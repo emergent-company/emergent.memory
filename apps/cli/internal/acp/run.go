@@ -131,6 +131,35 @@ func dispatch(ctx context.Context, a *Agent, req *request, send func(any) error)
 		}
 		a.closeSession(p.SessionID)
 		return struct{}{}, nil
+	case "session/set_mode":
+		var p SetModeParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, &rpcError{Code: codeInvalidParams, Message: fmt.Sprintf("session/set_mode: invalid params: %v", err)}
+		}
+		if p.SessionID == "" {
+			return nil, &rpcError{Code: codeInvalidParams, Message: "session/set_mode: missing sessionId"}
+		}
+		if p.ModeID == "" {
+			return nil, &rpcError{Code: codeInvalidParams, Message: "session/set_mode: missing modeId"}
+		}
+		state, err := a.setMode(p)
+		if err != nil {
+			return nil, &rpcError{Code: codeInvalidParams, Message: err.Error()}
+		}
+		return state, nil
+	case "session/set_config_option":
+		var p SetConfigOptionParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, &rpcError{Code: codeInvalidParams, Message: fmt.Sprintf("session/set_config_option: invalid params: %v", err)}
+		}
+		if p.SessionID == "" {
+			return nil, &rpcError{Code: codeInvalidParams, Message: "session/set_config_option: missing sessionId"}
+		}
+		opts, err := a.setConfigOption(p)
+		if err != nil {
+			return nil, &rpcError{Code: codeInvalidParams, Message: err.Error()}
+		}
+		return map[string]any{"configOptions": opts}, nil
 	default:
 		// session/list is deliberately unimplemented and unadvertised: this agent
 		// is an ephemeral in-memory bridge with loadSession=false, so it cannot

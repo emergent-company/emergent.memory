@@ -139,7 +139,45 @@ type AgentInfo struct {
 
 // SessionNewResponse is the result of the session/new method.
 type SessionNewResponse struct {
-	SessionID string `json:"sessionId"`
+	SessionID     string            `json:"sessionId"`
+	Modes         *SessionModeState `json:"modes,omitempty"`
+	ConfigOptions []ConfigOption    `json:"configOptions,omitempty"`
+}
+
+// Mode is one selectable agent advertised by the bridge. Its ID is the A2A
+// skill slug (RFC 1123) that `memory acp` resolves on prompt.
+type Mode struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+// SessionModeState is the ACP session-modes payload. It is carried on
+// session/new and returned by session/set_mode.
+type SessionModeState struct {
+	CurrentModeID  string `json:"currentModeId"`
+	AvailableModes []Mode `json:"availableModes"`
+}
+
+// ConfigOption is an ACP session config option (the newer replacement for
+// session modes). The bridge exposes a single "agent" select option whose
+// values mirror the mode list, so clients that prefer config options still get
+// an agent selector.
+type ConfigOption struct {
+	ID           string              `json:"id"`
+	Name         string              `json:"name"`
+	Description  string              `json:"description,omitempty"`
+	Category     string              `json:"category,omitempty"`
+	Type         string              `json:"type"`
+	CurrentValue string              `json:"currentValue"`
+	Options      []ConfigOptionValue `json:"options"`
+}
+
+// ConfigOptionValue is one selectable value of a ConfigOption.
+type ConfigOptionValue struct {
+	Value       string `json:"value"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
 }
 
 // PromptParams is the params of the session/prompt method.
@@ -175,6 +213,19 @@ type DeleteSessionParams struct {
 // CloseSessionParams is the params of the session/close method.
 type CloseSessionParams struct {
 	SessionID string `json:"sessionId"`
+}
+
+// SetModeParams is the params of the session/set_mode method.
+type SetModeParams struct {
+	SessionID string `json:"sessionId"`
+	ModeID    string `json:"modeId"`
+}
+
+// SetConfigOptionParams is the params of the session/set_config_option method.
+type SetConfigOptionParams struct {
+	SessionID string `json:"sessionId"`
+	ConfigID  string `json:"configId"`
+	Value     string `json:"value"`
 }
 
 // stream reads newline-delimited JSON-RPC 2.0 messages from in and writes

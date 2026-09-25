@@ -26,7 +26,16 @@ func streamAgent(t *testing.T, handler http.HandlerFunc) *Agent {
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 	client := a2a.NewClientWithHTTP(srv.URL, "emt_test", srv.Client())
-	return NewAgent(client, "research-agent", "test")
+	return NewAgent(client, "research-agent", "test", nil)
+}
+
+// streamAgentWithModes is streamAgent but with an explicit selectable mode list.
+func streamAgentWithModes(t *testing.T, handler http.HandlerFunc, modes []Mode) *Agent {
+	t.Helper()
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+	client := a2a.NewClientWithHTTP(srv.URL, "emt_test", srv.Client())
+	return NewAgent(client, "research-agent", "test", modes)
 }
 
 // writeSSEEvents writes the given StreamResponses as SSE data lines. Each
@@ -1481,5 +1490,246 @@ func TestConcurrentMidTurnCancelDoesNotCancelFollowingPrompt(t *testing.T) {
 	}
 	if n := backendRequests.Load(); n != inFlight+1 {
 		t.Errorf("backend requests = %d, want %d (following prompt did not execute)", n, inFlight+1)
+	}
+}
+
+// --- Session modes / config options ---
+
+// TestSessionNewAdvertisesModes verifies session/new returns the advertised mode
+// list (modes + configOptions) with the default skill as the current selection.
+func TestSessionNewAdvertisesModes(t *testing.T) {
+	agent := streamAgentWithModes(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected HTTP request")
+	}, []Mode{
+		{ID: "research-agent", Name: "Research", Description: "researches"},
+		{ID: "writer-agent", Name: "Writer", Description: "writes"},
+	})
+
+	out := runLines(t, agent, `{"jsonrpc":"2.0","id":2,"method":"session/new","params":{}}`+"\n")
+	msgs := decodeLines(t, out)
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	result := msgs[0]["result"].(map[string]any)
+
+	modes, ok := result["modes"].(map[string]any)
+	if !ok {
+		t.Fatalf("result.modes = %v, want object", result["modes"])
+	}
+	if modes["currentModeId"] != "research-agent" {
+		t.Errorf("currentModeId = %v, want research-agent", modes["currentModeId"])
+	}
+	available, ok := modes["availableModes"].([]any)
+	if !ok || len(available) != 2 {
+		t.Fatalf("availableModes = %v, want 2 entries", modes["availableModes"])
+	}
+	first := available[0].(map[string]any)
+	if first["id"] != "research-agent" || first["name"] != "Research" || first["description"] != "researches" {
+		t.Errorf("mode[0] = %v, want id/name/description for research-agent", first)
+	}
+
+	opts, ok := result["configOptions"].([]any)
+	if !ok || len(opts) != 1 {
+		t.Fatalf("configOptions = %v, want 1 entry", result["configOptions"])
+	}
+	opt := opts[0].(map[string]any)
+	if opt["id"] != "agent" || opt["category"] != "model" || opt["type"] != "select" || opt["currentValue"] != "research-agent" {
+		t.Errorf("configOption = %v, want agent/model/select/research-agent", opt)
+	}
+	values, ok := opt["options"].([]any)
+	if !ok || len(values) != 2 {
+		t.Fatalf("configOption.options = %v, want 2 entries", opt["options"])
+	}
+}
+
+// TestSessionNewSingleDefaultMode verifies a nil mode list degrades to a single
+// default mode, so a session always has a valid current mode.
+func TestSessionNewSingleDefaultMode(t *testing.T) {
+	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected HTTP request")
+	})
+
+	out := runLines(t, agent, `{"jsonrpc":"2.0","id":2,"method":"session/new","params":{}}`+"\n")
+	msgs := decodeLines(t, out)
+	result := msgs[0]["result"].(map[string]any)
+	modes := result["modes"].(map[string]any)
+	if modes["currentModeId"] != "research-agent" {
+		t.Errorf("currentModeId = %v, want research-agent", modes["currentModeId"])
+	}
+	available := modes["availableModes"].([]any)
+	if len(available) != 1 {
+		t.Fatalf("availableModes = %v, want 1 default entry", available)
+	}
+	if available[0].(map[string]any)["id"] != "research-agent" {
+		t.Errorf("mode[0].id = %v, want research-agent", available[0].(map[string]any)["id"])
+	}
+}
+
+// TestSetModeViaRun verifies session/set_mode switches the session skill and
+// returns the updated mode state.
+func TestSetModeViaRun(t *testing.T) {
+	agent := streamAgentWithModes(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected HTTP request")
+	}, []Mode{{ID: "research-agent", Name: "Research"}, {ID: "writer-agent", Name: "Writer"}})
+	id := mustNewSession(t, agent)
+
+	input := fmt.Sprintf(`{"jsonrpc":"2.0","id":3,"method":"session/set_mode","params":{"sessionId":%q,"modeId":"writer-agent"}}`, id) + "\n"
+	msgs := decodeLines(t, runLines(t, agent, input))
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	result := msgs[0]["result"].(map[string]any)
+	if result["currentModeId"] != "writer-agent" {
+		t.Errorf("currentModeId = %v, want writer-agent", result["currentModeId"])
+	}
+	agent.mu.Lock()
+	skill := agent.sessions[id].skill
+	agent.mu.Unlock()
+	if skill != "writer-agent" {
+		t.Errorf("session skill = %q, want writer-agent", skill)
+	}
+}
+
+// TestSetModeUnknownModeReturnsError verifies set_mode rejects a mode that was
+// not advertised.
+func TestSetModeUnknownModeReturnsError(t *testing.T) {
+	agent := streamAgentWithModes(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected HTTP request")
+	}, []Mode{{ID: "research-agent", Name: "Research"}})
+	id := mustNewSession(t, agent)
+
+	input := fmt.Sprintf(`{"jsonrpc":"2.0","id":3,"method":"session/set_mode","params":{"sessionId":%q,"modeId":"nope"}}`, id) + "\n"
+	msgs := decodeLines(t, runLines(t, agent, input))
+	assertErrorCode(t, msgs[0], codeInvalidParams)
+}
+
+// TestSetModeMissingSessionIDReturnsError verifies set_mode validates params.
+func TestSetModeMissingSessionIDReturnsError(t *testing.T) {
+	agent := streamAgentWithModes(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected HTTP request")
+	}, []Mode{{ID: "research-agent", Name: "Research"}})
+
+	out := runLines(t, agent, `{"jsonrpc":"2.0","id":3,"method":"session/set_mode","params":{"modeId":"research-agent"}}`+"\n")
+	msgs := decodeLines(t, out)
+	assertErrorCode(t, msgs[0], codeInvalidParams)
+}
+
+// TestSetModeUnknownSessionReturnsError verifies set_mode rejects an untracked
+// session id.
+func TestSetModeUnknownSessionReturnsError(t *testing.T) {
+	agent := streamAgentWithModes(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected HTTP request")
+	}, []Mode{{ID: "research-agent", Name: "Research"}})
+
+	out := runLines(t, agent, `{"jsonrpc":"2.0","id":3,"method":"session/set_mode","params":{"sessionId":"missing","modeId":"research-agent"}}`+"\n")
+	msgs := decodeLines(t, out)
+	assertErrorCode(t, msgs[0], codeInvalidParams)
+}
+
+// TestSetConfigOptionViaRun verifies session/set_config_option switches the
+// session skill and returns the updated config options.
+func TestSetConfigOptionViaRun(t *testing.T) {
+	agent := streamAgentWithModes(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected HTTP request")
+	}, []Mode{{ID: "research-agent", Name: "Research"}, {ID: "writer-agent", Name: "Writer"}})
+	id := mustNewSession(t, agent)
+
+	input := fmt.Sprintf(`{"jsonrpc":"2.0","id":3,"method":"session/set_config_option","params":{"sessionId":%q,"configId":"agent","value":"writer-agent"}}`, id) + "\n"
+	msgs := decodeLines(t, runLines(t, agent, input))
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	result := msgs[0]["result"].(map[string]any)
+	opts, ok := result["configOptions"].([]any)
+	if !ok || len(opts) != 1 {
+		t.Fatalf("configOptions = %v, want 1 entry", result["configOptions"])
+	}
+	if opts[0].(map[string]any)["currentValue"] != "writer-agent" {
+		t.Errorf("currentValue = %v, want writer-agent", opts[0].(map[string]any)["currentValue"])
+	}
+	agent.mu.Lock()
+	skill := agent.sessions[id].skill
+	agent.mu.Unlock()
+	if skill != "writer-agent" {
+		t.Errorf("session skill = %q, want writer-agent", skill)
+	}
+}
+
+// TestSetConfigOptionUnknownConfigReturnsError verifies set_config_option
+// rejects an unknown config id.
+func TestSetConfigOptionUnknownConfigReturnsError(t *testing.T) {
+	agent := streamAgentWithModes(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected HTTP request")
+	}, []Mode{{ID: "research-agent", Name: "Research"}})
+	id := mustNewSession(t, agent)
+
+	input := fmt.Sprintf(`{"jsonrpc":"2.0","id":3,"method":"session/set_config_option","params":{"sessionId":%q,"configId":"nope","value":"research-agent"}}`, id) + "\n"
+	msgs := decodeLines(t, runLines(t, agent, input))
+	assertErrorCode(t, msgs[0], codeInvalidParams)
+}
+
+// TestSetModeRoutesPromptToSelectedAgent verifies a prompt after set_mode sends
+// the selected skill id, not the default.
+func TestSetModeRoutesPromptToSelectedAgent(t *testing.T) {
+	bodyCh := make(chan a2a.SendMessageRequest, 1)
+	agent := streamAgentWithModes(t, func(w http.ResponseWriter, r *http.Request) {
+		var body a2a.SendMessageRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		bodyCh <- body
+		writeSSEEvents(w, []a2a.StreamResponse{
+			{Task: &a2a.Task{ID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}},
+		})
+	}, []Mode{{ID: "research-agent", Name: "Research"}, {ID: "writer-agent", Name: "Writer"}})
+
+	sessID := mustNewSession(t, agent)
+	if _, err := agent.setMode(SetModeParams{SessionID: sessID, ModeID: "writer-agent"}); err != nil {
+		t.Fatalf("setMode returned error: %v", err)
+	}
+
+	if _, err := agent.prompt(context.Background(), PromptParams{
+		SessionID: sessID,
+		Prompt:    []ContentBlock{{Type: "text", Text: "hi"}},
+	}, func(any) error { return nil }); err != nil {
+		t.Fatalf("prompt returned error: %v", err)
+	}
+
+	body := <-bodyCh
+	if got := body.Message.Metadata[a2a.SkillIDMetadataKey]; got != "writer-agent" {
+		t.Errorf("skillId = %v, want writer-agent", got)
+	}
+}
+
+// TestSetConfigOptionRoutesPromptToSelectedAgent mirrors the set_mode routing
+// case for the config-options surface.
+func TestSetConfigOptionRoutesPromptToSelectedAgent(t *testing.T) {
+	bodyCh := make(chan a2a.SendMessageRequest, 1)
+	agent := streamAgentWithModes(t, func(w http.ResponseWriter, r *http.Request) {
+		var body a2a.SendMessageRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		bodyCh <- body
+		writeSSEEvents(w, []a2a.StreamResponse{
+			{Task: &a2a.Task{ID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}},
+		})
+	}, []Mode{{ID: "research-agent", Name: "Research"}, {ID: "writer-agent", Name: "Writer"}})
+
+	sessID := mustNewSession(t, agent)
+	if _, err := agent.setConfigOption(SetConfigOptionParams{SessionID: sessID, ConfigID: "agent", Value: "writer-agent"}); err != nil {
+		t.Fatalf("setConfigOption returned error: %v", err)
+	}
+
+	if _, err := agent.prompt(context.Background(), PromptParams{
+		SessionID: sessID,
+		Prompt:    []ContentBlock{{Type: "text", Text: "hi"}},
+	}, func(any) error { return nil }); err != nil {
+		t.Fatalf("prompt returned error: %v", err)
+	}
+
+	body := <-bodyCh
+	if got := body.Message.Metadata[a2a.SkillIDMetadataKey]; got != "writer-agent" {
+		t.Errorf("skillId = %v, want writer-agent", got)
 	}
 }

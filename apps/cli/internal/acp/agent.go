@@ -26,8 +26,9 @@ const defaultMaxSessions = 256
 // task is resumed by threading its taskId on the next prompt.
 type Agent struct {
 	client  *a2a.Client
-	skill   string // Memory agent skill id (RFC1123 slug)
+	skill   string // default Memory agent skill id (RFC1123 slug)
 	version string // CLI version advertised on initialize
+	modes   []Mode // selectable agents; always contains the default skill
 
 	mu          sync.Mutex
 	sessions    map[string]*session
@@ -42,6 +43,7 @@ type Agent struct {
 
 // session is the per-session state tracked by the agent.
 type session struct {
+	skill         string // selected skill slug; defaults to the agent's default skill
 	contextID     string
 	pendingTaskID string // set when the last turn paused for HITL input
 	// cancels holds one cancel function per in-flight prompt turn, keyed by the
@@ -67,16 +69,66 @@ type session struct {
 func (s *session) inFlight() int { return len(s.cancels) }
 
 // NewAgent creates an ACP agent that fronts the given A2A client and targets
-// the Memory agent identified by skill (its RFC1123 slug).
-func NewAgent(client *a2a.Client, skill, version string) *Agent {
+// the Memory agent identified by skill (its RFC1123 slug). modes is the list of
+// selectable agents advertised to clients; the default skill is always present.
+func NewAgent(client *a2a.Client, skill, version string, modes []Mode) *Agent {
 	return &Agent{
 		client:      client,
 		skill:       skill,
 		version:     version,
+		modes:       ensureDefaultMode(modes, skill),
 		sessions:    make(map[string]*session),
 		maxSessions: defaultMaxSessions,
 	}
 }
+
+// ensureDefaultMode guarantees the default skill is present in the mode list so
+// that session/new always advertises at least one mode (the configured agent).
+func ensureDefaultMode(modes []Mode, skill string) []Mode {
+	for _, m := range modes {
+		if m.ID == skill {
+			return modes
+		}
+	}
+	return append([]Mode{{ID: skill, Name: skill}}, modes...)
+}
+
+// hasMode reports whether id is one of the advertised modes.
+func (a *Agent) hasMode(id string) bool {
+	for _, m := range a.modes {
+		if m.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// modeStateFor builds the session-modes payload for the given current skill.
+func (a *Agent) modeStateFor(skill string) *SessionModeState {
+	return &SessionModeState{CurrentModeID: skill, AvailableModes: a.modes}
+}
+
+// configOptionsFor builds the session config-options payload for the given
+// current skill.
+func (a *Agent) configOptionsFor(skill string) []ConfigOption {
+	values := make([]ConfigOptionValue, 0, len(a.modes))
+	for _, m := range a.modes {
+		values = append(values, ConfigOptionValue{Value: m.ID, Name: m.Name, Description: m.Description})
+	}
+	return []ConfigOption{{
+		ID:           agentConfigOptionID,
+		Name:         "Agent",
+		Description:  "Memory agent to converse with",
+		Category:     "model",
+		Type:         "select",
+		CurrentValue: skill,
+		Options:      values,
+	}}
+}
+
+// agentConfigOptionID is the id of the single select config option the bridge
+// advertises for agent selection.
+const agentConfigOptionID = "agent"
 
 // initialize answers the ACP initialize method.
 func (a *Agent) initialize() any {
@@ -116,8 +168,12 @@ func (a *Agent) newSession() (SessionNewResponse, error) {
 			"session limit reached: %d sessions tracked, every one with an in-flight turn", len(a.sessions))
 	}
 	a.seq++
-	a.sessions[id] = &session{lastUsed: a.seq}
-	return SessionNewResponse{SessionID: id}, nil
+	a.sessions[id] = &session{lastUsed: a.seq, skill: a.skill}
+	return SessionNewResponse{
+		SessionID:     id,
+		Modes:         a.modeStateFor(a.skill),
+		ConfigOptions: a.configOptionsFor(a.skill),
+	}, nil
 }
 
 // evictLocked drops least-recently-used idle sessions until the map has room for
@@ -195,6 +251,41 @@ func (a *Agent) deleteSession(sessionID string) { a.dropSession(sessionID) }
 // capability-gated lifecycle.
 func (a *Agent) closeSession(sessionID string) { a.dropSession(sessionID) }
 
+// setMode changes the session's target agent to the given mode. It validates the
+// mode against the advertised list and returns the updated mode state.
+func (a *Agent) setMode(p SetModeParams) (*SessionModeState, error) {
+	if !a.hasMode(p.ModeID) {
+		return nil, fmt.Errorf("unknown mode %q", p.ModeID)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	sess := a.sessions[p.SessionID]
+	if sess == nil {
+		return nil, fmt.Errorf("session %q not found", p.SessionID)
+	}
+	sess.skill = p.ModeID
+	return a.modeStateFor(p.ModeID), nil
+}
+
+// setConfigOption changes the session's target agent via the config-options
+// surface. Only the single "agent" option is supported.
+func (a *Agent) setConfigOption(p SetConfigOptionParams) ([]ConfigOption, error) {
+	if p.ConfigID != agentConfigOptionID {
+		return nil, fmt.Errorf("unknown config option %q", p.ConfigID)
+	}
+	if !a.hasMode(p.Value) {
+		return nil, fmt.Errorf("unknown value %q for config option %q", p.Value, p.ConfigID)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	sess := a.sessions[p.SessionID]
+	if sess == nil {
+		return nil, fmt.Errorf("session %q not found", p.SessionID)
+	}
+	sess.skill = p.Value
+	return a.configOptionsFor(p.Value), nil
+}
+
 // prompt answers the ACP session/prompt method by running one Memory agent turn
 // over A2A message:stream. It streams reply text via session/update
 // agent_message_chunk notifications and returns stopReason "end_turn" (or
@@ -216,13 +307,14 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams, send func(any) error
 			return nil, fmt.Errorf(
 				"session limit reached: %d sessions tracked, every one with an in-flight turn", n)
 		}
-		sess = &session{}
+		sess = &session{skill: a.skill}
 		a.sessions[p.SessionID] = sess
 	}
 	a.seq++
 	sess.lastUsed = a.seq
 	resumeTaskID := sess.pendingTaskID
 	contextID := sess.contextID
+	skill := sess.skill
 	hook := a.testHookAfterLookup
 	a.mu.Unlock()
 
@@ -289,7 +381,7 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams, send func(any) error
 		// Resume the paused task; the server infers the agent and context.
 		req.Message.TaskID = resumeTaskID
 	} else {
-		req.Message.Metadata = map[string]any{a2a.SkillIDMetadataKey: a.skill}
+		req.Message.Metadata = map[string]any{a2a.SkillIDMetadataKey: skill}
 		if contextID != "" {
 			req.Message.ContextID = contextID
 		}
