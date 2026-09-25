@@ -137,8 +137,8 @@ templ ShareAgentPage(props ShareAgentPageProps) {
 				})();
 				</script>
 			}
-			<!-- Paint the root dark before stylesheets load: no white flash. -->
-			<style>html{color-scheme:dark;background-color:#0E1017}</style>
+			<!-- Pre-paint guard: single source is foucBackgroundGuard(). -->
+			@foucBackgroundGuard()
 			<style>
 			/* Share surface is a full-height app frame: header, then a
 			   side-by-side rail + transcript. Self-contained so it never depends

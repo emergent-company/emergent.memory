@@ -150,10 +150,20 @@
 /* Keep the root element dark regardless of daisyUI's theme cascade. Without
    this, iOS Safari (Home-Screen PWA) shows a white page during navigation and
    back/bfcache restores, because the dark theme only lands once the late
-   stylesheets have parsed. base-200 is the page background (#0E1017). */
+   stylesheets have parsed. The background is the page-background token; do not
+   restate the colour here.
+ *
+ * Static mirrors of the theme tokens — these CANNOT read a CSS variable, so
+ * they are the only places the values are repeated. Keep them in sync:
+ *   - the inline pre-paint guard, emitted by foucBackgroundGuard() (ui.templ)
+ *     — background  = --color-base-200
+ *   - the theme-color metas in ui.templ, auth_ui.templ and share_page.templ
+ *     — surface     = --color-base-100
+ *   - webui/static/manifest.webmanifest: background_color (= --color-base-200)
+ *     and theme_color (= --color-base-100) */
 html {
   color-scheme: dark;
-  background-color: #0E1017;
+  background-color: var(--color-base-200);
   /* Base font size: 15px root so 1rem = 15px and all rem-based utilities
      scale down from the browser's 16px default. */
   font-size: 15px;
