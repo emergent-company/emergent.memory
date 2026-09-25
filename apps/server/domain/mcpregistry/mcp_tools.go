@@ -274,7 +274,7 @@ func (h *MCPRegistryToolHandler) ExecuteToggleMCPServerTool(ctx context.Context,
 		return errResult("enabled is required (boolean)")
 	}
 
-	if err := h.service.ToggleTool(ctx, toolID, enabled); err != nil {
+	if err := h.service.ToggleTool(ctx, projectID, toolID, enabled); err != nil {
 		return errResult("failed to toggle tool: " + err.Error())
 	}
 

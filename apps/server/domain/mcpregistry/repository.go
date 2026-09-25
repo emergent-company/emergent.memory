@@ -183,12 +183,16 @@ func (r *Repository) FindEnabledToolsByServerID(ctx context.Context, serverID st
 	return tools, nil
 }
 
-// FindToolByID returns a tool by ID.
-func (r *Repository) FindToolByID(ctx context.Context, id string) (*MCPServerTool, error) {
+// FindToolByIDForProject returns a tool by ID, scoped to a project through its
+// server's project_id. A foreign or missing tool returns (nil, nil), so a caller
+// can never observe another project's tool by bare ID (issue #978).
+func (r *Repository) FindToolByIDForProject(ctx context.Context, projectID, id string) (*MCPServerTool, error) {
 	tool := new(MCPServerTool)
 	err := r.db.NewSelect().
 		Model(tool).
-		Where("id = ?", id).
+		Join("JOIN kb.mcp_servers AS ms ON ms.id = mst.server_id").
+		Where("mst.id = ?", id).
+		Where("ms.project_id = ?", projectID).
 		Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -268,12 +272,16 @@ func (r *Repository) UpdateToolConfig(ctx context.Context, id string, config map
 	return err
 }
 
-// UpdateTool updates both enabled and config for a tool atomically.
-// Pass nil for fields that should not be changed.
-func (r *Repository) UpdateTool(ctx context.Context, id string, enabled *bool, config *map[string]any) error {
+// UpdateToolForProject updates both enabled and config for a tool atomically,
+// scoped to a project through the tool's server. A foreign tool is a no-op (the
+// WHERE project_id predicate excludes it), so a caller can never mutate another
+// project's tool by bare ID (issue #978). Pass nil for fields that should not be
+// changed.
+func (r *Repository) UpdateToolForProject(ctx context.Context, projectID, id string, enabled *bool, config *map[string]any) error {
 	q := r.db.NewUpdate().
 		Model((*MCPServerTool)(nil)).
-		Where("id = ?", id)
+		Where("id = ?", id).
+		Where("server_id IN (SELECT id FROM kb.mcp_servers WHERE project_id = ?)", projectID)
 
 	if enabled != nil {
 		q = q.Set("enabled = ?", *enabled)

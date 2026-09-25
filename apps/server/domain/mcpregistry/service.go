@@ -356,31 +356,29 @@ func (s *Service) ListTools(ctx context.Context, serverID string) ([]*MCPServerT
 	return s.repo.FindToolsByServerID(ctx, serverID)
 }
 
-// ToggleTool enables or disables a specific tool.
-func (s *Service) ToggleTool(ctx context.Context, toolID string, enabled bool) error {
-	return s.UpdateTool(ctx, toolID, &enabled, nil)
+// ToggleTool enables or disables a specific tool in the caller's project.
+func (s *Service) ToggleTool(ctx context.Context, projectID, toolID string, enabled bool) error {
+	return s.UpdateTool(ctx, projectID, toolID, &enabled, nil)
 }
 
-// UpdateTool updates enabled and/or config for a tool and invalidates the tool pool cache.
+// UpdateTool updates enabled and/or config for a tool in the caller's project
+// and invalidates the tool pool cache. The tool must belong to the caller's
+// project: a foreign or missing tool returns ErrToolNotFound (issue #978).
 // Pass nil for fields that should not be changed.
-func (s *Service) UpdateTool(ctx context.Context, toolID string, enabled *bool, config *map[string]any) error {
-	tool, err := s.repo.FindToolByID(ctx, toolID)
+func (s *Service) UpdateTool(ctx context.Context, projectID, toolID string, enabled *bool, config *map[string]any) error {
+	tool, err := s.repo.FindToolByIDForProject(ctx, projectID, toolID)
 	if err != nil {
 		return fmt.Errorf("fetching tool: %w", err)
 	}
 	if tool == nil {
-		return fmt.Errorf("tool not found")
+		return ErrToolNotFound
 	}
 
-	if err := s.repo.UpdateTool(ctx, toolID, enabled, config); err != nil {
+	if err := s.repo.UpdateToolForProject(ctx, projectID, toolID, enabled, config); err != nil {
 		return err
 	}
 
-	// Look up the server to get project ID for cache invalidation
-	server, err := s.repo.FindServerByID(ctx, tool.ServerID, nil)
-	if err == nil && server != nil {
-		s.invalidateToolPool(server.ProjectID)
-	}
+	s.invalidateToolPool(projectID)
 
 	return nil
 }
