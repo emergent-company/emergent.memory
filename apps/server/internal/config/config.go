@@ -618,6 +618,12 @@ type StandaloneConfig struct {
 
 	// ProjectName is the default project name
 	ProjectName string `env:"STANDALONE_PROJECT_NAME" envDefault:"Default Project"`
+
+	// APIKey2 is the static API key for the secondary standalone user (invitee in tests)
+	APIKey2 string `env:"STANDALONE_API_KEY_2" envDefault:""`
+
+	// UserEmail2 is the email for the secondary standalone user
+	UserEmail2 string `env:"STANDALONE_USER_EMAIL_2" envDefault:""`
 }
 
 // GraphConfig holds configuration for the knowledge graph domain.
