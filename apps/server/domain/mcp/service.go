@@ -1666,6 +1666,59 @@ func FilterToolsForScopes(tools []ToolDefinition, scopes []string) []ToolDefinit
 	return out
 }
 
+// FilterToolsForSuperadmin removes SuperadminOnly tools from the catalog when
+// the caller is not a superadmin_full principal. isSuperadmin must be the
+// resolved platform-admin authority (core.superadmins), not a scope-derived
+// value; callers that cannot resolve it must pass false so the operator tools
+// fail closed. When isSuperadmin is true the catalog is returned unchanged.
+func FilterToolsForSuperadmin(tools []ToolDefinition, isSuperadmin bool) []ToolDefinition {
+	if isSuperadmin {
+		return tools
+	}
+	out := make([]ToolDefinition, 0, len(tools))
+	for _, t := range tools {
+		if t.SuperadminOnly {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// IsSuperadminCaller reports whether the authenticated caller in ctx holds an
+// active superadmin_full grant. It delegates to the single canonical
+// platform-admin boundary (auth.IsSuperadminFull, backed by the core.superadmins
+// query), so a bare admin / admin:all token cannot satisfy it — the grant is
+// resolved from the caller's identity, never from token scopes (issue #948).
+// A resolution failure is returned to the caller so it can fail closed.
+func (s *Service) IsSuperadminCaller(ctx context.Context) (bool, error) {
+	return auth.IsSuperadminFull(ctx, s.db)
+}
+
+// superadminOnlyToolNames is the set of tool names gated on the superadmin_full
+// authority rather than a token scope. It is derived from the same package-level
+// builders (dynamicToolBuilders) that GetToolDefinitions consumes, so it cannot
+// drift from the tools it guards. Enforcement keys off this set — never off a
+// re-mapped ToolDefinition — so the ADK ToolPool's definition re-map (which drops
+// SuperadminOnly/RequiredScope) cannot bypass it (issue #948).
+var superadminOnlyToolNames = func() map[string]bool {
+	names := make(map[string]bool)
+	for _, build := range dynamicToolBuilders {
+		for _, def := range build() {
+			if def.SuperadminOnly {
+				names[def.Name] = true
+			}
+		}
+	}
+	return names
+}()
+
+// IsSuperadminOnlyTool reports whether the named tool is a deployment-wide /
+// org-level operator tool gated on the superadmin_full authority.
+func (s *Service) IsSuperadminOnlyTool(name string) bool {
+	return superadminOnlyToolNames[name]
+}
+
 // mcpToolScopeVocabulary is the set of scope values that can gate an MCP tool.
 // It is derived from the tool catalog — the central static scope map plus the
 // package-level builders in dynamicToolBuilders (the same list GetToolDefinitions
@@ -1815,6 +1868,22 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	// tools with the agent's context.
 	if scope := InstanceScopeFromContext(ctx); scope != nil && InstanceDeniesTool(scope, toolName) {
 		return nil, fmt.Errorf("tool not allowed by MCP share instance: %s", toolName)
+	}
+	// Defense in depth: enforce the superadmin_full authority for operator tools
+	// on the in-process dispatch path as well as in the transports. The ADK
+	// ToolPool (agent runs) calls ExecuteTool directly and never passes through a
+	// transport pre-check, so this is the authority boundary that covers it. The
+	// check resolves the caller from ctx (the run's originating principal, not the
+	// agent definition) and fails closed when that principal is unknown or lacks
+	// the grant (issue #948).
+	if s.IsSuperadminOnlyTool(toolName) {
+		ok, err := s.IsSuperadminCaller(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to authorize operator tool %q: %w", toolName, err)
+		}
+		if !ok {
+			return nil, fmt.Errorf("tool %q requires superadmin privileges", toolName)
+		}
 	}
 	switch toolName {
 	case "project-get":
