@@ -82,17 +82,45 @@
  * Tailwind namespace onto the semantic tokens to bring it back under the theme.
  * TEMPORARY: remove this block once go-daisy replaces its literal radius with
  * the semantic utilities (tracked in the audit's go-daisy dependency list).
- * Mapping keeps each step's previous appearance as closely as possible:
- * lg was 0.5rem (the box value), md/sm/default were 0.25–0.375rem (field). */
+ *
+ * The mapping is value-preserving: every step equals its Tailwind default
+ * (sm/default 0.25rem, md 0.375rem, lg 0.5rem, xl 0.75rem, 2xl 1rem,
+ * 3xl 1.5rem), so nothing collapses onto a smaller value. Steps with no
+ * dedicated token are derived from the three semantic levers — md is the
+ * midpoint of field and box, xl the midpoint of box and selector, 3xl one box
+ * past selector — so changing --radius-field/--radius-box/--radius-selector
+ * still moves every radius with a single edit. */
 @theme inline {
   --radius-sm: var(--radius-field);
   --radius: var(--radius-field);
-  --radius-md: var(--radius-field);
+  --radius-md: calc((var(--radius-field) + var(--radius-box)) / 2);
   --radius-lg: var(--radius-box);
-  --radius-xl: var(--radius-box);
-  --radius-2xl: var(--radius-box);
-  --radius-3xl: var(--radius-box);
+  --radius-xl: calc((var(--radius-box) + var(--radius-selector)) / 2);
+  --radius-2xl: var(--radius-selector);
+  --radius-3xl: calc(var(--radius-selector) + var(--radius-box));
 }
+
+/* Radius exception list. The "radius derives from theme variables" rule has one
+ * explicit, reviewable exception: the runtime-injected stylesheets in
+ * webui/static/js/chat-components.js (`memory-badge-style`,
+ * `memory-chat-control-style`). Those are appended to <head> after this compiled
+ * sheet and are unlayered, so their `border-radius` literals win over app.css's
+ * token-derived values on those selectors:
+ *
+ *   .memory-badge                 .625rem
+ *   .memory-run-marker-model      .375rem
+ *   .memory-run-marker-failure    .6rem
+ *   .memory-copy-btn              .375rem
+ *   .memory-queue-row             .5rem
+ *   .memory-queue-input:focus-visible .25rem
+ *   .memory-queue-send/remove     .375rem
+ *   .dock-question-option         .5rem
+ *
+ * Pills (`border-radius:9999px` on .memory-run-status, .memory-run-status-dot,
+ * .dock-count, .memory-rail-badge, .memory-rail-count) are deliberate circles and
+ * are exempt like `rounded-full`. Migrating the injected-sheet radii to
+ * var(--radius-*) is deferred to the stylesheet-consolidation follow-up unit
+ * (task 5.1); until then they are annotated in chat-components.js. */
 
 /* Iconify — Lucide icons as utility classes (used by go-daisy IconSpan and
    the client JS). */
@@ -1128,7 +1156,13 @@ div:has(> #_layout-topbar) {
  *
  * The values preserve the paddings that were previously inlined at each call
  * site, so introducing the block is appearance-neutral; tuning them is the
- * point. */
+ * point.
+ *
+ * One deliberate exception: the single `<ul class="menu menu-sm p-1">`
+ * dropdown menu (org_context.templ) keeps its `p-1`. That is a structural
+ * popover-menu idiom (size comes from `menu-sm`, the `p-1` is the menu's own
+ * compact padding), not a card-body density lever, so it is not routed through
+ * this block. */
 .memory-density-compact {
   padding: 1rem;
 }

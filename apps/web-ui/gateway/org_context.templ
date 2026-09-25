@@ -273,7 +273,7 @@ templ OrgLandingPage(data orgPageData) {
 				if pendingCount > 0 {
 					@projectsPendingRefreshNote(data.Org.ID, pendingCount)
 				}
-				@ui.Section("Projects", ui.SectionProps{Margin: "mb-6", BodyClass: "p-0"}) {
+				@ui.Section("Projects", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-flush"}) {
 					@components.TableCard(nil) {
 						<form method="post" action="/projects/delete" x-data="{ count: 0 }">
 							<input type="hidden" name="orgId" value={ data.Org.ID }/>
@@ -737,7 +737,7 @@ templ OrgSettingsPage(data orgSettingsPageData) {
 					Bordered:    true,
 				})
 			} else {
-					@ui.Section("Tools", ui.SectionProps{Margin: "mb-6", BodyClass: "p-0"}) {
+					@ui.Section("Tools", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-flush"}) {
 						@components.TableCard(nil) {
 							<div class="divide-y divide-base-200">
 								for _, s := range data.Settings {
@@ -766,7 +766,7 @@ templ OrgSettingsGeneralPage(data orgSettingsGeneralPageData) {
 		} else {
 			@pageHeader("Organization", "Settings", "Organization-level settings for "+data.Org.Name+".") {}
 			@layout.Rail(orgSettingsSubNav(data.Org.ID, "general"), nil) {
-				@ui.Section("General", ui.SectionProps{Margin: "mb-6", BodyClass: "p-5"}) {
+				@ui.Section("General", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-comfortable"}) {
 					<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(data.Org.ID) + "/rename") } hx-boost="false" class="flex max-w-md flex-col gap-4">
 						@form.FormControl("org-name", "Organization name", form.LabelAbove, "Renaming updates the organization everywhere it appears.", "", nil) {
 							<input id="org-name" name="name" type="text" required maxlength="120" value={ data.Org.Name } class="input w-full"/>
@@ -839,7 +839,7 @@ templ OrgSettingsDangerZonePage(data orgSettingsDangerZonePageData) {
 		} else {
 			@detailHeader(crumbsActive(nav.Crumbs("Organization", "/orgs/"+url.PathEscape(data.Org.ID), "Danger zone")), "", "Danger zone", "Deleting an organization removes it and its projects permanently. This cannot be undone.", detailHeaderOpts{Margin: "mb-6"}) {}
 			@layout.Rail(orgSettingsSubNav(data.Org.ID, "danger-zone"), nil) {
-				@ui.Section("Danger zone", ui.SectionProps{Margin: "mb-6", BodyClass: "p-5"}) {
+				@ui.Section("Danger zone", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-comfortable"}) {
 					<div class="flex flex-wrap items-center justify-between gap-3">
 						<div class="flex items-center gap-3">
 							<div class="bg-error/10 text-error grid size-9 shrink-0 place-items-center rounded-box border border-error/15">

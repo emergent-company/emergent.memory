@@ -81,7 +81,7 @@ templ restoreUnavailableNote() {
 templ backupCreateForm() {
 	@ui.Section("Create a backup", ui.SectionProps{
 		Margin:    "mb-6",
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 	}) {
 		<form class="flex flex-col gap-4" method="post" action="/backups">
 			@form.FormControl("backup-retention", "Retention", form.LabelAbove, "How many days to keep the archive before it expires. Default 30, valid 1–365.", "", nil) {
@@ -407,7 +407,7 @@ templ backupDetailField(label, value string) {
 
 // backupDetailOverview is the identity/metadata grid.
 templ backupDetailOverview(b *Backup) {
-	@ui.Section("Overview", ui.SectionProps{Margin: "mb-6", BodyClass: "p-5"}) {
+	@ui.Section("Overview", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-comfortable"}) {
 		@components.MetaGrid(components.MetaGridOpts{GapY: "gap-y-4", ColsClass: "lg:grid-cols-3"}) {
 			@backupDetailField("Project", backupTextOrDash(b.ProjectName))
 			@backupDetailField("Backup type", backupTypeLabel(b.BackupType))
@@ -450,7 +450,7 @@ templ backupDetailOverview(b *Backup) {
 // exists for: one stat card per known Stats key. An empty map (a backup still
 // creating, or one that failed before counting) shows a neutral note.
 templ backupDetailStats(b *Backup) {
-	@ui.Section("Contents", ui.SectionProps{Margin: "mb-6", BodyClass: "p-5"}) {
+	@ui.Section("Contents", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-comfortable"}) {
 		{{ rows := backupStatRows(b.Stats) }}
 		if len(rows) == 0 {
 			@ui.SoftBox(ui.SoftBoxProps{Class: "flex items-center gap-2"}) {
@@ -473,7 +473,7 @@ templ backupDetailStats(b *Backup) {
 // backupDetailSettings shows the archive's include flags as on/off rows, plus
 // the backup type and its expiry.
 templ backupDetailSettings(b *Backup) {
-	@ui.Section("Settings", ui.SectionProps{Margin: "mb-6", BodyClass: "p-5"}) {
+	@ui.Section("Settings", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-comfortable"}) {
 		<p class="text-base-content/60 mb-3 text-sm">What the archive includes:</p>
 		{{ rows := backupIncludeRows(b.Includes) }}
 		<div class="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -500,7 +500,7 @@ templ backupDetailSettings(b *Backup) {
 // stats above), not the manifest contents, so the page cannot list live
 // archive entries.
 templ backupDetailArchiveFormat(b *Backup) {
-	@ui.Section("Archive format", ui.SectionProps{Margin: "mb-6", BodyClass: "p-5"}) {
+	@ui.Section("Archive format", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-comfortable"}) {
 		<p class="text-base-content/70 text-sm">
 			The archive is a ZIP stored at <code class="rounded-field bg-base-200/60 px-1 py-0.5 font-mono text-xs break-all">{ b.StorageKey }</code>. It contains:
 		</p>
@@ -529,7 +529,7 @@ templ backupDetailArchiveFormat(b *Backup) {
 // surfaces its error prominently and never presents checksums as valid; a
 // backup still creating has no checksums yet.
 templ backupDetailIntegrity(b *Backup) {
-	@ui.Section("Integrity", ui.SectionProps{Margin: "mb-6", BodyClass: "p-5"}) {
+	@ui.Section("Integrity", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-comfortable"}) {
 		if b.Status == backupStatusFailed {
 			@ui.Alert(ui.AlertProps{
 				Type:    ui.AlertError,

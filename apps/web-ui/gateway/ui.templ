@@ -1029,7 +1029,7 @@ templ flashToasts(flashMsg string, flashErr error) {
 // selects h2 (default) or h3; children hold any extra content below the copy.
 templ chatWelcomeHero(id, icon, wrapClass, title string, headingLevel int, headingClass, subtitle, subClass string) {
 	<div id={ id } class={ "flex flex-col items-center justify-center", wrapClass, "text-center" }>
-		<div class="bg-primary/10 text-primary border-primary/15 grid size-14 place-items-center rounded-box border">
+		<div class="bg-primary/10 text-primary border-primary/15 grid size-14 place-items-center rounded-selector border">
 			@ui.IconSpan(icon, "size-7")
 		</div>
 		<div>

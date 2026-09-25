@@ -167,6 +167,11 @@
   // Inject the badge + shimmer CSS once. Unlayered, so it sits above the
   // daisyUI/Tailwind layers in app.css; runs after the stylesheet link, so it
   // also wins the cascade against app.css's unlayered tool-chip rules.
+  //
+  // The `border-radius` literals in this sheet are a documented exception to
+  // the "radius derives from theme variables" rule — see the "Radius exception
+  // list" note in webui/css/app.css. Migrating them to var(--radius-*) is
+  // deferred to the stylesheet-consolidation follow-up unit (task 5.1).
   function ensureBadgeStyle() {
     if (document.getElementById("memory-badge-style")) return;
     var st = document.createElement("style");
@@ -472,6 +477,11 @@
   // it sits above the daisyUI/Tailwind layers. The same rules live in
   // webui/css/app.css (the compiled source); this injection keeps the surfaces
   // styled even before the CSS bundle is rebuilt.
+  //
+  // The `border-radius` literals in this sheet are a documented exception to
+  // the "radius derives from theme variables" rule — see the "Radius exception
+  // list" note in webui/css/app.css. Migrating them to var(--radius-*) is
+  // deferred to the stylesheet-consolidation follow-up unit (task 5.1).
   function ensureChatControlStyle() {
     if (document.getElementById("memory-chat-control-style")) return;
     var st = document.createElement("style");

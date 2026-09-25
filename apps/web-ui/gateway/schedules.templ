@@ -253,7 +253,7 @@ templ scheduleDefinitionSelect(id string, defs []AgentDefinitionSummary, current
 
 // scheduleEditForm is the edit form (PRG → POST /schedules/:id/update).
 templ scheduleEditForm(a *ScheduledAgent, defs []AgentDefinitionSummary) {
-	@ui.Section("Edit schedule", ui.SectionProps{Margin: "mb-6", BodyClass: "p-5"}) {
+	@ui.Section("Edit schedule", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-comfortable"}) {
 		<form class="flex flex-col gap-4" method="post" action={ templ.URL("/schedules/" + a.ID + "/update") }>
 			@form.FormControl("edit-sched-name", "Name", form.LabelAbove, "", "", nil) {
 				<input id="edit-sched-name" name="name" type="text" required value={ a.Name } class="input w-full"/>
@@ -288,7 +288,7 @@ templ scheduleEditForm(a *ScheduledAgent, defs []AgentDefinitionSummary) {
 // scheduleRunsSection lists the schedule's recent runs, each linking to its
 // transcript (/runs/{id}). Empty state when the schedule has not run yet.
 templ scheduleRunsSection(runs []ScheduledAgentRun) {
-	@ui.Section("Latest runs", ui.SectionProps{Margin: "mb-6", BodyClass: "p-5"}) {
+	@ui.Section("Latest runs", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-comfortable"}) {
 		if len(runs) == 0 {
 			<p class="text-base-content/50 text-sm">No runs yet. Runs appear here after the schedule fires — or after you hit Run now.</p>
 		} else {
@@ -313,7 +313,7 @@ templ scheduleRunsSection(runs []ScheduledAgentRun) {
 templ scheduleDangerZone(a *ScheduledAgent) {
 	@ui.Section("Danger zone", ui.SectionProps{
 		Margin:    "mb-6",
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 	}) {
 		<div class="flex flex-wrap items-center justify-between gap-3">
 			<div class="flex items-center gap-3">
@@ -393,7 +393,7 @@ templ SchedulesNewPage(defs []AgentDefinitionSummary, flashErr error) {
 templ scheduleCreateForm(defs []AgentDefinitionSummary) {
 	@ui.Section("Schedule", ui.SectionProps{
 		Margin:    "mb-6",
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 	}) {
 		<form class="flex flex-col gap-4" method="post" action="/schedules">
 			@form.FormControl("sched-name", "Name", form.LabelAbove, "", "", nil) {
