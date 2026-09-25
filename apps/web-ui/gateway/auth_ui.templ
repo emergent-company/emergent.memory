@@ -54,9 +54,8 @@ templ loginPage(sentryDSN string, sentryEnvironment string, sentryTracesSampleRa
 				})();
 				</script>
 			}
-			<!-- Paint the root dark before any stylesheet loads (mirrors the
-			     shell guard): no white flash on first paint or bfcache. -->
-			<style>html{color-scheme:dark;background-color:#0E1017}</style>
+			<!-- Pre-paint guard: single source is foucBackgroundGuard(). -->
+			@foucBackgroundGuard()
 			<style>
 			/* Sign-in stage: full-viewport centered column over a faint
 			   brass/steel aura. Self-contained so the page never depends on

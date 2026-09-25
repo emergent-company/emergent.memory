@@ -37,7 +37,7 @@ templ settingsSubNav(active string, providersMissing bool) {
 		@components.SubNavItem("/settings/overrides", active == "overrides", "lucide--wrench", "Overrides")
 		{{ activeP := active == "providers" }}
 		<a
-			class={ "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm whitespace-nowrap transition-colors", templ.KV("bg-base-200 font-medium text-base-content", activeP), templ.KV("text-base-content/60 hover:bg-base-200/50 hover:text-base-content", !activeP) }
+			class={ "flex items-center gap-2.5 rounded-box px-3 py-2 text-sm whitespace-nowrap transition-colors", templ.KV("bg-base-200 font-medium text-base-content", activeP), templ.KV("text-base-content/60 hover:bg-base-200/50 hover:text-base-content", !activeP) }
 			href="/settings/providers"
 			if activeP {
 				aria-current="page"
@@ -167,7 +167,7 @@ templ projectSettingsHeader(ok bool) {
 templ projectInfoPanel(p *Project) {
 	@ui.Section("Project info", ui.SectionProps{
 		Margin:    "mb-6",
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 	}) {
 		<div class="flex flex-col gap-4">
 			@settingsField("project-name", "Name", "Display name shown in the UI and briefings. Purely cosmetic — the project ID is stable, so renaming never breaks stored data or links.", "Required.", nil) {
@@ -200,7 +200,7 @@ templ projectInfoPanel(p *Project) {
 templ assistantPanel(assistantAgent string, agents []AgentDefinitionSummary) {
 	@ui.Section("Assistant", ui.SectionProps{
 		Margin:    "mb-6",
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 	}) {
 		<div class="flex flex-col gap-4">
 			@settingsField("assistant-agent", "Assistant agent", "The agent that powers the assistant side panel and the 'Add with assistant' button. Empty hides the assistant.", "Pick the agent to use as the assistant. Empty hides the assistant.", nil) {
@@ -227,7 +227,7 @@ templ assistantPanel(assistantAgent string, agents []AgentDefinitionSummary) {
 templ agentOverridesPanel(overrides []AgentOverrideEntry) {
 	@ui.Section("Agent overrides", ui.SectionProps{
 		Margin:    "mb-6",
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 	}) {
 		<h3 class="mb-3 text-sm font-semibold">Current overrides</h3>
 		if len(overrides) == 0 {
@@ -315,7 +315,7 @@ templ overrideForm() {
 templ editorAgentPanel(editorAgent string, agents []AgentDefinitionSummary) {
 	@ui.Section("Editor agent", ui.SectionProps{
 		Margin:    "mb-6",
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 	}) {
 		<div class="flex flex-col gap-4">
 			@settingsField("editor-agent", "Editor agent", "The agent that proposes and applies edits to knowledge-graph objects from the object page (correcting properties, rewording content, rewiring relationships). A wrong choice yields low-quality object changes.", "The agent definition that runs object-content edits. Empty uses the default agent.", nil) {
@@ -346,7 +346,7 @@ templ editorAgentPanel(editorAgent string, agents []AgentDefinitionSummary) {
 templ rememberDedupPanel(rememberAgent, dedupThreshold string, agents []AgentDefinitionSummary) {
 	@ui.Section("Remember & dedup", ui.SectionProps{
 		Margin:    "mb-6",
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 	}) {
 		<div class="flex flex-col gap-4">
 			@settingsField("remember-agent", "Remember agent", "The agent whose prompt, model, and tools run the remember pipeline that turns conversations into memories. A wrong choice yields low-quality or mis-structured memories.", "The agent definition that powers the remember pipeline. Empty clears it.", nil) {
@@ -377,7 +377,7 @@ templ rememberDedupPanel(rememberAgent, dedupThreshold string, agents []AgentDef
 templ iosSetupPanel(qrImage string) {
 	@ui.Section("iOS setup", ui.SectionProps{
 		Margin:    "mb-6",
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 	}) {
 		if qrImage != "" {
 			<div class="flex items-start gap-5">
@@ -399,7 +399,7 @@ templ iosSetupPanel(qrImage string) {
 templ devicesPanel(devices []device) {
 	@ui.Section("Devices", ui.SectionProps{
 		Margin:    "mb-6",
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 	}) {
 		if len(devices) == 0 {
 			<p class="text-base-content/45 text-xs">No devices registered yet.</p>
@@ -450,7 +450,7 @@ templ deviceRow(d device) {
 templ voicePanel(v voiceSettings) {
 	@ui.Section("Voice", ui.SectionProps{
 		Margin:    "mb-6",
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 	}) {
 		<div class="flex flex-col gap-4">
 			// Master enable toggle: a single-field save (enabled). A checked
@@ -701,7 +701,7 @@ templ providersPanel(d providerPanelData) {
 		@defaultModelsPanel(d)
 		@ui.Section("Rates", ui.SectionProps{
 			Margin:    "mb-6",
-			BodyClass: "p-5",
+			BodyClass: "memory-density-comfortable",
 		}) {
 			if d.Err != nil {
 				@ui.Alert(ui.AlertProps{
@@ -781,7 +781,7 @@ templ embeddingProviderWarning() {
 templ defaultModelsPanel(d providerPanelData) {
 	@ui.Section("Default models", ui.SectionProps{
 		Margin:    "mb-6",
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 	}) {
 		<p class="text-base-content/55 mb-4 text-xs">Used when an agent has no explicit model ("Auto — default model"). Model names carry a provider prefix.</p>
 		<form class="flex flex-col gap-4" hx-post="/settings/providers/model-config" hx-trigger="change delay:400ms" hx-swap="none">
@@ -860,7 +860,7 @@ templ providerModelSelect(name, label, current string, models []Model) {
 templ providerManagementPanel(d providerPanelData) {
 	@ui.Section("Provider configuration", ui.SectionProps{
 		Margin:    "mb-6",
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 	}) {
 		<div class="mb-4 flex items-center justify-between gap-2">
 			<p class="text-base-content/55 text-xs">Credentials for the LLM providers this project can use. Test runs a live generate call.</p>
@@ -1294,7 +1294,7 @@ templ providerConfigPage(data providerConfigPageData) {
 		@layout.Rail(settingsSubNav("providers", data.ProvidersMissing), nil) {
 			@ui.Section("Provider", ui.SectionProps{
 				Margin:    "mb-6",
-				BodyClass: "p-5",
+				BodyClass: "memory-density-comfortable",
 			}) {
 				@providerConfigForm(data.Provider, data.Draft, data.DraftProvider, data.GenerativeModels, data.EmbeddingModels)
 			}

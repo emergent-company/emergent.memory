@@ -229,6 +229,6 @@ templ proposalChipRow(title string, items []string) {
 templ proposalMonoBlock(title string, content string) {
 	<div class="mt-2">
 		@ui.Eyebrow(title, ui.EyebrowProps{Size: "text-[10px]", Margin: "mb-1"})
-		<pre class="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-md bg-base-200/60 p-2 font-mono text-xs text-base-content/80">{ content }</pre>
+		<pre class="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-field bg-base-200/60 p-2 font-mono text-xs text-base-content/80">{ content }</pre>
 	</div>
 }

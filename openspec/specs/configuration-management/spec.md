@@ -4,6 +4,7 @@
 Defines how the application components (server, admin frontend, and workspace CLI) load their configuration and secrets: Infisical is the source of truth, reached with per-application/per-environment Universal Auth machine identities, with an encrypted in-memory and file cache, background refresh, and a `.env` fallback permitted only in local development. It also covers the minimal bootstrap credentials for reaching Infisical, migration/validation/rollback tooling from `.env` files, secret-fetch logging and audit, and the lowest-priority LLM-provider environment-variable fallback along with the encryption-key requirement and post-install provider prompts.
 
 ## Requirements
+
 ### Requirement: Infisical SDK Integration
 
 The system SHALL integrate with Infisical secrets management platform using the Node.js SDK (@infisical/sdk) to fetch configuration and secrets at application startup.
@@ -303,3 +304,29 @@ The system SHALL require minimal bootstrap credentials stored in .env.local file
 - **AND** SHALL log error message listing missing variables
 - **AND** SHALL NOT attempt to fetch from Infisical with incomplete credentials
 
+### Requirement: Schema assign operation supports migration control flags
+The schema assignment request body SHALL accept additional optional fields to control migration behavior when the assigned schema has a `migrations` block.
+
+New fields added to `AssignPackRequest`:
+- `force` (bool, default false): bypass the risk gate for dangerous migrations
+- `auto_uninstall` (bool, default false): uninstall `from_version` schema after successful migration
+
+#### Scenario: Assign request with force flag
+- **WHEN** a user assigns a schema with `force: true`
+- **THEN** any auto-triggered migration SHALL proceed regardless of risk level
+- **THEN** dropped properties SHALL still be archived before removal
+
+#### Scenario: Assign request with auto_uninstall flag
+- **WHEN** a user assigns a schema with `auto_uninstall: true` and migration succeeds
+- **THEN** the `from_version` schema SHALL be uninstalled from the project automatically
+
+### Requirement: Schema assign response includes migration result
+When auto-migration runs during an assign operation, the `AssignPackResult` response SHALL include a `migration_result` field summarizing what happened.
+
+#### Scenario: Assign response with migration result
+- **WHEN** auto-migration runs during assign
+- **THEN** the response SHALL include `migration_result` with `objects_migrated`, `objects_failed`, `overall_risk_level`, and `migration_skipped` (false)
+
+#### Scenario: Assign response when migration is skipped
+- **WHEN** auto-migration is not triggered (no matching `from_version` installed, or risk gate blocks without force)
+- **THEN** the response SHALL include `migration_result.migration_skipped: true` and `migration_result.skip_reason`

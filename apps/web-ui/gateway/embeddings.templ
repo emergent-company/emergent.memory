@@ -98,7 +98,7 @@ templ queueCountsSection(p *EmbeddingProgress) {
 templ queueStatsSection(title string, s EmbeddingQueueStats) {
 	@ui.Section(title, ui.SectionProps{
 		Margin:    "mb-6",
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 	}) {
 		@statRow([]ui.StatCardProps{
 			{Label: "Pending", Value: strconv.FormatInt(s.Pending, 10), Icon: "lucide--clock", IconColor: "bg-base-200/60 text-base-content"},
@@ -117,7 +117,7 @@ templ queueStatsSection(title string, s EmbeddingQueueStats) {
 templ workerStateError(err error) {
 	@ui.Section("Workers", ui.SectionProps{
 		Margin:    "mb-6",
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 	}) {
 		@ui.Alert(ui.AlertProps{
 			Type:    ui.AlertError,
@@ -133,7 +133,7 @@ templ workerStateError(err error) {
 templ workerStateSection(st *EmbeddingStatus) {
 	@ui.Section("Workers", ui.SectionProps{
 		Margin:    "mb-6",
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 	}) {
 		<div class="flex flex-wrap gap-2">
 			@workerStateBadge("Objects", st.Objects)

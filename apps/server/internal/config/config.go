@@ -431,6 +431,18 @@ type EmailConfig struct {
 	WorkerBatchSize int `env:"EMAIL_WORKER_BATCH_SIZE" envDefault:"10"`
 	// MailgunRegion is the Mailgun region ("us" or "eu", default: "us")
 	MailgunRegion string `env:"MAILGUN_REGION" envDefault:"us"`
+	// Transport selects the email transport ("mailgun" or "smtp", default: "mailgun")
+	Transport string `env:"EMAIL_TRANSPORT" envDefault:"mailgun"`
+	// SMTPHost is the SMTP server host
+	SMTPHost string `env:"SMTP_HOST" envDefault:""`
+	// SMTPPort is the SMTP server port (default: 1025)
+	SMTPPort int `env:"SMTP_PORT" envDefault:"1025"`
+	// SMTPUsername is the SMTP auth username (optional)
+	SMTPUsername string `env:"SMTP_USERNAME" envDefault:""`
+	// SMTPPassword is the SMTP auth password (optional)
+	SMTPPassword string `env:"SMTP_PASSWORD" envDefault:""`
+	// SMTPTLS is the SMTP TLS mode ("none", "starttls", or "tls", default: "none")
+	SMTPTLS string `env:"SMTP_TLS" envDefault:"none"`
 }
 
 // IsConfigured returns true if Mailgun is configured
@@ -606,6 +618,12 @@ type StandaloneConfig struct {
 
 	// ProjectName is the default project name
 	ProjectName string `env:"STANDALONE_PROJECT_NAME" envDefault:"Default Project"`
+
+	// APIKey2 is the static API key for the secondary standalone user (invitee in tests)
+	APIKey2 string `env:"STANDALONE_API_KEY_2" envDefault:""`
+
+	// UserEmail2 is the email for the secondary standalone user
+	UserEmail2 string `env:"STANDALONE_USER_EMAIL_2" envDefault:""`
 }
 
 // GraphConfig holds configuration for the knowledge graph domain.

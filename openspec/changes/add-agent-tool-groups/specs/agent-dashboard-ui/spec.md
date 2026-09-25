@@ -29,6 +29,26 @@ The Settings Tools panel SHALL let the user pick tools as checkboxes, SHALL orga
 - **WHEN** the agent has a tool that no registered MCP server, connected relay node, or capability group covers
 - **THEN** that tool is shown in a fallback group, checked, so it is not dropped on save
 
+#### Scenario: Built-in is the top-level native-tools section
+
+- **WHEN** the Tools panel loads and the agent definition reports tool groups
+- **THEN** a collapsible "Built-in" section renders at the top, holding each capability group with at least one native member as a nested collapsible group header carrying its enable switch and policy select
+
+#### Scenario: Capability group members render as direct rows
+
+- **WHEN** a capability group inside Built-in loads
+- **THEN** each of its native member tools (from the builtin server, or a native tool no source offers) renders as a direct checkbox row, and no nested "builtin" server sub-group is shown
+
+#### Scenario: Source owns a tool once
+
+- **WHEN** the Tools panel renders
+- **THEN** every tool renders exactly once across the whole picker, in its own source block or capability group
+
+#### Scenario: Group with no native members is hidden
+
+- **WHEN** a capability group's members are all offered by external servers or relay nodes
+- **THEN** that group renders no header inside Built-in, and its members render in their own source blocks
+
 #### Scenario: Server reports no groups
 
 - **WHEN** the agent definition reports no tool groups

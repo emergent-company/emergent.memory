@@ -11,7 +11,7 @@ import (
 // example "border-primary/20" on a one-time secret panel); the standard
 // treatment is always applied.
 templ PanelCard(extraClass string, attrs templ.Attributes) {
-	@ui.CardRaw(strings.TrimSpace("card-border "+extraClass), "p-5", attrs) {
+	@ui.CardRaw(strings.TrimSpace("card-border "+extraClass), "memory-density-comfortable", attrs) {
 		{ children... }
 	}
 }

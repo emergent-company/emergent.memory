@@ -130,7 +130,11 @@ func (h *MCPToolHandler) ExecuteCreateAgentDefinition(ctx context.Context, proje
 
 	visibility := VisibilityProject
 	if v, ok := args["visibility"].(string); ok && v != "" {
-		visibility = AgentVisibility(v)
+		nv, ok := NormalizeVisibility(AgentVisibility(v))
+		if !ok {
+			return errResult("visibility must be one of project, external, internal")
+		}
+		visibility = nv
 	}
 
 	isDefault := false
@@ -220,7 +224,11 @@ func (h *MCPToolHandler) ExecuteUpdateAgentDefinition(ctx context.Context, proje
 		def.FlowType = AgentFlowType(ft)
 	}
 	if v, ok := args["visibility"].(string); ok {
-		def.Visibility = AgentVisibility(v)
+		nv, ok := NormalizeVisibility(AgentVisibility(v))
+		if !ok {
+			return errResult("visibility must be one of project, external, internal")
+		}
+		def.Visibility = nv
 	}
 	if d, ok := args["is_default"].(bool); ok {
 		def.IsDefault = d
