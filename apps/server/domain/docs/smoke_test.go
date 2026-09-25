@@ -1,6 +1,7 @@
 package docs
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/labstack/echo/v4"
+
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
 func discardLogger() *slog.Logger {
@@ -103,8 +106,61 @@ func TestGetDocument(t *testing.T) {
 
 func TestGetDocumentNotFound(t *testing.T) {
 	svc := newTestService(t)
-	if _, err := svc.GetDocument("does-not-exist"); err == nil {
+	_, err := svc.GetDocument("does-not-exist")
+	if err == nil {
 		t.Fatal("expected error for unknown slug")
+	}
+	if !errors.Is(err, ErrDocumentNotFound) {
+		t.Fatalf("error = %v, want it to wrap ErrDocumentNotFound", err)
+	}
+	if !strings.Contains(err.Error(), "does-not-exist") {
+		t.Fatalf("error = %q, want it to name the missing slug", err)
+	}
+}
+
+func TestGetDocumentHandlerNotFound(t *testing.T) {
+	t.Run("maps missing document to not found", func(t *testing.T) {
+		assertGetDocumentNotFound(t)
+	})
+
+	// The 404 mapping must key on the sentinel, not on the error text, so that
+	// rewording the service message cannot silently turn every 404 into a 500.
+	t.Run("does not depend on error message wording", func(t *testing.T) {
+		original := ErrDocumentNotFound
+		ErrDocumentNotFound = errors.New("no documentation matches this slug")
+		t.Cleanup(func() { ErrDocumentNotFound = original })
+
+		assertGetDocumentNotFound(t)
+	})
+}
+
+func assertGetDocumentNotFound(t *testing.T) {
+	t.Helper()
+
+	e := echo.New()
+	h := NewHandler(newTestService(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/docs/does-not-exist", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/docs/:slug")
+	c.SetParamNames("slug")
+	c.SetParamValues("does-not-exist")
+
+	err := h.GetDocument(c)
+	if err == nil {
+		t.Fatal("expected handler error for unknown slug")
+	}
+
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) {
+		t.Fatalf("error = %T (%v), want *apperror.Error", err, err)
+	}
+	if appErr.HTTPStatus != http.StatusNotFound {
+		t.Fatalf("HTTPStatus = %d (%s), want 404", appErr.HTTPStatus, appErr.Code)
+	}
+	if appErr.Code != apperror.ErrNotFound.Code {
+		t.Fatalf("Code = %q, want %q", appErr.Code, apperror.ErrNotFound.Code)
 	}
 }
 

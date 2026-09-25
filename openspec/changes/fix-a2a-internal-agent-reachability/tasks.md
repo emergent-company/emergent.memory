@@ -21,3 +21,10 @@
 - [ ] 3.4 `bash scripts/lint-ratchet.sh`
 - [ ] 3.5 `golangci-lint` on touched packages
 - [ ] 3.6 `openspec validate --all --strict`
+
+## 4. Transitive reach + fail-closed polarity (#954)
+
+- [x] 4.1 Invert polarity: `ExternalFacing` → `TrustedInternal` (zero value = untrusted)
+- [x] 4.2 Persist the marker on `kb.agent_runs.trusted_internal` (migration 00180, default false)
+- [x] 4.3 Propagate through child spawn (`executeSingleSpawn`) and resume (`Resume` inherits prior run)
+- [x] 4.4 Fail-first DB tests: external→project→internal blocked, suspended external run stays untrusted, trusted delegation preserved, omitted declaration restrictive

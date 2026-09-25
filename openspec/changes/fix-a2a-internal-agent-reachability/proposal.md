@@ -26,14 +26,21 @@ fail-open paths remained:
 
 ## What Changes
 
-- Add `ExecuteRequest.ExternalFacing bool`, set by the transport (not inferred
-  from the agent's visibility) on every external-facing entry path: A2A
-  `message:send` start+resume, A2A `message:stream` start+resume, agentcompat
-  (new run + resume), and public share.
-- Thread it into `CoordinationToolDeps.ExternalFacing`; `list_available_agents`
+- Add `ExecuteRequest.TrustedInternal bool`, set by the transport (not inferred
+  from the agent's visibility). The polarity is **fail-closed**: the zero value
+  is `false` = untrusted/external-facing, so a transport that forgets to declare
+  itself cannot reach `internal` agents. Trusted surfaces (session UI,
+  scheduled/worker runs, MCP tools, agent→agent delegation) set it `true`.
+- Persist the marker on the run row (`kb.agent_runs.trusted_internal`, migration
+  00180, default `false`) and inherit it unchanged through delegation and
+  resume: spawned children carry the parent's marker, and a resume inherits the
+  prior run's persisted marker rather than re-deriving it from the resume
+  transport. The invariant therefore holds for the whole call chain, not just
+  the first hop.
+- Thread it into `CoordinationToolDeps.TrustedInternal`; `list_available_agents`
   hides `internal` definitions and `spawn_agents` rejects `internal` targets when
-  the run is external-facing. Trusted surfaces leave the flag false and keep full
-  internal coordination (internal→internal, project→internal).
+  the run is untrusted. Trusted surfaces keep full internal coordination
+  (internal→internal, project→internal).
 - agentcompat: refuse to resolve or invoke an `internal` agent at the
   `HandleChatCompletion` boundary (same "not found" message as a missing agent).
 
@@ -41,14 +48,14 @@ fail-open paths remained:
 
 The invariant at `entity.go:279` is about the *surface* a call was invoked
 through, not the agent's own visibility. The gate therefore keys on an explicit,
-server-derived `ExternalFacing` signal set by each transport. This closes all
-three holes without changing trusted-surface behaviour: session UI, scheduled /
-worker runs, MCP tools, and agent→agent delegation all keep current behaviour
-(no migration, no deprecation window). The only behavioural change is that
-`internal` agents become unreachable from A2A, agentcompat, and share — the paths
-the documentation already forbids. Default-deny for coordination (option (a)
-from the issue) is still not applied, so existing delegators that coordinate
-`external`/`project` agents are unaffected.
+server-derived `TrustedInternal` signal set by each transport, whose zero value
+fails closed (untrusted) so an omitted declaration is never silently trusted.
+This closes the reachability holes — including the transitive (child-spawn /
+resume) paths — without changing trusted-surface behaviour: session UI,
+scheduled / worker runs, MCP tools, and agent→agent delegation all keep internal
+coordination because they set `TrustedInternal: true`. The only behavioural
+change is that `internal` agents become unreachable from A2A, agentcompat, and
+share — the paths the documentation already forbids.
 
 ## Capabilities
 
@@ -60,16 +67,22 @@ from the issue) is still not applied, so existing delegators that coordinate
 
 ## Impact
 
-- `apps/server/domain/agents/executor.go`: `ExecuteRequest.ExternalFacing` field;
-  `buildCoordinationTools` threads it into the coordination deps.
-- `apps/server/domain/agents/coordination_tools.go`: `CoordinationToolDeps.ExternalFacing`,
-  `canReachInternal(bool)`, extracted `buildAgentCatalog` and `spawnTargetBlocked`.
-- `apps/server/domain/agents/a2a_message.go`, `a2a_stream.go`: set
-  `ExternalFacing: true` on all four A2A start/resume paths.
-- `apps/server/domain/agents/share_service.go`: set `ExternalFacing: true` on
-  public share runs.
-- `apps/server/domain/agentcompat/service.go`: set `ExternalFacing: true` on new
-  run + resume; refuse internal agents at resolution.
-- Tests: `coordination_tools_test.go` (per-hole fail-first + preserved paths),
+- `apps/server/domain/agents/executor.go`: `ExecuteRequest.TrustedInternal` field;
+  `Execute`/`ExecuteWithRun`/`Resume` persist and inherit the marker;
+  `runPipeline` overrides the request with the run row's persisted value.
+- `apps/server/domain/agents/coordination_tools.go`: `CoordinationToolDeps.TrustedInternal`,
+  `canReachInternal(bool)`, extracted `buildAgentCatalog` and `spawnTargetBlocked`,
+  and child-spawn propagation.
+- `apps/server/domain/agents/entity.go`, `repository.go`: `AgentRun.TrustedInternal`,
+  `CreateRunOptions.TrustedInternal`, `UpdateRunTrustedInternal`.
+- `apps/server/domain/agents/a2a_message.go`, `a2a_stream.go`,
+  `share_service.go`, `domain/agentcompat/service.go`: leave the marker untrusted
+  (the fail-closed default) on external-facing paths.
+- `apps/server/domain/agents/handler.go`, `triggers.go`, `worker_pool.go`,
+  `mcp_tools.go`, `agent_run_once.go`, `domain/chat/handler.go`: set
+  `TrustedInternal: true` on trusted surfaces.
+- `apps/server/migrations/00180_add_agent_runs_trusted_internal.sql`: persist the
+  marker (default `false`).
+- Tests: `coordination_tools_test.go` (fail-closed polarity + preserved paths),
+  `trust_propagation_test.go` (transitive spawn + resume inheritance, DB-backed),
   `agentcompat/internal_visibility_test.go` (resolution boundary).
-- No API, schema, or config-surface change.

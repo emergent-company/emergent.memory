@@ -1522,6 +1522,20 @@ func nilIfEmpty(s *string) *string {
 	return s
 }
 
+// UpdateRunTrustedInternal persists the fail-closed trust marker on an existing
+// run row. Used by the executor entry points (ExecuteWithRun, Resume with a
+// pre-created run) to store the run's trust after the row has already been
+// inserted, so a later resume inherits the same value rather than the column's
+// restrictive default.
+func (r *Repository) UpdateRunTrustedInternal(ctx context.Context, runID string, trusted bool) error {
+	_, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("trusted_internal = ?", trusted).
+		Where("id = ?", runID).
+		Exec(ctx)
+	return err
+}
+
 // CreateRunWithOptions creates a new agent run with coordination options.
 // newAgentRun builds an AgentRun from CreateRunOptions without persisting it.
 // Shared by CreateRunWithOptions and the share run reservation path.
@@ -1541,6 +1555,7 @@ func newAgentRun(opts CreateRunOptions) *AgentRun {
 		TriggerMessage:    opts.TriggerMessage,
 		Model:             opts.Model,
 		AgentDefinitionID: opts.AgentDefinitionID,
+		TrustedInternal:   opts.TrustedInternal,
 		Tools:             []string{},
 	}
 }
