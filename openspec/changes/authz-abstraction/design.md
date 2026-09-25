@@ -8,8 +8,8 @@ The audit evidence (grounded, all on disk at the audited sha):
 
 - **Mechanism 3.** `auth.RequireAuth` reads `user.ProjectID` from the client `X-Project-ID` header (`middleware.go:381`), and `auth.GetProjectID` prefers `APITokenProjectID` then falls back to that client header (`middleware.go:75-92`). The org is derived server-side (`middleware.go:389-440`), but the *project* is a client-controlled field used by every downstream guard.
 - **Mechanism 4.** Route groups exist that carry only `RequireAuth` (e.g. `domain/apitoken/routes.go:53-56`, `/api/tokens` POST → `CreateAccountToken`).
-- **Mechanism 2/6.** `domain/apitoken.Service.create` gates only `admin:all` via `checkAdminAllGrant` (`service.go:92,260`); the bare `admin` scope is a valid token scope (`entity.go:103`) mintable by any authenticated caller, and `CreateAccountToken` (`service.go:427`) is reached with only `RequireAuth`.
-- **Mechanism 7.** `mcp.Service.ExecuteTool` (`service.go:1796`) enforces only the share-instance allowlist (`InstanceDeniesTool`) and hidden built-ins; the per-tool `RequiredScope`/`AgentOnly` check lives **only** in the three HTTP transport handlers (`handler.go:308-310`, `sse_handler.go:339`, `streamable_http_handler.go:569`), not in the in-process path used by the ADK ToolPool during agent runs.
+- **Mechanism 2/6.** `domain/apitoken.Service.create` gates only `admin:all` via `checkAdminAllGrant` (`service.go:92,260,446,651,714`); the bare `admin` scope is a valid token scope (`entity.go:103`) mintable by any authenticated caller, and `CreateAccountToken` (`service.go:427`) is reached with only `RequireAuth`.
+- **Mechanism 7.** `mcp.Service.ExecuteTool` (`service.go:1849`) enforces the share-instance allowlist (`InstanceDeniesTool`), hidden built-ins, and `SuperadminOnly` (`IsSuperadminOnlyTool`+`IsSuperadminCaller`, `service.go:1879-1887`, issue #948) — but **not** `RequiredScope` or `AgentOnly`. Those two are enforced only in the three HTTP transport handlers (`handler.go:324-351`, `sse_handler.go:344-368`, `streamable_http_handler.go:586-610`), not on the in-process path used by the ADK ToolPool during agent runs.
 - **Mechanism 5.** There is no child-ownership primitive: handlers that address a child by bare id (document, entity, agent, branch, schema, token, share instance) each invent their own parent lookup or none.
 - **Mechanism 1.** `RequireScopes`/`RequireAPITokenScopes` (`middleware.go:779-853`) assert a scope only; nothing ties the scope to the *resource* the route actually touches.
 
@@ -19,24 +19,28 @@ Non-goals, stated first so they are not mistaken for scope: this is a **design**
 
 ### Authority tiers
 
-Four tiers. `Level` is a total order of **administrative reach**, but note the org/project/child tiers govern **disjoint resource families** (as `scope-authority` already specifies for org vs project scopes); only `platform` is a true superset.
+Three **grant** tiers. `Level` is ordered with platform highest; the org and project tiers govern **disjoint resource families** (as `scope-authority` already specifies for org vs project scopes), so only `platform` is a true superset and cross-family grants never satisfy.
 
 | Tier | Level | Who holds it | Governs |
 |---|---|---|---|
 | platform | `LevelPlatform` | active `superadmin_full` (`core.superadmins`, `revoked_at IS NULL AND role='superadmin_full'`) | everything, terminal |
 | org | `LevelOrg` | `org_admin` of a specific org (`kb.organization_memberships`) | org-family resources of **that** org: members, invites, projects CRUD, org settings |
 | project | `LevelProject` | a membership role in a specific project (`kb.project_memberships`) | project-family + child resources of **that** project |
-| child | `LevelChild` | ownership of a specific child, resolved to its owning project | a single child resource under a project the caller is a member of |
+
+**`child` is a resource kind, not a grant tier.** There is no `kb.child_memberships` table. A child resource (document, entity, agent, branch, schema, token, share instance) is authorized by **project membership of its owning project**; the child id is used only to resolve the owning project, and any additional per-child restriction (a share allowlist, an agent's own tool whitelist) is a scoped policy layered *on top* of that project membership, not a fourth grant. Making this explicit avoids the trap of inventing a "child grant" that no row in the database can back.
 
 ### Principal kinds
 
-| Principal | Auth plane | Derivation |
+A principal is the derived caller, tagged with the **kind** it authenticated as — required so enforcement can distinguish an anonymous share caller from an ownerless agent run even when both have an empty user id.
+
+| Principal kind | Auth plane | Derivation |
 |---|---|---|
-| OAuth session | OIDC (`validateToken` → `finalizeOIDCUser`) | `AuthUser.ID`, scopes resolved from entitlements |
-| Account API token | `emt_*`, `project_id IS NULL`, `user_id` set | `AuthUser` with `APITokenProjectID == ""`, owning user resolved |
-| Project-bound token | `emt_*`, `project_id` set | `APITokenProjectID` binds it to one project |
-| Agent | in-process run (`TrustedInternal`, #981) | run row's project + `TrustedInternal` marker |
-| Public share / anonymous | share key / `share:agent-chat` marker | share link → agent → project, allowlist-scoped |
+| `oauth` | OIDC (`validateToken` → `finalizeOIDCUser`) | `AuthUser.ID`, scopes resolved from entitlements |
+| `account-token` | `emt_*`, `project_id IS NULL`, `user_id` set | `AuthUser` with `APITokenProjectID == ""`, owning user resolved |
+| `project-token` | `emt_*`, `project_id` set | `APITokenProjectID` binds it to one project |
+| `agent` | in-process run (`TrustedInternal`, #981) | run row's project + `TrustedInternal` marker |
+| `share` | share key / `share:agent-chat` marker | share link → agent → project, allowlist-scoped |
+| `anonymous` | no credential (public share, unauthenticated) | no user id; any authority must come from a share/allowlist grant |
 
 ### Resource kinds
 
@@ -44,7 +48,7 @@ Four tiers. `Level` is a total order of **administrative reach**, but note the o
 
 ### The invariant
 
-> An authority grant is scoped to a resource family and a specific org/project. It SHALL be exercised only over a resource in that family and within that scope. The required level for a resource equals its tier. A client SHALL NEVER promote its own identity: the caller's org/project is derived from credential + route, and any client-supplied project/org id is a **hint** validated against the derived identity, never an authority input.
+> An authority grant is scoped to a resource family and a specific org/project. It SHALL be exercised only over a resource in that family and within that scope. The required level for a resource equals its tier (a child's required level is its owning project's tier). A client SHALL NEVER promote its own identity: the caller's org/project is derived from credential + route, and any client-supplied project/org id is a **hint** validated against the derived identity, never an authority input.
 
 Two corollaries, both load-bearing:
 
@@ -53,7 +57,7 @@ Two corollaries, both load-bearing:
 
 ## The abstractions (B)
 
-All sketches are grounded in the types that exist today (`auth.AuthUser`, `auth.ExpandScopes`, `auth.CanGrantAdminAll`, the `Middleware` guard methods, `mcp.Service.ExecuteTool`, `mcp.ToolDefinition`). New code lives in `pkg/authz`, a sibling of `pkg/auth` with **no** DB and **no** Echo dependency in its core: it operates on `Principal` + `Resource` + injected resolvers, so `pkg/auth` and every domain package can import it without a cycle. A thin `pkg/authz/echo` adapter holds the Echo-specific glue.
+All sketches are grounded in the types that exist today (`auth.AuthUser`, `auth.ExpandScopes`, `auth.CanGrantAdminAll`, the `Middleware` guard methods, `mcp.Service.ExecuteTool`, `mcp.ToolDefinition` with its three markers `RequiredScope`/`AgentOnly`/`SuperadminOnly`). New code lives in `pkg/authz`; its core has **no** Echo and **no** DB dependency and does **not** import `pkg/auth` — it operates on neutral value types (`Credential`, `RouteParams`, `Principal`, `Resource`) plus injected resolver interfaces. A thin `pkg/authz/echo` adapter holds the Echo glue, and `pkg/auth` owns the adapters (DB-backed resolvers, `Credential` construction) so the dependency is one-directional: `pkg/auth` → `pkg/authz`.
 
 ### B1 — Typed authority/resource vocabulary
 
@@ -63,10 +67,9 @@ package authz
 type Level uint8
 
 const (
-    LevelPlatform Level = iota // superadmin_full (terminal superset)
-    LevelOrg                    // org_admin of the resource's owning org
-    LevelProject                // membership role in the resource's project
-    LevelChild                  // ownership of a child, resolved via its project
+    LevelProject  Level = iota // 0 — membership role in a project
+    LevelOrg                    // 1 — org_admin of an org
+    LevelPlatform               // 2 — superadmin_full, terminal superset (highest)
 )
 
 type Kind string
@@ -78,8 +81,10 @@ const (
     KindChild        Kind = "child"
 )
 
-// RequiredLevel is each kind's intrinsic authority floor. A registry entry may
-// require MORE than the floor but never less (asserted at registration, B2).
+// RequiredLevel is each kind's intrinsic authority floor: platform→LevelPlatform,
+// organization→LevelOrg, project→LevelProject, child→LevelProject (a child is
+// authorized by its owning project's membership). A registry entry may require
+// MORE than the floor but never less (asserted at registration, B2).
 func (k Kind) RequiredLevel() Level
 
 // Resource is the thing being authorized: a family plus a concrete id whose
@@ -89,18 +94,44 @@ type Resource struct {
     ID   string // concrete resource id
 }
 
-// Principal is the caller, DERIVED from credential + route (B4). Handlers never
-// construct one from client input.
+// Principal is the caller, DERIVED from credential + route (B4). Its Kind tells
+// enforcement how it authenticated, so anonymous/share/agent callers are
+// distinguishable even with an empty UserID.
 type Principal struct {
-    UserID string
-    Grants []Grant // one per resolved entitlement
+    Kind       PrincipalKind
+    UserID     string // server-resolved user id ("" for anonymous/ownerless)
+    Credential string // opaque validated credential ref (token id / share key id / run id), for audit
+    Grants     []Grant
 }
 
-// Grant is a single resolved entitlement. Scope narrows it to one org/project/
-// child; empty for LevelPlatform.
+type PrincipalKind string
+
+const (
+    PrincipalOAuth         PrincipalKind = "oauth"
+    PrincipalAccountToken  PrincipalKind = "account-token"
+    PrincipalProjectToken  PrincipalKind = "project-token"
+    PrincipalAgent         PrincipalKind = "agent"
+    PrincipalShare         PrincipalKind = "share"
+    PrincipalAnonymous     PrincipalKind = "anonymous"
+)
+
+// Grant is a single resolved entitlement, scoped to a resource FAMILY plus a
+// concrete org/project id, so an org id can never be reused as a project grant
+// and the disjoint org/project families are enforced by construction.
 type Grant struct {
+    Kind  Kind   // the family the grant governs (KindPlatform for superadmin)
     Level Level
-    Scope string
+    Scope string // concrete org/project id; "" for platform
+}
+
+func (g Grant) Satisfies(res Resource, required Level) bool {
+    if g.Kind == KindPlatform {
+        return true // terminal superset
+    }
+    if g.Kind != res.Kind {
+        return false // disjoint family
+    }
+    return g.Level >= required
 }
 
 // OwnerResolver resolves a resource's owning org/project server-side. Injected
@@ -116,30 +147,42 @@ Why this kills mechanisms 2 and 6: the level and kind are **values with a fixed 
 
 ### B2 — Declarative surface registry, one enforcement point
 
+The core registry is transport-neutral; Echo types live only in the adapter.
+
 ```go
-// SurfaceEntry is one entrypoint's declaration, registered once at package
-// init (or route registration) beside the route it protects.
+// core (pkg/authz) — transport neutral
+type RouteParams struct {
+    Method string
+    Path   string
+    Param  map[string]string // :id path params, populated by the transport adapter
+}
+
 type SurfaceEntry struct {
     ID    string // e.g. "projects.tokens.create"
     Kind  Kind
     Level Level // must be >= Kind.RequiredLevel(); asserted at registration
-    // Resolve extracts the concrete Resource from the request context. It may
-    // read the :id path param, but MUST NOT read identity from headers/body.
-    Resolve func(c echo.Context) (Resource, error)
+    // Resolve extracts the concrete Resource from neutral route params. It MAY
+    // read the :id path param but MUST NOT read identity from headers/body.
+    Resolve func(ctx context.Context, rp RouteParams) (Resource, error)
 }
 
-type Registry struct { /* global; entries keyed by ID */ }
+type Registry struct { /* entries keyed by ID */ }
 
-// Register adds an entry, failing loudly at registry time on:
-//   - Level < Kind.RequiredLevel()   (mechanism 2)
-//   - duplicate ID                     (mechanism 6)
-//   - nil Resolve                      (mechanism 6)
 func Register(e SurfaceEntry) error
+func (r *Registry) Get(entryID string) (SurfaceEntry, bool)
+```
+
+```go
+// adapter (pkg/authz/echo) — the only Echo-dependent surface. Go disallows
+// methods on non-local types, so Enforce is a free function taking the registry.
+func ResolveFromEcho(c echo.Context) authz.RouteParams
 
 // Enforce returns ONE middleware that applies the entry's declaration through
 // the single Authorize path (B5), replacing a hand-assembled guard chain.
-func (r *Registry) Enforce(entryID string) echo.MiddlewareFunc
+func Enforce(r *authz.Registry, entryID string) echo.MiddlewareFunc
 ```
+
+`Register` fails loudly at registry time on: `Level < Kind.RequiredLevel()` (mechanism 2), a duplicate id (mechanism 6), or a nil `Resolve` (mechanism 6).
 
 Usage — the `apitoken` route group (today `routes.go:23-26`) becomes:
 
@@ -149,15 +192,15 @@ authz.Register(authz.SurfaceEntry{
     ID:    "projects.tokens.create",
     Kind:  authz.KindProject,
     Level: authz.LevelProject,
-    Resolve: func(c echo.Context) (authz.Resource, error) {
-        return authz.Resource{Kind: authz.KindProject, ID: c.Param("projectId")}, nil
+    Resolve: func(ctx context.Context, rp authz.RouteParams) (authz.Resource, error) {
+        return authz.Resource{Kind: authz.KindProject, ID: rp.Param["projectId"]}, nil
     },
 })
 
-// route:
+// route (in the domain's RegisterRoutes, via the echo adapter):
 e.POST("/api/projects/:projectId/tokens", h.Create,
     authMiddleware.RequireAuth(),
-    authz.Enforce("projects.tokens.create"),
+    authzEcho.Enforce(authzRegistry, "projects.tokens.create"),
 )
 ```
 
@@ -167,13 +210,17 @@ The two `RequireProjectTokenScope` + `RequireProjectMember` calls are folded int
 
 ```go
 // RequireAuthority returns an error unless p holds `level` authority over res.
-// It is the enforcement combinator everything reduces to. For KindChild it
-// resolves the child's owning project (OwnerResolver.ChildProject) and then
-// applies the project check, so a bare child id can never self-satisfy
-// (mechanism 5). For KindOrganization/KindProject it resolves the owning
-// org/project and requires a matching-scope grant. For KindPlatform it
-// requires a platform grant. Returns a typed denial error (401 vs 403 vs 404)
-// so the transport can render it consistently.
+// Resolution order:
+//   1. any platform grant → allow (terminal superset)
+//   2. resolve the resource's authorization (family, scope):
+//        KindProject/KindOrganization → (res.Kind, res.ID)
+//        KindChild                    → (KindProject, resolver.ChildProject(res.Kind, res.ID))
+//        KindPlatform                 → (KindPlatform, "")   // platform grant already handled
+//   3. require a grant with Kind == family, Level >= required, Scope == scope
+// Child authority is therefore a project-membership DERIVATIVE by construction:
+// the child id is used only to resolve its owning project, and a bare child id
+// can never self-satisfy (mechanism 5). Returns a typed denial (401 vs 403 vs
+// 404) so the transport renders it consistently.
 func RequireAuthority(ctx context.Context, p Principal, res Resource, level Level, r OwnerResolver) error
 ```
 
@@ -182,16 +229,32 @@ Ownership resolution is **in the combinator, not the handler**: to protect a chi
 ### B4 — Identity derivation by construction
 
 ```go
-// DerivePrincipal builds a Principal from an already-authenticated AuthUser plus
-// the route's declared resource. It is the ONLY place identity is turned into
-// authority. X-Project-ID is demoted to a hint: it is used to pick a default
-// project for scope resolution, but the project/org that become grants are
-// resolved server-side and validated against the credential:
+// Credential is the neutral, ALREADY-VALIDATED identity input. pkg/auth produces
+// it (from an AuthUser, or from a token/share/agent source); pkg/authz consumes
+// it and never imports pkg/auth, avoiding the import cycle.
+type Credential struct {
+    Kind         PrincipalKind
+    UserID       string
+    BoundProject string   // project-bound token's project; "" otherwise
+    BoundOrg     string   // server-derived org; "" otherwise
+    Scopes       []string // effective scopes (retained for tool-listing compatibility)
+}
+
+// DerivePrincipal builds a Principal from a validated Credential plus the route's
+// declared resource. It is the ONLY place identity becomes authority. The client
+// X-Project-ID header is demoted to a hint: it is used to pick a default project
+// for scope resolution, but the project/org that become grants are resolved
+// server-side and validated against the credential:
 //   - project-bound token: project := token.project_id (header ignored/mismatch=403)
 //   - OAuth session / account token: membership in the declared project's
 //     owning org is checked before a project grant is issued
-// The header can never mint a grant on its own (mechanism 3).
-func DerivePrincipal(ctx context.Context, u *auth.AuthUser, res Resource, r OwnerResolver) (Principal, error)
+// A header can never mint a grant on its own (mechanism 3).
+func DerivePrincipal(ctx context.Context, cred Credential, res Resource, r OwnerResolver) (Principal, error)
+```
+
+```go
+// pkg/auth — the adapter that turns an AuthUser into a neutral Credential.
+func CredentialFromAuthUser(u *AuthUser) authz.Credential
 ```
 
 This is not new *behavior* — `RequireProjectMember` already resolves the owning org server-side (`middleware.go:601-655`) and `RequireAuth` already derives org from the project (`middleware.go:389-440`). The abstraction **makes the safe path the only path**: a handler that wants a project id calls `DerivePrincipal` (which cannot be fed a client header) instead of reaching for `user.ProjectID` (which is a client header). The old `GetProjectID` helper remains for the transition but is marked deprecated, with a lint rule steering new code to `DerivePrincipal`.
@@ -200,19 +263,25 @@ This is not new *behavior* — `RequireProjectMember` already resolves the ownin
 
 ```go
 // Authorize is the single choke point every transport calls:
-//   - echo routes    → authz.Enforce (B2) → RequireAuthority (B3)
-//   - in-process     → mcp.Service.ExecuteTool gains an Authorize call using the
-//                      tool's declared (Kind, Level) before dispatch (worked
-//                      example E2)
+//   - echo routes    → authz/echo.Enforce (B2) → RequireAuthority (B3)
+//   - in-process     → mcp.Service.ExecuteTool gains an AuthorizeTool call using
+//                      the tool's declared (RequiredScope, AgentOnly, SuperadminOnly)
+//                      against the principal in ctx (worked example E2)
 //   - SSE            → the SSE message handler calls the same per-tool check
 //   - public share   → share resolution calls Authorize with the share-scoped
 //                      allowlist as the principal's only grants
 func Authorize(ctx context.Context, p Principal, res Resource, r OwnerResolver) error {
     return RequireAuthority(ctx, p, res, res.Kind.RequiredLevel(), r)
 }
+
+// PrincipalFromContext returns the principal the in-process call is running as.
+// The ADK ToolPool puts it in ctx at run start (from DerivePrincipal); the
+// transport handlers put the HTTP-derived principal in ctx before dispatch. This
+// is the propagation contract that makes AuthorizeTool implementable.
+func PrincipalFromContext(ctx context.Context) (Principal, bool)
 ```
 
-Today the per-tool `RequiredScope`/`AgentOnly` check is duplicated in three HTTP handlers and **absent** in-process (`service.go:1796`). `Authorize` collapses the four paths onto one, so a tool's authority is defined once and enforced identically everywhere (mechanism 7).
+Today the per-tool `RequiredScope`/`AgentOnly` check is duplicated in three HTTP handlers and **absent** in-process, while `SuperadminOnly` is already enforced in-process (`service.go:1879-1887`). `Authorize` collapses all paths onto one, so a tool's authority is defined once and enforced identically everywhere (mechanism 7).
 
 ### B6 — Conformance test kit
 
@@ -231,39 +300,58 @@ const (
     ClassShare           CallerClass = "share"            // public share / anonymous key
 )
 
-type ConformanceRow struct {
-    Class   CallerClass
-    Want    Decision // Allow or Deny
-    Expects HTTPStatus // 401/403/404 rendered form, for the HTTP adapter
+type Decision uint8
+const (Deny Decision = iota; Allow)
+
+// Conformance returns the caller classes an entry MUST be exercised against,
+// derived from (Kind, Level): every entry gets the base set; KindChild adds
+// "foreign-project child" and "bare child id"; KindProject adds "bare-scope
+// token" and "non-member account token"; KindOrganization adds "org_admin of a
+// different org". The CI guard (B7) uses this list for completeness.
+func Conformance(entry SurfaceEntry) []CallerClass
+
+// Fixture is one concrete matrix row: a real principal and resource built from
+// the module's OWN fixtures (one valid member, one foreign member, one token),
+// so the matrix executes against the REAL Authorize path rather than re-deriving
+// decisions from (Kind, Level) alone.
+type Fixture struct {
+    Class     CallerClass
+    Principal Principal
+    Resource  Resource
+    Want      Decision
 }
 
-// Conformance derives the caller-class matrix for an entry from its (Kind,
-// Level) declaration, so every module gets the same 6–9-row test for free.
-// Each row is executed against the REAL Authorize path, not a re-implemented
-// check, so a divergence between the declaration and the enforcement is a
-// failing test rather than a silent gap (mechanism 8).
-func Conformance(entry SurfaceEntry) []ConformanceRow
+// TestConformance runs each fixture through the real authorize function and
+// fails on divergence. A module calls MarkTested(entry.ID) on success.
+func TestConformance(t *testing.T, entryID string, fixtures []Fixture, authorize AuthorizeFn)
 ```
 
-A `TestConformance` helper runs the matrix: for `KindChild`, it adds the "foreign-project child" and "bare child id, no parent" rows; for `KindProject`, the "bare-scope token" and "account token of a non-member" rows; for `KindOrganization`, the "org_admin of a different org" row. The module author supplies the fixtures (one valid member, one foreign member, one token), and the kit does the rest.
+The kit distinguishes *deciding* the matrix (the module supplies real fixtures) from *enumerating* the classes (the kit derives them from the declaration), so it is connected to real execution — kind and level alone cannot decide membership, ownership, token binding, share allowlists, or principal-kind outcomes.
 
 ### B7 — CI coverage guard
 
 ```go
-// TestRegistryComplete walks the registry and fails the build when any entry
-// lacks a declaration, a conformance test, or a resolvable owner. Run in CI as
-// a plain `go test ./pkg/authz/...`. A companion static check (go/analysis) scans
-// RegisterRoutes call sites and flags any handler that is not backed by a
-// registered SurfaceEntry.
+// tested is the test-registration ledger: a module records that it ran
+// TestConformance for an entry id. It is the ONLY evidence the guard accepts —
+// len(Conformance(e)) is deterministic and proves nothing about whether a test
+// actually ran.
+var tested sync.Map // entryID → true
+
+func MarkTested(entryID string) { tested.Store(entryID, true) }
+
+// TestRegistryComplete fails the build when any registered entry has no
+// declaration, or was never MarkTested. Run in CI as `go test ./pkg/authz/...`.
 func TestRegistryComplete(t *testing.T) {
     for _, e := range registry.All() {
         if e.Kind == "" || e.Resolve == nil { t.Errorf("entry %s: incomplete declaration", e.ID) }
-        if len(Conformance(e)) == 0 { t.Errorf("entry %s: no conformance matrix", e.ID) }
+        if _, ok := tested.Load(e.ID); !ok { t.Errorf("entry %s: no conformance test registered", e.ID) }
     }
 }
 ```
 
-Mechanism 8 is why 1–7 survived: guards went untested. The kit + guard make "registered but untested" a build failure, so a route cannot be added (or a guard removed) without an explicit, enumerated caller-class matrix.
+A mandatory `go/analysis` pass (not optional) scans `RegisterRoutes` call sites and flags any handler not backed by a `SurfaceEntry`, closing the "unregistered handler" hole the runtime registry cannot see.
+
+**What the guard does and does not cover.** It closes exactly two holes: (1) a *registered* entry with no declaration or no conformance test, and (2) an *unregistered* handler (via the AST pass). It does **not** by itself close harness blindness: a conformance test that is written but wrong, or fixtures that do not reflect production, still passes. Those are closed by three further obligations, stated as non-negotiable in the task plan: (a) the conformance kit is adopted per-module and run against the **real** `Authorize` path (not a re-implemented check), (b) `t.Skip` is disallowed in conformance tests (a lint rule), and (c) fixtures are built from the same owner-resolver used in production. Mechanism 8 is closed only by the *combination*, not the registry guard alone.
 
 ## How each mechanism dies (C)
 
@@ -276,22 +364,22 @@ Mechanism 8 is why 1–7 survived: guards went untested. The kit + guard make "r
 | 5 | Child ownership unchecked | `RequireAuthority` resolves child→parent before checking (B3) |
 | 6 | Dead/lying authz code or spec | single vocabulary + single registry (B1/B2); no parallel implication tables or lying copies |
 | 7 | Transport inconsistency | `Authorize` (B5) is the one function HTTP, in-process, SSE, and share all call |
-| 8 | Harness blindness | conformance kit (B6) + CI coverage guard (B7) |
+| 8 | Harness blindness | conformance kit (B6) + CI coverage guard (B7) + mandatory no-skip + production fixtures — the **combination**, not the guard alone |
 
 ## Incremental adoption (D)
 
 Strangler, module-by-module, no big-bang. Each step is independently shippable and reversible; the new layer runs **beside** the old guards, which are removed only as each module is migrated and its conformance matrix is green.
 
-**Highest-leverage first step.** Land `pkg/authz` (B1 + B3 + B4 + B5 core) and migrate the **MCP in-process `ExecuteTool`** path (E2) plus **one** project-scoped HTTP domain end-to-end as the reference pattern. This single step closes the two known live findings (mintable `admin`; unenforced in-process scopes) and produces the worked pattern every later module copies. It is small enough to review carefully and its blast radius is bounded.
+**Highest-leverage first step.** Land `pkg/authz` (B1 + B3 + B4 + B5 core) and migrate the **MCP in-process `ExecuteTool`** path (E2) — this closes the unenforced in-process `RequiredScope`/`AgentOnly` finding (mechanism 7) and produces the worked pattern every later module copies. The token-mint fix (E1) is a close second and ships immediately after, because its blast radius (nine `RequiredScope:"admin"` tools, E1) is the largest remaining *live* surface.
 
 **Order.**
 
-1. `pkg/authz` vocabulary + `RequireAuthority` + `DerivePrincipal` + `Authorize` core (pure, unit-tested).
-2. Wire `ExecuteTool` to `Authorize` using each tool's `(Kind, Level)` (E2) — closes mechanism 7 for the in-process path.
-3. Migrate `apitoken` token mint (E1) — closes the mintable-`admin` hole via a level-based mint check.
-4. Register + migrate one project-scoped HTTP domain (e.g. `projects`, `documents`) to `Enforce(entryID)`; prove the conformance kit there.
-5. Roll out the kit + CI guard (`TestRegistryComplete`), turning on coverage for already-migrated modules.
-6. Migrate remaining domains in batches (org-scoped, child-scoped, platform-scoped), each with its conformance matrix.
+1. `pkg/authz` vocabulary + `RequireAuthority` + `DerivePrincipal` + `Authorize` core (pure, unit-tested; no Echo, no `pkg/auth` import).
+2. Wire `ExecuteTool` to `AuthorizeTool` covering `RequiredScope` + `AgentOnly` + `SuperadminOnly` (E2) — closes mechanism 7 for the in-process path.
+3. Migrate `apitoken` token mint (E1) — closes the mintable-`admin` hole via a scope→level mint check.
+4. Register + migrate one project-scoped HTTP domain (e.g. `documents`) to `Enforce(entryID)`; prove the conformance kit + CI guard there.
+5. Turn on the conformance kit + CI guard (B7) for already-migrated modules, with the no-skip lint and production fixtures.
+6. Migrate remaining domains in batches (org-scoped, project/child-scoped, platform-scoped), each with its conformance matrix.
 7. Deprecate `GetProjectID`/`user.ProjectID` header reads; remove old guards per-module once matrices are green.
 
 **Intermediate states.** A partially-migrated codebase runs both layers: new modules declare entries and call `Authorize`; unmigrated modules keep their existing `Require*` chains. The conformance kit only asserts over registered entries, so unmigrated routes neither pass nor fail the guard — they simply remain on the old path until migrated. There is no intermediate state where a route is less protected than before.
@@ -306,16 +394,35 @@ Strangler, module-by-module, no big-bang. Each step is independently shippable a
 
 ### E1 — The mintable bare `admin` scope (mechanism 2/3, audit-core F1)
 
-**Today.** `domain/apitoken.Service.create` (`service.go:236`) and `CreateAccountToken` (`service.go:427`) validate scopes against `ValidApiTokenScopes` (which contains bare `admin`, `entity.go:103`) and gate only `admin:all` via `checkAdminAllGrant` (`service.go:92,260`). `/api/tokens` POST is behind only `RequireAuth` (`routes.go:53-56`). Result: any authenticated user mints an `admin`-scoped account token and reaches `admin`-gated platform surfaces (sandbox exec, MCP registry, sandbox images, extraction admin).
+**Today.** `domain/apitoken.Service.create` (`service.go:236`) and `CreateAccountToken` (`service.go:427`) validate scopes against `ValidApiTokenScopes` (which contains bare `admin`, `entity.go:103`) and gate only `admin:all` via `checkAdminAllGrant` (`service.go:92,260`). `/api/tokens` POST is behind only `RequireAuth` (`routes.go:53-56`). Result: any authenticated user mints an `admin`-scoped token.
+
+**What is already fixed, and what is not.** The `admin`-scope *route* gates have been replaced, so the historical description ("reaches sandbox exec, MCP registry, sandbox images, extraction admin") is **stale**:
+
+- `sandbox` is gated by `RequireSuperadminFull()` (`sandbox/routes.go:36,42,54`) — a bare `admin` token cannot satisfy it.
+- `mcpregistry` dropped the `admin` gate for `RequireProjectTokenScope()+RequireProjectMember()` (`mcpregistry/routes.go:20-27`), citing #868/#948/#949.
+- `sandboximages` did the same (`sandboximages/routes.go:24-27`), citing #948/#949.
+
+The **live** blast radius of a mintable bare `admin` scope is now exactly the nine MCP tools that declare `RequiredScope:"admin"` — reachable through the project MCP transports by a project-bound token carrying `admin`, and enforced today only by the three transport-level scope checks (not in-process, per E2):
+
+| Tool | Declaration |
+|---|---|
+| `token-list`, `token-create`, `token-get`, `token-revoke` | `token_tools.go:19-68` |
+| `provider-configure-project` | `provider_tools.go:70-72` |
+| `provider-models-list` | `provider_tools.go:102-104` |
+| `trace-list` | `trace_tools.go:20-22` |
+| `trace-get` | `trace_tools.go:56-58` |
+| `project-create` | `service.go:1551` (`toolRequiredScope` static map) |
+
+Concretely, a non-privileged user who mints a project-bound `admin` token can create/revoke tokens, reconfigure an org/project LLM provider, read traces, and create projects — not exec sandboxes or touch the platform MCP registry.
 
 **How the model prevents it.** Token mint is itself an entrypoint with a **level**: minting a token whose scopes include a platform-tier scope requires `LevelPlatform` (or `LevelOrg` for `admin:all`, per #812's deliberate narrowing). Instead of a bespoke `if scope == "admin:all"` gate, the mint path declares, per scope, the level required to *grant* it, drawn from the same typed vocabulary:
 
 ```go
 // The mint check becomes: for every requested scope, resolve scope → required
 // level from a single registry; RequireAuthority(caller, Resource{KindPlatform},
-// thatLevel). Bare "admin" maps to LevelPlatform; "admin:all" to LevelOrg-or-platform
-// (preserving #812 semantics); project scopes to LevelProject (membership already
-// checked by the route).
+// thatLevel). Bare "admin" maps to LevelPlatform; "admin:all" to LevelOrg-or-
+// platform (preserving #812 semantics); project scopes to LevelProject
+// (membership already checked by the route).
 func (s *Service) checkMintAuthority(ctx context.Context, p authz.Principal, scopes []string, r authz.OwnerResolver) error
 ```
 
@@ -323,39 +430,59 @@ Bare `admin` now maps to `LevelPlatform`, so a non-superadmin is denied at the s
 
 ### E2 — Unenforced in-process `RequiredScope`/`AgentOnly` (mechanism 7, audit-mcp)
 
-**Today.** `mcp.Service.ExecuteTool` (`service.go:1796`) checks only the share-instance allowlist (`InstanceDeniesTool`) and hidden built-ins. The `RequiredScope`/`AgentOnly` check is duplicated in the three HTTP transports (`handler.go:308-310`, `sse_handler.go:339`, `streamable_http_handler.go:569`) and **absent** from the in-process path used by the ADK ToolPool during an agent run.
+**Today.** `mcp.Service.ExecuteTool` (`service.go:1849`) enforces the share-instance allowlist (`InstanceDeniesTool`), the hidden built-in `set_session_title`, and `SuperadminOnly` (`IsSuperadminOnlyTool`+`IsSuperadminCaller`, `service.go:1879-1887`, issue #948) — but **not** `RequiredScope` or `AgentOnly`. Those two are enforced only in the three HTTP transports (`handler.go:324-351`, `sse_handler.go:344-368`, `streamable_http_handler.go:586-610`) and are **absent** from the in-process path used by the ADK ToolPool during an agent run. So the gap is narrower than "in-process enforces nothing": `SuperadminOnly` is already correct in-process; `RequiredScope` and `AgentOnly` are the missing two.
 
-**How the model prevents it.** Each `ToolDefinition` already carries `RequiredScope` and `AgentOnly` (`entity.go:335-340`). Give `ExecuteTool` an `Authorize` call driven by a tool→`(Kind, Level)` projection:
+**How the model prevents it.** Each `ToolDefinition` already carries all three markers (`entity.go:335-345`). Give `ExecuteTool` an `AuthorizeTool` call that projects all three against the principal in `ctx`:
 
 ```go
+// AuthorizeTool enforces a tool's declared authority (RequiredScope, AgentOnly,
+// SuperadminOnly) from the principal in ctx. It replaces the three transport
+// copies and covers the in-process path. SuperadminOnly is preserved fail-closed
+// (unchanged from today's IsSuperadminOnlyTool/IsSuperadminCaller behaviour).
+func AuthorizeTool(ctx context.Context, def *ToolDefinition) error {
+    p, ok := PrincipalFromContext(ctx)
+    if !ok {
+        return errMissingPrincipal // fail closed
+    }
+    if def.SuperadminOnly && !p.HasPlatformGrant() {
+        return errSuperadminRequired
+    }
+    if def.AgentOnly && p.Kind != PrincipalAgent {
+        return errAgentOnly
+    }
+    if def.RequiredScope != "" && !p.HasScope(def.RequiredScope) {
+        return errScopeRequired
+    }
+    return nil
+}
+
 func (s *Service) ExecuteTool(ctx context.Context, projectID, toolName string, args map[string]any) (*ToolResult, error) {
     if scope := InstanceScopeFromContext(ctx); scope != nil && InstanceDeniesTool(scope, toolName) {
         return nil, fmt.Errorf("tool not allowed by MCP share instance: %s", toolName)
     }
-    def := s.GetToolByName(toolName)
-    if def != nil {
-        // Projection: AgentOnly → deny for non-agent principal; RequiredScope →
-        // a project-scoped authority check. This is the SAME check the three
-        // HTTP transports already do, now in the one place every transport
-        // (including in-process) reaches.
-        if err := authz.AuthorizeTool(ctx, p, def); err != nil {
-            return nil, err
-        }
+    if toolName == "set_session_title" {
+        return s.executeSetSessionTitle(ctx, projectID, args)
+    }
+    // One authority check for every transport (in-process included), replacing
+    // the three transport copies AND the ad-hoc superadmin check.
+    if err := authz.AuthorizeTool(ctx, s.GetToolByName(toolName)); err != nil {
+        return nil, err
     }
     // ... existing dispatch ...
 }
 ```
 
-The HTTP transports then delegate to the same `AuthorizeTool` (or simply stop re-implementing it and rely on `ExecuteTool`'s check), so there is exactly one enforcement of a tool's declared authority, exercised identically on legacy RPC, streamable HTTP, SSE, share, and in-process. Mechanism 7 is closed at the seam, not by adding a fourth copy.
+The principal reaches `ExecuteTool` through the `ctx` propagation contract (B5): the ADK ToolPool stores the run's `DerivePrincipal` result in `ctx` at start, and the HTTP transports store the HTTP-derived principal before dispatch. The three HTTP handlers then stop re-implementing the per-tool check and rely on `ExecuteTool`'s — so there is exactly one enforcement of a tool's declared authority, exercised identically on legacy RPC, streamable HTTP, SSE, share, and in-process, with `SuperadminOnly` folded in rather than left as a parallel path.
 
 ## Open questions
 
 1. **Grant-vs-scope dual representation.** `Principal.Grants` and the existing `AuthUser.Scopes []string` overlap. Does `DerivePrincipal` replace `Scopes` as the canonical authority carrier (with `Scopes` kept only for MCP tool-listing compatibility), or are the two kept in parallel for the transition? Recommend: `Grants` becomes canonical; `Scopes` is derived from `Grants` for the MCP list-time filter.
 2. **Org tier non-inclusivity.** Is `org_admin` truly **not** allowed to read project data (disjoint families), or should the model encode a controlled "org_admin may read (but not write) member projects"? The `scope-authority` spec says disjoint; confirm before baking it into `RequireAuthority`.
-3. **Share/agent as first-class principals.** The `share` and `agent` caller classes have no `AuthUser`; `DerivePrincipal` must accept a non-`AuthUser` source for them. Confirm the share allowlist and the `TrustedInternal` run row are the correct sole authority sources.
+3. **Share/agent principal construction.** `DerivePrincipal` must be fed a `Credential` for `agent` and `share` callers that have no `AuthUser`. Confirm the share allowlist and the `TrustedInternal` run row are the correct sole authority sources, and that `pkg/auth` is the right home for the token/share/agent → `Credential` adapters.
 4. **Child resolver registry.** `OwnerResolver.ChildProject` needs one parent link per child kind. Enumerate the child kinds exhaustively now (document, entity, agent, branch, schema, token, share-instance, member, webhook, device) or grow the registry lazily with a "no resolver → child entries rejected at registration" guard.
-5. **`admin` scope disposition.** Does bare `admin` disappear entirely (folded into `admin:all` + `LevelPlatform`), or is it retained as a distinct platform scope with its own level? The mint fix in E1 needs this decided.
-6. **Static route-lint vs runtime registry.** The CI guard can be a runtime `go test` (registry completeness) plus an optional `go/analysis` pass over `RegisterRoutes`. Is the runtime registry sufficient, or is the AST pass required to catch handlers that never register at all?
+5. **`admin` scope disposition.** Does bare `admin` disappear entirely (folded into `admin:all` + `LevelPlatform`), or is it retained as a distinct platform scope with its own level? The mint fix in E1 needs this decided — and it decides whether the nine `RequiredScope:"admin"` tools re-key to a different scope.
+6. **Route-discovery mechanism.** The CI guard's unregistered-handler detection needs a `go/analysis` pass over `RegisterRoutes`. Is a mandatory AST pass acceptable in CI (slower), or is a runtime registry augmented with an explicit `//go:generate` route manifest preferred?
+7. **`SuperadminOnly` folding.** `AuthorizeTool` folds `SuperadminOnly` into the single check (E2). Confirm operator tools keep their `superadmin_full` resolution (`IsSuperadminCaller`) rather than being downgraded to a scope check, since a bare `admin`/`admin:all` token must never satisfy them (issue #948).
 
 ## Relationship to #803 and #812
 
