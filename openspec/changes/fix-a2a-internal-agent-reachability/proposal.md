@@ -12,62 +12,64 @@ documented intent at `domain/agents/entity.go:279`:
 Reproduced on dev: agent `acp-probe-external` (`visibility=external`, `config={}`)
 carried `[set_session_title, list_available_agents, spawn_agents]` and a
 `list_available_agents` call returned `graph-query-agent` (`visibility=internal`).
-An external caller can therefore reach `internal` agents indirectly through the
-external agent.
+
+A first fix keyed the gate on the *caller's own visibility* (`external` only).
+That premise was wrong — `external` is not the sole A2A-facing level. Three
+fail-open paths remained:
+
+1. `a2aPickResolvableDefinition` serves a `project`-visibility fallback by slug,
+   so an A2A caller invokes a `project` agent and reaches `internal` through its
+   coordination tools.
+2. A2A resume with a nil definition defaulted the surface to `project`.
+3. agentcompat's `FindDefinitionByName` had no visibility filter, so
+   `agent:<internal-name>` resolved and invoked internal agents directly.
 
 ## What Changes
 
-- Thread the running agent's visibility into the coordination tools
-  (`CoordinationToolDeps.CallerVisibility`), derived from the agent definition in
-  `buildCoordinationTools`.
-- `list_available_agents`: hide `internal`-visible definitions from an
-  `external`-visibility caller (extracted into `buildAgentCatalog`).
-- `spawn_agents`: reject spawning an `internal`-visible target from an
-  `external`-visibility caller, even when the target is inside the spawn-policy
-  allowlist (extracted into `spawnTargetBlocked`).
+- Add `ExecuteRequest.ExternalFacing bool`, set by the transport (not inferred
+  from the agent's visibility) on every external-facing entry path: A2A
+  `message:send` start+resume, A2A `message:stream` start+resume, agentcompat
+  (new run + resume), and public share.
+- Thread it into `CoordinationToolDeps.ExternalFacing`; `list_available_agents`
+  hides `internal` definitions and `spawn_agents` rejects `internal` targets when
+  the run is external-facing. Trusted surfaces leave the flag false and keep full
+  internal coordination (internal→internal, project→internal).
+- agentcompat: refuse to resolve or invoke an `internal` agent at the
+  `HandleChatCompletion` boundary (same "not found" message as a missing agent).
 
 ### Fix choice and compatibility analysis
 
-Two options were considered:
-
-- **(a) default-deny coordination**: require an explicit `spawnPolicy.allow`
-  before an agent receives `spawn_agents`/`list_available_agents`.
-- **(b) filter internal**: exclude `internal` targets from the coordination
-  surface for `external`-facing callers only.
-
-**(b) is chosen.** Option (a) would break every working delegator that relies on
-the open default to coordinate `external`/`project` agents — a behaviour change
-with no migration path beyond editing every such agent in dev/prod and adding a
-`spawnPolicy.allow`, plus a deprecation window. Option (b) is narrower: it leaves
-`external→external`, `external→project`, `project→internal`, and
-`internal→internal` coordination untouched (no silent breakage) and only removes
-the specific path the documentation already forbids — an `external` (A2A-facing)
-agent reaching `internal` agents.
-
-The gate keys on **caller visibility** (`external` vs not), not trigger source.
-This is deliberate: `external` is the sole level advertised in the A2A card, so an
-`external` agent's coordination surface is itself A2A-reachable regardless of
-whether the run was started by an A2A message or a manual trigger. It also avoids
-depending on `TriggerSource`, which the ACP/agentcompat path does not set. No
-migration or deprecation window is required; this is a documented behaviour
-correction, not a capability removal.
+The invariant at `entity.go:279` is about the *surface* a call was invoked
+through, not the agent's own visibility. The gate therefore keys on an explicit,
+server-derived `ExternalFacing` signal set by each transport. This closes all
+three holes without changing trusted-surface behaviour: session UI, scheduled /
+worker runs, MCP tools, and agent→agent delegation all keep current behaviour
+(no migration, no deprecation window). The only behavioural change is that
+`internal` agents become unreachable from A2A, agentcompat, and share — the paths
+the documentation already forbids. Default-deny for coordination (option (a)
+from the issue) is still not applied, so existing delegators that coordinate
+`external`/`project` agents are unaffected.
 
 ## Capabilities
 
 ### Modified Capabilities
 
 - `agent-delegation`: add a requirement that `internal` agents are unreachable
-  from `external`-facing delegators (list + spawn), while non-external delegators
-  retain internal coordination.
+  from external-facing surfaces (A2A, agentcompat, share), keyed on the transport
+  surface, while trusted surfaces retain internal coordination.
 
 ## Impact
 
-- `apps/server/domain/agents/coordination_tools.go`: `CallerVisibility` field,
-  `canReachInternal`/`callerVisibility` helpers, extracted `buildAgentCatalog`
-  and `spawnTargetBlocked`; list and spawn now filter internal for external
-  callers.
-- `apps/server/domain/agents/executor.go`: `buildCoordinationTools` populates
-  `CallerVisibility` from the agent definition.
-- `apps/server/domain/agents/coordination_tools_test.go`: fail-first + regression
-  coverage (external blocked; internal/project still coordinate; allowlist intact).
+- `apps/server/domain/agents/executor.go`: `ExecuteRequest.ExternalFacing` field;
+  `buildCoordinationTools` threads it into the coordination deps.
+- `apps/server/domain/agents/coordination_tools.go`: `CoordinationToolDeps.ExternalFacing`,
+  `canReachInternal(bool)`, extracted `buildAgentCatalog` and `spawnTargetBlocked`.
+- `apps/server/domain/agents/a2a_message.go`, `a2a_stream.go`: set
+  `ExternalFacing: true` on all four A2A start/resume paths.
+- `apps/server/domain/agents/share_service.go`: set `ExternalFacing: true` on
+  public share runs.
+- `apps/server/domain/agentcompat/service.go`: set `ExternalFacing: true` on new
+  run + resume; refuse internal agents at resolution.
+- Tests: `coordination_tools_test.go` (per-hole fail-first + preserved paths),
+  `agentcompat/internal_visibility_test.go` (resolution boundary).
 - No API, schema, or config-surface change.
