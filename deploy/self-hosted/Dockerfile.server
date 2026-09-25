@@ -150,8 +150,8 @@ RUN set -eux; \
     esac; \
     base="https://github.com/github/github-mcp-server/releases/download/v${GITHUB_MCP_SERVER_VERSION}"; \
     asset="github-mcp-server_Linux_${asset_arch}.tar.gz"; \
-    curl -fsSL -o "/tmp/${asset}" "${base}/${asset}"; \
-    curl -fsSL -o /tmp/github-mcp-checksums.txt "${base}/github-mcp-server_${GITHUB_MCP_SERVER_VERSION}_checksums.txt"; \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o "/tmp/${asset}" "${base}/${asset}"; \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o /tmp/github-mcp-checksums.txt "${base}/github-mcp-server_${GITHUB_MCP_SERVER_VERSION}_checksums.txt"; \
     expected="$(awk -v a="${asset}" '$2==a || $2=="*"a {print $1}' /tmp/github-mcp-checksums.txt)"; \
     test -n "${expected}"; \
     echo "${expected}  /tmp/${asset}" | sha256sum -c -; \

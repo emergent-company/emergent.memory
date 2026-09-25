@@ -231,8 +231,7 @@ func TestMCPNew_ListADKSessions(t *testing.T) {
 	var rpc map[string]any
 	parseBodyJSON(t, body, &rpc)
 	if rpc["error"] != nil {
-		t.Logf("list_adk_sessions returned error (agent handler not wired in test env): %v", rpc["error"])
-		return
+		rl.Skipf("list_adk_sessions not wired in test env (agent/ADK handler unavailable): %v", rpc["error"])
 	}
 	result := rpc["result"].(map[string]any)
 	content := result["content"].([]any)
@@ -278,8 +277,7 @@ func TestMCPNew_ListTraces_SkipWhenTempoNotConfigured(t *testing.T) {
 	var rpc map[string]any
 	parseBodyJSON(t, body, &rpc)
 	if rpc["error"] != nil {
-		t.Logf("list_traces returned error (Tempo not configured): %v", rpc["error"])
-		return
+		rl.Skipf("list_traces not wired in test env (Tempo/tracing not configured): %v", rpc["error"])
 	}
 	result, ok := rpc["result"].(map[string]any)
 	if !ok {
@@ -316,8 +314,7 @@ func TestMCPNew_QueryKnowledge(t *testing.T) {
 	var rpc map[string]any
 	parseBodyJSON(t, body, &rpc)
 	if rpc["error"] != nil {
-		t.Logf("query_knowledge returned error (no LLM in test env): %v", rpc["error"])
-		return
+		rl.Skipf("query_knowledge not wired in test env (no LLM configured): %v", rpc["error"])
 	}
 	result, ok := rpc["result"].(map[string]any)
 	if !ok {
