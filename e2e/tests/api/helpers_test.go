@@ -177,11 +177,15 @@ func readBody(t *testing.T, resp *http.Response) string {
 
 // mustStatus asserts that the response has the expected status code.
 // It reads and returns the body string for use in further assertions.
+//
+// A status mismatch is fatal (t.Fatalf, not t.Errorf): continuing past a wrong
+// status code yields misleading follow-on failures on the garbage body, so the
+// test stops at the first real cause instead of cascading.
 func mustStatus(t *testing.T, resp *http.Response, want int) string {
 	t.Helper()
 	body := readBody(t, resp)
 	if resp.StatusCode != want {
-		t.Errorf("expected status %d, got %d\nbody: %s", want, resp.StatusCode, body)
+		t.Fatalf("expected status %d, got %d\nbody: %s", want, resp.StatusCode, body)
 	}
 	return body
 }
