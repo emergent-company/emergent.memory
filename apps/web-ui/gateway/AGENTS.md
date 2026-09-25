@@ -35,3 +35,55 @@ go build ./...
 go test ./...
 task lint
 ```
+
+## UI components — conventions
+
+Authoritative rules: `openspec/specs/web-ui-component-conventions/spec.md`. Read it before adding,
+splitting, or changing a UI component.
+
+**Layers — imports flow down only.**
+
+| Layer | Contents | Examples |
+|---|---|---|
+| L0 | go-daisy primitives | `ui.Button`, `form.FormControl`, `table.*` |
+| L1 | domain adapter (domain → intent, no extra markup) | `components.StatusBadge` |
+| L2 | app composite (markup only; no domain, routes, or config) | `PanelCard`, `MetaGrid`, `SnippetCard` |
+| L3 | page-local helper (private to one page; promote on reuse) | `settingsField` |
+| L4 | page | `ProjectSettingsPage` |
+
+**Does it earn a component?** Yes iff ≥2 call sites, or it encapsulates an invariant (ids,
+`data-testid`, `aria-*`, htmx wiring, class-merge order), or the markup/branching is non-trivial.
+Otherwise inline it. Rule of Three; duplication is cheaper than the wrong abstraction — re-inline and
+re-extract rather than growing `if`s. Check the layer table before adding a fourth implementation of
+something that already exists.
+
+**Props.** Props struct for every exported component; zero value = sensible default (`cmp.Or`). Four axes,
+named per daisyUI: `Tone` (primary/secondary/accent/neutral/info/success/warning/error), `Style`
+(solid/outline/soft/dash/ghost), `Size` (xs/sm/md/lg), `State` (interaction state: default/active/selected/
+disabled/loading). Mutually-exclusive presentation = one enum, never N booleans; genuinely independent
+flags (`Disabled`, `Loading`, `Selected`) stay booleans rather than becoming an enum value. Never pass a
+colour as a CSS string — use `Tone`. Never put external layout (margin, max-width, grid placement) in a
+prop — use a density variant for internal padding and let the caller own spacing. Express radius through
+the theme utilities (`rounded-box`, `rounded-field`, `rounded-selector`) — never Tailwind's literal radius
+scale, which follows the theme only once the bridge aliases it (`rounded-full` is fine for deliberate
+circles) — and never add padding to a daisyUI component root: density is owned centrally in
+`webui/css/app.css`.
+
+**Composition.** Content via children; named slots are `templ.Component` fields. `Attrs templ.Attributes`
+spread **last** on the root element; `Class` appended after base classes. Prefer slots over config props.
+
+**htmx ownership.** The page/integration site owns `hx-target`, `hx-swap`, `hx-trigger`, `hx-include` —
+pass them through `Attrs`. A component may own only self-contained client hints that are meaningless
+without it (`data-copy-target`, `data-dialog-autoopen`). A component whose whole contract is a swap region
+may ship a default but must expose an override.
+
+**Naming.** `PascalCase`, noun-first, no verb prefixes. Axis enums `<Component><Axis>` (e.g. `BadgeTone`).
+Slots: `Leading`, `Trailing`, `Title`, `Actions`, `Footer`, `Empty`, `Description`. App CSS:
+`memory-<block>__<element>--<modifier>`.
+
+**Tests.** Assert the contract — ids, `data-testid`, `aria-*`, `hx-*`, `data-copy-target`,
+`data-dialog-autoopen` — and omission where it matters. Do **not** pin class strings or class order: that
+is not the contract, and a theme tweak should not fail a unit test. The exceptions are the few class
+strings that *are* a component's API (the tool-group disclosure bases, the confirm-dialog icon circle).
+Visual regression belongs in the gallery and Playwright e2e, not in unit goldens (see the capability spec
+for the exact policy).
