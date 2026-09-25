@@ -47,8 +47,8 @@ func TestGetDockerComposeTemplate(t *testing.T) {
 		"db:",
 		"pgvector/pgvector:pg17",
 		"ghcr.io/kreuzberg-dev/kreuzberg-full:4.10.3",
-		"quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z",
-		"quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z",
+		"ghcr.io/emergent-company/minio:RELEASE.2025-09-07T16-13-09Z",
+		"ghcr.io/emergent-company/minio-mc:RELEASE.2025-08-13T08-35-41Z",
 		"kreuzberg:",
 		"minio:",
 		"minio-init:",
@@ -67,19 +67,19 @@ func TestGetDockerComposeTemplate(t *testing.T) {
 	}
 }
 
-// TestMinioImagesUseQuayRegistry guards against the regression that broke every
-// fresh install and every `memory server upgrade`: MinIO withdrew the
-// minio/minio and minio/mc repositories from Docker Hub, so any compose file
-// generated with those image references fails to pull.
-func TestMinioImagesUseQuayRegistry(t *testing.T) {
+// TestMinioImagesUseOwnedRegistry guards against the regression that broke every
+// fresh install and every `memory server upgrade`: upstream privatised the
+// minio/minio and minio/mc images, so those references fail to pull. The owned
+// GHCR repositories are built from the pinned AGPL-3.0 source (issue #23).
+func TestMinioImagesUseOwnedRegistry(t *testing.T) {
 	images := map[string]string{
 		"MinioImage":       MinioImage,
 		"MinioClientImage": MinioClientImage,
 	}
 
 	for name, image := range images {
-		if !strings.HasPrefix(image, "quay.io/minio/") {
-			t.Errorf("%s = %q: must use the quay.io/minio registry", name, image)
+		if !strings.HasPrefix(image, "ghcr.io/emergent-company/") {
+			t.Errorf("%s = %q: must use the owned ghcr.io/emergent-company registry", name, image)
 		}
 		if strings.HasSuffix(image, ":latest") {
 			t.Errorf("%s = %q: must be pinned to an explicit RELEASE tag, not :latest", name, image)
