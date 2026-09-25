@@ -425,7 +425,7 @@ echo -e "${GREEN}✓${NC} Files downloaded"
 echo ""
 echo -e "${CYAN}Generating secure configuration...${NC}"
 POSTGRES_PASSWORD=$(generate_secret)
-MINIO_PASSWORD=$(generate_secret)
+OBJECT_STORE_SECRET=$(generate_secret)
 API_KEY=$(generate_secret)
 LLM_ENCRYPTION_KEY=$(generate_secret)
 
@@ -435,9 +435,10 @@ POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 POSTGRES_DB=emergent
 POSTGRES_PORT=15432
 
-MINIO_ROOT_USER=minioadmin
-MINIO_ROOT_PASSWORD=${MINIO_PASSWORD}
-MINIO_API_PORT=19000
+OBJECT_STORE_ACCESS_KEY=emergent
+OBJECT_STORE_SECRET_KEY=${OBJECT_STORE_SECRET}
+OBJECT_STORE_API_PORT=19000
+STORAGE_REGION=us-east-1
 
 STANDALONE_MODE=true
 STANDALONE_API_KEY=${API_KEY}
@@ -505,41 +506,44 @@ services:
     networks:
       - memory
 
-  minio:
-    image: ghcr.io/emergent-company/minio:RELEASE.2025-09-07T16-13-09Z
-    container_name: memory-minio
+  seaweedfs:
+    image: chrislusf/seaweedfs@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882
+    container_name: memory-seaweedfs
     restart: unless-stopped
-    command: server /data --console-address ':9001'
+    # Single node: master + volume + filer + S3 in one process. S3 API on 8333.
+    command: server -dir=/data -s3
     environment:
-      MINIO_ROOT_USER: \${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: \${MINIO_ROOT_PASSWORD:-changeme}
+      AWS_ACCESS_KEY_ID: \${OBJECT_STORE_ACCESS_KEY:-emergent}
+      AWS_SECRET_ACCESS_KEY: \${OBJECT_STORE_SECRET_KEY:-changeme}
     ports:
-      - '\${MINIO_API_PORT:-9000}:9000'
+      - '\${OBJECT_STORE_API_PORT:-9000}:8333'
     volumes:
-      - minio_data:/data
+      - object_store_data:/data
     healthcheck:
-      test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live']
+      test: ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://127.0.0.1:9333/cluster/status']
       interval: 30s
       timeout: 10s
-      retries: 3
+      retries: 5
+      start_period: 10s
     networks:
       - memory
 
-  minio-init:
-    image: ghcr.io/emergent-company/minio-mc:RELEASE.2025-08-13T08-35-41Z
-    container_name: memory-minio-init
+  storage-init:
+    image: ${SERVER_IMAGE}
+    container_name: memory-storage-init
+    entrypoint: ['/usr/local/bin/emergent-storage-init']
+    restart: 'no'
     depends_on:
-      minio:
+      seaweedfs:
         condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      sleep 2;
-      /usr/bin/mc alias set myminio http://minio:9000 \$\${MINIO_ROOT_USER:-minioadmin} \$\${MINIO_ROOT_PASSWORD:-changeme};
-      /usr/bin/mc mb myminio/documents --ignore-existing;
-      /usr/bin/mc mb myminio/document-temp --ignore-existing;
-      echo 'MinIO buckets initialized';
-      exit 0;
-      "
+    environment:
+      STORAGE_PROVIDER: seaweedfs
+      STORAGE_ENDPOINT: http://seaweedfs:8333
+      STORAGE_ACCESS_KEY: \${OBJECT_STORE_ACCESS_KEY:-emergent}
+      STORAGE_SECRET_KEY: \${OBJECT_STORE_SECRET_KEY:-changeme}
+      STORAGE_REGION: \${STORAGE_REGION:-us-east-1}
+      STORAGE_BUCKET_DOCUMENTS: documents
+      STORAGE_BUCKET_TEMP: document-temp
     networks:
       - memory
 
@@ -566,12 +570,13 @@ services:
       GO_ENV: production
       KREUZBERG_SERVICE_URL: http://kreuzberg:8000
       KREUZBERG_ENABLED: 'true'
-      STORAGE_PROVIDER: minio
-      STORAGE_ENDPOINT: http://minio:9000
-      STORAGE_ACCESS_KEY: \${MINIO_ROOT_USER:-minioadmin}
-      STORAGE_SECRET_KEY: \${MINIO_ROOT_PASSWORD:-changeme}
+      STORAGE_PROVIDER: seaweedfs
+      STORAGE_ENDPOINT: http://seaweedfs:8333
+      STORAGE_ACCESS_KEY: \${OBJECT_STORE_ACCESS_KEY:-emergent}
+      STORAGE_SECRET_KEY: \${OBJECT_STORE_SECRET_KEY:-changeme}
       STORAGE_BUCKET_DOCUMENTS: documents
       STORAGE_BUCKET_TEMP: document-temp
+      STORAGE_REGION: \${STORAGE_REGION:-us-east-1}
       STORAGE_USE_SSL: 'false'
       GOOGLE_API_KEY: \${GOOGLE_API_KEY:-}
       EMBEDDING_DIMENSION: \${EMBEDDING_DIMENSION:-768}
@@ -582,8 +587,10 @@ services:
         condition: service_healthy
       kreuzberg:
         condition: service_healthy
-      minio:
+      seaweedfs:
         condition: service_healthy
+      storage-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ['CMD', 'curl', '-sf', 'http://localhost:3002/health']
       interval: 30s
@@ -594,7 +601,7 @@ services:
 
 volumes:
   postgres_data:
-  minio_data:
+  object_store_data:
   memory_cli_config:
 
 networks:

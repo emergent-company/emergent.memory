@@ -130,6 +130,27 @@ type fakeMemory struct {
 	ftsQuery            string                     // last query passed to SearchObjectsFTS
 	ftsTypeFilter       string                     // last type filter passed to SearchObjectsFTS
 
+	// objects browser: cursor pagination + count + search.
+	pageObjects      []GraphObject        // returned by ListGraphObjectsPage
+	nextPageCursor   string               // returned by ListGraphObjectsPage
+	pageErr          error                // ListGraphObjectsPage failure
+	lastPageCursor   string               // last cursor passed to ListGraphObjectsPage
+	lastPageBranch   string               // last branchID passed to ListGraphObjectsPage
+	lastPageType     string               // last typeFilter passed to ListGraphObjectsPage
+	lastPageLimit    int                  // last limit passed to ListGraphObjectsPage
+	objectCount      int                  // returned by CountObjects
+	objectCountErr   error                // CountObjects failure
+	lastCountBranch  string               // last branchID passed to CountObjects
+	searchResults    []ObjectSearchResult // returned by SearchObjects
+	searchHasMore    bool                 // returned by SearchObjects
+	searchObjectsErr error                // SearchObjects failure
+	lastSearchMode   string               // last mode passed to SearchObjects
+	lastSearchQuery  string               // last query passed to SearchObjects
+	lastSearchTypes  string               // last types passed to SearchObjects
+	lastSearchBranch string               // last branchID passed to SearchObjects
+	lastSearchLimit  int                  // last limit passed to SearchObjects
+	lastSearchOffset int                  // last offset passed to SearchObjects
+
 	embeddingProgress *EmbeddingProgress // returned by GetEmbeddingProgress
 	embeddingProgErr  error              // GetEmbeddingProgress failure
 	embeddingStatus   *EmbeddingStatus   // returned by GetEmbeddingStatus
@@ -1012,6 +1033,53 @@ func (f *fakeMemory) SearchObjectsFTS(ctx context.Context, query, typeFilter str
 	f.ftsQuery = query
 	f.ftsTypeFilter = typeFilter
 	return f.ftsResults, nil
+}
+
+func (f *fakeMemory) ListGraphObjectsPage(ctx context.Context, branchID, typeFilter, cursor string, limit int) ([]GraphObject, string, error) {
+	if f.pageErr != nil {
+		return nil, "", f.pageErr
+	}
+	f.lastPageBranch = branchID
+	f.lastPageType = typeFilter
+	f.lastPageCursor = cursor
+	f.lastPageLimit = limit
+	// Filter pageObjects by branch/type (mirrors ListGraphObjects) so route
+	// tests can assert filter behaviour with a plain slice.
+	var out []GraphObject
+	for _, o := range f.pageObjects {
+		if o.BranchID != branchID {
+			continue
+		}
+		if typeFilter != "" && o.Type != typeFilter {
+			continue
+		}
+		out = append(out, o)
+	}
+	if out == nil {
+		out = []GraphObject{}
+	}
+	return out, f.nextPageCursor, nil
+}
+
+func (f *fakeMemory) CountObjects(ctx context.Context, branchID string) (int, error) {
+	if f.objectCountErr != nil {
+		return 0, f.objectCountErr
+	}
+	f.lastCountBranch = branchID
+	return f.objectCount, nil
+}
+
+func (f *fakeMemory) SearchObjects(ctx context.Context, mode, query, types, branchID string, limit, offset int) ([]ObjectSearchResult, bool, error) {
+	if f.searchObjectsErr != nil {
+		return nil, false, f.searchObjectsErr
+	}
+	f.lastSearchMode = mode
+	f.lastSearchQuery = query
+	f.lastSearchTypes = types
+	f.lastSearchBranch = branchID
+	f.lastSearchLimit = limit
+	f.lastSearchOffset = offset
+	return f.searchResults, f.searchHasMore, nil
 }
 
 func (f *fakeMemory) GetEmbeddingProgress(ctx context.Context) (*EmbeddingProgress, error) {
