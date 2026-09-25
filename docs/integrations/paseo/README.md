@@ -17,9 +17,9 @@ The live daemon already fronts the `memory` provider:
 
 - Daemon home: `~/.paseo`, listening on **`0.0.0.0:6767`**.
 - Provider block in `~/.paseo/config.json` → `agents.providers.memory`:
-  `{ "extends": "acp", "label": "Memory", "command": ["/bin/sh", "/root/.memory/memory-acp-wrapper.sh"], "enabled": true }`.
-- Wrapper: `/root/.memory/memory-acp-wrapper.sh` (reference copy:
-  `docs/integrations/paseo/memory-acp-wrapper.sh`). It loads
+  `{ "extends": "acp", "label": "Memory", "command": ["/usr/local/bin/memory-acp-wrapper.sh"], "enabled": true }`.
+- Wrapper: `/usr/local/bin/memory-acp-wrapper.sh` (installed from the reference
+  copy `docs/integrations/paseo/memory-acp-wrapper.sh`). It loads
   `MEMORY_ACP_ENV_FILE` (default `~/.memory/memory-acp.env`) and execs
   `memory acp --agent "$MEMORY_AGENT"`.
 
@@ -113,7 +113,7 @@ Install the wrapper and env file (reference copies live in this directory;
 run from the repository root):
 
 ```bash
-install -m 0755 docs/integrations/paseo/memory-acp-wrapper.sh ~/.memory/memory-acp-wrapper.sh
+install -m 0755 docs/integrations/paseo/memory-acp-wrapper.sh /usr/local/bin/memory-acp-wrapper.sh
 install -m 0644 docs/integrations/paseo/memory-acp.env.example ~/.memory/memory-acp.env.example
 cp ~/.memory/memory-acp.env.example ~/.memory/memory-acp.env
 chmod 600 ~/.memory/memory-acp.env
@@ -121,7 +121,7 @@ chmod 600 ~/.memory/memory-acp.env
 # MEMORY_PROJECT_TOKEN / MEMORY_AGENT / MEMORY_PROJECT_ID
 ```
 
-`~/.memory/memory-acp-wrapper.sh` loads that env file and execs `memory acp`:
+The wrapper loads that env file and execs `memory acp`:
 
 ```sh
 exec "$MEMORY_BIN" acp --agent "$MEMORY_AGENT"
@@ -134,23 +134,19 @@ Merge this block into `~/.paseo/config.json` under `agents.providers`
 "memory": {
   "extends": "acp",
   "label": "Memory",
-  "command": ["/bin/sh", "<HOME>/.memory/memory-acp-wrapper.sh"]
+  "command": ["/usr/local/bin/memory-acp-wrapper.sh"]
 }
 ```
 
-> **Replace `<HOME>` with your absolute home directory** — for `root` that is
-> `/root`, so the reference setup uses `/root/.memory/memory-acp-wrapper.sh`.
-> Paseo runs `command` directly (no shell), so `~` and environment variables in
-> the path are **not** expanded; a literal `/root/.memory/...` path only works
-> for the `root` operator.
-
-> **Why `/bin/sh <script>` and not the bare script path?** The Paseo daemon's
-> session-spawn path returns `EACCES` when the configured command is a file under
-> `/root` (it can still *read* such files). `spawn /root/.memory/memory-acp-wrapper.sh
-> EACCES`. Exec'ing `/bin/sh` (a PATH binary) and passing the wrapper as an
-> argument is a workaround for that limitation, and keeps the script at the
-> documented `~/.memory` location. Alternatively install the wrapper outside the
-> home directory (e.g. `/usr/local/bin`) and reference it directly.
+> **Install the wrapper outside the home directory.** The wrapper must be the
+> `command` element itself, not `["/bin/sh", "<path>"]`. Two Paseo behaviours
+> force this: the daemon's session-spawn path returns `EACCES` when the command
+> is a file under `/root` (so `~/.memory/...` is out), and Paseo probes `--version`
+> by running `command[0] --version` — `/bin/sh` rejects `--version`, so hiding the
+> wrapper behind `/bin/sh` makes `provider diagnostic` report a version error.
+> Installing it to `/usr/local/bin/memory-acp-wrapper.sh` (outside `/root`)
+> satisfies both: spawn succeeds and the `--version` probe reaches the wrapper,
+> which answers with `memory --version`.
 
 ## 4. Apply with `paseo daemon reload` (never restart)
 
@@ -244,8 +240,10 @@ MEMORY_ACP_ENV_FILE=/root/.memory/memory-acp.env go test -v -count=1 -run '^Test
 `memory a2a discover` and `memory acp` now send `X-Project-ID`. The former
 `memory-acp-proxy.py` shim has been removed.
 
-1. **Daemon `EACCES` on `/root` command paths.** See step 3; use the
-   `["/bin/sh", "<path>"]` form.
+1. **Daemon `EACCES` on `/root` command paths.** See step 3; install the wrapper
+   outside the home directory (`/usr/local/bin`) and reference it directly.
+   A `command` of `["/bin/sh", "<path>"]` also breaks the `--version` probe,
+   since Paseo runs `command[0] --version` (`/bin/sh --version` fails).
 
 ## Operator checklist
 

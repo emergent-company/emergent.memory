@@ -157,7 +157,7 @@ func detectPostgresVersion(composePath string) (int, string, error) {
 // The caller (Upgrade) is responsible for starting services back up afterwards.
 func (i *Installer) RunPostgresUpgrade(docker *DockerManager, volumeName string) error {
 	i.output.Step("Stopping database for upgrade...")
-	// Stop only the db service to avoid disrupting minio/kreuzberg unnecessarily.
+	// Stop only the db service to avoid disrupting seaweedfs/kreuzberg unnecessarily.
 	stopCmd := exec.Command("docker", "compose",
 		"-f", docker.composePath(),
 		"--env-file", docker.envPath(),

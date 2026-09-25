@@ -265,6 +265,28 @@ func (s *GraphRelationshipEmbeddingJobsService) Stats(ctx context.Context) (*Gra
 	return stats, nil
 }
 
+// StatsByProject returns relationship queue statistics filtered to a single
+// project. failed excludes stale-sweep reaps; see Stats.
+func (s *GraphRelationshipEmbeddingJobsService) StatsByProject(ctx context.Context, projectID string) (*GraphRelationshipEmbeddingQueueStats, error) {
+	stats := &GraphRelationshipEmbeddingQueueStats{}
+	err := s.db.NewRaw(`
+		SELECT
+			COUNT(*) FILTER (WHERE j.status = 'pending') as pending,
+			COUNT(*) FILTER (WHERE j.status = 'processing') as processing,
+			COUNT(*) FILTER (WHERE j.status = 'completed') as completed,
+			COUNT(*) FILTER (WHERE j.status = 'failed' AND COALESCE(j.last_error, '') <> ?) as failed,
+			COUNT(*) FILTER (WHERE j.status = 'failed' AND j.last_error = ?) as stale_failed,
+			COUNT(*) FILTER (WHERE j.status = 'dead_letter') as dead_letter
+		FROM kb.graph_relationship_embedding_jobs j
+		JOIN kb.graph_relationships r ON r.id = j.relationship_id
+		WHERE r.project_id = ?`, jobs.StaleJobMessage, jobs.StaleJobMessage, projectID).
+		Scan(ctx, &stats.Pending, &stats.Processing, &stats.Completed, &stats.Failed, &stats.StaleFailed, &stats.DeadLetter)
+	if err != nil {
+		return nil, fmt.Errorf("get project relationship stats: %w", err)
+	}
+	return stats, nil
+}
+
 // ResetSchedule sets scheduled_at = now() for all pending relationship embedding jobs
 // so they are immediately eligible for dequeue regardless of backoff delay.
 // Returns the number of rows updated.
