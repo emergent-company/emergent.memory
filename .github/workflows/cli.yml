@@ -96,7 +96,7 @@ jobs:
           done
           echo "OK: all self-hosted static copies match KreuzbergImage"
 
-      - name: Verify MinIO image pins are in sync
+      - name: Verify object-store image pin is in sync
         working-directory: apps/cli
         run: |
           pin_matches() {
@@ -109,23 +109,21 @@ jobs:
               END { exit !found }
             ' "$2"
           }
-          for NAME in MinioImage MinioClientImage; do
-            PIN=$(grep -oP "${NAME}\s*=\s*\"\K[^\"]+" internal/installer/templates.go)
-            if [ -z "${PIN}" ]; then
-              echo "ERROR: could not read ${NAME} from internal/installer/templates.go"
+          PIN=$(grep -oP 'ObjectStoreImage\s*=\s*"\K[^"]+' internal/installer/templates.go)
+          if [ -z "${PIN}" ]; then
+            echo "ERROR: could not read ObjectStoreImage from internal/installer/templates.go"
+            exit 1
+          fi
+          echo "ObjectStoreImage pin: ${PIN}"
+          for f in ../../deploy/self-hosted/docker-compose.yml \
+                   ../../deploy/self-hosted/docker-compose.local.yml \
+                   ../../deploy/self-hosted/install-online.sh; do
+            if ! pin_matches "${PIN}" "${f}"; then
+              echo "ERROR: ${f} does not pin image: ${PIN}; bump it together with ObjectStoreImage"
               exit 1
             fi
-            echo "${NAME} pin: ${PIN}"
-            for f in ../../deploy/self-hosted/docker-compose.yml \
-                     ../../deploy/self-hosted/docker-compose.local.yml \
-                     ../../deploy/self-hosted/install-online.sh; do
-              if ! pin_matches "${PIN}" "${f}"; then
-                echo "ERROR: ${f} does not pin image: ${PIN}; bump it together with ${NAME}"
-                exit 1
-              fi
-            done
           done
-          echo "OK: all self-hosted static copies match the MinIO image pins"
+          echo "OK: all self-hosted static copies match the object-store image pin"
 
   test:
     name: Test

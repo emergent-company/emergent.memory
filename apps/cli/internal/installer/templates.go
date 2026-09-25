@@ -28,24 +28,30 @@ const (
 	// cli.yml CI workflow greps the static copies, so drift fails CI.
 	KreuzbergImage = "ghcr.io/kreuzberg-dev/kreuzberg-full:4.10.3"
 
-	// MinioImage is the pinned MinIO server image.
+	// ObjectStoreImage is the pinned SeaweedFS S3-compatible object store.
 	//
-	// Upstream archived the MinIO community edition and privatised the
-	// minio/minio and minio/mc images: anonymous pulls now return 401 and the
-	// Docker Hub repositories are gone (issue #23). The owned GHCR repositories
-	// are built from the pinned AGPL-3.0 source by .github/workflows/publish-minio.yml.
+	// MinIO archived its community edition and privatised its images (issue
+	// #23); SeaweedFS (chrislusf/seaweedfs, Apache-2.0) is the maintained,
+	// freely pullable replacement. The single-node command
+	// (`server -dir=/data -s3`) runs master + volume + filer + S3 in one
+	// process; the S3 API listens on 8333.
 	//
-	// Bumping these constants is the single source of truth for the MinIO
-	// version. The static copies in deploy/self-hosted/*.yml and
-	// install-online.sh MUST be bumped together with them; the CLI tests assert
-	// the rendered template and the cli.yml CI workflow greps the static copies,
-	// so drift fails CI.
-	MinioImage = "ghcr.io/emergent-company/minio:RELEASE.2025-09-07T16-13-09Z"
+	// Pinned BY DIGEST (multi-arch index for chrislusf/seaweedfs:4.47). Bumping
+	// this constant is the single source of truth for the object-store version.
+	// The static copies in deploy/self-hosted/*.yml and install-online.sh MUST
+	// be bumped together with it; the CLI tests assert the rendered template
+	// and the cli.yml CI workflow greps the static copies, so drift fails CI.
+	ObjectStoreImage = "chrislusf/seaweedfs@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882"
 
-	// MinioClientImage is the pinned MinIO `mc` client image used by the
-	// minio-init bucket provisioning service. See MinioImage for the registry
-	// rationale and the sync requirements.
-	MinioClientImage = "ghcr.io/emergent-company/minio-mc:RELEASE.2025-08-13T08-35-41Z"
+	// StorageInitImage is the image that carries the bucket-bootstrap binary.
+	// It is the server image itself: deploy/self-hosted/Dockerfile.server builds
+	// and copies `emergent-storage-init` into it, so the one-shot storage-init
+	// service reuses the same S3 client and versioned image as the server.
+	StorageInitImage = ServerImageRepo
+
+	// StorageInitEntrypoint is the path to the bucket-bootstrap binary baked
+	// into the server image.
+	StorageInitEntrypoint = "/usr/local/bin/emergent-storage-init"
 )
 
 // GetDockerComposeTemplate returns the docker-compose template with :latest tag.
@@ -152,42 +158,51 @@ func GetDockerComposeTemplateWithVersion(version string) string {
     networks:
       - memory
 
-  minio:
-    image: ` + MinioImage + `
-    container_name: memory-minio
+  seaweedfs:
+    image: ` + ObjectStoreImage + `
+    container_name: memory-seaweedfs
     restart: unless-stopped
-    command: server /data --console-address ':9001'
+    # Single node: master + volume + filer + S3 in one process. S3 API on 8333.
+    command: server -dir=/data -s3
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-changeme}
+      # Fallback admin credentials. With these set, the installer-generated
+      # secret is authoritative and unmatched access keys are rejected.
+      AWS_ACCESS_KEY_ID: ${OBJECT_STORE_ACCESS_KEY:-emergent}
+      AWS_SECRET_ACCESS_KEY: ${OBJECT_STORE_SECRET_KEY:-changeme}
     ports:
-      - '${MINIO_API_PORT:-9000}:9000'
+      - '${OBJECT_STORE_API_PORT:-9000}:8333'
     volumes:
-      - minio_data:/data
+      - object_store_data:/data
     healthcheck:
-      test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live']
+      # Master cluster-status endpoint (returns {"IsLeader":true}) — the S3
+      # port alone does not indicate a ready cluster. 127.0.0.1 is used
+      # explicitly because localhost resolves to IPv6 in the image.
+      test: ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://127.0.0.1:9333/cluster/status']
       interval: 30s
       timeout: 10s
-      retries: 3
+      retries: 5
+      start_period: 10s
     networks:
       - memory
 
-  minio-init:
-    image: ` + MinioClientImage + `
-    container_name: memory-minio-init
+  storage-init:
+    image: ` + serverImage + `
+    container_name: memory-storage-init
+    # One-shot bucket bootstrap from the server image (same S3 client as the
+    # server). Exits non-zero on failure, blocking server start.
+    entrypoint: ['` + StorageInitEntrypoint + `']
+    restart: 'no'
     depends_on:
-      minio:
+      seaweedfs:
         condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      sleep 2;
-      /usr/bin/mc alias set myminio http://minio:9000 $${MINIO_ROOT_USER:-minioadmin} $${MINIO_ROOT_PASSWORD:-changeme};
-      /usr/bin/mc mb myminio/documents --ignore-existing;
-      /usr/bin/mc mb myminio/document-temp --ignore-existing;
-      /usr/bin/mc mb myminio/backups --ignore-existing;
-      echo 'MinIO buckets initialized';
-      exit 0;
-      "
+    environment:
+      STORAGE_PROVIDER: seaweedfs
+      STORAGE_ENDPOINT: http://seaweedfs:8333
+      STORAGE_ACCESS_KEY: ${OBJECT_STORE_ACCESS_KEY:-emergent}
+      STORAGE_SECRET_KEY: ${OBJECT_STORE_SECRET_KEY:-changeme}
+      STORAGE_REGION: ${STORAGE_REGION:-us-east-1}
+      STORAGE_BUCKET_DOCUMENTS: documents
+      STORAGE_BUCKET_TEMP: document-temp
     networks:
       - memory
 
@@ -239,12 +254,13 @@ func GetDockerComposeTemplateWithVersion(version string) string {
       WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-}
       WHISPER_SERVICE_TIMEOUT: ${WHISPER_SERVICE_TIMEOUT:-600000}
       WHISPER_MAX_FILE_SIZE_MB: ${WHISPER_MAX_FILE_SIZE_MB:-500}
-      STORAGE_PROVIDER: minio
-      STORAGE_ENDPOINT: http://minio:9000
-      STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
-      STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-changeme}
+      STORAGE_PROVIDER: seaweedfs
+      STORAGE_ENDPOINT: http://seaweedfs:8333
+      STORAGE_ACCESS_KEY: ${OBJECT_STORE_ACCESS_KEY:-emergent}
+      STORAGE_SECRET_KEY: ${OBJECT_STORE_SECRET_KEY:-changeme}
       STORAGE_BUCKET_DOCUMENTS: documents
       STORAGE_BUCKET_TEMP: document-temp
+      STORAGE_REGION: ${STORAGE_REGION:-us-east-1}
       STORAGE_USE_SSL: 'false'
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       GITHUB_APP_ENCRYPTION_KEY: ${GITHUB_APP_ENCRYPTION_KEY:-}
@@ -259,8 +275,10 @@ func GetDockerComposeTemplateWithVersion(version string) string {
         condition: service_healthy
       kreuzberg:
         condition: service_healthy
-      minio:
+      seaweedfs:
         condition: service_healthy
+      storage-init:
+        condition: service_completed_successfully
       tempo:
         condition: service_healthy
     healthcheck:
@@ -273,7 +291,7 @@ func GetDockerComposeTemplateWithVersion(version string) string {
 
 volumes:
   postgres_data:
-  minio_data:
+  object_store_data:
   tempo_data:
   memory_cli_config:
 

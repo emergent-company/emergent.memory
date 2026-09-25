@@ -47,11 +47,14 @@ func TestGetDockerComposeTemplate(t *testing.T) {
 		"db:",
 		"pgvector/pgvector:pg17",
 		"ghcr.io/kreuzberg-dev/kreuzberg-full:4.10.3",
-		"ghcr.io/emergent-company/minio:RELEASE.2025-09-07T16-13-09Z",
-		"ghcr.io/emergent-company/minio-mc:RELEASE.2025-08-13T08-35-41Z",
+		ObjectStoreImage,
+		"seaweedfs:",
+		"storage-init:",
+		StorageInitEntrypoint,
+		"http://seaweedfs:8333",
+		"http://127.0.0.1:9333/cluster/status",
+		"object_store_data",
 		"kreuzberg:",
-		"minio:",
-		"minio-init:",
 		"server:",
 		"memory-server",
 		"volumes:",
@@ -67,33 +70,38 @@ func TestGetDockerComposeTemplate(t *testing.T) {
 	}
 }
 
-// TestMinioImagesUseOwnedRegistry guards against the regression that broke every
-// fresh install and every `memory server upgrade`: upstream privatised the
-// minio/minio and minio/mc images, so those references fail to pull. The owned
-// GHCR repositories are built from the pinned AGPL-3.0 source (issue #23).
-func TestMinioImagesUseOwnedRegistry(t *testing.T) {
-	images := map[string]string{
-		"MinioImage":       MinioImage,
-		"MinioClientImage": MinioClientImage,
+// TestObjectStoreImageIsPinnedByDigest guards the replacement of the archived
+// MinIO images (issue #23) with a maintained, freely pullable backend. The
+// object-store image must be pinned by digest and the bucket bootstrap must run
+// from the server image, not a MinIO client image.
+func TestObjectStoreImageIsPinnedByDigest(t *testing.T) {
+	if !strings.HasPrefix(ObjectStoreImage, "chrislusf/seaweedfs@sha256:") {
+		t.Fatalf("ObjectStoreImage = %q: must be a digest-pinned chrislusf/seaweedfs image", ObjectStoreImage)
+	}
+	digest := strings.TrimPrefix(ObjectStoreImage, "chrislusf/seaweedfs@sha256:")
+	if len(digest) != 64 {
+		t.Errorf("ObjectStoreImage digest length = %d, want 64", len(digest))
+	}
+	if _, err := hex.DecodeString(digest); err != nil {
+		t.Errorf("ObjectStoreImage digest is not valid hex: %v", err)
 	}
 
-	for name, image := range images {
-		if !strings.HasPrefix(image, "ghcr.io/emergent-company/") {
-			t.Errorf("%s = %q: must use the owned ghcr.io/emergent-company registry", name, image)
-		}
-		if strings.HasSuffix(image, ":latest") {
-			t.Errorf("%s = %q: must be pinned to an explicit RELEASE tag, not :latest", name, image)
-		}
-		if !strings.Contains(image, ":RELEASE.") {
-			t.Errorf("%s = %q: expected a MinIO RELEASE.* tag", name, image)
-		}
+	if StorageInitImage != ServerImageRepo {
+		t.Errorf("StorageInitImage = %q, want the server image repo %q", StorageInitImage, ServerImageRepo)
+	}
+	if StorageInitEntrypoint != "/usr/local/bin/emergent-storage-init" {
+		t.Errorf("StorageInitEntrypoint = %q, want /usr/local/bin/emergent-storage-init", StorageInitEntrypoint)
 	}
 
 	template := GetDockerComposeTemplate()
+	if !strings.Contains(template, ObjectStoreImage) {
+		t.Errorf("docker-compose template does not pin ObjectStoreImage %q", ObjectStoreImage)
+	}
 	for _, line := range strings.Split(template, "\n") {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "image: minio/") {
-			t.Errorf("docker-compose template still references withdrawn Docker Hub image: %q", trimmed)
+		if strings.HasPrefix(trimmed, "image: ghcr.io/emergent-company/minio") ||
+			strings.HasPrefix(trimmed, "image: minio/") {
+			t.Errorf("docker-compose template still references a MinIO image: %q", trimmed)
 		}
 	}
 }

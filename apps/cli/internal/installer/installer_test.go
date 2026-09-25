@@ -203,12 +203,13 @@ func TestWriteDockerCompose(t *testing.T) {
 		"services:",
 		"memory-server",
 		"memory-db",
-		"memory-minio",
+		"memory-seaweedfs",
+		"memory-storage-init",
 		"memory-kreuzberg",
 		"pgvector/pgvector:pg17",
 		"ghcr.io/kreuzberg-dev/kreuzberg-full:4.10.3",
-		"ghcr.io/emergent-company/minio:RELEASE.2025-09-07T16-13-09Z",
-		"ghcr.io/emergent-company/minio-mc:RELEASE.2025-08-13T08-35-41Z",
+		ObjectStoreImage,
+		StorageInitEntrypoint,
 	}
 
 	for _, check := range checks {
