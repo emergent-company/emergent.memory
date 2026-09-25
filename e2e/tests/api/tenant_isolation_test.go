@@ -25,9 +25,12 @@ func TestTenantIsolation_RejectsInvalidUUIDHeader(t *testing.T) {
 			"content":  "test content",
 		}))
 
-	// Accept 400, 422, or 500
+	// A malformed tenant header must be rejected with a client error. 404 is
+	// accepted (malformed id → no such project, matching the path-param
+	// convention). 500 no longer is: that was the uuid-cast failure this change
+	// fixes, and accepting it masked the bug.
 	switch resp.StatusCode {
-	case http.StatusBadRequest, http.StatusUnprocessableEntity, http.StatusInternalServerError:
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusUnprocessableEntity:
 		// ok
 	default:
 		mustStatus(t, resp, http.StatusBadRequest) // will print a meaningful failure
