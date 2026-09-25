@@ -39,7 +39,7 @@ templ OrgsPage(data orgsPageData) {
 		} else {
 			@ui.Section("Your organizations", ui.SectionProps{
 				Margin:    "mb-6",
-				BodyClass: "p-0",
+				BodyClass: "memory-density-flush",
 			}) {
 				if len(data.Orgs) == 0 {
 					@ui.EmptyState(ui.EmptyStateProps{
@@ -412,7 +412,7 @@ templ MemberDetailPage(data memberDetailPageData) {
 			@flashToasts("", data.FlashErr)
 			@ui.Section("Member", ui.SectionProps{
 				Margin:    "mb-6",
-				BodyClass: "p-5",
+				BodyClass: "memory-density-comfortable",
 			}) {
 				<div class="flex items-center gap-4">
 					@memberAvatar(m)
@@ -427,7 +427,7 @@ templ MemberDetailPage(data memberDetailPageData) {
 			}
 			@ui.Section("Details", ui.SectionProps{
 				Margin:    "mb-6",
-				BodyClass: "p-5",
+				BodyClass: "memory-density-comfortable",
 			}) {
 				@components.MetaGrid(components.MetaGridOpts{GapY: "gap-y-4"}) {
 					@memberDetailRow("Display name", memberDisplayName(m))
@@ -456,7 +456,7 @@ templ MemberDetailPage(data memberDetailPageData) {
 templ memberRoleChangeSection(m ProjectMemberDto, canChange bool) {
 	@ui.Section("Role", ui.SectionProps{
 		Margin:    "mb-6",
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 	}) {
 		<div class="flex flex-wrap items-start justify-between gap-4">
 			<div class="min-w-0">
@@ -586,7 +586,7 @@ templ InvitationsPage(data invitationsPageData) {
 			@profileRailContent("invitations") {
 				@ui.Section("Pending invitations", ui.SectionProps{
 					Margin:    "mb-6",
-					BodyClass: "p-0",
+					BodyClass: "memory-density-flush",
 				}) {
 					if len(data.Pending) == 0 {
 						<div class="px-5 py-8 text-center">
@@ -656,7 +656,7 @@ templ pendingInviteRow(inv PendingInviteDto) {
 templ profileIdentityCard(p *UserProfileDto, email string) {
 	@ui.Section("Profile", ui.SectionProps{
 		Margin:    "mb-6",
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 	}) {
 		<div class="flex items-center gap-4">
 			@profileAvatar(p)
@@ -763,7 +763,7 @@ templ profileAvatarModal(p *UserProfileDto) {
 templ profileEditForm(p *UserProfileDto) {
 	@ui.Section("Edit profile", ui.SectionProps{
 		Margin:    "mb-6",
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 	}) {
 		<form method="post" action="/profile" class="flex flex-col gap-4">
 			@form.FormControl("profile-display-name", "Display name", form.LabelAbove, "", "", nil) {
