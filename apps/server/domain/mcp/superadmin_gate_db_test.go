@@ -54,13 +54,11 @@ func gateContext(user *auth.AuthUser, token string) (echo.Context, *httptest.Res
 	return c, rec
 }
 
-// TestSuperadminGateOnOperatorTools proves that deployment-wide operator tools
-// (embedding-pause) and org-level provider tools (provider-configure-org) are
-// gated on the superadmin_full authority (core.superadmins), not on a bare
-// `admin` token scope. A project member carrying a bare admin token is refused;
-// a superadmin_full principal succeeds even though its token also carries only
-// the bare admin scope (proving the scope is not the authority).
-func TestSuperadminGateOnOperatorTools(t *testing.T) {
+// setupGateDB seeds a throwaway database with a project-member user (no
+// superadmin grant) and a superadmin_full principal, returning the DB and their
+// user IDs.
+func setupGateDB(t *testing.T) (*bun.DB, string, string) {
+	t.Helper()
 	if testing.Short() {
 		testdb.SkipOrFatal(t, "Skipping database integration test in short mode")
 	}
@@ -69,20 +67,29 @@ func TestSuperadminGateOnOperatorTools(t *testing.T) {
 	t.Cleanup(tdb.Close)
 	dbc := tdb.DB
 
-	// Project member carrying a bare admin scope token — no superadmin grant.
 	memberID := uuid.New().String()
 	_, err := dbc.NewRaw(`INSERT INTO core.user_profiles (id, zitadel_user_id) VALUES (?, ?)`,
 		memberID, "gate-member-user").Exec(ctx)
 	require.NoError(t, err)
 
-	// superadmin_full principal: same bare admin token scope, but holds an active
-	// core.superadmins grant — the only thing that should differ from the member.
 	superID := uuid.New().String()
 	_, err = dbc.NewRaw(`INSERT INTO core.user_profiles (id, zitadel_user_id) VALUES (?, ?)`,
 		superID, "gate-super-user").Exec(ctx)
 	require.NoError(t, err)
 	_, err = dbc.NewRaw(`INSERT INTO core.superadmins (user_id, role) VALUES (?, 'superadmin_full')`, superID).Exec(ctx)
 	require.NoError(t, err)
+
+	return dbc, memberID, superID
+}
+
+// TestSuperadminGateOnOperatorTools proves that deployment-wide operator tools
+// (embedding-pause) and org-level provider tools (provider-configure-org) are
+// gated on the superadmin_full authority (core.superadmins), not on a bare
+// `admin` token scope. A project member carrying a bare admin token is refused;
+// a superadmin_full principal succeeds even though its token also carries only
+// the bare admin scope (proving the scope is not the authority).
+func TestSuperadminGateOnOperatorTools(t *testing.T) {
+	dbc, memberID, superID := setupGateDB(t)
 
 	h := newGateHandler(dbc, &fakeEmbeddingCtl{status: EmbeddingStatusSnapshot{}})
 
@@ -125,5 +132,48 @@ func TestSuperadminGateOnOperatorTools(t *testing.T) {
 	t.Run("superadmin_full succeeds on provider-usage-get", func(t *testing.T) {
 		resp := call(t, superUser, "provider-usage-get")
 		require.Nil(t, resp.Error, "superadmin_full must execute provider-usage-get, got error %+v", resp.Error)
+	})
+}
+
+// TestExecuteToolSuperadminGate proves the in-process dispatch path — the one
+// the ADK ToolPool reaches during an agent run — enforces the superadmin_full
+// authority directly in Service.ExecuteTool. This is the bypass the HTTP-only
+// gate missed: ExecuteTool is the single dispatch point for every transport AND
+// the in-process agent ToolPool, so the check must live here (issue #948).
+func TestExecuteToolSuperadminGate(t *testing.T) {
+	dbc, memberID, superID := setupGateDB(t)
+
+	ctl := &fakeEmbeddingCtl{status: EmbeddingStatusSnapshot{}}
+	svc := &Service{db: dbc, embeddingCtl: ctl}
+
+	memberCtx := auth.ContextWithUser(context.Background(), &auth.AuthUser{ID: memberID, Scopes: []string{"admin"}})
+	superCtx := auth.ContextWithUser(context.Background(), &auth.AuthUser{ID: superID, Scopes: []string{"admin"}})
+	projectID := uuid.New().String()
+
+	t.Run("project member bare-admin is refused on embedding-pause (in-process)", func(t *testing.T) {
+		_, err := svc.ExecuteTool(memberCtx, projectID, "embedding-pause", map[string]any{})
+		require.Error(t, err, "in-process embedding-pause by a project member must be refused")
+		require.False(t, ctl.paused, "pause must not execute for a non-superadmin principal")
+	})
+
+	t.Run("project member bare-admin is refused on provider-configure-org (in-process)", func(t *testing.T) {
+		_, err := svc.ExecuteTool(memberCtx, projectID, "provider-configure-org", map[string]any{})
+		require.Error(t, err, "in-process provider-configure-org by a project member must be refused")
+	})
+
+	t.Run("no principal fails closed (in-process)", func(t *testing.T) {
+		_, err := svc.ExecuteTool(context.Background(), projectID, "embedding-pause", map[string]any{})
+		require.Error(t, err, "a principal-less in-process dispatch must fail closed")
+	})
+
+	t.Run("superadmin_full succeeds on embedding-pause (in-process)", func(t *testing.T) {
+		_, err := svc.ExecuteTool(superCtx, projectID, "embedding-pause", map[string]any{})
+		require.NoError(t, err, "superadmin_full must execute embedding-pause in-process")
+		require.True(t, ctl.paused, "pause must execute for a superadmin_full principal")
+	})
+
+	t.Run("superadmin_full succeeds on provider-usage-get (in-process)", func(t *testing.T) {
+		_, err := svc.ExecuteTool(superCtx, projectID, "provider-usage-get", map[string]any{})
+		require.NoError(t, err, "superadmin_full must execute provider-usage-get in-process")
 	})
 }
