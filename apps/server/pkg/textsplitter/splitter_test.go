@@ -3,6 +3,7 @@ package textsplitter_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/emergent-company/emergent.memory/pkg/textsplitter"
 )
@@ -104,5 +105,38 @@ func TestSplitNormalizesInvalidConfig(t *testing.T) {
 		if strings.TrimSpace(c) == "" {
 			t.Fatal("Split with invalid config produced an empty chunk")
 		}
+	}
+}
+
+// TestSplitWhitespaceBoundaryNearWindowStartDoesNotHang is a regression for
+// #993: a space boundary positioned within ChunkOverlap of the window start
+// used to make splitBySize land back on already-emitted text and spin forever.
+// The public Split entry point reaches that path when a short word (with a
+// trailing space) is carried as overlap in front of a long unbroken run. An
+// explicit deadline makes a regression fail fast instead of hanging CI.
+func TestSplitWhitespaceBoundaryNearWindowStartDoesNotHang(t *testing.T) {
+	in := "ab " + strings.Repeat("x", 300)
+	cfg := textsplitter.Config{ChunkSize: 15, ChunkOverlap: 3}
+
+	type result struct {
+		chunks []string
+	}
+	done := make(chan result, 1)
+	go func() {
+		done <- result{chunks: textsplitter.Split(in, cfg)}
+	}()
+
+	select {
+	case r := <-done:
+		if len(r.chunks) == 0 {
+			t.Fatal("Split returned no chunks for a non-empty input")
+		}
+		for i, c := range r.chunks {
+			if strings.TrimSpace(c) == "" {
+				t.Fatalf("chunk %d is empty/whitespace", i)
+			}
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Split did not terminate within 5s (issue #993 regression)")
 	}
 }
