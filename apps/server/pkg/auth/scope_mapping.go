@@ -481,26 +481,11 @@ func (m *Middleware) lookupOrgMember(ctx context.Context, orgID, userID string) 
 }
 
 // dbSuperadminRole reads the active superadmin role from core.superadmins. A
-// missing or revoked row returns ("", nil) — "no superadmin grant".
+// missing or revoked row returns ("", nil) — "no superadmin grant". Delegates to
+// the shared package-level superadminRole so the middleware and handler-layer
+// gates resolve the same canonical boundary.
 func (m *Middleware) dbSuperadminRole(ctx context.Context, userID string) (string, error) {
-	if m.db == nil {
-		return "", errors.New("auth: no database available for superadmin role lookup")
-	}
-	var role string
-	err := m.db.NewSelect().
-		TableExpr("core.superadmins").
-		Column("role").
-		Where("user_id = ?", userID).
-		Where("revoked_at IS NULL").
-		Limit(1).
-		Scan(ctx, &role)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", nil
-		}
-		return "", err
-	}
-	return role, nil
+	return superadminRole(ctx, m.db, userID)
 }
 
 // dbProjectOrg reads the owning organization of a project. A missing project
