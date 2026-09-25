@@ -39,9 +39,10 @@ The `mcp-invite` email template SHALL include all information a recipient needs 
 - **WHEN** the MCP invite email is rendered as HTML
 - **THEN** the API key is wrapped in a `<code>` or monospace element to distinguish it from prose
 
-#### Scenario: Email subject identifies the project
-- **WHEN** an MCP invite email is sent for project "Acme Knowledge Base"
-- **THEN** the email subject contains the project name (e.g., "MCP Access — Acme Knowledge Base")
+#### Scenario: Email subject names the sender
+- **WHEN** an MCP invite email is sent
+- **THEN** the email subject names the sender (e.g., "Alice has shared Memory project access with you")
+- **AND** the project name appears in the email body, not in the subject
 
 ### Requirement: MCP invite email uses a dedicated Handlebars template
 The system SHALL use a new template `mcp-invite.hbs` (following the existing Handlebars/MJML pattern) for MCP invite emails. This template MUST be separate from `project-invitation.hbs` and MUST NOT require the recipient to create a Memory account.

@@ -25,10 +25,10 @@ The response SHALL include a `mcpUrl` field containing the fully-qualified MCP s
 
 #### Scenario: mcpUrl is present and well-formed
 - **WHEN** a share token is generated
-- **THEN** `mcpUrl` in the response is a valid HTTPS URL pointing to the server's `/api/mcp` endpoint
+- **THEN** `mcpUrl` in the response is a valid URL pointing to the server's `/api/mcp` endpoint, using the request's scheme (HTTPS when the request is TLS-terminated or carries an `X-Forwarded-Proto` header, HTTP otherwise)
 
-#### Scenario: mcpUrl is consistent with the server's configured base URL
-- **WHEN** the server is deployed at `https://api.example.com`
+#### Scenario: mcpUrl is derived from the request host and scheme
+- **WHEN** the share request arrives at `https://api.example.com`
 - **THEN** `mcpUrl` is `https://api.example.com/api/mcp`
 
 ### Requirement: Admin UI displays the share snippet in a copyable format

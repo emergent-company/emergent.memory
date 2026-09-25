@@ -74,7 +74,9 @@ When `CreateRelationship` matches a declared relationship schema, the schema's `
 - **THEN** those properties are available in `agents.RelationshipSchema` for validation
 
 ### Requirement: Relationship properties validated on create and patch
-`CreateRelationship` and `PatchRelationship` SHALL run `validateProperties` against the relationship's schema `Properties` when the matched relationship schema declares any. Required fields SHALL be enforced and declared types coerced; property keys not declared in the schema SHALL be passed through unchanged.
+`CreateRelationship` SHALL run `validateProperties` against the matched relationship schema's `Properties` when that schema declares any: required fields SHALL be enforced and declared types coerced, and property keys not declared in the schema SHALL be passed through unchanged. `PatchRelationship` SHALL run `validatePatchProperties`, which coerces only the properties being added or changed in the patch delta and does NOT enforce required fields (an existing relationship may predate the schema version that made a field required).
+
+> **Tracked gap (#989):** `PatchRelationship` does not enforce required fields today — the patch path deliberately validates only the delta via `validatePatchProperties`, which skips `Required`. Required-field enforcement on patch is a known missing implementation and SHALL be added under #989.
 
 #### Scenario: Declared relationship property coerced on create
 - **WHEN** a client creates a relationship with a declared property of the wrong type
@@ -84,9 +86,10 @@ When `CreateRelationship` matches a declared relationship schema, the schema's `
 - **WHEN** a client creates a relationship missing a required property declared by its schema
 - **THEN** the server SHALL return `400 Bad Request`
 
-#### Scenario: Patch merged props validated
-- **WHEN** a client patches a relationship, resulting in merged props that fail the declared schema's type coercion or required check
+#### Scenario: Patch delta coerced, required not enforced
+- **WHEN** a client patches a relationship and a property in the patch delta fails the declared schema's type coercion
 - **THEN** the server SHALL return `400 Bad Request` and no new version is written
+- **AND** a patch that omits a schema-required property SHALL be accepted (required is not enforced on patch; see #989)
 
 #### Scenario: Unknown relationship property passed through on create
 - **WHEN** a client creates a relationship with a property key not declared in the schema

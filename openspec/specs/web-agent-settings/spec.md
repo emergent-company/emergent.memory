@@ -15,7 +15,7 @@ The agent General settings form SHALL expose a **Visibility** control — a cust
 | `external` | External | Advertised in the project's A2A agent card, so external A2A clients can discover it. The agent's name becomes its public skill id. |
 | `internal` | Internal | Hidden from the agents list. For system agents that other agents call — open it by direct link. |
 
-The control SHALL default to `project`, and a server-rendered helper line SHALL repeat the selected option's description.
+The control SHALL default to `project`, and a server-rendered helper line SHALL repeat the saved option's description (rendered from the stored value; it does not update live on selection).
 
 #### Scenario: Visibility listbox lists the three levels
 
@@ -27,10 +27,10 @@ The control SHALL default to `project`, and a server-rendered helper line SHALL 
 - **WHEN** an agent has no visibility set (empty/missing)
 - **THEN** the Visibility control preselects `project`
 
-#### Scenario: Helper line reflects the selected value
+#### Scenario: Helper line reflects the saved value
 
-- **WHEN** the Visibility control selects a value
-- **THEN** the helper line under the control shows that option's one-line description
+- **WHEN** the General settings form renders for an agent with a stored visibility
+- **THEN** the server-rendered helper line under the control shows that stored option's one-line description
 
 ### Requirement: External visibility warning
 
