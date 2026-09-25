@@ -8,9 +8,16 @@ theme."*
 build input: `webui/css/app.css` `@source`s the vendored go-daisy components and `@import`s their
 `components/css/custom.css` (`Taskfile.yml:22-27`). Generation is keyed to directory *absence*
 (`Taskfile.yml:27`), so a stale tree survives indefinitely — in the shared checkout `go.mod:9` pins go-daisy
-`6d4696fc9cf9` while `vendor/modules.txt` records `d98f93ca60f9` (29 commits behind) and
-`go build -mod=vendor ./...` fails with `inconsistent vendoring`. A 477 KB go-daisy bundle is mounted and
-served at `/static/*` with zero referencing pages, and `.row-actions` rules are dead.
+`6d4696fc9cf9` while `vendor/modules.txt` records `d98f93ca60f9` (29 commits behind), so the CSS build can
+silently compile the wrong component source with no other signal.
+
+Note `go build -mod=vendor ./...` is **not** a viable check: verified it exits 1 (`inconsistent vendoring`)
+even with a freshly regenerated tree, because the gateway module lives in the repo-root `go.work` workspace,
+where workspace-mode vendoring requires `go work vendor`. The tree therefore matters only to the CSS build,
+and the pin is guarded by a test rather than by that command. Separately, the pre-built go-daisy bundle is
+not referenced by any page, while the `/static/*` mount that serves go-daisy's own static tree **stays**
+(go-daisy's `layout`/`alpine`/`stimulus` components emit live `/static/js/*` URLs), and the `.row-actions`
+rules are dead.
 
 **2. Theme-owned values that do not follow the theme.** The theme block exists and is correct
 (`webui/css/app.css:38-75`: `--radius-selector:1rem`, `--radius-field:0.25rem`, `--radius-box:0.5rem`,
@@ -39,7 +46,10 @@ those elements render with **zero** radius today), and `@theme inline` is real T
 
 - Key `vendor/` generation to the pinned dependency version rather than directory absence, and add a check
   that fails when a present tree disagrees with `go.mod`.
-- Stop serving the unused 477 KB go-daisy bundle at `/static/*`.
+- Confirm the unused go-daisy pre-compiled bundle is not referenced by any page. The `/static/*` mount
+  itself **stays**: go-daisy's `layout`, `alpine`, and `stimulus` components emit live `/static/js/*` URLs
+  and the mount is documented as intentional (`webui/webui.go:3-5`), so removing it would silently break any
+  future adoption of them.
 - Remove the dead `.row-actions` rules.
 - Do **not** edit the vendored `custom.css` — it is generated, and its defects (unclosed braces at `:7`/`:17`,
   stray `*/` at `:51`, dead daisyUI-v4 variables) are upstream.
@@ -68,8 +78,7 @@ None.
 
 - `web-ui-css`: adds radius-derives-from-theme, density-has-one-central-source, and
   page-background-has-one-source requirements; scopes the injected-stylesheet requirement to a documented
-  tested subset; extends the monolithic-bundle requirement from "not linked" to "not served"; and adds the
-  CSS-build-input-matches-the-pin requirement.
+  tested subset; and adds the CSS-build-input-matches-the-pin requirement.
 
 ## Scope
 

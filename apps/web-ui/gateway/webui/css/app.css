@@ -1078,15 +1078,6 @@ div:has(> #_layout-topbar) {
   border-top: 1px solid oklch(0.74 0.135 78 / 0.2);
 }
 
-/* ---------- Rows / affordances ---------- */
-tr[data-row]:hover .row-actions {
-  opacity: 1;
-}
-.row-actions {
-  opacity: 0.45;
-  transition: opacity 0.15s ease;
-}
-
 /* ---------- Badge legibility (dark theme) ---------- */
 /* daisyUI's badge-soft paints the label with --badge-color. For the neutral
    variant that token (--color-neutral) is near-identical in lightness to the

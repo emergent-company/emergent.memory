@@ -1,19 +1,3 @@
-## MODIFIED Requirements
-
-### Requirement: No monolithic go-daisy bundle is served
-
-The gateway SHALL NOT reference go-daisy's pre-compiled monolithic `app.css` in its HTML, and SHALL NOT serve that bundle over HTTP.
-
-#### Scenario: Page HTML has no monolithic CSS link
-
-- **WHEN** a user loads any gateway page
-- **THEN** the document does not contain a `<link>` to go-daisy's `/static/css/app.css`
-
-#### Scenario: The unused bundle is not reachable
-
-- **WHEN** the go-daisy pre-compiled bundle URL is requested from a running gateway
-- **THEN** it is not served, because no page, script, or style in the gateway depends on it
-
 ## ADDED Requirements
 
 ### Requirement: Runtime-injected styles are not a second stylesheet
