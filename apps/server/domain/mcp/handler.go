@@ -273,6 +273,13 @@ func (h *Handler) handleToolsList(c echo.Context, req *Request, user *auth.AuthU
 
 	tools := h.svc.GetToolDefinitionsForProject(c.Request().Context(), user.ProjectID)
 	tools = FilterToolsForScopes(tools, user.Scopes)
+	// Hide deployment-wide operator tools from non-superadmins. A superadmin-status
+	// resolution failure fails closed (hides every SuperadminOnly tool).
+	isSuper, serr := h.svc.IsSuperadminCaller(c.Request().Context())
+	if serr != nil {
+		isSuper = false
+	}
+	tools = FilterToolsForSuperadmin(tools, isSuper)
 	scope, serr := h.svc.ResolveInstanceScope(c.Request().Context(), user.APITokenID)
 	if serr != nil {
 		// Fail closed: never list the full scope-permitted catalog when the
@@ -317,6 +324,24 @@ func (h *Handler) handleToolsCall(c echo.Context, req *Request, user *auth.AuthU
 		if toolDef.AgentOnly {
 			return NewErrorResponse(req.ID, ErrCodeMethodNotFound,
 				"Tool not found: "+params.Name, nil)
+		}
+		if toolDef.SuperadminOnly {
+			ok, err := h.svc.IsSuperadminCaller(c.Request().Context())
+			if err != nil {
+				// Fail closed: an unresolved superadmin grant must never execute
+				// the tool.
+				h.log.Error("superadmin authorization failed",
+					slog.String("tool", params.Name),
+					logger.Error(err),
+				)
+				return NewErrorResponse(req.ID, ErrCodeInternalError,
+					"Failed to authorize tool", nil)
+			}
+			if !ok {
+				// Do not reveal the operator tool's existence to non-superadmins.
+				return NewErrorResponse(req.ID, ErrCodeMethodNotFound,
+					"Tool not found: "+params.Name, nil)
+			}
 		}
 		if toolDef.RequiredScope != "" {
 			expanded := expandScopesSet(user.Scopes)
