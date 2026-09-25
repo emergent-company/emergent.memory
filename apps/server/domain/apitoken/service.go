@@ -74,9 +74,9 @@ var viewerReadOnlyScopes = map[string]bool{
 }
 
 // errAdminAllScopeDenied is returned when a caller attempts to grant admin:all
-// without org-admin or superadmin privileges.
+// without superadmin_full privileges.
 var errAdminAllScopeDenied = apperror.New(403, "admin-all-scope-denied",
-	"admin:all scope requires org admin or superadmin privileges")
+	"admin:all scope requires superadmin_full privileges")
 
 // scopesContainAdminAll reports whether scopes includes the admin:all scope.
 func scopesContainAdminAll(scopes []string) bool {
@@ -88,7 +88,7 @@ func scopesContainAdminAll(scopes []string) bool {
 	return false
 }
 
-// checkAdminAllGrant rejects admin:all unless the caller is a superadmin or org admin.
+// checkAdminAllGrant rejects admin:all unless the caller is a superadmin_full.
 func (s *Service) checkAdminAllGrant(ctx context.Context, userID string, scopes []string) error {
 	if !scopesContainAdminAll(scopes) {
 		return nil
@@ -256,7 +256,7 @@ func (s *Service) create(ctx context.Context, projectID string, userID *string, 
 		uid = *userID
 	}
 
-	// admin:all requires org admin or superadmin privileges
+	// admin:all requires superadmin_full privileges
 	if err := s.checkAdminAllGrant(ctx, uid, scopes); err != nil {
 		return nil, err
 	}
@@ -442,7 +442,7 @@ func (s *Service) CreateAccountToken(ctx context.Context, userID, name string, s
 		}
 	}
 
-	// admin:all requires org admin or superadmin privileges
+	// admin:all requires superadmin_full privileges
 	if err := s.checkAdminAllGrant(ctx, userID, scopes); err != nil {
 		return nil, err
 	}
@@ -647,7 +647,7 @@ func (s *Service) UpdateScopes(ctx context.Context, tokenID, projectID, userID s
 		}
 	}
 
-	// admin:all requires org admin or superadmin privileges
+	// admin:all requires superadmin_full privileges
 	if err := s.checkAdminAllGrant(ctx, userID, scopes); err != nil {
 		return nil, err
 	}
@@ -710,7 +710,7 @@ func (s *Service) UpdateAccountTokenScopes(ctx context.Context, tokenID, userID 
 		}
 	}
 
-	// admin:all requires org admin or superadmin privileges
+	// admin:all requires superadmin_full privileges
 	if err := s.checkAdminAllGrant(ctx, userID, scopes); err != nil {
 		return nil, err
 	}
