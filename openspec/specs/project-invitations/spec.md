@@ -49,6 +49,13 @@ The system SHALL gate an invitation whose `role` is `org_admin` on the caller's 
 - **WHEN** a member of an organization creates an invitation with a project-scoped role (`project_admin`, `project_user`, or `project_viewer`)
 - **THEN** the server stores the invitation and returns HTTP 201
 
+### Requirement: Project-scoped org_admin is rejected
+`org_admin` is an organization-level role with no meaning in project scope. The system SHALL reject a project-scoped invitation (one that supplies `projectId`) whose `role` is `org_admin` with HTTP 400 and SHALL store no invitation, because granting it would write an out-of-vocabulary `org_admin` value into `kb.project_memberships.role`.
+
+#### Scenario: project-scoped org_admin invitation rejected
+- **WHEN** a caller supplies `projectId` and `role: "org_admin"` to `POST /api/invites`
+- **THEN** the server responds with HTTP 400 and stores no invitation
+
 ### Requirement: Invitation email delivery
 The system SHALL send a `project-invitation` email to the invited address. The email SHALL include the inviting user's name, the project name, the role being granted, and a single-use accept URL valid for 7 days.
 

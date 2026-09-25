@@ -179,3 +179,104 @@ func TestAcceptInviteRefusesOrgAdminWithoutInviter(t *testing.T) {
 		t.Fatalf("no org membership should be granted for an org_admin invite with no inviter, got %q", role)
 	}
 }
+
+// TestAcceptProjectScopedInviteWritesInvitedProjectRole proves the acceptance
+// path writes kb.project_memberships.role exactly equal to the invited
+// project-scoped role, never an out-of-vocabulary value (issue #979). The bug
+// class is that a project-scoped invite carries its stored role straight into
+// kb.project_memberships.role, so a project-scoped org_admin invite would write
+// "org_admin" into a project-scoped role column. Pinning the mapping for every
+// valid project-scoped role stops that value from silently drifting.
+func TestAcceptProjectScopedInviteWritesInvitedProjectRole(t *testing.T) {
+	cases := []string{"project_admin", "project_user", "project_viewer"}
+
+	for _, invitedRole := range cases {
+		t.Run(invitedRole, func(t *testing.T) {
+			ctx := context.Background()
+			svc, testDB, orgID, userID, inviterID := newAcceptService(t)
+			defer testDB.Close()
+			db := testDB.GetDB()
+
+			projectID := uuid.New().String()
+			if _, err := db.NewRaw(
+				`INSERT INTO kb.projects (id, organization_id, name, created_at, updated_at) VALUES (?, ?, 'Test Project', NOW(), NOW())`,
+				projectID, orgID,
+			).Exec(ctx); err != nil {
+				t.Fatalf("insert project: %v", err)
+			}
+
+			invite, err := svc.Create(ctx, &CreateInviteRequest{
+				OrgID:     orgID,
+				ProjectID: projectID,
+				Email:     "invitee@example.com",
+				Role:      invitedRole,
+				InviterID: inviterID,
+			})
+			if err != nil {
+				t.Fatalf("create invite: %v", err)
+			}
+
+			if err := svc.Accept(ctx, userID, invite.Token); err != nil {
+				t.Fatalf("accept invite: %v", err)
+			}
+
+			var got string
+			if err := db.NewRaw(
+				`SELECT role FROM kb.project_memberships WHERE project_id = ? AND user_id = ?`,
+				projectID, userID,
+			).Scan(ctx, &got); err != nil {
+				t.Fatalf("read project_memberships.role: %v", err)
+			}
+			if got != invitedRole {
+				t.Fatalf("project_memberships.role = %q, want %q (must equal the invited project-scoped role)", got, invitedRole)
+			}
+		})
+	}
+}
+
+// TestAcceptInviteRefusesOrgAdminAfterInviterDemoted proves the acceptance-side
+// inviter re-verification (issue #967) against a live demotion: an org_admin
+// invitation minted by a then-org_admin inviter is refused once that inviter has
+// been demoted to member, and no membership row is written. This is the
+// committed regression test for the check #973 added — without it the
+// re-verification could be removed with no CI signal (issue #979).
+func TestAcceptInviteRefusesOrgAdminAfterInviterDemoted(t *testing.T) {
+	ctx := context.Background()
+	svc, testDB, orgID, userID, inviterID := newAcceptService(t)
+	defer testDB.Close()
+	db := testDB.GetDB()
+
+	invite, err := svc.Create(ctx, &CreateInviteRequest{
+		OrgID:     orgID,
+		Email:     "invitee@example.com",
+		Role:      "org_admin",
+		InviterID: inviterID,
+	})
+	if err != nil {
+		t.Fatalf("create invite: %v", err)
+	}
+
+	// Demote the inviter from org_admin to a plain member.
+	if _, err := db.NewRaw(
+		`UPDATE kb.organization_memberships SET role = 'member' WHERE organization_id = ? AND user_id = ?`,
+		orgID, inviterID,
+	).Exec(ctx); err != nil {
+		t.Fatalf("demote inviter: %v", err)
+	}
+
+	if err := svc.Accept(ctx, userID, invite.Token); err == nil {
+		t.Fatal("Accept must refuse an org_admin invite after the inviter is demoted")
+	}
+
+	// Assert no membership row was written (row count, not just the refusal).
+	var count int
+	if err := db.NewRaw(
+		`SELECT COUNT(*) FROM kb.organization_memberships WHERE organization_id = ? AND user_id = ?`,
+		orgID, userID,
+	).Scan(ctx, &count); err != nil {
+		t.Fatalf("count membership rows: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("no org membership row may be written after refusal, got %d", count)
+	}
+}
