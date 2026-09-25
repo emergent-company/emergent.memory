@@ -51,6 +51,7 @@ type EmailJob struct {
 	MailgunMessageID *string    `bun:"mailgun_message_id"`
 	CreatedAt        time.Time  `bun:"created_at,notnull,default:now()"`
 	ProcessedAt      *time.Time `bun:"processed_at"`
+	StartedAt        *time.Time `bun:"started_at"`
 	NextRetryAt      *time.Time `bun:"next_retry_at"`
 	SourceType       *string    `bun:"source_type"`
 	SourceID         *string    `bun:"source_id,type:uuid"`
