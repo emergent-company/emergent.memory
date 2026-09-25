@@ -14,6 +14,9 @@ mutations project UI/API mutations (create agent/skill/schedule/token/object, in
                   self-clean, so they never race the parallel read surface.
 scenarios project live-LLM full journey (provider → agent → blueprint → object → chat) on a
                   scratch project, sequential; skips fast when E2E_SCENARIO_LLM_API_KEY is unset
+chat project      live-LLM chat-UI scenarios (agent switch + session rail, run-control
+                  dock/queue/rail) on a scratch project, sequential; skips fast when
+                  E2E_SCENARIO_LLM_API_KEY is unset
 connector project memory-connector CLI PKCE sign-in with the test user; gateway-independent
 globalTeardown    delete the bootstrap org (idempotent, runs on failure)
 ```
@@ -52,8 +55,9 @@ proxy, provider `openai`):
 
 ```bash
 cd tests/e2e
-npx playwright test              # full suite (setup + chromium + mutations + scenarios)
+npx playwright test              # full suite (setup + chromium + mutations + scenarios + chat)
 npx playwright test --project=chromium   # reuse a previously saved session
+npx playwright test --project=chat       # live-LLM chat-UI scenarios only
 npx playwright report            # HTML report
 ```
 
@@ -259,12 +263,19 @@ registered kind degraded to a summary-only card). A fetch interceptor tees the
 `/api/chat` SSE stream and records the `question` events, so a gateway render
 regression can no longer masquerade as a skip.
 
-Scenario (chat agent switch): `chat-agent-switch.spec.ts` proves the chat area's
+Chat (agent switch): `chat-agent-switch.spec.ts` proves the chat area's
 navigation on a fresh scratch project — start a conversation with agent A, switch
 to agent B via "New chat", then resume A's conversation from the session rail. It
 asserts A's row is active after the first turn, that both A and B coexist in the
 rail after the second, and that resuming A switches the `#chat-agent` picker back
 to A and loads A's (not B's) transcript. Env-gated on `E2E_SCENARIO_LLM_API_KEY`.
+
+Chat (run control): `chat-run-control.spec.ts` proves the three run-control
+signals on the /chat surface against a real model turn: the pending-work dock
+renders a `ask_user` question card with decision controls and a count; a queued
+follow-up (Cmd/Ctrl+Enter) parks during a streaming turn and auto-releases in
+order when the turn ends; and the session-rail badge reflects the active run's
+bucket change without a navigation. Env-gated on `E2E_SCENARIO_LLM_API_KEY`.
 
 Scenario (approvals respond): `approvals-respond.spec.ts` drives a live
 human-in-the-loop tool approval end-to-end — scratch project → live provider →

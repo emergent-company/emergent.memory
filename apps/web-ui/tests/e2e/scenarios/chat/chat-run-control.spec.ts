@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
-import { readBootstrap, createProject } from '../helpers/bootstrap';
-import { expectAppPage } from '../helpers/page';
-import { addProvider } from '../helpers/providers';
+import { readBootstrap, createProject } from '../../helpers/bootstrap';
+import { expectAppPage } from '../../helpers/page';
+import { addProvider } from '../../helpers/providers';
 
 // Chat run-control scenarios (gateway lane A/B + the dock/queue/rail surfaces):
 // on a FRESH scratch project, a live agent run drives the pending-work dock, the
