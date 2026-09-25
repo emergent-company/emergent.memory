@@ -76,6 +76,20 @@ export default defineConfig({
       // the default full run stays green.
       name: 'scenarios',
       testMatch: /scenarios\/.*\.spec\.ts/,
+      // The strictly chat-UI scenarios moved into scenarios/chat/ and run under
+      // the dedicated `chat` project below.
+      testIgnore: /scenarios\/chat\//,
+      use: { ...devices['Desktop Chrome'], storageState: STORAGE_STATE },
+      dependencies: ['setup'],
+      workers: 1,
+    },
+    {
+      // Live-LLM chat UI suite (tests/e2e/scenarios/chat/) — the scenarios whose
+      // sole subject is the /chat surface (agent switch + session-rail resume,
+      // run control: dock/queue/rail). Depends on `setup` only; specs env-gate
+      // on E2E_SCENARIO_LLM_API_KEY so the default full run stays green.
+      name: 'chat',
+      testMatch: /scenarios\/chat\/.*\.spec\.ts/,
       use: { ...devices['Desktop Chrome'], storageState: STORAGE_STATE },
       dependencies: ['setup'],
       workers: 1,

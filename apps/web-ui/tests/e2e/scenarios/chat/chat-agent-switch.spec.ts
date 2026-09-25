@@ -1,9 +1,9 @@
 import { test, expect, type Page } from '@playwright/test';
-import { readBootstrap, createProject } from '../helpers/bootstrap';
-import { expectAppPage } from '../helpers/page';
-import { addProvider } from '../helpers/providers';
-import { createAgentViaModal } from '../helpers/agents';
-import { sendChatMessage } from '../helpers/chat';
+import { readBootstrap, createProject } from '../../helpers/bootstrap';
+import { expectAppPage } from '../../helpers/page';
+import { addProvider } from '../../helpers/providers';
+import { createAgentViaModal } from '../../helpers/agents';
+import { sendChatMessage } from '../../helpers/chat';
 
 // Chat agent-switch navigation scenario: on a FRESH scratch project, start a
 // conversation with agent A, switch to agent B via "New chat", then navigate
