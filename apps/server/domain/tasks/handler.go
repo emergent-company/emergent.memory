@@ -42,6 +42,9 @@ func (h *Handler) GetCounts(c echo.Context) error {
 	if projectID == "" {
 		return apperror.ErrBadRequest.WithMessage("project_id is required")
 	}
+	if err := h.svc.RequireProjectMember(c.Request().Context(), projectID); err != nil {
+		return err
+	}
 
 	counts, err := h.svc.GetCountsByProject(c.Request().Context(), projectID)
 	if err != nil {
@@ -105,6 +108,9 @@ func (h *Handler) List(c echo.Context) error {
 
 	if projectID == "" {
 		return apperror.ErrBadRequest.WithMessage("project_id is required")
+	}
+	if err := h.svc.RequireProjectMember(c.Request().Context(), projectID); err != nil {
+		return err
 	}
 
 	params := TaskListParams{
@@ -203,6 +209,9 @@ func (h *Handler) GetByID(c echo.Context) error {
 	if projectID == "" {
 		return apperror.ErrBadRequest.WithMessage("project_id is required")
 	}
+	if err := h.svc.RequireProjectMember(c.Request().Context(), projectID); err != nil {
+		return err
+	}
 
 	task, err := h.svc.GetByID(c.Request().Context(), projectID, taskID)
 	if err != nil {
@@ -243,6 +252,9 @@ func (h *Handler) Resolve(c echo.Context) error {
 
 	if projectID == "" {
 		return apperror.ErrBadRequest.WithMessage("project_id is required")
+	}
+	if err := h.svc.RequireProjectMember(c.Request().Context(), projectID); err != nil {
+		return err
 	}
 
 	var req ResolveTaskRequest
@@ -287,6 +299,9 @@ func (h *Handler) Cancel(c echo.Context) error {
 
 	if projectID == "" {
 		return apperror.ErrBadRequest.WithMessage("project_id is required")
+	}
+	if err := h.svc.RequireProjectMember(c.Request().Context(), projectID); err != nil {
+		return err
 	}
 
 	if err := h.svc.Cancel(c.Request().Context(), projectID, taskID, user.ID); err != nil {

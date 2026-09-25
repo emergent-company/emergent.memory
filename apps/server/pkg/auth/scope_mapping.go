@@ -505,24 +505,9 @@ func (m *Middleware) dbSuperadminRole(ctx context.Context, userID string) (strin
 
 // dbProjectOrg reads the owning organization of a project. A missing project
 // returns ("", nil) — no trusted org context, so tier 2 is not granted.
+// Delegates to the shared projectOrg helper used by RequireProjectMembership.
 func (m *Middleware) dbProjectOrg(ctx context.Context, projectID string) (string, error) {
-	if m.db == nil {
-		return "", errors.New("auth: no database available for project org lookup")
-	}
-	var orgID string
-	err := m.db.NewSelect().
-		TableExpr("kb.projects").
-		Column("organization_id").
-		Where("id = ?", projectID).
-		Limit(1).
-		Scan(ctx, &orgID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", nil
-		}
-		return "", err
-	}
-	return orgID, nil
+	return projectOrg(ctx, m.db, projectID)
 }
 
 // dbOrgAdmin reports whether the user holds an org_admin membership in the given
@@ -550,20 +535,7 @@ func (m *Middleware) dbOrgAdmin(ctx context.Context, orgID, userID string) (bool
 // import cycle), and the source org is always resolved server-side via
 // lookupProjectOrg — never from a request-controlled value.
 func (m *Middleware) dbOrgMember(ctx context.Context, orgID, userID string) (bool, error) {
-	if m.db == nil {
-		return false, errors.New("auth: no database available for org membership lookup")
-	}
-	var ok bool
-	err := m.db.NewRaw(`
-		SELECT EXISTS(
-			SELECT 1 FROM kb.organization_memberships
-			WHERE organization_id = ? AND user_id = ?
-		)
-	`, orgID, userID).Scan(ctx, &ok)
-	if err != nil {
-		return false, err
-	}
-	return ok, nil
+	return isOrgMember(ctx, m.db, orgID, userID)
 }
 
 // oidcAllGrantEnabled reports whether the legacy all-or-nothing grant may be
