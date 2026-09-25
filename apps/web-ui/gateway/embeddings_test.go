@@ -72,8 +72,8 @@ func TestWorkerStateLabel(t *testing.T) {
 
 func TestGetEmbeddingProgress(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/embeddings/progress" {
-			t.Errorf("path = %q, want /api/embeddings/progress", r.URL.Path)
+		if r.URL.Path != "/api/projects/proj/embeddings/progress" {
+			t.Errorf("path = %q, want /api/projects/proj/embeddings/progress", r.URL.Path)
 		}
 		if r.Method != http.MethodGet {
 			t.Errorf("method = %s, want GET", r.Method)
@@ -82,7 +82,7 @@ func TestGetEmbeddingProgress(t *testing.T) {
 			t.Errorf("X-Project-ID = %q, want proj", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"objects":{"pending":1,"processing":2,"completed":3,"failed":4,"staleFailed":11,"deadLetter":5},"relationships":{"pending":6,"processing":7,"completed":8,"failed":9,"staleFailed":12,"deadLetter":10}}`)
+		_, _ = io.WriteString(w, `{"objects":{"pending":1,"processing":2,"completed":3,"failed":4,"staleFailed":11,"deadLetter":5},"relationships":{"pending":6,"processing":7,"completed":8,"failed":9,"staleFailed":12,"deadLetter":10},"chunks":{"pending":13}}`)
 	}))
 	defer srv.Close()
 
@@ -96,6 +96,29 @@ func TestGetEmbeddingProgress(t *testing.T) {
 	}
 	if p.Relationships.Pending != 6 || p.Relationships.StaleFailed != 12 || p.Relationships.DeadLetter != 10 {
 		t.Errorf("relationships = %+v", p.Relationships)
+	}
+}
+
+// TestGetEmbeddingProgressFallsBackToInstanceWide verifies that with no active
+// project resolvable the client uses the instance-wide progress endpoint rather
+// than a project-scoped one.
+func TestGetEmbeddingProgressFallsBackToInstanceWide(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/embeddings/progress" {
+			t.Errorf("path = %q, want /api/embeddings/progress", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"objects":{"pending":1},"relationships":{"pending":2}}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "")
+	p, err := m.GetEmbeddingProgress(context.Background())
+	if err != nil {
+		t.Fatalf("GetEmbeddingProgress: %v", err)
+	}
+	if p.Objects.Pending != 1 || p.Relationships.Pending != 2 {
+		t.Errorf("progress = %+v", p)
 	}
 }
 

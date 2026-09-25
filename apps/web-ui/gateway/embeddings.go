@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"strings"
 
 	ui "github.com/emergent-company/go-daisy/components/ui"
@@ -58,10 +59,18 @@ type EmbeddingStatus struct {
 	Config        EmbeddingConfig       `json:"config"`
 }
 
-// GetEmbeddingProgress fetches the per-queue embedding job counts.
+// GetEmbeddingProgress fetches the per-queue embedding job counts. When an
+// active project is resolvable it scopes the fetch to that project via
+// GET /api/projects/:projectId/embeddings/progress, so the page never shows
+// other projects' queue backlog. With no active project it falls back to the
+// instance-wide GET /api/embeddings/progress.
 func (m *MemoryClient) GetEmbeddingProgress(ctx context.Context) (*EmbeddingProgress, error) {
+	path := "/api/embeddings/progress"
+	if projectID := m.projectIDFor(ctx); projectID != "" {
+		path = "/api/projects/" + url.PathEscape(projectID) + "/embeddings/progress"
+	}
 	var out EmbeddingProgress
-	if err := m.doH(ctx, http.MethodGet, "/api/embeddings/progress", nil, m.documentHeaders(ctx), &out); err != nil {
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

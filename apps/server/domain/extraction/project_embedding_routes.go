@@ -7,10 +7,14 @@ import (
 )
 
 // RegisterProjectEmbeddingRoutes registers project-scoped embedding management routes.
-// All routes require authentication; project admin check is enforced in each handler.
+// RequireAuth authenticates the caller; RequireProjectTokenScope binds an emt_* API
+// token to its project; RequireProjectMember authorizes session callers against the
+// project's owning organization. Mutating handlers additionally require project admin.
 func RegisterProjectEmbeddingRoutes(e *echo.Echo, h *ProjectEmbeddingHandler, authMiddleware *auth.Middleware) {
-	g := e.Group("/api/projects/:id/embeddings")
+	g := e.Group("/api/projects/:projectId/embeddings")
 	g.Use(authMiddleware.RequireAuth())
+	g.Use(authMiddleware.RequireProjectTokenScope())
+	g.Use(authMiddleware.RequireProjectMember())
 
 	g.GET("/progress", h.Progress)
 	g.POST("/retrigger", h.Retrigger)

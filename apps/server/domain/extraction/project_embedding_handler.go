@@ -12,9 +12,11 @@ import (
 )
 
 // ProjectEmbeddingHandler exposes project-scoped embedding management endpoints.
-// All operations are restricted to project admins.
+// Reads require project membership (enforced by the route middleware); mutating
+// operations (retrigger, cancel) additionally require the project admin role.
 type ProjectEmbeddingHandler struct {
 	graphJobs   *GraphEmbeddingJobsService
+	relJobs     *GraphRelationshipEmbeddingJobsService
 	chunkJobs   *ChunkEmbeddingJobsService
 	apitokenSvc *apitoken.Service
 }
@@ -22,11 +24,13 @@ type ProjectEmbeddingHandler struct {
 // NewProjectEmbeddingHandler creates a new project embedding handler.
 func NewProjectEmbeddingHandler(
 	graphJobs *GraphEmbeddingJobsService,
+	relJobs *GraphRelationshipEmbeddingJobsService,
 	chunkJobs *ChunkEmbeddingJobsService,
 	apitokenSvc *apitoken.Service,
 ) *ProjectEmbeddingHandler {
 	return &ProjectEmbeddingHandler{
 		graphJobs:   graphJobs,
+		relJobs:     relJobs,
 		chunkJobs:   chunkJobs,
 		apitokenSvc: apitokenSvc,
 	}
@@ -47,14 +51,14 @@ func (h *ProjectEmbeddingHandler) requireProjectAdmin(c echo.Context, projectID 
 
 // ProjectEmbeddingProgressResponse is the response for the progress endpoint.
 type ProjectEmbeddingProgressResponse struct {
-	Objects       *GraphEmbeddingQueueStats `json:"objects"`
-	Relationships *GraphEmbeddingQueueStats `json:"relationships"`
-	Chunks        *ChunkEmbeddingQueueStats `json:"chunks"`
+	Objects       *GraphEmbeddingQueueStats             `json:"objects"`
+	Relationships *GraphRelationshipEmbeddingQueueStats `json:"relationships"`
+	Chunks        *ChunkEmbeddingQueueStats             `json:"chunks"`
 }
 
-// Progress handles GET /api/projects/:id/embeddings/progress
+// Progress handles GET /api/projects/:projectId/embeddings/progress
 // @Summary      Get embedding queue progress for a project
-// @Description  Returns pending/processing/completed/failed counts for graph object, relationship, and chunk embedding jobs scoped to this project. Requires project_admin role.
+// @Description  Returns pending/processing/completed/failed counts for graph object, relationship, and chunk embedding jobs scoped to this project. Requires project membership.
 // @Tags         embeddings
 // @Produce      json
 // @Param        id   path      string  true  "Project ID"
@@ -63,10 +67,7 @@ type ProjectEmbeddingProgressResponse struct {
 // @Failure      403  {object}  apperror.Error
 // @Router       /api/projects/{id}/embeddings/progress [get]
 func (h *ProjectEmbeddingHandler) Progress(c echo.Context) error {
-	projectID := c.Param("id")
-	if err := h.requireProjectAdmin(c, projectID); err != nil {
-		return err
-	}
+	projectID := c.Param("projectId")
 
 	ctx := c.Request().Context()
 
@@ -75,10 +76,10 @@ func (h *ProjectEmbeddingHandler) Progress(c echo.Context) error {
 		return apperror.NewInternal("get object embedding stats", err)
 	}
 
-	// Graph relationship embedding jobs use the same table but object_id points to
-	// relationship objects — they share graphJobs. Relationship-specific stats would
-	// require filtering by object type; for now we surface total graph stats once.
-	// A separate rel stats field is left nil to avoid double-counting.
+	relStats, err := h.relJobs.StatsByProject(ctx, projectID)
+	if err != nil {
+		return apperror.NewInternal("get relationship embedding stats", err)
+	}
 
 	chunkStats, err := h.chunkJobs.StatsByProject(ctx, projectID)
 	if err != nil {
@@ -86,8 +87,9 @@ func (h *ProjectEmbeddingHandler) Progress(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, ProjectEmbeddingProgressResponse{
-		Objects: objStats,
-		Chunks:  chunkStats,
+		Objects:       objStats,
+		Relationships: relStats,
+		Chunks:        chunkStats,
 	})
 }
 
@@ -109,7 +111,7 @@ type ProjectEmbeddingRetriggerResponse struct {
 // @Failure      403  {object}  apperror.Error
 // @Router       /api/projects/{id}/embeddings/retrigger [post]
 func (h *ProjectEmbeddingHandler) Retrigger(c echo.Context) error {
-	projectID := c.Param("id")
+	projectID := c.Param("projectId")
 	if err := h.requireProjectAdmin(c, projectID); err != nil {
 		return err
 	}
@@ -151,7 +153,7 @@ type ProjectEmbeddingCancelResponse struct {
 // @Failure      403  {object}  apperror.Error
 // @Router       /api/projects/{id}/embeddings/queue [delete]
 func (h *ProjectEmbeddingHandler) Cancel(c echo.Context) error {
-	projectID := c.Param("id")
+	projectID := c.Param("projectId")
 	if err := h.requireProjectAdmin(c, projectID); err != nil {
 		return err
 	}
