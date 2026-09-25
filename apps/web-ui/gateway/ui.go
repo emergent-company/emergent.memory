@@ -819,6 +819,15 @@ func visibilityIntent(v string) ui.BadgeIntent {
 // stored value through the same single source as the Settings control
 // (normalizedVisibility), so the dashboard badge and Settings can never
 // disagree: empty or unknown reads as "project" (the server default).
+//
+// NOTE: blueprint manifest surfaces deliberately bypass this helper and echo the
+// raw value verbatim (proposal.templ agent apply preview, blueprints.templ
+// detail view and version diff). Those render user-authored YAML — a faithful
+// preview of the author's own content, not a persisted kb.agent_definitions
+// row — and the blueprint apply path rejects invalid values with a 400, so a
+// raw odd value can never be persisted through that route. Normalising it there
+// would hide what the author actually wrote. This is a stated decision, not an
+// inconsistency to "fix".
 func visibilityLabel(v string) string {
 	return normalizedVisibility(v)
 }
