@@ -3,6 +3,7 @@ package main
 import (
 	"net/url"
 	"slices"
+	"strconv"
 
 	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	fm "github.com/emergent-company/go-daisy/components/form"
@@ -13,30 +14,32 @@ import (
 
 // --- Objects browser ---
 
-// ObjectsPage renders the objects browser: graph objects, filterable by type
-// and by branch. typeUIByType carries the compiled types' declared ui accents
-// (icon/color) keyed by object type name, so rows can render each type's icon.
-templ ObjectsPage(objects []GraphObject, types []string, typeFilter string, branches []Branch, branchID string, typeUIByType map[string]typeUI, loadErr error) {
+// ObjectsPage renders the objects browser: searchable graph objects, filterable
+// by type and branch, with a small stats section and cursor-paginated browse.
+// data.TypeUIByType carries the compiled types' declared ui accents (icon/color)
+// keyed by object type name, so rows can render each type's icon.
+templ ObjectsPage(data objectsPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@objectsHeader(len(objects), loadErr == nil)
-		if loadErr != nil {
-			@pageError("Failed to load objects", loadErr)
+		@objectsHeader()
+		if data.LoadErr != nil {
+			@pageError("Failed to load objects", data.LoadErr)
 		} else {
-			@objectsFilters(types, typeFilter, branches, branchID)
-			if len(objects) == 0 {
-				@objectsEmpty(typeFilter)
+			if data.Query == "" {
+				@objectsStatsSection(data.Stats)
+			}
+			@objectsSearchForm(data)
+			@objectsFilters(data)
+			if data.Query != "" {
+				@objectsSearchResults(data)
 			} else {
-				@objectsList(objects, typeUIByType)
+				@objectsBrowse(data)
 			}
 		}
 	}
 }
 
-templ objectsHeader(count int, ok bool) {
+templ objectsHeader() {
 	@pageHeader("Knowledge", "Objects", "Entities in the knowledge graph — people, tasks, notes, and everything else memory stores.") {
-		if ok {
-			@countBadgeLabel(countLabel(count, "object", "objects"), "lucide--box")
-		}
 		@ui.Button(ui.ButtonProps{
 			Type:    ui.ButtonTypeLink,
 			Href:    "/objects/new",
@@ -49,22 +52,126 @@ templ objectsHeader(count int, ok bool) {
 	}
 }
 
-templ objectsFilters(types []string, typeFilter string, branches []Branch, branchID string) {
-	if len(branches) > 0 || len(types) > 0 {
+// objectsStatsSection renders the browse overview as a three-up stat row:
+// total objects, embedding-queue pending, and embedding-queue failed. It only
+// renders in browse mode, so the global counts never compete with a search's
+// results.
+templ objectsStatsSection(s objectsStats) {
+	{{ totalValue := strconv.Itoa(s.TotalObjects)
+		var totalAttrs templ.Attributes
+		if s.TotalErr != nil {
+			totalValue = "—"
+			totalAttrs = templ.Attributes{"title": "Unavailable"}
+		}
+		pendingValue := strconv.FormatInt(s.PendingEmbed, 10)
+		failedValue := strconv.FormatInt(s.FailedEmbed, 10)
+		var embedAttrs templ.Attributes
+		if s.EmbedErr != nil {
+			pendingValue = "—"
+			failedValue = "—"
+			embedAttrs = templ.Attributes{"title": "Unavailable"}
+		} }}
+	<div class="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+		@ui.StatCard(ui.StatCardProps{
+			Label:     "objects",
+			Value:     totalValue,
+			Icon:      "lucide--box",
+			IconColor: "bg-base-200/60 text-base-content",
+			Attrs:     totalAttrs,
+		})
+		@ui.StatCard(ui.StatCardProps{
+			Label:     "pending embeddings",
+			Value:     pendingValue,
+			Icon:      "lucide--hourglass",
+			IconColor: "bg-warning/10 text-warning",
+			Attrs:     embedAttrs,
+		})
+		@ui.StatCard(ui.StatCardProps{
+			Label:     "failed embeddings",
+			Value:     failedValue,
+			Icon:      "lucide--triangle-alert",
+			IconColor: "bg-error/10 text-error",
+			Attrs:     embedAttrs,
+		})
+	</div>
+}
+
+// objectsSearchForm is the text-query search form: a query input plus a mode
+// selector (full-text vs hybrid). The active type/branch filters ride along as
+// hidden inputs so searching doesn't drop the filters.
+templ objectsSearchForm(data objectsPageData) {
+	<form class="mb-4" method="get" action="/objects">
+		<div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+			<label class="input input-bordered flex w-full items-center gap-2 sm:max-w-md">
+				@ui.IconSpan("lucide--search", "size-4 shrink-0 opacity-50")
+				<input type="search" name="q" value={ data.Query } placeholder="Search objects…" class="grow" autocomplete="off" aria-label="Search objects"/>
+			</label>
+			<div class="flex items-center gap-2">
+				<div class="join" role="radiogroup" aria-label="Search mode">
+					<input
+						type="radio"
+						name="mode"
+						value="fulltext"
+						aria-label="Full-text"
+						class="join-item btn btn-sm checked:btn-primary"
+						checked?={ data.Mode == "" || data.Mode == "fulltext" }
+						onchange="this.form.submit()"
+					/>
+					<input
+						type="radio"
+						name="mode"
+						value="hybrid"
+						aria-label="Hybrid"
+						class="join-item btn btn-sm checked:btn-primary"
+						checked?={ data.Mode == "hybrid" }
+						onchange="this.form.submit()"
+					/>
+				</div>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonSecondary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--search",
+				}) {
+					Search
+				}
+			</div>
+		</div>
+		if data.TypeFilter != "" {
+			<input type="hidden" name="type" value={ data.TypeFilter }/>
+		}
+		if data.BranchID != "" {
+			<input type="hidden" name="branch" value={ data.BranchID }/>
+		}
+	</form>
+}
+
+// objectsFilters renders the type/branch filter dropdowns, preserving an active
+// query/mode via hidden inputs so filtering while searching doesn't drop it.
+templ objectsFilters(data objectsPageData) {
+	if len(data.Branches) > 0 || len(data.Types) > 0 {
 		<form class="mb-6 flex flex-wrap items-center gap-2" method="get" action="/objects">
-			if len(branches) > 0 {
+			<span class="text-base-content/45 flex items-center gap-1.5">
+				@ui.IconSpan("lucide--sliders-horizontal", "size-3.5 shrink-0")
+				<span class="text-xs font-medium">Filter</span>
+			</span>
+			if data.Query != "" {
+				<input type="hidden" name="q" value={ data.Query }/>
+				<input type="hidden" name="mode" value={ data.Mode }/>
+			}
+			if len(data.Branches) > 0 {
 				<select name="branch" class="select select-bordered select-sm" onchange="this.form.submit()">
-					<option value="" selected?={ branchID == "" }>Main branch</option>
-					for _, b := range branches {
-						<option value={ b.ID } selected?={ b.ID == branchID }>{ b.Name }</option>
+					<option value="" selected?={ data.BranchID == "" }>Main branch</option>
+					for _, b := range data.Branches {
+						<option value={ b.ID } selected?={ b.ID == data.BranchID }>{ b.Name }</option>
 					}
 				</select>
 			}
-			if len(types) > 0 {
+			if len(data.Types) > 0 {
 				<select name="type" class="select select-bordered select-sm" onchange="this.form.submit()">
 					<option value="">All types</option>
-					for _, t := range types {
-						<option value={ t } selected?={ t == typeFilter }>{ t }</option>
+					for _, t := range data.Types {
+						<option value={ t } selected?={ t == data.TypeFilter }>{ t }</option>
 					}
 				</select>
 			}
@@ -75,58 +182,207 @@ templ objectsFilters(types []string, typeFilter string, branches []Branch, branc
 	}
 }
 
+// objectsBrowse renders the browse-mode list: object rows plus a "Load more"
+// button when there are more pages.
+templ objectsBrowse(data objectsPageData) {
+	if len(data.Objects) == 0 {
+		@objectsEmpty(data.TypeFilter)
+	} else {
+		@objectsList(data.Objects, data.TypeUIByType)
+		if data.HasMore {
+			@objectsLoadMore(data)
+		}
+	}
+}
+
+// objectsSearchResults renders the search-mode hits (ranked, each with a muted
+// relevance score), or a no-hits empty state with a clear-search escape hatch.
+templ objectsSearchResults(data objectsPageData) {
+	if len(data.Results) == 0 {
+		@objectsSearchEmpty()
+	} else {
+		<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+			<p class="text-base-content/50 min-w-0 truncate text-sm">{ countLabel(len(data.Results), "result", "results") } matching "{ data.Query }"</p>
+			<span class="text-base-content/35 shrink-0 text-xs">Ranked by relevance</span>
+		</div>
+		<div class="card bg-base-100 card-border overflow-hidden">
+			<div class="card-body p-0">
+				<div class="divide-y divide-base-200">
+					for _, r := range data.Results {
+						@objectSearchRow(r, typeUIOf(data.TypeUIByType, r.Object.Type))
+					}
+				</div>
+			</div>
+		</div>
+	}
+}
+
+// objectsSearchEmpty is the no-hits state: an empty state with a clear-search
+// escape hatch back to the full browse list.
+templ objectsSearchEmpty() {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--search-x",
+		Title:       "No matching objects",
+		Description: "Nothing stored matches your search. Try different words, or clear it to keep browsing.",
+		Bordered:    true,
+		Class:       "py-12",
+	}) {
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeLink,
+			Href:    "/objects",
+			Variant: ui.ButtonGhost,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--x",
+		}) {
+			Clear search
+		}
+	}
+}
+
+// objectsLoadMore renders the "Load more" wrapper. Its id is the OOB swap
+// target the partial response replaces when a new page is loaded.
+templ objectsLoadMore(data objectsPageData) {
+	<div id="objects-load-more" class="mt-4 flex justify-center">
+		@objectsLoadMoreButton(data)
+	</div>
+}
+
+// objectsLoadMoreButton is the HTMX cursor-pagination trigger: it appends the
+// next page's rows to #objects-list (beforeend) and swaps itself via the OOB
+// replacement carried by the partial response.
+templ objectsLoadMoreButton(data objectsPageData) {
+	@ui.Button(ui.ButtonProps{
+		Type:       ui.ButtonTypeButton,
+		Variant:    ui.ButtonOutline,
+		Size:       ui.ButtonSM,
+		Icon:       "lucide--chevron-down",
+		ExtraClass: "gap-2 px-6",
+		Attrs: templ.Attributes{
+			"hx-get":    objectsPartialURL(data),
+			"hx-target": "#objects-list",
+			"hx-swap":   "beforeend",
+		},
+	}) {
+		Load more
+	}
+}
+
+// objectsRowsPartial is the HTMX fragment returned by /objects/partial: the
+// next page's rows (appended to #objects-list) plus a replacement load-more
+// slot (empty when there are no more pages).
+templ objectsRowsPartial(data objectsPageData) {
+	for _, o := range data.Objects {
+		@objectRow(o, typeUIOf(data.TypeUIByType, o.Type))
+	}
+	<div id="objects-load-more" hx-swap-oob="true" class="mt-4 flex justify-center">
+		if data.HasMore {
+			@objectsLoadMoreButton(data)
+		}
+	</div>
+}
+
 // objectsEmpty is the Objects page's full-surface empty state (list
 // replacement); py-12 keeps the panel present under the filter bar.
 templ objectsEmpty(typeFilter string) {
 	if typeFilter != "" {
-		@ui.EmptyState(ui.EmptyStateProps{
-			Icon:        "lucide--box",
-			Title:       "No objects of this type",
-			Description: "Nothing stored matches this type.",
-			Bordered:    true,
-			Class:       "py-12",
-		})
+		@objectsTypeEmpty()
 	} else {
-		@ui.EmptyState(ui.EmptyStateProps{
-			Icon:        "lucide--box",
-			Title:       "No objects yet",
-			Description: "Entities will show up here once memory stores something.",
-			Bordered:    true,
-			Class:       "py-12",
-		})
+		@objectsBrowseEmpty()
 	}
+}
+
+// objectsTypeEmpty is the filtered-browse empty state: no object of the
+// selected type, with a clear-filter escape hatch.
+templ objectsTypeEmpty() {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--filter-x",
+		Title:       "No objects of this type",
+		Description: "Nothing stored matches this type. Try another type, or view everything.",
+		Bordered:    true,
+		Class:       "py-12",
+	}) {
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeLink,
+			Href:    "/objects",
+			Variant: ui.ButtonGhost,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--x",
+		}) {
+			Clear filter
+		}
+	}
+}
+
+// objectsBrowseEmpty is the unfiltered browse empty state: nothing stored yet.
+templ objectsBrowseEmpty() {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--box",
+		Title:       "No objects yet",
+		Description: "Entities will show up here once memory stores something.",
+		Bordered:    true,
+		Class:       "py-12",
+	})
 }
 
 templ objectsList(objects []GraphObject, typeUIByType map[string]typeUI) {
-	@cardList("", cardListProps{}) {
-		for _, o := range objects {
-			@objectRow(o, typeUIOf(typeUIByType, o.Type))
-		}
-	}
+	<div class="card bg-base-100 card-border overflow-hidden">
+		<div class="card-body p-0">
+			<div id="objects-list" class="divide-y divide-base-200">
+				for _, o := range objects {
+					@objectRow(o, typeUIOf(typeUIByType, o.Type))
+				}
+			</div>
+		</div>
+	</div>
 }
 
+// objectRow is one browse-mode object row.
 templ objectRow(o GraphObject, tui typeUI) {
-	@components.ListRow(templ.URL("/objects/"+url.PathEscape(o.ID)), typeIconTile(tui.Icon, tui.Color), graphObjectLabel(o), relTime(o.CreatedAt)) {
+	<div class="memory-rise">
+		@components.ListRow(templ.URL("/objects/"+url.PathEscape(o.ID)), typeIconTile(tui.Icon, tui.Color), graphObjectLabel(o), relTime(o.CreatedAt)) {
+			@objectBadges(o)
+		}
+	</div>
+}
+
+// objectSearchRow is one search-mode hit: the standard row plus a muted
+// relevance score. The score is deliberately quiet — a small sparkle + number
+// after the badges — so the type/status/embedding chips stay the primary
+// signal and ranked search results don't read as noisy.
+templ objectSearchRow(r ObjectSearchResult, tui typeUI) {
+	<div class="memory-rise">
+		@components.ListRow(templ.URL("/objects/"+url.PathEscape(r.Object.ID)), typeIconTile(tui.Icon, tui.Color), graphObjectLabel(r.Object), relTime(r.Object.CreatedAt)) {
+			@objectBadges(r.Object)
+			<span class="text-base-content/40 flex shrink-0 items-center gap-1" title="Relevance score">
+				@ui.IconSpan("lucide--sparkles", "size-3 shrink-0")
+				<span class="text-xs font-medium tabular-nums">{ searchScoreLabel(r.Score) }</span>
+			</span>
+		}
+	</div>
+}
+
+// objectBadges renders the trailing type/status/embedding badges shared by the
+// browse and search rows.
+templ objectBadges(o GraphObject) {
+	@ui.Badge(ui.BadgeProps{
+		Label:   o.Type,
+		Variant: ui.BadgeNeutral,
+		Size:    ui.BadgeSizeXS,
+	})
+	if o.Status != "" {
 		@ui.Badge(ui.BadgeProps{
-			Label:   o.Type,
-			Variant: ui.BadgeNeutral,
+			Label:   o.Status,
+			Variant: ui.BadgeGhost,
 			Size:    ui.BadgeSizeXS,
 		})
-		if o.Status != "" {
-			@ui.Badge(ui.BadgeProps{
-				Label:   o.Status,
-				Variant: ui.BadgeGhost,
-				Size:    ui.BadgeSizeXS,
-			})
-		}
-		if o.EmbeddingStatus != "" {
-			{{ lbl, variant := embeddingStatusBadge(o.EmbeddingStatus) }}
-			@ui.Badge(ui.BadgeProps{
-				Label:   lbl,
-				Variant: variant,
-				Size:    ui.BadgeSizeXS,
-			})
-		}
+	}
+	if o.EmbeddingStatus != "" {
+		{{ lbl, variant := embeddingStatusBadge(o.EmbeddingStatus) }}
+		@ui.Badge(ui.BadgeProps{
+			Label:   lbl,
+			Variant: variant,
+			Size:    ui.BadgeSizeXS,
+		})
 	}
 }
 
