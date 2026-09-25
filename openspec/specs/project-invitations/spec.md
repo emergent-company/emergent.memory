@@ -9,6 +9,11 @@ Defines the invitation flow for adding new members to an organization or project
 ### Requirement: Create invitation
 The system SHALL provide a `POST /api/invites` endpoint (authentication required). The request body SHALL include `orgId` (required), `email` (required, must contain an `@`), and `role` (required; one of `org_admin`, `project_admin`, `project_user`, `project_viewer`), and MAY include `projectId` to scope the invitation to a project. The system SHALL generate a random token, store the invitation in `kb.invites` with a 7-day expiry, and enqueue a `project-invitation` email job. If the role is not one of the allowed values, the server SHALL return HTTP 400. If a pending invitation already exists for the same email and scope, the server SHALL return HTTP 400.
 
+The target project and organization are sourced from the request body (which the route membership middleware cannot inspect), so the system SHALL authorize both at the handler, never trusting a client-supplied value:
+
+- When `projectId` is supplied, the system SHALL authorize the caller against the target project (the supplied `projectId` MUST agree with the caller's authenticated project context and the caller MUST be a member of the project's owning organization — HTTP 403 otherwise, HTTP 404 for an unknown project), and SHALL bind the body `orgId` to the project's server-resolved owning organization (`kb.projects.organization_id`); a contradictory `orgId` SHALL be rejected with HTTP 400.
+- When `projectId` is omitted, the system SHALL require the caller to be a member of the supplied `orgId` (resolved against `kb.organization_memberships`); a non-member SHALL receive HTTP 403.
+
 #### Scenario: Admin invites a new viewer
 - **WHEN** an authenticated user sends `POST /api/invites` with `{"orgId":"<org>","email":"alice@example.com","role":"project_viewer"}`
 - **THEN** the server stores a pending invitation, enqueues a `project-invitation` email job, and returns HTTP 201 with the invitation including its token and expiry
@@ -20,6 +25,14 @@ The system SHALL provide a `POST /api/invites` endpoint (authentication required
 #### Scenario: Duplicate pending invitation
 - **WHEN** a pending invitation already exists for the same email and scope
 - **THEN** the server responds with HTTP 400 and stores no new invitation
+
+#### Scenario: Contradictory orgId and projectId rejected
+- **WHEN** a member supplies `projectId` for their own project but an `orgId` that is not that project's owning organization
+- **THEN** the server responds with HTTP 400 and stores no invitation
+
+#### Scenario: Non-member cannot create an org-level invitation
+- **WHEN** a caller who is not a member of the supplied `orgId` (and no `projectId`) attempts to create an invitation
+- **THEN** the server responds with HTTP 403 and stores no invitation
 
 ### Requirement: Invitation email delivery
 The system SHALL send a `project-invitation` email to the invited address. The email SHALL include the inviting user's name, the project name, the role being granted, and a single-use accept URL valid for 7 days.
@@ -36,7 +49,7 @@ The system SHALL provide a `GET /api/invites/pending` endpoint (authentication r
 - **THEN** the server returns the pending invitations for the user's email addresses with their organization, project, and role
 
 ### Requirement: List invitations for a project
-The system SHALL provide a `GET /api/projects/:projectId/invites` endpoint (authentication required) that returns all invitations for a project, ordered by creation time.
+The system SHALL provide a `GET /api/projects/:projectId/invites` endpoint (authentication required) that returns all invitations for a project, ordered by creation time. The system SHALL authorize the caller against the `:projectId` path parameter (the shared project membership pair): a caller who is not a member of the project's owning organization SHALL receive HTTP 403, and a caller addressing an unknown project SHALL receive HTTP 404.
 
 #### Scenario: Project invitations listed
 - **WHEN** an authenticated user requests invitations for a project
@@ -80,7 +93,7 @@ The system SHALL provide a `POST /api/invites/:id/decline` endpoint (authenticat
 - **THEN** the server responds with HTTP 403 and leaves the invitation unchanged
 
 ### Requirement: Revoke an invitation
-The system SHALL provide a `DELETE /api/invites/:id` endpoint (authentication required) that sets a pending invitation's status to `revoked`. Revoking a non-pending invitation SHALL return HTTP 404.
+The system SHALL provide a `DELETE /api/invites/:id` endpoint (authentication required) that sets a pending invitation's status to `revoked`. The system SHALL require the caller to be a member of the invitation's organization before revoking; a caller who is not a member SHALL receive HTTP 404 (indistinguishable from a missing invitation, so the endpoint is not an existence oracle). Revoking a non-pending invitation SHALL return HTTP 404.
 
 #### Scenario: Pending invitation revoked
 - **WHEN** an authenticated user revokes a pending invitation
