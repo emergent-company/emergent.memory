@@ -89,6 +89,10 @@ func (s *BootstrapService) createStandaloneResources(ctx context.Context) error 
 			return err
 		}
 
+		if err := s.createSecondUser(ctx, tx); err != nil {
+			return err
+		}
+
 		return nil
 	})
 
@@ -191,4 +195,36 @@ func (s *BootstrapService) createProject(ctx context.Context, tx bun.Tx, orgID, 
 
 	s.log.Info("standalone project created", slog.String("project_id", projectID))
 	return projectID, nil
+}
+
+// createSecondUser seeds a secondary standalone identity (invitee in e2e
+// tests) with a core.user_emails row so the invite accept/decline gate can
+// match the invite email to this user.
+func (s *BootstrapService) createSecondUser(ctx context.Context, tx bun.Tx) error {
+	if s.cfg.Standalone.UserEmail2 == "" {
+		return nil
+	}
+
+	var userID string
+	err := tx.NewRaw(`
+		INSERT INTO core.user_profiles (zitadel_user_id, display_name, created_at, updated_at)
+		VALUES ('standalone-2', ?, NOW(), NOW())
+		ON CONFLICT (zitadel_user_id) DO UPDATE SET display_name = EXCLUDED.display_name
+		RETURNING id
+	`, s.cfg.Standalone.UserEmail2).Scan(ctx, &userID)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.NewRaw(`
+		INSERT INTO core.user_emails (user_id, email, verified, created_at)
+		VALUES (?, ?, true, NOW())
+		ON CONFLICT (email) DO NOTHING
+	`, userID, s.cfg.Standalone.UserEmail2).Exec(ctx)
+	if err != nil {
+		return err
+	}
+
+	s.log.Info("standalone second user created", slog.String("user_id", userID))
+	return nil
 }

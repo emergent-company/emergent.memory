@@ -108,6 +108,8 @@ services:
       STANDALONE_USER_EMAIL: "e2e@localhost"
       STANDALONE_ORG_NAME: "E2E Org"
       STANDALONE_PROJECT_NAME: "E2E Project"
+      STANDALONE_API_KEY_2: "e2e-test-user-2"
+      STANDALONE_USER_EMAIL_2: "invitee@localhost"
 
       # Database
       POSTGRES_HOST: test-emergent-db
@@ -161,6 +163,8 @@ services:
         condition: service_healthy
     environment:
       MEMORY_TEST_SERVER: "${MEMORY_TEST_SERVER:-http://test-emergent-server:3002}"
+      STANDALONE_API_KEY_2: "e2e-test-user-2"
+      STANDALONE_USER_EMAIL_2: "invitee@localhost"
       TEST_LOG_DIR: "/test-logs"
       TEST_RUNNER: "docker"
       CI: "true"
