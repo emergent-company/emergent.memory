@@ -12,21 +12,29 @@ import (
 //
 // Authorization (issue #959, sibling): agent sandboxes are deployment-wide
 // infrastructure (host containers keyed by a workspace UUID in
-// kb.agent_sandboxes with no project/org linkage), so this surface is
-// platform-scoped and admits only an active superadmin_full principal. A scope
-// gate is deliberately NOT used: a bare `admin` scope is mintable by any
-// project member (#948/#949) and cannot authorize deployment-wide container
-// control.
+// kb.agent_sandboxes with no project/org linkage), so every route that reads or
+// mutates a workspace — the list, the :id reads, the write/stop/resume/attach/
+// snapshot routes, and the :id tool routes — is platform-scoped and admits only
+// an active superadmin_full principal. A scope gate is deliberately NOT used: a
+// bare `admin` scope is mintable by any project member (#948/#949) and cannot
+// authorize deployment-wide container control.
+//
+// GET /providers is the one exception: it is a read-only catalogue of provider
+// types, capabilities, and live health (no workspace or project data), and it
+// is consumed by the gateway's agent sandbox settings page with a plain session
+// token. It is gated on authenticated read (RequireAuth) only.
 func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware, log *slog.Logger) {
 	// Agent sandbox routes
 	g := e.Group("/api/v1/agent/sandboxes")
 	g.Use(authMiddleware.RequireAuth())
 
-	// Read operations
+	// Provider catalogue: authenticated read (see the group doc above).
+	g.GET("/providers", h.ListProviders)
+
+	// Read operations (deployment-wide container state) — superadmin_full.
 	readGroup := g.Group("")
 	readGroup.Use(authMiddleware.RequireSuperadminFull())
 	readGroup.GET("", h.ListWorkspaces)
-	readGroup.GET("/providers", h.ListProviders)
 	readGroup.GET("/:id", h.GetWorkspace)
 
 	// Write operations
@@ -41,7 +49,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware, l
 	writeGroup.POST("/:id/detach", h.DetachSession)
 	writeGroup.POST("/:id/snapshot", h.CreateSnapshot)
 
-	// Tool operations (require write scope + audit logging)
+	// Tool operations (require superadmin_full + audit logging)
 	toolGroup := g.Group("/:id")
 	toolGroup.Use(authMiddleware.RequireSuperadminFull())
 	toolGroup.Use(ToolAuditMiddleware(log))

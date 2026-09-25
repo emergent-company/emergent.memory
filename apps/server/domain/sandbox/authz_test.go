@@ -127,8 +127,9 @@ func TestMCPHostingAuthz(t *testing.T) {
 	})
 }
 
-// TestAgentSandboxesAuthz proves the sibling /api/v1/agent/sandboxes group is
-// likewise platform-scoped: bare `admin` is refused, superadmin_full is admitted.
+// TestAgentSandboxesAuthz proves the /api/v1/agent/sandboxes group: container
+// read/write/tool routes are platform-scoped (superadmin_full), while the
+// read-only /providers catalogue is an authenticated read (issue #959 review).
 func TestAgentSandboxesAuthz(t *testing.T) {
 	ctx := context.Background()
 	testDB := testutil.SetupTestDBOrFail(t, ctx, "agent_sandboxes_authz")
@@ -162,5 +163,29 @@ func TestAgentSandboxesAuthz(t *testing.T) {
 		resp := client.GET("/api/v1/agent/sandboxes", testutil.WithAuth(superadminToken))
 		require.Equal(t, http.StatusOK, resp.StatusCode,
 			"list by superadmin_full must be 200, got %d: %s", resp.StatusCode, resp.String())
+	})
+
+	t.Run("container read refused for non-superadmin", func(t *testing.T) {
+		resp := client.GET("/api/v1/agent/sandboxes/"+uuid.NewString(), testutil.WithAuth(memberAdminToken))
+		require.Equal(t, http.StatusForbidden, resp.StatusCode,
+			"workspace read by bare admin token must be 403, got %d: %s", resp.StatusCode, resp.String())
+	})
+
+	t.Run("providers allowed for authenticated member", func(t *testing.T) {
+		resp := client.GET("/api/v1/agent/sandboxes/providers", testutil.WithAuth(memberAdminToken))
+		require.Equal(t, http.StatusOK, resp.StatusCode,
+			"providers by authenticated member must be 200, got %d: %s", resp.StatusCode, resp.String())
+	})
+
+	t.Run("providers allowed for plain authenticated user", func(t *testing.T) {
+		resp := client.GET("/api/v1/agent/sandboxes/providers", testutil.WithAuth("no-scope"))
+		require.Equal(t, http.StatusOK, resp.StatusCode,
+			"providers by plain authenticated user must be 200, got %d: %s", resp.StatusCode, resp.String())
+	})
+
+	t.Run("providers unauthenticated refused", func(t *testing.T) {
+		resp := client.GET("/api/v1/agent/sandboxes/providers")
+		require.Equal(t, http.StatusUnauthorized, resp.StatusCode,
+			"providers unauthenticated must be 401, got %d: %s", resp.StatusCode, resp.String())
 	})
 }
