@@ -87,6 +87,18 @@ services:
       start_period: 5s
 
   # ─────────────────────────────────────────────────────────────────────────
+  # Mailpit — SMTP capture box (1025) + HTTP API/UI (8025). The server sends
+  # real email here via EMAIL_TRANSPORT=smtp; e2e tests read it back over the
+  # HTTP API. No healthcheck (the image has no shell).
+  # ─────────────────────────────────────────────────────────────────────────
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: test-emergent-mailpit
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+
+  # ─────────────────────────────────────────────────────────────────────────
   # Memory API server (standalone mode)
   # ─────────────────────────────────────────────────────────────────────────
   test-emergent-server:
@@ -101,6 +113,8 @@ services:
         condition: service_completed_successfully
       test-mcp-registry:
         condition: service_healthy
+      mailpit:
+        condition: service_started
     environment:
       # Standalone mode — API key is used instead of Zitadel OAuth
       STANDALONE_MODE: "true"
@@ -138,6 +152,14 @@ services:
       ENABLE_AGENT_WORKSPACES: "false"
       KREUZBERG_ENABLED: "false"
       WHISPER_ENABLED: "false"
+
+      # Email — SMTP transport into Mailpit so e2e can capture real email.
+      EMAIL_ENABLED: "true"
+      EMAIL_TRANSPORT: "smtp"
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_TLS: "none"
+      EMAIL_WORKER_INTERVAL_MS: "1000"
     healthcheck:
       test: ["CMD-SHELL", "curl -fs http://localhost:3002/health || exit 1"]
       interval: 5s
@@ -165,6 +187,7 @@ services:
       TEST_RUNNER: "docker"
       CI: "true"
       TEST_RUN: "${TEST_RUN:-}"
+      MAILPIT_BASE_URL: "http://mailpit:8025"
     volumes:
       # Persist test session logs to the host so they survive container exit.
       - ./test-logs:/test-logs
