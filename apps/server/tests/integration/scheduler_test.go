@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 	"os"
 	"testing"
@@ -405,8 +406,8 @@ func (s *SchedulerTestSuite) TestStaleJobCleanupTask_Run() {
 	// Create a test document
 	documentID := s.createTestDocument()
 
-	// Create a stale pending job (started 60 minutes ago)
-	staleJobID := s.createDocumentParsingJob(documentID, "pending")
+	// Create a stale in-flight job (started 60 minutes ago)
+	staleJobID := s.createDocumentParsingJob(documentID, "processing")
 	_, err := s.testDB.DB.NewRaw(`
 		UPDATE kb.document_parsing_jobs 
 		SET started_at = NOW() - INTERVAL '60 minutes',
@@ -415,8 +416,8 @@ func (s *SchedulerTestSuite) TestStaleJobCleanupTask_Run() {
 	`, staleJobID).Exec(s.ctx)
 	s.Require().NoError(err)
 
-	// Create a fresh pending job
-	freshJobID := s.createDocumentParsingJob(documentID, "pending")
+	// Create a fresh in-flight job
+	freshJobID := s.createDocumentParsingJob(documentID, "processing")
 	_, err = s.testDB.DB.NewRaw(`
 		UPDATE kb.document_parsing_jobs 
 		SET started_at = NOW() - INTERVAL '5 minutes',
@@ -438,13 +439,13 @@ func (s *SchedulerTestSuite) TestStaleJobCleanupTask_Run() {
 	s.Require().NoError(err)
 	s.Equal("failed", staleStatus, "stale job should be marked as failed")
 
-	// Fresh job should still be pending
+	// Fresh job should still be processing
 	var freshStatus string
 	err = s.testDB.DB.NewRaw(`
 		SELECT status FROM kb.document_parsing_jobs WHERE id = ?
 	`, freshJobID).Scan(s.ctx, &freshStatus)
 	s.Require().NoError(err)
-	s.Equal("pending", freshStatus, "fresh job should still be pending")
+	s.Equal("processing", freshStatus, "fresh job should still be processing")
 }
 
 func (s *SchedulerTestSuite) TestStaleJobCleanupTask_ProcessingJobs() {
@@ -532,7 +533,8 @@ func (s *SchedulerTestSuite) TestStaleJobCleanupTask_FailedJobsNotAffected() {
 func (s *SchedulerTestSuite) TestStaleJobCleanupTask_JobWithNoStartedAt() {
 	documentID := s.createTestDocument()
 
-	// Create a job with no started_at but old created_at
+	// Create a pending job with no started_at but old created_at. A never-started
+	// job is queued behind a backlog, not stale, so the sweep must leave it alone.
 	jobID := s.createDocumentParsingJob(documentID, "pending")
 	_, err := s.testDB.DB.NewRaw(`
 		UPDATE kb.document_parsing_jobs 
@@ -548,13 +550,13 @@ func (s *SchedulerTestSuite) TestStaleJobCleanupTask_JobWithNoStartedAt() {
 	err = task.Run(s.ctx)
 	s.Require().NoError(err)
 
-	// Job should be marked as failed (based on created_at)
+	// Job must stay pending: it never started, so it is queued, not stale.
 	var status string
 	err = s.testDB.DB.NewRaw(`
 		SELECT status FROM kb.document_parsing_jobs WHERE id = ?
 	`, jobID).Scan(s.ctx, &status)
 	s.Require().NoError(err)
-	s.Equal("failed", status)
+	s.Equal("pending", status)
 }
 
 func (s *SchedulerTestSuite) TestStaleJobCleanupTask_DefaultMinutes() {
@@ -562,6 +564,68 @@ func (s *SchedulerTestSuite) TestStaleJobCleanupTask_DefaultMinutes() {
 	task := scheduler.NewStaleJobCleanupTask(s.testDB.DB, s.log, 0, 0)
 	err := task.Run(s.ctx)
 	s.Require().NoError(err) // Should not error
+}
+
+// TestStaleJobCleanupTask_MarksAllCompletedAtTables executes the generated
+// stale-sweep UPDATE against a real Postgres for every table that carries a
+// completed_at column. A substring assertion on the built statement would NOT
+// have caught issue #893 (the SET list was missing a comma, so the statement
+// was syntactically invalid and the sweep silently no-oped); only executing the
+// statement and reading the row back proves the sweep works.
+func (s *SchedulerTestSuite) TestStaleJobCleanupTask_MarksAllCompletedAtTables() {
+	documentID := s.createTestDocument()
+	chunkID := s.createTestChunk(documentID)
+	objectID := s.createTestGraphObject()
+
+	type staleJob struct {
+		table string
+		id    string
+	}
+
+	staleJobs := []staleJob{
+		{table: "kb.document_parsing_jobs", id: s.insertStaleJob(`
+			INSERT INTO kb.document_parsing_jobs (organization_id, project_id, document_id, status, source_type, started_at, created_at, updated_at)
+			VALUES (?, ?, ?, 'processing', 'upload', NOW() - INTERVAL '60 minutes', NOW() - INTERVAL '60 minutes', NOW() - INTERVAL '60 minutes')
+			RETURNING id
+		`, s.orgID, s.projectID, documentID)},
+		{table: "kb.chunk_embedding_jobs", id: s.insertStaleJob(`
+			INSERT INTO kb.chunk_embedding_jobs (chunk_id, status, started_at, created_at, updated_at)
+			VALUES (?, 'processing', NOW() - INTERVAL '60 minutes', NOW() - INTERVAL '60 minutes', NOW() - INTERVAL '60 minutes')
+			RETURNING id
+		`, chunkID)},
+		{table: "kb.graph_embedding_jobs", id: s.insertStaleJob(`
+			INSERT INTO kb.graph_embedding_jobs (object_id, status, started_at, created_at, updated_at)
+			VALUES (?, 'processing', NOW() - INTERVAL '60 minutes', NOW() - INTERVAL '60 minutes', NOW() - INTERVAL '60 minutes')
+			RETURNING id
+		`, objectID)},
+		{table: "kb.object_extraction_jobs", id: s.insertStaleJob(`
+			INSERT INTO kb.object_extraction_jobs (project_id, status, started_at, created_at, updated_at)
+			VALUES (?, 'processing', NOW() - INTERVAL '60 minutes', NOW() - INTERVAL '60 minutes', NOW() - INTERVAL '60 minutes')
+			RETURNING id
+		`, s.projectID)},
+	}
+
+	task := scheduler.NewStaleJobCleanupTask(s.testDB.DB, s.log, 30, 0)
+	s.Require().NoError(task.Run(s.ctx))
+
+	for _, j := range staleJobs {
+		var status string
+		var completedAt sql.NullTime
+		err := s.testDB.DB.NewRaw(
+			"SELECT status, completed_at FROM "+j.table+" WHERE id = ?", j.id,
+		).Scan(s.ctx, &status, &completedAt)
+		s.Require().NoError(err, "read back %s", j.table)
+		s.Equal("failed", status, "%s stale job must be terminal-failed", j.table)
+		s.True(completedAt.Valid, "%s stale job must have completed_at set", j.table)
+	}
+}
+
+// insertStaleJob runs a table-specific INSERT that returns a job id.
+func (s *SchedulerTestSuite) insertStaleJob(insertSQL string, args ...any) string {
+	var id string
+	err := s.testDB.DB.NewRaw(insertSQL, args...).Scan(s.ctx, &id)
+	s.Require().NoError(err)
+	return id
 }
 
 // =============================================================================
@@ -576,6 +640,26 @@ func (s *SchedulerTestSuite) createTestDocument() string {
 	`, documentID, s.projectID).Exec(s.ctx)
 	s.Require().NoError(err)
 	return documentID
+}
+
+func (s *SchedulerTestSuite) createTestChunk(documentID string) string {
+	chunkID := uuid.New().String()
+	_, err := s.testDB.DB.NewRaw(`
+		INSERT INTO kb.chunks (id, document_id, chunk_index, text, created_at, updated_at)
+		VALUES (?, ?, 0, 'test chunk', now(), now())
+	`, chunkID, documentID).Exec(s.ctx)
+	s.Require().NoError(err)
+	return chunkID
+}
+
+func (s *SchedulerTestSuite) createTestGraphObject() string {
+	objectID := uuid.New().String()
+	_, err := s.testDB.DB.NewRaw(`
+		INSERT INTO kb.graph_objects (id, project_id, type, canonical_id)
+		VALUES (?, ?, 'test', ?)
+	`, objectID, s.projectID, objectID).Exec(s.ctx)
+	s.Require().NoError(err)
+	return objectID
 }
 
 func (s *SchedulerTestSuite) createDocumentParsingJob(documentID, status string) string {
