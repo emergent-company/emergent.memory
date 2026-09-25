@@ -64,7 +64,10 @@ func TestBuildMessage(t *testing.T) {
 		HTML:    "<p>Hello <b>HTML</b> body</p>",
 	}
 
-	msg, messageID := buildMessage(cfg, opts)
+	msg, messageID, err := buildMessage(cfg, opts)
+	if err != nil {
+		t.Fatalf("buildMessage: %v", err)
+	}
 	raw := string(msg)
 
 	t.Run("contains multipart/alternative", func(t *testing.T) {
@@ -92,7 +95,7 @@ func TestBuildMessage(t *testing.T) {
 	})
 
 	t.Run("contains correct To header", func(t *testing.T) {
-		want := "To: Invitee <invitee@example.com>"
+		want := `To: "Invitee" <invitee@example.com>`
 		if !strings.Contains(raw, want) {
 			t.Errorf("message missing %q:\n%s", want, raw)
 		}
@@ -116,7 +119,7 @@ func TestBuildMessage(t *testing.T) {
 	})
 
 	t.Run("contains From header with name", func(t *testing.T) {
-		want := "From: Test Sender <noreply@example.com>"
+		want := `From: "Test Sender" <noreply@example.com>`
 		if !strings.Contains(raw, want) {
 			t.Errorf("message missing %q:\n%s", want, raw)
 		}
@@ -135,9 +138,12 @@ func TestBuildMessageDefaults(t *testing.T) {
 	t.Run("defaults FromEmail to noreply@example.com", func(t *testing.T) {
 		cfg := &Config{FromName: "App"}
 		opts := SendOptions{To: "user@example.com", Subject: "Hi"}
-		msg, _ := buildMessage(cfg, opts)
+		msg, _, err := buildMessage(cfg, opts)
+		if err != nil {
+			t.Fatalf("buildMessage: %v", err)
+		}
 
-		if !strings.Contains(string(msg), "From: App <noreply@example.com>") {
+		if !strings.Contains(string(msg), `From: "App" <noreply@example.com>`) {
 			t.Errorf("expected default from email, got:\n%s", string(msg))
 		}
 	})
@@ -145,7 +151,10 @@ func TestBuildMessageDefaults(t *testing.T) {
 	t.Run("omits ToName when absent", func(t *testing.T) {
 		cfg := &Config{FromName: "App"}
 		opts := SendOptions{To: "user@example.com", Subject: "Hi"}
-		msg, _ := buildMessage(cfg, opts)
+		msg, _, err := buildMessage(cfg, opts)
+		if err != nil {
+			t.Fatalf("buildMessage: %v", err)
+		}
 
 		if !strings.Contains(string(msg), "To: user@example.com") {
 			t.Errorf("expected bare To header, got:\n%s", string(msg))

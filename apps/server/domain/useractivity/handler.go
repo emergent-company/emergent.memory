@@ -41,6 +41,9 @@ func (h *Handler) Record(c echo.Context) error {
 	if projectID == "" {
 		return apperror.ErrBadRequest.WithMessage("project_id query param is required")
 	}
+	if err := h.svc.RequireProjectMember(c.Request().Context(), projectID); err != nil {
+		return err
+	}
 
 	var req RecordActivityRequest
 	if err := c.Bind(&req); err != nil {

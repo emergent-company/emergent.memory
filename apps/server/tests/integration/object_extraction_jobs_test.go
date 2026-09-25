@@ -196,34 +196,33 @@ func (s *ObjectExtractionJobsTestSuite) TestDequeue_ReturnsNilWhenEmpty() {
 
 func (s *ObjectExtractionJobsTestSuite) TestDequeue_RespectsOrder() {
 	// Create first job
-	job1, _ := s.jobsService.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{
+	job1, err := s.jobsService.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{
 		ProjectID: s.projectID,
 	})
+	s.Require().NoError(err)
 
 	// Create second job
-	job2, _ := s.jobsService.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{
+	job2, err := s.jobsService.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{
 		ProjectID: s.projectID,
 	})
+	s.Require().NoError(err)
 
 	// Dequeue one job - should get first (FIFO order)
 	dequeuedJob, err := s.jobsService.Dequeue(s.ctx)
-	s.NoError(err)
+	s.Require().NoError(err)
+	s.Require().NotNil(dequeuedJob, "dequeue must return a job while pending jobs remain")
 	s.Equal(job1.ID, dequeuedJob.ID, "Should dequeue jobs in FIFO order")
 
-	// Dequeue next - but wait, same project can only have one running job
-	// so the second dequeue should return nil
+	// Per-project serialisation is no longer enforced: DequeueBatch was
+	// rewritten to support worker concurrency (object_extraction_worker claims
+	// up to Concurrency jobs per poll and runs them in parallel), so a second
+	// pending job in the same project IS dequeued even while the first is still
+	// processing. Assert the current contract and fail cleanly on a nil result
+	// rather than panicking on a nil dereference.
 	dequeuedJob2, err := s.jobsService.Dequeue(s.ctx)
-	s.NoError(err)
-	s.Nil(dequeuedJob2, "Second job should not be dequeued while first is processing (same project)")
-
-	// Complete the first job
-	_ = s.jobsService.MarkCompleted(s.ctx, job1.ID, extraction.ObjectExtractionResults{})
-
-	// Now we should be able to dequeue the second
-	dequeuedJob2, err = s.jobsService.Dequeue(s.ctx)
-	s.NoError(err)
-	s.NotNil(dequeuedJob2)
-	s.Equal(job2.ID, dequeuedJob2.ID)
+	s.Require().NoError(err)
+	s.Require().NotNil(dequeuedJob2, "second same-project job must be dequeued while the first is processing")
+	s.Equal(job2.ID, dequeuedJob2.ID, "Should dequeue the second job while the first is processing")
 }
 
 func (s *ObjectExtractionJobsTestSuite) TestDequeue_DifferentProjectsCanRunInParallel() {
@@ -565,11 +564,11 @@ func (s *ObjectExtractionJobsTestSuite) TestStats_ReturnsCorrectCounts() {
 		ProjectID: s.projectID,
 	})
 
-	// Create and process job (set to processing)
+	// Create a second pending job (same project — per-project serialisation is
+	// no longer enforced, so both stay pending until explicitly dequeued).
 	_, _ = s.jobsService.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{
 		ProjectID: s.projectID,
 	})
-	// Note: can't dequeue second while first is pending
 
 	// Create and complete job
 	job3, _ := s.jobsService.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{

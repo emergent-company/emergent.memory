@@ -51,7 +51,14 @@ func (s *SMTPSender) Send(ctx context.Context, opts SendOptions) (*SendResult, e
 		}, nil
 	}
 
-	msg, messageID := buildMessage(s.cfg, opts)
+	msg, messageID, err := buildMessage(s.cfg, opts)
+	if err != nil {
+		s.log.Error("failed to build email message", slog.String("error", err.Error()))
+		return &SendResult{
+			Success: false,
+			Error:   err.Error(),
+		}, nil
+	}
 
 	fromEmail := s.cfg.FromEmail
 	if fromEmail == "" {
@@ -194,16 +201,30 @@ func (s *SMTPSender) connect(ctx context.Context, host, addr string) (*smtp.Clie
 
 // buildMessage builds a multipart/alternative MIME message and returns the raw
 // bytes plus the generated Message-ID. It is exposed for unit testing.
-func buildMessage(cfg *Config, opts SendOptions) ([]byte, string) {
+//
+// The From/To/Subject header values are validated and encoded before being
+// written: addresses are parsed with net/mail (which rejects CR/LF) and the
+// subject is Q-encoded. Any caller-influenced value containing CR/LF fails the
+// build closed rather than being written raw into the header block.
+func buildMessage(cfg *Config, opts SendOptions) ([]byte, string, error) {
 	fromEmail := cfg.FromEmail
 	if fromEmail == "" {
 		fromEmail = "noreply@example.com"
 	}
-	from := fmt.Sprintf("%s <%s>", cfg.FromName, fromEmail)
 
-	to := opts.To
-	if opts.ToName != "" {
-		to = fmt.Sprintf("%s <%s>", opts.ToName, opts.To)
+	from, err := formatAddress(cfg.FromName, fromEmail)
+	if err != nil {
+		return nil, "", fmt.Errorf("invalid from address: %w", err)
+	}
+
+	to, err := formatAddress(opts.ToName, opts.To)
+	if err != nil {
+		return nil, "", fmt.Errorf("invalid to address: %w", err)
+	}
+
+	subject, err := encodeSubject(opts.Subject)
+	if err != nil {
+		return nil, "", err
 	}
 
 	host := "localhost"
@@ -225,7 +246,7 @@ func buildMessage(cfg *Config, opts SendOptions) ([]byte, string) {
 
 	writeHeader("From", from)
 	writeHeader("To", to)
-	writeHeader("Subject", opts.Subject)
+	writeHeader("Subject", subject)
 	writeHeader("Message-ID", messageID)
 	writeHeader("Date", time.Now().Format(time.RFC1123Z))
 	writeHeader("MIME-Version", "1.0")
@@ -248,7 +269,7 @@ func buildMessage(cfg *Config, opts SendOptions) ([]byte, string) {
 
 	buf.WriteString("--" + boundary + "--\r\n")
 
-	return buf.Bytes(), messageID
+	return buf.Bytes(), messageID, nil
 }
 
 // generateMessageID produces a unique Message-ID like "<hex>@<host>".

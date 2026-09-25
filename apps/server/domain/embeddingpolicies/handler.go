@@ -37,6 +37,9 @@ func (h *Handler) List(c echo.Context) error {
 	if projectID == "" {
 		return apperror.ErrBadRequest.WithMessage("project_id query parameter is required")
 	}
+	if err := h.svc.RequireProjectMember(c.Request().Context(), projectID); err != nil {
+		return err
+	}
 
 	// Optional object_type filter
 	var objectType *string
@@ -77,6 +80,9 @@ func (h *Handler) GetByID(c echo.Context) error {
 	if policyID == "" {
 		return apperror.ErrBadRequest.WithMessage("policy id required")
 	}
+	if err := h.svc.RequireProjectMember(c.Request().Context(), projectID); err != nil {
+		return err
+	}
 
 	policy, err := h.svc.GetByID(c.Request().Context(), projectID, policyID)
 	if err != nil {
@@ -113,6 +119,9 @@ func (h *Handler) Create(c echo.Context) error {
 	if req.ObjectType == "" {
 		return apperror.ErrBadRequest.WithMessage("objectType is required")
 	}
+	if err := h.svc.RequireProjectMember(c.Request().Context(), req.ProjectID); err != nil {
+		return err
+	}
 
 	policy, err := h.svc.Create(c.Request().Context(), req.ProjectID, &req)
 	if err != nil {
@@ -147,6 +156,9 @@ func (h *Handler) Update(c echo.Context) error {
 	policyID := c.Param("id")
 	if policyID == "" {
 		return apperror.ErrBadRequest.WithMessage("policy id required")
+	}
+	if err := h.svc.RequireProjectMember(c.Request().Context(), projectID); err != nil {
+		return err
 	}
 
 	var req UpdateRequest
@@ -186,6 +198,9 @@ func (h *Handler) Delete(c echo.Context) error {
 	policyID := c.Param("id")
 	if policyID == "" {
 		return apperror.ErrBadRequest.WithMessage("policy id required")
+	}
+	if err := h.svc.RequireProjectMember(c.Request().Context(), projectID); err != nil {
+		return err
 	}
 
 	err := h.svc.Delete(c.Request().Context(), projectID, policyID)
