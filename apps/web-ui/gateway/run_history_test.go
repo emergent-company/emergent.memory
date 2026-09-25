@@ -310,3 +310,51 @@ func TestRunTimelineQuestionsFetchFailure(t *testing.T) {
 		t.Error("transcript items missing when the questions fetch fails")
 	}
 }
+
+// TestRunTimelineItemsToolMetadataAndSystemPrompt verifies the run transcript
+// carries the tool-call id + execution duration and the composed system
+// instruction, so both chat renderers can surface them.
+func TestRunTimelineItemsToolMetadataAndSystemPrompt(t *testing.T) {
+	dur := 1250
+	full := &AgentRunFull{
+		Run: &ScheduledAgentRun{ID: "run-1", Status: "completed", StartedAt: "2026-08-26T08:00:00Z"},
+		Messages: []*AgentRunMessage{
+			{Role: "system", Content: map[string]any{"text": "You are a careful agent."}, CreatedAt: "2026-08-26T08:00:00Z", StepNumber: 0},
+			{Role: "user", Content: map[string]any{"text": "Do the thing"}, CreatedAt: "2026-08-26T08:00:01Z", StepNumber: 0},
+		},
+		ToolCalls: []*AgentRunToolCall{
+			{ID: "call-abc", ToolName: "web_search", Status: "completed", DurationMs: &dur, Input: map[string]any{"q": "x"}, Output: map[string]any{"n": 1}, CreatedAt: "2026-08-26T08:00:02Z", StepNumber: 1},
+		},
+	}
+	items := runTimelineItems(full, nil)
+
+	var sys map[string]any
+	var tool map[string]any
+	for _, raw := range items {
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatalf("decode item: %v", err)
+		}
+		switch {
+		case m["kind"] == "message" && m["role"] == "system":
+			sys = m
+		case m["kind"] == "tool_call" && m["tool_name"] == "web_search":
+			tool = m
+		}
+	}
+	if sys == nil {
+		t.Fatal("system instruction message missing from run transcript")
+	}
+	if got, _ := sys["content"].(map[string]any)["text"].(string); got != "You are a careful agent." {
+		t.Errorf("system text = %q", got)
+	}
+	if tool == nil {
+		t.Fatal("tool chip missing")
+	}
+	if tool["id"] != "call-abc" {
+		t.Errorf("tool id = %v, want call-abc", tool["id"])
+	}
+	if tool["duration_ms"] != float64(1250) {
+		t.Errorf("tool duration_ms = %v, want 1250", tool["duration_ms"])
+	}
+}

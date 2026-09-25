@@ -2615,6 +2615,15 @@ func (ae *AgentExecutor) runPipeline(
 	// system instruction stays static (enabling Gemini implicit prompt caching).
 	userContent := genai.NewContentFromText(triggerContextPrefix+req.UserMessage, genai.RoleUser)
 
+	// Persist the composed system instruction so the recorded transcript carries
+	// the prompt the model actually saw (base prompt + skills block + appendix +
+	// workspace context). It is written before the user turn so it orders first
+	// in the run's message list. isAgentReplyRole excludes role "system", so this
+	// record is never mistaken for the agent's reply.
+	if instruction != "" {
+		ae.persistMessage(dbCtx, run.ID, "system", instruction, initialSteps)
+	}
+
 	// Persist the user message
 	ae.persistMessage(dbCtx, run.ID, "user", req.UserMessage, initialSteps)
 

@@ -1324,7 +1324,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 			// Last text-bearing row that is not the user/tool side of the run is
 			// the assistant answer (Role may be "assistant" or the agent author).
 			for i := len(runMsgs) - 1; i >= 0; i-- {
-				if runMsgs[i].Role == RoleUser || runMsgs[i].Role == "tool" {
+				if runMsgs[i].Role == RoleUser || runMsgs[i].Role == "tool" || runMsgs[i].Role == "system" {
 					continue
 				}
 				if t := agentRunMessageText(runMsgs[i].Content); t != "" {

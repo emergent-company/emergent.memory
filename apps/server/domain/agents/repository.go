@@ -3195,6 +3195,7 @@ type ConversationHistoryItem struct {
 	Content map[string]any `json:"content,omitempty"`
 
 	// Fields populated for tool_call / tool_result
+	ID         string         `json:"id,omitempty"`
 	ToolName   string         `json:"tool_name,omitempty"`
 	ToolInput  map[string]any `json:"tool_input,omitempty"`
 	ToolOutput map[string]any `json:"tool_output,omitempty"`
@@ -3305,6 +3306,7 @@ func (r *Repository) GetConversationFullHistory(ctx context.Context, acpSessionI
 					RunID:      run.ID,
 					StepNumber: tc.StepNumber,
 					CreatedAt:  tc.CreatedAt,
+					ID:         tc.ID,
 					ToolName:   tc.ToolName,
 					ToolInput:  tc.Input,
 					ToolOutput: tc.Output,
@@ -3367,6 +3369,9 @@ func (r *Repository) GetConversationFullHistoryRaw(ctx context.Context, acpSessi
 			m["tool_input"] = item.ToolInput
 			m["tool_output"] = item.ToolOutput
 			m["tool_status"] = item.ToolStatus
+			if item.ID != "" {
+				m["id"] = item.ID
+			}
 		}
 		if item.DurationMs != nil {
 			m["duration_ms"] = *item.DurationMs
