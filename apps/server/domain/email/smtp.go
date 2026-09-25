@@ -90,7 +90,22 @@ func (s *SMTPSender) validate() error {
 	if s.cfg.SMTPHost == "" {
 		return fmt.Errorf("SMTP_HOST is required")
 	}
+	if !validSMTPTLS(s.cfg.SMTPTLS) {
+		return fmt.Errorf("SMTP_TLS has invalid value %q (must be one of none, starttls, tls)", s.cfg.SMTPTLS)
+	}
 	return nil
+}
+
+// validSMTPTLS reports whether tlsMode is a recognised SMTP_TLS value. An empty
+// value is treated as "none" (the historical default); any other unrecognised
+// string is rejected so a typo cannot silently downgrade credentials to plaintext.
+func validSMTPTLS(tlsMode string) bool {
+	switch tlsMode {
+	case "", "none", "starttls", "tls":
+		return true
+	default:
+		return false
+	}
 }
 
 // deliver connects to the SMTP server and delivers a single message. The dial
@@ -138,19 +153,28 @@ func (s *SMTPSender) deliver(ctx context.Context, fromEmail, to string, msg []by
 func (s *SMTPSender) connect(ctx context.Context, host, addr string) (*smtp.Client, error) {
 	dialer := &net.Dialer{}
 
-	switch s.cfg.SMTPTLS {
-	case "tls":
-		rawConn, err := dialer.DialContext(ctx, "tcp", addr)
-		if err != nil {
+	rawConn, err := dialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+
+	// The dial above honours ctx, but the net/smtp exchange (greeting, Auth,
+	// Mail, Rcpt, Data, Quit) does not — a host that accepts the connection and
+	// then goes silent would stall the worker goroutine indefinitely. Bound the
+	// entire exchange to the caller's deadline so every read/write fails once it
+	// is reached.
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := rawConn.SetDeadline(deadline); err != nil {
+			rawConn.Close()
 			return nil, err
 		}
+	}
+
+	switch s.cfg.SMTPTLS {
+	case "tls":
 		tlsConn := tls.Client(rawConn, &tls.Config{ServerName: host})
 		return smtp.NewClient(tlsConn, host)
 	case "starttls":
-		rawConn, err := dialer.DialContext(ctx, "tcp", addr)
-		if err != nil {
-			return nil, err
-		}
 		client, err := smtp.NewClient(rawConn, host)
 		if err != nil {
 			return nil, err
@@ -160,12 +184,11 @@ func (s *SMTPSender) connect(ctx context.Context, host, addr string) (*smtp.Clie
 			return nil, err
 		}
 		return client, nil
-	default: // "none"
-		rawConn, err := dialer.DialContext(ctx, "tcp", addr)
-		if err != nil {
-			return nil, err
-		}
+	case "", "none":
 		return smtp.NewClient(rawConn, host)
+	default:
+		rawConn.Close()
+		return nil, fmt.Errorf("unsupported SMTP_TLS mode %q", s.cfg.SMTPTLS)
 	}
 }
 

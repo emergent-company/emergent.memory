@@ -2,10 +2,13 @@ package email
 
 import (
 	"context"
+	"io"
 	"log/slog"
+	"net"
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSMTPSender_validate(t *testing.T) {
@@ -229,6 +232,105 @@ func TestSMTPSender_SendDisabled(t *testing.T) {
 	}
 	if result.Success {
 		t.Error("Send() result.Success = true, want false when disabled")
+	}
+}
+
+func TestSMTPSender_validateTLS(t *testing.T) {
+	tests := []struct {
+		name      string
+		tls       string
+		wantError bool
+	}{
+		{name: "none valid", tls: "none"},
+		{name: "empty treated as none", tls: ""},
+		{name: "starttls valid", tls: "starttls"},
+		{name: "tls valid", tls: "tls"},
+		{name: "unknown rejected", tls: "startls", wantError: true},
+		{name: "typo rejected", tls: "tl", wantError: true},
+		{name: "uppercase rejected", tls: "STARTTLS", wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sender := &SMTPSender{cfg: &Config{SMTPHost: "mailpit", SMTPTLS: tt.tls}}
+			err := sender.validate()
+			if tt.wantError && err == nil {
+				t.Fatalf("validate() with SMTP_TLS=%q: expected error, got nil", tt.tls)
+			}
+			if !tt.wantError && err != nil {
+				t.Fatalf("validate() with SMTP_TLS=%q: unexpected error %v", tt.tls, err)
+			}
+		})
+	}
+}
+
+func TestSMTPSender_connectRejectsUnknownTLS(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		_, _ = io.ReadAll(c)
+	}()
+
+	sender := &SMTPSender{cfg: &Config{SMTPHost: "127.0.0.1", SMTPTLS: "tls_typo"}}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err = sender.connect(ctx, "127.0.0.1", ln.Addr().String())
+	if err == nil {
+		t.Fatal("connect() with unknown SMTP_TLS: expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "SMTP_TLS") {
+		t.Errorf("connect() error = %q, want mention of SMTP_TLS", err)
+	}
+}
+
+func TestSMTPSender_deliverHonorsDeadline(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		// Accept the connection but never send the SMTP banner — simulate a host
+		// that goes silent after the TCP handshake.
+		buf := make([]byte, 1024)
+		for {
+			if _, err := c.Read(buf); err != nil {
+				return
+			}
+		}
+	}()
+
+	port := ln.Addr().(*net.TCPAddr).Port
+	sender := &SMTPSender{cfg: &Config{SMTPHost: "127.0.0.1", SMTPPort: port, SMTPTLS: "none"}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	err = sender.deliver(ctx, "noreply@example.com", "invitee@example.com", []byte("test"))
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("deliver() with silent server: expected error, got nil")
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("deliver() took %v, want bounded by the context deadline", elapsed)
 	}
 }
 

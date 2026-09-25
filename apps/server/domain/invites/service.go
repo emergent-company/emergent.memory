@@ -267,6 +267,7 @@ func (s *Service) Create(ctx context.Context, req *CreateInviteRequest) (*Invite
 				"projectName": projectName,
 				"roleLabel":   roleLabel,
 				"acceptUrl":   acceptURL,
+				"plainText":   email.ProjectInvitationPlainText(inviterName, projectName, roleLabel, acceptURL),
 			},
 			SourceType: stringPtr("invite"),
 			SourceID:   &invite.ID,

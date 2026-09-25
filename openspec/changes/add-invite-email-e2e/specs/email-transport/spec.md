@@ -29,3 +29,18 @@ The system SHALL deliver email over SMTP using `SMTP_HOST`, `SMTP_PORT`, optiona
 #### Scenario: Authenticated SMTP
 - **WHEN** `SMTP_USERNAME` and `SMTP_PASSWORD` are set
 - **THEN** the sender authenticates before delivering the message
+
+#### Scenario: Plain-text part carries actionable content
+- **WHEN** an email is delivered over SMTP
+- **THEN** the `text/plain` part SHALL carry the same actionable content as the HTML part, including any accept link and CLI install instructions, so plain-text clients and test captures receive the full message
+
+### Requirement: SMTP hardening
+The system SHALL reject an unrecognised `SMTP_TLS` value (fail closed) rather than silently treating it as plaintext, and SHALL bound the entire SMTP exchange by a deadline so a host that accepts the connection and then goes silent cannot stall a worker goroutine indefinitely.
+
+#### Scenario: Unknown TLS mode rejected
+- **WHEN** `SMTP_TLS` is set to a value other than `none`, `starttls`, or `tls`
+- **THEN** the sender reports a configuration error and does not send over plaintext
+
+#### Scenario: Silent server bounded by deadline
+- **WHEN** the SMTP server accepts the connection but stops responding
+- **THEN** the sender aborts once the send deadline is reached instead of blocking a worker goroutine indefinitely
