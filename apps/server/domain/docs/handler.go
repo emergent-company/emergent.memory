@@ -1,6 +1,7 @@
 package docs
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -57,7 +58,7 @@ func (h *Handler) GetDocument(c echo.Context) error {
 	doc, err := h.svc.GetDocument(slug)
 	if err != nil {
 		// Check if it's a "not found" error
-		if err.Error() == "document not found: "+slug {
+		if errors.Is(err, ErrDocumentNotFound) {
 			return apperror.ErrNotFound.WithMessage("document not found")
 		}
 		return apperror.ErrInternal.WithMessage("failed to get document").WithInternal(err)

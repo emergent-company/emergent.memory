@@ -3,6 +3,7 @@ package docs
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,6 +14,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+// ErrDocumentNotFound is returned when the requested document slug matches no file.
+var ErrDocumentNotFound = errors.New("document not found")
 
 type Service struct {
 	logger  *slog.Logger
@@ -117,7 +121,7 @@ func (s *Service) GetDocument(slug string) (*Document, error) {
 	}
 
 	if foundPath == "" {
-		return nil, fmt.Errorf("document not found: %s", slug)
+		return nil, fmt.Errorf("%w: %s", ErrDocumentNotFound, slug)
 	}
 
 	doc, err := s.parseDocument(foundPath)
