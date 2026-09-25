@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
@@ -40,6 +41,11 @@ func (h *Handler) Record(c echo.Context) error {
 	projectID := c.QueryParam("project_id")
 	if projectID == "" {
 		return apperror.ErrBadRequest.WithMessage("project_id query param is required")
+	}
+	// Validate the project ID format before the membership lookup: a malformed
+	// query project_id must be a 400, not fall through to the org lookup.
+	if _, err := uuid.Parse(projectID); err != nil {
+		return apperror.ErrBadRequest.WithMessage("Invalid project_id format")
 	}
 	if err := h.svc.RequireProjectMember(c.Request().Context(), projectID); err != nil {
 		return err
