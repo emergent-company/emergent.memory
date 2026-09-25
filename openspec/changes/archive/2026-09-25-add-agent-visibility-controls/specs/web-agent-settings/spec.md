@@ -1,8 +1,12 @@
+## Purpose
+
+The agent General settings form exposes a Visibility control (a custom Alpine listbox, since a native `<select>` cannot render a two-line option description) with three levels — `project`, `external`, `internal` — their descriptions, conditional warning/note alerts, and server-side validation and persistence through the general-settings path.
+
 ## ADDED Requirements
 
 ### Requirement: Visibility control on the agent General settings form
 
-The agent General settings form SHALL expose a **Visibility** control — a native `<select>` with exactly three options, one per visibility level, rendered as `Name — description`:
+The agent General settings form SHALL expose a **Visibility** control — a custom Alpine listbox (`role="listbox"` with three `role="option"` entries, one per visibility level) rendered as a two-line `Name` + `description`. A native `<select>`/`<option>` cannot render the second, dimmed description line per option, so a hidden input carries the submitted `visibility` value:
 
 | Value | Name | Description |
 |---|---|---|
@@ -12,10 +16,10 @@ The agent General settings form SHALL expose a **Visibility** control — a nati
 
 The control SHALL default to `project`, and a server-rendered helper line SHALL repeat the selected option's description.
 
-#### Scenario: Visibility dropdown lists the three levels
+#### Scenario: Visibility listbox lists the three levels
 
 - **WHEN** the General settings form renders
-- **THEN** the Visibility control contains exactly three options — `project`, `external`, `internal` — each labelled `Name — description` in that order
+- **THEN** the Visibility listbox contains exactly three `role="option"` entries — `project`, `external`, `internal` — each rendering a two-line `Name` + `description` in that order
 
 #### Scenario: Visibility defaults to project
 
