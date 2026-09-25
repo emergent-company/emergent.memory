@@ -292,6 +292,15 @@ type ExecuteRequest struct {
 	// Used by the agentcompat layer to inject caller-supplied (client) tools.
 	ExtraTools []tool.Tool
 
+	// ExternalFacing marks a run started through an external-facing transport
+	// (A2A message:send/stream, agentcompat, public share). It is set by the
+	// transport, never inferred from the agent's own visibility. When true, the
+	// coordination tools (spawn_agents / list_available_agents) must not reach
+	// internal-visible agents. Trusted surfaces (session UI, scheduled/worker
+	// runs, MCP tools, agent→agent delegation) leave it false and keep full
+	// internal coordination. Any new external-facing transport MUST set this.
+	ExternalFacing bool
+
 	// ShareToolDeny lists tool names hard-blocked on this run (public agent-share
 	// allowlist). beforeToolCb enforces it BEFORE the confirm gate, so an
 	// approval can never override a deny-listed tool.
@@ -3168,6 +3177,7 @@ func (ae *AgentExecutor) buildCoordinationTools(req ExecuteRequest, runID string
 		Depth:          req.Depth,
 		MaxDepth:       maxDepth,
 		SpawnPolicy:    extractSpawnPolicy(req.AgentDefinition),
+		ExternalFacing: req.ExternalFacing,
 		ParentMetadata: req.TriggerMetadata,
 	}
 

@@ -60,7 +60,7 @@ jobs:
       # built locally (memory-server:ci) and the test client/registry services
       # are built, so pull only the registry-backed services.
       - name: "Preflight: pull stack images"
-        run: docker compose pull test-db minio minio-init mailpit
+        run: docker compose pull test-db seaweedfs mailpit
 
       - name: Run CLI install tests
         env:
@@ -124,7 +124,7 @@ jobs:
       # built locally (memory-server:ci) and the test client/registry services
       # are built, so pull only the registry-backed services.
       - name: "Preflight: pull stack images"
-        run: docker compose pull test-db minio minio-init mailpit
+        run: docker compose pull test-db seaweedfs mailpit
 
       - name: Start server stack
         run: |
@@ -148,7 +148,10 @@ jobs:
 
       - name: Show server logs on failure
         if: failure()
-        run: docker compose logs --tail=100
+        run: |
+          docker compose logs --tail=100
+          echo "=== email-worker / SMTP logs ==="
+          docker compose logs test-emergent-server --tail=1000 2>/dev/null | grep -iE "email|smtp|template|enqueue|dequeue" || echo "(no email-related server log lines)"
 
       - name: Stop server stack
         if: always()

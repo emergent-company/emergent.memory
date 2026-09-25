@@ -94,6 +94,15 @@ func (s *Service) HandleChatCompletion(ctx context.Context, req *ChatCompletionR
 		return nil, fmt.Errorf("model %q not found: no agent definition named %q exists in this project", req.Model, agentName)
 	}
 
+	// Internal agents are "callable only by other agents, never via A2A"
+	// (entity.go:279). The OpenAI-compatible surface is external-facing, so it
+	// must not resolve or invoke an internal agent at all (issue #939). Return
+	// the same "not found" message as a missing agent so the name's existence
+	// is not revealed.
+	if agentDef.Visibility == agents.VisibilityInternal {
+		return nil, fmt.Errorf("model %q not found: no agent definition named %q exists in this project", req.Model, agentName)
+	}
+
 	// Validate client tools (check for reserved memory_ prefix).
 	if conflict := ValidateClientTools(req.Tools); conflict != "" {
 		return nil, fmt.Errorf("invalid tools: %s", conflict)
@@ -198,6 +207,7 @@ func (s *Service) handleNewRun(
 		SystemPromptAppendix: appendix,
 		UserID:               user.ID,
 		ExtraTools:           extraTools,
+		ExternalFacing:       true,
 	}
 
 	if req.Stream {
@@ -256,6 +266,7 @@ func (s *Service) handleResume(
 		SystemPromptAppendix: buildSystemAppendix(req.Messages, len(req.Tools) > 0, projectInfo),
 		UserID:               user.ID,
 		ExtraTools:           extraTools,
+		ExternalFacing:       true,
 	}
 
 	if req.Stream {
