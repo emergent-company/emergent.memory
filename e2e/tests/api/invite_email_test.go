@@ -40,11 +40,13 @@ type mailpitAddress struct {
 }
 
 // mailpitSummary is a message entry in the /api/v1/messages list response.
+// Mailpit models To/Cc/Bcc as arrays but From as a single object (an SMTP
+// message has exactly one envelope sender), so From is a bare mailpitAddress.
 type mailpitSummary struct {
 	ID      string           `json:"ID"`
 	Subject string           `json:"Subject"`
 	To      []mailpitAddress `json:"To"`
-	From    []mailpitAddress `json:"From"`
+	From    mailpitAddress   `json:"From"`
 }
 
 // mailpitMessage is the full message returned by /api/v1/message/{ID}.
@@ -52,7 +54,7 @@ type mailpitMessage struct {
 	ID      string           `json:"ID"`
 	Subject string           `json:"Subject"`
 	To      []mailpitAddress `json:"To"`
-	From    []mailpitAddress `json:"From"`
+	From    mailpitAddress   `json:"From"`
 	Text    string           `json:"Text"`
 	HTML    string           `json:"HTML"`
 }
@@ -96,8 +98,57 @@ func waitForMessageTo(t *testing.T, base, email string, timeout time.Duration) m
 		}
 		time.Sleep(2 * time.Second)
 	}
+	dumpMailpitInbox(t, base)
 	t.Fatalf("no email to %s arrived in Mailpit within %s", email, timeout)
 	return mailpitSummary{}
+}
+
+// dumpMailpitInbox logs every message currently in the Mailpit capture box so a
+// delivery failure is actionable without a manual investigation: it shows
+// whether the email never arrived at all, arrived under a different recipient,
+// or arrived with the wrong subject. It is called on the timeout path only.
+func dumpMailpitInbox(t *testing.T, base string) {
+	t.Helper()
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(base + "/api/v1/messages?start=0&limit=50")
+	if err != nil {
+		t.Logf("Mailpit inbox dump failed: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	var list mailpitListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		t.Logf("Mailpit inbox dump decode failed: %v", err)
+		return
+	}
+
+	if len(list.Messages) == 0 {
+		t.Logf("Mailpit inbox is EMPTY — the email was never delivered (check server email-worker/SMTP logs for enqueue/send errors)")
+		return
+	}
+
+	t.Logf("Mailpit inbox contains %d message(s):", len(list.Messages))
+	for _, m := range list.Messages {
+		t.Logf("  - subject=%q to=%v from=%s", m.Subject, addrStrings(m.To), addrString(m.From))
+	}
+}
+
+// addrString renders a single Mailpit address as "Name <addr>" or just "addr".
+func addrString(a mailpitAddress) string {
+	if a.Name != "" {
+		return fmt.Sprintf("%s <%s>", a.Name, a.Address)
+	}
+	return a.Address
+}
+
+// addrStrings flattens a Mailpit address list into readable "Name <addr>" strings.
+func addrStrings(addrs []mailpitAddress) []string {
+	out := make([]string, 0, len(addrs))
+	for _, a := range addrs {
+		out = append(out, addrString(a))
+	}
+	return out
 }
 
 // fetchMessage returns the full Mailpit message body for a message ID.
@@ -154,7 +205,7 @@ func TestInvite_EmailDeliveredWithAcceptLink(t *testing.T) {
 	if !strings.Contains(strings.ToLower(msg.Subject), "invited") {
 		t.Errorf("email subject %q does not mention invitation", msg.Subject)
 	}
-	if len(msg.From) == 0 || msg.From[0].Address == "" {
+	if msg.From.Address == "" {
 		t.Errorf("email has no from address: %+v", msg.From)
 	}
 
