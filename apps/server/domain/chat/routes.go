@@ -61,11 +61,21 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	askProjectGroup.Use(authMiddleware.RequireAPITokenScopes("chat:use"))
 	askProjectGroup.POST("", h.AskStream)
 
-	// User-level ask endpoint — no project context required.
-	// Useful for documentation questions and account-level tasks (e.g. "how do I configure a provider?").
-	// Still requires authentication so the agent can personalise responses and access account info.
+	// User-level ask endpoint — no project context required when no project is
+	// supplied. Useful for documentation questions and account-level tasks (e.g.
+	// "how do I configure a provider?"). Still requires authentication so the
+	// agent can personalise responses and access account info.
+	//
+	// The project, when present, is header-sourced (X-Project-ID, normalised onto
+	// user.ProjectID by RequireAuth) — the same disposition as /api/chat, /api/graph
+	// and /api/graph/journal. The shared pair enforces token binding then real
+	// org membership for any project-addressed caller (issue #913); with no
+	// project in scope both middlewares pass through, preserving the account-level
+	// ask path.
 	askGroup := e.Group("/api/ask")
 	askGroup.Use(authMiddleware.RequireAuth())
+	askGroup.Use(authMiddleware.RequireProjectTokenScope())
+	askGroup.Use(authMiddleware.RequireProjectMember())
 	askGroup.Use(authMiddleware.RequireAPITokenScopes("chat:use"))
 	askGroup.POST("", h.AskStream)
 	// Project-scoped remember endpoint — stateless NL insertion into the knowledge graph.
