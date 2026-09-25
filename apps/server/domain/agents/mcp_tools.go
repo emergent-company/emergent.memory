@@ -542,6 +542,20 @@ func (h *MCPToolHandler) ExecuteTriggerAgent(ctx context.Context, projectID stri
 	// Look up the agent definition for this agent (if one exists)
 	agentDef, _ := h.repo.ResolveDefinitionForAgent(ctx, agent)
 
+	// Inherit the caller's trust: a run invoking trigger_agent through the
+	// ToolPool carries its run ID in context, so the triggered child keeps that
+	// run's trust marker (same as spawn_agents). A direct authenticated MCP
+	// client has no parent run and is an external-facing surface — untrusted.
+	trusted := inheritedTrust(ctx, h.repo.FindRunByID)
+
+	// Respect target visibility: an untrusted caller must not trigger an
+	// internal-visible agent ("callable only by other agents, never via A2A").
+	if agentDef != nil {
+		if reason, blocked := spawnTargetBlocked(trusted, agentDef); blocked {
+			return errResult(reason)
+		}
+	}
+
 	// Build the user message from structured input
 	// Accepts: message as a JSON object { instructions, task_id } or legacy plain string
 	userMessage := "Execute agent tasks"
@@ -576,8 +590,9 @@ func (h *MCPToolHandler) ExecuteTriggerAgent(ctx context.Context, projectID stri
 		// the parent when this child run completes. Pass the user message as
 		// TriggerMessage so the worker uses it instead of the agent's prompt.
 		queuedOpts := CreateRunQueuedOptions{
-			TriggerMessage: &userMessage,
-			MaxPendingJobs: h.executor.safeguards.MaxPendingJobs,
+			TriggerMessage:  &userMessage,
+			MaxPendingJobs:  h.executor.safeguards.MaxPendingJobs,
+			TrustedInternal: trusted,
 		}
 		if callerRunID := callerRunIDFromContext(ctx); callerRunID != "" {
 			queuedOpts.ParentRunID = &callerRunID
@@ -620,7 +635,7 @@ func (h *MCPToolHandler) ExecuteTriggerAgent(ctx context.Context, projectID stri
 		ProjectID:       agent.ProjectID,
 		OrgID:           orgID,
 		UserMessage:     userMessage,
-		TrustedInternal: true, // MCP tools are a trusted surface (full internal coordination)
+		TrustedInternal: trusted, // inherit the caller's trust; never force true
 	}
 	if rootOverride != nil {
 		execReq.RootRunID = rootOverride

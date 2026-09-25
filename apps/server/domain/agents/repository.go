@@ -2379,12 +2379,14 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 	var triggerMessage *string
 	var triggerMetadata map[string]any
 	var maxPendingJobs int
+	var trustedInternal bool
 	if len(opts) > 0 {
 		parentRunID = opts[0].ParentRunID
 		rootRunID = nilIfEmpty(opts[0].RootRunID)
 		triggerMessage = opts[0].TriggerMessage
 		triggerMetadata = opts[0].TriggerMetadata
 		maxPendingJobs = opts[0].MaxPendingJobs
+		trustedInternal = opts[0].TrustedInternal
 	}
 
 	run := &AgentRun{
@@ -2396,6 +2398,7 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 		RootRunID:       rootRunID,
 		TriggerMessage:  triggerMessage,
 		TriggerMetadata: triggerMetadata,
+		TrustedInternal: trustedInternal,
 		Tools:           []string{},
 	}
 
