@@ -1,8 +1,4 @@
-## Purpose
-
-The server supports the OpenAI provider (and OpenAI-compatible endpoints via its optional base-URL override) configured via environment variables. The provider is selected by the model name's `openai/` prefix, speaks the Chat Completions wire protocol with ADK role mapping and JSON mode for structured extraction, honors `OPENAI_MODEL`, and registers the `openai` provider type.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: OpenAI-compatible provider configuration via environment variables
 The system SHALL support configuring an OpenAI LLM endpoint using three environment variables: `OPENAI_BASE_URL` (optional; the base URL of the OpenAI-compatible API, defaulting to `https://api.openai.com/v1`), `OPENAI_API_KEY` (the API key, required on the env-var path), and `OPENAI_MODEL` (the model name to request, e.g. `openai/gpt-4o`; it MUST carry the `openai/` provider prefix).
@@ -11,11 +7,11 @@ The system SHALL support configuring an OpenAI LLM endpoint using three environm
 - **WHEN** `OPENAI_API_KEY` and `OPENAI_MODEL` are set in the environment
 - **THEN** the server SHALL initialize successfully and `LLMConfig.IsEnabled()` SHALL return true
 
-#### Scenario: OPENAI_API_KEY is unset
-- **WHEN** `OPENAI_API_KEY` is empty and a model is requested with an `openai/` prefix
+#### Scenario: Server starts with only OPENAI_BASE_URL set (no API key)
+- **WHEN** `OPENAI_BASE_URL` is set but `OPENAI_API_KEY` is empty and a model is requested with an `openai/` prefix
 - **THEN** `ModelFactory.CreateModelWithName` SHALL return an error: "OPENAI_API_KEY is not set"
 
-#### Scenario: OPENAI_MODEL is unset
+#### Scenario: Server starts with only OPENAI_BASE_URL set (no model)
 - **WHEN** `OPENAI_API_KEY` is set but `OPENAI_MODEL` is empty and the caller supplies no bare model portion
 - **THEN** `ModelFactory.CreateModelWithName` SHALL return an error naming `OPENAI_MODEL`
 
@@ -58,6 +54,16 @@ The system SHALL include `response_format: {"type": "json_object"}` in Chat Comp
 - **WHEN** an agent calls `CreateModelWithName` without specifying `ResponseMIMEType`
 - **THEN** the Chat Completions request SHALL NOT include a `response_format` field
 
+## REMOVED Requirements
+
+### Requirement: OpenAI-compatible provider takes priority over Google backends
+
+### Requirement: LLM_MODEL env var for model name
+
+### Requirement: openai-compatible ProviderType registration
+
+## ADDED Requirements
+
 ### Requirement: OpenAI provider selected by model-name prefix
 A model name SHALL carry a provider prefix in the form `provider/model-name`. When the prefix is `openai`, the system SHALL construct an OpenAI-protocol model regardless of whether Google AI or Vertex AI credentials are also present; Google/Vertex credentials SHALL only be consulted when the prefix selects them (`google` or `google-vertex`).
 
@@ -72,11 +78,11 @@ A model name SHALL carry a provider prefix in the form `provider/model-name`. Wh
 ### Requirement: OPENAI_MODEL env var for model name
 The system SHALL read the `OPENAI_MODEL` environment variable as the fallback model name when an `openai/`-prefixed model is requested without a bare model portion. `OPENAI_MODEL` SHALL carry the `openai/` provider prefix, which the system strips when constructing the request.
 
-#### Scenario: OPENAI_MODEL is set
+#### Scenario: OPENAI_MODEL is set with OPENAI_BASE_URL
 - **WHEN** `OPENAI_MODEL=openai/kvasir` and `OPENAI_API_KEY` are set
 - **THEN** all Chat Completions requests SHALL use `"model": "kvasir"`
 
-#### Scenario: OPENAI_MODEL is not set
+#### Scenario: OPENAI_MODEL is not set, OPENAI_BASE_URL is set
 - **WHEN** `OPENAI_API_KEY` is set but `OPENAI_MODEL` is empty and no bare model is supplied
 - **THEN** `ModelFactory.CreateModelWithName` SHALL return an error naming `OPENAI_MODEL`
 
