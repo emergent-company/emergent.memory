@@ -56,9 +56,11 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Distinct infrastructure step: an image-pull failure must read as
-      # infrastructure, not as a failing test (issue #23).
+      # infrastructure, not as a failing test (issue #23). The server image is
+      # built locally (memory-server:ci) and the test client/registry services
+      # are built, so pull only the registry-backed services.
       - name: "Preflight: pull stack images"
-        run: docker compose pull
+        run: docker compose pull test-db minio minio-init mailpit
 
       - name: Run CLI install tests
         env:
@@ -118,9 +120,11 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Distinct infrastructure step: an image-pull failure must read as
-      # infrastructure, not as a failing test (issue #23).
+      # infrastructure, not as a failing test (issue #23). The server image is
+      # built locally (memory-server:ci) and the test client/registry services
+      # are built, so pull only the registry-backed services.
       - name: "Preflight: pull stack images"
-        run: docker compose pull
+        run: docker compose pull test-db minio minio-init mailpit
 
       - name: Start server stack
         run: |
