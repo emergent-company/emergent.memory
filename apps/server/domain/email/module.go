@@ -58,9 +58,24 @@ func NewTemplateServiceFromConfig(log *slog.Logger) *TemplateService {
 }
 
 // NewSender creates the appropriate email sender based on configuration.
-// Uses Mailgun when configured, otherwise falls back to no-op sender.
+// Uses SMTP when EMAIL_TRANSPORT=smtp, Mailgun when configured, otherwise
+// falls back to a no-op sender.
 func NewSender(log *slog.Logger, cfg *Config) Sender {
-	if cfg.IsConfigured() && cfg.Enabled {
+	if !cfg.Enabled {
+		log.Info("using no-op email sender (email disabled)")
+		return &noOpSender{log: log}
+	}
+
+	if cfg.Transport == "smtp" {
+		log.Info("using SMTP sender",
+			slog.String("host", cfg.SMTPHost),
+			slog.Int("port", cfg.SMTPPort),
+			slog.String("tls", cfg.SMTPTLS),
+			slog.String("from", cfg.FromEmail))
+		return NewSMTPSender(cfg, log)
+	}
+
+	if cfg.IsConfigured() {
 		mailgunSender := NewMailgunSender(cfg, log)
 		if mailgunSender != nil {
 			log.Info("using Mailgun sender",
