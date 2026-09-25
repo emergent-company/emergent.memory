@@ -62,6 +62,13 @@ jobs:
       - name: "Preflight: pull stack images"
         run: docker compose pull test-db seaweedfs mailpit
 
+      # Distinct infrastructure step: the test image build fetches the pinned
+      # opencode release binary (issue #944). A fetch failure must read as
+      # infrastructure, not as a failing test, so build the image here and let
+      # the test step below reuse the cached layer.
+      - name: "Preflight: build test image (fetches opencode)"
+        run: ./run_tests.sh --build-only
+
       - name: Run CLI install tests
         env:
           TEST_RUN: ${{ inputs.TEST_RUN }}

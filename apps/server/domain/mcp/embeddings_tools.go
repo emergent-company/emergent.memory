@@ -58,10 +58,10 @@ type EmbeddingConfigUpdate struct {
 func embeddingsToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
-			Name:          "embedding-status",
-			OutputSchema:  objectOutputSchema(),
-			RequiredScope: "admin",
-			Description:   "Get the current status of all embedding workers (objects, relationships, sweep). Returns running/paused state and active configuration.",
+			Name:           "embedding-status",
+			OutputSchema:   objectOutputSchema(),
+			SuperadminOnly: true,
+			Description:    "Get the current status of all embedding workers (objects, relationships, sweep). Returns running/paused state and active configuration.",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
@@ -69,10 +69,10 @@ func embeddingsToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:          "embedding-pause",
-			OutputSchema:  objectOutputSchema(),
-			RequiredScope: "admin",
-			Description:   "Pause all embedding workers. Embedding jobs will stop being processed until resumed.",
+			Name:           "embedding-pause",
+			OutputSchema:   objectOutputSchema(),
+			SuperadminOnly: true,
+			Description:    "Pause all embedding workers. Embedding jobs will stop being processed until resumed.",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
@@ -80,10 +80,10 @@ func embeddingsToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:          "embedding-resume",
-			OutputSchema:  objectOutputSchema(),
-			RequiredScope: "admin",
-			Description:   "Resume all embedding workers after they have been paused.",
+			Name:           "embedding-resume",
+			OutputSchema:   objectOutputSchema(),
+			SuperadminOnly: true,
+			Description:    "Resume all embedding workers after they have been paused.",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
@@ -91,9 +91,9 @@ func embeddingsToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:          "embedding-config-update",
-			OutputSchema:  objectOutputSchema(),
-			RequiredScope: "admin",
+			Name:           "embedding-config-update",
+			OutputSchema:   objectOutputSchema(),
+			SuperadminOnly: true,
 			Description: "Update embedding worker runtime configuration. All fields are optional — only provided fields are changed. " +
 				"Returns the updated status.",
 			InputSchema: InputSchema{
