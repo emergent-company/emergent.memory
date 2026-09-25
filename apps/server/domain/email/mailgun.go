@@ -56,17 +56,26 @@ func (s *MailgunSender) Send(ctx context.Context, opts SendOptions) (*SendResult
 		}, nil
 	}
 
-	// Format recipient with name if provided
-	to := opts.To
-	if opts.ToName != "" {
-		to = fmt.Sprintf("%s <%s>", opts.ToName, opts.To)
+	// Validate and canonicalise the from/to header values and the subject before
+	// handing them to the Mailgun API. The same caller-influenced CR/LF values
+	// that would inject headers into an SMTP message are rejected here too, so a
+	// display name or subject containing a line break fails closed instead of
+	// reaching Mailgun.
+	from, err := formatAddress(s.cfg.FromName, s.cfg.FromEmail)
+	if err != nil {
+		return &SendResult{Success: false, Error: err.Error()}, nil
+	}
+	to, err := formatAddress(opts.ToName, opts.To)
+	if err != nil {
+		return &SendResult{Success: false, Error: err.Error()}, nil
+	}
+	subject, err := encodeSubject(opts.Subject)
+	if err != nil {
+		return &SendResult{Success: false, Error: err.Error()}, nil
 	}
 
-	// Format sender with name
-	from := fmt.Sprintf("%s <%s>", s.cfg.FromName, s.cfg.FromEmail)
-
 	// Create message
-	message := s.client.NewMessage(from, opts.Subject, opts.Text, to)
+	message := s.client.NewMessage(from, subject, opts.Text, to)
 	if opts.HTML != "" {
 		message.SetHtml(opts.HTML)
 	}
