@@ -75,6 +75,25 @@
   --noise: 0;
 }
 
+/* Theme bridge — Tailwind's radius scale is a separate namespace from daisyUI's
+ * semantic radius tokens (--radius-box / --radius-field / --radius-selector),
+ * so a literal `rounded-lg` compiles to var(--radius-lg) and ignores the theme.
+ * go-daisy's component markup still uses that literal scale, so alias the
+ * Tailwind namespace onto the semantic tokens to bring it back under the theme.
+ * TEMPORARY: remove this block once go-daisy replaces its literal radius with
+ * the semantic utilities (tracked in the audit's go-daisy dependency list).
+ * Mapping keeps each step's previous appearance as closely as possible:
+ * lg was 0.5rem (the box value), md/sm/default were 0.25–0.375rem (field). */
+@theme inline {
+  --radius-sm: var(--radius-field);
+  --radius: var(--radius-field);
+  --radius-md: var(--radius-field);
+  --radius-lg: var(--radius-box);
+  --radius-xl: var(--radius-box);
+  --radius-2xl: var(--radius-box);
+  --radius-3xl: var(--radius-box);
+}
+
 /* Iconify — Lucide icons as utility classes (used by go-daisy IconSpan and
    the client JS). */
 @plugin "@iconify/tailwind4" {
