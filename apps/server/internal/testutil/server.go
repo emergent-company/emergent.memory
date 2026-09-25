@@ -26,6 +26,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/authinfo"
 	"github.com/emergent-company/emergent.memory/domain/branches"
 	"github.com/emergent-company/emergent.memory/domain/chat"
+	"github.com/emergent-company/emergent.memory/domain/chunking"
 	"github.com/emergent-company/emergent.memory/domain/chunks"
 	"github.com/emergent-company/emergent.memory/domain/discoveryjobs"
 	"github.com/emergent-company/emergent.memory/domain/documents"
@@ -458,6 +459,11 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	chunksSvc := chunks.NewService(chunksRepo, log)
 	chunksHandler := chunks.NewHandler(chunksSvc)
 	chunks.RegisterRoutes(e, chunksHandler, authMiddleware)
+
+	// Register chunking routes (POST /api/documents/:id/recreate-chunks)
+	chunkingSvc := chunking.NewService(db, testDB.Config, log)
+	chunkingHandler := chunking.NewHandler(chunkingSvc)
+	chunking.RegisterRoutes(e, chunkingHandler, authMiddleware)
 
 	// Register search routes
 	searchRepo := search.NewRepository(db, log)
