@@ -1666,6 +1666,35 @@ func FilterToolsForScopes(tools []ToolDefinition, scopes []string) []ToolDefinit
 	return out
 }
 
+// FilterToolsForSuperadmin removes SuperadminOnly tools from the catalog when
+// the caller is not a superadmin_full principal. isSuperadmin must be the
+// resolved platform-admin authority (core.superadmins), not a scope-derived
+// value; callers that cannot resolve it must pass false so the operator tools
+// fail closed. When isSuperadmin is true the catalog is returned unchanged.
+func FilterToolsForSuperadmin(tools []ToolDefinition, isSuperadmin bool) []ToolDefinition {
+	if isSuperadmin {
+		return tools
+	}
+	out := make([]ToolDefinition, 0, len(tools))
+	for _, t := range tools {
+		if t.SuperadminOnly {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// IsSuperadminCaller reports whether the authenticated caller in ctx holds an
+// active superadmin_full grant. It delegates to the single canonical
+// platform-admin boundary (auth.IsSuperadminFull, backed by the core.superadmins
+// query), so a bare admin / admin:all token cannot satisfy it — the grant is
+// resolved from the caller's identity, never from token scopes (issue #948).
+// A resolution failure is returned to the caller so it can fail closed.
+func (s *Service) IsSuperadminCaller(ctx context.Context) (bool, error) {
+	return auth.IsSuperadminFull(ctx, s.db)
+}
+
 // mcpToolScopeVocabulary is the set of scope values that can gate an MCP tool.
 // It is derived from the tool catalog — the central static scope map plus the
 // package-level builders in dynamicToolBuilders (the same list GetToolDefinitions
