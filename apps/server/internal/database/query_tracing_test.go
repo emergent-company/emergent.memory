@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -173,4 +174,69 @@ func spanNames(spans []sdktrace.ReadOnlySpan) []string {
 		names[i] = s.Name()
 	}
 	return names
+}
+
+// TestTracingHook_StatementDoesNotLeakBoundValues is the regression guard for
+// #929: the bunotel hook records db.statement in placeholder form (?) because
+// WithFormattedQueries is not enabled. If that option is ever turned on, bun's
+// formatted query (which interpolates bound arguments) would put token hashes
+// and other secret values straight into trace attributes. This test runs a
+// query with a sentinel bound argument and asserts the sentinel never appears
+// in db.statement or any other span attribute.
+func TestTracingHook_StatementDoesNotLeakBoundValues(t *testing.T) {
+	const sentinel = "SENTINEL-SECRET-TOKEN-VALUE"
+
+	rec := setupTestTracer(t)
+	db, mock := newSQLMockDB(t)
+
+	addTracingHook(db, tracingEnabledConfig())
+
+	// bun formats the raw QueryContext query and interpolates the bound arg into
+	// the string it hands to database/sql, so the mock must match the formatted
+	// query (sentinel present). The span, in contrast, must record the
+	// placeholder form.
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT * FROM api_tokens WHERE token_hash = '" + sentinel + "'")).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(42))
+
+	rows, err := db.QueryContext(context.Background(), "SELECT * FROM api_tokens WHERE token_hash = ?", sentinel)
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	defer rows.Close()
+
+	// Prove the query actually succeeded — the span assertions below must not be
+	// able to pass merely because the query failed early.
+	if !rows.Next() {
+		t.Fatal("expected at least one row")
+	}
+	var id int
+	if err := rows.Scan(&id); err != nil {
+		t.Fatalf("scan row: %v", err)
+	}
+	if id != 42 {
+		t.Fatalf("id = %d, want 42", id)
+	}
+
+	spans := rec.Ended()
+	span := spanWithName(spans, "SELECT")
+	if span == nil {
+		t.Fatalf("expected a span named SELECT, got names: %v", spanNames(spans))
+	}
+
+	stmt, ok := attrValue(span, "db.statement")
+	if !ok {
+		t.Fatal("db.statement attribute missing")
+	}
+	if !strings.Contains(stmt, "?") {
+		t.Errorf("db.statement = %q, want placeholder form containing '?'", stmt)
+	}
+	if strings.Contains(stmt, sentinel) {
+		t.Errorf("db.statement leaked the bound value: %q contains %q", stmt, sentinel)
+	}
+
+	for _, a := range span.Attributes() {
+		if strings.Contains(a.Value.AsString(), sentinel) {
+			t.Errorf("span attribute %q leaked the bound value: %q", a.Key, a.Value.AsString())
+		}
+	}
 }
