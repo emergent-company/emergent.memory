@@ -3,10 +3,9 @@
 Status: research note (no code changes).
 Date: 2026-09-25.
 Context: a self-hosted Laya decision engine is live on the tailnet and exposed to OpenCode as
-an MCP server (`laya`, `http://100.109.157.127:8081/mcp`) plus a subagent
-(`/root/.config/opencode/agents/laya.md`). This note records a direct evaluation of that
-deployed engine against the decisions the operator process needs, to answer whether it can
-gate decision-making today.
+an MCP server (`laya`) plus a subagent (`~/.config/opencode/agents/laya.md`). This note
+records a direct evaluation of that deployed engine against the decisions the operator
+process needs, to answer whether it can gate decision-making today.
 
 Related: `JEV_LAYA.md` (model research), `openspec/changes/add-agent-decision-routing/`
 (routing layer spec), `openspec/changes/add-decision-model-tools/` (decision-tier spec).
@@ -16,6 +15,8 @@ Related: `JEV_LAYA.md` (model research), `openspec/changes/add-agent-decision-ro
 Spawned the `laya` subagent three times, each driving `laya_predict` over the three operator
 decision types (lane routing, guardrail, severity/escalation) with three scenarios each.
 Captured the raw per-question answer, full probability distribution, and confidence.
+`P(chosen)` below is the probability the answer distribution assigns to the selected option;
+`conf` is the engine's separate confidence score.
 
 ## Results
 
@@ -51,6 +52,21 @@ as uncertain, but a guardrail cannot gate "block" on low confidence.
 
 `noul` underperformed for the second time (earlier smoke test returned P(true)=0.21 on the same
 "production down" signal). `choice` is the only consistently reliable primitive.
+
+## Limitations
+
+- **One-off, tiny sample:** three scenarios per decision type (nine decisions total); results
+  are directional, not a statistical estimate of accuracy. The per-type "1/3 correct" figures
+  must not be cited as a measured error rate.
+- **Zero-shot, uncalibrated:** the deployed checkpoint was queried as-is; the calibration
+  step (per-(question type, option count) temperature fitting) required before trusting
+  probabilities was **not** applied here.
+- **Checkpoint not pinned:** the exact Laya checkpoint/version behind the deployed MCP server
+  was not captured in this run. The base checkpoints are documented as near-chance zero-shot
+  (`JEV_LAYA.md`), so conclusions are scoped to "the deployed engine as-is", not a specific
+  release.
+- **Single judge:** ground-truth labels are the author's manual calls, not an independent
+  annotation.
 
 ## Verdict
 
