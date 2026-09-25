@@ -49,6 +49,10 @@ Run this loop per task:
    the base SHA** in the final report.
 5. **Monitor** — `paseo_get_agent_status` + `paseo_get_agent_activity`. Do **not**
    poll `list_agents` to "check on" a running agent; wait for the finish notification.
+   **But check lifecycle state often** — at every wake, and before assuming a lane is
+   merely slow, run `paseo ls --json` and confirm your lanes are `running`/`idle`.
+   A lane can be silently `closed` (daemon restart, crash) with **no** notification and
+   no error; never infer liveness from silence or from the job board (`§6a`).
 6. **Nudge-or-requeue** on stall/truncation (§6).
 7. **Independent review lane** — a *separate* workspace + agent
    (`title: "Review+merge #NNN — <summary>"`).
@@ -186,6 +190,7 @@ Then the status label is confirmation, not the only lock.
 | **Stale base** — lane's base is behind `origin/main` | if the lane has no own commits, fast-forward to `origin/main`; if it committed on a stale base, merge/rebase onto the fetched `origin/main` (never blind-reset — that discards lane work). Then assert `git rev-list --count HEAD..origin/main` is `0`. Prevented by the STEP 0 base check (§2) in the brief |
 | **Agent dies at birth** — `updateCount: 1`, `finished` almost immediately, zero model turns, no tool calls | the **workspace** is poisoned, not the agent: re-prompting, or new agents created in it, also die. Archive the workspace, create a **fresh** workspace with a **new slug**, then create the agent |
 | **Idle / incomplete lane** | `paseo_get_agent_status` shows `requiresAttention:true, attentionReason:"finished"` → treat as stopped, re-dispatch or new lane |
+| **Lane `closed` after a daemon/host restart** (state `closed`, `updatedAt: null`; only lanes created *after* the restart are `running`) | the session is **not lost**: `paseo_send_agent_prompt` on the **same closed agent id** continues the existing session with full context. Salvage the worktree first, then resume — **do not** spawn a replacement (§6a) |
 | **Disk full blocks workspace creation** | `df -h` → `go clean -cache` / `docker image prune` → retry. Go-cache reclaim is temporary (refills under lane activity); pruning merged worktrees (§2.9) is the durable win |
 | **Worktree cleanup silently removes nothing** (`removed=0 kept=N`) | ancestry can never match a squash-merged branch — derive merged heads from `gh pr list --state merged --json headRefName` (§2.9); leave dirty / unmerged / detached worktrees |
 | **Partial failed worktree** | `git worktree remove --force` + `git worktree prune` + `git branch -D`; retry with a new slug |
@@ -195,6 +200,46 @@ Then the status label is confirmation, not the only lock.
 **Hypothesis discipline:** only file issues backed by evidence. If a suspected bug
 turns out to be a different root cause, verify before opening an issue — do not
 file false positives.
+
+### 6a. Session lifecycle & daemon-restart recovery
+
+**Check lifecycle state often.** Session state is **not** durable across daemon or host
+restarts. At every wake — and whenever a lane goes quiet for longer than expected — run
+`paseo ls --json` (or `paseo_list_agents`) and classify every lane as `running` /
+`idle` / `closed` / `error`. A restart silently converts in-flight lanes to `closed`
+with **no** finish notification and **no** error, so a lane you believe is "still
+working" may have died minutes ago. Never infer liveness from silence, from the job
+board, or from the last thing you dispatched.
+
+**Recognising a restart:** many lanes flip to `closed` at once with `updatedAt: null`,
+while only lanes created *after* the restart show `running`. Only in-flight
+generations die — finished work, pushed commits, and all PR/issue state survive.
+
+**Resume, do not respawn.** `paseo_send_agent_prompt(agentId, prompt)` on a **closed**
+agent id **continues that same session** — same id, same conversation history, same
+context. It does not create a new agent, so it costs far less than a fresh lane that
+must rediscover everything. Reserve new agents/workspaces for the §6 cases (poisoned
+workspace, unusable worktree, session genuinely unrecoverable).
+
+**Salvage before resuming** — a dead lane's worktree usually holds work that was never
+pushed:
+1. `git -C <worktree> status --porcelain` — staged and untracked work survives (e.g. a
+   staged file rename). Continue it; do not redo it.
+2. Check whether the lane **already pushed**: compare the PR head to the commit you last
+   knew (`gh pr view <N> --json headRefOid,state,mergeable,statusCheckRollup`). A
+   reviewer may have pushed a fix and died before merging — that commit is still there
+   and still needs a merge decision.
+3. Untracked artefacts (e.g. a half-written `openspec/changes/<name>/`) are on disk.
+   Tell the resumed session exactly where they are and to finish rather than restart.
+4. Read-only lanes that died before emitting output leave nothing — just re-run them.
+
+**Resume prompt shape:** open with a restart notice, state precisely what survived
+(staged rename / pushed commit / untracked dir / clean tree), restate the remaining
+objective tightly, and re-state the gates. The session does **not** know what happened
+after it died — do not assume memory of the intervening events.
+
+**Never restart the daemon yourself** (§1). If it restarted unexpectedly, reconcile
+**every** lane before dispatching anything new.
 
 ---
 
