@@ -601,6 +601,7 @@ func (h *A2AHandler) startA2ATask(c echo.Context, projectID, userID, userMessage
 		OrgID:           orgID,
 		UserID:          userID,
 		UserMessage:     userMessage,
+		ExternalFacing:  true,
 	}
 
 	if a2aReturnImmediately(cfg) {
@@ -695,6 +696,7 @@ func (h *A2AHandler) resumeA2ATask(c echo.Context, projectID, userID, userMessag
 		OrgID:           orgID,
 		UserID:          userID,
 		UserMessage:     resumeMsg,
+		ExternalFacing:  true,
 	}
 
 	if a2aReturnImmediately(cfg) {
