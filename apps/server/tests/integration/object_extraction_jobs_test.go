@@ -292,6 +292,40 @@ func (s *ObjectExtractionJobsTestSuite) TestMarkCompleted_UpdatesJob() {
 	s.Equal(2, updatedJob.FailedItems)
 }
 
+// TestMarkCompleted_ZeroObjects verifies a job that completes with zero created
+// objects persists its terminal state. created_object_ids is NOT NULL, so an
+// empty result must be written as an empty array, not SQL NULL (issue #894).
+func (s *ObjectExtractionJobsTestSuite) TestMarkCompleted_ZeroObjects() {
+	job, _ := s.jobsService.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{
+		ProjectID: s.projectID,
+	})
+
+	_, _ = s.jobsService.Dequeue(s.ctx)
+
+	// Empty result: no objects created, and CreatedObjectIDs left nil.
+	err := s.jobsService.MarkCompleted(s.ctx, job.ID, extraction.ObjectExtractionResults{})
+	s.Require().NoError(err)
+
+	updatedJob, err := s.jobsService.FindByID(s.ctx, job.ID)
+	s.Require().NoError(err)
+	s.Equal(extraction.JobStatusCompleted, updatedJob.Status)
+	s.NotNil(updatedJob.CompletedAt)
+
+	var isNull bool
+	err = s.testDB.DB.NewRaw(
+		"SELECT (created_object_ids IS NULL) FROM kb.object_extraction_jobs WHERE id = ?",
+		job.ID).Scan(s.ctx, &isNull)
+	s.Require().NoError(err)
+	s.False(isNull, "created_object_ids must not be NULL for a zero-object completion")
+
+	var cardinality int
+	err = s.testDB.DB.NewRaw(
+		"SELECT cardinality(created_object_ids) FROM kb.object_extraction_jobs WHERE id = ?",
+		job.ID).Scan(s.ctx, &cardinality)
+	s.Require().NoError(err)
+	s.Equal(0, cardinality, "created_object_ids must be an empty array for a zero-object completion")
+}
+
 // =============================================================================
 // Test: MarkFailed
 // =============================================================================

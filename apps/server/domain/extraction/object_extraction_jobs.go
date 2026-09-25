@@ -223,6 +223,15 @@ func (s *ObjectExtractionJobsService) DequeueBatch(ctx context.Context, batchSiz
 func (s *ObjectExtractionJobsService) MarkCompleted(ctx context.Context, jobID string, results ObjectExtractionResults) error {
 	now := time.Now().UTC()
 
+	// created_object_ids is NOT NULL with default '{}'. Writing pq.Array(nil)
+	// for a zero-object completion emits SQL NULL and violates the constraint
+	// (SQLSTATE 23502). Coerce to a non-nil empty slice so "no objects created"
+	// is stored as an empty array (issue #894).
+	createdObjectIDs := results.CreatedObjectIDs
+	if createdObjectIDs == nil {
+		createdObjectIDs = []string{}
+	}
+
 	_, err := s.db.NewUpdate().
 		Model((*ObjectExtractionJob)(nil)).
 		Set("status = ?", JobStatusCompleted).
@@ -237,7 +246,7 @@ func (s *ObjectExtractionJobsService) MarkCompleted(ctx context.Context, jobID s
 		Set("failed_items = ?", results.FailedItems).
 		Set("discovered_types = ?", results.DiscoveredTypes).
 		Set("created_objects = ?", results.CreatedObjects).
-		Set("created_object_ids = ?", pq.Array(results.CreatedObjectIDs)).
+		Set("created_object_ids = ?", pq.Array(createdObjectIDs)).
 		Set("debug_info = ?", results.DebugInfo).
 		Where("id = ?", jobID).
 		Exec(ctx)
