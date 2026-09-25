@@ -236,7 +236,10 @@ jobs:
           # domain/sandbox's E2E tests need a Docker workspace image and are not
           # database-backed; they stay -short-gated in the unit job. Everything
           # else runs WITHOUT -short so the DB-backed suites execute.
-          PKGS=$(go list ./internal/... ./pkg/... ./domain/... | grep -v '/domain/sandbox$')
+          # ./tests/integration is the DB-backed integration suite (issue #911) —
+          # it must be listed here or it never runs in CI. It provisions its own
+          # throwaway databases via internal/testdb, so it is parallel-safe.
+          PKGS=$(go list ./internal/... ./pkg/... ./domain/... ./tests/integration/... | grep -v '/domain/sandbox$')
           # -p 4 runs package binaries in parallel. The go_test_template
           # bootstrap is serialized across processes with a Postgres advisory
           # lock (internal/testdb), and every throwaway database is uniquely
