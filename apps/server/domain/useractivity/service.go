@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -23,6 +24,14 @@ func NewService(repo *Repository, log *slog.Logger) *Service {
 		repo: repo,
 		log:  log.With(logger.Scope("useractivity.svc")),
 	}
+}
+
+// RequireProjectMember asserts the authenticated caller is a member of the org
+// that owns projectID, resolving the owning org server-side (issue #913). The
+// project ID is client-supplied via ?project_id, so it must never be treated as
+// authorization truth on its own.
+func (s *Service) RequireProjectMember(ctx context.Context, projectID string) error {
+	return auth.RequireProjectMembership(ctx, s.repo.db, projectID)
 }
 
 // Record records a user activity

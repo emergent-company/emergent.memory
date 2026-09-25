@@ -9,6 +9,7 @@ import (
 	"github.com/lib/pq"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -24,6 +25,14 @@ func NewService(store *Store, log *slog.Logger) *Service {
 		store: store,
 		log:   log.With(logger.Scope("embeddingpolicies.svc")),
 	}
+}
+
+// RequireProjectMember asserts the authenticated caller is a member of the org
+// that owns projectID, resolving the owning org server-side (issue #913). The
+// project ID is client-supplied via ?project_id / body, so it must never be
+// treated as authorization truth on its own.
+func (s *Service) RequireProjectMember(ctx context.Context, projectID string) error {
+	return auth.RequireProjectMembership(ctx, s.store.db, projectID)
 }
 
 // List retrieves all embedding policies for a project
