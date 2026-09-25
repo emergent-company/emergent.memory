@@ -129,4 +129,21 @@ func TestRequireProjectMemberEndToEnd(t *testing.T) {
 			t.Fatalf("api-token caller denied: %v", err)
 		}
 	})
+
+	t.Run("account token (member owner) -> allowed", func(t *testing.T) {
+		err := run(&AuthUser{ID: memberID, APITokenID: "tok-1", APITokenProjectID: ""}, proj)
+		if err != nil {
+			t.Fatalf("account-token caller with a member owner denied: %v", err)
+		}
+	})
+
+	t.Run("account token (non-member owner) -> 403", func(t *testing.T) {
+		err := run(&AuthUser{ID: strangerID, APITokenID: "tok-1", APITokenProjectID: ""}, proj)
+		if err == nil {
+			t.Fatal("want error for an account token whose owner is not a member")
+		}
+		if status, _ := apperror.ToHTTPError(err); status != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", status)
+		}
+	})
 }

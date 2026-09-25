@@ -340,12 +340,23 @@ func (s *Service) Accept(ctx context.Context, userID, token string) error {
 		return apperror.ErrForbidden.WithMessage("this invite is not for you")
 	}
 
+	// Resolve the organization membership role the invitation grants, failing
+	// closed on a role Create's validation would never have written, so an
+	// unexpected stored role is never inserted blindly.
+	orgRole, ok := orgMembershipRole(invite.Role)
+	if !ok {
+		return apperror.NewInternal(
+			fmt.Sprintf("invite %s has unexpected role %q", invite.ID, invite.Role),
+			nil,
+		)
+	}
+
 	// Begin transaction
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	// Update invite status
 	now := time.Now()
@@ -371,17 +382,35 @@ func (s *Service) Accept(ctx context.Context, userID, token string) error {
 		}
 	}
 
-	// Add user to org membership if needed
+	// Add user to org membership if needed, with the role the invitation
+	// carried (org_admin for org_admin invitations, member otherwise).
 	_, err = tx.NewRaw(`
-		INSERT INTO kb.org_memberships (user_id, org_id, role, created_at)
-		VALUES (?, ?, 'member', NOW())
-		ON CONFLICT (user_id, org_id) DO NOTHING
-	`, userID, invite.OrganizationID).Exec(ctx)
+		INSERT INTO kb.organization_memberships (organization_id, user_id, role, created_at)
+		VALUES (?, ?, ?, NOW())
+		ON CONFLICT (organization_id, user_id) DO NOTHING
+	`, invite.OrganizationID, userID, orgRole).Exec(ctx)
 	if err != nil {
 		return apperror.ErrDatabase.WithInternal(err)
 	}
 
 	return tx.Commit()
+}
+
+// orgMembershipRole maps an invitation role to the kb.organization_memberships
+// role it grants on acceptance. org_admin invitations grant org_admin
+// membership; the project-scoped roles (project_admin, project_user,
+// project_viewer) grant plain member membership at the organization level. Any
+// other role fails closed (ok=false) so an unexpected invite role is never
+// inserted blindly.
+func orgMembershipRole(inviteRole string) (role string, ok bool) {
+	switch inviteRole {
+	case "org_admin":
+		return "org_admin", true
+	case "project_admin", "project_user", "project_viewer":
+		return "member", true
+	default:
+		return "", false
+	}
 }
 
 // Decline declines an invitation
