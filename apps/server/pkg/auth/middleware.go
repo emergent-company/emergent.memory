@@ -860,7 +860,8 @@ func (m *Middleware) authenticate(c echo.Context) (*AuthUser, error) {
 		}
 		// Also accept the standalone API key presented as a Bearer token
 		// (e.g. from the CLI which uses Authorization: Bearer for emt_* tokens).
-		if token := m.extractToken(c.Request()); token != "" && token == m.cfg.Standalone.APIKey {
+		if token := m.extractToken(c.Request()); token != "" &&
+			(token == m.cfg.Standalone.APIKey || (m.cfg.Standalone.APIKey2 != "" && token == m.cfg.Standalone.APIKey2)) {
 			if user := m.checkStandaloneAPIKey(m.requestWithXAPIKey(c.Request(), token)); user != nil {
 				return user, nil
 			}
@@ -1224,7 +1225,16 @@ func (m *Middleware) checkStandaloneAPIKey(r *http.Request) *AuthUser {
 		return nil
 	}
 
-	if apiKey != m.cfg.Standalone.APIKey {
+	// Determine which standalone identity matched the presented key.
+	var zitadelID, email string
+	switch {
+	case apiKey == m.cfg.Standalone.APIKey:
+		zitadelID = "standalone"
+		email = m.cfg.Standalone.UserEmail
+	case m.cfg.Standalone.APIKey2 != "" && apiKey == m.cfg.Standalone.APIKey2:
+		zitadelID = "standalone-2"
+		email = m.cfg.Standalone.UserEmail2
+	default:
 		return nil
 	}
 
@@ -1233,11 +1243,11 @@ func (m *Middleware) checkStandaloneAPIKey(r *http.Request) *AuthUser {
 	var userID string
 
 	if m.db == nil {
-		// No database connection available — fall back to using "standalone" as ID
+		// No database connection available — fall back to using the zitadel ID as ID
 		return &AuthUser{
-			ID:     "standalone",
-			Sub:    "standalone",
-			Email:  m.cfg.Standalone.UserEmail,
+			ID:     zitadelID,
+			Sub:    zitadelID,
+			Email:  email,
 			Scopes: GetAllScopes(),
 		}
 	}
@@ -1245,7 +1255,7 @@ func (m *Middleware) checkStandaloneAPIKey(r *http.Request) *AuthUser {
 	err := m.db.NewSelect().
 		TableExpr("core.user_profiles").
 		Column("id").
-		Where("zitadel_user_id = ?", "standalone").
+		Where("zitadel_user_id = ?", zitadelID).
 		Scan(ctx, &userID)
 
 	if err != nil {
@@ -1255,8 +1265,8 @@ func (m *Middleware) checkStandaloneAPIKey(r *http.Request) *AuthUser {
 
 	return &AuthUser{
 		ID:     userID, // Use actual UUID from database
-		Sub:    "standalone",
-		Email:  m.cfg.Standalone.UserEmail,
+		Sub:    zitadelID,
+		Email:  email,
 		Scopes: GetAllScopes(),
 	}
 }
