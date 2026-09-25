@@ -386,7 +386,7 @@ func TestRenderObjectEmbeddingBadges(t *testing.T) {
 	}
 	for _, c := range statuses {
 		objects := []GraphObject{{ID: "o1", Type: "person", Key: "sam", EmbeddingStatus: c.status}}
-		html := renderHTML(t, ObjectsPage(objects, nil, "", nil, "", nil, nil))
+		html := renderHTML(t, ObjectsPage(objectsPageData{Objects: objects}))
 		if !strings.Contains(html, c.label) {
 			t.Errorf("list card for %q missing label %q", c.status, c.label)
 		}
