@@ -120,6 +120,15 @@ func (h *Handler) Create(c echo.Context) error {
 			return apperror.NewBadRequest("orgId does not match the project's organization")
 		}
 		targetOrgID = owningOrg
+
+		// A project-scoped invitation grants project membership only. org_admin
+		// is an organization-level role with no meaning in project scope, and
+		// accepting it would write the out-of-vocabulary value "org_admin" into
+		// kb.project_memberships.role (issue #979). Reject it at create time so
+		// the junk role is never persisted.
+		if req.Role == "org_admin" {
+			return apperror.NewBadRequest("org_admin role is not valid for a project-scoped invite")
+		}
 	} else {
 		// Org-scoped: the caller must be a member of the target org (issue #960).
 		// Membership is resolved server-side against kb.organization_memberships,
