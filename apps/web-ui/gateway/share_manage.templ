@@ -222,7 +222,7 @@ templ shareLinksEmpty(newLinkURL string) {
 // caps.
 templ shareLinkRowItem(link ShareLinkRow) {
 	<div class="card card-border bg-base-100" data-testid="share-link-row" data-link-id={ link.ID }>
-		<div class="card-body gap-4 p-4">
+		<div class="card-body gap-4 memory-density-compact">
 			<div class="flex flex-wrap items-start justify-between gap-3">
 				<div class="flex min-w-0 items-center gap-2">
 					@ui.IconSpan("lucide--link", "size-4 shrink-0 text-primary/70")
@@ -413,7 +413,7 @@ templ ShareLinkCreateForm(props ShareLinkCreatePageProps) {
 		action={ templ.URL(props.CreateAction) }
 		class="card card-border bg-base-100"
 	>
-		<div class="card-body gap-4 p-4">
+		<div class="card-body gap-4 memory-density-compact">
 			<div>
 				<h3 class="text-sm font-semibold">Link settings</h3>
 				<p class="text-base-content/50 mt-0.5 text-xs">Every field below applies to this one link.</p>

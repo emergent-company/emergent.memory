@@ -1097,6 +1097,33 @@ div:has(> #_layout-topbar) {
   border-top: 1px solid oklch(0.74 0.135 78 / 0.2);
 }
 
+/* ---------- Component density — single source ----------
+ * daisyUI exposes NO padding theme token for components: `.card-body` reads
+ * `--card-p` and `.btn` reads `--btn-p`, but those are component-internal and
+ * set per size variant, not derived from a theme variable. So the gateway
+ * declares its component padding here, once, and components reference these
+ * classes instead of raw `p-*` utilities. Changing component density is
+ * therefore one edit in this block.
+ *
+ * Re-check this block on a daisyUI upgrade: these are internal levers, not
+ * part of daisyUI's public theming surface.
+ *
+ * The values preserve the paddings that were previously inlined at each call
+ * site, so introducing the block is appearance-neutral; tuning them is the
+ * point. */
+.memory-density-compact {
+  padding: 1rem;
+}
+.memory-density-comfortable {
+  padding: 1.25rem;
+}
+.memory-density-flush {
+  padding: 0;
+}
+.memory-density-stack {
+  padding-block: 2.5rem;
+}
+
 /* ---------- Badge legibility (dark theme) ---------- */
 /* daisyUI's badge-soft paints the label with --badge-color. For the neutral
    variant that token (--color-neutral) is near-identical in lightness to the

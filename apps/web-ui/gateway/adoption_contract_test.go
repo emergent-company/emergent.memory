@@ -67,7 +67,7 @@ func TestAgentMCPListsRenderTableCardShell(t *testing.T) {
 	assertContainsHTML(t, body,
 		`class="card bg-base-100 card-border overflow-hidden shadow-sm" data-testid="agent-mcp-key-list"`,
 		`class="card bg-base-100 card-border overflow-hidden shadow-sm" data-testid="agent-mcp-session-list"`,
-		`card-body p-0`,
+		`card-body memory-density-flush`,
 		`class="mt-4"`,
 		`class="mt-3"`,
 	)

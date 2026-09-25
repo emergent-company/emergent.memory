@@ -305,7 +305,7 @@ templ agentCardGrid(agents []AgentDefinitionSummary) {
 templ agentCard(a AgentDefinitionSummary) {
 	@ui.CardRaw(
 		"card-border memory-rise cursor-pointer group transition-all duration-200 hover:-translate-y-0.5 hover:border-base-content/25 hover:shadow-md",
-		"p-4",
+		"memory-density-compact",
 		templ.Attributes{"data-href": "/agents/" + url.PathEscape(a.ID)},
 	) {
 		<div class="flex items-center gap-3">
@@ -797,7 +797,7 @@ templ cardList(title string, props cardListProps) {
 	@ui.Section(title, ui.SectionProps{
 		Margin:      props.Margin,
 		CardClass:   "card-border overflow-hidden",
-		BodyClass:   "p-0",
+		BodyClass:   "memory-density-flush",
 		Empty:       props.Empty,
 		EmptyIcon:   props.EmptyIcon,
 		EmptyTitle:  props.EmptyTitle,

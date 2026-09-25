@@ -81,12 +81,12 @@ func TestRefactorOutputExact(t *testing.T) {
 
 	// cardList — titled Section variant
 	got = render(cardList("Chunks", cardListProps{Margin: "mt-6", Empty: false}), "<p>row1</p>")
-	want = `<section class="mt-6"><h2 class="mb-3 text-lg font-semibold tracking-tight">Chunks</h2><div class="card bg-base-100 card-border overflow-hidden"><div class="card-body p-0"><div class="divide-y divide-base-200"><p>row1</p></div></div></div></section>`
+	want = `<section class="mt-6"><h2 class="mb-3 text-lg font-semibold tracking-tight">Chunks</h2><div class="card bg-base-100 card-border overflow-hidden"><div class="card-body memory-density-flush"><div class="divide-y divide-base-200"><p>row1</p></div></div></div></section>`
 	check("cardList titled", got, want)
 
 	// cardList — bare CardRaw variant
 	got = render(cardList("", cardListProps{}), "<p>r1</p>", "<p>r2</p>")
-	want = `<div class="card bg-base-100 card-border overflow-hidden"><div class="card-body p-0"><div class="divide-y divide-base-200"><p>r1</p><p>r2</p></div></div></div>`
+	want = `<div class="card bg-base-100 card-border overflow-hidden"><div class="card-body memory-density-flush"><div class="divide-y divide-base-200"><p>r1</p><p>r2</p></div></div></div>`
 	check("cardList bare", got, want)
 
 	// cardList — empty state

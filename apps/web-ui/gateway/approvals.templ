@@ -25,7 +25,7 @@ templ ApprovalsPage(approvals []ToolApprovalItem, loadErr error) {
 			@pageError("Approvals unavailable", loadErr)
 		} else if len(approvals) == 0 {
 			<div class="card card-border bg-base-100">
-				<div class="card-body items-center gap-2 py-10 text-center">
+				<div class="card-body items-center gap-2 memory-density-stack text-center">
 					<p class="text-sm font-medium">No approval decisions yet.</p>
 					<p class="text-xs text-base-content/50">When an agent asks to run a gated tool, its decision appears here.</p>
 				</div>
@@ -42,7 +42,7 @@ templ ApprovalsPage(approvals []ToolApprovalItem, loadErr error) {
 
 templ approvalRow(a ToolApprovalItem) {
 	<div class="card card-border bg-base-100">
-		<div class="card-body gap-2 p-4">
+		<div class="card-body gap-2 memory-density-compact">
 			<div class="flex items-start justify-between gap-3">
 				<div class="flex min-w-0 flex-wrap items-center gap-2">
 					<span class="font-mono text-sm font-semibold">{ a.ToolName }</span>
