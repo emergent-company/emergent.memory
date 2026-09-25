@@ -1016,13 +1016,15 @@ func (m *Middleware) validateToken(ctx context.Context, token, projectID string)
 		return m.finalizeOIDCUser(ctx, claims, projectID)
 	}
 
-	// 6. Local JWT verification as final fallback
-	claims, err := m.verifyJWT(ctx, token)
-	if err != nil {
-		return nil, apperror.ErrInvalidToken.WithInternal(err)
-	}
-
-	return m.finalizeOIDCUser(ctx, claims, projectID)
+	// Final fallback: every configured validation path has been exhausted. The
+	// token is not an emt_* API token, not a test token, not a cached or live
+	// introspection hit, and the userinfo endpoint did not accept it. There is
+	// deliberately no local JWT verification path (see scope-authority: Zitadel
+	// authenticates, the app authorizes; the coarse role signal is
+	// introspection-only and the userinfo fallback carries no role claims), so a
+	// token that reaches this point cannot be trusted and is denied fail-closed.
+	m.log.Warn("token rejected: no configured validation path accepted it")
+	return nil, apperror.ErrInvalidToken
 }
 
 // finalizeOIDCUser ensures the user profile exists, then resolves the effective
@@ -1520,25 +1522,6 @@ func (m *Middleware) introspectToken(ctx context.Context, token string) (*TokenC
 		Roles:      result.Roles,
 		AuthSource: authSourceIntrospection,
 	}, nil
-}
-
-// verifyJWT verifies the token using local JWKS
-func (m *Middleware) verifyJWT(ctx context.Context, token string) (*TokenClaims, error) {
-	// For now, JWT verification is not implemented
-	// The primary auth flow uses:
-	// 1. Test tokens (development)
-	// 2. API tokens (emt_* prefix)
-	// 3. Cached introspection results
-	// 4. Live introspection (if enabled)
-	//
-	// JWT verification would be a fallback using JWKS:
-	// - Fetch JWKS from {issuer}/.well-known/jwks.json
-	// - Verify token signature
-	// - Validate claims (iss, aud, exp)
-	//
-	// This requires go-jose library and JWKS caching.
-	// TODO: Implement if introspection is insufficient
-	return nil, errors.New("JWT verification not implemented - enable introspection or use test tokens")
 }
 
 // authError returns a formatted authentication error
