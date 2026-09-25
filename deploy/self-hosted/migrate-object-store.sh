@@ -3,9 +3,12 @@
 # migrate-object-store.sh — mirror objects from an existing MinIO endpoint to
 # the new SeaweedFS (or any S3-compatible) endpoint using rclone, then verify.
 #
-# Run this BEFORE flipping the server's STORAGE_ENDPOINT. The old MinIO volume
-# is retained until the cutover is verified, so rollback is an endpoint flip:
-# see UPGRADING_OBJECT_STORE.md.
+# Run this BEFORE flipping the server's STORAGE_ENDPOINT, while the old MinIO
+# instance is still up. The installer's SeaweedFS host port defaults to 19000 —
+# the same port old MinIO used — so bring SeaweedFS up on a distinct temporary
+# host port (e.g. 19001) for the mirror; see UPGRADING_OBJECT_STORE.md. The old
+# MinIO volume is retained until the cutover is verified, so rollback is an
+# endpoint flip.
 #
 # Requirements: rclone (https://rclone.org/downloads/) on PATH.
 #
@@ -13,7 +16,8 @@
 #   SRC_S3_ENDPOINT       old MinIO endpoint, e.g. http://localhost:19000
 #   SRC_S3_ACCESS_KEY     old MinIO access key
 #   SRC_S3_SECRET_KEY     old MinIO secret key
-#   DST_S3_ENDPOINT       new SeaweedFS endpoint, e.g. http://localhost:9000
+#   DST_S3_ENDPOINT       new SeaweedFS endpoint, e.g. http://localhost:19001
+#                         (temporary migration port; the installer takes 19000 later)
 #   DST_S3_ACCESS_KEY     new object-store access key
 #   DST_S3_SECRET_KEY     new object-store secret key
 #
@@ -77,10 +81,12 @@ for bucket in $BUCKETS; do
     echo "    source:      ${src_size}"
     echo "    destination: ${dst_size}"
 
-    # Verify checksums where both backends expose one, in addition to SHA-256
-    # spot checks below.
-    if ! rclone --config "$CONF" check "olds3:${bucket}" "news3:${bucket}" --checksum --one-way; then
-        echo "ERROR: checksum verification failed for bucket ${bucket}; keeping the old volume" >&2
+    # Size/count sanity check. `rclone check --checksum` false-fails when the
+    # two backends expose no common hash (multipart ETags vs single-part) or
+    # disagree on the hash algorithm, so use --size-only here and rely on the
+    # SHA-256 spot-check below for content integrity.
+    if ! rclone --config "$CONF" check "olds3:${bucket}" "news3:${bucket}" --size-only --one-way; then
+        echo "ERROR: size/count verification failed for bucket ${bucket}; keeping the old volume" >&2
         exit 1
     fi
 
@@ -102,5 +108,7 @@ done
 
 echo ""
 echo "==> Mirror complete. All buckets verified."
-echo "    Next: flip STORAGE_ENDPOINT to ${DST_S3_ENDPOINT} and recreate the server."
-echo "    Keep the old MinIO volume until the cutover has soaked; see UPGRADING_OBJECT_STORE.md."
+echo "    Next: flip the server's STORAGE_ENDPOINT to the new backend."
+echo "    For the self-hosted compose that is http://seaweedfs:8333 (STORAGE_PROVIDER=seaweedfs);"
+echo "    restart via 'docker compose up -d'. Keep the old MinIO volume until the cutover has"
+echo "    soaked; see UPGRADING_OBJECT_STORE.md."

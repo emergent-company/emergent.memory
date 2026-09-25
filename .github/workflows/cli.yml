@@ -117,7 +117,8 @@ jobs:
           echo "ObjectStoreImage pin: ${PIN}"
           for f in ../../deploy/self-hosted/docker-compose.yml \
                    ../../deploy/self-hosted/docker-compose.local.yml \
-                   ../../deploy/self-hosted/install-online.sh; do
+                   ../../deploy/self-hosted/install-online.sh \
+                   ../../e2e/docker-compose.yml; do
             if ! pin_matches "${PIN}" "${f}"; then
               echo "ERROR: ${f} does not pin image: ${PIN}; bump it together with ObjectStoreImage"
               exit 1

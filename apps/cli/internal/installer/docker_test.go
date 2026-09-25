@@ -86,9 +86,6 @@ func TestObjectStoreImageIsPinnedByDigest(t *testing.T) {
 		t.Errorf("ObjectStoreImage digest is not valid hex: %v", err)
 	}
 
-	if StorageInitImage != ServerImageRepo {
-		t.Errorf("StorageInitImage = %q, want the server image repo %q", StorageInitImage, ServerImageRepo)
-	}
 	if StorageInitEntrypoint != "/usr/local/bin/emergent-storage-init" {
 		t.Errorf("StorageInitEntrypoint = %q, want /usr/local/bin/emergent-storage-init", StorageInitEntrypoint)
 	}

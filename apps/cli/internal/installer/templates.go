@@ -43,14 +43,10 @@ const (
 	// and the cli.yml CI workflow greps the static copies, so drift fails CI.
 	ObjectStoreImage = "chrislusf/seaweedfs@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882"
 
-	// StorageInitImage is the image that carries the bucket-bootstrap binary.
-	// It is the server image itself: deploy/self-hosted/Dockerfile.server builds
-	// and copies `emergent-storage-init` into it, so the one-shot storage-init
-	// service reuses the same S3 client and versioned image as the server.
-	StorageInitImage = ServerImageRepo
-
 	// StorageInitEntrypoint is the path to the bucket-bootstrap binary baked
-	// into the server image.
+	// into the server image. The storage-init compose service runs the server
+	// image itself (see serverImage in GetDockerComposeTemplateWithVersion), so
+	// it reuses the same S3 client and versioned image as the server.
 	StorageInitEntrypoint = "/usr/local/bin/emergent-storage-init"
 )
 

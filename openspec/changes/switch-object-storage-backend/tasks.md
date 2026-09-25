@@ -27,7 +27,7 @@
 
 ## 5. e2e stack
 
-- [x] 5.1 Replace MinIO + `minio-init` in `e2e/docker-compose.yml` with SeaweedFS + `storage-init`; update `e2e/.env.example`
+- [x] 5.1 Replace MinIO + `minio-init` in `e2e/docker-compose.yml` with SeaweedFS + `storage-init` (e2e env is inline; no tracked `e2e/.env.example` exists)
 - [x] 5.2 `.github/workflows/e2e.yml`: add GHCR login and a distinct "Preflight: pull stack images" step before "Start server stack" so image-pull failure reads as infrastructure, not failing tests
 - [ ] 5.3 Confirm the `api` and `integration` jobs boot the stack on a clean runner
 
