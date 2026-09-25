@@ -603,6 +603,16 @@ func TestCreateShareInstanceNoTools(t *testing.T) {
 	assert.ElementsMatch(t, readOnlyMCPScopes, tok.createdScopes)
 }
 
+// TestReadOnlyMCPScopesPinned pins the exact scope set granted to a read-only
+// MCP share token so the authorization boundary cannot drift silently. A scope
+// added to, removed from, or reordered in readOnlyMCPScopes fails this test,
+// forcing a deliberate spec + code update (see the mcp-readonly-access-sharing
+// change).
+func TestReadOnlyMCPScopesPinned(t *testing.T) {
+	want := []string{"data:read", "schema:read", "agents:read", "projects:read", "chat:use"}
+	assert.Equal(t, want, readOnlyMCPScopes)
+}
+
 func TestCreateShareInstanceEmptyToolsRejected(t *testing.T) {
 	store := newFakeShareStore()
 	svc := newTestService(store, &fakeTokenSvc{}, &fakeAgentDir{})
