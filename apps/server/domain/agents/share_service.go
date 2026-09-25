@@ -908,7 +908,8 @@ func (s *ShareService) buildShareExecuteRequest(ctx context.Context, binding *Sh
 		DisableAuthMint:  true, // never mint owner credentials for anonymous users
 		AuthToken:        "",   // never inject the owner's project credentials
 		EphemeralTokenID: "",
-		ExternalFacing:   true, // anonymous public surface must not reach internal agents
+		// TrustedInternal defaults false: anonymous public surface must not reach
+		// internal agents.
 	}, nil
 }
 
