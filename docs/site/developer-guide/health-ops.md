@@ -9,10 +9,10 @@ The server exposes health check, readiness, diagnostics, and debug endpoints for
 | `GET /health` | Full health status with checks | None |
 | `GET /healthz` | Minimal liveness probe | None |
 | `GET /ready` | Readiness probe | None |
-| `GET /debug` | Go runtime stats (dev only) | None |
-| `GET /api/diagnostics` | Deep DB diagnostics | None |
+| `GET /debug` | Go runtime stats (dev only) | `superadmin_full` |
+| `GET /api/diagnostics` | Deep DB diagnostics | `superadmin_full` |
 
-All health endpoints are unauthenticated and should be accessible from your load balancer or monitoring system.
+The liveness/readiness probes (`/health`, `/healthz`, `/ready`) are deliberately unauthenticated so load balancers and Kubernetes probes can reach them. The internal diagnostic surfaces (`/debug`, `/api/diagnostics`) expose platform-tier internals (DB connection target, pool state, `pg_stat_activity`) and are gated on an active `superadmin_full` grant (the `core.superadmins` role), never a token scope and never a bare admin scope.
 
 ---
 
@@ -76,10 +76,10 @@ or
 !!! warning "Development only"
     This endpoint is only available when the server is started in development mode. Do not expose it in production.
 
-Returns Go runtime memory statistics and database connection pool stats as JSON.
+Requires an active `superadmin_full` grant. Returns Go runtime memory statistics and database connection pool stats as JSON.
 
 ```bash
-curl http://localhost:3012/debug
+curl -H "Authorization: Bearer <superadmin-token>" http://localhost:3012/debug
 ```
 
 ```json
@@ -105,8 +105,10 @@ curl http://localhost:3012/debug
 
 The diagnostics endpoint provides live database pool inspection and slow-query detection. Useful for on-call investigation of performance issues.
 
+Requires an active `superadmin_full` grant. The `long_queries` report redacts raw SQL text — it exposes only the query length (`query_length`) alongside `pid`, `duration`, and `state`, so an in-flight query's literals (which may embed secrets or user data) never leave the server.
+
 ```bash
-curl https://api.dev.emergent-company.ai/api/diagnostics
+curl -H "Authorization: Bearer <superadmin-token>" https://api.dev.emergent-company.ai/api/diagnostics
 ```
 
 Response fields:
@@ -132,7 +134,7 @@ Example response:
     {
       "pid": 1234,
       "state": "active",
-      "query": "SELECT ...",
+      "query_length": 42,
       "duration_sec": 0.1
     }
   ],

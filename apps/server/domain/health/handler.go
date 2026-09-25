@@ -107,6 +107,12 @@ type Check struct {
 // the health check considers it wedged.
 const databaseBackupStaleAfter = 6 * time.Hour
 
+// longRunningQueriesSQL lists long-running sessions from pg_stat_activity. It
+// must never select the raw query text: a live SQL body can carry literals
+// (secrets, user data, connection targets) that must not leave the server, even
+// to a superadmin. Only the query length is exposed (see TestLongRunningQueriesSQLRedactsQueryText).
+const longRunningQueriesSQL = "SELECT COALESCE(json_agg(json_build_object('pid', pid, 'query_length', length(query), 'duration', age(clock_timestamp(), query_start), 'state', state)), '[]'::json) FROM pg_stat_activity WHERE state != 'idle' AND query_start < clock_timestamp() - interval '2 seconds' AND pid <> pg_backend_pid()"
+
 // classifyDatabaseBackup derives a health Check from the newest scheduled
 // database backup row. `completed` is healthy; `failed` is unhealthy with the
 // stored error message (truncated); a `running`/`pending` backup older than the
@@ -466,6 +472,7 @@ func (h *Handler) Ready(c echo.Context) error {
 // @Success      200 {object} map[string]any "Debug information"
 // @Failure      404 {object} map[string]any "Not found in production"
 // @Router       /debug [get]
+// @Security     bearerAuth
 func (h *Handler) Debug(c echo.Context) error {
 	if h.cfg.Environment == "production" {
 		return echo.NewHTTPError(http.StatusNotFound, "Not found")
@@ -498,6 +505,7 @@ func (h *Handler) Debug(c echo.Context) error {
 
 // Diagnose returns detailed DB and server diagnostics
 // @Router /api/diagnostics [get]
+// @Security     bearerAuth
 func (h *Handler) Diagnose(c echo.Context) error {
 	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
 	defer cancel()
@@ -542,9 +550,12 @@ func (h *Handler) Diagnose(c echo.Context) error {
 	_ = json.Unmarshal(connStatesJSON, &connStates)
 	result["database"].(map[string]any)["connections"] = connStates
 
-	// DB Long Running Queries
+	// DB Long Running Queries. The raw query text is deliberately NOT returned:
+	// a live SQL body can embed literals (secrets, user data, connection
+	// targets) that must never leave the server even to a superadmin. Expose
+	// only the query length plus its pid/duration/state.
 	var longQueriesJSON []byte
-	_ = h.pool.QueryRow(ctx, "SELECT COALESCE(json_agg(json_build_object('pid', pid, 'query', left(query, 100), 'duration', age(clock_timestamp(), query_start), 'state', state)), '[]'::json) FROM pg_stat_activity WHERE state != 'idle' AND query_start < clock_timestamp() - interval '2 seconds' AND pid <> pg_backend_pid()").Scan(&longQueriesJSON)
+	_ = h.pool.QueryRow(ctx, longRunningQueriesSQL).Scan(&longQueriesJSON)
 	var longQueries []map[string]any
 	_ = json.Unmarshal(longQueriesJSON, &longQueries)
 	result["database"].(map[string]any)["long_queries"] = longQueries
