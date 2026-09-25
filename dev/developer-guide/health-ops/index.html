@@ -2601,16 +2601,16 @@
 <tr>
 <td><code>GET /debug</code></td>
 <td>Go runtime stats (dev only)</td>
-<td>None</td>
+<td><code>superadmin_full</code></td>
 </tr>
 <tr>
 <td><code>GET /api/diagnostics</code></td>
 <td>Deep DB diagnostics</td>
-<td>None</td>
+<td><code>superadmin_full</code></td>
 </tr>
 </tbody>
 </table>
-<p>All health endpoints are unauthenticated and should be accessible from your load balancer or monitoring system.</p>
+<p>The liveness/readiness probes (<code>/health</code>, <code>/healthz</code>, <code>/ready</code>) are deliberately unauthenticated so load balancers and Kubernetes probes can reach them. The internal diagnostic surfaces (<code>/debug</code>, <code>/api/diagnostics</code>) expose platform-tier internals (DB connection target, pool state, <code>pg_stat_activity</code>) and are gated on an active <code>superadmin_full</code> grant (the <code>core.superadmins</code> role), never a token scope and never a bare admin scope.</p>
 <hr />
 <h2 id="health-full-health-check"><code>/health</code> — Full health check<a class="headerlink" href="#health-full-health-check" title="Permanent link">&para;</a></h2>
 <p>Returns a JSON object with overall status and per-subsystem checks.</p>
@@ -2649,8 +2649,8 @@
 <p class="admonition-title">Development only</p>
 <p>This endpoint is only available when the server is started in development mode. Do not expose it in production.</p>
 </div>
-<p>Returns Go runtime memory statistics and database connection pool stats as JSON.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>curl<span class="w"> </span>http://localhost:3012/debug
+<p>Requires an active <code>superadmin_full</code> grant. Returns Go runtime memory statistics and database connection pool stats as JSON.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;superadmin-token&gt;"</span><span class="w"> </span>http://localhost:3012/debug
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="p">{</span>
 <a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">"go_runtime"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
@@ -2670,7 +2670,8 @@
 <hr />
 <h2 id="apidiagnostics-deep-diagnostics"><code>/api/diagnostics</code> — Deep diagnostics<a class="headerlink" href="#apidiagnostics-deep-diagnostics" title="Permanent link">&para;</a></h2>
 <p>The diagnostics endpoint provides live database pool inspection and slow-query detection. Useful for on-call investigation of performance issues.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>curl<span class="w"> </span>https://api.dev.emergent-company.ai/api/diagnostics
+<p>Requires an active <code>superadmin_full</code> grant. The <code>long_queries</code> report redacts raw SQL text — it exposes only the query length (<code>query_length</code>) alongside <code>pid</code>, <code>duration</code>, and <code>state</code>, so an in-flight query's literals (which may embed secrets or user data) never leave the server.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;superadmin-token&gt;"</span><span class="w"> </span>https://api.dev.emergent-company.ai/api/diagnostics
 </code></pre></div>
 <p>Response fields:</p>
 <table>
@@ -2714,7 +2715,7 @@
 <a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="w">    </span><span class="p">{</span>
 <a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="w">      </span><span class="nt">"pid"</span><span class="p">:</span><span class="w"> </span><span class="mi">1234</span><span class="p">,</span>
 <a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="w">      </span><span class="nt">"state"</span><span class="p">:</span><span class="w"> </span><span class="s2">"active"</span><span class="p">,</span>
-<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="w">      </span><span class="nt">"query"</span><span class="p">:</span><span class="w"> </span><span class="s2">"SELECT ..."</span><span class="p">,</span>
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="w">      </span><span class="nt">"query_length"</span><span class="p">:</span><span class="w"> </span><span class="mi">42</span><span class="p">,</span>
 <a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="w">      </span><span class="nt">"duration_sec"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.1</span>
 <a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a><span class="w">    </span><span class="p">}</span>
 <a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a><span class="w">  </span><span class="p">],</span>
