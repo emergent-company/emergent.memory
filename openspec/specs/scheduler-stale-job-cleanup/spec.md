@@ -51,3 +51,12 @@ The stale-job cleanup sweep SHALL emit a visible alert when a single run termina
 
 - **WHEN** a sweep reaps a count at or below the mass-reap threshold
 - **THEN** the sweep emits no mass-reap alert
+
+### Requirement: A failed sweep is not silent
+
+When the stale-job cleanup sweep cannot execute its UPDATE for a table (for example a malformed statement or a transient database error), the sweep SHALL log the failure at `ERROR` level (not `WARN`) with the table name and the underlying error, so a sweep that silently stops reaping genuinely stuck jobs is operationally visible. The sweep SHALL continue to the next table rather than aborting the run.
+
+#### Scenario: Sweep statement fails for one table
+
+- **WHEN** the sweep's UPDATE for a single table errors (e.g. SQLSTATE 42601)
+- **THEN** the sweep logs an `ERROR` record carrying the table name and the error, and proceeds to the remaining tables

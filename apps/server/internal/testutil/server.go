@@ -564,6 +564,15 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	agentsHandler := agents.NewHandler(agentsRepo, nil, nil, "", nil, nil, providerRepo, sandboxStore)
 	agents.RegisterRoutes(e, agentsHandler, authMiddleware)
 
+	// Register OpenAI-compatible agentcompat routes (/v1/chat/completions, /v1/models)
+	// unconditionally (issue #895). The executor is nil here because no LLM provider
+	// is wired; the handler still gates on auth first, so unauthenticated requests
+	// return 401 and GET /v1/models works against the repository. NewTestServerWithLLM
+	// re-registers these same routes with a live executor when credentials exist.
+	agentCompatSvc := agentcompat.NewService(agentRepo, nil, log)
+	agentCompatHandler := agentcompat.NewHandler(agentCompatSvc)
+	agentcompat.RegisterRoutes(e, agentCompatHandler, authMiddleware)
+
 	// Register blueprints routes (issue #868: project-scoped via the header
 	// normalised onto user.ProjectID; membership enforced by the shared pair).
 	blueprintsRepo := blueprints.NewRepository(db, log)
