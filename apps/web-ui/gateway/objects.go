@@ -24,6 +24,8 @@ type objectsStats struct {
 	TotalObjects int   // via count endpoint
 	PendingEmbed int64 // embedding queue pending (objects)
 	FailedEmbed  int64 // embedding queue failed (objects)
+	TotalErr     error // non-nil → total count unavailable
+	EmbedErr     error // non-nil → embedding queue stats unavailable
 }
 
 // objectsPageData carries everything the objects browser renders, in one struct
@@ -127,7 +129,7 @@ func (s *Server) uiObjects(c echo.Context) error {
 	data.Objects = objects
 	data.HasMore = nextCursor != ""
 	data.NextCursor = nextCursor
-	data.Stats = objectsStats{TotalObjects: count}
+	data.Stats = objectsStats{TotalObjects: count, TotalErr: countErr, EmbedErr: progressErr}
 	if progress != nil {
 		data.Stats.PendingEmbed = progress.Objects.Pending
 		data.Stats.FailedEmbed = progress.Objects.Failed
@@ -156,7 +158,7 @@ func (s *Server) uiObjectsPartial(c echo.Context) error {
 	objects, nextCursor, err := s.memory.ListGraphObjectsPage(ctx, branchID, typeFilter, cursor, 25)
 	if err != nil {
 		captureError(err)
-		objects, nextCursor = nil, ""
+		return echo.NewHTTPError(http.StatusBadGateway, "failed to load more objects")
 	}
 
 	compiled, _ := s.memory.GetCompiledTypes(ctx)
@@ -176,15 +178,6 @@ func (s *Server) uiObjectsPartial(c echo.Context) error {
 		TypeUIByType: typeUIByType,
 	}))
 	return nil
-}
-
-// objectUpdatedAt returns the object's updated-at timestamp, falling back to
-// its created-at timestamp when it has never been updated.
-func objectUpdatedAt(o GraphObject) string {
-	if o.UpdatedAt != "" {
-		return o.UpdatedAt
-	}
-	return o.CreatedAt
 }
 
 // objectsPartialURL builds the /objects/partial URL for the "Load more" button,

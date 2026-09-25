@@ -645,6 +645,34 @@ func TestUIObjectsPartial(t *testing.T) {
 	}
 }
 
+func TestUIObjectsPartialFailure(t *testing.T) {
+	f := &fakeMemory{pageErr: fmt.Errorf("boom")}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/objects/partial", s.uiObjectsPartial)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/partial?cursor=nc-1", nil))
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", rec.Code)
+	}
+}
+
+func TestRenderObjectsPageStatsUnavailable(t *testing.T) {
+	html := renderHTML(t, ObjectsPage(objectsPageData{
+		Objects: []GraphObject{{ID: "o1", Type: "person", Key: "sam-lee"}},
+		Stats:   objectsStats{TotalErr: errTest, EmbedErr: errTest},
+	}))
+	for _, want := range []string{"—", `title="Unavailable"`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("unavailable stats missing %q in:\n%s", want, html)
+		}
+	}
+	if strings.Contains(html, ">0</p>") {
+		t.Error("unavailable stats must not render a numeric 0 value")
+	}
+}
+
 func TestUIObjectsSearchRoute(t *testing.T) {
 	f := &fakeMemory{
 		searchResults: []ObjectSearchResult{

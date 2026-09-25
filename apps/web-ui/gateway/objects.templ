@@ -57,24 +57,41 @@ templ objectsHeader() {
 // renders in browse mode, so the global counts never compete with a search's
 // results.
 templ objectsStatsSection(s objectsStats) {
+	{{ totalValue := strconv.Itoa(s.TotalObjects)
+		var totalAttrs templ.Attributes
+		if s.TotalErr != nil {
+			totalValue = "—"
+			totalAttrs = templ.Attributes{"title": "Unavailable"}
+		}
+		pendingValue := strconv.FormatInt(s.PendingEmbed, 10)
+		failedValue := strconv.FormatInt(s.FailedEmbed, 10)
+		var embedAttrs templ.Attributes
+		if s.EmbedErr != nil {
+			pendingValue = "—"
+			failedValue = "—"
+			embedAttrs = templ.Attributes{"title": "Unavailable"}
+		} }}
 	<div class="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
 		@ui.StatCard(ui.StatCardProps{
 			Label:     "objects",
-			Value:     strconv.Itoa(s.TotalObjects),
+			Value:     totalValue,
 			Icon:      "lucide--box",
 			IconColor: "bg-base-200/60 text-base-content",
+			Attrs:     totalAttrs,
 		})
 		@ui.StatCard(ui.StatCardProps{
 			Label:     "pending embeddings",
-			Value:     strconv.FormatInt(s.PendingEmbed, 10),
+			Value:     pendingValue,
 			Icon:      "lucide--hourglass",
 			IconColor: "bg-warning/10 text-warning",
+			Attrs:     embedAttrs,
 		})
 		@ui.StatCard(ui.StatCardProps{
 			Label:     "failed embeddings",
-			Value:     strconv.FormatInt(s.FailedEmbed, 10),
+			Value:     failedValue,
 			Icon:      "lucide--triangle-alert",
 			IconColor: "bg-error/10 text-error",
+			Attrs:     embedAttrs,
 		})
 	</div>
 }
@@ -87,7 +104,7 @@ templ objectsSearchForm(data objectsPageData) {
 		<div class="flex flex-col gap-2 sm:flex-row sm:items-center">
 			<label class="input input-bordered flex w-full items-center gap-2 sm:max-w-md">
 				@ui.IconSpan("lucide--search", "size-4 shrink-0 opacity-50")
-				<input type="search" name="q" value={ data.Query } placeholder="Search objects…" class="grow" autocomplete="off"/>
+				<input type="search" name="q" value={ data.Query } placeholder="Search objects…" class="grow" autocomplete="off" aria-label="Search objects"/>
 			</label>
 			<div class="flex items-center gap-2">
 				<div class="join" role="radiogroup" aria-label="Search mode">
@@ -322,7 +339,7 @@ templ objectsList(objects []GraphObject, typeUIByType map[string]typeUI) {
 // objectRow is one browse-mode object row.
 templ objectRow(o GraphObject, tui typeUI) {
 	<div class="memory-rise">
-		@components.ListRow(templ.URL("/objects/"+url.PathEscape(o.ID)), typeIconTile(tui.Icon, tui.Color), graphObjectLabel(o), relTime(objectUpdatedAt(o))) {
+		@components.ListRow(templ.URL("/objects/"+url.PathEscape(o.ID)), typeIconTile(tui.Icon, tui.Color), graphObjectLabel(o), relTime(o.CreatedAt)) {
 			@objectBadges(o)
 		}
 	</div>
@@ -334,7 +351,7 @@ templ objectRow(o GraphObject, tui typeUI) {
 // signal and ranked search results don't read as noisy.
 templ objectSearchRow(r ObjectSearchResult, tui typeUI) {
 	<div class="memory-rise">
-		@components.ListRow(templ.URL("/objects/"+url.PathEscape(r.Object.ID)), typeIconTile(tui.Icon, tui.Color), graphObjectLabel(r.Object), relTime(objectUpdatedAt(r.Object))) {
+		@components.ListRow(templ.URL("/objects/"+url.PathEscape(r.Object.ID)), typeIconTile(tui.Icon, tui.Color), graphObjectLabel(r.Object), relTime(r.Object.CreatedAt)) {
 			@objectBadges(r.Object)
 			<span class="text-base-content/40 flex shrink-0 items-center gap-1" title="Relevance score">
 				@ui.IconSpan("lucide--sparkles", "size-3 shrink-0")

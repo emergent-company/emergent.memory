@@ -20,7 +20,6 @@ type GraphObject struct {
 	Properties  map[string]any `json:"properties"`
 	Labels      []string       `json:"labels"`
 	CreatedAt   string         `json:"created_at"`
-	UpdatedAt   string         `json:"updated_at"`
 	// EmbeddingStatus is the per-object embedding-job state derived by the
 	// server: embedded | pending | processing | failed | dead_letter | missing.
 	EmbeddingStatus string `json:"embedding_status"`
