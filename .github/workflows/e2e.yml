@@ -11,6 +11,10 @@ on:
         required: false
         default: ""
 
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   # ───────────────────────────────────────────────────────────────────────────
   # integration: full Docker Compose stack (server + CLI test runner)
@@ -43,6 +47,20 @@ jobs:
           tags: memory-server:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Distinct infrastructure step: an image-pull failure must read as
+      # infrastructure, not as a failing test (issue #23). The server image is
+      # built locally (memory-server:ci) and the test client/registry services
+      # are built, so pull only the registry-backed services.
+      - name: "Preflight: pull stack images"
+        run: docker compose pull test-db minio minio-init mailpit
 
       - name: Run CLI install tests
         env:
@@ -93,6 +111,20 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: e2e/go.mod
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Distinct infrastructure step: an image-pull failure must read as
+      # infrastructure, not as a failing test (issue #23). The server image is
+      # built locally (memory-server:ci) and the test client/registry services
+      # are built, so pull only the registry-backed services.
+      - name: "Preflight: pull stack images"
+        run: docker compose pull test-db minio minio-init mailpit
 
       - name: Start server stack
         run: |
