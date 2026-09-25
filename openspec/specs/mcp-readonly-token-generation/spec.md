@@ -1,11 +1,16 @@
-## ADDED Requirements
+# mcp-readonly-token-generation Specification
+
+## Purpose
+Project admins can generate a read-only MCP API token scoped to a project. The token carries the read-only scope set (`data:read`, `schema:read`, `agents:read`, `projects:read`, `chat:use`), is returned exactly once with the endpoint URL and config snippets, and can be revoked like any other token.
+
+## Requirements
 
 ### Requirement: Admin can generate a read-only MCP API token
-A project admin SHALL be able to generate a read-only API token scoped to a specific project via `POST /api/projects/{projectId}/mcp/share`. The token MUST be created with the `project_viewer` scope set (`data:read`, `schema:read`, `agents:read`, `projects:read`) and MUST NOT include any write scopes. The response MUST include the raw token value (returned only once), the MCP endpoint URL, the project ID, and pre-formatted agent config snippets.
+A project admin SHALL be able to generate a read-only API token scoped to a specific project via `POST /api/projects/{projectId}/mcp/share`. The token MUST be created with the read-only scope set (`data:read`, `schema:read`, `agents:read`, `projects:read`, `chat:use`) and MUST NOT include any write scopes. The response MUST include the raw token value (returned only once), the MCP endpoint URL, the project ID, and pre-formatted agent config snippets.
 
 #### Scenario: Successful token generation
 - **WHEN** an admin sends `POST /api/projects/{projectId}/mcp/share` with a valid session
-- **THEN** the system creates an API token with scopes `["data:read", "schema:read", "agents:read", "projects:read"]`
+- **THEN** the system creates an API token with scopes `["data:read", "schema:read", "agents:read", "projects:read", "chat:use"]`
 - **THEN** the response includes `token`, `mcpUrl`, `projectId`, and `snippets`
 - **THEN** the raw token value is present in the response body exactly once and never returned again
 
