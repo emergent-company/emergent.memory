@@ -70,6 +70,11 @@ func NewObjectExtractionJobsService(db bun.IDB, log *slog.Logger, config *Object
 	}
 }
 
+// DB returns the underlying database handle. The admin handler uses it to
+// enforce project membership at the handler layer for routes whose addressed
+// project is not the :projectId path param (issue #959).
+func (s *ObjectExtractionJobsService) DB() bun.IDB { return s.db }
+
 // CreateJobOptions contains options for creating an object extraction job
 type CreateObjectExtractionJobOptions struct {
 	ProjectID        string
