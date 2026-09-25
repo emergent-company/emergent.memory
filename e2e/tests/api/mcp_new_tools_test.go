@@ -5,8 +5,30 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 )
+
+// mcpErrIsToolNotFound reports whether the MCP response carries the specific
+// "tool not wired in this build" error: the server answered "tool not found"
+// for a name it does not register. The legacy names list_adk_sessions,
+// list_traces and query_knowledge are no longer registered in the tool catalog,
+// so the server answers with a "tool not found" error for them.
+//
+// Every other RPC error — an auth failure, a 500, a validation error — returns
+// false and must surface as a test FAILURE, never a skip. The server emits two
+// shapes for the not-wired case, both matched here:
+//
+//	-32603 "Tool execution failed: tool not found: <name>"  (legacy /api/mcp/rpc)
+//	-32601 "Tool not found: <name>"                          (streamable handler)
+func mcpErrIsToolNotFound(rpc map[string]any) bool {
+	errObj, ok := rpc["error"].(map[string]any)
+	if !ok {
+		return false
+	}
+	msg, _ := errObj["message"].(string)
+	return strings.Contains(strings.ToLower(msg), "tool not found")
+}
 
 // callMCPNewTool calls a tools/call on /api/mcp/rpc (new tools endpoint) and returns parsed JSON object.
 func callMCPNewTool(t *testing.T, projectID, toolName string, args map[string]any) map[string]any {
@@ -231,8 +253,10 @@ func TestMCPNew_ListADKSessions(t *testing.T) {
 	var rpc map[string]any
 	parseBodyJSON(t, body, &rpc)
 	if rpc["error"] != nil {
-		t.Logf("list_adk_sessions returned error (agent handler not wired in test env): %v", rpc["error"])
-		return
+		if mcpErrIsToolNotFound(rpc) {
+			rl.Skipf("list_adk_sessions not wired in test env (tool not found): %v", rpc["error"])
+		}
+		t.Fatalf("list_adk_sessions returned unexpected error: %v", rpc["error"])
 	}
 	result := rpc["result"].(map[string]any)
 	content := result["content"].([]any)
@@ -278,8 +302,10 @@ func TestMCPNew_ListTraces_SkipWhenTempoNotConfigured(t *testing.T) {
 	var rpc map[string]any
 	parseBodyJSON(t, body, &rpc)
 	if rpc["error"] != nil {
-		t.Logf("list_traces returned error (Tempo not configured): %v", rpc["error"])
-		return
+		if mcpErrIsToolNotFound(rpc) {
+			rl.Skipf("list_traces not wired in test env (tool not found): %v", rpc["error"])
+		}
+		t.Fatalf("list_traces returned unexpected error: %v", rpc["error"])
 	}
 	result, ok := rpc["result"].(map[string]any)
 	if !ok {
@@ -316,8 +342,10 @@ func TestMCPNew_QueryKnowledge(t *testing.T) {
 	var rpc map[string]any
 	parseBodyJSON(t, body, &rpc)
 	if rpc["error"] != nil {
-		t.Logf("query_knowledge returned error (no LLM in test env): %v", rpc["error"])
-		return
+		if mcpErrIsToolNotFound(rpc) {
+			rl.Skipf("query_knowledge not wired in test env (tool not found): %v", rpc["error"])
+		}
+		t.Fatalf("query_knowledge returned unexpected error: %v", rpc["error"])
 	}
 	result, ok := rpc["result"].(map[string]any)
 	if !ok {
@@ -362,4 +390,57 @@ func TestMCPNew_UploadDocument(t *testing.T) {
 	if got["id"] != docID {
 		t.Errorf("expected document ID %q, got %v", docID, got["id"])
 	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mcpErrIsToolNotFound guard — fail-first
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestMCPNew_toolNotFoundGuard(t *testing.T) {
+	t.Run("not-wired tool not found is a skip", func(t *testing.T) {
+		rpc := map[string]any{
+			"error": map[string]any{
+				"code":    float64(-32603),
+				"message": "Tool execution failed: tool not found: list_adk_sessions",
+			},
+		}
+		if !mcpErrIsToolNotFound(rpc) {
+			t.Fatal("expected the not-wired 'tool not found' error to be treated as a skip")
+		}
+	})
+
+	t.Run("method-not-found variant is a skip", func(t *testing.T) {
+		rpc := map[string]any{
+			"error": map[string]any{
+				"code":    float64(-32601),
+				"message": "Tool not found: list_traces",
+			},
+		}
+		if !mcpErrIsToolNotFound(rpc) {
+			t.Fatal("expected the -32601 'Tool not found' error to be treated as a skip")
+		}
+	})
+
+	t.Run("unexpected error must fail, not skip", func(t *testing.T) {
+		// Any real regression — auth failure, 500, validation — must surface as a
+		// FAILURE, never a skip.
+		cases := []map[string]any{
+			{"error": map[string]any{"code": float64(-32603), "message": "Tool execution failed: query_knowledge: request failed: connection refused"}},
+			{"error": map[string]any{"code": float64(-32002), "message": "Tool not allowed: query_knowledge"}},
+			{"error": map[string]any{"code": float64(-32600), "message": "Invalid request"}},
+			{"error": map[string]any{"code": float64(-32603), "message": "Tool execution failed: get_skill: skill \"x\" not found"}},
+		}
+		for _, rpc := range cases {
+			if mcpErrIsToolNotFound(rpc) {
+				t.Fatalf("expected error %v to be treated as a FAILURE, not a skip", rpc["error"])
+			}
+		}
+	})
+
+	t.Run("non-map error is not a tool-not-found skip", func(t *testing.T) {
+		rpc := map[string]any{"error": "some string error"}
+		if mcpErrIsToolNotFound(rpc) {
+			t.Fatal("expected a non-map error to be treated as a FAILURE, not a skip")
+		}
+	})
 }

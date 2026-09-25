@@ -14,7 +14,7 @@ The installer automatically:
 
 1. ✅ **Checks prerequisites** (Docker, Docker Compose)
 2. ✅ **Downloads Emergent** (latest version)
-3. ✅ **Generates secure passwords** (PostgreSQL, MinIO, API key)
+3. ✅ **Generates secure passwords** (PostgreSQL, object store, API key)
 4. ✅ **Creates configuration** (.env.local file)
 5. ✅ **Builds Docker images** (server with embedded CLI)
 6. ✅ **Starts all services** (API, database, storage, document processing)
@@ -83,11 +83,10 @@ PostgreSQL:
   Password: your-generated-password
   Database: emergent
 
-MinIO:
-  Console: http://localhost:19001
+SeaweedFS (S3-compatible object storage):
   API: http://localhost:19000
-  User: minioadmin
-  Password: your-generated-password
+  Access Key: emergent
+  Secret Key: your-generated-password
 ```
 
 ### 2. Verify Installation
@@ -154,7 +153,7 @@ INSTALL_DIR=/opt/emergent SERVER_PORT=8080 GOOGLE_API_KEY=your-key curl -fsSL ht
 | ------------------ | --------------------- | ------------ |
 | emergent-server    | API + CLI             | 3002         |
 | emergent-db        | PostgreSQL + pgvector | 15432        |
-| emergent-minio     | S3 storage            | 19000, 19001 |
+| emergent-seaweedfs | S3-compatible storage | 19000        |
 | emergent-kreuzberg | Document extraction   | 18000        |
 
 ### Files and Directories
@@ -331,7 +330,7 @@ By default, services are **only accessible from localhost**:
 
 - ✅ Server: `localhost:3002` (not exposed to network)
 - ✅ PostgreSQL: `localhost:15432` (not exposed)
-- ✅ MinIO: `localhost:19000, 19001` (not exposed)
+- ✅ SeaweedFS: `localhost:19000` (not exposed)
 
 To expose to network, see [README.md](./README.md) Tailscale section.
 

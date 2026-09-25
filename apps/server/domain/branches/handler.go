@@ -56,6 +56,9 @@ func (h *Handler) List(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := h.svc.RequireProjectMember(c.Request().Context(), projectID); err != nil {
+		return err
+	}
 
 	branches, err := h.svc.List(c.Request().Context(), &projectID)
 	if err != nil {
@@ -93,6 +96,9 @@ func (h *Handler) GetByID(c echo.Context) error {
 
 	projectID, err := resolveProjectID(c)
 	if err != nil {
+		return err
+	}
+	if err := h.svc.RequireProjectMember(c.Request().Context(), projectID); err != nil {
 		return err
 	}
 
@@ -144,6 +150,9 @@ func (h *Handler) Create(c echo.Context) error {
 		if _, err := uuid.Parse(*req.ProjectID); err != nil {
 			return apperror.ErrBadRequest.WithMessage("invalid project_id format")
 		}
+		if err := h.svc.RequireProjectMember(c.Request().Context(), *req.ProjectID); err != nil {
+			return err
+		}
 	}
 
 	// Validate parent_branch_id if provided
@@ -192,6 +201,9 @@ func (h *Handler) Update(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := h.svc.RequireProjectMember(c.Request().Context(), projectID); err != nil {
+		return err
+	}
 
 	var req UpdateBranchRequest
 	if err := c.Bind(&req); err != nil {
@@ -234,6 +246,9 @@ func (h *Handler) Delete(c echo.Context) error {
 
 	projectID, err := resolveProjectID(c)
 	if err != nil {
+		return err
+	}
+	if err := h.svc.RequireProjectMember(c.Request().Context(), projectID); err != nil {
 		return err
 	}
 

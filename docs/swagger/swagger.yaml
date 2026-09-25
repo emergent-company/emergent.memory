@@ -3269,8 +3269,6 @@ definitions:
     type: object
   domain_projects.Project:
     properties:
-      allow_parallel_extraction:
-        type: boolean
       auto_extract_config:
         additionalProperties: {}
         type: object

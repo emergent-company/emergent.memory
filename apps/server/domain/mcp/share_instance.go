@@ -321,6 +321,9 @@ func normalizeToolAllowlist(tools *[]string, lookup toolLookupFunc) ([]string, e
 		if def.AgentOnly {
 			return nil, apperror.NewValidation("agent-only tool cannot be shared: " + name)
 		}
+		if def.SuperadminOnly {
+			return nil, apperror.NewValidation("operator tool cannot be shared: " + name)
+		}
 		if isAdministrativeScope(def.RequiredScope) {
 			return nil, apperror.NewValidation("tool cannot be shared because it requires an administrative scope: " + name)
 		}
@@ -340,6 +343,9 @@ func deriveScopesForToolNames(tools []string, lookup toolLookupFunc) ([]string, 
 		def := lookup(name)
 		if def == nil {
 			return nil, apperror.NewValidation("unknown tool: " + name)
+		}
+		if def.SuperadminOnly {
+			return nil, apperror.NewValidation("tool requires operator privileges: " + name)
 		}
 		if isAdministrativeScope(def.RequiredScope) {
 			return nil, apperror.NewValidation("tool requires an administrative scope: " + name)
@@ -1094,7 +1100,7 @@ func BuildToolCatalog(ctx context.Context, s *Service, projectID string) []Catal
 	defs := s.GetToolDefinitionsForProject(ctx, projectID)
 	out := make([]CatalogToolDTO, 0, len(defs))
 	for _, d := range defs {
-		if d.AgentOnly {
+		if d.AgentOnly || d.SuperadminOnly {
 			continue
 		}
 		// Tools requiring an administrative/account scope are never includable:

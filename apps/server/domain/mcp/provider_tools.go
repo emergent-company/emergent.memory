@@ -15,10 +15,10 @@ import (
 func providerToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
-			Name:          "provider-list-org",
-			OutputSchema:  objectOutputSchema(),
-			RequiredScope: "admin",
-			Description:   "List all LLM provider configurations for an organization. Returns provider name, model selections, and credential source.",
+			Name:           "provider-list-org",
+			OutputSchema:   objectOutputSchema(),
+			SuperadminOnly: true,
+			Description:    "List all LLM provider configurations for an organization. Returns provider name, model selections, and credential source.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -31,10 +31,10 @@ func providerToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:          "provider-configure-org",
-			OutputSchema:  objectOutputSchema(),
-			RequiredScope: "admin",
-			Description:   "Configure or update an LLM provider at the organization level (e.g. set Google AI API key).",
+			Name:           "provider-configure-org",
+			OutputSchema:   objectOutputSchema(),
+			SuperadminOnly: true,
+			Description:    "Configure or update an LLM provider at the organization level (e.g. set Google AI API key).",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -120,10 +120,10 @@ func providerToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:          "provider-test",
-			OutputSchema:  objectOutputSchema(),
-			RequiredScope: "admin",
-			Description:   "Test an LLM provider configuration by sending a minimal generation request. Returns the model used and the response.",
+			Name:           "provider-test",
+			OutputSchema:   objectOutputSchema(),
+			SuperadminOnly: true,
+			Description:    "Test an LLM provider configuration by sending a minimal generation request. Returns the model used and the response.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -136,10 +136,10 @@ func providerToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:          "provider-usage-get",
-			OutputSchema:  objectOutputSchema(),
-			RequiredScope: "admin",
-			Description:   "Get LLM usage statistics (token counts, costs) for the organization.",
+			Name:           "provider-usage-get",
+			OutputSchema:   objectOutputSchema(),
+			SuperadminOnly: true,
+			Description:    "Get LLM usage statistics (token counts, costs) for the organization.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{

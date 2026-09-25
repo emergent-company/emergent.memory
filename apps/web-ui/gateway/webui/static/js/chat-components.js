@@ -167,6 +167,11 @@
   // Inject the badge + shimmer CSS once. Unlayered, so it sits above the
   // daisyUI/Tailwind layers in app.css; runs after the stylesheet link, so it
   // also wins the cascade against app.css's unlayered tool-chip rules.
+  //
+  // The `border-radius` literals in this sheet are a documented exception to
+  // the "radius derives from theme variables" rule — see the "Radius exception
+  // list" note in webui/css/app.css. Migrating them to var(--radius-*) is
+  // deferred to the stylesheet-consolidation follow-up unit (task 5.1).
   function ensureBadgeStyle() {
     if (document.getElementById("memory-badge-style")) return;
     var st = document.createElement("style");
@@ -197,10 +202,14 @@
       ".memory-tool-chip.memory-badge-open[data-status='ok'],.memory-tool-chip.memory-badge-open[data-status='error']{" +
       "border-color:color-mix(in oklab,var(--color-base-content) 10%,transparent)!important}" +
       // streaming shimmer: gradient sweep clipped to the label text
+      // streaming shimmer: gradient sweep clipped to the label text. The bright
+      // stop is a deliberate white — the theme has no "brighter than
+      // base-content" token — so it is documented as decorative rather than
+      // tokenised.
       ".memory-badge-live .memory-badge-label{" +
       "opacity:.72;color:transparent;" +
       "background-image:linear-gradient(90deg,var(--color-base-content) 40%," +
-      "color-mix(in oklab,#fff 50%,transparent) 50%,var(--color-base-content) 60%);" +
+      "color-mix(in oklab,oklch(1 0 0) 50%,transparent) 50%,var(--color-base-content) 60%);" +
       "background-size:200% 100%;background-position:-100% 0;" +
       "-webkit-background-clip:text;background-clip:text;" +
       "animation:memory-shimmer 1.6s linear infinite}" +
@@ -468,6 +477,11 @@
   // it sits above the daisyUI/Tailwind layers. The same rules live in
   // webui/css/app.css (the compiled source); this injection keeps the surfaces
   // styled even before the CSS bundle is rebuilt.
+  //
+  // The `border-radius` literals in this sheet are a documented exception to
+  // the "radius derives from theme variables" rule — see the "Radius exception
+  // list" note in webui/css/app.css. Migrating them to var(--radius-*) is
+  // deferred to the stylesheet-consolidation follow-up unit (task 5.1).
   function ensureChatControlStyle() {
     if (document.getElementById("memory-chat-control-style")) return;
     var st = document.createElement("style");

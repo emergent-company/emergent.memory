@@ -24,7 +24,20 @@ tasks:
       # stable ./vendor path (see gateway/godaisy_css.go).
       # GOWORK=off: this module lives in the repo-root go.work workspace, where
       # `go mod vendor` is rejected; vendor the gateway module by itself.
-      - test -e vendor/github.com/emergent-company/go-daisy || GOWORK=off go mod vendor
+      # Regenerate when the tree is missing OR when the vendored go-daisy commit
+      # drifts from the go.mod pin: vendor/ is gitignored, so it must be keyed to
+      # the pinned version, not merely to directory presence (a stale tree would
+      # silently build the CSS against the wrong component source).
+      - |
+        if [ ! -e vendor/github.com/emergent-company/go-daisy ]; then
+          GOWORK=off go mod vendor
+        else
+          pin=$(grep -E '^\s*github.com/emergent-company/go-daisy v' go.mod | head -n1 | awk '{print $NF}')
+          vendored=$(grep -E '^# github.com/emergent-company/go-daisy v' vendor/modules.txt | awk '{print $NF}')
+          if [ "$pin" != "$vendored" ]; then
+            GOWORK=off go mod vendor
+          fi
+        fi
       - "{{.TAILWIND_BIN}} -i {{.CSS_IN}} -o {{.CSS_OUT}} --minify"
 
   generate:
