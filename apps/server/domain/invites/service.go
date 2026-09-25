@@ -352,6 +352,17 @@ func (s *Service) Accept(ctx context.Context, userID, token string) error {
 		)
 	}
 
+	// Defence in depth (issue #979): a project-scoped invitation grants project
+	// membership only. org_admin is an organization-level role with no meaning
+	// in project scope, so a project-scoped org_admin invitation — a pre-existing
+	// legacy row that predates the create-side rejection — would write the
+	// out-of-vocabulary value "org_admin" into kb.project_memberships.role AND
+	// grant org-level admin in kb.organization_memberships. Refuse it fail
+	// closed here so no membership rows are written.
+	if invite.ProjectID != nil && invite.Role == "org_admin" {
+		return apperror.NewForbidden("org_admin is not valid for a project-scoped invite")
+	}
+
 	// Defence in depth (issue #967): an org_admin membership grant must originate
 	// from an inviter who holds org_admin (or superadmin_full) authority over the
 	// invite's organization. Re-verify at acceptance time so a pre-existing

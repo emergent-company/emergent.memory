@@ -280,3 +280,80 @@ func TestAcceptInviteRefusesOrgAdminAfterInviterDemoted(t *testing.T) {
 		t.Fatalf("no org membership row may be written after refusal, got %d", count)
 	}
 }
+
+// TestAcceptRefusesLegacyProjectScopedOrgAdmin proves the accept path itself
+// fails closed on a PRE-EXISTING (legacy) invitation row that has both a
+// project_id and role 'org_admin' (issue #979). Such a row predates the
+// create-side rejection and can still exist in kb.invites; accepting it would
+// write the out-of-vocabulary value "org_admin" into kb.project_memberships.role
+// AND grant org-level admin in kb.organization_memberships. The accept-side
+// inviter re-verification (#967) does not catch this — a legacy inviter was a
+// genuine org_admin — so the accept path must refuse it directly, fail closed,
+// writing no membership rows.
+func TestAcceptRefusesLegacyProjectScopedOrgAdmin(t *testing.T) {
+	ctx := context.Background()
+	svc, testDB, orgID, userID, inviterID := newAcceptService(t)
+	defer testDB.Close()
+	db := testDB.GetDB()
+
+	projectID := uuid.New().String()
+	if _, err := db.NewRaw(
+		`INSERT INTO kb.projects (id, organization_id, name, created_at, updated_at) VALUES (?, ?, 'Legacy Project', NOW(), NOW())`,
+		projectID, orgID,
+	).Exec(ctx); err != nil {
+		t.Fatalf("insert project: %v", err)
+	}
+
+	// A legacy-shaped invite row: project_id set AND role = org_admin, minted by
+	// a then-org_admin inviter — written directly, bypassing the create gate.
+	const token = "legacy-project-org-admin-token"
+	if _, err := db.NewRaw(`
+		INSERT INTO kb.invites (id, organization_id, project_id, email, role, token, status, expires_at, created_at, invited_by_user_id)
+		VALUES (uuid_generate_v4(), ?, ?, 'invitee@example.com', 'org_admin', ?, 'pending', NOW() + interval '1 day', NOW(), ?)
+	`, orgID, projectID, token, inviterID).Exec(ctx); err != nil {
+		t.Fatalf("insert legacy invite: %v", err)
+	}
+
+	if err := svc.Accept(ctx, userID, token); err == nil {
+		// Pre-guard this path succeeds and writes junk; surface the values so a
+		// regression failure is self-diagnosing.
+		var projRole, orgRole string
+		if e := db.NewRaw(
+			`SELECT role FROM kb.project_memberships WHERE project_id = ? AND user_id = ?`,
+			projectID, userID,
+		).Scan(ctx, &projRole); e != nil {
+			projRole = "<read error: " + e.Error() + ">"
+		}
+		if e := db.NewRaw(
+			`SELECT role FROM kb.organization_memberships WHERE organization_id = ? AND user_id = ?`,
+			orgID, userID,
+		).Scan(ctx, &orgRole); e != nil {
+			orgRole = "<read error: " + e.Error() + ">"
+		}
+		t.Fatalf("Accept must refuse a legacy project-scoped org_admin invite; it wrote project_memberships.role=%q and organization_memberships.role=%q", projRole, orgRole)
+	}
+
+	// No project membership row (and no junk role) may be written.
+	var projCount int
+	if err := db.NewRaw(
+		`SELECT COUNT(*) FROM kb.project_memberships WHERE project_id = ? AND user_id = ?`,
+		projectID, userID,
+	).Scan(ctx, &projCount); err != nil {
+		t.Fatalf("count project membership rows: %v", err)
+	}
+	if projCount != 0 {
+		t.Fatalf("no project_memberships row may be written after refusal, got %d", projCount)
+	}
+
+	// No org membership row (and in particular no elevated org_admin grant).
+	var orgCount int
+	if err := db.NewRaw(
+		`SELECT COUNT(*) FROM kb.organization_memberships WHERE organization_id = ? AND user_id = ?`,
+		orgID, userID,
+	).Scan(ctx, &orgCount); err != nil {
+		t.Fatalf("count org membership rows: %v", err)
+	}
+	if orgCount != 0 {
+		t.Fatalf("no organization_memberships row may be written after refusal, got %d", orgCount)
+	}
+}
