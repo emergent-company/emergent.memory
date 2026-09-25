@@ -164,7 +164,7 @@ func (r *Repository) VectorSearch(ctx context.Context, params TextSearchParams) 
 		JOIN kb.documents d ON d.id = c.document_id
 		WHERE c.embedding IS NOT NULL
 		  AND d.project_id = ?
-		ORDER BY c.embedding <=> ?::vector, c.id ASC
+		ORDER BY c.embedding <=> ?::vector
 		LIMIT ?
 	`
 
@@ -256,7 +256,7 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 		JOIN kb.documents d ON d.id = c.document_id
 		WHERE c.embedding IS NOT NULL
 		  AND d.project_id = ?
-		ORDER BY c.embedding <=> ?::vector, c.id ASC
+		ORDER BY c.embedding <=> ?::vector
 		LIMIT ?
 	`
 	vectorRows, err := r.db.QueryContext(ctx, vectorQuery, vectorStr, params.ProjectID, vectorStr, fetchLimit)
@@ -548,7 +548,7 @@ func buildRelationshipSearchQuery(vectorStr string, projectID uuid.UUID, namespa
 		baseQuery += "\n\t\t  AND r.namespace = ?"
 		queryArgs = append(queryArgs, *namespace)
 	}
-	query := baseQuery + "\n\t\tORDER BY r.embedding <=> ?::vector, r.id ASC\n\t\tLIMIT ?"
+	query := baseQuery + "\n\t\tORDER BY r.embedding <=> ?::vector\n\t\tLIMIT ?"
 	queryArgs = append(queryArgs, vectorStr, limit)
 	return query, queryArgs
 }
