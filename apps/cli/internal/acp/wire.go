@@ -153,7 +153,8 @@ type Mode struct {
 }
 
 // SessionModeState is the ACP session-modes payload. It is carried on
-// session/new and returned by session/set_mode.
+// session/new; a change of mode is delivered via the current_mode_update
+// notification, not as the session/set_mode result (which is an empty object).
 type SessionModeState struct {
 	CurrentModeID  string `json:"currentModeId"`
 	AvailableModes []Mode `json:"availableModes"`

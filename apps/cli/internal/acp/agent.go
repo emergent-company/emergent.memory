@@ -28,7 +28,7 @@ type Agent struct {
 	client  *a2a.Client
 	skill   string // default Memory agent skill id (RFC1123 slug)
 	version string // CLI version advertised on initialize
-	modes   []Mode // selectable agents; always contains the default skill
+	modes   []Mode // selectable external agents; empty degrades to the default skill
 
 	mu          sync.Mutex
 	sessions    map[string]*session
@@ -70,7 +70,8 @@ func (s *session) inFlight() int { return len(s.cancels) }
 
 // NewAgent creates an ACP agent that fronts the given A2A client and targets
 // the Memory agent identified by skill (its RFC1123 slug). modes is the list of
-// selectable agents advertised to clients; the default skill is always present.
+// selectable (external) agents advertised to clients; when empty it degrades to
+// the default skill (see ensureDefaultMode).
 func NewAgent(client *a2a.Client, skill, version string, modes []Mode) *Agent {
 	return &Agent{
 		client:      client,
@@ -82,15 +83,18 @@ func NewAgent(client *a2a.Client, skill, version string, modes []Mode) *Agent {
 	}
 }
 
-// ensureDefaultMode guarantees the default skill is present in the mode list so
-// that session/new always advertises at least one mode (the configured agent).
+// ensureDefaultMode returns the advertised mode list. When the list is empty
+// (card fetch failed or returned no external agents) it degrades to a single
+// fallback mode for the configured default skill, so session/new always has a
+// valid current mode. A non-empty list is trusted as-is: it comes from the
+// external-only AgentCard, so the default skill appears only when it is
+// genuinely external-reachable — an internal/project/stale default is never
+// prepended (the server refuses non-external agents at the first prompt).
 func ensureDefaultMode(modes []Mode, skill string) []Mode {
-	for _, m := range modes {
-		if m.ID == skill {
-			return modes
-		}
+	if len(modes) == 0 {
+		return []Mode{{ID: skill, Name: skill}}
 	}
-	return append([]Mode{{ID: skill, Name: skill}}, modes...)
+	return modes
 }
 
 // hasMode reports whether id is one of the advertised modes.
@@ -252,19 +256,21 @@ func (a *Agent) deleteSession(sessionID string) { a.dropSession(sessionID) }
 func (a *Agent) closeSession(sessionID string) { a.dropSession(sessionID) }
 
 // setMode changes the session's target agent to the given mode. It validates the
-// mode against the advertised list and returns the updated mode state.
-func (a *Agent) setMode(p SetModeParams) (*SessionModeState, error) {
+// mode against the advertised list; the updated mode state is delivered to the
+// client via a current_mode_update notification emitted by the caller (the ACP
+// session/set_mode response itself is an empty object).
+func (a *Agent) setMode(p SetModeParams) error {
 	if !a.hasMode(p.ModeID) {
-		return nil, fmt.Errorf("unknown mode %q", p.ModeID)
+		return fmt.Errorf("unknown mode %q", p.ModeID)
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	sess := a.sessions[p.SessionID]
 	if sess == nil {
-		return nil, fmt.Errorf("session %q not found", p.SessionID)
+		return fmt.Errorf("session %q not found", p.SessionID)
 	}
 	sess.skill = p.ModeID
-	return a.modeStateFor(p.ModeID), nil
+	return nil
 }
 
 // setConfigOption changes the session's target agent via the config-options
@@ -576,6 +582,23 @@ func sessionUpdate(sessionID, text string) any {
 			"update": map[string]any{
 				"sessionUpdate": "agent_message_chunk",
 				"content":       map[string]any{"type": "text", "text": text},
+			},
+		},
+	}
+}
+
+// currentModeUpdate builds a session/update current_mode_update notification.
+// Mode state is delivered to clients via this notification; the session/set_mode
+// response itself is an empty object per the ACP schema.
+func currentModeUpdate(sessionID, modeID string) any {
+	return map[string]any{
+		"jsonrpc": jsonrpcVersion,
+		"method":  "session/update",
+		"params": map[string]any{
+			"sessionId": sessionID,
+			"update": map[string]any{
+				"sessionUpdate": "current_mode_update",
+				"currentModeId": modeID,
 			},
 		},
 	}

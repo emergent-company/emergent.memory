@@ -1565,8 +1565,70 @@ func TestSessionNewSingleDefaultMode(t *testing.T) {
 	}
 }
 
-// TestSetModeViaRun verifies session/set_mode switches the session skill and
-// returns the updated mode state.
+// TestEnsureDefaultMode verifies the configured default skill is advertised only
+// when the mode list is empty (degradation). A non-empty list is trusted as-is:
+// it comes from the external-only AgentCard, so a default that is not
+// external-reachable (internal/project/stale) is never prepended as a selectable
+// mode.
+func TestEnsureDefaultMode(t *testing.T) {
+	cases := []struct {
+		name  string
+		modes []Mode
+		skill string
+		want  []string
+	}{
+		{
+			name:  "external default already present is kept",
+			modes: []Mode{{ID: "research-agent"}, {ID: "writer-agent"}},
+			skill: "research-agent",
+			want:  []string{"research-agent", "writer-agent"},
+		},
+		{
+			name:  "project default absent is not prepended",
+			modes: []Mode{{ID: "writer-agent"}},
+			skill: "project-only-agent",
+			want:  []string{"writer-agent"},
+		},
+		{
+			name:  "internal default absent is not prepended",
+			modes: []Mode{{ID: "writer-agent"}},
+			skill: "internal-agent",
+			want:  []string{"writer-agent"},
+		},
+		{
+			name:  "empty list degrades to the default",
+			modes: nil,
+			skill: "research-agent",
+			want:  []string{"research-agent"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ensureDefaultMode(tc.modes, tc.skill)
+			if len(got) != len(tc.want) {
+				t.Fatalf("ensureDefaultMode = %v, want ids %v", modeIDs(got), tc.want)
+			}
+			for i := range got {
+				if got[i].ID != tc.want[i] {
+					t.Errorf("mode[%d].id = %q, want %q", i, got[i].ID, tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// modeIDs extracts the id field of each mode, for readable test failures.
+func modeIDs(modes []Mode) []string {
+	ids := make([]string, len(modes))
+	for i, m := range modes {
+		ids[i] = m.ID
+	}
+	return ids
+}
+
+// TestSetModeViaRun verifies session/set_mode switches the session skill, emits
+// a current_mode_update notification carrying the new mode, and returns an empty
+// result object (ACP defines SetSessionModeResponse as an empty object).
 func TestSetModeViaRun(t *testing.T) {
 	agent := streamAgentWithModes(t, func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("unexpected HTTP request")
@@ -1575,13 +1637,40 @@ func TestSetModeViaRun(t *testing.T) {
 
 	input := fmt.Sprintf(`{"jsonrpc":"2.0","id":3,"method":"session/set_mode","params":{"sessionId":%q,"modeId":"writer-agent"}}`, id) + "\n"
 	msgs := decodeLines(t, runLines(t, agent, input))
-	if len(msgs) != 1 {
-		t.Fatalf("expected 1 message, got %d", len(msgs))
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages (notification + response), got %d", len(msgs))
 	}
-	result := msgs[0]["result"].(map[string]any)
-	if result["currentModeId"] != "writer-agent" {
-		t.Errorf("currentModeId = %v, want writer-agent", result["currentModeId"])
+
+	notif := msgs[0]
+	if notif["method"] != "session/update" {
+		t.Errorf("notification method = %v, want session/update", notif["method"])
 	}
+	params, ok := notif["params"].(map[string]any)
+	if !ok {
+		t.Fatalf("notification params = %v, want object", notif["params"])
+	}
+	if params["sessionId"] != id {
+		t.Errorf("notification sessionId = %v, want %q", params["sessionId"], id)
+	}
+	update, ok := params["update"].(map[string]any)
+	if !ok {
+		t.Fatalf("notification update = %v, want object", params["update"])
+	}
+	if update["sessionUpdate"] != "current_mode_update" {
+		t.Errorf("sessionUpdate = %v, want current_mode_update", update["sessionUpdate"])
+	}
+	if update["currentModeId"] != "writer-agent" {
+		t.Errorf("currentModeId = %v, want writer-agent", update["currentModeId"])
+	}
+
+	resp := msgs[1]
+	if resp["id"] != float64(3) {
+		t.Errorf("response id = %v, want 3", resp["id"])
+	}
+	if result, ok := resp["result"].(map[string]any); !ok || len(result) != 0 {
+		t.Errorf("set_mode result = %v, want empty object", resp["result"])
+	}
+
 	agent.mu.Lock()
 	skill := agent.sessions[id].skill
 	agent.mu.Unlock()
@@ -1684,7 +1773,7 @@ func TestSetModeRoutesPromptToSelectedAgent(t *testing.T) {
 	}, []Mode{{ID: "research-agent", Name: "Research"}, {ID: "writer-agent", Name: "Writer"}})
 
 	sessID := mustNewSession(t, agent)
-	if _, err := agent.setMode(SetModeParams{SessionID: sessID, ModeID: "writer-agent"}); err != nil {
+	if err := agent.setMode(SetModeParams{SessionID: sessID, ModeID: "writer-agent"}); err != nil {
 		t.Fatalf("setMode returned error: %v", err)
 	}
 

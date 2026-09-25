@@ -142,11 +142,13 @@ func dispatch(ctx context.Context, a *Agent, req *request, send func(any) error)
 		if p.ModeID == "" {
 			return nil, &rpcError{Code: codeInvalidParams, Message: "session/set_mode: missing modeId"}
 		}
-		state, err := a.setMode(p)
-		if err != nil {
+		if err := a.setMode(p); err != nil {
 			return nil, &rpcError{Code: codeInvalidParams, Message: err.Error()}
 		}
-		return state, nil
+		if err := send(currentModeUpdate(p.SessionID, p.ModeID)); err != nil {
+			return nil, &rpcError{Code: codeInternal, Message: err.Error()}
+		}
+		return struct{}{}, nil
 	case "session/set_config_option":
 		var p SetConfigOptionParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {

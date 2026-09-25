@@ -4,7 +4,9 @@
 
 The CLI SHALL advertise the project's selectable agents on `session/new`. When it has a non-empty agent list (from the extended AgentCard), the response SHALL carry a `modes` object whose `availableModes` lists one entry per agent (mode `id` = skill slug, `name` = skill name, `description` = skill description), and whose `currentModeId` is the configured default skill. The CLI SHALL also carry a `configOptions` array with a single `select` option (`id` `"agent"`, `category` `"model"`, `type` `"select"`) whose `options` list the same agents and whose `currentValue` is the default skill.
 
-When no agent list is available, the CLI SHALL still advertise a single mode (the configured default skill) so every session has a valid current mode.
+The advertised set SHALL be exactly the external-reachable agents from the AgentCard. The configured default skill SHALL be advertised only when it appears in that list (i.e. is genuinely external-reachable); an `internal`, `project`-visibility, or stale/deleted default SHALL NOT be prepended as a selectable mode.
+
+When no agent list is available (the card could not be fetched or lists no agents), the CLI SHALL degrade to a single mode (the configured default skill) so every session has a valid current mode.
 
 #### Scenario: Modes reflect the project's agents
 
@@ -16,14 +18,21 @@ When no agent list is available, the CLI SHALL still advertise a single mode (th
 - **WHEN** the agent is constructed with no agent list and the client sends `session/new`
 - **THEN** the response carries a `modes` object with `currentModeId` equal to the default skill and a single `availableModes` entry for that skill
 
+#### Scenario: An unreachable default is not advertised
+
+- **WHEN** the agent is constructed with a non-empty list of skills that does not include the configured default skill
+- **THEN** `session/new` advertises only those skills in `availableModes` and does not add the default skill
+
 ### Requirement: Mode and config-option selection
 
-The CLI SHALL handle `session/set_mode` and `session/set_config_option` by switching the session's target agent. It SHALL validate the requested value against the advertised agent list and reject unknown values, missing `sessionId`/`modeId`/`configId` with a JSON-RPC error. It SHALL return the updated mode/config state.
+The CLI SHALL handle `session/set_mode` and `session/set_config_option` by switching the session's target agent. It SHALL validate the requested value against the advertised agent list and reject unknown values, missing `sessionId`/`modeId`/`configId` with a JSON-RPC error.
+
+For `session/set_mode` the result SHALL be an empty object (per the ACP schema, `SetSessionModeResponse` has no fields) and the new mode SHALL be delivered to the client via a `current_mode_update` session notification. For `session/set_config_option` the result SHALL be the updated `configOptions` state.
 
 #### Scenario: set_mode selects an advertised agent
 
 - **WHEN** the client sends `session/set_mode` with a `modeId` that is one of the advertised modes for an existing session
-- **THEN** the CLI records that skill for the session and returns the updated `modes` state with `currentModeId` equal to the selected mode
+- **THEN** the CLI records that skill for the session, responds with an empty result object, and emits a `current_mode_update` notification whose `currentModeId` equals the selected mode
 
 #### Scenario: set_mode rejects an unknown mode
 
