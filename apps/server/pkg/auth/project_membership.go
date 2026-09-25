@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 
+	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
@@ -81,6 +82,13 @@ func RequireProjectMembership(ctx context.Context, db bun.IDB, projectID string)
 func projectOrg(ctx context.Context, db bun.IDB, projectID string) (string, error) {
 	if db == nil {
 		return "", errors.New("auth: no database available for project org lookup")
+	}
+	// A malformed project ID cannot address a project. Treat it as "no such
+	// project" so a client-supplied value is never cast to the uuid column
+	// (which would surface as a 500). Callers that require a 400 for malformed
+	// IDs validate the format at the handler layer (e.g. query/body sources).
+	if _, err := uuid.Parse(projectID); err != nil {
+		return "", nil
 	}
 	var orgID string
 	err := db.NewSelect().

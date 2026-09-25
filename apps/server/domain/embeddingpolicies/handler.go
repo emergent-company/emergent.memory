@@ -3,6 +3,7 @@ package embeddingpolicies
 import (
 	"net/http"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
@@ -118,6 +119,11 @@ func (h *Handler) Create(c echo.Context) error {
 	}
 	if req.ObjectType == "" {
 		return apperror.ErrBadRequest.WithMessage("objectType is required")
+	}
+	// Validate the project ID format before the membership lookup: a malformed
+	// body projectId must be a 400, not fall through to the org lookup.
+	if _, err := uuid.Parse(req.ProjectID); err != nil {
+		return apperror.ErrBadRequest.WithMessage("Invalid projectId format")
 	}
 	if err := h.svc.RequireProjectMember(c.Request().Context(), req.ProjectID); err != nil {
 		return err

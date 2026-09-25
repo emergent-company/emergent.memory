@@ -64,3 +64,17 @@ func (s *UserActivityMembershipSuite) TestOwnProjectRecordOK() {
 	s.Require().Equal(http.StatusOK, resp.StatusCode,
 		"own-project activity record must succeed, got %d: %s", resp.StatusCode, resp.String())
 }
+
+// TestMalformedProjectIDBadRequest pins that a non-UUID ?project_id is a 400
+// (format validation), not a 500 from the uuid column cast.
+func (s *UserActivityMembershipSuite) TestMalformedProjectIDBadRequest() {
+	resp := s.Client.POST("/api/user-activity/record?project_id=invalid-uuid",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"resourceType": "document",
+			"resourceId":   uuid.New().String(),
+			"actionType":   "viewed",
+		}))
+	s.Require().Equal(http.StatusBadRequest, resp.StatusCode,
+		"malformed project_id must be 400, got %d: %s", resp.StatusCode, resp.String())
+}
