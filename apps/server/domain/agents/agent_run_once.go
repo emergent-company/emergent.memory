@@ -148,6 +148,7 @@ func (h *MCPToolHandler) runAgentTurn(ctx context.Context, projectID, agentID, s
 		SessionID:       sessionRef,
 		MaxSteps:        &maxSteps,
 		Timeout:         &timeout,
+		TrustedInternal: true, // call_agent MCP tool is a trusted surface (full internal coordination)
 	})
 	if result != nil && result.Cleanup != nil {
 		defer result.Cleanup()

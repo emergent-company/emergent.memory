@@ -620,6 +620,7 @@ func (h *MCPToolHandler) ExecuteTriggerAgent(ctx context.Context, projectID stri
 		ProjectID:       agent.ProjectID,
 		OrgID:           orgID,
 		UserMessage:     userMessage,
+		TrustedInternal: true, // MCP tools are a trusted surface (full internal coordination)
 	}
 	if rootOverride != nil {
 		execReq.RootRunID = rootOverride

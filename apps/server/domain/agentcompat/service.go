@@ -207,7 +207,7 @@ func (s *Service) handleNewRun(
 		SystemPromptAppendix: appendix,
 		UserID:               user.ID,
 		ExtraTools:           extraTools,
-		ExternalFacing:       true,
+		// TrustedInternal defaults false: the OpenAI-compatible surface must not reach internal agents.
 	}
 
 	if req.Stream {
@@ -266,7 +266,7 @@ func (s *Service) handleResume(
 		SystemPromptAppendix: buildSystemAppendix(req.Messages, len(req.Tools) > 0, projectInfo),
 		UserID:               user.ID,
 		ExtraTools:           extraTools,
-		ExternalFacing:       true,
+		// TrustedInternal defaults false: the OpenAI-compatible surface must not reach internal agents.
 	}
 
 	if req.Stream {

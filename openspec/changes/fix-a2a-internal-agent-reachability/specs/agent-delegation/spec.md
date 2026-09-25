@@ -6,6 +6,23 @@ An `internal`-visibility agent SHALL be callable only by other agents and never 
 
 From an external-facing surface: `list_available_agents` SHALL exclude `internal`-visibility agents, `spawn_agents` SHALL reject spawning an `internal` target even when it is inside the spawn-policy allowlist, and the agentcompat resolution SHALL refuse to resolve or invoke an `internal` agent without revealing that the name exists. Trusted surfaces — session UI, scheduled/worker runs, MCP tools, and agent→agent delegation — SHALL retain full internal coordination, so internal→internal and project→internal delegation keep working.
 
+The reachability gate is **transitive**: the trust marker (whether the run started through a trusted surface) is fixed at run creation and SHALL be persisted on the run row and inherited unchanged through both delegation (spawned child runs) and resume, so the invariant holds for the whole call chain rather than the first hop only. The marker is fail-closed: the zero value is *untrusted*, so a transport that omits the declaration SHALL resolve to the restrictive case and cannot reach `internal` agents.
+
+#### Scenario: External-facing reach is blocked transitively
+
+- **WHEN** an external-facing run delegates to a `project`-visibility agent, and that child attempts to list or spawn an `internal`-visibility agent
+- **THEN** the child inherits the external-facing (untrusted) marker and is rejected or excluded exactly as its parent is, at any delegation depth
+
+#### Scenario: A suspended external-facing run stays external-facing when re-woken
+
+- **WHEN** an external-facing run is suspended and later resumed through a trusted path (parent wake, MCP question response, or session UI)
+- **THEN** the resumed run inherits the persisted external-facing (untrusted) marker and cannot reach `internal` agents, rather than being upgraded to trusted
+
+#### Scenario: Omitted trust declaration resolves to the restrictive case
+
+- **WHEN** a transport starts a run without declaring whether the surface is trusted
+- **THEN** the run is treated as external-facing (untrusted) and cannot reach `internal` agents
+
 #### Scenario: A2A-reached project agent cannot list internal agents
 
 - **WHEN** an A2A caller invokes a `project`-visibility agent by its slug, and that agent calls `list_available_agents` in a project that also contains an `internal`-visibility agent
