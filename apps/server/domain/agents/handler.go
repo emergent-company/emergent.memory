@@ -1278,7 +1278,11 @@ func (h *Handler) ReceiveWebhook(c echo.Context) error {
 		TriggerSource:   &triggerSource,
 		TriggerMetadata: metadata,
 		MaxSteps:        maxSteps,
-		TrustedInternal: true, // session UI is a trusted surface (full internal coordination)
+		// The webhook receiver is a public, external-facing surface authenticated
+		// only by a per-hook bearer token (no RequireAuth). It must NOT be trusted
+		// internal coordination, or a holder of a shared/leaked webhook secret could
+		// reach internal-visible agents via spawn_agents / list_available_agents.
+		TrustedInternal: false,
 	}
 
 	result, err := h.executor.Execute(c.Request().Context(), req)

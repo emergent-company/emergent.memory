@@ -260,6 +260,11 @@ type CreateRunQueuedOptions struct {
 	TriggerMessage  *string        // message injected as user message when worker picks up this run
 	TriggerMetadata map[string]any // structured metadata propagated from parent run
 	MaxPendingJobs  int            // if > 0, reject the enqueue when the agent already has this many pending jobs
+	// TrustedInternal is the fail-closed trust marker persisted on the queued run
+	// row and inherited by the worker, so a queued run keeps the trust of the
+	// transport that enqueued it (e.g. trigger_agent) rather than being upgraded.
+	// false (zero value) = external-facing/untrusted.
+	TrustedInternal bool
 }
 
 // AgentProcessingLog tracks which graph objects have been processed by reaction agents
