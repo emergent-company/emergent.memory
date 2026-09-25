@@ -85,6 +85,12 @@ None.
 - **Unit 1** (`web-ui-component-conventions`, PR #874) landed the conventions these changes enforce.
 - **Unit 3** (`web-ui-component-consolidation`) carries the component consolidation and the UX/IA/a11y/copy
   work, including the guard-test narrowing. This unit does not touch component structure.
+- **Deferred to a fourth unit: the muted-text and icon-size scale.** An earlier draft of this change
+  required muted emphasis and icon sizes to come from a small shared scale. That is a ~500-site sweep across
+  essentially every template, and because the rule admits no opacity outside the scale, a partial migration
+  would leave it unsatisfied. The requirement has been removed from this change's `web-ui-css` delta rather
+  than shipped half-done; the scale's definition and the migration belong together in their own unit. This
+  is recorded here so the deferral is visible, not silent.
 - **go-daisy upstream** (§7 of the audit record, PR #854) stays a cross-repo dependency: the library's own
   radius literals, its padding overrides, the dead `rounded-btn` class, and its global `--text-*` redefinition
   are fixed there, then re-pinned here. The `@theme inline` bridge exists so this unit does not block on it.

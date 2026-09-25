@@ -14,20 +14,6 @@ The gateway SHALL NOT maintain two divergent sources for the same component styl
 - **WHEN** the unit/style tests run
 - **THEN** a test fails if the injected subset and the compiled stylesheet disagree, and the badge rules retained by the badge-sync contract are covered by that test rather than removed
 
-### Requirement: Muted text and icon sizes come from a scale
-
-Muted text emphasis and icon sizes SHALL come from a small shared scale rather than arbitrary per-call-site values.
-
-#### Scenario: Muted text uses scale steps
-
-- **WHEN** the gateway templates are searched for muted content-opacity utilities
-- **THEN** only the documented scale steps are used, and the previous spread of near-identical opacities is gone
-
-#### Scenario: Icon sizes use scale steps
-
-- **WHEN** the gateway templates are searched for icon size utilities
-- **THEN** only the documented icon size steps are used
-
 ### Requirement: Colours derive from theme tokens
 
 Surfaces and foregrounds in the gateway's own CSS SHALL derive from the daisyUI theme tokens, so the app's palette has a single source of truth.
