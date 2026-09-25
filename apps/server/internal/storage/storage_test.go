@@ -1,9 +1,123 @@
 package storage
 
 import (
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 )
+
+func clearStorageEnv(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{
+		"STORAGE_ENDPOINT",
+		"STORAGE_PROVIDER",
+		"STORAGE_ACCESS_KEY",
+		"STORAGE_SECRET_KEY",
+		"STORAGE_REGION",
+		"STORAGE_BUCKET_DOCUMENTS",
+		"STORAGE_BUCKET_TEMP",
+	} {
+		t.Setenv(k, "")
+	}
+}
+
+func TestNewConfigDefaults(t *testing.T) {
+	clearStorageEnv(t)
+
+	cfg := NewConfig()
+	if cfg.Region != "us-east-1" {
+		t.Errorf("Region = %q, want us-east-1", cfg.Region)
+	}
+	if cfg.Provider != "" {
+		t.Errorf("Provider = %q, want empty default", cfg.Provider)
+	}
+	if cfg.BucketDocuments != "documents" {
+		t.Errorf("BucketDocuments = %q, want documents", cfg.BucketDocuments)
+	}
+	if cfg.BucketTemp != "document-temp" {
+		t.Errorf("BucketTemp = %q, want document-temp", cfg.BucketTemp)
+	}
+	if cfg.Enabled() {
+		t.Error("Enabled() = true with no endpoint/credentials, want false")
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() with empty provider returned error: %v", err)
+	}
+}
+
+func TestNewConfigOverrides(t *testing.T) {
+	clearStorageEnv(t)
+	t.Setenv("STORAGE_ENDPOINT", "http://seaweedfs:8333")
+	t.Setenv("STORAGE_PROVIDER", "seaweedfs")
+	t.Setenv("STORAGE_ACCESS_KEY", "emergent")
+	t.Setenv("STORAGE_SECRET_KEY", "secret")
+	t.Setenv("STORAGE_REGION", "eu-west-2")
+	t.Setenv("STORAGE_BUCKET_DOCUMENTS", "docs-bucket")
+	t.Setenv("STORAGE_BUCKET_TEMP", "temp-bucket")
+
+	cfg := NewConfig()
+	if cfg.Region != "eu-west-2" {
+		t.Errorf("Region = %q, want eu-west-2", cfg.Region)
+	}
+	if cfg.Provider != "seaweedfs" {
+		t.Errorf("Provider = %q, want seaweedfs", cfg.Provider)
+	}
+	if cfg.Endpoint != "http://seaweedfs:8333" {
+		t.Errorf("Endpoint = %q, want http://seaweedfs:8333", cfg.Endpoint)
+	}
+	if cfg.BucketDocuments != "docs-bucket" || cfg.BucketTemp != "temp-bucket" {
+		t.Errorf("buckets = %q/%q, want docs-bucket/temp-bucket", cfg.BucketDocuments, cfg.BucketTemp)
+	}
+	if !cfg.Enabled() {
+		t.Error("Enabled() = false with full config, want true")
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() with seaweedfs returned error: %v", err)
+	}
+}
+
+func TestConfigValidateRejectsUnknownProvider(t *testing.T) {
+	cfg := &Config{Provider: "ceph"}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() with unknown provider returned nil, want error")
+	}
+	if !strings.Contains(err.Error(), "ceph") {
+		t.Errorf("error %q does not name the rejected provider", err)
+	}
+	if !strings.Contains(err.Error(), "seaweedfs") {
+		t.Errorf("error %q does not list accepted providers", err)
+	}
+}
+
+func TestNewServiceRejectsUnknownProvider(t *testing.T) {
+	cfg := &Config{
+		Endpoint:  "http://example.invalid:8333",
+		Provider:  "not-a-backend",
+		AccessKey: "access",
+		SecretKey: "secret",
+	}
+	_, err := NewService(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err == nil {
+		t.Fatal("NewService() with unknown provider returned nil error, want fail-fast")
+	}
+	if !strings.Contains(err.Error(), "STORAGE_PROVIDER") {
+		t.Errorf("error %q does not mention STORAGE_PROVIDER", err)
+	}
+}
+
+func TestNewServiceAllowedProviders(t *testing.T) {
+	for _, provider := range []string{"", "s3", "seaweedfs", "minio"} {
+		t.Run("provider="+provider, func(t *testing.T) {
+			cfg := &Config{Endpoint: "http://example.invalid:8333", Provider: provider}
+			// Storage disabled (no credentials) but provider validation must pass.
+			if _, err := NewService(cfg, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
+				t.Errorf("NewService() with provider %q returned error: %v", provider, err)
+			}
+		})
+	}
+}
 
 func TestSanitizeFilename(t *testing.T) {
 	tests := []struct {

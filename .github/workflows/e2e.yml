@@ -60,7 +60,7 @@ jobs:
       # built locally (memory-server:ci) and the test client/registry services
       # are built, so pull only the registry-backed services.
       - name: "Preflight: pull stack images"
-        run: docker compose pull test-db minio minio-init mailpit
+        run: docker compose pull test-db seaweedfs mailpit
 
       - name: Run CLI install tests
         env:
@@ -124,7 +124,7 @@ jobs:
       # built locally (memory-server:ci) and the test client/registry services
       # are built, so pull only the registry-backed services.
       - name: "Preflight: pull stack images"
-        run: docker compose pull test-db minio minio-init mailpit
+        run: docker compose pull test-db seaweedfs mailpit
 
       - name: Start server stack
         run: |

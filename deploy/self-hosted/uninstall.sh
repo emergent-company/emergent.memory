@@ -49,6 +49,8 @@ if [[ "$REMOVE_DATA" =~ ^[Yy]$ ]]; then
     fi
     
     docker volume rm self-hosted_postgres_data minimal_postgres_data 2>/dev/null || true
+    docker volume rm self-hosted_object_store_data minimal_object_store_data 2>/dev/null || true
+    # Legacy MinIO volume from pre-SeaweedFS installs
     docker volume rm self-hosted_minio_data minimal_minio_data 2>/dev/null || true
     docker volume rm self-hosted_emergent_cli_config minimal_emergent_cli_config 2>/dev/null || true
     
