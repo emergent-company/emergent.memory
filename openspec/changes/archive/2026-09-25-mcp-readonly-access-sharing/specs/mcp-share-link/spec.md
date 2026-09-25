@@ -1,3 +1,7 @@
+## Purpose
+
+The MCP share response includes ready-to-paste agent config snippets (Claude Desktop, Cursor) and the project-scoped MCP endpoint URL, so a recipient can configure an AI agent client without further steps.
+
 ## ADDED Requirements
 
 ### Requirement: API response includes pre-formatted agent config snippets
