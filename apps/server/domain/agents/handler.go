@@ -765,6 +765,7 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 			MaxSteps:        triggerReq.MaxSteps,
 			AuthToken:       triggerAuthToken,
 			SessionID:       triggerReq.SessionID,
+			TrustedInternal: true, // session UI is a trusted surface (full internal coordination)
 		})
 		if execResult != nil && execResult.Cleanup != nil {
 			execResult.Cleanup()
@@ -1277,6 +1278,7 @@ func (h *Handler) ReceiveWebhook(c echo.Context) error {
 		TriggerSource:   &triggerSource,
 		TriggerMetadata: metadata,
 		MaxSteps:        maxSteps,
+		TrustedInternal: true, // session UI is a trusted surface (full internal coordination)
 	}
 
 	result, err := h.executor.Execute(c.Request().Context(), req)

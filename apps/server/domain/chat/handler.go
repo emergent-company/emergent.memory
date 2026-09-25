@@ -1270,6 +1270,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 			EphemeralTokenID:     ephemeralTokenID,
 			ACPSessionID:         acpSessionID,
 			SystemPromptAppendix: systemPromptAppendix,
+			TrustedInternal:      true, // session UI is a trusted surface (full internal coordination)
 		}
 		if parentRunID != "" {
 			execReq.ParentRunID = &parentRunID
@@ -2006,6 +2007,7 @@ func (h *Handler) RememberStream(c echo.Context) error {
 			UserID:          user.ID,
 			UserMessage:     agentMessage,
 			PreCreatedRun:   preCreated,
+			TrustedInternal: true, // session UI is a trusted surface (full internal coordination)
 		}
 		if parentRunID != "" {
 			execReq.ParentRunID = &parentRunID
@@ -2085,6 +2087,7 @@ func (h *Handler) RememberStream(c echo.Context) error {
 			OrgID:           user.OrgID,
 			UserID:          user.ID,
 			UserMessage:     agentMessage,
+			TrustedInternal: true, // session UI is a trusted surface (full internal coordination)
 		}
 		if parentRunID != "" {
 			execReq.ParentRunID = &parentRunID
@@ -2446,6 +2449,7 @@ func (h *Handler) RememberFile(c echo.Context) error {
 			UserID:          user.ID,
 			UserMessage:     agentMessage,
 			PreCreatedRun:   preCreated,
+			TrustedInternal: true, // session UI is a trusted surface (full internal coordination)
 		}
 		if req.ParentRunID != "" {
 			execReq.ParentRunID = &req.ParentRunID
@@ -2523,6 +2527,7 @@ func (h *Handler) RememberFile(c echo.Context) error {
 			OrgID:           user.OrgID,
 			UserID:          user.ID,
 			UserMessage:     agentMessage,
+			TrustedInternal: true, // session UI is a trusted surface (full internal coordination)
 		}
 		if req.ParentRunID != "" {
 			execReq.ParentRunID = &req.ParentRunID
@@ -2785,6 +2790,7 @@ func (h *Handler) ForgetStream(c echo.Context) error {
 			UserID:          user.ID,
 			UserMessage:     agentMessage,
 			PreCreatedRun:   preCreated,
+			TrustedInternal: true, // session UI is a trusted surface (full internal coordination)
 		}
 		if parentRunID != "" {
 			execReq.ParentRunID = &parentRunID
@@ -2835,6 +2841,7 @@ func (h *Handler) ForgetStream(c echo.Context) error {
 			OrgID:           user.OrgID,
 			UserID:          user.ID,
 			UserMessage:     agentMessage,
+			TrustedInternal: true, // session UI is a trusted surface (full internal coordination)
 		}
 		if parentRunID != "" {
 			execReq.ParentRunID = &parentRunID
