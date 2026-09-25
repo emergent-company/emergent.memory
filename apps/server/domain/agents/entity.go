@@ -215,6 +215,15 @@ type AgentRun struct {
 
 	AgentDefinitionID *string `bun:"agent_definition_id,type:uuid" json:"agentDefinitionId,omitempty"`
 
+	// TrustedInternal marks a run started through a trusted surface (session UI,
+	// scheduler/worker runs, MCP tools, agent→agent delegation). The zero value is
+	// false = untrusted/external-facing, so a transport that forgets to declare
+	// itself is denied internal agents (fail-closed). It is fixed at run creation
+	// and inherited unchanged through delegation and resume, so the internal-agent
+	// reachability invariant holds for the whole call chain, not just the first
+	// hop (issue #954).
+	TrustedInternal bool `bun:"trusted_internal,notnull,default:false" json:"trustedInternal"`
+
 	Tools []string `bun:"tools,array" json:"tools,omitempty"`
 
 	// SuspendContext holds the serialized SuspendSignal when a run is paused via the
@@ -239,6 +248,9 @@ type CreateRunOptions struct {
 	TriggerMessage    *string // optional message injected as user message on wakeup
 	Model             *string // model override for this run
 	AgentDefinitionID *string
+	// TrustedInternal is the fail-closed trust marker persisted on the run row.
+	// false (zero value) = external-facing/untrusted; trusted surfaces set true.
+	TrustedInternal bool
 }
 
 // CreateRunQueuedOptions holds optional parameters for CreateRunQueued.

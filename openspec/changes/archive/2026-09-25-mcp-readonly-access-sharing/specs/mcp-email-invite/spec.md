@@ -1,3 +1,7 @@
+## Purpose
+
+When generating a read-only MCP share, an admin may provide one or more email addresses. The system sends an MCP invite email (`mcp-invite` template) to each, asynchronously, containing the endpoint, API key, and setup instructions without requiring the recipient to create a Memory account.
+
 ## ADDED Requirements
 
 ### Requirement: Admin can send an MCP invite email to one or more addresses

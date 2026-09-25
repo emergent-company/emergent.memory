@@ -60,6 +60,39 @@ func TestSplitLongTextProducesMultipleChunks(t *testing.T) {
 	}
 }
 
+func TestSplitHonorsChunkOverlapWithoutSeparators(t *testing.T) {
+	cases := []struct {
+		name        string
+		in          string
+		cfg         textsplitter.Config
+		wantOverlap int
+	}{
+		{"unbroken alphanumeric run", strings.Repeat("abcdefghijklmnopqrstuvwxyz", 40), textsplitter.Config{ChunkSize: 100, ChunkOverlap: 20}, 20},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := textsplitter.Split(tc.in, tc.cfg)
+			if len(got) < 2 {
+				t.Fatalf("Split produced %d chunks, want >= 2", len(got))
+			}
+
+			for i := 1; i < len(got); i++ {
+				prev, cur := []rune(got[i-1]), []rune(got[i])
+				if len(prev) < tc.wantOverlap || len(cur) < tc.wantOverlap {
+					t.Fatalf("chunks %d/%d are shorter than the %d-rune overlap", i-1, i, tc.wantOverlap)
+				}
+				prevTail := string(prev[len(prev)-tc.wantOverlap:])
+				curHead := string(cur[:tc.wantOverlap])
+				if prevTail != curHead {
+					t.Fatalf("chunks %d and %d share no %d-rune overlap:\nchunk %d tail: %q\nchunk %d head: %q",
+						i-1, i, tc.wantOverlap, i-1, prevTail, i, curHead)
+				}
+			}
+		})
+	}
+}
+
 func TestSplitNormalizesInvalidConfig(t *testing.T) {
 	in := strings.Repeat("word ", 500) // 2500 chars
 	cfg := textsplitter.Config{ChunkSize: -10, ChunkOverlap: 999999}
