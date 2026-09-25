@@ -47,8 +47,8 @@ func TestGetDockerComposeTemplate(t *testing.T) {
 		"db:",
 		"pgvector/pgvector:pg17",
 		"ghcr.io/kreuzberg-dev/kreuzberg-full:4.10.3",
-		"quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z",
-		"quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z",
+		"ghcr.io/emergent-company/minio:RELEASE.2025-09-07T16-13-09Z",
+		"ghcr.io/emergent-company/minio-mc:RELEASE.2025-08-13T08-35-41Z",
 		"kreuzberg:",
 		"minio:",
 		"minio-init:",
@@ -67,19 +67,21 @@ func TestGetDockerComposeTemplate(t *testing.T) {
 	}
 }
 
-// TestMinioImagesUseQuayRegistry guards against the regression that broke every
+// TestMinioImagesUseOwnedRegistry guards against the regression that broke every
 // fresh install and every `memory server upgrade`: MinIO withdrew the
-// minio/minio and minio/mc repositories from Docker Hub, so any compose file
-// generated with those image references fails to pull.
-func TestMinioImagesUseQuayRegistry(t *testing.T) {
+// minio/minio and minio/mc repositories from Docker Hub, and later the
+// quay.io/minio images too, so any compose file generated with those image
+// references fails to pull. We now serve the pinned images from our own GHCR
+// mirror.
+func TestMinioImagesUseOwnedRegistry(t *testing.T) {
 	images := map[string]string{
 		"MinioImage":       MinioImage,
 		"MinioClientImage": MinioClientImage,
 	}
 
 	for name, image := range images {
-		if !strings.HasPrefix(image, "quay.io/minio/") {
-			t.Errorf("%s = %q: must use the quay.io/minio registry", name, image)
+		if !strings.HasPrefix(image, "ghcr.io/emergent-company/") {
+			t.Errorf("%s = %q: must use the owned ghcr.io/emergent-company registry", name, image)
 		}
 		if strings.HasSuffix(image, ":latest") {
 			t.Errorf("%s = %q: must be pinned to an explicit RELEASE tag, not :latest", name, image)
@@ -92,8 +94,9 @@ func TestMinioImagesUseQuayRegistry(t *testing.T) {
 	template := GetDockerComposeTemplate()
 	for _, line := range strings.Split(template, "\n") {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "image: minio/") {
-			t.Errorf("docker-compose template still references withdrawn Docker Hub image: %q", trimmed)
+		if strings.HasPrefix(trimmed, "image: minio/") ||
+			strings.HasPrefix(trimmed, "image: quay.io/minio/") {
+			t.Errorf("docker-compose template still references a withdrawn registry image: %q", trimmed)
 		}
 	}
 }

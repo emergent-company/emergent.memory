@@ -506,7 +506,7 @@ services:
       - memory
 
   minio:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    image: ghcr.io/emergent-company/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: memory-minio
     restart: unless-stopped
     command: server /data --console-address ':9001'
@@ -526,7 +526,7 @@ services:
       - memory
 
   minio-init:
-    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+    image: ghcr.io/emergent-company/minio-mc:RELEASE.2025-08-13T08-35-41Z
     container_name: memory-minio-init
     depends_on:
       minio:
