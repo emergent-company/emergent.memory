@@ -10,6 +10,10 @@ import (
 func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	admin := e.Group("/api/admin/mcp-servers")
 	admin.Use(authMiddleware.RequireAuth())
+	// These admin routes scope by user.ProjectID (X-Project-ID header): enforce
+	// token binding and session org-membership (issue #868, the #864 class).
+	admin.Use(authMiddleware.RequireProjectTokenScope())
+	admin.Use(authMiddleware.RequireProjectMember())
 
 	// Read operations - require admin
 	readGroup := admin.Group("")
@@ -32,6 +36,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// "builtin" MCPServer record, only the flat tool list with inheritance info.
 	builtins := e.Group("/api/admin/builtin-tools")
 	builtins.Use(authMiddleware.RequireAuth())
+	builtins.Use(authMiddleware.RequireProjectTokenScope())
+	builtins.Use(authMiddleware.RequireProjectMember())
 
 	builtinRead := builtins.Group("")
 	builtinRead.Use(authMiddleware.RequireAPITokenScopes("admin"))
@@ -44,6 +50,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Official MCP Registry browse/install routes
 	registry := e.Group("/api/admin/mcp-registry")
 	registry.Use(authMiddleware.RequireAuth())
+	registry.Use(authMiddleware.RequireProjectTokenScope())
+	registry.Use(authMiddleware.RequireProjectMember())
 
 	// Read operations - search/get from public registry
 	registryRead := registry.Group("")

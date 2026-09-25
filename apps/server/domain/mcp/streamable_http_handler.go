@@ -428,7 +428,7 @@ func (h *StreamableHTTPHandler) getSession(sessionID string) *MCPSession {
 func (h *StreamableHTTPHandler) processRequest(c echo.Context, req *Request, session *MCPSession, user *auth.AuthUser) *Response {
 	switch req.Method {
 	case "initialize":
-		return h.handleInitialize(c, req, session)
+		return h.handleInitialize(c, req, session, user)
 	case "tools/list":
 		return h.handleToolsList(c, req, session, user)
 	case "tools/call":
@@ -451,7 +451,7 @@ func (h *StreamableHTTPHandler) processRequest(c echo.Context, req *Request, ses
 }
 
 // handleInitialize handles initialize method
-func (h *StreamableHTTPHandler) handleInitialize(c echo.Context, req *Request, session *MCPSession) *Response {
+func (h *StreamableHTTPHandler) handleInitialize(c echo.Context, req *Request, session *MCPSession, user *auth.AuthUser) *Response {
 	var params InitializeParams
 	if len(req.Params) > 0 {
 		if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -481,14 +481,26 @@ func (h *StreamableHTTPHandler) handleInitialize(c echo.Context, req *Request, s
 		)
 	}
 
-	// Update session
-	session.Initialized = true
-	session.ProtocolVersion = params.ProtocolVersion
-	if params.ProjectID != "" {
-		session.ProjectID = params.ProjectID
+	// Resolve the candidate project WITHOUT mutating the session: the initialize
+	// params when supplied, otherwise the session's current project. Authorize
+	// the candidate before touching any session field so a denied re-init leaves
+	// the stored session exactly as it was — a re-init that names a foreign
+	// project must not poison the existing session (issue #868 follow-up:
+	// mutation-before-check). Session callers must be org members of the claimed
+	// project and project-bound tokens cannot claim a foreign project.
+	candidate := params.ProjectID
+	if candidate == "" {
+		candidate = session.ProjectID
+	}
+	if err := h.svc.authorizeProjectClaim(c.Request().Context(), user, candidate); err != nil {
+		return NewErrorResponse(req.ID, ErrCodeForbidden, "Project access denied", nil)
 	}
 
-	// Store session
+	// Authorized: commit the session update and store it.
+	session.Initialized = true
+	session.ProtocolVersion = params.ProtocolVersion
+	session.ProjectID = candidate
+
 	h.sessionsMu.Lock()
 	h.sessions[session.ID] = session
 	h.sessionsMu.Unlock()

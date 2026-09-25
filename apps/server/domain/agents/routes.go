@@ -140,6 +140,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Project ID is resolved from the API token binding or X-Project-ID header.
 	legacyDefs := e.Group("/api/agent-definitions")
 	legacyDefs.Use(authMiddleware.RequireAuth())
+	legacyDefs.Use(authMiddleware.RequireProjectTokenScope())
+	legacyDefs.Use(authMiddleware.RequireProjectMember())
 	legacyDefs.Use(authMiddleware.RequireAPITokenScopes("agents:read"))
 	legacyDefs.GET("", h.ListDefinitions)
 	legacyDefs.GET("/:id", h.GetDefinition)
