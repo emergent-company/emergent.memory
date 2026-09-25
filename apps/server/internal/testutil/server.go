@@ -39,6 +39,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/invites"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
+	"github.com/emergent-company/emergent.memory/domain/mcprelay"
 	"github.com/emergent-company/emergent.memory/domain/modelconfig"
 	"github.com/emergent-company/emergent.memory/domain/monitoring"
 	"github.com/emergent-company/emergent.memory/domain/notifications"
@@ -502,6 +503,11 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	mcpRegistrySvc := mcpregistry.NewService(mcpRegistryRepo, mcpSvc, mcpRegistryClient, nil, log)
 	mcpRegistryHandler := mcpregistry.NewHandler(mcpRegistrySvc)
 	mcpregistry.RegisterRoutes(e, mcpRegistryHandler, authMiddleware)
+
+	// Register MCP relay routes (WebSocket connect + REST sessions/tools/call)
+	mcprelaySvc := mcprelay.NewService(log)
+	mcprelayHandler := mcprelay.NewHandler(mcprelaySvc, log)
+	mcprelay.RegisterRoutes(e, mcprelayHandler, authMiddleware)
 
 	// Register useraccess routes
 	useraccessSvc := useraccess.NewService(db)
