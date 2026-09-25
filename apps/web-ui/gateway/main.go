@@ -288,6 +288,7 @@ func main() {
 	e.POST("/documents/:id/extract", s.uiTriggerExtraction)
 	e.POST("/documents/:id/delete", s.uiDeleteDocument)
 	e.GET("/objects", s.uiObjects)
+	e.GET("/objects/partial", s.uiObjectsPartial)
 	e.GET("/objects/search", s.uiObjectSearch)
 	e.GET("/objects/new", s.uiObjectNew)
 	e.GET("/objects/:id", s.uiObject)
