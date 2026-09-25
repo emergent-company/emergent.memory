@@ -17,9 +17,12 @@ import (
 //     caller's own project in the handler.
 //   - Operator write surface (pause, resume, config, queue, reset-schedule):
 //     deployment-wide controls that affect the whole embedding fleet, not a
-//     single project, so they require platform admin authority (admin:write).
+//     single project, so they require platform admin authority: an active
+//     superadmin_full principal (core.superadmins). A scope gate is deliberately
+//     NOT used — an admin:all token is mintable by any org_admin and would
+//     otherwise pass an admin:write scope check.
 //   - Diagnostic read surface (diagnose): unprojected global queue counts, so it
-//     requires platform admin read authority (admin:read).
+//     requires the same superadmin_full platform-admin authority.
 func RegisterEmbeddingControlRoutes(e *echo.Echo, h *EmbeddingControlHandler, authMiddleware *auth.Middleware) {
 	g := e.Group("/api/embeddings")
 	g.Use(authMiddleware.RequireAuth())
@@ -30,7 +33,7 @@ func RegisterEmbeddingControlRoutes(e *echo.Echo, h *EmbeddingControlHandler, au
 	read.GET("/progress", h.Progress)
 
 	write := g.Group("")
-	write.Use(authMiddleware.RequireScopes("admin:write"))
+	write.Use(authMiddleware.RequireSuperadminFull())
 	write.POST("/pause", h.Pause)
 	write.POST("/resume", h.Resume)
 	write.PATCH("/config", h.Config)
@@ -38,6 +41,6 @@ func RegisterEmbeddingControlRoutes(e *echo.Echo, h *EmbeddingControlHandler, au
 	write.POST("/reset-schedule", h.ResetSchedule)
 
 	diag := g.Group("")
-	diag.Use(authMiddleware.RequireScopes("admin:read"))
+	diag.Use(authMiddleware.RequireSuperadminFull())
 	diag.GET("/diagnose", h.DiagnoseQueue)
 }

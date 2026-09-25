@@ -20,6 +20,13 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 )
 
+const (
+	noScopeToken     = "no-scope"                  // NoScopeUser: empty scopes, no membership
+	superadminToken  = "e2e-test-user"             // AdminUser: all scopes + core.superadmins superadmin_full
+	orgAdminToken    = "emt_test_940_org_admin"    // admin:all token minted by an org_admin (the escalation path)
+	orgAdminUserName = "org-admin-escalation-user" // dedicated org_admin profile
+)
+
 // newEmbeddingControlEcho wires a minimal Echo instance with only the
 // /api/embeddings control routes and the real auth middleware + control handler,
 // so the authorization posture of each endpoint can be exercised over HTTP
@@ -72,8 +79,10 @@ func seedObjectJobs(t *testing.T, ctx context.Context, db bun.IDB, projectID str
 }
 
 // TestEmbeddingControlAuthz proves the /api/embeddings control group is gated by
-// platform admin for operator writes + diagnostics and by project membership
-// (with project-scoped counts) for reads (issue #940).
+// superadmin_full for operator writes + diagnostics and by project membership
+// (with project-scoped counts) for reads (issue #940). It specifically proves
+// that an org_admin-minted admin:all token does NOT satisfy the deployment-wide
+// controls (the proportionality failure of the earlier scope-based gate).
 func TestEmbeddingControlAuthz(t *testing.T) {
 	ctx := context.Background()
 	testDB := testutil.SetupTestDBOrFail(t, ctx, "embedding_control_authz")
@@ -89,21 +98,30 @@ func TestEmbeddingControlAuthz(t *testing.T) {
 	require.NoError(t, testutil.CreateTestOrgMembership(ctx, dbc, orgID, testutil.AdminUser.ID, "org_admin"))
 	require.NoError(t, testutil.CreateTestProjectMembership(ctx, dbc, projectID, testutil.AdminUser.ID, "project_admin"))
 
+	// superadmin_full principal: AdminUser holds an active superadmin_full grant.
+	_, err := dbc.NewRaw(`INSERT INTO core.superadmins (user_id, role) VALUES (?, 'superadmin_full')`, testutil.AdminUser.ID).Exec(ctx)
+	require.NoError(t, err)
+
+	// org_admin escalation principal: a dedicated user who is an org_admin and
+	// mints an admin:all token — the exact path the earlier scope gate admitted.
+	orgAdminUserID := uuid.New().String()
+	require.NoError(t, testutil.CreateTestUser(ctx, dbc, testutil.TestUser{
+		ID:            orgAdminUserID,
+		ZitadelUserID: orgAdminUserName,
+		Email:         "orgadmin@test.local",
+	}))
+	require.NoError(t, testutil.CreateTestOrgMembership(ctx, dbc, orgID, orgAdminUserID, "org_admin"))
+	require.NoError(t, testutil.CreateTestAccountAPIToken(ctx, dbc, orgAdminUserID, orgAdminToken, []string{"admin:all"}))
+
 	foreignOrg := uuid.New().String()
 	foreignProject := uuid.New().String()
 	require.NoError(t, testutil.CreateTestOrganization(ctx, dbc, foreignOrg, "Foreign Org"))
 	require.NoError(t, testutil.CreateTestProject(ctx, dbc, testutil.TestProject{ID: foreignProject, OrgID: foreignOrg, Name: "Foreign Project"}, testutil.AdminUser.ID))
 
-	// own project: 2 pending object jobs; foreign project: 5 pending object jobs.
 	seedObjectJobs(t, ctx, dbc, projectID, 2)
 	seedObjectJobs(t, ctx, dbc, foreignProject, 5)
 
 	client := newEmbeddingControlEcho(t, testDB)
-
-	const (
-		nonAdmin = "no-scope"      // NoScopeUser: empty scopes, no membership
-		admin    = "e2e-test-user" // AdminUser: all scopes, project_admin of projectID
-	)
 
 	writeCases := []struct {
 		method string
@@ -116,46 +134,59 @@ func TestEmbeddingControlAuthz(t *testing.T) {
 		{http.MethodPost, "/api/embeddings/reset-schedule"},
 	}
 
+	t.Run("operator writes refused for org_admin admin:all token", func(t *testing.T) {
+		for _, c := range writeCases {
+			resp := client.Request(c.method, c.path, testutil.WithAuth(orgAdminToken))
+			require.Equal(t, http.StatusForbidden, resp.StatusCode,
+				"%s %s by org_admin admin:all token must be 403, got %d: %s", c.method, c.path, resp.StatusCode, resp.String())
+		}
+	})
+
 	t.Run("operator writes refused for non-admin", func(t *testing.T) {
 		for _, c := range writeCases {
-			resp := client.Request(c.method, c.path, testutil.WithAuth(nonAdmin))
+			resp := client.Request(c.method, c.path, testutil.WithAuth(noScopeToken))
 			require.Equal(t, http.StatusForbidden, resp.StatusCode,
 				"%s %s by non-admin must be 403, got %d: %s", c.method, c.path, resp.StatusCode, resp.String())
 		}
 	})
 
-	t.Run("operator writes allowed for admin", func(t *testing.T) {
+	t.Run("operator writes allowed for superadmin_full", func(t *testing.T) {
 		for _, c := range writeCases {
-			resp := client.Request(c.method, c.path, testutil.WithAuth(admin))
+			resp := client.Request(c.method, c.path, testutil.WithAuth(superadminToken))
 			require.Equal(t, http.StatusOK, resp.StatusCode,
-				"%s %s by admin must be 200, got %d: %s", c.method, c.path, resp.StatusCode, resp.String())
+				"%s %s by superadmin_full must be 200, got %d: %s", c.method, c.path, resp.StatusCode, resp.String())
 		}
 	})
 
-	t.Run("diagnose refused for non-admin, allowed for admin", func(t *testing.T) {
-		resp := client.GET("/api/embeddings/diagnose", testutil.WithAuth(nonAdmin))
+	t.Run("diagnose refused for org_admin and non-admin, allowed for superadmin_full", func(t *testing.T) {
+		resp := client.GET("/api/embeddings/diagnose", testutil.WithAuth(orgAdminToken))
+		require.Equal(t, http.StatusForbidden, resp.StatusCode, "diagnose by org_admin admin:all token must be 403, got %d: %s", resp.StatusCode, resp.String())
+
+		resp = client.GET("/api/embeddings/diagnose", testutil.WithAuth(noScopeToken))
 		require.Equal(t, http.StatusForbidden, resp.StatusCode, "diagnose by non-admin must be 403, got %d: %s", resp.StatusCode, resp.String())
 
-		resp = client.GET("/api/embeddings/diagnose", testutil.WithAuth(admin))
-		require.Equal(t, http.StatusOK, resp.StatusCode, "diagnose by admin must be 200, got %d: %s", resp.StatusCode, resp.String())
+		resp = client.GET("/api/embeddings/diagnose", testutil.WithAuth(superadminToken))
+		require.Equal(t, http.StatusOK, resp.StatusCode, "diagnose by superadmin_full must be 200, got %d: %s", resp.StatusCode, resp.String())
 	})
 
-	t.Run("progress without project refused for non-admin, global for admin", func(t *testing.T) {
-		resp := client.GET("/api/embeddings/progress", testutil.WithAuth(nonAdmin))
-		require.Equal(t, http.StatusForbidden, resp.StatusCode, "progress without project by non-admin must be 403, got %d: %s", resp.StatusCode, resp.String())
+	t.Run("progress without project: superadmin_full only", func(t *testing.T) {
+		resp := client.GET("/api/embeddings/progress", testutil.WithAuth(orgAdminToken))
+		require.Equal(t, http.StatusForbidden, resp.StatusCode, "project-less progress by org_admin admin:all token must be 403, got %d: %s", resp.StatusCode, resp.String())
 
-		resp = client.GET("/api/embeddings/progress", testutil.WithAuth(admin))
-		require.Equal(t, http.StatusOK, resp.StatusCode, "progress without project by admin must be 200, got %d: %s", resp.StatusCode, resp.String())
+		resp = client.GET("/api/embeddings/progress", testutil.WithAuth(noScopeToken))
+		require.Equal(t, http.StatusForbidden, resp.StatusCode, "project-less progress by non-admin must be 403, got %d: %s", resp.StatusCode, resp.String())
+
+		resp = client.GET("/api/embeddings/progress", testutil.WithAuth(superadminToken))
+		require.Equal(t, http.StatusOK, resp.StatusCode, "project-less progress by superadmin_full must be 200, got %d: %s", resp.StatusCode, resp.String())
 	})
 
 	t.Run("progress is project-scoped for members", func(t *testing.T) {
-		// Re-seed: the admin write subtest above clears the queue (DELETE /queue),
-		// so restore own/foreign pending jobs before asserting scoped counts.
+		// Re-seed: the admin write subtest above clears the queue (DELETE /queue).
 		seedObjectJobs(t, ctx, dbc, projectID, 2)
 		seedObjectJobs(t, ctx, dbc, foreignProject, 5)
 
 		resp := client.GET("/api/embeddings/progress",
-			testutil.WithAuth(admin), testutil.WithProjectID(projectID))
+			testutil.WithAuth(superadminToken), testutil.WithProjectID(projectID))
 		require.Equal(t, http.StatusOK, resp.StatusCode, "member progress must be 200, got %d: %s", resp.StatusCode, resp.String())
 
 		var progress struct {
@@ -170,17 +201,17 @@ func TestEmbeddingControlAuthz(t *testing.T) {
 
 	t.Run("progress for foreign project denied", func(t *testing.T) {
 		resp := client.GET("/api/embeddings/progress",
-			testutil.WithAuth(nonAdmin), testutil.WithProjectID(foreignProject))
+			testutil.WithAuth(noScopeToken), testutil.WithProjectID(foreignProject))
 		require.Equal(t, http.StatusForbidden, resp.StatusCode, "non-member foreign-project progress must be 403, got %d: %s", resp.StatusCode, resp.String())
 	})
 
 	t.Run("status is a project-member read", func(t *testing.T) {
 		resp := client.GET("/api/embeddings/status",
-			testutil.WithAuth(admin), testutil.WithProjectID(projectID))
+			testutil.WithAuth(superadminToken), testutil.WithProjectID(projectID))
 		require.Equal(t, http.StatusOK, resp.StatusCode, "member status must be 200, got %d: %s", resp.StatusCode, resp.String())
 
 		resp = client.GET("/api/embeddings/status",
-			testutil.WithAuth(nonAdmin), testutil.WithProjectID(foreignProject))
+			testutil.WithAuth(noScopeToken), testutil.WithProjectID(foreignProject))
 		require.Equal(t, http.StatusForbidden, resp.StatusCode, "non-member status must be 403, got %d: %s", resp.StatusCode, resp.String())
 	})
 }

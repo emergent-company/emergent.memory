@@ -231,10 +231,12 @@ type EmbeddingProgressResponse struct {
 
 // Progress returns per-queue embedding job statistics, project-scoped when a
 // project context is present. A caller with no project context may only obtain
-// the deployment-wide view when they hold platform admin read authority
-// (admin:read); otherwise the request is refused. This closes the unprojected
-// aggregate-count disclosure of issue #940 while keeping the gateway's
-// project-scoped embeddings page working.
+// the deployment-wide view when they hold an active superadmin_full grant;
+// otherwise the request is refused. This closes the unprojected aggregate-count
+// disclosure of issue #940 (including the admin:all escalation: a scope check
+// would admit an org_admin-minted admin:all token, so the fallback checks the
+// core.superadmins role instead) while keeping the gateway's project-scoped
+// embeddings page working.
 // @Router /api/embeddings/progress [get]
 func (h *EmbeddingControlHandler) Progress(c echo.Context) error {
 	ctx := c.Request().Context()
@@ -246,9 +248,13 @@ func (h *EmbeddingControlHandler) Progress(c echo.Context) error {
 	}
 
 	if projectID == "" {
-		if !user.HasScope("admin:read") {
+		isSuperadmin, err := auth.IsSuperadminFull(ctx, h.objectJobsSvc.DB())
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
+		if !isSuperadmin {
 			return c.JSON(http.StatusForbidden, map[string]any{
-				"error": "admin scope required for deployment-wide embedding progress",
+				"error": "superadmin privilege required for deployment-wide embedding progress",
 			})
 		}
 		return h.progressGlobal(ctx, c)
