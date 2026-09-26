@@ -79,6 +79,21 @@ func TestGlobalAgentCard_Capabilities(t *testing.T) {
 	assert.True(t, card.Capabilities.ExtendedAgentCard)
 }
 
+func TestGlobalAgentCard_A2UIExtension(t *testing.T) {
+	card := GlobalAgentCard()
+	require.Len(t, card.Capabilities.Extensions, 1)
+	ext := card.Capabilities.Extensions[0]
+	assert.Equal(t, A2UIA2AExtensionURI, ext.URI)
+	ids, ok := ext.Params["supportedCatalogIds"].([]string)
+	require.True(t, ok, "supportedCatalogIds must be a string array")
+	assert.Equal(t, []string{"memory-basic"}, ids)
+
+	// No tenant data leaks through the extension params.
+	j := mustJSON(t, card)
+	assert.NotContains(t, j, "projectId")
+	assert.NotContains(t, j, "orgId")
+}
+
 func TestAgentDefinitionToSkill_SlugID(t *testing.T) {
 	def := &AgentDefinition{Name: "My Cool Agent"}
 	skill := AgentDefinitionToSkill(def)
