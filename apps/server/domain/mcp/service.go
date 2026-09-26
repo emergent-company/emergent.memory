@@ -383,8 +383,13 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					},
 					"fields": {
 						Type:        "array",
-						Description: "Optional list of property field names to return from the properties blob (e.g. [\"method\",\"path\"]). id, key, name, type, created_at, updated_at are always returned for free — do not include them here. When omitted, all properties are returned.",
+						Description: "Optional list of property field names to return from the properties blob (e.g. [\"method\",\"path\"]). id, key, name, type, created_at, updated_at are always returned for free — do not include them here. Only applies when field_strategy=\"full\".",
 						Items:       &PropertySchema{Type: "string"},
+					},
+					"field_strategy": {
+						Type:        "string",
+						Description: "Controls property depth. compact=name only (default), minimal=no properties/name, full=all properties (or the requested fields subset).",
+						Enum:        []string{"compact", "minimal", "full"},
 					},
 					"filters": {
 						Type:        "object",
@@ -2611,6 +2616,55 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 	return s.wrapResult(result)
 }
 
+// entityPropertiesProjection builds the SQL expression for the properties
+// column of the entity-query paths. Under a non-"full" field strategy it returns
+// an empty JSONB object so the wide properties column is never selected into the
+// result (issue #1069); under "full" it returns the requested fields subset, or
+// the full map when none are requested.
+func entityPropertiesProjection(strategy string, rawFields any) string {
+	if strategy != "full" {
+		return "'{}'::jsonb"
+	}
+	var fieldList []string
+	switch v := rawFields.(type) {
+	case []any:
+		for _, f := range v {
+			if s, ok := f.(string); ok && s != "" {
+				fieldList = append(fieldList, s)
+			}
+		}
+	case []string:
+		fieldList = v
+	}
+	if len(fieldList) == 0 {
+		return "go.properties"
+	}
+	// Ensure "name" is always present for display.
+	hasName := false
+	for _, f := range fieldList {
+		if f == "name" {
+			hasName = true
+			break
+		}
+	}
+	if !hasName {
+		fieldList = append([]string{"name"}, fieldList...)
+	}
+	// Build: jsonb_build_object('key1', go.properties->'key1', ...). Field names
+	// are safe — they come from the agent, not user input, but we still sanitize
+	// by allowing only alphanumeric + underscore + hyphen.
+	parts := make([]string, 0, len(fieldList)*2)
+	for _, f := range fieldList {
+		if isValidPropertyKey(f) {
+			parts = append(parts, fmt.Sprintf("'%s', go.properties->'%s'", f, f))
+		}
+	}
+	if len(parts) > 0 {
+		return "jsonb_build_object(" + strings.Join(parts, ", ") + ")"
+	}
+	return "go.properties"
+}
+
 // executeQueryEntities queries entities by type with pagination
 func (s *Service) executeQueryEntities(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
@@ -2687,50 +2741,17 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 		orderExpr = fmt.Sprintf("go.properties->>'name' %s NULLS LAST", sortOrder)
 	}
 
-	// Parse optional fields projection — only return requested property keys.
-	// Always include "name" so display is consistent.
-	var fieldProjection string
-	if rawFields, ok := args["fields"]; ok {
-		var fieldList []string
-		switch v := rawFields.(type) {
-		case []any:
-			for _, f := range v {
-				if s, ok := f.(string); ok && s != "" {
-					fieldList = append(fieldList, s)
-				}
-			}
-		case []string:
-			fieldList = v
-		}
-		if len(fieldList) > 0 {
-			// Ensure "name" is always present for display.
-			hasName := false
-			for _, f := range fieldList {
-				if f == "name" {
-					hasName = true
-					break
-				}
-			}
-			if !hasName {
-				fieldList = append([]string{"name"}, fieldList...)
-			}
-			// Build: jsonb_build_object('key1', go.properties->'key1', 'key2', go.properties->'key2', ...)
-			// Field names are safe — they come from the agent, not user input, but we still
-			// sanitize by allowing only alphanumeric + underscore + hyphen.
-			parts := make([]string, 0, len(fieldList)*2)
-			for _, f := range fieldList {
-				if isValidPropertyKey(f) {
-					parts = append(parts, fmt.Sprintf("'%s', go.properties->'%s'", f, f))
-				}
-			}
-			if len(parts) > 0 {
-				fieldProjection = "jsonb_build_object(" + strings.Join(parts, ", ") + ")"
-			}
-		}
+	// Resolve the field strategy the same way search-hybrid does. Defaulting to
+	// "compact" (name only, no properties) keeps a high-limit entity-query from
+	// returning the full properties JSONB — in statute projects that is ~14 KB of
+	// text per row, i.e. multiple MB at limit=200 (issue #1069). Callers that
+	// want properties must pass field_strategy="full".
+	opts := responseOptsFromArgs(args)
+	strategy := opts.FieldStrategy
+	if strategy == "" {
+		strategy = "compact"
 	}
-	if fieldProjection == "" {
-		fieldProjection = "go.properties"
-	}
+	fieldProjection := entityPropertiesProjection(strategy, args["fields"])
 
 	type entityRow struct {
 		ID              uuid.UUID      `bun:"id"`
@@ -2854,7 +2875,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	// Detect unrecognized parameters and surface them as a warning so callers
 	// know their extra keys (e.g. filter, status, entity_type) had no effect.
 	knownQueryEntitiesParams := map[string]struct{}{
-		"type_name": {}, "ids": {}, "limit": {}, "offset": {}, "sort_by": {}, "sort_order": {}, "include_relationships": {}, "fields": {}, "branch": {}, "filters": {},
+		"type_name": {}, "ids": {}, "limit": {}, "offset": {}, "sort_by": {}, "sort_order": {}, "include_relationships": {}, "fields": {}, "field_strategy": {}, "branch": {}, "filters": {},
 	}
 	var unknownParams []string
 	for k := range args {
@@ -3012,6 +3033,20 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 		UpdatedAt   time.Time      `bun:"updated_at"`
 	}
 
+	// ids[] is the documented "fetch full properties of a specific version"
+	// path, so it defaults to "full" (unlike the type/pagination path above,
+	// which defaults to "compact" to avoid the multi-MB wide-row payload). An
+	// explicit field_strategy still overrides it.
+	opts := responseOptsFromArgs(args)
+	strategy := opts.FieldStrategy
+	if strategy == "" {
+		strategy = "full"
+	}
+	propsProjection := "go.properties"
+	if strategy != "full" {
+		propsProjection = "'{}'::jsonb"
+	}
+
 	branchClause := "AND go.branch_id IS NULL"
 	branchQueryArgs := []any{bun.In(canonicalIDs), projectUUID}
 	if branchID != nil {
@@ -3031,7 +3066,7 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 				go.key,
 				COALESCE(go.properties->>'name', '') as name,
 				go.version,
-				go.properties,
+				`+propsProjection+` as properties,
 				go.created_at,
 				COALESCE(go.updated_at, go.created_at) as updated_at,
 				go.type as type_name
