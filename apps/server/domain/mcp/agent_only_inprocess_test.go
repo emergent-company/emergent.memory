@@ -45,6 +45,8 @@ func TestExecuteToolAuthorityGate(t *testing.T) {
 	// superadmin_full gate (issue #1018): their `admin` scope is token-only (no
 	// project role maps to it), so no trusted session run can hold it, and the
 	// in-process bar is raised to the identity-based superadmin_full grant.
+	// Trace tools are deliberately absent — they moved to SuperadminOnly (a
+	// stronger boundary) and are covered by TestTraceToolsSuperadminGate.
 	sensitiveAdminScoped := []string{
 		"token-list", "token-create", "token-get", "token-revoke",
 		"provider-configure-project",

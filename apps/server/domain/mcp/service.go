@@ -1942,10 +1942,11 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	//   - AgentOnly tools (web-search-*, web-fetch, mcp-server-*, update_mcp_server,
 	//     toggle/sync_mcp_server_tools) are the "callable only by other agents,
 	//     never via external surfaces" class — refused for untrusted runs.
-	//   - admin-scoped tools (token-*, provider-*, trace-*, project-create) are
-	//     refused for untrusted runs, matching the HTTP RequiredScope:"admin" gate.
-	//     The most sensitive of these are raised further — see
-	//     sensitiveInProcessAdminTools (issue #1018).
+	//   - admin-scoped tools (token-*, provider-*, project-create) are refused for
+	//     untrusted runs, matching the HTTP RequiredScope:"admin" gate. The most
+	//     sensitive of these are raised further — see sensitiveInProcessAdminTools
+	//     (issue #1018). Trace tools are SuperadminOnly and are gated by the
+	//     superadmin_full check above, not this admin gate.
 	if toolDef := s.GetToolByName(toolName); toolDef != nil &&
 		!TrustedInternalFromContext(ctx) && !TransportEnforcedFromContext(ctx) {
 		if toolDef.AgentOnly {
