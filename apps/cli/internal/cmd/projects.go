@@ -278,6 +278,7 @@ var (
 	setProviderBaseURL    string
 	setProviderEmbedding  string
 	setProviderGenerative string
+	setProviderName       string
 	setProjectClearFlag   bool
 )
 
@@ -905,6 +906,7 @@ func runSetProjectProvider(cmd *cobra.Command, args []string) error {
 	}
 
 	req := &provider.UpsertProviderConfigRequest{
+		Slug:            setProviderName,
 		APIKey:          setProviderAPIKey,
 		GCPProject:      setProviderGCPProject,
 		Location:        setProviderLocation,
@@ -1140,6 +1142,7 @@ func init() {
 	setProjectProviderCmd.Flags().StringVar(&setProviderBaseURL, "base-url", "", "OpenAI-compatible base URL (for openai)")
 	setProjectProviderCmd.Flags().StringVar(&setProviderEmbedding, "embedding-model", "", "Override embedding model for this project")
 	setProjectProviderCmd.Flags().StringVar(&setProviderGenerative, "generative-model", "", "Override generative model for this project")
+	setProjectProviderCmd.Flags().StringVar(&setProviderName, "name", "", "Provider instance name (slug); defaults to the provider name. Use a distinct name to add a second instance of the same provider type")
 
 	projectsCreateTokenCmd.Flags().StringVar(&createTokenName, "name", "cli-token", "Token name")
 	projectsCreateTokenCmd.Flags().StringSliceVar(&createTokenScopes, "scopes", nil, "Token scopes (default: data:read,data:write,schema:read,agents:read,agents:write)")

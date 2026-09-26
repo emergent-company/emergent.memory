@@ -14,11 +14,11 @@ type fakePricingLookup struct {
 	pricingByModel func(ctx context.Context, model string) (*ProviderPricing, error)
 }
 
-func (f fakePricingLookup) GetProjectCustomPricing(ctx context.Context, projectID string, provider ProviderType, model string) (*ProjectCustomPricing, error) {
+func (f fakePricingLookup) GetProjectCustomPricing(ctx context.Context, projectID string, providerSlug string, model string) (*ProjectCustomPricing, error) {
 	if f.projectPricing == nil {
 		return nil, nil
 	}
-	return f.projectPricing(ctx, projectID, provider, model)
+	return f.projectPricing(ctx, projectID, ProviderType(providerSlug), model)
 }
 
 func (f fakePricingLookup) GetPricing(ctx context.Context, provider ProviderType, model string) (*ProviderPricing, error) {

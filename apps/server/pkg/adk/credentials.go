@@ -19,9 +19,12 @@ type ResolvedCredential struct {
 	GenerativeModel    string
 	// BaseURL is the HTTP endpoint for OpenAI-protocol providers (openai, deepseek).
 	BaseURL string
-	// Provider is the canonical provider name: "google", "google-vertex", "openai", "deepseek".
+	// Provider is the canonical provider dialect: "google", "google-vertex", "openai", "deepseek".
 	// Used for dispatching model creation and recording usage events.
 	Provider string
+	// Slug is the provider instance slug the credential was resolved from. It
+	// may differ from Provider when several instances share one dialect.
+	Slug string
 	// Source describes where the credential was resolved from (project/organization/environment).
 	// Informational only; used for logging and tracing.
 	Source string
@@ -34,6 +37,9 @@ type ResolvedCredential struct {
 type CredentialResolver interface {
 	ResolveAny(ctx context.Context) (*ResolvedCredential, error)
 	ResolveFor(ctx context.Context, provider string) (*ResolvedCredential, error)
+	// ResolveBySlug resolves credentials for a specific provider instance.
+	// ResolveFor keeps its dialect semantics; this is the slug-addressed sibling.
+	ResolveBySlug(ctx context.Context, slug string) (*ResolvedCredential, error)
 }
 
 // ModelLimitResolver looks up token limits for the active LLM model.
@@ -61,11 +67,11 @@ type ModelResolver interface {
 // pkg/adk cannot import domain/provider, so the adapter satisfies this interface
 // and is injected optionally via fx.
 //
-// The provider parameter is one of "google", "google-vertex", "openai", "deepseek"
-// (the string values of domain/provider.ProviderType). It is passed as a plain
-// string to avoid exporting domain types through this package.
+// The slug and dialect parameters identify the provider instance and dialect
+// (e.g. slug "azure-openai", dialect "openai") as plain strings to avoid
+// exporting domain types through this package.
 type ModelWrapper interface {
-	WrapModel(inner adkmodel.LLM, provider string) adkmodel.LLM
+	WrapModel(inner adkmodel.LLM, slug, dialect string) adkmodel.LLM
 }
 
 // TestLLMChecker reports whether a project has deterministic test-LLM mode

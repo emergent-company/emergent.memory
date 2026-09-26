@@ -1760,14 +1760,22 @@ func (r *Repository) CompleteRunWithSteps(ctx context.Context, runID string, sum
 	return err
 }
 
-// UpdateRunModel sets the model name and optional provider on an agent run.
-func (r *Repository) UpdateRunModel(ctx context.Context, runID string, model string, provider ...string) error {
+// UpdateRunModel sets the model name and provider identity on an agent run.
+// provider is the dialect; slug identifies the provider instance; dialect is
+// recorded separately so legacy rows (no slug) remain queryable by dialect.
+func (r *Repository) UpdateRunModel(ctx context.Context, runID string, model string, provider string, slug string, dialect string) error {
 	q := r.db.NewUpdate().
 		Model((*AgentRun)(nil)).
 		Set("model = ?", model).
 		Where("id = ?", runID)
-	if len(provider) > 0 && provider[0] != "" {
-		q = q.Set("provider = ?", provider[0])
+	if provider != "" {
+		q = q.Set("provider = ?", provider)
+	}
+	if slug != "" {
+		q = q.Set("provider_slug = ?", slug)
+	}
+	if dialect != "" {
+		q = q.Set("dialect = ?", dialect)
 	}
 	_, err := q.Exec(ctx)
 	return err
