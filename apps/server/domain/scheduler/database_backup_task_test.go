@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/emergent-company/emergent.memory/internal/testdb"
 )
 
 // TestDatabaseBackupTaskSkipsOverlappingRun verifies the skip-if-running guard:
@@ -26,6 +28,91 @@ func TestDatabaseBackupTaskSkipsOverlappingRun(t *testing.T) {
 	}
 	if !task.running.Load() {
 		t.Fatal("overlapping Run cleared the running flag; in-flight run would no longer be guarded")
+	}
+}
+
+// TestDatabaseBackupTaskRun_PersistsFailedOnTimeout verifies the terminal record
+// write survives the backup deadline: when the dump is canceled, the row must
+// end as "failed" (not stuck "running").
+func TestDatabaseBackupTaskRun_PersistsFailedOnTimeout(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database-backed test in short mode")
+	}
+	ctx := context.Background()
+	tdb := testdb.SetupTestDBOrFail(t, ctx, "backup_timeout")
+	defer tdb.Close()
+
+	task := &DatabaseBackupTask{
+		db:  tdb.DB,
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Simulate a hung backup: block until the backup deadline fires, then return
+	// the cancellation error (mirrors pg_dump being killed on timeout).
+	entered := make(chan struct{})
+	task.backupFn = func(ctx context.Context, record *DatabaseBackup) error {
+		close(entered)
+		<-ctx.Done()
+		return ctx.Err()
+	}
+
+	runDone := make(chan error, 1)
+	go func() { runDone <- task.Run(runCtx) }()
+
+	<-entered
+	cancel() // fire the "timeout"
+
+	if err := <-runDone; err == nil {
+		t.Fatal("Run returned nil, want cancellation error")
+	}
+
+	var rec DatabaseBackup
+	if err := tdb.DB.NewSelect().Model(&rec).Order("created_at DESC").Limit(1).Scan(ctx); err != nil {
+		t.Fatalf("query backup record: %v", err)
+	}
+	if rec.Status != "failed" {
+		t.Fatalf("backup record status = %q, want failed", rec.Status)
+	}
+	if rec.Error == nil || *rec.Error == "" {
+		t.Fatal("backup record error should be set on timeout")
+	}
+}
+
+// TestDatabaseBackupTaskAcquireLock_RefusesCrossProcessOverlap verifies the
+// DB-level guard refuses a concurrent holder across two independent task
+// instances (each with its own zero-value in-process flag, which alone would
+// not stop the second run).
+func TestDatabaseBackupTaskAcquireLock_RefusesCrossProcessOverlap(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database-backed test in short mode")
+	}
+	ctx := context.Background()
+	tdb := testdb.SetupTestDBOrFail(t, ctx, "backup_lock")
+	defer tdb.Close()
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	first := &DatabaseBackupTask{db: tdb.DB, log: log}
+	second := &DatabaseBackupTask{db: tdb.DB, log: log}
+
+	release, err := first.acquireBackupLock(ctx)
+	if err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+	if release == nil {
+		t.Fatal("first acquire returned nil release, want success")
+	}
+	defer release()
+
+	secondRelease, err := second.acquireBackupLock(ctx)
+	if err != nil {
+		t.Fatalf("second acquire: %v", err)
+	}
+	if secondRelease != nil {
+		secondRelease()
+		t.Fatal("second acquire succeeded; DB-level guard did not refuse cross-process overlap")
 	}
 }
 
