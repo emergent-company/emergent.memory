@@ -765,6 +765,7 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 			MaxSteps:        triggerReq.MaxSteps,
 			AuthToken:       triggerAuthToken,
 			SessionID:       triggerReq.SessionID,
+			TrustedInternal: true, // session UI is a trusted surface (full internal coordination)
 		})
 		if execResult != nil && execResult.Cleanup != nil {
 			execResult.Cleanup()
@@ -1277,6 +1278,11 @@ func (h *Handler) ReceiveWebhook(c echo.Context) error {
 		TriggerSource:   &triggerSource,
 		TriggerMetadata: metadata,
 		MaxSteps:        maxSteps,
+		// The webhook receiver is a public, external-facing surface authenticated
+		// only by a per-hook bearer token (no RequireAuth). It must NOT be trusted
+		// internal coordination, or a holder of a shared/leaked webhook secret could
+		// reach internal-visible agents via spawn_agents / list_available_agents.
+		TrustedInternal: false,
 	}
 
 	result, err := h.executor.Execute(c.Request().Context(), req)
@@ -1482,7 +1488,11 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 
 	visibility := VisibilityProject
 	if dto.Visibility != "" {
-		visibility = dto.Visibility
+		nv, ok := NormalizeVisibility(dto.Visibility)
+		if !ok {
+			return apperror.NewBadRequest("visibility must be one of project, external, internal")
+		}
+		visibility = nv
 	}
 
 	isDefault := false
@@ -1634,7 +1644,11 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 		def.DefaultTimeout = dto.DefaultTimeout
 	}
 	if dto.Visibility != nil {
-		def.Visibility = *dto.Visibility
+		nv, ok := NormalizeVisibility(*dto.Visibility)
+		if !ok {
+			return apperror.NewBadRequest("visibility must be one of project, external, internal")
+		}
+		def.Visibility = nv
 	}
 	if dto.DispatchMode != nil {
 		def.DispatchMode = *dto.DispatchMode

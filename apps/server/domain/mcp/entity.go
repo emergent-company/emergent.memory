@@ -54,6 +54,29 @@ func ACPSessionIDFromContext(ctx context.Context) string {
 	return v
 }
 
+// trustedInternalKey is the context key for propagating the run's trust marker
+// into tool execution, so the in-process dispatch path (ExecuteTool) can enforce
+// AgentOnly consistently with the HTTP transports. It mirrors the fail-closed
+// kb.agent_runs.trusted_internal marker persisted on the run row.
+type trustedInternalKey struct{}
+
+// ContextWithTrustedInternal stores whether the calling run was started through a
+// trusted/internal surface (session UI, scheduler, MCP-triggered agent) as
+// opposed to an external surface (webhook, A2A, agentcompat, public share). The
+// agent executor sets it before running tools; ExecuteTool reads it to gate
+// AgentOnly tools. The zero value (marker absent) is untrusted, so a caller that
+// forgets to declare itself cannot reach agent-only tools (issue #994).
+func ContextWithTrustedInternal(ctx context.Context, trusted bool) context.Context {
+	return context.WithValue(ctx, trustedInternalKey{}, trusted)
+}
+
+// TrustedInternalFromContext reports whether the run in ctx was started through a
+// trusted/internal surface. Absent marker resolves to false (untrusted, fail-closed).
+func TrustedInternalFromContext(ctx context.Context) bool {
+	v, _ := ctx.Value(trustedInternalKey{}).(bool)
+	return v
+}
+
 // MCPRegistryToolHandler is the interface for executing MCP registry management tools.
 // Implemented by the mcpregistry domain to avoid circular imports (mcpregistry → mcp).
 type MCPRegistryToolHandler interface {
@@ -338,6 +361,11 @@ type ToolDefinition struct {
 	// AgentOnly marks tools that are only available to internal memory agents,
 	// not to external MCP clients regardless of their scopes.
 	AgentOnly bool `json:"agentOnly,omitempty"`
+	// SuperadminOnly marks deployment-wide operator tools that require an active
+	// superadmin_full grant (resolved from core.superadmins) rather than a token
+	// scope. A bare admin / admin:all token cannot satisfy it, because neither is
+	// minted from the platform-admin authority (issue #948).
+	SuperadminOnly bool `json:"superadminOnly,omitempty"`
 }
 
 // InputSchema is a JSON schema for tool parameters

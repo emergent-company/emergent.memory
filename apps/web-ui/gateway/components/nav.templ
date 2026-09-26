@@ -16,7 +16,7 @@ templ SubNav(label string) {
 // SubNavItem renders one sub-navigation entry, marking the active destination.
 templ SubNavItem(href string, isActive bool, icon, label string) {
 	<a
-		class={ "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm whitespace-nowrap transition-colors", templ.KV("bg-base-200 font-medium text-base-content", isActive), templ.KV("text-base-content/60 hover:bg-base-200/50 hover:text-base-content", !isActive) }
+		class={ "flex items-center gap-2.5 rounded-box px-3 py-2 text-sm whitespace-nowrap transition-colors", templ.KV("bg-base-200 font-medium text-base-content", isActive), templ.KV("text-base-content/60 hover:bg-base-200/50 hover:text-base-content", !isActive) }
 		href={ templ.URL(href) }
 		if isActive {
 			aria-current="page"

@@ -27,6 +27,7 @@ const (
 type Handler struct {
 	svc         *Service
 	log         *slog.Logger
+	auth        *auth.Middleware
 	connections map[string]*SSEConnection
 	connMu      sync.RWMutex
 
@@ -36,12 +37,13 @@ type Handler struct {
 }
 
 // NewHandler creates a new events handler
-func NewHandler(svc *Service, log *slog.Logger) *Handler {
+func NewHandler(svc *Service, log *slog.Logger, authMiddleware *auth.Middleware) *Handler {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	h := &Handler{
 		svc:             svc,
 		log:             log.With(logger.Scope("events.handler")),
+		auth:            authMiddleware,
 		connections:     make(map[string]*SSEConnection),
 		heartbeatCtx:    ctx,
 		heartbeatCancel: cancel,
@@ -141,6 +143,15 @@ func (h *Handler) HandleStream(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{
 			"error": "Missing projectId query parameter",
 		})
+	}
+
+	// Project-source hardening (issue #913): the project comes from a query
+	// parameter the shared middleware pair does not inspect, so authorize it
+	// here before establishing the stream. The authoritative project is the
+	// token-bound project or the X-Project-ID header; the supplied projectId
+	// must agree with it, and the caller must be a member of its owning org.
+	if err := h.auth.AuthorizeProject(c, projectID); err != nil {
+		return err
 	}
 
 	// Optional runId filter — when set only agent_run events for that run are delivered

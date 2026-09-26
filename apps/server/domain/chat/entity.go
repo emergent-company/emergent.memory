@@ -15,7 +15,7 @@ type Conversation struct {
 	ID          uuid.UUID  `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
 	Title       string     `bun:"title,notnull" json:"title"`
 	OwnerUserID *string    `bun:"owner_user_id,type:uuid" json:"ownerUserId,omitempty"`
-	IsPrivate   bool       `bun:"is_private,default:true" json:"isPrivate"`
+	IsPrivate   bool       `bun:"is_private" json:"isPrivate"`
 	ProjectID   *uuid.UUID `bun:"project_id,type:uuid" json:"projectId,omitempty"`
 	DraftText   *string    `bun:"draft_text" json:"draftText,omitempty"`
 

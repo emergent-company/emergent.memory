@@ -11,11 +11,15 @@ func RegisterRoutes(e *echo.Echo, h *Handler, uploadHandler *UploadHandler, auth
 	sourceTypesGroup := e.Group("/api/documents")
 	sourceTypesGroup.Use(authMiddleware.RequireAuth())
 	sourceTypesGroup.Use(authMiddleware.RequireProjectID())
+	sourceTypesGroup.Use(authMiddleware.RequireProjectTokenScope())
+	sourceTypesGroup.Use(authMiddleware.RequireProjectMember())
 	sourceTypesGroup.GET("/source-types", h.GetSourceTypes)
 
 	g := e.Group("/api/documents")
 	g.Use(authMiddleware.RequireAuth())
 	g.Use(authMiddleware.RequireProjectID())
+	g.Use(authMiddleware.RequireProjectTokenScope())
+	g.Use(authMiddleware.RequireProjectMember())
 
 	readGroup := g.Group("")
 	readGroup.Use(authMiddleware.RequireAPITokenScopes("documents:read"))
@@ -42,6 +46,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, uploadHandler *UploadHandler, auth
 	legacyUpload := e.Group("/api/document-parsing-jobs")
 	legacyUpload.Use(authMiddleware.RequireAuth())
 	legacyUpload.Use(authMiddleware.RequireProjectID())
+	legacyUpload.Use(authMiddleware.RequireProjectTokenScope())
+	legacyUpload.Use(authMiddleware.RequireProjectMember())
 	legacyUpload.Use(authMiddleware.RequireAPITokenScopes("documents:write"))
 	legacyUpload.POST("/upload", uploadHandler.Upload)
 }

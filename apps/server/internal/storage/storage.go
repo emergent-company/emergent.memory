@@ -27,9 +27,36 @@ var Module = fx.Module("storage",
 	fx.Provide(NewService),
 )
 
+// supportedStorageProviders lists the accepted STORAGE_PROVIDER backend ids.
+// The service talks generic S3; the id documents the intended backend and lets
+// an unknown/typo'd value fail fast instead of silently degrading. "minio" is
+// retained for existing installs that still point STORAGE_ENDPOINT at MinIO;
+// "seaweedfs" is the stock self-hosted backend.
+var supportedStorageProviders = []string{"s3", "seaweedfs", "minio"}
+
+// SupportedStorageProviders returns a comma-separated list of accepted
+// STORAGE_PROVIDER values, for use in actionable error messages.
+func SupportedStorageProviders() string {
+	return strings.Join(supportedStorageProviders, ", ")
+}
+
+func isSupportedStorageProvider(provider string) bool {
+	if provider == "" {
+		// Unset defaults to generic S3 semantics.
+		return true
+	}
+	for _, p := range supportedStorageProviders {
+		if p == provider {
+			return true
+		}
+	}
+	return false
+}
+
 // Config holds storage configuration
 type Config struct {
 	Endpoint        string
+	Provider        string
 	AccessKey       string
 	SecretKey       string
 	Region          string
@@ -40,6 +67,15 @@ type Config struct {
 // Enabled returns true if storage is properly configured
 func (c *Config) Enabled() bool {
 	return c.Endpoint != "" && c.AccessKey != "" && c.SecretKey != ""
+}
+
+// Validate fails fast on an unknown STORAGE_PROVIDER with an actionable error.
+func (c *Config) Validate() error {
+	if !isSupportedStorageProvider(c.Provider) {
+		return fmt.Errorf("unsupported STORAGE_PROVIDER %q: accepted values are %s",
+			c.Provider, SupportedStorageProviders())
+	}
+	return nil
 }
 
 // NewConfig creates storage config from environment variables
@@ -61,6 +97,7 @@ func NewConfig() *Config {
 
 	return &Config{
 		Endpoint:        os.Getenv("STORAGE_ENDPOINT"),
+		Provider:        os.Getenv("STORAGE_PROVIDER"),
 		AccessKey:       os.Getenv("STORAGE_ACCESS_KEY"),
 		SecretKey:       os.Getenv("STORAGE_SECRET_KEY"),
 		Region:          region,
@@ -105,6 +142,10 @@ type DocumentUploadOptions struct {
 
 // NewService creates a new storage service
 func NewService(cfg *Config, log *slog.Logger) (*Service, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+
 	if !cfg.Enabled() {
 		log.Warn("storage service disabled - no configuration provided")
 		return &Service{
@@ -113,7 +154,8 @@ func NewService(cfg *Config, log *slog.Logger) (*Service, error) {
 		}, nil
 	}
 
-	// Create custom endpoint resolver for MinIO
+	// Create a custom endpoint resolver so the S3 SDK talks to the configured
+	// S3-compatible backend (SeaweedFS, MinIO, or any other S3 API).
 	customResolver := aws.EndpointResolverWithOptionsFunc(
 		func(service, region string, options ...interface{}) (aws.Endpoint, error) {
 			return aws.Endpoint{
@@ -140,8 +182,9 @@ func NewService(cfg *Config, log *slog.Logger) (*Service, error) {
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}
 
-	// Create S3 client with path-style addressing (required for MinIO)
-	// Use a custom HTTP client with a long timeout for large file uploads
+	// Create S3 client with path-style addressing (required by S3-compatible
+	// backends such as SeaweedFS and MinIO). Use a custom HTTP client with a
+	// long timeout for large file uploads.
 	// DisableHTTPS: endpoint scheme (http:// vs https://) controls this
 	httpClient := &http.Client{
 		Timeout: 2 * time.Hour,
@@ -154,11 +197,11 @@ func NewService(cfg *Config, log *slog.Logger) (*Service, error) {
 		o.UsePathStyle = true
 		o.HTTPClient = httpClient
 		o.EndpointOptions.DisableHTTPS = !useHTTPS
-		// MinIO over plain HTTP: the SDK defaults to computing a trailing
-		// checksum for unseekable streams (unknown content length), which
-		// requires TLS. Disable auto checksum so pipe-streamed uploads
-		// (backup ZIP, pg_dump) work without TLS. Integrity is covered at the
-		// application layer (backup manifests carry SHA-256 checksums).
+		// Plain HTTP: the SDK defaults to computing a trailing checksum for
+		// unseekable streams (unknown content length), which requires TLS.
+		// Disable auto checksum so pipe-streamed uploads (backup ZIP, pg_dump)
+		// work without TLS. Integrity is covered at the application layer
+		// (backup manifests carry SHA-256 checksums).
 		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
 	})
@@ -168,6 +211,7 @@ func NewService(cfg *Config, log *slog.Logger) (*Service, error) {
 
 	log.Info("storage service initialized",
 		slog.String("endpoint", cfg.Endpoint),
+		slog.String("provider", cfg.Provider),
 		slog.String("bucket", cfg.BucketDocuments),
 	)
 

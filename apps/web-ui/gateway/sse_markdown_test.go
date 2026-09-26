@@ -671,3 +671,24 @@ func TestRenderHistoryHTML(t *testing.T) {
 		t.Errorf("unparsable item must be kept as-is, got %s", out[4])
 	}
 }
+
+// TestRenderHistoryHTMLLeavesSystemUntouched locks the agent-instruction
+// contract: a `system` record keeps its raw text and never gains a markdown
+// `html` render, so the client owns its dedicated prompt card.
+func TestRenderHistoryHTMLLeavesSystemUntouched(t *testing.T) {
+	items := []json.RawMessage{
+		json.RawMessage(`{"kind":"message","role":"system","content":{"text":"# Instructions\nBe careful."}}`),
+	}
+	out := renderHistoryHTML(items)
+	var m map[string]any
+	if err := json.Unmarshal(out[0], &m); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := m["content"].(map[string]any)
+	if c["text"] != "# Instructions\nBe careful." {
+		t.Errorf("system text altered: %v", c["text"])
+	}
+	if _, has := c["html"]; has {
+		t.Errorf("system record must not gain markdown html: %v", c)
+	}
+}

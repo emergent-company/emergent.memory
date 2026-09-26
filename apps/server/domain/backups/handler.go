@@ -96,7 +96,10 @@ type CreateBackupRequestDTO struct {
 // @Security     bearerAuth
 func (h *Handler) ListBackups(c echo.Context) error {
 
-	orgID := c.Param("orgId")
+	orgID, err := h.requireOrgAdmin(c)
+	if err != nil {
+		return err
+	}
 
 	limit := 20
 	if limitStr := c.QueryParam("limit"); limitStr != "" {
@@ -151,9 +154,12 @@ func (h *Handler) ListBackups(c echo.Context) error {
 // @Router       /api/v1/projects/{projectId}/backups [post]
 // @Security     bearerAuth
 func (h *Handler) CreateBackup(c echo.Context) error {
-	user := auth.MustGetUser(c)
+	projectID, orgID, err := h.requireProjectBackupAuthority(c)
+	if err != nil {
+		return err
+	}
 
-	projectID := c.Param("projectId")
+	user := auth.MustGetUser(c)
 
 	var req CreateBackupRequestDTO
 	if err := c.Bind(&req); err != nil {
@@ -166,20 +172,6 @@ func (h *Handler) CreateBackup(c echo.Context) error {
 
 	if req.RetentionDays < 1 || req.RetentionDays > 365 {
 		return echo.NewHTTPError(http.StatusBadRequest, "retention_days must be between 1 and 365")
-	}
-
-	var orgID string
-	err := h.service.repo.db.NewSelect().
-		Table("kb.projects").
-		Column("organization_id").
-		Where("id = ?", projectID).
-		Scan(c.Request().Context(), &orgID)
-	if err != nil {
-		h.log.Error("failed to get project org",
-			slog.String("project_id", projectID),
-			slog.Any("error", err),
-		)
-		return apperror.NewInternal("failed to get project", err)
 	}
 
 	backup, err := h.service.CreateBackup(c.Request().Context(), CreateBackupRequest{
@@ -278,28 +270,17 @@ func readArchiveUpload(c echo.Context) ([]byte, *apperror.Error) {
 // @Router       /api/v1/organizations/{orgId}/backups/import [post]
 // @Security     bearerAuth
 func (h *Handler) ImportBackup(c echo.Context) error {
+	orgID, err := h.requireOrgAdmin(c)
+	if err != nil {
+		return err
+	}
 	user := auth.MustGetUser(c)
-	orgID := c.Param("orgId")
 
 	// Cap the request body before anything reads the form. Multipart parsing
 	// consumes the entire body (spilling parts past maxMemory to temp files), so
 	// a limit applied after the first FormValue/FormFile call would let an
 	// oversized upload be fully consumed before the cap is ever enforced.
 	c.Request().Body = http.MaxBytesReader(c.Response(), c.Request().Body, MaxImportArchiveSize+1024)
-
-	// Org membership check first: authorization before any body work.
-	var memberCount int64
-	if err := h.service.repo.db.NewSelect().
-		Table("kb.organization_memberships").
-		ColumnExpr("count(*)").
-		Where("organization_id = ?", orgID).
-		Where("user_id = ?", user.ID).
-		Scan(c.Request().Context(), &memberCount); err != nil {
-		return apperror.NewInternal("failed to verify org membership", err)
-	}
-	if memberCount == 0 {
-		return apperror.NewForbidden("you are not a member of the target organization")
-	}
 
 	retentionDays, aerr := parseRetentionDays(c)
 	if aerr != nil {
@@ -340,7 +321,10 @@ func (h *Handler) ImportBackup(c echo.Context) error {
 // @Security     bearerAuth
 func (h *Handler) GetBackup(c echo.Context) error {
 
-	orgID := c.Param("orgId")
+	orgID, err := h.requireOrgAdmin(c)
+	if err != nil {
+		return err
+	}
 	backupID := c.Param("backupId")
 
 	backup, err := h.service.GetBackup(c.Request().Context(), orgID, backupID)
@@ -371,7 +355,10 @@ func (h *Handler) GetBackup(c echo.Context) error {
 // @Security     bearerAuth
 func (h *Handler) DownloadBackup(c echo.Context) error {
 
-	orgID := c.Param("orgId")
+	orgID, err := h.requireOrgAdmin(c)
+	if err != nil {
+		return err
+	}
 	backupID := c.Param("backupId")
 
 	backup, err := h.service.GetBackup(c.Request().Context(), orgID, backupID)
@@ -420,7 +407,10 @@ func (h *Handler) DownloadBackup(c echo.Context) error {
 // @Security     bearerAuth
 func (h *Handler) DeleteBackup(c echo.Context) error {
 
-	orgID := c.Param("orgId")
+	orgID, err := h.requireOrgAdmin(c)
+	if err != nil {
+		return err
+	}
 	backupID := c.Param("backupId")
 
 	if err := h.service.DeleteBackup(c.Request().Context(), orgID, backupID); err != nil {
@@ -477,29 +467,20 @@ func (h *Handler) RestoreBackup(c echo.Context) error {
 
 	ctx := c.Request().Context()
 
-	if projectID := c.Param("projectId"); projectID != "" {
-		return h.restoreOverwrite(c, ctx, user, projectID, dto, preSnapshot)
+	if c.Param("projectId") != "" {
+		return h.restoreOverwrite(c, ctx, user, dto, preSnapshot)
 	}
-	orgID := c.Param("orgId")
-	if orgID == "" {
-		return apperror.NewBadRequest("restore requires a projectId or orgId route")
+	if c.Param("orgId") != "" {
+		return h.restoreClone(c, ctx, user, dto)
 	}
-	return h.restoreClone(c, ctx, user, orgID, dto)
+	return apperror.NewBadRequest("restore requires a projectId or orgId route")
 }
 
 // restoreOverwrite handles POST /projects/:projectId/restore.
-func (h *Handler) restoreOverwrite(c echo.Context, ctx context.Context, user *auth.AuthUser, projectID string, dto RestoreRequestDTO, preSnapshot bool) error {
-	var orgID string
-	if err := h.service.repo.db.NewSelect().
-		Table("kb.projects").
-		Column("organization_id").
-		Where("id = ?", projectID).
-		Scan(ctx, &orgID); err != nil {
-		h.log.Error("failed to get project org",
-			slog.String("project_id", projectID),
-			slog.Any("error", err),
-		)
-		return apperror.NewNotFound("project", projectID)
+func (h *Handler) restoreOverwrite(c echo.Context, ctx context.Context, user *auth.AuthUser, dto RestoreRequestDTO, preSnapshot bool) error {
+	projectID, orgID, err := h.requireProjectBackupAuthority(c)
+	if err != nil {
+		return err
 	}
 
 	backup, err := h.service.GetBackup(ctx, orgID, dto.BackupID)
@@ -543,19 +524,10 @@ func (h *Handler) restoreOverwrite(c echo.Context, ctx context.Context, user *au
 
 // restoreClone handles POST /organizations/:orgId/restore. The path org is the
 // clone destination (supports cross-org restore).
-func (h *Handler) restoreClone(c echo.Context, ctx context.Context, user *auth.AuthUser, orgID string, dto RestoreRequestDTO) error {
-	// The restorer must be a member of the destination org.
-	var memberCount int64
-	if err := h.service.repo.db.NewSelect().
-		Table("kb.organization_memberships").
-		ColumnExpr("count(*)").
-		Where("organization_id = ?", orgID).
-		Where("user_id = ?", user.ID).
-		Scan(ctx, &memberCount); err != nil {
-		return apperror.NewInternal("failed to verify org membership", err)
-	}
-	if memberCount == 0 {
-		return apperror.NewForbidden("you are not a member of the target organization")
+func (h *Handler) restoreClone(c echo.Context, ctx context.Context, user *auth.AuthUser, dto RestoreRequestDTO) error {
+	orgID, err := h.requireOrgAdmin(c)
+	if err != nil {
+		return err
 	}
 
 	backup, err := h.fetchBackupByID(ctx, dto.BackupID)
@@ -619,17 +591,9 @@ func (h *Handler) fetchBackupByID(ctx context.Context, backupID string) (*Backup
 // @Security     bearerAuth
 func (h *Handler) GetRestoreStatus(c echo.Context) error {
 
-	restoreID := c.Param("restoreId")
-	job, err := h.service.GetRestore(c.Request().Context(), restoreID)
+	job, err := h.requireRestoreOwnership(c)
 	if err != nil {
-		h.log.Error("failed to get restore",
-			slog.String("restore_id", restoreID),
-			slog.Any("error", err),
-		)
-		return apperror.NewInternal("failed to get restore", err)
-	}
-	if job == nil {
-		return apperror.NewNotFound("restore", restoreID)
+		return err
 	}
 
 	return c.JSON(http.StatusOK, job)

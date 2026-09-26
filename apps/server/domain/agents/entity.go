@@ -2,6 +2,7 @@ package agents
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -214,6 +215,15 @@ type AgentRun struct {
 
 	AgentDefinitionID *string `bun:"agent_definition_id,type:uuid" json:"agentDefinitionId,omitempty"`
 
+	// TrustedInternal marks a run started through a trusted surface (session UI,
+	// scheduler/worker runs, MCP tools, agent→agent delegation). The zero value is
+	// false = untrusted/external-facing, so a transport that forgets to declare
+	// itself is denied internal agents (fail-closed). It is fixed at run creation
+	// and inherited unchanged through delegation and resume, so the internal-agent
+	// reachability invariant holds for the whole call chain, not just the first
+	// hop (issue #954).
+	TrustedInternal bool `bun:"trusted_internal,notnull,default:false" json:"trustedInternal"`
+
 	Tools []string `bun:"tools,array" json:"tools,omitempty"`
 
 	// SuspendContext holds the serialized SuspendSignal when a run is paused via the
@@ -238,6 +248,9 @@ type CreateRunOptions struct {
 	TriggerMessage    *string // optional message injected as user message on wakeup
 	Model             *string // model override for this run
 	AgentDefinitionID *string
+	// TrustedInternal is the fail-closed trust marker persisted on the run row.
+	// false (zero value) = external-facing/untrusted; trusted surfaces set true.
+	TrustedInternal bool
 }
 
 // CreateRunQueuedOptions holds optional parameters for CreateRunQueued.
@@ -247,6 +260,11 @@ type CreateRunQueuedOptions struct {
 	TriggerMessage  *string        // message injected as user message when worker picks up this run
 	TriggerMetadata map[string]any // structured metadata propagated from parent run
 	MaxPendingJobs  int            // if > 0, reject the enqueue when the agent already has this many pending jobs
+	// TrustedInternal is the fail-closed trust marker persisted on the queued run
+	// row and inherited by the worker, so a queued run keeps the trust of the
+	// transport that enqueued it (e.g. trigger_agent) rather than being upgraded.
+	// false (zero value) = external-facing/untrusted.
+	TrustedInternal bool
 }
 
 // AgentProcessingLog tracks which graph objects have been processed by reaction agents
@@ -278,6 +296,21 @@ const (
 	VisibilityProject  AgentVisibility = "project"  // Shown in the admin UI, not advertised in the A2A agent card
 	VisibilityInternal AgentVisibility = "internal" // Hidden from lists; callable only by other agents, never via A2A
 )
+
+// NormalizeVisibility trims and lowercases v and maps it to a canonical
+// AgentVisibility level. Empty (or whitespace-only) normalizes to project, the
+// server default. It returns ok=false for any value that is not one of the
+// three levels, so callers never persist an unmappable value (issue #889).
+func NormalizeVisibility(v AgentVisibility) (AgentVisibility, bool) {
+	switch s := AgentVisibility(strings.ToLower(strings.TrimSpace(string(v)))); s {
+	case "":
+		return VisibilityProject, true
+	case VisibilityExternal, VisibilityProject, VisibilityInternal:
+		return s, true
+	default:
+		return "", false
+	}
+}
 
 // AgentFlowType defines how an agent executes
 type AgentFlowType string

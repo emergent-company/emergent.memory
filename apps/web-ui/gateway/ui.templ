@@ -70,11 +70,7 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 			})();
 			</script>
 			}
-			<!-- Paint the root dark before any stylesheet loads: iOS Safari (incl.
-		     Home-Screen PWAs) paints the page white during navigation/back and
-		     bfcache restores unless the document declares a dark color-scheme
-		     and background up front. -->
-			<style>html{color-scheme:dark;background-color:#0E1017}</style>
+			@foucBackgroundGuard()
 			<meta name="view-transition" content="same-origin"/>
 		</head>
 		<body class="bg-base-200 min-h-screen">
@@ -178,9 +174,19 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 }
 
 // memoryLogo is the brand mark used in the sidebar header.
+// foucBackgroundGuard paints the root dark before any stylesheet loads, so iOS
+// Safari (including Home-Screen PWAs) does not paint the page white during
+// navigation or bfcache restores. The colour duplicates --color-base-200
+// because a pre-paint guard cannot rely on the stylesheet that defines it;
+// app.css's "Atmosphere" block lists this as a static mirror to keep in sync.
+// This is the single source of the guard — do not inline it again.
+templ foucBackgroundGuard() {
+	<style>html{color-scheme:dark;background-color:#0E1017}</style>
+}
+
 templ memoryLogo() {
 	<div class="flex items-center gap-2.5 select-none">
-		<div class="memory-monogram grid place-items-center rounded-lg font-bold">M</div>
+		<div class="memory-monogram grid place-items-center rounded-box font-bold">M</div>
 		<div class="leading-tight">
 			<span class="block text-[15px] font-semibold tracking-tight">Memory</span>
 		</div>
@@ -305,7 +311,7 @@ templ agentCardGrid(agents []AgentDefinitionSummary) {
 templ agentCard(a AgentDefinitionSummary) {
 	@ui.CardRaw(
 		"card-border memory-rise cursor-pointer group transition-all duration-200 hover:-translate-y-0.5 hover:border-base-content/25 hover:shadow-md",
-		"p-4",
+		"memory-density-compact",
 		templ.Attributes{"data-href": "/agents/" + url.PathEscape(a.ID)},
 	) {
 		<div class="flex items-center gap-3">
@@ -797,7 +803,7 @@ templ cardList(title string, props cardListProps) {
 	@ui.Section(title, ui.SectionProps{
 		Margin:      props.Margin,
 		CardClass:   "card-border overflow-hidden",
-		BodyClass:   "p-0",
+		BodyClass:   "memory-density-flush",
 		Empty:       props.Empty,
 		EmptyIcon:   props.EmptyIcon,
 		EmptyTitle:  props.EmptyTitle,
@@ -1023,7 +1029,7 @@ templ flashToasts(flashMsg string, flashErr error) {
 // selects h2 (default) or h3; children hold any extra content below the copy.
 templ chatWelcomeHero(id, icon, wrapClass, title string, headingLevel int, headingClass, subtitle, subClass string) {
 	<div id={ id } class={ "flex flex-col items-center justify-center", wrapClass, "text-center" }>
-		<div class="bg-primary/10 text-primary border-primary/15 grid size-14 place-items-center rounded-2xl border">
+		<div class="bg-primary/10 text-primary border-primary/15 grid size-14 place-items-center rounded-selector border">
 			@ui.IconSpan(icon, "size-7")
 		</div>
 		<div>

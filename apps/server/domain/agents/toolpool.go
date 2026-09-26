@@ -756,6 +756,14 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 				InputSchema: inputSchema,
 			},
 			func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+				// Relay tools forward to a connected client device and are, by
+				// construction, the agent-only class: they must not be reachable
+				// from an untrusted (external) run. This mirrors the ExecuteTool
+				// AgentOnly gate, which relay tools bypass by routing here instead
+				// of through mcp.Service.ExecuteTool (issue #994).
+				if !mcp.TrustedInternalFromContext(ctx) {
+					return map[string]any{"error": "relay tool not reachable from an untrusted surface"}, nil
+				}
 				result, err := relaySvc.CallTool(ctx, pid, instID, bareToolName, args)
 				if err != nil {
 					if errors.Is(err, mcprelay.ErrSessionNotFound) {
@@ -885,6 +893,13 @@ func (tp *ToolPool) CallTool(ctx context.Context, projectID, toolName string, ar
 
 	// Relay tool?
 	if instanceID, ok := cache.relayToolInstance[toolName]; ok && tp.relayService != nil {
+		// Relay tools are the agent-only class (they forward to a connected
+		// device) and must not be reachable from an untrusted (external) run.
+		// This mirrors the ExecuteTool AgentOnly gate that relay tools bypass by
+		// routing here (issue #994).
+		if !mcp.TrustedInternalFromContext(ctx) {
+			return map[string]any{"error": "relay tool not reachable from an untrusted surface"}, nil
+		}
 		prefix := instanceID + "_"
 		bareToolName := strings.TrimPrefix(toolName, prefix)
 		result, err := tp.relayService.CallTool(ctx, projectID, instanceID, bareToolName, args)
@@ -922,6 +937,33 @@ func (tp *ToolPool) CallTool(ctx context.Context, projectID, toolName string, ar
 		return map[string]any{"error": err.Error()}, nil
 	}
 	return convertToolResult(result)
+}
+
+// StripOperatorTools removes superadmin-only operator tools from a resolved tool
+// set unless the caller in ctx is a superadmin_full principal. It is the
+// resolution-level complement to mcp.Service.ExecuteTool's dispatch-time
+// enforcement (issue #948): a non-superadmin run never sees the operator tools
+// in its toolset. A superadmin-status resolution failure fails closed (the
+// operator tools are stripped).
+func (tp *ToolPool) StripOperatorTools(ctx context.Context, tools []tool.Tool) []tool.Tool {
+	if tp.mcpService == nil {
+		return tools
+	}
+	isSuper := false
+	if ok, err := tp.mcpService.IsSuperadminCaller(ctx); err == nil {
+		isSuper = ok
+	}
+	if isSuper {
+		return tools
+	}
+	out := make([]tool.Tool, 0, len(tools))
+	for _, t := range tools {
+		if tp.mcpService.IsSuperadminOnlyTool(t.Name()) {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
 }
 
 // isGlobPattern returns true if the string contains glob metacharacters.

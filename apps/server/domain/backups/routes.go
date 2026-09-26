@@ -5,7 +5,21 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// RegisterRoutes registers backup routes
+// RegisterRoutes registers backup routes.
+//
+// Authorization model (tier-correct, server-derived — never from a
+// client-supplied org/project id):
+//
+//   - /api/v1/organizations/:orgId/backups[...] and .../restore (clone): the
+//     caller must be org_admin of the addressed org (requireOrgAdmin).
+//   - /api/v1/projects/:projectId/backups and .../restore (overwrite): the
+//     caller must be project_admin of the addressed project OR org_admin of its
+//     owning org (requireProjectBackupAuthority).
+//   - /api/v1/restores/:restoreId: the caller must be org_admin of the restore's
+//     owning org; a foreign/missing id is a 404 (requireRestoreOwnership).
+//   - /api/superadmin/database-backups[...]: the caller must hold an active
+//     superadmin_full grant (RequireSuperadminFull) — a database-backup download
+//     is the highest-sensitivity surface in this set.
 func RegisterRoutes(e *echo.Echo, handler *Handler, authMiddleware *auth.Middleware) {
 	// Organization-level backup management
 	org := e.Group("/api/v1/organizations/:orgId")
@@ -40,6 +54,7 @@ func RegisterRoutes(e *echo.Echo, handler *Handler, authMiddleware *auth.Middlew
 	// Superadmin: database-level backup management
 	adminBackups := e.Group("/api/superadmin/database-backups")
 	adminBackups.Use(authMiddleware.RequireAuth())
+	adminBackups.Use(authMiddleware.RequireSuperadminFull())
 	adminBackups.GET("", handler.ListDatabaseBackups)
 	adminBackups.GET("/:id/download", handler.DownloadDatabaseBackup)
 }

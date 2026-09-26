@@ -12,6 +12,8 @@ func RegisterRoutes(e *echo.Echo, handler *Handler, authMiddleware *auth.Middlew
 	chunks := e.Group("/api/chunks")
 	chunks.Use(authMiddleware.RequireAuth())
 	chunks.Use(authMiddleware.RequireProjectID())
+	chunks.Use(authMiddleware.RequireProjectTokenScope())
+	chunks.Use(authMiddleware.RequireProjectMember())
 
 	// List chunks (requires chunks:read scope)
 	chunksRead := chunks.Group("")

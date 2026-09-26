@@ -34,12 +34,39 @@
       .replace(/^./, function (c) { return c.toUpperCase(); });
   }
 
+  // formatDurationMs renders a tool call's execution duration compactly:
+  // sub-second in "ms", then "1.2s", "5m", "2h 15m".
+  function formatDurationMs(ms) {
+    if (typeof ms !== "number" || !isFinite(ms) || ms < 0) return "";
+    if (ms < 1000) return Math.round(ms) + "ms";
+    var s = ms / 1000;
+    if (s < 60) return (Math.round(s * 10) / 10) + "s";
+    var m = Math.floor(s / 60);
+    if (m < 60) return m + "m";
+    return Math.floor(m / 60) + "h " + (m % 60) + "m";
+  }
+
+  // toolMetaLine summarises a tool call's identity/duration (id + execution
+  // duration) as a quiet mono line above its I/O, or "" when neither exists.
+  function toolMetaLine(p) {
+    var parts = [];
+    var dur = formatDurationMs(p && p.durationMs);
+    if (dur) parts.push(dur);
+    if (p && p.id) parts.push("#" + p.id);
+    if (!parts.length) return "";
+    return (
+      '<p class="mb-3 font-mono text-[11px] break-all text-base-content/40">' +
+      escapeHTML(parts.join(" · ")) +
+      "</p>"
+    );
+  }
+
   // Inline detail for an expanded tool badge — the same sections the legacy
-  // side panel used to show (summary / error / input / output), now rendered
-  // directly under the row.
+  // side panel used to show (identity/duration, summary / error / input /
+  // output), now rendered directly under the row.
   function renderToolDetails(detailEl, payload) {
     var p = payload || {};
-    var body = "";
+    var body = toolMetaLine(p);
     if (p.summary) body += summarySection(p.summary);
     if (p.error) body += errorSection(p.error);
     body += detailSection("Input", p.input, p.inputHtml);
@@ -167,6 +194,11 @@
   // Inject the badge + shimmer CSS once. Unlayered, so it sits above the
   // daisyUI/Tailwind layers in app.css; runs after the stylesheet link, so it
   // also wins the cascade against app.css's unlayered tool-chip rules.
+  //
+  // The `border-radius` literals in this sheet are a documented exception to
+  // the "radius derives from theme variables" rule — see the "Radius exception
+  // list" note in webui/css/app.css. Migrating them to var(--radius-*) is
+  // deferred to the stylesheet-consolidation follow-up unit (task 5.1).
   function ensureBadgeStyle() {
     if (document.getElementById("memory-badge-style")) return;
     var st = document.createElement("style");
@@ -189,6 +221,8 @@
       ".memory-thinking .memory-badge-chevron{display:none}" +
       // tool chips likewise: the leading icon swaps wrench→chevron on hover
       ".memory-tool-chip .memory-badge-chevron{display:none}" +
+      // agent prompt card: leading icon swaps scroll→chevron on hover
+      ".memory-agent-prompt .memory-badge-chevron{display:none}" +
       // auxiliary rows (thinking + tool calls) group tightly — reduce the gap
       // between consecutive aux rows while keeping the gap after a real bubble
       ".memory-aux + .memory-aux{margin-top:-.625rem}" +
@@ -197,10 +231,14 @@
       ".memory-tool-chip.memory-badge-open[data-status='ok'],.memory-tool-chip.memory-badge-open[data-status='error']{" +
       "border-color:color-mix(in oklab,var(--color-base-content) 10%,transparent)!important}" +
       // streaming shimmer: gradient sweep clipped to the label text
+      // streaming shimmer: gradient sweep clipped to the label text. The bright
+      // stop is a deliberate white — the theme has no "brighter than
+      // base-content" token — so it is documented as decorative rather than
+      // tokenised.
       ".memory-badge-live .memory-badge-label{" +
       "opacity:.72;color:transparent;" +
       "background-image:linear-gradient(90deg,var(--color-base-content) 40%," +
-      "color-mix(in oklab,#fff 50%,transparent) 50%,var(--color-base-content) 60%);" +
+      "color-mix(in oklab,oklch(1 0 0) 50%,transparent) 50%,var(--color-base-content) 60%);" +
       "background-size:200% 100%;background-position:-100% 0;" +
       "-webkit-background-clip:text;background-clip:text;" +
       "animation:memory-shimmer 1.6s linear infinite}" +
@@ -266,6 +304,52 @@
       body: badge.detail.querySelector(".memory-thinking-body"),
       setLive: badge.setLive,
     };
+  }
+
+  // Shared renderer for a conversation's composed agent instruction — the
+  // `system` record captured at the start of the run. Rendered as a collapsed,
+  // tool-chip-styled card so the prompt the model saw is inspectable without
+  // dominating the transcript. History-only: a live stream never carries it.
+  function agentPromptCard(ctx, text) {
+    ctx = ctx || {};
+    var messages = ctx.messages;
+    if (!messages || !text) return null;
+
+    var wrap = document.createElement("div");
+    wrap.className = "chat chat-start memory-rise memory-aux";
+    wrap.innerHTML =
+      '<div class="chat-image invisible bg-primary/5 text-primary border-primary/10 flex items-center justify-center rounded-full border p-2">' +
+      '<span class="iconify lucide--bot size-5" aria-hidden="true"></span></div>';
+    messages.appendChild(wrap);
+
+    var badge = expandableBadge({
+      className: "memory-agent-prompt col-start-2 row-start-2 w-full",
+      icon: "lucide--scroll-text",
+      label: "Agent prompt",
+      afterLabel:
+        '<span class="badge badge-ghost badge-xs font-normal">system</span>',
+      container: wrap,
+      renderDetails: function (detailEl) {
+        detailEl.innerHTML =
+          '<p class="mb-1.5 text-xs font-semibold tracking-wider uppercase text-base-content/50">System instruction</p>' +
+          '<pre class="memory-scroll max-h-72 overflow-auto rounded-box border border-base-content/10 bg-base-200/50 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words">' +
+          escapeHTML(text) +
+          "</pre>";
+      },
+    }, ctx);
+    if (!badge) return null;
+
+    // Hover affordance: swap the scroll icon for a dropdown chevron.
+    var iconEl = badge.root.querySelector(".memory-badge-icon .iconify");
+    if (badge.toggle) {
+      badge.toggle.addEventListener("mouseenter", function () {
+        if (iconEl) iconEl.setAttribute("class", "iconify lucide--chevron-down size-4 text-base-content/40");
+      });
+      badge.toggle.addEventListener("mouseleave", function () {
+        if (iconEl) iconEl.setAttribute("class", "iconify lucide--scroll-text size-4 text-base-content/40");
+      });
+    }
+    return badge.root;
   }
 
   /* ---------- run-control surfaces (copy, footer, typed run markers) ---------- */
@@ -468,6 +552,11 @@
   // it sits above the daisyUI/Tailwind layers. The same rules live in
   // webui/css/app.css (the compiled source); this injection keeps the surfaces
   // styled even before the CSS bundle is rebuilt.
+  //
+  // The `border-radius` literals in this sheet are a documented exception to
+  // the "radius derives from theme variables" rule — see the "Radius exception
+  // list" note in webui/css/app.css. Migrating them to var(--radius-*) is
+  // deferred to the stylesheet-consolidation follow-up unit (task 5.1).
   function ensureChatControlStyle() {
     if (document.getElementById("memory-chat-control-style")) return;
     var st = document.createElement("style");
@@ -574,9 +663,9 @@
       "#chat-todos{margin-bottom:.25rem}" +
       "#chat-todos :is(summary,button,input,select,a):focus-visible{outline:2px solid var(--color-primary);outline-offset:2px}" +
       /* rail status badge */
-      ".memory-rail-badge{display:inline-flex;align-items:center;gap:.25rem;padding:.1rem .4rem;border-radius:9999px;" +
+      ".memory-rail-badge{display:flex;align-items:center;gap:.25rem;width:fit-content;padding:.1rem .4rem;border-radius:9999px;" +
       "font-size:.625rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;" +
-      "border:1px solid transparent;align-self:center}" +
+      "border:1px solid transparent;margin-bottom:.25rem}" +
       /* A two-class selector hides the badge: this sheet is appended to <head>
          after the compiled Tailwind sheet, so at equal specificity the injected
          `.memory-rail-badge { display:inline-flex }` beats Tailwind's
@@ -619,6 +708,8 @@
     expandableBadge: expandableBadge,
     ensureBadgeStyle: ensureBadgeStyle,
     createThinkingBlock: createThinkingBlock,
+    agentPromptCard: agentPromptCard,
+    formatDurationMs: formatDurationMs,
     makeCopyButton: makeCopyButton,
     enhanceMessage: enhanceMessage,
     turnFooter: turnFooter,

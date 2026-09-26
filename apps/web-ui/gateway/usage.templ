@@ -82,10 +82,10 @@ templ usageSummaryCards(summary *UsageSummaryResponse, payload usageChartPayload
 // the dependency-free SVG chart helper (usage-charts.js).
 templ usageCharts(payload usageChartPayload) {
 	<div class="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
-		@ui.Section("Tokens per day", ui.SectionProps{Margin: "", CardClass: "card-border", BodyClass: "p-4"}) {
+		@ui.Section("Tokens per day", ui.SectionProps{Margin: "", CardClass: "card-border", BodyClass: "memory-density-compact"}) {
 			<div id="usage-token-chart" class="w-full" data-testid="usage-token-chart"></div>
 		}
-		@ui.Section("Sessions per day", ui.SectionProps{Margin: "", CardClass: "card-border", BodyClass: "p-4"}) {
+		@ui.Section("Sessions per day", ui.SectionProps{Margin: "", CardClass: "card-border", BodyClass: "memory-density-compact"}) {
 			<div id="usage-session-chart" class="w-full" data-testid="usage-session-chart"></div>
 		}
 	</div>
@@ -95,7 +95,7 @@ templ usageCharts(payload usageChartPayload) {
 
 // usageModelSection lists token usage grouped by model, sorted by cost.
 templ usageModelSection(summary *UsageSummaryResponse) {
-	@ui.Section("Per-model usage", ui.SectionProps{Margin: "mt-6", CardClass: "card-border overflow-hidden", BodyClass: "p-0"}) {
+	@ui.Section("Per-model usage", ui.SectionProps{Margin: "mt-6", CardClass: "card-border overflow-hidden", BodyClass: "memory-density-flush"}) {
 		@table.TableWithProps(table.TableProps{Bordered: false}) {
 			@table.TableHead() {
 				@table.TableHeadRow() {
