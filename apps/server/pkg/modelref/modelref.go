@@ -62,6 +62,35 @@ func Parse(s string) (Ref, error) {
 	return Ref{Provider: provider, Model: model}, nil
 }
 
+// StripRoutingPrefix removes a leading routing-provider prefix from s when the
+// first '/' segment is a recognised routing provider (as reported by
+// isRoutingProvider), returning the bare model name. Otherwise s is returned
+// unchanged.
+//
+// This is the canonical home for what used to be an ad-hoc "exactly one slash"
+// prefix parser in domain/provider (stripModelPrefix). Only a name whose first
+// segment is a recognised routing provider is treated as prefixed:
+//
+//   - "deepseek/deepseek-v4-flash"          → "deepseek-v4-flash"
+//   - "google-vertex/publishers/.../model"  → "publishers/.../model" (model may
+//     itself contain slashes, preserved by Parse's split-on-first-slash)
+//   - "publishers/google/models/gemini-..."  → unchanged (first segment is not a
+//     routing provider, so the slashes are part of the model id)
+//   - "gpt-4o"                               → unchanged (no prefix)
+//
+// The predicate keeps modelref free of any dialect registry: the caller decides
+// what counts as a routing provider, so this package stays dependency-neutral.
+func StripRoutingPrefix(s string, isRoutingProvider func(string) bool) string {
+	ref, err := Parse(s)
+	if err != nil {
+		return s // bare name — nothing to strip
+	}
+	if !isRoutingProvider(ref.Provider) {
+		return s // multi-segment resource path, not a routing prefix
+	}
+	return ref.Model
+}
+
 // Backfill note: legacy-value normalization (resolving a bare or
 // dialect-prefixed stored value to an instance) is implemented directly in the
 // SQL backfill migrations (kb.provider configs and kb.project_model_config),

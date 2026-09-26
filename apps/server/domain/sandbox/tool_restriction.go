@@ -52,6 +52,8 @@ func ToolRestrictionMiddleware(config *AgentSandboxConfig, log *slog.Logger) ech
 // e.g. "/api/v1/agent/workspaces/:id/bash" -> "bash"
 func extractToolFromPath(path string) string {
 	// Tool endpoints follow the pattern: .../workspaces/:id/<tool>
+	// modelref:allow — this splits a filesystem-style URL path into segments,
+	// not a model reference, so modelref.Parse does not apply here.
 	parts := strings.Split(strings.TrimSuffix(path, "/"), "/")
 	if len(parts) == 0 {
 		return ""
