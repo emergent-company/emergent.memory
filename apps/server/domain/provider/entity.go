@@ -6,15 +6,24 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// ProviderType identifies a supported LLM provider.
-type ProviderType string
+// ProviderDialect identifies the wire protocol and authentication behaviour of
+// a provider. Several provider instances may share one dialect.
+type ProviderDialect string
 
 const (
-	ProviderGoogleAI ProviderType = "google"
-	ProviderVertexAI ProviderType = "google-vertex"
-	ProviderOpenAI   ProviderType = "openai"
-	ProviderDeepSeek ProviderType = "deepseek"
+	ProviderGoogleAI ProviderDialect = "google"
+	ProviderVertexAI ProviderDialect = "google-vertex"
+	ProviderOpenAI   ProviderDialect = "openai"
+	ProviderDeepSeek ProviderDialect = "deepseek"
 )
+
+// ProviderType is a deprecated alias for ProviderDialect, retained so existing
+// call sites keep compiling while they migrate to the dialect vocabulary.
+type ProviderType = ProviderDialect
+
+// ProviderSlug is a project-scoped, user-facing identifier for a provider
+// instance. It defaults to the dialect name and must be unique within a project.
+type ProviderSlug string
 
 // ModelType classifies a model as embedding or generative.
 type ModelType string
@@ -40,18 +49,19 @@ const (
 type OrgProviderConfig struct {
 	bun.BaseModel `bun:"table:kb.org_provider_configs,alias:opc"`
 
-	ID                  string       `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
-	OrgID               string       `bun:"org_id,notnull,type:uuid" json:"orgId"`
-	Provider            ProviderType `bun:"provider,notnull" json:"provider"`
-	EncryptedCredential []byte       `bun:"encrypted_credential,notnull" json:"-"`
-	EncryptionNonce     []byte       `bun:"encryption_nonce,notnull" json:"-"`
-	GCPProject          string       `bun:"gcp_project" json:"gcpProject,omitempty"`
-	Location            string       `bun:"location" json:"location,omitempty"`
-	BaseURL             string       `bun:"base_url" json:"baseUrl,omitempty"`
-	GenerativeModel     string       `bun:"generative_model" json:"generativeModel,omitempty"`
-	EmbeddingModel      string       `bun:"embedding_model" json:"embeddingModel,omitempty"`
-	CreatedAt           time.Time    `bun:"created_at,notnull,default:now()" json:"createdAt"`
-	UpdatedAt           time.Time    `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+	ID                  string          `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
+	OrgID               string          `bun:"org_id,notnull,type:uuid" json:"orgId"`
+	Provider            ProviderDialect `bun:"provider,notnull" json:"provider"`
+	Slug                ProviderSlug    `bun:"slug,notnull" json:"slug"`
+	EncryptedCredential []byte          `bun:"encrypted_credential,notnull" json:"-"`
+	EncryptionNonce     []byte          `bun:"encryption_nonce,notnull" json:"-"`
+	GCPProject          string          `bun:"gcp_project" json:"gcpProject,omitempty"`
+	Location            string          `bun:"location" json:"location,omitempty"`
+	BaseURL             string          `bun:"base_url" json:"baseUrl,omitempty"`
+	GenerativeModel     string          `bun:"generative_model" json:"generativeModel,omitempty"`
+	EmbeddingModel      string          `bun:"embedding_model" json:"embeddingModel,omitempty"`
+	CreatedAt           time.Time       `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	UpdatedAt           time.Time       `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
 }
 
 // ProjectProviderConfig stores encrypted credentials and model selections for a
@@ -60,18 +70,19 @@ type OrgProviderConfig struct {
 type ProjectProviderConfig struct {
 	bun.BaseModel `bun:"table:kb.project_provider_configs,alias:ppc"`
 
-	ID                  string       `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
-	ProjectID           string       `bun:"project_id,notnull,type:uuid" json:"projectId"`
-	Provider            ProviderType `bun:"provider,notnull" json:"provider"`
-	EncryptedCredential []byte       `bun:"encrypted_credential,notnull" json:"-"`
-	EncryptionNonce     []byte       `bun:"encryption_nonce,notnull" json:"-"`
-	GCPProject          string       `bun:"gcp_project" json:"gcpProject,omitempty"`
-	Location            string       `bun:"location" json:"location,omitempty"`
-	BaseURL             string       `bun:"base_url" json:"baseUrl,omitempty"`
-	GenerativeModel     string       `bun:"generative_model" json:"generativeModel,omitempty"`
-	EmbeddingModel      string       `bun:"embedding_model" json:"embeddingModel,omitempty"`
-	CreatedAt           time.Time    `bun:"created_at,notnull,default:now()" json:"createdAt"`
-	UpdatedAt           time.Time    `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+	ID                  string          `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
+	ProjectID           string          `bun:"project_id,notnull,type:uuid" json:"projectId"`
+	Provider            ProviderDialect `bun:"provider,notnull" json:"provider"`
+	Slug                ProviderSlug    `bun:"slug,notnull" json:"slug"`
+	EncryptedCredential []byte          `bun:"encrypted_credential,notnull" json:"-"`
+	EncryptionNonce     []byte          `bun:"encryption_nonce,notnull" json:"-"`
+	GCPProject          string          `bun:"gcp_project" json:"gcpProject,omitempty"`
+	Location            string          `bun:"location" json:"location,omitempty"`
+	BaseURL             string          `bun:"base_url" json:"baseUrl,omitempty"`
+	GenerativeModel     string          `bun:"generative_model" json:"generativeModel,omitempty"`
+	EmbeddingModel      string          `bun:"embedding_model" json:"embeddingModel,omitempty"`
+	CreatedAt           time.Time       `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	UpdatedAt           time.Time       `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
 }
 
 // UpsertProviderConfigRequest is the request body for creating or updating a
@@ -79,6 +90,9 @@ type ProjectProviderConfig struct {
 // For google: set APIKey.
 // For google-vertex: set ServiceAccountJSON, GCPProject, Location.
 type UpsertProviderConfigRequest struct {
+	// Slug optionally names the provider instance. When empty the slug
+	// defaults to the dialect name, with a numeric suffix on collision.
+	Slug               string `json:"slug,omitempty"`
 	APIKey             string `json:"apiKey,omitempty"`
 	ServiceAccountJSON string `json:"serviceAccountJson,omitempty"`
 	GCPProject         string `json:"gcpProject,omitempty"`
@@ -91,31 +105,33 @@ type UpsertProviderConfigRequest struct {
 // ProviderConfigResponse is the public-safe representation of a stored provider config.
 // Credential fields (APIKey, ServiceAccountJSON) are never returned.
 type ProviderConfigResponse struct {
-	ID              string       `json:"id"`
-	Provider        ProviderType `json:"provider"`
-	GCPProject      string       `json:"gcpProject,omitempty"`
-	Location        string       `json:"location,omitempty"`
-	BaseURL         string       `json:"baseUrl,omitempty"`
-	GenerativeModel string       `json:"generativeModel,omitempty"`
-	EmbeddingModel  string       `json:"embeddingModel,omitempty"`
-	CreatedAt       time.Time    `json:"createdAt"`
-	UpdatedAt       time.Time    `json:"updatedAt"`
+	ID              string          `json:"id"`
+	Provider        ProviderDialect `json:"provider"`
+	Slug            ProviderSlug    `json:"slug"`
+	GCPProject      string          `json:"gcpProject,omitempty"`
+	Location        string          `json:"location,omitempty"`
+	BaseURL         string          `json:"baseUrl,omitempty"`
+	GenerativeModel string          `json:"generativeModel,omitempty"`
+	EmbeddingModel  string          `json:"embeddingModel,omitempty"`
+	CreatedAt       time.Time       `json:"createdAt"`
+	UpdatedAt       time.Time       `json:"updatedAt"`
 }
 
 // ProjectProviderConfigResponse is the public-safe representation of a
 // project-level provider config. It includes the ProjectID so consumers
 // can identify which project the override belongs to.
 type ProjectProviderConfigResponse struct {
-	ID              string       `json:"id"`
-	ProjectID       string       `json:"projectId"`
-	Provider        ProviderType `json:"provider"`
-	GCPProject      string       `json:"gcpProject,omitempty"`
-	Location        string       `json:"location,omitempty"`
-	BaseURL         string       `json:"baseUrl,omitempty"`
-	GenerativeModel string       `json:"generativeModel,omitempty"`
-	EmbeddingModel  string       `json:"embeddingModel,omitempty"`
-	CreatedAt       time.Time    `json:"createdAt"`
-	UpdatedAt       time.Time    `json:"updatedAt"`
+	ID              string          `json:"id"`
+	ProjectID       string          `json:"projectId"`
+	Provider        ProviderDialect `json:"provider"`
+	Slug            ProviderSlug    `json:"slug"`
+	GCPProject      string          `json:"gcpProject,omitempty"`
+	Location        string          `json:"location,omitempty"`
+	BaseURL         string          `json:"baseUrl,omitempty"`
+	GenerativeModel string          `json:"generativeModel,omitempty"`
+	EmbeddingModel  string          `json:"embeddingModel,omitempty"`
+	CreatedAt       time.Time       `json:"createdAt"`
+	UpdatedAt       time.Time       `json:"updatedAt"`
 }
 
 // ProviderSupportedModel is a cached entry of a model available from a provider.

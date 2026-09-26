@@ -82,9 +82,11 @@ CLI: `memory provider configure-project <dialect> [--name <slug>]`; get/list/del
 
 `ResolveAny`, `ResolveAnyEmbedding`, `DefaultGenerativeModel`, and `DefaultEmbeddingModel` pick a single instance when no reference is given. They SHALL iterate dialects in the existing preference order and, within a dialect, prefer the instance whose slug **equals the dialect** (the default instance), then fall back to the lexicographically smallest slug among the rest. An explicit `slug == dialect` preference is required — pure lexicographic order would let an unrelated slug such as `a-local` sort ahead of `openai`. This keeps pre-migration behavior stable and makes the choice deterministic. `Resolve`/`ResolveFor` keep **dialect** semantics for backward compatibility and gain slug-addressed siblings (`ResolveByRef`, `ResolveBySlug`); calling the dialect form when a dialect has multiple instances selects that dialect's default instance.
 
-### D9 — Slug validation
+### D9 — Slug validation and defaulting
 
-A slug SHALL match `[a-z0-9][a-z0-9-]*` and SHALL NOT equal a dialect name that differs from the instance's own dialect (which would shadow the legacy dialect fallback). Creating a second instance of a dialect with no explicit slug SHALL auto-suffix (`openai-2`, `openai-3`, …) rather than collide on the default slug.
+A slug SHALL match `[a-z0-9][a-z0-9-]*` and SHALL NOT equal a dialect name that differs from the instance's own dialect (which would shadow the legacy dialect fallback).
+
+A save without an explicit slug targets the dialect's **default instance** (slug == dialect) and upserts in place; adding a second instance of a dialect therefore requires an explicit, distinct slug. **No auto-suffix is allocated.** This is deliberate: auto-suffix would make a re-run of `configure-project <dialect>` silently create a second instance instead of updating the existing one, and it introduced a read-then-insert race. Explicit slugs plus in-place upsert are deterministic and race-free (the same slug conflicts on `(project_id, slug)` and updates).
 
 ## Risks / Trade-offs
 

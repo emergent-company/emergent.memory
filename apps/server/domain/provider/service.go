@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
@@ -17,8 +18,12 @@ import (
 // ResolvedCredential holds the decrypted credential material and metadata
 // needed to instantiate an LLM client for a specific request context.
 type ResolvedCredential struct {
-	// Provider type
+	// Provider is the provider dialect (wire/auth behavior).
 	Provider ProviderType
+
+	// Slug is the provider instance the credential was resolved from. It may
+	// differ from Provider when several instances share one dialect.
+	Slug ProviderSlug
 
 	// Source describes where the credential was resolved from
 	Source CredentialSource
@@ -146,6 +151,7 @@ func (s *CredentialService) decryptProjectConfig(cfg *ProjectProviderConfig) (*R
 
 	resolved := &ResolvedCredential{
 		Provider:        cfg.Provider,
+		Slug:            cfg.Slug,
 		Source:          SourceProject,
 		GCPProject:      cfg.GCPProject,
 		Location:        cfg.Location,
@@ -395,6 +401,7 @@ func (s *CredentialService) ListProjectConfigs(ctx context.Context, projectID st
 			ID:              cfg.ID,
 			ProjectID:       cfg.ProjectID,
 			Provider:        cfg.Provider,
+			Slug:            cfg.Slug,
 			GCPProject:      cfg.GCPProject,
 			Location:        cfg.Location,
 			BaseURL:         cfg.BaseURL,
@@ -423,6 +430,7 @@ func (s *CredentialService) ListProjectConfigsByOrg(ctx context.Context, orgID s
 			ID:              cfg.ID,
 			ProjectID:       cfg.ProjectID,
 			Provider:        cfg.Provider,
+			Slug:            cfg.Slug,
 			GCPProject:      cfg.GCPProject,
 			Location:        cfg.Location,
 			BaseURL:         cfg.BaseURL,
@@ -442,13 +450,18 @@ func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID s
 		return nil, err
 	}
 
+	slug, err := resolveSlug(req.Slug, provider)
+	if err != nil {
+		return nil, err
+	}
+
 	// When the caller omits credential fields (e.g. only updating models or
 	// baseURL), reuse the previously stored credential instead of requiring
 	// the API key / service account on every upsert. Model selections are
 	// reused too, so re-saving credentials/baseURL never silently re-auto-selects
 	// a different model from the (possibly larger) synced catalog.
 	if s.needsStoredCredential(provider, req) || req.GenerativeModel == "" || req.EmbeddingModel == "" {
-		existing, err := s.repo.GetProjectProviderConfig(ctx, projectID, provider)
+		existing, err := s.repo.GetProjectProviderConfigBySlug(ctx, projectID, slug)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get existing provider config: %w", err)
 		}
@@ -552,6 +565,7 @@ func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID s
 	cfg := &ProjectProviderConfig{
 		ProjectID:           projectID,
 		Provider:            provider,
+		Slug:                slug,
 		EncryptedCredential: ciphertext,
 		EncryptionNonce:     nonce,
 		GCPProject:          req.GCPProject,
@@ -568,6 +582,7 @@ func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID s
 	return &ProviderConfigResponse{
 		ID:              cfg.ID,
 		Provider:        cfg.Provider,
+		Slug:            cfg.Slug,
 		GCPProject:      cfg.GCPProject,
 		Location:        cfg.Location,
 		BaseURL:         cfg.BaseURL,
@@ -578,14 +593,22 @@ func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID s
 	}, nil
 }
 
-// GetProjectConfig retrieves the public-safe metadata for a project's provider config.
-func (s *CredentialService) GetProjectConfig(ctx context.Context, projectID string, provider ProviderType) (*ProviderConfigResponse, error) {
+// GetProjectConfig retrieves the public-safe metadata for a project's provider
+// instance. The argument is resolved as an instance slug first, then as a
+// dialect (the dialect's default instance) for legacy callers.
+func (s *CredentialService) GetProjectConfig(ctx context.Context, projectID string, slugOrDialect ProviderType) (*ProviderConfigResponse, error) {
 	if err := s.assertCallerOwnsProject(ctx, projectID); err != nil {
 		return nil, err
 	}
-	cfg, err := s.repo.GetProjectProviderConfig(ctx, projectID, provider)
+	cfg, err := s.repo.GetProjectProviderConfigBySlug(ctx, projectID, ProviderSlug(slugOrDialect))
 	if err != nil {
 		return nil, err
+	}
+	if cfg == nil && isDialectName(string(slugOrDialect)) {
+		cfg, err = s.repo.GetProjectProviderConfig(ctx, projectID, slugOrDialect)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if cfg == nil {
 		return nil, nil
@@ -593,6 +616,7 @@ func (s *CredentialService) GetProjectConfig(ctx context.Context, projectID stri
 	return &ProviderConfigResponse{
 		ID:              cfg.ID,
 		Provider:        cfg.Provider,
+		Slug:            cfg.Slug,
 		GCPProject:      cfg.GCPProject,
 		Location:        cfg.Location,
 		BaseURL:         cfg.BaseURL,
@@ -603,12 +627,70 @@ func (s *CredentialService) GetProjectConfig(ctx context.Context, projectID stri
 	}, nil
 }
 
-// DeleteProjectConfig removes a project's provider config.
-func (s *CredentialService) DeleteProjectConfig(ctx context.Context, projectID string, provider ProviderType) error {
+// DeleteProjectConfig removes a project's provider instance. The argument is
+// resolved as an instance slug first, then as a dialect (default instance).
+func (s *CredentialService) DeleteProjectConfig(ctx context.Context, projectID string, slugOrDialect ProviderType) error {
 	if err := s.assertCallerOwnsProject(ctx, projectID); err != nil {
 		return err
 	}
-	return s.repo.DeleteProjectProviderConfig(ctx, projectID, provider)
+	if err := s.repo.DeleteProjectProviderConfigBySlug(ctx, projectID, ProviderSlug(slugOrDialect)); err != nil {
+		return err
+	}
+	if isDialectName(string(slugOrDialect)) {
+		return s.repo.DeleteProjectProviderConfig(ctx, projectID, slugOrDialect)
+	}
+	return nil
+}
+
+// --- provider instance slugs ---
+
+const maxProviderSlugLen = 63
+
+var providerSlugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+
+// isDialectName reports whether s names a supported provider dialect.
+func isDialectName(s string) bool {
+	switch ProviderDialect(s) {
+	case ProviderGoogleAI, ProviderVertexAI, ProviderOpenAI, ProviderDeepSeek:
+		return true
+	default:
+		return false
+	}
+}
+
+// validateProviderSlug validates a user-supplied instance slug. A slug must not
+// equal a dialect other than the instance's own dialect, which would shadow the
+// legacy dialect fallback.
+func validateProviderSlug(slug ProviderSlug, dialect ProviderDialect) error {
+	s := string(slug)
+	if s == "" {
+		return apperror.NewBadRequest("provider slug must not be empty")
+	}
+	if len(s) > maxProviderSlugLen {
+		return apperror.NewBadRequest(fmt.Sprintf("provider slug %q is too long (max %d characters)", s, maxProviderSlugLen))
+	}
+	if !providerSlugRe.MatchString(s) {
+		return apperror.NewBadRequest(fmt.Sprintf("invalid provider slug %q: must match [a-z0-9][a-z0-9-]*", s))
+	}
+	if isDialectName(s) && ProviderDialect(s) != dialect {
+		return apperror.NewBadRequest(fmt.Sprintf("provider slug %q is a reserved dialect name", s))
+	}
+	return nil
+}
+
+// resolveSlug returns the target instance slug for a save: an explicit,
+// validated slug, or the dialect's default slug when none is given. A save
+// without a slug therefore updates the dialect's default instance in place
+// rather than creating a duplicate (D9).
+func resolveSlug(requested string, dialect ProviderDialect) (ProviderSlug, error) {
+	if strings.TrimSpace(requested) == "" {
+		return ProviderSlug(dialect), nil
+	}
+	slug := ProviderSlug(strings.TrimSpace(requested))
+	if err := validateProviderSlug(slug, dialect); err != nil {
+		return "", err
+	}
+	return slug, nil
 }
 
 // --- helpers ---

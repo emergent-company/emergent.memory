@@ -12,8 +12,8 @@
 - [ ] 2.4 Update `ProjectProviderConfig`/`OrgProviderConfig` entities and `ProviderConfigResponse`/`ProjectProviderConfigResponse` with `Slug`/`Dialect`. Verify `go build ./...`.
 - [ ] 2.5 Add `GetProjectProviderConfigBySlug`, `ListProjectProviderConfigs` (all instances), and `DeleteProjectProviderConfigBySlug` to `repository.go`; keep legacy-by-dialect helpers during transition. Verify `go build ./...`.
 - [ ] 2.6 Unit-test repository slug lookups and multi-instance listing. Verify `go test ./domain/provider/ -run ProviderConfig -count=1`.
-- [ ] 2.7 Implement slug validation (`[a-z0-9][a-z0-9-]*`, not shadowing a different dialect) and auto-suffix (`openai-2`, …) when a second instance of a dialect is created without an explicit slug (D9). Auto-suffix allocation MUST be concurrency-safe: allocate and insert in one transaction, or retry on unique-constraint conflict, so two concurrent no-slug creates cannot both pick the same suffix. Verify `go build ./...`.
-- [ ] 2.8 Unit-test slug validation, auto-suffix on a second no-slug instance, and concurrent no-slug creates producing distinct slugs without an error. Verify `go test ./domain/provider/ -run Slug -count=1`.
+- [ ] 2.7 Implement provider slug validation (`[a-z0-9][a-z0-9-]*`, not shadowing a different dialect). A save without an explicit slug targets the dialect's default instance (slug == dialect) and upserts in place; a second instance requires an explicit distinct slug. No auto-suffix allocation (D9). Verify `go build ./...`.
+- [ ] 2.8 Unit-test slug validation, default-slug save updating the existing instance in place, and a second explicit-slug instance coexisting with the default. Verify `go test ./domain/provider/ -run Slug -count=1`.
 
 ## 3. Credential resolution
 

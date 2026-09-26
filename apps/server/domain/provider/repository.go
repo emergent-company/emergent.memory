@@ -29,20 +29,56 @@ func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 
 // --- Project Provider Configs ---
 
-// GetProjectProviderConfig returns the config for a specific provider and project.
-func (r *Repository) GetProjectProviderConfig(ctx context.Context, projectID string, provider ProviderType) (*ProjectProviderConfig, error) {
+// GetProjectProviderConfigBySlug returns the config for a specific provider
+// instance (slug) in a project. Returns nil, nil when absent.
+func (r *Repository) GetProjectProviderConfigBySlug(ctx context.Context, projectID string, slug ProviderSlug) (*ProjectProviderConfig, error) {
 	var cfg ProjectProviderConfig
 	err := r.db.NewSelect().
 		Model(&cfg).
 		Where("project_id = ?", projectID).
-		Where("provider = ?", provider).
+		Where("slug = ?", slug).
 		Scan(ctx)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
-		r.log.Error("failed to get project provider config",
+		r.log.Error("failed to get project provider config by slug",
+			logger.Error(err),
+			slog.String("projectID", projectID),
+			slog.String("slug", string(slug)),
+		)
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return &cfg, nil
+}
+
+// GetProjectProviderConfig returns the default instance for a dialect in a
+// project: the instance whose slug equals the dialect, otherwise the smallest
+// slug of that dialect. Returns nil, nil when the project has no such instance.
+//
+// This preserves the dialect-addressed semantics of the previous
+// (project, provider) lookup for callers that do not yet handle slugs.
+func (r *Repository) GetProjectProviderConfig(ctx context.Context, projectID string, provider ProviderType) (*ProjectProviderConfig, error) {
+	if cfg, err := r.GetProjectProviderConfigBySlug(ctx, projectID, ProviderSlug(provider)); err != nil {
+		return nil, err
+	} else if cfg != nil {
+		return cfg, nil
+	}
+
+	var cfg ProjectProviderConfig
+	err := r.db.NewSelect().
+		Model(&cfg).
+		Where("project_id = ?", projectID).
+		Where("provider = ?", provider).
+		Order("slug ASC").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		r.log.Error("failed to get default project provider config",
 			logger.Error(err),
 			slog.String("projectID", projectID),
 			slog.String("provider", string(provider)),
@@ -52,11 +88,57 @@ func (r *Repository) GetProjectProviderConfig(ctx context.Context, projectID str
 	return &cfg, nil
 }
 
-// UpsertProjectProviderConfig inserts or updates a project's provider config.
+// ListProjectProviderConfigsByDialect returns every instance of a dialect in a
+// project, ordered by slug (default instance first when slug == dialect).
+func (r *Repository) ListProjectProviderConfigsByDialect(ctx context.Context, projectID string, dialect ProviderDialect) ([]ProjectProviderConfig, error) {
+	var cfgs []ProjectProviderConfig
+	err := r.db.NewSelect().
+		Model(&cfgs).
+		Where("project_id = ?", projectID).
+		Where("provider = ?", dialect).
+		Order("slug ASC").
+		Scan(ctx)
+	if err != nil {
+		r.log.Error("failed to list project provider configs by dialect",
+			logger.Error(err),
+			slog.String("projectID", projectID),
+			slog.String("dialect", string(dialect)),
+		)
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return cfgs, nil
+}
+
+// ProjectProviderSlugs returns the set of instance slugs configured for a
+// project. Used for slug validation and auto-suffix allocation.
+func (r *Repository) ProjectProviderSlugs(ctx context.Context, projectID string) (map[ProviderSlug]bool, error) {
+	var slugs []string
+	err := r.db.NewSelect().
+		TableExpr("kb.project_provider_configs").
+		Column("slug").
+		Where("project_id = ?", projectID).
+		Scan(ctx, &slugs)
+	if err != nil {
+		r.log.Error("failed to list project provider slugs",
+			logger.Error(err),
+			slog.String("projectID", projectID),
+		)
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	out := make(map[ProviderSlug]bool, len(slugs))
+	for _, s := range slugs {
+		out[ProviderSlug(s)] = true
+	}
+	return out, nil
+}
+
+// UpsertProjectProviderConfig inserts or updates a project's provider instance.
+// The identity is (project_id, slug).
 func (r *Repository) UpsertProjectProviderConfig(ctx context.Context, cfg *ProjectProviderConfig) error {
 	_, err := r.db.NewInsert().
 		Model(cfg).
-		On("CONFLICT (project_id, provider) DO UPDATE").
+		On("CONFLICT (project_id, slug) DO UPDATE").
+		Set("provider = EXCLUDED.provider").
 		Set("encrypted_credential = EXCLUDED.encrypted_credential").
 		Set("encryption_nonce = EXCLUDED.encryption_nonce").
 		Set("gcp_project = EXCLUDED.gcp_project").
@@ -73,29 +155,57 @@ func (r *Repository) UpsertProjectProviderConfig(ctx context.Context, cfg *Proje
 			logger.Error(err),
 			slog.String("projectID", cfg.ProjectID),
 			slog.String("provider", string(cfg.Provider)),
+			slog.String("slug", string(cfg.Slug)),
 		)
 		return apperror.ErrDatabase.WithInternal(err)
 	}
 	return nil
 }
 
-// DeleteProjectProviderConfig removes a project's provider config.
-func (r *Repository) DeleteProjectProviderConfig(ctx context.Context, projectID string, provider ProviderType) error {
+// InsertProjectProviderConfig inserts a new provider instance. Unlike
+// UpsertProjectProviderConfig it does not merge on conflict, so a unique-slug
+// violation surfaces to the caller (used for concurrency-safe auto-suffix
+// allocation).
+func (r *Repository) InsertProjectProviderConfig(ctx context.Context, cfg *ProjectProviderConfig) error {
+	_, err := r.db.NewInsert().
+		Model(cfg).
+		Returning("*").
+		Exec(ctx)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// DeleteProjectProviderConfigBySlug removes a project's provider instance.
+func (r *Repository) DeleteProjectProviderConfigBySlug(ctx context.Context, projectID string, slug ProviderSlug) error {
 	_, err := r.db.NewDelete().
 		Model((*ProjectProviderConfig)(nil)).
 		Where("project_id = ?", projectID).
-		Where("provider = ?", provider).
+		Where("slug = ?", slug).
 		Exec(ctx)
 
 	if err != nil {
-		r.log.Error("failed to delete project provider config",
+		r.log.Error("failed to delete project provider config by slug",
 			logger.Error(err),
 			slog.String("projectID", projectID),
-			slog.String("provider", string(provider)),
+			slog.String("slug", string(slug)),
 		)
 		return apperror.ErrDatabase.WithInternal(err)
 	}
 	return nil
+}
+
+// DeleteProjectProviderConfig removes a project's default instance for a dialect.
+func (r *Repository) DeleteProjectProviderConfig(ctx context.Context, projectID string, provider ProviderType) error {
+	cfg, err := r.GetProjectProviderConfig(ctx, projectID, provider)
+	if err != nil {
+		return err
+	}
+	if cfg == nil {
+		return nil
+	}
+	return r.DeleteProjectProviderConfigBySlug(ctx, projectID, cfg.Slug)
 }
 
 // ListProjectProviderConfigs lists all provider configs for a specific project (metadata only, no secrets).

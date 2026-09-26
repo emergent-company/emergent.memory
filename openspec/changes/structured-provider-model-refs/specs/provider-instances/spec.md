@@ -15,19 +15,19 @@ Each provider config SHALL have a project-scoped slug that is unique within the 
 
 #### Scenario: Instance created without a slug
 
-- **WHEN** a caller creates a provider config with a dialect and no slug
+- **WHEN** a caller saves a provider config with a dialect and no slug
 - **THEN** the slug defaults to the dialect name
-- **AND** if that slug is already taken, the system assigns a suffixed slug (`<dialect>-2`, `<dialect>-3`, …) rather than failing
+- **AND** if an instance with that slug already exists it is updated in place, not duplicated
 
-#### Scenario: Concurrent no-slug creates
+#### Scenario: Duplicate slug updates in place
 
-- **WHEN** two no-slug creates for the same dialect arrive concurrently
-- **THEN** both succeed with distinct suffixed slugs (allocation is transactional or retried on unique-constraint conflict), and neither fails
+- **WHEN** a caller saves a provider config with a slug that already exists in the project
+- **THEN** the existing instance is updated (credentials/models), and no second row is created
 
-#### Scenario: Duplicate slug rejected
+#### Scenario: Second instance requires an explicit slug
 
-- **WHEN** a caller creates a second config in the same project with an existing slug
-- **THEN** the request is rejected with a message naming the conflicting slug
+- **WHEN** a caller wants a second instance of a dialect that already has its default instance
+- **THEN** the caller must supply a distinct, explicit slug
 
 #### Scenario: Slug must not shadow a different dialect
 
