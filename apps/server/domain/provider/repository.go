@@ -622,6 +622,11 @@ func (r *Repository) ListProjectCustomPricing(ctx context.Context, projectID str
 // UpsertProjectCustomPricing inserts or updates a project's pricing override.
 // The override is keyed by (project_id, provider_slug, model).
 func (r *Repository) UpsertProjectCustomPricing(ctx context.Context, entry *ProjectCustomPricing) error {
+	// Default the instance slug to the dialect when the caller only supplied a
+	// dialect — the dialect's default instance is the pre-instance identity.
+	if entry.ProviderSlug == "" {
+		entry.ProviderSlug = ProviderSlug(entry.Provider)
+	}
 	_, err := r.db.NewInsert().
 		Model(entry).
 		On("CONFLICT (project_id, provider_slug, model) DO UPDATE").
