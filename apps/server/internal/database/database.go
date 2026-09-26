@@ -109,10 +109,16 @@ func NewBunDB(lc fx.Lifecycle, pool *pgxpool.Pool, cfg *config.Config, log *slog
 	return db, nil
 }
 
-// addTracingHook registers the bunotel query hook when OTel tracing is enabled.
-// Inert (hook not registered) when tracing is disabled, so there is zero overhead.
+// addTracingHook registers the bunotel query hook when both the tracing feature
+// (FEATURE_TRACING) and OTel export (OTEL_EXPORTER_OTLP_ENDPOINT) are enabled.
+//
+// It requires Features.Tracing because the tracing module — which installs the
+// OTLP TracerProvider — is only loaded when that flag is set (see cmd/server
+// main). Without the provider, spans would be created against the no-op global
+// provider: useless work on every query. Inert (hook not registered) otherwise,
+// so there is zero per-query overhead when tracing is disabled.
 func addTracingHook(db *bun.DB, cfg *config.Config) {
-	if cfg.Otel.Enabled() {
+	if cfg.Features.Tracing && cfg.Otel.Enabled() {
 		db.AddQueryHook(bunotel.NewQueryHook(bunotel.WithDBName(cfg.Database.Database)))
 	}
 }
