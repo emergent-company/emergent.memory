@@ -1,6 +1,8 @@
-title = "memory gitleaks config"
+title = "emergent.memory gitleaks config"
 
-# Extend the full default ruleset — 150+ secret types out of the box.
+# Repo-wide gitleaks config (single source for the whole monorepo).
+# Extends the full default ruleset — 150+ secret types out of the box.
+
 [extend]
 useDefault = true
 
@@ -14,15 +16,24 @@ regex       = '''\b(memt_[A-Za-z0-9_\-]{10,})\b'''
 keywords    = ["memt_"]
 entropy     = 2.5
 
-# ── Global allowlist ──────────────────────────────────────────────────────────
+# ── Global allowlists ────────────────────────────────────────────────────────
 
 [[allowlists]]
 description = "Angle-bracket placeholders are never real keys — e.g. <YOUR_API_KEY>"
 regexes     = ['''<[A-Z][A-Z0-9_]{2,}>''']
 
 [[allowlists]]
-description = "Gitignored local env files — contain real keys intentionally, never committed"
-paths       = ['''(^|[\\/])\.env$''', '''(^|[\\/])\.env\.(google|realtime|local|cloud)$''']
+description = "Local env files — contain real keys intentionally, never committed"
+paths       = ['''(^|[\\/])\.env$''', '''(^|[\\/])\.env\.[A-Za-z0-9_.-]+$''']
+
+[[allowlists]]
+description = "Vendored, generated, and ignored trees are not product code"
+paths       = [
+  '''(^|[\\/])node_modules[\\/]''',
+  '''(^|[\\/])\.venv[\\/]''',
+  '''(^|[\\/])vendor[\\/]''',
+  '''(^|[\\/])(dist|build|coverage)[\\/]''',
+]
 
 [[allowlists]]
 description = "Go test fixtures use fabricated tokens/keys, not real secrets (manually verified)"

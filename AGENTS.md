@@ -105,7 +105,8 @@ task build          # build Go server binary
 task test           # unit tests
 task test:integration   # integration tests (apps/server/tests/integration)
 task test:e2e       # API e2e suites (e2e/tests/api, runlog)
-task lint           # Go linter
+task lint           # all linters via lefthook (server, CLI, web UI, connector)
+task hooks:install  # install git hooks via lefthook (once per checkout)
 task migrate:up     # run Goose migrations
 task migrate:status
 task cli:install    # build + install memory CLI → ~/.memory/bin/memory
@@ -113,7 +114,7 @@ task cli:install    # build + install memory CLI → ~/.memory/bin/memory
 # Web UI (apps/web-ui) — Go templ + HTMX gateway
 cd apps/web-ui
 task dev        # gateway with air hot reload (templ + tailwind + go)
-task lint       # lefthook: golangci-lint, go vet/test, templ, gitleaks
+task lint       # web-ui + connector linters (repo-root lefthook config)
 task fmt
 task e2e:test   # Playwright e2e (see tests/e2e/README.md)
 
@@ -122,6 +123,17 @@ task -d e2e test:mcj
 ```
 
 > There is no server-local `apps/server/tests/e2e/` suite anymore. API e2e lives in `e2e/tests/api/`; CLI e2e lives in `e2e/tests/cli/`. The legacy `e2e/tests-api/` (NestJS-era testify module) was removed in favor of the consolidated runlog suite.
+
+## Git Hooks — lefthook (single root config)
+
+All git hooks live in the **one** repo-root `lefthook.yml`; install them with `task hooks:install` (or `lefthook install`).
+
+- Git hooks are repo-global and lefthook loads exactly one config from the git root. There is **no** per-directory config (the old `apps/web-ui/lefthook.yml` and `.husky/` are gone).
+- Each job is scoped with `root:` (its CWD) and `glob:` (patterns are matched **relative to `root`**), so server / CLI / web-ui / connector jobs coexist in one file.
+- `pre-commit` is fast and path-scoped (gofmt, vet, build, lint-ratchet, Swagger `@Router`, migration SQL, untracked-import guard, ruff/templ). **Tests are not run on commit** — CI owns them.
+- Secrets are scanned **repo-wide** by a single root `.gitleaks.toml`: strictly on staged changes at commit, whole-tree in the lint groups. Pre-existing findings are waived in `.gitleaksignore` — a **ratchet**: remove entries as you fix them, never add.
+- Gateway Go jobs (`vet`/`build`/`test`/`golangci-lint`) need generated assets that aren't committed (templ output + compiled CSS). On an un-warmed tree they skip with instructions — run `task dev` (or `task generate && task css`) in `apps/web-ui` first; CI generates them before building.
+- `lefthook run lint` = all trees (root `task lint`); `lefthook run lint-webui` = web-ui + connector (web-ui `task lint`).
 
 ## OpenSpec
 
