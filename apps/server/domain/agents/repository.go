@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
+	"github.com/emergent-company/emergent.memory/domain/sessiontodos"
 	"github.com/emergent-company/emergent.memory/pkg/acpslug"
 	"github.com/emergent-company/emergent.memory/pkg/adk/session/bunsession"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 )
@@ -3348,7 +3350,24 @@ func (r *Repository) GetConversationFullHistory(ctx context.Context, acpSessionI
 // GetConversationFullHistoryRaw implements mcp.SessionHistoryProvider.
 // Returns the same unified timeline as GetConversationFullHistory but serialised
 // as []map[string]any so the mcp package can consume it without importing agents.
-func (r *Repository) GetConversationFullHistoryRaw(ctx context.Context, acpSessionID string) ([]map[string]any, error) {
+//
+// The session is ownership-checked at this data-access layer before any
+// history is loaded, reusing the shared sessiontodos.SessionAccessibleQuery
+// predicate (the #1010 conversation ownership model): the session must be in
+// the caller's project and, when it is linked to a chat conversation, that
+// conversation must be owned by the caller or non-private. A foreign or
+// unknown session id fails closed to the domain's 404 convention so its
+// existence (and any stored messages / composed system prompt) cannot leak
+// (issue #1032).
+func (r *Repository) GetConversationFullHistoryRaw(ctx context.Context, projectID, ownerUserID, acpSessionID string) ([]map[string]any, error) {
+	ok, err := sessiontodos.SessionAccessibleQuery(ctx, r.db, acpSessionID, projectID, ownerUserID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, apperror.NewNotFound("session", acpSessionID)
+	}
+
 	items, err := r.GetConversationFullHistory(ctx, acpSessionID)
 	if err != nil {
 		return nil, err
