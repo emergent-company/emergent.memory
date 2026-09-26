@@ -163,6 +163,7 @@ func (r *Repository) CompleteRun(ctx context.Context, runID string, summary map[
 		Model((*AgentRun)(nil)).
 		Set("status = ?", RunStatusSuccess).
 		Set("completed_at = ?", now).
+		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
 		Set("summary = ?", summary).
 		Where("id = ?", runID).
 		Exec(ctx)
@@ -176,6 +177,7 @@ func (r *Repository) SkipRun(ctx context.Context, runID string, reason string) e
 		Model((*AgentRun)(nil)).
 		Set("status = ?", RunStatusSkipped).
 		Set("completed_at = ?", now).
+		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
 		Set("skip_reason = ?", reason).
 		Where("id = ?", runID).
 		Exec(ctx)
@@ -189,6 +191,7 @@ func (r *Repository) FailRun(ctx context.Context, runID string, errorMessage str
 		Model((*AgentRun)(nil)).
 		Set("status = ?", RunStatusError).
 		Set("completed_at = ?", now).
+		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
 		Set("error_message = ?", errorMessage).
 		Where("id = ?", runID).
 		Exec(ctx)
@@ -204,6 +207,7 @@ func (r *Repository) MarkOrphanedRunsAsError(ctx context.Context) (int, error) {
 		Model((*AgentRun)(nil)).
 		Set("status = ?", RunStatusError).
 		Set("completed_at = ?", now).
+		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
 		Set("error_message = ?", "server restarted while run was in progress").
 		Where("status = ?", RunStatusRunning).
 		Exec(ctx)
@@ -280,6 +284,7 @@ func (r *Repository) MarkStaleRunsAsError(ctx context.Context, threshold time.Du
 		Model((*AgentRun)(nil)).
 		Set("status = ?", RunStatusError).
 		Set("completed_at = ?", now).
+		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
 		Set("error_message = ?", "run exceeded idle timeout (likely abandoned by client)").
 		Where("status = ?", RunStatusRunning).
 		Where("COALESCE(last_step_at, started_at) < ?", cutoff).
@@ -1682,6 +1687,7 @@ func (r *Repository) CancelRun(ctx context.Context, runID string) error {
 		Model((*AgentRun)(nil)).
 		Set("status = ?", RunStatusCancelled).
 		Set("completed_at = ?", now).
+		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
 		Where("id = ?", runID).
 		Exec(ctx)
 	return err
@@ -1696,6 +1702,7 @@ func (r *Repository) CancelRunIfPaused(ctx context.Context, runID string) (bool,
 		Model((*AgentRun)(nil)).
 		Set("status = ?", RunStatusCancelled).
 		Set("completed_at = ?", now).
+		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
 		Where("id = ?", runID).
 		Where("status = ?", RunStatusPaused).
 		Exec(ctx)
@@ -1736,6 +1743,7 @@ func (r *Repository) FailRunWithSteps(ctx context.Context, runID string, errorMe
 		Model((*AgentRun)(nil)).
 		Set("status = ?", RunStatusError).
 		Set("completed_at = ?", now).
+		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
 		Set("error_message = ?", errorMessage).
 		Set("step_count = ?", stepCount).
 		Set("session_status = ?", SessionStatusError).
@@ -2543,6 +2551,7 @@ func (r *Repository) CompleteJob(ctx context.Context, jobID, runID string) error
 			Model((*AgentRun)(nil)).
 			Set("status = ?", RunStatusSuccess).
 			Set("completed_at = ?", now).
+			Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
 			Where("id = ?", runID).
 			Exec(ctx); err != nil {
 			return fmt.Errorf("complete run: %w", err)
@@ -2599,6 +2608,7 @@ func (r *Repository) FailJob(ctx context.Context, jobID, runID, errMsg string, r
 				Model((*AgentRun)(nil)).
 				Set("status = ?", RunStatusError).
 				Set("completed_at = ?", now).
+				Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
 				Set("error_message = ?", errMsg).
 				Where("id = ?", runID).
 				Exec(ctx); err != nil {
