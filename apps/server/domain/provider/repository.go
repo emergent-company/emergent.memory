@@ -104,7 +104,7 @@ func (r *Repository) ListProjectProviderConfigsByDialect(ctx context.Context, pr
 			slog.String("projectID", projectID),
 			slog.String("dialect", string(dialect)),
 		)
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, err
 	}
 	return cfgs, nil
 }
@@ -123,7 +123,7 @@ func (r *Repository) ProjectProviderSlugs(ctx context.Context, projectID string)
 			logger.Error(err),
 			slog.String("projectID", projectID),
 		)
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, err
 	}
 	out := make(map[ProviderSlug]bool, len(slugs))
 	for _, s := range slugs {
