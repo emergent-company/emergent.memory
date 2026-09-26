@@ -11,7 +11,7 @@ import (
 )
 
 // TestACPSessionIDUniqueEnforcesOneToOneConversation is the regression test for
-// migration 00183: kb.chat_conversations.acp_session_id is now UNIQUE, so a
+// migration 00184: kb.chat_conversations.acp_session_id is now UNIQUE, so a
 // second conversation cannot point at the same ACP session (the 1:1 invariant
 // becomes the database's job), while multiple NULL acp_session_id conversations
 // remain permitted (non-agent conversations have no session).
@@ -49,7 +49,7 @@ func TestACPSessionIDUniqueEnforcesOneToOneConversation(t *testing.T) {
 	`, convA, "conv-a", projectID, sessionID).Exec(ctx)
 	require.NoError(t, err, "first conversation must link to the session (normal 1:1 flow)")
 
-	// AFTER 00183: a second conversation reusing the same session is rejected.
+	// AFTER 00184: a second conversation reusing the same session is rejected.
 	convB := uuid.New()
 	_, err = db.NewRaw(`
 		INSERT INTO kb.chat_conversations (id, title, project_id, acp_session_id, created_at, updated_at)
