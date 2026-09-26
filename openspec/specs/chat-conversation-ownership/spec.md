@@ -66,3 +66,24 @@ Message reads SHALL never return messages from a conversation the caller cannot 
 - **GIVEN** a private conversation owned by another user
 - **WHEN** a non-owner reads its message history
 - **THEN** no messages are returned
+
+### Requirement: Session todos inherit the conversation's ownership
+
+Session todos (`kb.session_todos`, keyed by `session_id`) SHALL inherit the owner-or-shared predicate of the conversation the session backs. The session id SHALL be resolved to its ACP session (`kb.acp_sessions`) for the project scope and to its linked conversation (`kb.chat_conversations.acp_session_id`) for the owner/private scope; a todo's list/create/update/delete SHALL succeed only when the session is in the caller's project AND the linked conversation is owned by the caller or non-private. A session with no linked conversation SHALL be project-scoped. A foreign or unknown session id SHALL fail closed to the domain's 404 convention, indistinguishable from a non-existent session.
+
+#### Scenario: Foreign member cannot read or write a private session's todos
+
+- **GIVEN** a private conversation owned by another user in the same project, whose ACP session has todos
+- **WHEN** a non-owner project member lists, creates, updates, or deletes those session todos by session id
+- **THEN** every accessor returns 404
+
+#### Scenario: Owner still manages their session todos
+
+- **WHEN** the conversation owner lists, creates, updates, or deletes their session todos
+- **THEN** every accessor succeeds
+
+#### Scenario: Non-private session todos are project-shared
+
+- **GIVEN** a non-private (`is_private = false`) conversation whose session has todos
+- **WHEN** any member of its project lists those session todos
+- **THEN** the todos are returned

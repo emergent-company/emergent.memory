@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/emergent-company/emergent.memory/domain/sessiontodos"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // ============================================================================
@@ -70,10 +71,22 @@ func sessionTodoToolDefinitions() []ToolDefinition {
 	}
 }
 
+// sessionTodoCaller resolves the session-todo tool's caller identity from the
+// run context (project id + the user who initiated the run). When absent the
+// values are empty, so the ownership predicate fails closed in the service.
+func sessionTodoCaller(ctx context.Context) (projectID, ownerUserID string) {
+	projectID = auth.ProjectIDFromContext(ctx)
+	if u := auth.UserFromContext(ctx); u != nil {
+		ownerUserID = u.ID
+	}
+	return projectID, ownerUserID
+}
+
 func (s *Service) executeSessionTodoList(ctx context.Context, args map[string]any) (*ToolResult, error) {
 	if s.sessionTodoSvc == nil {
 		return nil, fmt.Errorf("session todo service not available")
 	}
+	projectID, ownerUserID := sessionTodoCaller(ctx)
 	sessionID, _ := args["session_id"].(string)
 	if sessionID == "" {
 		return nil, fmt.Errorf("session-todo-list: 'session_id' is required")
@@ -87,7 +100,7 @@ func (s *Service) executeSessionTodoList(ctx context.Context, args map[string]an
 			}
 		}
 	}
-	todos, err := s.sessionTodoSvc.List(ctx, sessionID, statuses)
+	todos, err := s.sessionTodoSvc.List(ctx, projectID, ownerUserID, sessionID, statuses)
 	if err != nil {
 		return nil, err
 	}
@@ -109,6 +122,7 @@ func (s *Service) executeSessionTodoUpdate(ctx context.Context, args map[string]
 	if s.sessionTodoSvc == nil {
 		return nil, fmt.Errorf("session todo service not available")
 	}
+	projectID, ownerUserID := sessionTodoCaller(ctx)
 	sessionID, _ := args["session_id"].(string)
 	todoID, _ := args["todo_id"].(string)
 	if sessionID == "" || todoID == "" {
@@ -122,7 +136,7 @@ func (s *Service) executeSessionTodoUpdate(ctx context.Context, args map[string]
 	if content, _ := args["content"].(string); content != "" {
 		req.Content = &content
 	}
-	todo, err := s.sessionTodoSvc.Update(ctx, sessionID, todoID, req)
+	todo, err := s.sessionTodoSvc.Update(ctx, projectID, ownerUserID, sessionID, todoID, req)
 	if err != nil {
 		return nil, err
 	}

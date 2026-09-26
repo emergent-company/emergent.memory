@@ -51,6 +51,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/schemaregistry"
 	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/domain/search"
+	"github.com/emergent-company/emergent.memory/domain/sessiontodos"
 	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/domain/superadmin"
 	"github.com/emergent-company/emergent.memory/domain/tasks"
@@ -634,6 +635,12 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	// When cfg.Otel.Enabled() == false, GetTrace returns 503 — tests react accordingly.
 	tracingHandler := tracing.NewHandler(testDB.Config, db)
 	tracing.RegisterRoutes(e, tracingHandler, authMiddleware)
+
+	// Register session todos routes (session-scoped, conversation-ownership-gated).
+	sessionTodosRepo := sessiontodos.NewRepository(db, log)
+	sessionTodosSvc := sessiontodos.NewService(sessionTodosRepo, log)
+	sessionTodosHandler := sessiontodos.NewHandler(sessionTodosSvc)
+	sessiontodos.RegisterRoutes(e, sessionTodosHandler, authMiddleware)
 
 	return &TestServer{
 		Echo:           e,
