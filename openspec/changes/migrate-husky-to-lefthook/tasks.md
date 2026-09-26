@@ -49,3 +49,10 @@
 - [x] 8.2 Guard gateway Go jobs (`vet`/`build`/`test`/`golangci`) on generated assets (templ output + `webui/static/css/app.css`): skip with instructions on an un-warmed tree instead of failing; added `webui-go-build` to both lint groups
 - [x] 8.3 Add the missing module `go build` jobs (`cli-go-build`, `webui-go-build`, `connector-go-build`) so the `lint` group matches its spec
 - [x] 8.4 Repo-wide `secrets` job (no web-ui glob) is intentional and documented — the earlier path-scoped `webui-secrets` finding is obsolete
+
+## 9. Review fixes (second pass — #1058-class blockers)
+
+- [x] 9.1 Remove `cli-golangci-lint` from `pre-commit`: whole-module golangci-lint is too slow for the fast path and `apps/cli` carries ~71 pre-existing findings that blocked unrelated commits. It stays in the `lint` group scoped `--new-from-rev HEAD`, so a newly introduced CLI finding still fails.
+- [x] 9.2 Guard `webui-templ` on generated assets (same guard as the gateway Go jobs) so it skips on an un-warmed tree instead of failing on ~54 un-generated `*_templ.go` files, while still catching a genuinely stale generated file once warm.
+- [x] 9.3 Scope the `lint` group's `server-golangci-lint` and `cli-golangci-lint` with `--new-from-rev HEAD` (golangci-lint has no baseline ratchet), documenting the pre-existing debt (~260 server / ~71 cli) so `task lint` is green on a clean tree and a contributor can tell "red from my change" from "red from the backlog".
+- [x] 9.4 Add `--allow-parallel-runners` to every `golangci-lint` job in the parallel `lint` / `lint-webui` groups. The 8.1 cache isolation was necessary but not sufficient: golangci-lint's lock lives at `$TMPDIR/golangci-lint.lock` (not in `GOLANGCI_LINT_CACHE`), so parallel jobs still failed with `parallel golangci-lint is running` until the lock was disabled. With per-tree cache dirs, parallel runs are safe.

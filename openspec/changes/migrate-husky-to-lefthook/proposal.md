@@ -11,7 +11,7 @@ Result: no pre-commit hook runs on any host, so the quality gates the hooks were
 ## What Changes
 
 - **One config.** Consolidate into a single repo-root `lefthook.yml`. Scope every job with `root:` (its CWD) and `glob:` (matched relative to `root`) so server, CLI, web-ui, and connector jobs coexist in one file.
-- **Port the husky checks** into lefthook pre-commit jobs: migration SQL validation, untracked-Go-import guard (fixed module prefix/paths), CLI golangci-lint (fixed path), repo gofmt, golangci config verify, and the per-staged-handler Swagger `@Router` check.
+- **Port the husky checks** into lefthook jobs: migration SQL validation, untracked-Go-import guard (fixed module prefix/paths), CLI golangci-lint (fixed path), repo gofmt, golangci config verify, and the per-staged-handler Swagger `@Router` check. The CLI `golangci-lint` runs in the `lint` group (whole-module, `--new-from-rev HEAD`) rather than `pre-commit`: whole-module golangci-lint is too slow for the fast commit path and `apps/cli` carries pre-existing findings.
 - **Keep pre-commit fast.** Heavy or CI-duplicative checks stay out of pre-commit: husky's scoped unit tests are dropped from pre-commit (CI owns tests); the full `lint` group carries vet/build/test/golangci for every tree.
 - **Delete husky.** Remove `.husky/` and `apps/web-ui/lefthook.yml`.
 - **Lint entry points.** Root `task lint` → `lefthook run lint` (all trees); `apps/web-ui` `task lint` → `lefthook run lint-webui` (web-ui + connector only, preserving its previous scope). Add `task hooks:install`.

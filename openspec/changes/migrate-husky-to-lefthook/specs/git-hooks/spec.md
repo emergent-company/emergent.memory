@@ -32,6 +32,8 @@ Server (`apps/server`) staged Go files SHALL trigger `gofmt`, `go vet`, `go buil
 
 Web UI (`apps/web-ui`) staged Python SHALL run `ruff`; staged gateway (Go) files SHALL run `gofmt`, `go vet`, `go build`; staged `.templ` files SHALL pass `templ generate -check`; any staged change SHALL pass the repo-wide `gitleaks` secrets scan; and staged files SHALL pass the generated-file guard.
 
+Whole-module `golangci-lint` SHALL NOT run on commit: it is too slow for the fast path and `apps/server` / `apps/cli` carry pre-existing findings. The full `golangci-lint` checks belong to the `lint` group (scoped `--new-from-rev HEAD` for the trees with pre-existing debt).
+
 #### Scenario: Path-scoped server checks
 
 - **WHEN** a staged Go file under `apps/server` is not gofmt-formatted
@@ -70,7 +72,9 @@ A single repo-root `.gitleaks.toml` SHALL configure secret detection for the who
 
 ### Requirement: Full lint group
 
-The configuration SHALL expose a `lint` group that runs the full static-analysis set for every tree — server, CLI, web UI, and Linux connector: `gofmt`, `go vet`, `go build`, and `golangci-lint`, plus `go test` for the web UI and Linux connector, and `ruff`, `templ generate -check`, and `gitleaks` for the web UI. Server and CLI tests are excluded here (they need a database; run via `task test`). Parallel `golangci-lint` jobs SHALL use isolated cache directories so concurrent runs do not collide on the shared lock.
+The configuration SHALL expose a `lint` group that runs the full static-analysis set for every tree — server, CLI, web UI, and Linux connector: `gofmt`, `go vet`, `go build`, and `golangci-lint`, plus `go test` for the web UI and Linux connector, and `ruff`, `templ generate -check`, and `gitleaks` for the web UI. Server and CLI tests are excluded here (they need a database; run via `task test`). Parallel `golangci-lint` jobs SHALL use isolated `GOLANGCI_LINT_CACHE` directories **and** pass `--allow-parallel-runners`, so concurrent runs do not collide: golangci-lint otherwise acquires a global lock at `$TMPDIR/golangci-lint.lock` and a second job fails with `parallel golangci-lint is running` (the per-tree cache dirs are what make parallel runs safe).
+
+Because `apps/server` and `apps/cli` carry pre-existing golangci-lint findings (and golangci-lint has no baseline ratchet like gitleaks's `.gitleaksignore`), their `golangci-lint` jobs SHALL run with `--new-from-rev HEAD` so a clean tree stays green while a newly introduced finding still fails — the same ratchet the server CI uses (`.github/workflows/server.yml`). The connector and web UI `golangci-lint` jobs run whole-module, since those trees carry no pre-existing debt.
 
 The root `task lint` SHALL run this group. The web-ui `task lint` SHALL run a `lint-webui` group scoped to the web UI and connector, preserving its previous scope.
 
@@ -79,6 +83,13 @@ The root `task lint` SHALL run this group. The web-ui `task lint` SHALL run a `l
 - **WHEN** a developer runs `task lint` at the repo root
 - **THEN** lefthook runs the `lint` group across all trees
 - **AND** each `golangci-lint` job uses its own cache directory
+- **AND** no job fails with `parallel golangci-lint is running` (jobs pass `--allow-parallel-runners`)
+
+#### Scenario: Pre-existing golangci debt does not fail lint
+
+- **WHEN** `task lint` runs on a clean tree (no uncommitted changes)
+- **THEN** the server and CLI `golangci-lint` jobs report only new issues (none) and pass
+- **AND** a newly introduced finding in a changed file still fails the job
 
 #### Scenario: Web-ui lint stays scoped
 
@@ -101,7 +112,7 @@ The `lint` group SHALL include a repo-wide gofmt check over **tracked** Go files
 
 ### Requirement: Gateway build prerequisites
 
-Gateway Go jobs (`go vet`, `go build`, `go test`, `golangci-lint`) SHALL require generated assets that are not committed (templ output and compiled CSS). When those assets are absent on an un-warmed tree, the jobs SHALL skip with an actionable message (naming `task dev` / `task generate && task css`) instead of failing. CI generates the assets before building, so the checks still run there.
+Gateway Go jobs (`go vet`, `go build`, `go test`, `golangci-lint`) and the templ check (`templ generate -check`) SHALL require generated assets that are not committed (templ output and compiled CSS). When those assets are absent on an un-warmed tree, the jobs SHALL skip with an actionable message (naming `task dev` / `task generate && task css`) instead of failing. CI generates the assets before building, so the checks still run there.
 
 #### Scenario: Un-warmed tree
 
