@@ -48,7 +48,7 @@ Submitting a valid create form SHALL create the object in the project's graph an
 
 ### Requirement: Type-aware property inputs
 
-Each schema-defined property SHALL render an input widget appropriate to its declared type: `date` uses a date picker, `number` a numeric input, `boolean` a toggle switch, and `array`/`object` a multi-value chip input. A property whose type is `string` (or any unrecognised type) uses a plain text input.
+Each schema-defined property SHALL render an input widget appropriate to its declared type: `date` uses a date picker, `number` and `integer` a numeric input, `boolean` a toggle switch, and `array`/`object` a multi-value chip input. A `string` property SHALL render a multi-line plain-text field by default; it SHALL render a single-line text input when it declares `widget: "input"`, and a select of the allowed values when it declares an `enum`. The multi-line field SHALL be auto-growing and vertically resizable, and SHALL carry a live character count; no other widget type SHALL show a character count.
 
 #### Scenario: Date property
 - **WHEN** a property is declared with type `date`
@@ -68,8 +68,31 @@ Each schema-defined property SHALL render an input widget appropriate to its dec
 - **THEN** it renders a chip input where each value is added and removed individually
 
 #### Scenario: String and unknown types
-- **WHEN** a property is declared with type `string` or an unrecognised type
-- **THEN** it renders a plain text input
+- **WHEN** a property is declared with type `string` or an unrecognised type and does not declare `widget: "input"` or an `enum`
+- **THEN** it renders an auto-growing, vertically resizable multi-line text field sized to present long text at a comfortable height
+- **AND** the field shows a live, digit-grouped character count (for example "41,594 characters")
+
+#### Scenario: Single-line override
+- **WHEN** a `string` property declares `widget: "input"`
+- **THEN** it renders a single-line text input
+- **AND** no character count is shown
+
+#### Scenario: Enum property
+- **WHEN** a `string` property declares an `enum`
+- **THEN** it renders a select of the allowed values
+- **AND** no character count is shown
+
+#### Scenario: Character count excludes non-text widgets
+- **WHEN** a property renders as a date picker, numeric input, toggle switch, select, or chip input
+- **THEN** no character count is shown
+
+#### Scenario: Count updates live
+- **WHEN** the user edits a multi-line text field
+- **THEN** its character count updates to reflect the current value
+
+#### Scenario: Count matches the browser for normalized line endings
+- **WHEN** a multi-line value is stored with CRLF or lone CR line endings
+- **THEN** the server-rendered initial count treats each of them as a single LF, so it matches the count the browser computes for the same field
 
 ### Requirement: Labels chip input with autocomplete
 
