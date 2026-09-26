@@ -1512,7 +1512,9 @@ func (ae *AgentExecutor) confirmResponseBody(ctx context.Context, runID, project
 	responseBody := map[string]any{}
 	switch strings.TrimSpace(strings.ToLower(decision)) {
 	case "approve":
+		start := time.Now()
 		toolResult, callErr := ae.toolPool.CallTool(ctx, projectID, toolName, toolArgs)
+		durationMs := int(time.Since(start).Milliseconds())
 		status := "completed"
 		if callErr != nil {
 			responseBody["error"] = fmt.Sprintf("tool execution failed: %v", callErr)
@@ -1535,6 +1537,7 @@ func (ae *AgentExecutor) confirmResponseBody(ctx context.Context, runID, project
 				Output:     responseBody,
 				Status:     status,
 				StepNumber: 0,
+				DurationMs: &durationMs,
 			}
 			if persistErr := ae.repo.CreateToolCall(ctx, tcRecord); persistErr != nil {
 				ae.log.Warn("failed to persist approved tool result",
@@ -2144,6 +2147,11 @@ func (ae *AgentExecutor) runPipeline(
 	var cachedTokensMu sync.Mutex
 	var totalCachedTokens int64
 
+	// toolStartTimes records each tool invocation's start instant, keyed by its
+	// ADK function-call id, so the after-tool callback can compute the actual
+	// execution window (duration_ms) even across parallel tool calls.
+	var toolStartTimes sync.Map // functionCallID -> time.Time
+
 	// Set up before-model callback for step tracking
 	beforeModelCb := func(cbCtx agent.CallbackContext, llmReq *model.LLMRequest) (*model.LLMResponse, error) {
 		// Check if context was cancelled (timeout or manual cancellation)
@@ -2234,6 +2242,13 @@ func (ae *AgentExecutor) runPipeline(
 
 	// Set up before-tool callback for streaming ToolCallStart events and tool policy enforcement
 	beforeToolCb := func(tCtx tool.Context, t tool.Tool, args map[string]any) (map[string]any, error) {
+		// Stamp the invocation start so afterToolCb can compute the real
+		// execution window (duration_ms). FunctionCallID is stable across the
+		// before/after callback pair, even for parallel tool calls.
+		if id := tCtx.FunctionCallID(); id != "" {
+			toolStartTimes.Store(id, time.Now())
+		}
+
 		// Heartbeat on tool invocation so long tool phases (sandbox build, MCP
 		// round-trips) between model steps keep refreshing last_step_at.
 		_ = ae.repo.TouchRun(dbCtx, run.ID)
@@ -2382,6 +2397,19 @@ func (ae *AgentExecutor) runPipeline(
 		toolName := t.Name()
 		currentStep := tracker.current()
 
+		// Compute the tool's actual execution window from the start stamped in
+		// beforeToolCb. A tool blocked by policy or awaiting confirmation never
+		// runs, so its window is ~0ms — which accurately reflects no execution.
+		var durationMs *int
+		if id := tCtx.FunctionCallID(); id != "" {
+			if v, ok := toolStartTimes.LoadAndDelete(id); ok {
+				if start, ok := v.(time.Time); ok {
+					d := int(time.Since(start).Milliseconds())
+					durationMs = &d
+				}
+			}
+		}
+
 		// Record the tool call
 		status := "completed"
 		if toolErr != nil {
@@ -2401,6 +2429,7 @@ func (ae *AgentExecutor) runPipeline(
 			Output:     output,
 			Status:     status,
 			StepNumber: currentStep,
+			DurationMs: durationMs,
 		}
 		if persistErr := ae.repo.CreateToolCall(dbCtx, tcRecord); persistErr != nil {
 			ae.log.Warn("failed to persist tool call",
