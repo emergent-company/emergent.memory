@@ -16,6 +16,17 @@ func mustJSON(t *testing.T, v any) string {
 	return string(b)
 }
 
+// mustJSONT is mustJSON for a require.TestingT, so helpers like
+// assertSingleMember can accept a recording stub in addition to *testing.T.
+func mustJSONT(t require.TestingT, v any) string {
+	if h, ok := t.(interface{ Helper() }); ok {
+		h.Helper()
+	}
+	b, err := json.Marshal(v)
+	require.NoError(t, err)
+	return string(b)
+}
+
 func assertNotContains(t *testing.T, s string, substrs ...string) {
 	t.Helper()
 	for _, sub := range substrs {
