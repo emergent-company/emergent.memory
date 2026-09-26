@@ -77,6 +77,31 @@ func TrustedInternalFromContext(ctx context.Context) bool {
 	return v
 }
 
+// transportEnforcedKey is the context key marking an ExecuteTool call whose
+// per-tool authority was already enforced by an HTTP transport before dispatch.
+// It is deliberately DISTINCT from trustedInternalKey: the trust marker means
+// "a genuinely internal agent run", while this marker means "an HTTP transport
+// already ran the per-tool AgentOnly / RequiredScope / SuperadminOnly checks".
+// Conflating the two let the relay fallback treat an authenticated HTTP call as
+// an internal run (issue #1017).
+type transportEnforcedKey struct{}
+
+// ContextWithTransportEnforced marks ctx as an ExecuteTool call whose per-tool
+// authority was already enforced by an HTTP transport, so the in-process gate
+// does not re-fire for an authenticated HTTP client. It does NOT mark the call
+// as a genuinely internal run: relay (agent-only) tools are gated on
+// trustedInternal only, so this marker can never satisfy them.
+func ContextWithTransportEnforced(ctx context.Context) context.Context {
+	return context.WithValue(ctx, transportEnforcedKey{}, true)
+}
+
+// TransportEnforcedFromContext reports whether the ExecuteTool call was already
+// authorized by an HTTP transport. Absent marker resolves to false.
+func TransportEnforcedFromContext(ctx context.Context) bool {
+	v, _ := ctx.Value(transportEnforcedKey{}).(bool)
+	return v
+}
+
 // MCPRegistryToolHandler is the interface for executing MCP registry management tools.
 // Implemented by the mcpregistry domain to avoid circular imports (mcpregistry → mcp).
 type MCPRegistryToolHandler interface {

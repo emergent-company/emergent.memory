@@ -1898,18 +1898,19 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	// in-process trust primitive: true for trusted/internal surfaces (session UI,
 	// scheduler, MCP-triggered agent) and false for external surfaces (webhook,
 	// A2A, agentcompat, public share). Fail-closed: an absent marker resolves to
-	// untrusted.
+	// untrusted. An HTTP transport marks its dispatch TransportEnforced after its
+	// own per-tool check, so that is an equally-authorized origin for the
+	// AgentOnly / RequiredScope gates below.
 	//
 	//   - AgentOnly tools (web-search-*, web-fetch, mcp-server-*, update_mcp_server,
 	//     toggle/sync_mcp_server_tools) are the "callable only by other agents,
 	//     never via external surfaces" class — refused for untrusted runs.
-	//   - admin-scoped tools (token-*, provider-configure-project, provider-models-list,
-	//     trace-*, project-create) are sensitive (token minting, provider config,
-	//     cross-tenant traces, project creation) — refused for untrusted runs,
-	//     matching the HTTP RequiredScope:"admin" gate. They are admin-scoped over
-	//     HTTP, not superadmin, so the in-process bar is trusted-internal, not
-	//     superadmin_full.
-	if toolDef := s.GetToolByName(toolName); toolDef != nil && !TrustedInternalFromContext(ctx) {
+	//   - admin-scoped tools (token-*, provider-*, trace-*, project-create) are
+	//     refused for untrusted runs, matching the HTTP RequiredScope:"admin" gate.
+	//     The most sensitive of these are raised further — see
+	//     sensitiveInProcessAdminTools (issue #1018).
+	if toolDef := s.GetToolByName(toolName); toolDef != nil &&
+		!TrustedInternalFromContext(ctx) && !TransportEnforcedFromContext(ctx) {
 		if toolDef.AgentOnly {
 			return nil, fmt.Errorf("tool %q is agent-only and not reachable from an untrusted surface", toolName)
 		}
@@ -2210,8 +2211,11 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 				prefix := sess.InstanceID + "_"
 				if strings.HasPrefix(toolName, prefix) {
 					// Relay tools forward to a connected client device and are the
-					// agent-only class: refuse them from an untrusted (external) run,
-					// mirroring the AgentOnly gate above (issue #994).
+					// agent-only class: refuse them from an untrusted (external) run
+					// AND from any HTTP transport. The HTTP transports mark their
+					// dispatch TransportEnforced (not TrustedInternal) after their own
+					// per-tool check, so they never satisfy this trusted-internal gate
+					// — the relay fallback is genuinely-internal only (issues #994, #1017).
 					if !TrustedInternalFromContext(ctx) {
 						return nil, fmt.Errorf("relay tool %q is not reachable from an untrusted surface", toolName)
 					}
