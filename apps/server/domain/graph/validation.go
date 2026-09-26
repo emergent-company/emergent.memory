@@ -338,7 +338,38 @@ func validatePatchProperties(
 	patchProps map[string]any,
 	schema agents.ObjectSchema,
 ) (map[string]any, error) {
-	if len(schema.Properties) == 0 {
+	return validatePatchDelta(patchProps, nil, schema)
+}
+
+// validateRelationshipPatchProperties validates a relationship patch's property
+// delta and enforces required fields against the merged result (existing
+// properties plus the patch delta).
+//
+// Unlike validatePatchProperties (the object patch path), required fields ARE
+// enforced here against mergedProps, so a patch can neither clear nor omit a
+// required relationship property and still succeed (issue #989). Type coercion
+// remains delta-only: keys already stored on the relationship that are not
+// touched by the patch are left alone, because they may predate the schema
+// version that declared their type.
+//
+// Unknown keys are passed through as-is (the schema is not an allowlist).
+func validateRelationshipPatchProperties(
+	patchProps map[string]any,
+	mergedProps map[string]any,
+	schema agents.ObjectSchema,
+) (map[string]any, error) {
+	return validatePatchDelta(patchProps, mergedProps, schema)
+}
+
+// validatePatchDelta type-coerces the patch delta keys. When mergedProps is
+// non-nil it also enforces required fields against that merged result, so a
+// patch cannot leave a required property absent (whether omitted or cleared).
+func validatePatchDelta(
+	patchProps map[string]any,
+	mergedProps map[string]any,
+	schema agents.ObjectSchema,
+) (map[string]any, error) {
+	if len(schema.Properties) == 0 && len(schema.Required) == 0 {
 		return patchProps, nil
 	}
 
@@ -346,7 +377,9 @@ func validatePatchProperties(
 	var validationErrors []string
 
 	for key, value := range patchProps {
-		// null means "delete this property" — always allowed
+		// null means "delete this property" — allowed at the delta level. When
+		// mergedProps is non-nil and the deleted key is required, the merged
+		// required check below rejects the patch.
 		if value == nil {
 			validated[key] = nil
 			continue
@@ -400,6 +433,14 @@ func validatePatchProperties(
 
 		default:
 			validated[key] = value
+		}
+	}
+
+	if mergedProps != nil {
+		for _, required := range schema.Required {
+			if v, ok := mergedProps[required]; !ok || v == nil {
+				validationErrors = append(validationErrors, fmt.Sprintf("missing required field: %s", required))
+			}
 		}
 	}
 

@@ -150,6 +150,17 @@ type fakeMemory struct {
 	lastSearchBranch string               // last branchID passed to SearchObjects
 	lastSearchLimit  int                  // last limit passed to SearchObjects
 	lastSearchOffset int                  // last offset passed to SearchObjects
+	unifiedResults   []ObjectSearchResult // returned by SearchObjectsUnified
+	unifiedErr       error                // SearchObjectsUnified failure
+	lastUnifiedQuery string               // last query passed to SearchObjectsUnified
+	lastUnifiedTypes string               // last types passed to SearchObjectsUnified
+	lastUnifiedBrnch string               // last branchID passed to SearchObjectsUnified
+	lastUnifiedLimit int                  // last limit passed to SearchObjectsUnified
+	knowledgeAnswer  string               // returned by QueryKnowledge
+	knowledgeSession string               // returned by QueryKnowledge
+	knowledgeErr     error                // QueryKnowledge failure
+	lastKnowledgeQ   string               // last question passed to QueryKnowledge
+	lastKnowledgeBr  string               // last branch passed to QueryKnowledge
 
 	embeddingProgress *EmbeddingProgress // returned by GetEmbeddingProgress
 	embeddingProgErr  error              // GetEmbeddingProgress failure
@@ -294,34 +305,35 @@ type fakeMemory struct {
 	modelConfig            *ProjectModelConfig // returned by GetProjectModelConfig
 	lastModelConfig        *ProjectModelConfig // last UpsertProjectModelConfig
 
-	orgs               []Org                     // returned by ListOrgs
-	createdOrgs        []Org                     // every CreateOrg request, in order
-	createOrgID        int                       // id counter for created orgs
-	createOrgErr       error                     // failure for CreateOrg
-	getOrgErr          error                     // failure for GetOrg
-	updateOrgErr       error                     // failure for UpdateOrg
-	renamedOrgID       string                    // last org id passed to UpdateOrg
-	renamedOrgName     string                    // last name passed to UpdateOrg
-	deletedOrgID       string                    // last org id passed to DeleteOrg
-	deleteOrgErr       error                     // failure for DeleteOrg
-	deletedProjectIDs  []string                  // project ids passed to DeleteProject, in order
-	deleteProjectErr   error                     // failure for DeleteProject
-	restoredProjectIDs []string                  // project ids passed to RestoreProject, in order
-	restoreProjectErr  error                     // failure for RestoreProject
-	transferCount      int                       // number of TransferProject calls
-	transferredID      string                    // last project id passed to TransferProject
-	transferredToOrg   string                    // last destination org id passed to TransferProject
-	transferProjectErr error                     // failure for TransferProject
-	orgMembers         []OrgMemberDto            // returned by ListOrgMembers
-	orgToolSettings    []OrgToolSettingDto       // returned by ListOrgToolSettings
-	toolSettingErr     error                     // failure for any org tool-setting method
-	toolSettingOrg     string                    // last org id passed to Upsert/DeleteOrgToolSetting
-	toolSettingTool    string                    // last tool name passed to Upsert/DeleteOrgToolSetting
-	toolSettingIn      UpsertOrgToolSettingInput // last input passed to UpsertOrgToolSetting
-	orgsAndProjects    []OrgWithProjectsDto      // returned by GetOrgsAndProjects
-	projects           []ProjectRef              // returned by ListProjects
-	createdProjects    []ProjectRef              // every CreateProject request, in order
-	createProjectID    int                       // id counter for created projects
+	orgs                 []Org                     // returned by ListOrgs
+	createdOrgs          []Org                     // every CreateOrg request, in order
+	createOrgID          int                       // id counter for created orgs
+	createOrgErr         error                     // failure for CreateOrg
+	getOrgErr            error                     // failure for GetOrg
+	updateOrgErr         error                     // failure for UpdateOrg
+	renamedOrgID         string                    // last org id passed to UpdateOrg
+	renamedOrgName       string                    // last name passed to UpdateOrg
+	deletedOrgID         string                    // last org id passed to DeleteOrg
+	deleteOrgErr         error                     // failure for DeleteOrg
+	deletedProjectIDs    []string                  // project ids passed to DeleteProject, in order
+	deleteProjectErr     error                     // failure for DeleteProject
+	restoredProjectIDs   []string                  // project ids passed to RestoreProject, in order
+	restoreProjectErr    error                     // failure for RestoreProject
+	transferCount        int                       // number of TransferProject calls
+	transferredID        string                    // last project id passed to TransferProject
+	transferredToOrg     string                    // last destination org id passed to TransferProject
+	transferProjectErr   error                     // failure for TransferProject
+	orgMembers           []OrgMemberDto            // returned by ListOrgMembers
+	orgToolSettings      []OrgToolSettingDto       // returned by ListOrgToolSettings
+	toolSettingErr       error                     // failure for any org tool-setting method
+	toolSettingOrg       string                    // last org id passed to Upsert/DeleteOrgToolSetting
+	toolSettingTool      string                    // last tool name passed to Upsert/DeleteOrgToolSetting
+	toolSettingIn        UpsertOrgToolSettingInput // last input passed to UpsertOrgToolSetting
+	orgsAndProjects      []OrgWithProjectsDto      // returned by GetOrgsAndProjects
+	orgsAndProjectsCalls int                       // number of GetOrgsAndProjects calls
+	projects             []ProjectRef              // returned by ListProjects
+	createdProjects      []ProjectRef              // every CreateProject request, in order
+	createProjectID      int                       // id counter for created projects
 
 	members           []ProjectMemberDto    // returned by ListMembers
 	removedMember     string                // last user id passed to RemoveMember
@@ -1080,6 +1092,26 @@ func (f *fakeMemory) SearchObjects(ctx context.Context, mode, query, types, bran
 	f.lastSearchLimit = limit
 	f.lastSearchOffset = offset
 	return f.searchResults, f.searchHasMore, nil
+}
+
+func (f *fakeMemory) SearchObjectsUnified(ctx context.Context, query, types, branchID string, limit int) ([]ObjectSearchResult, error) {
+	if f.unifiedErr != nil {
+		return nil, f.unifiedErr
+	}
+	f.lastUnifiedQuery = query
+	f.lastUnifiedTypes = types
+	f.lastUnifiedBrnch = branchID
+	f.lastUnifiedLimit = limit
+	return f.unifiedResults, nil
+}
+
+func (f *fakeMemory) QueryKnowledge(ctx context.Context, question, branch string) (string, string, error) {
+	if f.knowledgeErr != nil {
+		return "", "", f.knowledgeErr
+	}
+	f.lastKnowledgeQ = question
+	f.lastKnowledgeBr = branch
+	return f.knowledgeAnswer, f.knowledgeSession, nil
 }
 
 func (f *fakeMemory) GetEmbeddingProgress(ctx context.Context) (*EmbeddingProgress, error) {
@@ -2465,6 +2497,7 @@ func (f *fakeMemory) CreateOrg(ctx context.Context, name string) (*Org, error) {
 }
 
 func (f *fakeMemory) GetOrgsAndProjects(ctx context.Context) ([]OrgWithProjectsDto, error) {
+	f.orgsAndProjectsCalls++
 	return f.orgsAndProjects, nil
 }
 

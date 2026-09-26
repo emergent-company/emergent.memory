@@ -12,14 +12,24 @@ import (
 )
 
 // assertSingleMember asserts a StreamResponse serializes with exactly one of the
-// four A2A members and never a `kind` discriminator.
-func assertSingleMember(t *testing.T, sr StreamResponse) {
-	t.Helper()
-	j := mustJSON(t, sr)
-	assertNotContains(t, j, `"kind"`)
+// four A2A members and never a `kind` discriminator *on the envelope*. The A2A
+// wire format uses member presence (task/message/statusUpdate/artifactUpdate),
+// not a `kind` field, so the discriminator check is scoped to the top-level
+// object's keys. Nested payloads (e.g. an A2UI proposal card inside a Data part)
+// may legitimately carry their own `kind` key and must not trip the check.
+//
+// t is a require.TestingT so callers can pass a real *testing.T or a
+// recording stub (see TestAssertSingleMember_StillRejectsViolations).
+func assertSingleMember(t require.TestingT, sr StreamResponse) {
+	if h, ok := t.(interface{ Helper() }); ok {
+		h.Helper()
+	}
+	j := mustJSONT(t, sr)
 
 	var m map[string]any
 	require.NoError(t, json.Unmarshal([]byte(j), &m))
+	assert.NotContains(t, m, "kind", "envelope must not carry a kind discriminator: %s", j)
+
 	var count int
 	for _, k := range []string{"task", "message", "statusUpdate", "artifactUpdate"} {
 		if _, ok := m[k]; ok {
@@ -27,6 +37,61 @@ func assertSingleMember(t *testing.T, sr StreamResponse) {
 		}
 	}
 	assert.Equal(t, 1, count, "StreamResponse must have exactly one member: %s", j)
+}
+
+// recordingT is a require.TestingT stub that records assertion failure without
+// aborting, so tests can assert that assertSingleMember still rejects violations.
+type recordingT struct {
+	failed bool
+}
+
+func (r *recordingT) Errorf(string, ...any) { r.failed = true }
+func (r *recordingT) FailNow()              { r.failed = true }
+
+// TestAssertSingleMember_DataPart_NestedKind_DoesNotFalsePositive is the
+// fail-first regression for #1044: a Data part that legitimately nests content
+// with its own `kind` key (an A2UI proposal card) must not trip the
+// "no kind" check, because the envelope still has exactly one member.
+func TestAssertSingleMember_DataPart_NestedKind_DoesNotFalsePositive(t *testing.T) {
+	sr := StreamResponse{
+		ArtifactUpdate: &TaskArtifactUpdateEvent{
+			TaskID:    "t1",
+			ContextID: "c1",
+			Artifact: Artifact{
+				ArtifactID: "artifact-t1",
+				Parts: []Part{{
+					Data: map[string]any{
+						"kind": "blueprint",
+						"proposal": map[string]any{
+							"kind":    "blueprint",
+							"summary": "s",
+							"body":    map[string]any{"steps": []any{"a", "b"}},
+						},
+					},
+				}},
+			},
+		},
+	}
+	assertSingleMember(t, sr)
+}
+
+// TestAssertSingleMember_StillRejectsViolations proves the helper kept its
+// teeth: zero members and two members must still fail the single-member
+// invariant. A fix that made the helper always pass would silently disable the
+// assertion for every caller.
+func TestAssertSingleMember_StillRejectsViolations(t *testing.T) {
+	cases := map[string]StreamResponse{
+		"zero members": {},
+		"two members":  {Task: &Task{ID: "t1"}, Message: &Message{MessageID: "m1"}},
+	}
+	for name, sr := range cases {
+		name, sr := name, sr
+		t.Run(name, func(t *testing.T) {
+			rec := &recordingT{}
+			assertSingleMember(rec, sr)
+			assert.True(t, rec.failed, "assertSingleMember must reject the %s violation", name)
+		})
+	}
 }
 
 // ============================================================================

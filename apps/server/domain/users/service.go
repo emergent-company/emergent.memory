@@ -22,14 +22,15 @@ func NewService(repo *Repository, log *slog.Logger) *Service {
 	}
 }
 
-// SearchByEmail searches for users by email (partial match)
-// Requires at least 2 characters in the query
-func (s *Service) SearchByEmail(ctx context.Context, emailQuery string, excludeUserID *string) (*UserSearchResponse, error) {
+// SearchByEmail searches for users by email (partial match), bounded to users
+// who share an organization with the caller. Requires at least 2 characters in
+// the query.
+func (s *Service) SearchByEmail(ctx context.Context, emailQuery, callerID string) (*UserSearchResponse, error) {
 	if len(emailQuery) < 2 {
 		return nil, apperror.ErrBadRequest.WithMessage("email query must be at least 2 characters")
 	}
 
-	results, err := s.repo.SearchByEmail(ctx, emailQuery, excludeUserID)
+	results, err := s.repo.SearchByEmail(ctx, emailQuery, callerID)
 	if err != nil {
 		return nil, err
 	}

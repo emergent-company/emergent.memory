@@ -137,6 +137,7 @@ type AgentWebhookHook struct {
 	Label           string           `bun:"label,notnull" json:"label"`
 	TokenHash       string           `bun:"token_hash,notnull" json:"-"` // Never expose hash in JSON
 	Enabled         bool             `bun:"enabled,notnull,default:true" json:"enabled"`
+	AllowInternal   bool             `bun:"allow_internal,notnull,default:false" json:"allowInternal"` // opt-in to bind an internal-visibility agent (see #1004)
 	RateLimitConfig *RateLimitConfig `bun:"rate_limit_config,type:jsonb" json:"rateLimitConfig"`
 	CreatedAt       time.Time        `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
 	UpdatedAt       time.Time        `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`

@@ -10,7 +10,14 @@ import (
 var Module = fx.Module("blueprints",
 	fx.Provide(NewRepository),
 	fx.Provide(NewService),
-	fx.Provide(NewHandler),
+	// superadmin is optional: when the superadmin feature module is not loaded,
+	// NewHandler receives nil and global-catalogue writes fail closed.
+	fx.Provide(
+		fx.Annotate(
+			NewHandler,
+			fx.ParamTags(``, `optional:"true"`),
+		),
+	),
 	fx.Provide(provideMCPBlueprintToolHandler),
 	fx.Invoke(RegisterRoutes),
 )
