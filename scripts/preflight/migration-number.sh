@@ -24,9 +24,14 @@ cd "$root"
 base="origin/main"
 mig_dir="apps/server/migrations"
 
-# Resolve the base ref, fetching if needed (offline-tolerant).
-if ! git rev-parse --verify --quiet "$base" >/dev/null 2>&1; then
-  if ! git fetch --quiet origin main; then
+# Refresh the remote tracking ref first — a stale local `origin/main` is exactly
+# the hazard this guard exists to catch (a worktree handed an outdated main would
+# otherwise compare against an old ref and MISS a real collision). Tolerate
+# no-network gracefully: fall back to a cached ref, or skip when none exists.
+if ! git fetch --quiet origin main; then
+  if git rev-parse --verify --quiet "$base" >/dev/null 2>&1; then
+    echo "migration-number: WARNING could not reach origin; using cached $base" >&2
+  else
     echo "migration-number: WARNING could not reach origin and no cached $base; skipping" >&2
     exit 0
   fi
