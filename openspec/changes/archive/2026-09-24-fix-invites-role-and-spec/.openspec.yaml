@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-09-24
+goal: Grant the invited role on invite acceptance and reconcile the
+  project-invitations spec with the shipped implementation

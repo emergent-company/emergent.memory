@@ -21,9 +21,8 @@ type Project struct {
 	UpdatedAt          time.Time      `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
 
 	// Additional columns added in later migrations
-	ChunkingConfig          map[string]any `bun:"chunking_config,type:jsonb" json:"chunking_config,omitempty"`
-	AllowParallelExtraction *bool          `bun:"allow_parallel_extraction" json:"allow_parallel_extraction,omitempty"`
-	ExtractionConfig        map[string]any `bun:"extraction_config,type:jsonb" json:"extraction_config,omitempty"`
+	ChunkingConfig   map[string]any `bun:"chunking_config,type:jsonb" json:"chunking_config,omitempty"`
+	ExtractionConfig map[string]any `bun:"extraction_config,type:jsonb" json:"extraction_config,omitempty"`
 
 	// AutoMergeExtractionBranches enables auto-merging extraction staging branches
 	// into the main graph once extraction completes (partial merge; added in migration 00129).

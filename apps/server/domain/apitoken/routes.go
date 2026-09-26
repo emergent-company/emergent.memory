@@ -8,10 +8,18 @@ import (
 
 // RegisterRoutes registers API token routes
 func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
-	// Project-scoped token routes
+	// Project-scoped token routes. The CRUD surface (List/Get/UpdateScopes/
+	// Revoke/Regenerate) runs the same authorization pair as the mint routes
+	// fixed in #873: RequireProjectTokenScope binds an emt_* token to its
+	// project, then RequireProjectMember asserts session/account-token
+	// membership in the project's owning org (issue #878). Like the mint routes,
+	// the project:read scope guard is omitted — membership is the real gate, and
+	// a member (or a token bound to the addressed project) should be able to
+	// manage their own project's tokens without a bespoke scope.
 	g := e.Group("/api/projects/:projectId/tokens")
 	g.Use(authMiddleware.RequireAuth())
-	g.Use(authMiddleware.RequireAPITokenScopes("project:read"))
+	g.Use(authMiddleware.RequireProjectTokenScope())
+	g.Use(authMiddleware.RequireProjectMember())
 
 	// Creating a token requires auth, token↔project binding, and project
 	// membership (issue #870). The project:read scope guard is intentionally

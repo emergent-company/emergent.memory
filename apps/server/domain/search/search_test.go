@@ -1,12 +1,14 @@
 package search
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/emergent-company/emergent.memory/domain/graph"
 )
@@ -839,9 +841,9 @@ func TestFuseWeighted_RelationshipWeight(t *testing.T) {
 		{ID: uuid.New(), SrcID: uuid.New(), DstID: uuid.New(), Type: "KNOWS", TripletText: "A knows B", Score: 1.0},
 	}
 
-	t.Run("backward compat: omitted RelationshipWeight uses graphWeight", func(t *testing.T) {
-		// With equal graph/text weights (0.5/0.5), normalized = 0.5/0.5
-		// Relationship should get graphWeight = 0.5
+	t.Run("omitted RelationshipWeight does not promote relationship leg", func(t *testing.T) {
+		// With equal graph/text weights (0.5/0.5), normalized = 0.5/0.5.
+		// Relationship weight is unset, so it must NOT inherit graphWeight.
 		weights := &UnifiedSearchWeights{GraphWeight: 0.5, TextWeight: 0.5}
 		results := svc.fuseWeighted(graphResults, textResults, relResults, weights, 10)
 
@@ -860,13 +862,13 @@ func TestFuseWeighted_RelationshipWeight(t *testing.T) {
 		// Graph and text each get 1.0 * 0.5 = 0.5
 		assert.InDelta(t, 0.5, graphScore, 0.01)
 		assert.InDelta(t, 0.5, textScore, 0.01)
-		// Relationship uses graphWeight (0.5) for backward compat
-		assert.InDelta(t, 0.5, relScore, 0.01)
+		// Relationship is not a first-class leg when its weight is unset: score 0.
+		assert.InDelta(t, 0.0, relScore, 0.01)
 	})
 
-	t.Run("backward compat: uneven weights still applies graphWeight to rels", func(t *testing.T) {
-		// graphWeight=0.8, textWeight=0.2 → normalized: graph=0.8, text=0.2
-		// Relationship should get graphWeight = 0.8
+	t.Run("omitted RelationshipWeight keeps relationships at score 0", func(t *testing.T) {
+		// graphWeight=0.8, textWeight=0.2 → normalized: graph=0.8, text=0.2.
+		// Relationship weight unset → relationships score 0, not graphWeight.
 		weights := &UnifiedSearchWeights{GraphWeight: 0.8, TextWeight: 0.2}
 		results := svc.fuseWeighted(graphResults, textResults, relResults, weights, 10)
 
@@ -880,7 +882,7 @@ func TestFuseWeighted_RelationshipWeight(t *testing.T) {
 			}
 		}
 		assert.InDelta(t, 0.8, graphScore, 0.01)
-		assert.InDelta(t, 0.8, relScore, 0.01, "relationship score should equal graph score when RelationshipWeight is omitted")
+		assert.InDelta(t, 0.0, relScore, 0.01, "relationship score must be 0 when RelationshipWeight is omitted")
 	})
 
 	t.Run("three-way normalize: explicit RelationshipWeight", func(t *testing.T) {
@@ -939,6 +941,117 @@ func TestFuseWeighted_RelationshipWeight(t *testing.T) {
 		assert.Equal(t, ItemTypeRelationship, results[0].Type)
 		assert.InDelta(t, 0.6, results[0].Score, 0.01)
 	})
+}
+
+func TestRelationshipWeightEnabled(t *testing.T) {
+	t.Run("unset everywhere", func(t *testing.T) {
+		svc := newTestService()
+		assert.False(t, svc.relationshipWeightEnabled(nil))
+		assert.False(t, svc.relationshipWeightEnabled(&UnifiedSearchWeights{GraphWeight: 0.5, TextWeight: 0.5}))
+	})
+
+	t.Run("env default enables", func(t *testing.T) {
+		svc := &Service{relWeight: 0.3}
+		assert.True(t, svc.relationshipWeightEnabled(nil))
+		assert.True(t, svc.relationshipWeightEnabled(&UnifiedSearchWeights{}))
+	})
+
+	t.Run("explicit request weight enables", func(t *testing.T) {
+		svc := newTestService()
+		assert.True(t, svc.relationshipWeightEnabled(&UnifiedSearchWeights{RelationshipWeight: 0.2}))
+	})
+
+	t.Run("zero request weight does not enable", func(t *testing.T) {
+		svc := newTestService()
+		assert.False(t, svc.relationshipWeightEnabled(&UnifiedSearchWeights{RelationshipWeight: 0}))
+	})
+}
+
+// TestFuseWeighted_RelationshipDoesNotDisplaceGraph pins the #996 regression:
+// with the relationship weight unset (default), a large set of near-identical
+// relationship candidates must NOT outrank the graph leg, whose top item is the
+// correct statute. It mirrors the real failure shape (graph 0.45–0.47 vs a tight
+// 0.707–0.729 relationship band).
+func TestFuseWeighted_RelationshipDoesNotDisplaceGraph(t *testing.T) {
+	svc := &Service{
+		log:         slog.New(slog.NewTextHandler(os.Stdout, nil)),
+		graphWeight: 0.25,
+		textWeight:  0.75,
+		relWeight:   0, // relationship weight unset (the buggy default path)
+	}
+
+	graphResults := []*UnifiedSearchGraphResult{
+		{ObjectID: "aksjeloven-10-12", Key: "lov/1997-06-13-44#kapittel-10-kapittel-1-paragraf-12", ObjectType: "LegalParagraph", Score: 0.4706},
+		{ObjectID: "aksjeloven-2-7", Key: "lov/1997-06-13-44#kapittel-2-kapittel-1-paragraf-7", ObjectType: "LegalParagraph", Score: 0.4548},
+	}
+
+	// 50 near-identical has_paragraph candidates (similarity 0.707–0.729 band).
+	relResults := make([]*RelationshipSearchResult, 0, 50)
+	for i := 0; i < 50; i++ {
+		score := float32(0.729) - float32(i)*0.00044
+		relResults = append(relResults, &RelationshipSearchResult{
+			ID:          uuid.New(),
+			SrcID:       uuid.New(),
+			DstID:       uuid.New(),
+			SrcKey:      "lov/1985-06-21-83#" + uuid.NewString(), // Selskapsloven (wrong statute)
+			DstKey:      "lov/1985-06-21-83#" + uuid.NewString(),
+			SrcType:     "Law",
+			DstType:     "LegalParagraph",
+			Type:        "has_paragraph",
+			TripletText: "Selskapsloven has paragraph §" + fmt.Sprint(i),
+			Score:       score,
+		})
+	}
+
+	// Replicate Search(): gate injection, then fuse (default weights, rel unset).
+	if svc.relationshipWeightEnabled(nil) {
+		graphResults = svc.injectRelationshipNodes(graphResults, relResults)
+	}
+	fused := svc.fuseWeighted(graphResults, nil, relResults, nil, 10)
+
+	require.NotEmpty(t, fused)
+	// The correct graph item must rank first.
+	assert.Equal(t, "aksjeloven-10-12", fused[0].ObjectID)
+	assert.Equal(t, ItemTypeGraph, fused[0].Type)
+	assert.InDelta(t, 0.4706*0.25, fused[0].Score, 1e-4)
+
+	// No relationship-derived item may displace the graph leg: every relationship
+	// item must sit below every graph item (weight 0 → score 0).
+	for i := 1; i < len(fused); i++ {
+		if fused[i].Type == ItemTypeRelationship {
+			assert.Equal(t, float32(0), fused[i].Score, "relationship item must not carry graph weight")
+		}
+	}
+}
+
+// TestFuseWeighted_ExplicitRelationshipWeightElevates pins that an explicit
+// relationship weight still promotes relationship candidates (legitimate behaviour).
+func TestFuseWeighted_ExplicitRelationshipWeightElevates(t *testing.T) {
+	svc := &Service{
+		log:         slog.New(slog.NewTextHandler(os.Stdout, nil)),
+		graphWeight: 0.25,
+		textWeight:  0.75,
+		relWeight:   0,
+	}
+
+	graphResults := []*UnifiedSearchGraphResult{
+		{ObjectID: "aksjeloven-10-12", Score: 0.4706},
+	}
+	relResults := []*RelationshipSearchResult{
+		{ID: uuid.New(), SrcID: uuid.New(), DstID: uuid.New(), Type: "has_paragraph", TripletText: "x has paragraph y", Score: 0.72},
+	}
+
+	// Explicit relationship weight makes the relationship leg a first-class contributor.
+	weights := &UnifiedSearchWeights{GraphWeight: 0.25, TextWeight: 0.75, RelationshipWeight: 0.5}
+	graphResults = svc.injectRelationshipNodes(graphResults, relResults) // injection applies when enabled
+	fused := svc.fuseWeighted(graphResults, nil, relResults, weights, 10)
+
+	require.NotEmpty(t, fused)
+	assert.True(t, svc.relationshipWeightEnabled(weights))
+	// With an explicit relationship weight, relationship candidates must rank first.
+	assert.Equal(t, ItemTypeRelationship, fused[0].Type)
+	// Three-way normalize: 0.5 / (0.25 + 0.75 + 0.5) = 0.5/1.5 = 0.3333.
+	assert.InDelta(t, 0.72*0.5/1.5, fused[0].Score, 1e-3)
 }
 
 func TestFuseRRF_WithRelationships(t *testing.T) {

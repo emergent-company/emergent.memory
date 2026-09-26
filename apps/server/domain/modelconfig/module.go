@@ -70,8 +70,14 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	api := e.Group("/api/v1")
 	api.Use(authMiddleware.RequireAuth())
 
-	// Project model config
+	// Project model config. The shared pair runs in canonical order
+	// (issue #926): RequireProjectTokenScope binds a project-bound emt_* token
+	// to its project, then RequireProjectMember asserts real org membership for
+	// session/account-token callers. The project is the :projectId path param,
+	// which the pair inspects.
 	proj := api.Group("/projects/:projectId/model-config")
+	proj.Use(authMiddleware.RequireProjectTokenScope())
+	proj.Use(authMiddleware.RequireProjectMember())
 	proj.GET("", h.GetProjectModelConfig)
 	proj.PUT("", h.UpsertProjectModelConfig)
 	proj.DELETE("", h.DeleteProjectModelConfig)

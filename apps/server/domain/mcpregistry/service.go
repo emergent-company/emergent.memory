@@ -356,39 +356,49 @@ func (s *Service) ListTools(ctx context.Context, serverID string) ([]*MCPServerT
 	return s.repo.FindToolsByServerID(ctx, serverID)
 }
 
-// ToggleTool enables or disables a specific tool.
-func (s *Service) ToggleTool(ctx context.Context, toolID string, enabled bool) error {
-	return s.UpdateTool(ctx, toolID, &enabled, nil)
+// ToggleTool enables or disables a specific tool in the caller's project.
+func (s *Service) ToggleTool(ctx context.Context, projectID, toolID string, enabled bool) error {
+	return s.UpdateTool(ctx, projectID, toolID, &enabled, nil)
 }
 
-// UpdateTool updates enabled and/or config for a tool and invalidates the tool pool cache.
+// UpdateTool updates enabled and/or config for a tool in the caller's project
+// and invalidates the tool pool cache. The tool must belong to the caller's
+// project: a foreign or missing tool returns ErrToolNotFound (issue #978).
 // Pass nil for fields that should not be changed.
-func (s *Service) UpdateTool(ctx context.Context, toolID string, enabled *bool, config *map[string]any) error {
-	tool, err := s.repo.FindToolByID(ctx, toolID)
+func (s *Service) UpdateTool(ctx context.Context, projectID, toolID string, enabled *bool, config *map[string]any) error {
+	tool, err := s.repo.FindToolByIDForProject(ctx, projectID, toolID)
 	if err != nil {
 		return fmt.Errorf("fetching tool: %w", err)
 	}
 	if tool == nil {
-		return fmt.Errorf("tool not found")
+		return ErrToolNotFound
 	}
 
-	if err := s.repo.UpdateTool(ctx, toolID, enabled, config); err != nil {
+	if err := s.repo.UpdateToolForProject(ctx, projectID, toolID, enabled, config); err != nil {
 		return err
 	}
 
-	// Look up the server to get project ID for cache invalidation
-	server, err := s.repo.FindServerByID(ctx, tool.ServerID, nil)
-	if err == nil && server != nil {
-		s.invalidateToolPool(server.ProjectID)
-	}
+	s.invalidateToolPool(projectID)
 
 	return nil
 }
 
-// SyncServerTools discovers tools from an external MCP server and updates the registry.
-// For now this accepts tools directly (caller is responsible for connecting and calling tools/list).
-// In the future, the proxy layer will handle the connection.
-func (s *Service) SyncServerTools(ctx context.Context, serverID string, discoveredTools []DiscoveredTool) error {
+// SyncServerTools upserts discovered tools for a server and removes tools that
+// no longer exist. The server must belong to the caller's project: a foreign or
+// missing server returns ErrServerNotFound before any mutation (issue #978), so
+// kb.mcp_server_tools can never be mutated without an ownership predicate.
+// For now this accepts tools directly (caller is responsible for connecting and
+// calling tools/list). In the future, the proxy layer will handle the connection.
+func (s *Service) SyncServerTools(ctx context.Context, projectID, serverID string, discoveredTools []DiscoveredTool) error {
+	// Enforce server ownership before any mutation (issue #978).
+	server, err := s.repo.FindServerByID(ctx, serverID, &projectID)
+	if err != nil {
+		return fmt.Errorf("fetching server: %w", err)
+	}
+	if server == nil {
+		return ErrServerNotFound
+	}
+
 	// Upsert discovered tools
 	tools := make([]*MCPServerTool, 0, len(discoveredTools))
 	currentNames := make([]string, 0, len(discoveredTools))
@@ -421,11 +431,7 @@ func (s *Service) SyncServerTools(ctx context.Context, serverID string, discover
 		slog.Int("stale_removed", staleCount),
 	)
 
-	// Invalidate ToolPool cache — look up server to get project ID
-	server, err := s.repo.FindServerByID(ctx, serverID, nil)
-	if err == nil && server != nil {
-		s.invalidateToolPool(server.ProjectID)
-	}
+	s.invalidateToolPool(projectID)
 
 	return nil
 }
@@ -550,7 +556,7 @@ func (s *Service) DiscoverAndSyncTools(ctx context.Context, serverID string, pro
 	}
 
 	// Sync discovered tools to database
-	if err := s.SyncServerTools(ctx, serverID, discovered); err != nil {
+	if err := s.SyncServerTools(ctx, projectID, serverID, discovered); err != nil {
 		return nil, fmt.Errorf("syncing discovered tools: %w", err)
 	}
 

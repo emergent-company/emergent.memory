@@ -71,7 +71,7 @@ func (d *DockerManager) RemoveVolumes() error {
 	// which defaults to the directory name ("docker" from ~/.memory/docker/).
 	volumes := []string{
 		"docker_postgres_data",
-		"docker_minio_data",
+		"docker_object_store_data",
 		"docker_memory_cli_config",
 	}
 

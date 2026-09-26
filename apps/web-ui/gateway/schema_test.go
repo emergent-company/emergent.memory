@@ -275,7 +275,7 @@ func TestRenderObjectsTypeIcons(t *testing.T) {
 		"note":  {Icon: "📝", Color: "#4F46E5"},
 		"plain": {Color: "#7C3AED"},
 	}
-	html := renderHTML(t, ObjectsPage(objects, nil, "", nil, "", uiByType, nil))
+	html := renderHTML(t, ObjectsPage(objectsPageData{Objects: objects, TypeUIByType: uiByType}))
 	for _, want := range []string{"shopping", "other", "📝", "color:#4F46E5", "color:#7C3AED"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("objects page rows missing %q in:\n%s", want, html)
@@ -283,7 +283,7 @@ func TestRenderObjectsTypeIcons(t *testing.T) {
 	}
 
 	// object rows without any type declaration keep the plain box tile
-	htmlPlain := renderHTML(t, ObjectsPage(objects, nil, "", nil, "", nil, nil))
+	htmlPlain := renderHTML(t, ObjectsPage(objectsPageData{Objects: objects}))
 	if !strings.Contains(htmlPlain, "lucide--box") {
 		t.Errorf("undeclared rows should keep the box tile in:\n%s", htmlPlain)
 	}

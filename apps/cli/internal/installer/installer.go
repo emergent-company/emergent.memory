@@ -150,7 +150,7 @@ func (i *Installer) GenerateEnvFile() (string, error) {
 		return "", err
 	}
 
-	minioPassword, err := GenerateSecret(32)
+	objectStoreSecret, err := GenerateSecret(32)
 	if err != nil {
 		return "", err
 	}
@@ -170,9 +170,10 @@ POSTGRES_PASSWORD=%s
 POSTGRES_DB=emergent
 POSTGRES_PORT=15432
 
-MINIO_ROOT_USER=minioadmin
-MINIO_ROOT_PASSWORD=%s
-MINIO_API_PORT=19000
+OBJECT_STORE_ACCESS_KEY=emergent
+OBJECT_STORE_SECRET_KEY=%s
+OBJECT_STORE_API_PORT=19000
+STORAGE_REGION=us-east-1
 
 STANDALONE_MODE=true
 STANDALONE_API_KEY=%s
@@ -190,7 +191,7 @@ EMBEDDING_DIMENSION=768
 KREUZBERG_LOG_LEVEL=info
 
 LLM_ENCRYPTION_KEY=%s
-`, postgresPassword, minioPassword, apiKey, i.config.ServerPort, i.config.GoogleAPIKey, i.config.OpenAIBaseURL, i.config.LLMModel, llmEncryptionKey)
+`, postgresPassword, objectStoreSecret, apiKey, i.config.ServerPort, i.config.GoogleAPIKey, i.config.OpenAIBaseURL, i.config.LLMModel, llmEncryptionKey)
 
 	envPath := filepath.Join(i.config.InstallDir, "config", ".env.local")
 	if err := os.WriteFile(envPath, []byte(envContent), 0600); err != nil {
@@ -569,7 +570,7 @@ func (i *Installer) Uninstall(keepData bool) error {
 
 	if keepData {
 		fmt.Printf("%sNote:%s Docker volumes were preserved. To remove them manually:\n", colorYellow, colorReset)
-		fmt.Println("  docker volume rm docker_postgres_data docker_minio_data docker_memory_cli_config")
+		fmt.Println("  docker volume rm docker_postgres_data docker_object_store_data docker_memory_cli_config")
 	}
 
 	return nil

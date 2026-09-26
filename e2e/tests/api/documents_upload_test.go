@@ -24,13 +24,18 @@ func TestDocumentsUpload_RequiresAuth(t *testing.T) {
 	mustStatus(t, resp, http.StatusUnauthorized)
 }
 
+// Contract: a real project with a token lacking documents:write ⇒ 403. A
+// non-existent project would be pre-empted by RequireProjectMember (404), so
+// this uses a real project to pin the scope-denial branch specifically.
 func TestDocumentsUpload_RequiresDocumentsWriteScope(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
-	skipIfStandaloneMode(t)
 
-	resp := doMultipartWithFile(t, "/api/documents/upload", "read-only", dummyProjectID, "file", "test.txt", []byte("test content"))
+	projectID, _ := setupProjectLogged(t, rl)
+	_, readOnlyToken := createToken(t, projectID, uniqueName("upload-read-only"), []string{"data:read"})
+
+	resp := doMultipartWithFile(t, "/api/documents/upload", readOnlyToken, projectID, "file", "test.txt", []byte("test content"))
 	body := mustStatus(t, resp, http.StatusForbidden)
 
 	var result map[string]any
@@ -64,8 +69,10 @@ func TestDocumentsUpload_RejectsWhenFileIsMissing(t *testing.T) {
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
+	projectID, _ := setupProjectLogged(t, rl)
+
 	// Send a multipart form with only a text field, no file
-	resp := doMultipartWithField(t, "/api/documents/upload", e2eTestToken(), dummyProjectID, "someField", "someValue")
+	resp := doMultipartWithField(t, "/api/documents/upload", e2eTestToken(), projectID, "someField", "someValue")
 	body := mustStatus(t, resp, http.StatusBadRequest)
 
 	var result map[string]any
@@ -110,9 +117,11 @@ func TestDocumentsBatchUpload_RequiresDocumentsWriteScope(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
-	skipIfStandaloneMode(t)
 
-	resp := doMultipartWithFiles(t, "/api/documents/upload/batch", "read-only", dummyProjectID, "files", map[string][]byte{
+	projectID, _ := setupProjectLogged(t, rl)
+	_, readOnlyToken := createToken(t, projectID, uniqueName("batch-upload-read-only"), []string{"data:read"})
+
+	resp := doMultipartWithFiles(t, "/api/documents/upload/batch", readOnlyToken, projectID, "files", map[string][]byte{
 		"test1.txt": []byte("test content 1"),
 	})
 	body := mustStatus(t, resp, http.StatusForbidden)
@@ -134,8 +143,10 @@ func TestDocumentsBatchUpload_RejectsWhenNoFilesProvided(t *testing.T) {
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
+	projectID, _ := setupProjectLogged(t, rl)
+
 	// Send a multipart form with only a text field, no files
-	resp := doMultipartWithField(t, "/api/documents/upload/batch", e2eTestToken(), dummyProjectID, "someField", "someValue")
+	resp := doMultipartWithField(t, "/api/documents/upload/batch", e2eTestToken(), projectID, "someField", "someValue")
 	body := mustStatus(t, resp, http.StatusBadRequest)
 
 	var result map[string]any

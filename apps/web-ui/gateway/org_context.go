@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -22,7 +23,10 @@ var errOrgIDRequired = errors.New("organization id is required")
 // carry PRG feedback from the delete/transfer-project flows. TransferOrgs are
 // the acting user's destination orgs (their org access tree minus the source)
 // and CanTransfer gates the per-row Transfer action (user is org_admin of the
-// source org and at least one candidate exists).
+// source org and at least one candidate exists). IsOrgAdmin is the single
+// org-role capability every org page consults (see orgRoleFor/isOrgAdmin): it
+// gates create/delete/restore on the landing and the admin-only Settings
+// sections, mirroring CanTransfer's derivation from the access tree.
 type orgPageData struct {
 	Org          *Org
 	Projects     []ProjectRef
@@ -31,17 +35,21 @@ type orgPageData struct {
 	FlashErr     error
 	TransferOrgs []Org
 	CanTransfer  bool
+	IsOrgAdmin   bool
 }
 
 // orgMembersPageData is the payload for OrgMembersPage: the active org's
 // members (OrgMemberDto from GET /api/orgs/{id}/members) plus PRG flash
-// feedback (the ?invited= success flash from the org-invite flow).
+// feedback (the ?invited= success flash from the org-invite flow). The page is
+// org_admin-gated (it exposes whole-org PII), so IsOrgAdmin drives the Members
+// sidebar entry's visibility.
 type orgMembersPageData struct {
-	Org      *Org
-	Members  []OrgMemberDto
-	LoadErr  error
-	FlashMsg string
-	FlashErr error
+	Org        *Org
+	Members    []OrgMemberDto
+	LoadErr    error
+	FlashMsg   string
+	FlashErr   error
+	IsOrgAdmin bool
 }
 
 // orgInvitePageData is the payload for OrgInvitePage (GET /orgs/:id/invite):
@@ -55,32 +63,36 @@ type orgInvitePageData struct {
 
 // orgSettingsPageData is the payload for OrgSettingsPage (the Tools section of
 // the org Settings hub): the active org's tool-setting overrides plus PRG
-// feedback from the toggle/delete flows.
+// feedback from the toggle/delete flows. IsOrgAdmin gates the write controls
+// (tool-settings read stays on membership).
 type orgSettingsPageData struct {
-	Org      *Org
-	Settings []OrgToolSettingDto
-	LoadErr  error
-	FlashMsg string
-	FlashErr error
+	Org        *Org
+	Settings   []OrgToolSettingDto
+	LoadErr    error
+	FlashMsg   string
+	FlashErr   error
+	IsOrgAdmin bool
 }
 
 // orgSettingsDangerZonePageData is the payload for
 // OrgSettingsDangerZonePage (the Danger zone section of the org Settings hub):
 // the active org for the delete-organization confirm form. LoadErr degrades to
-// the whole-page error state.
+// the whole-page error state. IsOrgAdmin gates the delete form.
 type orgSettingsDangerZonePageData struct {
-	Org     *Org
-	LoadErr error
+	Org        *Org
+	LoadErr    error
+	IsOrgAdmin bool
 }
 
 // orgSettingsGeneralPageData is the payload for OrgSettingsGeneralPage (the
 // General section of the org Settings hub): the active org for the rename form
-// plus PRG feedback from the rename flow.
+// plus PRG feedback from the rename flow. IsOrgAdmin gates the rename form.
 type orgSettingsGeneralPageData struct {
-	Org      *Org
-	LoadErr  error
-	FlashMsg string
-	FlashErr error
+	Org        *Org
+	LoadErr    error
+	FlashMsg   string
+	FlashErr   error
+	IsOrgAdmin bool
 }
 
 // resolveOrg loads the org named by the :id path param and makes it the
@@ -133,6 +145,7 @@ func (s *Server) uiOrg(c echo.Context) error {
 	}
 	data := orgPageData{Org: org, Projects: mine}
 	data.TransferOrgs, data.CanTransfer = transferState(tree, org.ID)
+	data.IsOrgAdmin = isOrgAdmin(tree, org.ID)
 	data.FlashErr = flashError(c)
 	if q := c.QueryParam("deleted"); q != "" {
 		if n, err := strconv.Atoi(q); err == nil {
@@ -155,6 +168,39 @@ func (s *Server) uiOrg(c echo.Context) error {
 	return s.page(c, pageTitle(org.Name), OrgLandingPage(data))
 }
 
+// orgRoleFor returns the caller's role in orgID from their org access tree
+// ("" when the org is absent). This is the single place a rendered page learns
+// its caller's org role — every org gating surface consults it (or isOrgAdmin)
+// instead of re-deriving the role locally. The memory service stays
+// authoritative on every operation; this only decides UI visibility.
+func orgRoleFor(tree []OrgWithProjectsDto, orgID string) string {
+	for _, o := range tree {
+		if o.ID == orgID {
+			return o.Role
+		}
+	}
+	return ""
+}
+
+// isOrgAdmin reports whether the caller is org_admin of orgID per their access
+// tree.
+func isOrgAdmin(tree []OrgWithProjectsDto, orgID string) bool {
+	return orgRoleFor(tree, orgID) == "org_admin"
+}
+
+// orgAdminForCaller fetches the caller's org access tree and reports whether
+// they are org_admin of orgID. Best-effort: a failed fetch returns false, which
+// hides admin affordances rather than surfacing an error (the same degrade the
+// transfer affordance already relies on).
+func (s *Server) orgAdminForCaller(ctx context.Context, orgID string) bool {
+	tree, err := s.memory.GetOrgsAndProjects(ctx)
+	if err != nil {
+		captureError(err)
+		return false
+	}
+	return isOrgAdmin(tree, orgID)
+}
+
 // transferState derives the org-landing transfer affordance for the acting user
 // from their org access tree: the candidate destination orgs (their orgs minus
 // the source) and whether the per-project Transfer action is available — they
@@ -162,10 +208,9 @@ func (s *Server) uiOrg(c echo.Context) error {
 // exists. The memory service stays authoritative on the transfer itself
 // (design D4/D5); this only decides UI visibility.
 func transferState(tree []OrgWithProjectsDto, sourceOrgID string) (destinations []Org, canTransfer bool) {
-	var role string
+	role := orgRoleFor(tree, sourceOrgID)
 	for _, o := range tree {
 		if o.ID == sourceOrgID {
-			role = o.Role
 			continue
 		}
 		destinations = append(destinations, Org{ID: o.ID, Name: o.Name})
@@ -220,6 +265,7 @@ func (s *Server) uiOrgMembers(c echo.Context) error {
 	}
 	data.Org = org
 	data.Members = members
+	data.IsOrgAdmin = s.orgAdminForCaller(c.Request().Context(), org.ID)
 	return s.page(c, pageTitle("Members"), OrgMembersPage(data))
 }
 
@@ -282,7 +328,7 @@ func (s *Server) uiOrgSettings(c echo.Context) error {
 	if c.QueryParam("updated") != "" {
 		flashMsg = "Tool setting updated."
 	}
-	return s.page(c, pageTitle("Settings"), OrgSettingsPage(orgSettingsPageData{Org: org, Settings: settings, FlashMsg: flashMsg, FlashErr: flashError(c)}))
+	return s.page(c, pageTitle("Settings"), OrgSettingsPage(orgSettingsPageData{Org: org, Settings: settings, FlashMsg: flashMsg, FlashErr: flashError(c), IsOrgAdmin: s.orgAdminForCaller(c.Request().Context(), org.ID)}))
 }
 
 // uiOrgSettingsDangerZone renders the Danger zone section of the active org's
@@ -294,7 +340,7 @@ func (s *Server) uiOrgSettingsDangerZone(c echo.Context) error {
 	if err != nil {
 		return s.page(c, pageTitle("Settings"), OrgSettingsDangerZonePage(orgSettingsDangerZonePageData{LoadErr: err}))
 	}
-	return s.page(c, pageTitle("Settings"), OrgSettingsDangerZonePage(orgSettingsDangerZonePageData{Org: org}))
+	return s.page(c, pageTitle("Settings"), OrgSettingsDangerZonePage(orgSettingsDangerZonePageData{Org: org, IsOrgAdmin: s.orgAdminForCaller(c.Request().Context(), org.ID)}))
 }
 
 // uiOrgSettingsGeneral renders the General section of the active org's Settings
@@ -309,7 +355,7 @@ func (s *Server) uiOrgSettingsGeneral(c echo.Context) error {
 	if c.QueryParam("renamed") != "" {
 		flashMsg = "Organization renamed."
 	}
-	return s.page(c, pageTitle("Settings"), OrgSettingsGeneralPage(orgSettingsGeneralPageData{Org: org, FlashMsg: flashMsg, FlashErr: flashError(c)}))
+	return s.page(c, pageTitle("Settings"), OrgSettingsGeneralPage(orgSettingsGeneralPageData{Org: org, FlashMsg: flashMsg, FlashErr: flashError(c), IsOrgAdmin: s.orgAdminForCaller(c.Request().Context(), org.ID)}))
 }
 
 // uiOrgRename renames the org (POST /orgs/:id/rename; form field name). The org

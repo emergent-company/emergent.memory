@@ -79,6 +79,17 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     -o /out/emergent-migrate \
     ./cmd/migrate
 
+# Cross-compile the one-shot object-store bucket bootstrap binary. Runs as the
+# storage-init compose service (gated by service_completed_successfully) to
+# create the documents/document-temp buckets before the server starts, using
+# the same backend-agnostic S3 client as the server.
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+    -ldflags="-s -w" \
+    -o /out/emergent-storage-init \
+    ./cmd/storage-init
+
 # ── Stage 2: CLI ───────────────────────────────────────────────────
 FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS cli-builder
 
@@ -139,8 +150,8 @@ RUN set -eux; \
     esac; \
     base="https://github.com/github/github-mcp-server/releases/download/v${GITHUB_MCP_SERVER_VERSION}"; \
     asset="github-mcp-server_Linux_${asset_arch}.tar.gz"; \
-    curl -fsSL -o "/tmp/${asset}" "${base}/${asset}"; \
-    curl -fsSL -o /tmp/github-mcp-checksums.txt "${base}/github-mcp-server_${GITHUB_MCP_SERVER_VERSION}_checksums.txt"; \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o "/tmp/${asset}" "${base}/${asset}"; \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o /tmp/github-mcp-checksums.txt "${base}/github-mcp-server_${GITHUB_MCP_SERVER_VERSION}_checksums.txt"; \
     expected="$(awk -v a="${asset}" '$2==a || $2=="*"a {print $1}' /tmp/github-mcp-checksums.txt)"; \
     test -n "${expected}"; \
     echo "${expected}  /tmp/${asset}" | sha256sum -c -; \
@@ -181,6 +192,7 @@ WORKDIR /app
 # Copy binaries from builders
 COPY --from=server-builder /out/emergent-server /usr/local/bin/
 COPY --from=server-builder /out/emergent-migrate /usr/local/bin/
+COPY --from=server-builder /out/emergent-storage-init /usr/local/bin/
 COPY --from=cli-builder /out/memory /usr/local/bin/
 
 # GitHub MCP server (stdio) — invoked by the MCP registry with GitHub App auth

@@ -1,6 +1,7 @@
 package mcpregistry
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -239,6 +240,26 @@ func (h *Handler) ListServerTools(c echo.Context) error {
 
 // ToggleTool handles PATCH /api/admin/mcp-servers/:id/tools/:toolId
 func (h *Handler) ToggleTool(c echo.Context) error {
+	user := auth.MustGetUser(c)
+	if user.ProjectID == "" {
+		return apperror.NewBadRequest("X-Project-ID header is required")
+	}
+
+	// The :id server param is authoritative (issue #978): the addressed server
+	// must belong to the caller's project. A foreign or missing server is 404,
+	// matching the sandboximages :id convention (#968/#974).
+	serverID := c.Param("id")
+	if serverID == "" {
+		return apperror.NewBadRequest("server ID is required")
+	}
+
+	server, err := h.svc.GetServer(c.Request().Context(), serverID, &user.ProjectID)
+	if err != nil {
+		return apperror.NewInternal("failed to get MCP server", err)
+	}
+	if server == nil {
+		return apperror.NewNotFound("mcp_server", serverID)
+	}
 
 	toolID := c.Param("toolId")
 	if toolID == "" {
@@ -253,7 +274,10 @@ func (h *Handler) ToggleTool(c echo.Context) error {
 		return apperror.NewBadRequest("at least one of enabled or config must be provided")
 	}
 
-	if err := h.svc.UpdateTool(c.Request().Context(), toolID, dto.Enabled, dto.Config); err != nil {
+	if err := h.svc.UpdateTool(c.Request().Context(), user.ProjectID, toolID, dto.Enabled, dto.Config); err != nil {
+		if errors.Is(err, ErrToolNotFound) {
+			return apperror.NewNotFound("mcp_server_tool", toolID)
+		}
 		return apperror.NewBadRequest(err.Error())
 	}
 
@@ -348,7 +372,7 @@ func (h *Handler) SyncTools(c echo.Context) error {
 			toolCount = len(discovered)
 		} else {
 			// Manual sync with provided tools
-			if err := h.svc.SyncServerTools(ctx, serverID, discoveredTools); err != nil {
+			if err := h.svc.SyncServerTools(ctx, user.ProjectID, serverID, discoveredTools); err != nil {
 				return apperror.NewInternal("failed to sync tools", err)
 			}
 			toolCount = len(discoveredTools)
@@ -392,6 +416,10 @@ func (h *Handler) ListBuiltinTools(c echo.Context) error {
 // Enables/disables a built-in tool or updates its runtime config for the
 // current project. Accepts the same body as PATCH /api/admin/mcp-servers/:id/tools/:toolId.
 func (h *Handler) UpdateBuiltinTool(c echo.Context) error {
+	user := auth.MustGetUser(c)
+	if user.ProjectID == "" {
+		return apperror.NewBadRequest("X-Project-ID header is required")
+	}
 
 	toolID := c.Param("toolId")
 	if toolID == "" {
@@ -406,7 +434,12 @@ func (h *Handler) UpdateBuiltinTool(c echo.Context) error {
 		return apperror.NewBadRequest("at least one of enabled or config must be provided")
 	}
 
-	if err := h.svc.UpdateTool(c.Request().Context(), toolID, dto.Enabled, dto.Config); err != nil {
+	// The tool is scoped to the caller's project; a foreign or missing tool is
+	// 404 (issue #978), matching the sandboximages :id convention (#968/#974).
+	if err := h.svc.UpdateTool(c.Request().Context(), user.ProjectID, toolID, dto.Enabled, dto.Config); err != nil {
+		if errors.Is(err, ErrToolNotFound) {
+			return apperror.NewNotFound("mcp_server_tool", toolID)
+		}
 		return apperror.NewBadRequest(err.Error())
 	}
 

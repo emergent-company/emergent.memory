@@ -235,3 +235,28 @@ func TestChatRailAgentGlyphLeading(t *testing.T) {
 		t.Errorf("scheduled rail row must lead with the agent glyph: %s", html)
 	}
 }
+
+// TestChatRailBadgeAboveTitle asserts the run-state badge is stacked ABOVE the
+// session title (inside the grow column), not inline after it, so the title
+// takes the full row width instead of competing with the badge horizontally.
+func TestChatRailBadgeAboveTitle(t *testing.T) {
+	conv := Conversation{
+		ID:                "c1",
+		Title:             "A very long session title that needs the full width",
+		AgentDefinitionID: "a1",
+		UpdatedAt:         "2026-08-26T09:00:00Z",
+		Bucket:            "failed",
+	}
+	ap := agentAppearance{Name: "memory"}
+	html := renderHTML(t, sessionRailItem(conv, ap, false))
+
+	grow := strings.Index(html, `class="list-col-grow"`)
+	badge := strings.Index(html, `class="memory-rail-badge"`)
+	title := strings.Index(html, "A very long session title that needs the full width")
+	if grow == -1 || badge == -1 || title == -1 {
+		t.Fatalf("missing grow column, badge, or title: %s", html)
+	}
+	if grow >= badge || badge >= title {
+		t.Errorf("badge must sit above the title inside the grow column: grow=%d badge=%d title=%d\n%s", grow, badge, title, html)
+	}
+}

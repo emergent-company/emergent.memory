@@ -317,8 +317,10 @@ func splitLeadingReasoning(text string) (reasoning, answer string) {
 }
 
 // renderHistoryHTML converts assistant message text to sanitized HTML,
-// injecting it as content.html. User/tool messages and non-message items are
-// left untouched; items that fail to parse are kept as-is.
+// injecting it as content.html. User/tool/system messages and non-message items
+// are left untouched; items that fail to parse are kept as-is. System records
+// carry the run's composed agent instruction — the client renders them as a
+// dedicated prompt card from the raw text, not as a markdown reply.
 func renderHistoryHTML(items []json.RawMessage) []json.RawMessage {
 	out := make([]json.RawMessage, len(items))
 	for i, item := range items {
@@ -365,7 +367,7 @@ func renderHistoryHTML(items []json.RawMessage) []json.RawMessage {
 		}
 
 		role, _ := m["role"].(string)
-		if kind != "message" || role == "user" || role == "tool" {
+		if kind != "message" || role == "user" || role == "tool" || role == "system" {
 			continue
 		}
 		content, ok := m["content"].(map[string]any)

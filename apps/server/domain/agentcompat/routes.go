@@ -17,6 +17,8 @@ import (
 func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	v1 := e.Group("/v1")
 	v1.Use(authMiddleware.RequireAuth())
+	v1.Use(authMiddleware.RequireProjectTokenScope())
+	v1.Use(authMiddleware.RequireProjectMember())
 
 	v1.POST("/chat/completions", h.ChatCompletion)
 	v1.GET("/models", h.ListModels)

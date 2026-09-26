@@ -61,7 +61,11 @@ func queryToolDefinitions() []ToolDefinition {
 // Query Knowledge Tool Handler
 // ============================================================================
 
-const queryKnowledgeTimeout = 60 * time.Second
+// Raised from 60s to 120s: the internal graph-query-agent performs multi-step
+// graph research (search-hybrid + entity-type-list + several LLM turns), and a
+// 60s ceiling was canceling runs mid-flight and returning an empty answer
+// (issue #915). The 105s entity-type-list query is also fixed by migration 00179.
+const queryKnowledgeTimeout = 120 * time.Second
 
 func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	question, _ := args["question"].(string)
