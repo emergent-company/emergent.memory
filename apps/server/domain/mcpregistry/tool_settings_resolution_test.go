@@ -31,9 +31,15 @@ func (s *MCPRegistryToolSettingsResolutionSuite) SetupSuite() {
 }
 
 // seedBuiltinTool inserts a builtin server and one tool row for the project. A nil
-// enabledOverride mirrors EnsureBuiltinServer's bulk upsert (no explicit project
-// override); a non-nil value mirrors an explicit project toggle.
+// enabledOverride mirrors EnsureBuiltinServer's bulk upsert (enabled=true, no
+// explicit override); a non-nil value mirrors an explicit project toggle
+// (UpdateToolForProject sets both enabled and enabled_override).
 func (s *MCPRegistryToolSettingsResolutionSuite) seedBuiltinTool(projectID, toolName string, enabledOverride *bool) string {
+	enabled := true
+	if enabledOverride != nil {
+		enabled = *enabledOverride
+	}
+
 	serverID := uuid.New().String()
 	_, err := s.DB().NewRaw(`
 		INSERT INTO kb.mcp_servers (id, project_id, name, enabled, type, created_at, updated_at)
@@ -43,8 +49,8 @@ func (s *MCPRegistryToolSettingsResolutionSuite) seedBuiltinTool(projectID, tool
 
 	_, err = s.DB().NewRaw(`
 		INSERT INTO kb.mcp_server_tools (id, server_id, tool_name, enabled, enabled_override, created_at)
-		VALUES (?, ?, ?, true, ?, NOW())
-	`, uuid.New().String(), serverID, toolName, enabledOverride).Exec(s.Ctx)
+		VALUES (?, ?, ?, ?, ?, NOW())
+	`, uuid.New().String(), serverID, toolName, enabled, enabledOverride).Exec(s.Ctx)
 	s.Require().NoError(err)
 
 	return serverID
@@ -140,4 +146,61 @@ func (s *MCPRegistryToolSettingsResolutionSuite) TestListServerTools_SurfacesPro
 	tool := s.listToolFromServer(serverID, toolName)
 	s.Require().Equal(false, tool["enabled"], "expected project override (enabled=false) surfaced in list")
 	s.Require().Equal("project", tool["inheritedFrom"], "expected inheritedFrom=project")
+}
+
+// TestPreExistingDisabledToolStaysDisabled guards the migration backfill: a
+// pre-existing explicitly-disabled row (enabled=false, enabled_override=false
+// after backfill, no org setting) must stay disabled with a truthful source,
+// not fall through to the global default (issue #988 regression).
+func (s *MCPRegistryToolSettingsResolutionSuite) TestPreExistingDisabledToolStaysDisabled() {
+	const toolName = "web-search-brave"
+	disabled := false
+	// Post-backfill shape of a pre-existing disable.
+	s.seedBuiltinTool(s.ProjectID, toolName, &disabled)
+
+	enabled, _, source, err := s.svc().ResolveBuiltinToolSettings(s.Ctx, s.ProjectID, toolName)
+	s.Require().NoError(err)
+	s.Require().False(enabled, "pre-existing explicit disable must stay disabled")
+	s.Require().Equal("project", source)
+}
+
+// enabledBuiltinToolNames returns the tool names the EXECUTION path considers
+// enabled (FindAllEnabledBuiltinTools), for consistency checks against the list path.
+func (s *MCPRegistryToolSettingsResolutionSuite) enabledBuiltinToolNames() []string {
+	tools, err := mcpregistry.NewRepository(s.DB()).FindAllEnabledBuiltinTools(s.Ctx, s.ProjectID)
+	s.Require().NoError(err)
+	names := make([]string, 0, len(tools))
+	for _, t := range tools {
+		names = append(names, t.ToolName)
+	}
+	return names
+}
+
+func (s *MCPRegistryToolSettingsResolutionSuite) TestExecution_OrgDefaultDisables() {
+	const toolName = "web-search-brave"
+	s.seedBuiltinTool(s.ProjectID, toolName, nil) // bulk row, no override
+	s.seedOrgToolSetting(s.OrgID, toolName, false)
+
+	s.Require().NotContains(s.enabledBuiltinToolNames(), toolName,
+		"org default (enabled=false) must disable the tool at execution")
+}
+
+func (s *MCPRegistryToolSettingsResolutionSuite) TestExecution_ProjectDisableWinsOverOrgEnable() {
+	const toolName = "web-search-brave"
+	disabled := false
+	s.seedBuiltinTool(s.ProjectID, toolName, &disabled) // explicit disable
+	s.seedOrgToolSetting(s.OrgID, toolName, true)       // org enables
+
+	s.Require().NotContains(s.enabledBuiltinToolNames(), toolName,
+		"explicit project disable must win over org enable at execution")
+}
+
+func (s *MCPRegistryToolSettingsResolutionSuite) TestExecution_ProjectEnableWinsOverOrgDisable() {
+	const toolName = "web-search-brave"
+	enabled := true
+	s.seedBuiltinTool(s.ProjectID, toolName, &enabled) // explicit enable
+	s.seedOrgToolSetting(s.OrgID, toolName, false)     // org disables
+
+	s.Require().Contains(s.enabledBuiltinToolNames(), toolName,
+		"explicit project enable must win over org disable at execution")
 }

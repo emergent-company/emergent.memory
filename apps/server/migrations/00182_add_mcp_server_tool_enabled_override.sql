@@ -9,6 +9,18 @@ ALTER TABLE kb.mcp_server_tools
     ADD COLUMN IF NOT EXISTS enabled_override BOOLEAN;
 -- +goose StatementEnd
 
+-- +goose StatementBegin
+-- Backfill pre-existing explicitly-disabled rows. A disable (`enabled = false`)
+-- can only have come from an explicit project toggle (ToggleTool), so it must
+-- survive as a project override. `enabled = true` rows are left NULL because
+-- they are indistinguishable from EnsureBuiltinServer's bulk upsert. Idempotent:
+-- a re-run matches no rows because the backfilled rows now carry
+-- enabled_override = false (issue #988).
+UPDATE kb.mcp_server_tools
+SET enabled_override = false
+WHERE enabled_override IS NULL AND enabled = false;
+-- +goose StatementEnd
+
 -- +goose Down
 -- +goose StatementBegin
 ALTER TABLE kb.mcp_server_tools
