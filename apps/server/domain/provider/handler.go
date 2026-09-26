@@ -319,12 +319,15 @@ func (h *Handler) GetOrgUsageTimeSeries(c echo.Context) error {
 // project pricing override. Prices are in USD per 1 million tokens.
 type UpsertProjectPricingOverridesRequest struct {
 	Provider        ProviderType `json:"provider"`
-	Model           string       `json:"model"`
-	TextInputPrice  float64      `json:"textInputPrice"`
-	ImageInputPrice float64      `json:"imageInputPrice"`
-	VideoInputPrice float64      `json:"videoInputPrice"`
-	AudioInputPrice float64      `json:"audioInputPrice"`
-	OutputPrice     float64      `json:"outputPrice"`
+	// ProviderSlug identifies the provider instance. When empty, Provider is
+	// used as the slug (the default instance).
+	ProviderSlug    string  `json:"providerSlug,omitempty"`
+	Model           string  `json:"model"`
+	TextInputPrice  float64 `json:"textInputPrice"`
+	ImageInputPrice float64 `json:"imageInputPrice"`
+	VideoInputPrice float64 `json:"videoInputPrice"`
+	AudioInputPrice float64 `json:"audioInputPrice"`
+	OutputPrice     float64 `json:"outputPrice"`
 }
 
 // ListProjectPricingOverrides returns all pricing overrides for a project.
@@ -384,7 +387,7 @@ func (h *Handler) UpsertProjectPricingOverrides(c echo.Context) error {
 	entry := &ProjectCustomPricing{
 		ProjectID:       projectID,
 		Provider:        req.Provider,
-		ProviderSlug:    ProviderSlug(req.Provider),
+		ProviderSlug:    ProviderSlug(firstNonEmpty(req.ProviderSlug, string(req.Provider))),
 		Model:           req.Model,
 		TextInputPrice:  req.TextInputPrice,
 		ImageInputPrice: req.ImageInputPrice,
@@ -476,6 +479,16 @@ type OrgUsageByProjectResponse struct {
 }
 
 // parseTimeRange extracts optional ?since= and ?until= query params.
+// firstNonEmpty returns the first non-empty string.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func parseTimeRange(c echo.Context) (since, until *time.Time) {
 	if s := c.QueryParam("since"); s != "" {
 		if t, err := time.Parse(time.RFC3339, s); err == nil {
