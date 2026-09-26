@@ -9,11 +9,15 @@ import (
 
 // --- project usage ---
 
-// UsageSummaryRow is one provider+model row of aggregated token usage. The
-// memory service serializes usage rows WITHOUT json tags, so the wire keys are
-// the Go field names in PascalCase (Provider, Model, TotalText, …).
+// UsageSummaryRow is one provider instance+model row of aggregated token
+// usage. Provider is the dialect; ProviderSlug is the instance that served the
+// request (empty for rows recorded before instances existed — the UI then
+// shows the dialect). The memory service serializes usage rows WITHOUT json
+// tags, so the wire keys are the Go field names in PascalCase (Provider,
+// Model, TotalText, …).
 type UsageSummaryRow struct {
 	Provider         string  `json:"Provider"`
+	ProviderSlug     string  `json:"ProviderSlug"`
 	Model            string  `json:"Model"`
 	TotalText        int64   `json:"TotalText"`
 	TotalImage       int64   `json:"TotalImage"`
@@ -33,11 +37,13 @@ type UsageSummaryResponse struct {
 }
 
 // UsageTimeSeriesRow is one time-bucketed usage row. Period is an RFC3339
-// timestamp (start of the bucket). Like the summary rows, keys are the
+// timestamp (start of the bucket). Provider is the dialect; ProviderSlug is
+// the instance (empty for legacy rows). Like the summary rows, keys are the
 // PascalCase Go field names on the wire.
 type UsageTimeSeriesRow struct {
 	Period           string  `json:"Period"` // RFC3339
 	Provider         string  `json:"Provider"`
+	ProviderSlug     string  `json:"ProviderSlug"`
 	Model            string  `json:"Model"`
 	TotalText        int64   `json:"TotalText"`
 	TotalImage       int64   `json:"TotalImage"`
