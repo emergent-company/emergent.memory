@@ -1086,8 +1086,9 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 		return nil
 	}
 
-	// Load conversation history (last 10 messages for context)
-	history, err := h.svc.repo.GetConversationHistory(ctx, conv.ID, 10)
+	// Load conversation history (last 10 messages for context), scoped to the
+	// caller so a foreign conversation id yields no prior messages.
+	history, err := h.svc.repo.GetConversationHistory(ctx, projectID, userID, conv.ID, 10)
 	if err != nil {
 		h.log.Warn("failed to load conversation history for agent chat",
 			slog.String("conversation_id", conv.ID.String()),

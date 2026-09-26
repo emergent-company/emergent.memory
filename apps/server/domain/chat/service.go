@@ -79,8 +79,11 @@ func (s *Service) CreateConversation(ctx context.Context, projectID, ownerUserID
 		}
 		canonicalID = &parsed
 
-		// Check if conversation already exists for this canonical ID
-		existing, err := s.repo.GetByCanonicalID(ctx, projectID, parsed)
+		// Check if a visible conversation already exists for this canonical ID.
+		// The owner predicate prevents returning another user's private
+		// conversation; canonical (refinement) conversations are project-shared
+		// (is_private = false), so any project member resolves the same row.
+		existing, err := s.repo.GetByCanonicalID(ctx, projectID, ownerUserID, parsed)
 		if err != nil {
 			return nil, err
 		}
@@ -94,7 +97,11 @@ func (s *Service) CreateConversation(ctx context.Context, projectID, ownerUserID
 	conv := &Conversation{
 		Title:       req.Title,
 		OwnerUserID: &ownerUserID,
-		IsPrivate:   true,
+		// Canonical (refinement) conversations are project-shared: the
+		// globally-unique canonical_id index permits exactly one row per
+		// canonical id, so a private per-user conversation would block every
+		// other project member from the object's refinement chat.
+		IsPrivate:   canonicalID == nil,
 		ProjectID:   projectUUIDPtr,
 		CanonicalID: canonicalID,
 		CreatedAt:   now,
@@ -175,7 +182,7 @@ func (s *Service) AddMessage(ctx context.Context, projectID, ownerUserID string,
 		CreatedAt:        time.Now(),
 	}
 
-	history, err := s.repo.GetConversationHistory(ctx, conversationID, 5)
+	history, err := s.repo.GetConversationHistory(ctx, projectID, ownerUserID, conversationID, 5)
 	if err != nil {
 		s.log.Warn("failed to load conversation history", logger.Error(err))
 	} else if len(history) > 0 {
@@ -220,7 +227,7 @@ func (s *Service) GetOrCreateConversation(ctx context.Context, projectID, ownerU
 	}
 
 	// Try to get existing
-	existing, err := s.repo.GetByCanonicalID(ctx, projectID, canonicalUUID)
+	existing, err := s.repo.GetByCanonicalID(ctx, projectID, ownerUserID, canonicalUUID)
 	if err != nil {
 		return nil, false, err
 	}
