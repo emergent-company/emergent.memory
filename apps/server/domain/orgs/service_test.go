@@ -15,9 +15,10 @@ import (
 // fakeOrgRepo is an in-memory orgRepository double for service/handler tests.
 // Only the fields exercised by a given test need to be set.
 type fakeOrgRepo struct {
-	org    *Org  // returned by UpdateName/GetByID when err is nil
-	err    error // UpdateName/GetByID failure
-	member bool  // result returned by IsUserMember
+	org    *Org   // returned by UpdateName/GetByID when err is nil
+	err    error  // UpdateName/GetByID failure
+	member bool   // result returned by IsUserMember
+	role   string // result returned by GetMembershipRole
 
 	updatedID   string // last id passed to UpdateName
 	updatedName string // last name passed to UpdateName
@@ -65,6 +66,10 @@ func (f *fakeOrgRepo) IsUserMember(context.Context, string, string) (bool, error
 	return f.member, nil
 }
 
+func (f *fakeOrgRepo) GetMembershipRole(context.Context, string, string) (string, error) {
+	return f.role, nil
+}
+
 func (f *fakeOrgRepo) FindOrgToolSettings(context.Context, string) ([]OrgToolSetting, error) {
 	return nil, nil
 }
@@ -85,7 +90,7 @@ func testOrgService(repo orgRepository) *Service {
 }
 
 func TestServiceUpdate_Success(t *testing.T) {
-	repo := &fakeOrgRepo{org: &Org{ID: "org-1", Name: "Renamed"}, member: true}
+	repo := &fakeOrgRepo{org: &Org{ID: "org-1", Name: "Renamed"}, member: true, role: "org_admin"}
 	svc := testOrgService(repo)
 
 	dto, err := svc.Update(context.Background(), "org-1", "user-1", "  Renamed  ")
@@ -111,7 +116,7 @@ func TestServiceUpdate_InvalidName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := &fakeOrgRepo{member: true}
+			repo := &fakeOrgRepo{member: true, role: "org_admin"}
 			svc := testOrgService(repo)
 
 			dto, err := svc.Update(context.Background(), "org-1", "user-1", tt.in)
@@ -128,7 +133,7 @@ func TestServiceUpdate_InvalidName(t *testing.T) {
 }
 
 func TestServiceUpdate_NotFound(t *testing.T) {
-	repo := &fakeOrgRepo{err: apperror.ErrNotFound.WithMessage("Organization not found"), member: true}
+	repo := &fakeOrgRepo{err: apperror.ErrNotFound.WithMessage("Organization not found"), member: true, role: "org_admin"}
 	svc := testOrgService(repo)
 
 	dto, err := svc.Update(context.Background(), "missing", "user-1", "New name")
