@@ -1222,6 +1222,23 @@ func (h *Handler) ReceiveWebhook(c echo.Context) error {
 	var agentDef *AgentDefinition
 	agentDef, _ = h.repo.ResolveDefinitionForAgent(c.Request().Context(), agent)
 
+	// Refuse to invoke a hook still bound to an internal-visibility agent. Hook
+	// creation now refuses internal-visibility targets (#1004), but hooks bound
+	// before that guard shipped still exist in the database and are still
+	// reachable on this public, token-only surface. Fail closed here — the check
+	// is cheap because the definition is already resolved — and log so an
+	// operator can find and re-bind the stale hook. A hook bound to a normal
+	// (project/external) visibility agent is unaffected.
+	if agentDef != nil && agentDef.Visibility == VisibilityInternal {
+		slog.Warn("webhook: refusing invocation bound to internal-visibility agent",
+			slog.String("hook_id", hook.ID),
+			slog.String("agent_id", agent.ID),
+			slog.String("agent_definition_id", agentDef.ID),
+			slog.String("agent_definition_name", agentDef.Name),
+		)
+		return apperror.NewForbidden("webhook hook is bound to an internal-visibility agent; re-bind it to a public agent")
+	}
+
 	// Parse payload
 	var payload WebhookTriggerPayloadDTO
 	_ = c.Bind(&payload) // body is optional
