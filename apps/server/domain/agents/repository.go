@@ -1522,6 +1522,20 @@ func nilIfEmpty(s *string) *string {
 	return s
 }
 
+// UpdateRunTrustedInternal persists the fail-closed trust marker on an existing
+// run row. Used by the executor entry points (ExecuteWithRun, Resume with a
+// pre-created run) to store the run's trust after the row has already been
+// inserted, so a later resume inherits the same value rather than the column's
+// restrictive default.
+func (r *Repository) UpdateRunTrustedInternal(ctx context.Context, runID string, trusted bool) error {
+	_, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("trusted_internal = ?", trusted).
+		Where("id = ?", runID).
+		Exec(ctx)
+	return err
+}
+
 // CreateRunWithOptions creates a new agent run with coordination options.
 // newAgentRun builds an AgentRun from CreateRunOptions without persisting it.
 // Shared by CreateRunWithOptions and the share run reservation path.
@@ -1541,6 +1555,7 @@ func newAgentRun(opts CreateRunOptions) *AgentRun {
 		TriggerMessage:    opts.TriggerMessage,
 		Model:             opts.Model,
 		AgentDefinitionID: opts.AgentDefinitionID,
+		TrustedInternal:   opts.TrustedInternal,
 		Tools:             []string{},
 	}
 }
@@ -2364,12 +2379,14 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 	var triggerMessage *string
 	var triggerMetadata map[string]any
 	var maxPendingJobs int
+	var trustedInternal bool
 	if len(opts) > 0 {
 		parentRunID = opts[0].ParentRunID
 		rootRunID = nilIfEmpty(opts[0].RootRunID)
 		triggerMessage = opts[0].TriggerMessage
 		triggerMetadata = opts[0].TriggerMetadata
 		maxPendingJobs = opts[0].MaxPendingJobs
+		trustedInternal = opts[0].TrustedInternal
 	}
 
 	run := &AgentRun{
@@ -2381,6 +2398,7 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 		RootRunID:       rootRunID,
 		TriggerMessage:  triggerMessage,
 		TriggerMetadata: triggerMetadata,
+		TrustedInternal: trustedInternal,
 		Tools:           []string{},
 	}
 
@@ -3180,6 +3198,7 @@ type ConversationHistoryItem struct {
 	Content map[string]any `json:"content,omitempty"`
 
 	// Fields populated for tool_call / tool_result
+	ID         string         `json:"id,omitempty"`
 	ToolName   string         `json:"tool_name,omitempty"`
 	ToolInput  map[string]any `json:"tool_input,omitempty"`
 	ToolOutput map[string]any `json:"tool_output,omitempty"`
@@ -3290,6 +3309,7 @@ func (r *Repository) GetConversationFullHistory(ctx context.Context, acpSessionI
 					RunID:      run.ID,
 					StepNumber: tc.StepNumber,
 					CreatedAt:  tc.CreatedAt,
+					ID:         tc.ID,
 					ToolName:   tc.ToolName,
 					ToolInput:  tc.Input,
 					ToolOutput: tc.Output,
@@ -3352,6 +3372,9 @@ func (r *Repository) GetConversationFullHistoryRaw(ctx context.Context, acpSessi
 			m["tool_input"] = item.ToolInput
 			m["tool_output"] = item.ToolOutput
 			m["tool_status"] = item.ToolStatus
+			if item.ID != "" {
+				m["id"] = item.ID
+			}
 		}
 		if item.DurationMs != nil {
 			m["duration_ms"] = *item.DurationMs

@@ -31,12 +31,16 @@ func (s *Store) Create(ctx context.Context, img *SandboxImage) (*SandboxImage, e
 	return img, nil
 }
 
-// GetByID returns a workspace image by ID.
-func (s *Store) GetByID(ctx context.Context, id string) (*SandboxImage, error) {
+// GetByIDForProject returns a workspace image by ID, scoped to a project. A
+// mismatched or missing image returns (nil, nil) so a caller can never observe
+// another project's image (issue #968: the resource is project-scoped and the
+// admin routes must not read by bare ID).
+func (s *Store) GetByIDForProject(ctx context.Context, projectID, id string) (*SandboxImage, error) {
 	img := new(SandboxImage)
 	err := s.db.NewSelect().
 		Model(img).
 		Where("id = ?", id).
+		Where("project_id = ?", projectID).
 		Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -110,11 +114,14 @@ func (s *Store) UpdateStatus(ctx context.Context, id string, status ImageStatus,
 	return err
 }
 
-// Delete removes a workspace image by ID.
-func (s *Store) Delete(ctx context.Context, id string) error {
+// DeleteByIDForProject removes a workspace image by ID, scoped to a project.
+// A mismatched image is a no-op, so a caller cannot delete another project's
+// image by ID (issue #968).
+func (s *Store) DeleteByIDForProject(ctx context.Context, projectID, id string) error {
 	_, err := s.db.NewDelete().
 		Model((*SandboxImage)(nil)).
 		Where("id = ?", id).
+		Where("project_id = ?", projectID).
 		Exec(ctx)
 	return err
 }

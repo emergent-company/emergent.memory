@@ -156,6 +156,11 @@ func (p *WorkerPool) executeJob(ctx context.Context, log *slog.Logger, job *Agen
 		ProjectID:       agent.ProjectID,
 		OrgID:           orgID,
 		UserMessage:     userMessage,
+		// Inherit the queued run's persisted trust marker rather than forcing
+		// true: the trust is fixed at run creation by whichever transport enqueued
+		// it (scheduler, trigger_agent, parent wake), and the worker is a deferred
+		// executor, not a transport surface that may upgrade it.
+		TrustedInternal: run.TrustedInternal,
 	})
 	if result != nil && result.Cleanup != nil {
 		defer result.Cleanup()
@@ -322,6 +327,9 @@ func (p *WorkerPool) reenqueueParent(ctx context.Context, log *slog.Logger, run 
 		RootRunID:       parentRun.RootRunID,   // propagate orchestration root so the tree is not split
 		TriggerMetadata: parentRun.TriggerMetadata,
 		MaxPendingJobs:  p.executor.safeguards.MaxPendingJobs,
+		// Re-enqueued parents inherit the parent run's persisted trust, so a
+		// suspended external-facing parent stays untrusted when re-woken.
+		TrustedInternal: parentRun.TrustedInternal,
 	})
 	if err != nil {
 		log.Warn("failed to re-enqueue parent run",

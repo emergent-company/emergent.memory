@@ -56,9 +56,12 @@ func TestBranches_List_FiltersByProjectID(t *testing.T) {
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
-	dummyProjectID := "00000000-0000-0000-0000-000000000001"
+	// Branches are project-scoped and membership-gated (issue #913): listing
+	// must use the caller's own project (via setupProjectLogged), not a foreign
+	// project id.
+	projectID, _ := setupProjectLogged(t, rl)
 
-	resp := doAPILogged(t, rl, "GET", "/api/graph/branches?project_id="+dummyProjectID, e2eTestToken(), "", nil)
+	resp := doAPILogged(t, rl, "GET", "/api/graph/branches?project_id="+projectID, e2eTestToken(), "", nil)
 	body := mustStatus(t, resp, http.StatusOK)
 
 	var branches []any
@@ -153,9 +156,11 @@ func TestBranches_Create_RequiresName(t *testing.T) {
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
-	resp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), "", jsonBody(map[string]any{
-		"project_id": "00000000-0000-0000-0000-000000000001",
-	}))
+	// Use the caller's own project so the membership gate (issue #913) passes
+	// and the request reaches name validation.
+	projectID, _ := setupProjectLogged(t, rl)
+
+	resp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), projectID, jsonBody(map[string]any{}))
 	body := mustStatus(t, resp, http.StatusBadRequest)
 
 	var result map[string]any
@@ -639,42 +644,43 @@ func TestBranches_Merge_DryRun_EmptyBranches(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
-	t.Skip("merge endpoint not yet implemented in server")
+
+	projectID, _ := setupProjectLogged(t, rl)
 
 	// Create source and target branches
-	sourceResp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), "", jsonBody(map[string]any{
+	sourceResp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), projectID, jsonBody(map[string]any{
 		"name": branchUniqueName("merge-source"),
 	}))
 	sourceBody := mustStatus(t, sourceResp, http.StatusCreated)
 	var source map[string]any
 	parseBodyJSON(t, sourceBody, &source)
 	sourceID := source["id"].(string)
-	t.Cleanup(func() { doAPILogged(t, rl, "DELETE", "/api/graph/branches/"+sourceID, e2eTestToken(), "", nil) })
+	t.Cleanup(func() { doAPILogged(t, rl, "DELETE", "/api/graph/branches/"+sourceID, e2eTestToken(), projectID, nil) })
 
-	targetResp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), "", jsonBody(map[string]any{
+	targetResp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), projectID, jsonBody(map[string]any{
 		"name": branchUniqueName("merge-target"),
 	}))
 	targetBody := mustStatus(t, targetResp, http.StatusCreated)
 	var target map[string]any
 	parseBodyJSON(t, targetBody, &target)
 	targetID := target["id"].(string)
-	t.Cleanup(func() { doAPILogged(t, rl, "DELETE", "/api/graph/branches/"+targetID, e2eTestToken(), "", nil) })
+	t.Cleanup(func() { doAPILogged(t, rl, "DELETE", "/api/graph/branches/"+targetID, e2eTestToken(), projectID, nil) })
 
 	// Dry run merge
-	mergeResp := doAPILogged(t, rl, "POST", "/api/graph/branches/"+targetID+"/merge", e2eTestToken(), "",
+	mergeResp := doAPILogged(t, rl, "POST", "/api/graph/branches/"+targetID+"/merge", e2eTestToken(), projectID,
 		jsonBody(map[string]any{
-			"sourceBranchId": sourceID,
+			"source_branch_id": sourceID,
 		}))
 	mergeBody := mustStatus(t, mergeResp, http.StatusOK)
 
 	var result map[string]any
 	parseBodyJSON(t, mergeBody, &result)
 
-	if result["targetBranchId"] != targetID {
-		t.Errorf("expected targetBranchId=%s, got %v", targetID, result["targetBranchId"])
+	if result["target_branch_id"] != targetID {
+		t.Errorf("expected target_branch_id=%s, got %v", targetID, result["target_branch_id"])
 	}
-	if result["sourceBranchId"] != sourceID {
-		t.Errorf("expected sourceBranchId=%s, got %v", sourceID, result["sourceBranchId"])
+	if result["source_branch_id"] != sourceID {
+		t.Errorf("expected source_branch_id=%s, got %v", sourceID, result["source_branch_id"])
 	}
 	if result["dryRun"] != true {
 		t.Errorf("expected dryRun=true, got %v", result["dryRun"])
@@ -689,30 +695,31 @@ func TestBranches_Merge_DryRun_DoesNotMutate(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
-	t.Skip("merge endpoint not yet implemented in server")
 
-	sourceResp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), "", jsonBody(map[string]any{
+	projectID, _ := setupProjectLogged(t, rl)
+
+	sourceResp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), projectID, jsonBody(map[string]any{
 		"name": branchUniqueName("dry-run-source"),
 	}))
 	sourceBody := mustStatus(t, sourceResp, http.StatusCreated)
 	var source map[string]any
 	parseBodyJSON(t, sourceBody, &source)
 	sourceID := source["id"].(string)
-	t.Cleanup(func() { doAPILogged(t, rl, "DELETE", "/api/graph/branches/"+sourceID, e2eTestToken(), "", nil) })
+	t.Cleanup(func() { doAPILogged(t, rl, "DELETE", "/api/graph/branches/"+sourceID, e2eTestToken(), projectID, nil) })
 
-	targetResp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), "", jsonBody(map[string]any{
+	targetResp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), projectID, jsonBody(map[string]any{
 		"name": branchUniqueName("dry-run-target"),
 	}))
 	targetBody := mustStatus(t, targetResp, http.StatusCreated)
 	var target map[string]any
 	parseBodyJSON(t, targetBody, &target)
 	targetID := target["id"].(string)
-	t.Cleanup(func() { doAPILogged(t, rl, "DELETE", "/api/graph/branches/"+targetID, e2eTestToken(), "", nil) })
+	t.Cleanup(func() { doAPILogged(t, rl, "DELETE", "/api/graph/branches/"+targetID, e2eTestToken(), projectID, nil) })
 
 	// Dry run
-	mergeResp := doAPILogged(t, rl, "POST", "/api/graph/branches/"+targetID+"/merge", e2eTestToken(), "",
+	mergeResp := doAPILogged(t, rl, "POST", "/api/graph/branches/"+targetID+"/merge", e2eTestToken(), projectID,
 		jsonBody(map[string]any{
-			"sourceBranchId": sourceID,
+			"source_branch_id": sourceID,
 			// execute omitted — defaults to false (dry run)
 		}))
 	mergeBody := mustStatus(t, mergeResp, http.StatusOK)

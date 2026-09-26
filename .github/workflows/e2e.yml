@@ -11,6 +11,10 @@ on:
         required: false
         default: ""
 
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   # ───────────────────────────────────────────────────────────────────────────
   # integration: full Docker Compose stack (server + CLI test runner)
@@ -43,6 +47,27 @@ jobs:
           tags: memory-server:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Distinct infrastructure step: an image-pull failure must read as
+      # infrastructure, not as a failing test (issue #23). The server image is
+      # built locally (memory-server:ci) and the test client/registry services
+      # are built, so pull only the registry-backed services.
+      - name: "Preflight: pull stack images"
+        run: docker compose pull test-db seaweedfs mailpit
+
+      # Distinct infrastructure step: the test image build fetches the pinned
+      # opencode release binary (issue #944). A fetch failure must read as
+      # infrastructure, not as a failing test, so build the image here and let
+      # the test step below reuse the cached layer.
+      - name: "Preflight: build test image (fetches opencode)"
+        run: ./run_tests.sh --build-only
 
       - name: Run CLI install tests
         env:
@@ -94,6 +119,20 @@ jobs:
         with:
           go-version-file: e2e/go.mod
 
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Distinct infrastructure step: an image-pull failure must read as
+      # infrastructure, not as a failing test (issue #23). The server image is
+      # built locally (memory-server:ci) and the test client/registry services
+      # are built, so pull only the registry-backed services.
+      - name: "Preflight: pull stack images"
+        run: docker compose pull test-db seaweedfs mailpit
+
       - name: Start server stack
         run: |
           cp .env.example .env 2>/dev/null || true
@@ -116,7 +155,10 @@ jobs:
 
       - name: Show server logs on failure
         if: failure()
-        run: docker compose logs --tail=100
+        run: |
+          docker compose logs --tail=100
+          echo "=== email-worker / SMTP logs ==="
+          docker compose logs test-emergent-server --tail=1000 2>/dev/null | grep -iE "email|smtp|template|enqueue|dequeue" || echo "(no email-related server log lines)"
 
       - name: Stop server stack
         if: always()

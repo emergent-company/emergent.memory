@@ -3,6 +3,7 @@ package embeddingpolicies
 import (
 	"net/http"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
@@ -36,6 +37,9 @@ func (h *Handler) List(c echo.Context) error {
 	projectID := c.QueryParam("project_id")
 	if projectID == "" {
 		return apperror.ErrBadRequest.WithMessage("project_id query parameter is required")
+	}
+	if err := h.svc.RequireProjectMember(c.Request().Context(), projectID); err != nil {
+		return err
 	}
 
 	// Optional object_type filter
@@ -77,6 +81,9 @@ func (h *Handler) GetByID(c echo.Context) error {
 	if policyID == "" {
 		return apperror.ErrBadRequest.WithMessage("policy id required")
 	}
+	if err := h.svc.RequireProjectMember(c.Request().Context(), projectID); err != nil {
+		return err
+	}
 
 	policy, err := h.svc.GetByID(c.Request().Context(), projectID, policyID)
 	if err != nil {
@@ -113,6 +120,14 @@ func (h *Handler) Create(c echo.Context) error {
 	if req.ObjectType == "" {
 		return apperror.ErrBadRequest.WithMessage("objectType is required")
 	}
+	// Validate the project ID format before the membership lookup: a malformed
+	// body projectId must be a 400, not fall through to the org lookup.
+	if _, err := uuid.Parse(req.ProjectID); err != nil {
+		return apperror.ErrBadRequest.WithMessage("Invalid projectId format")
+	}
+	if err := h.svc.RequireProjectMember(c.Request().Context(), req.ProjectID); err != nil {
+		return err
+	}
 
 	policy, err := h.svc.Create(c.Request().Context(), req.ProjectID, &req)
 	if err != nil {
@@ -147,6 +162,9 @@ func (h *Handler) Update(c echo.Context) error {
 	policyID := c.Param("id")
 	if policyID == "" {
 		return apperror.ErrBadRequest.WithMessage("policy id required")
+	}
+	if err := h.svc.RequireProjectMember(c.Request().Context(), projectID); err != nil {
+		return err
 	}
 
 	var req UpdateRequest
@@ -186,6 +204,9 @@ func (h *Handler) Delete(c echo.Context) error {
 	policyID := c.Param("id")
 	if policyID == "" {
 		return apperror.ErrBadRequest.WithMessage("policy id required")
+	}
+	if err := h.svc.RequireProjectMember(c.Request().Context(), projectID); err != nil {
+		return err
 	}
 
 	err := h.svc.Delete(c.Request().Context(), projectID, policyID)

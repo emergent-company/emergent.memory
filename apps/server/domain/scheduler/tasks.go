@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -254,7 +255,11 @@ func (t *StaleJobCleanupTask) Run(ctx context.Context) error {
 	for _, cfg := range tables {
 		count, err := t.cleanupTable(ctx, cfg, staleMinutes)
 		if err != nil {
-			t.log.Warn("failed to clean up stale jobs in table",
+			// A failed sweep is not a soft miss: jobs stuck in
+			// processing/running would accumulate indefinitely. Log at error
+			// level (not warn) so the failure is visible operationally, matching
+			// the mass-reap alert already emitted at error level.
+			t.log.Error("failed to clean up stale jobs in table",
 				slog.String("table", cfg.table),
 				slog.String("error", err.Error()))
 			continue
@@ -313,17 +318,24 @@ func cleanupStaleJobsQuery(cfg jobTableConfig, cutoff time.Time) (string, []any)
 		notNull = "\n\t\t\tAND started_at IS NOT NULL"
 	}
 
-	bookkeeping := ""
+	// Build the SET list as a slice of assignments and join them, so a missing
+	// separator between fragments can never silently corrupt the statement
+	// (issue #893: the bookkeeping fragment was concatenated without a comma,
+	// yielding a 42601 syntax error for every hasCompletedAt table).
+	setClauses := []string{
+		"status = 'failed'",
+		cfg.errorColumn + " = '" + staleJobMessage + "'",
+	}
 	if cfg.hasCompletedAt {
-		bookkeeping = `
-			completed_at = NOW(),
-			updated_at = NOW()`
+		setClauses = append(setClauses,
+			"completed_at = NOW()",
+			"updated_at = NOW()",
+		)
 	}
 
 	query := `
 		UPDATE ` + cfg.table + `
-		SET status = 'failed',
-			` + cfg.errorColumn + ` = '` + staleJobMessage + `'` + bookkeeping + `
+		SET ` + strings.Join(setClauses, ",\n\t\t\t") + `
 		WHERE status IN ('processing', 'running')` + notNull + `
 		AND ` + startedAt + ` < ?`
 	return query, []any{cutoff}

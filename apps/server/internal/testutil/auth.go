@@ -525,7 +525,7 @@ func SeedTestProjectProviderConfig(
 // SetupFullTestProject creates a fully-configured test project in one call:
 //   - organisation (orgID)
 //   - project (projectID) owned by AdminUser
-//   - org + project memberships for AdminUser (admin role)
+//   - org + project memberships for AdminUser (org_admin + project_admin)
 //   - provider credential rows for every API key found in env
 //   - project model config: generative model from env, embedding "google/gemini-embedding-2-preview"
 //
@@ -546,10 +546,10 @@ func SetupFullTestProject(ctx context.Context, db bun.IDB, orgID, projectID stri
 	}, AdminUser.ID); err != nil {
 		return fmt.Errorf("SetupFullTestProject: project: %w", err)
 	}
-	if err := CreateTestOrgMembership(ctx, db, orgID, AdminUser.ID, "admin"); err != nil {
+	if err := CreateTestOrgMembership(ctx, db, orgID, AdminUser.ID, "org_admin"); err != nil {
 		return fmt.Errorf("SetupFullTestProject: org membership: %w", err)
 	}
-	if err := CreateTestProjectMembership(ctx, db, projectID, AdminUser.ID, "admin"); err != nil {
+	if err := CreateTestProjectMembership(ctx, db, projectID, AdminUser.ID, "project_admin"); err != nil {
 		return fmt.Errorf("SetupFullTestProject: project membership: %w", err)
 	}
 

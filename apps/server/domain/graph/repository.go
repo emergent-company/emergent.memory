@@ -1639,6 +1639,11 @@ const graphObjectColumns = `id, project_id, branch_id, canonical_id, supersedes_
 	extraction_job_id, extraction_confidence, needs_review, reviewed_by, reviewed_at,
 	actor_type, actor_id, schema_version`
 
+// vectorOverfetchLimit is the candidate window fetched via the HNSW index so the
+// outer deterministic ORDER BY (distance, id) can break exact ties without
+// defeating the index.
+const vectorOverfetchLimit = 64
+
 // scanGraphObject scans a row from a raw SQL query into a GraphObject.
 // Uses JSONMap and pq.StringArray intermediaries because database/sql's rows.Scan()
 // cannot directly scan JSONB ([]uint8) into map[string]any or PostgreSQL arrays into []string.
@@ -3394,20 +3399,25 @@ func (r *Repository) FindSimilarObjectInBranch(
 	}
 
 	query := fmt.Sprintf(`
-		SELECT %s, (embedding_v2 <=> ?::vector) AS _dist
-		FROM kb.graph_objects
-		WHERE project_id = ? AND type = ? AND %s
-		  AND supersedes_id IS NULL AND deleted_at IS NULL
-		  AND embedding_v2 IS NOT NULL
-		  AND NOT (canonical_id = ANY(%s))
-		  AND (embedding_v2 <=> ?::vector) <= ?
+		SELECT %s, _dist
+		FROM (
+		  SELECT %s, (embedding_v2 <=> ?::vector) AS _dist
+		  FROM kb.graph_objects
+		  WHERE project_id = ? AND type = ? AND %s
+		    AND supersedes_id IS NULL AND deleted_at IS NULL
+		    AND embedding_v2 IS NOT NULL
+		    AND NOT (canonical_id = ANY(%s))
+		    AND (embedding_v2 <=> ?::vector) <= ?
+		  ORDER BY embedding_v2 <=> ?::vector
+		  LIMIT %d
+		) AS ann
 		ORDER BY _dist ASC, id ASC
 		LIMIT 1`,
-		graphObjectColumns, branchCond, excludeStr)
+		graphObjectColumns, graphObjectColumns, branchCond, excludeStr, vectorOverfetchLimit)
 
 	args := []any{vectorStr, projectID, objType}
 	args = append(args, branchArg...)
-	args = append(args, vectorStr, maxDistance)
+	args = append(args, vectorStr, maxDistance, vectorStr)
 
 	type row struct {
 		GraphObject
@@ -3491,20 +3501,27 @@ func (r *Repository) FindSimilarRelationshipInBranch(
 	query := fmt.Sprintf(`
 		SELECT id, project_id, branch_id, canonical_id, supersedes_id, version,
 		       type, src_id, dst_id, label, properties, weight,
-		       change_summary, deleted_at, created_at,
-		       (embedding <=> ?::vector) AS _dist
-		FROM kb.graph_relationships
-		WHERE project_id = ? AND src_id = ? AND dst_id = ? AND type = ? AND %s
-		  AND supersedes_id IS NULL AND deleted_at IS NULL
-		  AND embedding IS NOT NULL
-		  AND NOT (id = ANY(%s))
-		  AND (embedding <=> ?::vector) <= ?
+		       change_summary, deleted_at, created_at, _dist
+		FROM (
+		  SELECT id, project_id, branch_id, canonical_id, supersedes_id, version,
+		         type, src_id, dst_id, label, properties, weight,
+		         change_summary, deleted_at, created_at,
+		         (embedding <=> ?::vector) AS _dist
+		  FROM kb.graph_relationships
+		  WHERE project_id = ? AND src_id = ? AND dst_id = ? AND type = ? AND %s
+		    AND supersedes_id IS NULL AND deleted_at IS NULL
+		    AND embedding IS NOT NULL
+		    AND NOT (id = ANY(%s))
+		    AND (embedding <=> ?::vector) <= ?
+		  ORDER BY embedding <=> ?::vector
+		  LIMIT %d
+		) AS ann
 		ORDER BY _dist ASC, id ASC LIMIT 1`,
-		branchCond, excludeStr)
+		branchCond, excludeStr, vectorOverfetchLimit)
 
 	args := []any{vectorStr, projectID, srcCanonicalID, dstCanonicalID, relType}
 	args = append(args, branchArg...)
-	args = append(args, vectorStr, maxDistance)
+	args = append(args, vectorStr, maxDistance, vectorStr)
 
 	type relRow struct {
 		GraphRelationship

@@ -11,6 +11,11 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// All blueprint endpoints require authentication
 	g := e.Group("/api/blueprints")
 	g.Use(authMiddleware.RequireAuth())
+	// Blueprint CRUD/apply scope is the caller's project (X-Project-ID header,
+	// normalised onto user.ProjectID by RequireAuth). Enforce token binding and
+	// session org-membership against that project (issue #868, the #864 class).
+	g.Use(authMiddleware.RequireProjectTokenScope())
+	g.Use(authMiddleware.RequireProjectMember())
 
 	// Static sub-paths must be registered before /:id so they are not swallowed.
 	g.GET("/name/:name/versions", h.ListVersionsByName)

@@ -1666,6 +1666,80 @@ func FilterToolsForScopes(tools []ToolDefinition, scopes []string) []ToolDefinit
 	return out
 }
 
+// FilterToolsForSuperadmin removes SuperadminOnly tools from the catalog when
+// the caller is not a superadmin_full principal. isSuperadmin must be the
+// resolved platform-admin authority (core.superadmins), not a scope-derived
+// value; callers that cannot resolve it must pass false so the operator tools
+// fail closed. When isSuperadmin is true the catalog is returned unchanged.
+func FilterToolsForSuperadmin(tools []ToolDefinition, isSuperadmin bool) []ToolDefinition {
+	if isSuperadmin {
+		return tools
+	}
+	out := make([]ToolDefinition, 0, len(tools))
+	for _, t := range tools {
+		if t.SuperadminOnly {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// IsSuperadminCaller reports whether the authenticated caller in ctx holds an
+// active superadmin_full grant. It delegates to the single canonical
+// platform-admin boundary (auth.IsSuperadminFull, backed by the core.superadmins
+// query), so a bare admin / admin:all token cannot satisfy it — the grant is
+// resolved from the caller's identity, never from token scopes (issue #948).
+// A resolution failure is returned to the caller so it can fail closed.
+func (s *Service) IsSuperadminCaller(ctx context.Context) (bool, error) {
+	return auth.IsSuperadminFull(ctx, s.db)
+}
+
+// superadminOnlyToolNames is the set of tool names gated on the superadmin_full
+// authority rather than a token scope. It is derived from the same package-level
+// builders (dynamicToolBuilders) that GetToolDefinitions consumes, so it cannot
+// drift from the tools it guards. Enforcement keys off this set — never off a
+// re-mapped ToolDefinition — so the ADK ToolPool's definition re-map (which drops
+// SuperadminOnly/RequiredScope) cannot bypass it (issue #948).
+var superadminOnlyToolNames = func() map[string]bool {
+	names := make(map[string]bool)
+	for _, build := range dynamicToolBuilders {
+		for _, def := range build() {
+			if def.SuperadminOnly {
+				names[def.Name] = true
+			}
+		}
+	}
+	return names
+}()
+
+// IsSuperadminOnlyTool reports whether the named tool is a deployment-wide /
+// org-level operator tool gated on the superadmin_full authority.
+func (s *Service) IsSuperadminOnlyTool(name string) bool {
+	return superadminOnlyToolNames[name]
+}
+
+// sensitiveInProcessAdminTools is the set of admin-scoped tools whose in-process
+// bar is raised to superadmin_full rather than trusted-internal. The `admin`
+// scope these tools declare is a TOKEN-ONLY scope: no project role maps to it
+// (roleToScopes in pkg/auth deliberately excludes admin*), so no trusted session
+// run — member, project_admin, or org_admin — can hold the authority the scope
+// represents. Over HTTP these tools require a token carrying `admin`; in-process
+// there is no token scope, so the identity-based superadmin_full grant is the
+// correct fail-closed bar (issue #1018).
+//
+// The subset is the sensitive six: token minting (privilege escalation),
+// provider config (accepts API keys), and project creation. The read-only
+// provider-models-list is left at the trusted-internal bar.
+var sensitiveInProcessAdminTools = map[string]bool{
+	"token-list":                 true,
+	"token-create":               true,
+	"token-get":                  true,
+	"token-revoke":               true,
+	"provider-configure-project": true,
+	"project-create":             true,
+}
+
 // mcpToolScopeVocabulary is the set of scope values that can gate an MCP tool.
 // It is derived from the tool catalog — the central static scope map plus the
 // package-level builders in dynamicToolBuilders (the same list GetToolDefinitions
@@ -1815,6 +1889,72 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	// tools with the agent's context.
 	if scope := InstanceScopeFromContext(ctx); scope != nil && InstanceDeniesTool(scope, toolName) {
 		return nil, fmt.Errorf("tool not allowed by MCP share instance: %s", toolName)
+	}
+	// Defense in depth: enforce the superadmin_full authority for operator tools
+	// on the in-process dispatch path as well as in the transports. The ADK
+	// ToolPool (agent runs) calls ExecuteTool directly and never passes through a
+	// transport pre-check, so this is the authority boundary that covers it. The
+	// check resolves the caller from ctx (the run's originating principal, not the
+	// agent definition) and fails closed when that principal is unknown or lacks
+	// the grant (issue #948).
+	if s.IsSuperadminOnlyTool(toolName) {
+		ok, err := s.IsSuperadminCaller(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to authorize operator tool %q: %w", toolName, err)
+		}
+		if !ok {
+			return nil, fmt.Errorf("tool %q requires superadmin privileges", toolName)
+		}
+	}
+	// Sensitive admin-scoped tools are gated on superadmin_full in-process, not
+	// trusted-internal. Their `admin` scope is token-only (no project role maps
+	// to it), so a trusted session run can never legitimately hold it; raising the
+	// in-process bar to the identity-based superadmin_full grant aligns the
+	// in-process path with the HTTP surface's refusal of the same call. An HTTP
+	// transport already enforced the tool's `admin` scope before dispatch, so it
+	// is exempt here (issue #1018).
+	if sensitiveInProcessAdminTools[toolName] && !TransportEnforcedFromContext(ctx) {
+		ok, err := s.IsSuperadminCaller(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to authorize sensitive tool %q: %w", toolName, err)
+		}
+		if !ok {
+			return nil, fmt.Errorf("tool %q requires superadmin privileges", toolName)
+		}
+	}
+	// Defense in depth: enforce the per-tool authority boundary on the in-process
+	// dispatch path. The three HTTP transports already enforce AgentOnly (hidden)
+	// and RequiredScope (scope-gated) before dispatch via GetToolByName, but the
+	// ADK ToolPool (agent runs) calls ExecuteTool directly and never passes
+	// through a transport pre-check. This reads the SAME source of truth the HTTP
+	// transports use — GetToolByName(...).AgentOnly / .RequiredScope — so the two
+	// can never drift (issue #994).
+	//
+	// The in-process principal is an agent run, not a token, so token scopes do
+	// not apply directly. TrustedInternal (kb.agent_runs.trusted_internal) is the
+	// in-process trust primitive: true for trusted/internal surfaces (session UI,
+	// scheduler, MCP-triggered agent) and false for external surfaces (webhook,
+	// A2A, agentcompat, public share). Fail-closed: an absent marker resolves to
+	// untrusted. An HTTP transport marks its dispatch TransportEnforced after its
+	// own per-tool check, so that is an equally-authorized origin for the
+	// AgentOnly / RequiredScope gates below.
+	//
+	//   - AgentOnly tools (web-search-*, web-fetch, mcp-server-*, update_mcp_server,
+	//     toggle/sync_mcp_server_tools) are the "callable only by other agents,
+	//     never via external surfaces" class — refused for untrusted runs.
+	//   - admin-scoped tools (token-*, provider-*, project-create) are refused for
+	//     untrusted runs, matching the HTTP RequiredScope:"admin" gate. The most
+	//     sensitive of these are raised further — see sensitiveInProcessAdminTools
+	//     (issue #1018). Trace tools are SuperadminOnly and are gated by the
+	//     superadmin_full check above, not this admin gate.
+	if toolDef := s.GetToolByName(toolName); toolDef != nil &&
+		!TrustedInternalFromContext(ctx) && !TransportEnforcedFromContext(ctx) {
+		if toolDef.AgentOnly {
+			return nil, fmt.Errorf("tool %q is agent-only and not reachable from an untrusted surface", toolName)
+		}
+		if toolDef.RequiredScope == "admin" {
+			return nil, fmt.Errorf("tool %q requires admin authority and is not reachable from an untrusted surface", toolName)
+		}
 	}
 	switch toolName {
 	case "project-get":
@@ -2108,6 +2248,15 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 			for _, sess := range s.relaySvc.ListByProject(projectID) {
 				prefix := sess.InstanceID + "_"
 				if strings.HasPrefix(toolName, prefix) {
+					// Relay tools forward to a connected client device and are the
+					// agent-only class: refuse them from an untrusted (external) run
+					// AND from any HTTP transport. The HTTP transports mark their
+					// dispatch TransportEnforced (not TrustedInternal) after their own
+					// per-tool check, so they never satisfy this trusted-internal gate
+					// — the relay fallback is genuinely-internal only (issues #994, #1017).
+					if !TrustedInternalFromContext(ctx) {
+						return nil, fmt.Errorf("relay tool %q is not reachable from an untrusted surface", toolName)
+					}
 					relayToolName := strings.TrimPrefix(toolName, prefix)
 					result, err := s.relaySvc.CallTool(ctx, projectID, sess.InstanceID, relayToolName, args)
 					if err != nil {

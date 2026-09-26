@@ -8,9 +8,16 @@ import (
 
 // RegisterRoutes registers all graph routes.
 func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
-	// All graph routes require authentication and project context
+	// All graph routes require authentication and project context. The shared
+	// pair runs in canonical order: RequireProjectTokenScope binds an emt_* token
+	// to its project, then RequireProjectMember asserts real org membership for
+	// session/account-token callers (issue #909). These routes are header-scoped
+	// (no :projectId path param), which is exactly the user.ProjectID fallback
+	// RequireProjectMember exists for (#872).
 	g := e.Group("/api/graph")
 	g.Use(authMiddleware.RequireAuth())
+	g.Use(authMiddleware.RequireProjectTokenScope())
+	g.Use(authMiddleware.RequireProjectMember())
 
 	// Object routes
 	objects := g.Group("/objects")

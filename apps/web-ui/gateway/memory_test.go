@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -1574,6 +1575,303 @@ func TestSearchObjectsFTSNoTypeFilter(t *testing.T) {
 	}
 	if len(out) != 0 {
 		t.Errorf("objects = %+v, want empty", out)
+	}
+}
+
+// TestListGraphObjectsPage exercises the cursor-paginated object list: limit,
+// cursor, type and branch_id query params plus the items/next_cursor envelope.
+func TestListGraphObjectsPage(t *testing.T) {
+	var gotPath string
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"items":[
+			{"id":"o1","type":"person","key":"sam-lee"},
+			{"id":"o2","type":"task","key":"call dentist"}
+		],"next_cursor":"nc-1"}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	items, next, err := m.ListGraphObjectsPage(context.Background(), "b1", "person", "cur-0", 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/graph/objects/search" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if gotQuery.Get("limit") != "25" || gotQuery.Get("cursor") != "cur-0" || gotQuery.Get("type") != "person" || gotQuery.Get("branch_id") != "b1" {
+		t.Errorf("query = %v", gotQuery)
+	}
+	if gotQuery.Get("include_total") != "false" {
+		t.Errorf("include_total = %q, want false", gotQuery.Get("include_total"))
+	}
+	if len(items) != 2 || items[0].ID != "o1" || items[1].Key != "call dentist" {
+		t.Errorf("items = %+v", items)
+	}
+	if next != "nc-1" {
+		t.Errorf("next_cursor = %q, want nc-1", next)
+	}
+}
+
+// TestCountObjects exercises GET /api/graph/objects/count with an optional
+// branch_id query param.
+func TestCountObjects(t *testing.T) {
+	var gotPath string
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"count":42}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	count, err := m.CountObjects(context.Background(), "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/graph/objects/count" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if gotQuery.Get("branch_id") != "b1" {
+		t.Errorf("branch_id = %q, want b1", gotQuery.Get("branch_id"))
+	}
+	if count != 42 {
+		t.Errorf("count = %d, want 42", count)
+	}
+}
+
+// TestSearchObjectsFulltext exercises the fulltext search mode: GET
+// /api/graph/objects/fts with q/limit/offset/types/branch_id and the
+// data/score/hasMore envelope.
+func TestSearchObjectsFulltext(t *testing.T) {
+	var gotPath string
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[
+			{"object":{"id":"o1","type":"person","key":"sam-lee"},"score":1.5}
+		],"total":1,"hasMore":true}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	results, hasMore, err := m.SearchObjects(context.Background(), "fulltext", "sam", "person", "b1", 25, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/graph/objects/fts" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if gotQuery.Get("q") != "sam" || gotQuery.Get("limit") != "25" || gotQuery.Get("offset") != "10" || gotQuery.Get("types") != "person" || gotQuery.Get("branch_id") != "b1" {
+		t.Errorf("query = %v", gotQuery)
+	}
+	if len(results) != 1 || results[0].Object.ID != "o1" || results[0].Score != 1.5 {
+		t.Errorf("results = %+v", results)
+	}
+	if !hasMore {
+		t.Error("hasMore = false, want true")
+	}
+}
+
+// TestSearchObjectsHybrid exercises the hybrid search mode: POST
+// /api/graph/search with the JSON body and the same envelope shape.
+func TestSearchObjectsHybrid(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody searchObjectsRequestBody
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[
+			{"object":{"id":"o2","type":"task","key":"call dentist"},"score":0.88}
+		],"total":1,"hasMore":false}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	results, hasMore, err := m.SearchObjects(context.Background(), "hybrid", "dentist", "task", "b1", 25, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/graph/search" || gotMethod != http.MethodPost {
+		t.Errorf("request = %s %s", gotMethod, gotPath)
+	}
+	if gotBody.Query != "dentist" || gotBody.Limit != 25 || gotBody.Offset != 0 {
+		t.Errorf("body = %+v", gotBody)
+	}
+	if len(gotBody.Types) != 1 || gotBody.Types[0] != "task" {
+		t.Errorf("body.types = %v", gotBody.Types)
+	}
+	if gotBody.BranchID != "b1" {
+		t.Errorf("body.branchId = %q, want b1", gotBody.BranchID)
+	}
+	if len(results) != 1 || results[0].Object.ID != "o2" || results[0].Score != 0.88 {
+		t.Errorf("results = %+v", results)
+	}
+	if hasMore {
+		t.Error("hasMore = true, want false")
+	}
+}
+
+// TestSearchObjectsUnified exercises POST /api/search/unified: the resultTypes
+// graph flag, types/branch_id only when set, and normalization of graph results
+// (canonical_id fallback, fields/labels mapping, score floor, non-graph skip).
+func TestSearchObjectsUnified(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[
+			{"type":"graph","id":"oid1","object_id":"oid1","canonical_id":"c1","object_type":"person","key":"sam-lee","score":0.88,"labels":["contact"],"fields":{"first_name":"Sam"}},
+			{"type":"text","id":"chunk1","snippet":"a chunk","score":0.9},
+			{"type":"graph","id":"oid2","object_id":"oid2","object_type":"task","key":"call dentist","score":0.05},
+			{"type":"graph","id":"oid3","object_id":"oid3","canonical_id":"c3","object_type":"note","key":"note-key","score":0.5,"fields":{"content":"hello"}}
+		],"metadata":{}}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	results, err := m.SearchObjectsUnified(context.Background(), "sam", "person,note", "b1", 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/search/unified" || gotMethod != http.MethodPost {
+		t.Errorf("request = %s %s, want POST /api/search/unified", gotMethod, gotPath)
+	}
+	if gotBody["resultTypes"] != "graph" {
+		t.Errorf("resultTypes = %v, want graph", gotBody["resultTypes"])
+	}
+	if gotBody["query"] != "sam" {
+		t.Errorf("query = %v, want sam", gotBody["query"])
+	}
+	types, _ := gotBody["types"].([]any)
+	if len(types) != 2 || types[0] != "person" || types[1] != "note" {
+		t.Errorf("types = %v, want [person note]", gotBody["types"])
+	}
+	if gotBody["branch_id"] != "b1" {
+		t.Errorf("branch_id = %v, want b1", gotBody["branch_id"])
+	}
+	// text chunk skipped; oid2 (0.05) is below minSearchScore and dropped.
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2: %+v", len(results), results)
+	}
+	if results[0].Object.ID != "c1" || results[0].Object.Type != "person" || results[0].Object.Key != "sam-lee" {
+		t.Errorf("result0 = %+v", results[0])
+	}
+	if results[0].Score != 0.88 {
+		t.Errorf("result0 score = %v, want 0.88", results[0].Score)
+	}
+	if len(results[0].Object.Labels) != 1 || results[0].Object.Labels[0] != "contact" {
+		t.Errorf("result0 labels = %v", results[0].Object.Labels)
+	}
+	if results[1].Object.ID != "c3" || results[1].Object.Properties["content"] != "hello" {
+		t.Errorf("result1 = %+v", results[1])
+	}
+}
+
+// TestQueryKnowledge exercises POST /api/projects/:projectId/query (SSE): the
+// request shape, the Accept header, token concatenation, and meta conversationId
+// capture.
+func TestQueryKnowledge(t *testing.T) {
+	var gotPath, gotMethod, gotAccept string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		gotAccept = r.Header.Get("Accept")
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"type\":\"meta\",\"conversationId\":\"conv-1\"}\n\n"+
+			"data: {\"type\":\"token\",\"token\":\"Hello\"}\n\n"+
+			"data: {\"type\":\"token\",\"token\":\" world\"}\n\n"+
+			"data: {\"type\":\"done\"}\n\n")
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	answer, sessionID, err := m.QueryKnowledge(context.Background(), "who is sam?", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/projects/proj/query" || gotMethod != http.MethodPost {
+		t.Errorf("request = %s %s, want POST /api/projects/proj/query", gotMethod, gotPath)
+	}
+	if gotAccept != "text/event-stream" {
+		t.Errorf("accept = %q, want text/event-stream", gotAccept)
+	}
+	if gotBody["message"] != "who is sam?" {
+		t.Errorf("message = %v, want \"who is sam?\"", gotBody["message"])
+	}
+	if answer != "Hello world" {
+		t.Errorf("answer = %q, want \"Hello world\"", answer)
+	}
+	if sessionID != "conv-1" {
+		t.Errorf("sessionID = %q, want conv-1", sessionID)
+	}
+}
+
+// TestQueryKnowledgeBranchAndError covers the optional branch body field and the
+// error event short-circuit.
+func TestQueryKnowledgeBranchAndError(t *testing.T) {
+	var gotBody map[string]any
+	var sentError bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		if sentError {
+			_, _ = io.WriteString(w, "data: {\"type\":\"error\",\"error\":\"boom\"}\n\n")
+			return
+		}
+		sentError = true
+		_, _ = io.WriteString(w, "data: {\"type\":\"token\",\"token\":\"ok\"}\n\n"+
+			"data: {\"type\":\"done\"}\n\n")
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	if _, _, err := m.QueryKnowledge(context.Background(), "q", "b1"); err != nil {
+		t.Fatal(err)
+	}
+	if gotBody["branch"] != "b1" {
+		t.Errorf("branch = %v, want b1", gotBody["branch"])
+	}
+
+	if _, _, err := m.QueryKnowledge(context.Background(), "q", ""); err == nil {
+		t.Fatal("want error event to surface, got nil")
+	}
+}
+
+// TestQueryKnowledgePrematureEOF feeds a stream with token deltas but no
+// terminal done/[DONE] event and asserts QueryKnowledge surfaces an error
+// instead of returning the partial answer.
+func TestQueryKnowledgePrematureEOF(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"type\":\"token\",\"token\":\"Hel\"}\n\n"+
+			"data: {\"type\":\"token\",\"token\":\"lo\"}\n\n")
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	answer, _, err := m.QueryKnowledge(context.Background(), "q", "")
+	if err == nil {
+		t.Fatalf("want premature-EOF error, got nil (answer=%q)", answer)
+	}
+	if answer != "" {
+		t.Errorf("answer = %q, want empty on premature EOF", answer)
 	}
 }
 

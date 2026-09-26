@@ -139,6 +139,14 @@ func (h *MCPToolHandler) runAgentTurn(ctx context.Context, projectID, agentID, s
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	// Inherit the caller's trust. call_agent is only reachable through the
+	// per-agent MCP endpoint (an admin-minted mcp:agent-call key), i.e. a direct
+	// authenticated MCP client with no parent run — an external-facing surface,
+	// not the session UI — so this resolves to untrusted (false). The run keeps
+	// that marker unchanged, which is what stops the called agent from reaching
+	// internal-visible agents through its own coordination tools.
+	trusted := inheritedTrust(ctx, repo.FindRunByID)
+
 	result, err := runner.Execute(runCtx, ExecuteRequest{
 		Agent:           agent,
 		AgentDefinition: def,
@@ -148,6 +156,7 @@ func (h *MCPToolHandler) runAgentTurn(ctx context.Context, projectID, agentID, s
 		SessionID:       sessionRef,
 		MaxSteps:        &maxSteps,
 		Timeout:         &timeout,
+		TrustedInternal: trusted, // inherit the caller's trust; never force true
 	})
 	if result != nil && result.Cleanup != nil {
 		defer result.Cleanup()

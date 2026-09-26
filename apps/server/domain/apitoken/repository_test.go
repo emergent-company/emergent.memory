@@ -89,7 +89,9 @@ func seedProjectAdmin(t *testing.T, db bun.IDB, userID string) {
 
 // CanGrantAdminAll must require the superadmin_full role: a superadmin_readonly
 // grant is a non-minting platform-observation role and must not be able to mint
-// an admin:all token (issue #810).
+// an admin:all token (issue #810), and an org_admin membership no longer
+// qualifies — org-scoped authority must not buy platform-scoped power
+// (issue #949).
 func TestRepository_CanGrantAdminAll_RequiresSuperadminFull(t *testing.T) {
 	db := connectTestDB(t)
 	repo := NewRepository(db, slog.Default())
@@ -131,13 +133,13 @@ func TestRepository_CanGrantAdminAll_RequiresSuperadminFull(t *testing.T) {
 		require.False(t, allowed, "unprivileged user must not mint admin:all")
 	})
 
-	t.Run("org_admin can mint admin:all", func(t *testing.T) {
+	t.Run("org_admin cannot mint admin:all", func(t *testing.T) {
 		userID := uuid.NewString()
 		seedOrgAdmin(t, db, userID)
 
 		allowed, err := repo.CanGrantAdminAll(ctx, userID)
 		require.NoError(t, err)
-		require.True(t, allowed, "org_admin must mint admin:all (any-org semantics)")
+		require.False(t, allowed, "org_admin must not mint admin:all (org-scoped authority does not buy platform power)")
 	})
 
 	t.Run("bare project_admin cannot mint admin:all", func(t *testing.T) {

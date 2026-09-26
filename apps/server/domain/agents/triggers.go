@@ -422,6 +422,7 @@ func (ts *TriggerService) executeTriggeredAgent(ctx context.Context, agentID str
 		OrgID:           orgID,
 		UserMessage:     userMessage,
 		MaxSteps:        maxSteps,
+		TrustedInternal: true, // scheduled runs are a trusted surface (full internal coordination)
 	})
 	if result != nil && result.Cleanup != nil {
 		defer result.Cleanup()
