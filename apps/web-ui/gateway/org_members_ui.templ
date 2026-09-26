@@ -212,7 +212,7 @@ templ MembersPage(data membersPageData) {
 								@memberRow(m, canRemoveMember(data.Members, m))
 							}
 							for _, inv := range data.Pending {
-								@memberInviteRow(inv)
+								@memberInviteRow(inv, data.CanRevokeInvite)
 							}
 						}
 					}
@@ -281,8 +281,10 @@ templ memberAvatar(m ProjectMemberDto) {
 // memberInviteRow is one still-pending invitation to the active project,
 // rendered in the members table as a not-yet-confirmed member: a muted mail
 // tile, the invited email with the subdued "Not responded" badge, the invited
-// role, when it was sent, and a revoke affordance.
-templ memberInviteRow(inv SentInviteDto) {
+// role, when it was sent, and a revoke affordance. Revoking is an org-tier
+// write (org_admin of the invite's org — #1015), so the revoke button renders
+// only when canRevoke (the caller is org_admin of the active project's org).
+templ memberInviteRow(inv SentInviteDto, canRevoke bool) {
 	@table.TableRow(inv.ID, true, nil) {
 		@table.TableCell("", nil) {
 			<div class="flex items-center gap-3">
@@ -307,20 +309,22 @@ templ memberInviteRow(inv SentInviteDto) {
 			<span class="text-base-content/50 text-xs whitespace-nowrap">{ relTime(inv.CreatedAt) }</span>
 		}
 		@table.TableCell("text-right", nil) {
-			<div class="flex justify-end">
-				<form method="post" action={ templ.URL("/invites/" + url.PathEscape(inv.ID) + "/revoke") }>
-					@ui.Button(ui.ButtonProps{
-						Type:       ui.ButtonTypeSubmit,
-						Variant:    ui.ButtonGhost,
-						Size:       ui.ButtonSM,
-						Shape:      ui.ButtonShapeSquare,
-						Icon:       "lucide--trash-2",
-						ExtraClass: "text-error hover:text-error",
-						AriaLabel:  "Revoke invite for " + inv.Email,
-						Attrs:      templ.Attributes{"title": "Revoke invite"},
-					})
-				</form>
-			</div>
+			if canRevoke {
+				<div class="flex justify-end">
+					<form method="post" action={ templ.URL("/invites/" + url.PathEscape(inv.ID) + "/revoke") }>
+						@ui.Button(ui.ButtonProps{
+							Type:       ui.ButtonTypeSubmit,
+							Variant:    ui.ButtonGhost,
+							Size:       ui.ButtonSM,
+							Shape:      ui.ButtonShapeSquare,
+							Icon:       "lucide--trash-2",
+							ExtraClass: "text-error hover:text-error",
+							AriaLabel:  "Revoke invite for " + inv.Email,
+							Attrs:      templ.Attributes{"title": "Revoke invite"},
+						})
+					</form>
+				</div>
+			}
 		}
 	}
 }

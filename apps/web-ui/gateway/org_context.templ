@@ -247,27 +247,37 @@ templ OrgLandingPage(data orgPageData) {
 			</script>
 			{{ pendingCount := projectPendingCount(data.Projects) }}
 			{{ deletableCount := projectDeletableCount(data.Projects) }}
-			if len(data.Projects) > 0 {
+			if len(data.Projects) > 0 && data.IsOrgAdmin {
 				@projectDeleteDialog(data.Org.ID)
 				@projectRestoreForm(data.Org.ID)
 			}
 			if len(data.Projects) == 0 {
-				@ui.EmptyState(ui.EmptyStateProps{
-					Icon:        "lucide--folder",
-					Title:       "No projects yet",
-					Description: "Create the first project in this organization.",
-					Bordered:    true,
-					Class:       "py-12",
-				}) {
-					@ui.Button(ui.ButtonProps{
-						Type:    ui.ButtonTypeButton,
-						Variant: ui.ButtonPrimary,
-						Size:    ui.ButtonSM,
-						Icon:    "lucide--plus",
-						Attrs:   templ.Attributes{"onclick": "openNewProjectModal()"},
+				if data.IsOrgAdmin {
+					@ui.EmptyState(ui.EmptyStateProps{
+						Icon:        "lucide--folder",
+						Title:       "No projects yet",
+						Description: "Create the first project in this organization.",
+						Bordered:    true,
+						Class:       "py-12",
 					}) {
-						Create project
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeButton,
+							Variant: ui.ButtonPrimary,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--plus",
+							Attrs:   templ.Attributes{"onclick": "openNewProjectModal()"},
+						}) {
+							Create project
+						}
 					}
+				} else {
+					@ui.EmptyState(ui.EmptyStateProps{
+						Icon:        "lucide--folder",
+						Title:       "No projects yet",
+						Description: "Projects appear here once an organization admin creates them.",
+						Bordered:    true,
+						Class:       "py-12",
+					})
 				}
 			} else {
 				if pendingCount > 0 {
@@ -275,216 +285,245 @@ templ OrgLandingPage(data orgPageData) {
 				}
 				@ui.Section("Projects", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-flush"}) {
 					@components.TableCard(nil) {
-						<form method="post" action="/projects/delete" x-data="{ count: 0 }">
-							<input type="hidden" name="orgId" value={ data.Org.ID }/>
-							<div class="flex min-h-11 items-center gap-3 border-b border-base-200 px-4">
-								if deletableCount > 0 {
-									<div x-show="count > 0" class="flex items-center">
-										@ui.Button(ui.ButtonProps{
-											Type:    ui.ButtonTypeSubmit,
-											Variant: ui.ButtonError,
-											Size:    ui.ButtonSM,
-											Attrs: templ.Attributes{
-												"data-project-delete-busy": "true",
-												"onclick":                  "openBulkProjectDeleteDialog(this); return false;",
-											},
-										}) {
-											<span data-busy-idle class="inline-flex items-center gap-2">
-												@ui.IconSpan("lucide--trash-2", "size-4")
-												<span>Delete <span x-text="count"></span> selected</span>
-											</span>
-											<span data-busy-active hidden class="inline-flex items-center gap-2">
-												<span class="loading loading-spinner loading-xs"></span>
-												Scheduling deletion…
-											</span>
-										}
-									</div>
-									<span x-show="count == 0" class="text-base-content/50 ml-auto text-xs">Select projects to delete.</span>
-								} else {
-									<span class="text-base-content/50 text-xs">Every project is scheduled for deletion.</span>
-								}
-							</div>
-							@table.TableWithProps(table.TableProps{Bordered: false}) {
-								@table.TableHead() {
-									@table.TableHeadRow() {
-										<th class="w-10 text-xs font-semibold text-base-content/60 uppercase">
-											if deletableCount > 0 {
-												<input
-													type="checkbox"
-													class="checkbox checkbox-sm"
-													aria-label="Select all projects"
-													@change="($el.form.querySelectorAll('input[name=projectId]').forEach(cb => cb.checked = $el.checked), count = $el.checked ? $el.form.querySelectorAll('input[name=projectId]').length : 0)"
-												/>
-											} else {
-												<span class="sr-only">No projects can be selected</span>
-											}
-										</th>
-										@table.TableHeadCell("Project")
-										<th class="text-xs font-semibold text-base-content/60 uppercase text-right"></th>
-									}
-								}
-								@table.TableBody() {
-									for _, p := range data.Projects {
-										// Non-pending rows are whole-row clickable:
-										// data-activate-url lets the page script POST
-										// /projects/activate from a click anywhere that is
-										// not one of the row's own controls. Pending rows
-										// carry no target and no pointer affordance — they
-										// cannot be opened.
-										<tr
-											id={ p.ID }
-											if !p.PendingDeletion() {
-												class="cursor-pointer transition-colors hover:bg-base-200"
-												data-activate-url={ templ.URL("/projects/activate?projectId=" + p.ID) }
-											}
-										>
-											@table.TableCell("w-10", nil) {
-												if p.PendingDeletion() {
-													// Pending projects are never selectable for
-													// deletion, so they carry no named
-													// checkbox — the select-all query and the
-													// bulk count never see them.
-													<input
-														type="checkbox"
-														class="checkbox checkbox-sm"
-														disabled
-														title="Scheduled for deletion"
-														aria-label={ p.Name + " is scheduled for deletion and cannot be selected" }
-													/>
-												} else {
-													<input
-														type="checkbox"
-														name="projectId"
-														value={ p.ID }
-														data-project-name={ p.Name }
-														class="checkbox checkbox-sm"
-														aria-label={ "Select " + p.Name }
-														@change="count += $el.checked ? 1 : -1"
-													/>
-												}
-											}
-											@table.TableCell("", nil) {
-												<div class="min-w-0">
-													<div class="flex flex-wrap items-center gap-2">
-														if p.PendingDeletion() {
-															<span class="truncate text-sm font-medium">{ p.Name }</span>
-														} else {
-															<button
-																type="button"
-																class="truncate text-left text-sm font-medium hover:text-primary hover:underline"
-																title={ "Open " + p.Name }
-																hx-post={ templ.URL("/projects/activate?projectId=" + p.ID) }
-															>{ p.Name }</button>
-														}
-														if p.PendingDeletion() {
-															@ui.Badge(ui.BadgeProps{
-																Label:   "Scheduled for deletion",
-																Variant: ui.BadgeWarning,
-																Size:    ui.BadgeSizeXS,
-																Icon:    "lucide--clock",
-															})
-														}
-													</div>
-													if p.PendingDeletion() {
-														{{ when := projectDeletionScheduledLabel(p) }}
-														<p class="text-base-content/50 mt-0.5 text-xs" title="This project will be permanently removed after the scheduled time. You can cancel the deletion until then.">
-															if when != "" {
-																Permanently removed after { when } — you can still cancel.
-															} else {
-																Permanently removed soon — you can still cancel.
-															}
-														</p>
-													}
-												</div>
-											}
-											@table.TableCell("text-right", nil) {
-												@ui.Popover(ui.PopoverRootProps{}) {
-													@ui.PopoverTrigger(ui.PopoverTriggerProps{
-														Class: "btn btn-ghost btn-sm btn-square",
-														Attrs: templ.Attributes{
-															"aria-haspopup": "menu",
-															"aria-expanded": "false",
-															"aria-label":    "Actions for " + p.Name,
-														},
-													}) {
-														@ui.IconSpan("lucide--ellipsis-vertical", "size-5")
-													}
-													@ui.PopoverContent(ui.PopoverContentProps{
-														Placement: ui.PopoverBottomEnd,
-														Offset:    4,
-														Exclusive: true,
-														Class:     "w-44",
-														Attrs:     templ.Attributes{"role": "menu"},
-													}) {
-														<ul class="menu menu-sm p-1">
-															if p.PendingDeletion() {
-																// A pending project cannot be opened or
-																// transferred — it is on its way out. The
-																// only meaningful action is to cancel the
-																// deletion before the purge runs.
-																<li>
-																	<button
-																		type="button"
-																		class="flex items-center gap-2 text-sm"
-																		data-delete-project-id={ p.ID }
-																		data-delete-project-name={ p.Name }
-																		onclick="cancelProjectDeletion(this)"
-																	>
-																		<span data-busy-idle class="inline-flex items-center gap-2">
-																			<span class="iconify size-4 lucide--undo-2"></span>
-																			Cancel deletion
-																		</span>
-																		<span data-busy-active hidden class="inline-flex items-center gap-2">
-																			<span class="loading loading-spinner loading-xs"></span>
-																			Cancelling…
-																		</span>
-																	</button>
-																</li>
-															} else {
-																<li>
-																	<button type="button" class="flex items-center gap-2 text-sm" hx-post={ templ.URL("/projects/activate?projectId=" + p.ID) }>
-																		<span class="iconify size-4 lucide--folder-open"></span>
-																		Open
-																	</button>
-																</li>
-																if data.CanTransfer {
-																	<li>
-																		<button
-																			type="button"
-																			class="flex items-center gap-2 text-sm"
-																			data-project-id={ p.ID }
-																			data-project-name={ p.Name }
-																			onclick="openTransferProjectDialog(this)"
-																		>
-																			<span class="iconify size-4 lucide--arrow-right-left"></span>
-																			Transfer
-																		</button>
-																	</li>
-																}
-																<li>
-																	<button
-																		type="button"
-																		class="flex items-center gap-2 text-sm text-error"
-																		data-delete-project-id={ p.ID }
-																		data-delete-project-name={ p.Name }
-																		onclick="openProjectDeleteDialog(this)"
-																	>
-																		<span class="iconify size-4 lucide--trash-2"></span>
-																		Delete
-																	</button>
-																</li>
-															}
-														</ul>
-													}
-												}
-											}
-										</tr>
-									}
-								}
-							}
-						</form>
+						if data.IsOrgAdmin {
+							<form method="post" action="/projects/delete" x-data="{ count: 0 }">
+								<input type="hidden" name="orgId" value={ data.Org.ID }/>
+								@orgProjectsToolbar(deletableCount)
+								@orgProjectsTable(data.Projects, true, data.CanTransfer)
+							</form>
+						} else {
+							@orgProjectsTable(data.Projects, false, false)
+						}
 					}
 				}
+			}
+		}
+	}
+}
+
+// orgProjectsToolbar is the org-landing bulk-delete toolbar (only rendered for
+// org_admin — see OrgLandingPage). It holds the "Delete N selected" submit and
+// the select hint, driven by the Alpine count on the surrounding form.
+templ orgProjectsToolbar(deletableCount int) {
+	<div class="flex min-h-11 items-center gap-3 border-b border-base-200 px-4">
+		if deletableCount > 0 {
+			<div x-show="count > 0" class="flex items-center">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonError,
+					Size:    ui.ButtonSM,
+					Attrs: templ.Attributes{
+						"data-project-delete-busy": "true",
+						"onclick":                  "openBulkProjectDeleteDialog(this); return false;",
+					},
+				}) {
+					<span data-busy-idle class="inline-flex items-center gap-2">
+						@ui.IconSpan("lucide--trash-2", "size-4")
+						<span>Delete <span x-text="count"></span> selected</span>
+					</span>
+					<span data-busy-active hidden class="inline-flex items-center gap-2">
+						<span class="loading loading-spinner loading-xs"></span>
+						Scheduling deletion…
+					</span>
+				}
+			</div>
+			<span x-show="count == 0" class="text-base-content/50 ml-auto text-xs">Select projects to delete.</span>
+		} else {
+			<span class="text-base-content/50 text-xs">Every project is scheduled for deletion.</span>
+		}
+	</div>
+}
+
+// orgProjectsTable is the org-landing projects table. isAdmin gates the
+// select-checkbox column, the bulk toolbar's select-all cell, and the per-row
+// actions menu (Open / Transfer / Delete / Cancel deletion); canTransfer gates
+// the Transfer row action specifically. A plain member sees a read-only,
+// single-column table whose rows are still openable.
+templ orgProjectsTable(projects []ProjectRef, isAdmin, canTransfer bool) {
+	{{ deletableCount := projectDeletableCount(projects) }}
+	@table.TableWithProps(table.TableProps{Bordered: false}) {
+		@table.TableHead() {
+			@table.TableHeadRow() {
+				if isAdmin {
+					<th class="w-10 text-xs font-semibold text-base-content/60 uppercase">
+						if deletableCount > 0 {
+							<input
+								type="checkbox"
+								class="checkbox checkbox-sm"
+								aria-label="Select all projects"
+								@change="($el.form.querySelectorAll('input[name=projectId]').forEach(cb => cb.checked = $el.checked), count = $el.checked ? $el.form.querySelectorAll('input[name=projectId]').length : 0)"
+							/>
+						} else {
+							<span class="sr-only">No projects can be selected</span>
+						}
+					</th>
+				}
+				@table.TableHeadCell("Project")
+				if isAdmin {
+					<th class="text-xs font-semibold text-base-content/60 uppercase text-right"></th>
+				}
+			}
+		}
+		@table.TableBody() {
+			for _, p := range projects {
+				// Non-pending rows are whole-row clickable:
+				// data-activate-url lets the page script POST
+				// /projects/activate from a click anywhere that is
+				// not one of the row's own controls. Pending rows
+				// carry no target and no pointer affordance — they
+				// cannot be opened.
+				<tr
+					id={ p.ID }
+					if !p.PendingDeletion() {
+						class="cursor-pointer transition-colors hover:bg-base-200"
+						data-activate-url={ templ.URL("/projects/activate?projectId=" + p.ID) }
+					}
+				>
+					if isAdmin {
+						@table.TableCell("w-10", nil) {
+							if p.PendingDeletion() {
+								// Pending projects are never selectable for
+								// deletion, so they carry no named checkbox —
+								// the select-all query and the bulk count never
+								// see them.
+								<input
+									type="checkbox"
+									class="checkbox checkbox-sm"
+									disabled
+									title="Scheduled for deletion"
+									aria-label={ p.Name + " is scheduled for deletion and cannot be selected" }
+								/>
+							} else {
+								<input
+									type="checkbox"
+									name="projectId"
+									value={ p.ID }
+									data-project-name={ p.Name }
+									class="checkbox checkbox-sm"
+									aria-label={ "Select " + p.Name }
+									@change="count += $el.checked ? 1 : -1"
+								/>
+							}
+						}
+					}
+					@table.TableCell("", nil) {
+						<div class="min-w-0">
+							<div class="flex flex-wrap items-center gap-2">
+								if p.PendingDeletion() {
+									<span class="truncate text-sm font-medium">{ p.Name }</span>
+								} else {
+									<button
+										type="button"
+										class="truncate text-left text-sm font-medium hover:text-primary hover:underline"
+										title={ "Open " + p.Name }
+										hx-post={ templ.URL("/projects/activate?projectId=" + p.ID) }
+									>{ p.Name }</button>
+								}
+								if p.PendingDeletion() {
+									@ui.Badge(ui.BadgeProps{
+										Label:   "Scheduled for deletion",
+										Variant: ui.BadgeWarning,
+										Size:    ui.BadgeSizeXS,
+										Icon:    "lucide--clock",
+									})
+								}
+							</div>
+							if p.PendingDeletion() {
+								{{ when := projectDeletionScheduledLabel(p) }}
+								<p class="text-base-content/50 mt-0.5 text-xs" title="This project will be permanently removed after the scheduled time. You can cancel the deletion until then.">
+									if when != "" {
+										Permanently removed after { when } — you can still cancel.
+									} else {
+										Permanently removed soon — you can still cancel.
+									}
+								</p>
+							}
+						</div>
+					}
+					if isAdmin {
+						@table.TableCell("text-right", nil) {
+							@ui.Popover(ui.PopoverRootProps{}) {
+								@ui.PopoverTrigger(ui.PopoverTriggerProps{
+									Class: "btn btn-ghost btn-sm btn-square",
+									Attrs: templ.Attributes{
+										"aria-haspopup": "menu",
+										"aria-expanded": "false",
+										"aria-label":    "Actions for " + p.Name,
+									},
+								}) {
+									@ui.IconSpan("lucide--ellipsis-vertical", "size-5")
+								}
+								@ui.PopoverContent(ui.PopoverContentProps{
+									Placement: ui.PopoverBottomEnd,
+									Offset:    4,
+									Exclusive: true,
+									Class:     "w-44",
+									Attrs:     templ.Attributes{"role": "menu"},
+								}) {
+									<ul class="menu menu-sm p-1">
+										if p.PendingDeletion() {
+											// A pending project cannot be opened or
+											// transferred — it is on its way out. The
+											// only meaningful action is to cancel the
+											// deletion before the purge runs.
+											<li>
+												<button
+													type="button"
+													class="flex items-center gap-2 text-sm"
+													data-delete-project-id={ p.ID }
+													data-delete-project-name={ p.Name }
+													onclick="cancelProjectDeletion(this)"
+												>
+													<span data-busy-idle class="inline-flex items-center gap-2">
+														<span class="iconify size-4 lucide--undo-2"></span>
+														Cancel deletion
+													</span>
+													<span data-busy-active hidden class="inline-flex items-center gap-2">
+														<span class="loading loading-spinner loading-xs"></span>
+														Cancelling…
+													</span>
+												</button>
+											</li>
+										} else {
+											<li>
+												<button type="button" class="flex items-center gap-2 text-sm" hx-post={ templ.URL("/projects/activate?projectId=" + p.ID) }>
+													<span class="iconify size-4 lucide--folder-open"></span>
+													Open
+												</button>
+											</li>
+											if canTransfer {
+												<li>
+													<button
+														type="button"
+														class="flex items-center gap-2 text-sm"
+														data-project-id={ p.ID }
+														data-project-name={ p.Name }
+														onclick="openTransferProjectDialog(this)"
+													>
+														<span class="iconify size-4 lucide--arrow-right-left"></span>
+														Transfer
+													</button>
+												</li>
+											}
+											<li>
+												<button
+													type="button"
+													class="flex items-center gap-2 text-sm text-error"
+													data-delete-project-id={ p.ID }
+													data-delete-project-name={ p.Name }
+													onclick="openProjectDeleteDialog(this)"
+												>
+													<span class="iconify size-4 lucide--trash-2"></span>
+													Delete
+												</button>
+											</li>
+										}
+									</ul>
+								}
+							}
+						}
+					}
+				</tr>
 			}
 		}
 	}
@@ -707,13 +746,21 @@ templ OrgInvitePage(data orgInvitePageData) {
 }
 
 // orgSettingsSubNav is the vertical sub-navigation rail for the org Settings
-// hub (Tools / Danger zone), mirroring settingsSubNav. It stacks horizontally
-// on small screens and becomes a sticky left rail on desktop.
-templ orgSettingsSubNav(orgID string, active string) {
+// hub (General / Tools / Danger zone), mirroring settingsSubNav. It stacks
+// horizontally on small screens and becomes a sticky left rail on desktop.
+// isAdmin gates the General (rename) and Danger zone (delete org) sections —
+// both are org_admin-only, so their entries are hidden for members rather than
+// landing them on a page they cannot use. Tools stays visible: tool-settings
+// read remains on membership.
+templ orgSettingsSubNav(orgID string, active string, isAdmin bool) {
 	@components.SubNav("Organization settings sections") {
-		@components.SubNavItem("/orgs/"+url.PathEscape(orgID)+"/settings/general", active == "general", "lucide--building-2", "General")
+		if isAdmin {
+			@components.SubNavItem("/orgs/"+url.PathEscape(orgID)+"/settings/general", active == "general", "lucide--building-2", "General")
+		}
 		@components.SubNavItem("/orgs/"+url.PathEscape(orgID)+"/settings", active == "tools", "lucide--sliders-horizontal", "Tools")
-		@components.SubNavItem("/orgs/"+url.PathEscape(orgID)+"/settings/danger-zone", active == "danger-zone", "lucide--shield-alert", "Danger zone")
+		if isAdmin {
+			@components.SubNavItem("/orgs/"+url.PathEscape(orgID)+"/settings/danger-zone", active == "danger-zone", "lucide--shield-alert", "Danger zone")
+		}
 	}
 }
 
@@ -728,7 +775,7 @@ templ OrgSettingsPage(data orgSettingsPageData) {
 			@pageError("Settings unavailable", data.LoadErr)
 		} else {
 			@pageHeader("Organization", "Settings", "Organization-level tool overrides for "+data.Org.Name+".") {}
-			@layout.Rail(orgSettingsSubNav(data.Org.ID, "tools"), nil) {
+			@layout.Rail(orgSettingsSubNav(data.Org.ID, "tools", data.IsOrgAdmin), nil) {
 			if len(data.Settings) == 0 {
 				@ui.EmptyState(ui.EmptyStateProps{
 					Icon:        "lucide--sliders-horizontal",
@@ -741,7 +788,7 @@ templ OrgSettingsPage(data orgSettingsPageData) {
 						@components.TableCard(nil) {
 							<div class="divide-y divide-base-200">
 								for _, s := range data.Settings {
-									@orgToolSettingRow(data.Org, s)
+									@orgToolSettingRow(data.Org, s, data.IsOrgAdmin)
 								}
 							</div>
 						}
@@ -765,23 +812,27 @@ templ OrgSettingsGeneralPage(data orgSettingsGeneralPageData) {
 			@pageError("Settings unavailable", data.LoadErr)
 		} else {
 			@pageHeader("Organization", "Settings", "Organization-level settings for "+data.Org.Name+".") {}
-			@layout.Rail(orgSettingsSubNav(data.Org.ID, "general"), nil) {
+			@layout.Rail(orgSettingsSubNav(data.Org.ID, "general", data.IsOrgAdmin), nil) {
 				@ui.Section("General", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-comfortable"}) {
-					<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(data.Org.ID) + "/rename") } hx-boost="false" class="flex max-w-md flex-col gap-4">
-						@form.FormControl("org-name", "Organization name", form.LabelAbove, "Renaming updates the organization everywhere it appears.", "", nil) {
-							<input id="org-name" name="name" type="text" required maxlength="120" value={ data.Org.Name } class="input w-full"/>
-						}
-						@form.FormActions("", "") {
-							@ui.Button(ui.ButtonProps{
-								Type:    ui.ButtonTypeSubmit,
-								Variant: ui.ButtonPrimary,
-								Size:    ui.ButtonSM,
-								Icon:    "lucide--check",
-							}) {
-								Save name
+					if data.IsOrgAdmin {
+						<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(data.Org.ID) + "/rename") } hx-boost="false" class="flex max-w-md flex-col gap-4">
+							@form.FormControl("org-name", "Organization name", form.LabelAbove, "Renaming updates the organization everywhere it appears.", "", nil) {
+								<input id="org-name" name="name" type="text" required maxlength="120" value={ data.Org.Name } class="input w-full"/>
 							}
-						}
-					</form>
+							@form.FormActions("", "") {
+								@ui.Button(ui.ButtonProps{
+									Type:    ui.ButtonTypeSubmit,
+									Variant: ui.ButtonPrimary,
+									Size:    ui.ButtonSM,
+									Icon:    "lucide--check",
+								}) {
+									Save name
+								}
+							}
+						</form>
+					} else {
+						<p class="text-base-content/50 text-sm">Only organization admins can rename this organization.</p>
+					}
 				}
 			}
 		}
@@ -789,8 +840,10 @@ templ OrgSettingsGeneralPage(data orgSettingsGeneralPageData) {
 }
 
 // orgToolSettingRow is one org tool-setting override: name + enabled state,
-// with enable/disable and delete forms.
-templ orgToolSettingRow(org *Org, s OrgToolSettingDto) {
+// with enable/disable and delete forms. The write controls render only when
+// isAdmin (tool-settings write is org_admin — #1015); the name + state read
+// stays visible to members.
+templ orgToolSettingRow(org *Org, s OrgToolSettingDto, isAdmin bool) {
 	<div class="flex items-center gap-3 px-5 py-3">
 		<div class="min-w-0 grow">
 			<p class="truncate text-sm font-medium">{ s.ToolName }</p>
@@ -800,32 +853,34 @@ templ orgToolSettingRow(org *Org, s OrgToolSettingDto) {
 				@ui.Badge(ui.BadgeProps{Label: "Disabled", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Dot: true})
 			}
 		</div>
-		if s.Enabled {
-			<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(org.ID) + "/tool-settings/" + url.PathEscape(s.ToolName)) }>
-				<input type="hidden" name="enabled" value="false"/>
-				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM}) {
-					Disable
-				}
-			</form>
-		} else {
-			<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(org.ID) + "/tool-settings/" + url.PathEscape(s.ToolName)) }>
-				<input type="hidden" name="enabled" value="true"/>
-				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM}) {
-					Enable
-				}
+		if isAdmin {
+			if s.Enabled {
+				<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(org.ID) + "/tool-settings/" + url.PathEscape(s.ToolName)) }>
+					<input type="hidden" name="enabled" value="false"/>
+					@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM}) {
+						Disable
+					}
+				</form>
+			} else {
+				<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(org.ID) + "/tool-settings/" + url.PathEscape(s.ToolName)) }>
+					<input type="hidden" name="enabled" value="true"/>
+					@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM}) {
+						Enable
+					}
+				</form>
+			}
+			<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(org.ID) + "/tool-settings/" + url.PathEscape(s.ToolName) + "/delete") }>
+				@ui.Button(ui.ButtonProps{
+					Type:       ui.ButtonTypeSubmit,
+					Variant:    ui.ButtonGhost,
+					Size:       ui.ButtonSM,
+					Shape:      ui.ButtonShapeSquare,
+					Icon:       "lucide--trash-2",
+					ExtraClass: "text-error hover:text-error",
+					AriaLabel:  "Delete " + s.ToolName,
+				})
 			</form>
 		}
-		<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(org.ID) + "/tool-settings/" + url.PathEscape(s.ToolName) + "/delete") }>
-			@ui.Button(ui.ButtonProps{
-				Type:       ui.ButtonTypeSubmit,
-				Variant:    ui.ButtonGhost,
-				Size:       ui.ButtonSM,
-				Shape:      ui.ButtonShapeSquare,
-				Icon:       "lucide--trash-2",
-				ExtraClass: "text-error hover:text-error",
-				AriaLabel:  "Delete " + s.ToolName,
-			})
-		</form>
 	</div>
 }
 
@@ -838,39 +893,43 @@ templ OrgSettingsDangerZonePage(data orgSettingsDangerZonePageData) {
 			@pageError("Settings unavailable", data.LoadErr)
 		} else {
 			@detailHeader(crumbsActive(nav.Crumbs("Organization", "/orgs/"+url.PathEscape(data.Org.ID), "Danger zone")), "", "Danger zone", "Deleting an organization removes it and its projects permanently. This cannot be undone.", detailHeaderOpts{Margin: "mb-6"}) {}
-			@layout.Rail(orgSettingsSubNav(data.Org.ID, "danger-zone"), nil) {
+			@layout.Rail(orgSettingsSubNav(data.Org.ID, "danger-zone", data.IsOrgAdmin), nil) {
 				@ui.Section("Danger zone", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-comfortable"}) {
-					<div class="flex flex-wrap items-center justify-between gap-3">
-						<div class="flex items-center gap-3">
-							<div class="bg-error/10 text-error grid size-9 shrink-0 place-items-center rounded-box border border-error/15">
-								@ui.IconSpan("lucide--trash-2", "size-4.5")
+					if data.IsOrgAdmin {
+						<div class="flex flex-wrap items-center justify-between gap-3">
+							<div class="flex items-center gap-3">
+								<div class="bg-error/10 text-error grid size-9 shrink-0 place-items-center rounded-box border border-error/15">
+									@ui.IconSpan("lucide--trash-2", "size-4.5")
+								</div>
+								<div>
+									<p class="text-sm font-medium">Delete organization</p>
+									<p class="text-base-content/50 text-xs">Permanently delete { data.Org.Name } and its projects. This cannot be undone.</p>
+								</div>
 							</div>
-							<div>
-								<p class="text-sm font-medium">Delete organization</p>
-								<p class="text-base-content/50 text-xs">Permanently delete { data.Org.Name } and its projects. This cannot be undone.</p>
-							</div>
+							// Deleting the current org changes the session context
+							// (org/project), which lives in the shell OUTSIDE
+							// #main-content. A boosted submit would swap only the
+							// content and leave the topbar pointing at the deleted
+							// org, so this form opts out of hx-boost: the native
+							// POST runs a true PRG full load that re-renders the
+							// whole shell. The confirmation becomes a plain
+							// window.confirm on submit (hx-confirm only fires when
+							// htmx handles the request).
+							<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(data.Org.ID) + "/delete") } hx-boost="false" onsubmit="return confirm('Delete this organization? This cannot be undone.');">
+								@ui.Button(ui.ButtonProps{
+									Type:    ui.ButtonTypeSubmit,
+									Variant: ui.ButtonError,
+									Style:   ui.ButtonStyleOutline,
+									Size:    ui.ButtonSM,
+									Icon:    "lucide--trash-2",
+								}) {
+									Delete organization
+								}
+							</form>
 						</div>
-						// Deleting the current org changes the session context
-						// (org/project), which lives in the shell OUTSIDE
-						// #main-content. A boosted submit would swap only the
-						// content and leave the topbar pointing at the deleted
-						// org, so this form opts out of hx-boost: the native
-						// POST runs a true PRG full load that re-renders the
-						// whole shell. The confirmation becomes a plain
-						// window.confirm on submit (hx-confirm only fires when
-						// htmx handles the request).
-						<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(data.Org.ID) + "/delete") } hx-boost="false" onsubmit="return confirm('Delete this organization? This cannot be undone.');">
-							@ui.Button(ui.ButtonProps{
-								Type:    ui.ButtonTypeSubmit,
-								Variant: ui.ButtonError,
-								Style:   ui.ButtonStyleOutline,
-								Size:    ui.ButtonSM,
-								Icon:    "lucide--trash-2",
-							}) {
-								Delete organization
-							}
-						</form>
-					</div>
+					} else {
+						<p class="text-base-content/50 text-sm">Only organization admins can delete this organization.</p>
+					}
 				}
 			}
 		}

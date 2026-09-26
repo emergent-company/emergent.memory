@@ -67,8 +67,21 @@ func pageTestID(title string) string {
 }
 
 // sidebarGroups returns the app navigation. Active state is derived per
-// request via layout.ActiveSidebarGroups.
-func sidebarGroups() []layout.SidebarGroup {
+// request via layout.ActiveSidebarGroups. isOrgAdmin gates the Backups entry
+// (org-scoped backups require org_admin of the active project's owning org —
+// see #997); it is threaded in by page() from the caller's access tree.
+func sidebarGroups(isOrgAdmin bool) []layout.SidebarGroup {
+	memoryBrowser := []layout.SidebarItem{
+		{Label: "Objects", Href: "/objects", Icon: "lucide--box"},
+		{Label: "Embeddings", Href: "/embeddings", Icon: "lucide--scan-line"},
+		{Label: "Schema", Href: "/schema", Icon: "lucide--git-branch"},
+		{Label: "Documents", Href: "/documents", Icon: "lucide--file-text"},
+	}
+	if isOrgAdmin {
+		// Backups are org-scoped and org_admin-gated (see #997). Hiding the
+		// entry beats landing a non-admin on a page that degrades to an error.
+		memoryBrowser = append(memoryBrowser, layout.SidebarItem{Label: "Backups", Href: "/backups", Icon: "lucide--archive"})
+	}
 	return []layout.SidebarGroup{
 		{
 			// Ungrouped top-level entries: pulled out of their groups to sit
@@ -89,13 +102,7 @@ func sidebarGroups() []layout.SidebarGroup {
 		},
 		{
 			Label: "Memory Browser",
-			Items: []layout.SidebarItem{
-				{Label: "Objects", Href: "/objects", Icon: "lucide--box"},
-				{Label: "Embeddings", Href: "/embeddings", Icon: "lucide--scan-line"},
-				{Label: "Schema", Href: "/schema", Icon: "lucide--git-branch"},
-				{Label: "Documents", Href: "/documents", Icon: "lucide--file-text"},
-				{Label: "Backups", Href: "/backups", Icon: "lucide--archive"},
-			},
+			Items: memoryBrowser,
 		},
 		{
 			Label: "Settings",
@@ -113,19 +120,18 @@ func sidebarGroups() []layout.SidebarGroup {
 // orgSidebarGroups returns the organization-scoped navigation shown when an
 // organization (not a project) is the active context. Links are path-scoped to
 // the active org; the Settings hub holds the tool overrides and the
-// delete-org danger zone.
-func orgSidebarGroups(orgID string) []layout.SidebarGroup {
+// delete-org danger zone. isOrgAdmin gates the Members entry (the page exposes
+// whole-org member PII, org_admin-only per #1015).
+func orgSidebarGroups(orgID string, isOrgAdmin bool) []layout.SidebarGroup {
 	base := "/orgs/" + url.PathEscape(orgID)
-	return []layout.SidebarGroup{
-		{
-			Label: "Organization",
-			Items: []layout.SidebarItem{
-				{Label: "Projects", Href: base, Icon: "lucide--folder"},
-				{Label: "Members", Href: base + "/members", Icon: "lucide--users"},
-				{Label: "Settings", Href: base + "/settings", Icon: "lucide--settings"},
-			},
-		},
+	items := []layout.SidebarItem{
+		{Label: "Projects", Href: base, Icon: "lucide--folder"},
 	}
+	if isOrgAdmin {
+		items = append(items, layout.SidebarItem{Label: "Members", Href: base + "/members", Icon: "lucide--users"})
+	}
+	items = append(items, layout.SidebarItem{Label: "Settings", Href: base + "/settings", Icon: "lucide--settings"})
+	return []layout.SidebarGroup{{Label: "Organization", Items: items}}
 }
 
 // partialWithTitle prefixes an hx-boost partial fragment with a <title> element
@@ -222,6 +228,13 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 	captureError(err)
 	orgs, err := s.memory.ListOrgs(c.Request().Context())
 	captureError(err)
+	// The caller's org→project access tree supplies the org role used to gate
+	// the Backups (project nav) and Members (org nav) sidebar entries. One
+	// best-effort fetch here serves every page render; a failure degrades to
+	// "not admin", which hides the gated entries rather than surfacing an error
+	// (mirroring the org landing's transfer affordance).
+	tree, err := s.memory.GetOrgsAndProjects(c.Request().Context())
+	captureError(err)
 	activeProjectID := ""
 	var activeOrgID string
 	if sc, ok := sessionContextFrom(c.Request().Context()); ok {
@@ -258,16 +271,23 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 		}
 	}
 	// Sidebar selection by context: project → project nav; org → org nav;
-	// none → no sidebar (wizard / account pages).
+	// none → no sidebar (wizard / account pages). The governing org's admin
+	// role (from the access tree) gates the Backups and Members entries.
 	var groups []layout.SidebarGroup
 	providersMissing := false
 	if activeProjectID != "" {
-		groups = layout.ActiveSidebarGroups(sidebarGroups(), r.URL.Path)
+		// The active project's owning org governs the Backups gate. Fall back
+		// to the session org when the project list didn't resolve (best-effort).
+		backupsOrgID := activeOrgID
+		if current != nil {
+			backupsOrgID = current.OrgID
+		}
+		groups = layout.ActiveSidebarGroups(sidebarGroups(isOrgAdmin(tree, backupsOrgID)), r.URL.Path)
 		// Warn in the settings nav when the active project has zero configured
 		// LLM providers. Fail-safe helper: false on lookup errors.
 		providersMissing = s.projectHasNoProviders(c.Request().Context())
 	} else if activeOrgID != "" {
-		groups = layout.ActiveSidebarGroups(orgSidebarGroups(activeOrgID), r.URL.Path)
+		groups = layout.ActiveSidebarGroups(orgSidebarGroups(activeOrgID, isOrgAdmin(tree, activeOrgID)), r.URL.Path)
 	}
 	// Recent projects for the picker's "Recent" section (only when the user
 	// has more than ten projects). Recent ids come from the durable cookie,
