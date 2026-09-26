@@ -15,6 +15,7 @@ Result: no pre-commit hook runs on any host, so the quality gates the hooks were
 - **Keep pre-commit fast.** Heavy or CI-duplicative checks stay out of pre-commit: husky's scoped unit tests are dropped from pre-commit (CI owns tests); the full `lint` group carries vet/build/test/golangci for every tree.
 - **Delete husky.** Remove `.husky/` and `apps/web-ui/lefthook.yml`.
 - **Lint entry points.** Root `task lint` → `lefthook run lint` (all trees); `apps/web-ui` `task lint` → `lefthook run lint-webui` (web-ui + connector only, preserving its previous scope). Add `task hooks:install`.
+- **Repo-wide secret scanning.** Replace the web-ui-scoped `.gitleaks.toml` with a single root `.gitleaks.toml`; run gitleaks **repo-wide** — strict on staged changes in `pre-commit`, and whole-tree in the lint groups. Pre-existing findings are waived by a committed `.gitleaksignore` **ratchet** (entries may only be removed, never added), so the full-tree scan starts green and only new leaks fail.
 - **Docs.** Update `AGENTS.md`, `CONTRIBUTING.md`, and the web-ui operations spec to describe the single-config model and the install step.
 
 ## Capabilities
@@ -29,8 +30,8 @@ Result: no pre-commit hook runs on any host, so the quality gates the hooks were
 
 ## Impact
 
-- **Config:** rewrite `lefthook.yml` (repo root); delete `.husky/pre-commit` and `apps/web-ui/lefthook.yml`.
-- **Taskfiles:** `Taskfile.yml` (`lint`, new `hooks:install`), `apps/web-ui/Taskfile.yml` (`lint` → `lint-webui`).
+- **Config:** rewrite `lefthook.yml` (repo root); add root `.gitleaks.toml` + `.gitleaksignore`; delete `.husky/pre-commit`, `apps/web-ui/lefthook.yml`, and `apps/web-ui/.gitleaks.toml`.
+- **Taskfiles:** `Taskfile.yml` (`lint`, new `hooks:install`), `apps/web-ui/Taskfile.yml` (`lint` → `lint-webui`, repo-wide `secrets:scan`).
 - **Docs:** `AGENTS.md`, `CONTRIBUTING.md`, `apps/web-ui/docs/spec/12-operations.md`.
-- **Tooling dependency:** lefthook v2 (`github.com/evilmartians/lefthook/v2`); must be installed (`task hooks:install` / `lefthook install`).
-- **Out of scope:** there is no root `.gitleaks.toml` (secrets scan stays scoped to `apps/web-ui/.gitleaks.toml`); a repo-wide secret scan is a follow-up.
+- **Tooling dependency:** lefthook v2 (`github.com/evilmartians/lefthook/v2`) and gitleaks v8; both must be installed (`task hooks:install` / `lefthook install`).
+- **Security follow-up:** the first whole-tree scan surfaced pre-existing findings that look like **real** committed credentials (a DeepSeek-style key and `emt_` API tokens, among placeholders). They are waived in `.gitleaksignore` only to keep the ratchet green and must be rotated and removed under a separate security issue.

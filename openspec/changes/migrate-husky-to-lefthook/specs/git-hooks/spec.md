@@ -30,7 +30,7 @@ The `pre-commit` hook SHALL run only fast, file-scoped checks and SHALL skip a j
 
 Server (`apps/server`) staged Go files SHALL trigger `gofmt`, `go vet`, `go build`, and the architectural lint ratchet. Staged handler files SHALL each carry a Swagger `@Router` annotation. Staged migration SQL SHALL be free of leading backslash metacommands and spaced dollar quotes. Staged Go files that import a local package not tracked in git SHALL fail the hook.
 
-Web UI (`apps/web-ui`) staged Python SHALL run `ruff`; staged gateway (Go) files SHALL run `gofmt`, `go vet`, `go build`; staged `.templ` files SHALL pass `templ generate -check`; and staged changes SHALL pass the `gitleaks` secrets scan and the generated-file guard.
+Web UI (`apps/web-ui`) staged Python SHALL run `ruff`; staged gateway (Go) files SHALL run `gofmt`, `go vet`, `go build`; staged `.templ` files SHALL pass `templ generate -check`; any staged change SHALL pass the repo-wide `gitleaks` secrets scan; and staged files SHALL pass the generated-file guard.
 
 #### Scenario: Path-scoped server checks
 
@@ -47,6 +47,26 @@ Web UI (`apps/web-ui`) staged Python SHALL run `ruff`; staged gateway (Go) files
 
 - **WHEN** the `pre-commit` hook runs
 - **THEN** no unit or integration test suite is executed (tests are owned by CI)
+
+### Requirement: Repo-wide secret scanning
+
+A single repo-root `.gitleaks.toml` SHALL configure secret detection for the whole monorepo. The `pre-commit` hook SHALL scan **staged** changes strictly (no baseline). The `lint` and `lint-webui` groups SHALL scan the whole working tree. Pre-existing findings SHALL be waived through a committed `.gitleaksignore` **ratchet** whose entries may only ever be removed and never added, so that the whole-tree scan starts green while any new leak fails.
+
+#### Scenario: Staged secret blocks the commit
+
+- **WHEN** a staged change introduces a detected secret
+- **THEN** the `pre-commit` hook fails and reports the finding
+
+#### Scenario: Ratchet keeps the tree green
+
+- **WHEN** the whole-tree secret scan runs in a lint group
+- **THEN** findings listed in `.gitleaksignore` do not fail the scan
+- **AND** any finding not listed fails it
+
+#### Scenario: Single secrets config
+
+- **WHEN** the tree is inspected
+- **THEN** the only gitleaks config is the repo-root `.gitleaks.toml` (no app-scoped config)
 
 ### Requirement: Full lint group
 

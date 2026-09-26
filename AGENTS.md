@@ -130,7 +130,8 @@ All git hooks live in the **one** repo-root `lefthook.yml`; install them with `t
 
 - Git hooks are repo-global and lefthook loads exactly one config from the git root. There is **no** per-directory config (the old `apps/web-ui/lefthook.yml` and `.husky/` are gone).
 - Each job is scoped with `root:` (its CWD) and `glob:` (patterns are matched **relative to `root`**), so server / CLI / web-ui / connector jobs coexist in one file.
-- `pre-commit` is fast and path-scoped (gofmt, vet, build, lint-ratchet, Swagger `@Router`, migration SQL, untracked-import guard, ruff/templ/gitleaks). **Tests are not run on commit** — CI owns them.
+- `pre-commit` is fast and path-scoped (gofmt, vet, build, lint-ratchet, Swagger `@Router`, migration SQL, untracked-import guard, ruff/templ). **Tests are not run on commit** — CI owns them.
+- Secrets are scanned **repo-wide** by a single root `.gitleaks.toml`: strictly on staged changes at commit, whole-tree in the lint groups. Pre-existing findings are waived in `.gitleaksignore` — a **ratchet**: remove entries as you fix them, never add.
 - `lefthook run lint` = all trees (root `task lint`); `lefthook run lint-webui` = web-ui + connector (web-ui `task lint`).
 
 ## OpenSpec

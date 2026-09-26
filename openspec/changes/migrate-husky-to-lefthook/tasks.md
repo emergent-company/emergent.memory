@@ -31,6 +31,14 @@
 - [x] 5.4 `openspec validate migrate-husky-to-lefthook --strict` → "Change 'migrate-husky-to-lefthook' is valid"
 - [x] 5.5 Staged deliberately unformatted `apps/server/**/*.go` → `server-gofmt` job blocked; probe reverted
 
-## 6. Follow-ups (out of scope)
+## 6. Repo-wide secret scanning
 
-- [ ] 6.1 No root `.gitleaks.toml`; a repo-wide secret scan (and/or a CI gitleaks job) is a separate change
+- [x] 6.1 Add repo-root `.gitleaks.toml` (default ruleset + `memt_` rule + placeholder/env/vendor/test-fixture allowlists); delete `apps/web-ui/.gitleaks.toml`
+- [x] 6.2 `pre-commit` job scans staged changes repo-wide with `gitleaks git --staged`; verified a staged fake key fails the job
+- [x] 6.3 `lint` / `lint-webui` jobs scan the whole tree with `gitleaks dir .`; added `.gitleaksignore` ratchet for the 73 pre-existing findings; verified the scan is green (and that an unlisted leak still fails)
+- [x] 6.4 `apps/web-ui` `secrets:scan` task now scans from the repo root with the root config
+
+## 7. Follow-ups
+
+- [ ] 7.1 Security: rotate/remove the pre-existing findings that look like real credentials (a DeepSeek-style key and `emt_` API tokens, among placeholders) — needs a security issue with user confirmation
+- [ ] 7.2 Optionally add a gitleaks step to CI so the gate also runs server-side

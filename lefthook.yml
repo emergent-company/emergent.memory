@@ -162,13 +162,12 @@ pre-commit:
         - "**/*.templ"
       run: templ generate -check
 
-    - name: webui-secrets
-      root: apps/web-ui
+    - name: secrets
       run: |
         if ! command -v gitleaks >/dev/null 2>&1; then
           echo "gitleaks not installed, skipping secrets scan"; exit 0
         fi
-        gitleaks protect --staged --config .gitleaks.toml --no-banner
+        gitleaks git --staged --config .gitleaks.toml --no-banner
 
     - name: webui-no-generated
       run: |
@@ -278,8 +277,7 @@ lint:
       root: apps/web-ui/gateway
       run: templ generate -check
 
-    - name: webui-secrets
-      root: apps/web-ui
+    - name: secrets
       run: |
         if ! command -v gitleaks >/dev/null 2>&1; then
           echo "gitleaks not installed, skipping secrets scan"; exit 0
@@ -347,8 +345,7 @@ lint-webui:
       root: apps/web-ui/gateway
       run: templ generate -check
 
-    - name: webui-secrets
-      root: apps/web-ui
+    - name: secrets
       run: |
         if ! command -v gitleaks >/dev/null 2>&1; then
           echo "gitleaks not installed, skipping secrets scan"; exit 0
