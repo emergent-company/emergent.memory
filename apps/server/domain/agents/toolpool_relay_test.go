@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"testing"
@@ -69,6 +70,22 @@ func TestBuildCache_RelayToolRegisteredWithInstancePrefix(t *testing.T) {
 		"bare relay tool name must not be registered as a pool key")
 	assert.NotContains(t, cache.toolNames, "reminders_list",
 		"bare relay tool name must not leak into the ordered pool names")
+}
+
+// TestCallToolRelayGate proves the ToolPool relay routing — the path that
+// bypasses mcp.Service.ExecuteTool and calls mcprelay.Service directly — is
+// gated on the trust marker: an untrusted run must not reach a connected
+// device's relay tools (issue #994).
+func TestCallToolRelayGate(t *testing.T) {
+	tp, _ := buildRelayTestPool(t)
+	const prefixed = "mcj-mini-connector_reminders_list"
+
+	untrustedCtx := context.Background()
+
+	out, err := tp.CallTool(untrustedCtx, relayTestProjectID, prefixed, map[string]any{})
+	require.NoError(t, err, "relay gate must return a structured refusal, not a Go error")
+	require.Contains(t, out["error"], "untrusted surface",
+		"untrusted run must be refused on relay tools before the relay service is reached")
 }
 
 // TestResolveTools_RelayToolPrefixedWhitelist_Selected verifies that the

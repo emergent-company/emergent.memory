@@ -70,13 +70,15 @@ func (r *Repository) ListConversations(ctx context.Context, params ListConversat
 	}, nil
 }
 
-// GetByID retrieves a conversation by ID
-func (r *Repository) GetByID(ctx context.Context, projectID string, conversationID uuid.UUID) (*Conversation, error) {
+// GetByID retrieves a conversation by ID, scoped to the caller: the caller
+// must own the conversation or it must be non-private (project-shared).
+func (r *Repository) GetByID(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID) (*Conversation, error) {
 	var conv Conversation
 	err := r.db.NewSelect().
 		Model(&conv).
 		Where("id = ?", conversationID).
 		Where("project_id = ?", projectID).
+		Where("(owner_user_id = ? OR is_private = false)", ownerUserID).
 		Scan(ctx)
 
 	if err != nil {
@@ -89,8 +91,9 @@ func (r *Repository) GetByID(ctx context.Context, projectID string, conversation
 	return &conv, nil
 }
 
-// GetByIDWithMessages retrieves a conversation with all its messages
-func (r *Repository) GetByIDWithMessages(ctx context.Context, projectID string, conversationID uuid.UUID) (*Conversation, error) {
+// GetByIDWithMessages retrieves a conversation with all its messages, scoped
+// to the caller (owner or non-private).
+func (r *Repository) GetByIDWithMessages(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID) (*Conversation, error) {
 	var conv Conversation
 	err := r.db.NewSelect().
 		Model(&conv).
@@ -99,6 +102,7 @@ func (r *Repository) GetByIDWithMessages(ctx context.Context, projectID string, 
 		}).
 		Where("conversation.id = ?", conversationID).
 		Where("conversation.project_id = ?", projectID).
+		Where("(conversation.owner_user_id = ? OR conversation.is_private = false)", ownerUserID).
 		Scan(ctx)
 
 	if err != nil {
@@ -111,13 +115,16 @@ func (r *Repository) GetByIDWithMessages(ctx context.Context, projectID string, 
 	return &conv, nil
 }
 
-// GetByCanonicalID retrieves a conversation by canonical ID (for object refinement chats)
-func (r *Repository) GetByCanonicalID(ctx context.Context, projectID string, canonicalID uuid.UUID) (*Conversation, error) {
+// GetByCanonicalID retrieves a conversation by canonical ID (for object
+// refinement chats), scoped to the caller: the caller must own the
+// conversation or it must be non-private (project-shared).
+func (r *Repository) GetByCanonicalID(ctx context.Context, projectID, ownerUserID string, canonicalID uuid.UUID) (*Conversation, error) {
 	var conv Conversation
 	err := r.db.NewSelect().
 		Model(&conv).
 		Where("canonical_id = ?", canonicalID).
 		Where("project_id = ?", projectID).
+		Where("(owner_user_id = ? OR is_private = false)", ownerUserID).
 		Scan(ctx)
 
 	if err != nil {
@@ -151,12 +158,13 @@ func (r *Repository) Create(ctx context.Context, conv *Conversation) error {
 	return nil
 }
 
-// Update updates a conversation
-func (r *Repository) Update(ctx context.Context, projectID string, conv *Conversation) error {
+// Update updates a conversation, scoped to the caller (owner or non-private).
+func (r *Repository) Update(ctx context.Context, projectID, ownerUserID string, conv *Conversation) error {
 	result, err := r.db.NewUpdate().
 		Model(conv).
 		WherePK().
 		Where("project_id = ?", projectID).
+		Where("(owner_user_id = ? OR is_private = false)", ownerUserID).
 		Returning("*").
 		Exec(ctx)
 
@@ -173,12 +181,14 @@ func (r *Repository) Update(ctx context.Context, projectID string, conv *Convers
 	return nil
 }
 
-// Delete deletes a conversation (cascades to messages via FK)
-func (r *Repository) Delete(ctx context.Context, projectID string, conversationID uuid.UUID) (bool, error) {
+// Delete deletes a conversation (cascades to messages via FK), scoped to the
+// caller (owner or non-private).
+func (r *Repository) Delete(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID) (bool, error) {
 	result, err := r.db.NewDelete().
 		Model((*Conversation)(nil)).
 		Where("id = ?", conversationID).
 		Where("project_id = ?", projectID).
+		Where("(owner_user_id = ? OR is_private = false)", ownerUserID).
 		Exec(ctx)
 
 	if err != nil {
@@ -220,30 +230,6 @@ func (r *Repository) AddMessage(ctx context.Context, msg *Message) error {
 	return nil
 }
 
-// GetMessages retrieves messages for a conversation
-func (r *Repository) GetMessages(ctx context.Context, conversationID uuid.UUID, limit int) ([]Message, error) {
-	if limit <= 0 {
-		limit = 100
-	}
-	if limit > 1000 {
-		limit = 1000
-	}
-
-	messages := []Message{}
-	err := r.db.NewSelect().
-		Model(&messages).
-		Where("conversation_id = ?", conversationID).
-		Order("created_at ASC").
-		Limit(limit).
-		Scan(ctx)
-
-	if err != nil {
-		return nil, fmt.Errorf("get messages: %w", err)
-	}
-
-	return messages, nil
-}
-
 // CreateConversationWithMessage creates a conversation and its first message in a transaction
 func (r *Repository) CreateConversationWithMessage(ctx context.Context, conv *Conversation, msg *Message) error {
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -278,8 +264,10 @@ func (r *Repository) CreateConversationWithMessage(ctx context.Context, conv *Co
 	})
 }
 
-// GetConversationHistory retrieves the last N messages for a conversation
-func (r *Repository) GetConversationHistory(ctx context.Context, conversationID uuid.UUID, limit int) ([]Message, error) {
+// GetConversationHistory retrieves the last N messages for a conversation,
+// scoped to the caller: it returns no messages when the caller cannot access
+// the conversation (owner or non-private within the caller's project).
+func (r *Repository) GetConversationHistory(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID, limit int) ([]Message, error) {
 	if limit <= 0 {
 		limit = 5
 	}
@@ -287,8 +275,24 @@ func (r *Repository) GetConversationHistory(ctx context.Context, conversationID 
 		limit = 20
 	}
 
+	// Guard the read: never return messages from a conversation the caller
+	// cannot see. This is the exfiltration step the canonical-id path could
+	// otherwise feed — a foreign conversation id must yield no history.
+	visible, err := r.db.NewSelect().
+		Model((*Conversation)(nil)).
+		Where("id = ?", conversationID).
+		Where("project_id = ?", projectID).
+		Where("(owner_user_id = ? OR is_private = false)", ownerUserID).
+		Exists(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("check conversation visibility: %w", err)
+	}
+	if !visible {
+		return nil, nil
+	}
+
 	messages := []Message{}
-	err := r.db.NewSelect().
+	err = r.db.NewSelect().
 		Model(&messages).
 		Where("conversation_id = ?", conversationID).
 		Order("created_at DESC").
@@ -307,13 +311,15 @@ func (r *Repository) GetConversationHistory(ctx context.Context, conversationID 
 	return messages, nil
 }
 
-// SetAgentDefinitionID updates the agent_definition_id on a conversation.
-func (r *Repository) SetAgentDefinitionID(ctx context.Context, projectID string, conversationID uuid.UUID, agentDefID *uuid.UUID) error {
+// SetAgentDefinitionID updates the agent_definition_id on a conversation,
+// scoped to the caller (owner or non-private).
+func (r *Repository) SetAgentDefinitionID(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID, agentDefID *uuid.UUID) error {
 	q := r.db.NewUpdate().
 		Model((*Conversation)(nil)).
 		Set("agent_definition_id = ?", agentDefID).
 		Set("updated_at = NOW()").
-		Where("id = ?", conversationID)
+		Where("id = ?", conversationID).
+		Where("(owner_user_id = ? OR is_private = false)", ownerUserID)
 	if projectID != "" {
 		q = q.Where("project_id = ?", projectID)
 	} else {

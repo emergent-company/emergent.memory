@@ -20,8 +20,16 @@ import (
 //     not satisfy it) — the same convention as #947/#958.
 //   - /api/health/scope-authority — authenticated only (RequireAuth); the
 //     permissive scope-authority posture must not leak anonymously (#812).
-//   - /api/metrics/{jobs,scheduler} — authenticated only (RequireAuth); project
-//     tokens see only their own project's data.
+//   - /api/metrics/jobs — PROJECT-SCOPED. Gated on RequireAuth +
+//     RequireProjectTokenScope + RequireProjectMember: the effective project is
+//     resolved server-side (token binding or X-Project-ID header) and validated
+//     against the caller's owning-org membership. A client-supplied ?project_id
+//     is only a filter and can never widen access; the instance-wide aggregate
+//     (no project context) is refused in the handler unless the caller holds
+//     superadmin_full (issue #994 mechanism 3/4).
+//   - /api/metrics/scheduler — INSTANCE-WIDE platform concern (deployment task
+//     info). Gated on RequireAuth + RequireSuperadminFull, the same convention
+//     as /debug and /api/diagnostics; a project member must not reach it.
 func RegisterRoutes(e *echo.Echo, h *Handler, m *MetricsHandler, authMiddleware *auth.Middleware) {
 	// Public probes.
 	e.GET("/health", h.Health)
@@ -50,9 +58,12 @@ func RegisterRoutes(e *echo.Echo, h *Handler, m *MetricsHandler, authMiddleware 
 	authority.Use(authMiddleware.RequireAuth())
 	authority.GET("/scope-authority", h.ScopeAuthority)
 
-	// Metrics endpoints require authentication — project tokens see only their project's data.
+	// Metrics endpoints carry per-route authority decisions so neither is left
+	// behind RequireAuth-only (issue #994 mechanism 3/4):
+	//   - /jobs       project-scoped (token binding + membership)
+	//   - /scheduler  instance-wide (superadmin_full)
 	metrics := e.Group("/api/metrics")
 	metrics.Use(authMiddleware.RequireAuth())
-	metrics.GET("/jobs", m.JobMetrics)
-	metrics.GET("/scheduler", m.SchedulerMetrics)
+	metrics.GET("/jobs", m.JobMetrics, authMiddleware.RequireProjectTokenScope(), authMiddleware.RequireProjectMember())
+	metrics.GET("/scheduler", m.SchedulerMetrics, authMiddleware.RequireSuperadminFull())
 }
