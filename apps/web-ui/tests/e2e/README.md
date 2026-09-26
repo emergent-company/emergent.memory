@@ -156,7 +156,9 @@ project-transfer, project row-click activation, org-settings-hub render + legacy
   dashboard, and settings Model picker after every switch), agent-create, skill-create,
 schedule-create, token-create, document-upload, document-extraction
 (provider-gated), member-invite, provider-config, object-create, object-edit (versioned save →
-`?updated=1` toast → value persists on reload), backup-details (list checksum
+`?updated=1` toast → value persists on reload), object-long-text (boosted navigation into a
+person's long `notes` field grows the textarea past one row and initialises its live character
+counter, which updates on edit), backup-details (list checksum
 cleanup + row→`/backups/:id` link, details page sections/settings/integrity, and
 the unavailable state for a missing backup).
 

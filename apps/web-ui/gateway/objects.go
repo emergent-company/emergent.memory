@@ -1048,9 +1048,14 @@ func propValues(v any) []string {
 }
 
 // charCountLabel renders the initial, server-side character count for a
-// long-text field ("1,234 characters"). It counts code points so it matches the
-// client-side counter (which counts code points too) and groups thousands.
+// long-text field ("1,234 characters"). A browser normalizes a textarea's line
+// endings to LF in its .value / on form submit, so CRLF and lone CR sequences in
+// the raw stored string are normalized to LF before counting — otherwise the
+// server-rendered count would be one too high per CR compared with the
+// client-side counter. It counts code points and groups thousands.
 func charCountLabel(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
 	n := utf8.RuneCountInString(s)
 	noun := "characters"
 	if n == 1 {

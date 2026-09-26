@@ -50,3 +50,7 @@ Each schema-defined property SHALL render an input widget appropriate to its dec
 #### Scenario: Count updates live
 - **WHEN** the user edits a multi-line text field
 - **THEN** its character count updates to reflect the current value
+
+#### Scenario: Count matches the browser for normalized line endings
+- **WHEN** a multi-line value is stored with CRLF or lone CR line endings
+- **THEN** the server-rendered initial count treats each of them as a single LF, so it matches the count the browser computes for the same field

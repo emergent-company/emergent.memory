@@ -1604,6 +1604,13 @@ func TestCharCountLabel(t *testing.T) {
 		{"abcd", "4 characters"},
 		{strings.Repeat("x", 1234), "1,234 characters"},
 		{strings.Repeat("x", 41594), "41,594 characters"},
+		// Line-ending normalization: a browser rewrites a textarea's CRLF/CR to
+		// LF, so the server-rendered count must match the client's LF count.
+		{"a\r\nb", "3 characters"},
+		{"a\rb", "3 characters"},
+		{"\r\n", "1 character"},
+		{"\r", "1 character"},
+		{"a\r\nb\r\nc", "5 characters"},
 	}
 	for _, c := range cases {
 		if got := charCountLabel(c.in); got != c.want {
