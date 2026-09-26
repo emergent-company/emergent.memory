@@ -4,10 +4,10 @@ The AgentSession uses this as its ``llm``, so all the turn-taking / barge-in
 machinery works unchanged while the "brain" is memory's chat endpoint.
 
 Rich chat events (``mcp_tool`` -> tool chips, ``thinking``, ``approval``,
-``ask_user`` -> question cards) are forwarded onto the iOS ``lk.chat.events``
-stream via an injected async event sink (wired by the worker once the room
-exists). The sink receives one JSON-ready payload dict per client event, in
-memory's original stream order.
+``ask_user`` -> question cards, ``ui`` -> A2UI surfaces) are forwarded onto the
+iOS ``lk.chat.events`` stream via an injected async event sink (wired by the
+worker once the room exists). The sink receives one JSON-ready payload dict per
+client event, in memory's original stream order.
 """
 
 import inspect
@@ -108,10 +108,11 @@ class MemoryLLMStream(LLMStream):
                     raise RuntimeError(event.get("error") or "memory chat error")
                 elif kind == "done":
                     break
-                elif kind in ("mcp_tool", "thinking", "approval"):
+                elif kind in ("mcp_tool", "thinking", "approval", "ui"):
                     # Rich events memory streams for tool chips / thinking
-                    # blocks / approval + question cards. Forwarded verbatim in
-                    # stream order; a publish failure must not kill the turn.
+                    # blocks / approval + question cards / A2UI surfaces.
+                    # Forwarded verbatim in stream order; a publish failure
+                    # must not kill the turn.
                     for payload in mapper.handle(event):
                         await self._emit_chat_event(payload)
                 else:

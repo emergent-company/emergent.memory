@@ -11,11 +11,11 @@ import (
 // Route groups:
 //
 //	GET    /api/v1/organizations/:orgId/project-providers    — list all project-level overrides for org
-//	GET    /api/v1/projects/:projectId/providers             — list project configs
-//	PUT    /api/v1/projects/:projectId/providers/:provider    — upsert project config
-//	GET    /api/v1/projects/:projectId/providers/:provider    — get project config metadata
-//	DELETE /api/v1/projects/:projectId/providers/:provider    — delete project config
-//	POST   /api/v1/projects/:projectId/providers/:provider/test — live project credential test (optional {model,modelType} body)
+//	GET    /api/v1/projects/:projectId/providers             — list project instances
+//	PUT    /api/v1/projects/:projectId/providers/:slug        — upsert project instance (a dialect is accepted as a legacy alias)
+//	GET    /api/v1/projects/:projectId/providers/:slug        — get project instance metadata
+//	DELETE /api/v1/projects/:projectId/providers/:slug        — delete project instance
+//	POST   /api/v1/projects/:projectId/providers/:slug/test   — live project credential test (optional {model,modelType} body)
 //	GET    /api/v1/providers/:provider/models                 — read-only model catalog (per provider)
 //	GET    /api/v1/models                                     — list all models across providers (agents:read)
 //	POST   /api/v1/providers/:provider/test                   — live credential test

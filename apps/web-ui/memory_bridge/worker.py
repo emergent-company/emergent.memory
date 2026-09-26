@@ -23,6 +23,7 @@ from .chat_events import (
     TOPIC_INTERRUPT,
     is_interrupt_message,
     parse_decision,
+    surface_action_message,
 )
 from .llm import MemoryLLM
 from .memory_chat import MemoryChatClient, MemoryChatError
@@ -268,15 +269,27 @@ async def _handle_decision_text(session, chat, tracker: _PauseTracker, text: str
 
     Forwards it to memory (respond/cancel), then — when it was the last open
     question of the paused run — resumes the turn with a fresh text reply.
+    A surface action starts a new turn in the existing context (it is distinct
+    from answering a question).
     Returns an outcome label for tests: malformed | memory_error | answered |
-    resumed | resume_failed.
+    resumed | resume_failed | surface_action | surface_action_failed.
     """
     decision = parse_decision(text)
     if decision is None:
         logger.info("ignoring malformed lk.chat.decision payload: %.160s", (text or "").strip())
         return "malformed"
-    question_id = decision["questionId"]
     kind = decision["type"]
+    if kind == "surfaceAction":
+        surface_id = decision["surfaceId"]
+        message = surface_action_message(surface_id, decision["action"])
+        trace.trace(trace.get_room(), "surface_action", surface_id=surface_id)
+        try:
+            await _run_text_turn(session, message)
+        except Exception:
+            logger.exception("surface action turn failed for surface %s", surface_id)
+            return "surface_action_failed"
+        return "surface_action"
+    question_id = decision["questionId"]
     try:
         if kind == "approval":
             action = decision["action"]

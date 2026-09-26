@@ -11,10 +11,16 @@ import (
 // ProjectProviderConfig mirrors memory's ProjectProviderConfigResponse: the
 // public-safe metadata of one project-level provider config (credentials are
 // never included). All keys are camelCase.
+//
+// Provider is the dialect (google, google-vertex, openai, deepseek); Slug is
+// the project-scoped instance name. Several instances may share a dialect, so
+// the slug — not the dialect — is the identity used in UI routes and model
+// references.
 type ProjectProviderConfig struct {
 	ID              string `json:"id"`
 	ProjectID       string `json:"projectId"`
 	Provider        string `json:"provider"`
+	Slug            string `json:"slug"`
 	GCPProject      string `json:"gcpProject,omitempty"`
 	Location        string `json:"location,omitempty"`
 	BaseURL         string `json:"baseUrl,omitempty"`
@@ -25,11 +31,16 @@ type ProjectProviderConfig struct {
 }
 
 // ProviderConfigInput is the request body for upserting a project provider
-// config (PUT /api/v1/projects/{projectId}/providers/{provider}). Credentials
+// config (PUT /api/v1/projects/{projectId}/providers/{dialect}). Credentials
 // differ by provider type: google takes an API key; google-vertex takes a
 // service-account JSON + GCP project + location; openai/deepseek take an API
 // key + base URL.
+//
+// Slug names the instance to create or update. Empty targets the dialect's
+// default instance; a distinct value creates (or updates in place) a second
+// instance of the same dialect.
 type ProviderConfigInput struct {
+	Slug               string `json:"slug,omitempty"`
 	APIKey             string `json:"apiKey,omitempty"`
 	ServiceAccountJSON string `json:"serviceAccountJson,omitempty"`
 	GCPProject         string `json:"gcpProject,omitempty"`
@@ -109,12 +120,15 @@ type ProviderPricing struct {
 
 // ProjectCustomPricing is one project pricing override row (GET/PUT
 // /api/v1/projects/{projectId}/pricing-overrides). A custom rate replaces the
-// retail rate for (provider, model).
+// retail rate for (provider instance, model). Provider is the dialect;
+// ProviderSlug is the instance the override applies to (defaults to the
+// dialect for rows written before instances existed).
 type ProjectCustomPricing struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"projectId"`
-	Provider  string `json:"provider"`
-	Model     string `json:"model"`
+	ID           string `json:"id"`
+	ProjectID    string `json:"projectId"`
+	Provider     string `json:"provider"`
+	ProviderSlug string `json:"providerSlug"`
+	Model        string `json:"model"`
 	modelPriceRates
 	CreatedAt string `json:"createdAt,omitempty"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
@@ -166,16 +180,18 @@ func (m *MemoryClient) ListProjectPricingOverrides(ctx context.Context) ([]Proje
 }
 
 // UpsertProjectPricingOverride sets (or replaces) the custom rate for one
-// (provider, model) (PUT /api/v1/projects/{projectId}/pricing-overrides). The
-// body carries the five rate fields in camelCase; the response is the bare
-// saved entry.
-func (m *MemoryClient) UpsertProjectPricingOverride(ctx context.Context, provider, model string, rates modelPriceRates) (*ProjectCustomPricing, error) {
+// provider instance + model (PUT /api/v1/projects/{projectId}/pricing-overrides).
+// provider is the dialect (required by memory) and providerSlug names the
+// instance the rate applies to; the body carries the five rate fields in
+// camelCase and the response is the bare saved entry.
+func (m *MemoryClient) UpsertProjectPricingOverride(ctx context.Context, provider, providerSlug, model string, rates modelPriceRates) (*ProjectCustomPricing, error) {
 	path := "/api/v1/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/pricing-overrides"
 	body := struct {
-		Provider string `json:"provider"`
-		Model    string `json:"model"`
+		Provider     string `json:"provider"`
+		ProviderSlug string `json:"providerSlug,omitempty"`
+		Model        string `json:"model"`
 		modelPriceRates
-	}{Provider: provider, Model: model, modelPriceRates: rates}
+	}{Provider: provider, ProviderSlug: providerSlug, Model: model, modelPriceRates: rates}
 	var out ProjectCustomPricing
 	if err := m.do(ctx, http.MethodPut, path, body, &out); err != nil {
 		return nil, err
@@ -183,16 +199,20 @@ func (m *MemoryClient) UpsertProjectPricingOverride(ctx context.Context, provide
 	return &out, nil
 }
 
-// DeleteProjectPricingOverride removes the custom rate for one (provider,
-// model), reverting it to the retail rate (DELETE
-// /api/v1/projects/{projectId}/pricing-overrides/{provider}/{model}).
+// DeleteProjectPricingOverride removes the custom rate for one provider
+// instance + model, reverting it to the retail rate (DELETE
+// /api/v1/projects/{projectId}/pricing-overrides/{providerSlug}/{model}). The
+// path segment is the instance slug; the backend accepts a dialect as a legacy
+// alias for its default instance.
 func (m *MemoryClient) DeleteProjectPricingOverride(ctx context.Context, provider, model string) error {
 	path := "/api/v1/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/pricing-overrides/" + url.PathEscape(provider) + "/" + url.PathEscape(model)
 	return m.do(ctx, http.MethodDelete, path, nil, nil)
 }
 
 // UpsertProjectProviderConfig sets a project's provider credentials + model
-// selections (PUT /api/v1/projects/{projectId}/providers/{provider}).
+// selections (PUT /api/v1/projects/{projectId}/providers/{dialect}). The route
+// segment is the dialect; in.Slug selects the instance (empty = the dialect's
+// default instance, a distinct value = a second instance of the same dialect).
 func (m *MemoryClient) UpsertProjectProviderConfig(ctx context.Context, provider string, in ProviderConfigInput) (*ProjectProviderConfig, error) {
 	path := "/api/v1/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/providers/" + url.PathEscape(provider)
 	var out ProjectProviderConfig
@@ -202,15 +222,20 @@ func (m *MemoryClient) UpsertProjectProviderConfig(ctx context.Context, provider
 	return &out, nil
 }
 
-// DeleteProjectProviderConfig removes a project's provider config (DELETE
-// /api/v1/projects/{projectId}/providers/{provider}).
+// DeleteProjectProviderConfig removes one project provider instance (DELETE
+// /api/v1/projects/{projectId}/providers/{slug}). The argument is the instance
+// slug; the backend accepts a dialect as a legacy alias for its default
+// instance.
 func (m *MemoryClient) DeleteProjectProviderConfig(ctx context.Context, provider string) error {
 	path := "/api/v1/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/providers/" + url.PathEscape(provider)
 	return m.do(ctx, http.MethodDelete, path, nil, nil)
 }
 
-// TestProjectProvider sends a live generate+embed call using the project's
-// configured credentials (POST /api/v1/projects/{projectId}/providers/{provider}/test).
+// TestProjectProvider sends a live generate+embed call using one project
+// provider instance's credentials (POST
+// /api/v1/projects/{projectId}/providers/{slug}/test). The argument is the
+// instance slug; a dialect is accepted as a legacy alias for its default
+// instance.
 func (m *MemoryClient) TestProjectProvider(ctx context.Context, provider string) (*ProviderTestResult, error) {
 	path := "/api/v1/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/providers/" + url.PathEscape(provider) + "/test"
 	var out ProviderTestResult
@@ -229,10 +254,11 @@ type projectModelTestRequest struct {
 }
 
 // TestProjectModel runs a live generate or embed call for ONE model of a
-// configured project provider (POST
-// /api/v1/projects/{projectId}/providers/{provider}/test with {"model",
-// "modelType"}). model is the bare model name — the part after the provider
-// prefix — and modelType is "generative" or "embedding".
+// configured project provider instance (POST
+// /api/v1/projects/{projectId}/providers/{slug}/test with {"model",
+// "modelType"}). provider is the instance slug (a dialect resolves to its
+// default instance), model is the bare model name, and modelType is
+// "generative" or "embedding".
 func (m *MemoryClient) TestProjectModel(ctx context.Context, provider, model, modelType string) (*ProviderTestResult, error) {
 	path := "/api/v1/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/providers/" + url.PathEscape(provider) + "/test"
 	body := projectModelTestRequest{Model: model, ModelType: modelType}

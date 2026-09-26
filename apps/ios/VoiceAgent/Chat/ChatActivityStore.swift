@@ -102,6 +102,10 @@ final class ChatActivityStore: ObservableObject {
     /// All turns in chronological order; the last one is the live turn.
     @Published private(set) var turns: [Turn] = []
 
+    /// Live A2UI surfaces (structured cards), in arrival order. Store-level
+    /// rather than turn-bound: the server may update a surface across turns.
+    @Published private(set) var surfaces: [ChatUISurface] = []
+
     /// Quiet-timer driving `didReplyFinish` (only armed once a reply started).
     private var quietTask: Task<Void, Never>?
 
@@ -138,6 +142,7 @@ final class ChatActivityStore: ObservableObject {
         quietTask?.cancel()
         quietTask = nil
         turns = []
+        surfaces = []
     }
 
     // MARK: - Message-driven transitions
@@ -182,8 +187,13 @@ final class ChatActivityStore: ObservableObject {
 
     // MARK: - Events
 
-    /// Routes one decoded worker event into the live turn.
+    /// Routes one decoded worker event into the live turn (or, for A2UI
+    /// surfaces, into the store-level surface list).
     func apply(_ event: ChatEvent) {
+        if case let .ui(surface) = event {
+            applySurface(surface)
+            return
+        }
         guard var turn = liveTurn else { return }
         switch event {
         case let .toolCall(call):
@@ -225,9 +235,56 @@ final class ChatActivityStore: ObservableObject {
                 placeholder: question.placeholder,
                 maxLength: question.maxLength
             )
+        case .ui:
+            break // handled above, before turn routing
         }
         turns[turns.count - 1] = turn
         armQuietFinishTimer()
+    }
+
+    // MARK: - A2UI surfaces
+
+    /// Merges one `ui` event's A2UI messages into the surface list:
+    /// `createSurface` opens (or updates) a surface, `updateComponents` merges
+    /// components by id, `deleteSurface` removes it. `updateDataModel` is
+    /// tolerated and ignored (flat component props are rendered directly).
+    private func applySurface(_ event: ChatUISurfaceEvent) {
+        let id = event.surfaceId
+        var list = surfaces
+
+        for message in event.messages {
+            if message.deleteSurface != nil {
+                list.removeAll { $0.id == id }
+                continue
+            }
+            if let create = message.createSurface {
+                if let index = list.firstIndex(where: { $0.id == id }) {
+                    if let catalogId = create.catalogId { list[index].catalogId = catalogId }
+                } else {
+                    list.append(ChatUISurface(id: id, catalogId: create.catalogId))
+                }
+            }
+            if let update = message.updateComponents {
+                guard let index = list.firstIndex(where: { $0.id == id }) else { continue }
+                for component in update.components {
+                    if let existing = list[index].components.firstIndex(where: { $0.id == component.id }) {
+                        list[index].components[existing] = component
+                    } else {
+                        list[index].components.append(component)
+                    }
+                }
+            }
+        }
+
+        surfaces = list
+    }
+
+    /// Records a submitted surface action so its card renders answered.
+    func submitSurfaceAction(surfaceId: String, componentId: String, response: ChatUIPropValue) {
+        guard let index = surfaces.firstIndex(where: { $0.id == surfaceId }) else { return }
+        var list = surfaces
+        list[index].submittedActions[componentId] = response
+        surfaces = list
     }
 
     // MARK: - Decisions (mark the card answered)

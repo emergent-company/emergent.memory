@@ -27,7 +27,7 @@ type thinkingModelWrapper struct {
 // WrapModel implements adk.ModelWrapper. It applies the thinking override on
 // models that support it (DeepSeek/Qwen3 via ThinkingConfigurator) and returns
 // the model unchanged otherwise.
-func (w thinkingModelWrapper) WrapModel(inner adkmodel.LLM, _ string) adkmodel.LLM {
+func (w thinkingModelWrapper) WrapModel(inner adkmodel.LLM, _, _ string) adkmodel.LLM {
 	if tc, ok := inner.(adk.ThinkingConfigurator); ok {
 		tc.SetEnableThinking(w.enableThinking)
 	}

@@ -136,6 +136,25 @@ When the agent asks the user a question, the chat SHALL render it as an interact
 - **WHEN** the user selects an answer and submits
 - **THEN** the chat sends the answer and shows the card in an answered, non-interactive state
 
+### Requirement: Render A2UI surfaces natively
+
+The chat SHALL render A2UI structured-UI surfaces with native SwiftUI views resolved by a component registry over the catalog (`proposal`, `approval`, `question`, `code`, `entity`, `object-form`, `todo`, `result`), SHALL fall back to a summary card for components outside the catalog without erroring, and SHALL send a card action back so the agent can continue.
+
+#### Scenario: Catalog card renders natively
+
+- **WHEN** the agent emits a `proposal` or `question` surface
+- **THEN** the chat shows a native SwiftUI card for it, not a web view or raw JSON
+
+#### Scenario: Unknown component falls back
+
+- **WHEN** a surface references a component outside the catalog
+- **THEN** the chat renders a summary fallback and does not error
+
+#### Scenario: Surface action round-trips
+
+- **WHEN** the user taps an action on a surface card
+- **THEN** the chat sends the action back and the card shows an answered state while the agent's subsequent reply renders
+
 ### Requirement: Decisions resume the run
 
 Submitting an approval or question decision SHALL resume the paused run and the resulting reply SHALL appear in the chat.

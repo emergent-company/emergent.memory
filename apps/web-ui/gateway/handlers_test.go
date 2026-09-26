@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1586,16 +1587,16 @@ func (f *fakeMemory) ListProjectPricingOverrides(ctx context.Context) ([]Project
 	return f.pricingOverrides, nil
 }
 
-func (f *fakeMemory) UpsertProjectPricingOverride(ctx context.Context, provider, model string, rates modelPriceRates) (*ProjectCustomPricing, error) {
+func (f *fakeMemory) UpsertProjectPricingOverride(ctx context.Context, provider, providerSlug, model string, rates modelPriceRates) (*ProjectCustomPricing, error) {
 	if f.providerErr != nil {
 		return nil, f.providerErr
 	}
-	o := &ProjectCustomPricing{ProjectID: "p1", Provider: provider, Model: model, modelPriceRates: rates}
+	o := &ProjectCustomPricing{ProjectID: "p1", Provider: provider, ProviderSlug: providerSlug, Model: model, modelPriceRates: rates}
 	f.overrideWrites = append(f.overrideWrites, *o)
 	// Reflect the write so a subsequent ListProjectPricingOverrides sees it.
 	replaced := false
 	for i := range f.pricingOverrides {
-		if f.pricingOverrides[i].Provider == provider && f.pricingOverrides[i].Model == model {
+		if cmp.Or(f.pricingOverrides[i].ProviderSlug, f.pricingOverrides[i].Provider) == providerSlug && f.pricingOverrides[i].Model == model {
 			f.pricingOverrides[i] = *o
 			replaced = true
 			break
@@ -1614,7 +1615,7 @@ func (f *fakeMemory) DeleteProjectPricingOverride(ctx context.Context, provider,
 	f.deletedOverrides = append(f.deletedOverrides, providerModelKey(provider, model))
 	kept := f.pricingOverrides[:0]
 	for _, o := range f.pricingOverrides {
-		if o.Provider != provider || o.Model != model {
+		if cmp.Or(o.ProviderSlug, o.Provider) != provider || o.Model != model {
 			kept = append(kept, o)
 		}
 	}
@@ -1628,7 +1629,8 @@ func (f *fakeMemory) UpsertProjectProviderConfig(ctx context.Context, provider s
 	}
 	f.providerConfigInput = in
 	f.lastProviderConfig = provider
-	out := &ProjectProviderConfig{ProjectID: "p1", Provider: provider}
+	slug := cmp.Or(in.Slug, provider)
+	out := &ProjectProviderConfig{ProjectID: "p1", Provider: provider, Slug: slug}
 	out.GenerativeModel = in.GenerativeModel
 	out.EmbeddingModel = in.EmbeddingModel
 	out.BaseURL = in.BaseURL
@@ -1637,7 +1639,7 @@ func (f *fakeMemory) UpsertProjectProviderConfig(ctx context.Context, provider s
 	// Reflect the write so a subsequent ListProjectProviders sees it.
 	replaced := false
 	for i := range f.projectProviders {
-		if f.projectProviders[i].Provider == provider {
+		if cmp.Or(f.projectProviders[i].Slug, f.projectProviders[i].Provider) == slug {
 			f.projectProviders[i] = *out
 			replaced = true
 			break
@@ -1656,7 +1658,7 @@ func (f *fakeMemory) DeleteProjectProviderConfig(ctx context.Context, provider s
 	f.deletedProviderConfigs = append(f.deletedProviderConfigs, provider)
 	kept := f.projectProviders[:0]
 	for _, p := range f.projectProviders {
-		if p.Provider != provider {
+		if cmp.Or(p.Slug, p.Provider) != provider {
 			kept = append(kept, p)
 		}
 	}
