@@ -704,6 +704,12 @@ func (h *AgentWebhookHook) ToDTO() *AgentWebhookHookDTO {
 type CreateAgentWebhookHookDTO struct {
 	Label           string           `json:"label" validate:"required"`
 	RateLimitConfig *RateLimitConfig `json:"rateLimitConfig"`
+	// AllowInternal opts in to binding the hook to an internal-visibility agent.
+	// The default is false (fail-closed): the webhook receiver is a public
+	// surface authenticated only by a shared per-hook bearer token, so binding
+	// an internal agent there would let a third party holding that secret invoke
+	// an agent meant to be reachable only from within the platform.
+	AllowInternal bool `json:"allowInternal,omitempty"`
 }
 
 type WebhookTriggerPayloadDTO struct {

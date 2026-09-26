@@ -14,12 +14,17 @@ import (
 // ---------------------------------------------------------------------------
 
 type fakeRepo struct {
-	todos  map[string]*SessionTodo
-	nextID int
+	todos      map[string]*SessionTodo
+	nextID     int
+	accessible bool
 }
 
 func newFakeRepo() *fakeRepo {
-	return &fakeRepo{todos: make(map[string]*SessionTodo)}
+	return &fakeRepo{todos: make(map[string]*SessionTodo), accessible: true}
+}
+
+func (f *fakeRepo) SessionAccessible(_ context.Context, _ string, _ string, _ string) (bool, error) {
+	return f.accessible, nil
 }
 
 func (f *fakeRepo) List(_ context.Context, sessionID string, statuses []TodoStatus) ([]*SessionTodo, error) {
@@ -77,6 +82,7 @@ func (f *fakeRepo) Delete(_ context.Context, todoID string) error {
 // ---------------------------------------------------------------------------
 
 type repoIface interface {
+	SessionAccessible(ctx context.Context, sessionID, projectID, ownerUserID string) (bool, error)
 	List(ctx context.Context, sessionID string, statuses []TodoStatus) ([]*SessionTodo, error)
 	Get(ctx context.Context, todoID string) (*SessionTodo, error)
 	Create(ctx context.Context, todo *SessionTodo) error
@@ -94,19 +100,36 @@ func newTestService() (*testService, *fakeRepo) {
 	return &testService{repo: fake, log: slog.Default()}, fake
 }
 
-func (s *testService) List(ctx context.Context, sessionID string, statuses []TodoStatus) ([]*SessionTodo, error) {
+func (s *testService) checkAccess(ctx context.Context, sessionID, projectID, ownerUserID string) error {
+	ok, err := s.repo.SessionAccessible(ctx, sessionID, projectID, ownerUserID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return apperror.NewNotFound("session", sessionID)
+	}
+	return nil
+}
+
+func (s *testService) List(ctx context.Context, projectID, ownerUserID, sessionID string, statuses []TodoStatus) ([]*SessionTodo, error) {
 	if sessionID == "" {
 		return nil, apperror.NewBadRequest("sessionId is required")
+	}
+	if err := s.checkAccess(ctx, sessionID, projectID, ownerUserID); err != nil {
+		return nil, err
 	}
 	return s.repo.List(ctx, sessionID, statuses)
 }
 
-func (s *testService) Create(ctx context.Context, sessionID string, req CreateTodoRequest) (*SessionTodo, error) {
+func (s *testService) Create(ctx context.Context, projectID, ownerUserID, sessionID string, req CreateTodoRequest) (*SessionTodo, error) {
 	if sessionID == "" {
 		return nil, apperror.NewBadRequest("sessionId is required")
 	}
 	if req.Content == "" {
 		return nil, apperror.NewBadRequest("content is required")
+	}
+	if err := s.checkAccess(ctx, sessionID, projectID, ownerUserID); err != nil {
+		return nil, err
 	}
 	order := 0
 	if req.Order != nil {
@@ -125,7 +148,10 @@ func (s *testService) Create(ctx context.Context, sessionID string, req CreateTo
 	return todo, nil
 }
 
-func (s *testService) Update(ctx context.Context, sessionID, todoID string, req UpdateTodoRequest) (*SessionTodo, error) {
+func (s *testService) Update(ctx context.Context, projectID, ownerUserID, sessionID, todoID string, req UpdateTodoRequest) (*SessionTodo, error) {
+	if err := s.checkAccess(ctx, sessionID, projectID, ownerUserID); err != nil {
+		return nil, err
+	}
 	todo, err := s.repo.Get(ctx, todoID)
 	if err != nil {
 		return nil, err
@@ -155,7 +181,10 @@ func (s *testService) Update(ctx context.Context, sessionID, todoID string, req 
 	return todo, nil
 }
 
-func (s *testService) Delete(ctx context.Context, sessionID, todoID string) error {
+func (s *testService) Delete(ctx context.Context, projectID, ownerUserID, sessionID, todoID string) error {
+	if err := s.checkAccess(ctx, sessionID, projectID, ownerUserID); err != nil {
+		return err
+	}
 	todo, err := s.repo.Get(ctx, todoID)
 	if err != nil {
 		return err
@@ -169,6 +198,14 @@ func (s *testService) Delete(ctx context.Context, sessionID, todoID string) erro
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+// testProject/testOwner are the arbitrary caller identity used by the in-memory
+// mirror tests; the fakeRepo reports every session as accessible, so ownership
+// is not exercised here (see ownership_test.go for the hermetic two-user suite).
+const (
+	testProject = "proj-1"
+	testOwner   = "user-1"
+)
 
 func assertBadRequest(t *testing.T, err error) {
 	t.Helper()
@@ -200,25 +237,25 @@ func assertNotFound(t *testing.T, err error) {
 
 func TestService_List_EmptySessionID(t *testing.T) {
 	svc, _ := newTestService()
-	_, err := svc.List(context.Background(), "", nil)
+	_, err := svc.List(context.Background(), testProject, testOwner, "", nil)
 	assertBadRequest(t, err)
 }
 
 func TestService_Create_EmptySessionID(t *testing.T) {
 	svc, _ := newTestService()
-	_, err := svc.Create(context.Background(), "", CreateTodoRequest{Content: "do something"})
+	_, err := svc.Create(context.Background(), testProject, testOwner, "", CreateTodoRequest{Content: "do something"})
 	assertBadRequest(t, err)
 }
 
 func TestService_Create_EmptyContent(t *testing.T) {
 	svc, _ := newTestService()
-	_, err := svc.Create(context.Background(), "session-1", CreateTodoRequest{})
+	_, err := svc.Create(context.Background(), testProject, testOwner, "session-1", CreateTodoRequest{})
 	assertBadRequest(t, err)
 }
 
 func TestService_Create_DefaultsStatusToDraft(t *testing.T) {
 	svc, _ := newTestService()
-	todo, err := svc.Create(context.Background(), "sess-abc", CreateTodoRequest{Content: "write tests"})
+	todo, err := svc.Create(context.Background(), testProject, testOwner, "sess-abc", CreateTodoRequest{Content: "write tests"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -236,7 +273,7 @@ func TestService_Create_DefaultsStatusToDraft(t *testing.T) {
 func TestService_Create_OrderFromRequest(t *testing.T) {
 	svc, _ := newTestService()
 	order := 5
-	todo, err := svc.Create(context.Background(), "sess-abc", CreateTodoRequest{Content: "step 5", Order: &order})
+	todo, err := svc.Create(context.Background(), testProject, testOwner, "sess-abc", CreateTodoRequest{Content: "step 5", Order: &order})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -247,7 +284,7 @@ func TestService_Create_OrderFromRequest(t *testing.T) {
 
 func TestService_Create_DefaultOrderZero(t *testing.T) {
 	svc, _ := newTestService()
-	todo, err := svc.Create(context.Background(), "sess", CreateTodoRequest{Content: "task"})
+	todo, err := svc.Create(context.Background(), testProject, testOwner, "sess", CreateTodoRequest{Content: "task"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -258,16 +295,16 @@ func TestService_Create_DefaultOrderZero(t *testing.T) {
 
 func TestService_Update_WrongSession_ReturnsNotFound(t *testing.T) {
 	svc, _ := newTestService()
-	todo, _ := svc.Create(context.Background(), "session-A", CreateTodoRequest{Content: "task"})
+	todo, _ := svc.Create(context.Background(), testProject, testOwner, "session-A", CreateTodoRequest{Content: "task"})
 	status := StatusCompleted
-	_, err := svc.Update(context.Background(), "session-B", todo.ID, UpdateTodoRequest{Status: &status})
+	_, err := svc.Update(context.Background(), testProject, testOwner, "session-B", todo.ID, UpdateTodoRequest{Status: &status})
 	assertNotFound(t, err)
 }
 
 func TestService_Update_NoFields_ReturnsUnchangedTodo(t *testing.T) {
 	svc, _ := newTestService()
-	todo, _ := svc.Create(context.Background(), "sess", CreateTodoRequest{Content: "original"})
-	updated, err := svc.Update(context.Background(), "sess", todo.ID, UpdateTodoRequest{})
+	todo, _ := svc.Create(context.Background(), testProject, testOwner, "sess", CreateTodoRequest{Content: "original"})
+	updated, err := svc.Update(context.Background(), testProject, testOwner, "sess", todo.ID, UpdateTodoRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -278,9 +315,9 @@ func TestService_Update_NoFields_ReturnsUnchangedTodo(t *testing.T) {
 
 func TestService_Update_Status(t *testing.T) {
 	svc, _ := newTestService()
-	todo, _ := svc.Create(context.Background(), "sess", CreateTodoRequest{Content: "task"})
+	todo, _ := svc.Create(context.Background(), testProject, testOwner, "sess", CreateTodoRequest{Content: "task"})
 	status := StatusInProgress
-	updated, err := svc.Update(context.Background(), "sess", todo.ID, UpdateTodoRequest{Status: &status})
+	updated, err := svc.Update(context.Background(), testProject, testOwner, "sess", todo.ID, UpdateTodoRequest{Status: &status})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -291,9 +328,9 @@ func TestService_Update_Status(t *testing.T) {
 
 func TestService_Update_Content(t *testing.T) {
 	svc, _ := newTestService()
-	todo, _ := svc.Create(context.Background(), "sess", CreateTodoRequest{Content: "old"})
+	todo, _ := svc.Create(context.Background(), testProject, testOwner, "sess", CreateTodoRequest{Content: "old"})
 	newContent := "new content"
-	updated, err := svc.Update(context.Background(), "sess", todo.ID, UpdateTodoRequest{Content: &newContent})
+	updated, err := svc.Update(context.Background(), testProject, testOwner, "sess", todo.ID, UpdateTodoRequest{Content: &newContent})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -304,15 +341,15 @@ func TestService_Update_Content(t *testing.T) {
 
 func TestService_Delete_WrongSession_ReturnsNotFound(t *testing.T) {
 	svc, _ := newTestService()
-	todo, _ := svc.Create(context.Background(), "session-A", CreateTodoRequest{Content: "task"})
-	err := svc.Delete(context.Background(), "session-B", todo.ID)
+	todo, _ := svc.Create(context.Background(), testProject, testOwner, "session-A", CreateTodoRequest{Content: "task"})
+	err := svc.Delete(context.Background(), testProject, testOwner, "session-B", todo.ID)
 	assertNotFound(t, err)
 }
 
 func TestService_Delete_OwnSession_Succeeds(t *testing.T) {
 	svc, fake := newTestService()
-	todo, _ := svc.Create(context.Background(), "sess", CreateTodoRequest{Content: "task"})
-	err := svc.Delete(context.Background(), "sess", todo.ID)
+	todo, _ := svc.Create(context.Background(), testProject, testOwner, "sess", CreateTodoRequest{Content: "task"})
+	err := svc.Delete(context.Background(), testProject, testOwner, "sess", todo.ID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -323,18 +360,18 @@ func TestService_Delete_OwnSession_Succeeds(t *testing.T) {
 
 func TestService_Delete_NonexistentTodo_ReturnsNotFound(t *testing.T) {
 	svc, _ := newTestService()
-	err := svc.Delete(context.Background(), "sess", "no-such-id")
+	err := svc.Delete(context.Background(), testProject, testOwner, "sess", "no-such-id")
 	assertNotFound(t, err)
 }
 
 func TestService_List_StatusFilter(t *testing.T) {
 	svc, _ := newTestService()
-	svc.Create(context.Background(), "sess", CreateTodoRequest{Content: "a"}) // draft
-	todo2, _ := svc.Create(context.Background(), "sess", CreateTodoRequest{Content: "b"})
+	_, _ = svc.Create(context.Background(), testProject, testOwner, "sess", CreateTodoRequest{Content: "a"}) // draft
+	todo2, _ := svc.Create(context.Background(), testProject, testOwner, "sess", CreateTodoRequest{Content: "b"})
 	completedStatus := StatusCompleted
-	svc.Update(context.Background(), "sess", todo2.ID, UpdateTodoRequest{Status: &completedStatus})
+	_, _ = svc.Update(context.Background(), testProject, testOwner, "sess", todo2.ID, UpdateTodoRequest{Status: &completedStatus})
 
-	todos, err := svc.List(context.Background(), "sess", []TodoStatus{StatusCompleted})
+	todos, err := svc.List(context.Background(), testProject, testOwner, "sess", []TodoStatus{StatusCompleted})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -348,10 +385,10 @@ func TestService_List_StatusFilter(t *testing.T) {
 
 func TestService_List_NoFilter_ReturnsAll(t *testing.T) {
 	svc, _ := newTestService()
-	svc.Create(context.Background(), "sess", CreateTodoRequest{Content: "a"})
-	svc.Create(context.Background(), "sess", CreateTodoRequest{Content: "b"})
+	_, _ = svc.Create(context.Background(), testProject, testOwner, "sess", CreateTodoRequest{Content: "a"})
+	_, _ = svc.Create(context.Background(), testProject, testOwner, "sess", CreateTodoRequest{Content: "b"})
 
-	todos, err := svc.List(context.Background(), "sess", nil)
+	todos, err := svc.List(context.Background(), testProject, testOwner, "sess", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -362,10 +399,10 @@ func TestService_List_NoFilter_ReturnsAll(t *testing.T) {
 
 func TestService_List_IsolatesBySession(t *testing.T) {
 	svc, _ := newTestService()
-	svc.Create(context.Background(), "sess-1", CreateTodoRequest{Content: "for sess-1"})
-	svc.Create(context.Background(), "sess-2", CreateTodoRequest{Content: "for sess-2"})
+	_, _ = svc.Create(context.Background(), testProject, testOwner, "sess-1", CreateTodoRequest{Content: "for sess-1"})
+	_, _ = svc.Create(context.Background(), testProject, testOwner, "sess-2", CreateTodoRequest{Content: "for sess-2"})
 
-	todos, err := svc.List(context.Background(), "sess-1", nil)
+	todos, err := svc.List(context.Background(), testProject, testOwner, "sess-1", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -375,4 +412,35 @@ func TestService_List_IsolatesBySession(t *testing.T) {
 	if todos[0].Content != "for sess-1" {
 		t.Errorf("unexpected content: %s", todos[0].Content)
 	}
+}
+
+func TestService_List_ForeignSession_ReturnsNotFound(t *testing.T) {
+	svc, fake := newTestService()
+	fake.accessible = false
+	_, err := svc.List(context.Background(), testProject, testOwner, "foreign-sess", nil)
+	assertNotFound(t, err)
+}
+
+func TestService_Create_ForeignSession_ReturnsNotFound(t *testing.T) {
+	svc, fake := newTestService()
+	fake.accessible = false
+	_, err := svc.Create(context.Background(), testProject, testOwner, "foreign-sess", CreateTodoRequest{Content: "x"})
+	assertNotFound(t, err)
+}
+
+func TestService_Update_ForeignSession_ReturnsNotFound(t *testing.T) {
+	svc, fake := newTestService()
+	todo, _ := svc.Create(context.Background(), testProject, testOwner, "owned-sess", CreateTodoRequest{Content: "task"})
+	fake.accessible = false
+	status := StatusCompleted
+	_, err := svc.Update(context.Background(), testProject, testOwner, "owned-sess", todo.ID, UpdateTodoRequest{Status: &status})
+	assertNotFound(t, err)
+}
+
+func TestService_Delete_ForeignSession_ReturnsNotFound(t *testing.T) {
+	svc, fake := newTestService()
+	todo, _ := svc.Create(context.Background(), testProject, testOwner, "owned-sess", CreateTodoRequest{Content: "task"})
+	fake.accessible = false
+	err := svc.Delete(context.Background(), testProject, testOwner, "owned-sess", todo.ID)
+	assertNotFound(t, err)
 }

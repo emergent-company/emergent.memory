@@ -1521,6 +1521,14 @@ func (h *MCPToolHandler) ExecuteCreateAgentHook(ctx context.Context, projectID s
 		return errResult("agent not found: " + agentID)
 	}
 
+	// Refuse binding a public webhook hook to an internal-visibility agent
+	// (fail-closed) unless explicitly opted in — the webhook receiver is a
+	// public surface authenticated only by a shared per-hook bearer token.
+	allowInternal, _ := args["allow_internal"].(bool)
+	if err := hookInternalBindingErr(ctx, h.repo, agent, allowInternal); err != nil {
+		return errResult(err.Error())
+	}
+
 	rawToken, err := GenerateWebhookToken()
 	if err != nil {
 		return errResult("failed to generate token: " + err.Error())

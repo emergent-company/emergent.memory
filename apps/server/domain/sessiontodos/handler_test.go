@@ -52,26 +52,26 @@ type handlerSvcAdapter struct {
 	inner *testService
 }
 
-func (a *handlerSvcAdapter) List(ctx context.Context, sessionID string, statuses []TodoStatus) ([]*SessionTodo, error) {
-	return a.inner.List(ctx, sessionID, statuses)
+func (a *handlerSvcAdapter) List(ctx context.Context, projectID, ownerUserID, sessionID string, statuses []TodoStatus) ([]*SessionTodo, error) {
+	return a.inner.List(ctx, projectID, ownerUserID, sessionID, statuses)
 }
-func (a *handlerSvcAdapter) Create(ctx context.Context, sessionID string, req CreateTodoRequest) (*SessionTodo, error) {
-	return a.inner.Create(ctx, sessionID, req)
+func (a *handlerSvcAdapter) Create(ctx context.Context, projectID, ownerUserID, sessionID string, req CreateTodoRequest) (*SessionTodo, error) {
+	return a.inner.Create(ctx, projectID, ownerUserID, sessionID, req)
 }
-func (a *handlerSvcAdapter) Update(ctx context.Context, sessionID, todoID string, req UpdateTodoRequest) (*SessionTodo, error) {
-	return a.inner.Update(ctx, sessionID, todoID, req)
+func (a *handlerSvcAdapter) Update(ctx context.Context, projectID, ownerUserID, sessionID, todoID string, req UpdateTodoRequest) (*SessionTodo, error) {
+	return a.inner.Update(ctx, projectID, ownerUserID, sessionID, todoID, req)
 }
-func (a *handlerSvcAdapter) Delete(ctx context.Context, sessionID, todoID string) error {
-	return a.inner.Delete(ctx, sessionID, todoID)
+func (a *handlerSvcAdapter) Delete(ctx context.Context, projectID, ownerUserID, sessionID, todoID string) error {
+	return a.inner.Delete(ctx, projectID, ownerUserID, sessionID, todoID)
 }
 
 // testHandler is a copy of Handler that accepts an svcIface so tests don't need
 // a real *Service (which requires a live DB via *Repository).
 type svcIface interface {
-	List(ctx context.Context, sessionID string, statuses []TodoStatus) ([]*SessionTodo, error)
-	Create(ctx context.Context, sessionID string, req CreateTodoRequest) (*SessionTodo, error)
-	Update(ctx context.Context, sessionID, todoID string, req UpdateTodoRequest) (*SessionTodo, error)
-	Delete(ctx context.Context, sessionID, todoID string) error
+	List(ctx context.Context, projectID, ownerUserID, sessionID string, statuses []TodoStatus) ([]*SessionTodo, error)
+	Create(ctx context.Context, projectID, ownerUserID, sessionID string, req CreateTodoRequest) (*SessionTodo, error)
+	Update(ctx context.Context, projectID, ownerUserID, sessionID, todoID string, req UpdateTodoRequest) (*SessionTodo, error)
+	Delete(ctx context.Context, projectID, ownerUserID, sessionID, todoID string) error
 }
 
 type testHandler struct {
@@ -94,7 +94,7 @@ func (h *testHandler) List(c echo.Context) error {
 			statuses = append(statuses, TodoStatus(strings.TrimSpace(s)))
 		}
 	}
-	todos, err := h.svc.List(c.Request().Context(), sessionID, statuses)
+	todos, err := h.svc.List(c.Request().Context(), testProject, testOwner, sessionID, statuses)
 	if err != nil {
 		return err
 	}
@@ -110,7 +110,7 @@ func (h *testHandler) Create(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
-	todo, err := h.svc.Create(c.Request().Context(), sessionID, req)
+	todo, err := h.svc.Create(c.Request().Context(), testProject, testOwner, sessionID, req)
 	if err != nil {
 		return err
 	}
@@ -127,7 +127,7 @@ func (h *testHandler) Update(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
-	todo, err := h.svc.Update(c.Request().Context(), sessionID, todoID, req)
+	todo, err := h.svc.Update(c.Request().Context(), testProject, testOwner, sessionID, todoID, req)
 	if err != nil {
 		return err
 	}
@@ -140,7 +140,7 @@ func (h *testHandler) Delete(c echo.Context) error {
 	if sessionID == "" || todoID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "sessionId and todoId are required")
 	}
-	if err := h.svc.Delete(c.Request().Context(), sessionID, todoID); err != nil {
+	if err := h.svc.Delete(c.Request().Context(), testProject, testOwner, sessionID, todoID); err != nil {
 		return err
 	}
 	return c.NoContent(http.StatusNoContent)

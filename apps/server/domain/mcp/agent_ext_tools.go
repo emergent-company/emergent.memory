@@ -86,7 +86,7 @@ func agentExtToolDefinitions() []ToolDefinition {
 			Name:          "agent-hook-create",
 			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "agents:write",
-			Description:   "Create a new webhook hook for an agent. Returns the hook id and a one-time token for authenticating webhook calls.",
+			Description:   "Create a new webhook hook for an agent. Returns the hook id and a one-time token for authenticating webhook calls. Binding a hook to an internal-visibility agent is refused unless allow_internal is true.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -97,6 +97,10 @@ func agentExtToolDefinitions() []ToolDefinition {
 					"label": {
 						Type:        "string",
 						Description: "Human-readable label for this hook",
+					},
+					"allow_internal": {
+						Type:        "boolean",
+						Description: "Opt in to binding the hook to an internal-visibility agent (default false; the webhook receiver is a public surface)",
 					},
 				},
 				Required: []string{"agent_id", "label"},
