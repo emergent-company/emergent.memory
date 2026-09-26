@@ -1904,7 +1904,7 @@ routes:
       note: a2aErrorEnvelopeMiddleware, RequireAuth, RequireAPITokenScopes(agents:read)
     - method: GET
       path: /health
-      level: public
+      level: auth
       note: ""
     - method: GET
       path: /healthz
