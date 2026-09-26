@@ -2123,7 +2123,6 @@
 
   /* ---------- boot ---------- */
   MemoryChatComponents.ensureBadgeStyle();
-  MemoryChatComponents.ensureChatControlStyle();
 
   // document-level: close the tool panel via backdrop / X / Escape (survives
   // htmx swaps of #chat-root)
