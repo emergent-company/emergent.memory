@@ -40,36 +40,43 @@ services:
       retries: 10
 
   # ─────────────────────────────────────────────────────────────────────────
-  # MinIO storage (required for document upload tests)
+  # SeaweedFS storage (required for document upload tests)
   # ─────────────────────────────────────────────────────────────────────────
-  minio:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
-    container_name: test-emergent-minio
+  seaweedfs:
+    image: chrislusf/seaweedfs@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882
+    container_name: test-emergent-seaweedfs
+    # Single node: master + volume + filer + S3 in one process. S3 API on 8333.
+    command: server -dir=/data -s3
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: local-test-minio
-    command: server /data --console-address ":9001"
+      AWS_ACCESS_KEY_ID: e2e-access
+      AWS_SECRET_ACCESS_KEY: e2e-secret
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      # Master cluster-status endpoint; 127.0.0.1 avoids IPv6 localhost.
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:9333/cluster/status"]
       interval: 5s
       timeout: 5s
       retries: 10
+      start_period: 10s
 
-  # MinIO bucket initialization (one-shot; the server's storage ping does
-  # HeadBucket on the documents bucket, so buckets must exist before start).
-  minio-init:
-    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
-    container_name: test-emergent-minio-init
+  # Bucket bootstrap (one-shot; the server's storage ping does HeadBucket on the
+  # documents bucket, so buckets must exist before start). Runs from the server
+  # image, which carries the emergent-storage-init binary.
+  storage-init:
+    image: ${MEMORY_SERVER_IMAGE:-ghcr.io/emergent-company/memory-server:latest}
+    container_name: test-emergent-storage-init
+    entrypoint: ["/usr/local/bin/emergent-storage-init"]
+    restart: "no"
     depends_on:
-      minio:
+      seaweedfs:
         condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      sleep 2;
-      mc alias set myminio http://minio:9000 minioadmin local-test-minio;
-      mc mb myminio/documents --ignore-existing;
-      mc mb myminio/document-temp --ignore-existing;
-      "
+    environment:
+      STORAGE_PROVIDER: seaweedfs
+      STORAGE_ENDPOINT: http://seaweedfs:8333
+      STORAGE_ACCESS_KEY: e2e-access
+      STORAGE_SECRET_KEY: e2e-secret
+      STORAGE_REGION: us-east-1
+      STORAGE_BUCKET_DOCUMENTS: documents
+      STORAGE_BUCKET_TEMP: document-temp
 
   # ─────────────────────────────────────────────────────────────────────────
   # Stub MCP registry — impersonates the official MCP registry API so the
@@ -87,6 +94,18 @@ services:
       start_period: 5s
 
   # ─────────────────────────────────────────────────────────────────────────
+  # Mailpit — SMTP capture box (1025) + HTTP API/UI (8025). The server sends
+  # real email here via EMAIL_TRANSPORT=smtp; e2e tests read it back over the
+  # HTTP API. No healthcheck (the image has no shell).
+  # ─────────────────────────────────────────────────────────────────────────
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: test-emergent-mailpit
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+
+  # ─────────────────────────────────────────────────────────────────────────
   # Memory API server (standalone mode)
   # ─────────────────────────────────────────────────────────────────────────
   test-emergent-server:
@@ -95,12 +114,14 @@ services:
     depends_on:
       test-db:
         condition: service_healthy
-      minio:
+      seaweedfs:
         condition: service_healthy
-      minio-init:
+      storage-init:
         condition: service_completed_successfully
       test-mcp-registry:
         condition: service_healthy
+      mailpit:
+        condition: service_started
     environment:
       # Standalone mode — API key is used instead of Zitadel OAuth
       STANDALONE_MODE: "true"
@@ -108,6 +129,8 @@ services:
       STANDALONE_USER_EMAIL: "e2e@localhost"
       STANDALONE_ORG_NAME: "E2E Org"
       STANDALONE_PROJECT_NAME: "E2E Project"
+      STANDALONE_API_KEY_2: "e2e-test-user-2"
+      STANDALONE_USER_EMAIL_2: "invitee@localhost"
 
       # Database
       POSTGRES_HOST: test-emergent-db
@@ -116,13 +139,14 @@ services:
       POSTGRES_PASSWORD: emergent
       POSTGRES_DB: emergent
 
-      # Storage (MinIO)
-      STORAGE_PROVIDER: minio
-      STORAGE_ENDPOINT: http://minio:9000
-      STORAGE_ACCESS_KEY: minioadmin
-      STORAGE_SECRET_KEY: local-test-minio
+      # Storage (SeaweedFS S3-compatible)
+      STORAGE_PROVIDER: seaweedfs
+      STORAGE_ENDPOINT: http://seaweedfs:8333
+      STORAGE_ACCESS_KEY: e2e-access
+      STORAGE_SECRET_KEY: e2e-secret
       STORAGE_BUCKET_DOCUMENTS: documents
       STORAGE_BUCKET_TEMP: document-temp
+      STORAGE_REGION: us-east-1
       STORAGE_USE_SSL: 'false'
 
       # Server
@@ -138,6 +162,14 @@ services:
       ENABLE_AGENT_WORKSPACES: "false"
       KREUZBERG_ENABLED: "false"
       WHISPER_ENABLED: "false"
+
+      # Email — SMTP transport into Mailpit so e2e can capture real email.
+      EMAIL_ENABLED: "true"
+      EMAIL_TRANSPORT: "smtp"
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_TLS: "none"
+      EMAIL_WORKER_INTERVAL_MS: "1000"
     healthcheck:
       test: ["CMD-SHELL", "curl -fs http://localhost:3002/health || exit 1"]
       interval: 5s
@@ -161,10 +193,13 @@ services:
         condition: service_healthy
     environment:
       MEMORY_TEST_SERVER: "${MEMORY_TEST_SERVER:-http://test-emergent-server:3002}"
+      STANDALONE_API_KEY_2: "e2e-test-user-2"
+      STANDALONE_USER_EMAIL_2: "invitee@localhost"
       TEST_LOG_DIR: "/test-logs"
       TEST_RUNNER: "docker"
       CI: "true"
       TEST_RUN: "${TEST_RUN:-}"
+      MAILPIT_BASE_URL: "http://mailpit:8025"
     volumes:
       # Persist test session logs to the host so they survive container exit.
       - ./test-logs:/test-logs

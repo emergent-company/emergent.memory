@@ -160,7 +160,11 @@ func (r *Repository) CancelJob(ctx context.Context, jobID uuid.UUID) error {
 
 	rows, _ := result.RowsAffected()
 	if rows == 0 {
-		return apperror.ErrBadRequest.WithMessage("job cannot be cancelled (already completed, failed, or cancelled)")
+		// The job is not in a cancellable state (it is terminal — completed,
+		// failed, or already cancelled — or does not exist). Return 409 Conflict
+		// per the cancellation contract (issue #1003): cancelling an already-terminal
+		// job is a state conflict, not a malformed request.
+		return apperror.ErrConflict.WithMessage("job cannot be cancelled (already completed, failed, or cancelled)")
 	}
 	return nil
 }

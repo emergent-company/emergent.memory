@@ -82,7 +82,7 @@ func TestConfirmIconRendersOverride(t *testing.T) {
 
 func TestTableCardWrapsChildren(t *testing.T) {
 	html := renderHTML(t, TableCard(nil))
-	assertContains(t, html, "card-border overflow-hidden shadow-sm", "card-body p-0")
+	assertContains(t, html, "card-border overflow-hidden shadow-sm", "card-body memory-density-flush")
 
 	withChild := renderHTML(t, tableCardFixture())
 	assertContains(t, withChild, "<table", "child-table")
@@ -255,7 +255,7 @@ func TestMetaChipRendersIconAndText(t *testing.T) {
 
 func TestPanelCardRendersStandardTreatment(t *testing.T) {
 	html := renderHTML(t, PanelCard("", nil))
-	assertContains(t, html, `class="card bg-base-100 card-border"`, "card-body p-5")
+	assertContains(t, html, `class="card bg-base-100 card-border"`, "card-body memory-density-comfortable")
 }
 
 func TestPanelCardAppendsAccentClass(t *testing.T) {

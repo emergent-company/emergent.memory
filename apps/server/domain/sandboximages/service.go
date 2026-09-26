@@ -142,14 +142,17 @@ func (s *Service) List(ctx context.Context, projectID string) ([]*SandboxImage, 
 	return s.store.ListByProject(ctx, projectID)
 }
 
-// Get returns a workspace image by ID.
-func (s *Service) Get(ctx context.Context, id string) (*SandboxImage, error) {
-	return s.store.GetByID(ctx, id)
+// Get returns a workspace image by ID, scoped to the caller's project. A
+// missing or foreign-project image returns (nil, nil) (issue #968).
+func (s *Service) Get(ctx context.Context, projectID, id string) (*SandboxImage, error) {
+	return s.store.GetByIDForProject(ctx, projectID, id)
 }
 
-// Delete removes a custom workspace image. Built-in images cannot be deleted.
-func (s *Service) Delete(ctx context.Context, id string) error {
-	img, err := s.store.GetByID(ctx, id)
+// Delete removes a custom workspace image by ID, scoped to the caller's
+// project. Built-in images cannot be deleted. A missing or foreign-project
+// image returns ErrNotFound (issue #968).
+func (s *Service) Delete(ctx context.Context, projectID, id string) error {
+	img, err := s.store.GetByIDForProject(ctx, projectID, id)
 	if err != nil {
 		return fmt.Errorf("failed to get image: %w", err)
 	}
@@ -159,7 +162,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	if img.Type == ImageTypeBuiltIn {
 		return ErrBuiltInImmutable
 	}
-	return s.store.Delete(ctx, id)
+	return s.store.DeleteByIDForProject(ctx, projectID, id)
 }
 
 // SeedBuiltIns scans the Firecracker data directory for rootfs files and

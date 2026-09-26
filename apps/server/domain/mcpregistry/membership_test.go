@@ -72,3 +72,37 @@ func (s *MCPRegistryMembershipSuite) TestTokenProjectBindingForbidden() {
 	s.Require().Equal(http.StatusForbidden, resp.StatusCode,
 		"project token addressing a different project must be 403, got %d: %s", resp.StatusCode, resp.String())
 }
+
+// TestBareAdminAccountTokenForbidden proves the scope-only gate is gone
+// (issue #968): a bare `admin` account token minted by a non-member carries no
+// ownership and is refused by membership, never admitted by the removed scope.
+func (s *MCPRegistryMembershipSuite) TestBareAdminAccountTokenForbidden() {
+	nonMemberID := uuid.New().String()
+	s.Require().NoError(testutil.CreateTestUser(s.Ctx, s.DB(), testutil.TestUser{
+		ID:            nonMemberID,
+		ZitadelUserID: "mcpregistry-nonmember-" + nonMemberID[:8],
+		Email:         "mcpregistry-nonmember@test.local",
+	}))
+	token := "emt_968_mcpregistry_bare_admin"
+	s.Require().NoError(testutil.CreateTestAccountAPIToken(s.Ctx, s.DB(), nonMemberID, token, []string{"admin"}))
+
+	resp := s.Client.GET("/api/admin/mcp-servers",
+		testutil.WithAuth(token), testutil.WithProjectID(s.ProjectID))
+	s.Require().Equal(http.StatusForbidden, resp.StatusCode,
+		"bare admin account token must be 403, got %d: %s", resp.StatusCode, resp.String())
+}
+
+// TestProjectTokenWithoutAdminScopeOK proves the authority is membership, not a
+// scope (issue #968): a project-bound token owned by a member succeeds even
+// though it carries no `admin` scope — the removed scope gate can no longer
+// wrongly refuse it.
+func (s *MCPRegistryMembershipSuite) TestProjectTokenWithoutAdminScopeOK() {
+	token := "emt_968_mcpregistry_no_admin"
+	s.Require().NoError(testutil.CreateTestAPIToken(s.Ctx, s.DB(),
+		testutil.AdminUser.ID, token, []string{"data:read"}, s.ProjectID))
+
+	resp := s.Client.GET("/api/admin/mcp-servers",
+		testutil.WithAuth(token), testutil.WithProjectID(s.ProjectID))
+	s.Require().Equal(http.StatusOK, resp.StatusCode,
+		"project-bound member token without admin scope must be 200, got %d: %s", resp.StatusCode, resp.String())
+}

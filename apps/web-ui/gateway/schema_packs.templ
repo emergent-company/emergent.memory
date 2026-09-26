@@ -138,7 +138,7 @@ templ schemaPackHeader(pack *schemaPackSummary) {
 templ schemaPackMeta(pack *schemaPackSummary) {
 	@ui.Section("Pack details", ui.SectionProps{
 		Margin:    "mb-6",
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 	}) {
 		@components.MetaGrid() {
 			@schemaPackMetaRow("Pack id", pack.ID, true)

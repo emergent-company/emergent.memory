@@ -31,5 +31,7 @@ jobs:
         run: python3 .github/scripts/check-injection.py --self-test
       - name: Workflow injection guard
         run: python3 .github/scripts/check-injection.py .github/workflows
+      - name: go.work coverage guard
+        run: .github/scripts/check-go-work-coverage.sh
       - name: Meta checks
         run: 'echo "Meta CI: no meta checks remain in this repository."'

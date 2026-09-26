@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // Service handles business logic for branches
@@ -17,6 +18,14 @@ type Service struct {
 // NewService creates a new branches service
 func NewService(store *Store) *Service {
 	return &Service{store: store}
+}
+
+// RequireProjectMember asserts the authenticated caller is a member of the org
+// that owns projectID, resolving the owning org server-side (issue #913). The
+// project ID is client-supplied via ?project_id / body / header, so it must
+// never be treated as authorization truth on its own.
+func (s *Service) RequireProjectMember(ctx context.Context, projectID string) error {
+	return auth.RequireProjectMembership(ctx, s.store.db, projectID)
 }
 
 // List returns all branches, optionally filtered by project_id

@@ -31,8 +31,13 @@ type SessionTitleHandler interface {
 // SessionHistoryProvider retrieves the unified timeline for an ACP session.
 // Implemented by agents.Repository to avoid a circular import (mcp → agents).
 // Returns items as map[string]any so no shared types are needed across the boundary.
+//
+// projectID and ownerUserID are the caller's identity, resolved from the
+// run/auth context; the implementation enforces the conversation ownership
+// model (#1010) at the data-access layer and refuses a foreign/unknown session
+// with a 404 (issue #1032).
 type SessionHistoryProvider interface {
-	GetConversationFullHistoryRaw(ctx context.Context, acpSessionID string) ([]map[string]any, error)
+	GetConversationFullHistoryRaw(ctx context.Context, projectID, ownerUserID, acpSessionID string) ([]map[string]any, error)
 }
 
 // GraphObjectPatcher patches graph object Properties.title when set_session_title runs.
@@ -51,6 +56,54 @@ func ContextWithACPSessionID(ctx context.Context, sessionID string) context.Cont
 // Returns empty string if not set.
 func ACPSessionIDFromContext(ctx context.Context) string {
 	v, _ := ctx.Value(acpSessionIDKey{}).(string)
+	return v
+}
+
+// trustedInternalKey is the context key for propagating the run's trust marker
+// into tool execution, so the in-process dispatch path (ExecuteTool) can enforce
+// AgentOnly consistently with the HTTP transports. It mirrors the fail-closed
+// kb.agent_runs.trusted_internal marker persisted on the run row.
+type trustedInternalKey struct{}
+
+// ContextWithTrustedInternal stores whether the calling run was started through a
+// trusted/internal surface (session UI, scheduler, MCP-triggered agent) as
+// opposed to an external surface (webhook, A2A, agentcompat, public share). The
+// agent executor sets it before running tools; ExecuteTool reads it to gate
+// AgentOnly tools. The zero value (marker absent) is untrusted, so a caller that
+// forgets to declare itself cannot reach agent-only tools (issue #994).
+func ContextWithTrustedInternal(ctx context.Context, trusted bool) context.Context {
+	return context.WithValue(ctx, trustedInternalKey{}, trusted)
+}
+
+// TrustedInternalFromContext reports whether the run in ctx was started through a
+// trusted/internal surface. Absent marker resolves to false (untrusted, fail-closed).
+func TrustedInternalFromContext(ctx context.Context) bool {
+	v, _ := ctx.Value(trustedInternalKey{}).(bool)
+	return v
+}
+
+// transportEnforcedKey is the context key marking an ExecuteTool call whose
+// per-tool authority was already enforced by an HTTP transport before dispatch.
+// It is deliberately DISTINCT from trustedInternalKey: the trust marker means
+// "a genuinely internal agent run", while this marker means "an HTTP transport
+// already ran the per-tool AgentOnly / RequiredScope / SuperadminOnly checks".
+// Conflating the two let the relay fallback treat an authenticated HTTP call as
+// an internal run (issue #1017).
+type transportEnforcedKey struct{}
+
+// ContextWithTransportEnforced marks ctx as an ExecuteTool call whose per-tool
+// authority was already enforced by an HTTP transport, so the in-process gate
+// does not re-fire for an authenticated HTTP client. It does NOT mark the call
+// as a genuinely internal run: relay (agent-only) tools are gated on
+// trustedInternal only, so this marker can never satisfy them.
+func ContextWithTransportEnforced(ctx context.Context) context.Context {
+	return context.WithValue(ctx, transportEnforcedKey{}, true)
+}
+
+// TransportEnforcedFromContext reports whether the ExecuteTool call was already
+// authorized by an HTTP transport. Absent marker resolves to false.
+func TransportEnforcedFromContext(ctx context.Context) bool {
+	v, _ := ctx.Value(transportEnforcedKey{}).(bool)
 	return v
 }
 
@@ -338,6 +391,11 @@ type ToolDefinition struct {
 	// AgentOnly marks tools that are only available to internal memory agents,
 	// not to external MCP clients regardless of their scopes.
 	AgentOnly bool `json:"agentOnly,omitempty"`
+	// SuperadminOnly marks deployment-wide operator tools that require an active
+	// superadmin_full grant (resolved from core.superadmins) rather than a token
+	// scope. A bare admin / admin:all token cannot satisfy it, because neither is
+	// minted from the platform-admin authority (issue #948).
+	SuperadminOnly bool `json:"superadminOnly,omitempty"`
 }
 
 // InputSchema is a JSON schema for tool parameters

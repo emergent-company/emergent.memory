@@ -272,19 +272,6 @@ func TestMCPSSE_Tool_ListEntityTypes(t *testing.T) {
 // query_entities
 // ─────────────────────────────────────────────────────────────────────────────
 
-func TestMCPSSE_Tool_QueryEntities_RequiresTypeName(t *testing.T) {
-	t.Skip("entity-query no longer requires type_name — returns all entities when omitted")
-
-	projectID, _ := setupProject(t)
-	sessionID := initAPIUnifiedMCPSession(t, projectID)
-	body := callAPIMCPTool(t, projectID, sessionID, "entity-query", map[string]any{})
-	errObj, ok := body["error"].(map[string]any)
-	if !ok {
-		t.Fatal("expected error for missing type_name")
-	}
-	assertContains(t, errObj["message"].(string), "type_name")
-}
-
 func TestMCPSSE_Tool_QueryEntities_EmptyResult(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
@@ -479,132 +466,108 @@ func TestMCPSSE_Tool_GetInstalledTemplates(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// assign_template_pack validation
+// schema-assign validation
 // ─────────────────────────────────────────────────────────────────────────────
 
-func TestMCPSSE_Tool_AssignTemplatePack_RequiresTemplatePackID(t *testing.T) {
+func TestMCPSSE_Tool_AssignSchema_RequiresSchemaID(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
-	t.Skip("tool removed from MCP server")
 
 	projectID, _ := setupProjectLogged(t, rl)
 	sessionID := initAPIUnifiedMCPSession(t, projectID)
-	body := callAPIMCPTool(t, projectID, sessionID, "schema-install", map[string]any{})
+	body := callAPIMCPTool(t, projectID, sessionID, "schema-assign", map[string]any{})
 	errObj, ok := body["error"].(map[string]any)
 	if !ok {
-		t.Fatal("expected error for missing template_pack_id")
+		t.Fatal("expected error for missing schema_id")
 	}
-	assertContains(t, errObj["message"].(string), "template_pack_id")
+	assertContains(t, errObj["message"].(string), "schema_id")
 }
 
-func TestMCPSSE_Tool_AssignTemplatePack_NotFound(t *testing.T) {
+func TestMCPSSE_Tool_AssignSchema_NotFound(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
-	t.Skip("tool removed from MCP server")
 
 	projectID, _ := setupProjectLogged(t, rl)
 	sessionID := initAPIUnifiedMCPSession(t, projectID)
-	body := callAPIMCPTool(t, projectID, sessionID, "schema-install", map[string]any{
-		"template_pack_id": "00000000-0000-0000-0000-000000000000",
+	body := callAPIMCPTool(t, projectID, sessionID, "schema-assign", map[string]any{
+		"schema_id": "00000000-0000-0000-0000-000000000000",
 	})
 	errObj, ok := body["error"].(map[string]any)
 	if !ok {
-		t.Fatal("expected error for non-existent pack")
+		t.Fatal("expected error for non-existent schema")
 	}
 	assertContains(t, errObj["message"].(string), "not found")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// update_template_assignment validation
+// schema-assignment-update validation
 // ─────────────────────────────────────────────────────────────────────────────
 
-func TestMCPSSE_Tool_UpdateTemplateAssignment_RequiresAssignmentID(t *testing.T) {
+func TestMCPSSE_Tool_UpdateSchemaAssignment_RequiresSchemaID(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
-	t.Skip("tool removed from MCP server")
 
 	projectID, _ := setupProjectLogged(t, rl)
 	sessionID := initAPIUnifiedMCPSession(t, projectID)
-	body := callAPIMCPTool(t, projectID, sessionID, "schema-update-assignment", map[string]any{})
+	body := callAPIMCPTool(t, projectID, sessionID, "schema-assignment-update", map[string]any{})
 	errObj, ok := body["error"].(map[string]any)
 	if !ok {
-		t.Fatal("expected error for missing assignment_id")
+		t.Fatal("expected error for missing schema_id")
 	}
-	assertContains(t, errObj["message"].(string), "assignment_id")
-}
-
-func TestMCPSSE_Tool_UpdateTemplateAssignment_NotFound(t *testing.T) {
-	rl := newRunLog(t)
-	defer rl.Close()
-	skipIfServerDown(t, rl)
-	t.Skip("tool removed from MCP server")
-
-	projectID, _ := setupProjectLogged(t, rl)
-	sessionID := initAPIUnifiedMCPSession(t, projectID)
-	body := callAPIMCPTool(t, projectID, sessionID, "schema-update-assignment", map[string]any{
-		"assignment_id": "00000000-0000-0000-0000-000000000000",
-		"active":        true,
-	})
-	errObj, ok := body["error"].(map[string]any)
-	if !ok {
-		t.Fatal("expected error for non-existent assignment")
-	}
-	assertContains(t, errObj["message"].(string), "not found")
+	assertContains(t, errObj["message"].(string), "schema_id")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// uninstall_template_pack validation
+// schema-uninstall validation
 // ─────────────────────────────────────────────────────────────────────────────
 
-func TestMCPSSE_Tool_UninstallTemplatePack_RequiresAssignmentID(t *testing.T) {
+func TestMCPSSE_Tool_UninstallSchema_RequiresSchemaID(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
-	t.Skip("tool removed from MCP server")
 
 	projectID, _ := setupProjectLogged(t, rl)
 	sessionID := initAPIUnifiedMCPSession(t, projectID)
 	body := callAPIMCPTool(t, projectID, sessionID, "schema-uninstall", map[string]any{})
 	errObj, ok := body["error"].(map[string]any)
 	if !ok {
-		t.Fatal("expected error for missing assignment_id")
+		t.Fatal("expected error for missing schema_id")
 	}
-	assertContains(t, errObj["message"].(string), "assignment_id")
+	assertContains(t, errObj["message"].(string), "schema_id")
 }
 
-func TestMCPSSE_Tool_UninstallTemplatePack_NotFound(t *testing.T) {
+func TestMCPSSE_Tool_UninstallSchema_NotFound(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
-	t.Skip("tool removed from MCP server")
 
 	projectID, _ := setupProjectLogged(t, rl)
 	sessionID := initAPIUnifiedMCPSession(t, projectID)
 	body := callAPIMCPTool(t, projectID, sessionID, "schema-uninstall", map[string]any{
-		"assignment_id": "00000000-0000-0000-0000-000000000000",
+		"schema_id": "00000000-0000-0000-0000-000000000000",
 	})
 	errObj, ok := body["error"].(map[string]any)
 	if !ok {
-		t.Fatal("expected error for non-existent assignment")
+		t.Fatal("expected error for non-existent schema")
 	}
 	assertContains(t, errObj["message"].(string), "not found")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// create_template_pack validation
+// schema-create validation
 // ─────────────────────────────────────────────────────────────────────────────
 
-func TestMCPSSE_Tool_CreateTemplatePack_RequiresName(t *testing.T) {
+func TestMCPSSE_Tool_CreateSchema_RequiresName(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
-	t.Skip("tool removed from MCP server")
 
-	sessionID := initAPIUnifiedMCPSession(t, "")
-	body := callAPIMCPTool(t, "", sessionID, "schema-create", map[string]any{
+	projectID, _ := setupProjectLogged(t, rl)
+	sessionID := initAPIUnifiedMCPSession(t, projectID)
+	body := callAPIMCPTool(t, projectID, sessionID, "schema-create", map[string]any{
 		"version":             "1.0.0",
 		"object_type_schemas": map[string]any{},
 	})
@@ -615,74 +578,38 @@ func TestMCPSSE_Tool_CreateTemplatePack_RequiresName(t *testing.T) {
 	assertContains(t, errObj["message"].(string), "name")
 }
 
-func TestMCPSSE_Tool_CreateTemplatePack_RequiresVersion(t *testing.T) {
-	rl := newRunLog(t)
-	defer rl.Close()
-	skipIfServerDown(t, rl)
-	t.Skip("tool removed from MCP server")
-
-	sessionID := initAPIUnifiedMCPSession(t, "")
-	body := callAPIMCPTool(t, "", sessionID, "schema-create", map[string]any{
-		"name":                "Test",
-		"object_type_schemas": map[string]any{},
-	})
-	errObj, ok := body["error"].(map[string]any)
-	if !ok {
-		t.Fatal("expected error for missing version")
-	}
-	assertContains(t, errObj["message"].(string), "version")
-}
-
-func TestMCPSSE_Tool_CreateTemplatePack_RequiresSchemas(t *testing.T) {
-	rl := newRunLog(t)
-	defer rl.Close()
-	skipIfServerDown(t, rl)
-	t.Skip("tool removed from MCP server")
-
-	sessionID := initAPIUnifiedMCPSession(t, "")
-	body := callAPIMCPTool(t, "", sessionID, "schema-create", map[string]any{
-		"name":    "Test",
-		"version": "1.0.0",
-	})
-	errObj, ok := body["error"].(map[string]any)
-	if !ok {
-		t.Fatal("expected error for missing object_type_schemas")
-	}
-	assertContains(t, errObj["message"].(string), "object_type_schemas")
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
-// delete_template_pack validation
+// schema-delete validation
 // ─────────────────────────────────────────────────────────────────────────────
 
-func TestMCPSSE_Tool_DeleteTemplatePack_RequiresPackID(t *testing.T) {
+func TestMCPSSE_Tool_DeleteSchema_RequiresSchemaID(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
-	t.Skip("tool removed from MCP server")
 
-	sessionID := initAPIUnifiedMCPSession(t, "")
-	body := callAPIMCPTool(t, "", sessionID, "schema-delete", map[string]any{})
+	projectID, _ := setupProjectLogged(t, rl)
+	sessionID := initAPIUnifiedMCPSession(t, projectID)
+	body := callAPIMCPTool(t, projectID, sessionID, "schema-delete", map[string]any{})
 	errObj, ok := body["error"].(map[string]any)
 	if !ok {
-		t.Fatal("expected error for missing pack_id")
+		t.Fatal("expected error for missing schema_id")
 	}
-	assertContains(t, errObj["message"].(string), "pack_id")
+	assertContains(t, errObj["message"].(string), "schema_id")
 }
 
-func TestMCPSSE_Tool_DeleteTemplatePack_NotFound(t *testing.T) {
+func TestMCPSSE_Tool_DeleteSchema_NotFound(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
-	t.Skip("tool removed from MCP server")
 
-	sessionID := initAPIUnifiedMCPSession(t, "")
-	body := callAPIMCPTool(t, "", sessionID, "schema-delete", map[string]any{
-		"pack_id": "00000000-0000-0000-0000-000000000000",
+	projectID, _ := setupProjectLogged(t, rl)
+	sessionID := initAPIUnifiedMCPSession(t, projectID)
+	body := callAPIMCPTool(t, projectID, sessionID, "schema-delete", map[string]any{
+		"schema_id": "00000000-0000-0000-0000-000000000000",
 	})
 	errObj, ok := body["error"].(map[string]any)
 	if !ok {
-		t.Fatal("expected error for non-existent pack")
+		t.Fatal("expected error for non-existent schema")
 	}
 	assertContains(t, errObj["message"].(string), "not found")
 }

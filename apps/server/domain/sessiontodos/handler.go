@@ -7,6 +7,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // Handler handles HTTP requests for session todos.
@@ -19,6 +20,18 @@ func NewHandler(svc *Service) *Handler {
 	return &Handler{svc: svc}
 }
 
+// caller resolves the authenticated caller's identity (project + user) for the
+// session-todo ownership predicate. The route is RequireAuth-guarded, so
+// MustGetUser is safe; a missing project id fails closed with a 400.
+func caller(c echo.Context) (projectID, ownerUserID string, err error) {
+	user := auth.MustGetUser(c)
+	projectID, err = auth.GetProjectID(c)
+	if err != nil {
+		return "", "", err
+	}
+	return projectID, user.ID, nil
+}
+
 // List handles GET /api/v1/agent/sessions/:sessionId/todos
 // @Summary      List session todos
 // @Tags         session-todos
@@ -29,6 +42,10 @@ func NewHandler(svc *Service) *Handler {
 // @Failure      401  {object}  apperror.Error
 // @Router       /api/v1/agent/sessions/{sessionId}/todos [get]
 func (h *Handler) List(c echo.Context) error {
+	projectID, ownerUserID, err := caller(c)
+	if err != nil {
+		return err
+	}
 	sessionID := c.Param("sessionId")
 	if sessionID == "" {
 		return apperror.NewBadRequest("sessionId is required")
@@ -39,7 +56,7 @@ func (h *Handler) List(c echo.Context) error {
 			statuses = append(statuses, TodoStatus(strings.TrimSpace(s)))
 		}
 	}
-	todos, err := h.svc.List(c.Request().Context(), sessionID, statuses)
+	todos, err := h.svc.List(c.Request().Context(), projectID, ownerUserID, sessionID, statuses)
 	if err != nil {
 		return err
 	}
@@ -56,6 +73,10 @@ func (h *Handler) List(c echo.Context) error {
 // @Failure      401  {object}  apperror.Error
 // @Router       /api/v1/agent/sessions/{sessionId}/todos [post]
 func (h *Handler) Create(c echo.Context) error {
+	projectID, ownerUserID, err := caller(c)
+	if err != nil {
+		return err
+	}
 	sessionID := c.Param("sessionId")
 	if sessionID == "" {
 		return apperror.NewBadRequest("sessionId is required")
@@ -64,7 +85,7 @@ func (h *Handler) Create(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return apperror.NewBadRequest("invalid request body")
 	}
-	todo, err := h.svc.Create(c.Request().Context(), sessionID, req)
+	todo, err := h.svc.Create(c.Request().Context(), projectID, ownerUserID, sessionID, req)
 	if err != nil {
 		return err
 	}
@@ -82,6 +103,10 @@ func (h *Handler) Create(c echo.Context) error {
 // @Failure      404  {object}  apperror.Error
 // @Router       /api/v1/agent/sessions/{sessionId}/todos/{todoId} [patch]
 func (h *Handler) Update(c echo.Context) error {
+	projectID, ownerUserID, err := caller(c)
+	if err != nil {
+		return err
+	}
 	sessionID := c.Param("sessionId")
 	todoID := c.Param("todoId")
 	if sessionID == "" || todoID == "" {
@@ -91,7 +116,7 @@ func (h *Handler) Update(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return apperror.NewBadRequest("invalid request body")
 	}
-	todo, err := h.svc.Update(c.Request().Context(), sessionID, todoID, req)
+	todo, err := h.svc.Update(c.Request().Context(), projectID, ownerUserID, sessionID, todoID, req)
 	if err != nil {
 		return err
 	}
@@ -107,12 +132,16 @@ func (h *Handler) Update(c echo.Context) error {
 // @Failure      404  {object}  apperror.Error
 // @Router       /api/v1/agent/sessions/{sessionId}/todos/{todoId} [delete]
 func (h *Handler) Delete(c echo.Context) error {
+	projectID, ownerUserID, err := caller(c)
+	if err != nil {
+		return err
+	}
 	sessionID := c.Param("sessionId")
 	todoID := c.Param("todoId")
 	if sessionID == "" || todoID == "" {
 		return apperror.NewBadRequest("sessionId and todoId are required")
 	}
-	if err := h.svc.Delete(c.Request().Context(), sessionID, todoID); err != nil {
+	if err := h.svc.Delete(c.Request().Context(), projectID, ownerUserID, sessionID, todoID); err != nil {
 		return err
 	}
 	return c.NoContent(http.StatusNoContent)

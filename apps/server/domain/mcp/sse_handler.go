@@ -311,6 +311,11 @@ func (h *SSEHandler) handleInitialize(req *Request, projectID string) *Response 
 func (h *SSEHandler) handleToolsList(c echo.Context, req *Request, projectID string, user *auth.AuthUser) *Response {
 	tools := h.svc.GetToolDefinitionsForProject(c.Request().Context(), projectID)
 	tools = FilterToolsForScopes(tools, user.Scopes)
+	isSuper, superErr := h.svc.IsSuperadminCaller(c.Request().Context())
+	if superErr != nil {
+		isSuper = false
+	}
+	tools = FilterToolsForSuperadmin(tools, isSuper)
 	scope, serr := h.svc.ResolveInstanceScope(c.Request().Context(), user.APITokenID)
 	if serr != nil {
 		// Fail closed on allowlist resolution failure.
@@ -340,6 +345,21 @@ func (h *SSEHandler) handleToolsCall(c echo.Context, req *Request, projectID str
 			return NewErrorResponse(req.ID, ErrCodeMethodNotFound,
 				"Tool not found: "+params.Name, nil)
 		}
+		if toolDef.SuperadminOnly {
+			ok, err := h.svc.IsSuperadminCaller(c.Request().Context())
+			if err != nil {
+				h.log.Error("superadmin authorization failed",
+					slog.String("tool", params.Name),
+					logger.Error(err),
+				)
+				return NewErrorResponse(req.ID, ErrCodeInternalError,
+					"Failed to authorize tool", nil)
+			}
+			if !ok {
+				return NewErrorResponse(req.ID, ErrCodeMethodNotFound,
+					"Tool not found: "+params.Name, nil)
+			}
+		}
 		if toolDef.RequiredScope != "" {
 			expanded := expandScopesSet(user.Scopes)
 			if !expanded[toolDef.RequiredScope] {
@@ -363,6 +383,13 @@ func (h *SSEHandler) handleToolsCall(c echo.Context, req *Request, projectID str
 	}
 
 	execCtx := WithInstanceScope(c.Request().Context(), scope)
+	// The transport already enforced per-tool AgentOnly / RequiredScope /
+	// SuperadminOnly above. Mark the call transport-enforced so ExecuteTool's
+	// in-process gate (which covers the agent-run path) does not re-fire for an
+	// authenticated HTTP client. This is NOT the trusted-internal marker: relay
+	// (agent-only) tools are gated on trusted-internal only, so an HTTP caller
+	// can never reach them through the relay fallback (issue #1017).
+	execCtx = ContextWithTransportEnforced(execCtx)
 	result, err := h.svc.ExecuteTool(execCtx, projectID, params.Name, params.Arguments)
 	if err != nil {
 		h.log.Error("tool execution failed",

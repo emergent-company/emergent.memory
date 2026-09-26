@@ -153,7 +153,7 @@ func (h *Handler) GetConversation(c echo.Context) error {
 	}
 
 	// Get conversation with messages
-	conv, err := h.svc.GetConversationWithMessages(c.Request().Context(), user.ProjectID, conversationID)
+	conv, err := h.svc.GetConversationWithMessages(c.Request().Context(), user.ProjectID, user.ID, conversationID)
 	if err != nil {
 		return err
 	}
@@ -239,7 +239,7 @@ func (h *Handler) UpdateConversation(c echo.Context) error {
 		return err
 	}
 
-	conv, err := h.svc.UpdateConversation(c.Request().Context(), user.ProjectID, conversationID, req)
+	conv, err := h.svc.UpdateConversation(c.Request().Context(), user.ProjectID, user.ID, conversationID, req)
 	if err != nil {
 		return err
 	}
@@ -273,7 +273,7 @@ func (h *Handler) DeleteConversation(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid conversation id")
 	}
 
-	if err := h.svc.DeleteConversation(c.Request().Context(), user.ProjectID, conversationID); err != nil {
+	if err := h.svc.DeleteConversation(c.Request().Context(), user.ProjectID, user.ID, conversationID); err != nil {
 		return err
 	}
 
@@ -318,7 +318,7 @@ func (h *Handler) AddMessage(c echo.Context) error {
 		return err
 	}
 
-	msg, err := h.svc.AddMessage(c.Request().Context(), user.ProjectID, conversationID, req)
+	msg, err := h.svc.AddMessage(c.Request().Context(), user.ProjectID, user.ID, conversationID, req)
 	if err != nil {
 		return err
 	}
@@ -345,7 +345,7 @@ func (h *Handler) GetConversationHistory(c echo.Context) error {
 	ctx := c.Request().Context()
 
 	// Load the conversation to verify ownership and get acp_session_id.
-	conv, err := h.svc.GetConversationWithMessages(ctx, user.ProjectID, conversationID)
+	conv, err := h.svc.GetConversationWithMessages(ctx, user.ProjectID, user.ID, conversationID)
 	if err != nil {
 		return err
 	}
@@ -767,7 +767,7 @@ func (h *Handler) StreamChat(c echo.Context) error {
 		// agent-backed turn; a conversation that already has an agent keeps it.
 		parsed, _ := uuid.Parse(*req.ConversationID) // Already validated
 		var err error
-		conv, err = h.svc.GetConversation(ctx, user.ProjectID, parsed)
+		conv, err = h.svc.GetConversation(ctx, user.ProjectID, user.ID, parsed)
 		if err != nil {
 			return err
 		}
@@ -779,7 +779,7 @@ func (h *Handler) StreamChat(c echo.Context) error {
 		// would take the legacy direct-LLM path instead of the agent executor.
 		if conv.AgentDefinitionID == nil && agentDefID != nil {
 			conv.AgentDefinitionID = agentDefID
-			if err := h.svc.SetAgentDefinitionID(ctx, user.ProjectID, conv.ID, agentDefID); err != nil {
+			if err := h.svc.SetAgentDefinitionID(ctx, user.ProjectID, user.ID, conv.ID, agentDefID); err != nil {
 				h.log.Warn("failed to bind agent to conversation on first turn",
 					slog.String("conversation_id", conv.ID.String()),
 					slog.String("error", err.Error()),
@@ -788,7 +788,7 @@ func (h *Handler) StreamChat(c echo.Context) error {
 		}
 
 		// Persist the user message
-		_, err = h.svc.AddMessage(ctx, user.ProjectID, conv.ID, AddMessageRequest{
+		_, err = h.svc.AddMessage(ctx, user.ProjectID, user.ID, conv.ID, AddMessageRequest{
 			Role:    RoleUser,
 			Content: message,
 		})
@@ -816,7 +816,7 @@ func (h *Handler) StreamChat(c echo.Context) error {
 		// Set agent_definition_id on the new conversation if requested
 		if agentDefID != nil {
 			conv.AgentDefinitionID = agentDefID
-			if err := h.svc.SetAgentDefinitionID(ctx, user.ProjectID, conv.ID, agentDefID); err != nil {
+			if err := h.svc.SetAgentDefinitionID(ctx, user.ProjectID, user.ID, conv.ID, agentDefID); err != nil {
 				h.log.Warn("failed to set agent_definition_id on conversation",
 					slog.String("conversation_id", conv.ID.String()),
 					slog.String("error", err.Error()),
@@ -992,7 +992,7 @@ func (h *Handler) StreamChat(c echo.Context) error {
 		// Persist assistant response
 		go func() {
 			// Use a background context since the request context may be cancelled
-			_, _ = h.svc.AddMessage(ctx, user.ProjectID, conv.ID, AddMessageRequest{
+			_, _ = h.svc.AddMessage(ctx, user.ProjectID, user.ID, conv.ID, AddMessageRequest{
 				Role:             RoleAssistant,
 				Content:          fullResponse.String(),
 				RetrievalContext: retrievalCtx,
@@ -1086,8 +1086,9 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 		return nil
 	}
 
-	// Load conversation history (last 10 messages for context)
-	history, err := h.svc.repo.GetConversationHistory(ctx, conv.ID, 10)
+	// Load conversation history (last 10 messages for context), scoped to the
+	// caller so a foreign conversation id yields no prior messages.
+	history, err := h.svc.repo.GetConversationHistory(ctx, projectID, userID, conv.ID, 10)
 	if err != nil {
 		h.log.Warn("failed to load conversation history for agent chat",
 			slog.String("conversation_id", conv.ID.String()),
@@ -1272,6 +1273,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 			EphemeralTokenID:     ephemeralTokenID,
 			ACPSessionID:         acpSessionID,
 			SystemPromptAppendix: systemPromptAppendix,
+			TrustedInternal:      true, // session UI is a trusted surface (full internal coordination)
 		}
 		if parentRunID != "" {
 			execReq.ParentRunID = &parentRunID
@@ -1325,7 +1327,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 			// Last text-bearing row that is not the user/tool side of the run is
 			// the assistant answer (Role may be "assistant" or the agent author).
 			for i := len(runMsgs) - 1; i >= 0; i-- {
-				if runMsgs[i].Role == RoleUser || runMsgs[i].Role == "tool" {
+				if runMsgs[i].Role == RoleUser || runMsgs[i].Role == "tool" || runMsgs[i].Role == "system" {
 					continue
 				}
 				if t := agentRunMessageText(runMsgs[i].Content); t != "" {
@@ -1359,7 +1361,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 		}
 
 		go func() {
-			_, _ = h.svc.AddMessage(ctx, projectID, conv.ID, AddMessageRequest{
+			_, _ = h.svc.AddMessage(ctx, projectID, userID, conv.ID, AddMessageRequest{
 				Role:             RoleAssistant,
 				Content:          responseText,
 				RetrievalContext: retrievalCtx,
@@ -1494,7 +1496,7 @@ func (h *Handler) QueryStream(c echo.Context) error {
 	if req.ConversationID != "" {
 		convUUID, parseErr := uuid.Parse(req.ConversationID)
 		if parseErr == nil {
-			conv, _ = h.svc.GetConversation(ctx, projectID, convUUID)
+			conv, _ = h.svc.GetConversation(ctx, projectID, user.ID, convUUID)
 		}
 	}
 	if conv == nil {
@@ -1515,7 +1517,7 @@ func (h *Handler) QueryStream(c echo.Context) error {
 	}
 	conv.AgentDefinitionID = &agentDefUUID
 	span.SetAttributes(attribute.String("memory.query.conversation_id", conv.ID.String()))
-	if err := h.svc.SetAgentDefinitionID(ctx, projectID, conv.ID, &agentDefUUID); err != nil {
+	if err := h.svc.SetAgentDefinitionID(ctx, projectID, user.ID, conv.ID, &agentDefUUID); err != nil {
 		h.log.Warn("failed to set agent_definition_id on query conversation",
 			slog.String("conversation_id", conv.ID.String()),
 			slog.String("error", err.Error()),
@@ -1688,7 +1690,7 @@ func (h *Handler) AskStream(c echo.Context) error {
 	}
 	conv.AgentDefinitionID = &agentDefUUID
 	span.SetAttributes(attribute.String("memory.ask.conversation_id", conv.ID.String()))
-	if err := h.svc.SetAgentDefinitionID(ctx, projectID, conv.ID, &agentDefUUID); err != nil {
+	if err := h.svc.SetAgentDefinitionID(ctx, projectID, user.ID, conv.ID, &agentDefUUID); err != nil {
 		h.log.Warn("failed to set agent_definition_id on ask conversation",
 			slog.String("conversation_id", conv.ID.String()),
 			slog.String("error", err.Error()),
@@ -1945,7 +1947,7 @@ func (h *Handler) RememberStream(c echo.Context) error {
 	if req.ConversationID != "" {
 		convUUID, parseErr := uuid.Parse(req.ConversationID)
 		if parseErr == nil {
-			conv, _ = h.svc.GetConversation(ctx, projectID, convUUID)
+			conv, _ = h.svc.GetConversation(ctx, projectID, user.ID, convUUID)
 		}
 	}
 	if conv == nil {
@@ -1966,7 +1968,7 @@ func (h *Handler) RememberStream(c echo.Context) error {
 	}
 	conv.AgentDefinitionID = &agentDefUUID
 	span.SetAttributes(attribute.String("memory.remember.conversation_id", conv.ID.String()))
-	if err := h.svc.SetAgentDefinitionID(ctx, projectID, conv.ID, &agentDefUUID); err != nil {
+	if err := h.svc.SetAgentDefinitionID(ctx, projectID, user.ID, conv.ID, &agentDefUUID); err != nil {
 		h.log.Warn("failed to set agent_definition_id on remember conversation",
 			slog.String("conversation_id", conv.ID.String()),
 			slog.String("error", err.Error()),
@@ -2008,6 +2010,7 @@ func (h *Handler) RememberStream(c echo.Context) error {
 			UserID:          user.ID,
 			UserMessage:     agentMessage,
 			PreCreatedRun:   preCreated,
+			TrustedInternal: true, // session UI is a trusted surface (full internal coordination)
 		}
 		if parentRunID != "" {
 			execReq.ParentRunID = &parentRunID
@@ -2087,6 +2090,7 @@ func (h *Handler) RememberStream(c echo.Context) error {
 			OrgID:           user.OrgID,
 			UserID:          user.ID,
 			UserMessage:     agentMessage,
+			TrustedInternal: true, // session UI is a trusted surface (full internal coordination)
 		}
 		if parentRunID != "" {
 			execReq.ParentRunID = &parentRunID
@@ -2382,7 +2386,7 @@ func (h *Handler) RememberFile(c echo.Context) error {
 	if req.ConversationID != "" {
 		convUUID, parseErr := uuid.Parse(req.ConversationID)
 		if parseErr == nil {
-			conv, _ = h.svc.GetConversation(ctx, projectID, convUUID)
+			conv, _ = h.svc.GetConversation(ctx, projectID, user.ID, convUUID)
 		}
 	}
 	if conv == nil {
@@ -2408,7 +2412,7 @@ func (h *Handler) RememberFile(c echo.Context) error {
 	}
 	conv.AgentDefinitionID = &agentDefUUID
 	span.SetAttributes(attribute.String("memory.remember.conversation_id", conv.ID.String()))
-	if err := h.svc.SetAgentDefinitionID(ctx, projectID, conv.ID, &agentDefUUID); err != nil {
+	if err := h.svc.SetAgentDefinitionID(ctx, projectID, user.ID, conv.ID, &agentDefUUID); err != nil {
 		h.log.Warn("failed to set agent_definition_id on remember/file conversation",
 			slog.String("conversation_id", conv.ID.String()),
 			slog.String("error", err.Error()),
@@ -2448,6 +2452,7 @@ func (h *Handler) RememberFile(c echo.Context) error {
 			UserID:          user.ID,
 			UserMessage:     agentMessage,
 			PreCreatedRun:   preCreated,
+			TrustedInternal: true, // session UI is a trusted surface (full internal coordination)
 		}
 		if req.ParentRunID != "" {
 			execReq.ParentRunID = &req.ParentRunID
@@ -2525,6 +2530,7 @@ func (h *Handler) RememberFile(c echo.Context) error {
 			OrgID:           user.OrgID,
 			UserID:          user.ID,
 			UserMessage:     agentMessage,
+			TrustedInternal: true, // session UI is a trusted surface (full internal coordination)
 		}
 		if req.ParentRunID != "" {
 			execReq.ParentRunID = &req.ParentRunID
@@ -2732,7 +2738,7 @@ func (h *Handler) ForgetStream(c echo.Context) error {
 	if req.ConversationID != "" {
 		convUUID, parseErr := uuid.Parse(req.ConversationID)
 		if parseErr == nil {
-			conv, _ = h.svc.GetConversation(ctx, projectID, convUUID)
+			conv, _ = h.svc.GetConversation(ctx, projectID, user.ID, convUUID)
 		}
 	}
 	if conv == nil {
@@ -2750,7 +2756,7 @@ func (h *Handler) ForgetStream(c echo.Context) error {
 		}
 	}
 	conv.AgentDefinitionID = &agentDefUUID
-	if err := h.svc.SetAgentDefinitionID(ctx, projectID, conv.ID, &agentDefUUID); err != nil {
+	if err := h.svc.SetAgentDefinitionID(ctx, projectID, user.ID, conv.ID, &agentDefUUID); err != nil {
 		h.log.Warn("failed to set agent_definition_id on forget conversation",
 			slog.String("conversation_id", conv.ID.String()),
 			slog.String("error", err.Error()),
@@ -2787,6 +2793,7 @@ func (h *Handler) ForgetStream(c echo.Context) error {
 			UserID:          user.ID,
 			UserMessage:     agentMessage,
 			PreCreatedRun:   preCreated,
+			TrustedInternal: true, // session UI is a trusted surface (full internal coordination)
 		}
 		if parentRunID != "" {
 			execReq.ParentRunID = &parentRunID
@@ -2837,6 +2844,7 @@ func (h *Handler) ForgetStream(c echo.Context) error {
 			OrgID:           user.OrgID,
 			UserID:          user.ID,
 			UserMessage:     agentMessage,
+			TrustedInternal: true, // session UI is a trusted surface (full internal coordination)
 		}
 		if parentRunID != "" {
 			execReq.ParentRunID = &parentRunID

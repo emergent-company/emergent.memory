@@ -267,6 +267,7 @@ func (s *Service) Create(ctx context.Context, req *CreateInviteRequest) (*Invite
 				"projectName": projectName,
 				"roleLabel":   roleLabel,
 				"acceptUrl":   acceptURL,
+				"plainText":   email.ProjectInvitationPlainText(inviterName, projectName, roleLabel, acceptURL),
 			},
 			SourceType: stringPtr("invite"),
 			SourceID:   &invite.ID,
@@ -351,6 +352,33 @@ func (s *Service) Accept(ctx context.Context, userID, token string) error {
 		)
 	}
 
+	// Defence in depth (issue #979): a project-scoped invitation grants project
+	// membership only. org_admin is an organization-level role with no meaning
+	// in project scope, so a project-scoped org_admin invitation — a pre-existing
+	// legacy row that predates the create-side rejection — would write the
+	// out-of-vocabulary value "org_admin" into kb.project_memberships.role AND
+	// grant org-level admin in kb.organization_memberships. Refuse it fail
+	// closed here so no membership rows are written.
+	if invite.ProjectID != nil && invite.Role == "org_admin" {
+		return apperror.NewForbidden("org_admin is not valid for a project-scoped invite")
+	}
+
+	// Defence in depth (issue #967): an org_admin membership grant must originate
+	// from an inviter who holds org_admin (or superadmin_full) authority over the
+	// invite's organization. Re-verify at acceptance time so a pre-existing
+	// invitation minted by a plain member before the create-side gate existed
+	// cannot be used to self-escalate. An invitation with no recorded inviter has
+	// no authority to assert, so it is refused (fail closed).
+	if orgRole == "org_admin" {
+		admin, err := s.inviterIsOrgAdmin(ctx, &invite)
+		if err != nil {
+			return apperror.NewDatabase("failed to verify inviter authority", err)
+		}
+		if !admin {
+			return apperror.NewForbidden("org_admin invitations require an org_admin inviter")
+		}
+	}
+
 	// Begin transaction
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -411,6 +439,42 @@ func orgMembershipRole(inviteRole string) (role string, ok bool) {
 	default:
 		return "", false
 	}
+}
+
+// inviterIsOrgAdmin reports whether the invitation's recorded inviter holds
+// org_admin authority over the invitation's organization, or is an active
+// superadmin_full. It is the acceptance-side defence-in-depth counterpart to the
+// create-side role gate: an org_admin grant is refused unless its inviter could
+// have minted it (issue #967).
+func (s *Service) inviterIsOrgAdmin(ctx context.Context, invite *Invite) (bool, error) {
+	if invite.InvitedByUserID == nil || *invite.InvitedByUserID == "" {
+		return false, nil
+	}
+	inviterID := *invite.InvitedByUserID
+
+	var superadminFull bool
+	if err := s.db.NewRaw(`
+		SELECT EXISTS(
+			SELECT 1 FROM core.superadmins
+			WHERE user_id = ? AND role = 'superadmin_full' AND revoked_at IS NULL
+		)
+	`, inviterID).Scan(ctx, &superadminFull); err != nil {
+		return false, err
+	}
+	if superadminFull {
+		return true, nil
+	}
+
+	var orgAdmin bool
+	if err := s.db.NewRaw(`
+		SELECT EXISTS(
+			SELECT 1 FROM kb.organization_memberships
+			WHERE organization_id = ? AND user_id = ? AND role = 'org_admin'
+		)
+	`, invite.OrganizationID, inviterID).Scan(ctx, &orgAdmin); err != nil {
+		return false, err
+	}
+	return orgAdmin, nil
 }
 
 // Decline declines an invitation
@@ -483,6 +547,27 @@ func (s *Service) Revoke(ctx context.Context, inviteID string) error {
 	}
 
 	return nil
+}
+
+// ProjectOrg resolves the owning organization of a project server-side
+// (kb.projects.organization_id). It is the authoritative org source for the
+// orgId-binding check in Create: neither the body orgId nor the body projectId
+// is trusted, the owning org is derived and compared (issue #960).
+func (s *Service) ProjectOrg(ctx context.Context, projectID string) (string, error) {
+	var orgID string
+	err := s.db.NewSelect().
+		TableExpr("kb.projects").
+		Column("organization_id").
+		Where("id = ?", projectID).
+		Limit(1).
+		Scan(ctx, &orgID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", apperror.NewNotFound("project", projectID)
+		}
+		return "", apperror.NewDatabase("failed to resolve project organization", err)
+	}
+	return orgID, nil
 }
 
 // GetByID retrieves an invite by ID

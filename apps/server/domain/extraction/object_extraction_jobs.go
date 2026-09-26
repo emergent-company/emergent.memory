@@ -70,6 +70,11 @@ func NewObjectExtractionJobsService(db bun.IDB, log *slog.Logger, config *Object
 	}
 }
 
+// DB returns the underlying database handle. The admin handler uses it to
+// enforce project membership at the handler layer for routes whose addressed
+// project is not the :projectId path param (issue #959).
+func (s *ObjectExtractionJobsService) DB() bun.IDB { return s.db }
+
 // CreateJobOptions contains options for creating an object extraction job
 type CreateObjectExtractionJobOptions struct {
 	ProjectID        string
@@ -223,6 +228,15 @@ func (s *ObjectExtractionJobsService) DequeueBatch(ctx context.Context, batchSiz
 func (s *ObjectExtractionJobsService) MarkCompleted(ctx context.Context, jobID string, results ObjectExtractionResults) error {
 	now := time.Now().UTC()
 
+	// created_object_ids is NOT NULL with default '{}'. Writing pq.Array(nil)
+	// for a zero-object completion emits SQL NULL and violates the constraint
+	// (SQLSTATE 23502). Coerce to a non-nil empty slice so "no objects created"
+	// is stored as an empty array (issue #894).
+	createdObjectIDs := results.CreatedObjectIDs
+	if createdObjectIDs == nil {
+		createdObjectIDs = []string{}
+	}
+
 	_, err := s.db.NewUpdate().
 		Model((*ObjectExtractionJob)(nil)).
 		Set("status = ?", JobStatusCompleted).
@@ -237,7 +251,7 @@ func (s *ObjectExtractionJobsService) MarkCompleted(ctx context.Context, jobID s
 		Set("failed_items = ?", results.FailedItems).
 		Set("discovered_types = ?", results.DiscoveredTypes).
 		Set("created_objects = ?", results.CreatedObjects).
-		Set("created_object_ids = ?", pq.Array(results.CreatedObjectIDs)).
+		Set("created_object_ids = ?", pq.Array(createdObjectIDs)).
 		Set("debug_info = ?", results.DebugInfo).
 		Where("id = ?", jobID).
 		Exec(ctx)

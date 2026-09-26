@@ -524,6 +524,21 @@
     // the latter so "Run complete" lands after the run's content.
     items = MemoryChatHost.sortTimeline(items);
 
+    // The run's composed system instruction renders once as a collapsed
+    // agent-prompt card above the transcript; later system records are skipped.
+    for (var pi = 0; pi < items.length; pi++) {
+      var pit = items[pi];
+      if (pit && pit.kind === "message" && pit.role === "system") {
+        var promptText = (pit.content && pit.content.text) || "";
+        if (promptText) {
+          if (MemoryChatComponents.agentPromptCard) {
+            MemoryChatComponents.agentPromptCard(badgeCtx, promptText);
+          }
+          break;
+        }
+      }
+    }
+
     for (var i = 0; i < items.length; i++) {
       var item = items[i];
       if (!item || typeof item !== "object") continue;
@@ -550,12 +565,19 @@
             output: out,
             inputHtml: item.tool_input_html,
             outputHtml: item.tool_output_html,
+            id: item.id,
+            durationMs: item.duration_ms,
           });
           break;
         case "message":
           var content = item.content || {};
           var text = content.text || "";
           var html = content.html || "";
+          if (item.role === "system") {
+            // Composed system instruction — rendered once as the agent-prompt
+            // card above; never a chat bubble.
+            break;
+          }
           if (item.role === "user") {
             if (text && !isResumePrompt(text)) addUserMessage(text, true);
           } else if (item.role === "tool") {

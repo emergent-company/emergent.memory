@@ -75,6 +75,53 @@
   --noise: 0;
 }
 
+/* Theme bridge — Tailwind's radius scale is a separate namespace from daisyUI's
+ * semantic radius tokens (--radius-box / --radius-field / --radius-selector),
+ * so a literal `rounded-lg` compiles to var(--radius-lg) and ignores the theme.
+ * go-daisy's component markup still uses that literal scale, so alias the
+ * Tailwind namespace onto the semantic tokens to bring it back under the theme.
+ * TEMPORARY: remove this block once go-daisy replaces its literal radius with
+ * the semantic utilities (tracked in the audit's go-daisy dependency list).
+ *
+ * The mapping is value-preserving: every step equals its Tailwind default
+ * (sm/default 0.25rem, md 0.375rem, lg 0.5rem, xl 0.75rem, 2xl 1rem,
+ * 3xl 1.5rem), so nothing collapses onto a smaller value. Steps with no
+ * dedicated token are derived from the three semantic levers — md is the
+ * midpoint of field and box, xl the midpoint of box and selector, 3xl one box
+ * past selector — so changing --radius-field/--radius-box/--radius-selector
+ * still moves every radius with a single edit. */
+@theme inline {
+  --radius-sm: var(--radius-field);
+  --radius: var(--radius-field);
+  --radius-md: calc((var(--radius-field) + var(--radius-box)) / 2);
+  --radius-lg: var(--radius-box);
+  --radius-xl: calc((var(--radius-box) + var(--radius-selector)) / 2);
+  --radius-2xl: var(--radius-selector);
+  --radius-3xl: calc(var(--radius-selector) + var(--radius-box));
+}
+
+/* Radius exception list. The "radius derives from theme variables" rule has one
+ * explicit, reviewable exception: the runtime-injected stylesheets in
+ * webui/static/js/chat-components.js (`memory-badge-style`,
+ * `memory-chat-control-style`). Those are appended to <head> after this compiled
+ * sheet and are unlayered, so their `border-radius` literals win over app.css's
+ * token-derived values on those selectors:
+ *
+ *   .memory-badge                 .625rem
+ *   .memory-run-marker-model      .375rem
+ *   .memory-run-marker-failure    .6rem
+ *   .memory-copy-btn              .375rem
+ *   .memory-queue-row             .5rem
+ *   .memory-queue-input:focus-visible .25rem
+ *   .memory-queue-send/remove     .375rem
+ *   .dock-question-option         .5rem
+ *
+ * Pills (`border-radius:9999px` on .memory-run-status, .memory-run-status-dot,
+ * .dock-count, .memory-rail-badge, .memory-rail-count) are deliberate circles and
+ * are exempt like `rounded-full`. Migrating the injected-sheet radii to
+ * var(--radius-*) is deferred to the stylesheet-consolidation follow-up unit
+ * (task 5.1); until then they are annotated in chat-components.js. */
+
 /* Iconify — Lucide icons as utility classes (used by go-daisy IconSpan and
    the client JS). */
 @plugin "@iconify/tailwind4" {
@@ -131,10 +178,20 @@
 /* Keep the root element dark regardless of daisyUI's theme cascade. Without
    this, iOS Safari (Home-Screen PWA) shows a white page during navigation and
    back/bfcache restores, because the dark theme only lands once the late
-   stylesheets have parsed. base-200 is the page background (#0E1017). */
+   stylesheets have parsed. The background is the page-background token; do not
+   restate the colour here.
+ *
+ * Static mirrors of the theme tokens — these CANNOT read a CSS variable, so
+ * they are the only places the values are repeated. Keep them in sync:
+ *   - the inline pre-paint guard, emitted by foucBackgroundGuard() (ui.templ)
+ *     — background  = --color-base-200
+ *   - the theme-color metas in ui.templ, auth_ui.templ and share_page.templ
+ *     — surface     = --color-base-100
+ *   - webui/static/manifest.webmanifest: background_color (= --color-base-200)
+ *     and theme_color (= --color-base-100) */
 html {
   color-scheme: dark;
-  background-color: #0E1017;
+  background-color: var(--color-base-200);
   /* Base font size: 15px root so 1rem = 15px and all rem-based utilities
      scale down from the browser's 16px default. */
   font-size: 15px;
@@ -261,6 +318,9 @@ div:has(> #_layout-topbar) {
 }
 
 /* ---------- Logo monogram ---------- */
+/* The monogram is a deliberate brand treatment: an amber gradient with its own
+   paired dark foreground and shadow, so it does not track the theme palette.
+   Documented as decorative rather than tokenised. */
 .memory-monogram {
   background: linear-gradient(140deg, oklch(0.82 0.14 85), oklch(0.62 0.16 62));
   color: oklch(0.16 0.03 60);
@@ -296,7 +356,7 @@ div:has(> #_layout-topbar) {
   box-shadow: 0 1px 2px oklch(0 0 0 / 0.2);
 }
 .chat-bubble.chat-bubble-neutral {
-  background: oklch(0.24 0.018 274);
+  background: var(--color-base-100);
   border: 1px solid oklch(1 0 0 / 0.06);
 }
 
@@ -425,7 +485,7 @@ div:has(> #_layout-topbar) {
   letter-spacing: 0;
   font-size: 0.6875rem;
   padding: 0.05rem 0.4rem;
-  border-radius: 0.375rem;
+  border-radius: var(--radius-field);
   background: color-mix(in oklab, var(--color-base-content) 8%, transparent);
   color: color-mix(in oklab, var(--color-base-content) 60%, transparent);
 }
@@ -445,7 +505,7 @@ div:has(> #_layout-topbar) {
   align-items: flex-start;
   gap: 0.6rem;
   padding: 0.7rem 0.85rem;
-  border-radius: 0.6rem;
+  border-radius: var(--radius-box);
   border: 1px solid color-mix(in oklab, var(--color-error) 42%, transparent);
   border-left: 3px solid var(--color-error);
   background: color-mix(in oklab, var(--color-error) 18%, var(--color-base-100));
@@ -505,7 +565,7 @@ div:has(> #_layout-topbar) {
   align-items: center;
   gap: 0.25rem;
   padding: 0.15rem;
-  border-radius: 0.375rem;
+  border-radius: var(--radius-field);
   color: color-mix(in oklab, var(--color-base-content) 40%, transparent);
   background: transparent;
   border: 1px solid transparent;
@@ -572,7 +632,7 @@ div:has(> #_layout-topbar) {
   align-items: flex-start;
   gap: 0.5rem;
   padding: 0.3rem 0.5rem;
-  border-radius: 0.5rem;
+  border-radius: var(--radius-box);
   border: 1px solid color-mix(in oklab, var(--color-base-content) 10%, transparent);
   background: var(--color-base-100);
 }
@@ -592,7 +652,7 @@ div:has(> #_layout-topbar) {
 .memory-queue-input:focus-visible {
   outline: 2px solid color-mix(in oklab, var(--color-primary) 60%, transparent);
   outline-offset: 2px;
-  border-radius: 0.25rem;
+  border-radius: var(--radius-field);
 }
 .memory-queue-send,
 .memory-queue-remove {
@@ -601,7 +661,7 @@ div:has(> #_layout-topbar) {
   gap: 0.25rem;
   flex: 0 0 auto;
   padding: 0.2rem 0.5rem;
-  border-radius: 0.375rem;
+  border-radius: var(--radius-field);
   border: 1px solid transparent;
   background: transparent;
   cursor: pointer;
@@ -660,7 +720,7 @@ div:has(> #_layout-topbar) {
   gap: 0.35rem 0.6rem;
   margin: 0.5rem 0.75rem;
   padding: 0.5rem 0.75rem;
-  border-radius: 0.5rem;
+  border-radius: var(--radius-box);
   border: 1px solid color-mix(in oklab, var(--color-base-content) 12%, transparent);
   background: var(--color-base-100);
 }
@@ -719,7 +779,7 @@ div:has(> #_layout-topbar) {
 }
 .dock-question-option {
   border: 1px solid color-mix(in oklab, var(--color-base-content) 18%, transparent);
-  border-radius: 0.5rem;
+  border-radius: var(--radius-box);
   padding: 0.25rem 0.6rem;
   background: var(--color-base-100);
   color: inherit;
@@ -742,7 +802,7 @@ div:has(> #_layout-topbar) {
 }
 .todo-card {
   overflow: hidden;
-  border-radius: 0.5rem;
+  border-radius: var(--radius-box);
   border: 1px solid color-mix(in oklab, var(--color-base-content) 12%, transparent);
   background: color-mix(in oklab, var(--color-base-200) 40%, transparent);
 }
@@ -789,7 +849,7 @@ div:has(> #_layout-topbar) {
 .todo-item-status {
   flex: 0 0 auto;
   padding: 0.1rem 0.35rem;
-  border-radius: 0.25rem;
+  border-radius: var(--radius-field);
   border: 1px solid transparent;
   font-size: 0.5625rem;
   font-weight: 700;
@@ -819,10 +879,13 @@ div:has(> #_layout-topbar) {
    only — the accent still drives the border and the tint, and the count pill
    keeps its own solid-token pair. */
 .memory-rail-badge {
-  display: inline-flex;
+  /* The badge now sits ABOVE the title inside the row's grow column, so it is
+     block-level and hugs its own content width (fit-content) rather than
+     stretching; margin-bottom keeps it off the title below. */
+  display: flex;
   align-items: center;
   gap: 0.25rem;
-  align-self: center;
+  width: fit-content;
   padding: 0.1rem 0.4rem;
   border-radius: 9999px;
   font-size: 0.625rem;
@@ -831,6 +894,7 @@ div:has(> #_layout-topbar) {
   text-transform: uppercase;
   white-space: nowrap;
   border: 1px solid transparent;
+  margin-bottom: 0.25rem;
 }
 /* A two-class selector is required to hide the badge: the injected copy of
    this sheet (chat-components.js) is appended to <head> after the compiled
@@ -963,16 +1027,21 @@ div:has(> #_layout-topbar) {
   border: 1px solid color-mix(in oklch, var(--color-primary) 24%, transparent);
   color: color-mix(in oklch, var(--color-primary) 80%, oklch(0.93 0.008 265));
   padding: 0.12em 0.4em;
-  border-radius: 0.375rem;
+  border-radius: var(--radius-field);
 }
 
 /* fenced code blocks — raised, deeper surface, scrolls horizontally */
+/* Decorative literals in rendered markdown are intentional: the translucent
+   whites below are hairline/overlay tints on the dark base (not surfaces or
+   foregrounds), and the markdown heading sizes are a fixed type scale. They are
+   documented here rather than tokenised so the "colours derive from tokens" rule
+   has one explicit, reviewable exception list. */
 .memory-md pre {
   margin: 0.8em 0;
   padding: 0.8rem 1rem;
-  background: oklch(0.185 0.014 274);
+  background: var(--color-base-200);
   border: 1px solid oklch(1 0 0 / 0.07);
-  border-radius: 0.5rem;
+  border-radius: var(--radius-box);
   overflow-x: auto;
   max-width: 100%;
   font-size: 0.8375rem;
@@ -997,7 +1066,7 @@ div:has(> #_layout-topbar) {
   margin: 0.9em 0;
   padding: 0.5em 1em;
   border-left: 3px solid color-mix(in oklch, var(--color-primary) 55%, transparent);
-  border-radius: 0 0.5rem 0.5rem 0;
+  border-radius: 0 var(--radius-box) var(--radius-box) 0;
   background: oklch(1 0 0 / 0.035);
   color: color-mix(in oklch, var(--color-base-content) 75%, transparent);
 }
@@ -1078,13 +1147,37 @@ div:has(> #_layout-topbar) {
   border-top: 1px solid oklch(0.74 0.135 78 / 0.2);
 }
 
-/* ---------- Rows / affordances ---------- */
-tr[data-row]:hover .row-actions {
-  opacity: 1;
+/* ---------- Component density — single source ----------
+ * daisyUI exposes NO padding theme token for components: `.card-body` reads
+ * `--card-p` and `.btn` reads `--btn-p`, but those are component-internal and
+ * set per size variant, not derived from a theme variable. So the gateway
+ * declares its component padding here, once, and components reference these
+ * classes instead of raw `p-*` utilities. Changing component density is
+ * therefore one edit in this block.
+ *
+ * Re-check this block on a daisyUI upgrade: these are internal levers, not
+ * part of daisyUI's public theming surface.
+ *
+ * The values preserve the paddings that were previously inlined at each call
+ * site, so introducing the block is appearance-neutral; tuning them is the
+ * point.
+ *
+ * One deliberate exception: the single `<ul class="menu menu-sm p-1">`
+ * dropdown menu (org_context.templ) keeps its `p-1`. That is a structural
+ * popover-menu idiom (size comes from `menu-sm`, the `p-1` is the menu's own
+ * compact padding), not a card-body density lever, so it is not routed through
+ * this block. */
+.memory-density-compact {
+  padding: 1rem;
 }
-.row-actions {
-  opacity: 0.45;
-  transition: opacity 0.15s ease;
+.memory-density-comfortable {
+  padding: 1.25rem;
+}
+.memory-density-flush {
+  padding: 0;
+}
+.memory-density-stack {
+  padding-block: 2.5rem;
 }
 
 /* ---------- Badge legibility (dark theme) ---------- */
@@ -1124,7 +1217,7 @@ pre.memory-scroll::-webkit-scrollbar-thumb { background: var(--color-base-300); 
 
 #chat-rail .list-row {
   cursor: pointer;
-  border-radius: 0.5rem;
+  border-radius: var(--radius-box);
   transition: background-color 0.15s ease, color 0.15s ease;
 }
 #chat-rail .list-row:hover {

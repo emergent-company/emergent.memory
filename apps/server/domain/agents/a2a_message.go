@@ -680,6 +680,7 @@ func (h *A2AHandler) startA2ATask(c echo.Context, projectID, userID, userMessage
 		OrgID:           orgID,
 		UserID:          userID,
 		UserMessage:     userMessage,
+		// TrustedInternal defaults false: an A2A surface must not reach internal agents.
 	}
 
 	if a2aReturnImmediately(cfg) {
@@ -774,6 +775,7 @@ func (h *A2AHandler) resumeA2ATask(c echo.Context, projectID, userID, userMessag
 		OrgID:           orgID,
 		UserID:          userID,
 		UserMessage:     resumeMsg,
+		// TrustedInternal defaults false: an A2A surface must not reach internal agents.
 	}
 
 	if a2aReturnImmediately(cfg) {

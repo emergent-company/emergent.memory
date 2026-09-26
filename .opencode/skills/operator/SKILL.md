@@ -48,7 +48,13 @@ Run this loop per task:
    `git fetch origin`, compare to `origin/main`, fast-forward if behind, **report
    the base SHA** in the final report.
 5. **Monitor** — `paseo_get_agent_status` + `paseo_get_agent_activity`. Do **not**
-   poll `list_agents` to "check on" a running agent; wait for the finish notification.
+   poll `list_agents` for **progress** — wait for the finish notification.
+   **But DO check lifecycle STATE often** — at every wake, and before assuming a lane is
+   merely slow, run `paseo ls` (the same enumeration `list_agents` exposes) and confirm
+   each lane is `running` / `idle` / `closed`. Checking state and polling for progress
+   are different operations; only the latter is discouraged. A lane can be silently
+   `closed` (daemon restart, crash) with **no** notification and no error — never infer
+   liveness from silence or from the job board (`§6a`).
 6. **Nudge-or-requeue** on stall/truncation (§6).
 7. **Independent review lane** — a *separate* workspace + agent
    (`title: "Review+merge #NNN — <summary>"`).
@@ -186,15 +192,66 @@ Then the status label is confirmation, not the only lock.
 | **Stale base** — lane's base is behind `origin/main` | if the lane has no own commits, fast-forward to `origin/main`; if it committed on a stale base, merge/rebase onto the fetched `origin/main` (never blind-reset — that discards lane work). Then assert `git rev-list --count HEAD..origin/main` is `0`. Prevented by the STEP 0 base check (§2) in the brief |
 | **Agent dies at birth** — `updateCount: 1`, `finished` almost immediately, zero model turns, no tool calls | the **workspace** is poisoned, not the agent: re-prompting, or new agents created in it, also die. Archive the workspace, create a **fresh** workspace with a **new slug**, then create the agent |
 | **Idle / incomplete lane** | `paseo_get_agent_status` shows `requiresAttention:true, attentionReason:"finished"` → treat as stopped, re-dispatch or new lane |
+| **Lane `closed` after a daemon/host restart** (state `closed`, agent timestamp predates the daemon's `startedAt`) | the session is **not lost**: `paseo_send_agent_prompt` on the **same closed agent id** resumes it (fallback: `paseo agent reload <id>`, then send). Salvage the worktree first, then resume — **do not** spawn a replacement (§6a) |
 | **Disk full blocks workspace creation** | `df -h` → `go clean -cache` / `docker image prune` → retry. Go-cache reclaim is temporary (refills under lane activity); pruning merged worktrees (§2.9) is the durable win |
 | **Worktree cleanup silently removes nothing** (`removed=0 kept=N`) | ancestry can never match a squash-merged branch — derive merged heads from `gh pr list --state merged --json headRefName` (§2.9); leave dirty / unmerged / detached worktrees |
 | **Partial failed worktree** | `git worktree remove --force` + `git worktree prune` + `git branch -D`; retry with a new slug |
+| **Green PRs, RED `main`** — every PR passed its own CI, yet `main` fails after they merge | a sibling in-flight PR's test or code encoded the **old** invariant (real case: #1011 asserted `trace-list`/`trace-get` were *admin*-scoped; #1013 moved them to `SuperadminOnly`). The contradiction exists **only in the merged tree**, so per-PR green cannot catch it — re-check `main` after merging anything that changes a shared invariant (§7) |
 | **`gh pr create` fails** | push branch first, retry with explicit `--head <branch>` |
 | **Ambiguous decision** | use `question` tool with bounded options |
 
 **Hypothesis discipline:** only file issues backed by evidence. If a suspected bug
 turns out to be a different root cause, verify before opening an issue — do not
 file false positives.
+
+### 6a. Session lifecycle & daemon-restart recovery
+
+**Check lifecycle state often.** Session state is **not** durable across daemon or host
+restarts. At every wake — and whenever a lane goes quiet for longer than expected — run
+`paseo ls --json` (or `paseo_list_agents`) and classify every lane as `running` /
+`idle` / `closed` / `error`. A restart silently converts in-flight lanes to `closed`
+with **no** finish notification and **no** error, so a lane you believe is "still
+working" may have died minutes ago. Never infer liveness from silence, from the job
+board, or from the last thing you dispatched.
+
+**Recognising a restart:** many lanes flip to `closed` at once. The reliable signature is
+`closed` status plus agent timestamps that **predate** the daemon's current `startedAt`:
+`paseo status` reports `startedAt`, and `paseo inspect <id> --json` reports per-agent
+timestamps. Do **not** read timestamps from `paseo ls --json` — it returns only a compact
+row with no timestamp field, so querying it for one silently yields null (that is exactly
+how an earlier version of this note invented a false "`updatedAt: null`" signature).
+Only in-flight generations die; finished work, pushed commits, and all PR/issue state
+survive.
+
+**Resume, do not respawn.** `paseo_send_agent_prompt(agentId, prompt)` on a **closed**
+agent id **continues that same session** — same id, same conversation history — rather
+than creating a new agent, so it costs far less than a fresh lane that must rediscover
+everything. One caveat, stated honestly: the CLI documents `send` for `running`/`idle`
+agents and does **not** document closed-agent resume, yet in practice it has reliably
+resumed restart-closed sessions (an operator session recovered ~9 lanes this way). So:
+**send first**; if it does not take, use `paseo agent reload <id>` ("restarts the
+underlying process") and then send. Reserve brand-new agents/workspaces for the §6
+cases (poisoned workspace, unusable worktree, session genuinely unrecoverable).
+
+**Salvage before resuming** — a dead lane's worktree usually holds work that was never
+pushed:
+1. `git -C <worktree> status --porcelain` — staged and untracked work survives (e.g. a
+   staged file rename). Continue it; do not redo it.
+2. Check whether the lane **already pushed**: compare the PR head to the commit you last
+   knew (`gh pr view <N> --json headRefOid,state,mergeable,statusCheckRollup`). A
+   reviewer may have pushed a fix and died before merging — that commit is still there
+   and still needs a merge decision.
+3. Untracked artefacts (e.g. a half-written `openspec/changes/<name>/`) are on disk.
+   Tell the resumed session exactly where they are and to finish rather than restart.
+4. Read-only lanes that died before emitting output leave nothing — just re-run them.
+
+**Resume prompt shape:** open with a restart notice, state precisely what survived
+(staged rename / pushed commit / untracked dir / clean tree), restate the remaining
+objective tightly, and re-state the gates. The session does **not** know what happened
+after it died — do not assume memory of the intervening events.
+
+**Never restart the daemon yourself** (§1). If it restarted unexpectedly, reconcile
+**every** lane before dispatching anything new.
 
 ---
 
@@ -207,6 +264,20 @@ file false positives.
   data-mutating lane, "which target did that actually touch?" is mandatory. A report
   that is confident, complete, and suspiciously smooth with no raw output is the tell.
 - Confirm merged SHA, close issues, archive workspaces.
+- **After merging a PR that changes a SHARED INVARIANT, verify `main` — not the PR.**
+  Shared invariants include: tool scoping / authority declarations, trust markers
+  (`TrustedInternal`, `TransportEnforced`), guard vocabulary, scope→role mappings, and
+  default authority levels. A PR's CI runs against a `main` that does **not** contain
+  sibling in-flight PRs, so two individually-green PRs can combine into a red `main` —
+  the contradiction simply does not exist in either branch.
+  - Cheap check after each such merge: `gh run list --repo <owner>/<repo> --branch main --limit 5`
+    and confirm the required workflows concluded `success` on the new head.
+  - For the **reviewer** of such a PR, the obligation is stronger than the branch diff:
+    check the merge result against the other PRs that merged (or are merging) around it.
+    "Verified on my branch" is not the same claim as "true on `main`".
+  - When a PR moves a surface between gates (e.g. scope → `superadmin_full`), grep the
+    test suite for the **old** assertion before merging — the sibling test is the
+    likeliest casualty.
 - Report the board: what merged, what's still open, what's blocked (call out
   blocker chains explicitly).
 - Reuse still-valid evidence; do not re-read files an explorer already mapped —

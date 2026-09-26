@@ -2030,8 +2030,8 @@ func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID
 	}
 
 	// Validate patch delta properties against schema (soft-fail on schema load error).
-	// Same delta-only approach as Patch: only validate properties being added/changed,
-	// not those already stored on the relationship from an older schema version.
+	// Required fields are enforced against the merged result (existing properties +
+	// patch delta), so a patch can neither clear nor omit a required property.
 	if schemas != nil {
 		if relSchema, ok := schemas.RelationshipSchemas[current.Type]; ok && (len(relSchema.Properties) > 0 || len(relSchema.Required) > 0) {
 			objSchema := agents.ObjectSchema{
@@ -2044,7 +2044,7 @@ func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID
 					patchDelta[k] = v
 				}
 			}
-			if validatedDelta, err := validatePatchProperties(patchDelta, objSchema); err != nil {
+			if validatedDelta, err := validateRelationshipPatchProperties(patchDelta, newProps, objSchema); err != nil {
 				return nil, apperror.ErrBadRequest.WithMessage("property validation failed: " + err.Error())
 			} else {
 				for k, v := range validatedDelta {

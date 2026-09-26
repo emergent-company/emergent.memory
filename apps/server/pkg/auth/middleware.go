@@ -606,52 +606,106 @@ func (m *Middleware) RequireProjectMember() echo.MiddlewareFunc {
 				return apperror.ErrUnauthorized
 			}
 
-			// Project-bound emt_* tokens are already bound to their project by
-			// RequireProjectTokenScope; their owner need not be a member.
-			if user.APITokenProjectID != "" {
-				return next(c)
-			}
-
-			// Ownerless tokens (user_id = NULL) are server-minted ephemeral
-			// credentials with no owning user to resolve membership for; they
-			// are unreachable through user-facing mint paths.
-			if user.APITokenID != "" && user.ID == "" {
-				return next(c)
-			}
-
-			// Session and account-token callers require a real user identity.
-			if user.ID == "" {
-				return apperror.ErrUnauthorized
-			}
-
 			projectID := c.Param("projectId")
 			if projectID == "" {
 				// Header-scoped groups (e.g. /api/chat) carry the project in
 				// X-Project-ID; RequireAuth normalises it onto user.ProjectID.
 				projectID = user.ProjectID
 			}
-			if projectID == "" {
-				return next(c)
-			}
 
-			orgID, err := m.lookupProjectOrg(c.Request().Context(), projectID)
-			if err != nil {
+			if err := m.authorizeProjectMember(c, projectID); err != nil {
 				return err
-			}
-			if orgID == "" {
-				return apperror.NewNotFound("project", projectID)
-			}
-
-			isMember, err := m.lookupOrgMember(c.Request().Context(), orgID, user.ID)
-			if err != nil {
-				return err
-			}
-			if !isMember {
-				return apperror.NewForbidden("access to project denied")
 			}
 			return next(c)
 		}
 	}
+}
+
+// authorizeProjectMember enforces membership for an explicitly-addressed
+// projectID. Project-bound emt_* tokens and ownerless tokens pass through; every
+// other caller must belong to the addressed project's owning organization. This
+// is the shared core of RequireProjectMember (path-param/header sourced project)
+// and AuthorizeProject (handler-level query/body sourced project).
+func (m *Middleware) authorizeProjectMember(c echo.Context, projectID string) error {
+	user := GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	// Project-bound emt_* tokens are already bound to their project by
+	// RequireProjectTokenScope (or by AuthorizeProject's token-binding check);
+	// their owner need not be a member.
+	if user.APITokenProjectID != "" {
+		return nil
+	}
+
+	// Ownerless tokens (user_id = NULL) are server-minted ephemeral credentials
+	// with no owning user to resolve membership for; they are unreachable
+	// through user-facing mint paths.
+	if user.APITokenID != "" && user.ID == "" {
+		return nil
+	}
+
+	// Session and account-token callers require a real user identity.
+	if user.ID == "" {
+		return apperror.ErrUnauthorized
+	}
+
+	if projectID == "" {
+		return nil
+	}
+
+	orgID, err := m.lookupProjectOrg(c.Request().Context(), projectID)
+	if err != nil {
+		return err
+	}
+	if orgID == "" {
+		return apperror.NewNotFound("project", projectID)
+	}
+
+	isMember, err := m.lookupOrgMember(c.Request().Context(), orgID, user.ID)
+	if err != nil {
+		return err
+	}
+	if !isMember {
+		return apperror.NewForbidden("access to project denied")
+	}
+	return nil
+}
+
+// AuthorizeProject is the handler-level counterpart to the
+// RequireProjectTokenScope → RequireProjectMember pair, for a project ID
+// supplied via a source the pair does not inspect (a query parameter or body
+// field — not the :projectId path param or the X-Project-ID header). The shared
+// pair cannot see such a source, so a handler that reads project identity from
+// one must call this before acting on it (issue #913's events group).
+//
+// The authoritative project is the token-bound project (APITokenProjectID) when
+// present, else the X-Project-ID header (user.ProjectID). A supplied projectID
+// that disagrees with the authoritative source fails closed (403). Session and
+// account-token callers must then belong to the addressed project's owning org
+// (403), with an unknown project reported as 404 (no existence oracle).
+func (m *Middleware) AuthorizeProject(c echo.Context, projectID string) error {
+	user := GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	// Token binding: a project-bound emt_* token may only address its own project.
+	if user.APITokenProjectID != "" {
+		if projectID != user.APITokenProjectID {
+			return apperror.NewForbidden("API token is scoped to a different project")
+		}
+		return nil
+	}
+
+	// Session callers: the declared project (X-Project-ID) is authoritative; a
+	// supplied project id that disagrees with it fails closed.
+	if user.ProjectID != "" && user.ProjectID != projectID {
+		return apperror.NewForbidden("project id does not match the authenticated project context")
+	}
+
+	return m.authorizeProjectMember(c, projectID)
 }
 
 // ScopeImplies is the single canonical umbrella-scope implication relation: it
@@ -860,7 +914,8 @@ func (m *Middleware) authenticate(c echo.Context) (*AuthUser, error) {
 		}
 		// Also accept the standalone API key presented as a Bearer token
 		// (e.g. from the CLI which uses Authorization: Bearer for emt_* tokens).
-		if token := m.extractToken(c.Request()); token != "" && token == m.cfg.Standalone.APIKey {
+		if token := m.extractToken(c.Request()); token != "" &&
+			(token == m.cfg.Standalone.APIKey || (m.cfg.Standalone.APIKey2 != "" && token == m.cfg.Standalone.APIKey2)) {
 			if user := m.checkStandaloneAPIKey(m.requestWithXAPIKey(c.Request(), token)); user != nil {
 				return user, nil
 			}
@@ -961,13 +1016,15 @@ func (m *Middleware) validateToken(ctx context.Context, token, projectID string)
 		return m.finalizeOIDCUser(ctx, claims, projectID)
 	}
 
-	// 6. Local JWT verification as final fallback
-	claims, err := m.verifyJWT(ctx, token)
-	if err != nil {
-		return nil, apperror.ErrInvalidToken.WithInternal(err)
-	}
-
-	return m.finalizeOIDCUser(ctx, claims, projectID)
+	// Final fallback: every configured validation path has been exhausted. The
+	// token is not an emt_* API token, not a test token, not a cached or live
+	// introspection hit, and the userinfo endpoint did not accept it. There is
+	// deliberately no local JWT verification path (see scope-authority: Zitadel
+	// authenticates, the app authorizes; the coarse role signal is
+	// introspection-only and the userinfo fallback carries no role claims), so a
+	// token that reaches this point cannot be trusted and is denied fail-closed.
+	m.log.Warn("token rejected: no configured validation path accepted it")
+	return nil, apperror.ErrInvalidToken
 }
 
 // finalizeOIDCUser ensures the user profile exists, then resolves the effective
@@ -1224,7 +1281,16 @@ func (m *Middleware) checkStandaloneAPIKey(r *http.Request) *AuthUser {
 		return nil
 	}
 
-	if apiKey != m.cfg.Standalone.APIKey {
+	// Determine which standalone identity matched the presented key.
+	var zitadelID, email string
+	switch {
+	case apiKey == m.cfg.Standalone.APIKey:
+		zitadelID = "standalone"
+		email = m.cfg.Standalone.UserEmail
+	case m.cfg.Standalone.APIKey2 != "" && apiKey == m.cfg.Standalone.APIKey2:
+		zitadelID = "standalone-2"
+		email = m.cfg.Standalone.UserEmail2
+	default:
 		return nil
 	}
 
@@ -1233,11 +1299,11 @@ func (m *Middleware) checkStandaloneAPIKey(r *http.Request) *AuthUser {
 	var userID string
 
 	if m.db == nil {
-		// No database connection available — fall back to using "standalone" as ID
+		// No database connection available — fall back to using the zitadel ID as ID
 		return &AuthUser{
-			ID:     "standalone",
-			Sub:    "standalone",
-			Email:  m.cfg.Standalone.UserEmail,
+			ID:     zitadelID,
+			Sub:    zitadelID,
+			Email:  email,
 			Scopes: GetAllScopes(),
 		}
 	}
@@ -1245,7 +1311,7 @@ func (m *Middleware) checkStandaloneAPIKey(r *http.Request) *AuthUser {
 	err := m.db.NewSelect().
 		TableExpr("core.user_profiles").
 		Column("id").
-		Where("zitadel_user_id = ?", "standalone").
+		Where("zitadel_user_id = ?", zitadelID).
 		Scan(ctx, &userID)
 
 	if err != nil {
@@ -1255,8 +1321,8 @@ func (m *Middleware) checkStandaloneAPIKey(r *http.Request) *AuthUser {
 
 	return &AuthUser{
 		ID:     userID, // Use actual UUID from database
-		Sub:    "standalone",
-		Email:  m.cfg.Standalone.UserEmail,
+		Sub:    zitadelID,
+		Email:  email,
 		Scopes: GetAllScopes(),
 	}
 }
@@ -1456,25 +1522,6 @@ func (m *Middleware) introspectToken(ctx context.Context, token string) (*TokenC
 		Roles:      result.Roles,
 		AuthSource: authSourceIntrospection,
 	}, nil
-}
-
-// verifyJWT verifies the token using local JWKS
-func (m *Middleware) verifyJWT(ctx context.Context, token string) (*TokenClaims, error) {
-	// For now, JWT verification is not implemented
-	// The primary auth flow uses:
-	// 1. Test tokens (development)
-	// 2. API tokens (emt_* prefix)
-	// 3. Cached introspection results
-	// 4. Live introspection (if enabled)
-	//
-	// JWT verification would be a fallback using JWKS:
-	// - Fetch JWKS from {issuer}/.well-known/jwks.json
-	// - Verify token signature
-	// - Validate claims (iss, aud, exp)
-	//
-	// This requires go-jose library and JWKS caching.
-	// TODO: Implement if introspection is insufficient
-	return nil, errors.New("JWT verification not implemented - enable introspection or use test tokens")
 }
 
 // authError returns a formatted authentication error
