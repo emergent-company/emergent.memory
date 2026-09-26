@@ -15,6 +15,16 @@
 # already enforces freshness on merge, so we skip (exit 0) in CI instead.
 set -euo pipefail
 
+# --warn: advisory mode — report staleness but exit 0. Used by the pre-push
+# hook, where hard-failing is redundant with branch protection's "up to date
+# before merge" and only trains `git push --no-verify` (disabling every
+# pre-push guard). The default (no flag) hard-fails, which is kept for manual
+# runs and scripts/preflight/all.sh.
+warn=0
+if [ "${1:-}" = "--warn" ]; then
+  warn=1
+fi
+
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 
@@ -52,6 +62,12 @@ behind="$(git rev-list --count HEAD.."$base")"
 echo "base-check: HEAD=$head_sha origin/main=$base_sha"
 
 if [ "$behind" -gt 0 ]; then
+  if [ "$warn" -eq 1 ]; then
+    echo "base-check: WARN HEAD is $behind commit(s) behind $base ($base_sha)." >&2
+    echo "base-check:       rebase before opening/merging a PR:" >&2
+    echo "base-check:         git fetch origin && git merge --ff-only origin/main" >&2
+    exit 0
+  fi
   echo "base-check: FAIL HEAD is $behind commit(s) behind $base ($base_sha)." >&2
   echo "base-check:       the tree was based on a stale main; rebase first:" >&2
   echo "base-check:         git fetch origin && git merge --ff-only origin/main" >&2

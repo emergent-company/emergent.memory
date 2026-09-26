@@ -230,14 +230,17 @@ pre-commit:
 
 # Pre-push: stale-base guard. Blocking a *commit* on being behind main is
 # counterproductive — a lane mid-work, with main moving underneath it, must
-# still be able to commit WIP — but a push is exactly the moment a stale tree
-# would land on the remote. Invokes scripts/preflight/base-check.sh (single
-# source of truth, also run in CI).
+# still be able to commit WIP — but a push is the moment a stale tree would
+# land on the remote. Invokes scripts/preflight/base-check.sh (single source
+# of truth, also run in CI) in --warn mode: a lane routinely legitimately
+# pushes a branch that has fallen behind main (main advances under it), and
+# branch protection already enforces "up to date before merge". Hard-failing
+# here would just train `git push --no-verify`, disabling every pre-push guard.
 pre-push:
   parallel: true
   jobs:
     - name: preflight-base-check
-      run: bash scripts/preflight/base-check.sh
+      run: bash scripts/preflight/base-check.sh --warn
 
 # Full lint across every tree. `task lint` (repo root) runs this group.
 # Per tree: gofmt + go vet + go build + golangci-lint; web UI/connector also run
