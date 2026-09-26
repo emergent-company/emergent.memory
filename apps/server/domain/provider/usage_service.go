@@ -101,7 +101,7 @@ func (s *UsageService) persist(ctx context.Context, event *LLMUsageEvent) error 
 // that calculateCostWith can be tested without a database. *Repository satisfies
 // this interface.
 type pricingLookup interface {
-	GetProjectCustomPricing(ctx context.Context, projectID string, provider ProviderType, model string) (*ProjectCustomPricing, error)
+	GetProjectCustomPricing(ctx context.Context, projectID string, providerSlug string, model string) (*ProjectCustomPricing, error)
 	GetPricing(ctx context.Context, provider ProviderType, model string) (*ProviderPricing, error)
 	GetPricingByModel(ctx context.Context, model string) (*ProviderPricing, error)
 }
@@ -127,8 +127,14 @@ func (s *UsageService) calculateCost(ctx context.Context, event *LLMUsageEvent) 
 // The first non-nil match SHALL be used. The recorded model name is never
 // mutated; normalization only affects the fallback lookup.
 func (s *UsageService) calculateCostWith(ctx context.Context, lookup pricingLookup, event *LLMUsageEvent) float64 {
-	// 1. Project override (manual rates) — highest precedence.
-	if pricing, err := lookup.GetProjectCustomPricing(ctx, event.ProjectID, event.Provider, event.Model); err == nil && pricing != nil {
+	// 1. Project override (manual rates) — highest precedence. Keyed by the
+	// provider instance slug; legacy events without a slug fall back to the
+	// dialect (which was the pre-instance identity).
+	providerSlug := string(event.ProviderSlug)
+	if providerSlug == "" {
+		providerSlug = string(event.Provider)
+	}
+	if pricing, err := lookup.GetProjectCustomPricing(ctx, event.ProjectID, providerSlug, event.Model); err == nil && pricing != nil {
 		return computeCost(event, pricing.TextInputPrice, pricing.ImageInputPrice,
 			pricing.VideoInputPrice, pricing.AudioInputPrice, pricing.OutputPrice)
 	}

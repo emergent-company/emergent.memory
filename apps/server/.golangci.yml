@@ -6,10 +6,43 @@ linters:
     - govet
     - staticcheck
     - unused
+    - depguard
   settings:
     errcheck:
       check-type-assertions: false
       check-blank: false
+    depguard:
+      rules:
+        # Import boundary for the MCP tool surface: domain/mcp must not reach
+        # another domain's store/repository layer directly. Each domain's store
+        # and repository live *in* that domain's package (e.g. skills/store.go,
+        # graph/repository.go), so the boundary is enforced at the domain-package
+        # level: mcp may import a sibling domain only when it consumes that
+        # domain's Service or its shared Authorize* helper — never a raw
+        # Repository/Store. Any new sibling-domain import therefore fails lint
+        # until it is classified and, if legitimate, allowlisted below.
+        mcp-domain-boundary:
+          list-mode: lax
+          files:
+            - "**/domain/mcp/**"
+            - "!$test"
+          allow:
+            - github.com/emergent-company/emergent.memory/domain/mcp$
+            # Service-layer (or shared-Authorize-helper) imports only — reasons:
+            - github.com/emergent-company/emergent.memory/domain/apitoken    # apitoken.Service (token lifecycle via shareTokenService interface)
+            - github.com/emergent-company/emergent.memory/domain/branches    # branches.Service (graph-branch-* tools)
+            - github.com/emergent-company/emergent.memory/domain/documents   # documents.Service (list/get/upload/delete)
+            - github.com/emergent-company/emergent.memory/domain/email       # email.JobsService (MCP invite emails)
+            - github.com/emergent-company/emergent.memory/domain/graph       # graph.Service + DTO types (no direct Repository)
+            - github.com/emergent-company/emergent.memory/domain/journal     # journal.Service (journal-list/add-note)
+            - github.com/emergent-company/emergent.memory/domain/provider    # provider.CredentialService/ModelCatalogService + DTO types
+            - github.com/emergent-company/emergent.memory/domain/schemas     # schemas.Service (schema migration tools)
+            - github.com/emergent-company/emergent.memory/domain/search      # search.Service + DTO types
+            - github.com/emergent-company/emergent.memory/domain/sessiontodos # sessiontodos.Service (authz via SessionAccessibleQuery)
+            - github.com/emergent-company/emergent.memory/domain/skills      # skills.Repository + AuthorizeSkillAccess/Write (same helper REST uses; no skills.Service)
+          deny:
+            - pkg: "github.com/emergent-company/emergent.memory/domain"
+              desc: "domain/mcp must not reach another domain's store/repository layer directly; go through the domain Service or its shared Authorize* helper"
     staticcheck:
       checks:
         - all

@@ -852,7 +852,7 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 
 	// Persist the resolved model name on the run record for observability (#141)
 	if modelName != "" {
-		if err := ae.repo.UpdateRunModel(dbCtx, run.ID, modelName); err != nil {
+		if err := ae.repo.UpdateRunModel(dbCtx, run.ID, modelName, "", "", ""); err != nil {
 			ae.log.Warn("failed to persist model on agent run",
 				slog.String("run_id", run.ID),
 				slog.String("error", err.Error()),
@@ -997,6 +997,29 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 	result.Cleanup = cleanup.Cleanup
 	return result, nil
 }
+
+// defaultRunTimeout is the fallback wall-clock limit applied to a run when
+// neither the request nor the agent definition specifies a timeout. It exists
+// so a hung LLM/tool call cannot block the executor goroutine forever.
+const defaultRunTimeout = 10 * time.Minute
+
+// resolveRunTimeout returns the wall-clock timeout for a run, in precedence
+// order:
+//  1. an explicit per-request timeout (ExecuteRequest.Timeout, when > 0);
+//  2. the agent definition's default_timeout (seconds, when > 0) — so an
+//     operator can opt a slow-but-legitimate agent into a longer budget on the
+//     primary surfaces (chat/A2A/scheduler/worker), not just on sub-agent spawns;
+//  3. the hard-coded defaultRunTimeout.
+func resolveRunTimeout(req ExecuteRequest) time.Duration {
+	if req.Timeout != nil && *req.Timeout > 0 {
+		return *req.Timeout
+	}
+	if req.AgentDefinition != nil && req.AgentDefinition.DefaultTimeout != nil && *req.AgentDefinition.DefaultTimeout > 0 {
+		return time.Duration(*req.AgentDefinition.DefaultTimeout) * time.Second
+	}
+	return defaultRunTimeout
+}
+
 func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req ExecuteRequest) (*ExecuteResult, error) {
 	startTime := time.Now()
 	dbCtx := context.Background()
@@ -1006,11 +1029,9 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 	}
 
 	// Apply hard timeout so a hung LLM call cannot block the goroutine forever.
-	const defaultRunTimeout = 10 * time.Minute
-	runTimeout := defaultRunTimeout
-	if req.Timeout != nil && *req.Timeout > 0 {
-		runTimeout = *req.Timeout
-	}
+	// The timeout honours an explicit per-request value, then the agent
+	// definition's default_timeout, then the hard-coded default.
+	runTimeout := resolveRunTimeout(req)
 	{
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, runTimeout)
@@ -1860,13 +1881,10 @@ func (ae *AgentExecutor) runPipeline(
 		ctx = auth.ContextWithOrgID(ctx, req.OrgID)
 	}
 
-	// Apply timeout if specified; fall back to a hard maximum to prevent runs
-	// from blocking forever on a hung LLM HTTP call.
-	const defaultRunTimeout = 10 * time.Minute
-	runTimeout := defaultRunTimeout
-	if req.Timeout != nil && *req.Timeout > 0 {
-		runTimeout = *req.Timeout
-	}
+	// Apply timeout if specified; fall back to the agent definition's
+	// default_timeout, then a hard maximum to prevent runs from blocking forever
+	// on a hung LLM HTTP call.
+	runTimeout := resolveRunTimeout(req)
 	{
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, runTimeout)
@@ -1883,6 +1901,11 @@ func (ae *AgentExecutor) runPipeline(
 	modelName := req.Model
 	if modelName == "" && req.AgentDefinition != nil && req.AgentDefinition.Model != nil && req.AgentDefinition.Model.Name != "" {
 		modelName = req.AgentDefinition.Model.Name
+		// Structured override: an explicit provider instance (slug) is combined
+		// with the bare model name, unless the name already carries a prefix.
+		if p := req.AgentDefinition.Model.Provider; p != "" && !strings.Contains(modelName, "/") {
+			modelName = p + "/" + modelName
+		}
 	}
 
 	var llm model.LLM
@@ -1908,11 +1931,12 @@ func (ae *AgentExecutor) runPipeline(
 	// llm.Name() reflects the actual model used (including factory/credential defaults),
 	// which may differ from the modelName variable when a credential-level default applies.
 	if resolvedModelName := llm.Name(); resolvedModelName != "" {
-		var providerName string
+		var providerName, providerSlug string
 		if tm, ok := llm.(*provider.TrackingModel); ok {
 			providerName = tm.ProviderName()
+			providerSlug = tm.ProviderSlugName()
 		}
-		if err := ae.repo.UpdateRunModel(dbCtx, run.ID, resolvedModelName, providerName); err != nil {
+		if err := ae.repo.UpdateRunModel(dbCtx, run.ID, resolvedModelName, providerName, providerSlug, providerName); err != nil {
 			ae.log.Warn("failed to persist model on agent run",
 				slog.String("run_id", run.ID),
 				slog.String("model", resolvedModelName),

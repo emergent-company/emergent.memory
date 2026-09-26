@@ -31,19 +31,21 @@ type usageRecorder interface {
 //   - Multimodal token counts are extracted from PromptTokensDetails when present,
 //     falling back to PromptTokenCount (text-only) for older response shapes.
 type TrackingModel struct {
-	inner    adkmodel.LLM
-	usage    usageRecorder
-	provider ProviderType
-	log      *slog.Logger
+	inner   adkmodel.LLM
+	usage   usageRecorder
+	slug    ProviderSlug
+	dialect ProviderDialect
+	log     *slog.Logger
 }
 
 // NewTrackingModel wraps an existing LLM with usage tracking.
-func NewTrackingModel(inner adkmodel.LLM, usage usageRecorder, provider ProviderType, log *slog.Logger) *TrackingModel {
+func NewTrackingModel(inner adkmodel.LLM, usage usageRecorder, slug ProviderSlug, dialect ProviderDialect, log *slog.Logger) *TrackingModel {
 	return &TrackingModel{
-		inner:    inner,
-		usage:    usage,
-		provider: provider,
-		log:      log.With(logger.Scope("provider.tracking")),
+		inner:   inner,
+		usage:   usage,
+		slug:    slug,
+		dialect: dialect,
+		log:     log.With(logger.Scope("provider.tracking")),
 	}
 }
 
@@ -52,10 +54,17 @@ func (m *TrackingModel) Name() string {
 	return m.inner.Name()
 }
 
-// ProviderName returns the provider type string for this model (e.g. "google", "openai-compatible").
-// Callers can type-assert adkmodel.LLM to *TrackingModel to access this.
+// ProviderName returns the provider dialect string for this model (e.g.
+// "google", "openai"). Callers can type-assert adkmodel.LLM to *TrackingModel
+// to access this.
 func (m *TrackingModel) ProviderName() string {
-	return string(m.provider)
+	return string(m.dialect)
+}
+
+// ProviderSlugName returns the provider instance slug for this model. It may be
+// empty when the model was created without instance context.
+func (m *TrackingModel) ProviderSlugName() string {
+	return string(m.slug)
 }
 
 // SetEnableThinking delegates to the inner model if it supports the
@@ -125,7 +134,8 @@ func (m *TrackingModel) recordUsage(ctx context.Context, req *adkmodel.LLMReques
 	event := &LLMUsageEvent{
 		ProjectID:    projectID,
 		OrgID:        orgID,
-		Provider:     m.provider,
+		Provider:     m.dialect,
+		ProviderSlug: m.slug,
 		Model:        modelName,
 		Operation:    OperationGenerate,
 		OutputTokens: int64(meta.CandidatesTokenCount),

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"maps"
@@ -1145,13 +1146,22 @@ func agentAutoModelName(agent *AgentDefinition, pinnedDefault string) string {
 	return name
 }
 
-// projectProviderNames returns the provider keys of the project's configured
-// providers (ps[i].Provider), e.g. "openai" for openai/deepseek-v4-pro, in
-// list order.
+// projectProviderNames returns the provider identifiers an agent model
+// reference may use: each configured instance's slug (the structured
+// reference) plus its dialect (the legacy alias), in list order and deduped.
+// Including the dialect keeps a stored legacy value like "openai/gpt-4o"
+// resolvable when the instance slug is "openai-main".
 func projectProviderNames(ps []ProjectProviderConfig) []string {
-	names := make([]string, 0, len(ps))
+	names := make([]string, 0, len(ps)*2)
+	seen := map[string]bool{}
 	for _, p := range ps {
-		names = append(names, p.Provider)
+		for _, n := range []string{cmp.Or(p.Slug, p.Provider), p.Provider} {
+			if n == "" || seen[n] {
+				continue
+			}
+			seen[n] = true
+			names = append(names, n)
+		}
 	}
 	return names
 }

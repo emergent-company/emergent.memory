@@ -75,8 +75,13 @@ where IDs won't do: `stat-agents` · `stat-with-tools` · `model-select`.
 Adopt the go-daisy / emergent.memory tooling:
 
 - **golangci-lint** — `.golangci.yml` + `task lint`.
-- **lefthook pre-commit** — `gofmt` (staged files) + `go vet` + `go build`; the `lint` job
-  runs `gofmt` + `go vet` + `golangci-lint`.
+- **lefthook** — one repo-root `lefthook.yml` (install with `task hooks:install`). The
+  `pre-commit` hook runs fast, path-scoped checks: gateway `gofmt` (staged files) + `go vet`
+  + `go build`, `templ generate -check` on `.templ` files, `ruff` on Python, and a repo-wide
+  `gitleaks` secret scan (strict on staged changes).
+  Full `task lint` runs `lefthook run lint-webui` (web UI + connector): `gofmt` + `go vet` +
+  `go test` + `golangci-lint` + `templ generate -check` + repo-wide `gitleaks` (whole tree,
+  with a `.gitleaksignore` ratchet for pre-existing findings).
 - `templ generate` before build when `.templ` files change.
 
 ## Migration (existing → new)

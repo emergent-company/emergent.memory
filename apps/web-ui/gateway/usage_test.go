@@ -309,3 +309,53 @@ func TestUsageTokenSeriesAggregatesByDay(t *testing.T) {
 		t.Errorf("points = %+v", points)
 	}
 }
+
+// TestUsageInstanceSlugFallsBackToDialect covers the legacy row: with no
+// ProviderSlug the dialect is shown, and the dialect is only repeated when it
+// differs from the instance.
+func TestUsageInstanceSlugFallsBackToDialect(t *testing.T) {
+	legacy := UsageSummaryRow{Provider: "openai", Model: "gpt-4o"}
+	if got := usageInstanceSlug(legacy); got != "openai" {
+		t.Errorf("legacy slug = %q, want the dialect", got)
+	}
+	if usageDialectDistinct(legacy) {
+		t.Error("legacy row must not repeat the dialect")
+	}
+	modern := UsageSummaryRow{Provider: "openai", ProviderSlug: "openai-local", Model: "gpt-4o"}
+	if got := usageInstanceSlug(modern); got != "openai-local" {
+		t.Errorf("instance slug = %q", got)
+	}
+	if !usageDialectDistinct(modern) {
+		t.Error("a distinct instance slug must show its dialect alongside")
+	}
+}
+
+// TestUsageRouteDistinguishesSameDialectInstances asserts two instances of one
+// dialect serving the same model render as separate rows, each identified by
+// its instance slug, instead of being merged.
+func TestUsageRouteDistinguishesSameDialectInstances(t *testing.T) {
+	summary := &UsageSummaryResponse{
+		Note: "Costs shown are estimates.",
+		Data: []UsageSummaryRow{
+			{Provider: "openai", ProviderSlug: "openai", Model: "gpt-4o", TotalText: 100, TotalOutput: 50, EstimatedCostUSD: 0.0123},
+			{Provider: "openai", ProviderSlug: "openai-local", Model: "gpt-4o", TotalText: 10, TotalOutput: 5, EstimatedCostUSD: 0.0021},
+		},
+	}
+	f := &fakeMemory{usageSummary: summary, usageSeries: sampleUsageSeries()}
+	_, e := newUsageEcho(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/usage", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-testid="usage-provider-openai"`,
+		`data-testid="usage-provider-openai-local"`,
+		"openai-local",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("usage page missing %q, got:\n%s", want, body)
+		}
+	}
+}

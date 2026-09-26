@@ -39,3 +39,11 @@
 - [x] 6.1 Worker: run `pytest` in `alfred_bridge/` and the linter; all pass
 - [ ] 6.2 iOS: build via `tools/ios-build-mac.sh` and run `VoiceAgentTests`; all pass
 - [ ] 6.3 Manual: build the iOS app on the Mac, connect to an agent, send text, and confirm rich markdown, tool chips, and thinking blocks render; trigger an approval and a question and confirm each renders and resumes after a decision
+
+## 7. A2UI structured-UI surfaces (extends `agent-structured-ui` §6)
+
+- [x] 7.1 Bridge: forward memory `ui` events (A2UI surfaces) over `lk.chat.events` (`chat_events.py`, `llm.py`); unit test asserts the forwarded surface
+- [x] 7.2 iOS: decode `ui` events into A2UI message/component models, ignoring unknown envelope kinds
+- [x] 7.3 iOS: native SwiftUI component registry for the 8 catalog cards + summary fallback
+- [x] 7.4 Bridge + iOS: surface-action round-trip over `lk.chat.decision` (starts a new turn in the existing context)
+- [x] 7.5 Verify: bridge `pytest` (48 passed) + iOS `xcodebuild` build/build-for-testing on `mcj-mini`

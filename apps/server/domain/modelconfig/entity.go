@@ -41,8 +41,12 @@ type ProjectModelConfig struct {
 	ProjectID       uuid.UUID `bun:"project_id,pk,type:uuid" json:"projectId"`
 	GenerativeModel string    `bun:"generative_model,notnull" json:"generativeModel"`
 	EmbeddingModel  string    `bun:"embedding_model,notnull" json:"embeddingModel"`
-	CreatedAt       time.Time `bun:"created_at,notnull,default:now()" json:"createdAt"`
-	UpdatedAt       time.Time `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+	// Provider instance slugs that serve each model. They make the selection
+	// structured (provider + model) instead of relying on a string prefix.
+	GenerativeProviderSlug string    `bun:"generative_provider_slug" json:"generativeProviderSlug,omitempty"`
+	EmbeddingProviderSlug  string    `bun:"embedding_provider_slug" json:"embeddingProviderSlug,omitempty"`
+	CreatedAt              time.Time `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	UpdatedAt              time.Time `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
 }
 
 // OrgModelConfig is retained for DB migration compatibility only.
@@ -79,10 +83,12 @@ type UpsertModelConfigRequest struct {
 
 // ModelConfigResponse is the API response for a stored model config.
 type ModelConfigResponse struct {
-	GenerativeModel string    `json:"generativeModel"`
-	EmbeddingModel  string    `json:"embeddingModel"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	GenerativeModel        string    `json:"generativeModel"`
+	EmbeddingModel         string    `json:"embeddingModel"`
+	GenerativeProviderSlug string    `json:"generativeProviderSlug,omitempty"`
+	EmbeddingProviderSlug  string    `json:"embeddingProviderSlug,omitempty"`
+	CreatedAt              time.Time `json:"createdAt"`
+	UpdatedAt              time.Time `json:"updatedAt"`
 }
 
 // EffectiveModelConfig is the response for the effective model resolution endpoint.

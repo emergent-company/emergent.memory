@@ -1,16 +1,25 @@
-# lefthook.yml — git hooks and lint tasks for emergent.memory server.
+# lefthook.yml — repo-wide git hooks + lint for the Memory monorepo.
 #
-# Install hooks:   lefthook install
-# Run lint only:   lefthook run lint
-# Run pre-commit:  lefthook run pre-commit
+# Lefthook loads exactly ONE config, from the git repo root: git hooks are
+# repo-global and per-directory configs are NOT auto-discovered. Scope each job
+# with `root:` (its CWD) and `glob:` (matched relative to `root` when set, else
+# relative to the repo root).
 #
-# Override locally in lefthook-local.yml (not committed).
+# Install hooks:    lefthook install        (or: task hooks:install)
+# Run pre-commit:   lefthook run pre-commit
+# Run lint (all):   lefthook run lint
+# Run web-ui lint:  lefthook run lint-webui
+#
+# Local overrides go in lefthook-local.yml (not committed).
+# lefthook v2: https://github.com/evilmartians/lefthook
 
 pre-commit:
   parallel: true
   jobs:
-    - name: gofmt
-      glob: "*.go"
+    # ── Server — apps/server ─────────────────────────────────────────────────
+    - name: server-gofmt
+      root: apps/server
+      glob: "**/*.go"
       run: |
         files=$(gofmt -l {staged_files})
         if [ -n "$files" ]; then
@@ -19,20 +28,231 @@ pre-commit:
           exit 1
         fi
 
-    - name: go-vet
-      run: go vet ./apps/server/...
+    - name: server-go-vet
+      root: apps/server
+      glob: "**/*.go"
+      run: go vet ./...
 
-    - name: go-build
-      run: go build ./apps/server/...
+    - name: server-go-build
+      root: apps/server
+      glob: "**/*.go"
+      run: go build ./...
 
-    - name: lint-ratchet
-      glob: "*.go"
+    - name: server-lint-ratchet
+      root: apps/server
+      glob: "**/*.go"
+      run: ./scripts/lint-ratchet.sh
+
+    - name: server-swagger-annotations
+      root: apps/server
+      glob: "**/handler*.go"
+      exclude:
+        - "**/*_test.go"
       run: |
-        cd apps/server && ./scripts/lint-ratchet.sh
+        fail=0
+        for file in {staged_files}; do
+          if ! grep -q '^// @Router' "$file"; then
+            echo "ERROR: missing Swagger @Router annotation in $file"
+            echo "  Handler files must document routes; see apps/server/domain/chunks/handler.go"
+            fail=1
+          fi
+        done
+        exit $fail
 
+    - name: server-golangci-config
+      root: apps/server
+      glob: ".golangci.y*ml"
+      run: golangci-lint config verify
+
+    - name: server-untracked-imports
+      glob:
+        - "apps/server/*.go"
+        - "apps/server/**/*.go"
+      run: |
+        staged=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '^apps/server/.*\.go$' || true)
+        imports=$(echo "$staged" | xargs grep -oh '"github\.com/emergent-company/emergent\.memory/[^"]*"' 2>/dev/null | tr -d '"' | sort -u || true)
+        fail=0
+        for imp in $imports; do
+          rel="${imp#github.com/emergent-company/emergent.memory/}"
+          case "$rel" in
+            apps/server/*) dir="$rel" ;;
+            *) dir="apps/server/$rel" ;;
+          esac
+          count=$(git ls-files --cached -- "$dir" | grep -c '\.go$' || true)
+          if [ "$count" -eq 0 ]; then
+            echo "ERROR: import \"$imp\" references untracked package ($dir)"
+            echo "  Add the package files with 'git add $dir' before committing."
+            fail=1
+          fi
+        done
+        exit $fail
+
+    - name: server-migrations
+      glob:
+        - "apps/server/migrations/*.sql"
+        - "apps/server/migrations/**/*.sql"
+      run: |
+        fail=0
+        for file in {staged_files}; do
+          if grep -q '^\\' "$file"; then
+            echo "ERROR: backslash metacommand in $file"
+            grep -n '^\\' "$file" || true
+            fail=1
+          fi
+          if grep -q '\$ \$' "$file"; then
+            echo "ERROR: spaced dollar quotes in $file (use \$\$ not \$ \$)"
+            grep -n '\$ \$' "$file" | head -5 || true
+            fail=1
+          fi
+        done
+        exit $fail
+
+    # Preflight: migration numbering. Invokes scripts/preflight/migration-number.sh
+    # (single source of truth, also run in CI). Only runs when a migration is
+    # staged; goose silently skips a duplicate version, so a collision means the
+    # migration never runs. This is the disaster-avoidance guard the CI-only
+    # check used to surface only after push.
+    - name: preflight-migration-number
+      glob:
+        - "apps/server/migrations/*.sql"
+        - "apps/server/migrations/**/*.sql"
+      run: bash scripts/preflight/migration-number.sh
+
+    # ── CLI — apps/cli ───────────────────────────────────────────────────────
+    - name: cli-gofmt
+      root: apps/cli
+      glob: "**/*.go"
+      run: |
+        files=$(gofmt -l {staged_files})
+        if [ -n "$files" ]; then
+          echo "gofmt: the following files need formatting:"
+          echo "$files"
+          exit 1
+        fi
+
+    # cli-golangci-lint intentionally lives in the `lint` group, not here:
+    # whole-module golangci-lint is too slow for the fast pre-commit path and
+    # apps/cli carries pre-existing findings that must not block unrelated
+    # commits (see the lint group's --new-from-rev note).
+
+    # ── Web UI — apps/web-ui ─────────────────────────────────────────────────
+    - name: webui-ruff
+      root: apps/web-ui
+      glob: "**/*.py"
+      run: |
+        if ! command -v ruff >/dev/null 2>&1; then
+          echo "ruff not installed, skipping (install: pipx install ruff)"; exit 0
+        fi
+        ruff check {staged_files}
+
+    - name: webui-gofmt
+      root: apps/web-ui/gateway
+      glob: "**/*.go"
+      run: |
+        files=$(gofmt -l {staged_files})
+        if [ -n "$files" ]; then
+          echo "gofmt: the following files need formatting:"
+          echo "$files"
+          exit 1
+        fi
+
+    # Gateway compile jobs need the generated assets (templ output + compiled
+    # CSS), which are gitignored. Skip with instructions on an un-warmed tree;
+    # CI generates them before building.
+    - name: webui-go-vet
+      root: apps/web-ui/gateway
+      glob: "**/*.go"
+      run: |
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+          echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
+          exit 0
+        fi
+        go vet ./...
+
+    - name: webui-go-build
+      root: apps/web-ui/gateway
+      glob: "**/*.go"
+      run: |
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+          echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
+          exit 0
+        fi
+        go build ./...
+
+    - name: webui-templ
+      root: apps/web-ui/gateway
+      glob:
+        - "*.templ"
+        - "**/*.templ"
+      run: |
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+          echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
+          exit 0
+        fi
+        if ! command -v templ >/dev/null 2>&1; then
+          echo "templ not installed, skipping"; exit 0
+        fi
+        templ generate -check
+
+    - name: secrets
+      run: |
+        if ! command -v gitleaks >/dev/null 2>&1; then
+          echo "gitleaks not installed, skipping secrets scan"; exit 0
+        fi
+        gitleaks git --staged --config .gitleaks.toml --no-banner
+
+    - name: webui-no-generated
+      run: |
+        bad=$(git diff --cached --name-only --diff-filter=ACM \
+          | grep -E 'webui/static/css/app\.css$|_templ\.go$' || true)
+        if [ -n "$bad" ]; then
+          echo "Generated files staged (gitignored — regenerate via task build/css):"
+          echo "$bad"
+          exit 1
+        fi
+
+    # ── Linux connector — apps/connector.linux ───────────────────────────────
+    - name: connector-gofmt
+      root: apps/connector.linux
+      glob: "**/*.go"
+      run: |
+        files=$(gofmt -l {staged_files})
+        if [ -n "$files" ]; then
+          echo "gofmt: the following files need formatting:"
+          echo "$files"
+          exit 1
+        fi
+
+    - name: connector-go-vet
+      root: apps/connector.linux
+      glob: "**/*.go"
+      run: go vet ./...
+
+# Pre-push: stale-base guard. Blocking a *commit* on being behind main is
+# counterproductive — a lane mid-work, with main moving underneath it, must
+# still be able to commit WIP — but a push is the moment a stale tree would
+# land on the remote. Invokes scripts/preflight/base-check.sh (single source
+# of truth, also run in CI) in --warn mode: a lane routinely legitimately
+# pushes a branch that has fallen behind main (main advances under it), and
+# branch protection already enforces "up to date before merge". Hard-failing
+# here would just train `git push --no-verify`, disabling every pre-push guard.
+pre-push:
+  parallel: true
+  jobs:
+    - name: preflight-base-check
+      run: bash scripts/preflight/base-check.sh --warn
+
+# Full lint across every tree. `task lint` (repo root) runs this group.
+# Per tree: gofmt + go vet + go build + golangci-lint; web UI/connector also run
+# go test; web UI adds ruff/templ/gitleaks. Server/CLI tests run via `task test`
+# (they need a database), not here.
 lint:
   parallel: true
   jobs:
+    # Repo-wide gofmt over *tracked* files — the only place the whole repo
+    # (including e2e/, blueprints/, tools/) is checked for formatting, since
+    # `task lint` in apps/web-ui is scoped to the gateway. Mirrors the CI
+    # `gofmt (tracked Go files)` guard (see #1058 / #1061).
     - name: gofmt
       run: |
         files=$(git ls-files '*.go' | xargs gofmt -l)
@@ -42,8 +262,266 @@ lint:
           exit 1
         fi
 
-    - name: go-vet
-      run: go vet ./apps/server/...
+    # ── Server ───────────────────────────────────────────────────────────────
+    - name: server-gofmt
+      root: apps/server
+      run: |
+        files=$(git ls-files '*.go' | xargs gofmt -l)
+        if [ -n "$files" ]; then
+          echo "gofmt: the following tracked files need formatting:"
+          echo "$files"
+          exit 1
+        fi
 
-    - name: go-build
-      run: go build ./apps/server/...
+    - name: server-go-vet
+      root: apps/server
+      run: go vet ./...
+
+    - name: server-go-build
+      root: apps/server
+      run: go build ./...
+
+    # golangci-lint has no baseline ratchet (unlike gitleaks/.gitleaksignore or
+    # apps/server/scripts/lint-ratchet.sh). apps/server (~260 findings) and
+    # apps/cli (~71) carry pre-existing debt, so a whole-module run would leave
+    # `task lint` red before any work. `--new-from-rev HEAD` reports only new
+    # issues on changed lines — the same ratchet the server CI uses
+    # (.github/workflows/server.yml) — so a clean tree stays green while a new
+    # finding still fails. Pay the debt down under a dedicated follow-up; do not
+    # silently re-enable a whole-module run here.
+    #
+    # Every golangci-lint job in these parallel groups passes
+    # `--allow-parallel-runners`: golangci-lint otherwise takes a global lock at
+    # $TMPDIR/golangci-lint.lock and fails ("parallel golangci-lint is running")
+    # when another job holds it. The per-tree GOLANGCI_LINT_CACHE dirs below are
+    # already isolated, so concurrent runs are safe.
+    - name: server-golangci-lint
+      root: apps/server
+      run: GOLANGCI_LINT_CACHE="${TMPDIR:-/tmp}/em-golangci-server" golangci-lint run --allow-parallel-runners --new-from-rev HEAD ./...
+
+    # ── CLI ──────────────────────────────────────────────────────────────────
+    - name: cli-gofmt
+      root: apps/cli
+      run: |
+        files=$(git ls-files '*.go' | xargs gofmt -l)
+        if [ -n "$files" ]; then
+          echo "gofmt: the following tracked files need formatting:"
+          echo "$files"
+          exit 1
+        fi
+
+    - name: cli-go-vet
+      root: apps/cli
+      run: go vet ./...
+
+    - name: cli-go-build
+      root: apps/cli
+      run: go build ./...
+
+    - name: cli-golangci-lint
+      root: apps/cli
+      run: GOLANGCI_LINT_CACHE="${TMPDIR:-/tmp}/em-golangci-cli" golangci-lint run --allow-parallel-runners --new-from-rev HEAD ./...
+
+    # ── Web UI ───────────────────────────────────────────────────────────────
+    - name: webui-ruff
+      root: apps/web-ui
+      run: |
+        if ! command -v ruff >/dev/null 2>&1; then
+          echo "ruff not installed, skipping (install: pipx install ruff)"; exit 0
+        fi
+        ruff check .
+
+    - name: webui-gofmt
+      root: apps/web-ui/gateway
+      run: |
+        files=$(git ls-files '*.go' | xargs gofmt -l)
+        if [ -n "$files" ]; then
+          echo "gofmt: the following tracked files need formatting:"
+          echo "$files"
+          exit 1
+        fi
+
+    - name: webui-go-vet
+      root: apps/web-ui/gateway
+      run: |
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+          echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
+          exit 0
+        fi
+        go vet ./...
+
+    - name: webui-go-build
+      root: apps/web-ui/gateway
+      run: |
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+          echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
+          exit 0
+        fi
+        go build ./...
+
+    - name: webui-go-test
+      root: apps/web-ui/gateway
+      run: |
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+          echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
+          exit 0
+        fi
+        go test ./...
+
+    - name: webui-golangci-lint
+      root: apps/web-ui/gateway
+      run: |
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+          echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
+          exit 0
+        fi
+        GOLANGCI_LINT_CACHE="${TMPDIR:-/tmp}/em-golangci-gateway" golangci-lint run --allow-parallel-runners ./...
+
+    - name: webui-templ
+      root: apps/web-ui/gateway
+      run: |
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+          echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
+          exit 0
+        fi
+        if ! command -v templ >/dev/null 2>&1; then
+          echo "templ not installed, skipping"; exit 0
+        fi
+        templ generate -check
+
+    - name: secrets
+      run: |
+        if ! command -v gitleaks >/dev/null 2>&1; then
+          echo "gitleaks not installed, skipping secrets scan"; exit 0
+        fi
+        gitleaks dir . --config .gitleaks.toml --no-banner
+
+    # ── Connector ────────────────────────────────────────────────────────────
+    - name: connector-gofmt
+      root: apps/connector.linux
+      run: |
+        files=$(git ls-files '*.go' | xargs gofmt -l)
+        if [ -n "$files" ]; then
+          echo "gofmt: the following tracked files need formatting:"
+          echo "$files"
+          exit 1
+        fi
+
+    - name: connector-go-vet
+      root: apps/connector.linux
+      run: go vet ./...
+
+    - name: connector-go-build
+      root: apps/connector.linux
+      run: go build ./...
+
+    - name: connector-go-test
+      root: apps/connector.linux
+      run: go test ./...
+
+    - name: connector-golangci-lint
+      root: apps/connector.linux
+      run: GOLANGCI_LINT_CACHE="${TMPDIR:-/tmp}/em-golangci-connector" golangci-lint run --allow-parallel-runners ./...
+
+# Web-ui + connector scope. `task lint` in apps/web-ui runs this group.
+lint-webui:
+  parallel: true
+  jobs:
+    - name: webui-ruff
+      root: apps/web-ui
+      run: |
+        if ! command -v ruff >/dev/null 2>&1; then
+          echo "ruff not installed, skipping (install: pipx install ruff)"; exit 0
+        fi
+        ruff check .
+
+    - name: webui-gofmt
+      root: apps/web-ui/gateway
+      run: |
+        files=$(git ls-files '*.go' | xargs gofmt -l)
+        if [ -n "$files" ]; then
+          echo "gofmt: the following tracked files need formatting:"
+          echo "$files"
+          exit 1
+        fi
+
+    - name: webui-go-vet
+      root: apps/web-ui/gateway
+      run: |
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+          echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
+          exit 0
+        fi
+        go vet ./...
+
+    - name: webui-go-build
+      root: apps/web-ui/gateway
+      run: |
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+          echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
+          exit 0
+        fi
+        go build ./...
+
+    - name: webui-go-test
+      root: apps/web-ui/gateway
+      run: |
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+          echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
+          exit 0
+        fi
+        go test ./...
+
+    - name: webui-golangci-lint
+      root: apps/web-ui/gateway
+      run: |
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+          echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
+          exit 0
+        fi
+        GOLANGCI_LINT_CACHE="${TMPDIR:-/tmp}/em-golangci-gateway" golangci-lint run --allow-parallel-runners ./...
+
+    - name: webui-templ
+      root: apps/web-ui/gateway
+      run: |
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+          echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
+          exit 0
+        fi
+        if ! command -v templ >/dev/null 2>&1; then
+          echo "templ not installed, skipping"; exit 0
+        fi
+        templ generate -check
+
+    - name: secrets
+      run: |
+        if ! command -v gitleaks >/dev/null 2>&1; then
+          echo "gitleaks not installed, skipping secrets scan"; exit 0
+        fi
+        gitleaks dir . --config .gitleaks.toml --no-banner
+
+    - name: connector-gofmt
+      root: apps/connector.linux
+      run: |
+        files=$(git ls-files '*.go' | xargs gofmt -l)
+        if [ -n "$files" ]; then
+          echo "gofmt: the following tracked files need formatting:"
+          echo "$files"
+          exit 1
+        fi
+
+    - name: connector-go-vet
+      root: apps/connector.linux
+      run: go vet ./...
+
+    - name: connector-go-build
+      root: apps/connector.linux
+      run: go build ./...
+
+    - name: connector-go-test
+      root: apps/connector.linux
+      run: go test ./...
+
+    - name: connector-golangci-lint
+      root: apps/connector.linux
+      run: GOLANGCI_LINT_CACHE="${TMPDIR:-/tmp}/em-golangci-connector" golangci-lint run --allow-parallel-runners ./...

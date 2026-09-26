@@ -783,7 +783,7 @@ templ defaultModelsPanel(d providerPanelData) {
 		Margin:    "mb-6",
 		BodyClass: "memory-density-comfortable",
 	}) {
-		<p class="text-base-content/55 mb-4 text-xs">Used when an agent has no explicit model ("Auto — default model"). Model names carry a provider prefix.</p>
+		<p class="text-base-content/55 mb-4 text-xs">Used when an agent has no explicit model ("Auto — default model"). Each option names the provider instance and the model.</p>
 		<form class="flex flex-col gap-4" hx-post="/settings/providers/model-config" hx-trigger="change delay:400ms" hx-swap="none">
 			@defaultModelSelect("generative_model", "Default generative model", modelConfigGen(d), defaultModelCatalog(d, "generative"))
 			@defaultModelSelect("embedding_model", "Embedding model", modelConfigEmb(d), defaultModelCatalog(d, "embedding"))
@@ -792,9 +792,10 @@ templ defaultModelsPanel(d providerPanelData) {
 }
 
 // defaultModelSelect renders one grouped model dropdown for the default-model
-// form plus its Test action. Options are provider-prefixed ("provider/model").
+// form plus its Test action. Options are structured references
+// ("instance/model"); the optgroup label names the instance.
 templ defaultModelSelect(name, label, current string, models []Model) {
-	@settingsField("", label, "Provider-prefixed model name (configured provider), e.g. openai/deepseek-v4-pro.", "", nil) {
+	@settingsField("", label, "Provider instance and model name, e.g. openai-main/gpt-4o. Pick the instance that serves the model.", "", nil) {
 		<div class="flex items-center gap-2">
 			<select id={ name } name={ name } class="select w-full min-w-0">
 				<option value="" selected?={ current == "" }>None — no default</option>
@@ -839,12 +840,12 @@ templ defaultModelTestButton(selectName string) {
 	</button>
 }
 
-// providerModelSelect renders a provider-grouped model dropdown for the
-// provider config form's fallback models. Options are prefixed
-// ("provider/model"); a synthetic "(current)" option keeps a stored value
+// providerModelSelect renders an instance-grouped model dropdown for the
+// provider config form's fallback models. Options are structured references
+// ("instance/model"); a synthetic "(current)" option keeps a stored value
 // selected when it isn't in the catalog (e.g. legacy bare names).
 templ providerModelSelect(name, label, current string, models []Model) {
-	@settingsField("", label, "Provider-prefixed model name (e.g. openai/deepseek-v4-flash). Fallback used when the project has no default.", "", nil) {
+	@settingsField("", label, "Provider instance and model name (e.g. openai-main/gpt-4o). Fallback used when the project has no default.", "", nil) {
 		<select name={ name } class="select w-full">
 			<option value="" selected?={ current == "" }>None — auto-select</option>
 			@components.SelectOptionGroups(modelOptionGroupsFor(models, current))
@@ -878,18 +879,22 @@ templ providerManagementPanel(d providerPanelData) {
 	}
 }
 
-// providerConfigRow shows one configured provider with edit/test/remove
-// actions pushed to the right.
+// providerConfigRow shows one configured provider instance with edit/test/
+// remove actions pushed to the right. The instance slug is the primary label
+// and the dialect is shown alongside it, so two instances of one dialect are
+// distinguishable; every action targets the instance by slug.
 templ providerConfigRow(p ProjectProviderConfig) {
-	<div class="rounded-box border border-base-content/10 bg-base-200/30 p-3">
+	{{ slug := providerInstanceSlug(p) }}
+	<div class="rounded-box border border-base-content/10 bg-base-200/30 p-3" data-testid={ "provider-instance-" + slug }>
 		<div class="flex flex-wrap items-center gap-3">
-			<span class="font-mono text-sm font-medium">{ p.Provider }</span>
+			<span class="font-mono text-sm font-medium">{ slug }</span>
+			<span class="text-base-content/55 text-xs">{ p.Provider }</span>
 			if p.BaseURL != "" {
 				<span class="text-xs text-base-content/55">{ p.BaseURL }</span>
 			}
 			<div class="ml-auto flex items-center gap-2">
-				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/settings/providers/" + url.PathEscape(p.Provider) + "/edit", Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Edit }
-				<form method="post" hx-post={ templ.URL("/settings/providers/" + url.PathEscape(p.Provider) + "/test") } hx-swap="none">
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/settings/providers/" + url.PathEscape(slug) + "/edit", Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Edit }
+				<form method="post" hx-post={ templ.URL("/settings/providers/" + url.PathEscape(slug) + "/test") } hx-swap="none">
 					@ui.Button(ui.ButtonProps{
 						Type:      ui.ButtonTypeSubmit,
 						Variant:   ui.ButtonGhost,
@@ -900,7 +905,7 @@ templ providerConfigRow(p ProjectProviderConfig) {
 						Test
 					}
 				</form>
-				<form method="post" action={ templ.URL("/settings/providers/" + url.PathEscape(p.Provider) + "/remove") }>
+				<form method="post" action={ templ.URL("/settings/providers/" + url.PathEscape(slug) + "/remove") }>
 					@ui.Button(ui.ButtonProps{
 						Type:      ui.ButtonTypeSubmit,
 						Variant:   ui.ButtonError,
@@ -952,8 +957,27 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 					<option value="deepseek" if draftProvider == "deepseek" { selected }>deepseek</option>
 				</select>
 			</label>
+			// Optional instance name. Leaving it blank saves the provider's
+			// default instance; a name adds a second endpoint of the same
+			// provider (e.g. a second OpenAI-compatible URL).
+			<label class="form-control w-full">
+				<div class="label"><span class="label-text">Name (optional)</span></div>
+				<input
+					id="provider-slug"
+					name="slug"
+					type="text"
+					class="input w-full"
+					placeholder="e.g. openai-main"
+					if draft != nil {
+						value={ draft.Slug }
+					}
+				/>
+				<p class="text-base-content/45 mt-1 text-xs">Leave blank to use the provider name. Give it a name to keep a second endpoint of the same provider.</p>
+			</label>
 		} else {
 			<input type="hidden" name="provider" value={ p.Provider }/>
+			<input type="hidden" name="slug" value={ providerInstanceSlug(*p) }/>
+			<p class="text-sm text-base-content/70">Name: <span class="font-mono font-semibold">{ providerInstanceSlug(*p) }</span></p>
 			<p class="text-sm text-base-content/70">Provider: <span class="font-mono font-semibold">{ p.Provider }</span></p>
 		}
 		@form.PasswordField(form.PasswordFieldProps{
@@ -1315,12 +1339,16 @@ templ providerFallbackModelOptions(genModels, embModels []Model) {
 	@providerModelSelect("embedding_model", "Embedding model", "", embModels)
 }
 
-// providerGroup renders one configured provider with its model rows.
+// providerGroup renders one configured provider instance with its model rows.
+// The heading names the instance slug and its dialect so two same-dialect
+// instances never read as one group.
 templ providerGroup(g providerRateGroup) {
-	<div class="mb-5 last:mb-0">
+	{{ slug := providerGroupSlug(g) }}
+	<div class="mb-5 last:mb-0" data-testid={ "rate-group-" + slug }>
 		<div class="mb-2 flex items-center gap-2">
 			<span class="iconify lucide--server size-3.5 text-base-content/40" aria-hidden="true"></span>
-			<h3 class="font-mono text-sm font-semibold">{ g.Provider }</h3>
+			<h3 class="font-mono text-sm font-semibold">{ slug }</h3>
+			<span class="text-base-content/45 text-xs">{ g.Provider }</span>
 		</div>
 		<div class="flex flex-col gap-3">
 			for _, r := range g.Rows {
@@ -1335,14 +1363,16 @@ templ providerGroup(g providerRateGroup) {
 // group on change), the effective rate summary, and a remove action for
 // overrides.
 templ providerModelRow(r providerRateRow) {
+	{{ slug := providerRowSlug(r) }}
 	<div class="rounded-box border border-base-content/10 bg-base-200/30 p-3">
 		<div class="flex flex-wrap items-center gap-x-3 gap-y-2">
 			<form
 				class="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-2"
-				hx-post={ templ.URL("/settings/providers/" + url.PathEscape(r.Provider) + "/" + url.PathEscape(r.Model)) }
+				hx-post={ templ.URL("/settings/providers/" + url.PathEscape(slug) + "/" + url.PathEscape(r.Model)) }
 				hx-trigger="change delay:400ms"
 				hx-swap="none"
 			>
+				<input type="hidden" name="provider" value={ r.Provider }/>
 				<span class="flex flex-col gap-0.5">
 					<span class="flex items-center gap-2">
 						<span class="font-mono text-sm font-medium">{ r.Model }</span>
@@ -1364,14 +1394,14 @@ templ providerModelRow(r providerRateRow) {
 				</span>
 			</form>
 			if r.IsCustom {
-				<form method="post" hx-post={ templ.URL("/settings/providers/" + url.PathEscape(r.Provider) + "/" + url.PathEscape(r.Model) + "/delete") } hx-swap="none">
+				<form method="post" hx-post={ templ.URL("/settings/providers/" + url.PathEscape(slug) + "/" + url.PathEscape(r.Model) + "/delete") } hx-swap="none">
 					@ui.Button(ui.ButtonProps{
 						Type:      ui.ButtonTypeSubmit,
 						Variant:   ui.ButtonGhost,
 						Style:     ui.ButtonStyleOutline,
 						Size:      ui.ButtonSM,
 						Icon:      "lucide--rotate-ccw",
-						AriaLabel: "Remove custom rate for " + r.Provider + "/" + r.Model,
+						AriaLabel: "Remove custom rate for " + slug + "/" + r.Model,
 					}) {
 						Remove
 					}

@@ -44,6 +44,8 @@ func (s *Store) UpsertProjectModelConfig(ctx context.Context, cfg *ProjectModelC
 		On("CONFLICT (project_id) DO UPDATE").
 		Set("generative_model = EXCLUDED.generative_model").
 		Set("embedding_model = EXCLUDED.embedding_model").
+		Set("generative_provider_slug = EXCLUDED.generative_provider_slug").
+		Set("embedding_provider_slug = EXCLUDED.embedding_provider_slug").
 		Set("updated_at = NOW()").
 		Exec(ctx)
 	return err

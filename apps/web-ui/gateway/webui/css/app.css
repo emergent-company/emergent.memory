@@ -101,26 +101,15 @@
 }
 
 /* Radius exception list. The "radius derives from theme variables" rule has one
- * explicit, reviewable exception: the runtime-injected stylesheets in
- * webui/static/js/chat-components.js (`memory-badge-style`,
- * `memory-chat-control-style`). Those are appended to <head> after this compiled
- * sheet and are unlayered, so their `border-radius` literals win over app.css's
- * token-derived values on those selectors:
- *
- *   .memory-badge                 .625rem
- *   .memory-run-marker-model      .375rem
- *   .memory-run-marker-failure    .6rem
- *   .memory-copy-btn              .375rem
- *   .memory-queue-row             .5rem
- *   .memory-queue-input:focus-visible .25rem
- *   .memory-queue-send/remove     .375rem
- *   .dock-question-option         .5rem
+ * explicit, reviewable exception: the runtime-injected badge shell in
+ * webui/static/js/chat-components.js (`memory-badge-style`), whose
+ * `.memory-badge` carries a `border-radius: .625rem` literal. It is JS-only —
+ * app.css defines no `.memory-badge` rule — and no theme token maps to
+ * 0.625rem, so it is documented here rather than forced onto a token.
  *
  * Pills (`border-radius:9999px` on .memory-run-status, .memory-run-status-dot,
- * .dock-count, .memory-rail-badge, .memory-rail-count) are deliberate circles and
- * are exempt like `rounded-full`. Migrating the injected-sheet radii to
- * var(--radius-*) is deferred to the stylesheet-consolidation follow-up unit
- * (task 5.1); until then they are annotated in chat-components.js. */
+ * .dock-count, .memory-rail-badge, .memory-rail-count) are deliberate circles
+ * and are exempt like `rounded-full`. */
 
 /* Iconify — Lucide icons as utility classes (used by go-daisy IconSpan and
    the client JS). */
@@ -418,8 +407,9 @@ div:has(> #_layout-topbar) {
 /* ---------- Agentic chat run-control surface ---------- */
 /* Live run status (chat header, chat.js → #chat-run-status), typed run markers,
    turn footers, copy affordances, the composer queue, the pending-work dock, the
-   session todo card, and the rail status badge. chat-components.js injects the
-   same rules so the surfaces stay styled before this bundle is rebuilt. */
+   session todo card, and the rail status badge. app.css is the single source of
+   truth for this surface — chat-components.js no longer injects a duplicate
+   sheet. */
 
 .memory-run-status {
   display: inline-flex;
@@ -896,11 +886,10 @@ div:has(> #_layout-topbar) {
   border: 1px solid transparent;
   margin-bottom: 0.25rem;
 }
-/* A two-class selector is required to hide the badge: the injected copy of
-   this sheet (chat-components.js) is appended to <head> after the compiled
-   Tailwind sheet, so at equal specificity its `.memory-rail-badge { display:
-   inline-flex }` beats Tailwind's `.hidden { display: none }`. Keep this rule
-   identical to the injected copy. */
+/* A two-class selector is required to hide the badge: `.memory-rail-badge` is
+   unlayered and sets `display: flex`, which beats Tailwind's layered `.hidden {
+   display: none }` at equal specificity. This rule (specificity 0,2,0)
+   re-asserts `display: none` so a badge carrying `.hidden` still hides. */
 .memory-rail-badge.hidden {
   display: none;
 }

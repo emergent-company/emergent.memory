@@ -33,10 +33,11 @@
 
 ## 6. iOS renderer
 
-- [ ] 6.1 Add `ui`/component case to the `ChatEvent` decoder (`apps/ios/VoiceAgent/Chat/ChatEvent.swift`)
-- [ ] 6.2 Add SwiftUI component registry + `Surface` renderer in `ChatView.swift` for the 8 cards
-- [ ] 6.3 Wire action round-trip (`surfaceId` + action back over `lk.chat.decision`)
-- [ ] 6.4 Build via Xcode simulator + manual smoke of one card
+- [x] 6.1 Add `ui`/component case to the `ChatEvent` decoder (`apps/ios/VoiceAgent/Chat/ChatEvent.swift` + `ChatUISurface.swift`)
+- [x] 6.2 Add SwiftUI component registry + `Surface` renderer (`ChatUISurfaceView.swift`, wired in `ChatView.swift`) for the 8 cards
+- [x] 6.3 Wire action round-trip (`surfaceId` + action back over `lk.chat.decision`)
+- [x] 6.4 Build via Xcode simulator (`xcodebuild ... generic/platform=iOS Simulator`, on `mcj-mini`)
+- [ ] 6.5 Manual smoke of one card on a running agent
 
 ## 7. Verify
 

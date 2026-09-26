@@ -3,11 +3,11 @@
 Pure module — no LiveKit / network dependency, so it is unit-testable standalone:
 
 - :class:`ChatEventMapper.handle` turns one memory SSE event dict (``mcp_tool`` /
-  ``thinking`` / ``approval``) into zero or more client event dicts — the JSON
-  payloads the worker streams over the ``lk.chat.events`` text-stream topic.
+  ``thinking`` / ``approval`` / ``ui``) into zero or more client event dicts —
+  the JSON payloads the worker streams over the ``lk.chat.events`` topic.
 - :func:`parse_decision` decodes one client decision message received on the
-  ``lk.chat.decision`` topic (approve/reject/answer), returning ``None`` for
-  malformed input.
+  ``lk.chat.decision`` topic (approve/reject/answer/surfaceAction), returning
+  ``None`` for malformed input.
 - :func:`is_interrupt_message` decides whether a ``lk.chat.interrupt`` payload
   asks the worker to cancel the current generation.
 
@@ -24,6 +24,8 @@ Worker -> client (``lk.chat.events``, one JSON object per message):
     ``approval``    {type, questionId, tool, arguments}
     ``question``    {type, questionId, question, interactionType, options,
                      placeholder, maxLength}
+    ``ui``          {type, surfaceId, messages}   (A2UI v0.9.1 envelopes,
+                     forwarded verbatim; the server already catalog-validated)
 
 Memory's own event shapes (see apps/server/pkg/sse/events.go in the memory repo):
 
@@ -32,6 +34,7 @@ Memory's own event shapes (see apps/server/pkg/sse/events.go in the memory repo)
                    ``result``; the terminal event carries ``{question_id}``.
     ``thinking``   {type, id, role, text, done}  (text is the incremental part)
     ``approval``   {type, tool, input, questionId}
+    ``ui``         {type, surfaceId, messages}   (A2UI surface messages)
 """
 
 from __future__ import annotations
@@ -173,6 +176,8 @@ class ChatEventMapper:
             return [{"type": "thinking", "delta": delta}]
         if kind == "approval":
             return [self._handle_approval(event)]
+        if kind == "ui":
+            return self._handle_ui(event)
         logger.debug("chat mapper: ignoring memory event type %r", kind)
         return []
 
@@ -299,10 +304,35 @@ class ChatEventMapper:
             "arguments": _json_string(_decode_result(arguments)),
         }
 
+    # --- A2UI surfaces -----------------------------------------------------
+
+    @staticmethod
+    def _handle_ui(event: dict) -> list[dict]:
+        """``ui`` carries an A2UI surface (declarative cards) the server already
+        validated against the catalog. Forward it verbatim for the native
+        renderer; malformed envelopes are dropped."""
+        surface_id = event.get("surfaceId")
+        messages = event.get("messages")
+        if not isinstance(surface_id, str) or not surface_id:
+            logger.debug("ui event without a surfaceId: %s", event)
+            return []
+        if not isinstance(messages, list) or not messages:
+            logger.debug("ui event without messages: %s", event)
+            return []
+        return [{"type": "ui", "surfaceId": surface_id, "messages": messages}]
+
 
 # --- client -> worker parsing ----------------------------------------------
 
 _APPROVAL_ACTIONS = frozenset({"approve", "reject", "cancel"})
+
+
+def surface_action_message(surface_id: str, action: Any) -> str:
+    """Format a surface action as the user message a follow-up memory turn
+    receives (mirrors the server's ``a2uiActionMessage`` in
+    ``agents/a2a_message.go``)."""
+    action_text = action if isinstance(action, str) else json.dumps(action, ensure_ascii=False, default=str)
+    return f'The user took an action on UI surface "{surface_id}":\n{action_text}'
 
 
 def parse_decision(text: str) -> dict | None:
@@ -312,6 +342,7 @@ def parse_decision(text: str) -> dict | None:
 
     - ``{"type": "approval", "questionId", "action": approve|reject|cancel, "message"}``
     - ``{"type": "question", "questionId", "answer"}``
+    - ``{"type": "surfaceAction", "surfaceId", "action"}``
 
     Returns ``None`` for anything malformed (non-JSON, wrong shape, missing
     required fields, unknown action/type) — callers must ignore it.
@@ -325,6 +356,16 @@ def parse_decision(text: str) -> dict | None:
     if not isinstance(payload, dict):
         return None
     kind = payload.get("type")
+    if kind == "surfaceAction":
+        surface_id = payload.get("surfaceId")
+        if not isinstance(surface_id, str) or not surface_id:
+            return None
+        action = payload.get("action")
+        if action is None or (isinstance(action, str) and not action):
+            return None
+        if not isinstance(action, (dict, str, list)):
+            return None
+        return {"type": "surfaceAction", "surfaceId": surface_id, "action": action}
     question_id = payload.get("questionId")
     if not isinstance(question_id, str) or not question_id:
         return None
