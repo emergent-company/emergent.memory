@@ -36,8 +36,8 @@ func (s *Service) ListConversations(ctx context.Context, projectID string, owner
 }
 
 // GetConversation retrieves a conversation by ID
-func (s *Service) GetConversation(ctx context.Context, projectID string, conversationID uuid.UUID) (*Conversation, error) {
-	conv, err := s.repo.GetByID(ctx, projectID, conversationID)
+func (s *Service) GetConversation(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID) (*Conversation, error) {
+	conv, err := s.repo.GetByID(ctx, projectID, ownerUserID, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -48,8 +48,8 @@ func (s *Service) GetConversation(ctx context.Context, projectID string, convers
 }
 
 // GetConversationWithMessages retrieves a conversation with all its messages
-func (s *Service) GetConversationWithMessages(ctx context.Context, projectID string, conversationID uuid.UUID) (*Conversation, error) {
-	conv, err := s.repo.GetByIDWithMessages(ctx, projectID, conversationID)
+func (s *Service) GetConversationWithMessages(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID) (*Conversation, error) {
+	conv, err := s.repo.GetByIDWithMessages(ctx, projectID, ownerUserID, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -118,9 +118,9 @@ func (s *Service) CreateConversation(ctx context.Context, projectID, ownerUserID
 }
 
 // UpdateConversation updates a conversation's title or draft text
-func (s *Service) UpdateConversation(ctx context.Context, projectID string, conversationID uuid.UUID, req UpdateConversationRequest) (*Conversation, error) {
+func (s *Service) UpdateConversation(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID, req UpdateConversationRequest) (*Conversation, error) {
 	// First, get the existing conversation
-	conv, err := s.repo.GetByID(ctx, projectID, conversationID)
+	conv, err := s.repo.GetByID(ctx, projectID, ownerUserID, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +137,7 @@ func (s *Service) UpdateConversation(ctx context.Context, projectID string, conv
 	}
 	conv.UpdatedAt = time.Now()
 
-	if err := s.repo.Update(ctx, projectID, conv); err != nil {
+	if err := s.repo.Update(ctx, projectID, ownerUserID, conv); err != nil {
 		return nil, err
 	}
 
@@ -145,8 +145,8 @@ func (s *Service) UpdateConversation(ctx context.Context, projectID string, conv
 }
 
 // DeleteConversation deletes a conversation and all its messages
-func (s *Service) DeleteConversation(ctx context.Context, projectID string, conversationID uuid.UUID) error {
-	deleted, err := s.repo.Delete(ctx, projectID, conversationID)
+func (s *Service) DeleteConversation(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID) error {
+	deleted, err := s.repo.Delete(ctx, projectID, ownerUserID, conversationID)
 	if err != nil {
 		return err
 	}
@@ -157,9 +157,9 @@ func (s *Service) DeleteConversation(ctx context.Context, projectID string, conv
 }
 
 // AddMessage adds a message to a conversation
-func (s *Service) AddMessage(ctx context.Context, projectID string, conversationID uuid.UUID, req AddMessageRequest) (*Message, error) {
+func (s *Service) AddMessage(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID, req AddMessageRequest) (*Message, error) {
 	// Verify conversation exists
-	conv, err := s.repo.GetByID(ctx, projectID, conversationID)
+	conv, err := s.repo.GetByID(ctx, projectID, ownerUserID, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -203,8 +203,8 @@ func (s *Service) buildContextSummary(history []Message) string {
 }
 
 // SetAgentDefinitionID sets the agent_definition_id on a conversation.
-func (s *Service) SetAgentDefinitionID(ctx context.Context, projectID string, conversationID uuid.UUID, agentDefID *uuid.UUID) error {
-	return s.repo.SetAgentDefinitionID(ctx, projectID, conversationID, agentDefID)
+func (s *Service) SetAgentDefinitionID(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID, agentDefID *uuid.UUID) error {
+	return s.repo.SetAgentDefinitionID(ctx, projectID, ownerUserID, conversationID, agentDefID)
 }
 
 // GetOrCreateConversation gets an existing conversation by canonical ID or creates a new one
