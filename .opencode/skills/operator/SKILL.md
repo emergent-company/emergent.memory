@@ -196,6 +196,7 @@ Then the status label is confirmation, not the only lock.
 | **Disk full blocks workspace creation** | `df -h` → `go clean -cache` / `docker image prune` → retry. Go-cache reclaim is temporary (refills under lane activity); pruning merged worktrees (§2.9) is the durable win |
 | **Worktree cleanup silently removes nothing** (`removed=0 kept=N`) | ancestry can never match a squash-merged branch — derive merged heads from `gh pr list --state merged --json headRefName` (§2.9); leave dirty / unmerged / detached worktrees |
 | **Partial failed worktree** | `git worktree remove --force` + `git worktree prune` + `git branch -D`; retry with a new slug |
+| **Green PRs, RED `main`** — every PR passed its own CI, yet `main` fails after they merge | a sibling in-flight PR's test or code encoded the **old** invariant (real case: #1011 asserted `trace-list`/`trace-get` were *admin*-scoped; #1013 moved them to `SuperadminOnly`). The contradiction exists **only in the merged tree**, so per-PR green cannot catch it — re-check `main` after merging anything that changes a shared invariant (§7) |
 | **`gh pr create` fails** | push branch first, retry with explicit `--head <branch>` |
 | **Ambiguous decision** | use `question` tool with bounded options |
 
@@ -263,6 +264,20 @@ after it died — do not assume memory of the intervening events.
   data-mutating lane, "which target did that actually touch?" is mandatory. A report
   that is confident, complete, and suspiciously smooth with no raw output is the tell.
 - Confirm merged SHA, close issues, archive workspaces.
+- **After merging a PR that changes a SHARED INVARIANT, verify `main` — not the PR.**
+  Shared invariants include: tool scoping / authority declarations, trust markers
+  (`TrustedInternal`, `TransportEnforced`), guard vocabulary, scope→role mappings, and
+  default authority levels. A PR's CI runs against a `main` that does **not** contain
+  sibling in-flight PRs, so two individually-green PRs can combine into a red `main` —
+  the contradiction simply does not exist in either branch.
+  - Cheap check after each such merge: `gh run list --repo <owner>/<repo> --branch main --limit 5`
+    and confirm the required workflows concluded `success` on the new head.
+  - For the **reviewer** of such a PR, the obligation is stronger than the branch diff:
+    check the merge result against the other PRs that merged (or are merging) around it.
+    "Verified on my branch" is not the same claim as "true on `main`".
+  - When a PR moves a surface between gates (e.g. scope → `superadmin_full`), grep the
+    test suite for the **old** assertion before merging — the sibling test is the
+    likeliest casualty.
 - Report the board: what merged, what's still open, what's blocked (call out
   blocker chains explicitly).
 - Reuse still-valid evidence; do not re-read files an explorer already mapped —

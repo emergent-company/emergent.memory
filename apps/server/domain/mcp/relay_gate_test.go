@@ -46,3 +46,24 @@ func TestExecuteToolRelayGate(t *testing.T) {
 		require.Equal(t, 1, relay.called, "relay must be reached for a trusted run")
 	})
 }
+
+// TestExecuteToolRelayHTTPTransportRefused proves the relay fallback refuses a
+// call that an HTTP transport already authorized. Relay tools are the agent-only
+// class and must be reachable ONLY from a genuinely internal agent run. An HTTP
+// transport marks its dispatch transport-enforced (NOT trusted-internal) after
+// its own per-tool check, so an authenticated HTTP caller can never satisfy the
+// trusted-internal gate and is refused before reaching the relay (issue #1017).
+func TestExecuteToolRelayHTTPTransportRefused(t *testing.T) {
+	relay := &fakeRelayProvider{sessions: []*RelaySession{{InstanceID: "inst1"}}}
+	svc := &Service{relaySvc: relay}
+
+	projectID := "00000000-0000-0000-0000-000000000000"
+	// What an HTTP transport does: enforce per-tool checks, then mark the call
+	// transport-enforced before dispatch.
+	httpCtx := ContextWithTransportEnforced(context.Background())
+
+	_, err := svc.ExecuteTool(httpCtx, projectID, "inst1_reminders_list", map[string]any{})
+	require.Error(t, err, "an HTTP transport must be refused on a relay tool")
+	require.Contains(t, err.Error(), "untrusted surface", "refusal must name the trust boundary")
+	require.Zero(t, relay.called, "relay must not be reached from an HTTP transport")
+}
