@@ -680,7 +680,11 @@ templ ObjectDetailPage(obj *GraphObject, relTypes []CompiledType, edges []GraphR
 			@objectDetailHeader(obj, typeUIByType)
 			@objectPropertiesCard(obj, propDefs, labelSuggestions)
 			@objectRelationships(obj, relTypes, edges, related)
-			@objectSimilarObjects(obj, similar)
+			if similar != nil {
+				@objectSimilarObjects(obj, similar)
+			} else {
+				@objectSimilarObjectsDeferred(obj)
+			}
 		}
 	}
 }
@@ -909,6 +913,32 @@ templ objectSimilarObjects(obj *GraphObject, similar []SimilarObject) {
 			@similarObjectRow(obj, so)
 		}
 	}
+}
+
+// objectSimilarObjectsDeferred is the first-paint placeholder for the Similar
+// objects section: it renders the card title with a loading indicator and
+// triggers the deferred /objects/:id/similar fetch, which swaps the real results
+// in after paint. Keeping the optional vector-similarity read off the critical
+// path means a slow /similar can no longer hold the object page (issue #1096).
+templ objectSimilarObjectsDeferred(obj *GraphObject) {
+	<div
+		id="object-similar"
+		hx-get={ templ.URL("/objects/" + url.PathEscape(obj.ID) + "/similar") }
+		hx-trigger="load"
+		hx-swap="outerHTML"
+	>
+		@ui.Section("Similar objects", ui.SectionProps{
+			Margin:      "mt-6",
+			CardClass:   "card-border overflow-hidden",
+			BodyClass:   "memory-density-flush",
+			Rows:        true,
+		}) {
+			<div class="flex items-center gap-2 px-4 py-3">
+				<span class="htmx-indicator loading loading-spinner loading-xs" aria-hidden="true"></span>
+				<span class="text-base-content/50 text-sm">Finding similar objects…</span>
+			</div>
+		}
+	</div>
 }
 
 // similarObjectRow is one similar object: label + type, similarity badge, and

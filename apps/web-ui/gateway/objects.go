@@ -273,18 +273,14 @@ func (s *Server) uiObject(c echo.Context) error {
 		compiledErr      error
 		edges            []GraphRelationship
 		edgesErr         error
-		similar          []SimilarObject
-		similarErr       error
 	)
 	var g errgroup.Group
 	g.Go(func() error { labelSuggestions = s.objectLabelSuggestions(ctx); return nil })
 	g.Go(func() error { compiled, compiledErr = s.memory.GetCompiledTypes(ctx); return nil })
 	g.Go(func() error { edges, edgesErr = s.memory.GetObjectEdges(ctx, id); return nil })
-	g.Go(func() error { similar, similarErr = s.memory.GetSimilarObjects(ctx, id, 10); return nil })
 	_ = g.Wait()
 	captureError(compiledErr)
 	captureError(edgesErr)
-	captureError(similarErr)
 
 	var relTypes []CompiledType
 	var propDefs []objectPropertyDef
@@ -301,7 +297,28 @@ func (s *Server) uiObject(c echo.Context) error {
 	if c.QueryParam("updated") != "" {
 		flashMsg = "Object updated."
 	}
-	return s.page(c, pageTitle(graphObjectLabel(*obj)), ObjectDetailPage(obj, relTypes, edges, related, filterSimilarMatches(similar), nil, flashMsg, flashErr, labelSuggestions, propDefs, typeUIByType))
+	// Similar objects is optional and historically the slowest fan-out call
+	// (issue #1096): it is not fetched here. The detail page renders the section
+	// as a deferred HTMX partial (/objects/:id/similar) so a slow /similar can
+	// never hold the page render again. nil similar triggers that deferred path.
+	return s.page(c, pageTitle(graphObjectLabel(*obj)), ObjectDetailPage(obj, relTypes, edges, related, nil, nil, flashMsg, flashErr, labelSuggestions, propDefs, typeUIByType))
+}
+
+// uiObjectSimilarPartial renders the "Similar objects" section as an HTMX
+// fragment. It is fetched after the object detail page paints (issue #1096), so
+// a slow /similar (vector search) can no longer hold the page render; a failure
+// degrades to the "no similar objects" empty state.
+func (s *Server) uiObjectSimilarPartial(c echo.Context) error {
+	ctx, cancel := context.WithTimeout(c.Request().Context(), optionalFetchTimeout)
+	defer cancel()
+	id := c.Param("id")
+	similar, err := s.memory.GetSimilarObjects(ctx, id, 10)
+	if err != nil {
+		captureError(err)
+		similar = nil
+	}
+	render.RenderPartial(c.Response().Writer, c.Request(), objectSimilarObjects(&GraphObject{ID: id}, filterSimilarMatches(similar)))
+	return nil
 }
 
 // uiObjectUpdate applies an object edit from the detail form (key, status,
