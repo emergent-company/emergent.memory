@@ -33,7 +33,7 @@ type objectsStats struct {
 // mode fills Objects/HasMore/NextCursor/Stats; search mode fills Results.
 type objectsPageData struct {
 	Query        string
-	Mode         string // "" | "fulltext" | "hybrid"
+	Mode         string // "" | "fulltext" | "hybrid" | "unified"
 	TypeFilter   string
 	BranchID     string
 	Types        []string
@@ -92,7 +92,13 @@ func (s *Server) uiObjects(c echo.Context) error {
 			mode = "fulltext"
 		}
 		data.Mode = mode
-		results, _, err := s.memory.SearchObjects(ctx, mode, query, typeFilter, branchID, 25, 0)
+		var results []ObjectSearchResult
+		var err error
+		if mode == "unified" {
+			results, err = s.memory.SearchObjectsUnified(ctx, query, typeFilter, branchID, 25)
+		} else {
+			results, _, err = s.memory.SearchObjects(ctx, mode, query, typeFilter, branchID, 25, 0)
+		}
 		if err != nil {
 			data.LoadErr = err
 			return s.page(c, pageTitle("Objects"), ObjectsPage(data))
@@ -205,6 +211,30 @@ func objectsPartialURL(data objectsPageData) string {
 // searchScoreLabel formats a search hit's relevance score for the score badge.
 func searchScoreLabel(f float32) string {
 	return strconv.FormatFloat(float64(f), 'f', 2, 32)
+}
+
+// uiObjectsKnowledge runs the "ask the graph" RAG Q&A (POST /objects/knowledge)
+// and returns the grounded answer as an HTMX fragment for the answer box. An
+// empty question redirects back to the browser; a backend failure renders an
+// inline error state in place of the answer.
+func (s *Server) uiObjectsKnowledge(c echo.Context) error {
+	ctx := c.Request().Context()
+	if err := c.Request().ParseForm(); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid form submission")
+	}
+	question := c.FormValue("question")
+	branch := c.FormValue("branch")
+	if question == "" {
+		return c.Redirect(http.StatusSeeOther, "/objects")
+	}
+	answer, sessionID, err := s.memory.QueryKnowledge(ctx, question, branch)
+	if err != nil {
+		captureError(err)
+		render.RenderPartial(c.Response().Writer, c.Request(), objectsKnowledgeError(err))
+		return nil
+	}
+	render.RenderPartial(c.Response().Writer, c.Request(), objectsKnowledgeAnswer(answer, sessionID))
+	return nil
 }
 
 // uiObject renders one object's detail: properties + relationships.

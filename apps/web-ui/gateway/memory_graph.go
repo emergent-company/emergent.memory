@@ -328,3 +328,72 @@ func (m *MemoryClient) SearchObjects(ctx context.Context, mode, query, types, br
 	}
 	return results, wire.HasMore, nil
 }
+
+// unifiedSearchResult is one union item of POST /api/search/unified. The union
+// spans graph/text/relationship items; only graph items are relevant to the
+// objects browser, so the other fields (snippet, lexical/vector score) are
+// omitted here.
+type unifiedSearchResult struct {
+	Type        string         `json:"type"`
+	ID          string         `json:"id"`
+	ObjectID    string         `json:"object_id"`
+	CanonicalID string         `json:"canonical_id"`
+	ObjectType  string         `json:"object_type"`
+	Key         string         `json:"key"`
+	Fields      map[string]any `json:"fields"`
+	Labels      []string       `json:"labels"`
+	Score       float64        `json:"score"`
+}
+
+// SearchObjectsUnified runs a unified search (POST /api/search/unified) across
+// the graph, returning only the type=="graph" hits normalized to
+// ObjectSearchResult. types is a comma-joined list of type names (empty = no
+// type filter). Results below minSearchScore are dropped and the top `limit`
+// graph hits are kept. Unified results carry fields (object properties) but
+// not created_at/status/embedding_status, so callers must not render those.
+func (m *MemoryClient) SearchObjectsUnified(ctx context.Context, query, types, branchID string, limit int) ([]ObjectSearchResult, error) {
+	body := map[string]any{
+		"query":       query,
+		"limit":       limit,
+		"resultTypes": "graph",
+	}
+	if types != "" {
+		body["types"] = strings.Split(types, ",")
+	}
+	if branchID != "" {
+		body["branch_id"] = branchID
+	}
+	var wire struct {
+		Results []unifiedSearchResult `json:"results"`
+	}
+	if err := m.doH(ctx, http.MethodPost, "/api/search/unified", body, m.documentHeaders(ctx), &wire); err != nil {
+		return nil, err
+	}
+	out := make([]ObjectSearchResult, 0, limit)
+	for _, r := range wire.Results {
+		if r.Type != "graph" {
+			continue
+		}
+		if r.Score < minSearchScore {
+			continue
+		}
+		id := firstNonEmpty(r.CanonicalID, r.ObjectID, r.ID)
+		if id == "" {
+			continue
+		}
+		out = append(out, ObjectSearchResult{
+			Object: GraphObject{
+				ID:         id,
+				Type:       r.ObjectType,
+				Key:        r.Key,
+				Properties: r.Fields,
+				Labels:     r.Labels,
+			},
+			Score: float32(r.Score),
+		})
+		if len(out) == limit {
+			break
+		}
+	}
+	return out, nil
+}
