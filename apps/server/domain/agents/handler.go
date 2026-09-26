@@ -1091,6 +1091,7 @@ func (h *Handler) CreateWebhookHook(c echo.Context) error {
 		Label:           dto.Label,
 		TokenHash:       hashedToken,
 		Enabled:         true,
+		AllowInternal:   dto.AllowInternal,
 		RateLimitConfig: dto.RateLimitConfig,
 	}
 
@@ -1218,9 +1219,35 @@ func (h *Handler) ReceiveWebhook(c echo.Context) error {
 		return apperror.NewBadRequest("agent not found or disabled")
 	}
 
-	// Look up the agent definition
-	var agentDef *AgentDefinition
-	agentDef, _ = h.repo.ResolveDefinitionForAgent(c.Request().Context(), agent)
+	// Look up the agent definition. Fail closed on a resolution error — a
+	// transient DB failure must not let a stale hook execute unchecked, matching
+	// the create-time binding guard (webhook_visibility.go).
+	agentDef, resolveErr := h.repo.ResolveDefinitionForAgent(c.Request().Context(), agent)
+	if resolveErr != nil {
+		slog.Error("webhook: failed to resolve agent definition for visibility check",
+			slog.String("hook_id", hook.ID),
+			slog.String("agent_id", agent.ID),
+			slog.String("error", resolveErr.Error()),
+		)
+		return apperror.NewInternal("failed to resolve agent definition for webhook invocation", resolveErr)
+	}
+
+	// Refuse to invoke a hook still bound to an internal-visibility agent unless
+	// the hook was explicitly opted in at creation (allow_internal). Hook
+	// creation now refuses internal-visibility targets unless opted in (#1004),
+	// and that opt-in is persisted on the hook row, so a hook bound before the
+	// guard shipped (allow_internal=false) is refused here while an opted-in hook
+	// proceeds by the operator's explicit choice. A normal (project/external)
+	// visibility agent is unaffected.
+	if agentDef != nil && agentDef.Visibility == VisibilityInternal && !hook.AllowInternal {
+		slog.Warn("webhook: refusing invocation bound to internal-visibility agent",
+			slog.String("hook_id", hook.ID),
+			slog.String("agent_id", agent.ID),
+			slog.String("agent_definition_id", agentDef.ID),
+			slog.String("agent_definition_name", agentDef.Name),
+		)
+		return apperror.NewForbidden("webhook hook is bound to an internal-visibility agent; re-bind it to a public agent")
+	}
 
 	// Parse payload
 	var payload WebhookTriggerPayloadDTO

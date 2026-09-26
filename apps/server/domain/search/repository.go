@@ -84,30 +84,51 @@ func (r *Repository) LexicalSearch(ctx context.Context, params TextSearchParams)
 }
 
 // lexicalSearch runs the chunks lexical query and, when it matches nothing,
-// retries once with numeric terms removed. A hyphenated identifier in the query
-// is rewritten by websearch_to_tsquery into a phrase that cannot match this
-// index, which zeroes the whole AND clause — see ftsquery.Relax.
+// retries once with numeric terms removed (ftsquery.Relax) and then once more
+// with the terms OR-joined (ftsquery.Disjoin). A hyphenated identifier in the
+// query is rewritten by websearch_to_tsquery into a phrase that cannot match
+// this index, which zeroes the whole AND clause — see ftsquery.Relax. A natural
+// multi-term query over chunks where no single chunk holds every term is
+// zeroed by AND semantics but well represented under OR — see ftsquery.Disjoin.
 func (r *Repository) lexicalSearch(ctx context.Context, projectID uuid.UUID, queryText string, limit int) ([]*TextSearchResult, error) {
-	results, err := r.runChunkLexical(ctx, projectID, queryText, limit)
+	results, err := r.runChunkLexical(ctx, projectID, queryText, limit, false)
 	if err != nil || len(results) > 0 {
 		return results, err
 	}
 
 	relaxed, ok := ftsquery.Relax(queryText)
+	if ok {
+		relaxedResults, err := r.runChunkLexical(ctx, projectID, relaxed, limit, false)
+		if err != nil {
+			return nil, err
+		}
+		if len(relaxedResults) > 0 {
+			return relaxedResults, nil
+		}
+	}
+
+	disjoined, ok := ftsquery.Disjoin(queryText)
 	if !ok {
 		return results, nil
 	}
-	return r.runChunkLexical(ctx, projectID, relaxed, limit)
+	return r.runChunkLexical(ctx, projectID, disjoined, limit, true)
 }
 
-// runChunkLexical executes the chunks lexical query for queryText.
-func (r *Repository) runChunkLexical(ctx context.Context, projectID uuid.UUID, queryText string, limit int) ([]*TextSearchResult, error) {
+// runChunkLexical executes the chunks lexical query for queryText. When
+// disjoin is true, queryText is a `|`-joined term disjunction matched with
+// to_tsquery (OR semantics) instead of websearch_to_tsquery (AND semantics).
+func (r *Repository) runChunkLexical(ctx context.Context, projectID uuid.UUID, queryText string, limit int, disjoin bool) ([]*TextSearchResult, error) {
+	tsqueryFn := "websearch_to_tsquery"
+	if disjoin {
+		tsqueryFn = "to_tsquery"
+	}
+
 	query := `
 		SELECT c.id, c.document_id, c.chunk_index, c.text,
-			   ts_rank_cd(c.tsv, websearch_to_tsquery('simple', ?), 32) AS score
+			   ts_rank_cd(c.tsv, ` + tsqueryFn + `('simple', ?), 32) AS score
 		FROM kb.chunks c
 		JOIN kb.documents d ON d.id = c.document_id
-		WHERE c.tsv @@ websearch_to_tsquery('simple', ?)
+		WHERE c.tsv @@ ` + tsqueryFn + `('simple', ?)
 		  AND d.project_id = ?
 		ORDER BY score DESC, c.id ASC
 		LIMIT ?

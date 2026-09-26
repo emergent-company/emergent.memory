@@ -1492,15 +1492,12 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 	})
 
-	// Apply RequiredScope from the central map to any tool that doesn't already have one set.
-	// Tools in dynamic *_tools.go files set RequiredScope directly; this covers static tools.
-	for i := range tools {
-		if tools[i].RequiredScope == "" {
-			if scope, ok := toolRequiredScope[tools[i].Name]; ok {
-				tools[i].RequiredScope = scope
-			}
-		}
-	}
+	// Apply RequiredScope from the central static map and the agent-tool map to
+	// any tool that doesn't already declare one. Tools in dynamic *_tools.go
+	// files set RequiredScope directly; this covers the static core tools and
+	// the handler-provided agent tools (whose HTTP equivalents enforce the same
+	// scope — see agentToolRequiredScope).
+	applyRequiredScopes(tools)
 
 	buildToolIndex(tools)
 	return tools
@@ -1529,6 +1526,12 @@ func (s *Service) GetToolDefinitionsForProject(ctx context.Context, projectID st
 			tools[i] = et
 		}
 	}
+
+	// Re-apply scopes: the enrichment above replaces every handler-provided
+	// agent tool with its project-enriched definition, which carries no
+	// RequiredScope. Re-apply so the tools/call scope gate sees the same
+	// authority as the tools/list (GetToolDefinitions) path.
+	applyRequiredScopes(tools)
 
 	// Append tools from connected relay sessions for this project.
 	if s.relaySvc != nil && projectID != "" {
@@ -1608,6 +1611,62 @@ var toolRequiredScope = map[string]string{
 	// Journal (static tools; journal-list and journal-add-note are also appended below)
 	"journal-list":     "journal:read",
 	"journal-add-note": "journal:write",
+}
+
+// agentToolRequiredScope maps each agent-domain MCP tool name to the MCP scope
+// its HTTP equivalent enforces (see domain/agents/routes.go). The agent tool
+// definitions are handler-provided — domain/agents injects them at runtime via
+// GetAgentToolDefinitions — and declare no RequiredScope of their own, so the
+// MCP layer assigns the scope here to keep the two surfaces in parity
+// (issue #1019). This is a separate map from toolRequiredScope so that
+// LookupToolScope / tool-group resolution, which read the static core catalog
+// only, are unaffected by handler-provided tools.
+var agentToolRequiredScope = map[string]string{
+	// Agent definitions — mirror /api/projects/:projectId/agent-definitions
+	"agent-def-list":          "agents:read",
+	"agent-def-get":           "agents:read",
+	"agent-def-create":        "agents:write",
+	"update_agent_definition": "agents:write",
+	"agent-def-delete":        "agents:write",
+
+	// Runtime agents — mirror /api/projects/:projectId/agents
+	"agent-list":    "agents:read",
+	"agent-get":     "agents:read",
+	"agent-create":  "agents:write",
+	"update_agent":  "agents:write",
+	"agent-delete":  "agents:write",
+	"trigger_agent": "agents:write",
+
+	// Agent runs — mirror /api/projects/:projectId/agent-runs and /api/v1/runs
+	"agent-run-list":       "agents:read",
+	"agent-run-get":        "agents:read",
+	"agent-run-messages":   "agents:read",
+	"agent-run-tool-calls": "agents:read",
+	"agent-run-status":     "agents:read",
+
+	// Agent catalog — derived from the agent-definitions read surface
+	"agent-list-available": "agents:read",
+}
+
+// applyRequiredScopes assigns RequiredScope to any tool that does not already
+// declare one, first from the static core map (toolRequiredScope) and then from
+// the handler-provided agent-tool map (agentToolRequiredScope). It runs in both
+// GetToolDefinitions and GetToolDefinitionsForProject: the latter re-applies it
+// after project enrichment replaces the handler-provided agent tools (which
+// otherwise carry no RequiredScope).
+func applyRequiredScopes(tools []ToolDefinition) {
+	for i := range tools {
+		if tools[i].RequiredScope != "" {
+			continue
+		}
+		if scope, ok := toolRequiredScope[tools[i].Name]; ok {
+			tools[i].RequiredScope = scope
+			continue
+		}
+		if scope, ok := agentToolRequiredScope[tools[i].Name]; ok {
+			tools[i].RequiredScope = scope
+		}
+	}
 }
 
 // LookupToolScope returns the required MCP scope for a static core tool name.
@@ -3696,7 +3755,14 @@ func (s *Service) executeGetSessionMessages(ctx context.Context, projectID strin
 	if s.sessionHistoryProvider == nil {
 		return nil, fmt.Errorf("session service not available")
 	}
-	items, err := s.sessionHistoryProvider.GetConversationFullHistoryRaw(ctx, sessionIDStr)
+	// Resolve the caller's owner identity from the run/auth context so the
+	// data-access layer can enforce the conversation ownership model (#1010).
+	// A missing identity fails closed in the repository (no owner match).
+	ownerUserID := ""
+	if u := auth.UserFromContext(ctx); u != nil {
+		ownerUserID = u.ID
+	}
+	items, err := s.sessionHistoryProvider.GetConversationFullHistoryRaw(ctx, projectID, ownerUserID, sessionIDStr)
 	if err != nil {
 		return nil, fmt.Errorf("get session messages: %w", err)
 	}

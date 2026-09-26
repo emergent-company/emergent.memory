@@ -681,6 +681,7 @@ type AgentWebhookHookDTO struct {
 	ProjectID       string           `json:"projectId"`
 	Label           string           `json:"label"`
 	Enabled         bool             `json:"enabled"`
+	AllowInternal   bool             `json:"allowInternal,omitempty"`
 	RateLimitConfig *RateLimitConfig `json:"rateLimitConfig"`
 	CreatedAt       time.Time        `json:"createdAt"`
 	UpdatedAt       time.Time        `json:"updatedAt"`
@@ -694,6 +695,7 @@ func (h *AgentWebhookHook) ToDTO() *AgentWebhookHookDTO {
 		ProjectID:       h.ProjectID,
 		Label:           h.Label,
 		Enabled:         h.Enabled,
+		AllowInternal:   h.AllowInternal,
 		RateLimitConfig: h.RateLimitConfig,
 		CreatedAt:       h.CreatedAt,
 		UpdatedAt:       h.UpdatedAt,

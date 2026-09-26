@@ -31,8 +31,13 @@ type SessionTitleHandler interface {
 // SessionHistoryProvider retrieves the unified timeline for an ACP session.
 // Implemented by agents.Repository to avoid a circular import (mcp → agents).
 // Returns items as map[string]any so no shared types are needed across the boundary.
+//
+// projectID and ownerUserID are the caller's identity, resolved from the
+// run/auth context; the implementation enforces the conversation ownership
+// model (#1010) at the data-access layer and refuses a foreign/unknown session
+// with a 404 (issue #1032).
 type SessionHistoryProvider interface {
-	GetConversationFullHistoryRaw(ctx context.Context, acpSessionID string) ([]map[string]any, error)
+	GetConversationFullHistoryRaw(ctx context.Context, projectID, ownerUserID, acpSessionID string) ([]map[string]any, error)
 }
 
 // GraphObjectPatcher patches graph object Properties.title when set_session_title runs.

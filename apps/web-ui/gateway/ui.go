@@ -229,11 +229,13 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 	orgs, err := s.memory.ListOrgs(c.Request().Context())
 	captureError(err)
 	// The caller's org→project access tree supplies the org role used to gate
-	// the Backups (project nav) and Members (org nav) sidebar entries. One
-	// best-effort fetch here serves every page render; a failure degrades to
-	// "not admin", which hides the gated entries rather than surfacing an error
-	// (mirroring the org landing's transfer affordance).
-	tree, err := s.memory.GetOrgsAndProjects(c.Request().Context())
+	// the Backups (project nav) and Members (org nav) sidebar entries. It is
+	// threaded once per request (see orgAccessTree): the page-data builders
+	// compute it first and page() reuses the cached result, so a render never
+	// re-fetches it. A failure degrades to "not admin", which hides the gated
+	// entries rather than surfacing an error (mirroring the org landing's
+	// transfer affordance).
+	tree, err := s.orgAccessTree(c)
 	captureError(err)
 	activeProjectID := ""
 	var activeOrgID string
