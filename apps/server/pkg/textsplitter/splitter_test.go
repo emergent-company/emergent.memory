@@ -3,6 +3,7 @@ package textsplitter_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/emergent-company/emergent.memory/pkg/textsplitter"
 )
@@ -60,6 +61,39 @@ func TestSplitLongTextProducesMultipleChunks(t *testing.T) {
 	}
 }
 
+func TestSplitHonorsChunkOverlapWithoutSeparators(t *testing.T) {
+	cases := []struct {
+		name        string
+		in          string
+		cfg         textsplitter.Config
+		wantOverlap int
+	}{
+		{"unbroken alphanumeric run", strings.Repeat("abcdefghijklmnopqrstuvwxyz", 40), textsplitter.Config{ChunkSize: 100, ChunkOverlap: 20}, 20},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := textsplitter.Split(tc.in, tc.cfg)
+			if len(got) < 2 {
+				t.Fatalf("Split produced %d chunks, want >= 2", len(got))
+			}
+
+			for i := 1; i < len(got); i++ {
+				prev, cur := []rune(got[i-1]), []rune(got[i])
+				if len(prev) < tc.wantOverlap || len(cur) < tc.wantOverlap {
+					t.Fatalf("chunks %d/%d are shorter than the %d-rune overlap", i-1, i, tc.wantOverlap)
+				}
+				prevTail := string(prev[len(prev)-tc.wantOverlap:])
+				curHead := string(cur[:tc.wantOverlap])
+				if prevTail != curHead {
+					t.Fatalf("chunks %d and %d share no %d-rune overlap:\nchunk %d tail: %q\nchunk %d head: %q",
+						i-1, i, tc.wantOverlap, i-1, prevTail, i, curHead)
+				}
+			}
+		})
+	}
+}
+
 func TestSplitNormalizesInvalidConfig(t *testing.T) {
 	in := strings.Repeat("word ", 500) // 2500 chars
 	cfg := textsplitter.Config{ChunkSize: -10, ChunkOverlap: 999999}
@@ -71,5 +105,38 @@ func TestSplitNormalizesInvalidConfig(t *testing.T) {
 		if strings.TrimSpace(c) == "" {
 			t.Fatal("Split with invalid config produced an empty chunk")
 		}
+	}
+}
+
+// TestSplitWhitespaceBoundaryNearWindowStartDoesNotHang is a regression for
+// #993: a space boundary positioned within ChunkOverlap of the window start
+// used to make splitBySize land back on already-emitted text and spin forever.
+// The public Split entry point reaches that path when a short word (with a
+// trailing space) is carried as overlap in front of a long unbroken run. An
+// explicit deadline makes a regression fail fast instead of hanging CI.
+func TestSplitWhitespaceBoundaryNearWindowStartDoesNotHang(t *testing.T) {
+	in := "ab " + strings.Repeat("x", 300)
+	cfg := textsplitter.Config{ChunkSize: 15, ChunkOverlap: 3}
+
+	type result struct {
+		chunks []string
+	}
+	done := make(chan result, 1)
+	go func() {
+		done <- result{chunks: textsplitter.Split(in, cfg)}
+	}()
+
+	select {
+	case r := <-done:
+		if len(r.chunks) == 0 {
+			t.Fatal("Split returned no chunks for a non-empty input")
+		}
+		for i, c := range r.chunks {
+			if strings.TrimSpace(c) == "" {
+				t.Fatalf("chunk %d is empty/whitespace", i)
+			}
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Split did not terminate within 5s (issue #993 regression)")
 	}
 }

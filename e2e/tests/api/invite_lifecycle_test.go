@@ -72,6 +72,28 @@ func findInviteByID(invites []map[string]any, id string) map[string]any {
 	return nil
 }
 
+// orgMembers lists an organization's members via GET /api/orgs/{id}/members as
+// the given token. The endpoint itself is membership-gated, so the caller must
+// already be a member; the primary (org creator) token is used for that.
+func orgMembers(t *testing.T, rl *runLog, orgID, token string) []map[string]any {
+	t.Helper()
+	resp := doAPILogged(t, rl, "GET", "/api/orgs/"+orgID+"/members", token, "", nil)
+	body := mustStatus(t, resp, http.StatusOK)
+	var out []map[string]any
+	parseBodyJSON(t, body, &out)
+	return out
+}
+
+// findOrgMemberByEmail returns the org member entry whose email matches, or nil.
+func findOrgMemberByEmail(members []map[string]any, email string) map[string]any {
+	for _, m := range members {
+		if m["email"] == email {
+			return m
+		}
+	}
+	return nil
+}
+
 // ─── Create validation ──────────────────────────────────────────────────────
 
 func TestInvite_CreateInvalidRole(t *testing.T) {
@@ -181,6 +203,53 @@ func TestInvite_AcceptSuccess(t *testing.T) {
 	}
 	if found["status"] != "accepted" {
 		t.Errorf("expected status accepted, got %v", found["status"])
+	}
+
+	// Membership is really granted, not merely reflected in the invite status.
+	// A regression that flipped status=accepted without inserting the
+	// kb.organization_memberships row would pass the check above but fail here.
+	//
+	// 1. The invitee must now appear in the org member list, with the "member"
+	//    role a project_user invitation grants at the org level.
+	members := orgMembers(t, rl, orgID, e2eTestToken())
+	m := findOrgMemberByEmail(members, inviteeEmail())
+	if m == nil {
+		t.Fatalf("invitee %s not found in org member list after accept", inviteeEmail())
+	}
+	if m["role"] != "member" {
+		t.Fatalf("expected member role for project_user invite, got %v", m["role"])
+	}
+
+	// 2. A membership-gated request as the invitee must succeed: GET /api/orgs/{id}
+	//    is gated on kb.organization_memberships (orgs.Service.GetByID →
+	//    requireOrgMember), the same membership the middleware enforces.
+	mustStatus(t, doAPILogged(t, rl, "GET", "/api/orgs/"+orgID, inviteeToken(), "", nil), http.StatusOK)
+}
+
+// TestInvite_AcceptGrantsOrgAdminRole closes the role-coverage gap: an
+// org_admin invitation must grant org_admin authority in
+// kb.organization_memberships, not merely a plain member row. A regression that
+// mapped org_admin → member (the exact bug class fixed in #881/#885) would
+// fail here.
+func TestInvite_AcceptGrantsOrgAdminRole(t *testing.T) {
+	requireSecondIdentity(t)
+	rl := newRunLog(t)
+	defer rl.Close()
+	skipIfServerDown(t, rl)
+
+	_, orgID := setupProjectLogged(t, rl)
+	inv := createInvite(t, inviteeEmail(), orgID, "", "org_admin")
+	token := inv["token"].(string)
+
+	mustStatus(t, acceptInvite(t, rl, inviteeToken(), token), http.StatusOK)
+
+	members := orgMembers(t, rl, orgID, e2eTestToken())
+	m := findOrgMemberByEmail(members, inviteeEmail())
+	if m == nil {
+		t.Fatalf("invitee %s not found in org member list after accept", inviteeEmail())
+	}
+	if m["role"] != "org_admin" {
+		t.Fatalf("expected org_admin membership for org_admin invite, got %v", m["role"])
 	}
 }
 

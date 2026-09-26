@@ -756,6 +756,14 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 				InputSchema: inputSchema,
 			},
 			func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+				// Relay tools forward to a connected client device and are, by
+				// construction, the agent-only class: they must not be reachable
+				// from an untrusted (external) run. This mirrors the ExecuteTool
+				// AgentOnly gate, which relay tools bypass by routing here instead
+				// of through mcp.Service.ExecuteTool (issue #994).
+				if !mcp.TrustedInternalFromContext(ctx) {
+					return map[string]any{"error": "relay tool not reachable from an untrusted surface"}, nil
+				}
 				result, err := relaySvc.CallTool(ctx, pid, instID, bareToolName, args)
 				if err != nil {
 					if errors.Is(err, mcprelay.ErrSessionNotFound) {
@@ -885,6 +893,13 @@ func (tp *ToolPool) CallTool(ctx context.Context, projectID, toolName string, ar
 
 	// Relay tool?
 	if instanceID, ok := cache.relayToolInstance[toolName]; ok && tp.relayService != nil {
+		// Relay tools are the agent-only class (they forward to a connected
+		// device) and must not be reachable from an untrusted (external) run.
+		// This mirrors the ExecuteTool AgentOnly gate that relay tools bypass by
+		// routing here (issue #994).
+		if !mcp.TrustedInternalFromContext(ctx) {
+			return map[string]any{"error": "relay tool not reachable from an untrusted surface"}, nil
+		}
 		prefix := instanceID + "_"
 		bareToolName := strings.TrimPrefix(toolName, prefix)
 		result, err := tp.relayService.CallTool(ctx, projectID, instanceID, bareToolName, args)

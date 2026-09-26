@@ -35,7 +35,7 @@ func runUpdateHandler(t *testing.T, repo orgRepository, id, body string) (*httpt
 }
 
 func TestHandlerUpdate_Success(t *testing.T) {
-	repo := &fakeOrgRepo{org: &Org{ID: "org-1", Name: "Renamed"}, member: true}
+	repo := &fakeOrgRepo{org: &Org{ID: "org-1", Name: "Renamed"}, member: true, role: "org_admin"}
 	rec, err := runUpdateHandler(t, repo, "org-1", `{"name":"Renamed"}`)
 
 	require.NoError(t, err)
@@ -48,7 +48,7 @@ func TestHandlerUpdate_Success(t *testing.T) {
 }
 
 func TestHandlerUpdate_InvalidName(t *testing.T) {
-	repo := &fakeOrgRepo{member: true}
+	repo := &fakeOrgRepo{member: true, role: "org_admin"}
 	_, err := runUpdateHandler(t, repo, "org-1", `{"name":""}`)
 
 	require.Error(t, err)
@@ -59,7 +59,7 @@ func TestHandlerUpdate_InvalidName(t *testing.T) {
 }
 
 func TestHandlerUpdate_UnknownID(t *testing.T) {
-	repo := &fakeOrgRepo{err: apperror.ErrNotFound.WithMessage("Organization not found"), member: true}
+	repo := &fakeOrgRepo{err: apperror.ErrNotFound.WithMessage("Organization not found"), member: true, role: "org_admin"}
 	_, err := runUpdateHandler(t, repo, "missing", `{"name":"New name"}`)
 
 	require.Error(t, err)
@@ -70,7 +70,7 @@ func TestHandlerUpdate_UnknownID(t *testing.T) {
 }
 
 func TestHandlerUpdate_MalformedBody(t *testing.T) {
-	repo := &fakeOrgRepo{member: true}
+	repo := &fakeOrgRepo{member: true, role: "org_admin"}
 	_, err := runUpdateHandler(t, repo, "org-1", `{`)
 
 	require.Error(t, err)

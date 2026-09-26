@@ -204,6 +204,31 @@ func (r *Repository) GetByID(ctx context.Context, id string, includeStats bool) 
 	return &dbProject.Project, nil
 }
 
+// GetOrganizationID returns the owning organization ID of a project regardless
+// of its deletion state. found is false when no such project exists. Unlike
+// GetByID it does not filter soft-deleted rows, so it also resolves the org of a
+// project pending deletion (needed by the restore path's authorization).
+func (r *Repository) GetOrganizationID(ctx context.Context, projectID string) (string, bool, error) {
+	var orgID string
+
+	err := r.db.NewSelect().
+		TableExpr("kb.projects").
+		Column("organization_id").
+		Where("id = ?", projectID).
+		Limit(1).
+		Scan(ctx, &orgID)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", false, nil
+		}
+		r.log.Error("failed to get project organization", logger.Error(err), slog.String("id", projectID))
+		return "", false, apperror.NewDatabase("failed to get project organization", err)
+	}
+
+	return orgID, true, nil
+}
+
 // GetByIDWithLock returns a project by ID with a pessimistic lock (FOR UPDATE)
 func (r *Repository) GetByIDWithLock(ctx context.Context, tx bun.Tx, id string) (*Project, error) {
 	var project Project

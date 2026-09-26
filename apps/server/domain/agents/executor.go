@@ -220,6 +220,25 @@ func callerRunIDFromContext(ctx context.Context) string {
 	return v
 }
 
+// inheritedTrust resolves the trust to apply to a run started through a
+// delegation/coordination tool (trigger_agent, call_agent) from the invoking
+// context, so these tools inherit the caller's trust exactly as spawn_agents
+// does via CoordinationToolDeps.TrustedInternal. A direct authenticated MCP
+// client has no parent run in context, so it resolves to untrusted (false): the
+// MCP surface is external-facing, not the session UI. Fail-closed: a missing or
+// unreadable parent run also resolves to false.
+func inheritedTrust(ctx context.Context, findRun func(context.Context, string) (*AgentRun, error)) bool {
+	callerRunID := callerRunIDFromContext(ctx)
+	if callerRunID == "" {
+		return false
+	}
+	run, err := findRun(ctx, callerRunID)
+	if err != nil || run == nil {
+		return false
+	}
+	return run.TrustedInternal
+}
+
 // acpSessionIDKey is the context key used to propagate the ACP session ID
 // through the execution pipeline so that built-in tools (e.g. set_session_title)
 // can update session metadata without needing it in their function signatures.
@@ -1045,6 +1064,13 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 	// Propagate the run's originating principal into the run context (see Execute).
 	ctx = auth.ContextWithUser(ctx, &auth.AuthUser{ID: req.UserID})
 
+	// Propagate the run's trust marker into the context so the in-process tool
+	// dispatch (mcp.Service.ExecuteTool) can enforce the AgentOnly boundary
+	// consistently with the HTTP transports. This covers the resume confirm gate
+	// (injectToolResponse → confirmResponseBody → CallTool) which runs before
+	// runPipeline re-injects the marker (issue #994).
+	ctx = mcp.ContextWithTrustedInternal(ctx, newRun.TrustedInternal)
+
 	// Provision workspace if configured
 	hasSandboxConfig := ae.wsEnabled && ae.provisioner != nil &&
 		req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0
@@ -1692,6 +1718,13 @@ func (ae *AgentExecutor) runPipeline(
 	// spawn) inherit the run's trust rather than whatever the current transport
 	// happened to carry — a resume or re-wake must never upgrade trust.
 	req.TrustedInternal = run.TrustedInternal
+
+	// Propagate the trust marker into the context so the in-process tool dispatch
+	// (mcp.Service.ExecuteTool) can enforce the AgentOnly boundary consistently
+	// with the HTTP transports. The marker is fail-closed: it is true only for
+	// trusted/internal surfaces; external surfaces (webhook, A2A, agentcompat,
+	// public share) carry false and cannot reach agent-only tools (issue #994).
+	ctx = mcp.ContextWithTrustedInternal(ctx, req.TrustedInternal)
 
 	// Identify the ADK session ID.
 	// If the caller supplied a stable SessionID (cross-run conversation history),

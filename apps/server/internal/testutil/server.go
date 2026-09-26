@@ -632,7 +632,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 
 	// Register tracing (Tempo proxy) routes.
 	// When cfg.Otel.Enabled() == false, GetTrace returns 503 — tests react accordingly.
-	tracingHandler := tracing.NewHandler(testDB.Config)
+	tracingHandler := tracing.NewHandler(testDB.Config, db)
 	tracing.RegisterRoutes(e, tracingHandler, authMiddleware)
 
 	return &TestServer{

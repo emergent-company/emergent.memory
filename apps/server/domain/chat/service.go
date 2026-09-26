@@ -36,8 +36,8 @@ func (s *Service) ListConversations(ctx context.Context, projectID string, owner
 }
 
 // GetConversation retrieves a conversation by ID
-func (s *Service) GetConversation(ctx context.Context, projectID string, conversationID uuid.UUID) (*Conversation, error) {
-	conv, err := s.repo.GetByID(ctx, projectID, conversationID)
+func (s *Service) GetConversation(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID) (*Conversation, error) {
+	conv, err := s.repo.GetByID(ctx, projectID, ownerUserID, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -48,8 +48,8 @@ func (s *Service) GetConversation(ctx context.Context, projectID string, convers
 }
 
 // GetConversationWithMessages retrieves a conversation with all its messages
-func (s *Service) GetConversationWithMessages(ctx context.Context, projectID string, conversationID uuid.UUID) (*Conversation, error) {
-	conv, err := s.repo.GetByIDWithMessages(ctx, projectID, conversationID)
+func (s *Service) GetConversationWithMessages(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID) (*Conversation, error) {
+	conv, err := s.repo.GetByIDWithMessages(ctx, projectID, ownerUserID, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -79,8 +79,11 @@ func (s *Service) CreateConversation(ctx context.Context, projectID, ownerUserID
 		}
 		canonicalID = &parsed
 
-		// Check if conversation already exists for this canonical ID
-		existing, err := s.repo.GetByCanonicalID(ctx, projectID, parsed)
+		// Check if a visible conversation already exists for this canonical ID.
+		// The owner predicate prevents returning another user's private
+		// conversation; canonical (refinement) conversations are project-shared
+		// (is_private = false), so any project member resolves the same row.
+		existing, err := s.repo.GetByCanonicalID(ctx, projectID, ownerUserID, parsed)
 		if err != nil {
 			return nil, err
 		}
@@ -94,7 +97,11 @@ func (s *Service) CreateConversation(ctx context.Context, projectID, ownerUserID
 	conv := &Conversation{
 		Title:       req.Title,
 		OwnerUserID: &ownerUserID,
-		IsPrivate:   true,
+		// Canonical (refinement) conversations are project-shared: the
+		// globally-unique canonical_id index permits exactly one row per
+		// canonical id, so a private per-user conversation would block every
+		// other project member from the object's refinement chat.
+		IsPrivate:   canonicalID == nil,
 		ProjectID:   projectUUIDPtr,
 		CanonicalID: canonicalID,
 		CreatedAt:   now,
@@ -118,9 +125,9 @@ func (s *Service) CreateConversation(ctx context.Context, projectID, ownerUserID
 }
 
 // UpdateConversation updates a conversation's title or draft text
-func (s *Service) UpdateConversation(ctx context.Context, projectID string, conversationID uuid.UUID, req UpdateConversationRequest) (*Conversation, error) {
+func (s *Service) UpdateConversation(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID, req UpdateConversationRequest) (*Conversation, error) {
 	// First, get the existing conversation
-	conv, err := s.repo.GetByID(ctx, projectID, conversationID)
+	conv, err := s.repo.GetByID(ctx, projectID, ownerUserID, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +144,7 @@ func (s *Service) UpdateConversation(ctx context.Context, projectID string, conv
 	}
 	conv.UpdatedAt = time.Now()
 
-	if err := s.repo.Update(ctx, projectID, conv); err != nil {
+	if err := s.repo.Update(ctx, projectID, ownerUserID, conv); err != nil {
 		return nil, err
 	}
 
@@ -145,8 +152,8 @@ func (s *Service) UpdateConversation(ctx context.Context, projectID string, conv
 }
 
 // DeleteConversation deletes a conversation and all its messages
-func (s *Service) DeleteConversation(ctx context.Context, projectID string, conversationID uuid.UUID) error {
-	deleted, err := s.repo.Delete(ctx, projectID, conversationID)
+func (s *Service) DeleteConversation(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID) error {
+	deleted, err := s.repo.Delete(ctx, projectID, ownerUserID, conversationID)
 	if err != nil {
 		return err
 	}
@@ -157,9 +164,9 @@ func (s *Service) DeleteConversation(ctx context.Context, projectID string, conv
 }
 
 // AddMessage adds a message to a conversation
-func (s *Service) AddMessage(ctx context.Context, projectID string, conversationID uuid.UUID, req AddMessageRequest) (*Message, error) {
+func (s *Service) AddMessage(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID, req AddMessageRequest) (*Message, error) {
 	// Verify conversation exists
-	conv, err := s.repo.GetByID(ctx, projectID, conversationID)
+	conv, err := s.repo.GetByID(ctx, projectID, ownerUserID, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +182,7 @@ func (s *Service) AddMessage(ctx context.Context, projectID string, conversation
 		CreatedAt:        time.Now(),
 	}
 
-	history, err := s.repo.GetConversationHistory(ctx, conversationID, 5)
+	history, err := s.repo.GetConversationHistory(ctx, projectID, ownerUserID, conversationID, 5)
 	if err != nil {
 		s.log.Warn("failed to load conversation history", logger.Error(err))
 	} else if len(history) > 0 {
@@ -203,8 +210,8 @@ func (s *Service) buildContextSummary(history []Message) string {
 }
 
 // SetAgentDefinitionID sets the agent_definition_id on a conversation.
-func (s *Service) SetAgentDefinitionID(ctx context.Context, projectID string, conversationID uuid.UUID, agentDefID *uuid.UUID) error {
-	return s.repo.SetAgentDefinitionID(ctx, projectID, conversationID, agentDefID)
+func (s *Service) SetAgentDefinitionID(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID, agentDefID *uuid.UUID) error {
+	return s.repo.SetAgentDefinitionID(ctx, projectID, ownerUserID, conversationID, agentDefID)
 }
 
 // GetOrCreateConversation gets an existing conversation by canonical ID or creates a new one
@@ -220,7 +227,7 @@ func (s *Service) GetOrCreateConversation(ctx context.Context, projectID, ownerU
 	}
 
 	// Try to get existing
-	existing, err := s.repo.GetByCanonicalID(ctx, projectID, canonicalUUID)
+	existing, err := s.repo.GetByCanonicalID(ctx, projectID, ownerUserID, canonicalUUID)
 	if err != nil {
 		return nil, false, err
 	}
