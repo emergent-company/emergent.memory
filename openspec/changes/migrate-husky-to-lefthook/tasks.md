@@ -5,7 +5,7 @@
 - [x] 1.3 Port husky's untracked-Go-import guard with the corrected module prefix `github.com/emergent-company/emergent.memory` and `apps/`-rooted path resolution; verified it fails for a staged import of an untracked package and passes otherwise
 - [x] 1.4 Port husky's migration SQL validation (backslash metacommands, spaced `$$`) as a `apps/server/migrations/*.sql` job; verified it fails on a seeded bad migration and passes on a clean one
 - [x] 1.5 Move the web-ui jobs into the root config (ruff, gateway gofmt/vet/build, `templ generate -check`, gitleaks, no-generated guard) and add CLI (gofmt/golangci) and connector (gofmt/vet) jobs; fix the dead `connector/` root to `apps/connector.linux`; verified `webui-no-generated` blocks a staged `app.css` and `cli-gofmt` blocks an unformatted CLI file
-- [x] 1.6 Add the full `lint` group (server/cli/web-ui/connector gofmt+vet+build+test+golangci, ruff, templ, gitleaks) and a `lint-webui` group (web-ui + connector only)
+- [x] 1.6 Add the full `lint` group (gofmt + vet + build + golangci for all four trees; go test for web UI + connector; ruff/templ/gitleaks for web UI) and a `lint-webui` group (web-ui + connector only)
 
 ## 2. Remove husky + dead config
 
@@ -40,5 +40,12 @@
 
 ## 7. Follow-ups
 
-- [ ] 7.1 Security: rotate/remove the pre-existing findings that look like real credentials (a DeepSeek-style key and `emt_` API tokens, among placeholders) — needs a security issue with user confirmation
+- [ ] 7.1 Security: rotate/remove the pre-existing findings that look like real credentials (a DeepSeek-style key and `emt_` API tokens, among placeholders) — tracked in #1042
 - [ ] 7.2 Optionally add a gitleaks step to CI so the gate also runs server-side
+
+## 8. Review fixes (Copilot)
+
+- [x] 8.1 Isolate `golangci-lint` caches per tree (`GOLANGCI_LINT_CACHE`) so parallel `lint` / `lint-webui` jobs cannot collide on the shared lock
+- [x] 8.2 Guard gateway Go jobs (`vet`/`build`/`test`/`golangci`) on generated assets (templ output + `webui/static/css/app.css`): skip with instructions on an un-warmed tree instead of failing; added `webui-go-build` to both lint groups
+- [x] 8.3 Add the missing module `go build` jobs (`cli-go-build`, `webui-go-build`, `connector-go-build`) so the `lint` group matches its spec
+- [x] 8.4 Repo-wide `secrets` job (no web-ui glob) is intentional and documented — the earlier path-scoped `webui-secrets` finding is obsolete

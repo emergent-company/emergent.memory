@@ -70,7 +70,7 @@ A single repo-root `.gitleaks.toml` SHALL configure secret detection for the who
 
 ### Requirement: Full lint group
 
-The configuration SHALL expose a `lint` group that runs the full static-analysis set for every tree — server, CLI, web UI, and Linux connector: `gofmt`, `go vet`, `go build`, `go test`, `golangci-lint`, plus `ruff`, `templ generate -check`, and `gitleaks` for the web UI.
+The configuration SHALL expose a `lint` group that runs the full static-analysis set for every tree — server, CLI, web UI, and Linux connector: `gofmt`, `go vet`, `go build`, and `golangci-lint`, plus `go test` for the web UI and Linux connector, and `ruff`, `templ generate -check`, and `gitleaks` for the web UI. Server and CLI tests are excluded here (they need a database; run via `task test`). Parallel `golangci-lint` jobs SHALL use isolated cache directories so concurrent runs do not collide on the shared lock.
 
 The root `task lint` SHALL run this group. The web-ui `task lint` SHALL run a `lint-webui` group scoped to the web UI and connector, preserving its previous scope.
 
@@ -78,8 +78,19 @@ The root `task lint` SHALL run this group. The web-ui `task lint` SHALL run a `l
 
 - **WHEN** a developer runs `task lint` at the repo root
 - **THEN** lefthook runs the `lint` group across all trees
+- **AND** each `golangci-lint` job uses its own cache directory
 
 #### Scenario: Web-ui lint stays scoped
 
 - **WHEN** a developer runs `task lint` in `apps/web-ui`
 - **THEN** lefthook runs the `lint-webui` group (web UI + connector only)
+
+### Requirement: Gateway build prerequisites
+
+Gateway Go jobs (`go vet`, `go build`, `go test`, `golangci-lint`) SHALL require generated assets that are not committed (templ output and compiled CSS). When those assets are absent on an un-warmed tree, the jobs SHALL skip with an actionable message (naming `task dev` / `task generate && task css`) instead of failing. CI generates the assets before building, so the checks still run there.
+
+#### Scenario: Un-warmed tree
+
+- **WHEN** a gateway Go job runs and `webui/static/css/app.css` or the generated `*_templ.go` files are absent
+- **THEN** the job skips with a message explaining how to generate the assets
+- **AND** does not fail the hook

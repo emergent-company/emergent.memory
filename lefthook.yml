@@ -122,7 +122,7 @@ pre-commit:
     - name: cli-golangci-lint
       root: apps/cli
       glob: "**/*.go"
-      run: golangci-lint run ./...
+      run: GOLANGCI_LINT_CACHE="${TMPDIR:-/tmp}/em-golangci-cli" golangci-lint run ./...
 
     # ── Web UI — apps/web-ui ─────────────────────────────────────────────────
     - name: webui-ruff
@@ -145,22 +145,39 @@ pre-commit:
           exit 1
         fi
 
+    # Gateway compile jobs need the generated assets (templ output + compiled
+    # CSS), which are gitignored. Skip with instructions on an un-warmed tree;
+    # CI generates them before building.
     - name: webui-go-vet
       root: apps/web-ui/gateway
       glob: "**/*.go"
-      run: go vet ./...
+      run: |
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+          echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
+          exit 0
+        fi
+        go vet ./...
 
     - name: webui-go-build
       root: apps/web-ui/gateway
       glob: "**/*.go"
-      run: go build ./...
+      run: |
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+          echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
+          exit 0
+        fi
+        go build ./...
 
     - name: webui-templ
       root: apps/web-ui/gateway
       glob:
         - "*.templ"
         - "**/*.templ"
-      run: templ generate -check
+      run: |
+        if ! command -v templ >/dev/null 2>&1; then
+          echo "templ not installed, skipping"; exit 0
+        fi
+        templ generate -check
 
     - name: secrets
       run: |
@@ -197,6 +214,9 @@ pre-commit:
       run: go vet ./...
 
 # Full lint across every tree. `task lint` (repo root) runs this group.
+# Per tree: gofmt + go vet + go build + golangci-lint; web UI/connector also run
+# go test; web UI adds ruff/templ/gitleaks. Server/CLI tests run via `task test`
+# (they need a database), not here.
 lint:
   parallel: true
   jobs:
@@ -221,7 +241,7 @@ lint:
 
     - name: server-golangci-lint
       root: apps/server
-      run: golangci-lint run ./...
+      run: GOLANGCI_LINT_CACHE="${TMPDIR:-/tmp}/em-golangci-server" golangci-lint run ./...
 
     # ── CLI ──────────────────────────────────────────────────────────────────
     - name: cli-gofmt
@@ -238,9 +258,13 @@ lint:
       root: apps/cli
       run: go vet ./...
 
+    - name: cli-go-build
+      root: apps/cli
+      run: go build ./...
+
     - name: cli-golangci-lint
       root: apps/cli
-      run: golangci-lint run ./...
+      run: GOLANGCI_LINT_CACHE="${TMPDIR:-/tmp}/em-golangci-cli" golangci-lint run ./...
 
     # ── Web UI ───────────────────────────────────────────────────────────────
     - name: webui-ruff
@@ -263,19 +287,47 @@ lint:
 
     - name: webui-go-vet
       root: apps/web-ui/gateway
-      run: go vet ./...
+      run: |
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+          echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
+          exit 0
+        fi
+        go vet ./...
+
+    - name: webui-go-build
+      root: apps/web-ui/gateway
+      run: |
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+          echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
+          exit 0
+        fi
+        go build ./...
 
     - name: webui-go-test
       root: apps/web-ui/gateway
-      run: go test ./...
+      run: |
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+          echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
+          exit 0
+        fi
+        go test ./...
 
     - name: webui-golangci-lint
       root: apps/web-ui/gateway
-      run: golangci-lint run ./...
+      run: |
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+          echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
+          exit 0
+        fi
+        GOLANGCI_LINT_CACHE="${TMPDIR:-/tmp}/em-golangci-gateway" golangci-lint run ./...
 
     - name: webui-templ
       root: apps/web-ui/gateway
-      run: templ generate -check
+      run: |
+        if ! command -v templ >/dev/null 2>&1; then
+          echo "templ not installed, skipping"; exit 0
+        fi
+        templ generate -check
 
     - name: secrets
       run: |
@@ -299,13 +351,17 @@ lint:
       root: apps/connector.linux
       run: go vet ./...
 
+    - name: connector-go-build
+      root: apps/connector.linux
+      run: go build ./...
+
     - name: connector-go-test
       root: apps/connector.linux
       run: go test ./...
 
     - name: connector-golangci-lint
       root: apps/connector.linux
-      run: golangci-lint run ./...
+      run: GOLANGCI_LINT_CACHE="${TMPDIR:-/tmp}/em-golangci-connector" golangci-lint run ./...
 
 # Web-ui + connector scope. `task lint` in apps/web-ui runs this group.
 lint-webui:
@@ -331,19 +387,47 @@ lint-webui:
 
     - name: webui-go-vet
       root: apps/web-ui/gateway
-      run: go vet ./...
+      run: |
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+          echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
+          exit 0
+        fi
+        go vet ./...
+
+    - name: webui-go-build
+      root: apps/web-ui/gateway
+      run: |
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+          echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
+          exit 0
+        fi
+        go build ./...
 
     - name: webui-go-test
       root: apps/web-ui/gateway
-      run: go test ./...
+      run: |
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+          echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
+          exit 0
+        fi
+        go test ./...
 
     - name: webui-golangci-lint
       root: apps/web-ui/gateway
-      run: golangci-lint run ./...
+      run: |
+        if [ ! -f webui/static/css/app.css ] || ! ls *_templ.go >/dev/null 2>&1; then
+          echo "gateway assets not generated — run 'task dev' (or 'task generate && task css') in apps/web-ui; skipping"
+          exit 0
+        fi
+        GOLANGCI_LINT_CACHE="${TMPDIR:-/tmp}/em-golangci-gateway" golangci-lint run ./...
 
     - name: webui-templ
       root: apps/web-ui/gateway
-      run: templ generate -check
+      run: |
+        if ! command -v templ >/dev/null 2>&1; then
+          echo "templ not installed, skipping"; exit 0
+        fi
+        templ generate -check
 
     - name: secrets
       run: |
@@ -366,10 +450,14 @@ lint-webui:
       root: apps/connector.linux
       run: go vet ./...
 
+    - name: connector-go-build
+      root: apps/connector.linux
+      run: go build ./...
+
     - name: connector-go-test
       root: apps/connector.linux
       run: go test ./...
 
     - name: connector-golangci-lint
       root: apps/connector.linux
-      run: golangci-lint run ./...
+      run: GOLANGCI_LINT_CACHE="${TMPDIR:-/tmp}/em-golangci-connector" golangci-lint run ./...

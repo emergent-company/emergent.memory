@@ -132,6 +132,7 @@ All git hooks live in the **one** repo-root `lefthook.yml`; install them with `t
 - Each job is scoped with `root:` (its CWD) and `glob:` (patterns are matched **relative to `root`**), so server / CLI / web-ui / connector jobs coexist in one file.
 - `pre-commit` is fast and path-scoped (gofmt, vet, build, lint-ratchet, Swagger `@Router`, migration SQL, untracked-import guard, ruff/templ). **Tests are not run on commit** — CI owns them.
 - Secrets are scanned **repo-wide** by a single root `.gitleaks.toml`: strictly on staged changes at commit, whole-tree in the lint groups. Pre-existing findings are waived in `.gitleaksignore` — a **ratchet**: remove entries as you fix them, never add.
+- Gateway Go jobs (`vet`/`build`/`test`/`golangci-lint`) need generated assets that aren't committed (templ output + compiled CSS). On an un-warmed tree they skip with instructions — run `task dev` (or `task generate && task css`) in `apps/web-ui` first; CI generates them before building.
 - `lefthook run lint` = all trees (root `task lint`); `lefthook run lint-webui` = web-ui + connector (web-ui `task lint`).
 
 ## OpenSpec
