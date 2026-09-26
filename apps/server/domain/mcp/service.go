@@ -1719,6 +1719,27 @@ func (s *Service) IsSuperadminOnlyTool(name string) bool {
 	return superadminOnlyToolNames[name]
 }
 
+// sensitiveInProcessAdminTools is the set of admin-scoped tools whose in-process
+// bar is raised to superadmin_full rather than trusted-internal. The `admin`
+// scope these tools declare is a TOKEN-ONLY scope: no project role maps to it
+// (roleToScopes in pkg/auth deliberately excludes admin*), so no trusted session
+// run — member, project_admin, or org_admin — can hold the authority the scope
+// represents. Over HTTP these tools require a token carrying `admin`; in-process
+// there is no token scope, so the identity-based superadmin_full grant is the
+// correct fail-closed bar (issue #1018).
+//
+// The subset is the sensitive six: token minting (privilege escalation),
+// provider config (accepts API keys), and project creation. The read-only
+// provider-models-list is left at the trusted-internal bar.
+var sensitiveInProcessAdminTools = map[string]bool{
+	"token-list":                 true,
+	"token-create":               true,
+	"token-get":                  true,
+	"token-revoke":               true,
+	"provider-configure-project": true,
+	"project-create":             true,
+}
+
 // mcpToolScopeVocabulary is the set of scope values that can gate an MCP tool.
 // It is derived from the tool catalog — the central static scope map plus the
 // package-level builders in dynamicToolBuilders (the same list GetToolDefinitions
@@ -1880,6 +1901,22 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 		ok, err := s.IsSuperadminCaller(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to authorize operator tool %q: %w", toolName, err)
+		}
+		if !ok {
+			return nil, fmt.Errorf("tool %q requires superadmin privileges", toolName)
+		}
+	}
+	// Sensitive admin-scoped tools are gated on superadmin_full in-process, not
+	// trusted-internal. Their `admin` scope is token-only (no project role maps
+	// to it), so a trusted session run can never legitimately hold it; raising the
+	// in-process bar to the identity-based superadmin_full grant aligns the
+	// in-process path with the HTTP surface's refusal of the same call. An HTTP
+	// transport already enforced the tool's `admin` scope before dispatch, so it
+	// is exempt here (issue #1018).
+	if sensitiveInProcessAdminTools[toolName] && !TransportEnforcedFromContext(ctx) {
+		ok, err := s.IsSuperadminCaller(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to authorize sensitive tool %q: %w", toolName, err)
 		}
 		if !ok {
 			return nil, fmt.Errorf("tool %q requires superadmin privileges", toolName)
