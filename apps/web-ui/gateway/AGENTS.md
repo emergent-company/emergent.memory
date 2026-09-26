@@ -87,3 +87,19 @@ is not the contract, and a theme tweak should not fail a unit test. The exceptio
 strings that *are* a component's API (the tool-group disclosure bases, the confirm-dialog icon circle).
 Visual regression belongs in the gallery and Playwright e2e, not in unit goldens (see the capability spec
 for the exact policy).
+
+## Role gating
+
+- **Hide, don't disable.** A control the caller's role cannot use must not render at all — not render
+  `disabled`. Derive the role once from the caller's org access tree (`orgRoleFor`/`isOrgAdmin` in
+  `org_context.go:172,188`) and gate the render on it; never re-derive the role locally. See
+  `sidebarGroups`/`orgSidebarGroups` (`ui.go:73,125`), which take `isOrgAdmin bool` and only *append*
+  the gated entry when it holds (Backups — #997; Members — #1015).
+- **Hide nav entries entirely for wholly admin-only pages.** Landing a non-admin on a page that then
+  degrades to a 403 is worse than not showing the link. `ui.go` states the rule in place: "Hiding the
+  entry beats landing a non-admin on a page that degrades to an error." (#997.)
+- **Never `innerHTML` agent-produced content.** Agent/LLM output is untrusted. Render markdown through
+  `renderMarkdown` (`markdown.go:22` — goldmark + `bluemonday.UGCPolicy`, raw HTML escaped, dangerous
+  link schemes stripped) and then `templ.Raw`; for a plain string, use `textContent`, never `innerHTML`
+  (`org_context.templ` carries the `textContent — never innerHTML` precedent). Do **not** feed
+  unsanitized agent output straight into `templ.Raw`.
