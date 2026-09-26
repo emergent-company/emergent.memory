@@ -161,6 +161,7 @@ type ListParams struct {
 	ExtractionJobID *uuid.UUID         // Filter by extraction job
 	PropertyFilters []PropertyFilter   // JSONB property filters
 	Fields          []string           // Property field projection (include only these property keys)
+	ExcludeFields   []string           // Property field projection (drop these property keys)
 	Namespace       *string            // Filter by namespace
 	PropertyOrder   *PropertyOrderSpec // optional property-based ordering
 
