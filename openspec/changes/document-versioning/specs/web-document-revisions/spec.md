@@ -1,15 +1,15 @@
 ## ADDED Requirements
 
 ### Requirement: Document detail shows a revisions section
-The gateway document detail page SHALL render a Revisions section listing the logical document's revisions newest-first, each showing its version number, creation timestamp, current flag, and conversion status. The section SHALL be absent-or-empty-state when the document has only one revision, and SHALL indicate that the document has a single version.
+The gateway document detail page SHALL render a Revisions section listing the logical document's revisions newest-first, each showing its version number, creation timestamp, current flag, and conversion status. Under the revision model every document is a group of at least one revision, so the section SHALL present a "single version" state when the group has exactly one revision, and a list when it has more than one.
 
 #### Scenario: Document with multiple revisions
-- **WHEN** the document detail page renders for a document that has more than one revision
+- **WHEN** the document detail page renders for a document in a group with more than one revision
 - **THEN** the Revisions section lists each revision newest-first with its version number and current flag
 
-#### Scenario: Document with a single revision
-- **WHEN** the document detail page renders for a document with no revisions
-- **THEN** the Revisions section shows a single-version empty state rather than a list of one
+#### Scenario: Document with exactly one revision
+- **WHEN** the document detail page renders for a document in a group with exactly one revision
+- **THEN** the Revisions section shows a "single version" state rather than a list of one
 
 ### Requirement: Revisions section shows the revision delta
 The Revisions section SHALL present the content diff and entity delta between the previous revision and a selected revision, showing added/removed lines and added/updated/removed graph objects and relationships. The delta SHALL be loaded from the revision diff API and SHALL render an explicit "not yet available" state while a revision's content is still parsing.

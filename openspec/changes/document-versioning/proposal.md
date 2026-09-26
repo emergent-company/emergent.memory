@@ -16,8 +16,8 @@ The knowledge graph already has the primitives this needs — a version chain (`
 - **Upload a revision**: a new endpoint takes a file and attaches it to an existing logical document, creating the next version in the chain rather than a standalone document.
 - **Revision listing and discard**: list all revisions of a logical document and discard a non-current revision (removing its chunks and any staged graph objects).
 - **Revision diff**: compare two revisions and return both a human-readable line diff of parsed content and a structured entity delta (added / updated / removed graph objects and relationships). Diff is computed against the staged extraction, not against the main graph.
-- **Extraction provenance**: extraction records which chunks produced each graph object (`kb.object_chunks`, currently unused), which is what makes removed-content detection possible.
-- **Review-gated graph update**: extraction for a revision lands on a staging branch and does **not** auto-merge. The user reviews the delta and applies it; applying merges the staged objects into the main graph and tombstones objects whose provenance is entirely removed chunks. Discarding drops the staging branch.
+- **Extraction provenance**: extraction records which chunks produced each graph object (`kb.object_chunks`, currently unused), which is what makes removed-content detection possible. Phase 1 records this at batch granularity.
+- **Review-gated graph update**: extraction for a revision lands on a staging branch and does **not** auto-merge (and aborts rather than falling back to main if staging fails). The user reviews the delta and applies it; applying reconciles staged objects against the main graph by `(type, key)` — add, update, or leave unchanged — and tombstones objects attributable only to superseded revisions. Discarding drops the staging branch.
 - **CLI + web UI**: `memory documents` gains revision subcommands; the document detail page gains a Revisions tab (list, diff, entity delta, apply / discard).
 
 ## Capabilities
@@ -39,16 +39,17 @@ The knowledge graph already has the primitives this needs — a version chain (`
 - **Database**: `apps/server/migrations/` — additive columns and a partial unique index on `kb.documents`; index on the revision chain; no destructive changes.
 - **Backend — documents**: `apps/server/domain/documents/` — entity, repository, service, handler, routes (revision endpoints, `is_current` transitions, group resolution).
 - **Backend — extraction**: `apps/server/domain/extraction/` — carry chunk identity through batch building and write `kb.object_chunks`; a per-job "do not auto-merge" mode for revision extraction; staging-branch lifecycle on discard.
-- **Backend — diff**: new revision-diff service (text diff + entity-delta assembly), reusing `graph.BranchMergeReadiness` / `MergeBranch` dry-run.
-- **Backend — graph**: `MergeBranch` apply path reused as-is; tombstoning of objects with fully-removed provenance may require a small graph-service addition.
+- **Backend — diff**: new revision-diff service (text diff + entity-delta assembly), comparing staged extraction against main-graph heads by `(type, key)`.
+- **Backend — graph**: a new `(type, key)` reconciliation apply path (staged branch objects → main graph) plus a tombstone pass for objects attributable only to superseded revisions. `MergeBranch` is deliberately **not** reused — it classifies by `canonical_id`, which a fresh branch does not share with main.
 - **SDK**: `apps/server/pkg/sdk/documents/` — revision methods.
 - **CLI**: `apps/cli/internal/cmd/documents.go` — revision subcommands.
 - **Web UI**: `apps/web-ui/gateway/documents.templ` (+ handlers) — Revisions tab.
 - **Tests**: unit tests for the revision chain invariants, diff, and apply idempotency; integration test for the full revision cycle; optional e2e coverage.
-- **No breaking API changes**: all new surfaces are additive; existing document endpoints keep their current behaviour for non-revision documents.
+- **Backward compatibility**: revision surfaces are additive. One behaviour changes: `DELETE /api/documents/:id` (and bulk delete) now removes the whole revision group, since every document is a one-revision group — for existing single-revision documents this is identical to today's behaviour.
 
 ## Out of Scope (follow-up issues)
 
 - Chunk-level incremental extraction (phase 2) — this change re-extracts the revision's changed regions but not a fully incremental chunk pipeline.
+- Exact per-entity span provenance — phase 1 records batch-scoped provenance; exact spans need the extraction output schema to return source references.
 - Provenance backfill for graph objects created before this change (their source chunks cannot be reconstructed).
 - A reaper for orphaned staging branches left by abandoned revisions.
