@@ -1,6 +1,7 @@
 package mcp_test
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"testing"
@@ -8,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/orgs"
 	"github.com/emergent-company/emergent.memory/domain/projects"
@@ -59,9 +61,13 @@ func (s *ShapeBAuthzSuite) SetupTest() {
 		Log:                 log,
 		OrgMembershipReader: orgsRepo,
 	})
-	// graphSvc is nil: DeletePack (the only write this suite exercises) does not
-	// invalidate the schema cache.
-	schemasSvc := schemas.NewService(schemas.NewRepository(s.DB(), log), nil, log, s.TestDB.Config)
+	// A real graph.Service is required: AssignPack / UpdateAssignmentBySchemaID /
+	// DeleteAssignmentBySchemaID invalidate the schema cache on a write, so a
+	// nil graph service would panic. The schema provider is a no-op — cache
+	// invalidation is the only surface these schema writes touch.
+	graphRepo := graph.NewRepository(s.DB(), log, s.TestDB.Config)
+	graphSvc := graph.NewService(graphRepo, log, noopSchemaProvider{}, nil, nil, nil, nil, nil, nil, nil)
+	schemasSvc := schemas.NewService(schemas.NewRepository(s.DB(), log), graphSvc, log, s.TestDB.Config)
 
 	s.mcpSvc = mcp.NewService(mcp.ServiceParams{
 		DB:                        s.DB(),
@@ -72,6 +78,17 @@ func (s *ShapeBAuthzSuite) SetupTest() {
 	})
 	_ = s.mcpSvc.GetToolDefinitions()
 }
+
+// noopSchemaProvider satisfies graph.SchemaProvider for the schema-write paths
+// exercised here; only InvalidateProjectCache is called (by the schema service's
+// cache invalidation), never GetProjectSchemas.
+type noopSchemaProvider struct{}
+
+func (noopSchemaProvider) GetProjectSchemas(context.Context, string) (*graph.ExtractionSchemas, error) {
+	return nil, nil
+}
+
+func (noopSchemaProvider) InvalidateProjectCache(string) {}
 
 func (s *ShapeBAuthzSuite) seedSchema(projectID, name string) string {
 	s.T().Helper()
@@ -152,4 +169,133 @@ func (s *ShapeBAuthzSuite) TestSchemaDeleteOwnProjectSucceeds() {
 	err = s.DB().NewRaw(`SELECT COUNT(*) FROM kb.graph_schemas WHERE id = ?`, ownSchema).Scan(s.Ctx, &n)
 	s.Require().NoError(err)
 	s.Require().Equal(0, n)
+}
+
+// seedForeignProject creates a second org+project owned by the admin user and
+// returns the project id, so a caller addressing it is a cross-project caller.
+func (s *ShapeBAuthzSuite) seedForeignProject() string {
+	s.T().Helper()
+	foreignOrg := uuid.New().String()
+	foreignProject := uuid.New().String()
+	s.Require().NoError(testutil.CreateTestOrganization(s.Ctx, s.DB(), foreignOrg, "Foreign Org"))
+	s.Require().NoError(testutil.CreateTestProject(s.Ctx, s.DB(), testutil.TestProject{
+		ID:    foreignProject,
+		OrgID: foreignOrg,
+		Name:  "Foreign Project",
+	}, testutil.AdminUser.ID))
+	return foreignProject
+}
+
+// --- schema-assign (executeAssignSchema → schemas.AssignVisiblePack) ---
+
+// TestSchemaAssignForeignProjectRefused is the fail-closed guard for #1114: the
+// schema-assign tool delegates to schemas.AssignVisiblePack, which must refuse a
+// schema the caller's project cannot see (foreign project_id, non-builtin) with 404.
+func (s *ShapeBAuthzSuite) TestSchemaAssignForeignProjectRefused() {
+	foreignProject := s.seedForeignProject()
+	foreignSchema := s.seedSchema(foreignProject, "foreign-secret-schema")
+
+	ctx := auth.ContextWithUser(s.Ctx, &auth.AuthUser{ID: testutil.AdminUser.ID})
+	_, err := s.mcpSvc.ExecuteTool(ctx, s.ProjectID, "schema-assign", map[string]any{"schema_id": foreignSchema})
+	s.assertAppErrorStatus(err, 404)
+}
+
+func (s *ShapeBAuthzSuite) TestSchemaAssignOwnProjectSucceeds() {
+	ownSchema := s.seedSchema(s.ProjectID, "own-schema")
+
+	ctx := auth.ContextWithUser(s.Ctx, &auth.AuthUser{ID: testutil.AdminUser.ID})
+	result, err := s.mcpSvc.ExecuteTool(ctx, s.ProjectID, "schema-assign", map[string]any{"schema_id": ownSchema})
+	s.Require().NoError(err)
+	s.Require().NotNil(result)
+
+	var n int
+	err = s.DB().NewRaw(
+		`SELECT COUNT(*) FROM kb.project_schemas WHERE project_id = ? AND schema_id = ? AND removed_at IS NULL`,
+		s.ProjectID, ownSchema,
+	).Scan(s.Ctx, &n)
+	s.Require().NoError(err)
+	s.Require().Equal(1, n)
+}
+
+// --- schema-assignment-update (executeUpdateTemplateAssignment) ---
+
+func (s *ShapeBAuthzSuite) TestSchemaAssignmentUpdateForeignProjectRefused() {
+	foreignProject := s.seedForeignProject()
+	foreignSchema := s.seedSchema(foreignProject, "foreign-schema")
+
+	ctx := auth.ContextWithUser(s.Ctx, &auth.AuthUser{ID: testutil.AdminUser.ID})
+	_, err := s.mcpSvc.ExecuteTool(ctx, s.ProjectID, "schema-assignment-update", map[string]any{
+		"schema_id": foreignSchema,
+		"active":    false,
+	})
+	s.assertAppErrorStatus(err, 404)
+}
+
+// --- schema-uninstall (executeUninstallSchema) ---
+
+func (s *ShapeBAuthzSuite) TestSchemaUninstallForeignProjectRefused() {
+	foreignProject := s.seedForeignProject()
+	foreignSchema := s.seedSchema(foreignProject, "foreign-schema")
+
+	ctx := auth.ContextWithUser(s.Ctx, &auth.AuthUser{ID: testutil.AdminUser.ID})
+	_, err := s.mcpSvc.ExecuteTool(ctx, s.ProjectID, "schema-uninstall", map[string]any{"schema_id": foreignSchema})
+	s.assertAppErrorStatus(err, 404)
+}
+
+// TestSchemaAssignmentUpdateAndUninstallOwnSucceeds exercises the happy path for
+// the two assignment tools: assign → deactivate → uninstall, all through the
+// shared schemas service seam.
+func (s *ShapeBAuthzSuite) TestSchemaAssignmentUpdateAndUninstallOwnSucceeds() {
+	ownSchema := s.seedSchema(s.ProjectID, "own-schema")
+
+	ctx := auth.ContextWithUser(s.Ctx, &auth.AuthUser{ID: testutil.AdminUser.ID})
+
+	_, err := s.mcpSvc.ExecuteTool(ctx, s.ProjectID, "schema-assign", map[string]any{"schema_id": ownSchema})
+	s.Require().NoError(err)
+
+	_, err = s.mcpSvc.ExecuteTool(ctx, s.ProjectID, "schema-assignment-update", map[string]any{
+		"schema_id": ownSchema,
+		"active":    false,
+	})
+	s.Require().NoError(err)
+
+	var active bool
+	err = s.DB().NewRaw(
+		`SELECT active FROM kb.project_schemas WHERE project_id = ? AND schema_id = ? AND removed_at IS NULL`,
+		s.ProjectID, ownSchema,
+	).Scan(s.Ctx, &active)
+	s.Require().NoError(err)
+	s.Require().False(active)
+
+	_, err = s.mcpSvc.ExecuteTool(ctx, s.ProjectID, "schema-uninstall", map[string]any{"schema_id": ownSchema})
+	s.Require().NoError(err)
+
+	var n int
+	err = s.DB().NewRaw(
+		`SELECT COUNT(*) FROM kb.project_schemas WHERE project_id = ? AND schema_id = ? AND removed_at IS NULL`,
+		s.ProjectID, ownSchema,
+	).Scan(s.Ctx, &n)
+	s.Require().NoError(err)
+	s.Require().Equal(0, n)
+}
+
+// TestSchemaDeleteForeignAssignedSchemaRefused is the fail-closed guard for
+// #1116: a foreign schema that is assigned to another project must yield 404
+// (the existence oracle), not the 400 "assigned to projects" branch, which the
+// pre-fix ordering leaked because the assignment check ran before ownership.
+func (s *ShapeBAuthzSuite) TestSchemaDeleteForeignAssignedSchemaRefused() {
+	foreignProject := s.seedForeignProject()
+	foreignSchema := s.seedSchema(foreignProject, "foreign-assigned-schema")
+
+	// Install the foreign schema into its own project so DeletePack's
+	// assignment-count branch would fire if it ran before the ownership oracle.
+	_, err := s.DB().NewRaw(`
+		INSERT INTO kb.project_schemas (project_id, schema_id, active, installed_at)
+		VALUES (?, ?, true, NOW())
+	`, foreignProject, foreignSchema).Exec(s.Ctx)
+	s.Require().NoError(err)
+
+	ctx := auth.ContextWithUser(s.Ctx, &auth.AuthUser{ID: testutil.AdminUser.ID})
+	_, err = s.mcpSvc.ExecuteTool(ctx, s.ProjectID, "schema-delete", map[string]any{"schema_id": foreignSchema})
+	s.assertAppErrorStatus(err, 404)
 }
