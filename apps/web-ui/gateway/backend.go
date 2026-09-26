@@ -32,6 +32,7 @@ type MemoryBackend interface {
 	ListSandboxProviders(ctx context.Context) ([]SandboxProvider, error)
 	ListSandboxImages(ctx context.Context) ([]SandboxImage, error)
 	ChatStream(ctx context.Context, req ChatRequest) (io.ReadCloser, error)
+	QueryKnowledge(ctx context.Context, question, branch string) (answer, sessionID string, err error)
 	RespondQuestion(ctx context.Context, questionID, response, message string) (*RespondQuestionResult, error)
 	CancelQuestion(ctx context.Context, questionID string) (*RespondQuestionResult, error)
 	ListAgentQuestions(ctx context.Context) ([]AgentQuestionItem, error)
@@ -96,6 +97,10 @@ type MemoryBackend interface {
 	CreateObject(ctx context.Context, req *CreateObjectRequest) (*GraphObject, error)
 	CreateRelationship(ctx context.Context, req *CreateRelationshipRequest) error
 	SearchObjectsFTS(ctx context.Context, query, typeFilter string) ([]GraphObject, error)
+	ListGraphObjectsPage(ctx context.Context, branchID, typeFilter, cursor string, limit int) ([]GraphObject, string, error)
+	CountObjects(ctx context.Context, branchID string) (int, error)
+	SearchObjects(ctx context.Context, mode, query, types, branchID string, limit, offset int) ([]ObjectSearchResult, bool, error)
+	SearchObjectsUnified(ctx context.Context, query, types, branchID string, limit int) ([]ObjectSearchResult, error)
 	GetEmbeddingProgress(ctx context.Context) (*EmbeddingProgress, error)
 	GetEmbeddingStatus(ctx context.Context) (*EmbeddingStatus, error)
 	ListBranches(ctx context.Context) ([]Branch, error)

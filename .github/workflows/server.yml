@@ -65,6 +65,12 @@ jobs:
         working-directory: apps/server
         run: ./scripts/lint-ratchet.sh
 
+      - name: Go test coverage guard
+        # Fails when a *_test.go package under apps/server is not referenced by
+        # any `go test` / `go list` glob in this workflow — the #923 class of
+        # bug where a package's tests silently rot because no job runs them.
+        run: .github/scripts/check-go-test-coverage.sh
+
   build:
     name: Build
     runs-on: [self-hosted, linux, x64, memory]
@@ -119,7 +125,14 @@ jobs:
       - name: Run unit tests
         working-directory: apps/server
         run: |
-          go test -short ./internal/... ./pkg/... ./domain/... -v -count=1 \
+          # ./cmd/... carries three pure-Go test packages — cmd/migrate
+          # (target/DSN resolution, no DB: its main() is never invoked under
+          # `go test`), cmd/swiftbridge (pure-Go internals behind the CGO
+          # exports; ships a !cgo main stub) and cmd/storage-init (bucket
+          # selection/ensure-bucket logic). None needs Postgres or CGO, so they
+          # run under -short here. Before this line they executed in no CI job
+          # at all (#923).
+          go test -short ./internal/... ./pkg/... ./domain/... ./cmd/... -v -count=1 \
             -coverprofile=coverage.out \
             -covermode=atomic
 
@@ -236,7 +249,10 @@ jobs:
           # domain/sandbox's E2E tests need a Docker workspace image and are not
           # database-backed; they stay -short-gated in the unit job. Everything
           # else runs WITHOUT -short so the DB-backed suites execute.
-          PKGS=$(go list ./internal/... ./pkg/... ./domain/... | grep -v '/domain/sandbox$')
+          # ./tests/integration is the DB-backed integration suite (issue #911) —
+          # it must be listed here or it never runs in CI. It provisions its own
+          # throwaway databases via internal/testdb, so it is parallel-safe.
+          PKGS=$(go list ./internal/... ./pkg/... ./domain/... ./tests/integration/... | grep -v '/domain/sandbox$')
           # -p 4 runs package binaries in parallel. The go_test_template
           # bootstrap is serialized across processes with a Postgres advisory
           # lock (internal/testdb), and every throwaway database is uniquely

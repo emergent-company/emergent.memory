@@ -765,6 +765,7 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 			MaxSteps:        triggerReq.MaxSteps,
 			AuthToken:       triggerAuthToken,
 			SessionID:       triggerReq.SessionID,
+			TrustedInternal: true, // session UI is a trusted surface (full internal coordination)
 		})
 		if execResult != nil && execResult.Cleanup != nil {
 			execResult.Cleanup()
@@ -1067,6 +1068,13 @@ func (h *Handler) CreateWebhookHook(c echo.Context) error {
 		return apperror.NewNotFound("Agent", id)
 	}
 
+	// Refuse binding a public webhook hook to an internal-visibility agent
+	// (fail-closed) unless the caller explicitly opts in — the webhook receiver
+	// is a public surface authenticated only by a shared per-hook bearer token.
+	if err := hookInternalBindingErr(c.Request().Context(), h.repo, agent, dto.AllowInternal); err != nil {
+		return err
+	}
+
 	rawToken, err := GenerateWebhookToken()
 	if err != nil {
 		return apperror.NewInternal("failed to generate token", err)
@@ -1083,6 +1091,7 @@ func (h *Handler) CreateWebhookHook(c echo.Context) error {
 		Label:           dto.Label,
 		TokenHash:       hashedToken,
 		Enabled:         true,
+		AllowInternal:   dto.AllowInternal,
 		RateLimitConfig: dto.RateLimitConfig,
 	}
 
@@ -1210,9 +1219,35 @@ func (h *Handler) ReceiveWebhook(c echo.Context) error {
 		return apperror.NewBadRequest("agent not found or disabled")
 	}
 
-	// Look up the agent definition
-	var agentDef *AgentDefinition
-	agentDef, _ = h.repo.ResolveDefinitionForAgent(c.Request().Context(), agent)
+	// Look up the agent definition. Fail closed on a resolution error — a
+	// transient DB failure must not let a stale hook execute unchecked, matching
+	// the create-time binding guard (webhook_visibility.go).
+	agentDef, resolveErr := h.repo.ResolveDefinitionForAgent(c.Request().Context(), agent)
+	if resolveErr != nil {
+		slog.Error("webhook: failed to resolve agent definition for visibility check",
+			slog.String("hook_id", hook.ID),
+			slog.String("agent_id", agent.ID),
+			slog.String("error", resolveErr.Error()),
+		)
+		return apperror.NewInternal("failed to resolve agent definition for webhook invocation", resolveErr)
+	}
+
+	// Refuse to invoke a hook still bound to an internal-visibility agent unless
+	// the hook was explicitly opted in at creation (allow_internal). Hook
+	// creation now refuses internal-visibility targets unless opted in (#1004),
+	// and that opt-in is persisted on the hook row, so a hook bound before the
+	// guard shipped (allow_internal=false) is refused here while an opted-in hook
+	// proceeds by the operator's explicit choice. A normal (project/external)
+	// visibility agent is unaffected.
+	if agentDef != nil && agentDef.Visibility == VisibilityInternal && !hook.AllowInternal {
+		slog.Warn("webhook: refusing invocation bound to internal-visibility agent",
+			slog.String("hook_id", hook.ID),
+			slog.String("agent_id", agent.ID),
+			slog.String("agent_definition_id", agentDef.ID),
+			slog.String("agent_definition_name", agentDef.Name),
+		)
+		return apperror.NewForbidden("webhook hook is bound to an internal-visibility agent; re-bind it to a public agent")
+	}
 
 	// Parse payload
 	var payload WebhookTriggerPayloadDTO
@@ -1277,6 +1312,11 @@ func (h *Handler) ReceiveWebhook(c echo.Context) error {
 		TriggerSource:   &triggerSource,
 		TriggerMetadata: metadata,
 		MaxSteps:        maxSteps,
+		// The webhook receiver is a public, external-facing surface authenticated
+		// only by a per-hook bearer token (no RequireAuth). It must NOT be trusted
+		// internal coordination, or a holder of a shared/leaked webhook secret could
+		// reach internal-visible agents via spawn_agents / list_available_agents.
+		TrustedInternal: false,
 	}
 
 	result, err := h.executor.Execute(c.Request().Context(), req)
@@ -1482,7 +1522,11 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 
 	visibility := VisibilityProject
 	if dto.Visibility != "" {
-		visibility = dto.Visibility
+		nv, ok := NormalizeVisibility(dto.Visibility)
+		if !ok {
+			return apperror.NewBadRequest("visibility must be one of project, external, internal")
+		}
+		visibility = nv
 	}
 
 	isDefault := false
@@ -1634,7 +1678,11 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 		def.DefaultTimeout = dto.DefaultTimeout
 	}
 	if dto.Visibility != nil {
-		def.Visibility = *dto.Visibility
+		nv, ok := NormalizeVisibility(*dto.Visibility)
+		if !ok {
+			return apperror.NewBadRequest("visibility must be one of project, external, internal")
+		}
+		def.Visibility = nv
 	}
 	if dto.DispatchMode != nil {
 		def.DispatchMode = *dto.DispatchMode

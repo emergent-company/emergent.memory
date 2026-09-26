@@ -74,7 +74,11 @@ type MCPServerTool struct {
 	InputSchema  map[string]any `bun:"input_schema,type:jsonb,default:'{}'" json:"inputSchema"`
 	OutputSchema map[string]any `bun:"output_schema,type:jsonb" json:"outputSchema,omitempty"`
 	Enabled      bool           `bun:"enabled,notnull,default:true" json:"enabled"`
-	Config       map[string]any `bun:"config,type:jsonb" json:"config,omitempty"`
+	// EnabledOverride marks an explicit project-level toggle (issue #988). Nil means
+	// "no project override" and falls through to org default, then the builtin
+	// default; non-nil means the project explicitly enabled/disabled this tool.
+	EnabledOverride *bool          `bun:"enabled_override" json:"enabledOverride,omitempty"`
+	Config          map[string]any `bun:"config,type:jsonb" json:"config,omitempty"`
 	// ConfigKeys lists setup-time configuration keys required by this tool (e.g. ["api_key"]).
 	ConfigKeys []string  `bun:"config_keys,array,default:'{}'" json:"configKeys,omitempty"`
 	CreatedAt  time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`

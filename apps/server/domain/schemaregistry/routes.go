@@ -11,6 +11,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// All schema-registry endpoints require authentication
 	g := e.Group("/api/schema-registry")
 	g.Use(authMiddleware.RequireAuth())
+	g.Use(authMiddleware.RequireProjectTokenScope())
+	g.Use(authMiddleware.RequireProjectMember())
 
 	// Get all object types for a project
 	g.GET("/projects/:projectId", h.GetProjectTypes)

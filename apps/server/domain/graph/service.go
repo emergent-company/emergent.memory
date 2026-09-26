@@ -2030,8 +2030,8 @@ func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID
 	}
 
 	// Validate patch delta properties against schema (soft-fail on schema load error).
-	// Same delta-only approach as Patch: only validate properties being added/changed,
-	// not those already stored on the relationship from an older schema version.
+	// Required fields are enforced against the merged result (existing properties +
+	// patch delta), so a patch can neither clear nor omit a required property.
 	if schemas != nil {
 		if relSchema, ok := schemas.RelationshipSchemas[current.Type]; ok && (len(relSchema.Properties) > 0 || len(relSchema.Required) > 0) {
 			objSchema := agents.ObjectSchema{
@@ -2044,7 +2044,7 @@ func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID
 					patchDelta[k] = v
 				}
 			}
-			if validatedDelta, err := validatePatchProperties(patchDelta, objSchema); err != nil {
+			if validatedDelta, err := validateRelationshipPatchProperties(patchDelta, newProps, objSchema); err != nil {
 				return nil, apperror.ErrBadRequest.WithMessage("property validation failed: " + err.Error())
 			} else {
 				for k, v := range validatedDelta {
@@ -2252,15 +2252,21 @@ func (s *Service) FTSSearch(ctx context.Context, projectID uuid.UUID, req *FTSSe
 		Offset:         req.Offset,
 	}
 
-	results, err := s.repo.FTSSearch(ctx, params)
+	results, fellBack, err := s.repo.FTSSearchWithFallback(ctx, params)
 	if err != nil {
 		return nil, err
 	}
 
-	hasMore := len(results) > limit
-	if hasMore {
+	// Truncate the "limit+1" extra row exactly as before, so page 1's documents
+	// are unchanged. The Relax/Disjoin fallback is deliberately first-page-only
+	// (see Repository.FTSSearchWithFallback), so when it produced the result set
+	// the extra row is a disjoined-match overhang, not a real second page:
+	// HasMore must be false in that case or the caller is shown a dead next page.
+	exceeded := len(results) > limit
+	if exceeded {
 		results = results[:limit]
 	}
+	hasMore := exceeded && !fellBack
 
 	data := make([]*SearchResultItem, len(results))
 	objectIDs := make([]uuid.UUID, 0, len(results))

@@ -28,6 +28,18 @@ type Config struct {
 	WorkerBatchSize int
 	// MailgunRegion is the Mailgun region ("us" or "eu")
 	MailgunRegion string
+	// Transport selects the email transport ("mailgun" or "smtp")
+	Transport string
+	// SMTPHost is the SMTP server host
+	SMTPHost string
+	// SMTPPort is the SMTP server port
+	SMTPPort int
+	// SMTPUsername is the SMTP auth username (optional)
+	SMTPUsername string
+	// SMTPPassword is the SMTP auth password (optional)
+	SMTPPassword string
+	// SMTPTLS is the SMTP TLS mode ("none", "starttls", or "tls")
+	SMTPTLS string
 }
 
 // NewConfig creates email configuration from the app config
@@ -43,6 +55,12 @@ func NewConfig(cfg *config.Config) *Config {
 		WorkerIntervalMs: cfg.Email.WorkerIntervalMs,
 		WorkerBatchSize:  cfg.Email.WorkerBatchSize,
 		MailgunRegion:    cfg.Email.MailgunRegion,
+		Transport:        cfg.Email.Transport,
+		SMTPHost:         cfg.Email.SMTPHost,
+		SMTPPort:         cfg.Email.SMTPPort,
+		SMTPUsername:     cfg.Email.SMTPUsername,
+		SMTPPassword:     cfg.Email.SMTPPassword,
+		SMTPTLS:          cfg.Email.SMTPTLS,
 	}
 }
 

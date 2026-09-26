@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
+	"github.com/uptrace/bun/extra/bunotel"
 	"go.uber.org/fx"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
@@ -87,6 +88,9 @@ func NewBunDB(lc fx.Lifecycle, pool *pgxpool.Pool, cfg *config.Config, log *slog
 	// Create Bun DB with PostgreSQL dialect
 	db := bun.NewDB(sqldb, pgdialect.New())
 
+	// Emit an OTel span per query when tracing is enabled (see addTracingHook).
+	addTracingHook(db, cfg)
+
 	// Add query logging hook if debug enabled
 	if cfg.Database.QueryDebug {
 		db.AddQueryHook(&queryLoggingHook{log: log})
@@ -103,6 +107,20 @@ func NewBunDB(lc fx.Lifecycle, pool *pgxpool.Pool, cfg *config.Config, log *slog
 	})
 
 	return db, nil
+}
+
+// addTracingHook registers the bunotel query hook when both the tracing feature
+// (FEATURE_TRACING) and OTel export (OTEL_EXPORTER_OTLP_ENDPOINT) are enabled.
+//
+// It requires Features.Tracing because the tracing module — which installs the
+// OTLP TracerProvider — is only loaded when that flag is set (see cmd/server
+// main). Without the provider, spans would be created against the no-op global
+// provider: useless work on every query. Inert (hook not registered) otherwise,
+// so there is zero per-query overhead when tracing is disabled.
+func addTracingHook(db *bun.DB, cfg *config.Config) {
+	if cfg.Features.Tracing && cfg.Otel.Enabled() {
+		db.AddQueryHook(bunotel.NewQueryHook(bunotel.WithDBName(cfg.Database.Database)))
+	}
 }
 
 // queryLoggingHook implements bun.QueryHook for query logging

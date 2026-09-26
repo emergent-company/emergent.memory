@@ -30,6 +30,7 @@ type orgRepository interface {
 	ListMembers(ctx context.Context, orgID string) ([]OrgMemberDTO, error)
 	CountUserMemberships(ctx context.Context, userID string) (int, error)
 	IsUserMember(ctx context.Context, orgID, userID string) (bool, error)
+	GetMembershipRole(ctx context.Context, orgID, userID string) (string, error)
 	FindOrgToolSettings(ctx context.Context, orgID string) ([]OrgToolSetting, error)
 	UpsertOrgToolSetting(ctx context.Context, setting *OrgToolSetting) (*OrgToolSetting, error)
 	DeleteOrgToolSetting(ctx context.Context, orgID, toolName string) (bool, error)
@@ -136,11 +137,12 @@ func (s *Service) Create(ctx context.Context, name string, userID string) (*OrgD
 }
 
 // Update renames an organization and returns the updated DTO. The caller must
-// be a member of the organization; a non-member receives ErrForbidden before
-// any validation or write. Unknown (or soft-deleted) orgs surface the
-// repository's not-found error unchanged.
+// be an org_admin of the addressed organization (renaming is an org-tier write,
+// not a membership read); a non-admin receives ErrForbidden before any
+// validation or write. Unknown (or soft-deleted) orgs surface the repository's
+// not-found error unchanged.
 func (s *Service) Update(ctx context.Context, id, userID, name string) (*OrgDTO, error) {
-	if err := s.requireOrgMember(ctx, id, userID); err != nil {
+	if err := s.requireOrgAdmin(ctx, id, userID); err != nil {
 		return nil, err
 	}
 
@@ -162,10 +164,15 @@ func (s *Service) Update(ctx context.Context, id, userID, name string) (*OrgDTO,
 	return &dto, nil
 }
 
-// Delete deletes an organization by ID. The caller must be a member of the
-// organization; a non-member receives ErrForbidden before any write.
+// Delete deletes an organization by ID. The caller must be an org_admin of the
+// addressed organization (deletion is the most destructive org-tier write); a
+// non-admin receives ErrForbidden before any write. The bar is org_admin of the
+// addressed org, mirroring projects.Transfer: a platform superadmin who is not
+// an org_admin of the org is refused here. (A separate platform-level soft-delete
+// lives at DELETE /api/superadmin/organizations/:id, gated by superadmin_full —
+// this orgs-domain route deliberately stays at the org tier.)
 func (s *Service) Delete(ctx context.Context, id, userID string) error {
-	if err := s.requireOrgMember(ctx, id, userID); err != nil {
+	if err := s.requireOrgAdmin(ctx, id, userID); err != nil {
 		return err
 	}
 
@@ -181,11 +188,13 @@ func (s *Service) Delete(ctx context.Context, id, userID string) error {
 	return nil
 }
 
-// ListMembers returns all members of an organization. The caller must be a
-// member of the organization; member lists carry user PII (emails, names), so
-// a non-member receives ErrForbidden before any read.
+// ListMembers returns all members of an organization. Member lists carry user
+// PII (emails, names), so the caller must be an org_admin of the addressed
+// organization — a plain member cannot enumerate the whole org's identities
+// (project-scoped member lists remain the member-level surface). A non-admin
+// receives ErrForbidden before any read.
 func (s *Service) ListMembers(ctx context.Context, orgID, userID string) ([]OrgMemberDTO, error) {
-	if err := s.requireOrgMember(ctx, orgID, userID); err != nil {
+	if err := s.requireOrgAdmin(ctx, orgID, userID); err != nil {
 		return nil, err
 	}
 	return s.repo.ListMembers(ctx, orgID)

@@ -1253,6 +1253,13 @@ func fetchJobMetrics(serverURL, apiKey, projectID string) *jobMetricsAPIResponse
 		return nil
 	}
 	setAuthHeader(req, apiKey)
+	// Carry the project context as a header (not just the ?project_id filter)
+	// so the server resolves the effective project server-side and validates
+	// membership. Without it, account-token/OAuth project-scoped callers are
+	// refused 403 by the project-membership guard (issue #994). Mirrors fetchAPI.
+	if projectID != "" {
+		req.Header.Set("X-Project-ID", projectID)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil

@@ -36,7 +36,7 @@ cat ~/.emergent/config.yaml
 - **Emergent CLI** - Local management tool
 - **PostgreSQL** - Database with pgvector extension
 - **Kreuzberg** - Document extraction service (56+ file formats)
-- **MinIO** - S3-compatible object storage
+- **SeaweedFS** - S3-compatible object storage (single node: master + volume + filer + S3)
 
 ### CLI Access
 
@@ -111,11 +111,10 @@ EMERGENT_VERSION=v1.0.0 curl -fsSL ... | bash
 
 | Service       | Port  | Purpose                |
 | ------------- | ----- | ---------------------- |
-| Emergent API  | 3002  | Main API server + CLI  |
-| PostgreSQL    | 15432 | Database with pgvector |
-| MinIO API     | 19000 | S3-compatible storage  |
-| MinIO Console | 19001 | Web UI for MinIO       |
-| Kreuzberg     | 18000 | Document extraction    |
+| Emergent API    | 3002  | Main API server + CLI  |
+| PostgreSQL      | 15432 | Database with pgvector |
+| SeaweedFS S3    | 19000 | S3-compatible storage  |
+| Kreuzberg       | 18000 | Document extraction    |
 
 ### Files Created
 
@@ -155,7 +154,7 @@ cat ~/emergent-standalone/deploy/self-hosted/credentials.txt
 
 # - POSTGRES_PASSWORD (generate: openssl rand -hex 32)
 
-# - MINIO_ROOT_PASSWORD (generate: openssl rand -hex 32)
+# - OBJECT_STORE_SECRET_KEY (generate: openssl rand -hex 32)
 
 # - STANDALONE_API_KEY (generate: openssl rand -hex 32)
 
@@ -207,8 +206,8 @@ curl http://emergent:3002/health
 # API server
 curl http://localhost:3002/health
 
-# MinIO console
-open http://localhost:9001
+# SeaweedFS S3 API (host port OBJECT_STORE_API_PORT, default 9000)
+curl http://localhost:9000/status
 ```
 
 ## MCP Configuration
@@ -276,10 +275,10 @@ cat ~/emergent-standalone/deploy/self-hosted/credentials.txt
 │  └──────────────────────────────────┘  │
 │       │         │         │             │
 │       ▼         ▼         ▼             │
-│  ┌────────┐ ┌──────┐ ┌───────┐         │
-│  │ Postgres│ │Kreuz-│ │ MinIO │         │
-│  │+pgvector│ │ berg │ │  S3   │         │
-│  └────────┘ └──────┘ └───────┘         │
+│  ┌────────┐ ┌──────┐ ┌─────────┐      │
+│  │ Postgres│ │Kreuz-│ │SeaweedFS│      │
+│  │+pgvector│ │ berg │ │   S3    │      │
+│  └────────┘ └──────┘ └─────────┘      │
 └─────────────────────────────────────────┘
 ```
 
@@ -307,12 +306,12 @@ The server image runs a scheduled `pg_dump` backup (see `scheduler.database_back
 - **Formats**: PDF, DOCX, PPTX, XLSX, images (OCR), HTML, Markdown
 - **Health**: `http://kreuzberg:8000/health`
 
-### MinIO
+### SeaweedFS
 
-- **API Port**: 9000 (internal only)
-- **Console**: 9001 (accessible via `localhost:9001` on host)
-- **Buckets**: `documents`, `document-temp`
-- **Access**: Admin user from env
+- **API Port**: 8333 in-container (published on host as `OBJECT_STORE_API_PORT`, default 9000)
+- **Single node**: `server -dir=/data -s3` runs master + volume + filer + S3 in one process
+- **Buckets**: `documents`, `document-temp` (created by the one-shot `storage-init` service)
+- **Access**: `OBJECT_STORE_ACCESS_KEY` / `OBJECT_STORE_SECRET_KEY` from env
 
 ### Tailscale
 
@@ -324,24 +323,27 @@ The server image runs a scheduled `pg_dump` backup (see `scheduler.database_back
 
 ### Required Environment Variables
 
-| Variable              | Description           | Generation             |
-| --------------------- | --------------------- | ---------------------- |
-| `POSTGRES_PASSWORD`   | Database password     | `openssl rand -hex 32` |
-| `MINIO_ROOT_PASSWORD` | MinIO admin password  | `openssl rand -hex 32` |
-| `STANDALONE_API_KEY`  | MCP authentication    | `openssl rand -hex 32` |
-| `GOOGLE_API_KEY`      | Vertex AI credentials | Google Cloud Console   |
-| `TS_AUTHKEY`          | Tailscale auth key    | Tailscale admin panel  |
+| Variable                  | Description                  | Generation             |
+| ------------------------- | ---------------------------- | ---------------------- |
+| `POSTGRES_PASSWORD`       | Database password            | `openssl rand -hex 32` |
+| `OBJECT_STORE_SECRET_KEY` | Object store secret key      | `openssl rand -hex 32` |
+| `STANDALONE_API_KEY`      | MCP authentication           | `openssl rand -hex 32` |
+| `GOOGLE_API_KEY`          | Vertex AI credentials        | Google Cloud Console   |
+| `TS_AUTHKEY`              | Tailscale auth key           | Tailscale admin panel  |
 
 ### Optional Configuration
 
-| Variable                  | Default                | Description                   |
-| ------------------------- | ---------------------- | ----------------------------- |
-| `TAILSCALE_HOSTNAME`      | `emergent`             | Hostname in Tailscale network |
-| `STANDALONE_USER_EMAIL`   | `admin@localhost`      | Default user email            |
-| `STANDALONE_ORG_NAME`     | `Default Organization` | Default org name              |
-| `STANDALONE_PROJECT_NAME` | `Default Project`      | Default project name          |
-| `EMBEDDING_DIMENSION`     | `768`                  | Embedding vector size         |
-| `KREUZBERG_LOG_LEVEL`     | `info`                 | Kreuzberg logging             |
+| Variable                  | Default                | Description                        |
+| ------------------------- | ---------------------- | ---------------------------------- |
+| `TAILSCALE_HOSTNAME`      | `emergent`             | Hostname in Tailscale network      |
+| `STANDALONE_USER_EMAIL`   | `admin@localhost`      | Default user email                 |
+| `STANDALONE_ORG_NAME`     | `Default Organization` | Default org name                   |
+| `STANDALONE_PROJECT_NAME` | `Default Project`      | Default project name               |
+| `EMBEDDING_DIMENSION`     | `768`                  | Embedding vector size              |
+| `KREUZBERG_LOG_LEVEL`     | `info`                 | Kreuzberg logging                  |
+| `OBJECT_STORE_ACCESS_KEY` | `emergent`             | Object store access key            |
+| `OBJECT_STORE_API_PORT`   | `9000`                 | Host port for the S3 API           |
+| `STORAGE_REGION`          | `us-east-1`            | Region used to sign S3 requests    |
 
 ## Management
 
@@ -385,8 +387,14 @@ docker compose up -d --build
 # Backup database
 docker compose exec db pg_dump -U emergent emergent > backup.sql
 
-# Backup MinIO data
-docker compose exec minio mc mirror myminio/documents ./backup/documents/
+# Backup object-store data (any generic S3 client, e.g. rclone)
+# Configure an S3 remote pointed at the SeaweedFS endpoint, then:
+rclone copy seaweedfs:documents ./backup/documents/
+
+# Or archive the raw volume (stop the stack first for a consistent snapshot):
+docker compose stop seaweedfs
+docker run --rm -v docker_object_store_data:/data -v "$PWD/backup":/backup alpine \
+  tar czf /backup/object-store-data.tgz -C /data .
 ```
 
 ## Troubleshooting
@@ -443,17 +451,17 @@ docker compose logs kreuzberg
 docker stats emergent-kreuzberg
 ```
 
-### MinIO Access Issues
+### Object Store Access Issues
 
 ```bash
-# Check MinIO health
-curl http://localhost:9000/minio/health/live
+# Check SeaweedFS health (master cluster status)
+docker compose exec seaweedfs wget -qO- http://127.0.0.1:9333/cluster/status
 
 # Verify buckets were created
-docker compose logs minio-init
+docker compose logs storage-init
 
 # Recreate buckets
-docker compose run --rm minio-init
+docker compose run --rm storage-init
 ```
 
 ## Security Considerations
@@ -476,7 +484,7 @@ docker compose run --rm minio-init
 
 - No ports exposed to public internet
 - All access via Tailscale encrypted network
-- MinIO console only on localhost
+- Object store API published only on the configured host port
 - Internal services (DB, Kreuzberg) not exposed
 
 ## Upgrading
@@ -496,6 +504,13 @@ docker compose up -d
 4. Update docker-compose.yml if required
 5. Test with `docker compose up -d`
 
+### Migrating an existing install from MinIO to SeaweedFS
+
+Existing installs hold objects in the old `minio_data` volume. Mirror them to
+the new backend before flipping the endpoint and keep the old volume for
+rollback — see [UPGRADING_OBJECT_STORE.md](./UPGRADING_OBJECT_STORE.md) and
+`migrate-object-store.sh`.
+
 ## Support
 
 For issues specific to:
@@ -503,4 +518,4 @@ For issues specific to:
 - **Tailscale**: https://tailscale.com/contact/support
 - **Emergent**: GitHub issues or documentation
 - **Kreuzberg (v4 LTS)**: https://kreuzberg.dev
-- **MinIO**: https://min.io/docs/minio/linux/
+- **SeaweedFS**: https://github.com/seaweedfs/seaweedfs

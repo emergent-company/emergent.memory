@@ -12,6 +12,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/pgutils"
 )
@@ -239,6 +240,66 @@ func (r *Repository) IsUserOrgMember(ctx context.Context, orgID, userID string) 
 		return false, apperror.ErrDatabase.WithInternal(err)
 	}
 	return exists, nil
+}
+
+// AuthorizeSkillAccess enforces tier-based read authority for a single skill
+// addressed by id. It is the single source of truth shared by the REST
+// GetSkill route and the MCP skill-get/skill-update/skill-delete tools, so the
+// two entrypoints cannot drift. A global skill (project_id IS NULL AND org_id
+// IS NULL) is platform catalogue accessible to any authenticated caller. An
+// org-scoped skill requires membership of the skill's org; a project-scoped
+// skill requires membership of the project's owning org (resolved server-side,
+// never from a caller-supplied path/header). Returns nil on access, a 404
+// apperror when the caller lacks authority over the addressed skill (so the
+// response does not leak the skill's existence), and 401 when no authenticated
+// user is present.
+func (r *Repository) AuthorizeSkillAccess(ctx context.Context, skill *Skill) error {
+	if skill.ProjectID == nil && skill.OrgID == nil {
+		return nil // global catalogue: accessible to any authenticated caller
+	}
+
+	user, err := auth.RequireUser(ctx)
+	if err != nil {
+		return err
+	}
+
+	if skill.OrgID != nil {
+		ok, err := r.IsUserOrgMember(ctx, *skill.OrgID, user.ID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return apperror.NewNotFound("skill", skill.ID.String())
+		}
+		return nil
+	}
+
+	orgID, err := r.GetOrgIDForProject(ctx, *skill.ProjectID)
+	if err != nil {
+		return err
+	}
+	ok, err := r.IsUserOrgMember(ctx, orgID, user.ID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return apperror.NewNotFound("skill", skill.ID.String())
+	}
+	return nil
+}
+
+// AuthorizeSkillWrite enforces tier-based authority for mutating a single skill
+// addressed by id (the MCP skill-update/skill-delete tools). Org- and
+// project-scoped skills reuse AuthorizeSkillAccess (membership of the skill's
+// org / owning org). A global skill is refused: global writes require
+// superadmin_full, which the project-scoped MCP surface does not hold — this
+// mirrors the REST CreateGlobalSkill/UpdateGlobalSkill/DeleteGlobalSkill
+// requireSuperadminFull gate.
+func (r *Repository) AuthorizeSkillWrite(ctx context.Context, skill *Skill) error {
+	if skill.ProjectID == nil && skill.OrgID == nil {
+		return apperror.ErrForbidden
+	}
+	return r.AuthorizeSkillAccess(ctx, skill)
 }
 
 // GetOrgIDForProject looks up the organization ID for a given project.

@@ -1,0 +1,6 @@
+- [x] 1. Map the invitation role to the organization membership role in `Accept` (`org_admin` → `org_admin`; project roles → `member`) and fail closed on an unexpected stored role
+- [x] 2. Add both-roles tests: accept an `org_admin` invitation grants `org_admin`; accept a `project_user` invitation grants `member` (fail-first: with the hardcode, the `org_admin` case fails)
+- [x] 3. Add a fail-closed test proving an unexpected stored role is rejected and grants no membership
+- [x] 4. Audit every other membership-insert path for the same hardcoded-role bug (org creation, project creation, standalone bootstrap, autoprovision) and confirm none under-grant
+- [x] 5. Reconcile `openspec/specs/project-invitations/spec.md` with the shipped implementation via the change delta
+- [x] 6. Verify `go build ./...`, the `domain/invites` tests, the lint ratchet, `golangci-lint`, and `openspec validate --all --strict`

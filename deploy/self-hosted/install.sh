@@ -57,7 +57,7 @@ cd deploy/self-hosted
 echo ""
 echo "🔐 Generating secure passwords..."
 POSTGRES_PASSWORD=$(generate_password)
-MINIO_PASSWORD=$(generate_password)
+OBJECT_STORE_SECRET=$(generate_password)
 API_KEY=$(generate_password)
 LLM_ENCRYPTION_KEY=$(generate_password)
 
@@ -68,10 +68,10 @@ POSTGRES_PASSWORD=$POSTGRES_PASSWORD
 POSTGRES_DB=emergent
 POSTGRES_PORT=15432
 
-MINIO_ROOT_USER=minioadmin
-MINIO_ROOT_PASSWORD=$MINIO_PASSWORD
-MINIO_API_PORT=19000
-MINIO_CONSOLE_PORT=19001
+OBJECT_STORE_ACCESS_KEY=emergent
+OBJECT_STORE_SECRET_KEY=$OBJECT_STORE_SECRET
+OBJECT_STORE_API_PORT=19000
+STORAGE_REGION=us-east-1
 
 STANDALONE_MODE=true
 STANDALONE_API_KEY=$API_KEY
@@ -229,11 +229,10 @@ PostgreSQL:
   Password: $POSTGRES_PASSWORD
   Database: emergent
 
-MinIO:
-  Console: http://localhost:19001
+SeaweedFS (S3-compatible object storage):
   API: http://localhost:19000
-  User: minioadmin
-  Password: $MINIO_PASSWORD
+  Access Key: emergent
+  Secret Key: $OBJECT_STORE_SECRET
 
 Installation Directory: $INSTALL_DIR
 

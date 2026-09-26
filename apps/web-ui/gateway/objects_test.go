@@ -63,7 +63,11 @@ func TestRenderObjectsPage(t *testing.T) {
 		{ID: "o2", Type: "task", Key: "call dentist", CreatedAt: "2026-08-26T11:00:00Z"},
 	}
 	branches := []Branch{{ID: "b1", Name: "plan/next-gen"}}
-	html := renderHTML(t, ObjectsPage(objects, []string{"person", "task"}, "", branches, "", nil, nil))
+	html := renderHTML(t, ObjectsPage(objectsPageData{
+		Objects:  objects,
+		Types:    []string{"person", "task"},
+		Branches: branches,
+	}))
 	for _, want := range []string{
 		"Objects", "sam-lee", "call dentist", "person", "task",
 		`href="/objects/o1"`, `name="type"`, "All types",
@@ -75,14 +79,78 @@ func TestRenderObjectsPage(t *testing.T) {
 		}
 	}
 
-	htmlEmpty := renderHTML(t, ObjectsPage(nil, nil, "", nil, "", nil, nil))
+	htmlEmpty := renderHTML(t, ObjectsPage(objectsPageData{}))
 	if !strings.Contains(htmlEmpty, "No objects yet") {
 		t.Error("empty state missing")
 	}
 
-	htmlErr := renderHTML(t, ObjectsPage(nil, nil, "", nil, "", nil, errTest))
+	htmlErr := renderHTML(t, ObjectsPage(objectsPageData{LoadErr: errTest}))
 	if !strings.Contains(htmlErr, "Failed to load objects") {
 		t.Error("error state missing")
+	}
+}
+
+func TestRenderObjectsPageSearchStatsLoadMore(t *testing.T) {
+	// search mode: query input, mode selector, and result rows with a score badge.
+	searchHTML := renderHTML(t, ObjectsPage(objectsPageData{
+		Query: "sam",
+		Mode:  "hybrid",
+		Results: []ObjectSearchResult{
+			{Object: GraphObject{ID: "o1", Type: "person", Key: "sam-lee"}, Score: 0.87},
+		},
+	}))
+	for _, want := range []string{
+		`name="q"`, `value="sam"`, `name="mode"`, "Full-text", "Hybrid",
+		"sam-lee", "0.87",
+	} {
+		if !strings.Contains(searchHTML, want) {
+			t.Errorf("search page missing %q", want)
+		}
+	}
+	if strings.Contains(searchHTML, "Load more") {
+		t.Error("search mode must not render a Load more button")
+	}
+
+	// search no-hits state
+	noHits := renderHTML(t, ObjectsPage(objectsPageData{Query: "zzz", Mode: "fulltext"}))
+	if !strings.Contains(noHits, "No matching objects") {
+		t.Error("search no-hits state missing")
+	}
+
+	// browse mode with stats + load-more
+	browseHTML := renderHTML(t, ObjectsPage(objectsPageData{
+		Objects:    []GraphObject{{ID: "o1", Type: "person", Key: "sam-lee"}},
+		HasMore:    true,
+		NextCursor: "cur-1",
+		Stats:      objectsStats{TotalObjects: 42, PendingEmbed: 3, FailedEmbed: 1},
+	}))
+	for _, want := range []string{"42", "objects", "pending", "failed", "Load more", `hx-get="/objects/partial?cursor=cur-1"`, `hx-target="#objects-list"`} {
+		if !strings.Contains(browseHTML, want) {
+			t.Errorf("browse page missing %q", want)
+		}
+	}
+}
+
+// TestRenderObjectsPageSearchUnified renders the unified search mode: the
+// Unified mode option and a unified result row (labels + score) that omits the
+// status/embedding badges unavailable in unified results.
+func TestRenderObjectsPageSearchUnified(t *testing.T) {
+	html := renderHTML(t, ObjectsPage(objectsPageData{
+		Query: "sam",
+		Mode:  "unified",
+		Results: []ObjectSearchResult{
+			{Object: GraphObject{ID: "c1", Type: "person", Key: "sam-lee", Status: "confirmed", EmbeddingStatus: "embedded", Labels: []string{"contact"}}, Score: 0.88},
+		},
+	}))
+	for _, want := range []string{
+		"Unified", "sam-lee", "0.88", "contact", "person",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("unified search page missing %q", want)
+		}
+	}
+	if strings.Contains(html, "confirmed") || strings.Contains(html, "Embedded") {
+		t.Error("unified row must not render status/embedding badges")
 	}
 }
 
@@ -474,6 +542,11 @@ func TestObjectsRoutes(t *testing.T) {
 			{ID: "o2", CanonicalID: "o2", Type: "task", Key: "call dentist"},
 			{ID: "o3", CanonicalID: "o3", BranchID: "b1", Type: "person", Key: "branch-person"},
 		},
+		pageObjects: []GraphObject{
+			{ID: "o1", CanonicalID: "o1", Type: "person", Key: "sam-lee"},
+			{ID: "o2", CanonicalID: "o2", Type: "task", Key: "call dentist"},
+			{ID: "o3", CanonicalID: "o3", BranchID: "b1", Type: "person", Key: "branch-person"},
+		},
 		relns: []GraphRelationship{
 			{ID: "r1", Type: "assigned_to", SrcID: "o2", DstID: "o1"},
 		},
@@ -565,6 +638,205 @@ func TestUIObjectPartialIncludesTitle(t *testing.T) {
 	if strings.Contains(body, "<html") || strings.Contains(body, "<head") {
 		t.Fatalf("partial must not include the full HTML shell, got: %.200s", body)
 	}
+}
+
+func TestUIObjectsPartial(t *testing.T) {
+	f := &fakeMemory{
+		pageObjects: []GraphObject{
+			{ID: "o2", Type: "task", Key: "call dentist"},
+			{ID: "o3", Type: "task", Key: "write report"},
+		},
+		nextPageCursor: "nc-2",
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/objects/partial", s.uiObjectsPartial)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/partial?cursor=nc-1", nil))
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, body)
+	}
+	for _, want := range []string{"call dentist", "write report", `id="objects-load-more"`, "hx-swap-oob", "Load more", "cursor=nc-2"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("partial missing %q in:\n%s", want, body)
+		}
+	}
+	if f.lastPageCursor != "nc-1" {
+		t.Errorf("cursor = %q, want nc-1", f.lastPageCursor)
+	}
+}
+
+func TestUIObjectsPartialFailure(t *testing.T) {
+	f := &fakeMemory{pageErr: fmt.Errorf("boom")}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/objects/partial", s.uiObjectsPartial)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/partial?cursor=nc-1", nil))
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", rec.Code)
+	}
+}
+
+func TestRenderObjectsPageStatsUnavailable(t *testing.T) {
+	html := renderHTML(t, ObjectsPage(objectsPageData{
+		Objects: []GraphObject{{ID: "o1", Type: "person", Key: "sam-lee"}},
+		Stats:   objectsStats{TotalErr: errTest, EmbedErr: errTest},
+	}))
+	for _, want := range []string{"—", `title="Unavailable"`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("unavailable stats missing %q in:\n%s", want, html)
+		}
+	}
+	if strings.Contains(html, ">0</p>") {
+		t.Error("unavailable stats must not render a numeric 0 value")
+	}
+}
+
+func TestUIObjectsSearchRoute(t *testing.T) {
+	f := &fakeMemory{
+		searchResults: []ObjectSearchResult{
+			{Object: GraphObject{ID: "o1", Type: "person", Key: "sam-lee"}, Score: 0.9},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/objects", s.uiObjects)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?q=sam&mode=hybrid", nil))
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, body)
+	}
+	if !strings.Contains(body, "sam-lee") || !strings.Contains(body, "0.90") {
+		t.Errorf("search body missing result: %s", body)
+	}
+	if f.lastSearchMode != "hybrid" || f.lastSearchQuery != "sam" {
+		t.Errorf("search = %q/%q, want hybrid/sam", f.lastSearchMode, f.lastSearchQuery)
+	}
+	if strings.Contains(body, "Load more") {
+		t.Error("search route must not render Load more")
+	}
+}
+
+// TestUIObjectsUnifiedRoute exercises GET /objects?mode=unified: it dispatches
+// to SearchObjectsUnified and renders the unified row.
+func TestUIObjectsUnifiedRoute(t *testing.T) {
+	f := &fakeMemory{
+		unifiedResults: []ObjectSearchResult{
+			{Object: GraphObject{ID: "c1", Type: "person", Key: "sam-lee"}, Score: 0.9},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/objects", s.uiObjects)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?q=sam&mode=unified", nil))
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, body)
+	}
+	if !strings.Contains(body, "sam-lee") || !strings.Contains(body, "0.90") {
+		t.Errorf("unified search body missing result: %s", body)
+	}
+	if f.lastUnifiedQuery != "sam" || f.lastUnifiedLimit != 25 {
+		t.Errorf("unified search = %q/%d, want sam/25", f.lastUnifiedQuery, f.lastUnifiedLimit)
+	}
+	if f.lastSearchMode != "" {
+		t.Errorf("fulltext/hybrid SearchObjects must not run for unified mode, got mode %q", f.lastSearchMode)
+	}
+}
+
+// TestUIObjectsKnowledge exercises POST /objects/knowledge: a question renders
+// the answer partial, a backend error renders the error state, and an empty
+// question redirects back to the browser.
+func TestUIObjectsKnowledge(t *testing.T) {
+	s := func(f *fakeMemory) *Server { return &Server{cfg: Config{DefaultAgent: "memory"}, memory: f} }
+
+	t.Run("answer renders", func(t *testing.T) {
+		f := &fakeMemory{knowledgeAnswer: "Sam is a colleague.", knowledgeSession: "conv-1"}
+		e := echo.New()
+		e.POST("/objects/knowledge", s(f).uiObjectsKnowledge)
+
+		form := url.Values{}
+		form.Set("question", "who is sam?")
+		form.Set("branch", "b1")
+		req := httptest.NewRequest(http.MethodPost, "/objects/knowledge", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "Sam is a colleague.") || !strings.Contains(rec.Body.String(), "conv-1") {
+			t.Errorf("answer body = %s", rec.Body.String())
+		}
+		if f.lastKnowledgeQ != "who is sam?" || f.lastKnowledgeBr != "b1" {
+			t.Errorf("query = %q/%q, want who is sam?/b1", f.lastKnowledgeQ, f.lastKnowledgeBr)
+		}
+	})
+
+	t.Run("error renders", func(t *testing.T) {
+		f := &fakeMemory{knowledgeErr: fmt.Errorf("boom")}
+		e := echo.New()
+		e.POST("/objects/knowledge", s(f).uiObjectsKnowledge)
+
+		form := url.Values{}
+		form.Set("question", "who is sam?")
+		req := httptest.NewRequest(http.MethodPost, "/objects/knowledge", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "Could not get an answer.") {
+			t.Errorf("error body = %s", rec.Body.String())
+		}
+	})
+
+	t.Run("empty question redirects", func(t *testing.T) {
+		f := &fakeMemory{}
+		e := echo.New()
+		e.POST("/objects/knowledge", s(f).uiObjectsKnowledge)
+
+		req := httptest.NewRequest(http.MethodPost, "/objects/knowledge", strings.NewReader("question="))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/objects" {
+			t.Fatalf("status=%d location=%q, want 303 /objects", rec.Code, rec.Header().Get("Location"))
+		}
+		if f.lastKnowledgeQ != "" {
+			t.Errorf("QueryKnowledge called for empty question: %q", f.lastKnowledgeQ)
+		}
+	})
+
+	t.Run("whitespace-only question redirects", func(t *testing.T) {
+		f := &fakeMemory{}
+		e := echo.New()
+		e.POST("/objects/knowledge", s(f).uiObjectsKnowledge)
+
+		req := httptest.NewRequest(http.MethodPost, "/objects/knowledge", strings.NewReader("question=+++"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/objects" {
+			t.Fatalf("status=%d location=%q, want 303 /objects", rec.Code, rec.Header().Get("Location"))
+		}
+		if f.lastKnowledgeQ != "" {
+			t.Errorf("QueryKnowledge called for whitespace-only question: %q", f.lastKnowledgeQ)
+		}
+	})
 }
 
 func TestUIObjectUpdate(t *testing.T) {

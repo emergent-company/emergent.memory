@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -74,6 +75,42 @@ func TestRenderSessionPage(t *testing.T) {
 	}
 	if !strings.Contains(html, "&#34;failed&#34;") {
 		t.Error("tool output JSON content missing")
+	}
+}
+
+// TestRenderSessionPageAgentPromptAndToolMetadata covers the composed agent
+// instruction card (rendered once, at the top, not as a chat bubble) and the
+// tool-call id + execution duration on the tool card.
+func TestRenderSessionPageAgentPromptAndToolMetadata(t *testing.T) {
+	dur := 1200
+	items := []TimelineItem{
+		{Kind: "message", RunID: "r1", Role: "system", Content: &MessageContent{Text: "You are a careful agent."}},
+		{Kind: "message", RunID: "r1", Role: "user", Content: &MessageContent{Text: "hi"}},
+		{Kind: "tool_call", RunID: "r1", ID: "call-abc", ToolName: "web_search", ToolStatus: "completed", DurationMs: &dur,
+			ToolInput: json.RawMessage(`{"q":"x"}`), ToolOutput: json.RawMessage(`{"n":1}`)},
+	}
+	html := renderHTML(t, SessionPage(nil, sampleConversation(), groupByRun(items), nil))
+	for _, want := range []string{
+		"Agent prompt", "You are a careful agent.", "system instruction",
+		"1.2s", "#call-abc",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("session page missing %q", want)
+		}
+	}
+	// The system instruction is a card, never an assistant/system bubble.
+	if strings.Contains(html, ">System</div>") {
+		t.Error("system instruction rendered as a chat bubble")
+	}
+	// Regression: the instruction card is only rendered once per prompt. Two
+	// identical system records still yield a single card.
+	twice := []TimelineItem{
+		{Kind: "message", RunID: "r1", Role: "system", Content: &MessageContent{Text: "You are a careful agent."}},
+		{Kind: "message", RunID: "r2", Role: "system", Content: &MessageContent{Text: "You are a careful agent."}},
+	}
+	htmlTwice := renderHTML(t, SessionPage(nil, sampleConversation(), groupByRun(twice), nil))
+	if n := strings.Count(htmlTwice, "Agent prompt"); n != 1 {
+		t.Errorf("agent prompt rendered %d times, want 1", n)
 	}
 }
 

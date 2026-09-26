@@ -81,7 +81,7 @@ script seedSkillSidepanel() {
 templ skillCreateForm() {
 	@ui.Section("New skill", ui.SectionProps{
 		Margin:    "mb-6",
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 	}) {
 		<form class="flex flex-col gap-4" method="post" action="/skills">
 			@form.FormControl("skill-name", "Name", form.LabelAbove, "Lowercase letters, numbers, and dashes — e.g. summarize-email.", "", nil) {
@@ -250,7 +250,7 @@ templ skillDetailMeta(s *Skill) {
 templ skillContentBlock(s *Skill) {
 	@ui.Section("Content", ui.SectionProps{
 		Margin:    "mb-6",
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 	}) {
 		<div class="memory-md">
 			@templ.Raw(renderMarkdown(s.Content))
@@ -264,7 +264,7 @@ templ skillContentBlock(s *Skill) {
 templ skillEditForm(s *Skill) {
 	@ui.Section("Edit", ui.SectionProps{
 		Margin:    "mb-6",
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 	}) {
 		<form class="flex flex-col gap-4" method="post" action={ templ.URL("/skills/" + url.PathEscape(s.ID) + "/update") }>
 			@ui.SoftBox(ui.SoftBoxProps{Class: "flex flex-wrap items-center gap-2"}) {
@@ -295,11 +295,11 @@ templ skillEditForm(s *Skill) {
 templ skillDeleteSection(s *Skill) {
 	@ui.Section("Danger zone", ui.SectionProps{
 		Margin:    "mb-6",
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 	}) {
 		<div class="flex flex-wrap items-center justify-between gap-3">
 			<div class="flex items-center gap-3">
-				<div class="bg-error/10 text-error grid size-9 shrink-0 place-items-center rounded-lg border border-error/15">
+				<div class="bg-error/10 text-error grid size-9 shrink-0 place-items-center rounded-box border border-error/15">
 					@ui.IconSpan("lucide--trash-2", "size-4.5")
 				</div>
 				<div>

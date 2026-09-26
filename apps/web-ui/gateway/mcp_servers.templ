@@ -414,7 +414,7 @@ templ mcpServerTransportGroup(data mcpServerFormData, editing bool) {
 		@ui.Eyebrow("Transport", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
 		<div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
 			for _, t := range mcpTransportOptions {
-				<label class="flex cursor-pointer items-start gap-2 rounded-lg border border-base-content/10 bg-base-100 px-3 py-2 transition-colors hover:border-base-content/25">
+				<label class="flex cursor-pointer items-start gap-2 rounded-box border border-base-content/10 bg-base-100 px-3 py-2 transition-colors hover:border-base-content/25">
 					<input type="radio" name="type" value={ t.Value } class="radio radio-sm mt-0.5" data-mcp-transport checked?={ data.Type == t.Value || (!editing && data.Type == "" && t.Value == "stdio") }/>
 					<span class="min-w-0">
 						<span class="block font-mono text-xs font-medium">{ t.Title }</span>

@@ -48,6 +48,14 @@ func (h *AdminHandler) CreateJob(c echo.Context) error {
 		return apperror.NewBadRequest("project_id mismatch between body and X-Project-ID header")
 	}
 
+	// Enforce membership on the addressed project (issue #959). The project is
+	// sourced from the body or the X-Project-ID header, not the :projectId path,
+	// so the shared RequireProjectTokenScope/RequireProjectMember pair cannot see
+	// it; enforce the equivalent handler-level ownership check here.
+	if err := auth.RequireProjectMembership(c.Request().Context(), h.jobsService.DB(), projectID); err != nil {
+		return err
+	}
+
 	// Convert source type to string
 	sourceType := string(dto.SourceType)
 	if sourceType == "" {
@@ -171,8 +179,6 @@ func (h *AdminHandler) ListJobs(c echo.Context) error {
 // GetJob handles GET /api/admin/extraction-jobs/:jobId
 // Gets a single extraction job by ID
 func (h *AdminHandler) GetJob(c echo.Context) error {
-	user := auth.MustGetUser(c)
-
 	jobID := c.Param("jobId")
 	if jobID == "" {
 		return apperror.NewBadRequest("jobId is required")
@@ -186,9 +192,11 @@ func (h *AdminHandler) GetJob(c echo.Context) error {
 		return apperror.NewNotFound("ExtractionJob", jobID)
 	}
 
-	// Verify project access if project header is set
-	if user.ProjectID != "" && job.ProjectID != user.ProjectID {
-		return apperror.NewNotFound("ExtractionJob", jobID)
+	// Enforce membership on the job's owning project (issue #959). The project
+	// is sourced from the job record, not the :jobId path, so the shared pair
+	// cannot see it; enforce the equivalent handler-level ownership check here.
+	if err := auth.RequireProjectMembership(c.Request().Context(), h.jobsService.DB(), job.ProjectID); err != nil {
+		return err
 	}
 
 	return c.JSON(http.StatusOK, SuccessResponse(job.ToDTO()))
@@ -197,8 +205,6 @@ func (h *AdminHandler) GetJob(c echo.Context) error {
 // UpdateJob handles PATCH /api/admin/extraction-jobs/:jobId
 // Updates an extraction job
 func (h *AdminHandler) UpdateJob(c echo.Context) error {
-	user := auth.MustGetUser(c)
-
 	jobID := c.Param("jobId")
 	if jobID == "" {
 		return apperror.NewBadRequest("jobId is required")
@@ -218,9 +224,9 @@ func (h *AdminHandler) UpdateJob(c echo.Context) error {
 		return apperror.NewNotFound("ExtractionJob", jobID)
 	}
 
-	// Verify project access if project header is set
-	if user.ProjectID != "" && job.ProjectID != user.ProjectID {
-		return apperror.NewNotFound("ExtractionJob", jobID)
+	// Enforce membership on the job's owning project (issue #959).
+	if err := auth.RequireProjectMembership(c.Request().Context(), h.jobsService.DB(), job.ProjectID); err != nil {
+		return err
 	}
 
 	// Apply updates
@@ -273,8 +279,6 @@ func (h *AdminHandler) UpdateJob(c echo.Context) error {
 // DeleteJob handles DELETE /api/admin/extraction-jobs/:jobId
 // Deletes an extraction job
 func (h *AdminHandler) DeleteJob(c echo.Context) error {
-	user := auth.MustGetUser(c)
-
 	jobID := c.Param("jobId")
 	if jobID == "" {
 		return apperror.NewBadRequest("jobId is required")
@@ -289,11 +293,12 @@ func (h *AdminHandler) DeleteJob(c echo.Context) error {
 		return apperror.NewNotFound("ExtractionJob", jobID)
 	}
 
-	// Verify project access if project header is set
-	projectID := job.ProjectID
-	if user.ProjectID != "" && projectID != user.ProjectID {
-		return apperror.NewNotFound("ExtractionJob", jobID)
+	// Enforce membership on the job's owning project (issue #959).
+	if err := auth.RequireProjectMembership(c.Request().Context(), h.jobsService.DB(), job.ProjectID); err != nil {
+		return err
 	}
+
+	projectID := job.ProjectID
 
 	if err := h.jobsService.DeleteJob(c.Request().Context(), jobID, projectID); err != nil {
 		return apperror.NewBadRequest(err.Error())
@@ -305,8 +310,6 @@ func (h *AdminHandler) DeleteJob(c echo.Context) error {
 // CancelJob handles POST /api/admin/extraction-jobs/:jobId/cancel
 // Cancels a pending or running extraction job
 func (h *AdminHandler) CancelJob(c echo.Context) error {
-	user := auth.MustGetUser(c)
-
 	jobID := c.Param("jobId")
 	if jobID == "" {
 		return apperror.NewBadRequest("jobId is required")
@@ -321,9 +324,9 @@ func (h *AdminHandler) CancelJob(c echo.Context) error {
 		return apperror.NewNotFound("ExtractionJob", jobID)
 	}
 
-	// Verify project access if project header is set
-	if user.ProjectID != "" && job.ProjectID != user.ProjectID {
-		return apperror.NewNotFound("ExtractionJob", jobID)
+	// Enforce membership on the job's owning project (issue #959).
+	if err := auth.RequireProjectMembership(c.Request().Context(), h.jobsService.DB(), job.ProjectID); err != nil {
+		return err
 	}
 
 	if err := h.jobsService.CancelJob(c.Request().Context(), jobID); err != nil {
@@ -338,8 +341,6 @@ func (h *AdminHandler) CancelJob(c echo.Context) error {
 // RetryJob handles POST /api/admin/extraction-jobs/:jobId/retry
 // Retries a failed or stuck extraction job
 func (h *AdminHandler) RetryJob(c echo.Context) error {
-	user := auth.MustGetUser(c)
-
 	jobID := c.Param("jobId")
 	if jobID == "" {
 		return apperror.NewBadRequest("jobId is required")
@@ -354,11 +355,12 @@ func (h *AdminHandler) RetryJob(c echo.Context) error {
 		return apperror.NewNotFound("ExtractionJob", jobID)
 	}
 
-	// Verify project access if project header is set
-	projectID := existingJob.ProjectID
-	if user.ProjectID != "" && projectID != user.ProjectID {
-		return apperror.NewNotFound("ExtractionJob", jobID)
+	// Enforce membership on the job's owning project (issue #959).
+	if err := auth.RequireProjectMembership(c.Request().Context(), h.jobsService.DB(), existingJob.ProjectID); err != nil {
+		return err
 	}
+
+	projectID := existingJob.ProjectID
 
 	job, err := h.jobsService.RetryJob(c.Request().Context(), jobID, projectID)
 	if err != nil {
@@ -504,8 +506,6 @@ func (h *AdminHandler) BulkRetryJobs(c echo.Context) error {
 // GetLogs handles GET /api/admin/extraction-jobs/:jobId/logs
 // Gets detailed extraction logs for a job
 func (h *AdminHandler) GetLogs(c echo.Context) error {
-	user := auth.MustGetUser(c)
-
 	jobID := c.Param("jobId")
 	if jobID == "" {
 		return apperror.NewBadRequest("jobId is required")
@@ -520,9 +520,9 @@ func (h *AdminHandler) GetLogs(c echo.Context) error {
 		return apperror.NewNotFound("ExtractionJob", jobID)
 	}
 
-	// Verify project access if project header is set
-	if user.ProjectID != "" && job.ProjectID != user.ProjectID {
-		return apperror.NewNotFound("ExtractionJob", jobID)
+	// Enforce membership on the job's owning project (issue #959).
+	if err := auth.RequireProjectMembership(c.Request().Context(), h.jobsService.DB(), job.ProjectID); err != nil {
+		return err
 	}
 
 	// Get logs and summary in parallel

@@ -1639,6 +1639,11 @@ const graphObjectColumns = `id, project_id, branch_id, canonical_id, supersedes_
 	extraction_job_id, extraction_confidence, needs_review, reviewed_by, reviewed_at,
 	actor_type, actor_id, schema_version`
 
+// vectorOverfetchLimit is the candidate window fetched via the HNSW index so the
+// outer deterministic ORDER BY (distance, id) can break exact ties without
+// defeating the index.
+const vectorOverfetchLimit = 64
+
 // scanGraphObject scans a row from a raw SQL query into a GraphObject.
 // Uses JSONMap and pq.StringArray intermediaries because database/sql's rows.Scan()
 // cannot directly scan JSONB ([]uint8) into map[string]any or PostgreSQL arrays into []string.
@@ -1688,22 +1693,40 @@ type FTSSearchResult struct {
 
 // FTSSearch performs full-text search using PostgreSQL's websearch_to_tsquery.
 // Returns objects sorted by relevance (ts_rank_cd with length normalization).
+//
+// It is a convenience wrapper over FTSSearchWithFallback for callers that do
+// not need to know whether a fallback pass produced the results.
 func (r *Repository) FTSSearch(ctx context.Context, params FTSSearchParams) ([]*FTSSearchResult, error) {
-	results, err := r.ftsSearch(ctx, params, params.Query)
+	results, _, err := r.FTSSearchWithFallback(ctx, params)
+	return results, err
+}
+
+// FTSSearchWithFallback is FTSSearch with an additional fellBack signal: it is
+// true when the strict and relaxed queries matched nothing and the result set
+// came from the disjoined (OR) fallback — or, equivalently, from the relaxed
+// fallback — rather than the strict query.
+//
+// The signal matters because the Relax/Disjoin fallbacks are gated to the first
+// page only (params.Offset > 0 skips them), so a fallback result cannot promise
+// a second page: computing HasMore from a `limit+1` disjoined result set would
+// advertise a page that returns empty. Callers that surface HasMore must consult
+// fellBack before reporting more results than actually exist.
+func (r *Repository) FTSSearchWithFallback(ctx context.Context, params FTSSearchParams) ([]*FTSSearchResult, bool, error) {
+	results, err := r.ftsSearch(ctx, params, params.Query, false)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if len(results) > 0 {
-		return results, nil
+		return results, false, nil
 	}
 
-	// Only relax on the first page. FTSSearch supports offset pagination, so a
-	// later page returning zero rows means the caller has paged past every
-	// strict match, not that the strict query matched nothing. Relaxing here
-	// would refill the page with relaxed-only matches that the strict query
+	// Only relax or disjoin on the first page. FTSSearch supports offset
+	// pagination, so a later page returning zero rows means the caller has
+	// paged past every strict match, not that the strict query matched nothing.
+	// Falling back here would refill the page with matches the strict query
 	// never surfaced on earlier pages.
 	if params.Offset > 0 {
-		return results, nil
+		return results, false, nil
 	}
 
 	// A single unsatisfiable term in the strict query — typically a hyphenated
@@ -1714,20 +1737,51 @@ func (r *Repository) FTSSearch(ctx context.Context, params FTSSearchParams) ([]*
 	// represent rather than the primary recovery path. Retry once without
 	// numeric terms before reporting no results.
 	relaxed, ok := ftsquery.Relax(params.Query)
-	if !ok {
-		return results, nil
+	if ok {
+		relaxedResults, err := r.ftsSearch(ctx, params, relaxed, false)
+		if err != nil {
+			return nil, false, err
+		}
+		if len(relaxedResults) > 0 {
+			return relaxedResults, true, nil
+		}
 	}
-	return r.ftsSearch(ctx, params, relaxed)
+
+	// A natural multi-term query with no single object containing every term
+	// matches nothing under AND semantics even though each term is individually
+	// well represented (issue #996). Retry once with the terms OR-joined and
+	// ranked by ts_rank_cd, which rewards objects covering more of the terms, so
+	// recall is restored without collapsing ranking to "any one term".
+	disjoined, ok := ftsquery.Disjoin(params.Query)
+	if !ok {
+		return results, false, nil
+	}
+	disjoinedResults, err := r.ftsSearch(ctx, params, disjoined, true)
+	if err != nil {
+		return nil, false, err
+	}
+	return disjoinedResults, true, nil
 }
 
 // ftsSearch runs the lexical query for queryText. It is separate from FTSSearch
-// so that the relaxed fallback can reuse it verbatim.
-func (r *Repository) ftsSearch(ctx context.Context, params FTSSearchParams, queryText string) ([]*FTSSearchResult, error) {
+// so that the relaxed and disjoined fallbacks can reuse it verbatim. When
+// disjoin is true, queryText is a `|`-joined term disjunction and the query is
+// matched with to_tsquery (OR semantics) instead of websearch_to_tsquery (AND).
+func (r *Repository) ftsSearch(ctx context.Context, params FTSSearchParams, queryText string, disjoin bool) ([]*FTSSearchResult, error) {
 	if params.Limit <= 0 {
 		params.Limit = 20
 	}
 	if params.Limit > r.maxListLimit {
 		params.Limit = r.maxListLimit
+	}
+
+	// tsqueryFn selects the query constructor. The strict and relaxed passes use
+	// websearch_to_tsquery (AND semantics over the parsed terms); the disjoined
+	// fallback uses to_tsquery (OR semantics over an explicit `|` disjunction).
+	// Both take (config, text) and both apply the configuration's stemmer.
+	tsqueryFn := "websearch_to_tsquery"
+	if disjoin {
+		tsqueryFn = "to_tsquery"
 	}
 
 	// Build WHERE conditions.
@@ -1742,7 +1796,7 @@ func (r *Repository) ftsSearch(ctx context.Context, params FTSSearchParams, quer
 	conditions := []string{
 		"project_id = ?",
 		"supersedes_id IS NULL", // HEAD versions only
-		"(fts @@ websearch_to_tsquery('simple', ?) OR fts @@ websearch_to_tsquery('norwegian', ?))",
+		"(fts @@ " + tsqueryFn + "('simple', ?) OR fts @@ " + tsqueryFn + "('norwegian', ?))",
 	}
 	args := []any{params.ProjectID, queryText, queryText}
 
@@ -1769,8 +1823,8 @@ func (r *Repository) ftsSearch(ctx context.Context, params FTSSearchParams, quer
 	query := `
 		SELECT ` + graphObjectColumns + `,
 			GREATEST(
-				ts_rank_cd(fts, websearch_to_tsquery('simple', ?), 1),
-				ts_rank_cd(fts, websearch_to_tsquery('norwegian', ?), 1)
+				ts_rank_cd(fts, ` + tsqueryFn + `('simple', ?), 1),
+				ts_rank_cd(fts, ` + tsqueryFn + `('norwegian', ?), 1)
 			) AS rank
 		FROM kb.graph_objects
 		` + whereClause + `
@@ -3394,20 +3448,25 @@ func (r *Repository) FindSimilarObjectInBranch(
 	}
 
 	query := fmt.Sprintf(`
-		SELECT %s, (embedding_v2 <=> ?::vector) AS _dist
-		FROM kb.graph_objects
-		WHERE project_id = ? AND type = ? AND %s
-		  AND supersedes_id IS NULL AND deleted_at IS NULL
-		  AND embedding_v2 IS NOT NULL
-		  AND NOT (canonical_id = ANY(%s))
-		  AND (embedding_v2 <=> ?::vector) <= ?
+		SELECT %s, _dist
+		FROM (
+		  SELECT %s, (embedding_v2 <=> ?::vector) AS _dist
+		  FROM kb.graph_objects
+		  WHERE project_id = ? AND type = ? AND %s
+		    AND supersedes_id IS NULL AND deleted_at IS NULL
+		    AND embedding_v2 IS NOT NULL
+		    AND NOT (canonical_id = ANY(%s))
+		    AND (embedding_v2 <=> ?::vector) <= ?
+		  ORDER BY embedding_v2 <=> ?::vector
+		  LIMIT %d
+		) AS ann
 		ORDER BY _dist ASC, id ASC
 		LIMIT 1`,
-		graphObjectColumns, branchCond, excludeStr)
+		graphObjectColumns, graphObjectColumns, branchCond, excludeStr, vectorOverfetchLimit)
 
 	args := []any{vectorStr, projectID, objType}
 	args = append(args, branchArg...)
-	args = append(args, vectorStr, maxDistance)
+	args = append(args, vectorStr, maxDistance, vectorStr)
 
 	type row struct {
 		GraphObject
@@ -3491,20 +3550,27 @@ func (r *Repository) FindSimilarRelationshipInBranch(
 	query := fmt.Sprintf(`
 		SELECT id, project_id, branch_id, canonical_id, supersedes_id, version,
 		       type, src_id, dst_id, label, properties, weight,
-		       change_summary, deleted_at, created_at,
-		       (embedding <=> ?::vector) AS _dist
-		FROM kb.graph_relationships
-		WHERE project_id = ? AND src_id = ? AND dst_id = ? AND type = ? AND %s
-		  AND supersedes_id IS NULL AND deleted_at IS NULL
-		  AND embedding IS NOT NULL
-		  AND NOT (id = ANY(%s))
-		  AND (embedding <=> ?::vector) <= ?
+		       change_summary, deleted_at, created_at, _dist
+		FROM (
+		  SELECT id, project_id, branch_id, canonical_id, supersedes_id, version,
+		         type, src_id, dst_id, label, properties, weight,
+		         change_summary, deleted_at, created_at,
+		         (embedding <=> ?::vector) AS _dist
+		  FROM kb.graph_relationships
+		  WHERE project_id = ? AND src_id = ? AND dst_id = ? AND type = ? AND %s
+		    AND supersedes_id IS NULL AND deleted_at IS NULL
+		    AND embedding IS NOT NULL
+		    AND NOT (id = ANY(%s))
+		    AND (embedding <=> ?::vector) <= ?
+		  ORDER BY embedding <=> ?::vector
+		  LIMIT %d
+		) AS ann
 		ORDER BY _dist ASC, id ASC LIMIT 1`,
-		branchCond, excludeStr)
+		branchCond, excludeStr, vectorOverfetchLimit)
 
 	args := []any{vectorStr, projectID, srcCanonicalID, dstCanonicalID, relType}
 	args = append(args, branchArg...)
-	args = append(args, vectorStr, maxDistance)
+	args = append(args, vectorStr, maxDistance, vectorStr)
 
 	type relRow struct {
 		GraphRelationship

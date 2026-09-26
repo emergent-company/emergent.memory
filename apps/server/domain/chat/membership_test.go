@@ -157,3 +157,49 @@ func (s *ChatMembershipSuite) TestChatTokenProjectBindingOK() {
 		"project token addressing its own project must be 200, got %d: %s",
 		resp.StatusCode, resp.String())
 }
+
+// TestAskCrossProjectForbidden is the /api/ask fail-first reproducer: a member
+// of org A who sends org B's project id via X-Project-ID must not run an ask
+// against org B's project. Before the fix the /api/ask group applied only
+// RequireAuth + RequireAPITokenScopes, so the handler resolved the project from
+// the header and streamed B's data with no membership check (issue #913 — a
+// different route from the /api/chat group fixed in #864).
+func (s *ChatMembershipSuite) TestAskCrossProjectForbidden() {
+	projectB := s.newForeignProject()
+
+	resp := s.Client.POST("/api/ask",
+		testutil.WithAuth("e2e-test-user"), testutil.WithProjectID(projectB),
+		testutil.WithJSONBody(map[string]any{"message": "hi"}))
+	s.Require().Equal(http.StatusForbidden, resp.StatusCode,
+		"cross-project ask must be forbidden, got %d: %s", resp.StatusCode, resp.String())
+}
+
+// TestAskOwnProjectOK proves the membership derivation still admits the caller's
+// own project for /api/ask.
+func (s *ChatMembershipSuite) TestAskOwnProjectOK() {
+	resp := s.Client.POST("/api/ask",
+		testutil.WithAuth("e2e-test-user"), testutil.WithProjectID(s.ProjectID),
+		testutil.WithJSONBody(map[string]any{"message": "hi"}))
+	s.Require().NotEqual(http.StatusForbidden, resp.StatusCode,
+		"own-project ask must not be 403, got %d: %s", resp.StatusCode, resp.String())
+	s.Require().NotEqual(http.StatusUnauthorized, resp.StatusCode,
+		"own-project ask must not be 401, got %d: %s", resp.StatusCode, resp.String())
+}
+
+// TestAskTokenProjectBindingForbidden proves a project-bound emt_* token that
+// presents a different project's id via X-Project-ID is rejected 403 by the
+// shared RequireProjectTokenScope middleware on the /api/ask group.
+func (s *ChatMembershipSuite) TestAskTokenProjectBindingForbidden() {
+	projectB := s.newForeignProject()
+
+	token := "emt_test_913_ask_binding"
+	s.Require().NoError(testutil.CreateTestAPIToken(s.Ctx, s.DB(),
+		testutil.AdminUser.ID, token, []string{"chat:use"}, s.ProjectID))
+
+	resp := s.Client.POST("/api/ask",
+		testutil.WithAuth(token), testutil.WithProjectID(projectB),
+		testutil.WithJSONBody(map[string]any{"message": "hi"}))
+	s.Require().Equal(http.StatusForbidden, resp.StatusCode,
+		"project token addressing a different project via X-Project-ID must be 403, got %d: %s",
+		resp.StatusCode, resp.String())
+}
