@@ -537,6 +537,10 @@ func (r *staticResolver) ResolveFor(_ context.Context, _ string) (*ResolvedCrede
 	return r.cred, r.err
 }
 
+func (r *staticResolver) ResolveBySlug(_ context.Context, _ string) (*ResolvedCredential, error) {
+	return r.cred, r.err
+}
+
 // TestOpenAICompatibleModel_ToolSchema_ContainsResolvedPrefixedName is the schema
 // half of the bare-tool-name fix (agent-tools-in-chat-schema). The tool pool
 // resolves a bare whitelist entry (web_fetch_exa) to its prefixed pool key

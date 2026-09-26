@@ -151,7 +151,7 @@ type MemoryBackend interface {
 	ListProviderModels(ctx context.Context, provider string) ([]ProviderSupportedModel, error)
 	ListPricing(ctx context.Context) ([]ProviderPricing, error)
 	ListProjectPricingOverrides(ctx context.Context) ([]ProjectCustomPricing, error)
-	UpsertProjectPricingOverride(ctx context.Context, provider, model string, rates modelPriceRates) (*ProjectCustomPricing, error)
+	UpsertProjectPricingOverride(ctx context.Context, provider, providerSlug, model string, rates modelPriceRates) (*ProjectCustomPricing, error)
 	DeleteProjectPricingOverride(ctx context.Context, provider, model string) error
 	UpsertProjectProviderConfig(ctx context.Context, provider string, in ProviderConfigInput) (*ProjectProviderConfig, error)
 	DeleteProjectProviderConfig(ctx context.Context, provider string) error

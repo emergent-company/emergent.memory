@@ -23,10 +23,10 @@ func NewUsageTrackerAdapter(usage *UsageService, log *slog.Logger) *UsageTracker
 }
 
 // WrapModel satisfies adk.ModelWrapper.
-// The provider parameter is one of "google" or "google-vertex" as a plain string
-// (matching ProviderType string values) to avoid leaking domain types into pkg/adk.
-func (a *UsageTrackerAdapter) WrapModel(inner adkmodel.LLM, provider string) adkmodel.LLM {
-	return NewTrackingModel(inner, a.usage, ProviderType(provider), a.log)
+// The slug and dialect parameters are plain strings (matching ProviderSlug /
+// ProviderDialect string values) to avoid leaking domain types into pkg/adk.
+func (a *UsageTrackerAdapter) WrapModel(inner adkmodel.LLM, slug, dialect string) adkmodel.LLM {
+	return NewTrackingModel(inner, a.usage, ProviderSlug(slug), ProviderDialect(dialect), a.log)
 }
 
 // Ensure UsageTrackerAdapter implements adk.ModelWrapper at compile time.

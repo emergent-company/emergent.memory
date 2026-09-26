@@ -57,6 +57,7 @@ const (
 type ProviderConfig struct {
 	ID              string    `json:"id"`
 	Provider        string    `json:"provider"`
+	Slug            string    `json:"slug"`
 	GCPProject      string    `json:"gcpProject,omitempty"`
 	Location        string    `json:"location,omitempty"`
 	BaseURL         string    `json:"baseUrl,omitempty"`
@@ -72,6 +73,7 @@ type ProjectProviderConfig struct {
 	ID              string    `json:"id"`
 	ProjectID       string    `json:"projectId"`
 	Provider        string    `json:"provider"`
+	Slug            string    `json:"slug"`
 	GCPProject      string    `json:"gcpProject,omitempty"`
 	Location        string    `json:"location,omitempty"`
 	BaseURL         string    `json:"baseUrl,omitempty"`
@@ -166,6 +168,9 @@ type TestProviderResponse struct {
 // For openai-compatible: set APIKey, BaseURL, GenerativeModel.
 // GenerativeModel and EmbeddingModel are auto-selected from the catalog if omitted.
 type UpsertProviderConfigRequest struct {
+	// Slug optionally names the provider instance. When empty it defaults to
+	// the dialect name; a save with an existing slug updates in place.
+	Slug               string `json:"slug,omitempty"`
 	APIKey             string `json:"apiKey,omitempty"`
 	ServiceAccountJSON string `json:"serviceAccountJson,omitempty"`
 	GCPProject         string `json:"gcpProject,omitempty"`

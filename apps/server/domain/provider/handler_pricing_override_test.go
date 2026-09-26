@@ -198,7 +198,7 @@ func TestPricingOverrides_DeleteRemovesOverride(t *testing.T) {
 	require.NoError(t, h.DeleteProjectPricingOverride(c))
 	assert.Equal(t, http.StatusOK, rec.Code)
 
-	got, err := repo.GetProjectCustomPricing(ctx, projectA, provider.ProviderDeepSeek, "deepseek-v4-pro")
+	got, err := repo.GetProjectCustomPricing(ctx, projectA, string(provider.ProviderDeepSeek), "deepseek-v4-pro")
 	require.NoError(t, err)
 	assert.Nil(t, got, "override must be removed after delete")
 }
@@ -223,7 +223,7 @@ func TestPricingOverrides_CrossProjectForbidden(t *testing.T) {
 
 	// The override must NOT have been persisted.
 	repo := provider.NewRepository(testDB.GetDB(), slog.Default())
-	got, getErr := repo.GetProjectCustomPricing(context.Background(), projectB, provider.ProviderOpenAI, "gpt-4o")
+	got, getErr := repo.GetProjectCustomPricing(context.Background(), projectB, string(provider.ProviderOpenAI), "gpt-4o")
 	require.NoError(t, getErr)
 	assert.Nil(t, got, "cross-project upsert must not modify pricing")
 }

@@ -120,7 +120,12 @@ templ usageModelRow(rowID string, r UsageSummaryRow) {
 			<span class="font-mono text-sm">{ r.Model }</span>
 		}
 		@table.TableCell("", nil) {
-			<span class="text-base-content/60 text-sm">{ r.Provider }</span>
+			<span class="text-base-content/60 text-sm" data-testid={ "usage-provider-" + usageInstanceSlug(r) }>
+				{ usageInstanceSlug(r) }
+				if usageDialectDistinct(r) {
+					<span class="ml-1 text-base-content/40 text-xs">{ r.Provider }</span>
+				}
+			</span>
 		}
 		@table.TableCell("", nil) {
 			<span class="text-sm">{ compactNum(modelTokenCount(r)) }</span>
