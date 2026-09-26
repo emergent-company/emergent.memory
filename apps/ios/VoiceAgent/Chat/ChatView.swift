@@ -49,6 +49,7 @@ struct ChatView: View {
                     }
 
                     trailingActivity()
+                    surfaceCards()
 
                     Color.clear
                         .frame(height: 1)
@@ -200,6 +201,33 @@ struct ChatView: View {
             }
         }
         .padding(.leading, 1 * .grid)
+    }
+
+    // MARK: - A2UI surfaces
+
+    /// Live structured-UI surfaces streamed by the agent, rendered as native
+    /// SwiftUI cards. Each component's actions round-trip over `lk.chat.decision`.
+    @ViewBuilder
+    private func surfaceCards() -> some View {
+        ForEach(store.surfaces.filter(\.hasContent)) { surface in
+            ForEach(surface.components) { component in
+                A2UIComponentCard(
+                    component: component,
+                    submittedResponse: surface.submittedActions[component.id]
+                ) { action in
+                    submitSurfaceAction(surface, action)
+                }
+            }
+        }
+    }
+
+    private func submitSurfaceAction(_ surface: ChatUISurface, _ action: ChatUIAction) {
+        store.submitSurfaceAction(
+            surfaceId: surface.id,
+            componentId: action.componentId,
+            response: action.response
+        )
+        Task { await controller.sendDecision(.surfaceAction(surfaceId: surface.id, action: action)) }
     }
 
     // MARK: - Decisions
