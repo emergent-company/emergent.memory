@@ -69,12 +69,13 @@ func selectCounts(errorColumn string) string {
 
 // JobMetrics returns metrics for all job queues
 // @Summary      Get job queue metrics
-// @Description  Returns processing pipeline metrics for all job queues. Project-scoped tokens see only their project's data. Account-level tokens see all projects (optionally filtered by project_id query param).
+// @Description  Returns processing pipeline metrics. The effective project is resolved server-side (project token binding or X-Project-ID header) and validated against membership; project_id is a filter only and cannot widen access. An instance-wide aggregate (no project context) requires superadmin_full.
 // @Tags         metrics
 // @Produce      json
-// @Param        project_id query string false "Filter by project ID (account-level tokens only; ignored for project-scoped tokens)"
+// @Param        project_id query string false "Filter by project ID (must match the caller's project, or any project for a superadmin_full aggregate)"
 // @Success      200 {object} AllJobMetrics "Job queue metrics"
 // @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden"
 // @Router       /api/metrics/jobs [get]
 // @Security     bearerAuth
 func (h *MetricsHandler) JobMetrics(c echo.Context) error {
@@ -82,16 +83,43 @@ func (h *MetricsHandler) JobMetrics(c echo.Context) error {
 
 	ctx := c.Request().Context()
 
-	// Project-scoped tokens: enforce their bound project — cannot be overridden.
-	// Account-level tokens/OAuth: use optional query param.
-	projectID := c.QueryParam("project_id")
-	if user.APITokenProjectID != "" {
-		projectID = user.APITokenProjectID
-	}
+	// Resolve the effective project server-side. RequireAuth normalises the
+	// project-scoped token binding and the X-Project-ID header onto
+	// user.ProjectID, and RequireProjectMember has already validated the
+	// caller's membership in that project's owning org. A client-supplied
+	// ?project_id is ONLY a filter and can never widen access (issue #994
+	// mechanism 3/4).
+	serverProject := user.ProjectID
+	filterProject := c.QueryParam("project_id")
 
-	scope := "account"
-	if projectID != "" {
-		scope = "project"
+	scope := "project"
+	projectID := serverProject
+
+	switch {
+	case serverProject != "":
+		// Project-scoped caller: a filter for a different project is refused.
+		if filterProject != "" && filterProject != serverProject {
+			return apperror.NewForbidden("project_id filter does not match the caller's project")
+		}
+	default:
+		// No server-side project context: this is an instance-wide aggregate.
+		// It is a superadmin_full-only surface, so a client-supplied ?project_id
+		// cannot smuggle a project read past the membership gate.
+		isSuperadmin, err := auth.IsSuperadminFull(ctx, h.db)
+		if err != nil {
+			return err
+		}
+		if !isSuperadmin {
+			return apperror.NewForbidden("superadmin privilege required")
+		}
+		// A superadmin may filter the aggregate to a single project.
+		if filterProject != "" {
+			projectID = filterProject
+			scope = "project"
+		} else {
+			projectID = ""
+			scope = "account"
+		}
 	}
 
 	queues := []struct {
@@ -214,11 +242,12 @@ func (h *MetricsHandler) getQueueMetrics(ctx context.Context, name, projectID st
 
 // SchedulerMetrics returns metrics for scheduled tasks
 // @Summary      Get scheduler metrics
-// @Description  Returns metrics for scheduled background tasks
+// @Description  Returns metrics for scheduled background tasks (instance-wide; superadmin_full only)
 // @Tags         metrics
 // @Produce      json
 // @Success      200 {object} map[string]interface{} "Scheduler metrics"
 // @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden"
 // @Router       /api/metrics/scheduler [get]
 // @Security     bearerAuth
 func (h *MetricsHandler) SchedulerMetrics(c echo.Context) error {
