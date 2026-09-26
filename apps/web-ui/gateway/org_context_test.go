@@ -963,3 +963,37 @@ func TestUIOrgSettingsDangerZoneNonAdmin(t *testing.T) {
 		t.Error("non-admin danger zone missing the grounded note")
 	}
 }
+
+// TestOrgPageRenderSingleAccessTreeFetch asserts each org-scoped render — the
+// landing, members, and the three Settings hub sections — performs exactly ONE
+// GetOrgsAndProjects call: the access tree is threaded once per request (see
+// orgAccessTree) and shared by the page data and page()'s sidebar gating,
+// instead of being fetched by both call sites.
+func TestOrgPageRenderSingleAccessTreeFetch(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+	}{
+		{"landing", "/orgs/o1"},
+		{"members", "/orgs/o1/members"},
+		{"settings", "/orgs/o1/settings"},
+		{"settings-general", "/orgs/o1/settings/general"},
+		{"settings-danger-zone", "/orgs/o1/settings/danger-zone"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeMemory{
+				orgs:            []Org{{ID: "o1", Name: "Acme"}},
+				orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin"}},
+			}
+			s := &Server{cfg: sessionCfg(), memory: f}
+			rec := orgGet(t, orgContextUIServer(s), tc.path)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET %s = %d, want 200", tc.path, rec.Code)
+			}
+			if f.orgsAndProjectsCalls != 1 {
+				t.Errorf("GET %s performed %d GetOrgsAndProjects calls, want 1", tc.path, f.orgsAndProjectsCalls)
+			}
+		})
+	}
+}

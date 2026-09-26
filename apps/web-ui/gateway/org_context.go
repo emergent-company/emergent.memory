@@ -41,15 +41,15 @@ type orgPageData struct {
 // orgMembersPageData is the payload for OrgMembersPage: the active org's
 // members (OrgMemberDto from GET /api/orgs/{id}/members) plus PRG flash
 // feedback (the ?invited= success flash from the org-invite flow). The page is
-// org_admin-gated (it exposes whole-org PII), so IsOrgAdmin drives the Members
-// sidebar entry's visibility.
+// org_admin-gated (it exposes whole-org PII), but the Members sidebar entry's
+// visibility is driven by page()'s org-nav builder (orgSidebarGroups), not by
+// this payload — the members page data carries no role state.
 type orgMembersPageData struct {
-	Org        *Org
-	Members    []OrgMemberDto
-	LoadErr    error
-	FlashMsg   string
-	FlashErr   error
-	IsOrgAdmin bool
+	Org      *Org
+	Members  []OrgMemberDto
+	LoadErr  error
+	FlashMsg string
+	FlashErr error
 }
 
 // orgInvitePageData is the payload for OrgInvitePage (GET /orgs/:id/invite):
@@ -132,10 +132,11 @@ func (s *Server) uiOrg(c echo.Context) error {
 	}
 	projects, err := s.memory.ListProjectsIncludingPending(c.Request().Context())
 	captureError(err)
-	// The org access tree supplies the acting user's orgs with roles (the same
-	// fetch the orgs/members pages back on): candidates for the transfer
-	// destination picker and the per-row Transfer-action gating.
-	tree, err := s.memory.GetOrgsAndProjects(c.Request().Context())
+	// The org access tree supplies the acting user's orgs with roles:
+	// candidates for the transfer destination picker and the per-row
+	// Transfer-action gating. Threaded once per request (see orgAccessTree) and
+	// shared with page()'s sidebar gating.
+	tree, err := s.orgAccessTree(c)
 	captureError(err)
 	var mine []ProjectRef
 	for _, p := range projects {
@@ -188,16 +189,48 @@ func isOrgAdmin(tree []OrgWithProjectsDto, orgID string) bool {
 	return orgRoleFor(tree, orgID) == "org_admin"
 }
 
-// orgAdminForCaller fetches the caller's org access tree and reports whether
-// they are org_admin of orgID. Best-effort: a failed fetch returns false, which
-// hides admin affordances rather than surfacing an error (the same degrade the
-// transfer affordance already relies on).
-func (s *Server) orgAdminForCaller(ctx context.Context, orgID string) bool {
-	tree, err := s.memory.GetOrgsAndProjects(ctx)
-	if err != nil {
-		captureError(err)
-		return false
+// orgTreeCtxKey is the request-context key caching the caller's org→project
+// access tree for one request, so the page data and the sidebar share a single
+// GetOrgsAndProjects evaluation instead of re-fetching it.
+type orgTreeCtxKey struct{}
+
+// withOrgTree returns a context carrying the caller's access tree, scoped to
+// one request.
+func withOrgTree(ctx context.Context, tree []OrgWithProjectsDto) context.Context {
+	return context.WithValue(ctx, orgTreeCtxKey{}, tree)
+}
+
+// orgTreeFrom returns the access tree cached in ctx, if one was computed for
+// this request.
+func orgTreeFrom(ctx context.Context) ([]OrgWithProjectsDto, bool) {
+	tree, ok := ctx.Value(orgTreeCtxKey{}).([]OrgWithProjectsDto)
+	return tree, ok
+}
+
+// orgAccessTree returns the caller's org→project access tree, computing it once
+// per request and caching it in the request context so every consumer of a
+// render — the org landing's transfer/role derivation, the members-page revoke
+// gate, the settings write controls, and page()'s sidebar gating — reads the
+// same single evaluation instead of re-fetching GetOrgsAndProjects. A failed
+// fetch yields an empty tree (fail closed) and returns the error for the caller
+// to capture or surface.
+func (s *Server) orgAccessTree(c echo.Context) ([]OrgWithProjectsDto, error) {
+	if tree, ok := orgTreeFrom(c.Request().Context()); ok {
+		return tree, nil
 	}
+	tree, err := s.memory.GetOrgsAndProjects(c.Request().Context())
+	c.SetRequest(c.Request().WithContext(withOrgTree(c.Request().Context(), tree)))
+	return tree, err
+}
+
+// orgAdminForCaller reports whether the caller is org_admin of orgID per the
+// request's access tree (see orgAccessTree). Best-effort: a failed fetch yields
+// an empty tree, which reports false — hiding admin affordances rather than
+// surfacing an error (the same degrade the transfer affordance already relies
+// on).
+func (s *Server) orgAdminForCaller(c echo.Context, orgID string) bool {
+	tree, err := s.orgAccessTree(c)
+	captureError(err)
 	return isOrgAdmin(tree, orgID)
 }
 
@@ -265,7 +298,6 @@ func (s *Server) uiOrgMembers(c echo.Context) error {
 	}
 	data.Org = org
 	data.Members = members
-	data.IsOrgAdmin = s.orgAdminForCaller(c.Request().Context(), org.ID)
 	return s.page(c, pageTitle("Members"), OrgMembersPage(data))
 }
 
@@ -328,7 +360,7 @@ func (s *Server) uiOrgSettings(c echo.Context) error {
 	if c.QueryParam("updated") != "" {
 		flashMsg = "Tool setting updated."
 	}
-	return s.page(c, pageTitle("Settings"), OrgSettingsPage(orgSettingsPageData{Org: org, Settings: settings, FlashMsg: flashMsg, FlashErr: flashError(c), IsOrgAdmin: s.orgAdminForCaller(c.Request().Context(), org.ID)}))
+	return s.page(c, pageTitle("Settings"), OrgSettingsPage(orgSettingsPageData{Org: org, Settings: settings, FlashMsg: flashMsg, FlashErr: flashError(c), IsOrgAdmin: s.orgAdminForCaller(c, org.ID)}))
 }
 
 // uiOrgSettingsDangerZone renders the Danger zone section of the active org's
@@ -340,7 +372,7 @@ func (s *Server) uiOrgSettingsDangerZone(c echo.Context) error {
 	if err != nil {
 		return s.page(c, pageTitle("Settings"), OrgSettingsDangerZonePage(orgSettingsDangerZonePageData{LoadErr: err}))
 	}
-	return s.page(c, pageTitle("Settings"), OrgSettingsDangerZonePage(orgSettingsDangerZonePageData{Org: org, IsOrgAdmin: s.orgAdminForCaller(c.Request().Context(), org.ID)}))
+	return s.page(c, pageTitle("Settings"), OrgSettingsDangerZonePage(orgSettingsDangerZonePageData{Org: org, IsOrgAdmin: s.orgAdminForCaller(c, org.ID)}))
 }
 
 // uiOrgSettingsGeneral renders the General section of the active org's Settings
@@ -355,7 +387,7 @@ func (s *Server) uiOrgSettingsGeneral(c echo.Context) error {
 	if c.QueryParam("renamed") != "" {
 		flashMsg = "Organization renamed."
 	}
-	return s.page(c, pageTitle("Settings"), OrgSettingsGeneralPage(orgSettingsGeneralPageData{Org: org, FlashMsg: flashMsg, FlashErr: flashError(c), IsOrgAdmin: s.orgAdminForCaller(c.Request().Context(), org.ID)}))
+	return s.page(c, pageTitle("Settings"), OrgSettingsGeneralPage(orgSettingsGeneralPageData{Org: org, FlashMsg: flashMsg, FlashErr: flashError(c), IsOrgAdmin: s.orgAdminForCaller(c, org.ID)}))
 }
 
 // uiOrgRename renames the org (POST /orgs/:id/rename; form field name). The org
