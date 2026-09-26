@@ -40,15 +40,17 @@ func newSQLMockDB(t *testing.T) (*bun.DB, sqlmock.Sqlmock) {
 	return bun.NewDB(sqldb, pgdialect.New()), mock
 }
 
-// tracingEnabledConfig returns a config with OTel tracing enabled.
+// tracingEnabledConfig returns a config with the tracing feature and OTel
+// export both enabled — the only combination that registers the hook.
 func tracingEnabledConfig() *config.Config {
 	return &config.Config{
 		Otel:     config.OtelConfig{ExporterEndpoint: "http://localhost:4318"},
+		Features: config.FeatureSet{Tracing: true},
 		Database: config.DatabaseConfig{Database: "testdb"},
 	}
 }
 
-// spanByStatus returns the span with the given status code, or nil.
+// spanWithName returns the span with the given name, or nil.
 func spanWithName(spans []sdktrace.ReadOnlySpan, name string) sdktrace.ReadOnlySpan {
 	for _, s := range spans {
 		if s.Name() == name {
@@ -85,6 +87,34 @@ func TestTracingHook_Disabled_NoSpans(t *testing.T) {
 
 	if got := len(rec.Ended()); got != 0 {
 		t.Fatalf("expected 0 spans when tracing disabled, got %d", got)
+	}
+}
+
+// TestTracingHook_FeatureDisabled_NoSpans guards the FEATURE_TRACING gate: even
+// with an OTLP endpoint configured, no hook is registered when the tracing
+// feature is off, because the module that installs the TracerProvider is not
+// loaded. Registering anyway would create no-op spans on every query.
+func TestTracingHook_FeatureDisabled_NoSpans(t *testing.T) {
+	rec := setupTestTracer(t)
+	db, mock := newSQLMockDB(t)
+
+	addTracingHook(db, &config.Config{
+		Otel:     config.OtelConfig{ExporterEndpoint: "http://localhost:4318"},
+		Features: config.FeatureSet{Tracing: false},
+		Database: config.DatabaseConfig{Database: "testdb"},
+	})
+
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT 1")).
+		WillReturnRows(sqlmock.NewRows([]string{"?column?"}).AddRow(1))
+
+	rows, err := db.QueryContext(context.Background(), "SELECT 1")
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	rows.Close()
+
+	if got := len(rec.Ended()); got != 0 {
+		t.Fatalf("expected 0 spans when FEATURE_TRACING is off, got %d", got)
 	}
 }
 
