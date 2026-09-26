@@ -5,6 +5,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/emergent-company/emergent.memory/domain/superadmin"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
@@ -12,11 +13,34 @@ import (
 // Handler handles HTTP requests for blueprints
 type Handler struct {
 	svc *Service
+
+	// superadmin gates writes to the platform-global blueprint catalogue
+	// (project_id IS NULL); nil when the superadmin module is absent.
+	superadmin *superadmin.Repository
 }
 
 // NewHandler creates a new blueprints handler
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc}
+func NewHandler(svc *Service, superadmin *superadmin.Repository) *Handler {
+	return &Handler{svc: svc, superadmin: superadmin}
+}
+
+// requireSuperadminFull denies the request unless the authenticated user holds
+// an active superadmin_full grant. A nil superadmin module (feature disabled)
+// fails closed: the absence of the dependency is not permission, so the request
+// is denied rather than let through.
+func (h *Handler) requireSuperadminFull(c echo.Context) error {
+	if h.superadmin == nil {
+		return apperror.ErrForbidden
+	}
+	user := auth.MustGetUser(c)
+	ok, err := h.superadmin.IsSuperadminFull(c.Request().Context(), user.ID)
+	if err != nil {
+		return apperror.NewInternal("failed to check superadmin status", err)
+	}
+	if !ok {
+		return apperror.ErrForbidden
+	}
+	return nil
 }
 
 // CreateBlueprint handles POST /api/blueprints
@@ -47,6 +71,15 @@ func (h *Handler) CreateBlueprint(c echo.Context) error {
 	projectID := user.ProjectID
 	if req.ProjectID == nil && projectID != "" {
 		req.ProjectID = &projectID
+	}
+
+	// A global-scope creation (project_id IS NULL) is a write to the
+	// platform-global catalogue and requires superadmin_full; a project member
+	// may only author project-private drafts (issue #1021).
+	if req.ProjectID == nil {
+		if err := h.requireSuperadminFull(c); err != nil {
+			return err
+		}
 	}
 
 	bp, err := h.svc.CreateBlueprint(c.Request().Context(), &req)
@@ -169,6 +202,19 @@ func (h *Handler) PublishBlueprint(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("id is required")
 	}
 
+	// Publishing a global blueprint is a platform-global catalogue write
+	// (superadmin_full); publishing the caller's own private draft stays
+	// project-tier and unchanged (issue #1021).
+	target, err := h.svc.GetBlueprint(c.Request().Context(), user.ProjectID, id)
+	if err != nil {
+		return err
+	}
+	if target.ProjectID == nil {
+		if err := h.requireSuperadminFull(c); err != nil {
+			return err
+		}
+	}
+
 	bp, err := h.svc.PublishBlueprint(c.Request().Context(), user.ProjectID, id)
 	if err != nil {
 		return err
@@ -196,6 +242,19 @@ func (h *Handler) DeprecateBlueprint(c echo.Context) error {
 	id := c.Param("id")
 	if id == "" {
 		return apperror.ErrBadRequest.WithMessage("id is required")
+	}
+
+	// Deprecating a global blueprint is a platform-global catalogue write
+	// (superadmin_full); deprecating the caller's own private blueprint stays
+	// project-tier and unchanged (issue #1021).
+	target, err := h.svc.GetBlueprint(c.Request().Context(), user.ProjectID, id)
+	if err != nil {
+		return err
+	}
+	if target.ProjectID == nil {
+		if err := h.requireSuperadminFull(c); err != nil {
+			return err
+		}
 	}
 
 	bp, err := h.svc.DeprecateBlueprint(c.Request().Context(), user.ProjectID, id)
@@ -233,6 +292,16 @@ func (h *Handler) NewVersion(c echo.Context) error {
 	var req NewVersionRequest
 	if err := c.Bind(&req); err != nil {
 		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	// Forking a blueprint with no project context clones it as a NEW global
+	// version — a platform-global catalogue write requiring superadmin_full.
+	// With a project context the clone is project-private (the documented
+	// "fork a version" flow) and unchanged (issue #1021).
+	if user.ProjectID == "" {
+		if err := h.requireSuperadminFull(c); err != nil {
+			return err
+		}
 	}
 
 	bp, err := h.svc.NewVersion(c.Request().Context(), user.ProjectID, id, req.Version)
