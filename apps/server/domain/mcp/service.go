@@ -1492,6 +1492,12 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 	})
 
+	// Session todo tools — session-scoped, ownership enforced at the data-access
+	// layer via the shared sessiontodos.SessionAccessible predicate (see
+	// session_todo_tools.go). Registered here so they dispatch through the same
+	// ExecuteTool switch as every other tool.
+	tools = append(tools, sessionTodoToolDefinitions()...)
+
 	// Apply RequiredScope from the central static map and the agent-tool map to
 	// any tool that doesn't already declare one. Tools in dynamic *_tools.go
 	// files set RequiredScope directly; this covers the static core tools and
@@ -2068,6 +2074,10 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 		return s.executeRestoreEntity(ctx, projectID, args)
 	case "session-get-messages":
 		return s.executeGetSessionMessages(ctx, projectID, args)
+	case "session-todo-list":
+		return s.executeSessionTodoList(ctx, projectID, args)
+	case "session-todo-update":
+		return s.executeSessionTodoUpdate(ctx, projectID, args)
 	case "graph-branch-list":
 		return s.executeGraphBranchList(ctx, projectID)
 	case "graph-branch-create":
