@@ -305,34 +305,35 @@ type fakeMemory struct {
 	modelConfig            *ProjectModelConfig // returned by GetProjectModelConfig
 	lastModelConfig        *ProjectModelConfig // last UpsertProjectModelConfig
 
-	orgs               []Org                     // returned by ListOrgs
-	createdOrgs        []Org                     // every CreateOrg request, in order
-	createOrgID        int                       // id counter for created orgs
-	createOrgErr       error                     // failure for CreateOrg
-	getOrgErr          error                     // failure for GetOrg
-	updateOrgErr       error                     // failure for UpdateOrg
-	renamedOrgID       string                    // last org id passed to UpdateOrg
-	renamedOrgName     string                    // last name passed to UpdateOrg
-	deletedOrgID       string                    // last org id passed to DeleteOrg
-	deleteOrgErr       error                     // failure for DeleteOrg
-	deletedProjectIDs  []string                  // project ids passed to DeleteProject, in order
-	deleteProjectErr   error                     // failure for DeleteProject
-	restoredProjectIDs []string                  // project ids passed to RestoreProject, in order
-	restoreProjectErr  error                     // failure for RestoreProject
-	transferCount      int                       // number of TransferProject calls
-	transferredID      string                    // last project id passed to TransferProject
-	transferredToOrg   string                    // last destination org id passed to TransferProject
-	transferProjectErr error                     // failure for TransferProject
-	orgMembers         []OrgMemberDto            // returned by ListOrgMembers
-	orgToolSettings    []OrgToolSettingDto       // returned by ListOrgToolSettings
-	toolSettingErr     error                     // failure for any org tool-setting method
-	toolSettingOrg     string                    // last org id passed to Upsert/DeleteOrgToolSetting
-	toolSettingTool    string                    // last tool name passed to Upsert/DeleteOrgToolSetting
-	toolSettingIn      UpsertOrgToolSettingInput // last input passed to UpsertOrgToolSetting
-	orgsAndProjects    []OrgWithProjectsDto      // returned by GetOrgsAndProjects
-	projects           []ProjectRef              // returned by ListProjects
-	createdProjects    []ProjectRef              // every CreateProject request, in order
-	createProjectID    int                       // id counter for created projects
+	orgs                 []Org                     // returned by ListOrgs
+	createdOrgs          []Org                     // every CreateOrg request, in order
+	createOrgID          int                       // id counter for created orgs
+	createOrgErr         error                     // failure for CreateOrg
+	getOrgErr            error                     // failure for GetOrg
+	updateOrgErr         error                     // failure for UpdateOrg
+	renamedOrgID         string                    // last org id passed to UpdateOrg
+	renamedOrgName       string                    // last name passed to UpdateOrg
+	deletedOrgID         string                    // last org id passed to DeleteOrg
+	deleteOrgErr         error                     // failure for DeleteOrg
+	deletedProjectIDs    []string                  // project ids passed to DeleteProject, in order
+	deleteProjectErr     error                     // failure for DeleteProject
+	restoredProjectIDs   []string                  // project ids passed to RestoreProject, in order
+	restoreProjectErr    error                     // failure for RestoreProject
+	transferCount        int                       // number of TransferProject calls
+	transferredID        string                    // last project id passed to TransferProject
+	transferredToOrg     string                    // last destination org id passed to TransferProject
+	transferProjectErr   error                     // failure for TransferProject
+	orgMembers           []OrgMemberDto            // returned by ListOrgMembers
+	orgToolSettings      []OrgToolSettingDto       // returned by ListOrgToolSettings
+	toolSettingErr       error                     // failure for any org tool-setting method
+	toolSettingOrg       string                    // last org id passed to Upsert/DeleteOrgToolSetting
+	toolSettingTool      string                    // last tool name passed to Upsert/DeleteOrgToolSetting
+	toolSettingIn        UpsertOrgToolSettingInput // last input passed to UpsertOrgToolSetting
+	orgsAndProjects      []OrgWithProjectsDto      // returned by GetOrgsAndProjects
+	orgsAndProjectsCalls int                       // number of GetOrgsAndProjects calls
+	projects             []ProjectRef              // returned by ListProjects
+	createdProjects      []ProjectRef              // every CreateProject request, in order
+	createProjectID      int                       // id counter for created projects
 
 	members           []ProjectMemberDto    // returned by ListMembers
 	removedMember     string                // last user id passed to RemoveMember
@@ -2496,6 +2497,7 @@ func (f *fakeMemory) CreateOrg(ctx context.Context, name string) (*Org, error) {
 }
 
 func (f *fakeMemory) GetOrgsAndProjects(ctx context.Context) ([]OrgWithProjectsDto, error) {
+	f.orgsAndProjectsCalls++
 	return f.orgsAndProjects, nil
 }
 

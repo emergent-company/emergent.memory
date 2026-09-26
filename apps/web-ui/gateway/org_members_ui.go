@@ -107,13 +107,12 @@ type invitationsPageData struct {
 // "Create organization" action pointing at /orgs/new. ?ok=1 surfaces a
 // create-org success flash.
 func (s *Server) uiOrgs(c echo.Context) error {
-	ctx := c.Request().Context()
 	data := orgsPageData{}
 	if c.QueryParam("ok") != "" {
 		data.FlashMsg = "Organization created."
 	}
 	data.FlashErr = flashError(c)
-	orgs, err := s.memory.GetOrgsAndProjects(ctx)
+	orgs, err := s.orgAccessTree(c)
 	if err != nil {
 		data.LoadErr = err
 	} else {
@@ -148,7 +147,7 @@ func (s *Server) uiMembers(c echo.Context) error {
 	data.FlashErr = flashError(c)
 	if pr, ok := s.activeProjectRef(ctx); ok {
 		data.ProjectName = pr.Name
-		data.CanRevokeInvite = s.orgAdminForCaller(ctx, pr.OrgID)
+		data.CanRevokeInvite = s.orgAdminForCaller(c, pr.OrgID)
 	}
 	members, err := s.memory.ListMembers(ctx)
 	if err != nil {
