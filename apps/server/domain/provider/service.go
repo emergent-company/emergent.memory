@@ -13,6 +13,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/crypto"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/modelref"
 )
 
 // ResolvedCredential holds the decrypted credential material and metadata
@@ -192,6 +193,49 @@ func (s *CredentialService) ResolveFor(ctx context.Context, provider string) (*R
 	return s.Resolve(ctx, ProviderType(provider))
 }
 
+// ResolveBySlug resolves credentials for a specific provider instance (slug).
+// Returns nil, nil when no project context is present, and an error when the
+// project has no instance with that slug.
+func (s *CredentialService) ResolveBySlug(ctx context.Context, slug ProviderSlug) (*ResolvedCredential, error) {
+	projectID := auth.ProjectIDFromContext(ctx)
+	if projectID == "" {
+		return nil, nil // no project context — env-var callers handle this
+	}
+	cfg, err := s.repo.GetProjectProviderConfigBySlug(ctx, projectID, slug)
+	if err != nil {
+		return nil, err
+	}
+	if cfg == nil {
+		return nil, fmt.Errorf("no %s provider config found for project %s — configure it with `memory provider configure-project`", slug, projectID)
+	}
+	return s.decryptProjectConfig(cfg)
+}
+
+// ResolveByRef resolves credentials for a structured model reference. It is
+// slug-first: the reference's provider is looked up as an instance slug, and if
+// no such instance exists but the value names a dialect, it falls back to that
+// dialect's default instance (legacy compatibility).
+func (s *CredentialService) ResolveByRef(ctx context.Context, ref modelref.Ref) (*ResolvedCredential, error) {
+	if ref.Provider == "" {
+		return nil, fmt.Errorf("model reference has no provider")
+	}
+	projectID := auth.ProjectIDFromContext(ctx)
+	if projectID == "" {
+		return nil, nil // no project context — env-var callers handle this
+	}
+	cfg, err := s.repo.GetProjectProviderConfigBySlug(ctx, projectID, ProviderSlug(ref.Provider))
+	if err != nil {
+		return nil, err
+	}
+	if cfg != nil {
+		return s.decryptProjectConfig(cfg)
+	}
+	if isDialectName(ref.Provider) {
+		return s.Resolve(ctx, ProviderType(ref.Provider))
+	}
+	return nil, fmt.Errorf("no provider instance %q configured for project %s", ref.Provider, projectID)
+}
+
 // ResolveAny attempts to resolve the best available credential for the request
 // context. Tries project-level configs in order: DeepSeek → OpenAI → VertexAI → GoogleAI.
 // Returns nil, nil when no project context is present.
@@ -253,14 +297,15 @@ func (s *CredentialService) DefaultGenerativeModel(ctx context.Context, projectI
 			continue
 		}
 		if cred != nil && cred.GenerativeModel != "" {
-			return prefixedGenerativeModelName(cred.Provider, cred.GenerativeModel), nil
+			return prefixedGenerativeModelName(cred.Slug, cred.GenerativeModel), nil
 		}
 	}
 	return "", nil
 }
 
-// prefixedGenerativeModelName prefixes the routing provider onto a generative
-// model name, producing the routed "provider/model" form the executor expects.
+// prefixedGenerativeModelName prefixes the routing provider instance (slug)
+// onto a generative model name, producing the routed "slug/model" form the
+// executor expects.
 //
 // cred.GenerativeModel is already bare (decryptProjectConfig runs it through
 // stripModelPrefix, which leaves multi-segment Vertex resource paths like
@@ -268,16 +313,16 @@ func (s *CredentialService) DefaultGenerativeModel(ctx context.Context, projectI
 // here would corrupt those into "google-vertex/google/models/...". Routing
 // through the idempotent stripModelPrefix keeps the edge safe without changing
 // the bare-model result.
-func prefixedGenerativeModelName(provider ProviderType, gen string) string {
-	return string(provider) + "/" + stripModelPrefix(gen)
+func prefixedGenerativeModelName(slug ProviderSlug, gen string) string {
+	return string(slug) + "/" + stripModelPrefix(gen)
 }
 
-// prefixedEmbeddingModelName prefixes the routing provider onto an embedding
-// model name, producing the routed "provider/model" form modelconfig resolution
-// expects. Mirror of prefixedGenerativeModelName, kept separate so the two
-// resolution chains stay independently named.
-func prefixedEmbeddingModelName(provider ProviderType, emb string) string {
-	return string(provider) + "/" + stripModelPrefix(emb)
+// prefixedEmbeddingModelName prefixes the routing provider instance (slug) onto
+// an embedding model name, producing the routed "slug/model" form modelconfig
+// resolution expects. Mirror of prefixedGenerativeModelName, kept separate so
+// the two resolution chains stay independently named.
+func prefixedEmbeddingModelName(slug ProviderSlug, emb string) string {
+	return string(slug) + "/" + stripModelPrefix(emb)
 }
 
 // embeddingProviderOrder lists providers in preference order for embedding
@@ -359,7 +404,7 @@ func (s *CredentialService) DefaultEmbeddingModel(ctx context.Context, projectID
 			continue
 		}
 		if cfg.EmbeddingModel != "" {
-			return prefixedEmbeddingModelName(p, cfg.EmbeddingModel), nil
+			return prefixedEmbeddingModelName(cfg.Slug, cfg.EmbeddingModel), nil
 		}
 	}
 	return "", nil

@@ -1,8 +1,12 @@
 package provider
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/modelref"
 )
 
 func TestValidateProviderSlug(t *testing.T) {
@@ -68,5 +72,24 @@ func TestResolveSlug(t *testing.T) {
 				t.Fatalf("resolveSlug(%q) = %q, want %q", tc.requested, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestResolveByRef_NoContext(t *testing.T) {
+	svc := newTestCredentialService(&config.Config{})
+	ctx := context.Background()
+
+	if cred, err := svc.ResolveByRef(ctx, modelref.Ref{Provider: "openai", Model: "gpt-4o"}); err != nil || cred != nil {
+		t.Fatalf("ResolveByRef with no project context = (%v, %v), want (nil, nil)", cred, err)
+	}
+	if cred, err := svc.ResolveBySlug(ctx, "openai"); err != nil || cred != nil {
+		t.Fatalf("ResolveBySlug with no project context = (%v, %v), want (nil, nil)", cred, err)
+	}
+}
+
+func TestResolveByRef_EmptyProvider(t *testing.T) {
+	svc := newTestCredentialService(&config.Config{})
+	if _, err := svc.ResolveByRef(context.Background(), modelref.Ref{Model: "gpt-4o"}); err == nil {
+		t.Fatal("ResolveByRef with empty provider should error")
 	}
 }

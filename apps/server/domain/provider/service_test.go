@@ -484,7 +484,7 @@ func TestPrefixedGenerativeModelName(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := prefixedGenerativeModelName(tc.provider, tc.gen); got != tc.want {
+			if got := prefixedGenerativeModelName(ProviderSlug(tc.provider), tc.gen); got != tc.want {
 				t.Errorf("prefixedGenerativeModelName(%q, %q) = %q, want %q", tc.provider, tc.gen, got, tc.want)
 			}
 		})
@@ -556,7 +556,7 @@ func TestDefaultGenerativeModelName_DecryptAndBuild(t *testing.T) {
 			if cred == nil || cred.GenerativeModel == "" {
 				t.Fatal("expected a resolved credential with a generative model")
 			}
-			if got := prefixedGenerativeModelName(cred.Provider, cred.GenerativeModel); got != tc.want {
+			if got := prefixedGenerativeModelName(ProviderSlug(cred.Provider), cred.GenerativeModel); got != tc.want {
 				t.Errorf("decrypt+build = %q, want %q", got, tc.want)
 			}
 		})
@@ -601,7 +601,7 @@ func TestPrefixedEmbeddingModelName(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := prefixedEmbeddingModelName(tc.provider, tc.emb); got != tc.want {
+			if got := prefixedEmbeddingModelName(ProviderSlug(tc.provider), tc.emb); got != tc.want {
 				t.Errorf("prefixedEmbeddingModelName(%q, %q) = %q, want %q", tc.provider, tc.emb, got, tc.want)
 			}
 		})
