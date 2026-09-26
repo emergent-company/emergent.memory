@@ -1926,20 +1926,33 @@ func (r *Repository) VectorSearch(ctx context.Context, params VectorSearchParams
 
 	whereClause := buildWhereClause(conditions)
 
-	// Build the query with cosine distance
+	// Build the query with cosine distance.
+	//
+	// The distance ordering lives in an ANN subquery that orders by the raw
+	// `embedding_v2 <=> ?::vector` expression only, so the planner can use the
+	// HNSW index (IDX_graph_objects_embedding_v2_hnsw). Adding a secondary sort
+	// key (e.g. `, id ASC`) to that ORDER BY defeats the index and forces a full
+	// Seq Scan + Sort over every project row. The outer query applies the
+	// deterministic (distance, id) tie-break on the already-limited window.
+	innerLimit := params.Limit + params.Offset
 	query := `
-		SELECT ` + graphObjectColumns + `,
-			(embedding_v2 <=> ?::vector) AS distance
-		FROM kb.graph_objects
-		` + whereClause + `
-		ORDER BY distance ASC, id ASC
+		SELECT ` + graphObjectColumns + `, _dist AS distance
+		FROM (
+			SELECT ` + graphObjectColumns + `,
+				(embedding_v2 <=> ?::vector) AS _dist
+			FROM kb.graph_objects
+			` + whereClause + `
+			ORDER BY embedding_v2 <=> ?::vector ASC
+			LIMIT ?
+		) AS ann
+		ORDER BY _dist ASC, id ASC
 		LIMIT ?
 		OFFSET ?
 	`
 
-	// Prepend vector param for distance calculation, append limit and offset
+	// Outer vector param, WHERE args, ANN ORDER BY param, inner LIMIT, outer LIMIT/OFFSET.
 	finalArgs := append([]any{vectorStr}, args...)
-	finalArgs = append(finalArgs, params.Limit, params.Offset)
+	finalArgs = append(finalArgs, vectorStr, innerLimit, params.Limit, params.Offset)
 
 	rows, err := r.db.QueryContext(ctx, query, finalArgs...)
 	if err != nil {
@@ -2205,18 +2218,28 @@ func (r *Repository) FindSimilarObjects(ctx context.Context, params SimilarSearc
 
 	whereClause := buildWhereClause(conditions)
 
+	// Same HNSW-safe shape as VectorSearch: the inner ANN subquery orders by the
+	// raw distance expression only (so the HNSW index is usable); the outer query
+	// applies the deterministic (distance, id) tie-break on the limited window.
 	query := `
 		SELECT id, canonical_id, version, project_id, branch_id,
 			type, key, status, properties, labels, created_at,
-			(embedding_v2 <=> ?::vector) AS distance
-		FROM kb.graph_objects
-		` + whereClause + `
-		ORDER BY distance ASC, id ASC
+			_dist AS distance
+		FROM (
+			SELECT id, canonical_id, version, project_id, branch_id,
+				type, key, status, properties, labels, created_at,
+				(embedding_v2 <=> ?::vector) AS _dist
+			FROM kb.graph_objects
+			` + whereClause + `
+			ORDER BY embedding_v2 <=> ?::vector ASC
+			LIMIT ?
+		) AS ann
+		ORDER BY _dist ASC, id ASC
 		LIMIT ?
 	`
 
 	finalArgs := append([]any{vectorStr}, args...)
-	finalArgs = append(finalArgs, params.Limit)
+	finalArgs = append(finalArgs, vectorStr, params.Limit, params.Limit)
 
 	rows, err := r.db.QueryContext(ctx, query, finalArgs...)
 	if err != nil {
