@@ -1068,6 +1068,13 @@ func (h *Handler) CreateWebhookHook(c echo.Context) error {
 		return apperror.NewNotFound("Agent", id)
 	}
 
+	// Refuse binding a public webhook hook to an internal-visibility agent
+	// (fail-closed) unless the caller explicitly opts in — the webhook receiver
+	// is a public surface authenticated only by a shared per-hook bearer token.
+	if err := hookInternalBindingErr(c.Request().Context(), h.repo, agent, dto.AllowInternal); err != nil {
+		return err
+	}
+
 	rawToken, err := GenerateWebhookToken()
 	if err != nil {
 		return apperror.NewInternal("failed to generate token", err)
