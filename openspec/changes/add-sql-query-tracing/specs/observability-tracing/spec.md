@@ -43,9 +43,14 @@ When a query returns an error, the span SHALL record the error and set span stat
 
 ### Requirement: Inert when tracing is disabled
 
-The query hook SHALL be registered only when OTel tracing is enabled; when tracing is disabled, no query hook SHALL be registered and there SHALL be zero per-query tracing overhead.
+The query hook SHALL be registered only when OTel tracing is enabled — that is, when the tracing feature (`FEATURE_TRACING`) is on AND an OTLP exporter endpoint (`OTEL_EXPORTER_OTLP_ENDPOINT`) is configured. When either is absent, no query hook SHALL be registered and there SHALL be zero per-query tracing overhead.
 
-#### Scenario: Tracing disabled registers no hook
+#### Scenario: OTLP endpoint not configured registers no hook
 
-- **WHEN** OTel tracing is disabled
+- **WHEN** `OTEL_EXPORTER_OTLP_ENDPOINT` is unset
+- **THEN** the bun DB has no tracing query hook and executing a query produces zero spans
+
+#### Scenario: Tracing feature disabled registers no hook
+
+- **WHEN** `FEATURE_TRACING` is false, even with `OTEL_EXPORTER_OTLP_ENDPOINT` set
 - **THEN** the bun DB has no tracing query hook and executing a query produces zero spans
