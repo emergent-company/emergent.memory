@@ -107,9 +107,9 @@ templ compiledTypesTable(title string, types []CompiledType, endpoints bool, lin
 						}
 					</div>
 					if t.Description != "" {
-						<p class="text-base-content/55 mt-1 text-xs">{ t.Description }</p>
+						<p class="text-muted mt-1 text-xs">{ t.Description }</p>
 					}
-					<p class="text-base-content/50 mt-1 font-mono text-[11px]">{ compiledTypeSchemaLabel(t) }</p>
+					<p class="text-muted mt-1 font-mono text-[11px]">{ compiledTypeSchemaLabel(t) }</p>
 				</div>
 			} else {
 				@objectTypeRow(t.Name, t.Label, t.Description, compiledProperties(t.Properties), linkPrefix+url.PathEscape(t.Name), compiledTypeSchemaLabel(t), compiledTypeIcon(t), compiledTypeColor(t))
@@ -174,7 +174,7 @@ templ availableSchemaRow(item AvailableSchemaItem) {
 				@ui.Badge(ui.BadgeProps{Label: item.Source, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Dot: true})
 			</div>
 			if item.Description != "" {
-				<p class="text-base-content/55 mt-1 text-xs">{ item.Description }</p>
+				<p class="text-muted mt-1 text-xs">{ item.Description }</p>
 			}
 		</div>
 		<form method="post" action="/schema/add" hx-boost="false">
@@ -206,7 +206,7 @@ templ SchemaObjectTypePage(view *SchemaObjectTypeView, loadErr error) {
 			@flashToasts(view.FlashMsg, view.FlashErr)
 			@layout.Rail(schemaSubNav("compiled"), nil) {
 				if view.Detail.Description != "" {
-					<p class="text-base-content/55 mt-1 text-xs">{ view.Detail.Description }</p>
+					<p class="text-muted mt-1 text-xs">{ view.Detail.Description }</p>
 				}
 				@schemaObjectTypeOrigin(view)
 				@schemaObjectTypeProperties(view.Detail)
@@ -249,11 +249,11 @@ templ schemaObjectTypeOrigin(view *SchemaObjectTypeView) {
 			}
 		} else {
 			@ui.Badge(ui.BadgeProps{Label: "Project-authored", Variant: ui.BadgeNeutral, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeSM, Icon: "lucide--pencil"})
-			<span class="text-base-content/55 text-sm">Not from an installed blueprint.</span>
+			<span class="text-muted text-sm">Not from an installed blueprint.</span>
 			{{ origin := schemaOriginLabel(view.SchemaName, view.SchemaVersion) }}
 			if origin != "" {
-				<span class="text-base-content/30">·</span>
-				<span class="text-base-content/50 font-mono text-[11px]">{ origin }</span>
+				<span class="text-muted-subtle">·</span>
+				<span class="text-muted font-mono text-[11px]">{ origin }</span>
 			}
 		}
 	</div>
@@ -284,8 +284,8 @@ templ schemaObjectTypeHistory(history []SchemaHistoryItem, unavailable bool) {
 	}) {
 		if unavailable {
 			<div class="flex items-start gap-2 px-4 py-3">
-				@ui.IconSpan("lucide--alert-circle", "size-4 shrink-0 text-base-content/40")
-				<p class="text-base-content/55 text-xs">Schema history is unavailable right now. The type is shown as-is.</p>
+				@ui.IconSpan("lucide--alert-circle", "size-4 shrink-0 text-muted-faint")
+				<p class="text-muted text-xs">Schema history is unavailable right now. The type is shown as-is.</p>
 			</div>
 		} else {
 			for _, h := range history {
@@ -297,10 +297,10 @@ templ schemaObjectTypeHistory(history []SchemaHistoryItem, unavailable bool) {
 						@ui.Badge(ui.BadgeProps{Label: "inactive", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
 					}
 					if h.InstalledAt != "" {
-						<span class="text-base-content/50 text-xs">installed { h.InstalledAt }</span>
+						<span class="text-muted text-xs">installed { h.InstalledAt }</span>
 					}
 					if h.RemovedAt != "" {
-						<span class="text-base-content/50 text-xs">removed { h.RemovedAt }</span>
+						<span class="text-muted text-xs">removed { h.RemovedAt }</span>
 					}
 				</div>
 			}
@@ -395,7 +395,7 @@ templ schemaEditorForm(view *SchemaEditView) {
 		@components.PanelCard("", nil) {
 			<div class="mb-4">
 				<h2 class="text-lg font-semibold tracking-tight">Appearance</h2>
-				<p class="text-base-content/55 mt-0.5 text-sm">Optional accent used wherever this type is shown.</p>
+				<p class="text-muted mt-0.5 text-sm">Optional accent used wherever this type is shown.</p>
 			</div>
 			<div class="grid gap-x-8 gap-y-6 sm:grid-cols-2">
 				<div class="flex min-w-0 flex-col [&>fieldset]:min-w-0 [&>fieldset]:grow [&_.label-text-alt]:whitespace-normal">
@@ -428,14 +428,14 @@ templ schemaEditorForm(view *SchemaEditView) {
 			<div class="mb-4 flex flex-wrap items-start justify-between gap-3">
 				<div>
 					<h2 class="text-lg font-semibold tracking-tight">Properties</h2>
-					<p class="text-base-content/55 mt-0.5 text-sm">Each property is a typed field on this object type.</p>
+					<p class="text-muted mt-0.5 text-sm">Each property is a typed field on this object type.</p>
 				</div>
 				<button type="button" class="btn btn-outline btn-sm" data-add-property="property-row-template" data-property-rows="property-rows">
 					@ui.IconSpan("lucide--plus", "size-4")
 					Add property
 				</button>
 			</div>
-			<div class="mb-2 hidden gap-2 text-[11px] font-medium tracking-wide text-base-content/45 uppercase sm:grid sm:grid-cols-[minmax(0,1fr)_7rem_8rem_8rem_minmax(0,1.4fr)_auto]">
+			<div class="mb-2 hidden gap-2 text-[11px] font-medium tracking-wide text-muted-faint uppercase sm:grid sm:grid-cols-[minmax(0,1fr)_7rem_8rem_8rem_minmax(0,1.4fr)_auto]">
 				<span>Name</span>
 				<span>Type</span>
 				<span>Widget</span>
@@ -445,7 +445,7 @@ templ schemaEditorForm(view *SchemaEditView) {
 			</div>
 			<div id="property-rows" class="flex flex-col gap-2">
 				if len(view.Detail.Properties) == 0 {
-					<p id="property-empty" class="text-base-content/45 rounded-box border border-dashed border-base-content/15 px-4 py-6 text-center text-sm">
+					<p id="property-empty" class="text-muted-faint rounded-box border border-dashed border-base-content/15 px-4 py-6 text-center text-sm">
 						No properties yet. Add one to define the shape of this type.
 					</p>
 				}
@@ -461,7 +461,7 @@ templ schemaEditorForm(view *SchemaEditView) {
 			<a class="btn btn-ghost btn-sm" href={ templ.URL("/schema/object-types/" + url.PathEscape(view.Detail.Name)) }>Cancel</a>
 			<div class="flex items-center gap-2">
 				if view.Provenance != nil {
-					<span class="text-base-content/50 hidden text-xs sm:inline">Derived from a blueprint — a confirmation follows.</span>
+					<span class="text-muted hidden text-xs sm:inline">Derived from a blueprint — a confirmation follows.</span>
 				}
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeSubmit,
@@ -536,7 +536,7 @@ templ deriveWarningDialog(view *SchemaEditView) {
 			</div>
 			<div>
 				<h3 id="derive-warning-title" class="text-lg font-semibold">Save changes to a blueprint-derived type?</h3>
-				<p id="derive-warning-desc" class="text-base-content/60 mt-1 text-sm">
+				<p id="derive-warning-desc" class="text-muted-strong mt-1 text-sm">
 					<span class="font-mono">{ view.Detail.Name }</span> comes from blueprint <span class="font-medium">{ typeProvenanceLabel(p) }</span>. Saving your edit diverges from that blueprint and may be overwritten when it is updated or reinstalled.
 				</p>
 			</div>
@@ -565,7 +565,7 @@ templ deriveBlueprintDialog() {
 			</div>
 			<div>
 				<h3 id="derive-blueprint-title" class="text-lg font-semibold">Save as blueprint</h3>
-				<p class="text-base-content/55 mt-0.5 text-sm">Create a draft blueprint from the object types currently in this project.</p>
+				<p class="text-muted mt-0.5 text-sm">Create a draft blueprint from the object types currently in this project.</p>
 			</div>
 		</div>
 		<form method="post" action="/schema/blueprints/derive" hx-boost="false" class="mt-4 flex flex-col gap-4">

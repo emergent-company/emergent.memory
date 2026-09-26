@@ -105,10 +105,10 @@ templ agentSummaryCard(data agentDashboardData) {
 				if name, isDefault := agentModelName(data.Agent, data.DefaultModel); name != "" {
 					<span class="font-mono text-sm">{ name }</span>
 					if isDefault {
-						<span class="text-base-content/40 text-sm"> (default)</span>
+						<span class="text-muted-faint text-sm"> (default)</span>
 					}
 				} else {
-					<span class="text-base-content/40 text-sm">auto — default model</span>
+					<span class="text-muted-faint text-sm">auto — default model</span>
 				}
 			}
 			@agentSummaryField("Flow") {
@@ -239,7 +239,7 @@ templ agentToolsSection(data agentDashboardData) {
 			<div>
 				@ui.Eyebrow("Allowed tools", ui.EyebrowProps{Size: "text-[11px]", Margin: "mb-2"})
 				if len(data.Agent.Tools) == 0 {
-					<p class="text-base-content/40 text-sm italic">None</p>
+					<p class="text-muted-faint text-sm italic">None</p>
 				} else {
 					<div class="flex flex-wrap gap-1.5">
 						for _, t := range data.Agent.Tools {
@@ -306,7 +306,7 @@ templ agentChatsSection(data agentDashboardData) {
 }
 
 templ chatLinkRow(c Conversation) {
-	@components.ListRow(templ.URL("/chat?c="+url.QueryEscape(c.ID)), ui.IconSpan("lucide--messages-square", "size-4 shrink-0 text-base-content/40"), chatTitle(c), relTime(c.UpdatedAt))
+	@components.ListRow(templ.URL("/chat?c="+url.QueryEscape(c.ID)), ui.IconSpan("lucide--messages-square", "size-4 shrink-0 text-muted-faint"), chatTitle(c), relTime(c.UpdatedAt))
 }
 
 // --- Agent settings ---
@@ -426,7 +426,7 @@ templ agentGeneralSettingsForm(data agentSettingsData) {
 			BodyClass: "memory-density-comfortable",
 		}) {
 			<div class="flex flex-col gap-4">
-				<p class="text-base-content/70 text-sm">Controls who can discover this agent. Changes take effect after you save.</p>
+				<p class="text-muted-strong text-sm">Controls who can discover this agent. Changes take effect after you save.</p>
 				@form.FormControl("agent-settings-visibility", "Visibility", form.LabelAbove, agentVisibilityDescription(agentVisibilityValue(data.Agent)), "", nil) {
 					// Native <select>/<option> cannot render a second, dimmed
 					// description line per option, so this is a custom listbox:
@@ -467,7 +467,7 @@ templ agentGeneralSettingsForm(data agentSettingsData) {
 									}
 								}
 							</span>
-							<span class="iconify lucide--chevron-down size-4 shrink-0 opacity-60" aria-hidden="true"></span>
+							<span class="iconify lucide--chevron-down size-4 shrink-0 text-muted-strong" aria-hidden="true"></span>
 						</button>
 						<ul
 							id="agent-settings-visibility-listbox"
@@ -497,7 +497,7 @@ templ agentGeneralSettingsForm(data agentSettingsData) {
 									class={ "flex cursor-pointer flex-col gap-0.5 rounded-box px-3 py-2 transition-colors hover:bg-base-200 focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none", templ.KV("bg-primary/10 text-primary", agentVisibilityValue(data.Agent) == opt.Value) }
 								>
 									<span class="text-sm font-medium">{ opt.Label }</span>
-									<span class="text-base-content/50 text-xs leading-snug">{ opt.Description }</span>
+									<span class="text-muted text-xs leading-snug">{ opt.Description }</span>
 								</li>
 							}
 						</ul>
@@ -581,7 +581,7 @@ templ agentSkillsSettingsForm(data agentSettingsData) {
 					LabelClass:    "items-start gap-2 py-1.5",
 					CheckboxClass: "checkbox checkbox-sm mt-0.5",
 					TitleClass:    "block text-sm font-medium",
-					DescClass:     "text-base-content/50 block text-xs",
+					DescClass:     "text-muted block text-xs",
 					WrapTitle:     true,
 					Items:         skillPickerItems(data.Skills, func(name string) bool { return containsString(data.Agent.Skills, name) }),
 				})
@@ -619,7 +619,7 @@ templ agentDelegationSettingsForm(data agentSettingsData) {
 					EmptyNote:     delegateEmptyNote(),
 					LabelClass:    "gap-2 py-1",
 					CheckboxClass: "checkbox",
-					TitleClass:    "text-base-content/80 text-sm",
+					TitleClass:    "text-muted-bright text-sm",
 					Items:         delegatePickerItems(data.Agents, data.Agent.Name, func(name string) bool { return data.Agent.Delegation != nil && containsString(data.Agent.Delegation.Targets, name) }),
 				})
 			}
@@ -666,13 +666,13 @@ templ sandboxProviderAvailability(data agentSandboxData) {
 			<ul class="flex flex-col gap-1.5">
 				for _, p := range data.Providers {
 					<li class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
-						<span class="text-base-content/70 font-medium">{ sandboxProviderDisplayName(p) }</span>
+						<span class="text-muted-strong font-medium">{ sandboxProviderDisplayName(p) }</span>
 						if p.Healthy {
 							@components.StatusBadge("available", ui.BadgeSuccess, "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
 						} else {
 							@components.StatusBadge("unavailable", ui.BadgeError, "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
 							if p.Message != "" {
-								<span class="text-base-content/60">{ p.Message }</span>
+								<span class="text-muted-strong">{ p.Message }</span>
 							}
 						}
 					</li>
@@ -756,7 +756,7 @@ templ agentSandboxForm(data agentSandboxData) {
 						<span class="font-mono text-[13px]">{ tool }</span>
 					</label>
 				}
-				<p class="text-base-content/50 mt-2 text-xs">If none selected, all tools are allowed.</p>
+				<p class="text-muted mt-2 text-xs">If none selected, all tools are allowed.</p>
 			</div>
 		}
 		@ui.Section("Resources", ui.SectionProps{
@@ -893,7 +893,7 @@ templ agentToolBuiltinLeading() {
 			@ui.IconSpan("lucide--package", "size-4 shrink-0 text-primary/70")
 			<span class="truncate text-sm font-semibold">Built-in</span>
 		</div>
-		<p class="text-base-content/50 truncate pl-[26px] text-xs">Tools that ship with Memory.</p>
+		<p class="text-muted truncate pl-[26px] text-xs">Tools that ship with Memory.</p>
 	</div>
 }
 
@@ -926,12 +926,12 @@ templ agentToolCapabilityGroup(gv toolGroupView) {
 templ agentToolCapabilityLeading(gv toolGroupView) {
 	<div class="flex min-w-0 flex-col gap-0.5">
 		<div class="flex min-w-0 items-center gap-2.5">
-			@ui.IconSpan("lucide--layers", "size-4 shrink-0 text-base-content/40")
+			@ui.IconSpan("lucide--layers", "size-4 shrink-0 text-muted-faint")
 			<span class="truncate text-sm font-medium">{ gv.Group.Label }</span>
 			@agentToolCountBadge(gv.Count)
 		</div>
 		if gv.Group.Description != "" {
-			<p class="text-base-content/50 truncate pl-[26px] text-xs">{ gv.Group.Description }</p>
+			<p class="text-muted truncate pl-[26px] text-xs">{ gv.Group.Description }</p>
 		}
 	</div>
 }
@@ -986,7 +986,7 @@ templ agentToolOtherContainer(desc string, withTestID bool) {
 		}
 	>
 		@ui.Eyebrow("Other", ui.EyebrowProps{Size: "text-[11px]"})
-		<p class="text-base-content/50 mt-0.5 mb-2 text-xs">{ desc }</p>
+		<p class="text-muted mt-0.5 mb-2 text-xs">{ desc }</p>
 		<div class="flex flex-col divide-y divide-base-content/10">
 			{ children... }
 		</div>
@@ -1115,7 +1115,7 @@ templ agentToolRowView(t agentToolRow, withPolicy bool, rowClass ...string) {
 			<span class="min-w-0">
 				<span class="block font-mono text-[13px] font-medium">{ t.Name }</span>
 				if t.Description != "" {
-					<span class="text-base-content/50 block truncate text-xs">{ t.Description }</span>
+					<span class="text-muted block truncate text-xs">{ t.Description }</span>
 				}
 			</span>
 		</label>
@@ -1123,10 +1123,10 @@ templ agentToolRowView(t agentToolRow, withPolicy bool, rowClass ...string) {
 			@toolPolicySelectValue("toolPolicy."+t.Name, t.Name, t.PolicyValue, !t.Checked)
 		}
 		if t.Hint != "" {
-			<span class="text-base-content/40 hidden w-44 shrink-0 truncate text-right text-[11px] md:block" title={ t.Hint }>{ t.Hint }</span>
+			<span class="text-muted-faint hidden w-44 shrink-0 truncate text-right text-[11px] md:block" title={ t.Hint }>{ t.Hint }</span>
 		}
 		if t.HintShort != "" {
-			<span class="text-base-content/40 w-16 shrink-0 truncate text-right text-[11px] md:hidden" title={ t.Hint }>{ t.HintShort }</span>
+			<span class="text-muted-faint w-16 shrink-0 truncate text-right text-[11px] md:hidden" title={ t.Hint }>{ t.HintShort }</span>
 		}
 	</div>
 }
@@ -1170,7 +1170,7 @@ templ agentToolServerGroup(srv MCPServer, agent *AgentDefinition) {
 		BorderClass:     "border-base-content/10 bg-base-200/40",
 		BodyBorderClass: "border-base-content/10",
 		Icon:            "lucide--server",
-		IconClass:       "text-base-content/40",
+		IconClass:       "text-muted-faint",
 		Title:           srv.Name,
 		Count:           srv.ToolCount,
 		Open:            mcpServerInUse(srv, agent),
@@ -1270,7 +1270,7 @@ templ MemoriesPage(id string, name string, query string, memories []Memory, sele
 		}
 		<form class="mb-6 w-full sm:max-w-md" method="get" action={ templ.URL("/agents/" + url.PathEscape(id) + "/memories") }>
 			<label class="input input-bordered flex w-full items-center gap-2">
-				@ui.IconSpan("lucide--search", "size-4 shrink-0 opacity-50")
+				@ui.IconSpan("lucide--search", "size-4 shrink-0 text-muted")
 				<input type="search" name="q" value={ query } placeholder="Search memories…" class="grow"/>
 				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM, AriaLabel: "Search"}) { Search }
 			</label>
@@ -1320,7 +1320,7 @@ templ memoryRow(id string, query string, m Memory) {
 				})
 			}
 		</div>
-		<p class="line-clamp-2 text-sm text-base-content/80">{ m.Content }</p>
+		<p class="line-clamp-2 text-sm text-muted-bright">{ m.Content }</p>
 	</a>
 }
 
@@ -1351,7 +1351,7 @@ templ memoryDetail(id string, query string, m Memory) {
 			<p class="text-sm" style="white-space: pre-wrap">{ m.Content }</p>
 		</div>
 		<div class="mt-4 border-t border-base-200 pt-3">
-			<span class="text-base-content/40 font-mono text-xs">{ m.ID }</span>
+			<span class="text-muted-faint font-mono text-xs">{ m.ID }</span>
 		</div>
 	}
 }

@@ -54,7 +54,7 @@ templ uploadForm(flashMsg string, flashErr error) {
 					Upload
 				}
 			</form>
-			<p class="text-base-content/45 mt-3 text-xs">Single file up to 10 MB. Text-based files chunk and extract best.</p>
+			<p class="text-muted-faint mt-3 text-xs">Single file up to 10 MB. Text-based files chunk and extract best.</p>
 		}
 	</div>
 }
@@ -80,10 +80,10 @@ templ documentsList(documents []Document) {
 templ documentRow(d Document) {
 	<div class="flex items-center gap-2 px-4 py-3 transition-colors hover:bg-base-200/50">
 		<a class="flex min-w-0 grow items-center gap-3" href={ templ.URL("/documents/" + url.PathEscape(d.ID)) }>
-			@ui.IconSpan("lucide--file-text", "size-4 shrink-0 text-base-content/40")
+			@ui.IconSpan("lucide--file-text", "size-4 shrink-0 text-muted-faint")
 			<div class="min-w-0 grow">
 				<p class="truncate text-sm font-medium">{ documentName(d) }</p>
-				<p class="text-base-content/50 text-xs">{ relTime(d.CreatedAt) }</p>
+				<p class="text-muted text-xs">{ relTime(d.CreatedAt) }</p>
 			</div>
 			@ui.Badge(ui.BadgeProps{
 				Label:   strconv.Itoa(d.Chunks) + " chunk" + plural(d.Chunks),
@@ -92,7 +92,7 @@ templ documentRow(d Document) {
 				Icon:    "lucide--braces",
 			})
 			@documentStatusBadge(d.ExtractionStatus)
-			@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-base-content/25")
+			@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
 		</a>
 		@documentDeleteForm(d.ID, documentName(d))
 	</div>
@@ -172,7 +172,7 @@ templ extractionCard(doc *Document, flashMsg string, flashErr error) {
 			@ui.IconTile("lucide--sparkles", ui.IconTileProps{Tone: "accent"})
 			<div>
 				<h2 class="text-base font-semibold">Extraction</h2>
-					<p class="text-base-content/50 text-sm">
+					<p class="text-muted text-sm">
 						if doc.ObjectsCreated > 0 {
 							{ strconv.Itoa(doc.ObjectsCreated) } objects extracted
 						} else {
@@ -225,9 +225,9 @@ templ chunkRow(c Chunk) {
 					Icon:    "lucide--check",
 				})
 			}
-			<span class="text-base-content/40 text-xs">{ strconv.Itoa(c.Size) } chars</span>
+			<span class="text-muted-faint text-xs">{ strconv.Itoa(c.Size) } chars</span>
 		</div>
-		<p class="text-sm text-base-content/80" style="white-space: pre-wrap">{ c.Text }</p>
+		<p class="text-sm text-muted-bright" style="white-space: pre-wrap">{ c.Text }</p>
 	</div>
 }
 
@@ -289,8 +289,8 @@ templ extractedObjectRow(o GraphObject) {
 			Icon:    "lucide--box",
 		})
 		<span class="truncate text-sm font-medium">{ graphObjectLabel(o) }</span>
-		@monoMeta(shortID(o.ID), "text-base-content/35")
-		@ui.IconSpan("lucide--chevron-right", "size-4 ml-auto shrink-0 text-base-content/25")
+		@monoMeta(shortID(o.ID), "text-muted-faint")
+		@ui.IconSpan("lucide--chevron-right", "size-4 ml-auto shrink-0 text-muted-subtle")
 	</a>
 }
 
@@ -315,7 +315,7 @@ templ extractedRelationshipRow(objects []GraphObject, r GraphRelationship) {
 			Icon:    "lucide--link",
 		})
 		<span class="truncate text-sm">{ graphObjectLabelByID(objects, r.SrcID) }</span>
-		@ui.IconSpan("lucide--arrow-right", "size-4 shrink-0 text-base-content/30")
+		@ui.IconSpan("lucide--arrow-right", "size-4 shrink-0 text-muted-subtle")
 		<span class="truncate text-sm">{ graphObjectLabelByID(objects, r.DstID) }</span>
 	</div>
 }

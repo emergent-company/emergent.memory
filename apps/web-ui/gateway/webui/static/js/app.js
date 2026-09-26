@@ -108,7 +108,7 @@
       labelEl.textContent = option
         ? option.getAttribute("data-gd-icon-label")
         : root.getAttribute("data-gd-icon-picker-default-label") || "";
-      labelEl.classList.toggle("text-base-content/50", isDefault);
+      labelEl.classList.toggle("text-muted", isDefault);
     }
     var glyphEl = root.querySelector("[data-gd-icon-glyph]");
     if (glyphEl) {

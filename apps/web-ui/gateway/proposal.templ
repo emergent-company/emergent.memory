@@ -15,11 +15,11 @@ templ proposalCard(c *ProposalCard) {
 			<p class="text-sm font-semibold">Proposed changes</p>
 			@ui.Badge(ui.BadgeProps{Label: c.Kind, Variant: ui.BadgePrimary, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: proposalKindIcon(c.Kind)})
 			if summary := proposalSummaryLabel(c); summary != "" {
-				<span class="text-xs text-base-content/60">{ summary }</span>
+				<span class="text-xs text-muted-strong">{ summary }</span>
 			}
 		</div>
 		if c.Summary != "" {
-			<p class="text-base-content/70 px-4 py-2.5 text-xs">{ c.Summary }</p>
+			<p class="text-muted-strong px-4 py-2.5 text-xs">{ c.Summary }</p>
 		}
 		// The kind section carries data-proposal-kind so tests can assert the
 		// structured preview rendered for a kind — a summary-only degradation
@@ -86,7 +86,7 @@ templ proposalSkillSection(s *SkillProposal) {
 			<p class="text-sm font-medium">{ s.Name }</p>
 		</div>
 		if s.Description != "" {
-			<p class="text-base-content/55 mt-1 text-xs">{ s.Description }</p>
+			<p class="text-muted mt-1 text-xs">{ s.Description }</p>
 		}
 		if s.Prompt != "" {
 			@proposalMonoBlock("Prompt", s.Prompt)
@@ -113,7 +113,7 @@ templ proposalAgentSection(a *AgentProposal) {
 			}
 		</div>
 		if a.Description != "" {
-			<p class="text-base-content/55 mt-1 text-xs">{ a.Description }</p>
+			<p class="text-muted mt-1 text-xs">{ a.Description }</p>
 		}
 		if a.SystemPrompt != "" {
 			@proposalMonoBlock("System prompt", a.SystemPrompt)
@@ -175,13 +175,13 @@ templ proposalObjectSection(c *ProposalCard) {
 							@ui.Badge(ui.BadgeProps{Label: e.Type, Variant: ui.BadgeSecondary, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
 						}
 						if e.Key != "" {
-							<p class="font-mono text-sm text-base-content/80">{ e.Key }</p>
+							<p class="font-mono text-sm text-muted-bright">{ e.Key }</p>
 						}
 					</div>
 					for k, v := range e.Properties {
 						<div class="mt-1 flex flex-wrap items-baseline gap-2">
-							<span class="font-mono text-xs text-base-content/60">{ k }</span>
-							<span class="text-xs text-base-content/80">{ v }</span>
+							<span class="font-mono text-xs text-muted-strong">{ k }</span>
+							<span class="text-xs text-muted-bright">{ v }</span>
 						</div>
 					}
 					@proposalChipRow("Tags", e.Tags)
@@ -229,6 +229,6 @@ templ proposalChipRow(title string, items []string) {
 templ proposalMonoBlock(title string, content string) {
 	<div class="mt-2">
 		@ui.Eyebrow(title, ui.EyebrowProps{Size: "text-[10px]", Margin: "mb-1"})
-		<pre class="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-field bg-base-200/60 p-2 font-mono text-xs text-base-content/80">{ content }</pre>
+		<pre class="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-field bg-base-200/60 p-2 font-mono text-xs text-muted-bright">{ content }</pre>
 	</div>
 }

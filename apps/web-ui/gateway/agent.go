@@ -944,7 +944,7 @@ func buildToolPickerView(data agentSettingsData) toolPickerView {
 			BorderClass:     "border-base-content/10 bg-base-200/40",
 			BodyBorderClass: "border-base-content/10",
 			Icon:            "lucide--server",
-			IconClass:       "text-base-content/40",
+			IconClass:       "text-muted-faint",
 			Title:           srv.Name,
 			TestID:          "tool-source-server-" + srv.Name,
 			Count:           len(rows),

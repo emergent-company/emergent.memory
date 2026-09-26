@@ -27,7 +27,7 @@ templ UsagePage(summary *UsageSummaryResponse, series *UsageTimeSeriesResponse, 
 				@usageCharts(payload)
 				@usageModelSection(summary)
 				if note := usageNote(summary, series); note != "" {
-					<p class="text-base-content/45 mt-6 text-xs">{ note }</p>
+					<p class="text-muted-faint mt-6 text-xs">{ note }</p>
 				}
 			} else {
 				@usageEmpty()
@@ -48,7 +48,7 @@ templ usageHeader(ok bool, days int) {
 // highlighted.
 templ usageRangeSelector(days int) {
 	<div class="mb-6 flex items-center gap-3">
-		<span class="text-base-content/45 text-xs">Range</span>
+		<span class="text-muted-faint text-xs">Range</span>
 		<div class="join">
 			@usageRangeLink(days, 7)
 			@usageRangeLink(days, 30)
@@ -120,10 +120,10 @@ templ usageModelRow(rowID string, r UsageSummaryRow) {
 			<span class="font-mono text-sm">{ r.Model }</span>
 		}
 		@table.TableCell("", nil) {
-			<span class="text-base-content/60 text-sm" data-testid={ "usage-provider-" + usageInstanceSlug(r) }>
+			<span class="text-muted-strong text-sm" data-testid={ "usage-provider-" + usageInstanceSlug(r) }>
 				{ usageInstanceSlug(r) }
 				if usageDialectDistinct(r) {
-					<span class="ml-1 text-base-content/40 text-xs">{ r.Provider }</span>
+					<span class="ml-1 text-muted-faint text-xs">{ r.Provider }</span>
 				}
 			</span>
 		}

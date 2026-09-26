@@ -27,7 +27,7 @@ templ ApprovalsPage(approvals []ToolApprovalItem, loadErr error) {
 			<div class="card card-border bg-base-100">
 				<div class="card-body items-center gap-2 memory-density-stack text-center">
 					<p class="text-sm font-medium">No approval decisions yet.</p>
-					<p class="text-xs text-base-content/50">When an agent asks to run a gated tool, its decision appears here.</p>
+					<p class="text-xs text-muted">When an agent asks to run a gated tool, its decision appears here.</p>
 				</div>
 			</div>
 		} else {
@@ -59,11 +59,11 @@ templ approvalRow(a ToolApprovalItem) {
 							<span>Session</span>
 						</a>
 					}
-					<span class="text-xs text-base-content/50">{ a.CreatedAt.Format("Jan 02, 15:04") }</span>
+					<span class="text-xs text-muted">{ a.CreatedAt.Format("Jan 02, 15:04") }</span>
 				</div>
 			</div>
 			if a.Message != "" {
-				<p class="text-sm text-base-content/70">{ a.Message }</p>
+				<p class="text-sm text-muted-strong">{ a.Message }</p>
 			}
 			if args := formatArgsJSON(a.ArgsSummary); args != "" {
 				<pre class="max-h-32 overflow-y-auto rounded-box bg-base-200/60 p-2 font-mono text-xs whitespace-pre-wrap break-words">{ args }</pre>
