@@ -197,6 +197,8 @@ Then the status label is confirmation, not the only lock.
 | **Worktree cleanup silently removes nothing** (`removed=0 kept=N`) | ancestry can never match a squash-merged branch — derive merged heads from `gh pr list --state merged --json headRefName` (§2.9); leave dirty / unmerged / detached worktrees |
 | **Partial failed worktree** | `git worktree remove --force` + `git worktree prune` + `git branch -D`; retry with a new slug |
 | **Green PRs, RED `main`** — every PR passed its own CI, yet `main` fails after they merge | a sibling in-flight PR's test or code encoded the **old** invariant (real case: #1011 asserted `trace-list`/`trace-get` were *admin*-scoped; #1013 moved them to `SuperadminOnly`). The contradiction exists **only in the merged tree**, so per-PR green cannot catch it — re-check `main` after merging anything that changes a shared invariant (§7) |
+| **Migration version collision** — two concurrent lanes each pick "the next free version" | a duplicate version is caught by CI's `migration-order-guard`, so the collision surfaces only at merge — and locally it is **silent, not loud**: goose de-duplicates by version, so the second migration **never runs** (this is why `TestEmbeddedMigrationVersions` exists; detect it locally with `go test` or `go run ./cmd/migration-order-guard -base origin/main`). It happened twice in one session (#977 vs #981 both took `00180`; #1057 vs #1053 both took `00183`). Any lane that ADDS a migration must re-check the max version on `origin/main` **immediately before pushing** — not at implementation time — and report the order-guard output |
+| **Rebase vs a moving `main`** — `git rebase origin/main` replays the branch's patches, so main-side edits to a file the branch also touched can be lost **without a conflict**; and a `git diff origin/main HEAD` taken while `main` is advancing cannot distinguish "my operation removed main's content" from "main gained content after I branched" | after each rebase/merge, check `git diff --name-only origin/main...HEAD` enumerates exactly the branch's intended files, and prefer **merge** over rebase when `main` is moving under you. Cautionary case: a lane read a spurious `-` hunk as rebase data loss and switched to merge (#1028) — the merge was the right call, but the attribution was wrong: those lines had landed on `main` *after* its branch point, so the diff was measuring **drift, not damage**. Diagnose which before concluding |
 | **`gh pr create` fails** | push branch first, retry with explicit `--head <branch>` |
 | **Ambiguous decision** | use `question` tool with bounded options |
 
@@ -278,6 +280,11 @@ after it died — do not assume memory of the intervening events.
   - When a PR moves a surface between gates (e.g. scope → `superadmin_full`), grep the
     test suite for the **old** assertion before merging — the sibling test is the
     likeliest casualty.
+- **Treat anything derived from `main` at lane start as expiring.** Migration version
+  numbers, "next free" identifiers, dependency versions, file counts, and the set of
+  files a change touches are all relative to the `main` the lane read — and concurrent
+  lanes keep changing it. Re-derive them immediately before **push** and before
+  **merge** (see the migration-collision and rebase-data-loss rows in §6).
 - Report the board: what merged, what's still open, what's blocked (call out
   blocker chains explicitly).
 - Reuse still-valid evidence; do not re-read files an explorer already mapped —
