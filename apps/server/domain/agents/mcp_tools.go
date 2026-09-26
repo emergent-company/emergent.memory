@@ -1540,11 +1540,12 @@ func (h *MCPToolHandler) ExecuteCreateAgentHook(ctx context.Context, projectID s
 	}
 
 	hook := &AgentWebhookHook{
-		AgentID:   agent.ID,
-		ProjectID: agent.ProjectID,
-		Label:     label,
-		TokenHash: hashedToken,
-		Enabled:   true,
+		AgentID:       agent.ID,
+		ProjectID:     agent.ProjectID,
+		Label:         label,
+		TokenHash:     hashedToken,
+		Enabled:       true,
+		AllowInternal: allowInternal,
 	}
 
 	if err := h.repo.CreateWebhookHook(ctx, hook); err != nil {
