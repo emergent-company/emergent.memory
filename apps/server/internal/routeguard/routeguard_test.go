@@ -167,6 +167,50 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	}
 }
 
+func TestExtractFailClosedGroupHelper(t *testing.T) {
+	dir := t.TempDir()
+	domainDir := filepath.Join(dir, "domain", "demo")
+	if err := os.MkdirAll(domainDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A helper that takes a *echo.Group (not *echo.Echo) and a bare g.Add
+	// registration must both fail closed — silently ignoring them would make
+	// the guard under-enumerate.
+	src := `package demo
+
+import (
+	"github.com/labstack/echo/v4"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+)
+
+type Handler struct{}
+
+func registerThing(g *echo.Group, h *Handler) {
+	g.GET("/wrapped", h.X)
+}
+
+func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
+	g := e.Group("/api/demo")
+	g.Use(authMiddleware.RequireAuth())
+	registerThing(g, h)
+	g.Add("GET", "/added", h.X)
+}
+
+func (h *Handler) X(c echo.Context) error { return nil }
+`
+	if err := os.WriteFile(filepath.Join(domainDir, "routes.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Extract(dir)
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if len(res.Unclassified) == 0 {
+		t.Fatal("expected unclassified fail-closed diagnostics for group-helper and Add registrations")
+	}
+}
+
 // TestExtractRealTree ensures the extractor can classify every registration
 // pattern currently in apps/server/domain (fail-closed smoke test): if a future
 // pattern is added, this test surfaces it as an unclassified entry before CI.

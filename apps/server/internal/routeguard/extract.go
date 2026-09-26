@@ -528,10 +528,11 @@ func (x *extractor) handleBareCall(call *ast.CallExpr) {
 		// Delegation to another registration function, scanned independently.
 		return
 	}
-	if referencesEcho(call.Args, x.echoParam) {
+	if x.referencesRouteTree(call.Args) {
 		x.failClosed("%s: unrecognized route-registering call %s(...)", x.pos(call), ident.Name)
 	}
-	// Any other bare call (no echo arg) is a side effect, not route registration.
+	// Any other bare call (no echo/group arg) is a side effect, not route
+	// registration.
 }
 
 // handleSelectCall processes a statement-level method call that is not an Echo
@@ -540,16 +541,66 @@ func (x *extractor) handleSelectCall(sel *ast.SelectorExpr, call *ast.CallExpr) 
 	if id, ok := sel.X.(*ast.Ident); ok && decorativeReceivers[id.Name] {
 		return
 	}
-	if referencesEcho(call.Args, x.echoParam) {
+	if x.isKnownGroup(sel.X) {
+		x.failClosed("%s: unrecognized route-registering call %s", x.pos(call), exprString(sel))
+		return
+	}
+	if x.referencesRouteTree(call.Args) {
 		x.failClosed("%s: unrecognized route-registering call %s", x.pos(call), exprString(sel))
 	}
 }
 
-// referencesEcho reports whether any argument is (or contains) a reference to
-// the Echo root parameter.
-func referencesEcho(args []ast.Expr, echoParam string) bool {
+// isKnownGroup reports whether expr is a group variable created in this
+// registration function (see defineGroupFromCall).
+func (x *extractor) isKnownGroup(expr ast.Expr) bool {
+	id, ok := expr.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	_, ok = x.groups[id.Name]
+	return ok
+}
+
+// referencesRouteTree reports whether any argument references the Echo root
+// parameter or a known group variable — either signals the call may register
+// routes and is therefore fail-closed rather than silently ignored.
+func (x *extractor) referencesRouteTree(args []ast.Expr) bool {
 	for _, a := range args {
-		if containsIdent(a, echoParam) {
+		if containsIdent(a, x.echoParam) || containsKnownGroup(a, x.groups) {
+			return true
+		}
+	}
+	return false
+}
+
+// containsKnownGroup reports whether expr references a group variable created
+// in this registration function.
+func containsKnownGroup(expr ast.Expr, groups map[string]*groupState) bool {
+	switch e := expr.(type) {
+	case *ast.Ident:
+		_, ok := groups[e.Name]
+		return ok
+	case *ast.CallExpr:
+		return containsKnownGroup(e.Fun, groups) || containsKnownGroupList(e.Args, groups)
+	case *ast.SelectorExpr:
+		return containsKnownGroup(e.X, groups)
+	case *ast.StarExpr:
+		return containsKnownGroup(e.X, groups)
+	case *ast.UnaryExpr:
+		return containsKnownGroup(e.X, groups)
+	case *ast.ParenExpr:
+		return containsKnownGroup(e.X, groups)
+	case *ast.IndexExpr:
+		return containsKnownGroup(e.X, groups) || containsKnownGroup(e.Index, groups)
+	case *ast.CompositeLit:
+		return containsKnownGroupList(e.Elts, groups)
+	}
+	return false
+}
+
+func containsKnownGroupList(exprs []ast.Expr, groups map[string]*groupState) bool {
+	for _, e := range exprs {
+		if containsKnownGroup(e, groups) {
 			return true
 		}
 	}
