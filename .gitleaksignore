@@ -1,0 +1,82 @@
+# .gitleaksignore — pre-existing findings waived by the repo-wide secret scan.
+#
+# This is a RATCHET: entries may only ever be removed, never added to silence a
+# new finding. Remove an entry once the underlying line is fixed or deleted.
+# Fingerprint format: <path>:<rule-id>:<line>
+#
+# NOTE: several entries below are NOT test fixtures and must be treated as real
+# leaked credentials until rotated/removed (see the accompanying security issue).
+# They are listed here only so the ratchet starts green.
+.flow.yml:generic-api-key:6
+.opencode/skills/session-analyzer/memory_session_dump.py:generic-api-key:19
+.opencode/skills/session-analyzer/memory_session_dump.py:generic-api-key:32
+apps/cli/internal/auth/device_flow_test.go:generic-api-key:102
+apps/cli/internal/installer/installer_test.go:generic-api-key:271
+apps/cli/internal/installer/installer_test.go:generic-api-key:286
+apps/server/domain/apitoken/apitoken_test.go:generic-api-key:145
+apps/server/domain/apitoken/apitoken_test.go:generic-api-key:159
+apps/server/domain/apitoken/apitoken_test.go:generic-api-key:17
+apps/server/domain/apitoken/apitoken_test.go:generic-api-key:231
+apps/server/domain/apitoken/apitoken_test.go:generic-api-key:251
+apps/server/domain/apitoken/apitoken_test.go:generic-api-key:61
+apps/server/domain/apitoken/apitoken_test.go:generic-api-key:66
+apps/server/domain/apitoken/apitoken_test.go:generic-api-key:86
+apps/server/domain/mcp/handler_integration_test.go:generic-api-key:30
+apps/server/domain/mcp/mcp_test.go:generic-api-key:83
+apps/server/domain/mcp/mcp_test.go:jwt:67
+apps/server/domain/mcp/mcp_test.go:jwt:68
+apps/server/pkg/auth/middleware_standalone_test.go:generic-api-key:169
+apps/server/pkg/auth/middleware_standalone_test.go:generic-api-key:183
+apps/server/pkg/auth/zitadel_test.go:generic-api-key:373
+apps/server/pkg/sdk/auth/auth_test.go:generic-api-key:22
+apps/server/pkg/sdk/auth/auth_test.go:generic-api-key:46
+bench/domain-test/poc_finalize_debug.py:generic-api-key:16
+bench/domain-test/poc_finalize_debug.py:generic-api-key:18
+bench/domain-test/poc_race_tests.py:generic-api-key:21
+bench/domain-test/poc_race_tests.py:generic-api-key:23
+bench/domain-test/test_local.sh:generic-api-key:16
+bench/domain-test/test_local.sh:generic-api-key:5
+deploy/self-hosted/CLI_USAGE.md:generic-api-key:138
+deploy/self-hosted/CLI_USAGE.md:generic-api-key:146
+deploy/self-hosted/CLI_USAGE.md:generic-api-key:251
+deploy/self-hosted/CLI_USAGE.md:generic-api-key:71
+deploy/self-hosted/INSTALL.md:generic-api-key:56
+docs/EMERGENT_CLI_STANDALONE.md:generic-api-key:103
+docs/EMERGENT_CLI_STANDALONE.md:generic-api-key:30
+docs/MAC_STANDALONE_INSTALLATION.md:curl-auth-header:149
+docs/MAC_STANDALONE_INSTALLATION.md:generic-api-key:150
+docs/MAC_STANDALONE_INSTALLATION.md:generic-api-key:44
+docs/archive/migrations/remove-org-id-header-migration.md:curl-auth-header:15
+docs/archive/migrations/remove-org-id-header-migration.md:curl-auth-header:155
+docs/archive/migrations/remove-org-id-header-migration.md:curl-auth-header:160
+docs/archive/migrations/remove-org-id-header-migration.md:curl-auth-header:23
+docs/archive/plans/auto-discovery-testing.md:curl-auth-header:153
+docs/archive/plans/auto-discovery-testing.md:curl-auth-header:171
+docs/archive/sessions/auto-schema-discovery-tests.md:generic-api-key:101
+docs/features/extraction/EXTRACTION_DUPLICATE_KEY_HANDLING.md:generic-api-key:192
+docs/fixes/config/ENV_FALLBACK_AUDIT.md:generic-api-key:423
+docs/guides/ENVIRONMENT_VARIABLE_MIGRATION.md:generic-api-key:206
+docs/integrations/mcp/MCP_CHAT_DIAGRAMS.md:curl-auth-header:908
+docs/integrations/mcp/MCP_INSPECTOR_QUICKSTART.md:curl-auth-header:239
+docs/integrations/zitadel/AUTH_SCOPES_FIX.md:curl-auth-header:159
+docs/integrations/zitadel/SCOPES_DISABLED_MODE.md:curl-auth-header:59
+docs/setup/SERVICE_ACCOUNT_SETUP.md:generic-api-key:69
+docs/spec/27-extraction-worker-quickstart.md:curl-auth-header:104
+docs/spec/27-extraction-worker-quickstart.md:curl-auth-header:135
+docs/spec/27-extraction-worker-quickstart.md:curl-auth-header:143
+docs/spec/27-extraction-worker-quickstart.md:curl-auth-header:275
+docs/spec/27-extraction-worker-quickstart.md:curl-auth-header:358
+docs/spec/27-extraction-worker-quickstart.md:curl-auth-header:363
+docs/spec/27-extraction-worker-quickstart.md:curl-auth-header:68
+docs/technical/security/SECURITY_SCOPES.md:curl-auth-header:194
+docs/technical/security/SECURITY_SCOPES.md:curl-auth-header:233
+docs/testing/e2e/E2E_TEST_USER_SETUP.md:curl-auth-header:145
+e2e/tests/experiments/memory_benchmark_test.go:generic-api-key:429
+e2e/tests/integration/reextraction_test.go:generic-api-key:186
+tools/benchmarks/extraction_test.py:generic-api-key:24
+tools/graph-import/enrich_scenarios.py:generic-api-key:33
+tools/graph-import/enrich_scenarios.py:generic-api-key:73
+tools/graph-import/enrich_scenarios.py:generic-api-key:76
+tools/graph-import/fix_missing_wiring.py:generic-api-key:22
+tools/graph-import/fix_missing_wiring.py:generic-api-key:62
+tools/graph-import/fix_missing_wiring.py:generic-api-key:65
