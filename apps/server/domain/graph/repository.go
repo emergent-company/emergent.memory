@@ -2039,12 +2039,17 @@ func (r *Repository) GetDistinctTags(ctx context.Context, projectID uuid.UUID, p
 
 	args := []interface{}{projectID}
 
+	// cardinality(labels) > 0 is semantically a no-op (unnest of an empty array
+	// yields no rows) but lets the planner use the partial index
+	// idx_graph_objects_labels_head (project_id) WHERE ... cardinality(labels) > 0
+	// instead of scanning every object in the project (#1104).
 	query := `
 		SELECT DISTINCT unnest(labels) as tag
 		FROM kb.graph_objects
 		WHERE project_id = ?
 		  AND supersedes_id IS NULL
-		  AND deleted_at IS NULL`
+		  AND deleted_at IS NULL
+		  AND cardinality(labels) > 0`
 
 	if params != nil && params.ObjectType != "" {
 		query += `
