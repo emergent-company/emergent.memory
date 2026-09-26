@@ -303,6 +303,60 @@ func TestA2ASendMessage_ValidBody_ReachesRepo_Panics(t *testing.T) {
 	assertPanics(t, func() { _ = h.SendMessage(c) })
 }
 
+func TestA2UIActionFromMetadata(t *testing.T) {
+	tests := []struct {
+		name     string
+		metadata map[string]any
+		wantOK   bool
+		wantSID  string
+	}{
+		{"nil", nil, false, ""},
+		{"missing key", map[string]any{"skillId": "x"}, false, ""},
+		{"valid", map[string]any{"a2uiAction": map[string]any{"surfaceId": "s1", "action": map[string]any{"name": "approve"}}}, true, "s1"},
+		{"empty surfaceId", map[string]any{"a2uiAction": map[string]any{"action": "x"}}, false, ""},
+		{"non-object action", map[string]any{"a2uiAction": "not-an-object"}, false, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			action, ok := a2uiActionFromMetadata(tt.metadata)
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Equal(t, tt.wantSID, action.SurfaceID)
+		})
+	}
+}
+
+func TestA2UIActionMessage(t *testing.T) {
+	action := a2uiAction{SurfaceID: "s1", Action: map[string]any{"name": "approve"}}
+
+	msg := a2uiActionMessage(action, "")
+	assert.Contains(t, msg, `"s1"`)
+	assert.Contains(t, msg, "approve")
+
+	withText := a2uiActionMessage(action, "please proceed")
+	assert.Contains(t, withText, "please proceed")
+}
+
+func TestA2ASendMessage_SurfaceAction_NoTextPart_ReachesRepo(t *testing.T) {
+	h := newTestA2AHandler()
+	body := `{"message":{"messageId":"m1","role":"ROLE_USER","contextId":"c1","metadata":{"a2uiAction":{"surfaceId":"s1","action":{"name":"approve"}}},"parts":[]}}`
+	c, _ := newA2AMessageContext(http.MethodPost, "/message:send", body, true)
+
+	// A surface action with no text part must NOT be rejected as an empty
+	// message: it routes to the new-task path (which panics on the nil repo
+	// past validation) rather than the resume path.
+	assertPanics(t, func() { _ = h.SendMessage(c) })
+}
+
+func TestA2ASendMessage_SurfaceAction_NoContext_Returns400(t *testing.T) {
+	h := newTestA2AHandler()
+	body := `{"message":{"messageId":"m1","role":"ROLE_USER","metadata":{"a2uiAction":{"surfaceId":"s1","action":{"name":"approve"}}},"parts":[]}}`
+	c, rec := newA2AMessageContext(http.MethodPost, "/message:send", body, true)
+
+	require.NoError(t, h.SendMessage(c))
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Equal(t, "INVALID_ARGUMENT", mustA2AErr(t, rec).Error.Details[0].Reason)
+}
+
 func TestA2AGetTask_NoAuth_Returns401(t *testing.T) {
 	h := newTestA2AHandler()
 	c, _ := newA2AMessageContext(http.MethodGet, "/tasks/t1", "", false)
