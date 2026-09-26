@@ -25,7 +25,7 @@ func nonNilTodoSvc() *sessiontodos.Service {
 // rather than panicking when sessionTodoSvc is not injected.
 func TestExecuteSessionTodoList_NilService(t *testing.T) {
 	svc := &Service{sessionTodoSvc: nil}
-	_, err := svc.executeSessionTodoList(context.Background(), map[string]any{
+	_, err := svc.executeSessionTodoList(context.Background(), "proj-1", map[string]any{
 		"session_id": "sess-abc",
 	})
 	require.Error(t, err)
@@ -40,7 +40,7 @@ func TestExecuteSessionTodoList_MissingSessionID(t *testing.T) {
 	// Note: calling List on this service would panic (nil repo), but the
 	// session_id check fires first so it never reaches List.
 	svc := &Service{sessionTodoSvc: nonNilTodoSvc()}
-	_, err := svc.executeSessionTodoList(context.Background(), map[string]any{})
+	_, err := svc.executeSessionTodoList(context.Background(), "proj-1", map[string]any{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "session_id")
 }
@@ -48,7 +48,7 @@ func TestExecuteSessionTodoList_MissingSessionID(t *testing.T) {
 // TestExecuteSessionTodoList_EmptySessionID same but with empty string value.
 func TestExecuteSessionTodoList_EmptySessionID(t *testing.T) {
 	svc := &Service{sessionTodoSvc: nonNilTodoSvc()}
-	_, err := svc.executeSessionTodoList(context.Background(), map[string]any{
+	_, err := svc.executeSessionTodoList(context.Background(), "proj-1", map[string]any{
 		"session_id": "",
 	})
 	require.Error(t, err)
@@ -62,7 +62,7 @@ func TestExecuteSessionTodoList_EmptySessionID(t *testing.T) {
 // TestExecuteSessionTodoUpdate_NilService verifies the nil-guard.
 func TestExecuteSessionTodoUpdate_NilService(t *testing.T) {
 	svc := &Service{sessionTodoSvc: nil}
-	_, err := svc.executeSessionTodoUpdate(context.Background(), map[string]any{
+	_, err := svc.executeSessionTodoUpdate(context.Background(), "proj-1", map[string]any{
 		"session_id": "sess",
 		"todo_id":    "todo-1",
 	})
@@ -73,7 +73,7 @@ func TestExecuteSessionTodoUpdate_NilService(t *testing.T) {
 // TestExecuteSessionTodoUpdate_MissingSessionID returns error when session_id absent.
 func TestExecuteSessionTodoUpdate_MissingSessionID(t *testing.T) {
 	svc := &Service{sessionTodoSvc: nonNilTodoSvc()}
-	_, err := svc.executeSessionTodoUpdate(context.Background(), map[string]any{
+	_, err := svc.executeSessionTodoUpdate(context.Background(), "proj-1", map[string]any{
 		"todo_id": "todo-1",
 	})
 	require.Error(t, err)
@@ -83,7 +83,7 @@ func TestExecuteSessionTodoUpdate_MissingSessionID(t *testing.T) {
 // TestExecuteSessionTodoUpdate_MissingTodoID returns error when todo_id absent.
 func TestExecuteSessionTodoUpdate_MissingTodoID(t *testing.T) {
 	svc := &Service{sessionTodoSvc: nonNilTodoSvc()}
-	_, err := svc.executeSessionTodoUpdate(context.Background(), map[string]any{
+	_, err := svc.executeSessionTodoUpdate(context.Background(), "proj-1", map[string]any{
 		"session_id": "sess",
 	})
 	require.Error(t, err)
@@ -123,6 +123,41 @@ func TestSessionTodoToolDefinitions_RequiredFields(t *testing.T) {
 			assert.Contains(t, d.InputSchema.Required, "todo_id")
 		}
 	}
+}
+
+// TestSessionTodoToolsRegistered proves the tools are part of the runtime
+// catalog (GetToolDefinitions), so a caller-visible definition can never again
+// exist without a dispatch path (issue #1051 item (a)).
+func TestSessionTodoToolsRegistered(t *testing.T) {
+	svc := &Service{}
+	names := map[string]bool{}
+	for _, d := range svc.GetToolDefinitions() {
+		names[d.Name] = true
+	}
+	require.True(t, names["session-todo-list"], "session-todo-list must be in GetToolDefinitions")
+	require.True(t, names["session-todo-update"], "session-todo-update must be in GetToolDefinitions")
+}
+
+// TestExecuteToolDispatchesSessionTodoList proves the ExecuteTool switch routes
+// "session-todo-list" to executeSessionTodoList (not an unknown-tool fallthrough).
+func TestExecuteToolDispatchesSessionTodoList(t *testing.T) {
+	svc := &Service{sessionTodoSvc: nonNilTodoSvc()}
+	_, err := svc.ExecuteTool(context.Background(), "proj-1", "session-todo-list", map[string]any{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "session_id",
+		"dispatch must reach the handler's session_id validation")
+}
+
+// TestExecuteToolDispatchesSessionTodoUpdate proves the ExecuteTool switch routes
+// "session-todo-update" to executeSessionTodoUpdate.
+func TestExecuteToolDispatchesSessionTodoUpdate(t *testing.T) {
+	svc := &Service{sessionTodoSvc: nonNilTodoSvc()}
+	_, err := svc.ExecuteTool(context.Background(), "proj-1", "session-todo-update", map[string]any{
+		"session_id": "sess",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "todo_id",
+		"dispatch must reach the handler's todo_id validation")
 }
 
 // ---------------------------------------------------------------------------

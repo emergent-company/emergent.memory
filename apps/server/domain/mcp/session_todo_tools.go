@@ -71,22 +71,22 @@ func sessionTodoToolDefinitions() []ToolDefinition {
 	}
 }
 
-// sessionTodoCaller resolves the session-todo tool's caller identity from the
-// run context (project id + the user who initiated the run). When absent the
-// values are empty, so the ownership predicate fails closed in the service.
-func sessionTodoCaller(ctx context.Context) (projectID, ownerUserID string) {
-	projectID = auth.ProjectIDFromContext(ctx)
+// sessionTodoOwnerUserID resolves the session-todo tool's caller identity from
+// the run context (the user who initiated the run). The project id is passed in
+// by ExecuteTool, mirroring session-get-messages. When the user is absent the
+// value is empty, so the ownership predicate fails closed in the service.
+func sessionTodoOwnerUserID(ctx context.Context) string {
 	if u := auth.UserFromContext(ctx); u != nil {
-		ownerUserID = u.ID
+		return u.ID
 	}
-	return projectID, ownerUserID
+	return ""
 }
 
-func (s *Service) executeSessionTodoList(ctx context.Context, args map[string]any) (*ToolResult, error) {
+func (s *Service) executeSessionTodoList(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	if s.sessionTodoSvc == nil {
 		return nil, fmt.Errorf("session todo service not available")
 	}
-	projectID, ownerUserID := sessionTodoCaller(ctx)
+	ownerUserID := sessionTodoOwnerUserID(ctx)
 	sessionID, _ := args["session_id"].(string)
 	if sessionID == "" {
 		return nil, fmt.Errorf("session-todo-list: 'session_id' is required")
@@ -118,11 +118,11 @@ func sessionTodoListResult(todos []*sessiontodos.SessionTodo) *ToolResult {
 	}
 }
 
-func (s *Service) executeSessionTodoUpdate(ctx context.Context, args map[string]any) (*ToolResult, error) {
+func (s *Service) executeSessionTodoUpdate(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	if s.sessionTodoSvc == nil {
 		return nil, fmt.Errorf("session todo service not available")
 	}
-	projectID, ownerUserID := sessionTodoCaller(ctx)
+	ownerUserID := sessionTodoOwnerUserID(ctx)
 	sessionID, _ := args["session_id"].(string)
 	todoID, _ := args["todo_id"].(string)
 	if sessionID == "" || todoID == "" {
