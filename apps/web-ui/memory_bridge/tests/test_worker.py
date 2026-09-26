@@ -160,6 +160,27 @@ def test_question_answer_responds_with_answer():
     asyncio.run(run())
 
 
+def test_surface_action_starts_new_turn():
+    """A surface action is distinct from a question answer: it starts a fresh
+    memory turn carrying the surfaceId + action, and never touches
+    respond/cancel."""
+    async def run():
+        log = []
+        sess = _FakeSession(log)
+        chat = _FakeChat(log)
+        tracker = _PauseTracker()
+        outcome = await _handle_decision_text(
+            sess, chat, tracker,
+            '{"type":"surfaceAction","surfaceId":"s1","action":{"componentId":"root","response":"accept"}}',
+        )
+        assert outcome == "surface_action"
+        assert chat.responded == [] and chat.cancelled == []
+        assert len(sess.generated) == 1
+        assert sess.generated[0].startswith('The user took an action on UI surface "s1":')
+        assert '"response": "accept"' in sess.generated[0]
+    asyncio.run(run())
+
+
 def test_cancel_action_hits_cancel_endpoint():
     async def run():
         log = []
@@ -252,6 +273,7 @@ if __name__ == "__main__":
     test_approval_decision_responds_then_resumes()
     test_reject_with_reason_passes_message()
     test_question_answer_responds_with_answer()
+    test_surface_action_starts_new_turn()
     test_cancel_action_hits_cancel_endpoint()
     test_parallel_batch_resumes_only_after_last_decision()
     test_stale_decision_responds_but_does_not_resume()

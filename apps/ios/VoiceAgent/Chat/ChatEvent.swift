@@ -14,6 +14,8 @@ enum ChatEvent: Equatable {
     case thinking(delta: String)
     case approval(ChatApprovalEvent)
     case question(ChatQuestionEvent)
+    /// A declarative A2UI surface (structured cards) validated by the server.
+    case ui(ChatUISurfaceEvent)
 }
 
 /// A live tool invocation (`{"type":"tool_call",...}`). `id` is worker-assigned
@@ -128,6 +130,9 @@ func decodeChatEvent(data: Data) -> ChatEvent? {
     case "question":
         guard let event = try? decoder.decode(ChatQuestionEvent.self, from: data) else { return nil }
         return .question(event)
+    case "ui":
+        guard let event = try? decoder.decode(ChatUISurfaceEvent.self, from: data) else { return nil }
+        return .ui(event)
     default:
         // Unknown event type — ignored silently.
         return nil
@@ -150,25 +155,59 @@ enum ChatDecision: Equatable {
     case approve(questionId: String)
     case reject(questionId: String, reason: String?)
     case answer(questionId: String, value: String)
+    /// An action on an A2UI surface (distinct from a question answer).
+    case surfaceAction(surfaceId: String, action: ChatUIAction)
 }
 
 /// JSON payload for `lk.chat.decision`. Encoded fields depend on the kind:
 /// - approve: `{type:"approval", questionId, action:"approve"}`
 /// - reject:  `{type:"approval", questionId, action:"reject", message:"<reason>"}`
 /// - answer:  `{type:"question", questionId, answer:"<value>"}`
+/// - surface: `{type:"surfaceAction", surfaceId, action:{componentId, response}}`
 struct ChatDecisionPayload: Encodable, Equatable {
     let type: String
-    let questionId: String
+    let questionId: String?
+    let surfaceId: String?
     let action: String?
+    let surfaceAction: ChatUIAction?
     let message: String?
     let answer: String?
 
-    init(type: String, questionId: String, action: String? = nil, message: String? = nil, answer: String? = nil) {
+    init(type: String, questionId: String? = nil, surfaceId: String? = nil,
+         action: String? = nil, surfaceAction: ChatUIAction? = nil,
+         message: String? = nil, answer: String? = nil) {
         self.type = type
         self.questionId = questionId
+        self.surfaceId = surfaceId
         self.action = action
+        self.surfaceAction = surfaceAction
         self.message = message
         self.answer = answer
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case questionId
+        case surfaceId
+        case action
+        case message
+        case answer
+    }
+
+    /// The nested surface action is encoded under the wire key `action`,
+    /// while the approval action is a plain string — so only one is present.
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(type, forKey: .type)
+        try container.encodeIfPresent(questionId, forKey: .questionId)
+        try container.encodeIfPresent(surfaceId, forKey: .surfaceId)
+        try container.encodeIfPresent(message, forKey: .message)
+        try container.encodeIfPresent(answer, forKey: .answer)
+        if let surfaceAction {
+            try container.encode(surfaceAction, forKey: .action)
+        } else {
+            try container.encodeIfPresent(action, forKey: .action)
+        }
     }
 }
 
@@ -181,6 +220,8 @@ func makeChatDecisionPayload(_ decision: ChatDecision) -> ChatDecisionPayload {
         ChatDecisionPayload(type: "approval", questionId: questionId, action: "reject", message: reason)
     case let .answer(questionId, value):
         ChatDecisionPayload(type: "question", questionId: questionId, answer: value)
+    case let .surfaceAction(surfaceId, action):
+        ChatDecisionPayload(type: "surfaceAction", surfaceId: surfaceId, surfaceAction: action)
     }
 }
 
