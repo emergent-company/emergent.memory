@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
@@ -100,11 +101,13 @@ func TestReceiveWebhook_RefusesInternalVisibility(t *testing.T) {
 
 	_, projectID := insertOrgAndProject(t, tdb.DB, ctx)
 
-	// Internal-visibility target. The hook row is inserted directly (creation is
-	// now refused by #1004), modelling a hook bound before that guard shipped.
+	// Internal-visibility target. The hook rows are inserted directly (creation
+	// is now guarded by #1004), modelling hooks bound before the guard shipped
+	// (allow_internal=false) and a deliberately opted-in hook (allow_internal=true).
 	insertAgentDefinition(t, tdb.DB, ctx, projectID, "internal-target", string(VisibilityInternal))
 	internalAgentID := insertRuntimeAgent(t, tdb.DB, ctx, projectID, "internal-target")
 	internalHookID := insertWebhookHook(t, tdb.DB, ctx, internalAgentID, projectID, "whk_vis_internal_token")
+	internalOptInHookID := insertWebhookHookWithAllowInternal(t, tdb.DB, ctx, internalAgentID, projectID, "whk_vis_internal_optin_token", true)
 
 	// Normal (project) visibility target: must remain invocable.
 	insertAgentDefinition(t, tdb.DB, ctx, projectID, "project-target", string(VisibilityProject))
@@ -114,14 +117,22 @@ func TestReceiveWebhook_RefusesInternalVisibility(t *testing.T) {
 	repo := NewRepository(tdb.DB)
 	h := &Handler{repo: repo, executor: trustTestExecutor(repo)}
 
-	// 1. Internal target: refused (403), no run created.
+	// 1. Internal target (not opted in): refused (403), no run created.
 	rec := callReceiveWebhook(t, h, internalHookID, "whk_vis_internal_token")
 	require.Equal(t, http.StatusForbidden, rec.Code,
 		"invoking a hook bound to an internal-visibility agent must be refused")
 	require.Equal(t, 0, countRunsByTriggerSource(t, tdb.DB, ctx, "webhook:"+internalHookID),
 		"no run must be created for a refused internal-visibility hook")
 
-	// 2. Normal target: still invoked (202), a run is created.
+	// 2. Internal target (explicitly opted in): the opt-in persists on the hook
+	// row and invocation must agree with create-time — allowed (202), one run.
+	rec = callReceiveWebhook(t, h, internalOptInHookID, "whk_vis_internal_optin_token")
+	require.Equal(t, http.StatusAccepted, rec.Code,
+		"invoking an opted-in hook bound to an internal-visibility agent must succeed")
+	require.Equal(t, 1, countRunsByTriggerSource(t, tdb.DB, ctx, "webhook:"+internalOptInHookID),
+		"a run must be created for an opted-in internal-visibility hook")
+
+	// 3. Normal target: still invoked (202), a run is created.
 	rec = callReceiveWebhook(t, h, projectHookID, "whk_vis_project_token")
 	require.Equal(t, http.StatusAccepted, rec.Code,
 		"invoking a hook bound to a project-visibility agent must still succeed")
@@ -161,4 +172,56 @@ func countRunsByTriggerSource(t *testing.T, db *bun.DB, ctx context.Context, tri
 	err := db.NewRaw(`SELECT count(*) FROM kb.agent_runs WHERE trigger_source = ?`, triggerSource).Scan(ctx, &count)
 	require.NoError(t, err)
 	return count
+}
+
+// insertWebhookHookWithAllowInternal inserts an enabled webhook hook bound to
+// agentID with the given plaintext token and an explicit allow_internal value,
+// so tests can model both a stale pre-#1004 hook (false) and a deliberately
+// opted-in hook (true).
+func insertWebhookHookWithAllowInternal(t *testing.T, db *bun.DB, ctx context.Context, agentID, projectID, token string, allowInternal bool) string {
+	t.Helper()
+	hash, err := HashWebhookToken(token)
+	require.NoError(t, err)
+	id := uuid.NewString()
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO kb.agent_webhook_hooks (id, agent_id, project_id, label, token_hash, enabled, allow_internal) VALUES (?, ?, ?, ?, ?, true, ?)`,
+		id, agentID, projectID, "test-hook", hash, allowInternal)
+	require.NoError(t, err)
+	return id
+}
+
+// TestReceiveWebhook_ResolutionError_FailsClosed is the fail-first regression
+// for issue #1051(c) finding 2: ReceiveWebhook used to discard the error from
+// ResolveDefinitionForAgent (`agentDef, _ = ...`), so a transient DB error left
+// agentDef nil and the stale hook executed unchecked — the exact hole the
+// visibility check is meant to close. Invocation must fail closed: a definition
+// resolution failure refuses the invocation (500) and creates no run, matching
+// the create-time binding guard, which already returns 500 on the same error.
+func TestReceiveWebhook_ResolutionError_FailsClosed(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	tdb := testdb.SetupTestDBOrFail(t, context.Background(), "agents_receivewebhook_resolve_err")
+	t.Cleanup(tdb.Close)
+	ctx := context.Background()
+
+	_, projectID := insertOrgAndProject(t, tdb.DB, ctx)
+	agentID := insertRuntimeAgent(t, tdb.DB, ctx, projectID, "plain-agent")
+	hookID := insertWebhookHook(t, tdb.DB, ctx, agentID, projectID, "whk_vis_resolve_err_token")
+
+	// Fault injection: make the agent-definition resolution query fail with a
+	// real error (relation does not exist) while the hook and runtime-agent
+	// lookups still succeed. RENAME TO takes an unqualified name, so the table
+	// stays in kb. and the old kb.agent_definitions name becomes unresolvable.
+	_, err := tdb.DB.ExecContext(ctx, `ALTER TABLE kb.agent_definitions RENAME TO agent_definitions_hidden`)
+	require.NoError(t, err)
+
+	repo := NewRepository(tdb.DB)
+	h := &Handler{repo: repo, executor: trustTestExecutor(repo)}
+
+	rec := callReceiveWebhook(t, h, hookID, "whk_vis_resolve_err_token")
+	require.Equal(t, http.StatusInternalServerError, rec.Code,
+		"a definition resolution failure must refuse the invocation (500), never execute")
+	require.Equal(t, 0, countRunsByTriggerSource(t, tdb.DB, ctx, "webhook:"+hookID),
+		"no run must be created when definition resolution fails")
 }
