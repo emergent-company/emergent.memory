@@ -73,24 +73,39 @@ var viewerReadOnlyScopes = map[string]bool{
 	"projects:read": true,
 }
 
-// errAdminAllScopeDenied is returned when a caller attempts to grant admin:all
-// without superadmin_full privileges.
-var errAdminAllScopeDenied = apperror.New(403, "admin-all-scope-denied",
-	"admin:all scope requires superadmin_full privileges")
+// platformScopes are the platform-tier scopes whose minting requires the
+// platform authority (an active superadmin_full). Bare "admin" is folded into
+// "admin:all" + platform per #1041 E1 (docs/security/mcp-authz-class-decision.md):
+// it is no longer mintable by an unprivileged caller; only a superadmin_full may
+// grant either.
+var platformScopes = map[string]bool{
+	"admin":     true,
+	"admin:all": true,
+}
 
-// scopesContainAdminAll reports whether scopes includes the admin:all scope.
-func scopesContainAdminAll(scopes []string) bool {
+// errPlatformScopeDenied is returned when a caller attempts to grant a
+// platform-tier scope (admin or admin:all) without superadmin_full privileges.
+var errPlatformScopeDenied = apperror.New(403, "platform-scope-denied",
+	"admin and admin:all scopes require superadmin_full privileges")
+
+// scopesContainPlatformScope reports whether scopes includes a platform-tier
+// scope (bare admin or admin:all).
+func scopesContainPlatformScope(scopes []string) bool {
 	for _, sc := range scopes {
-		if sc == "admin:all" {
+		if platformScopes[sc] {
 			return true
 		}
 	}
 	return false
 }
 
-// checkAdminAllGrant rejects admin:all unless the caller is a superadmin_full.
-func (s *Service) checkAdminAllGrant(ctx context.Context, userID string, scopes []string) error {
-	if !scopesContainAdminAll(scopes) {
+// checkPlatformScopeGrant rejects platform-tier scopes (admin / admin:all)
+// unless the caller is a superadmin_full. Bare admin and admin:all share the
+// same platform authority: admin:all is the umbrella (it implies admin via
+// ScopeImplies), so a caller who may not grant admin:all may not grant bare
+// admin either (#1041 E1).
+func (s *Service) checkPlatformScopeGrant(ctx context.Context, userID string, scopes []string) error {
+	if !scopesContainPlatformScope(scopes) {
 		return nil
 	}
 	allowed, err := s.repo.CanGrantAdminAll(ctx, userID)
@@ -98,7 +113,7 @@ func (s *Service) checkAdminAllGrant(ctx context.Context, userID string, scopes 
 		return err
 	}
 	if !allowed {
-		return errAdminAllScopeDenied
+		return errPlatformScopeDenied
 	}
 	return nil
 }
@@ -256,8 +271,8 @@ func (s *Service) create(ctx context.Context, projectID string, userID *string, 
 		uid = *userID
 	}
 
-	// admin:all requires superadmin_full privileges
-	if err := s.checkAdminAllGrant(ctx, uid, scopes); err != nil {
+	// admin / admin:all require superadmin_full privileges
+	if err := s.checkPlatformScopeGrant(ctx, uid, scopes); err != nil {
 		return nil, err
 	}
 
@@ -442,8 +457,8 @@ func (s *Service) CreateAccountToken(ctx context.Context, userID, name string, s
 		}
 	}
 
-	// admin:all requires superadmin_full privileges
-	if err := s.checkAdminAllGrant(ctx, userID, scopes); err != nil {
+	// admin / admin:all require superadmin_full privileges
+	if err := s.checkPlatformScopeGrant(ctx, userID, scopes); err != nil {
 		return nil, err
 	}
 
@@ -647,8 +662,8 @@ func (s *Service) UpdateScopes(ctx context.Context, tokenID, projectID, userID s
 		}
 	}
 
-	// admin:all requires superadmin_full privileges
-	if err := s.checkAdminAllGrant(ctx, userID, scopes); err != nil {
+	// admin / admin:all require superadmin_full privileges
+	if err := s.checkPlatformScopeGrant(ctx, userID, scopes); err != nil {
 		return nil, err
 	}
 
@@ -710,8 +725,8 @@ func (s *Service) UpdateAccountTokenScopes(ctx context.Context, tokenID, userID 
 		}
 	}
 
-	// admin:all requires superadmin_full privileges
-	if err := s.checkAdminAllGrant(ctx, userID, scopes); err != nil {
+	// admin / admin:all require superadmin_full privileges
+	if err := s.checkPlatformScopeGrant(ctx, userID, scopes); err != nil {
 		return nil, err
 	}
 

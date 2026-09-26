@@ -151,3 +151,51 @@ func TestRepository_CanGrantAdminAll_RequiresSuperadminFull(t *testing.T) {
 		require.False(t, allowed, "project tier must not mint admin:all")
 	})
 }
+
+// checkPlatformScopeGrant must fold bare "admin" into "admin:all" + platform
+// (#1041 E1): minting a bare admin scope requires an active superadmin_full,
+// exactly like admin:all. This is the fail-first guard for the mint hole — a
+// non-superadmin who could previously mint a bare admin token is now denied at
+// the single platform-scope check.
+func TestService_checkPlatformScopeGrant_FoldsBareAdminIntoPlatform(t *testing.T) {
+	db := connectTestDB(t)
+	repo := NewRepository(db, slog.Default())
+	svc := NewService(db, repo, nil, slog.Default())
+	ctx := context.Background()
+
+	t.Run("non-superadmin cannot mint bare admin", func(t *testing.T) {
+		err := svc.checkPlatformScopeGrant(ctx, uuid.NewString(), []string{"admin"})
+		require.Error(t, err, "bare admin must be denied for a non-superadmin")
+	})
+
+	t.Run("non-superadmin cannot mint admin:all", func(t *testing.T) {
+		err := svc.checkPlatformScopeGrant(ctx, uuid.NewString(), []string{"admin:all"})
+		require.Error(t, err, "admin:all must be denied for a non-superadmin")
+	})
+
+	t.Run("superadmin_readonly cannot mint bare admin", func(t *testing.T) {
+		userID := uuid.NewString()
+		seedSuperadmin(t, db, userID, "superadmin_readonly")
+		err := svc.checkPlatformScopeGrant(ctx, userID, []string{"admin"})
+		require.Error(t, err, "superadmin_readonly must not mint bare admin")
+	})
+
+	t.Run("superadmin_full can mint bare admin", func(t *testing.T) {
+		userID := uuid.NewString()
+		seedSuperadmin(t, db, userID, "superadmin_full")
+		err := svc.checkPlatformScopeGrant(ctx, userID, []string{"admin"})
+		require.NoError(t, err, "superadmin_full must mint bare admin")
+	})
+
+	t.Run("superadmin_full can mint admin:all", func(t *testing.T) {
+		userID := uuid.NewString()
+		seedSuperadmin(t, db, userID, "superadmin_full")
+		err := svc.checkPlatformScopeGrant(ctx, userID, []string{"admin:all"})
+		require.NoError(t, err, "superadmin_full must mint admin:all")
+	})
+
+	t.Run("non-platform scopes need no platform grant", func(t *testing.T) {
+		err := svc.checkPlatformScopeGrant(ctx, uuid.NewString(), []string{"data:read", "graph:write"})
+		require.NoError(t, err, "project scopes must not require a platform grant")
+	})
+}
