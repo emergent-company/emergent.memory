@@ -95,6 +95,16 @@ Two existing but unused assets matter here:
 
 **Rationale**: A nullable `document_group_id` lets new rows escape the invariant (Postgres partial unique indexes treat NULLs as distinct), and a non-unique index leaves the promised version uniqueness unenforced. Existing creation paths (`Create`, `CreateFromUpload`) must set `document_group_id = id`, `version_number = 1`, `is_current = true` so standalone documents form valid single-revision groups.
 
+### D11: `is_current` is the **applied** revision; new revisions are pending
+
+**Decision**: `is_current` identifies the authoritative revision the main graph reflects. The first revision of a group is created current and applied. A newly uploaded revision is created **pending** (`is_current = false`, `applied_at = NULL`); it becomes current only when applied, at which point the prior current revision is demoted, in the same transaction. Revision states are therefore: current, pending, superseded.
+
+**Rationale**: The earlier model (promote on upload) made the document's label drift ahead of the graph — the UI would say "v2" while the graph still reflected v1 — and left no undo, because discarding the current revision was forbidden to protect the one-current invariant. Making the *applied* revision current removes both problems: the documents list always shows the authoritative version, the graph never lags the label, and a pending revision is freely discardable (it was never current) with no promotion to unwind. The one-current invariant is preserved by moving the flag only in the atomic apply transition.
+
+**Alternative considered**: Promote on upload, and allow discarding an unapplied current revision by promoting its predecessor. Workable, but it makes `is_current` mean "newest text" in one place and "authoritative" in another, and keeps the graph/label mismatch. Rejected.
+
+**Consequence**: extraction for a revision is staged and the revision stays pending until apply; the revision list must expose `isCurrent` + `appliedAt` so clients can render current/pending/superseded. Diff defaults `to` to the newest revision (pending if present) and `from` to its predecessor.
+
 ## Risks / Trade-offs
 
 - **[Risk] No provenance for pre-existing objects.** Objects created before this change have no `kb.object_chunks` rows, so they can never be classified as removed. *Mitigation*: document that removals only apply to objects extracted after this change ships; such objects remain live unless manually removed.
@@ -113,7 +123,7 @@ Two existing but unused assets matter here:
 
 ## Migration Plan
 
-1. **Schema (additive, reversible)**: add `document_group_id` (nullable), `version_number` (`NOT NULL DEFAULT 1`), `supersedes_document_id`, `is_current` (`NOT NULL DEFAULT true`) to `kb.documents`; backfill `document_group_id = id` for existing rows; then `SET NOT NULL` on `document_group_id`; add the unique index on `(document_group_id, version_number)` and the partial unique index on `(document_group_id) WHERE is_current`.
+1. **Schema (additive, reversible)**: add `document_group_id` (nullable), `version_number` (`NOT NULL DEFAULT 1`), `supersedes_document_id`, `is_current` (`NOT NULL DEFAULT true`), and `applied_at` (timestamptz, nullable) to `kb.documents`; backfill `document_group_id = id` and `applied_at = created_at` (or `now()`) for existing rows; then `SET NOT NULL` on `document_group_id`; add the unique index on `(document_group_id, version_number)` and the partial unique index on `(document_group_id) WHERE is_current`.
 2. **Backend**: initialize the new fields in `Create` and `CreateFromUpload`; ship revision endpoints, mandatory staging mode, batch provenance, and the `(type, key)` reconciliation apply. All additive; existing document endpoints keep their current behaviour for single-revision groups.
 3. **Clients**: SDK methods, CLI subcommands, and the web UI Revisions section.
 4. **Rollback**: dropping the new columns and indexes fully reverts the schema; revision endpoints are additive and can be left dormant. No existing single-revision document semantics change, so a rollback does not corrupt existing data. Applied-revision graph changes are ordinary graph versions and are reversible through the existing graph version history.

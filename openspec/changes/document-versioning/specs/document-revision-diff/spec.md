@@ -1,15 +1,15 @@
 ## ADDED Requirements
 
 ### Requirement: Content-level diff between revisions
-The API SHALL return a content diff between two revisions of the same logical document via `GET /api/documents/:id/revisions/diff?from=<version|revisionId>&to=<version|revisionId>`. The diff SHALL be computed over the parsed `content` of both revisions and SHALL include a unified, line-oriented diff with added, removed, and unchanged segments plus counts of added and removed lines. When `from` or `to` is omitted, the API SHALL default `to` to the current revision and `from` to the revision immediately preceding it. Both revisions MUST belong to the same `document_group_id`; a cross-group request SHALL be rejected.
+The API SHALL return a content diff between two revisions of the same logical document via `GET /api/documents/:id/revisions/diff?from=<version|revisionId>&to=<version|revisionId>`. The diff SHALL be computed over the parsed `content` of both revisions and SHALL include a unified, line-oriented diff with added, removed, and unchanged segments plus counts of added and removed lines. When `from` or `to` is omitted, the API SHALL default `to` to the group's newest revision (the pending revision if one exists, otherwise the current revision) and `from` to the revision immediately preceding it (for a pending revision, its predecessor — normally the current applied revision). Both revisions MUST belong to the same `document_group_id`; a cross-group request SHALL be rejected.
 
 #### Scenario: Diff two parsed revisions
 - **WHEN** a client requests a diff between two revisions whose content has been parsed
 - **THEN** the API returns a unified line diff and added/removed line counts for that pair
 
 #### Scenario: Default revision pair
-- **WHEN** a client requests a diff without specifying revisions and the group has at least two revisions
-- **THEN** the API diffs the previous revision against the current revision
+- **WHEN** a client requests a diff without specifying revisions and the group has a pending revision
+- **THEN** the API diffs the current applied revision against the pending revision
 
 #### Scenario: Cross-group diff rejected
 - **WHEN** a client requests a diff where one revision does not belong to the target document's group

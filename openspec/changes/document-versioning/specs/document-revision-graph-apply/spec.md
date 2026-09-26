@@ -37,7 +37,7 @@ The API SHALL apply a revision's staged delta to the main graph via `POST /api/d
 - staged `(type, key)` present on the main graph with differing content → create a new version of the existing object (an update), recording a change summary;
 - relationships reconciled by their endpoints' reconciled keys and relationship type.
 
-Apply SHALL be performed atomically and SHALL be idempotent: re-applying an already-applied revision SHALL make no further object, relationship, provenance, or tombstone writes. On success the revision SHALL be marked applied and its staging branch removed.
+Apply SHALL be performed atomically and SHALL be idempotent: re-applying an already-applied revision SHALL make no further object, relationship, provenance, or tombstone writes. On success the revision SHALL be marked applied (`applied_at` set) and promoted to the group's current revision in the same transaction, demoting the prior current revision; the staging branch SHALL then be removed.
 
 #### Scenario: Apply an added object
 - **WHEN** a staged object's `(type, key)` does not exist on the main graph
@@ -50,6 +50,10 @@ Apply SHALL be performed atomically and SHALL be idempotent: re-applying an alre
 #### Scenario: Apply conflates identical objects
 - **WHEN** a staged object's `(type, key)` exists on the main graph with identical content
 - **THEN** applying the revision makes no change for that object
+
+#### Scenario: Apply promotes the revision to current
+- **WHEN** a pending revision is applied successfully
+- **THEN** it becomes the group's current and applied revision and the prior current revision is superseded
 
 #### Scenario: Apply is idempotent
 - **WHEN** a client applies the same revision twice

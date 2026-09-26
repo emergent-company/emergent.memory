@@ -1,11 +1,11 @@
 ## ADDED Requirements
 
 ### Requirement: Upload a document revision from the CLI
-The `memory documents` command SHALL support uploading a local file as a new revision of an existing document via `memory documents upload <file> --revision-of <documentId>`. The command SHALL target the documents revisions API and SHALL report the created revision's id and version number. The existing upload behaviour SHALL be unchanged when `--revision-of` is omitted.
+The `memory documents` command SHALL support uploading a local file as a new revision of an existing document via `memory documents upload <file> --revision-of <documentId>`. The command SHALL target the documents revisions API and SHALL report the created revision's id, version number, and that it is pending. The existing upload behaviour SHALL be unchanged when `--revision-of` is omitted.
 
 #### Scenario: Upload a revision
 - **WHEN** the user runs `memory documents upload notes.md --revision-of <id>`
-- **THEN** a new revision is created for that document and the command prints the revision id and version number
+- **THEN** a new pending revision is created for that document and the command prints the revision id, version number, and pending state
 
 #### Scenario: Upload without revision flag unchanged
 - **WHEN** the user runs `memory documents upload notes.md` without `--revision-of`

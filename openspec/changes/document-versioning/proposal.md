@@ -12,12 +12,12 @@ The knowledge graph already has the primitives this needs — a version chain (`
 
 ## What Changes
 
-- **Document revision chain**: documents gain a logical identity (`document_group_id`) shared across revisions, plus `version_number`, `supersedes_document_id`, and an `is_current` flag with a per-group uniqueness guarantee. Existing documents are backfilled as single-revision groups. `parent_document_id` keeps its current meaning (hierarchy), unchanged.
-- **Upload a revision**: a new endpoint takes a file and attaches it to an existing logical document, creating the next version in the chain rather than a standalone document.
-- **Revision listing and discard**: list all revisions of a logical document and discard a non-current revision (removing its chunks and any staged graph objects).
+- **Document revision chain**: documents gain a logical identity (`document_group_id`) shared across revisions, plus `version_number`, `supersedes_document_id`, an `is_current` flag, and an `applied_at` timestamp. `is_current` identifies the **applied/authoritative** revision; a newly uploaded revision is **pending** until applied. Existing documents are backfilled as single-revision, applied groups. `parent_document_id` keeps its current meaning (hierarchy), unchanged.
+- **Upload a revision**: a new endpoint takes a file and attaches it to an existing logical document as the next version, pending review. The document's current revision and the main graph are unchanged until the revision is applied.
+- **Revision listing and discard**: list a logical document's revisions (current / pending / superseded) and discard a pending revision, which acts as undo for a mistaken upload.
 - **Revision diff**: compare two revisions and return both a human-readable line diff of parsed content and a structured entity delta (added / updated / removed graph objects and relationships). Diff is computed against the staged extraction, not against the main graph.
 - **Extraction provenance**: extraction records which chunks produced each graph object (`kb.object_chunks`, currently unused), which is what makes removed-content detection possible. Phase 1 records this at batch granularity.
-- **Review-gated graph update**: extraction for a revision lands on a staging branch and does **not** auto-merge (and aborts rather than falling back to main if staging fails). The user reviews the delta and applies it; applying reconciles staged objects against the main graph by `(type, key)` — add, update, or leave unchanged — and tombstones objects attributable only to superseded revisions. Discarding drops the staging branch.
+- **Review-gated graph update**: extraction for a revision lands on a staging branch and does **not** auto-merge (and aborts rather than falling back to main if staging fails). The user reviews the delta and applies it; applying reconciles staged objects against the main graph by `(type, key)` — add, update, or leave unchanged — tombstones objects attributable only to superseded revisions, and promotes the revision to the document's current version. Discarding a pending revision drops the staging branch and leaves the graph untouched.
 - **CLI + web UI**: `memory documents` gains revision subcommands; the document detail page gains a Revisions tab (list, diff, entity delta, apply / discard).
 
 ## Capabilities

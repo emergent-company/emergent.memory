@@ -1,31 +1,33 @@
 ## 1. Schema & Migration
 
-- [ ] 1.1 Add migration `apps/server/migrations/00182_document_revisions.sql` (next unused version — `00179`–`00181` are taken): `ALTER TABLE kb.documents ADD COLUMN IF NOT EXISTS document_group_id uuid`, `ADD COLUMN IF NOT EXISTS version_number integer NOT NULL DEFAULT 1`, `ADD COLUMN IF NOT EXISTS supersedes_document_id uuid`, `ADD COLUMN IF NOT EXISTS is_current boolean NOT NULL DEFAULT true`
-- [ ] 1.2 Backfill existing rows (`document_group_id = id`), then `ALTER COLUMN document_group_id SET NOT NULL`
+- [ ] 1.1 Add migration `apps/server/migrations/00182_document_revisions.sql` (next unused version — `00179`–`00181` are taken): `ALTER TABLE kb.documents ADD COLUMN IF NOT EXISTS document_group_id uuid`, `ADD COLUMN IF NOT EXISTS version_number integer NOT NULL DEFAULT 1`, `ADD COLUMN IF NOT EXISTS supersedes_document_id uuid`, `ADD COLUMN IF NOT EXISTS is_current boolean NOT NULL DEFAULT true`, `ADD COLUMN IF NOT EXISTS applied_at timestamptz`
+- [ ] 1.2 Backfill existing rows (`document_group_id = id`, `applied_at = created_at`), then `ALTER COLUMN document_group_id SET NOT NULL`
 - [ ] 1.3 Add `CREATE UNIQUE INDEX ... ON kb.documents (document_group_id, version_number)` and `CREATE UNIQUE INDEX ... ON kb.documents (document_group_id) WHERE is_current`
-- [ ] 1.4 Write the `-- +goose Down` block dropping the two indexes and the four columns
+- [ ] 1.4 Write the `-- +goose Down` block dropping the two indexes and the five columns
 - [ ] 1.5 Unit test: migration idempotency (re-run is a no-op), `document_group_id` backfill, and that `document_group_id` is NOT NULL
 
 ## 2. Documents Domain — Revision Chain
 
-- [ ] 2.1 Extend `Document` in `apps/server/domain/documents/entity.go` with `DocumentGroupID`, `VersionNumber`, `SupersedesDocumentID`, `IsCurrent`
-- [ ] 2.2 Initialize the new fields in every creation path — `Create` and `CreateFromUpload` in `service.go` set `document_group_id = id`, `version_number = 1`, `is_current = true`, `supersedes_document_id = NULL`
+- [ ] 2.1 Extend `Document` in `apps/server/domain/documents/entity.go` with `DocumentGroupID`, `VersionNumber`, `SupersedesDocumentID`, `IsCurrent`, `AppliedAt`
+- [ ] 2.2 Initialize the new fields in every creation path — `Create` and `CreateFromUpload` in `service.go` set `document_group_id = id`, `version_number = 1`, `is_current = true`, `supersedes_document_id = NULL`, `applied_at = now()` (first revision is current and applied)
 - [ ] 2.3 Update list/get queries in `repository.go` to select the new columns; default document list to current revisions only, with an `includeSuperseded` option
-- [ ] 2.4 Add `CreateRevision(ctx, baseDocumentID, params)` to `service.go`: single transaction computing `version_number = max+1`, demoting the prior current, inserting the new row, retrying on a concurrent-insert conflict
-- [ ] 2.5 Add `ListRevisions(ctx, projectID, documentID)` ordered by `version_number DESC`, including whether each revision is applied
-- [ ] 2.6 Add `DiscardRevision(ctx, projectID, revisionID)`: reject if current or applied; delete revision row + chunks + staging branch; re-point the successor's `supersedes_document_id` to the discarded revision's predecessor
+- [ ] 2.4 Add `CreateRevision(ctx, baseDocumentID, params)` to `service.go`: single transaction computing `version_number = max+1`, inserting the new row **pending** (`is_current = false`, `applied_at = NULL`), leaving the current revision untouched, retrying on a concurrent-insert conflict
+- [ ] 2.5 Add `ListRevisions(ctx, projectID, documentID)` ordered by `version_number DESC`, exposing `isCurrent` and `appliedAt` so clients can derive current/pending/superseded
+- [ ] 2.6 Add `DiscardRevision(ctx, projectID, revisionID)`: allow only pending revisions (reject current and applied); delete revision row + chunks + staging branch; re-point the successor's `supersedes_document_id` to the discarded revision's predecessor
 - [ ] 2.7 Change generic delete (`Delete` / `BulkDelete`) to remove the whole revision group, so no group is left with zero current revisions
-- [ ] 2.8 Unit test: creating a revision sets `version_number = 2`, demotes prior current, promotes new; exactly one current per group
-- [ ] 2.9 Unit test: concurrent revision creation yields distinct increasing version numbers (no two currents, no duplicate versions)
-- [ ] 2.10 Unit test: discarding the current revision and discarding an applied revision are both rejected; discarding a staged superseded revision succeeds and rewires the successor's supersession link
-- [ ] 2.11 Unit test: generic delete removes all revisions of a group and leaves no group with zero revisions
+- [ ] 2.8 Add `ApplyRevisionPromotion(ctx, revisionID)` helper (or inline in apply) that, in one transaction, sets `applied_at`, promotes the revision to current, and demotes the prior current — preserving exactly one current per group
+- [ ] 2.9 Unit test: creating a revision inserts a pending row (`isCurrent=false`, no `appliedAt`) and leaves the current revision and its version number unchanged
+- [ ] 2.10 Unit test: concurrent revision creation yields distinct increasing version numbers and still exactly one current revision
+- [ ] 2.11 Unit test: promotion sets the applied revision current and the prior current superseded, with exactly one current
+- [ ] 2.12 Unit test: discarding the current revision and discarding an applied revision are both rejected; discarding a pending revision succeeds (undo) and rewires a pending successor's supersession link
+- [ ] 2.13 Unit test: generic delete removes all revisions of a group and leaves no group with zero revisions
 
 ## 3. Revision HTTP API
 
 - [ ] 3.1 Add `POST /api/documents/:id/revisions` handler (multipart, reuses upload path) under `documents:write`
 - [ ] 3.2 Add `GET /api/documents/:id/revisions` handler under `documents:read`
 - [ ] 3.3 Add `DELETE /api/documents/:id/revisions/:revId` handler under `documents:delete`
-- [ ] 3.4 Expose `documentGroupId`, `versionNumber`, `isCurrent`, `supersedesDocumentId` on document read responses; document ids address revisions directly (no implicit current-resolution)
+- [ ] 3.4 Expose `documentGroupId`, `versionNumber`, `isCurrent`, `appliedAt`, `supersedesDocumentId` on document read responses; document ids address revisions directly (no implicit current-resolution)
 - [ ] 3.5 Register the routes in `apps/server/domain/documents/routes.go`
 - [ ] 3.6 Update swagger annotations and regenerate `apps/server/docs/swagger`
 - [ ] 3.7 Unit test: revision upload rejects an unknown base document and a disallowed file without mutating the group; list and delete enforce the new scopes
@@ -53,13 +55,14 @@
 - [ ] 6.1 Add a revision extraction mode that makes staging-branch creation and recording mandatory and aborts extraction on failure (no fallback to writing main); record `staging_branch_id` on the job before writing objects
 - [ ] 6.2 Add a graph-service reconciliation method that applies staged branch objects to main by `(type, key)` — create when absent, new version when content differs, no-op when identical — and rewrites provenance to the final main object ids. Do **not** use `MergeBranch` (canonical-id based)
 - [ ] 6.3 Add the removal pass: tombstone main objects attributable only to superseded revisions of the group (provenance from an earlier revision, none from the applied revision, absent from staged set)
-- [ ] 6.4 Add `POST /api/documents/:id/revisions/:revId/apply`: reconcile + remove atomically, mark the revision applied, delete the staging branch; idempotent on re-apply
+- [ ] 6.4 Add `POST /api/documents/:id/revisions/:revId/apply`: reconcile + remove atomically, mark the revision applied, promote it to current (demote the prior current), delete the staging branch; idempotent on re-apply
 - [ ] 6.5 Extend DiscardRevision to delete the revision's staging branch and staged objects
-- [ ] 6.6 Unit test: apply creates added objects and versions updated objects (no duplicate rows for an existing `(type, key)`)
+- [ ] 6.6 Unit test: apply creates added objects and versions updated objects (no duplicate rows for an existing `(type, key)`), and promotes the revision to current
 - [ ] 6.7 Unit test: apply tombstones objects with provenance only from superseded revisions and leaves unchanged/shared objects live
 - [ ] 6.8 Unit test: staging-branch creation failure aborts revision extraction and writes nothing to main
 - [ ] 6.9 Unit test: applying the same revision twice reports no additional changes
-- [ ] 6.10 Integration test: upload v1 → extract → apply → upload v2 → diff → apply → assert graph state matches the v2 delta and removed objects are tombstoned
+- [ ] 6.10 Integration test: upload v1 → extract → upload v2 (pending) → diff → apply v2 → assert graph matches the v2 delta, v2 is current, v1 superseded, and removed objects are tombstoned
+- [ ] 6.11 Integration test: upload v2 (pending) then discard it — graph and current revision are unchanged (undo)
 
 ## 7. SDK
 
