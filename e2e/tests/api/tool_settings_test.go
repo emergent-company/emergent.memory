@@ -213,13 +213,6 @@ func TestToolSettings_OrgToolSettings_CRUD(t *testing.T) {
 // =============================================================================
 
 func TestToolSettings_OrgDefaultUsedWhenNoProjectOverride(t *testing.T) {
-	// Tracked skip (issue #988): org-level tool-default inheritance does not yet
-	// work for builtin tools. EnsureBuiltinServer bulk-upserts every builtin tool
-	// as an enabled project-level row, so ResolveBuiltinToolSettings always
-	// resolves source=project and an org-level enabled=false never propagates.
-	// Re-enable this test when #988 lands; it is not an environment gate.
-	t.Skip("asserts org-level builtin-tool default inheritance the server does not yet implement (issue #988)")
-
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -20,6 +21,25 @@ import (
 const (
 	dbBackupBucket        = "database-backups"
 	dbBackupRetentionDays = 10
+	// dbBackupTimeout is a self-contained bound on the preflight + pg_dump +
+	// upload work so Run does not rely on its caller to supply a deadline.
+	// The scheduler already wraps every task in its own 30m timeout, but Run is
+	// also reachable outside that path, so it bounds itself defensively.
+	dbBackupTimeout = 30 * time.Minute
+	// dbBackupResultTimeout bounds the terminal failed/completed record write,
+	// which runs on a context detached from the backup deadline so a timed-out
+	// run is still persisted.
+	dbBackupResultTimeout = 30 * time.Second
+	// dbBackupUnlockTimeout bounds the advisory-lock release on the cleanup path.
+	dbBackupUnlockTimeout = 5 * time.Second
+
+	// dbBackupLockKey is a stable, arbitrary Postgres session-level advisory-lock
+	// key that serializes database_backup runs across processes. The in-process
+	// `running` flag cannot observe other server replicas, so this key is what
+	// actually prevents overlapping pg_dump processes exhausting max_connections
+	// when the API runs with replicas > 1. Chosen to not collide with
+	// testdb.templateLockKey (0x6d656d6f7279).
+	dbBackupLockKey int64 = 0x6d656d64626275 // "mem_dbbu"
 )
 
 // DatabaseBackup represents a database backup record in kb.database_backups
@@ -42,6 +62,15 @@ type DatabaseBackupTask struct {
 	storage *storage.Service
 	cfg     *config.Config
 	log     *slog.Logger
+
+	// running guards against overlapping runs within this process. Without it a
+	// hung run can stack additional pg_dump processes within a single replica.
+	// Cross-process overlap is prevented by a Postgres advisory lock (see Run).
+	running atomic.Bool
+
+	// backupFn, when non-nil, replaces the preflight + dump + upload work in Run.
+	// Tests use it to simulate a hung/blocking backup; production leaves it nil.
+	backupFn func(ctx context.Context, record *DatabaseBackup) error
 }
 
 // NewDatabaseBackupTask creates a new DatabaseBackupTask and ensures the backup bucket exists.
@@ -66,6 +95,29 @@ func NewDatabaseBackupTask(db *bun.DB, storageSvc *storage.Service, cfg *config.
 
 // Run executes the database backup task.
 func (t *DatabaseBackupTask) Run(ctx context.Context) error {
+	// Skip-if-running guard must come first, before inserting the running
+	// record, so an overlapping run in this process does not stack a second
+	// pg_dump.
+	if !t.running.CompareAndSwap(false, true) {
+		t.log.Warn("database backup already running; skipping overlapping run")
+		return nil
+	}
+	defer t.running.Store(false)
+
+	// Cross-process guard: a session-level Postgres advisory lock on a dedicated
+	// connection refuses a concurrent run from another replica. The in-process
+	// flag above cannot observe other processes, and a per-process flag alone
+	// cannot prevent max_connections exhaustion under replicas > 1.
+	unlock, err := t.acquireBackupLock(ctx)
+	if err != nil {
+		return err
+	}
+	if unlock == nil {
+		t.log.Warn("database backup already running in another process; skipping overlapping run")
+		return nil
+	}
+	defer unlock()
+
 	t.log.Info("starting database backup")
 	start := time.Now()
 
@@ -81,13 +133,17 @@ func (t *DatabaseBackupTask) Run(ctx context.Context) error {
 
 	// 2. Preflight the pg_dump ↔ server version pairing before dumping, so a
 	// mismatch is persisted on the record with an actionable message. Only run
-	// the dump itself once the preflight passes.
-	backupErr := t.preflightPgDump(ctx)
-	if backupErr == nil {
-		backupErr = t.runBackup(ctx, record)
-	}
+	// the dump itself once the preflight passes. Bound preflight + dump + upload
+	// with backupCtx so a hung pg_dump/upload cannot run forever; the terminal
+	// write below uses a detached context so a timed-out run is still recorded.
+	backupCtx, cancel := context.WithTimeout(ctx, dbBackupTimeout)
+	defer cancel()
+	backupErr := t.runBackupWithPreflight(backupCtx, record)
 
-	// 3. Update record with result
+	// 3. Update record with result. The terminal write must survive the backup
+	// deadline: ctx is canceled exactly when the dump times out, so writing the
+	// result on ctx would leave the row stuck in `running`. Detach from ctx and
+	// apply a short independent bound instead.
 	completedAt := time.Now()
 	record.CompletedAt = &completedAt
 
@@ -108,7 +164,9 @@ func (t *DatabaseBackupTask) Run(ctx context.Context) error {
 		)
 	}
 
-	if _, err := t.db.NewUpdate().Model(record).WherePK().Exec(ctx); err != nil {
+	resultCtx, resultCancel := context.WithTimeout(context.WithoutCancel(ctx), dbBackupResultTimeout)
+	defer resultCancel()
+	if _, err := t.db.NewUpdate().Model(record).WherePK().Exec(resultCtx); err != nil {
 		t.log.Error("failed to update backup record",
 			slog.String("id", record.ID),
 			slog.String("error", err.Error()),
@@ -124,6 +182,51 @@ func (t *DatabaseBackupTask) Run(ctx context.Context) error {
 	}
 
 	return backupErr
+}
+
+// acquireBackupLock takes the cross-process advisory lock on a dedicated
+// connection. It returns a release func on success. When another process
+// already holds the lock it returns (nil, nil) so the caller skips the run. A
+// non-nil error means the lock state could not be determined.
+func (t *DatabaseBackupTask) acquireBackupLock(ctx context.Context) (func(), error) {
+	conn, err := t.db.DB.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acquire backup lock connection: %w", err)
+	}
+
+	var locked bool
+	if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", dbBackupLockKey).Scan(&locked); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("acquire backup advisory lock: %w", err)
+	}
+	if !locked {
+		_ = conn.Close()
+		return nil, nil
+	}
+
+	// Release the session-level lock on this same connection before returning it
+	// to the pool. Use a detached, bounded context so a canceled run context
+	// cannot skip the release.
+	return func() {
+		defer conn.Close()
+		releaseCtx, cancel := context.WithTimeout(context.Background(), dbBackupUnlockTimeout)
+		defer cancel()
+		if _, err := conn.ExecContext(releaseCtx, "SELECT pg_advisory_unlock($1)", dbBackupLockKey); err != nil {
+			t.log.Warn("failed to release backup advisory lock", slog.String("error", err.Error()))
+		}
+	}, nil
+}
+
+// runBackupWithPreflight runs the preflight check and then the dump/upload,
+// unless a test seam (backupFn) overrides the whole operation.
+func (t *DatabaseBackupTask) runBackupWithPreflight(ctx context.Context, record *DatabaseBackup) error {
+	if t.backupFn != nil {
+		return t.backupFn(ctx, record)
+	}
+	if err := t.preflightPgDump(ctx); err != nil {
+		return err
+	}
+	return t.runBackup(ctx, record)
 }
 
 // pgMajorFromVersionNum extracts the major version from a PostgreSQL
