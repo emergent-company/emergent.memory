@@ -1,6 +1,6 @@
 ## 1. Schema & Migration
 
-- [ ] 1.1 Add migration `apps/server/migrations/00184_document_revisions.sql` (next unused version — `00182`/`00183` were taken by main after this branch forked): `ALTER TABLE kb.documents ADD COLUMN IF NOT EXISTS document_group_id uuid`, `ADD COLUMN IF NOT EXISTS version_number integer NOT NULL DEFAULT 1`, `ADD COLUMN IF NOT EXISTS supersedes_document_id uuid`, `ADD COLUMN IF NOT EXISTS is_current boolean NOT NULL DEFAULT true`, `ADD COLUMN IF NOT EXISTS applied_at timestamptz`
+- [ ] 1.1 Add migration `apps/server/migrations/00185_document_revisions.sql` (next unused version — `00182`–`00184` taken on main; re-check before implementation): `ALTER TABLE kb.documents ADD COLUMN IF NOT EXISTS document_group_id uuid`, `ADD COLUMN IF NOT EXISTS version_number integer NOT NULL DEFAULT 1`, `ADD COLUMN IF NOT EXISTS supersedes_document_id uuid`, `ADD COLUMN IF NOT EXISTS is_current boolean NOT NULL DEFAULT true`, `ADD COLUMN IF NOT EXISTS applied_at timestamptz`
 - [ ] 1.2 Backfill existing rows (`document_group_id = id`, `applied_at = created_at`), then `ALTER COLUMN document_group_id SET NOT NULL`
 - [ ] 1.3 Add `CREATE UNIQUE INDEX ... ON kb.documents (document_group_id, version_number)` and `CREATE UNIQUE INDEX ... ON kb.documents (document_group_id) WHERE is_current`
 - [ ] 1.4 Write the `-- +goose Down` block dropping the two indexes and the five columns
