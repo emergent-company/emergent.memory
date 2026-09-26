@@ -574,13 +574,13 @@ func (r *Repository) GetOrgCustomPricing(ctx context.Context, orgID string, prov
 // --- Project Custom Pricing ---
 
 // GetProjectCustomPricing returns the custom pricing for a specific project,
-// provider, and model. Returns (nil, nil) when no override exists.
-func (r *Repository) GetProjectCustomPricing(ctx context.Context, projectID string, provider ProviderType, model string) (*ProjectCustomPricing, error) {
+// provider instance (slug), and model. Returns (nil, nil) when no override exists.
+func (r *Repository) GetProjectCustomPricing(ctx context.Context, projectID string, providerSlug string, model string) (*ProjectCustomPricing, error) {
 	var pricing ProjectCustomPricing
 	err := r.db.NewSelect().
 		Model(&pricing).
 		Where("project_id = ?", projectID).
-		Where("provider = ?", provider).
+		Where("provider_slug = ?", providerSlug).
 		Where("model = ?", model).
 		Scan(ctx)
 
@@ -591,7 +591,7 @@ func (r *Repository) GetProjectCustomPricing(ctx context.Context, projectID stri
 		r.log.Error("failed to get project custom pricing",
 			logger.Error(err),
 			slog.String("projectID", projectID),
-			slog.String("provider", string(provider)),
+			slog.String("providerSlug", providerSlug),
 			slog.String("model", model),
 		)
 		return nil, apperror.ErrDatabase.WithInternal(err)
@@ -606,7 +606,7 @@ func (r *Repository) ListProjectCustomPricing(ctx context.Context, projectID str
 	err := r.db.NewSelect().
 		Model(&entries).
 		Where("project_id = ?", projectID).
-		Order("provider ASC", "model ASC").
+		Order("provider_slug ASC", "model ASC").
 		Scan(ctx)
 
 	if err != nil {
@@ -620,11 +620,11 @@ func (r *Repository) ListProjectCustomPricing(ctx context.Context, projectID str
 }
 
 // UpsertProjectCustomPricing inserts or updates a project's pricing override.
-// The override is keyed by (project_id, provider, model).
+// The override is keyed by (project_id, provider_slug, model).
 func (r *Repository) UpsertProjectCustomPricing(ctx context.Context, entry *ProjectCustomPricing) error {
 	_, err := r.db.NewInsert().
 		Model(entry).
-		On("CONFLICT (project_id, provider, model) DO UPDATE").
+		On("CONFLICT (project_id, provider_slug, model) DO UPDATE").
 		Set("text_input_price = EXCLUDED.text_input_price").
 		Set("image_input_price = EXCLUDED.image_input_price").
 		Set("video_input_price = EXCLUDED.video_input_price").
@@ -647,12 +647,12 @@ func (r *Repository) UpsertProjectCustomPricing(ctx context.Context, entry *Proj
 }
 
 // DeleteProjectCustomPricing removes a project's pricing override for the given
-// provider and model. Deleting a non-existent override is a no-op.
-func (r *Repository) DeleteProjectCustomPricing(ctx context.Context, projectID string, provider ProviderType, model string) error {
+// provider instance (slug) and model. Deleting a non-existent override is a no-op.
+func (r *Repository) DeleteProjectCustomPricing(ctx context.Context, projectID string, providerSlug string, model string) error {
 	_, err := r.db.NewDelete().
 		Model((*ProjectCustomPricing)(nil)).
 		Where("project_id = ?", projectID).
-		Where("provider = ?", provider).
+		Where("provider_slug = ?", providerSlug).
 		Where("model = ?", model).
 		Exec(ctx)
 
@@ -660,7 +660,7 @@ func (r *Repository) DeleteProjectCustomPricing(ctx context.Context, projectID s
 		r.log.Error("failed to delete project custom pricing",
 			logger.Error(err),
 			slog.String("projectID", projectID),
-			slog.String("provider", string(provider)),
+			slog.String("providerSlug", providerSlug),
 			slog.String("model", model),
 		)
 		return apperror.ErrDatabase.WithInternal(err)

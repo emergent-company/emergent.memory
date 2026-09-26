@@ -411,6 +411,10 @@ func (s *stubCredentialResolver) ResolveFor(_ context.Context, _ string) (*Resol
 	return s.cred, nil
 }
 
+func (s *stubCredentialResolver) ResolveBySlug(_ context.Context, _ string) (*ResolvedCredential, error) {
+	return s.cred, nil
+}
+
 // stubModelResolver returns a fixed (model, source) pair.
 type stubModelResolver struct {
 	model  string

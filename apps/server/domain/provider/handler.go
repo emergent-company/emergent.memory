@@ -384,6 +384,7 @@ func (h *Handler) UpsertProjectPricingOverrides(c echo.Context) error {
 	entry := &ProjectCustomPricing{
 		ProjectID:       projectID,
 		Provider:        req.Provider,
+		ProviderSlug:    ProviderSlug(req.Provider),
 		Model:           req.Model,
 		TextInputPrice:  req.TextInputPrice,
 		ImageInputPrice: req.ImageInputPrice,
@@ -421,7 +422,7 @@ func (h *Handler) DeleteProjectPricingOverride(c echo.Context) error {
 		return err
 	}
 
-	if err := h.repo.DeleteProjectCustomPricing(c.Request().Context(), projectID, provider, model); err != nil {
+	if err := h.repo.DeleteProjectCustomPricing(c.Request().Context(), projectID, string(provider), model); err != nil {
 		return err
 	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "deleted"})

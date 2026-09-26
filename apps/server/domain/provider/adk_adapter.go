@@ -42,6 +42,19 @@ func (a *ADKCredentialAdapter) ResolveFor(ctx context.Context, provider string) 
 	return toADKCredential(cred), nil
 }
 
+// ResolveBySlug satisfies adk.CredentialResolver. It resolves a specific
+// provider instance rather than a dialect.
+func (a *ADKCredentialAdapter) ResolveBySlug(ctx context.Context, slug string) (*adk.ResolvedCredential, error) {
+	cred, err := a.svc.ResolveBySlug(ctx, ProviderSlug(slug))
+	if err != nil {
+		return nil, err
+	}
+	if cred == nil {
+		return nil, nil
+	}
+	return toADKCredential(cred), nil
+}
+
 // toADKCredential converts a domain ResolvedCredential to the adk-package type.
 func toADKCredential(c *ResolvedCredential) *adk.ResolvedCredential {
 	return &adk.ResolvedCredential{
@@ -55,6 +68,7 @@ func toADKCredential(c *ResolvedCredential) *adk.ResolvedCredential {
 		Source:             string(c.Source),
 		BaseURL:            c.BaseURL,
 		Provider:           string(c.Provider),
+		Slug:               string(c.Slug),
 	}
 }
 

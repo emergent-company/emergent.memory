@@ -157,9 +157,12 @@ type LLMUsageEvent struct {
 	ID               string        `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
 	ProjectID        string        `bun:"project_id,notnull,type:uuid" json:"projectId"`
 	OrgID            string        `bun:"org_id,notnull,type:uuid" json:"orgId"`
-	Provider         ProviderType  `bun:"provider,notnull" json:"provider"`
-	Model            string        `bun:"model,notnull" json:"model"`
-	Operation        OperationType `bun:"operation,notnull,default:'generate'" json:"operation"`
+	Provider         ProviderDialect `bun:"provider,notnull" json:"provider"`
+	// ProviderSlug is the instance that served the request. Empty for rows
+	// recorded before instances existed (legacy).
+	ProviderSlug     ProviderSlug    `bun:"provider_slug" json:"providerSlug,omitempty"`
+	Model            string          `bun:"model,notnull" json:"model"`
+	Operation        OperationType   `bun:"operation,notnull,default:'generate'" json:"operation"`
 	TextInputTokens  int64         `bun:"text_input_tokens,notnull,default:0" json:"textInputTokens"`
 	ImageInputTokens int64         `bun:"image_input_tokens,notnull,default:0" json:"imageInputTokens"`
 	VideoInputTokens int64         `bun:"video_input_tokens,notnull,default:0" json:"videoInputTokens"`
@@ -215,10 +218,11 @@ type OrganizationCustomPricing struct {
 type ProjectCustomPricing struct {
 	bun.BaseModel `bun:"table:kb.project_custom_pricing,alias:pcp"`
 
-	ID              string       `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
-	ProjectID       string       `bun:"project_id,notnull,type:uuid" json:"projectId"`
-	Provider        ProviderType `bun:"provider,notnull" json:"provider"`
-	Model           string       `bun:"model,notnull" json:"model"`
+	ID              string          `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
+	ProjectID       string          `bun:"project_id,notnull,type:uuid" json:"projectId"`
+	Provider        ProviderDialect `bun:"provider,notnull" json:"provider"`
+	ProviderSlug    ProviderSlug    `bun:"provider_slug,notnull" json:"providerSlug"`
+	Model           string          `bun:"model,notnull" json:"model"`
 	TextInputPrice  float64      `bun:"text_input_price,notnull,default:0" json:"textInputPrice"`
 	ImageInputPrice float64      `bun:"image_input_price,notnull,default:0" json:"imageInputPrice"`
 	VideoInputPrice float64      `bun:"video_input_price,notnull,default:0" json:"videoInputPrice"`
