@@ -324,7 +324,7 @@ func TestRenderVoicePanel(t *testing.T) {
 		`name="away_timeout"`, `name="endpoint_min_delay"`, `name="endpoint_max_delay"`,
 		`name="allow_interruptions"`, `name="preemptive_generation"`,
 		"Cartesia API key", `class="text-success">set</span>`,
-		"Deepgram API key", `class="text-base-content/45">not set</span>`,
+		"Deepgram API key", `class="text-muted-faint">not set</span>`,
 		"LiveKit API secret", `class="text-success">set</span>`,
 		`hx-post="/settings/voice/group/tts"`,
 		`hx-post="/settings/voice/group/endpoint_delays"`,

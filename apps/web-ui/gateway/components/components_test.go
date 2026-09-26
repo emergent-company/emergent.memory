@@ -22,8 +22,8 @@ func TestMetaRowRendersLabelAndValue(t *testing.T) {
 	t.Run("default", func(t *testing.T) {
 		html := renderHTML(t, MetaRow("Project", "memory"))
 		assertContains(t, html,
-			`<dt class="text-base-content/45 text-[11px] font-medium tracking-wide uppercase">Project</dt>`,
-			`<dd class="text-base-content/85 mt-1 text-sm break-words">`,
+			`<dt class="text-muted-faint text-[11px] font-medium tracking-wide uppercase">Project</dt>`,
+			`<dd class="text-base-content mt-1 text-sm break-words">`,
 			"memory",
 		)
 	})
@@ -35,12 +35,12 @@ func TestMetaRowRendersLabelAndValue(t *testing.T) {
 
 	t.Run("empty falls back to em dash", func(t *testing.T) {
 		html := renderHTML(t, MetaRow("ID", ""))
-		assertContains(t, html, `<span class="text-base-content/30 text-sm">—</span>`)
+		assertContains(t, html, `<span class="text-muted-subtle text-sm">—</span>`)
 	})
 
 	t.Run("NoEmptyDash renders status copy", func(t *testing.T) {
 		html := renderHTML(t, MetaRow("Voice key", "", MetaRowOpts{NoEmptyDash: true}))
-		assertNotContains(t, html, `<span class="text-base-content/30 text-sm">—</span>`)
+		assertNotContains(t, html, `<span class="text-muted-subtle text-sm">—</span>`)
 	})
 
 	t.Run("mono does not apply to the empty fallback", func(t *testing.T) {
@@ -237,7 +237,7 @@ func TestSubNavItemActiveAndInactive(t *testing.T) {
 	assertContains(t, active, `bg-base-200 font-medium text-base-content`, `aria-current="page"`, "text-primary")
 
 	inactive := renderHTML(t, SubNavItem("/agents/a1", false, "lucide--layout-dashboard", "Dashboard"))
-	assertContains(t, inactive, `text-base-content/60`, "text-base-content/40")
+	assertContains(t, inactive, `text-muted-strong`, "text-muted-faint")
 	assertNotContains(t, inactive, `aria-current="page"`)
 }
 
