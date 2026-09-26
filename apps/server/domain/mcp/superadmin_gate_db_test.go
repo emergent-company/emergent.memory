@@ -177,3 +177,60 @@ func TestExecuteToolSuperadminGate(t *testing.T) {
 		require.NoError(t, err, "superadmin_full must execute provider-usage-get in-process")
 	})
 }
+
+// TestTraceToolsSuperadminGate proves the MCP trace tools (trace-list /
+// trace-get) are gated on the superadmin_full authority, not a token scope.
+// They read the raw Tempo backend (instance-wide, no tenant awareness), so a
+// project member — even one carrying admin:all (mintable by an org_admin) —
+// must not reach them (issue #994 mechanism 1/5). Before this fix they carried
+// RequiredScope "admin", which any admin:all token satisfied.
+func TestTraceToolsSuperadminGate(t *testing.T) {
+	dbc, memberID, superID := setupGateDB(t)
+
+	h := newGateHandler(dbc, &fakeEmbeddingCtl{status: EmbeddingStatusSnapshot{}})
+
+	memberUser := &auth.AuthUser{ID: memberID, Scopes: []string{"admin:all"}, ProjectID: uuid.New().String()}
+	superUser := &auth.AuthUser{ID: superID, Scopes: []string{"admin"}, ProjectID: uuid.New().String()}
+
+	call := func(t *testing.T, user *auth.AuthUser, tool string) *Response {
+		t.Helper()
+		token := "tok-" + user.ID
+		h.sessionsMu.Lock()
+		h.sessions[token] = &Session{Initialized: true, ProjectID: user.ProjectID}
+		h.sessionsMu.Unlock()
+
+		c, _ := gateContext(user, token)
+		params, err := json.Marshal(ToolsCallParams{Name: tool, Arguments: map[string]any{}})
+		require.NoError(t, err)
+		req := &Request{JSONRPC: "2.0", ID: json.RawMessage("1"), Method: "tools/call", Params: params}
+		return h.handleToolsCall(c, req, user)
+	}
+
+	for _, tool := range []string{"trace-list", "trace-get"} {
+		t.Run("admin:all member is refused on "+tool, func(t *testing.T) {
+			resp := call(t, memberUser, tool)
+			require.NotNil(t, resp.Error, "admin:all member must be refused on %s", tool)
+			require.Equal(t, ErrCodeMethodNotFound, resp.Error.Code,
+				"refusal must not reveal the tool's existence; got code %d: %s", resp.Error.Code, resp.Error.Message)
+		})
+	}
+
+	t.Run("superadmin_full reaches trace-list", func(t *testing.T) {
+		resp := call(t, superUser, "trace-list")
+		require.Nil(t, resp.Error, "superadmin_full must reach trace-list, got error %+v", resp.Error)
+	})
+
+	// In-process dispatch (the ADK ToolPool path) must gate identically.
+	svc := &Service{db: dbc, embeddingCtl: &fakeEmbeddingCtl{status: EmbeddingStatusSnapshot{}}}
+	memberCtx := auth.ContextWithUser(context.Background(), &auth.AuthUser{ID: memberID, Scopes: []string{"admin:all"}})
+	projectID := uuid.New().String()
+
+	for _, tool := range []string{"trace-list", "trace-get"} {
+		t.Run("admin:all member is refused on "+tool+" (in-process)", func(t *testing.T) {
+			_, err := svc.ExecuteTool(memberCtx, projectID, tool, map[string]any{})
+			require.Error(t, err, "in-process %s by an admin:all member must be refused", tool)
+			require.Contains(t, err.Error(), "superadmin",
+				"in-process %s refusal must come from the superadmin gate, not tool execution; got %v", tool, err)
+		})
+	}
+}

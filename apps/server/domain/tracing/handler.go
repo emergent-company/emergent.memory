@@ -2,6 +2,7 @@ package tracing
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -98,8 +99,14 @@ func (h *Handler) Search(c echo.Context) error {
 
 	// Project-scoped: force the project predicate into the query. The client's
 	// q (if any) is ANDed against the server's project filter, and any
-	// client-supplied project_id is discarded — it is not an authority.
-	params.Set("q", scopeTraceQL(params.Get("q"), projectID))
+	// client-supplied project_id is discarded — it is not an authority. A q that
+	// cannot be safely composed (unbalanced parens/braces, an escaped AND term)
+	// is rejected rather than allowed to weaken the project constraint.
+	scoped, err := scopeTraceQL(params.Get("q"), projectID)
+	if err != nil {
+		return apperror.NewBadRequest("invalid trace query")
+	}
+	params.Set("q", scoped)
 	params.Del("project_id")
 	return h.proxy(c, "/api/search", params)
 }
@@ -208,30 +215,154 @@ func extractTraceProject(body []byte) string {
 
 // scopeTraceQL forces a TraceQL query to be scoped to the given project by
 // ANDing a project predicate into the query's condition block. When q is empty
-// it produces a project-only query. The caller's q is treated as untrusted
-// input (a client may craft a foreign project predicate), so the server's
-// predicate always wraps it.
-func scopeTraceQL(q, projectID string) string {
-	predicate := fmt.Sprintf(`.memory.project.id = "%s" || .emergent.project.id = "%s"`, projectID, projectID)
+// it produces a project-only query.
+//
+// The caller's q is untrusted: a string-concatenated predicate is escapable
+// (a caller can inject a `)` to close the wrapper and then `||` a foreign
+// predicate). To make that impossible under any input, the forced project
+// predicate is written as an ATOMIC parenthesized operand
+// `( .memory.project.id = "P" || .emergent.project.id = "P" )` and ANDed with a
+// separately parenthesized `( <caller conditions> )`. Because both operands are
+// fully parenthesized and joined by a single top-level `&&`, the caller's own
+// `||`/`!=`/parentheses are trapped inside the second operand and can never
+// widen the result beyond the project. The only escape is an unbalanced `)`,
+// which is rejected by wellFormedTraceQL (quote/escape-aware) before the query
+// is built.
+//
+// It returns an error when q is malformed (unbalanced parentheses/braces, an
+// unterminated string, a trailing segment that is not a `|` pipeline), so the
+// handler can fail closed with 400 rather than compose a weakened query.
+func scopeTraceQL(q, projectID string) (string, error) {
+	project := fmt.Sprintf(`( .memory.project.id = "%s" || .emergent.project.id = "%s" )`, projectID, projectID)
 	q = strings.TrimSpace(q)
 	if q == "" {
-		return "{ " + predicate + " }"
+		return "{ " + project + " }", nil
 	}
-	// q is "{ conditions } [| pipeline]". AND the predicate into the condition
-	// block. The first "}" closes the condition block (TraceQL pipelines and
-	// select() clauses use parentheses, never bare braces).
-	if strings.HasPrefix(q, "{") {
-		if end := strings.Index(q, "}"); end > 0 {
-			rest := q[end+1:]
-			inner := strings.TrimSpace(q[1:end])
-			if inner == "" {
-				return "{ " + predicate + " }" + rest
+
+	inner, rest, ok := splitTraceQL(q)
+	if !ok {
+		return "", errInvalidTraceQL
+	}
+
+	// Keep a single space between the condition block and any trailing pipeline.
+	suffix := ""
+	if rest != "" {
+		suffix = " " + rest
+	}
+
+	inner = strings.TrimSpace(inner)
+	if inner == "" {
+		return "{ " + project + " }" + suffix, nil
+	}
+	return "{ " + project + " && ( " + inner + " ) }" + suffix, nil
+}
+
+// errInvalidTraceQL is returned when a caller-supplied TraceQL query cannot be
+// safely composed with the project predicate. It is a package sentinel so the
+// handler can fail closed without leaking the exact rejection reason.
+var errInvalidTraceQL = errors.New("invalid trace query")
+
+// splitTraceQL splits a caller-supplied TraceQL query into its condition block
+// (the text inside the leading "{ ... }", or the whole string when no braces
+// are present) and the trailing pipeline (after the "}"). It reports ok=false
+// for any input that is not well-formed — unbalanced parentheses/braces, an
+// unterminated string, a bare condition block containing a `|` pipeline, or a
+// trailing segment that is neither empty nor a `|`-delimited pipeline. Callers
+// must reject (fail closed) when ok is false.
+func splitTraceQL(q string) (inner, rest string, ok bool) {
+	if !wellFormedTraceQL(q) {
+		return "", "", false
+	}
+
+	if q[0] != '{' {
+		// Bare condition block: no braces, so a pipeline is not expressible.
+		if strings.Contains(q, "|") {
+			return "", "", false
+		}
+		return q, "", true
+	}
+
+	// Braced form: locate the matching '}' (quote/escape-aware).
+	depth := 0
+	inStr := false
+	for i := 0; i < len(q); i++ {
+		c := q[i]
+		if inStr {
+			if c == '\\' {
+				i++
+				continue
 			}
-			return "{ " + predicate + " && (" + inner + ") }" + rest
+			if c == '"' {
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				rest = q[i+1:]
+				rest = strings.TrimSpace(rest)
+				if rest != "" && (!strings.HasPrefix(rest, "|") || strings.Contains(rest, "||")) {
+					return "", "", false
+				}
+				return q[1:i], rest, true
+			}
 		}
 	}
-	// No leading brace: treat the whole string as bare conditions and AND them.
-	return "{ " + predicate + " && (" + q + ") }"
+	return "", "", false
+}
+
+// wellFormedTraceQL reports whether s has balanced parentheses and braces,
+// respecting double-quoted string literals and backslash escapes, and contains
+// no OR operator ("||") outside a string literal. It is the structural gate that
+// prevents a caller from injecting a `)` or `}` to escape the project AND term,
+// or an `||` to widen the result beyond the project. A single `|` (pipeline
+// stage separator) is allowed; `&&` is allowed (it only narrows).
+func wellFormedTraceQL(s string) bool {
+	paren := 0
+	brace := 0
+	inStr := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inStr {
+			if c == '\\' {
+				i++
+				continue
+			}
+			if c == '"' {
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '(':
+			paren++
+		case ')':
+			paren--
+			if paren < 0 {
+				return false
+			}
+		case '{':
+			brace++
+		case '}':
+			brace--
+			if brace < 0 {
+				return false
+			}
+		case '|':
+			if i+1 < len(s) && s[i+1] == '|' {
+				return false
+			}
+		}
+	}
+	return paren == 0 && brace == 0 && !inStr
 }
 
 // tempoGet performs a GET against Tempo and returns the raw response. It

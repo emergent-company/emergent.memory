@@ -841,10 +841,11 @@ func runTracesList(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	// The server now forces the caller's project predicate server-side (issue
+	// #994), so the client must not send its own project clause — and must not
+	// emit a TraceQL `||` (the server rejects it). Only the non-project filters
+	// (agent-run root span) are built client-side.
 	var conditions []string
-	if projectID != "" {
-		conditions = append(conditions, fmt.Sprintf(`.memory.project.id = "%s" || .emergent.project.id = "%s"`, projectID, projectID))
-	}
 	if tracesListAgentRuns {
 		conditions = append(conditions, `rootName = "agent.run"`)
 	}
@@ -898,15 +899,13 @@ func runTracesList(cmd *cobra.Command, _ []string) error {
 }
 
 func runTracesSearch(cmd *cobra.Command, _ []string) error {
-	// Resolve the active project once: it scopes both the client-side TraceQL
-	// and the X-Project-ID the server uses to authorize the request (issue #994).
+	// Resolve the active project once: it is sent as X-Project-ID so the server
+	// can authorize the call. The server forces the project predicate itself
+	// (issue #994), so the client builds only the non-project filters here.
 	projectID, _ := resolveProjectContext(cmd, "")
 
 	// Build TraceQL query from flags
 	var conditions []string
-	if projectID != "" {
-		conditions = append(conditions, fmt.Sprintf(`.memory.project.id = "%s"`, projectID))
-	}
 	if tracesSearchSvc != "" {
 		conditions = append(conditions, fmt.Sprintf(`.service.name = "%s"`, tracesSearchSvc))
 	}

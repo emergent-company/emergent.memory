@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -33,16 +34,27 @@ const (
 	superadminTok = "e2e-test-user" // maps to testutil.AdminUser (superadmin_full below)
 )
 
-// newFakeTempo returns an httptest server mimicking the Tempo query surface:
-// GET /api/search returns a result set scoped by the project predicate in `q`
-// (no predicate → all traces); GET /api/traces/<id> returns the trace by id.
+// newFakeTempo returns an httptest server mimicking the Tempo query surface.
+// GET /api/search evaluates the TraceQL `q` (a parser-aware subset: &&, ||, =,
+// !=, parentheses, dotted attribute refs, strings) against the two candidate
+// traces and returns the matching ones; GET /api/traces/<id> returns the trace
+// by id.
 func newFakeTempo() *httptest.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/search", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query().Get("q")
-		traces := []map[string]any{{"traceID": traceA, "rootTraceName": "agent.run", "durationMs": 1.0}}
-		if q == "" || strings.Contains(q, projectB) {
-			traces = append(traces, map[string]any{"traceID": traceB, "rootTraceName": "agent.run", "durationMs": 1.0})
+		candidates := []struct {
+			id    string
+			attrs map[string]string
+		}{
+			{traceA, map[string]string{"memory.project.id": projectA, "rootName": "agent.run"}},
+			{traceB, map[string]string{"memory.project.id": projectB, "rootName": "agent.run"}},
+		}
+		traces := []map[string]any{}
+		for _, c := range candidates {
+			if traceqlEval(q, c.attrs) {
+				traces = append(traces, map[string]any{"traceID": c.id, "rootTraceName": "agent.run", "durationMs": 1.0})
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"traces": traces})
@@ -61,6 +73,147 @@ func newFakeTempo() *httptest.Server {
 		}
 	})
 	return httptest.NewServer(mux)
+}
+
+// traceqlEval evaluates a minimal TraceQL condition block against a trace's
+// attribute map. Supports && (AND), || (OR, lower precedence), =, !=,
+// parentheses, dotted attribute refs and double-quoted strings. A missing
+// attribute matches != and fails =.
+func traceqlEval(q string, attrs map[string]string) bool {
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return true
+	}
+	q = strings.TrimPrefix(q, "{")
+	if i := strings.LastIndex(q, "}"); i >= 0 {
+		q = q[:i]
+	}
+	p := &tqParser{s: q, attrs: attrs}
+	return p.parseOr()
+}
+
+type tqParser struct {
+	s     string
+	pos   int
+	attrs map[string]string
+}
+
+func (p *tqParser) skipWS() {
+	for p.pos < len(p.s) && (p.s[p.pos] == ' ' || p.s[p.pos] == '\t' || p.s[p.pos] == '\n') {
+		p.pos++
+	}
+}
+
+func (p *tqParser) consume(s string) bool {
+	if strings.HasPrefix(p.s[p.pos:], s) {
+		p.pos += len(s)
+		return true
+	}
+	return false
+}
+
+func (p *tqParser) parseOr() bool {
+	v := p.parseAnd()
+	for {
+		p.skipWS()
+		if !p.consume("||") {
+			return v
+		}
+		// Evaluate the RHS first so the input is always consumed — Go's `||`
+		// short-circuits, which would otherwise skip the RHS parse entirely.
+		rhs := p.parseAnd()
+		v = v || rhs
+	}
+}
+
+func (p *tqParser) parseAnd() bool {
+	v := p.parseUnary()
+	for {
+		p.skipWS()
+		if !p.consume("&&") {
+			return v
+		}
+		rhs := p.parseUnary()
+		v = v && rhs
+	}
+}
+
+func (p *tqParser) parseUnary() bool {
+	p.skipWS()
+	if p.consume("(") {
+		v := p.parseOr()
+		p.skipWS()
+		p.consume(")")
+		return v
+	}
+	return p.parseComparison()
+}
+
+func (p *tqParser) parseComparison() bool {
+	p.skipWS()
+	attr := p.parseAttr()
+	p.skipWS()
+	op := ""
+	switch {
+	case p.consume("!="):
+		op = "!="
+	case p.consume("="):
+		op = "="
+	default:
+		return false
+	}
+	p.skipWS()
+	val := p.parseString()
+	// TraceQL ".memory.project.id" refers to the span attribute "memory.project.id";
+	// the leading dot is the span-attribute shortcut. Intrinsics like "rootName"
+	// carry no dot and are looked up verbatim.
+	attr = strings.TrimPrefix(attr, ".")
+	got, ok := p.attrs[attr]
+	if op == "=" {
+		return ok && got == val
+	}
+	// != : an absent attribute is "not equal" to any value.
+	return !ok || got != val
+}
+
+func (p *tqParser) parseAttr() string {
+	start := p.pos
+	for p.pos < len(p.s) {
+		c := p.s[p.pos]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' {
+			p.pos++
+		} else {
+			break
+		}
+	}
+	return p.s[start:p.pos]
+}
+
+func (p *tqParser) parseString() string {
+	p.skipWS()
+	if p.pos >= len(p.s) || p.s[p.pos] != '"' {
+		return ""
+	}
+	p.pos++
+	var b strings.Builder
+	for p.pos < len(p.s) {
+		c := p.s[p.pos]
+		if c == '\\' {
+			p.pos++
+			if p.pos < len(p.s) {
+				b.WriteByte(p.s[p.pos])
+				p.pos++
+			}
+			continue
+		}
+		if c == '"' {
+			p.pos++
+			break
+		}
+		b.WriteByte(c)
+		p.pos++
+	}
+	return b.String()
 }
 
 // traceBody builds a minimal OTLP JSON trace with a single span carrying the
@@ -215,5 +368,52 @@ func TestTracesAuthz(t *testing.T) {
 		resp := client.GET("/api/traces/"+traceB,
 			testutil.WithAuth(memberBTok), testutil.WithProjectID(projectB))
 		require.Equal(t, http.StatusOK, resp.StatusCode, "got %d: %s", resp.StatusCode, resp.String())
+	})
+
+	// Injection vectors: a caller must not be able to weaken the forced project
+	// predicate via a crafted `q`. The parser-aware fake evaluates the composed
+	// TraceQL (including != and ||), so these cases prove the override is caught
+	// either by rejection (400) or by returning only the caller's project.
+	search := func(q string) *testutil.HTTPResponse {
+		return client.GET("/api/traces/search?q="+url.QueryEscape(q),
+			testutil.WithAuth(adminAllTok), testutil.WithProjectID(projectA))
+	}
+
+	t.Run("paren-escape injection rejected -> 400", func(t *testing.T) {
+		resp := search(`{ .foo = "bar") || .memory.project.id != "` + projectA + `" }`)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode,
+			"paren-escape must be 400; got %d body=%s", resp.StatusCode, resp.String())
+	})
+
+	t.Run("empty-block OR foreign rejected -> 400", func(t *testing.T) {
+		resp := search(`{ } || .memory.project.id = "` + projectB + `"`)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode,
+			"empty-block OR foreign must be 400; got %d body=%s", resp.StatusCode, resp.String())
+	})
+
+	t.Run("OR into pipeline targeting foreign rejected -> 400", func(t *testing.T) {
+		resp := search(`{ rootName = "agent.run" } | select(span.memory.agent.run_id) || .memory.project.id = "` + projectB + `"`)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode,
+			"OR into pipeline must be 400; got %d body=%s", resp.StatusCode, resp.String())
+	})
+
+	t.Run("balanced OR targeting foreign rejected -> 400", func(t *testing.T) {
+		resp := search(`{ .memory.project.id = "` + projectA + `" || .memory.project.id = "` + projectB + `" }`)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode,
+			"balanced OR must be rejected (|| not allowed); got %d body=%s", resp.StatusCode, resp.String())
+	})
+
+	t.Run("well-formed AND targeting foreign yields empty", func(t *testing.T) {
+		resp := search(`{ .memory.project.id = "` + projectB + `" }`)
+		require.Equal(t, http.StatusOK, resp.StatusCode, "got %d body=%s", resp.StatusCode, resp.String())
+		require.NotContains(t, resp.String(), traceB, "foreign target must not surface foreign trace")
+		require.NotContains(t, resp.String(), traceA, "foreign-targeting AND must not surface own trace either")
+	})
+
+	t.Run("legitimate scoped search still works -> only own project", func(t *testing.T) {
+		resp := search(`{ rootName = "agent.run" }`)
+		require.Equal(t, http.StatusOK, resp.StatusCode, "got %d body=%s", resp.StatusCode, resp.String())
+		require.Contains(t, resp.String(), traceA, "legitimate scoped search must surface own trace")
+		require.NotContains(t, resp.String(), traceB, "legitimate scoped search must not surface foreign trace")
 	})
 }
