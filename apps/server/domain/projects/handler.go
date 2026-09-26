@@ -329,7 +329,7 @@ func (h *Handler) ListMembers(c echo.Context) error {
 	projectID := c.Param("id")
 	includeStats := c.QueryParam("stats") == "true"
 
-	if err := h.svc.authorizeProject(c.Request().Context(), projectID, user.ID, accessProjectMember); err != nil {
+	if err := h.svc.authorizeProject(c.Request().Context(), projectID, user.ID, accessProjectMemberOrOrgAdmin); err != nil {
 		return err
 	}
 

@@ -624,8 +624,11 @@ type projectAccessLevel int
 
 const (
 	// accessProjectMember permits any project member or any member of the
-	// project's owning organization (read surfaces).
+	// project's owning organization (project-metadata read surfaces).
 	accessProjectMember projectAccessLevel = iota
+	// accessProjectMemberOrOrgAdmin permits any project member or an org_admin of
+	// the owning org (member-PII read surface — see accessOrgAdmin note).
+	accessProjectMemberOrOrgAdmin
 	// accessProjectAdmin permits a project_admin or an org_admin of the owning org.
 	accessProjectAdmin
 	// accessOrgAdmin permits only an org_admin of the owning org (destructive
@@ -640,6 +643,12 @@ const (
 // domain convention: a foreign or unknown project returns 404 (no existence
 // oracle), while a recognised caller without sufficient authority returns 403.
 func (s *Service) authorizeProject(ctx context.Context, projectID, userID string, level projectAccessLevel) error {
+	// Validate before any query so a malformed id returns 400 invalid-uuid
+	// rather than a PostgreSQL cast error surfacing as 500.
+	if !isValidUUID(projectID) {
+		return apperror.New(400, "invalid-uuid", "id must be a valid UUID")
+	}
+
 	orgID, found, err := s.repo.GetOrganizationID(ctx, projectID)
 	if err != nil {
 		return err
@@ -653,23 +662,30 @@ func (s *Service) authorizeProject(ctx context.Context, projectID, userID string
 		return err
 	}
 
-	isMember := projectRole != "" || orgRole != ""
+	isProjectMember := projectRole != ""
+	isOrgMember := orgRole != ""
+	isProjectAdmin := projectRole == RoleProjectAdmin
+	isOrgAdmin := orgRole == "org_admin"
+
+	allowed := false
 	switch level {
 	case accessProjectMember:
-		if isMember {
-			return nil
-		}
-		return apperror.ErrProjectNotFound
+		allowed = isProjectMember || isOrgMember
+	case accessProjectMemberOrOrgAdmin:
+		allowed = isProjectMember || isOrgAdmin
 	case accessProjectAdmin:
-		if projectRole == RoleProjectAdmin || orgRole == "org_admin" {
-			return nil
-		}
+		allowed = isProjectAdmin || isOrgAdmin
 	case accessOrgAdmin:
-		if orgRole == "org_admin" {
-			return nil
-		}
+		allowed = isOrgAdmin
 	}
-	if isMember {
+	if allowed {
+		return nil
+	}
+
+	// Refusals: a caller who can see the project (project member or any org
+	// member) but lacks the required authority gets 403; a foreign caller gets
+	// 404 (no existence oracle).
+	if isProjectMember || isOrgMember {
 		return apperror.ErrForbidden
 	}
 	return apperror.ErrProjectNotFound

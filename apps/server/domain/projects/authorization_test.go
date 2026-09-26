@@ -186,6 +186,14 @@ func (s *ProjectAuthorizationSuite) TestListMembers_Authority() {
 		resp := s.Client.GET("/api/projects/"+s.ProjectID+"/members", testutil.WithAuth(noScope))
 		s.Equal(404, resp.StatusCode, resp.String())
 	})
+	s.Run("org member forbidden", func() {
+		// Member PII: a plain org member (non-admin, not a project member) is
+		// not entitled to enumerate member emails/names/roles (aligned with the
+		// org member-list bar, #1015).
+		s.grant(testutil.AllScopesUser.ID, "member", "")
+		resp := s.Client.GET("/api/projects/"+s.ProjectID+"/members", testutil.WithAuth(allScopes))
+		s.Equal(403, resp.StatusCode, resp.String())
+	})
 	s.Run("project member", func() {
 		s.grant(testutil.AllScopesUser.ID, "", "project_viewer")
 		resp := s.Client.GET("/api/projects/"+s.ProjectID+"/members", testutil.WithAuth(allScopes))
@@ -259,5 +267,39 @@ func (s *ProjectAuthorizationSuite) TestCreate_Authority() {
 	s.Run("org admin", func() {
 		resp := s.Client.POST("/api/projects", testutil.WithAuth(adminToken), newBody())
 		s.Equal(201, resp.StatusCode, resp.String())
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Invalid UUID — every authorizeProject-guarded route must return 400
+// invalid-uuid (not 500) before any query touches the uuid column.
+// ---------------------------------------------------------------------------
+
+func (s *ProjectAuthorizationSuite) TestInvalidUUID_Returns400() {
+	body := testutil.WithJSONBody(map[string]any{"name": "x"})
+
+	s.Run("get", func() {
+		resp := s.Client.GET("/api/projects/invalid-uuid", testutil.WithAuth(adminToken))
+		s.Equal(400, resp.StatusCode, resp.String())
+	})
+	s.Run("update", func() {
+		resp := s.Client.PATCH("/api/projects/invalid-uuid", testutil.WithAuth(adminToken), body)
+		s.Equal(400, resp.StatusCode, resp.String())
+	})
+	s.Run("delete", func() {
+		resp := s.Client.DELETE("/api/projects/invalid-uuid", testutil.WithAuth(adminToken))
+		s.Equal(400, resp.StatusCode, resp.String())
+	})
+	s.Run("list members", func() {
+		resp := s.Client.GET("/api/projects/invalid-uuid/members", testutil.WithAuth(adminToken))
+		s.Equal(400, resp.StatusCode, resp.String())
+	})
+	s.Run("remove member", func() {
+		resp := s.Client.DELETE("/api/projects/invalid-uuid/members/"+testutil.AdminUser.ID, testutil.WithAuth(adminToken))
+		s.Equal(400, resp.StatusCode, resp.String())
+	})
+	s.Run("restore", func() {
+		resp := s.Client.POST("/api/projects/invalid-uuid/restore", testutil.WithAuth(adminToken))
+		s.Equal(400, resp.StatusCode, resp.String())
 	})
 }
