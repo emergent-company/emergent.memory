@@ -160,7 +160,7 @@ type Agent struct {
 	Enabled             bool               `bun:"enabled,notnull,default:true" json:"enabled"`
 	TriggerType         AgentTriggerType   `bun:"trigger_type,notnull,default:'schedule'" json:"triggerType"`
 	ReactionConfig      *ReactionConfig    `bun:"reaction_config,type:jsonb" json:"reactionConfig"`
-	ExecutionMode       AgentExecutionMode `bun:"execution_mode,notnull,default:'execute'" json:"executionMode"`
+	ExecutionMode       AgentExecutionMode `bun:"execution_mode,default:'execute'" json:"executionMode"`
 	Capabilities        *AgentCapabilities `bun:"capabilities,type:jsonb" json:"capabilities"`
 	Config              map[string]any     `bun:"config,type:jsonb,default:'{}'" json:"config"`
 	Description         *string            `bun:"description" json:"description"`

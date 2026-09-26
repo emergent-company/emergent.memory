@@ -201,7 +201,7 @@ type GraphMemorySchema struct {
 	Migrations              *SchemaMigrationHints `bun:"migrations,type:jsonb" json:"migrations,omitempty"`
 	Checksum                *string               `bun:"checksum" json:"checksum,omitempty"`
 	ProjectID               *string               `bun:"project_id,type:uuid" json:"projectId,omitempty"`
-	Draft                   bool                  `bun:"draft,notnull,default:false" json:"draft"`
+	Draft                   bool                  `bun:"draft,default:false" json:"draft"`
 	PublishedAt             *time.Time            `bun:"published_at" json:"publishedAt,omitempty"`
 	DeprecatedAt            *time.Time            `bun:"deprecated_at" json:"deprecatedAt,omitempty"`
 	CreatedAt               time.Time             `bun:"created_at" json:"createdAt"`
