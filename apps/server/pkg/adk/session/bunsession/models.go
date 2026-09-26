@@ -53,10 +53,11 @@ type ADKEvent struct {
 type ADKState struct {
 	bun.BaseModel `bun:"table:kb.adk_states,alias:ast"`
 
-	Scope      string                 `bun:"scope,pk,type:text"` // 'app', 'user'
-	AppName    string                 `bun:"app_name,pk,type:text"`
-	UserID     string                 `bun:"user_id,pk,type:text"` // empty for 'app' scope
-	SessionID  string                 `bun:"session_id,type:text"` // For task 1.3 FK requirement, though ADK uses session state in the session table usually.
+	ID         string                 `bun:"id,pk,type:uuid,default:gen_random_uuid()"`
+	Scope      string                 `bun:"scope,notnull,type:text"` // 'app', 'user', 'session'
+	AppName    string                 `bun:"app_name,notnull,type:text"`
+	UserID     string                 `bun:"user_id,type:text,nullzero"`    // NULL/empty for 'app' scope
+	SessionID  string                 `bun:"session_id,type:text,nullzero"` // NULL/empty for 'app'/'user' scope
 	State      map[string]interface{} `bun:"state,type:jsonb,nullzero"`
 	UpdateTime time.Time              `bun:"update_time,notnull,default:current_timestamp"`
 }
