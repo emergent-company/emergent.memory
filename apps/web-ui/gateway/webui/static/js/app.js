@@ -471,19 +471,23 @@
     if (ev.target && ev.target.id === "delete-agent-go") confirmDelete();
   });
 
-  /* ---------- auto-grow textareas ---------- */
-  /* Any textarea with data-autogrow starts single-line and grows to fit its
-     content, capped by its CSS max-height (overflow scrolls past the cap).
-     Mirrors the chat composer's auto-grow for free-form string fields (e.g.
-     object properties that can hold long text). Delegated on document so it
-     survives HTMX swaps. */
+  /* ---------- auto-grow textareas + long-text character counter ---------- */
+  /* Any textarea with data-autogrow starts as a small multi-line box and grows
+     to fit its content, capped by its CSS max-height (overflow scrolls past the
+     cap). Mirrors the chat composer's auto-grow for free-form string fields
+     (e.g. object properties that can hold long text). Delegated on document so
+     it survives HTMX swaps, and re-run after swaps below. */
   function autogrow(el) {
     if (!el) return;
+    // Preserve a height the user dragged the resize handle to (long-text fields
+    // are resize-y): capture it before we reset the inline height.
+    var floor = el.dataset.userResized === "1" ? Math.round(el.getBoundingClientRect().height) : 0;
     el.style.height = "auto";
     var max = 0;
     try { max = parseInt(getComputedStyle(el).maxHeight, 10) || 0; } catch (e) {}
     var h = el.scrollHeight;
     if (max > 0 && h > max) h = max;
+    if (floor > h) h = floor;
     el.style.height = h + "px";
   }
 
@@ -491,12 +495,62 @@
     (root || document).querySelectorAll("textarea[data-autogrow]").forEach(autogrow);
   }
 
+  /* The live character count lives in the field's [data-char-counter] wrapper,
+     written into its [data-char-count-value] element. Comma-grouped to match the
+     server-rendered initial value. */
+  function charCountText(n) {
+    var s = String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    return s + (n === 1 ? " character" : " characters");
+  }
+
+  function updateCharCount(el) {
+    if (!el) return;
+    var wrap = el.closest && el.closest("[data-char-counter]");
+    if (!wrap) return;
+    var out = wrap.querySelector("[data-char-count-value]");
+    if (out) out.textContent = charCountText(Array.from(el.value).length);
+  }
+
+  function charCountAll(root) {
+    (root || document).querySelectorAll("textarea[data-autogrow]").forEach(updateCharCount);
+  }
+
   document.addEventListener("input", function (ev) {
     var t = ev.target;
-    if (t && t.matches && t.matches("textarea[data-autogrow]")) autogrow(t);
+    if (t && t.matches && t.matches("textarea[data-autogrow]")) {
+      autogrow(t);
+      updateCharCount(t);
+    }
   });
 
-  document.addEventListener("DOMContentLoaded", function () { autogrowAll(); });
+  /* Remember manual resize-y drags so a later keystroke's autogrow does not
+     snap the box back down to the content height. */
+  document.addEventListener("pointerdown", function (ev) {
+    var t = ev.target;
+    if (t && t.matches && t.matches("textarea[data-autogrow]")) {
+      t.dataset.resizeStart = Math.round(t.getBoundingClientRect().height);
+    }
+  }, true);
+  document.addEventListener("pointerup", function (ev) {
+    var t = ev.target;
+    if (!t || !t.matches || !t.matches("textarea[data-autogrow]")) return;
+    var start = parseInt(t.dataset.resizeStart, 10);
+    if (!isNaN(start) && Math.abs(Math.round(t.getBoundingClientRect().height) - start) > 4) {
+      t.dataset.userResized = "1";
+    }
+  }, true);
+
+  document.addEventListener("DOMContentLoaded", function () {
+    autogrowAll();
+    charCountAll();
+  });
+
+  /* Boosted client-side navigation swaps #main-content without firing
+     DOMContentLoaded, so re-initialise auto-grow and counters after every swap. */
+  document.addEventListener("htmx:after:swap", function () {
+    autogrowAll();
+    charCountAll();
+  });
 
   /* ---------- schema editor + derive dialogs (delegated) ---------- */
   /* Native <dialog> open/close driven by data attributes, so the markup needs

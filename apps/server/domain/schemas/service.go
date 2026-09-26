@@ -179,6 +179,46 @@ func (s *Service) DeleteAssignment(ctx context.Context, projectID, assignmentID 
 	return nil
 }
 
+// UpdateAssignmentBySchemaID updates the active assignment for a project+schema,
+// resolving the assignment id server-side from the (project_id, schema_id) pair.
+// It is the shared seam the MCP schema-assignment-update tool uses so the MCP
+// surface and the REST UpdateAssignment handler both mutate through this service
+// (issue #1041).
+func (s *Service) UpdateAssignmentBySchemaID(ctx context.Context, projectID, schemaID string, active bool) error {
+	a, err := s.repo.GetActiveAssignment(ctx, projectID, schemaID)
+	if err != nil {
+		return err
+	}
+	if a == nil {
+		return apperror.NewNotFound("schema assignment", schemaID)
+	}
+	if err := s.repo.UpdateAssignment(ctx, projectID, a.ID, &UpdateAssignmentRequest{Active: &active}); err != nil {
+		return err
+	}
+	s.graphSvc.InvalidateSchemaCache(projectID)
+	return nil
+}
+
+// DeleteAssignmentBySchemaID soft-deletes the active assignment for a
+// project+schema, resolving the assignment id server-side from the
+// (project_id, schema_id) pair. It is the shared seam the MCP schema-uninstall
+// tool uses so the MCP surface and the REST DeleteAssignment handler both mutate
+// through this service (issue #1041).
+func (s *Service) DeleteAssignmentBySchemaID(ctx context.Context, projectID, schemaID string) error {
+	a, err := s.repo.GetActiveAssignment(ctx, projectID, schemaID)
+	if err != nil {
+		return err
+	}
+	if a == nil {
+		return apperror.NewNotFound("schema assignment", schemaID)
+	}
+	if err := s.repo.DeleteAssignment(ctx, projectID, a.ID); err != nil {
+		return err
+	}
+	s.graphSvc.InvalidateSchemaCache(projectID)
+	return nil
+}
+
 // CreatePack creates a new schema scoped to the given project.
 // If migration hints are present, they are validated before persisting.
 func (s *Service) CreatePack(ctx context.Context, projectID string, req *CreatePackRequest) (*GraphMemorySchema, error) {

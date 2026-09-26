@@ -1548,6 +1548,105 @@ func TestPropertyInput(t *testing.T) {
 	if strings.Contains(htmlUnchecked, "checked") {
 		t.Errorf("unchecked boolean should not render checked:\n%s", htmlUnchecked)
 	}
+
+	// multi-line string fields carry a live character counter, seeded with the
+	// server-rendered count and grouped for readability.
+	multiLine := []struct {
+		def  objectPropertyDef
+		val  string
+		want string
+	}{
+		{objectPropertyDef{Name: "name", Type: "string"}, "abc", "3 characters"},
+		{objectPropertyDef{Name: "name", Type: "string"}, "", "0 characters"},
+		{objectPropertyDef{Name: "name", Type: "string"}, "x", "1 character"},
+		{objectPropertyDef{Name: "other", Type: "unknown"}, strings.Repeat("x", 1234), "1,234 characters"},
+		{objectPropertyDef{Name: "note", Type: ""}, "hello", "5 characters"},
+		{objectPropertyDef{Name: "summary", Type: "string", Widget: "textarea"}, "hi", "2 characters"},
+		{objectPropertyDef{Name: "notes", Type: "string", Widget: "bogus"}, "ok", "2 characters"},
+	}
+	for _, c := range multiLine {
+		html := renderHTML(t, propertyInput(c.def, []string{c.val}))
+		for _, want := range []string{`data-char-counter`, `data-testid="char-count"`, `data-char-count-value`, c.want} {
+			if !strings.Contains(html, want) {
+				t.Errorf("%s: counter HTML missing %q in:\n%s", c.def.Name, want, html)
+			}
+		}
+	}
+
+	// every other widget type omits the counter — a count on a date, select,
+	// number, toggle, or chip input is noise.
+	notMultiLine := []objectPropertyDef{
+		{Name: "born", Type: "date"},
+		{Name: "age", Type: "number"},
+		{Name: "streak", Type: "integer"},
+		{Name: "tags", Type: "array"},
+		{Name: "meta", Type: "object"},
+		{Name: "source", Type: "string", Widget: "input"},
+		{Name: "category", Type: "string", Enum: []string{"preference", "fact"}},
+		{Name: "active", Type: "boolean"},
+	}
+	for _, def := range notMultiLine {
+		html := renderHTML(t, propertyInput(def, []string{"x"}))
+		if strings.Contains(html, `data-testid="char-count"`) {
+			t.Errorf("%s: counter must not render on non-multi-line fields:\n%s", def.Name, html)
+		}
+	}
+}
+
+func TestCharCountLabel(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"", "0 characters"},
+		{"a", "1 character"},
+		{"abc", "3 characters"},
+		{"abcd", "4 characters"},
+		{strings.Repeat("x", 1234), "1,234 characters"},
+		{strings.Repeat("x", 41594), "41,594 characters"},
+		// Line-ending normalization: a browser rewrites a textarea's CRLF/CR to
+		// LF, so the server-rendered count must match the client's LF count.
+		{"a\r\nb", "3 characters"},
+		{"a\rb", "3 characters"},
+		{"\r\n", "1 character"},
+		{"\r", "1 character"},
+		{"a\r\nb\r\nc", "5 characters"},
+	}
+	for _, c := range cases {
+		if got := charCountLabel(c.in); got != c.want {
+			t.Errorf("charCountLabel(len=%d) = %q, want %q", len(c.in), got, c.want)
+		}
+	}
+}
+
+func TestObjectPropertiesCardLongTextFallback(t *testing.T) {
+	obj := &GraphObject{
+		ID: "o1", Type: "note", Key: "n1",
+		Properties: map[string]any{
+			"content":  "a long body", // no schema def → fallback multi-line field
+			"source":   "https://example.com",
+			"category": "fact",
+			"amount":   1.5,
+		},
+	}
+	propDefs := []objectPropertyDef{
+		{Name: "source", Type: "string", Widget: "input"},
+		{Name: "category", Type: "string", Enum: []string{"fact", "opinion"}},
+		{Name: "amount", Type: "number"},
+	}
+	html := renderHTML(t, objectPropertiesCard(obj, propDefs, nil))
+
+	// the un-schema'd stored property renders the long-text field with a counter
+	if !strings.Contains(html, `name="prop_content"`) || !strings.Contains(html, `data-autogrow`) {
+		t.Errorf("fallback property missing auto-growing textarea in:\n%s", html)
+	}
+	if !strings.Contains(html, "11 characters") {
+		t.Errorf("fallback property missing server-rendered counter in:\n%s", html)
+	}
+	// exactly one counter across the card: only the multi-line field has one
+	if n := strings.Count(html, `data-testid="char-count"`); n != 1 {
+		t.Errorf("counter rendered %d times, want 1 (multi-line only):\n%s", n, html)
+	}
 }
 
 func TestIndexedFormValues(t *testing.T) {

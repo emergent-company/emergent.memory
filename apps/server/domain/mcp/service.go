@@ -86,6 +86,11 @@ type Service struct {
 	// Schemas service (for schema migration tools)
 	schemasSvc *schemas.Service
 
+	// projectOrgAdminAuthorizer is the shared org_admin authority seam for
+	// project creation (projects.Service.AuthorizeOrgAdmin). Wired via fx to
+	// avoid a circular import. Nil when not configured; callers fail closed.
+	projectOrgAdminAuthorizer ProjectOrgAdminAuthorizer
+
 	// sessionHistoryProvider retrieves unified session timelines for session-get-messages tool.
 	// Replaces graphSessionSvc — backed by kb.agent_run_messages, not graph objects.
 	sessionHistoryProvider SessionHistoryProvider
@@ -162,6 +167,12 @@ type ServiceParams struct {
 	SchemasSvc         *schemas.Service
 	SessionTodoSvc     *sessiontodos.Service
 
+	// ProjectOrgAdminAuthorizer is the shared org_admin authority for
+	// project-create (projects.Service.AuthorizeOrgAdmin). Wired via fx to avoid
+	// a circular import (projects → agents → mcp). Nil-safe: a nil authorizer is
+	// fail-closed at the call site.
+	ProjectOrgAdminAuthorizer ProjectOrgAdminAuthorizer `optional:"true"`
+
 	// Cross-domain tool handlers (optional — wired via fx.Provide adapters to
 	// avoid circular imports; nil-safe when the providing feature is disabled).
 	BlueprintToolHandler   BlueprintToolHandler    `optional:"true"`
@@ -189,42 +200,43 @@ func NewService(p ServiceParams) *Service {
 		tempoURL = cfg.Otel.InternalTempoQueryURL()
 	}
 	return &Service{
-		db:                      p.DB,
-		graphService:            p.GraphService,
-		searchSvc:               p.SearchSvc,
-		braveSearchAPIKey:       cfg.BraveSearch.APIKey,
-		braveSearchTimeout:      timeout,
-		log:                     p.Log.With(logger.Scope("mcp.svc")),
-		documentsSvc:            p.DocumentsSvc,
-		storageSvc:              p.StorageSvc,
-		skillsRepo:              p.SkillsRepo,
-		branchSvc:               p.BranchSvc,
-		providerCredSvc:         p.ProviderCredSvc,
-		providerCatalogSvc:      p.ProviderCatalogSvc,
-		apitokenSvc:             p.ApitokenSvc,
-		emailSvc:                p.EmailSvc,
-		tempoBaseURL:            tempoURL,
-		serverPort:              cfg.ServerPort,
-		journalSvc:              p.JournalSvc,
-		schemasSvc:              p.SchemasSvc,
-		sessionTodoSvc:          p.SessionTodoSvc,
-		blueprintToolHandler:    p.BlueprintToolHandler,
-		sessionTitleHandler:     p.SessionTitleHandler,
-		sessionHistoryProvider:  p.SessionHistoryProvider,
-		graphObjectTitlePatcher: p.GraphObjectPatcher,
-		embeddingCtl:            p.EmbeddingCtl,
-		domainClassifier:        p.DomainClassifier,
-		schemaIndex:             p.SchemaIndex,
-		reextractionQueuer:      p.ReextractionQueuer,
-		discoverySvc:            p.DiscoverySvc,
-		docSignalsReader:        p.DocSignalsReader,
-		relaySvc:                p.RelaySvc,
-		shareInstances:          shareInstanceOrNil(p.DB),
-		shareTokens:             p.ApitokenSvc,
-		agentDir:                agentDirectoryOrNil(p.DB),
-		agentEndpoints:          agentMCPEndpointOrNil(p.DB),
-		agentKeys:               agentMCPKeyOrNil(p.DB),
-		agentSessions:           agentMCPSessionOrNil(p.DB),
+		db:                        p.DB,
+		graphService:              p.GraphService,
+		searchSvc:                 p.SearchSvc,
+		braveSearchAPIKey:         cfg.BraveSearch.APIKey,
+		braveSearchTimeout:        timeout,
+		log:                       p.Log.With(logger.Scope("mcp.svc")),
+		documentsSvc:              p.DocumentsSvc,
+		storageSvc:                p.StorageSvc,
+		skillsRepo:                p.SkillsRepo,
+		branchSvc:                 p.BranchSvc,
+		providerCredSvc:           p.ProviderCredSvc,
+		providerCatalogSvc:        p.ProviderCatalogSvc,
+		apitokenSvc:               p.ApitokenSvc,
+		emailSvc:                  p.EmailSvc,
+		tempoBaseURL:              tempoURL,
+		serverPort:                cfg.ServerPort,
+		journalSvc:                p.JournalSvc,
+		schemasSvc:                p.SchemasSvc,
+		sessionTodoSvc:            p.SessionTodoSvc,
+		projectOrgAdminAuthorizer: p.ProjectOrgAdminAuthorizer,
+		blueprintToolHandler:      p.BlueprintToolHandler,
+		sessionTitleHandler:       p.SessionTitleHandler,
+		sessionHistoryProvider:    p.SessionHistoryProvider,
+		graphObjectTitlePatcher:   p.GraphObjectPatcher,
+		embeddingCtl:              p.EmbeddingCtl,
+		domainClassifier:          p.DomainClassifier,
+		schemaIndex:               p.SchemaIndex,
+		reextractionQueuer:        p.ReextractionQueuer,
+		discoverySvc:              p.DiscoverySvc,
+		docSignalsReader:          p.DocSignalsReader,
+		relaySvc:                  p.RelaySvc,
+		shareInstances:            shareInstanceOrNil(p.DB),
+		shareTokens:               p.ApitokenSvc,
+		agentDir:                  agentDirectoryOrNil(p.DB),
+		agentEndpoints:            agentMCPEndpointOrNil(p.DB),
+		agentKeys:                 agentMCPKeyOrNil(p.DB),
+		agentSessions:             agentMCPSessionOrNil(p.DB),
 	}
 }
 
@@ -5227,7 +5239,12 @@ func (s *Service) delegateRegistryTool(ctx context.Context, projectID, toolName 
 }
 
 // executeCreateProject creates a new project under the caller's organization.
-// The org_id argument is optional; when absent it is resolved from the auth context.
+// The org_id argument is optional; when absent it is resolved from the auth
+// context. The caller's org_admin authority over the resolved org is enforced
+// server-side via the shared projects.Service.AuthorizeOrgAdmin helper before
+// the insert, so a client-supplied org_id at most selects the resource and can
+// never authorize creation in an org the caller does not administer (issue
+// #1041 — the REST Create path enforces the same helper).
 func (s *Service) executeCreateProject(ctx context.Context, args map[string]any) (*ToolResult, error) {
 	name, _ := args["name"].(string)
 	if strings.TrimSpace(name) == "" {
@@ -5260,6 +5277,21 @@ func (s *Service) executeCreateProject(ctx context.Context, args map[string]any)
 		return nil, fmt.Errorf("create_project: 'org_id' must be a valid UUID: %w", err)
 	}
 
+	// Enforce org_admin authority server-side before the insert (issue #1041):
+	// the REST handler enforces projects.Service.Create → AuthorizeOrgAdmin; the
+	// MCP tool must enforce the same authority so a client-supplied org_id cannot
+	// create a project in an org the caller does not administer.
+	user, err := auth.RequireUser(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("create_project: %w", err)
+	}
+	if s.projectOrgAdminAuthorizer == nil {
+		return nil, fmt.Errorf("create_project: project authorizer not configured")
+	}
+	if err := s.projectOrgAdminAuthorizer(ctx, orgID, user.ID); err != nil {
+		return nil, fmt.Errorf("create_project: %w", err)
+	}
+
 	// Insert the project directly via the shared DB handle.
 	type projectRow struct {
 		ID    string `bun:"id"`
@@ -5267,7 +5299,7 @@ func (s *Service) executeCreateProject(ctx context.Context, args map[string]any)
 		OrgID string `bun:"organization_id"`
 	}
 	var row projectRow
-	err := s.db.NewRaw(
+	err = s.db.NewRaw(
 		"INSERT INTO kb.projects (name, organization_id, budget_usd) VALUES (?, ?, 10.0) RETURNING id, name, organization_id",
 		name, orgID,
 	).Scan(ctx, &row)

@@ -45,6 +45,13 @@ type SessionHistoryProvider interface {
 // a circular import (mcp already imports graph).
 type GraphObjectPatcher func(ctx context.Context, projectID, objectID, title string) error
 
+// ProjectOrgAdminAuthorizer asserts the caller is an org_admin of the addressed
+// organization. Satisfied by projects.Service.AuthorizeOrgAdmin; declared as a
+// func type to avoid a circular import (mcp cannot import projects directly:
+// projects → agents → mcp). The zero value (nil) is fail-closed: a caller must
+// treat a nil authorizer as "not configured" and refuse the write (issue #1041).
+type ProjectOrgAdminAuthorizer func(ctx context.Context, orgID, userID string) error
+
 // ContextWithACPSessionID stores the ACP session ID in context.
 // Called by the agent executor before running tools so that built-in tools
 // like set_session_title can update session metadata.
