@@ -222,7 +222,7 @@ func TestExtractRealTree(t *testing.T) {
 	// internal/routeguard -> apps/server
 	serverDir := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
 	if _, err := os.Stat(filepath.Join(serverDir, "domain")); err != nil {
-		t.Skipf("domain tree not available at %s: %v", serverDir, err)
+		t.Fatalf("domain tree not available at %s: %v", serverDir, err)
 	}
 
 	res, err := Extract(serverDir)
@@ -251,7 +251,7 @@ func TestSuperadminRoutesAreTransportGated(t *testing.T) {
 	}
 	serverDir := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
 	if _, err := os.Stat(filepath.Join(serverDir, "domain")); err != nil {
-		t.Skipf("domain tree not available at %s: %v", serverDir, err)
+		t.Fatalf("domain tree not available at %s: %v", serverDir, err)
 	}
 
 	res, err := Extract(serverDir)
