@@ -24,6 +24,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      # Guard against silently-committed unformatted Go. `task lint` from
+      # apps/web-ui is scoped to the gateway, so the whole repo is only checked
+      # here — over *tracked* files, so generated/untracked artifacts don't
+      # produce noise. (See emergent-company/emergent.memory#1058.)
+      - name: gofmt (tracked Go files)
+        run: |
+          files=$(git ls-files '*.go' | xargs gofmt -l)
+          if [ -n "$files" ]; then
+            echo "Unformatted tracked Go files:"
+            echo "$files"
+            echo "Fix with: gofmt -w <file>"
+            exit 1
+          fi
       # Reject dynamic ${{ ... }} interpolation (refs, inputs, outputs, event
       # payloads) inside shell run:/github-script script: payloads. Runs here so
       # the branch-protection-required `ci` check enforces it repo-wide.
