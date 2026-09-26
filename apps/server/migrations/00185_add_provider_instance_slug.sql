@@ -60,6 +60,11 @@ WHERE embedding_model LIKE '%/%'
 -- Note: the model normalization above is lossy (the stripped dialect prefix is
 -- not restored). Down restores the pre-instance uniqueness and drops the slug
 -- column.
+--
+-- Rollback caveat: Down re-adds UNIQUE (project_id, provider), which FAILS
+-- loudly if a second same-dialect instance was created after this migration
+-- (two rows now share one dialect). Roll back before using multi-instance
+-- providers, or delete the extra instances first.
 DROP INDEX IF EXISTS uq_project_provider_configs_project_slug;
 DROP INDEX IF EXISTS uq_org_provider_configs_org_slug;
 

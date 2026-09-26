@@ -44,9 +44,9 @@ This change separates **dialect** (wire protocol + auth behavior) from **provide
 - The `adk.ModelResolver` boundary stays string-based (`ResolveGenerativeModelByID` returns the routed `"slug/model"` string); the factory's `CreateModelWithName` still takes a string. Converting those remaining string callers — `domain/agents/session_compressor.go`, `domain/agents/handler.go`, `domain/agents/mcp_tools.go`, and `domain/extraction/usage.go`'s provider-string map — to carry `modelref.Ref` end-to-end is a follow-up. `domain/provider/project_settings_store.go` and `domain/provider/share_service.go` listed in an earlier draft do not exist and were dropped.
 
 **SDK / CLI / Web UI**
-- `apps/server/pkg/sdk/provider/client.go`: slug/dialect types and slug-addressed methods.
-- `apps/cli/internal/cmd/projects.go` and `provider.go`: `configure-project <dialect> [--name <slug>]`, slug-addressed get/list/delete/test, `set-models` accepting a structured reference.
-- `apps/web-ui/gateway/`: `settings_providers.go`, `project_settings_templ.go`, `agent.go` (model-issue classification by slug), provider/model handlers and templ.
+- `apps/server/pkg/sdk/provider/client.go`: adds a `Slug` field to `ProviderConfig`, `ProjectProviderConfig`, and `UpsertProviderConfigRequest` (no new slug-addressed methods).
+- `apps/cli/internal/cmd/projects.go`: `projects set-provider <provider> [--name <slug>]` (adds the `--name` instance-slug flag).
+- `apps/web-ui/gateway/`: `settings_providers.go`, `settings_handlers.go`, `memory_providers.go`, `memory_usage.go`, `usage.go`, `usage.templ`, `project_settings.templ`, `backend.go`, and `agent.go` (model-issue classification by slug).
 
 **Docs / specs**: this change; the affected main specs are updated on archive.
 
