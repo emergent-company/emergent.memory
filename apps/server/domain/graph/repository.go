@@ -1693,13 +1693,31 @@ type FTSSearchResult struct {
 
 // FTSSearch performs full-text search using PostgreSQL's websearch_to_tsquery.
 // Returns objects sorted by relevance (ts_rank_cd with length normalization).
+//
+// It is a convenience wrapper over FTSSearchWithFallback for callers that do
+// not need to know whether a fallback pass produced the results.
 func (r *Repository) FTSSearch(ctx context.Context, params FTSSearchParams) ([]*FTSSearchResult, error) {
+	results, _, err := r.FTSSearchWithFallback(ctx, params)
+	return results, err
+}
+
+// FTSSearchWithFallback is FTSSearch with an additional fellBack signal: it is
+// true when the strict and relaxed queries matched nothing and the result set
+// came from the disjoined (OR) fallback — or, equivalently, from the relaxed
+// fallback — rather than the strict query.
+//
+// The signal matters because the Relax/Disjoin fallbacks are gated to the first
+// page only (params.Offset > 0 skips them), so a fallback result cannot promise
+// a second page: computing HasMore from a `limit+1` disjoined result set would
+// advertise a page that returns empty. Callers that surface HasMore must consult
+// fellBack before reporting more results than actually exist.
+func (r *Repository) FTSSearchWithFallback(ctx context.Context, params FTSSearchParams) ([]*FTSSearchResult, bool, error) {
 	results, err := r.ftsSearch(ctx, params, params.Query, false)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if len(results) > 0 {
-		return results, nil
+		return results, false, nil
 	}
 
 	// Only relax or disjoin on the first page. FTSSearch supports offset
@@ -1708,7 +1726,7 @@ func (r *Repository) FTSSearch(ctx context.Context, params FTSSearchParams) ([]*
 	// Falling back here would refill the page with matches the strict query
 	// never surfaced on earlier pages.
 	if params.Offset > 0 {
-		return results, nil
+		return results, false, nil
 	}
 
 	// A single unsatisfiable term in the strict query — typically a hyphenated
@@ -1722,10 +1740,10 @@ func (r *Repository) FTSSearch(ctx context.Context, params FTSSearchParams) ([]*
 	if ok {
 		relaxedResults, err := r.ftsSearch(ctx, params, relaxed, false)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if len(relaxedResults) > 0 {
-			return relaxedResults, nil
+			return relaxedResults, true, nil
 		}
 	}
 
@@ -1736,9 +1754,13 @@ func (r *Repository) FTSSearch(ctx context.Context, params FTSSearchParams) ([]*
 	// recall is restored without collapsing ranking to "any one term".
 	disjoined, ok := ftsquery.Disjoin(params.Query)
 	if !ok {
-		return results, nil
+		return results, false, nil
 	}
-	return r.ftsSearch(ctx, params, disjoined, true)
+	disjoinedResults, err := r.ftsSearch(ctx, params, disjoined, true)
+	if err != nil {
+		return nil, false, err
+	}
+	return disjoinedResults, true, nil
 }
 
 // ftsSearch runs the lexical query for queryText. It is separate from FTSSearch

@@ -2252,15 +2252,21 @@ func (s *Service) FTSSearch(ctx context.Context, projectID uuid.UUID, req *FTSSe
 		Offset:         req.Offset,
 	}
 
-	results, err := s.repo.FTSSearch(ctx, params)
+	results, fellBack, err := s.repo.FTSSearchWithFallback(ctx, params)
 	if err != nil {
 		return nil, err
 	}
 
-	hasMore := len(results) > limit
-	if hasMore {
+	// Truncate the "limit+1" extra row exactly as before, so page 1's documents
+	// are unchanged. The Relax/Disjoin fallback is deliberately first-page-only
+	// (see Repository.FTSSearchWithFallback), so when it produced the result set
+	// the extra row is a disjoined-match overhang, not a real second page:
+	// HasMore must be false in that case or the caller is shown a dead next page.
+	exceeded := len(results) > limit
+	if exceeded {
 		results = results[:limit]
 	}
+	hasMore := exceeded && !fellBack
 
 	data := make([]*SearchResultItem, len(results))
 	objectIDs := make([]uuid.UUID, 0, len(results))
