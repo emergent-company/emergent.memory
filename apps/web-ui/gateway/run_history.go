@@ -36,11 +36,13 @@ type runMessageItem struct {
 // agent's question so the client renders the interactive question card.
 type runToolItem struct {
 	Kind       string         `json:"kind"`
+	ID         string         `json:"id,omitempty"`
 	RunID      string         `json:"run_id,omitempty"`
 	StepNumber int            `json:"step_number"`
 	CreatedAt  string         `json:"created_at,omitempty"`
 	ToolName   string         `json:"tool_name"`
 	ToolStatus string         `json:"tool_status,omitempty"`
+	DurationMs *int           `json:"duration_ms,omitempty"`
 	ToolInput  map[string]any `json:"tool_input,omitempty"`
 	ToolOutput map[string]any `json:"tool_output,omitempty"`
 }
@@ -104,7 +106,7 @@ func runTimelineItems(full *AgentRunFull, questions []AgentQuestionItem) []json.
 					created: keyTime(tc.CreatedAt, fallbackCreated),
 					step:    tc.StepNumber,
 					idx:     len(entries),
-					raw:     mustJSON(runToolItem{Kind: "tool_call", RunID: runID, StepNumber: tc.StepNumber, CreatedAt: orZero(tc.CreatedAt, fallbackCreated), ToolName: tc.ToolName, ToolStatus: toolStatus(tc.Status), ToolInput: tc.Input, ToolOutput: out}),
+					raw:     mustJSON(runToolItem{Kind: "tool_call", ID: tc.ID, RunID: runID, StepNumber: tc.StepNumber, CreatedAt: orZero(tc.CreatedAt, fallbackCreated), ToolName: tc.ToolName, ToolStatus: toolStatus(tc.Status), DurationMs: tc.DurationMs, ToolInput: tc.Input, ToolOutput: out}),
 				})
 				continue
 			}
@@ -126,7 +128,7 @@ func runTimelineItems(full *AgentRunFull, questions []AgentQuestionItem) []json.
 				created: keyTime(tc.CreatedAt, fallbackCreated),
 				step:    tc.StepNumber,
 				idx:     len(entries),
-				raw:     mustJSON(runToolItem{Kind: "tool_call", RunID: runID, StepNumber: tc.StepNumber, CreatedAt: orZero(tc.CreatedAt, fallbackCreated), ToolName: "ask_user", ToolStatus: "completed", ToolInput: in, ToolOutput: out}),
+				raw:     mustJSON(runToolItem{Kind: "tool_call", ID: tc.ID, RunID: runID, StepNumber: tc.StepNumber, CreatedAt: orZero(tc.CreatedAt, fallbackCreated), ToolName: "ask_user", ToolStatus: "completed", DurationMs: tc.DurationMs, ToolInput: in, ToolOutput: out}),
 			})
 			continue
 		}
@@ -134,7 +136,7 @@ func runTimelineItems(full *AgentRunFull, questions []AgentQuestionItem) []json.
 			created: keyTime(tc.CreatedAt, fallbackCreated),
 			step:    tc.StepNumber,
 			idx:     len(entries),
-			raw:     mustJSON(runToolItem{Kind: "tool_call", RunID: runID, StepNumber: tc.StepNumber, CreatedAt: orZero(tc.CreatedAt, fallbackCreated), ToolName: tc.ToolName, ToolStatus: toolStatus(tc.Status), ToolInput: tc.Input, ToolOutput: out}),
+			raw:     mustJSON(runToolItem{Kind: "tool_call", ID: tc.ID, RunID: runID, StepNumber: tc.StepNumber, CreatedAt: orZero(tc.CreatedAt, fallbackCreated), ToolName: tc.ToolName, ToolStatus: toolStatus(tc.Status), DurationMs: tc.DurationMs, ToolInput: tc.Input, ToolOutput: out}),
 		})
 	}
 

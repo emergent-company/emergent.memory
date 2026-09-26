@@ -117,10 +117,49 @@ templ sessionTimelineEmpty() {
 }
 
 // sessionTimeline renders the timeline grouped by run, in first-seen order.
+// When the transcript captured the run's composed system instruction, its card
+// is shown once at the very top; per-run system records are skipped in the run
+// bodies so an identical instruction is not repeated for every run.
 templ sessionTimeline(aui agentUI, groups []runGroup) {
+	if prompt, ok := firstAgentPrompt(groups); ok {
+		@sessionAgentPrompt(prompt)
+	}
 	for i, g := range groups {
 		@sessionRunBlock(aui, i+1, g)
 	}
+}
+
+// firstAgentPrompt returns the text of the first system message in the
+// transcript — the run's composed agent instruction — and whether one exists.
+// Later system records are intentionally ignored: the instruction is stable
+// across a conversation's runs, so rendering it once avoids duplicate cards.
+func firstAgentPrompt(groups []runGroup) (string, bool) {
+	for _, g := range groups {
+		for _, it := range g.items {
+			if it.Kind == "message" && it.Role == "system" && it.Content != nil && it.Content.Text != "" {
+				return it.Content.Text, true
+			}
+		}
+	}
+	return "", false
+}
+
+// sessionAgentPrompt renders the composed agent instruction as a collapsible
+// card at the top of the timeline, styled like a tool-call card. The prompt is
+// markdown-rendered; the body is collapsed by default so a long instruction
+// never forms a text wall.
+templ sessionAgentPrompt(text string) {
+	<details class="rounded-box mb-6 border border-base-content/10 bg-base-200/30">
+		<summary class="flex cursor-pointer list-none items-center gap-2 p-3 [&::-webkit-details-marker]:hidden">
+			<span class="iconify lucide--scroll-text size-3.5 shrink-0 text-base-content/40" aria-hidden="true"></span>
+			<span class="text-xs font-medium">Agent prompt</span>
+			<span class="ml-auto text-[10px] font-semibold tracking-wider text-base-content/40 uppercase">system instruction</span>
+			<span class="iconify lucide--chevron-right size-3 shrink-0 text-base-content/40" aria-hidden="true"></span>
+		</summary>
+		<div class="border-t border-base-content/10 p-3">
+			<div class="alfred-md max-h-96 overflow-auto text-sm leading-relaxed break-words">@templ.Raw(renderMarkdown(text))</div>
+		</div>
+	</details>
 }
 
 // sessionRunBlock renders one run: a header (model · status · duration), its
@@ -152,7 +191,9 @@ templ sessionRunBlock(aui agentUI, n int, g runGroup) {
 		<div class="space-y-3">
 			for _, it := range g.items {
 				if it.Kind == "message" {
-					@sessionMessageItem(aui, it)
+					if it.Role != "system" {
+						@sessionMessageItem(aui, it)
+					}
 				} else if it.Kind == "tool_call" {
 					@sessionToolItem(it)
 				}
@@ -288,16 +329,22 @@ func sessionItemFooter(it TimelineItem) string {
 	return footer
 }
 
-// sessionToolItem renders one tool call: name, status, collapsible
-// syntax-highlighted input/output JSON, and a distinct error line when the
-// call failed. Input/output <details> are collapsed by default so long
-// payloads never form a text wall.
+// sessionToolItem renders one tool call: name, status, execution duration and
+// call id, collapsible syntax-highlighted input/output JSON, and a distinct
+// error line when the call failed. Input/output <details> are collapsed by
+// default so long payloads never form a text wall.
 templ sessionToolItem(it TimelineItem) {
 	<div class="rounded-box border border-base-content/10 bg-base-200/30 p-3">
 		<div class="flex flex-wrap items-center gap-2">
 			<span class="iconify lucide--wrench size-3.5 text-base-content/40" aria-hidden="true"></span>
 			<span class="font-mono text-xs font-medium">{ it.ToolName }</span>
 			@toolStatusBadge(it.ToolStatus)
+			if it.DurationMs != nil {
+				@ui.Badge(ui.BadgeProps{Label: toolDurationLabel(*it.DurationMs), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--timer"})
+			}
+			if it.ID != "" {
+				<span class="font-mono text-[10px] text-base-content/35" title={ it.ID }>#{ shortID(it.ID) }</span>
+			}
 		</div>
 		if len(it.ToolInput) > 0 {
 			{{ inHL, inOK := highlightJSONValue(it.ToolInput) }}
