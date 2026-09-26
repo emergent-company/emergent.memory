@@ -598,7 +598,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 		AgentRepo:   agentsRepo,
 		Log:         log,
 	})
-	blueprintsHandler := blueprints.NewHandler(blueprintsSvc)
+	blueprintsHandler := blueprints.NewHandler(blueprintsSvc, superadminRepo)
 	blueprints.RegisterRoutes(e, blueprintsHandler, authMiddleware)
 
 	// Register extraction admin routes
