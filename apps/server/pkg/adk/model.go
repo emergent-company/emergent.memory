@@ -14,6 +14,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/modelref"
 )
 
 // Module provides the ADK ModelFactory as an fx module
@@ -132,9 +133,10 @@ func (f *ModelFactory) CreateModel(ctx context.Context) (model.LLM, error) {
 						slug = cred.Provider
 					}
 					// cred.GenerativeModel is already bare: the provider adapter
-					// strips the routing prefix on resolution (stripModelPrefix),
-					// so the bare name may itself contain slashes (Vertex
-					// resource paths) and must not be re-split here.
+					// strips the routing prefix on resolution
+					// (modelref.StripRoutingPrefix), so the bare name may
+					// itself contain slashes (Vertex resource paths) and must
+					// not be re-split here.
 					name := string(slug) + "/" + cred.GenerativeModel
 					f.log.Debug("resolved generative model from provider config fallback",
 						slog.String("model", name),
@@ -189,11 +191,14 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 		return nil, fmt.Errorf("model name is required")
 	}
 
-	// Require provider prefix: "provider/model-name"
-	providerHint, bareModel, hasPrefix := strings.Cut(modelName, "/")
-	if !hasPrefix {
+	// Require provider prefix: "provider/model-name". Parsed via the canonical
+	// modelref.Parse (strict, split-on-first-slash) so provider identity is not
+	// reconstructed here with an ad-hoc string split.
+	ref, err := modelref.Parse(modelName)
+	if err != nil {
 		return nil, fmt.Errorf("model name %q must include a provider prefix (e.g. deepseek/deepseek-v4-flash, openai/gpt-4o, google/gemini-2.5-flash)", modelName)
 	}
+	providerHint, bareModel := ref.Provider, ref.Model
 
 	// --- 1. DB credential resolution (project/org hierarchy) ---
 	if f.resolver != nil {
@@ -303,7 +308,11 @@ func (f *ModelFactory) createDeepSeekEnv(bareModel string) (model.LLM, error) {
 		return nil, fmt.Errorf("DEEPSEEK_API_KEY is not set")
 	}
 	if bareModel == "" {
-		// Strip prefix from DeepSeekModel env var if it was set with provider prefix
+		// Strip an optional "provider/" prefix from the DEEPSEEK_MODEL env var
+		// if it was configured in routed form. modelref:allow — this is the
+		// untrusted environment-variable input boundary, not a routed model
+		// reference reconstructed from a trusted internal string, so the
+		// canonical modelref.Parse (strict) does not apply here.
 		m := f.cfg.DeepSeekModel
 		if _, stripped, ok := strings.Cut(m, "/"); ok {
 			m = stripped
@@ -324,6 +333,11 @@ func (f *ModelFactory) createOpenAIEnv(bareModel string) (model.LLM, error) {
 		return nil, fmt.Errorf("OPENAI_API_KEY is not set")
 	}
 	if bareModel == "" {
+		// Strip an optional "provider/" prefix from the OPENAI_MODEL env var
+		// if it was configured in routed form. modelref:allow — this is the
+		// untrusted environment-variable input boundary, not a routed model
+		// reference reconstructed from a trusted internal string, so the
+		// canonical modelref.Parse (strict) does not apply here.
 		m := f.cfg.OpenAIModel
 		if _, stripped, ok := strings.Cut(m, "/"); ok {
 			m = stripped
