@@ -201,11 +201,17 @@ a token usage summary (Input Tokens, Output Tokens, Estimated Cost). Use
 
 // tracesGet calls the server's Tempo proxy at /api/traces<path> with auth.
 // It uses the SDK client's Do() method so that the correct auth header is set
-// regardless of auth mode (standalone X-API-Key vs Bearer token).
-func tracesGet(cmd *cobra.Command, path string, params url.Values) ([]byte, error) {
+// regardless of auth mode (standalone X-API-Key vs Bearer token). projectID is
+// the resolved active project; when non-empty it is set as the SDK project
+// context so the server receives an X-Project-ID header it can authorize
+// against (the /api/traces routes are now project-scoped, issue #994).
+func tracesGet(cmd *cobra.Command, path string, params url.Values, projectID string) ([]byte, error) {
 	c, err := getClient(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("cannot initialise client: %w", err)
+	}
+	if projectID != "" {
+		c.SetContext("", projectID)
 	}
 	u := strings.TrimRight(c.BaseURL(), "/") + "/api/traces" + path
 	if len(params) > 0 {
@@ -436,9 +442,10 @@ func fetchProjectIDFromRunID(cmd *cobra.Command, runID string) (projectID, agent
 
 // fetchRunIDFromTrace fetches the full trace from Tempo and extracts the agent run_id
 // from span attributes. Used as a fallback when the search select() clause didn't
-// return the run_id in spanSet attributes.
-func fetchRunIDFromTrace(cmd *cobra.Command, traceID string) (runID, projectID string) {
-	body, err := tracesGet(cmd, "/"+traceID, nil)
+// return the run_id in spanSet attributes. projectID carries the active project
+// so the server can authorize the /api/traces/:id fetch (project-scoped, issue #994).
+func fetchRunIDFromTrace(cmd *cobra.Command, traceID, projectID string) (runID, gotProjectID string) {
+	body, err := tracesGet(cmd, "/"+traceID, nil, projectID)
 	if err != nil {
 		return "", ""
 	}
@@ -456,20 +463,20 @@ func fetchRunIDFromTrace(cmd *cobra.Command, traceID string) (runID, projectID s
 						runID = v
 					}
 				}
-				if projectID == "" {
+				if gotProjectID == "" {
 					if v := attrValue(s.Attributes, "memory.project.id"); v != "" {
-						projectID = v
+						gotProjectID = v
 					} else if v := attrValue(s.Attributes, "emergent.project.id"); v != "" {
-						projectID = v
+						gotProjectID = v
 					}
 				}
-				if runID != "" && projectID != "" {
-					return runID, projectID
+				if runID != "" && gotProjectID != "" {
+					return runID, gotProjectID
 				}
 			}
 		}
 	}
-	return runID, projectID
+	return runID, gotProjectID
 }
 
 func parseSince(since string) time.Time {
@@ -604,7 +611,7 @@ func fetchRunInfos(cmd *cobra.Command, projectID string, traces []tempoTraceSear
 			// Fallback: if run_id wasn't in the search response, fetch the full trace.
 			if rid == "" {
 				var p2 string
-				rid, p2 = fetchRunIDFromTrace(cmd, tid)
+				rid, p2 = fetchRunIDFromTrace(cmd, tid, p)
 				if rid == "" {
 					return
 				}
@@ -851,7 +858,7 @@ func runTracesList(cmd *cobra.Command, _ []string) error {
 		params.Set("q", `{ rootName = "agent.run" } | select(span.emergent.agent.run_id, span.emergent.project.id, span.memory.agent.run_id, span.memory.project.id)`)
 	}
 
-	body, err := tracesGet(cmd, "/search", params)
+	body, err := tracesGet(cmd, "/search", params, projectID)
 	if err != nil {
 		return err
 	}
@@ -891,10 +898,14 @@ func runTracesList(cmd *cobra.Command, _ []string) error {
 }
 
 func runTracesSearch(cmd *cobra.Command, _ []string) error {
+	// Resolve the active project once: it scopes both the client-side TraceQL
+	// and the X-Project-ID the server uses to authorize the request (issue #994).
+	projectID, _ := resolveProjectContext(cmd, "")
+
 	// Build TraceQL query from flags
 	var conditions []string
-	if id, err := resolveProjectContext(cmd, ""); err == nil && id != "" {
-		conditions = append(conditions, fmt.Sprintf(`.memory.project.id = "%s"`, id))
+	if projectID != "" {
+		conditions = append(conditions, fmt.Sprintf(`.memory.project.id = "%s"`, projectID))
 	}
 	if tracesSearchSvc != "" {
 		conditions = append(conditions, fmt.Sprintf(`.service.name = "%s"`, tracesSearchSvc))
@@ -917,7 +928,7 @@ func runTracesSearch(cmd *cobra.Command, _ []string) error {
 		params.Set("q", q)
 	}
 
-	body, err := tracesGet(cmd, "/search", params)
+	body, err := tracesGet(cmd, "/search", params, projectID)
 	if err != nil {
 		return err
 	}
@@ -937,7 +948,11 @@ func runTracesSearch(cmd *cobra.Command, _ []string) error {
 
 func runTracesGet(cmd *cobra.Command, args []string) error {
 	traceID := args[0]
-	body, err := tracesGet(cmd, "/"+traceID, nil)
+	// Resolve the active project so the server can authorize the trace read
+	// against the caller's own project (issue #994). Without a project context
+	// the server refuses the read unless the caller is a superadmin.
+	projectID, _ := resolveProjectContext(cmd, "")
+	body, err := tracesGet(cmd, "/"+traceID, nil, projectID)
 	if err != nil {
 		return err
 	}
