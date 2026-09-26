@@ -476,8 +476,9 @@ func (s *Service) ListBuiltinToolsForProject(ctx context.Context, projectID stri
 	dtos := make([]*MCPServerToolDTO, 0, len(tools))
 	for _, t := range tools {
 		dto := t.ToDTO()
-		_, _, source, resolveErr := s.ResolveBuiltinToolSettings(ctx, projectID, t.ToolName)
+		resolvedEnabled, _, source, resolveErr := s.ResolveBuiltinToolSettings(ctx, projectID, t.ToolName)
 		if resolveErr == nil {
+			dto.Enabled = resolvedEnabled
 			dto.InheritedFrom = source
 		}
 		dtos = append(dtos, dto)
@@ -1017,62 +1018,65 @@ func secretValueString(v any) string {
 // ResolveBuiltinToolSettings resolves the effective enabled/config for a builtin
 // tool for a given project, applying three-tier inheritance:
 //
-//  1. Project-level override (kb.mcp_server_tools for the builtin server)
+//  1. Project-level override (explicit `enabled_override` or `config` on the
+//     builtin server's kb.mcp_server_tools row)
 //  2. Org-level default (kb.org_tool_settings)
 //  3. Global env fallback — enabled=true, config=nil
 //
-// The returned source is one of "project", "org", or "global".
+// The returned source is one of "project", "org", or "global". A project row
+// that was bulk-upserted by EnsureBuiltinServer carries no explicit override
+// (enabled_override is NULL), so it does NOT shadow an org-level default
+// (issue #988).
 func (s *Service) ResolveBuiltinToolSettings(ctx context.Context, projectID, toolName string) (enabled bool, config map[string]any, source string, err error) {
-	// 1. Project level
+	// 1. Project level — only an explicit override (enabled_override or config)
+	//    counts. A plain bulk-upserted row does not.
 	projectTool, err := s.repo.FindBuiltinToolByProjectAndName(ctx, projectID, toolName)
 	if err != nil {
 		return false, nil, "", fmt.Errorf("resolve builtin tool project level: %w", err)
 	}
-	if projectTool != nil {
-		// A project-level row exists — check if config is explicitly set
-		if projectTool.Config != nil {
-			return projectTool.Enabled, projectTool.Config, "project", nil
-		}
-		// Row exists but no config override — check org for config, but use project enabled state
-		orgID, err := s.repo.FindOrgIDByProjectID(ctx, projectID)
-		if err != nil {
-			s.log.Warn("failed to find org for project, using project row only",
-				slog.String("projectID", projectID), slog.String("error", err.Error()))
-			return projectTool.Enabled, nil, "project", nil
-		}
-		if orgID != "" {
-			orgSetting, err := s.repo.FindOrgToolSetting(ctx, orgID, toolName)
-			if err != nil {
-				s.log.Warn("failed to find org tool setting",
-					slog.String("orgID", orgID), slog.String("error", err.Error()))
-			}
-			if orgSetting != nil && orgSetting.Config != nil {
-				return projectTool.Enabled, orgSetting.Config, "project", nil
-			}
-		}
-		return projectTool.Enabled, nil, "project", nil
-	}
 
-	// 2. Org level
+	// 2. Org level — resolved once, and only consumed when no project enabled
+	//    override decides the outcome.
+	var orgSetting *orgToolSettingRow
 	orgID, err := s.repo.FindOrgIDByProjectID(ctx, projectID)
 	if err != nil {
 		s.log.Warn("failed to find org for project, falling back to global",
 			slog.String("projectID", projectID), slog.String("error", err.Error()))
-		return true, nil, "global", nil
-	}
-	if orgID != "" {
-		orgSetting, err := s.repo.FindOrgToolSetting(ctx, orgID, toolName)
-		if err != nil {
-			s.log.Warn("failed to find org tool setting, falling back to global",
-				slog.String("orgID", orgID), slog.String("error", err.Error()))
+	} else if orgID != "" {
+		setting, ferr := s.repo.FindOrgToolSetting(ctx, orgID, toolName)
+		if ferr != nil {
+			s.log.Warn("failed to find org tool setting",
+				slog.String("orgID", orgID), slog.String("error", ferr.Error()))
 		}
-		if orgSetting != nil {
-			return orgSetting.Enabled, orgSetting.Config, "org", nil
-		}
+		orgSetting = setting
 	}
 
-	// 3. Global fallback
-	return true, nil, "global", nil
+	projectEnabledOverride := projectTool != nil && projectTool.EnabledOverride != nil
+	projectConfigOverride := projectTool != nil && projectTool.Config != nil
+
+	// enabled: explicit project override → org default → builtin default (true).
+	switch {
+	case projectEnabledOverride:
+		enabled = *projectTool.EnabledOverride
+		source = "project"
+	case orgSetting != nil:
+		enabled = orgSetting.Enabled
+		source = "org"
+	default:
+		enabled = true
+		source = "global"
+	}
+
+	// config: project → org → nil. A config-only project override still marks the
+	// tool as explicitly configured at the project level.
+	if projectConfigOverride {
+		config = projectTool.Config
+		source = "project"
+	} else if orgSetting != nil {
+		config = orgSetting.Config
+	}
+
+	return enabled, config, source, nil
 }
 
 // ResolveBuiltinToolConfig is a convenience wrapper that returns only the

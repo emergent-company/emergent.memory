@@ -225,10 +225,12 @@ func (h *Handler) ListServerTools(c echo.Context) error {
 	dtos := make([]*MCPServerToolDTO, 0, len(tools))
 	for _, t := range tools {
 		dto := t.ToDTO()
-		// For builtin servers, enrich each tool with its inheritance source.
+		// For builtin servers, enrich each tool with its resolved enabled state and
+		// inheritance source so org-level defaults are surfaced truthfully (#988).
 		if server.Type == ServerTypeBuiltin {
-			_, _, source, resolveErr := h.svc.ResolveBuiltinToolSettings(c.Request().Context(), user.ProjectID, t.ToolName)
+			resolvedEnabled, _, source, resolveErr := h.svc.ResolveBuiltinToolSettings(c.Request().Context(), user.ProjectID, t.ToolName)
 			if resolveErr == nil {
+				dto.Enabled = resolvedEnabled
 				dto.InheritedFrom = source
 			}
 		}

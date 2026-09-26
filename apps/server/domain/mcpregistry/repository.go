@@ -284,7 +284,8 @@ func (r *Repository) UpdateToolForProject(ctx context.Context, projectID, id str
 		Where("server_id IN (SELECT id FROM kb.mcp_servers WHERE project_id = ?)", projectID)
 
 	if enabled != nil {
-		q = q.Set("enabled = ?", *enabled)
+		q = q.Set("enabled = ?", *enabled).
+			Set("enabled_override = ?", *enabled)
 	}
 	if config != nil {
 		q = q.Set("config = ?", *config)
@@ -374,8 +375,11 @@ func (r *Repository) FindAllEnabledTools(ctx context.Context, projectID string) 
 }
 
 // FindAllEnabledBuiltinTools returns all enabled builtin tools for a project,
-// respecting org-level overrides: if an org-level setting disables a tool, it
-// is excluded even if the project-level row has enabled = true.
+// applying the same three-tier precedence as ResolveBuiltinToolSettings:
+// explicit project override (enabled_override) → org default → builtin default.
+// This keeps the execution path (ToolPool) consistent with the list path, so a
+// project override shown in the list is also honoured at execution, and an
+// org-level disable is enforced in both (issue #988).
 func (r *Repository) FindAllEnabledBuiltinTools(ctx context.Context, projectID string) ([]*EnabledServerTool, error) {
 	var tools []*EnabledServerTool
 	err := r.db.NewSelect().
@@ -392,9 +396,8 @@ func (r *Repository) FindAllEnabledBuiltinTools(ctx context.Context, projectID s
 		ColumnExpr("mst.config AS config").
 		Where("ms.project_id = ?", projectID).
 		Where("ms.enabled = true").
-		Where("mst.enabled = true").
 		Where("ms.type = ?", ServerTypeBuiltin).
-		Where("COALESCE(ots.enabled, true) = true").
+		Where("COALESCE(mst.enabled_override, ots.enabled, true) = true").
 		Order("mst.tool_name ASC").
 		Scan(ctx, &tools)
 	if err != nil {
