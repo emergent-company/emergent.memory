@@ -62,65 +62,9 @@ func Parse(s string) (Ref, error) {
 	return Ref{Provider: provider, Model: model}, nil
 }
 
-// Resolver supplies the context NormalizeLegacy needs to resolve a stored
-// legacy value. Implementations are backed by the provider repository.
-type Resolver interface {
-	// IsInstance reports whether slug is a provider instance in scope.
-	IsInstance(slug string) bool
-	// IsDialect reports whether dialect is a supported provider dialect.
-	IsDialect(dialect string) bool
-	// DefaultInstanceForDialect returns the default instance slug for a
-	// dialect (the instance whose slug equals the dialect, else the smallest
-	// slug), if the dialect has any instance in scope.
-	DefaultInstanceForDialect(dialect string) (slug string, ok bool)
-	// InferDialectForModel returns the dialect of the unique instance whose
-	// configured models include model, if exactly one such instance exists.
-	InferDialectForModel(model string) (dialect string, ok bool)
-}
-
-// NormalizeLegacy resolves a pre-migration stored value into a Ref.
-//
-// It is a context-aware backfill/inference helper, NOT the runtime edge parser
-// (that is Parse, which is strict). Resolution order:
-//
-//  1. A value whose first '/' segment is a known instance slug uses it.
-//  2. A value whose first '/' segment is a known dialect uses that dialect's
-//     default instance.
-//  3. A bare value (no '/', or a slash-containing model id that matches a
-//     configured model) is attributed to a default instance inferred from the
-//     model name, or to the single in-scope default dialect.
-//  4. Otherwise it is unresolved (ok=false) and the caller flags the row.
-//
-// A slash-containing value is never split unless its prefix is a recognised
-// slug or dialect, so unqualified multi-segment model ids are preserved.
-func NormalizeLegacy(s string, r Resolver) (Ref, bool) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return Ref{}, false
-	}
-
-	// (1)/(2): a recognised prefix is an instance slug or a dialect.
-	if prefix, rest, found := strings.Cut(s, "/"); found {
-		prefix = strings.TrimSpace(prefix)
-		stripRest := strings.TrimSpace(rest)
-		if rest != "" && r.IsInstance(prefix) {
-			return Ref{Provider: prefix, Model: stripRest}, true
-		}
-		if rest != "" && r.IsDialect(prefix) {
-			if slug, ok := r.DefaultInstanceForDialect(prefix); ok {
-				return Ref{Provider: slug, Model: stripRest}, true
-			}
-		}
-		// Not a recognised prefix: fall through and try model-name inference
-		// so unqualified multi-segment model ids are not split.
-	}
-
-	// (3): bare or unqualified multi-segment value — infer from the model name.
-	if dialect, ok := r.InferDialectForModel(s); ok {
-		if slug, ok := r.DefaultInstanceForDialect(dialect); ok {
-			return Ref{Provider: slug, Model: s}, true
-		}
-	}
-
-	return Ref{}, false
-}
+// Backfill note: legacy-value normalization (resolving a bare or
+// dialect-prefixed stored value to an instance) is implemented directly in the
+// SQL backfill migrations (kb.provider configs and kb.project_model_config),
+// not as a Go helper. There is no Go-side backfill path, so no NormalizeLegacy
+// helper is defined here; the runtime edge uses only Parse (strict). See
+// design D2/D6 and the migrations for the deterministic resolution rules.

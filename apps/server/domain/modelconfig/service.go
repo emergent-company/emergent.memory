@@ -4,10 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/emergent-company/emergent.memory/pkg/modelref"
 )
 
 // Service resolves and manages model configuration.
@@ -70,14 +71,15 @@ func (s *Service) WithEmbeddingDefaultResolver(r embeddingDefaultResolver) *Serv
 	return s
 }
 
-// validateModelName returns an error if the model name does not include a
-// provider prefix (e.g. "deepseek/deepseek-v4-flash", "google/gemini-2.5-flash").
+// validateModelName returns an error if the model name is not a valid
+// structured reference ("provider/model"), parsed at this single input boundary
+// via modelref.Parse. Empty is allowed (means "not set").
 func validateModelName(field, name string) error {
 	if name == "" {
 		return nil // empty is allowed (means "not set")
 	}
-	if !strings.Contains(name, "/") {
-		return fmt.Errorf("%s %q must include a provider prefix (e.g. \"deepseek/deepseek-v4-flash\", \"google/gemini-2.5-flash\", \"google-vertex/gemini-2.5-flash\")", field, name)
+	if _, err := modelref.Parse(name); err != nil {
+		return fmt.Errorf("%s %q must be in 'provider/model' form (e.g. \"deepseek/deepseek-v4-flash\", \"google/gemini-2.5-flash\", \"google-vertex/gemini-2.5-flash\")", field, name)
 	}
 	return nil
 }
@@ -97,8 +99,9 @@ func (s *Service) GetProjectModelConfig(ctx context.Context, projectID uuid.UUID
 }
 
 // UpsertProjectModelConfig sets the explicit default models for a project.
-// Both generativeModel and embeddingModel must include a provider prefix
-// (e.g. "deepseek/deepseek-v4-flash", "google/gemini-embedding-001").
+// Both generativeModel and embeddingModel must be a structured reference
+// (e.g. "deepseek/deepseek-v4-flash", "google/gemini-embedding-001"); the
+// provider segment and the bare model are stored as distinct values.
 func (s *Service) UpsertProjectModelConfig(ctx context.Context, projectID uuid.UUID, req UpsertModelConfigRequest) (*ModelConfigResponse, error) {
 	if err := validateModelName("generativeModel", req.GenerativeModel); err != nil {
 		return nil, err
@@ -106,13 +109,15 @@ func (s *Service) UpsertProjectModelConfig(ctx context.Context, projectID uuid.U
 	if err := validateModelName("embeddingModel", req.EmbeddingModel); err != nil {
 		return nil, err
 	}
+	genRef, _ := modelref.Parse(req.GenerativeModel)
+	embRef, _ := modelref.Parse(req.EmbeddingModel)
 	now := time.Now()
 	cfg := &ProjectModelConfig{
 		ProjectID:              projectID,
-		GenerativeModel:        req.GenerativeModel,
-		EmbeddingModel:         req.EmbeddingModel,
-		GenerativeProviderSlug: providerSlugOf(req.GenerativeModel),
-		EmbeddingProviderSlug:  providerSlugOf(req.EmbeddingModel),
+		GenerativeModel:        genRef.Model,
+		EmbeddingModel:         embRef.Model,
+		GenerativeProviderSlug: genRef.Provider,
+		EmbeddingProviderSlug:  embRef.Provider,
 		CreatedAt:              now,
 		UpdatedAt:              now,
 	}
@@ -121,10 +126,12 @@ func (s *Service) UpsertProjectModelConfig(ctx context.Context, projectID uuid.U
 	}
 	s.log.Info("project model config upserted",
 		slog.String("projectID", projectID.String()),
-		slog.String("generativeModel", req.GenerativeModel),
-		slog.String("embeddingModel", req.EmbeddingModel),
+		slog.String("generativeModel", cfg.GenerativeModel),
+		slog.String("generativeProviderSlug", cfg.GenerativeProviderSlug),
+		slog.String("embeddingModel", cfg.EmbeddingModel),
+		slog.String("embeddingProviderSlug", cfg.EmbeddingProviderSlug),
 	)
-	return toModelConfigResponse(req.GenerativeModel, req.EmbeddingModel, cfg.GenerativeProviderSlug, cfg.EmbeddingProviderSlug, cfg.CreatedAt, cfg.UpdatedAt), nil
+	return toModelConfigResponse(cfg.GenerativeModel, cfg.EmbeddingModel, cfg.GenerativeProviderSlug, cfg.EmbeddingProviderSlug, cfg.CreatedAt, cfg.UpdatedAt), nil
 }
 
 // DeleteProjectModelConfig clears the project's explicit model config.
@@ -149,7 +156,10 @@ func (s *Service) ResolveGenerativeModel(ctx context.Context, projectID uuid.UUI
 		return "", "", err
 	}
 	if projCfg != nil && projCfg.GenerativeModel != "" {
-		return projCfg.GenerativeModel, ModelSourceProject, nil
+		// Stored structured: bare model + instance slug. Reconstruct the routed
+		// "slug/model" form for the string-based adk boundary (the executor's
+		// CreateModelWithName parses it once at the edge).
+		return routedModelName(projCfg.GenerativeModel, projCfg.GenerativeProviderSlug), ModelSourceProject, nil
 	}
 	if s.resolver != nil {
 		if m, rerr := s.resolver.DefaultGenerativeModel(ctx, projectID.String()); rerr == nil && m != "" {
@@ -175,7 +185,7 @@ func (s *Service) ResolveEmbeddingModel(ctx context.Context, projectID uuid.UUID
 		return "", "", err
 	}
 	if projCfg != nil && projCfg.EmbeddingModel != "" {
-		return projCfg.EmbeddingModel, ModelSourceProject, nil
+		return routedModelName(projCfg.EmbeddingModel, projCfg.EmbeddingProviderSlug), ModelSourceProject, nil
 	}
 	if s.embeddingResolver != nil {
 		if m, rerr := s.embeddingResolver.DefaultEmbeddingModel(ctx, projectID.String()); rerr == nil && m != "" {
@@ -205,10 +215,14 @@ func (s *Service) ResolveEffectiveModels(ctx context.Context, projectID uuid.UUI
 
 // --- Helpers ---
 
+// toModelConfigResponse builds the API response. The GenerativeModel/
+// EmbeddingModel fields carry the routed "slug/model" display form (reconstructed
+// from the stored bare model + slug); the slug fields expose the structured
+// identity.
 func toModelConfigResponse(genModel, embModel, genSlug, embSlug string, createdAt, updatedAt time.Time) *ModelConfigResponse {
 	return &ModelConfigResponse{
-		GenerativeModel:        genModel,
-		EmbeddingModel:         embModel,
+		GenerativeModel:        routedModelName(genModel, genSlug),
+		EmbeddingModel:         routedModelName(embModel, embSlug),
 		GenerativeProviderSlug: genSlug,
 		EmbeddingProviderSlug:  embSlug,
 		CreatedAt:              createdAt,
@@ -216,19 +230,15 @@ func toModelConfigResponse(genModel, embModel, genSlug, embSlug string, createdA
 	}
 }
 
-// providerSlugOf extracts the provider instance prefix from a routed
-// "provider/model" name. It returns "" for a bare name or an unqualified
-// multi-segment model id (Vertex resource paths), matching the migration
-// backfill rule.
-func providerSlugOf(model string) string {
-	prefix, _, found := strings.Cut(model, "/")
-	if !found {
+// routedModelName reconstructs the "slug/model" display form from a stored bare
+// model name and instance slug. An empty model yields ""; a missing slug (an
+// unresolved, flagged row) yields the bare name.
+func routedModelName(bare, slug string) string {
+	if bare == "" {
 		return ""
 	}
-	switch prefix {
-	case "google", "google-vertex", "openai", "deepseek":
-		return prefix
-	default:
-		return ""
+	if slug == "" {
+		return bare
 	}
+	return slug + "/" + bare
 }

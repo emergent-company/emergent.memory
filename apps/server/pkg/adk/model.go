@@ -131,7 +131,11 @@ func (f *ModelFactory) CreateModel(ctx context.Context) (model.LLM, error) {
 					if slug == "" {
 						slug = cred.Provider
 					}
-					name := slug + "/" + stripRoutingPrefix(cred.GenerativeModel)
+					// cred.GenerativeModel is already bare: the provider adapter
+					// strips the routing prefix on resolution (stripModelPrefix),
+					// so the bare name may itself contain slashes (Vertex
+					// resource paths) and must not be re-split here.
+					name := string(slug) + "/" + cred.GenerativeModel
 					f.log.Debug("resolved generative model from provider config fallback",
 						slog.String("model", name),
 						slog.String("slug", slug),
@@ -158,23 +162,6 @@ func (f *ModelFactory) CreateModel(ctx context.Context) (model.LLM, error) {
 		return nil, fmt.Errorf("no generative model configured: set DEEPSEEK_MODEL, OPENAI_MODEL, or VERTEX_AI_MODEL")
 	}
 	return f.CreateModelWithName(ctx, envModel)
-}
-
-// stripRoutingPrefix removes a single "provider/" routing prefix from a model
-// name, mirroring domain/provider's stripModelPrefix: only a name with exactly
-// one '/' is treated as prefixed and returned bare; bare names and multi-
-// segment resource paths (Vertex "publishers/google/models/..." or
-// "locations/.../publishers/...") are returned unchanged. It is idempotent so
-// defensive fallbacks over already-stripped credentials never double-strip a
-// routing prefix out of the middle of a resource path.
-func stripRoutingPrefix(model string) string {
-	if strings.Count(model, "/") != 1 {
-		return model
-	}
-	if _, bare, ok := strings.Cut(model, "/"); ok {
-		return bare
-	}
-	return model
 }
 
 // CreateModelWithName creates an ADK-compatible Gemini model with a specific model name.

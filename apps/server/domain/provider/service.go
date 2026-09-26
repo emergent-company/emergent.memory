@@ -118,25 +118,29 @@ func (s *CredentialService) Resolve(ctx context.Context, provider ProviderType) 
 	return nil, fmt.Errorf("no %s provider config found for project %s — run 'memory provider configure-project %s' to set credentials", provider, projectID, provider)
 }
 
-// stripModelPrefix removes a "provider/" routing prefix from a model name,
-// returning the bare model name. Provider configs may store models prefixed
-// with their routing provider (e.g. "deepseek/deepseek-v4-flash" served through
-// an OpenAI-compatible LiteLLM proxy); the resolved credential must carry the
-// bare name because the prefix is a routing concern, not part of the model name
-// the provider API expects. A bare name (no slash) is returned unchanged.
+// stripModelPrefix removes a routing prefix from a model name, returning the
+// bare model name. Provider configs may store models prefixed with their
+// routing provider (e.g. "deepseek/deepseek-v4-flash" served through an
+// OpenAI-compatible LiteLLM proxy); the resolved credential must carry the bare
+// name because the prefix is a routing concern, not part of the model name the
+// provider API expects.
 //
-// Only a name with exactly one '/' is treated as prefixed. Multi-segment model
-// IDs (e.g. Vertex-style "publishers/google/models/gemini-2.0-flash" or
-// "locations/us-central1/publishers/google/models/...") are returned unchanged —
-// their slashes are part of the resource path, not a routing prefix.
+// Only a name whose first '/' segment is a recognised dialect is treated as
+// prefixed. A bare name (no slash) and an unqualified multi-segment model id
+// (a Vertex resource path such as "publishers/google/models/gemini-2.0-flash")
+// are returned unchanged — those slashes are part of the model id, not a
+// routing prefix. The bare model name may itself contain slashes, so the former
+// "exactly one slash" heuristic is gone: the prefix is identified by the dialect
+// name via modelref.Parse, matching the backfill migrations.
 func stripModelPrefix(model string) string {
-	if strings.Count(model, "/") != 1 {
-		return model
+	ref, err := modelref.Parse(model)
+	if err != nil {
+		return model // bare name — nothing to strip
 	}
-	if _, bare, ok := strings.Cut(model, "/"); ok {
-		return bare
+	if !isDialectName(ref.Provider) {
+		return model // multi-segment resource path, not a dialect routing prefix
 	}
-	return model
+	return ref.Model
 }
 
 // decryptProjectConfig decrypts a project-level provider config.
