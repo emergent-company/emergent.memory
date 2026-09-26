@@ -128,6 +128,7 @@ func (h *Handler) ListJobs(c echo.Context) error {
 // @Failure      400 {object} apperror.Error "Bad request"
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      404 {object} apperror.Error "Job not found"
+// @Failure      409 {object} apperror.Error "Job already in a terminal state (completed, failed, or cancelled)"
 // @Failure      500 {object} apperror.Error "Internal server error"
 // @Router       /discovery-jobs/{jobId} [delete]
 // @Security     bearerAuth

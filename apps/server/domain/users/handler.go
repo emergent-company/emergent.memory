@@ -39,10 +39,9 @@ func (h *Handler) Search(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("email query parameter is required")
 	}
 
-	// Exclude the current user from search results
-	excludeUserID := &user.ID
-
-	result, err := h.svc.SearchByEmail(c.Request().Context(), emailQuery, excludeUserID)
+	// Scope results to the caller's org(s): the repository filters to users who
+	// share a membership with the caller and always excludes the caller.
+	result, err := h.svc.SearchByEmail(c.Request().Context(), emailQuery, user.ID)
 	if err != nil {
 		return err
 	}

@@ -186,6 +186,29 @@ func (s *DiscoveryJobsTestSuite) pollUntilDone(jobID string, deadline time.Durat
 	return nil
 }
 
+// insertPendingJob inserts a discovery job directly in StatusPending without
+// launching the background processing goroutine, so its state is fully
+// deterministic for cancellation tests (no goroutine can race it to terminal).
+func (s *DiscoveryJobsTestSuite) insertPendingJob() string {
+	s.T().Helper()
+	job := &discoveryjobs.DiscoveryJob{
+		ID:                      uuid.New(),
+		OrganizationID:          uuid.MustParse(s.orgID),
+		ProjectID:               uuid.MustParse(s.projectID),
+		Status:                  discoveryjobs.StatusPending,
+		Progress:                discoveryjobs.JSONMap{},
+		Config:                  discoveryjobs.JSONMap{},
+		KBPurpose:               "test",
+		DiscoveredTypes:         discoveryjobs.JSONArray{},
+		DiscoveredRelationships: discoveryjobs.JSONArray{},
+		CreatedAt:               time.Now(),
+		UpdatedAt:               time.Now(),
+	}
+	_, err := s.testDB.DB.NewInsert().Model(job).Exec(s.T().Context())
+	s.Require().NoError(err)
+	return job.ID.String()
+}
+
 // assertNoReifiedTypes fails the test if any discovered type name ends in
 // "Relationship" or "Association" — these are relational concepts that should
 // never appear as entity types in the discovery output.
@@ -267,21 +290,44 @@ func (s *DiscoveryJobsTestSuite) TestDiscovery_FinalizeRequiresProjectIDHeader()
 	s.Equal(http.StatusBadRequest, resp.StatusCode)
 }
 
-// TestDiscovery_CancelJob verifies that a running job can be cancelled and the
-// subsequent status reflects the cancellation.
+// TestDiscovery_CancelJob verifies cancellation against both ends of the
+// status contract, deterministically:
+//
+//   - Cancelling a still-pending job returns 200 and marks it cancelled.
+//   - Cancelling an already-terminal job returns 409 Conflict.
+//
+// The terminal case is made deterministic by waiting for the background
+// goroutine to fail the job (no LLM provider is configured in-process) BEFORE
+// issuing the DELETE, so the outcome no longer depends on goroutine timing
+// (issue #1003).
 func (s *DiscoveryJobsTestSuite) TestDiscovery_CancelJob() {
-	jobID := s.startDiscoveryJob([]string{s.docID})
-
-	cancelURL := fmt.Sprintf("/api/discovery-jobs/%s", jobID)
+	// 200 path: cancel a job that is still pending. The job is inserted
+	// directly (no background goroutine), so it cannot race to a terminal
+	// state before the DELETE.
+	pendingID := s.insertPendingJob()
 	resp := s.client.DELETE(
-		cancelURL,
+		fmt.Sprintf("/api/discovery-jobs/%s", pendingID),
 		testutil.WithAuth(s.authToken),
 	)
-	// Accept 200 (cancelled) or 409 (already finished — race in fast test env).
-	s.True(
-		resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusConflict,
-		"unexpected status %d: %s", resp.StatusCode, resp.Body,
+	s.Require().Equal(http.StatusOK, resp.StatusCode, "cancel pending: %s", resp.Body)
+
+	// The subsequent status reflects the cancellation.
+	statusResp := s.client.GET(s.statusURL(pendingID), testutil.WithAuth(s.authToken))
+	s.Require().Equal(http.StatusOK, statusResp.StatusCode)
+	var pendingStatus map[string]any
+	s.Require().NoError(json.Unmarshal(statusResp.Body, &pendingStatus))
+	s.Equal("cancelled", pendingStatus["status"], "cancelled job status should be 'cancelled'")
+
+	// 409 path: cancel an already-terminal job. With no LLM provider the
+	// StartDiscovery goroutine fails the job almost immediately, so we wait
+	// for the terminal state before deleting — controlled, not lucky.
+	terminalID := s.startDiscoveryJob([]string{s.docID})
+	s.pollUntilDone(terminalID, 5*time.Second)
+	resp = s.client.DELETE(
+		fmt.Sprintf("/api/discovery-jobs/%s", terminalID),
+		testutil.WithAuth(s.authToken),
 	)
+	s.Equal(http.StatusConflict, resp.StatusCode, "cancel terminal: %s", resp.Body)
 }
 
 // TestDiscovery_ListJobs verifies the list endpoint returns the started job.

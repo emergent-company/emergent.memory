@@ -124,6 +124,10 @@ func (h *Handler) GetSkill(c echo.Context) error {
 		return err
 	}
 
+	if err := h.repo.AuthorizeSkillAccess(c.Request().Context(), skill); err != nil {
+		return err
+	}
+
 	return c.JSON(http.StatusOK, skill.ToDTO())
 }
 

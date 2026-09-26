@@ -54,14 +54,14 @@ func TestSearchHandlerMissingEmail(t *testing.T) {
 
 func TestSearchByEmailTooShort(t *testing.T) {
 	svc := &users.Service{}
-	if _, err := svc.SearchByEmail(context.Background(), "a", nil); err == nil {
+	if _, err := svc.SearchByEmail(context.Background(), "a", ""); err == nil {
 		t.Fatal("expected error for 1-char query")
 	}
 }
 
 func TestRepositorySearchByEmailTooShort(t *testing.T) {
 	repo := &users.Repository{}
-	got, err := repo.SearchByEmail(context.Background(), " a ", nil)
+	got, err := repo.SearchByEmail(context.Background(), " a ", "")
 	if err != nil {
 		t.Fatalf("short query must return empty result without error, got %v", err)
 	}
