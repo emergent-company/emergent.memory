@@ -126,3 +126,61 @@ func TestMCPBlueprintTools_GlobalWrite_RequireSuperadmin(t *testing.T) {
 		require.NotContains(t, mcpResultText(t, pubRes, pubErr), "forbidden")
 	})
 }
+
+// TestMCPBlueprintTools_GlobalNewVersion_RequireSuperadmin is the repair
+// fail-first for blueprint-new-version: forking with no project context lands a
+// NEW global version (project_id IS NULL), the same global-catalogue write the
+// REST NewVersion handler gates with superadmin_full. A member must be refused,
+// a superadmin_full allowed, and a member's project-scoped fork (global →
+// private) must stay allowed (no over-restriction).
+func TestMCPBlueprintTools_GlobalNewVersion_RequireSuperadmin(t *testing.T) {
+	h, db := newMCPAuthzHandler(t)
+	ctx := context.Background()
+
+	member := uuid.NewString()
+	super := uuid.NewString()
+	seedSuperadmin(t, ctx, db, super)
+
+	memberCtx := auth.ContextWithUser(ctx, &auth.AuthUser{ID: member})
+	superCtx := auth.ContextWithUser(ctx, &auth.AuthUser{ID: super})
+
+	seedGlobal := func(t *testing.T) *Blueprint {
+		bp := &Blueprint{
+			Name:      uniqueName("mcp-g-fork"),
+			Version:   "1.0.0",
+			Status:    StatusDraft,
+			Manifest:  []byte(`{"kind":"fork"}`),
+			ProjectID: nil, // global
+		}
+		require.NoError(t, h.svc.repo.Create(ctx, bp))
+		return bp
+	}
+
+	t.Run("global fork (no project) refused for member", func(t *testing.T) {
+		bp := seedGlobal(t)
+		res, err := h.ExecuteBlueprintNewVersion(memberCtx, "", map[string]any{
+			"id":      bp.ID,
+			"version": "2.0.0",
+		})
+		require.Contains(t, mcpResultText(t, res, err), "forbidden")
+	})
+
+	t.Run("global fork (no project) allowed for superadmin", func(t *testing.T) {
+		bp := seedGlobal(t)
+		res, err := h.ExecuteBlueprintNewVersion(superCtx, "", map[string]any{
+			"id":      bp.ID,
+			"version": "3.0.0",
+		})
+		require.NotContains(t, mcpResultText(t, res, err), "forbidden")
+	})
+
+	t.Run("project-scoped fork allowed for member", func(t *testing.T) {
+		bp := seedGlobal(t)
+		proj := uuid.NewString()
+		res, err := h.ExecuteBlueprintNewVersion(memberCtx, proj, map[string]any{
+			"id":      bp.ID,
+			"version": "4.0.0",
+		})
+		require.NotContains(t, mcpResultText(t, res, err), "forbidden")
+	})
+}

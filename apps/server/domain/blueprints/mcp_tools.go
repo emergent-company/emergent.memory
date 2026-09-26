@@ -230,6 +230,18 @@ func (h *MCPBlueprintToolHandler) ExecuteBlueprintNewVersion(ctx context.Context
 		return errResult("version is required")
 	}
 
+	// Forking with no project context clones the blueprint as a NEW global
+	// version (project_id IS NULL) — a platform-global catalogue write requiring
+	// superadmin_full. With a project context the clone is project-private (the
+	// documented "fork a version" flow) and unchanged. The authority decision
+	// lives in the shared Service helper so the REST and MCP entrypoints cannot
+	// drift (issue #1041).
+	if projectID == "" {
+		if err := h.svc.AuthorizeGlobalBlueprintWrite(ctx); err != nil {
+			return errResult("forbidden: global blueprint writes require superadmin_full")
+		}
+	}
+
 	bp, err := h.svc.NewVersion(ctx, projectID, id, version)
 	if err != nil {
 		return errResult("failed to create new blueprint version: " + err.Error())
