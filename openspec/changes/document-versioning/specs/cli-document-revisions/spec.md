@@ -1,15 +1,25 @@
 ## ADDED Requirements
 
 ### Requirement: Upload a document revision from the CLI
-The `memory documents` command SHALL support uploading a local file as a new revision of an existing document via `memory documents upload <file> --revision-of <documentId>`. The command SHALL target the documents revisions API and SHALL report the created revision's id, version number, and that it is pending. The existing upload behaviour SHALL be unchanged when `--revision-of` is omitted.
+The `memory documents` command SHALL support uploading a local file as a new revision of an existing document via `memory documents upload <file> --revision-of <documentId>`. The command SHALL target the documents revisions API and SHALL report the created revision's id, version number, and that it is pending.
 
-#### Scenario: Upload a revision
+By default, `memory documents upload <file>` SHALL use server-side auto-detection (see `document-revision-auto-detect`) and SHALL report the outcome: linked as a pending revision (with the detected document), standalone, or standalone with a suggested document. The command SHALL support `--no-detect` to force a standalone document. `--revision-of` SHALL take precedence over detection.
+
+#### Scenario: Upload a revision explicitly
 - **WHEN** the user runs `memory documents upload notes.md --revision-of <id>`
-- **THEN** a new pending revision is created for that document and the command prints the revision id, version number, and pending state
+- **THEN** a new pending revision of that document is created and the command prints the revision id, version number, and pending state
 
-#### Scenario: Upload without revision flag unchanged
-- **WHEN** the user runs `memory documents upload notes.md` without `--revision-of`
-- **THEN** a standalone document is created as before
+#### Scenario: Upload auto-detects a revision
+- **WHEN** the user runs `memory documents upload notes.md` and the server detects a confident match
+- **THEN** the command reports that a pending revision was created and identifies the detected document
+
+#### Scenario: Upload with detection disabled
+- **WHEN** the user runs `memory documents upload notes.md --no-detect`
+- **THEN** a standalone document is created and the command reports it as new
+
+#### Scenario: Ambiguous match
+- **WHEN** the user runs `memory documents upload notes.md` and detection is ambiguous
+- **THEN** a standalone document is created and the command reports the suggested candidate document(s)
 
 ### Requirement: List revisions from the CLI
 The CLI SHALL support `memory documents revisions <documentId>` to list a logical document's revisions, ordered newest-first, showing each revision's version number, id, current flag, and conversion status. The command SHALL support `--output json` consistent with other `documents` subcommands.

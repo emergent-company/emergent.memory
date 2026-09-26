@@ -46,7 +46,7 @@
 - [ ] 5.2 Add a revision-diff service computing a unified line diff plus added/removed line counts from two revisions' parsed content
 - [ ] 5.3 Implement entity-delta assembly by comparing the staged extraction's `(type, key)` set and content against main-graph heads → added/updated; plus added/removed relationships
 - [ ] 5.4 Compute the `removed` set via provenance: main objects with provenance from an earlier revision of the group and none from the target revision's chunks, absent from the staged set
-- [ ] 5.5 Add `GET /api/documents/:id/revisions/diff?from=&to=` handler with default from=previous, to=current; reject cross-group pairs
+- [ ] 5.5 Add `GET /api/documents/:id/revisions/diff?from=&to=` handler defaulting `to` to the newest revision (pending if present) and `from` to its predecessor; reject cross-group pairs
 - [ ] 5.6 Unit test: line diff reports the correct added/removed lines for a known pair of contents
 - [ ] 5.7 Unit test: entity delta classifies added/updated/removed correctly, including a removal attributable only to a superseded revision
 
@@ -64,34 +64,49 @@
 - [ ] 6.10 Integration test: upload v1 → extract → upload v2 (pending) → diff → apply v2 → assert graph matches the v2 delta, v2 is current, v1 superseded, and removed objects are tombstoned
 - [ ] 6.11 Integration test: upload v2 (pending) then discard it — graph and current revision are unchanged (undo)
 
-## 7. SDK
+## 7. Upload Auto-Detection
 
-- [ ] 7.1 Add `CreateRevision` / `ListRevisions` / `GetRevisionDiff` / `ApplyRevision` / `DiscardRevision` to `apps/server/pkg/sdk/documents/client.go`
-- [ ] 7.2 Unit test: SDK request/response round-trip against an httptest server
+- [ ] 7.1 Add `DetectUploadTarget(ctx, projectID, filename, fileHash, externalSourceID)` to the documents service: evaluate signals in priority order (external source id → file hash → normalized filename vs current revisions), project-scoped, returning matched / ambiguous-candidates / none
+- [ ] 7.2 Accept and persist an optional `externalSourceId` on uploads; include it in detection
+- [ ] 7.3 Wire the upload handler: explicit `revisionOf` or the revisions endpoint bypasses detection; otherwise a confident single match creates a pending revision, ambiguity/none creates a standalone document (ambiguous returns suggested candidate ids)
+- [ ] 7.4 Add a per-request detection opt-out (`?detect=false`) and honour `--no-detect` from the CLI
+- [ ] 7.5 Record the matched signal and detected document id on the created revision (metadata)
+- [ ] 7.6 Unit test: file-hash match and external-id match auto-link; single filename match auto-links; no match is standalone
+- [ ] 7.7 Unit test: multiple filename matches create a standalone document and return suggestions without linking
+- [ ] 7.8 Unit test: detection is skipped when `revisionOf` is supplied, when the revisions endpoint is used, and when `detect=false`; matches never cross projects
+- [ ] 7.9 Integration test: upload `notes.md`, edit it, re-upload `notes.md` → a pending revision of the first document is created
 
-## 8. CLI
+## 8. SDK
 
-- [ ] 8.1 Add `--revision-of` to `memory documents upload`
-- [ ] 8.2 Add `memory documents revisions <id>`
-- [ ] 8.3 Add `memory documents diff <id> [--from] [--to]`
-- [ ] 8.4 Add `memory documents apply-revision <id> --revision <n>` and `discard-revision <id> --revision <n>`
-- [ ] 8.5 Unit test: flag parsing and error when `--revision` is missing on apply/discard
-- [ ] 8.6 Update the CLI reference skill/docs for the new subcommands
+- [ ] 8.1 Add `CreateRevision` / `ListRevisions` / `GetRevisionDiff` / `ApplyRevision` / `DiscardRevision` to `apps/server/pkg/sdk/documents/client.go`
+- [ ] 8.2 Add `NoDetect` / detection-outcome fields to the SDK upload types and `UploadWithOptions`
+- [ ] 8.3 Unit test: SDK request/response round-trip against an httptest server
 
-## 9. Web UI (gateway)
+## 9. CLI
 
-- [ ] 9.1 Add a Revisions section to `apps/web-ui/gateway/documents.templ` (list newest-first; single-version state when the group has one revision)
-- [ ] 9.2 Render the revision diff + entity delta with a parsing/processing state
-- [ ] 9.3 Add Apply / Discard actions with confirmation; omit Discard on the current revision and on applied revisions
-- [ ] 9.4 Add a revision upload control on the document detail page
-- [ ] 9.5 Run `templ generate` and add/extend handler tests for the new sections
+- [ ] 9.1 Add `--revision-of` and `--no-detect` to `memory documents upload`
+- [ ] 9.2 Report the detection outcome (linked / standalone / suggested) in the upload output
+- [ ] 9.3 Add `memory documents revisions <id>`
+- [ ] 9.4 Add `memory documents diff <id> [--from] [--to]`
+- [ ] 9.5 Add `memory documents apply-revision <id> --revision <n>` and `discard-revision <id> --revision <n>`
+- [ ] 9.6 Unit test: flag parsing, precedence of `--revision-of` over detection, and error when `--revision` is missing on apply/discard
+- [ ] 9.7 Update the CLI reference skill/docs for the new subcommands and flags
 
-## 10. Verification & Spec Sync
+## 10. Web UI (gateway)
 
-- [ ] 10.1 Compile: `(cd apps/server && go build ./...)`, `(cd apps/web-ui/gateway && go build ./...)`, `(cd apps/cli && go build ./...)`
-- [ ] 10.2 `templ generate`
-- [ ] 10.3 `task lint`
-- [ ] 10.4 `task build`, `task test`, and `task test:integration` from the repo root
-- [ ] 10.5 Manual browser check of the Revisions section (upload → diff → apply → discard)
-- [ ] 10.6 Confirm no OpenSpec drift: `openspec validate document-versioning --strict`
-- [ ] 10.7 Post-merge: `openspec archive document-versioning`
+- [ ] 10.1 Add a Revisions section to `apps/web-ui/gateway/documents.templ` (list newest-first; single-version state when the group has one revision)
+- [ ] 10.2 Render the revision diff + entity delta with a parsing/processing state
+- [ ] 10.3 Add Apply / Discard actions with confirmation; omit Discard on current and applied revisions
+- [ ] 10.4 Add a revision upload control on the document detail page
+- [ ] 10.5 Report the upload detection outcome (linked / standalone / suggested) on the documents page, with a force-standalone control
+- [ ] 10.6 Run `templ generate` and add/extend handler tests for the new sections
+
+## 11. Verification & Spec Sync
+
+- [ ] 11.1 Compile: `(cd apps/server && go build ./...)`, `(cd apps/web-ui/gateway && go build ./...)`, `(cd apps/cli && go build ./...)`
+- [ ] 11.2 `templ generate`
+- [ ] 11.3 `task lint`
+- [ ] 11.4 `task build`, `task test`, and `task test:integration` from the repo root
+- [ ] 11.5 Manual browser check of the Revisions section (upload → diff → apply → discard) and the auto-detect upload path
+- [ ] 11.6 Confirm no OpenSpec drift: `openspec validate document-versioning --strict`
+- [ ] 11.7 Post-merge: `openspec archive document-versioning`

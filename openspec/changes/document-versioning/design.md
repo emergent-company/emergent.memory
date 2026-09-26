@@ -105,6 +105,16 @@ Two existing but unused assets matter here:
 
 **Consequence**: extraction for a revision is staged and the revision stays pending until apply; the revision list must expose `isCurrent` + `appliedAt` so clients can render current/pending/superseded. Diff defaults `to` to the newest revision (pending if present) and `from` to its predecessor.
 
+### D12: Auto-detect uses deterministic signals, auto-links only on a confident single match
+
+**Decision**: On upload, detect the target logical document using, in priority order: (1) `external_source_id` exact match, (2) `file_hash` exact match, (3) normalized filename matching exactly one current revision. A single high-confidence candidate (1 or 2) or a single filename candidate auto-links: the upload becomes a **pending revision** of that document. No candidate → standalone. Multiple candidates → standalone plus a non-blocking suggestion. Detection is project-scoped, skipped when the caller targets a document explicitly, and disableable per request.
+
+**Rationale**: Auto-linking is a mutation of an existing logical document, so a false positive is worse than a missed link. The chosen signals are deterministic and cheap (metadata available before parsing), and they cover the dominant cases: connector re-syncs (external id), re-uploads/reverts (file hash), and edited files re-uploaded under the same name (filename). Auto-linking to a *pending* revision is safe by construction — a pending revision is never current and is discardable, so a wrong link is reversible without touching the graph. Ambiguity is escalated to the user rather than guessed.
+
+**Alternative considered**: Content-embedding similarity to catch renamed or restructured documents. Rejected for this change — fuzzy, requires parsing and embeddings before a decision, and its false-positive profile is unacceptable for an auto-mutating operation. Filed as a follow-up (suggestion-only).
+
+**Out of scope**: converting an already-created standalone document into a revision ("detach"/"promote"), and adding a name-collision "keep as new version" UI on the plain upload path beyond the reported suggestion.
+
 ## Risks / Trade-offs
 
 - **[Risk] No provenance for pre-existing objects.** Objects created before this change have no `kb.object_chunks` rows, so they can never be classified as removed. *Mitigation*: document that removals only apply to objects extracted after this change ships; such objects remain live unless manually removed.
@@ -120,6 +130,8 @@ Two existing but unused assets matter here:
 - **[Risk] Large-content diffs.** Diffing two very large parsed documents in memory. *Mitigation*: line diff is O(n) memory; the endpoint bounds response size and reports truncation if the diff exceeds a cap (open question).
 - **[Risk] `parent_document_id` confusion.** `parent_document_id` already exists and is *not* the revision link. *Mitigation*: the spec explicitly forbids using it for revisions; revision links live only in `supersedes_document_id` / `document_group_id`.
 - **[Risk] Generic delete semantics change.** `DELETE /api/documents/:id` now removes a whole group. *Mitigation*: explicitly specified and documented; single-revision removal uses the discard endpoint.
+- **[Risk] False-positive auto-link.** Filename matching can link an unrelated file that happens to share a name. *Mitigation*: auto-linking only ever creates a **pending** revision (never current, never applied), so the wrong link is discarded with no graph effect; ambiguity falls back to standalone; detection is disableable per upload.
+- **[Risk] `external_source_id` was dormant.** It is now written on connector uploads; existing rows have it NULL. *Mitigation*: NULL simply means signal 1 cannot match; the other signals still apply, and the column is already indexed for data-source lookups.
 
 ## Migration Plan
 

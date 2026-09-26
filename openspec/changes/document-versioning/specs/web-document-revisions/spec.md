@@ -51,3 +51,18 @@ The document detail page SHALL provide an upload control that creates a new pend
 #### Scenario: Graph unchanged after upload
 - **WHEN** a revision has been uploaded and its extraction has completed but it has not been applied
 - **THEN** the page indicates the main graph still reflects the current revision
+
+### Requirement: Upload reports auto-detection outcome
+For uploads initiated from the documents page (not scoped to a specific document), the UI SHALL report the server's detection outcome: linked as a pending revision of a named document, created as a standalone document, or created as standalone with a suggested document the user may promote to a revision. The UI SHALL offer a control to force a standalone upload (disable detection).
+
+#### Scenario: Auto-linked upload
+- **WHEN** an upload auto-detects an existing document
+- **THEN** the UI reports that a pending revision of that document was created and links to it
+
+#### Scenario: Suggested document
+- **WHEN** an upload is ambiguous and returns suggested candidates
+- **THEN** the UI presents the suggestion with a link to the suggested document so the user can upload it there as a revision
+
+#### Scenario: Force standalone
+- **WHEN** the user disables detection for an upload
+- **THEN** the UI creates a standalone document and reports it as new

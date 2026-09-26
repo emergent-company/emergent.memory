@@ -1,15 +1,19 @@
 ## MODIFIED Requirements
 
 ### Requirement: Upload a document
-The API SHALL accept a multipart file upload, ingest it as a new document, and return the resulting document id and chunk count. When the upload targets an existing document's revisions endpoint, the API SHALL instead create a new revision within that document's revision group and return the new revision's id and version number.
+The API SHALL accept a multipart file upload, ingest it as a new document, and return the resulting document id and chunk count. By default the upload SHALL attempt to detect whether the file is a new revision of an existing logical document (see `document-revision-auto-detect`); on a confident single match the API SHALL instead create a pending revision of that document. When the upload targets an existing document's revisions endpoint, the API SHALL create a new revision of that document without detection. Detection SHALL be disableable per request and an explicit revision target SHALL take precedence.
 
 #### Scenario: Successful upload
-- **WHEN** a client uploads a valid file
+- **WHEN** a client uploads a valid file that matches no existing document
 - **THEN** the API ingests it as a new document and returns the new document id and its chunk count
 
 #### Scenario: Successful revision upload
 - **WHEN** a client uploads a valid file to a known document's revisions endpoint
-- **THEN** the API creates a new revision of that document and returns the new revision id and version number
+- **THEN** the API creates a new pending revision of that document and returns the new revision id and version number
+
+#### Scenario: Auto-detected revision upload
+- **WHEN** a client uploads a valid file that confidently matches an existing document
+- **THEN** the API creates a pending revision of that document and the response identifies the detected document
 
 #### Scenario: Empty or invalid upload
 - **WHEN** a client uploads an empty or unsupported file
