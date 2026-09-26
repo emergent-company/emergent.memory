@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/labstack/echo/v4"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/scheduler"
@@ -264,13 +265,26 @@ func (h *EmbeddingControlHandler) Progress(c echo.Context) error {
 
 // progressByProject returns the queue statistics scoped to a single project.
 func (h *EmbeddingControlHandler) progressByProject(ctx context.Context, c echo.Context, projectID string) error {
-	objStats, err := h.objectJobsSvc.StatsByProject(ctx, projectID)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	// The two per-queue aggregates are independent. On large projects the
+	// relationship leg dominates (it joins the queue table with
+	// kb.graph_relationships to resolve the project), so run both concurrently
+	// instead of serially.
+	var (
+		objStats *GraphEmbeddingQueueStats
+		relStats *GraphRelationshipEmbeddingQueueStats
+		objErr   error
+		relErr   error
+	)
+	var g errgroup.Group
+	g.Go(func() error { objStats, objErr = h.objectJobsSvc.StatsByProject(ctx, projectID); return nil })
+	g.Go(func() error { relStats, relErr = h.relJobsSvc.StatsByProject(ctx, projectID); return nil })
+	_ = g.Wait()
+
+	if objErr != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": objErr.Error()})
 	}
-	relStats, err := h.relJobsSvc.StatsByProject(ctx, projectID)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	if relErr != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": relErr.Error()})
 	}
 	return c.JSON(http.StatusOK, embeddingProgressResponse(objStats, relStats))
 }
@@ -278,13 +292,22 @@ func (h *EmbeddingControlHandler) progressByProject(ctx context.Context, c echo.
 // progressGlobal returns the deployment-wide queue statistics. Callers must have
 // already been authorized (admin:read) by the Progress handler.
 func (h *EmbeddingControlHandler) progressGlobal(ctx context.Context, c echo.Context) error {
-	objStats, err := h.objectJobsSvc.Stats(ctx)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	var (
+		objStats *GraphEmbeddingQueueStats
+		relStats *GraphRelationshipEmbeddingQueueStats
+		objErr   error
+		relErr   error
+	)
+	var g errgroup.Group
+	g.Go(func() error { objStats, objErr = h.objectJobsSvc.Stats(ctx); return nil })
+	g.Go(func() error { relStats, relErr = h.relJobsSvc.Stats(ctx); return nil })
+	_ = g.Wait()
+
+	if objErr != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": objErr.Error()})
 	}
-	relStats, err := h.relJobsSvc.Stats(ctx)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	if relErr != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": relErr.Error()})
 	}
 	return c.JSON(http.StatusOK, embeddingProgressResponse(objStats, relStats))
 }
