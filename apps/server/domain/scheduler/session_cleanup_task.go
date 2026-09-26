@@ -8,12 +8,13 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/runstatus"
 )
 
 // SessionCleanupTask deletes ADK session data (events, states, sessions) for
 // agent runs that have been in a terminal state for longer than RetentionDays.
 //
-// Terminal run statuses: success, error, skipped, cancelled.
+// Terminal run statuses: completed, failed, skipped, cancelled.
 //
 // Deletion order respects FK constraints:
 //  1. kb.adk_events   (FK → kb.adk_sessions ON DELETE CASCADE, but we delete explicitly for logging)
@@ -53,11 +54,14 @@ func (t *SessionCleanupTask) Run(ctx context.Context) error {
 
 	// Collect session IDs for runs that completed before the cutoff.
 	// session_id == run_id by ADK convention (set in executor.go buildSessionID).
+	// The terminal statuses are sourced from pkg/runstatus (the single source of
+	// truth shared with domain/agents) rather than string literals, which drifted
+	// from 'success'/'error' to the real 'completed'/'failed' (issue #1110).
 	var sessionIDs []string
 	err := t.db.NewSelect().
 		TableExpr("kb.agent_runs").
 		ColumnExpr("id::text").
-		Where("status IN ('success', 'error', 'skipped', 'cancelled')").
+		Where("status IN (?)", bun.In(runstatus.Terminal())).
 		Where("completed_at IS NOT NULL").
 		Where("completed_at < ?", cutoff).
 		Scan(ctx, &sessionIDs)
