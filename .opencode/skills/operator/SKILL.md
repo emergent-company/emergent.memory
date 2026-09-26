@@ -101,10 +101,10 @@ Run this loop per task:
     archive **only** workspaces whose agent is idle/closed AND whose branch PR is merged
     or closed AND whose worktree is clean; then `git worktree remove` + `git worktree
     prune`. **Disk reality:** agent transcripts are ~2 MB total (416 files / 106 dirs) —
-    hygiene only, **not** a disk concern; worktrees are the real consumer (~1.8 GB in
-    this repo). So sweep worktrees for disk; treat agent tidying as cheap hygiene.
-    `paseo ls` **hides archived agents and under-reports the true total ~5×** (105 dirs
-    on disk vs 16 listed) — enumerate `~/.paseo/agents` when the true count matters. No
+    hygiene only, **not** a disk concern; worktrees are the real consumer (~2 GB and
+    growing in this repo). So sweep worktrees for disk; treat agent tidying as cheap hygiene.
+    `paseo ls` **hides archived agents and under-reports the true total ~5×** (~108 dirs
+    on disk vs ~19 listed) — enumerate `~/.paseo/agents` when the true count matters. No
     plugin/retention feature is needed: agent archiving is a one-command,
     operator-driven step.
 
@@ -225,8 +225,9 @@ Multiple orchestrator sessions can run on one box under the **same GitHub identi
 `--add-assignee @me` cannot distinguish two managers — the claim protocol is best-effort
 against a peer **session**, not against a peer **manager**. To fix the collision:
 
-- Apply a `manager: <name>` label (or one milestone per manager) at claim time so
-  ownership is visible.
+- Apply a `manager: <name>` label at claim time so ownership is visible. `manager:` is
+  **not** pre-provisioned (unlike the `status:`/`process`/`area:` labels in §4) — create
+  it once on first use. (One milestone per manager is a no-label alternative.)
 - **Mandatory preflight before creating any lane:** check `paseo workspace ls`,
   `git worktree list`, and the issue's recent comments for another manager already on
   the same issue or the same file. If another lane already edits the target file, STOP
