@@ -195,10 +195,13 @@
   // daisyUI/Tailwind layers in app.css; runs after the stylesheet link, so it
   // also wins the cascade against app.css's unlayered tool-chip rules.
   //
-  // The `border-radius` literals in this sheet are a documented exception to
-  // the "radius derives from theme variables" rule — see the "Radius exception
-  // list" note in webui/css/app.css. Migrating them to var(--radius-*) is
-  // deferred to the stylesheet-consolidation follow-up unit (task 5.1).
+  // This is the ONLY runtime-injected stylesheet, and it owns just the
+  // expandable-badge shell + shimmer that app.css deliberately does not define.
+  // Single source of truth: nothing here re-declares an app.css rule except the
+  // two documented `.memory-tool-chip[data-status]` border overrides below. The
+  // `.memory-badge` `border-radius: .625rem` literal is a documented JS-only
+  // exception (no theme token maps to 0.625rem) — see the "Radius exception
+  // list" note in webui/css/app.css.
   function ensureBadgeStyle() {
     if (document.getElementById("memory-badge-style")) return;
     var st = document.createElement("style");
@@ -546,155 +549,6 @@
       modelChip +
       '<span class="memory-run-marker-line" aria-hidden="true"></span>';
     return el;
-  }
-
-  // Inject the run-control styles once. Mirrors ensureBadgeStyle: unlayered so
-  // it sits above the daisyUI/Tailwind layers. The same rules live in
-  // webui/css/app.css (the compiled source); this injection keeps the surfaces
-  // styled even before the CSS bundle is rebuilt.
-  //
-  // The `border-radius` literals in this sheet are a documented exception to
-  // the "radius derives from theme variables" rule — see the "Radius exception
-  // list" note in webui/css/app.css. Migrating them to var(--radius-*) is
-  // deferred to the stylesheet-consolidation follow-up unit (task 5.1).
-  function ensureChatControlStyle() {
-    if (document.getElementById("memory-chat-control-style")) return;
-    var st = document.createElement("style");
-    st.id = "memory-chat-control-style";
-    st.textContent =
-      /* live run status (chat header) */
-      ".memory-run-status{display:inline-flex;align-items:center;gap:.4rem;padding:.2rem .6rem;" +
-      "border-radius:9999px;border:1px solid transparent;font-size:.75rem;font-weight:500;white-space:nowrap}" +
-      ".memory-run-status[data-state='working']{color:var(--color-base-content);" +
-      "background:color-mix(in oklab,var(--color-primary) 10%,transparent);" +
-      "border-color:color-mix(in oklab,var(--color-primary) 28%,transparent)}" +
-      ".memory-run-status[data-state='waiting']{color:var(--color-warning);" +
-      "background:color-mix(in oklab,var(--color-warning) 12%,transparent);" +
-      "border-color:color-mix(in oklab,var(--color-warning) 34%,transparent)}" +
-      ".memory-run-status[data-state='failed']{color:var(--color-error);" +
-      "background:color-mix(in oklab,var(--color-error) 12%,transparent);" +
-      "border-color:color-mix(in oklab,var(--color-error) 34%,transparent)}" +
-      ".memory-run-status-dot{width:.5rem;height:.5rem;border-radius:9999px;background:currentColor}" +
-      ".memory-run-status[data-state='working'] .memory-run-status-dot{animation:memory-pulse 1.4s ease-in-out infinite}" +
-      "@keyframes memory-pulse{0%,100%{opacity:.35}50%{opacity:1}}" +
-      /* typed run markers */
-      ".memory-run-marker{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;margin:.35rem 0;" +
-      "font-size:.6875rem;letter-spacing:.05em;text-transform:uppercase;color:color-mix(in oklab,var(--color-base-content) 42%,transparent)}" +
-      ".memory-run-marker-line{flex:1 1 2rem;height:1px;background:color-mix(in oklab,var(--color-base-content) 10%,transparent)}" +
-      ".memory-run-marker-icon{display:inline-flex}" +
-      ".memory-run-marker-model{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;" +
-      "text-transform:none;letter-spacing:0;font-size:.6875rem;padding:.05rem .4rem;border-radius:.375rem;" +
-      "background:color-mix(in oklab,var(--color-base-content) 8%,transparent);color:color-mix(in oklab,var(--color-base-content) 60%,transparent)}" +
-      ".memory-run-marker[data-status='failed']{display:block;margin:.5rem 0}" +
-      ".memory-run-marker[data-status='input-required']{color:var(--color-warning)}" +
-      ".memory-run-marker[data-status='cancelled']{color:color-mix(in oklab,var(--color-base-content) 55%,transparent)}" +
-      ".memory-run-marker-failure{display:flex;align-items:flex-start;gap:.6rem;padding:.7rem .85rem;" +
-      "border-radius:.6rem;border:1px solid color-mix(in oklab,var(--color-error) 42%,transparent);" +
-      "border-left:3px solid var(--color-error);" +
-      "background:color-mix(in oklab,var(--color-error) 18%,var(--color-base-100));" +
-      "text-transform:none;letter-spacing:normal}" +
-      ".memory-run-marker-failure-icon{display:inline-flex;flex:0 0 auto;margin-top:.05rem;color:var(--color-error)}" +
-      ".memory-run-marker-failure-body{min-width:0}" +
-      ".memory-run-marker-failure-title{margin:0;font-size:.8125rem;font-weight:600;line-height:1.3;color:var(--color-error)}" +
-      ".memory-run-marker-failure-msg{margin:.2rem 0 0;font-size:.8125rem;line-height:1.45;white-space:pre-wrap;" +
-      "word-break:break-word;color:color-mix(in oklab,var(--color-base-content) 80%,transparent)}" +
-      /* turn footer */
-      ".memory-turn-footer{display:flex;align-items:center;gap:.5rem;margin-top:.25rem;" +
-      "font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.6875rem;" +
-      "color:color-mix(in oklab,var(--color-base-content) 35%,transparent)}" +
-      ".memory-turn-footer .memory-turn-time{max-width:0;overflow:hidden;opacity:0;white-space:nowrap;" +
-      "transition:opacity .15s ease,max-width .2s ease}" +
-      ".memory-turn-footer:hover .memory-turn-time,.memory-turn-footer:focus-within .memory-turn-time{max-width:12rem;opacity:1}" +
-      /* copy affordances */
-      ".memory-copy-btn{display:inline-flex;align-items:center;gap:.25rem;padding:.15rem;border-radius:.375rem;" +
-      "color:color-mix(in oklab,var(--color-base-content) 40%,transparent);background:transparent;" +
-      "border:1px solid transparent;cursor:pointer;opacity:0;" +
-      "transition:opacity .15s ease,color .15s ease,background-color .15s ease}" +
-      ".memory-copy-btn:hover{color:var(--color-base-content);background:color-mix(in oklab,var(--color-base-content) 8%,transparent)}" +
-      ".memory-copy-btn:focus-visible{opacity:1;outline:2px solid var(--color-primary);outline-offset:2px}" +
-      ".memory-copy-btn.memory-copy-done{opacity:1;color:var(--color-success)}" +
-      ".memory-copy-msg{margin-left:.15rem;vertical-align:middle}" +
-      ".chat-start:hover .memory-copy-msg,.chat-start:focus-within .memory-copy-msg," +
-      ".memory-code-wrap:hover .memory-copy-code,.memory-code-wrap:focus-within .memory-copy-code{opacity:1}" +
-      ".memory-code-wrap{position:relative;margin:.8em 0}" +
-      ".memory-md .memory-code-wrap > pre{margin:0}" +
-      ".memory-code-wrap .memory-copy-code{position:absolute;top:.4rem;right:.4rem;" +
-      "background:color-mix(in oklab,var(--color-base-300) 80%,transparent)}" +
-      "@media (hover:none){.memory-copy-btn{opacity:.55}}" +
-      "@media (prefers-reduced-motion:reduce){.memory-run-status-dot{animation:none}}" +
-      /* composer queue lane */
-      ".memory-queue{border-bottom:1px solid color-mix(in oklab,var(--color-base-content) 8%,transparent);" +
-      "background:color-mix(in oklab,var(--color-base-200) 45%,transparent)}" +
-      ".memory-queue-head{display:flex;align-items:center;gap:.4rem;padding:.45rem .75rem .1rem;" +
-      "font-size:.625rem;font-weight:600;letter-spacing:.09em;text-transform:uppercase;" +
-      "color:color-mix(in oklab,var(--color-base-content) 45%,transparent)}" +
-      ".memory-queue-list{display:flex;flex-direction:column;gap:.25rem;padding:0 .75rem .5rem}" +
-      ".memory-queue-row{display:flex;align-items:flex-start;gap:.5rem;padding:.3rem .5rem;border-radius:.5rem;" +
-      "border:1px solid color-mix(in oklab,var(--color-base-content) 10%,transparent);background:var(--color-base-100)}" +
-      ".memory-queue-input{flex:1 1 auto;min-width:0;resize:none;background:transparent;border:0;outline:none;" +
-      "color:inherit;font-size:.8125rem;line-height:1.45;max-height:7rem;overflow-y:auto}" +
-      ".memory-queue-input:focus-visible{outline:2px solid color-mix(in oklab,var(--color-primary) 60%,transparent);outline-offset:2px;border-radius:.25rem}" +
-      ".memory-queue-send,.memory-queue-remove{display:inline-flex;align-items:center;gap:.25rem;flex:0 0 auto;" +
-      "padding:.2rem .5rem;border-radius:.375rem;border:1px solid transparent;background:transparent;cursor:pointer;" +
-      "font-size:.6875rem;font-weight:600;color:color-mix(in oklab,var(--color-base-content) 55%,transparent)}" +
-      ".memory-queue-send{color:var(--color-primary);border-color:color-mix(in oklab,var(--color-primary) 30%,transparent)}" +
-      ".memory-queue-send:hover{background:color-mix(in oklab,var(--color-primary) 12%,transparent)}" +
-      ".memory-queue-remove:hover{color:var(--color-error);background:color-mix(in oklab,var(--color-error) 12%,transparent)}" +
-      ".memory-queue-send:focus-visible,.memory-queue-remove:focus-visible{outline:2px solid var(--color-primary);outline-offset:2px}" +
-      /* pending-work dock */
-      "#chat-dock{border-bottom:1px solid color-mix(in oklab,var(--color-base-content) 8%,transparent);" +
-      "background:color-mix(in oklab,var(--color-base-200) 40%,transparent)}" +
-      "#chat-dock :is(button,a,input,select,textarea):focus-visible{outline:2px solid var(--color-primary);outline-offset:2px}" +
-      ".dock-head{display:flex;align-items:center;gap:.4rem;margin:.45rem .75rem .1rem;font-size:.625rem;" +
-      "font-weight:600;letter-spacing:.09em;text-transform:uppercase;" +
-      "color:color-mix(in oklab,var(--color-base-content) 65%,transparent)}" +
-      ".dock-count{display:inline-flex;align-items:center;justify-content:center;min-width:1.05rem;height:1.05rem;" +
-      "padding:0 .3rem;border-radius:9999px;background:var(--color-warning);color:var(--color-warning-content);font-size:.5625rem}" +
-      ".dock-card-controls{display:flex;flex-basis:100%;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:.4rem}" +
-      ".dock-approval-msg{flex:1 1 12rem;min-width:0;margin-right:auto}" +
-      ".dock-question-input{flex-basis:100%}" +
-      ".dock-card-options{display:flex;flex-basis:100%;flex-wrap:wrap;gap:.35rem;margin:.1rem 0 0;padding:0}" +
-      ".dock-question-option{border:1px solid color-mix(in oklab,var(--color-base-content) 18%,transparent);" +
-      "border-radius:.5rem;padding:.25rem .6rem;background:var(--color-base-100);color:inherit;font-size:.75rem;cursor:pointer}" +
-      ".dock-question-option:hover{background:color-mix(in oklab,var(--color-base-content) 6%,transparent)}" +
-      ".dock-question-option[aria-checked='true']{border-color:var(--color-primary);" +
-      "background:color-mix(in oklab,var(--color-primary) 10%,transparent);color:var(--color-primary)}" +
-      /* session todo card */
-      "#chat-todos{margin-bottom:.25rem}" +
-      "#chat-todos :is(summary,button,input,select,a):focus-visible{outline:2px solid var(--color-primary);outline-offset:2px}" +
-      /* rail status badge */
-      ".memory-rail-badge{display:flex;align-items:center;gap:.25rem;width:fit-content;padding:.1rem .4rem;border-radius:9999px;" +
-      "font-size:.625rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;" +
-      "border:1px solid transparent;margin-bottom:.25rem}" +
-      /* A two-class selector hides the badge: this sheet is appended to <head>
-         after the compiled Tailwind sheet, so at equal specificity the injected
-         `.memory-rail-badge { display:inline-flex }` beats Tailwind's
-         `.hidden { display:none }`. Keep this rule identical to webui/css/app.css. */
-      ".memory-rail-badge.hidden{display:none}" +
-      ".memory-rail-badge[data-bucket='needs_input']{color:var(--color-warning);" +
-      "background:color-mix(in oklab,var(--color-warning) 15%,transparent);" +
-      "border-color:color-mix(in oklab,var(--color-warning) 40%,transparent)}" +
-      ".memory-rail-badge[data-bucket='failed']{color:color-mix(in oklab,var(--color-error) 60%,var(--color-base-content));" +
-      "background:color-mix(in oklab,var(--color-error) 14%,transparent);" +
-      "border-color:color-mix(in oklab,var(--color-error) 38%,transparent)}" +
-      ".memory-rail-badge[data-bucket='running']{color:var(--color-primary);" +
-      "background:color-mix(in oklab,var(--color-primary) 13%,transparent);" +
-      "border-color:color-mix(in oklab,var(--color-primary) 34%,transparent)}" +
-      ".memory-rail-badge[data-bucket='done']{color:color-mix(in oklab,var(--color-base-content) 65%,transparent);" +
-      "background:color-mix(in oklab,var(--color-base-content) 7%,transparent);" +
-      "border-color:color-mix(in oklab,var(--color-base-content) 12%,transparent)}" +
-      ".memory-rail-badge .memory-rail-count{display:inline-flex;align-items:center;justify-content:center;" +
-      "min-width:1rem;height:1rem;padding:0 .2rem;border-radius:9999px;font-size:.5625rem;" +
-      "background:var(--color-base-content);color:var(--color-base-100)}" +
-      ".memory-rail-badge[data-bucket='needs_input'] .memory-rail-count{background:var(--color-warning);" +
-      "color:var(--color-warning-content)}" +
-      ".memory-rail-badge[data-bucket='failed'] .memory-rail-count{background:var(--color-error);" +
-      "color:var(--color-error-content)}" +
-      ".memory-rail-badge[data-bucket='running'] .memory-rail-count{background:var(--color-primary);" +
-      "color:var(--color-primary-content)}" +
-      ".memory-rail-badge[data-bucket='done'] .memory-rail-count{background:var(--color-base-content);" +
-      "color:var(--color-base-100)}";
-    document.head.appendChild(st);
   }
 
   /* ---------- A2UI declarative cards ---------- */
@@ -1073,7 +927,6 @@
     enhanceMessage: enhanceMessage,
     turnFooter: turnFooter,
     runMarker: runMarker,
-    ensureChatControlStyle: ensureChatControlStyle,
     renderA2UISurface: renderA2UISurface,
   };
 })();
