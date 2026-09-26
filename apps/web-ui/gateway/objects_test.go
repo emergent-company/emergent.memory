@@ -122,7 +122,7 @@ func TestRenderObjectsPageSearchStatsLoadMore(t *testing.T) {
 		Objects:    []GraphObject{{ID: "o1", Type: "person", Key: "sam-lee"}},
 		HasMore:    true,
 		NextCursor: "cur-1",
-		Stats:      objectsStats{TotalObjects: 42, PendingEmbed: 3, FailedEmbed: 1},
+		Stats:      &objectsStats{TotalObjects: 42, PendingEmbed: 3, FailedEmbed: 1},
 	}))
 	for _, want := range []string{"42", "objects", "pending", "failed", "Load more", `hx-get="/objects/partial?cursor=cur-1"`, `hx-target="#objects-list"`} {
 		if !strings.Contains(browseHTML, want) {
@@ -684,7 +684,7 @@ func TestUIObjectsPartialFailure(t *testing.T) {
 func TestRenderObjectsPageStatsUnavailable(t *testing.T) {
 	html := renderHTML(t, ObjectsPage(objectsPageData{
 		Objects: []GraphObject{{ID: "o1", Type: "person", Key: "sam-lee"}},
-		Stats:   objectsStats{TotalErr: errTest, EmbedErr: errTest},
+		Stats:   &objectsStats{TotalErr: errTest, EmbedErr: errTest},
 	}))
 	for _, want := range []string{"—", `title="Unavailable"`} {
 		if !strings.Contains(html, want) {
@@ -693,6 +693,49 @@ func TestRenderObjectsPageStatsUnavailable(t *testing.T) {
 	}
 	if strings.Contains(html, ">0</p>") {
 		t.Error("unavailable stats must not render a numeric 0 value")
+	}
+}
+
+// TestObjectsStatsDeferredCarriesBranch pins the branch-scoping regression guard
+// (issue #1098): the deferred stats placeholder must carry the active branch so
+// the object count is scoped the same way the pre-deferral synchronous call was.
+func TestObjectsStatsDeferredCarriesBranch(t *testing.T) {
+	html := renderHTML(t, ObjectsPage(objectsPageData{
+		Objects:  []GraphObject{{ID: "o1", Type: "person", Key: "sam-lee"}},
+		BranchID: "b1",
+	}))
+	if !strings.Contains(html, `hx-get="/objects/stats?branch=b1"`) {
+		t.Errorf("deferred stats URL must carry the branch, got:\n%s", html)
+	}
+
+	// Without a branch the URL is bare.
+	htmlMain := renderHTML(t, ObjectsPage(objectsPageData{
+		Objects: []GraphObject{{ID: "o1", Type: "person", Key: "sam-lee"}},
+	}))
+	if !strings.Contains(htmlMain, `hx-get="/objects/stats"`) {
+		t.Errorf("deferred stats URL should omit an empty branch, got:\n%s", htmlMain)
+	}
+}
+
+// TestUIObjectsStatsPartialBranchScoped asserts the deferred stats endpoint
+// forwards the branch to CountObjects (the assertion whose absence let the
+// unscoped-count regression through).
+func TestUIObjectsStatsPartialBranchScoped(t *testing.T) {
+	f := &fakeMemory{objectCount: 7}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/objects/stats", s.uiObjectsStatsPartial)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/stats?branch=b1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if f.lastCountBranch != "b1" {
+		t.Fatalf("CountObjects branch = %q, want b1", f.lastCountBranch)
+	}
+	if !strings.Contains(rec.Body.String(), "7") {
+		t.Errorf("stats partial missing branch-scoped count 7: %s", rec.Body.String())
 	}
 }
 

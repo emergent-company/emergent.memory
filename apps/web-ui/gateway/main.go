@@ -289,6 +289,7 @@ func main() {
 	e.POST("/documents/:id/delete", s.uiDeleteDocument)
 	e.GET("/objects", s.uiObjects)
 	e.GET("/objects/partial", s.uiObjectsPartial)
+	e.GET("/objects/stats", s.uiObjectsStatsPartial)
 	e.GET("/objects/search", s.uiObjectSearch)
 	e.GET("/objects/new", s.uiObjectNew)
 	e.POST("/objects/knowledge", s.uiObjectsKnowledge)
