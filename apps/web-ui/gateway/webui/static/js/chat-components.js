@@ -588,9 +588,9 @@
       "#chat-todos{margin-bottom:.25rem}" +
       "#chat-todos :is(summary,button,input,select,a):focus-visible{outline:2px solid var(--color-primary);outline-offset:2px}" +
       /* rail status badge */
-      ".memory-rail-badge{display:inline-flex;align-items:center;gap:.25rem;padding:.1rem .4rem;border-radius:9999px;" +
+      ".memory-rail-badge{display:flex;align-items:center;gap:.25rem;width:fit-content;padding:.1rem .4rem;border-radius:9999px;" +
       "font-size:.625rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;" +
-      "border:1px solid transparent;align-self:center}" +
+      "border:1px solid transparent;margin-bottom:.25rem}" +
       /* A two-class selector hides the badge: this sheet is appended to <head>
          after the compiled Tailwind sheet, so at equal specificity the injected
          `.memory-rail-badge { display:inline-flex }` beats Tailwind's
