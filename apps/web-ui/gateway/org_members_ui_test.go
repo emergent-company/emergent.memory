@@ -185,9 +185,10 @@ func TestRenderMembersPageMerged(t *testing.T) {
 	admin2.ID = "u-admin2"
 	admin2.DisplayName = "Lin"
 	data := membersPageData{
-		Members:     []ProjectMemberDto{admin, admin2, user},
-		Pending:     []SentInviteDto{pendingInviteFixture()},
-		ProjectName: "Home",
+		Members:         []ProjectMemberDto{admin, admin2, user},
+		Pending:         []SentInviteDto{pendingInviteFixture()},
+		ProjectName:     "Home",
+		CanRevokeInvite: true,
 	}
 	html := renderHTML(t, MembersPage(data))
 	for _, want := range []string{
@@ -210,6 +211,19 @@ func TestRenderMembersPageMerged(t *testing.T) {
 	// occurrence is the revoke button's aria-label)
 	if got := strings.Count(html, ">lin@example.com<"); got != 1 {
 		t.Errorf("pending email text-node count = %d, want 1", got)
+	}
+}
+
+// TestRenderMembersPageNonAdminNoRevoke asserts a caller who is not org_admin
+// of the active project's org sees the pending-invite row but no revoke button
+// (revoking is an org-tier write — #1015).
+func TestRenderMembersPageNonAdminNoRevoke(t *testing.T) {
+	html := renderHTML(t, MembersPage(membersPageData{Pending: []SentInviteDto{pendingInviteFixture()}}))
+	if !strings.Contains(html, "lin@example.com") {
+		t.Error("pending invite row should still render for a non-admin")
+	}
+	if strings.Contains(html, `action="/invites/inv-1/revoke"`) {
+		t.Error("non-admin must not see the invite revoke button")
 	}
 }
 
@@ -519,7 +533,7 @@ func TestRenderNewProjectModalOrgSelector(t *testing.T) {
 // group (identity moved to the topbar account menu); the active-state
 // mechanism marks the members family.
 func TestSidebarGroupsWorkspaceAccount(t *testing.T) {
-	groups := sidebarGroups()
+	groups := sidebarGroups(true)
 	byLabel := map[string][]layout.SidebarItem{}
 	for _, g := range groups {
 		byLabel[g.Label] = g.Items
@@ -544,7 +558,7 @@ func TestSidebarGroupsWorkspaceAccount(t *testing.T) {
 	}
 
 	// the org context sidebar exposes the org-scoped pages under /orgs/:id
-	orgGroups := orgSidebarGroups("org-1")
+	orgGroups := orgSidebarGroups("org-1", true)
 	hrefs := map[string]bool{}
 	for _, g := range orgGroups {
 		for _, item := range g.Items {
@@ -555,6 +569,40 @@ func TestSidebarGroupsWorkspaceAccount(t *testing.T) {
 		if !hrefs[want] {
 			t.Errorf("org sidebar missing %q", want)
 		}
+	}
+}
+
+// TestSidebarGroupsRoleGating asserts the org_admin-gated entries: Backups
+// (project nav, org-scoped backups #997) and Members (org nav, PII #1015) are
+// hidden for non-admins and present for org_admins.
+func TestSidebarGroupsRoleGating(t *testing.T) {
+	hrefs := func(groups []layout.SidebarGroup) map[string]bool {
+		m := map[string]bool{}
+		for _, g := range groups {
+			for _, item := range g.Items {
+				m[item.Href] = true
+			}
+		}
+		return m
+	}
+
+	if hrefs(sidebarGroups(false))["/backups"] {
+		t.Error("non-admin project sidebar must hide Backups")
+	}
+	if !hrefs(sidebarGroups(true))["/backups"] {
+		t.Error("org_admin project sidebar must show Backups")
+	}
+
+	nonAdminOrg := hrefs(orgSidebarGroups("org-1", false))
+	if nonAdminOrg["/orgs/org-1/members"] {
+		t.Error("non-admin org sidebar must hide Members")
+	}
+	if !nonAdminOrg["/orgs/org-1"] || !nonAdminOrg["/orgs/org-1/settings"] {
+		t.Error("non-admin org sidebar must keep Projects and Settings")
+	}
+
+	if !hrefs(orgSidebarGroups("org-1", true))["/orgs/org-1/members"] {
+		t.Error("org_admin org sidebar must show Members")
 	}
 }
 
@@ -723,6 +771,8 @@ func TestUIMembersRoutes(t *testing.T) {
 			{ID: "inv-1", Email: "lin@example.com", Role: "project_user", Status: "pending", CreatedAt: "2026-08-20T09:00:00Z"},
 			{ID: "inv-2", Email: "old@example.com", Role: "project_admin", Status: "accepted", CreatedAt: "2026-08-18T09:00:00Z"},
 		},
+		// org_admin of the active project's org → revoke button renders.
+		orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin"}},
 	}
 	// dev mode: the static memory project is the active project
 	s := &Server{cfg: Config{MemoryProjectID: "p1"}, memory: f}

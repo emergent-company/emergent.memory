@@ -45,6 +45,10 @@ type membersPageData struct {
 	LoadErr     error
 	FlashMsg    string
 	FlashErr    error
+	// CanRevokeInvite gates the pending-invite revoke button: revoking an
+	// invite is an org-tier write (org_admin of the invite's org — #1015), so
+	// only an org_admin of the active project's owning org may revoke.
+	CanRevokeInvite bool
 }
 
 // memberInvitePageData is the payload for MemberInvitePage (/members/new):
@@ -144,6 +148,7 @@ func (s *Server) uiMembers(c echo.Context) error {
 	data.FlashErr = flashError(c)
 	if pr, ok := s.activeProjectRef(ctx); ok {
 		data.ProjectName = pr.Name
+		data.CanRevokeInvite = s.orgAdminForCaller(ctx, pr.OrgID)
 	}
 	members, err := s.memory.ListMembers(ctx)
 	if err != nil {
