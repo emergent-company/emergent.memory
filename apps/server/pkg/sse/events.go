@@ -1,5 +1,7 @@
 package sse
 
+import "github.com/emergent-company/emergent.memory/pkg/a2ui"
+
 // ChatEventType represents the type of SSE event in chat streaming.
 type ChatEventType string
 
@@ -16,6 +18,10 @@ const (
 
 	// EventMCPTool is emitted for MCP tool invocations.
 	EventMCPTool ChatEventType = "mcp_tool"
+
+	// EventUI is emitted when the agent produces declarative A2UI surface
+	// messages (structured cards).
+	EventUI ChatEventType = "ui"
 
 	// EventError is emitted when an error occurs during streaming.
 	EventError ChatEventType = "error"
@@ -111,6 +117,22 @@ func NewMCPToolEvent(tool, status string, result any, errMsg string) MCPToolEven
 		Status: status,
 		Result: result,
 		Error:  errMsg,
+	}
+}
+
+// UIEvent is emitted when the agent produces declarative A2UI surface messages.
+type UIEvent struct {
+	Type      string         `json:"type"`
+	SurfaceID string         `json:"surfaceId"`
+	Messages  []a2ui.Message `json:"messages"`
+}
+
+// NewUIEvent creates a new structured-UI event.
+func NewUIEvent(surfaceID string, messages []a2ui.Message) UIEvent {
+	return UIEvent{
+		Type:      string(EventUI),
+		SurfaceID: surfaceID,
+		Messages:  messages,
 	}
 }
 
