@@ -220,6 +220,19 @@ pre-commit:
 lint:
   parallel: true
   jobs:
+    # Repo-wide gofmt over *tracked* files — the only place the whole repo
+    # (including e2e/, blueprints/, tools/) is checked for formatting, since
+    # `task lint` in apps/web-ui is scoped to the gateway. Mirrors the CI
+    # `gofmt (tracked Go files)` guard (see #1058 / #1061).
+    - name: gofmt
+      run: |
+        files=$(git ls-files '*.go' | xargs gofmt -l)
+        if [ -n "$files" ]; then
+          echo "gofmt: the following tracked files need formatting:"
+          echo "$files"
+          exit 1
+        fi
+
     # ── Server ───────────────────────────────────────────────────────────────
     - name: server-gofmt
       root: apps/server
@@ -247,9 +260,9 @@ lint:
     - name: cli-gofmt
       root: apps/cli
       run: |
-        files=$(gofmt -l $(find . -name "*.go" -not -path "*/vendor/*"))
+        files=$(git ls-files '*.go' | xargs gofmt -l)
         if [ -n "$files" ]; then
-          echo "gofmt: the following files need formatting:"
+          echo "gofmt: the following tracked files need formatting:"
           echo "$files"
           exit 1
         fi
@@ -278,9 +291,9 @@ lint:
     - name: webui-gofmt
       root: apps/web-ui/gateway
       run: |
-        files=$(gofmt -l $(find . -name "*.go" -not -path "*/vendor/*"))
+        files=$(git ls-files '*.go' | xargs gofmt -l)
         if [ -n "$files" ]; then
-          echo "gofmt: the following files need formatting:"
+          echo "gofmt: the following tracked files need formatting:"
           echo "$files"
           exit 1
         fi
@@ -340,9 +353,9 @@ lint:
     - name: connector-gofmt
       root: apps/connector.linux
       run: |
-        files=$(gofmt -l $(find . -name "*.go" -not -path "*/vendor/*"))
+        files=$(git ls-files '*.go' | xargs gofmt -l)
         if [ -n "$files" ]; then
-          echo "gofmt: the following files need formatting:"
+          echo "gofmt: the following tracked files need formatting:"
           echo "$files"
           exit 1
         fi
@@ -378,9 +391,9 @@ lint-webui:
     - name: webui-gofmt
       root: apps/web-ui/gateway
       run: |
-        files=$(gofmt -l $(find . -name "*.go" -not -path "*/vendor/*"))
+        files=$(git ls-files '*.go' | xargs gofmt -l)
         if [ -n "$files" ]; then
-          echo "gofmt: the following files need formatting:"
+          echo "gofmt: the following tracked files need formatting:"
           echo "$files"
           exit 1
         fi
@@ -439,9 +452,9 @@ lint-webui:
     - name: connector-gofmt
       root: apps/connector.linux
       run: |
-        files=$(gofmt -l $(find . -name "*.go" -not -path "*/vendor/*"))
+        files=$(git ls-files '*.go' | xargs gofmt -l)
         if [ -n "$files" ]; then
-          echo "gofmt: the following files need formatting:"
+          echo "gofmt: the following tracked files need formatting:"
           echo "$files"
           exit 1
         fi
