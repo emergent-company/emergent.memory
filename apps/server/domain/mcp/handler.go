@@ -386,6 +386,11 @@ func (h *Handler) handleToolsCall(c echo.Context, req *Request, user *auth.AuthU
 
 	// Execute tool
 	execCtx := WithInstanceScope(c.Request().Context(), scope)
+	// The transport already enforced per-tool AgentOnly / RequiredScope /
+	// SuperadminOnly above. Mark the call trusted so ExecuteTool's in-process
+	// trust gate (which covers the agent-run path) does not re-fire for an
+	// authenticated HTTP client.
+	execCtx = ContextWithTrustedInternal(execCtx, true)
 	result, err := h.svc.ExecuteTool(execCtx, projectID, params.Name, params.Arguments)
 	if err != nil {
 		h.log.Error("tool execution failed",
