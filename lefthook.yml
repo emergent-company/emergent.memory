@@ -35,9 +35,9 @@ lint:
   jobs:
     - name: gofmt
       run: |
-        files=$(gofmt -l $(find . -name "*.go" -not -path "*/vendor/*"))
+        files=$(git ls-files '*.go' | xargs gofmt -l)
         if [ -n "$files" ]; then
-          echo "gofmt: the following files need formatting:"
+          echo "gofmt: the following tracked files need formatting:"
           echo "$files"
           exit 1
         fi

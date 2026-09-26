@@ -3,6 +3,12 @@
 # Install hooks:   lefthook install
 # Run pre-commit:  lefthook run pre-commit
 # Run lint:        lefthook run lint
+#
+# NOTE: lefthook (v2.x) resolves the repo-root lefthook.yml regardless of the
+# directory it is invoked from, and runs jobs from the git root by default.
+# `apps/web-ui/Taskfile.yml` points lefthook here via LEFTHOOK_CONFIG, and each
+# `lint` job sets `root: apps/web-ui` so its relative paths (gateway/,
+# pyproject.toml, .gitleaks.toml) resolve against this directory.
 
 pre-commit:
   parallel: true
@@ -48,12 +54,15 @@ lint:
   parallel: true
   jobs:
     - name: ruff-check
+      root: apps/web-ui
       run: ruff check .
 
     - name: golangci-lint
+      root: apps/web-ui
       run: cd gateway && golangci-lint run ./...
 
     - name: gofmt
+      root: apps/web-ui
       run: |
         files=$(gofmt -l $(find gateway -name "*.go" -not -path "*/vendor/*"))
         if [ -n "$files" ]; then
@@ -61,29 +70,17 @@ lint:
         fi
 
     - name: go-vet
+      root: apps/web-ui
       run: cd gateway && go vet ./...
 
     - name: go-test
+      root: apps/web-ui
       run: cd gateway && go test ./...
 
-    - name: connector-golangci-lint
-      run: cd connector && golangci-lint run ./...
-
-    - name: connector-gofmt
-      run: |
-        files=$(gofmt -l $(find connector -name "*.go" -not -path "*/vendor/*"))
-        if [ -n "$files" ]; then
-          echo "gofmt needed:"; echo "$files"; exit 1
-        fi
-
-    - name: connector-go-vet
-      run: cd connector && go vet ./...
-
-    - name: connector-go-test
-      run: cd connector && go test ./...
-
     - name: templ-generate
+      root: apps/web-ui
       run: cd gateway && templ generate -check
 
     - name: no-secrets
+      root: apps/web-ui
       run: gitleaks dir . --config .gitleaks.toml --no-banner

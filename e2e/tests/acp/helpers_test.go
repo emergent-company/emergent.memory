@@ -50,14 +50,14 @@ func (m *rpcMsg) isResponse(id int) bool {
 
 // acpProc is a running `memory acp` process driven over stdio.
 type acpProc struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stderr *safeBuffer
-	ch     chan rpcMsg
-	done   chan struct{} // closed once the process exits
-	mu     sync.Mutex
+	cmd     *exec.Cmd
+	stdin   io.WriteCloser
+	stderr  *safeBuffer
+	ch      chan rpcMsg
+	done    chan struct{} // closed once the process exits
+	mu      sync.Mutex
 	exitErr error
-	once   sync.Once
+	once    sync.Once
 }
 
 // exitedErr returns the process exit error, valid after done is closed.

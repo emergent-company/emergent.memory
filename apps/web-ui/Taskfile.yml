@@ -7,6 +7,12 @@ tasks:
     desc: Run all linters via lefthook (ruff, golangci-lint, go vet/test, templ, gitleaks)
     cmds:
       - lefthook run lint
+    env:
+      # lefthook (v2.x) resolves the repo-root lefthook.yml regardless of the
+      # directory it is invoked from, so this app's own config would otherwise be
+      # inert. Point lefthook at the gateway-scoped config; the path is resolved
+      # relative to the git root, not the working directory.
+      LEFTHOOK_CONFIG: apps/web-ui/lefthook.yml
 
   secrets:scan:
     desc: Scan entire working tree for leaked secrets (gitleaks)
