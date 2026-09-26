@@ -394,6 +394,8 @@ templ chatRailList(convs *ConversationList, appearances map[string]agentAppearan
 // Clicking it asks chat.js to load the transcript and continue it. All
 // conversations are on-demand, so their origin is "manual". The agent's own
 // glyph leads the row (ap carries its declared icon/color, or the neutral bot).
+// The run-state badge sits ABOVE the title inside the grow column, so the
+// title takes the full row width instead of competing with the badge inline.
 templ sessionRailItem(c Conversation, ap agentAppearance, active bool) {
 	{{
 		attrs := templ.Attributes{
@@ -410,16 +412,15 @@ templ sessionRailItem(c Conversation, ap agentAppearance, active bool) {
 			attrs["data-active"] = "true"
 		}
 	}}
-	@ui.ListRow(ui.ListRowProps{
-		Title:    c.Title,
-		Subtitle: railSubtitle(ap.Name, c.UpdatedAt),
-		Leading:  agentInlineGlyph(ap.Icon, ap.Color),
-		Trailing: []templ.Component{
-			railStatusBadge(c.Bucket, c.PendingApprovals, c.PendingQuestions),
-			ui.IconSpan("lucide--chevron-right", "size-4 text-base-content/25"),
-		},
-		Attrs: attrs,
-	})
+	<li class="list-row" { attrs... }>
+		@agentInlineGlyph(ap.Icon, ap.Color)
+		<div class="list-col-grow">
+			@railStatusBadge(c.Bucket, c.PendingApprovals, c.PendingQuestions)
+			<div class="font-medium text-sm">{ c.Title }</div>
+			<div class="text-xs text-base-content/50">{ railSubtitle(ap.Name, c.UpdatedAt) }</div>
+		</div>
+		@ui.IconSpan("lucide--chevron-right", "size-4 text-base-content/25")
+	</li>
 }
 
 // railStatusBadge wraps lane A's RailStatusBadge in the node chat.js updates in
