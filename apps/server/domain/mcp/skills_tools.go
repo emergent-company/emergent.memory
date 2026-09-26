@@ -154,6 +154,11 @@ func (s *Service) executeGetSkill(ctx context.Context, projectID string, args ma
 		if err != nil {
 			return nil, fmt.Errorf("get_skill: %w", err)
 		}
+		// Same tier resolution as the REST GetSkill route (shared helper), so a
+		// cross-project/org read by UUID is refused (404) rather than leaked.
+		if err := s.skillsRepo.AuthorizeSkillAccess(ctx, sk); err != nil {
+			return nil, fmt.Errorf("get_skill: %w", err)
+		}
 		return s.wrapResult(sk.ToDTO())
 	}
 
@@ -209,6 +214,17 @@ func (s *Service) executeUpdateSkill(ctx context.Context, args map[string]any) (
 		return nil, fmt.Errorf("update_skill: invalid skill_id UUID: %w", err)
 	}
 
+	// Authorize before mutating: same tier resolution as the REST write routes,
+	// so a cross-project/org update is refused (404) and global writes (which
+	// require superadmin_full on the REST surface) are refused here too.
+	sk, err := s.skillsRepo.FindByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("update_skill: %w", err)
+	}
+	if err := s.skillsRepo.AuthorizeSkillWrite(ctx, sk); err != nil {
+		return nil, fmt.Errorf("update_skill: %w", err)
+	}
+
 	dto := &skills.UpdateSkillDTO{}
 
 	if v, ok := args["description"].(string); ok {
@@ -239,6 +255,18 @@ func (s *Service) executeDeleteSkill(ctx context.Context, args map[string]any) (
 	if err != nil {
 		return nil, fmt.Errorf("delete_skill: invalid skill_id UUID: %w", err)
 	}
+
+	// Authorize before mutating: same tier resolution as the REST write routes,
+	// so a cross-project/org delete is refused (404) and global deletes (which
+	// require superadmin_full on the REST surface) are refused here too.
+	sk, err := s.skillsRepo.FindByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("delete_skill: %w", err)
+	}
+	if err := s.skillsRepo.AuthorizeSkillWrite(ctx, sk); err != nil {
+		return nil, fmt.Errorf("delete_skill: %w", err)
+	}
+
 	if err := s.skillsRepo.Delete(ctx, id); err != nil {
 		return nil, fmt.Errorf("delete_skill: %w", err)
 	}

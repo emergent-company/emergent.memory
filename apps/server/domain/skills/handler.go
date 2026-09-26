@@ -124,7 +124,7 @@ func (h *Handler) GetSkill(c echo.Context) error {
 		return err
 	}
 
-	if err := h.authorizeSkillRead(c, skill); err != nil {
+	if err := h.repo.AuthorizeSkillAccess(c.Request().Context(), skill); err != nil {
 		return err
 	}
 
@@ -599,51 +599,4 @@ func parseSkillID(c echo.Context) (uuid.UUID, error) {
 		return uuid.Nil, apperror.ErrBadRequest.WithMessage("invalid skill ID")
 	}
 	return id, nil
-}
-
-// authorizeSkillRead enforces scope-based read authority for a single skill
-// addressed by id (GET /api/skills/:id). Skills are three-tiered: a global
-// skill (project_id IS NULL AND org_id IS NULL) is platform catalogue readable
-// by any authenticated caller — mirroring ListGlobalSkills and the blueprints
-// global-catalogue read posture; an org-scoped skill requires membership of its
-// org; a project-scoped skill requires membership of the project's owning org.
-// A cross-tenant read returns 404 (not 403) so the response does not leak a
-// skill's existence, mirroring requireOrgSkill/requireProjectSkill. 401 only
-// when no authenticated user is present (the route's RequireAuth guard already
-// guarantees one, so this is defense-in-depth).
-func (h *Handler) authorizeSkillRead(c echo.Context, skill *Skill) error {
-	if skill.ProjectID == nil && skill.OrgID == nil {
-		return nil // global catalogue: readable by any authenticated caller
-	}
-
-	user, err := auth.RequireUser(c.Request().Context())
-	if err != nil {
-		return err
-	}
-
-	if skill.OrgID != nil {
-		ok, err := h.repo.IsUserOrgMember(c.Request().Context(), *skill.OrgID, user.ID)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return apperror.NewNotFound("skill", skill.ID.String())
-		}
-		return nil
-	}
-
-	// Project-scoped: authorize against the owning org resolved server-side
-	// (never a caller-supplied path/header), mirroring requireProjectMember.
-	orgID, err := h.repo.GetOrgIDForProject(c.Request().Context(), *skill.ProjectID)
-	if err != nil {
-		return err
-	}
-	ok, err := h.repo.IsUserOrgMember(c.Request().Context(), orgID, user.ID)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return apperror.NewNotFound("skill", skill.ID.String())
-	}
-	return nil
 }
