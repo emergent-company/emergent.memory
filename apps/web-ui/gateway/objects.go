@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/emergent-company/go-daisy/render"
 	"github.com/labstack/echo/v4"
@@ -1044,6 +1045,44 @@ func propValues(v any) []string {
 	default:
 		return []string{propInputValue(v)}
 	}
+}
+
+// charCountLabel renders the initial, server-side character count for a
+// long-text field ("1,234 characters"). A browser normalizes a textarea's line
+// endings to LF in its .value / on form submit, so CRLF and lone CR sequences in
+// the raw stored string are normalized to LF before counting — otherwise the
+// server-rendered count would be one too high per CR compared with the
+// client-side counter. It counts code points and groups thousands.
+func charCountLabel(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	n := utf8.RuneCountInString(s)
+	noun := "characters"
+	if n == 1 {
+		noun = "character"
+	}
+	return groupDigits(n) + " " + noun
+}
+
+// groupDigits inserts thousands separators into a non-negative integer
+// ("41594" -> "41,594") so long counts stay readable.
+func groupDigits(n int) string {
+	digits := strconv.Itoa(n)
+	if len(digits) <= 3 {
+		return digits
+	}
+	var b strings.Builder
+	lead := len(digits) % 3
+	if lead > 0 {
+		b.WriteString(digits[:lead])
+	}
+	for i := lead; i < len(digits); i += 3 {
+		if b.Len() > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(digits[i : i+3])
+	}
+	return b.String()
 }
 
 // relationshipOptions returns the compiled relationship types usable from an
