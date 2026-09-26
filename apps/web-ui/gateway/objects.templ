@@ -626,8 +626,22 @@ templ propertyInput(def objectPropertyDef, vals []string) {
 	} else {
 		// string/unknown → auto-growing textarea; string values are free-form
 		// and may hold long text (widget: "textarea" is the explicit form).
-		<textarea name={ "prop_" + def.Name } rows="1" data-autogrow class="textarea w-full resize-none min-h-11 max-h-60">{ v }</textarea>
+		@longTextarea("prop_"+def.Name, v)
 	}
+}
+
+// longTextarea renders the free-form, multi-line string field used wherever an
+// object property may hold long text (schema string properties and stored
+// properties with no schema definition). It is an auto-growing, vertically
+// resizable textarea with a muted live character counter. The counter's initial
+// value is rendered server-side so it is correct before JS runs; app.js keeps
+// it in sync on input and re-initialises on HTMX swaps (boosted client-side
+// navigation does not fire DOMContentLoaded).
+templ longTextarea(name string, value string) {
+	<div class="w-full" data-char-counter>
+		<textarea name={ name } rows="1" data-autogrow class="textarea w-full min-h-20 max-h-96 resize-y">{ value }</textarea>
+		<div class="text-base-content/40 mt-1 text-right text-xs" data-testid="char-count" data-char-count-value>{ charCountLabel(value) }</div>
+	</div>
 }
 
 // --- Object detail ---
@@ -718,7 +732,7 @@ templ objectPropertiesCard(obj *GraphObject, propDefs []objectPropertyDef, label
 					}
 				} else {
 					@fm.FormControl(p.Key, p.Key, fm.LabelAbove, "", "", nil) {
-						<textarea name={ "prop_" + p.Key } rows="1" data-autogrow class="textarea w-full resize-none min-h-11 max-h-60">{ p.Value }</textarea>
+						@longTextarea("prop_"+p.Key, p.Value)
 					}
 				}
 			}
