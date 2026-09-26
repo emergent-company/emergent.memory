@@ -150,6 +150,17 @@ type fakeMemory struct {
 	lastSearchBranch string               // last branchID passed to SearchObjects
 	lastSearchLimit  int                  // last limit passed to SearchObjects
 	lastSearchOffset int                  // last offset passed to SearchObjects
+	unifiedResults   []ObjectSearchResult // returned by SearchObjectsUnified
+	unifiedErr       error                // SearchObjectsUnified failure
+	lastUnifiedQuery string               // last query passed to SearchObjectsUnified
+	lastUnifiedTypes string               // last types passed to SearchObjectsUnified
+	lastUnifiedBrnch string               // last branchID passed to SearchObjectsUnified
+	lastUnifiedLimit int                  // last limit passed to SearchObjectsUnified
+	knowledgeAnswer  string               // returned by QueryKnowledge
+	knowledgeSession string               // returned by QueryKnowledge
+	knowledgeErr     error                // QueryKnowledge failure
+	lastKnowledgeQ   string               // last question passed to QueryKnowledge
+	lastKnowledgeBr  string               // last branch passed to QueryKnowledge
 
 	embeddingProgress *EmbeddingProgress // returned by GetEmbeddingProgress
 	embeddingProgErr  error              // GetEmbeddingProgress failure
@@ -1080,6 +1091,26 @@ func (f *fakeMemory) SearchObjects(ctx context.Context, mode, query, types, bran
 	f.lastSearchLimit = limit
 	f.lastSearchOffset = offset
 	return f.searchResults, f.searchHasMore, nil
+}
+
+func (f *fakeMemory) SearchObjectsUnified(ctx context.Context, query, types, branchID string, limit int) ([]ObjectSearchResult, error) {
+	if f.unifiedErr != nil {
+		return nil, f.unifiedErr
+	}
+	f.lastUnifiedQuery = query
+	f.lastUnifiedTypes = types
+	f.lastUnifiedBrnch = branchID
+	f.lastUnifiedLimit = limit
+	return f.unifiedResults, nil
+}
+
+func (f *fakeMemory) QueryKnowledge(ctx context.Context, question, branch string) (string, string, error) {
+	if f.knowledgeErr != nil {
+		return "", "", f.knowledgeErr
+	}
+	f.lastKnowledgeQ = question
+	f.lastKnowledgeBr = branch
+	return f.knowledgeAnswer, f.knowledgeSession, nil
 }
 
 func (f *fakeMemory) GetEmbeddingProgress(ctx context.Context) (*EmbeddingProgress, error) {

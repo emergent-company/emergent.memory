@@ -291,6 +291,7 @@ func main() {
 	e.GET("/objects/partial", s.uiObjectsPartial)
 	e.GET("/objects/search", s.uiObjectSearch)
 	e.GET("/objects/new", s.uiObjectNew)
+	e.POST("/objects/knowledge", s.uiObjectsKnowledge)
 	e.GET("/objects/:id", s.uiObject)
 	e.GET("/objects/:id/merge", s.uiObjectMerge)
 	e.GET("/objects/:id/chat", s.uiObjectChat)
