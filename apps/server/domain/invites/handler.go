@@ -151,7 +151,7 @@ func (h *Handler) Create(c echo.Context) error {
 	// authority is resolved server-side from kb.organization_memberships and
 	// core.superadmins — never from a request-controlled value.
 	if req.Role == "org_admin" {
-		allowed, err := h.mayGrantOrgAdmin(c.Request().Context(), targetOrgID, user.ID)
+		allowed, err := h.mayAdministerOrg(c.Request().Context(), targetOrgID, user.ID)
 		if err != nil {
 			return err
 		}
@@ -174,12 +174,12 @@ func (h *Handler) Create(c echo.Context) error {
 	return c.JSON(http.StatusCreated, invite)
 }
 
-// mayGrantOrgAdmin reports whether the caller may grant org_admin membership in
-// orgID. A caller who is themselves an org_admin of orgID, or an active
-// superadmin_full, may; anyone else may not (issue #967). The caller's authority
-// is resolved server-side from kb.organization_memberships and core.superadmins,
-// never from a client-supplied value.
-func (h *Handler) mayGrantOrgAdmin(ctx context.Context, orgID, userID string) (bool, error) {
+// mayAdministerOrg reports whether the caller holds org_admin authority over
+// orgID (or is an active superadmin_full), resolved server-side from
+// kb.organization_memberships and core.superadmins — never a client-supplied
+// value. It gates both org-tier invite actions: minting an org_admin invitation
+// (issue #967) and revoking an invitation.
+func (h *Handler) mayAdministerOrg(ctx context.Context, orgID, userID string) (bool, error) {
 	role, err := h.orgs.GetMembershipRole(ctx, orgID, userID)
 	if err != nil {
 		return false, err
@@ -304,21 +304,24 @@ func (h *Handler) Delete(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invite_id is required")
 	}
 
-	// Resolve the invite server-side and require the caller to be a member of
-	// its organization before revoking (issue #960). A non-member receives 404,
-	// indistinguishable from a missing invite, so this endpoint is not an
-	// existence oracle.
+	// Resolve the invite server-side; a missing invite is 404.
 	invite, err := h.svc.GetByID(c.Request().Context(), inviteID)
 	if err != nil {
 		return err
 	}
 
-	member, err := h.orgs.IsUserMember(c.Request().Context(), invite.OrganizationID, user.ID)
+	// Revoking an invitation is an org-tier write: the caller must hold
+	// org_admin authority over the invite's organization (or be an active
+	// superadmin_full). Authority is resolved server-side from the invite's
+	// stored organization_id — never a client-supplied value — so a plain member
+	// (who could previously revoke) and a caller from a different org are both
+	// refused fail-closed.
+	allowed, err := h.mayAdministerOrg(c.Request().Context(), invite.OrganizationID, user.ID)
 	if err != nil {
 		return err
 	}
-	if !member {
-		return apperror.NewNotFound("invite", inviteID)
+	if !allowed {
+		return apperror.ErrForbidden
 	}
 
 	if err := h.svc.Revoke(c.Request().Context(), inviteID); err != nil {

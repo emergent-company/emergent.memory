@@ -274,27 +274,38 @@ func (s *InvitesMembershipSuite) TestCreateProjectScopedOrgAdminRejected() {
 
 // ─── Revoke (DELETE /api/invites/:id) ────────────────────────────────────────
 
-// TestRevokeNonMemberNotFound proves a non-member cannot revoke another org's
-// invite and receives 404 (no existence oracle).
-func (s *InvitesMembershipSuite) TestRevokeNonMemberNotFound() {
+// TestRevokeNonMemberForbidden proves a non-member (bare user) cannot revoke an
+// invite and receives 403 — revoke is an org_admin action, not a membership one.
+func (s *InvitesMembershipSuite) TestRevokeNonMemberForbidden() {
 	inviteID := s.createInviteID(s.OrgID)
 
 	resp := s.Client.DELETE("/api/invites/"+inviteID, testutil.WithAuth("no-scope"))
-	s.Require().Equal(http.StatusNotFound, resp.StatusCode,
-		"non-member revoke must be 404, got %d: %s", resp.StatusCode, resp.String())
+	s.Require().Equal(http.StatusForbidden, resp.StatusCode,
+		"non-member revoke must be 403, got %d: %s", resp.StatusCode, resp.String())
 }
 
-// TestRevokeMemberOK proves a member revoking their own org's invite succeeds.
-func (s *InvitesMembershipSuite) TestRevokeMemberOK() {
+// TestRevokePlainMemberForbidden is the fail-first reproducer for the tier gap:
+// a plain member (role "member") of the invite's org must NOT revoke an invite
+// — the tier-correct bar is org_admin, not mere membership.
+func (s *InvitesMembershipSuite) TestRevokePlainMemberForbidden() {
+	s.seedMemberInOrg()
+	inviteID := s.createInviteID(s.OrgID)
+
+	resp := s.Client.DELETE("/api/invites/"+inviteID, testutil.WithAuth("read-only"))
+	s.Require().Equal(http.StatusForbidden, resp.StatusCode,
+		"plain member revoke must be 403, got %d: %s", resp.StatusCode, resp.String())
+}
+
+// TestRevokeOrgAdminOK proves an org_admin revoking their own org's invite succeeds.
+func (s *InvitesMembershipSuite) TestRevokeOrgAdminOK() {
 	inviteID := s.createInviteID(s.OrgID)
 
 	resp := s.Client.DELETE("/api/invites/"+inviteID, testutil.WithAuth("e2e-test-user"))
 	s.Require().Equal(http.StatusNoContent, resp.StatusCode,
-		"member revoke must be 204, got %d: %s", resp.StatusCode, resp.String())
+		"org_admin revoke must be 204, got %d: %s", resp.StatusCode, resp.String())
 }
 
-// TestRevokeUnknownInviteNotFound proves a non-existent id returns 404,
-// indistinguishable from the non-member denial (no existence leak).
+// TestRevokeUnknownInviteNotFound proves a non-existent id returns 404.
 func (s *InvitesMembershipSuite) TestRevokeUnknownInviteNotFound() {
 	resp := s.Client.DELETE("/api/invites/"+uuid.New().String(), testutil.WithAuth("e2e-test-user"))
 	s.Require().Equal(http.StatusNotFound, resp.StatusCode,

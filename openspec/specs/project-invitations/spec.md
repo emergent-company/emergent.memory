@@ -123,11 +123,19 @@ The system SHALL provide a `POST /api/invites/:id/decline` endpoint (authenticat
 - **THEN** the server responds with HTTP 403 and leaves the invitation unchanged
 
 ### Requirement: Revoke an invitation
-The system SHALL provide a `DELETE /api/invites/:id` endpoint (authentication required) that sets a pending invitation's status to `revoked`. The system SHALL require the caller to be a member of the invitation's organization before revoking; a caller who is not a member SHALL receive HTTP 404 (indistinguishable from a missing invitation, so the endpoint is not an existence oracle). Revoking a non-pending invitation SHALL return HTTP 404.
+The system SHALL provide a `DELETE /api/invites/:id` endpoint (authentication required) that sets a pending invitation's status to `revoked`. The system SHALL require the caller to be an `org_admin` of the invitation's organization (or an active `superadmin_full`) before revoking — revoking is an org-tier write, not a membership read. A caller who is not an `org_admin` SHALL receive HTTP 403 (a plain member, a caller from a different organization, and a bare authenticated user are all refused fail-closed). A missing invitation SHALL return HTTP 404. Revoking a non-pending invitation SHALL return HTTP 404.
 
 #### Scenario: Pending invitation revoked
-- **WHEN** an authenticated user revokes a pending invitation
+- **WHEN** an `org_admin` of the invitation's organization revokes a pending invitation
 - **THEN** the invitation `status` is set to `revoked` and the server returns HTTP 204
+
+#### Scenario: A non-admin member cannot revoke
+- **WHEN** a plain member of the invitation's organization attempts to revoke a pending invitation
+- **THEN** the server returns HTTP 403 and the invitation is unchanged
+
+#### Scenario: A caller from another organization cannot revoke
+- **WHEN** a caller who is not an `org_admin` of the invitation's organization attempts to revoke it
+- **THEN** the server returns HTTP 403 and the invitation is unchanged
 
 #### Scenario: Already-processed invitation cannot be revoked
 - **WHEN** a user attempts to revoke an invitation that is not pending

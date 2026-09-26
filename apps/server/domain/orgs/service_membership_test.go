@@ -36,7 +36,8 @@ func TestServiceGetByID_Membership(t *testing.T) {
 	assert.Equal(t, "org-1", dto.ID)
 }
 
-// TestServiceUpdate_Membership covers the membership gate added to Update.
+// TestServiceUpdate_Membership covers the org_admin gate on Update (rename):
+// no user ⇒ 401, non-member ⇒ 403, plain member ⇒ 403, org_admin ⇒ allowed.
 func TestServiceUpdate_Membership(t *testing.T) {
 	svc := testOrgService(&fakeOrgRepo{org: &Org{ID: "org-1", Name: "Renamed"}})
 
@@ -46,14 +47,20 @@ func TestServiceUpdate_Membership(t *testing.T) {
 	_, err = svc.Update(context.Background(), "org-1", "user-2", "Renamed")
 	expectHTTPStatus(t, err, 403)
 
-	repo := &fakeOrgRepo{org: &Org{ID: "org-1", Name: "Renamed"}, member: true}
+	// A plain member (role "member") must NOT rename the org — the tier-correct
+	// bar is org_admin, not membership.
+	_, err = testOrgService(&fakeOrgRepo{member: true, role: "member"}).Update(context.Background(), "org-1", "user-1", "Renamed")
+	expectHTTPStatus(t, err, 403)
+
+	repo := &fakeOrgRepo{org: &Org{ID: "org-1", Name: "Renamed"}, member: true, role: "org_admin"}
 	svc = testOrgService(repo)
 	_, err = svc.Update(context.Background(), "org-1", "user-1", "Renamed")
 	require.NoError(t, err)
 	assert.Equal(t, 1, repo.updateCalls)
 }
 
-// TestServiceDelete_Membership covers the membership gate added to Delete.
+// TestServiceDelete_Membership covers the org_admin gate on Delete: no user ⇒
+// 401, non-member ⇒ 403, plain member ⇒ 403, org_admin ⇒ allowed.
 func TestServiceDelete_Membership(t *testing.T) {
 	svc := testOrgService(&fakeOrgRepo{})
 
@@ -61,14 +68,18 @@ func TestServiceDelete_Membership(t *testing.T) {
 
 	expectHTTPStatus(t, svc.Delete(context.Background(), "org-1", "user-2"), 403)
 
-	repo := &fakeOrgRepo{member: true, deleteResult: true}
+	expectHTTPStatus(t, testOrgService(&fakeOrgRepo{member: true, role: "member"}).Delete(context.Background(), "org-1", "user-1"), 403)
+
+	repo := &fakeOrgRepo{member: true, role: "org_admin", deleteResult: true}
 	svc = testOrgService(repo)
 	require.NoError(t, svc.Delete(context.Background(), "org-1", "user-1"))
 	assert.Equal(t, 1, repo.deleteCalls)
 	assert.Equal(t, "org-1", repo.deletedID)
 }
 
-// TestServiceListMembers_Membership covers the membership gate added to ListMembers.
+// TestServiceListMembers_Membership covers the org_admin gate on ListMembers
+// (member PII): no user ⇒ 401, non-member ⇒ 403, plain member ⇒ 403, org_admin
+// ⇒ allowed.
 func TestServiceListMembers_Membership(t *testing.T) {
 	svc := testOrgService(&fakeOrgRepo{})
 
@@ -78,7 +89,10 @@ func TestServiceListMembers_Membership(t *testing.T) {
 	_, err = svc.ListMembers(context.Background(), "org-1", "user-2")
 	expectHTTPStatus(t, err, 403)
 
-	svc = testOrgService(&fakeOrgRepo{member: true})
+	_, err = testOrgService(&fakeOrgRepo{member: true, role: "member"}).ListMembers(context.Background(), "org-1", "user-1")
+	expectHTTPStatus(t, err, 403)
+
+	svc = testOrgService(&fakeOrgRepo{member: true, role: "org_admin"})
 	_, err = svc.ListMembers(context.Background(), "org-1", "user-1")
 	require.NoError(t, err)
 }
