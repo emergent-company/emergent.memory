@@ -1719,42 +1719,6 @@ func (s *Service) IsSuperadminOnlyTool(name string) bool {
 	return superadminOnlyToolNames[name]
 }
 
-// agentOnlyToolNames is the set of tool names gated on agent-only visibility:
-// they are reachable in-process ONLY from a trusted/internal run, never via an
-// external surface (webhook, A2A, agentcompat, public share), matching the HTTP
-// transports which hide them entirely. It is derived from the same package-level
-// web-tool builders GetToolDefinitions consumes (plus any dynamic builder that
-// tags a tool AgentOnly), so it cannot drift from the tools it guards.
-// Enforcement keys off this set — never off a re-mapped ToolDefinition — so the
-// ADK ToolPool's definition re-map (which drops AgentOnly) cannot bypass it
-// (issue #994, mechanism 7).
-var agentOnlyToolNames = func() map[string]bool {
-	names := make(map[string]bool)
-	for _, def := range []ToolDefinition{
-		getBraveSearchToolDefinition(),
-		getWebFetchToolDefinition(),
-		getRedditSearchToolDefinition(),
-	} {
-		if def.AgentOnly {
-			names[def.Name] = true
-		}
-	}
-	for _, build := range dynamicToolBuilders {
-		for _, def := range build() {
-			if def.AgentOnly {
-				names[def.Name] = true
-			}
-		}
-	}
-	return names
-}()
-
-// IsAgentOnlyTool reports whether the named tool is agent-only (reachable only
-// by internal memory agents, never via an external surface regardless of scopes).
-func (s *Service) IsAgentOnlyTool(name string) bool {
-	return agentOnlyToolNames[name]
-}
-
 // mcpToolScopeVocabulary is the set of scope values that can gate an MCP tool.
 // It is derived from the tool catalog — the central static scope map plus the
 // package-level builders in dynamicToolBuilders (the same list GetToolDefinitions
@@ -1921,22 +1885,37 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 			return nil, fmt.Errorf("tool %q requires superadmin privileges", toolName)
 		}
 	}
-	// Defense in depth: enforce the AgentOnly boundary on the in-process dispatch
-	// path. The HTTP transports hide agent-only tools entirely, but the ADK
-	// ToolPool (agent runs) calls ExecuteTool directly and never passes through a
-	// transport pre-check. Agent-only tools are the "callable only by other
-	// agents, never via external surfaces" class, so an in-process run may reach
-	// them only when it was started through a trusted/internal surface (session
-	// UI, scheduler, MCP-triggered agent). An external/untrusted run — webhook,
-	// A2A, agentcompat, or public share (TrustedInternal == false) — must not.
-	// Fail-closed: an absent trust marker resolves to untrusted (issue #994).
+	// Defense in depth: enforce the per-tool authority boundary on the in-process
+	// dispatch path. The three HTTP transports already enforce AgentOnly (hidden)
+	// and RequiredScope (scope-gated) before dispatch via GetToolByName, but the
+	// ADK ToolPool (agent runs) calls ExecuteTool directly and never passes
+	// through a transport pre-check. This reads the SAME source of truth the HTTP
+	// transports use — GetToolByName(...).AgentOnly / .RequiredScope — so the two
+	// can never drift (issue #994).
 	//
-	// NOTE: RequiredScope is intentionally NOT enforced here. It is a token-scope
-	// concept; the in-process principal is an agent run acting on project
-	// membership (not a token), so its ctx carries no token scopes to check. See
-	// the authz-surface-matrix residual for the remaining gap (issue #994).
-	if s.IsAgentOnlyTool(toolName) && !TrustedInternalFromContext(ctx) {
-		return nil, fmt.Errorf("tool %q is agent-only and not reachable from an untrusted surface", toolName)
+	// The in-process principal is an agent run, not a token, so token scopes do
+	// not apply directly. TrustedInternal (kb.agent_runs.trusted_internal) is the
+	// in-process trust primitive: true for trusted/internal surfaces (session UI,
+	// scheduler, MCP-triggered agent) and false for external surfaces (webhook,
+	// A2A, agentcompat, public share). Fail-closed: an absent marker resolves to
+	// untrusted.
+	//
+	//   - AgentOnly tools (web-search-*, web-fetch, mcp-server-*, update_mcp_server,
+	//     toggle/sync_mcp_server_tools) are the "callable only by other agents,
+	//     never via external surfaces" class — refused for untrusted runs.
+	//   - admin-scoped tools (token-*, provider-configure-project, provider-models-list,
+	//     trace-*, project-create) are sensitive (token minting, provider config,
+	//     cross-tenant traces, project creation) — refused for untrusted runs,
+	//     matching the HTTP RequiredScope:"admin" gate. They are admin-scoped over
+	//     HTTP, not superadmin, so the in-process bar is trusted-internal, not
+	//     superadmin_full.
+	if toolDef := s.GetToolByName(toolName); toolDef != nil && !TrustedInternalFromContext(ctx) {
+		if toolDef.AgentOnly {
+			return nil, fmt.Errorf("tool %q is agent-only and not reachable from an untrusted surface", toolName)
+		}
+		if toolDef.RequiredScope == "admin" {
+			return nil, fmt.Errorf("tool %q requires admin authority and is not reachable from an untrusted surface", toolName)
+		}
 	}
 	switch toolName {
 	case "project-get":
@@ -2230,6 +2209,12 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 			for _, sess := range s.relaySvc.ListByProject(projectID) {
 				prefix := sess.InstanceID + "_"
 				if strings.HasPrefix(toolName, prefix) {
+					// Relay tools forward to a connected client device and are the
+					// agent-only class: refuse them from an untrusted (external) run,
+					// mirroring the AgentOnly gate above (issue #994).
+					if !TrustedInternalFromContext(ctx) {
+						return nil, fmt.Errorf("relay tool %q is not reachable from an untrusted surface", toolName)
+					}
 					relayToolName := strings.TrimPrefix(toolName, prefix)
 					result, err := s.relaySvc.CallTool(ctx, projectID, sess.InstanceID, relayToolName, args)
 					if err != nil {
