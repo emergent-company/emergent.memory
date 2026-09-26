@@ -202,7 +202,18 @@ func TestRenderObjectDetailSimilar(t *testing.T) {
 		}
 	}
 
-	htmlEmpty := renderHTML(t, ObjectDetailPage(obj, nil, nil, nil, nil, nil, "", nil, nil, nil, nil))
+	// Without similar data the page defers the section to /objects/:id/similar
+	// instead of rendering it inline, so a slow /similar cannot hold the render
+	// (issue #1096).
+	htmlDeferred := renderHTML(t, ObjectDetailPage(obj, nil, nil, nil, nil, nil, "", nil, nil, nil, nil))
+	for _, want := range []string{`hx-get="/objects/o1/similar"`, "Finding similar objects"} {
+		if !strings.Contains(htmlDeferred, want) {
+			t.Errorf("deferred similar placeholder missing %q", want)
+		}
+	}
+
+	// The empty state itself still renders from the partial's data path.
+	htmlEmpty := renderHTML(t, objectSimilarObjects(obj, nil))
 	if !strings.Contains(htmlEmpty, "No similar objects") {
 		t.Error("no-similar-objects state missing")
 	}
