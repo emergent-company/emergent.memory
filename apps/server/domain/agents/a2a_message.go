@@ -96,6 +96,76 @@ func a2aSkillIDFromMetadata(metadata map[string]any) string {
 	return ""
 }
 
+// a2uiActionMetadataKey is the message.metadata key carrying a client→server
+// surface action ({"surfaceId": "...", "action": {...}}).
+const a2uiActionMetadataKey = "a2uiAction"
+
+// a2uiAction is the parsed client→server surface action carried in
+// message.metadata under a2uiActionMetadataKey.
+type a2uiAction struct {
+	SurfaceID string `json:"surfaceId"`
+	Action    any    `json:"action"`
+}
+
+// a2uiActionFromMetadata extracts a surface action from message metadata. It
+// reports ok=false when the metadata carries no valid surface action.
+func a2uiActionFromMetadata(metadata map[string]any) (a2uiAction, bool) {
+	if metadata == nil {
+		return a2uiAction{}, false
+	}
+	raw, ok := metadata[a2uiActionMetadataKey]
+	if !ok || raw == nil {
+		return a2uiAction{}, false
+	}
+	obj, ok := raw.(map[string]any)
+	if !ok {
+		return a2uiAction{}, false
+	}
+	surfaceID, _ := obj["surfaceId"].(string)
+	if surfaceID == "" {
+		return a2uiAction{}, false
+	}
+	return a2uiAction{SurfaceID: surfaceID, Action: obj["action"]}, true
+}
+
+// a2uiActionMessage formats a surface action as the user message the agent
+// receives, so it can respond with updated surfaces for the same surfaceId.
+func a2uiActionMessage(action a2uiAction, userText string) string {
+	actionJSON, err := json.Marshal(action.Action)
+	if err != nil {
+		actionJSON = []byte("{}")
+	}
+	msg := fmt.Sprintf("The user took an action on UI surface %q:\n%s", action.SurfaceID, actionJSON)
+	if userText != "" {
+		msg += "\n\n" + userText
+	}
+	return msg
+}
+
+// a2uiSurfaceActionContext resolves the context id for a surface-action
+// follow-up: message.contextId when present, else the session of the referenced
+// task. It returns an *A2AError when neither yields a context.
+func (h *A2AHandler) a2uiSurfaceActionContext(ctx context.Context, req SendMessageRequest) (string, *A2AError) {
+	if req.Message.ContextID != "" {
+		return req.Message.ContextID, nil
+	}
+	if req.Message.TaskID == "" {
+		return "", a2aValidationError("surface action requires a contextId or taskId")
+	}
+	orig, err := h.repo.FindRunByID(ctx, req.Message.TaskID)
+	if err != nil {
+		h.log.Error("surface action: failed to load task", "task_id", req.Message.TaskID, "error", err.Error())
+		return "", NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to load task")
+	}
+	if orig == nil {
+		return "", a2aValidationError("surface action references an unknown task")
+	}
+	if cid := derefString(orig.ACPSessionID); cid != "" {
+		return cid, nil
+	}
+	return "", a2aValidationError("surface action references a task with no context")
+}
+
 // isTerminalRunStatus reports whether an internal run status is terminal.
 func isTerminalRunStatus(s AgentRunStatus) bool {
 	switch s {
@@ -527,13 +597,22 @@ func (h *A2AHandler) SendMessage(c echo.Context) error {
 	}
 
 	userMessage := a2aUserMessageFromParts(req.Message.Parts)
-	if userMessage == "" {
+	surfaceAction, isSurfaceAction := a2uiActionFromMetadata(req.Message.Metadata)
+	if userMessage == "" && !isSurfaceAction {
 		return writeA2AError(c, a2aValidationError("message must contain at least one text part"))
 	}
 
 	userID := ""
 	if u := auth.GetUser(c); u != nil {
 		userID = u.ID
+	}
+
+	if isSurfaceAction {
+		contextID, a2aErr := h.a2uiSurfaceActionContext(c.Request().Context(), req)
+		if a2aErr != nil {
+			return writeA2AError(c, a2aErr)
+		}
+		return h.startA2ATask(c, projectID, userID, a2uiActionMessage(surfaceAction, userMessage), contextID, a2aSkillIDFromMetadata(req.Message.Metadata), req.Configuration)
 	}
 
 	if req.Message.TaskID == "" {

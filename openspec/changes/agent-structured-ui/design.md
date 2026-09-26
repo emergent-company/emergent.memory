@@ -39,7 +39,7 @@ The executor recognizes A2UI two ways: (1) fenced ```a2ui JSONL blocks in model 
 
 ### Action round-trip
 
-A client action (`Button.action.event` or `functionCall`) returns to the server as a follow-up message on the same `contextId`/`taskId` carrying `{surfaceId, action}` in metadata. The existing resume path (`message:stream`/`message:send` with `taskId`, or chat `/respond`) resumes the run; the agent emits `updateComponents`/`updateDataModel` for that surface. A2UI actions are distinct from `ask_user` question answers and are NOT routed through `AnswerQuestion`.
+A client action (`Button.action.event` or `functionCall`) returns to the server as a follow-up message on the same `contextId` (or `taskId`) carrying `{surfaceId, action}` under `message.metadata["a2uiAction"]`. The server detects it, resolves the context, formats the action as the agent's user message, and starts a **new turn in the existing context** — never the `INPUT_REQUIRED` question-answer resume (`AnswerQuestion`). The agent's reply (possibly a new ```a2ui fence) streams updated surfaces. A surface action does not require a text part.
 
 ### Rendering
 
@@ -52,3 +52,9 @@ A client action (`Button.action.event` or `functionCall`) returns to the server 
 - No code execution: actions are `event` (→ agent) or `functionCall` (→ pre-registered client fn); no arbitrary JS.
 - Secrets never echoed (provider/api-key, mcp headers masked) — same rule as the existing proposal cards.
 - `a2uiClientDataModel` (when `sendDataModel: true`) is point-to-point; stripping for multi-agent fan-out is out of scope (leaf server today).
+
+## Implementation notes (deviations from the original design)
+
+- **Catalog**: implemented as a Go-native component registry + structural validator (`pkg/a2ui`), not a JSON Schema file. No new dependency; a JSON-Schema export can be added later if a spec-conformant artifact is needed.
+- **Web rendering**: implemented as a dependency-free plain-JS card renderer (no `@a2ui/lit` npm island). The `@a2ui/lit`/`@a2ui/web_core` island remains a follow-up for byte-identical A2UI rendering.
+- **Surface-action routing**: implemented as a new turn in the existing context (not a literal resume of the completed run, which is terminal). Documented in the Action round-trip section.

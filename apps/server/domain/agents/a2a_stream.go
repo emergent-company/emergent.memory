@@ -346,13 +346,22 @@ func (h *A2AHandler) StreamMessage(c echo.Context) error {
 	}
 
 	userMessage := a2aUserMessageFromParts(req.Message.Parts)
-	if userMessage == "" {
+	surfaceAction, isSurfaceAction := a2uiActionFromMetadata(req.Message.Metadata)
+	if userMessage == "" && !isSurfaceAction {
 		return writeA2AError(c, a2aValidationError("message must contain at least one text part"))
 	}
 
 	userID := ""
 	if u := auth.GetUser(c); u != nil {
 		userID = u.ID
+	}
+
+	if isSurfaceAction {
+		contextID, a2aErr := h.a2uiSurfaceActionContext(c.Request().Context(), req)
+		if a2aErr != nil {
+			return writeA2AError(c, a2aErr)
+		}
+		return h.streamNewTask(c, projectID, userID, a2uiActionMessage(surfaceAction, userMessage), contextID, a2aSkillIDFromMetadata(req.Message.Metadata))
 	}
 
 	if req.Message.TaskID == "" {
