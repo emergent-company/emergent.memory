@@ -25,7 +25,11 @@ templ ObjectsPage(data objectsPageData) {
 			@pageError("Failed to load objects", data.LoadErr)
 		} else {
 			if data.Query == "" {
-				@objectsStatsSection(data.Stats)
+				if data.Stats == nil {
+					@objectsStatsDeferred()
+				} else {
+					@objectsStatsSection(*data.Stats)
+				}
 			}
 			@objectsSearchForm(data)
 			@objectsFilters(data)
@@ -94,6 +98,36 @@ templ objectsStatsSection(s objectsStats) {
 			IconColor: "bg-error/10 text-error",
 			Attrs:     embedAttrs,
 		})
+	</div>
+}
+
+// objectsStatsDeferred is the first-paint placeholder for the browse stats row:
+// three "…" stat cards plus the deferred /objects/stats fetch, which swaps the
+// real counts in. Keeping the object-count and embedding-progress aggregates off
+// the critical path means one slow call can no longer hold the whole browse page
+// (issue #1098).
+templ objectsStatsDeferred() {
+	<div id="objects-stats" hx-get="/objects/stats" hx-trigger="load" hx-swap="outerHTML">
+		<div class="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+			@ui.StatCard(ui.StatCardProps{
+				Label:     "objects",
+				Value:     "…",
+				Icon:      "lucide--box",
+				IconColor: "bg-base-200/60 text-base-content",
+			})
+			@ui.StatCard(ui.StatCardProps{
+				Label:     "pending embeddings",
+				Value:     "…",
+				Icon:      "lucide--hourglass",
+				IconColor: "bg-warning/10 text-warning",
+			})
+			@ui.StatCard(ui.StatCardProps{
+				Label:     "failed embeddings",
+				Value:     "…",
+				Icon:      "lucide--triangle-alert",
+				IconColor: "bg-error/10 text-error",
+			})
+		</div>
 	</div>
 }
 

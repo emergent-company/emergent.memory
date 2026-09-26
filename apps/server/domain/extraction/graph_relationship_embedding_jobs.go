@@ -249,19 +249,46 @@ type GraphRelationshipEmbeddingQueueStats struct {
 // staleFailed so a healthy queue does not look permanently broken.
 func (s *GraphRelationshipEmbeddingJobsService) Stats(ctx context.Context) (*GraphRelationshipEmbeddingQueueStats, error) {
 	stats := &GraphRelationshipEmbeddingQueueStats{}
+
+	// Index-friendly shape: one `GROUP BY status` aggregate satisfied by an
+	// index-only scan over idx_graph_rel_emb_jobs_status, plus a separate
+	// index-backed stale_failed count (last_error is not covered by the status
+	// index). The old `COUNT(*) FILTER (WHERE status = ...)` shape full-scanned
+	// the table (issue #1098).
+	type statusCount struct {
+		Status string `bun:"status"`
+		Count  int64  `bun:"count"`
+	}
+	var rows []statusCount
 	err := s.db.NewRaw(`
-		SELECT
-			COUNT(*) FILTER (WHERE status = 'pending') as pending,
-			COUNT(*) FILTER (WHERE status = 'processing') as processing,
-			COUNT(*) FILTER (WHERE status = 'completed') as completed,
-			COUNT(*) FILTER (WHERE status = 'failed' AND COALESCE(last_error, '') <> ?) as failed,
-			COUNT(*) FILTER (WHERE status = 'failed' AND last_error = ?) as stale_failed,
-			COUNT(*) FILTER (WHERE status = 'dead_letter') as dead_letter
-		FROM kb.graph_relationship_embedding_jobs`, jobs.StaleJobMessage, jobs.StaleJobMessage).
-		Scan(ctx, &stats.Pending, &stats.Processing, &stats.Completed, &stats.Failed, &stats.StaleFailed, &stats.DeadLetter)
+		SELECT status, COUNT(*) AS count
+		FROM kb.graph_relationship_embedding_jobs
+		GROUP BY status`).Scan(ctx, &rows)
 	if err != nil {
 		return nil, fmt.Errorf("get relationship stats: %w", err)
 	}
+	for _, r := range rows {
+		switch r.Status {
+		case string(JobStatusPending):
+			stats.Pending = r.Count
+		case string(JobStatusProcessing):
+			stats.Processing = r.Count
+		case string(JobStatusCompleted):
+			stats.Completed = r.Count
+		case string(JobStatusFailed):
+			stats.Failed = r.Count
+		case string(JobStatusDeadLetter):
+			stats.DeadLetter = r.Count
+		}
+	}
+
+	if err := s.db.NewRaw(`
+		SELECT COUNT(*) FROM kb.graph_relationship_embedding_jobs
+		WHERE status = 'failed' AND last_error = ?`, jobs.StaleJobMessage).Scan(ctx, &stats.StaleFailed); err != nil {
+		return nil, fmt.Errorf("get relationship stale-failed stats: %w", err)
+	}
+	stats.Failed -= stats.StaleFailed
+
 	return stats, nil
 }
 
@@ -269,21 +296,48 @@ func (s *GraphRelationshipEmbeddingJobsService) Stats(ctx context.Context) (*Gra
 // project. failed excludes stale-sweep reaps; see Stats.
 func (s *GraphRelationshipEmbeddingJobsService) StatsByProject(ctx context.Context, projectID string) (*GraphRelationshipEmbeddingQueueStats, error) {
 	stats := &GraphRelationshipEmbeddingQueueStats{}
+
+	// Same index-friendly GROUP BY shape as Stats, scoped to the project via the
+	// graph_relationships join (the jobs table carries relationship_id only).
+	type statusCount struct {
+		Status string `bun:"status"`
+		Count  int64  `bun:"count"`
+	}
+	var rows []statusCount
 	err := s.db.NewRaw(`
-		SELECT
-			COUNT(*) FILTER (WHERE j.status = 'pending') as pending,
-			COUNT(*) FILTER (WHERE j.status = 'processing') as processing,
-			COUNT(*) FILTER (WHERE j.status = 'completed') as completed,
-			COUNT(*) FILTER (WHERE j.status = 'failed' AND COALESCE(j.last_error, '') <> ?) as failed,
-			COUNT(*) FILTER (WHERE j.status = 'failed' AND j.last_error = ?) as stale_failed,
-			COUNT(*) FILTER (WHERE j.status = 'dead_letter') as dead_letter
+		SELECT j.status, COUNT(*) AS count
 		FROM kb.graph_relationship_embedding_jobs j
 		JOIN kb.graph_relationships r ON r.id = j.relationship_id
-		WHERE r.project_id = ?`, jobs.StaleJobMessage, jobs.StaleJobMessage, projectID).
-		Scan(ctx, &stats.Pending, &stats.Processing, &stats.Completed, &stats.Failed, &stats.StaleFailed, &stats.DeadLetter)
+		WHERE r.project_id = ?
+		GROUP BY j.status`, projectID).Scan(ctx, &rows)
 	if err != nil {
 		return nil, fmt.Errorf("get project relationship stats: %w", err)
 	}
+	for _, r := range rows {
+		switch r.Status {
+		case string(JobStatusPending):
+			stats.Pending = r.Count
+		case string(JobStatusProcessing):
+			stats.Processing = r.Count
+		case string(JobStatusCompleted):
+			stats.Completed = r.Count
+		case string(JobStatusFailed):
+			stats.Failed = r.Count
+		case string(JobStatusDeadLetter):
+			stats.DeadLetter = r.Count
+		}
+	}
+
+	if err := s.db.NewRaw(`
+		SELECT COUNT(*)
+		FROM kb.graph_relationship_embedding_jobs j
+		JOIN kb.graph_relationships r ON r.id = j.relationship_id
+		WHERE r.project_id = ? AND j.status = 'failed' AND j.last_error = ?`,
+		projectID, jobs.StaleJobMessage).Scan(ctx, &stats.StaleFailed); err != nil {
+		return nil, fmt.Errorf("get project relationship stale-failed stats: %w", err)
+	}
+	stats.Failed -= stats.StaleFailed
+
 	return stats, nil
 }
 

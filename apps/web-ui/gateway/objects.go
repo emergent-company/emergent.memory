@@ -42,7 +42,7 @@ type objectsPageData struct {
 	Results      []ObjectSearchResult // search mode hits
 	HasMore      bool
 	NextCursor   string
-	Stats        objectsStats
+	Stats        *objectsStats // nil → deferred stats partial; non-nil → loaded
 	TypeUIByType map[string]typeUI
 	LoadErr      error
 }
@@ -107,27 +107,13 @@ func (s *Server) uiObjects(c echo.Context) error {
 		return s.page(c, pageTitle("Objects"), ObjectsPage(data))
 	}
 
-	// Browse mode: one page of 25 (most-recent-first) plus, in parallel, the
-	// object count and embedding-queue stats for the small stats section.
-	var (
-		objects     []GraphObject
-		nextCursor  string
-		objectsErr  error
-		count       int
-		countErr    error
-		progress    *EmbeddingProgress
-		progressErr error
-	)
-	g = errgroup.Group{}
-	g.Go(func() error {
-		objects, nextCursor, objectsErr = s.memory.ListGraphObjectsPage(ctx, branchID, typeFilter, cursor, 25)
-		return nil
-	})
-	g.Go(func() error { count, countErr = s.memory.CountObjects(ctx, branchID); return nil })
-	g.Go(func() error { progress, progressErr = s.memory.GetEmbeddingProgress(ctx); return nil })
-	_ = g.Wait()
-	captureError(countErr)
-	captureError(progressErr)
+	// Browse mode: one page of 25 (most-recent-first). The object count and
+	// embedding-queue stats for the small stats section are optional and slow
+	// (issue #1098: /api/embeddings/progress ~29s, /api/graph/objects/count
+	// ~6s), so they are fetched by a deferred HTMX partial (/objects/stats)
+	// after first paint instead of gating the browse render. data.Stats is left
+	// nil to select that deferred path.
+	objects, nextCursor, objectsErr := s.memory.ListGraphObjectsPage(ctx, branchID, typeFilter, cursor, 25)
 	if objectsErr != nil {
 		data.LoadErr = objectsErr
 		return s.page(c, pageTitle("Objects"), ObjectsPage(data))
@@ -135,11 +121,6 @@ func (s *Server) uiObjects(c echo.Context) error {
 	data.Objects = objects
 	data.HasMore = nextCursor != ""
 	data.NextCursor = nextCursor
-	data.Stats = objectsStats{TotalObjects: count, TotalErr: countErr, EmbedErr: progressErr}
-	if progress != nil {
-		data.Stats.PendingEmbed = progress.Objects.Pending
-		data.Stats.FailedEmbed = progress.Objects.Failed
-	}
 	return s.page(c, pageTitle("Objects"), ObjectsPage(data))
 }
 
@@ -206,6 +187,44 @@ func objectsPartialURL(data objectsPageData) string {
 		q.Set("branch", data.BranchID)
 	}
 	return "/objects/partial?" + q.Encode()
+}
+
+// optionalFetchTimeout bounds the deferred HTMX partial calls (object count,
+// embedding progress, similar objects). These sections are optional: a slow
+// backend must degrade them to an empty/unavailable state quickly rather than
+// hold a deferred request open (issues #1096, #1098).
+const optionalFetchTimeout = 10 * time.Second
+
+// uiObjectsStatsPartial renders the objects browser's small stats row as an HTMX
+// fragment. The object count + embedding-queue aggregates are slow (issue
+// #1098), so they are fetched here — after the browse page has already painted —
+// with a short timeout; on any failure the section degrades to its "unavailable"
+// state without affecting the already-rendered list.
+func (s *Server) uiObjectsStatsPartial(c echo.Context) error {
+	ctx, cancel := context.WithTimeout(c.Request().Context(), optionalFetchTimeout)
+	defer cancel()
+	branchID := c.QueryParam("branch")
+
+	var (
+		count       int
+		countErr    error
+		progress    *EmbeddingProgress
+		progressErr error
+	)
+	var g errgroup.Group
+	g.Go(func() error { count, countErr = s.memory.CountObjects(ctx, branchID); return nil })
+	g.Go(func() error { progress, progressErr = s.memory.GetEmbeddingProgress(ctx); return nil })
+	_ = g.Wait()
+	captureError(countErr)
+	captureError(progressErr)
+
+	stats := objectsStats{TotalObjects: count, TotalErr: countErr, EmbedErr: progressErr}
+	if progress != nil {
+		stats.PendingEmbed = progress.Objects.Pending
+		stats.FailedEmbed = progress.Objects.Failed
+	}
+	render.RenderPartial(c.Response().Writer, c.Request(), objectsStatsSection(stats))
+	return nil
 }
 
 // searchScoreLabel formats a search hit's relevance score for the score badge.

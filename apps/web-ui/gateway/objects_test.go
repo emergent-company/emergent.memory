@@ -122,7 +122,7 @@ func TestRenderObjectsPageSearchStatsLoadMore(t *testing.T) {
 		Objects:    []GraphObject{{ID: "o1", Type: "person", Key: "sam-lee"}},
 		HasMore:    true,
 		NextCursor: "cur-1",
-		Stats:      objectsStats{TotalObjects: 42, PendingEmbed: 3, FailedEmbed: 1},
+		Stats:      &objectsStats{TotalObjects: 42, PendingEmbed: 3, FailedEmbed: 1},
 	}))
 	for _, want := range []string{"42", "objects", "pending", "failed", "Load more", `hx-get="/objects/partial?cursor=cur-1"`, `hx-target="#objects-list"`} {
 		if !strings.Contains(browseHTML, want) {
@@ -684,7 +684,7 @@ func TestUIObjectsPartialFailure(t *testing.T) {
 func TestRenderObjectsPageStatsUnavailable(t *testing.T) {
 	html := renderHTML(t, ObjectsPage(objectsPageData{
 		Objects: []GraphObject{{ID: "o1", Type: "person", Key: "sam-lee"}},
-		Stats:   objectsStats{TotalErr: errTest, EmbedErr: errTest},
+		Stats:   &objectsStats{TotalErr: errTest, EmbedErr: errTest},
 	}))
 	for _, want := range []string{"—", `title="Unavailable"`} {
 		if !strings.Contains(html, want) {
