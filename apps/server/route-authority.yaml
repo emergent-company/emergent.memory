@@ -11,14 +11,21 @@
 #   auth             RequireAuth (or a2aStreamingAuthMiddleware), no project gate
 #   project-token    RequireProjectTokenScope, no RequireProjectMember
 #   project-member   RequireProjectMember (with or without token scope)
+#   superadmin-any   RequireSuperadmin (any active superadmin grant: full or readonly)
 #   superadmin-full  RequireSuperadminFull
 #
 # The 'note' column records the full derived middleware chain for reviewer
 # context and is informational (a note-only drift warns but does not fail).
 #
-# Scope of the scan: apps/server/domain only. Handler-level authorization (e.g.
-# backups requireOrgAdmin, skills requireProjectMember) is NOT part of the
-# middleware tier and is tracked separately (#1041).
+# Scope of the scan: apps/server/domain only. Handler-level authorization is NOT
+# part of the middleware tier and is tracked separately (#1041). The
+# handler-gated surfaces are:
+#   - /api/projects/:id/embeddings/*  (requireProjectAdmin in the handler)
+#   - /api/tokens/* account-token handlers (mint-level admin/admin:all check in
+#     the apitoken service, not a route gate)
+# /api/superadmin/* is NOT in that list: it is middleware-gated since #1086
+# (RequireSuperadmin for reads, RequireSuperadminFull for mutations), with
+# /api/superadmin/me the single RequireAuth-only exception.
 
 version: 1
 routes:
@@ -1408,96 +1415,96 @@ routes:
       note: RequireAuth, RequireSuperadminFull
     - method: GET
       path: /api/superadmin/document-parsing-jobs
-      level: auth
-      note: RequireAuth
+      level: superadmin-any
+      note: RequireAuth, RequireSuperadmin
     - method: POST
       path: /api/superadmin/document-parsing-jobs/delete
-      level: auth
-      note: RequireAuth
+      level: superadmin-full
+      note: RequireAuth, RequireSuperadmin, RequireSuperadminFull
     - method: POST
       path: /api/superadmin/document-parsing-jobs/retry
-      level: auth
-      note: RequireAuth
+      level: superadmin-full
+      note: RequireAuth, RequireSuperadmin, RequireSuperadminFull
     - method: GET
       path: /api/superadmin/email-jobs
-      level: auth
-      note: RequireAuth
+      level: superadmin-any
+      note: RequireAuth, RequireSuperadmin
     - method: GET
       path: /api/superadmin/email-jobs/:id/preview-json
-      level: auth
-      note: RequireAuth
+      level: superadmin-any
+      note: RequireAuth, RequireSuperadmin
     - method: GET
       path: /api/superadmin/embedding-jobs
-      level: auth
-      note: RequireAuth
+      level: superadmin-any
+      note: RequireAuth, RequireSuperadmin
     - method: POST
       path: /api/superadmin/embedding-jobs/cleanup-orphans
-      level: auth
-      note: RequireAuth
+      level: superadmin-full
+      note: RequireAuth, RequireSuperadmin, RequireSuperadminFull
     - method: POST
       path: /api/superadmin/embedding-jobs/delete
-      level: auth
-      note: RequireAuth
+      level: superadmin-full
+      note: RequireAuth, RequireSuperadmin, RequireSuperadminFull
     - method: POST
       path: /api/superadmin/embedding-jobs/reset-dead-letter
-      level: auth
-      note: RequireAuth
+      level: superadmin-full
+      note: RequireAuth, RequireSuperadmin, RequireSuperadminFull
     - method: GET
       path: /api/superadmin/extraction-jobs
-      level: auth
-      note: RequireAuth
+      level: superadmin-any
+      note: RequireAuth, RequireSuperadmin
     - method: POST
       path: /api/superadmin/extraction-jobs/cancel
-      level: auth
-      note: RequireAuth
+      level: superadmin-full
+      note: RequireAuth, RequireSuperadmin, RequireSuperadminFull
     - method: POST
       path: /api/superadmin/extraction-jobs/delete
-      level: auth
-      note: RequireAuth
+      level: superadmin-full
+      note: RequireAuth, RequireSuperadmin, RequireSuperadminFull
     - method: GET
       path: /api/superadmin/me
       level: auth
       note: RequireAuth
     - method: GET
       path: /api/superadmin/organizations
-      level: auth
-      note: RequireAuth
+      level: superadmin-any
+      note: RequireAuth, RequireSuperadmin
     - method: DELETE
       path: /api/superadmin/organizations/:id
-      level: auth
-      note: RequireAuth
+      level: superadmin-full
+      note: RequireAuth, RequireSuperadmin, RequireSuperadminFull
     - method: GET
       path: /api/superadmin/projects
-      level: auth
-      note: RequireAuth
+      level: superadmin-any
+      note: RequireAuth, RequireSuperadmin
     - method: DELETE
       path: /api/superadmin/projects/:id
-      level: auth
-      note: RequireAuth
+      level: superadmin-full
+      note: RequireAuth, RequireSuperadmin, RequireSuperadminFull
     - method: GET
       path: /api/superadmin/projects/:id/members
-      level: auth
-      note: RequireAuth
+      level: superadmin-any
+      note: RequireAuth, RequireSuperadmin
     - method: POST
       path: /api/superadmin/projects/:id/members
-      level: auth
-      note: RequireAuth
+      level: superadmin-full
+      note: RequireAuth, RequireSuperadmin, RequireSuperadminFull
     - method: DELETE
       path: /api/superadmin/projects/:id/members/:userId
-      level: auth
-      note: RequireAuth
+      level: superadmin-full
+      note: RequireAuth, RequireSuperadmin, RequireSuperadminFull
     - method: POST
       path: /api/superadmin/service-tokens
-      level: auth
-      note: RequireAuth
+      level: superadmin-full
+      note: RequireAuth, RequireSuperadmin, RequireSuperadminFull
     - method: GET
       path: /api/superadmin/users
-      level: auth
-      note: RequireAuth
+      level: superadmin-any
+      note: RequireAuth, RequireSuperadmin
     - method: DELETE
       path: /api/superadmin/users/:id
-      level: auth
-      note: RequireAuth
+      level: superadmin-full
+      note: RequireAuth, RequireSuperadmin, RequireSuperadminFull
     - method: GET
       path: /api/tasks
       level: auth
