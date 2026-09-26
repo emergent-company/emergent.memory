@@ -329,20 +329,14 @@ func (s *Server) uiProjectProviderNew(c echo.Context) error {
 // apiKey and serviceAccountJson stay blank (leave blank to keep the stored one).
 func (s *Server) uiProjectProviderEdit(c echo.Context) error {
 	ctx := c.Request().Context()
-	provider := strings.TrimSpace(c.Param("provider"))
+	slug := strings.TrimSpace(c.Param("provider"))
 	providers, err := s.memory.ListProjectProviders(ctx)
 	if err != nil {
 		return redirectWithError(c, "/settings/providers", err)
 	}
-	var cfg *ProjectProviderConfig
-	for i := range providers {
-		if providers[i].Provider == provider {
-			cfg = &providers[i]
-			break
-		}
-	}
+	cfg := findProviderInstance(providers, slug)
 	if cfg == nil {
-		return redirectWithError(c, "/settings/providers", fmt.Errorf("provider %q not found", provider))
+		return redirectWithError(c, "/settings/providers", fmt.Errorf("provider %q not found", slug))
 	}
 	data := providerConfigPageData{Provider: cfg}
 	data.FlashErr = flashError(c)

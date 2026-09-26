@@ -1466,3 +1466,158 @@ func TestUIProjectDefaultModelTestBackendError(t *testing.T) {
 		t.Errorf("backend call must still have been attempted: %+v", f.modelTestCalls)
 	}
 }
+
+// --- multi-instance (same dialect) support ---
+
+// sampleTwoInstanceProviders returns two provider instances that share the
+// openai dialect with distinct slugs.
+func sampleTwoInstanceProviders() []ProjectProviderConfig {
+	return []ProjectProviderConfig{
+		{ID: "pc1", ProjectID: "proj", Provider: "openai", Slug: "openai"},
+		{ID: "pc2", ProjectID: "proj", Provider: "openai", Slug: "openai-local", BaseURL: "http://litellm:4000/v1"},
+	}
+}
+
+// TestMergeProviderRatesDistinctSameDialectInstances asserts two instances of
+// one dialect that serve the same model produce separate rows (so they are not
+// merged) and that a project override applies only to the instance it targets.
+func TestMergeProviderRatesDistinctSameDialectInstances(t *testing.T) {
+	catalog := map[string][]ProviderSupportedModel{
+		"openai": {{Provider: "openai", ModelName: "gpt-4o", ModelType: "generative"}},
+	}
+	overrides := []ProjectCustomPricing{
+		{ProjectID: "proj", Provider: "openai", ProviderSlug: "openai-local", Model: "gpt-4o", modelPriceRates: modelPriceRates{TextInputPrice: 1.0, OutputPrice: 2.0}},
+	}
+	rows := mergeProviderRates(sampleTwoInstanceProviders(), catalog, nil, overrides)
+	if len(rows) != 2 {
+		t.Fatalf("want 2 rows (one per instance), got %+v", rows)
+	}
+	if rows[0].ProviderSlug != "openai" || rows[0].IsCustom {
+		t.Errorf("row[0] must be the override-free default instance: %+v", rows[0])
+	}
+	if rows[1].ProviderSlug != "openai-local" || !rows[1].IsCustom || rows[1].OverrideInput != 1.0 {
+		t.Errorf("row[1] must carry the instance-scoped override: %+v", rows[1])
+	}
+}
+
+// TestGroupProviderRowsSeparatesSameDialect asserts grouping keys on the
+// instance slug, not the dialect.
+func TestGroupProviderRowsSeparatesSameDialect(t *testing.T) {
+	catalog := map[string][]ProviderSupportedModel{
+		"openai": {{Provider: "openai", ModelName: "gpt-4o", ModelType: "generative"}},
+	}
+	groups := groupProviderRows(mergeProviderRates(sampleTwoInstanceProviders(), catalog, nil, nil))
+	if len(groups) != 2 {
+		t.Fatalf("want 2 groups (one per instance), got %+v", groups)
+	}
+	if groups[0].ProviderSlug != "openai" || groups[1].ProviderSlug != "openai-local" {
+		t.Errorf("group slugs = %q / %q", groups[0].ProviderSlug, groups[1].ProviderSlug)
+	}
+	if groups[0].Provider != "openai" || groups[1].Provider != "openai" {
+		t.Errorf("both groups keep their dialect: %+v", groups)
+	}
+}
+
+// TestRenderProvidersPanelDistinctInstances asserts two same-dialect instances
+// are listed distinctly: each has its own row/actions addressed by slug, its
+// own rate group, and both instances appear as separate default-model options
+// even though they share a model name.
+func TestRenderProvidersPanelDistinctInstances(t *testing.T) {
+	providers := sampleTwoInstanceProviders()
+	catalog := map[string][]ProviderSupportedModel{
+		"openai": {{Provider: "openai", ModelName: "gpt-4o", ModelType: "generative", DisplayName: "GPT-4o"}},
+	}
+	d := providerPanelData{
+		Providers:      providers,
+		ProviderModels: catalog,
+		Groups:         groupProviderRows(mergeProviderRates(providers, catalog, nil, nil)),
+	}
+	html := renderHTML(t, providersPanel(d))
+	for _, want := range []string{
+		`data-testid="provider-instance-openai"`,
+		`data-testid="provider-instance-openai-local"`,
+		`href="/settings/providers/openai-local/edit"`,
+		`hx-post="/settings/providers/openai-local/test"`,
+		`action="/settings/providers/openai-local/remove"`,
+		`data-testid="rate-group-openai-local"`,
+		// Both instances offered for the same model name, distinguished by slug.
+		`value="openai/gpt-4o"`,
+		`value="openai-local/gpt-4o"`,
+		`optgroup label="openai-local"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("distinct-instance panel missing %q, got:\n%s", want, html)
+		}
+	}
+}
+
+// TestProviderEditPrefersExactSlug asserts findProviderInstance resolves an
+// exact instance slug before falling back to a dialect match.
+func TestProviderEditPrefersExactSlug(t *testing.T) {
+	providers := sampleTwoInstanceProviders()
+	if got := findProviderInstance(providers, "openai-local"); got == nil || got.Slug != "openai-local" {
+		t.Errorf("exact slug lookup = %+v", got)
+	}
+	// A dialect with a matching default instance resolves that instance.
+	if got := findProviderInstance(providers, "openai"); got == nil || got.Slug != "openai" {
+		t.Errorf("dialect lookup = %+v", got)
+	}
+	if got := findProviderInstance(providers, "nope"); got != nil {
+		t.Errorf("unknown slug must not resolve, got %+v", got)
+	}
+}
+
+// TestUIProviderOverrideTargetsInstance asserts the override POST carries the
+// instance slug in the route and the dialect in the hidden field.
+func TestUIProviderOverrideTargetsInstance(t *testing.T) {
+	f := &fakeMemory{
+		project:          &Project{ID: "p1", Name: "Home"},
+		projectProviders: sampleTwoInstanceProviders(),
+		modelsByProvider: map[string][]ProviderSupportedModel{
+			"openai": {{Provider: "openai", ModelName: "gpt-4o", ModelType: "generative"}},
+		},
+	}
+	_, e := newProvidersSettingsEcho(f)
+	rec := httptest.NewRecorder()
+	// The rate row form carries the dialect in a hidden field.
+	req := httptest.NewRequest(http.MethodPost, "/settings/providers/openai-local/gpt-4o", strings.NewReader("provider=openai&textInputPrice=1.25&outputPrice=5"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if len(f.overrideWrites) != 1 {
+		t.Fatalf("override not persisted: %+v", f.overrideWrites)
+	}
+	w := f.overrideWrites[0]
+	if w.Provider != "openai" || w.ProviderSlug != "openai-local" || w.Model != "gpt-4o" {
+		t.Errorf("persisted override = %+v", w)
+	}
+}
+
+// TestProjectProviderNamesIncludeSlugsAndDialects asserts the agent model
+// classifier accepts both an instance slug (the structured reference) and the
+// dialect (a legacy alias), so an override pinned to a slug is not flagged as
+// holding an unconfigured provider.
+func TestProjectProviderNamesIncludeSlugsAndDialects(t *testing.T) {
+	names := projectProviderNames([]ProjectProviderConfig{
+		{Provider: "openai", Slug: "openai"},
+		{Provider: "openai", Slug: "openai-local"},
+		{Provider: "deepseek", Slug: "deepseek"},
+	})
+	want := []string{"openai", "openai-local", "deepseek"}
+	if len(names) != len(want) {
+		t.Fatalf("names = %v, want %v", names, want)
+	}
+	for i := range want {
+		if names[i] != want[i] {
+			t.Fatalf("names[%d] = %q, want %q (got %v)", i, names[i], want[i], names)
+		}
+	}
+	if issue := classifyAgentModelIssue(&AgentDefinition{Model: &ModelConfig{Name: "openai-local/gpt-4o"}}, "", true, true, names); issue.sev != "" {
+		t.Errorf("slug-prefixed model must be servable, got %+v", issue)
+	}
+	if issue := classifyAgentModelIssue(&AgentDefinition{Model: &ModelConfig{Name: "openai/gpt-4o"}}, "", true, true, names); issue.sev != "" {
+		t.Errorf("dialect-prefixed legacy model must be servable, got %+v", issue)
+	}
+}

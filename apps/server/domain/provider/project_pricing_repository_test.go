@@ -39,7 +39,7 @@ func TestProjectCustomPricingRepository(t *testing.T) {
 	repo := provider.NewRepository(testDB.GetDB(), slog.Default())
 
 	t.Run("get missing returns nil", func(t *testing.T) {
-		got, err := repo.GetProjectCustomPricing(ctx, projectID, provider.ProviderOpenAI, "gpt-4o")
+		got, err := repo.GetProjectCustomPricing(ctx, projectID, string(provider.ProviderOpenAI), "gpt-4o")
 		require.NoError(t, err)
 		assert.Nil(t, got)
 	})
@@ -55,7 +55,7 @@ func TestProjectCustomPricingRepository(t *testing.T) {
 		}
 		require.NoError(t, repo.UpsertProjectCustomPricing(ctx, entry))
 
-		got, err := repo.GetProjectCustomPricing(ctx, projectID, provider.ProviderOpenAI, "gpt-4o")
+		got, err := repo.GetProjectCustomPricing(ctx, projectID, string(provider.ProviderOpenAI), "gpt-4o")
 		require.NoError(t, err)
 		require.NotNil(t, got)
 		assert.Equal(t, projectID, got.ProjectID)
@@ -78,7 +78,7 @@ func TestProjectCustomPricingRepository(t *testing.T) {
 		}
 		require.NoError(t, repo.UpsertProjectCustomPricing(ctx, entry))
 
-		got, err := repo.GetProjectCustomPricing(ctx, projectID, provider.ProviderOpenAI, "gpt-4o")
+		got, err := repo.GetProjectCustomPricing(ctx, projectID, string(provider.ProviderOpenAI), "gpt-4o")
 		require.NoError(t, err)
 		require.NotNil(t, got)
 		assert.Equal(t, 12.50, got.OutputPrice, "upsert must replace the previous price")
@@ -128,13 +128,13 @@ func TestProjectCustomPricingRepository(t *testing.T) {
 	})
 
 	t.Run("delete removes override", func(t *testing.T) {
-		require.NoError(t, repo.DeleteProjectCustomPricing(ctx, projectID, provider.ProviderDeepSeek, "deepseek-v4-pro"))
+		require.NoError(t, repo.DeleteProjectCustomPricing(ctx, projectID, string(provider.ProviderDeepSeek), "deepseek-v4-pro"))
 
-		got, err := repo.GetProjectCustomPricing(ctx, projectID, provider.ProviderDeepSeek, "deepseek-v4-pro")
+		got, err := repo.GetProjectCustomPricing(ctx, projectID, string(provider.ProviderDeepSeek), "deepseek-v4-pro")
 		require.NoError(t, err)
 		assert.Nil(t, got)
 
 		// Deleting again is a no-op, not an error.
-		require.NoError(t, repo.DeleteProjectCustomPricing(ctx, projectID, provider.ProviderDeepSeek, "deepseek-v4-pro"))
+		require.NoError(t, repo.DeleteProjectCustomPricing(ctx, projectID, string(provider.ProviderDeepSeek), "deepseek-v4-pro"))
 	})
 }

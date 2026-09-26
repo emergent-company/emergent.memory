@@ -164,15 +164,15 @@ func TestUpsertProjectPricingOverride(t *testing.T) {
 
 	m := NewMemoryClient(srv.URL, "proj-1")
 	rates := modelPriceRates{TextInputPrice: 1.5, OutputPrice: 6}
-	got, err := m.UpsertProjectPricingOverride(context.Background(), "openai", "gpt-4o", rates)
+	got, err := m.UpsertProjectPricingOverride(context.Background(), "openai", "openai-main", "gpt-4o", rates)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if gotMethod != http.MethodPut || gotPath != "/api/v1/projects/proj-1/pricing-overrides" {
 		t.Errorf("got %s %s", gotMethod, gotPath)
 	}
-	if gotBody["provider"] != "openai" || gotBody["model"] != "gpt-4o" {
-		t.Errorf("body provider/model = %v / %v", gotBody["provider"], gotBody["model"])
+	if gotBody["provider"] != "openai" || gotBody["providerSlug"] != "openai-main" || gotBody["model"] != "gpt-4o" {
+		t.Errorf("body provider/providerSlug/model = %v / %v / %v", gotBody["provider"], gotBody["providerSlug"], gotBody["model"])
 	}
 	for _, k := range []string{"textInputPrice", "imageInputPrice", "videoInputPrice", "audioInputPrice", "outputPrice"} {
 		if _, ok := gotBody[k]; !ok {
