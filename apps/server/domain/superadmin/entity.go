@@ -112,23 +112,26 @@ type OrganizationMembership struct {
 type EmailJob struct {
 	bun.BaseModel `bun:"table:kb.email_jobs,alias:ej"`
 
-	ID               string     `bun:"id,pk,type:uuid" json:"id"`
-	TemplateName     string     `bun:"template_name" json:"templateName"`
-	ToEmail          string     `bun:"to_email" json:"toEmail"`
-	ToName           *string    `bun:"to_name" json:"toName,omitempty"`
-	Subject          string     `bun:"subject" json:"subject"`
-	TemplateData     any        `bun:"template_data,type:jsonb" json:"templateData,omitempty"`
-	Status           string     `bun:"status" json:"status"`
-	Attempts         int        `bun:"attempts" json:"attempts"`
-	MaxAttempts      int        `bun:"max_attempts" json:"maxAttempts"`
-	LastError        *string    `bun:"last_error" json:"lastError,omitempty"`
-	ProcessedAt      *time.Time `bun:"processed_at" json:"processedAt,omitempty"`
-	SourceType       *string    `bun:"source_type" json:"sourceType,omitempty"`
-	SourceID         *string    `bun:"source_id" json:"sourceId,omitempty"`
-	DeliveryStatus   *string    `bun:"delivery_status" json:"deliveryStatus,omitempty"`
-	DeliveryStatusAt *time.Time `bun:"delivery_status_at" json:"deliveryStatusAt,omitempty"`
-	CreatedAt        time.Time  `bun:"created_at" json:"createdAt"`
-	UpdatedAt        time.Time  `bun:"updated_at" json:"updatedAt"`
+	ID                     string     `bun:"id,pk,type:uuid" json:"id"`
+	TemplateName           string     `bun:"template_name" json:"templateName"`
+	ToEmail                string     `bun:"to_email" json:"toEmail"`
+	ToName                 *string    `bun:"to_name" json:"toName,omitempty"`
+	Subject                string     `bun:"subject" json:"subject"`
+	TemplateData           any        `bun:"template_data,type:jsonb" json:"templateData,omitempty"`
+	Status                 string     `bun:"status" json:"status"`
+	Attempts               int        `bun:"attempts" json:"attempts"`
+	MaxAttempts            int        `bun:"max_attempts" json:"maxAttempts"`
+	LastError              *string    `bun:"last_error" json:"lastError,omitempty"`
+	MailgunMessageID       *string    `bun:"mailgun_message_id" json:"mailgunMessageId,omitempty"`
+	ProcessedAt            *time.Time `bun:"processed_at" json:"processedAt,omitempty"`
+	StartedAt              *time.Time `bun:"started_at" json:"startedAt,omitempty"`
+	NextRetryAt            *time.Time `bun:"next_retry_at" json:"nextRetryAt,omitempty"`
+	SourceType             *string    `bun:"source_type" json:"sourceType,omitempty"`
+	SourceID               *string    `bun:"source_id" json:"sourceId,omitempty"`
+	DeliveryStatus         *string    `bun:"delivery_status" json:"deliveryStatus,omitempty"`
+	DeliveryStatusAt       *time.Time `bun:"delivery_status_at" json:"deliveryStatusAt,omitempty"`
+	DeliveryStatusSyncedAt *time.Time `bun:"delivery_status_synced_at" json:"deliveryStatusSyncedAt,omitempty"`
+	CreatedAt              time.Time  `bun:"created_at" json:"createdAt"`
 }
 
 // GraphEmbeddingJob for superadmin queries (kb.graph_embedding_jobs)

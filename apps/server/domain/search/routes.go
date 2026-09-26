@@ -12,6 +12,8 @@ func RegisterRoutes(e *echo.Echo, handler *Handler, authMiddleware *auth.Middlew
 	search := e.Group("/api/search")
 	search.Use(authMiddleware.RequireAuth())
 	search.Use(authMiddleware.RequireProjectID())
+	search.Use(authMiddleware.RequireProjectTokenScope())
+	search.Use(authMiddleware.RequireProjectMember())
 
 	// Unified search requires search:read scope
 	unified := search.Group("/unified")

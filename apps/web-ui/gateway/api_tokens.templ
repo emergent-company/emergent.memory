@@ -420,7 +420,7 @@ templ apiTokenScopePickerContent(selected []string) {
 								checked = true
 							}
 						} }}
-						<label class="flex cursor-pointer items-start gap-2 rounded-lg border border-base-content/10 bg-base-100 px-3 py-2 transition-colors hover:border-base-content/25">
+						<label class="flex cursor-pointer items-start gap-2 rounded-box border border-base-content/10 bg-base-100 px-3 py-2 transition-colors hover:border-base-content/25">
 							<input type="checkbox" name="scopes" value={ opt.Value } class="checkbox checkbox-sm mt-0.5" checked?={ checked }/>
 							<span class="min-w-0">
 								<span class="block text-xs font-mono">{ opt.Value }</span>

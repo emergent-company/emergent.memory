@@ -21518,9 +21518,6 @@ const docTemplate = `{
         "domain_projects.Project": {
             "type": "object",
             "properties": {
-                "allow_parallel_extraction": {
-                    "type": "boolean"
-                },
                 "auto_extract_config": {
                     "type": "object",
                     "additionalProperties": {}
