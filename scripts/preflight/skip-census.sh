@@ -9,8 +9,10 @@
 #   1. Counts skip *call sites* per package across the Go tree.
 #   2. Fails when the total grows past the checked-in baseline, so adding a skip
 #      becomes a deliberate, reviewed act.
-#   3. Flags skip call sites whose message carries no issue reference (`#NNN`),
-#      so a skip has to name why it exists and what tracks it.
+#   3. Fails when the count of skip call sites whose message carries no issue
+#      reference (`#NNN`) grows past its own checked-in baseline, so a *new* skip
+#      has to name why it exists and what tracks it (a warning nobody acts on is
+#      decoration, not a gate).
 #
 # ── Counting rule (the exact line drawn) ─────────────────────────────────────
 # Counted: a direct `.Skip(` / `.Skipf(` invocation that appears lexically inside
@@ -48,10 +50,11 @@ root="$(git rev-parse --show-toplevel)"
 cd "$root"
 
 # ── Baseline ─────────────────────────────────────────────────────────────────
-# Total skip call sites recorded 2026-09-26 (see #1088). Lower it as debt is
-# paid down — never raise it to make CI green. Raising requires an explicit
+# Skip call sites recorded 2026-09-26 (see #1088). Lower either number as debt
+# is paid down — never raise one to make CI green. Raising requires an explicit
 # justification in the PR body.
 BASELINE_SKIPS=337
+BASELINE_NO_REF=335
 
 mapfile -t files < <(git ls-files '*_test.go')
 if [ "${#files[@]}" -eq 0 ]; then
@@ -134,8 +137,18 @@ else
   echo "skip-census: ok skip count $total <= baseline $BASELINE_SKIPS"
 fi
 
+if [ "$no_ref" -gt "$BASELINE_NO_REF" ]; then
+  echo "skip-census: FAIL no-ref skip count grew from $BASELINE_NO_REF to $no_ref"
+  echo "skip-census:       a new t.Skip/t.Skipf was added without a #NNN issue reference."
+  echo "skip-census:       Add the tracking issue number, or — if unreferenced is genuinely"
+  echo "skip-census:       unavoidable — justify raising the baseline in the PR."
+  fail=1
+else
+  echo "skip-census: ok no-ref skip count $no_ref <= baseline $BASELINE_NO_REF"
+fi
+
 if [ "$no_ref" -gt 0 ]; then
-  echo "skip-census: WARN $no_ref skip call site(s) carry no issue reference (#NNN)"
+  echo "skip-census: $no_ref skip call site(s) carry no issue reference (#NNN)"
   echo "skip-census:       per package:"
   printf '%s\n' "$report" | awk '$1 == "NOREFPKG" { printf "  %4d  %s\n", $2, $3 }' | sort -k1 -rn
   echo "skip-census:       sites:"
