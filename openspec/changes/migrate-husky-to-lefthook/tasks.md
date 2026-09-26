@@ -1,0 +1,36 @@
+## 1. Consolidate config
+
+- [x] 1.1 Rewrite the repo-root `lefthook.yml` as the single config: `pre-commit` (fast, parallel) and `lint` (full) groups, every job scoped by `root:` + `glob:`; verified `lefthook validate` → "All good" and `lefthook run pre-commit` executes against staged files
+- [x] 1.2 Port the husky server checks into `pre-commit` jobs: gofmt, `go vet`, `go build`, `lint-ratchet`, staged-handler Swagger `@Router` check, golangci config verify; verified gofmt blocks an unformatted staged file, swagger blocks a handler without `@Router`, and jobs with no matching staged file are skipped
+- [x] 1.3 Port husky's untracked-Go-import guard with the corrected module prefix `github.com/emergent-company/emergent.memory` and `apps/`-rooted path resolution; verified it fails for a staged import of an untracked package and passes otherwise
+- [x] 1.4 Port husky's migration SQL validation (backslash metacommands, spaced `$$`) as a `apps/server/migrations/*.sql` job; verified it fails on a seeded bad migration and passes on a clean one
+- [x] 1.5 Move the web-ui jobs into the root config (ruff, gateway gofmt/vet/build, `templ generate -check`, gitleaks, no-generated guard) and add CLI (gofmt/golangci) and connector (gofmt/vet) jobs; fix the dead `connector/` root to `apps/connector.linux`; verified `webui-no-generated` blocks a staged `app.css` and `cli-gofmt` blocks an unformatted CLI file
+- [x] 1.6 Add the full `lint` group (server/cli/web-ui/connector gofmt+vet+build+test+golangci, ruff, templ, gitleaks) and a `lint-webui` group (web-ui + connector only)
+
+## 2. Remove husky + dead config
+
+- [x] 2.1 Delete `.husky/` (pre-commit) and `apps/web-ui/lefthook.yml`; `git status` shows only the intended deletions and no remaining references outside the OpenSpec change docs
+
+## 3. Lint entry points
+
+- [x] 3.1 Root `Taskfile.yml`: `lint` → `lefthook run lint`; added `hooks:install` → `lefthook install`
+- [x] 3.2 `apps/web-ui/Taskfile.yml`: `lint` → `lefthook run lint-webui` (preserve web-ui + connector scope)
+- [x] 3.3 `e2e/Taskfile.yml`: keep `lefthook run lint` (now resolves the root config)
+
+## 4. Docs + spec
+
+- [x] 4.1 `AGENTS.md`: fixed the `task lint` description, added `task hooks:install`, and added a "Git Hooks — lefthook" section
+- [x] 4.2 `CONTRIBUTING.md`: added `lefthook` to prerequisites and an "Install git hooks" setup step
+- [x] 4.3 `apps/web-ui/docs/spec/12-operations.md`: updated the "Linting & hooks" section to the single-root-config model
+
+## 5. Verification
+
+- [x] 5.1 `lefthook install` writes `.git/hooks/pre-commit` and a commit runs the hook — verified in a scratch repo (not installed into the shared checkout, to avoid mutating other sessions' hooks)
+- [x] 5.2 `lefthook validate` → "All good"; targeted jobs in the `lint` group verified runnable (`webui-ruff` / `webui-secrets` skip cleanly when the tool is absent)
+- [x] 5.3 `task -n lint` → `lefthook run lint`; `cd apps/web-ui && task -n lint` → `lefthook run lint-webui`
+- [x] 5.4 `openspec validate migrate-husky-to-lefthook --strict` → "Change 'migrate-husky-to-lefthook' is valid"
+- [x] 5.5 Staged deliberately unformatted `apps/server/**/*.go` → `server-gofmt` job blocked; probe reverted
+
+## 6. Follow-ups (out of scope)
+
+- [ ] 6.1 No root `.gitleaks.toml`; a repo-wide secret scan (and/or a CI gitleaks job) is a separate change

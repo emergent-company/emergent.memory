@@ -38,6 +38,7 @@ This is a monorepo:
 - PostgreSQL 16+ (via Docker)
 - Git
 - Taskfile (`task`)
+- lefthook v2 — `go install github.com/evilmartians/lefthook/v2@v2.1.14`
 
 ### Initial Setup
 
@@ -55,14 +56,21 @@ This is a monorepo:
    # Edit .env with your local configuration
    ```
 
-3. **Start services:**
+3. **Install git hooks:**
+
+   ```bash
+   # Installs the repo-root lefthook hooks into .git/hooks (run once per checkout)
+   task hooks:install
+   ```
+
+4. **Start services:**
 
    ```bash
    # Start Docker dependencies (PostgreSQL, Zitadel)
    docker compose -f docker-compose.dev.yml up -d
    ```
 
-4. **Verify setup:**
+5. **Verify setup:**
 
    ```bash
    # Build the server
