@@ -93,7 +93,7 @@ func (s *Service) GetProjectModelConfig(ctx context.Context, projectID uuid.UUID
 	if cfg == nil {
 		return nil, nil
 	}
-	return toModelConfigResponse(cfg.GenerativeModel, cfg.EmbeddingModel, cfg.CreatedAt, cfg.UpdatedAt), nil
+	return toModelConfigResponse(cfg.GenerativeModel, cfg.EmbeddingModel, cfg.GenerativeProviderSlug, cfg.EmbeddingProviderSlug, cfg.CreatedAt, cfg.UpdatedAt), nil
 }
 
 // UpsertProjectModelConfig sets the explicit default models for a project.
@@ -108,11 +108,13 @@ func (s *Service) UpsertProjectModelConfig(ctx context.Context, projectID uuid.U
 	}
 	now := time.Now()
 	cfg := &ProjectModelConfig{
-		ProjectID:       projectID,
-		GenerativeModel: req.GenerativeModel,
-		EmbeddingModel:  req.EmbeddingModel,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		ProjectID:              projectID,
+		GenerativeModel:        req.GenerativeModel,
+		EmbeddingModel:         req.EmbeddingModel,
+		GenerativeProviderSlug: providerSlugOf(req.GenerativeModel),
+		EmbeddingProviderSlug:  providerSlugOf(req.EmbeddingModel),
+		CreatedAt:              now,
+		UpdatedAt:              now,
 	}
 	if err := s.store.UpsertProjectModelConfig(ctx, cfg); err != nil {
 		return nil, err
@@ -122,7 +124,7 @@ func (s *Service) UpsertProjectModelConfig(ctx context.Context, projectID uuid.U
 		slog.String("generativeModel", req.GenerativeModel),
 		slog.String("embeddingModel", req.EmbeddingModel),
 	)
-	return toModelConfigResponse(req.GenerativeModel, req.EmbeddingModel, cfg.CreatedAt, cfg.UpdatedAt), nil
+	return toModelConfigResponse(req.GenerativeModel, req.EmbeddingModel, cfg.GenerativeProviderSlug, cfg.EmbeddingProviderSlug, cfg.CreatedAt, cfg.UpdatedAt), nil
 }
 
 // DeleteProjectModelConfig clears the project's explicit model config.
@@ -203,11 +205,30 @@ func (s *Service) ResolveEffectiveModels(ctx context.Context, projectID uuid.UUI
 
 // --- Helpers ---
 
-func toModelConfigResponse(genModel, embModel string, createdAt, updatedAt time.Time) *ModelConfigResponse {
+func toModelConfigResponse(genModel, embModel, genSlug, embSlug string, createdAt, updatedAt time.Time) *ModelConfigResponse {
 	return &ModelConfigResponse{
-		GenerativeModel: genModel,
-		EmbeddingModel:  embModel,
-		CreatedAt:       createdAt,
-		UpdatedAt:       updatedAt,
+		GenerativeModel:        genModel,
+		EmbeddingModel:         embModel,
+		GenerativeProviderSlug: genSlug,
+		EmbeddingProviderSlug:  embSlug,
+		CreatedAt:              createdAt,
+		UpdatedAt:              updatedAt,
+	}
+}
+
+// providerSlugOf extracts the provider instance prefix from a routed
+// "provider/model" name. It returns "" for a bare name or an unqualified
+// multi-segment model id (Vertex resource paths), matching the migration
+// backfill rule.
+func providerSlugOf(model string) string {
+	prefix, _, found := strings.Cut(model, "/")
+	if !found {
+		return ""
+	}
+	switch prefix {
+	case "google", "google-vertex", "openai", "deepseek":
+		return prefix
+	default:
+		return ""
 	}
 }

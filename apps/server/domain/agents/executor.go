@@ -852,7 +852,7 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 
 	// Persist the resolved model name on the run record for observability (#141)
 	if modelName != "" {
-		if err := ae.repo.UpdateRunModel(dbCtx, run.ID, modelName); err != nil {
+		if err := ae.repo.UpdateRunModel(dbCtx, run.ID, modelName, "", "", ""); err != nil {
 			ae.log.Warn("failed to persist model on agent run",
 				slog.String("run_id", run.ID),
 				slog.String("error", err.Error()),
@@ -1883,6 +1883,11 @@ func (ae *AgentExecutor) runPipeline(
 	modelName := req.Model
 	if modelName == "" && req.AgentDefinition != nil && req.AgentDefinition.Model != nil && req.AgentDefinition.Model.Name != "" {
 		modelName = req.AgentDefinition.Model.Name
+		// Structured override: an explicit provider instance (slug) is combined
+		// with the bare model name, unless the name already carries a prefix.
+		if p := req.AgentDefinition.Model.Provider; p != "" && !strings.Contains(modelName, "/") {
+			modelName = p + "/" + modelName
+		}
 	}
 
 	var llm model.LLM
@@ -1908,11 +1913,12 @@ func (ae *AgentExecutor) runPipeline(
 	// llm.Name() reflects the actual model used (including factory/credential defaults),
 	// which may differ from the modelName variable when a credential-level default applies.
 	if resolvedModelName := llm.Name(); resolvedModelName != "" {
-		var providerName string
+		var providerName, providerSlug string
 		if tm, ok := llm.(*provider.TrackingModel); ok {
 			providerName = tm.ProviderName()
+			providerSlug = tm.ProviderSlugName()
 		}
-		if err := ae.repo.UpdateRunModel(dbCtx, run.ID, resolvedModelName, providerName); err != nil {
+		if err := ae.repo.UpdateRunModel(dbCtx, run.ID, resolvedModelName, providerName, providerSlug, providerName); err != nil {
 			ae.log.Warn("failed to persist model on agent run",
 				slog.String("run_id", run.ID),
 				slog.String("model", resolvedModelName),

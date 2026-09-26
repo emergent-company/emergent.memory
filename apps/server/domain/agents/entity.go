@@ -205,6 +205,11 @@ type AgentRun struct {
 	TriggerMessage *string `bun:"trigger_message" json:"triggerMessage,omitempty"`
 	Model          *string `bun:"model" json:"model,omitempty"`
 	Provider       *string `bun:"provider" json:"provider,omitempty"`
+	// ProviderSlug identifies the provider instance that served the run. Null
+	// for legacy rows created before instances existed.
+	ProviderSlug *string `bun:"provider_slug" json:"providerSlug,omitempty"`
+	// Dialect records the provider dialect separately from the instance.
+	Dialect *string `bun:"dialect" json:"dialect,omitempty"`
 
 	// Observability linkage: trace_id links the run back to its OTel trace;
 	// root_run_id links sub-agent runs back to the top-level orchestration run.
@@ -333,7 +338,11 @@ type ACPConfig struct {
 
 // ModelConfig holds model configuration for an agent definition
 type ModelConfig struct {
-	Name        string   `json:"name,omitempty"`
+	Name string `json:"name,omitempty"`
+	// Provider is the provider instance slug that serves Name. When empty, the
+	// project's default instance for the dialect is used. This makes the model
+	// identity structured (provider + model) rather than a single string.
+	Provider    string   `json:"provider,omitempty"`
 	Temperature *float32 `json:"temperature,omitempty"`
 	MaxTokens   *int     `json:"maxTokens,omitempty"`
 	// NativeTools lists Google-native tools to enable when using a Gemini model.
