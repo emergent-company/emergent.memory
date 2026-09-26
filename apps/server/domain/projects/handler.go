@@ -121,8 +121,13 @@ func (h *Handler) List(c echo.Context) error {
 // @Router       /api/projects/{id} [get]
 // @Security     bearerAuth
 func (h *Handler) Get(c echo.Context) error {
+	user := auth.MustGetUser(c)
 	id := c.Param("id")
 	includeStats := c.QueryParam("include_stats") == "true"
+
+	if err := h.svc.authorizeProject(c.Request().Context(), id, user.ID, accessProjectMember); err != nil {
+		return err
+	}
 
 	project, err := h.svc.GetByID(c.Request().Context(), id, includeStats)
 	if err != nil {
@@ -177,12 +182,17 @@ func (h *Handler) Create(c echo.Context) error {
 // @Router       /api/projects/{id} [patch]
 // @Security     bearerAuth
 func (h *Handler) Update(c echo.Context) error {
+	user := auth.MustGetUser(c)
 
 	id := c.Param("id")
 
 	var req UpdateProjectRequest
 	if err := c.Bind(&req); err != nil {
 		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if err := h.svc.authorizeProject(c.Request().Context(), id, user.ID, accessProjectAdmin); err != nil {
+		return err
 	}
 
 	project, err := h.svc.Update(c.Request().Context(), id, req)
@@ -245,6 +255,10 @@ func (h *Handler) Delete(c echo.Context) error {
 
 	id := c.Param("id")
 
+	if err := h.svc.authorizeProject(c.Request().Context(), id, user.ID, accessOrgAdmin); err != nil {
+		return err
+	}
+
 	info, err := h.svc.RequestDeletion(c.Request().Context(), id, user.ID)
 	if err != nil {
 		return err
@@ -278,11 +292,13 @@ func (h *Handler) Delete(c echo.Context) error {
 // @Router       /api/projects/{id}/restore [post]
 // @Security     bearerAuth
 func (h *Handler) Restore(c echo.Context) error {
-	if auth.GetUser(c) == nil {
-		return apperror.ErrUnauthorized
-	}
+	user := auth.MustGetUser(c)
 
 	id := c.Param("id")
+
+	if err := h.svc.authorizeProject(c.Request().Context(), id, user.ID, accessOrgAdmin); err != nil {
+		return err
+	}
 
 	if err := h.svc.CancelDeletion(c.Request().Context(), id); err != nil {
 		return err
@@ -308,8 +324,14 @@ func (h *Handler) Restore(c echo.Context) error {
 // @Router       /api/projects/{id}/members [get]
 // @Security     bearerAuth
 func (h *Handler) ListMembers(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
 	projectID := c.Param("id")
 	includeStats := c.QueryParam("stats") == "true"
+
+	if err := h.svc.authorizeProject(c.Request().Context(), projectID, user.ID, accessProjectMember); err != nil {
+		return err
+	}
 
 	members, err := h.svc.ListMembers(c.Request().Context(), projectID, includeStats)
 	if err != nil {
@@ -334,9 +356,14 @@ func (h *Handler) ListMembers(c echo.Context) error {
 // @Router       /api/projects/{id}/members/{userId} [delete]
 // @Security     bearerAuth
 func (h *Handler) RemoveMember(c echo.Context) error {
+	user := auth.MustGetUser(c)
 
 	projectID := c.Param("id")
 	userID := c.Param("userId")
+
+	if err := h.svc.authorizeProject(c.Request().Context(), projectID, user.ID, accessProjectAdmin); err != nil {
+		return err
+	}
 
 	if err := h.svc.RemoveMember(c.Request().Context(), projectID, userID); err != nil {
 		return err

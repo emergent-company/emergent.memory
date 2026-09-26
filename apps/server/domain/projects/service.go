@@ -225,6 +225,14 @@ func (s *Service) Create(ctx context.Context, req CreateProjectRequest, userID s
 		return nil, apperror.New(400, "org-not-found", "Organization not found")
 	}
 
+	// The caller must be an org_admin of the target org (scope-authority:
+	// org:project:create). Authority is resolved server-side from the membership
+	// tables; req.OrgID only selects the resource and is never authorization
+	// truth.
+	if err := s.authorizeOrgAdmin(ctx, req.OrgID, userID); err != nil {
+		return nil, err
+	}
+
 	// Check for duplicate name in org
 	isDuplicate, err := s.repo.CheckDuplicateName(ctx, tx.Tx, req.OrgID, name, "")
 	if err != nil {
@@ -608,6 +616,109 @@ func (s *Service) RemoveMember(ctx context.Context, projectID, userID string) er
 // IsUserMember checks if a user is a member of a project
 func (s *Service) IsUserMember(ctx context.Context, projectID, userID string) (bool, error) {
 	return s.repo.IsUserMember(ctx, projectID, userID)
+}
+
+// projectAccessLevel is the minimum authority a caller must hold over an
+// addressed project for a project-addressed route.
+type projectAccessLevel int
+
+const (
+	// accessProjectMember permits any project member or any member of the
+	// project's owning organization (read surfaces).
+	accessProjectMember projectAccessLevel = iota
+	// accessProjectAdmin permits a project_admin or an org_admin of the owning org.
+	accessProjectAdmin
+	// accessOrgAdmin permits only an org_admin of the owning org (destructive
+	// org-level surfaces: delete, restore).
+	accessOrgAdmin
+)
+
+// authorizeProject authorizes a caller (userID) against the addressed project.
+// The owning org is resolved server-side from the project id — never from caller
+// input — so a client-supplied project id at most selects the resource, and the
+// caller's authority over THAT resource is always verified. Refusals follow the
+// domain convention: a foreign or unknown project returns 404 (no existence
+// oracle), while a recognised caller without sufficient authority returns 403.
+func (s *Service) authorizeProject(ctx context.Context, projectID, userID string, level projectAccessLevel) error {
+	orgID, found, err := s.repo.GetOrganizationID(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return apperror.ErrProjectNotFound
+	}
+
+	projectRole, orgRole, err := s.callerRoles(ctx, projectID, orgID, userID)
+	if err != nil {
+		return err
+	}
+
+	isMember := projectRole != "" || orgRole != ""
+	switch level {
+	case accessProjectMember:
+		if isMember {
+			return nil
+		}
+		return apperror.ErrProjectNotFound
+	case accessProjectAdmin:
+		if projectRole == RoleProjectAdmin || orgRole == "org_admin" {
+			return nil
+		}
+	case accessOrgAdmin:
+		if orgRole == "org_admin" {
+			return nil
+		}
+	}
+	if isMember {
+		return apperror.ErrForbidden
+	}
+	return apperror.ErrProjectNotFound
+}
+
+// callerRoles resolves the caller's project membership role and their role in the
+// project's owning organization. A nil orgMembershipReader yields no org role
+// (fail-closed for org_admin-dependent checks; project-member reads are
+// unaffected). The project's owning org (orgID) is passed in already resolved
+// server-side by authorizeProject.
+func (s *Service) callerRoles(ctx context.Context, projectID, orgID, userID string) (projectRole, orgRole string, err error) {
+	if userID == "" {
+		return "", "", nil
+	}
+
+	m, err := s.repo.GetMembership(ctx, projectID, userID)
+	if err != nil {
+		return "", "", err
+	}
+	if m != nil {
+		projectRole = m.Role
+	}
+
+	if s.orgMembershipReader != nil {
+		role, oerr := s.orgMembershipReader.GetMembershipRole(ctx, orgID, userID)
+		if oerr != nil {
+			return "", "", oerr
+		}
+		orgRole = role
+	}
+
+	return projectRole, orgRole, nil
+}
+
+// authorizeOrgAdmin requires the caller to be an org_admin of the addressed
+// organization. Used by org-addressed mutations (project creation) where the org
+// id is client-supplied and must not be trusted as authorization truth.
+func (s *Service) authorizeOrgAdmin(ctx context.Context, orgID, userID string) error {
+	if s.orgMembershipReader == nil {
+		return apperror.ErrInternal
+	}
+	role, err := s.orgMembershipReader.GetMembershipRole(ctx, orgID, userID)
+	if err != nil {
+		return err
+	}
+	if role != "org_admin" {
+		return apperror.ErrForbidden
+	}
+	return nil
 }
 
 // Helper to validate UUID format
