@@ -697,6 +697,365 @@
     document.head.appendChild(st);
   }
 
+  /* ---------- A2UI declarative cards ---------- */
+
+  // A2UI (v0.9.1) surface renderer. The agent streams declarative "cards" via
+  // the gateway's `ui` SSE event; this walks the message list, accumulates
+  // components from updateComponents, and renders one card per component into
+  // the chat message list (ctx.messages — the same container question/approval
+  // cards append to). createSurface / updateDataModel / deleteSurface are
+  // tolerated (ignored for now — this is a Phase-1 read-only render). Unknown
+  // component ids fall back to a summary card and never throw. All user/model
+  // text is escaped (textContent / escapeHTML), never injected via innerHTML.
+
+  // Bot avatar byte-identical to the assistant-bubble fallback (chat-stream.js
+  // agentAvatarHTML with no agent appearance), so A2UI cards align with chat.
+  var A2UI_AVATAR =
+    '<div class="chat-image bg-primary/5 text-primary border-primary/10 flex items-center justify-center rounded-full border p-2">' +
+    '<span class="iconify lucide--bot size-5" aria-hidden="true"></span></div>';
+
+  function renderA2UISurface(surfaceId, messages, ctx) {
+    ctx = ctx || {};
+    var container = ctx.messages;
+    if (!container) return;
+    var hideEmpty = ctx.hideEmpty;
+    var scrollToBottom = ctx.scrollToBottom || function () {};
+
+    // Accumulate components from updateComponents; ignore other envelope kinds.
+    var components = [];
+    var list = Array.isArray(messages) ? messages : [];
+    for (var i = 0; i < list.length; i++) {
+      var msg = list[i];
+      if (!msg || typeof msg !== "object") continue;
+      var upd = msg.updateComponents;
+      if (upd && Array.isArray(upd.components)) {
+        for (var j = 0; j < upd.components.length; j++) {
+          if (upd.components[j]) components.push(upd.components[j]);
+        }
+      }
+    }
+
+    for (var k = 0; k < components.length; k++) {
+      var node = buildA2UICard(components[k], surfaceId);
+      if (node) container.appendChild(node);
+    }
+    if (hideEmpty) hideEmpty();
+    scrollToBottom();
+  }
+
+  function buildA2UICard(comp, surfaceId) {
+    switch (comp && comp.component) {
+      case "proposal": return a2uiProposal(comp, surfaceId);
+      case "approval": return a2uiApproval(comp, surfaceId);
+      case "question": return a2uiQuestion(comp, surfaceId);
+      case "code": return a2uiCode(comp, surfaceId);
+      case "entity": return a2uiEntity(comp, surfaceId);
+      case "object-form": return a2uiObjectForm(comp, surfaceId);
+      case "todo": return a2uiTodo(comp, surfaceId);
+      case "result": return a2uiResult(comp, surfaceId);
+      default: return a2uiSummary(comp, surfaceId);
+    }
+  }
+
+  // a2uiShell builds the chat-grid wrapper + card shell every card lives in:
+  // the same `chat chat-start` + `card` structure the question/approval cards
+  // use, so A2UI cards read as the agent speaking.
+  function a2uiShell() {
+    var wrap = document.createElement("div");
+    wrap.className = "chat chat-start memory-rise";
+    wrap.innerHTML = A2UI_AVATAR;
+    var card = document.createElement("div");
+    card.className =
+      "card card-border bg-base-100 col-start-2 row-start-2 w-fit min-w-[min(100%,30rem)] max-w-[85%] shadow-sm";
+    wrap.appendChild(card);
+    var body = document.createElement("div");
+    body.className = "card-body gap-3 p-4";
+    card.appendChild(body);
+    return { wrap: wrap, card: card, body: body };
+  }
+
+  // a2uiText coerces any prop value to a display string (objects → pretty JSON).
+  function a2uiText(v) {
+    if (v === undefined || v === null) return "";
+    if (typeof v === "string") return v;
+    if (typeof v === "number" || typeof v === "boolean") return String(v);
+    return safeJSON(v);
+  }
+
+  function a2uiHeader(title, badge) {
+    var h = document.createElement("div");
+    h.className = "flex items-center gap-2";
+    if (badge) {
+      var b = document.createElement("span");
+      b.className = "badge badge-sm badge-outline";
+      b.textContent = badge;
+      h.appendChild(b);
+    }
+    var t = document.createElement("span");
+    t.className = "text-xs uppercase tracking-wider text-base-content/50";
+    t.textContent = title;
+    h.appendChild(t);
+    return h;
+  }
+
+  function a2uiLabel(text) {
+    var p = document.createElement("p");
+    p.className = "text-sm text-base-content/90 leading-relaxed whitespace-pre-wrap break-words";
+    p.textContent = text == null ? "" : String(text);
+    return p;
+  }
+
+  function a2uiSectionLabel(text) {
+    var p = document.createElement("p");
+    p.className = "mb-0 mt-1 text-xs font-semibold tracking-wider uppercase text-base-content/50";
+    p.textContent = text;
+    return p;
+  }
+
+  function a2uiPre(value) {
+    var pre = document.createElement("pre");
+    pre.className =
+      "memory-scroll max-h-72 overflow-auto rounded-lg bg-base-200/60 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words";
+    pre.textContent = typeof value === "string" ? value : safeJSON(value);
+    return pre;
+  }
+
+  // a2uiRows renders [[label, value], ...] as stacked key/value rows.
+  function a2uiRows(rows) {
+    var list = document.createElement("div");
+    list.className = "flex flex-col gap-2";
+    for (var i = 0; i < rows.length; i++) {
+      var pair = rows[i];
+      var row = document.createElement("div");
+      row.className = "flex flex-col";
+      var key = document.createElement("span");
+      key.className = "text-[10px] font-semibold tracking-wider uppercase text-base-content/50";
+      key.textContent = pair[0];
+      var val = document.createElement("span");
+      val.className = "text-sm text-base-content/90 leading-relaxed break-words whitespace-pre-wrap";
+      val.textContent = pair[1];
+      row.appendChild(key);
+      row.appendChild(val);
+      list.appendChild(row);
+    }
+    return list;
+  }
+
+  function a2uiButton(label, action, primary) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = primary ? "btn btn-primary btn-sm" : "btn btn-ghost btn-sm";
+    btn.textContent = label;
+    btn.addEventListener("click", function () {
+      // TODO(agent-structured-ui): wire resume/respond — for now a click just
+      // emits an `a2ui:action` CustomEvent so a follow-up can send the decision
+      // back to the agent (resume) / server (respond). No endpoint is invented.
+      document.dispatchEvent(new CustomEvent("a2ui:action", {
+        detail: { surfaceId: surfaceId, action: action },
+      }));
+    });
+    return btn;
+  }
+
+  function a2uiActions(surfaceId, comp, pairs) {
+    // pairs = [[label, responseValue, primary], ...]
+    var row = document.createElement("div");
+    row.className = "flex items-center justify-end gap-2 pt-1";
+    for (var i = 0; i < pairs.length; i++) {
+      row.appendChild(a2uiButton(
+        pairs[i][0],
+        { componentId: comp.id, response: pairs[i][1] },
+        !!pairs[i][2]
+      ));
+    }
+    return row;
+  }
+
+  function a2uiProposal(comp, surfaceId) {
+    var shell = a2uiShell();
+    shell.body.appendChild(a2uiHeader("Proposal", comp.kind || "proposal"));
+    if (comp.summary != null && comp.summary !== "") {
+      shell.body.appendChild(a2uiLabel(comp.summary));
+    }
+    if (comp.body !== undefined && comp.body !== null) {
+      shell.body.appendChild(a2uiPre(comp.body));
+    }
+    shell.body.appendChild(a2uiActions(surfaceId, comp, [
+      ["Reject", "reject", false],
+      ["Accept", "accept", true],
+    ]));
+    return shell.wrap;
+  }
+
+  function a2uiApproval(comp, surfaceId) {
+    var shell = a2uiShell();
+    shell.body.appendChild(a2uiHeader("Approval", comp.tool || "tool"));
+    if (comp.input !== undefined && comp.input !== null) {
+      shell.body.appendChild(a2uiPre(comp.input));
+    }
+    shell.body.appendChild(a2uiActions(surfaceId, comp, [
+      ["Deny", "deny", false],
+      ["Approve", "approve", true],
+    ]));
+    return shell.wrap;
+  }
+
+  function a2uiQuestion(comp, surfaceId) {
+    var shell = a2uiShell();
+    shell.body.appendChild(a2uiHeader("Question", null));
+    if (comp.prompt != null && comp.prompt !== "") {
+      shell.body.appendChild(a2uiLabel(comp.prompt));
+    }
+    var options = comp.options;
+    if (Array.isArray(options) && options.length) {
+      var opts = document.createElement("div");
+      opts.className = "flex flex-wrap gap-2";
+      for (var i = 0; i < options.length; i++) {
+        var o = options[i];
+        var isObj = o && typeof o === "object";
+        var val = isObj ? (o.value != null ? o.value : o.label) : o;
+        var label = isObj ? (o.label != null ? o.label : o.value) : o;
+        opts.appendChild(a2uiButton(
+          label == null ? "" : String(label),
+          { componentId: comp.id, response: val },
+          false
+        ));
+      }
+      shell.body.appendChild(opts);
+    }
+    return shell.wrap;
+  }
+
+  function a2uiCode(comp, surfaceId) {
+    var shell = a2uiShell();
+    if (comp.lang) shell.body.appendChild(a2uiSectionLabel(comp.lang));
+    var pre = document.createElement("pre");
+    pre.className =
+      "memory-scroll max-h-96 overflow-auto rounded-lg bg-base-200/60 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words";
+    var code = document.createElement("code");
+    code.textContent = comp.code == null ? "" : String(comp.code);
+    pre.appendChild(code);
+    shell.body.appendChild(pre);
+    return shell.wrap;
+  }
+
+  function a2uiEntity(comp, surfaceId) {
+    var shell = a2uiShell();
+    shell.body.appendChild(a2uiHeader("Entity", comp.type || "entity"));
+    var props = comp.properties;
+    if (props && typeof props === "object" && !Array.isArray(props)) {
+      var rows = [];
+      for (var key in props) {
+        if (Object.prototype.hasOwnProperty.call(props, key)) {
+          rows.push([key, a2uiText(props[key])]);
+        }
+      }
+      if (rows.length) {
+        shell.body.appendChild(a2uiSectionLabel("Properties"));
+        shell.body.appendChild(a2uiRows(rows));
+      }
+    }
+    var rels = comp.relationships;
+    if (Array.isArray(rels) && rels.length) {
+      shell.body.appendChild(a2uiSectionLabel("Relationships"));
+      var relRows = [];
+      for (var r = 0; r < rels.length; r++) {
+        var rel = rels[r];
+        if (typeof rel === "string") {
+          relRows.push([rel, ""]);
+          continue;
+        }
+        var relObj = rel && typeof rel === "object" ? rel : {};
+        relRows.push([
+          relObj.relation || relObj.type || relObj.label || "related",
+          relObj.target || relObj.entity || relObj.id || "",
+        ]);
+      }
+      shell.body.appendChild(a2uiRows(relRows));
+    }
+    return shell.wrap;
+  }
+
+  function a2uiObjectForm(comp, surfaceId) {
+    var shell = a2uiShell();
+    shell.body.appendChild(a2uiHeader("Form", null));
+    // TODO(agent-structured-ui): render an editable form from comp's schema/fields.
+    shell.body.appendChild(a2uiLabel("Structured input requested — form rendering is not implemented yet."));
+    return shell.wrap;
+  }
+
+  function a2uiTodo(comp, surfaceId) {
+    var shell = a2uiShell();
+    shell.body.appendChild(a2uiHeader("Tasks", null));
+    var items = comp.items || comp.todos;
+    if (Array.isArray(items) && items.length) {
+      var list = document.createElement("ul");
+      list.className = "flex flex-col gap-1.5";
+      for (var i = 0; i < items.length; i++) {
+        var item = items[i];
+        var isObj = item && typeof item === "object";
+        var text = isObj ? (item.label != null ? item.label : item.text) : item;
+        var done = isObj && !!item.done;
+        var li = document.createElement("li");
+        li.className = "flex items-center gap-2";
+        var cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.className = "checkbox checkbox-xs";
+        cb.checked = done;
+        cb.disabled = true; // read-only for now
+        var span = document.createElement("span");
+        span.className = "text-sm text-base-content/90 break-words";
+        span.textContent = a2uiText(text);
+        li.appendChild(cb);
+        li.appendChild(span);
+        list.appendChild(li);
+      }
+      shell.body.appendChild(list);
+    }
+    return shell.wrap;
+  }
+
+  function a2uiResult(comp, surfaceId) {
+    var shell = a2uiShell();
+    shell.body.appendChild(a2uiHeader("Result", null));
+    var rows = [];
+    for (var key in comp) {
+      if (!Object.prototype.hasOwnProperty.call(comp, key)) continue;
+      if (key === "id" || key === "component") continue;
+      rows.push([key, a2uiText(comp[key])]);
+    }
+    if (!rows.length && comp.result !== undefined) {
+      rows.push(["result", a2uiText(comp.result)]);
+    }
+    if (!rows.length) rows.push(["result", "—"]);
+    shell.body.appendChild(a2uiRows(rows));
+    return shell.wrap;
+  }
+
+  function a2uiSummary(comp, surfaceId) {
+    var shell = a2uiShell();
+    var name = (comp && comp.component) ? comp.component : "component";
+    shell.body.appendChild(a2uiHeader(name, null));
+    var copy = {};
+    for (var key in comp) {
+      if (Object.prototype.hasOwnProperty.call(comp, key) && key !== "id" && key !== "component") {
+        copy[key] = comp[key];
+      }
+    }
+    shell.body.appendChild(a2uiPre(safeJSON(copy)));
+    return shell.wrap;
+  }
+
+  // Phase-1 action stub: card buttons emit an `a2ui:action` CustomEvent
+  // (detail: {surfaceId, action}); this listener currently just logs it. The
+  // real resume/respond wiring (POSTing the decision back to the gateway/agent)
+  // is a follow-up.
+  document.addEventListener("a2ui:action", function (evt) {
+    // TODO(agent-structured-ui): send evt.detail (surfaceId + action) to the
+    // server to resume/respond to the paused agent run.
+    console.log("a2ui:action", evt.detail);
+  });
+
   window.MemoryChatComponents = {
     escapeHTML: escapeHTML,
     humanizeToolName: humanizeToolName,
@@ -715,5 +1074,6 @@
     turnFooter: turnFooter,
     runMarker: runMarker,
     ensureChatControlStyle: ensureChatControlStyle,
+    renderA2UISurface: renderA2UISurface,
   };
 })();

@@ -78,11 +78,20 @@ type A2AAgentCapabilities struct {
 
 // AgentExtension describes an agent extension.
 type AgentExtension struct {
-	URI         string `json:"uri"`
-	Description string `json:"description,omitempty"`
-	Required    bool   `json:"required,omitempty"`
-	Version     string `json:"version,omitempty"`
+	URI         string         `json:"uri"`
+	Description string         `json:"description,omitempty"`
+	Required    bool           `json:"required,omitempty"`
+	Version     string         `json:"version,omitempty"`
+	Params      map[string]any `json:"params,omitempty"`
 }
+
+// A2UIA2AExtensionURI is the A2UI-over-A2A extension URI advertised on the
+// AgentCard so A2UI-capable clients can negotiate surface rendering.
+const A2UIA2AExtensionURI = "https://a2ui.org/a2a-extension/a2ui/v0.9.1"
+
+// A2UIMimeType is the MIME type marking an A2A data part whose `data` member is
+// an ordered array of A2UI surface messages.
+const A2UIMimeType = "application/a2ui+json"
 
 // AgentSkill describes a single agent skill.
 type AgentSkill struct {

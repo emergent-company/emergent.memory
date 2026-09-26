@@ -128,6 +128,9 @@
       if (dockAvailable === true) { refreshDock(); return; }
       renderApproval(evt);
     },
+    renderUI: function (evt) {
+      MemoryChatComponents.renderA2UISurface(evt.surfaceId, evt.messages, badgeCtx);
+    },
     failStream: function (msg) { failStream(msg); },
     onToken: function (evt) { appendToken(evt.token); },
     onThinking: handleThinkingEvent,

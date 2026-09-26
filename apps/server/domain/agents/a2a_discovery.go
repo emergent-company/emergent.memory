@@ -8,6 +8,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/events"
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/a2ui"
 	"github.com/emergent-company/emergent.memory/pkg/acpslug"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -102,6 +103,10 @@ func GlobalAgentCard() AgentCard {
 		Capabilities: A2AAgentCapabilities{
 			Streaming:         true,
 			ExtendedAgentCard: true,
+			Extensions: []AgentExtension{{
+				URI:    A2UIA2AExtensionURI,
+				Params: map[string]any{"supportedCatalogIds": []string{a2ui.CatalogID}},
+			}},
 		},
 		DefaultInputModes:  []string{"application/json", "text/plain"},
 		DefaultOutputModes: []string{"application/json", "text/plain"},
