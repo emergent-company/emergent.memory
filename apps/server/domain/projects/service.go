@@ -229,7 +229,7 @@ func (s *Service) Create(ctx context.Context, req CreateProjectRequest, userID s
 	// org:project:create). Authority is resolved server-side from the membership
 	// tables; req.OrgID only selects the resource and is never authorization
 	// truth.
-	if err := s.authorizeOrgAdmin(ctx, req.OrgID, userID); err != nil {
+	if err := s.AuthorizeOrgAdmin(ctx, req.OrgID, userID); err != nil {
 		return nil, err
 	}
 
@@ -720,10 +720,14 @@ func (s *Service) callerRoles(ctx context.Context, projectID, orgID, userID stri
 	return projectRole, orgRole, nil
 }
 
-// authorizeOrgAdmin requires the caller to be an org_admin of the addressed
-// organization. Used by org-addressed mutations (project creation) where the org
-// id is client-supplied and must not be trusted as authorization truth.
-func (s *Service) authorizeOrgAdmin(ctx context.Context, orgID, userID string) error {
+// AuthorizeOrgAdmin requires the caller to be an org_admin of the addressed
+// organization. It is the shared authority seam for org-addressed mutations
+// (project creation) where the org id may be client-supplied and must never be
+// trusted as authorization truth: the caller's org_admin role is resolved
+// server-side from membership tables. Both the REST Create path and the MCP
+// project-create tool call this helper so the two entrypoints cannot drift
+// (issue #1041).
+func (s *Service) AuthorizeOrgAdmin(ctx context.Context, orgID, userID string) error {
 	if s.orgMembershipReader == nil {
 		return apperror.ErrInternal
 	}

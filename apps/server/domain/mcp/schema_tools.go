@@ -14,6 +14,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/internal/database"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -439,8 +440,10 @@ func (s *Service) executeGetInstalledTemplates(ctx context.Context, projectID st
 }
 
 func (s *Service) executeAssignSchema(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
-	projectUUID, err := uuid.Parse(projectID)
-	if err != nil {
+	if projectID == "" {
+		return nil, fmt.Errorf("project context required")
+	}
+	if _, err := uuid.Parse(projectID); err != nil {
 		return nil, fmt.Errorf("invalid project_id: %w", err)
 	}
 
@@ -451,68 +454,42 @@ func (s *Service) executeAssignSchema(ctx context.Context, projectID string, arg
 
 	force, _ := args["force"].(bool)
 
-	var schemaRow struct {
-		ID   string `bun:"id"`
-		Name string `bun:"name"`
+	if s.schemasSvc == nil {
+		return nil, fmt.Errorf("schemas service not available")
 	}
-	err = s.db.NewRaw(`
-		SELECT id, name
-		FROM kb.graph_schemas
-		WHERE id = ? AND (project_id = ? OR source = 'builtin')
-	`, schemaID, projectID).Scan(ctx, &schemaRow)
+
+	var userID string
+	if u := auth.UserFromContext(ctx); u != nil {
+		userID = u.ID
+	}
+
+	// Delegate to the schemas service (issue #1041): the REST AssignPack handler
+	// and this MCP tool share the same service boundary, so project scoping and
+	// type registration cannot drift from the domain. The projectID is the
+	// server-derived caller project; the schemaID at most selects a resource and
+	// is scoped by AssignPack to the caller's project + builtin.
+	result, err := s.schemasSvc.AssignPack(ctx, projectID, userID, &schemas.AssignPackRequest{
+		SchemaID: schemaID,
+		Force:    force,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("schema not found: %s", schemaID)
+		return nil, err
 	}
 
-	{
-		var existing struct {
-			ID string `bun:"id"`
-		}
-		err = s.db.NewRaw(`
-			SELECT id FROM kb.project_schemas WHERE project_id = ? AND schema_id = ?
-		`, projectUUID, schemaID).Scan(ctx, &existing)
-		if err == nil && existing.ID != "" {
-			return &ToolResult{
-				Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("Schema \"%s\" is already assigned to this project.", schemaRow.Name)}},
-			}, nil
-		}
+	msg := fmt.Sprintf("Schema \"%s\" assigned successfully.", result.SchemaName)
+	if result.MigrationStatus != "" {
+		msg += fmt.Sprintf(" Migration status: %s", result.MigrationStatus)
 	}
-
-	_, err = s.db.NewRaw(`
-		INSERT INTO kb.project_schemas (project_id, schema_id, active)
-		VALUES (?, ?, true)
-		ON CONFLICT (project_id, schema_id) DO UPDATE
-		SET active = true, removed_at = NULL
-	`, projectUUID, schemaID).Exec(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("assign schema: %w", err)
-	}
-
-	if !force {
-		// Run schema migration preview
-		previewResult, err := s.schemasSvc.PreviewSchemaMigration(ctx, projectID, &schemas.SchemaMigrationPreviewRequest{
-			FromSchemaID: "",
-			ToSchemaID:   schemaID,
-		})
-		if err != nil {
-			s.log.Warn("schema migration preview failed", logger.Error(err))
-		} else {
-			return &ToolResult{
-				Content: []ContentBlock{
-					{Type: "text", Text: fmt.Sprintf("Schema \"%s\" assigned successfully.\n\nMigration preview:\n%v", schemaRow.Name, previewResult)},
-				},
-			}, nil
-		}
-	}
-
 	return &ToolResult{
-		Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("Schema \"%s\" assigned successfully.", schemaRow.Name)}},
+		Content: []ContentBlock{{Type: "text", Text: msg}},
 	}, nil
 }
 
 func (s *Service) executeUpdateTemplateAssignment(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
-	projectUUID, err := uuid.Parse(projectID)
-	if err != nil {
+	if projectID == "" {
+		return nil, fmt.Errorf("project context required")
+	}
+	if _, err := uuid.Parse(projectID); err != nil {
 		return nil, fmt.Errorf("invalid project_id: %w", err)
 	}
 
@@ -523,17 +500,14 @@ func (s *Service) executeUpdateTemplateAssignment(ctx context.Context, projectID
 
 	active, _ := args["active"].(bool)
 
-	var assigned struct {
-		ID string `bun:"id"`
+	if s.schemasSvc == nil {
+		return nil, fmt.Errorf("schemas service not available")
 	}
-	err = s.db.NewRaw(`
-		UPDATE kb.project_schemas
-		SET active = ?, removed_at = CASE WHEN ? THEN NULL ELSE removed_at END
-		WHERE project_id = ? AND schema_id = ?
-		RETURNING id
-	`, active, active, projectUUID, schemaID).Scan(ctx, &assigned)
-	if err != nil {
-		return nil, fmt.Errorf("update template assignment: %w", err)
+
+	// Delegate to the schemas service (issue #1041): the REST UpdateAssignment
+	// handler and this MCP tool share the same service boundary.
+	if err := s.schemasSvc.UpdateAssignmentBySchemaID(ctx, projectID, schemaID, active); err != nil {
+		return nil, err
 	}
 
 	return &ToolResult{
@@ -542,8 +516,10 @@ func (s *Service) executeUpdateTemplateAssignment(ctx context.Context, projectID
 }
 
 func (s *Service) executeUninstallSchema(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
-	projectUUID, err := uuid.Parse(projectID)
-	if err != nil {
+	if projectID == "" {
+		return nil, fmt.Errorf("project context required")
+	}
+	if _, err := uuid.Parse(projectID); err != nil {
 		return nil, fmt.Errorf("invalid project_id: %w", err)
 	}
 
@@ -552,39 +528,18 @@ func (s *Service) executeUninstallSchema(ctx context.Context, projectID string, 
 		return nil, fmt.Errorf("schema_id is required")
 	}
 
-	var schemaRow struct {
-		ID   string `bun:"id"`
-		Name string `bun:"name"`
-	}
-	err = s.db.NewRaw(`
-		SELECT id, name FROM kb.graph_schemas WHERE id = ?
-	`, schemaID).Scan(ctx, &schemaRow)
-	if err != nil {
-		return nil, fmt.Errorf("schema not found: %s", schemaID)
+	if s.schemasSvc == nil {
+		return nil, fmt.Errorf("schemas service not available")
 	}
 
-	now := time.Now()
-	var uninstalled struct {
-		ID string `bun:"id"`
-	}
-	err = s.db.NewRaw(`
-		UPDATE kb.project_schemas
-		SET active = false, removed_at = ?
-		WHERE project_id = ? AND schema_id = ? AND active = true
-		RETURNING id
-	`, now, projectUUID, schemaID).Scan(ctx, &uninstalled)
-	if err != nil {
-		return nil, fmt.Errorf("uninstall schema: %w", err)
-	}
-
-	if uninstalled.ID == "" {
-		return &ToolResult{
-			Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("Schema \"%s\" is not currently installed in this project.", schemaRow.Name)}},
-		}, nil
+	// Delegate to the schemas service (issue #1041): the REST DeleteAssignment
+	// handler and this MCP tool share the same service boundary.
+	if err := s.schemasSvc.DeleteAssignmentBySchemaID(ctx, projectID, schemaID); err != nil {
+		return nil, err
 	}
 
 	return &ToolResult{
-		Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("Schema \"%s\" uninstalled successfully.", schemaRow.Name)}},
+		Content: []ContentBlock{{Type: "text", Text: "Schema uninstalled successfully."}},
 	}, nil
 }
 
@@ -722,8 +677,10 @@ func (s *Service) executeCreateSchema(ctx context.Context, projectID string, arg
 }
 
 func (s *Service) executeDeleteSchema(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
-	_, err := uuid.Parse(projectID)
-	if err != nil {
+	if projectID == "" {
+		return nil, fmt.Errorf("project context required")
+	}
+	if _, err := uuid.Parse(projectID); err != nil {
 		return nil, fmt.Errorf("invalid project_id: %w", err)
 	}
 
@@ -732,58 +689,22 @@ func (s *Service) executeDeleteSchema(ctx context.Context, projectID string, arg
 		return nil, fmt.Errorf("schema_id is required")
 	}
 
-	type packRow struct {
-		ID     string `bun:"id"`
-		Name   string `bun:"name"`
-		Source string `bun:"source"`
+	if s.schemasSvc == nil {
+		return nil, fmt.Errorf("schemas service not available")
 	}
 
-	var pack packRow
-	err = s.db.NewSelect().
-		TableExpr("kb.graph_schemas").
-		Column("id", "name", "source").
-		Where("id = ?", packID).
-		Where("project_id = ?", projectID).
-		Scan(ctx, &pack)
-
-	if err != nil {
-		return nil, fmt.Errorf("schema not found: %s", packID)
-	}
-
-	// Defense-in-depth: builtins are normally NULL-project and are already excluded
-	// by the strict project_id filter above, but reject explicitly in case a builtin
-	// is ever project-owned.
-	if pack.Source == "builtin" || pack.Source == "system" {
-		return nil, fmt.Errorf("cannot delete built-in schemas")
-	}
-
-	var installCount int
-	err = s.db.NewRaw(`
-		SELECT COUNT(*) FROM kb.project_schemas WHERE schema_id = ?
-	`, packID).Scan(ctx, &installCount)
-
-	if err != nil {
-		return nil, fmt.Errorf("check installations: %w", err)
-	}
-
-	if installCount > 0 {
-		return nil, fmt.Errorf("cannot delete schema \"%s\" because it is currently installed in %d project(s)", pack.Name, installCount)
-	}
-
-	_, err = s.db.NewRaw(`
-		DELETE FROM kb.graph_schemas WHERE id = ? AND project_id = ?
-	`, packID, projectID).Exec(ctx)
-
-	if err != nil {
-		return nil, fmt.Errorf("delete schema: %w", err)
+	// Delegate to the schemas service (issue #1041): the REST DeletePack handler
+	// and this MCP tool share the same service boundary. DeletePack scopes the
+	// delete to the caller's project and refuses a schema installed anywhere.
+	if err := s.schemasSvc.DeletePack(ctx, packID, projectID); err != nil {
+		return nil, err
 	}
 
 	result := DeleteSchemaResult{
 		Success:  true,
 		SchemaID: packID,
-		Message:  fmt.Sprintf("Schema \"%s\" deleted successfully", pack.Name),
+		Message:  "Schema deleted successfully",
 	}
-
 	return s.wrapResult(result)
 }
 
