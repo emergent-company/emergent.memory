@@ -37,8 +37,9 @@ This change separates **dialect** (wire protocol + auth behavior) from **provide
 - `domain/modelconfig/`: `entity.go`, `service.go`, `adapter.go`, `store.go`.
 - `domain/agents/`: `entity.go` (`ModelConfig` gains a provider field), `executor.go` (build `ModelRef`, persist slug/dialect on the run), run/handler model fields.
 - `pkg/adk/`: `model.go` (`CreateModelWithName` takes a `ModelRef`), `credentials.go`, `embeddings` resolver seam.
+- `pkg/modelref/` (new): dependency-neutral `ModelRef`, strict `ParseModelRef`, and backfill-only `NormalizeLegacy` — shared by `pkg/adk` and `domain/provider` without an import cycle.
 - String-based model callers to convert: `domain/agents/session_compressor.go`, `domain/agents/handler.go`, `domain/agents/mcp_tools.go`, `domain/provider/project_settings_store.go`, `domain/provider/share_service.go`, `domain/extraction/usage.go`.
-- `migrations/`: new migration(s) covering provider config slug/dialect (including dropping the pre-existing unnamed `UNIQUE (…, provider)` constraints and normalizing already-prefixed model columns), `project_model_config`, `agent_definitions.model`, `agent_runs`, `llm_usage_events`, and both custom-pricing tables (backfill + uniqueness swap).
+- `migrations/`: new migration(s) covering provider config slug/dialect (including dropping the pre-existing unnamed `UNIQUE (…, provider)` constraints and normalizing already-prefixed model columns — recognised-prefix strip only), `project_model_config`, `agent_definitions.model`, `agent_runs`, `llm_usage_events`, and project custom pricing (backfill + uniqueness swap). `organization_custom_pricing` stays dialect-scoped.
 
 **SDK / CLI / Web UI**
 - `apps/server/pkg/sdk/provider/client.go`: slug/dialect types and slug-addressed methods.

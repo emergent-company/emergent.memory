@@ -38,7 +38,16 @@ type ModelRef struct {
 }
 ```
 
-`ModelRef` is what entities, services, API payloads, agent definitions, and run records carry. The string form `"slug/model"` exists for CLI arguments, URL path segments, and form values; `ParseModelRef` splits on the **first** `/` and is the only place string parsing happens. Because `Model` is allowed to contain slashes, the "exactly one slash" heuristic disappears.
+`ModelRef` lives in a **dependency-neutral package** (`pkg/modelref`), not in `domain/provider`. `domain/provider` already imports `pkg/adk` (via `adk_adapter.go`), so placing the shared value or its parser in `domain/provider` while `pkg/adk` returns it would create `pkg/adk → domain/provider → pkg/adk`. Both `pkg/adk` and `domain/provider` import `pkg/modelref`; the neutral package imports neither.
+
+`ModelRef` is what entities, services, API payloads, agent definitions, and run records carry. The string form `"slug/model"` exists for CLI arguments, URL path segments, and form values.
+
+Two distinct operations — they must not be conflated:
+
+- `ParseModelRef(string) (ModelRef, error)` — **strict** edge parser. Splits on the first `/`; requires a non-empty provider segment and a non-empty model; rejects a string with no `/`.
+- `NormalizeLegacy(string) (ModelRef, bool)` — **context-aware** migration/inference helper, used only while backfilling stored values. It resolves a recognised dialect or slug prefix to an instance and attributes a bare value using the owning project's default instance for the inferred dialect; it is explicitly **not** the edge parser and is not on any runtime path after migration.
+
+Because `Model` is allowed to contain slashes, the "exactly one slash" heuristic disappears.
 
 ### D3 — Slug-first resolution with dialect fallback
 
@@ -50,17 +59,18 @@ Each provider config row gains `slug` and `dialect` columns. On migration, `dial
 
 ### D5 — Pricing/usage keyed by slug; catalog/retail by dialect
 
-- Project and org custom pricing key on the instance slug (`UNIQUE (project_id, provider_slug, model)`), since manual rates are per endpoint.
+- Project custom pricing keys on the instance slug (`UNIQUE (project_id, provider_slug, model)`), since manual rates are per endpoint.
+- **Org custom pricing stays dialect-scoped** (`UNIQUE (org_id, provider, model)` unchanged). A slug is project-scoped, so `(org_id, provider_slug, model)` cannot identify an instance: two projects in the same org may reuse a slug for different endpoints. Org-level rates are negotiated per dialect/model, not per project endpoint. (This resolves former Open Question 4.)
 - `kb.llm_usage_events` gains `provider_slug` and `dialect`; cost resolution first tries the project override by slug, then falls back to retail by dialect, then by model name (unchanged optimistic-matching chain).
-- `provider_supported_models` and `provider_pricing` keep dialect keying. Trade-off accepted: two instances of one dialect share one catalog and retail price list.
+- `provider_supported_models` and `provider_pricing` keep dialect keying. Trade-off accepted: two instances of one dialect share one catalog and retail price list. Consequently **model context/output limits stay dialect+model scoped** — there is no per-instance limit data to select from.
 
 ### D6 — Migration in place, additive then tightening
 
 Migrations add nullable columns, backfill from existing values, then set `NOT NULL` and swap uniqueness.
 
 - **Provider configs.** The existing inline `UNIQUE (project_id, provider)` (and `UNIQUE (org_id, provider)`) constraints must be **explicitly dropped** (they are unnamed, so the migration references their PostgreSQL auto-generated names) before `UNIQUE (project_id, slug)` / `UNIQUE (org_id, slug)` is added, otherwise two same-dialect rows still collide on `provider`.
-- **Provider-config model columns.** `generative_model`/`embedding_model` may already hold prefix-qualified values (the code comments explicitly bless `deepseek/deepseek-v4-flash` served via a proxy; the prefix is only stripped on read). The backfill must first-slash-split and normalize these columns too, not just `slug`/`dialect`, or removing the "exactly one slash" heuristic (D2) would mis-read a stored prefixed name as a bare model containing a slash.
-- **`kb.project_model_config`.** Replaced by `*_provider_slug` + `*_model` pairs. `00124` only prefixed rows where the value lacked any `/`; a bare Vertex resource path (contains `/`, no provider prefix) was skipped and would be mis-split by first-`/`. The backfill SHALL be per-row deterministic: a value whose first `/`-segment is a known dialect becomes that dialect's default instance; an explicit provider prefix that is an existing slug becomes that instance; anything else is attributed to the project's default instance for the row's recorded dialect, or flagged when ambiguous.
+- **Provider-config model columns.** `generative_model`/`embedding_model` may already hold prefix-qualified values (the code comments explicitly bless `deepseek/deepseek-v4-flash` served via a proxy; the prefix is only stripped on read). The backfill strips **only a recognised dialect or slug prefix** and preserves otherwise-unqualified multi-segment model IDs (Vertex `publishers/google/models/…` resource paths) intact — a blind first-slash split would corrupt those. After stripping, the stored value is a bare model name under the new parser.
+- **`kb.project_model_config`.** Replaced by `*_provider_slug` + `*_model` pairs. `kb.project_model_config` has **no recorded dialect** today, so bare values cannot fall back to "the row's dialect". The backfill SHALL resolve each row deterministically: (1) if the value's first `/`-segment is a known dialect or an existing slug, that identifies the instance; (2) otherwise, if exactly one of the project's provider configs carries that model name in its `generative_model`/`embedding_model`, use that config's slug; (3) otherwise leave the row **flagged for manual resolution** (a migration report/quarantine table) rather than guessing. Bare Vertex resource paths are matched by rule (2), never split. Ambiguous multi-instance rows are flagged, not silently assigned.
 - **`kb.agent_definitions.model`.** JSONB `provider` slug backfilled by prefix parse. `AgentDefinition` has a `project_id` column, so the backfill **can** join `project_provider_configs` — the constraint is ambiguity when a project holds multiple same-dialect instances, not lack of project context. Bare legacy names resolve to the project's default instance; ambiguous cases are flagged in the migration output.
 - **`kb.agent_runs`.** `provider_slug`/`dialect` backfilled from the nullable `provider`. Rows with `provider IS NULL` (pre-`00084`) fall back to a dialect inferred from the model name when possible, else remain NULL and are labelled "legacy" in the dashboard rather than folded into an empty bucket.
 
@@ -70,7 +80,7 @@ CLI: `memory provider configure-project <dialect> [--name <slug>]`; get/list/del
 
 ### D8 — Default-instance selection order for multi-instance projects
 
-`ResolveAny`, `ResolveAnyEmbedding`, `DefaultGenerativeModel`, and `DefaultEmbeddingModel` pick a single instance when no reference is given. They SHALL iterate dialects in the existing preference order and, within a dialect, select the instance with the lexicographically smallest slug (the default instance, whose slug equals the dialect, therefore wins). This keeps pre-migration behavior stable and makes the choice deterministic. `Resolve`/`ResolveFor` keep **dialect** semantics for backward compatibility and gain slug-addressed siblings; calling the dialect form when a dialect has multiple instances selects that dialect's default instance.
+`ResolveAny`, `ResolveAnyEmbedding`, `DefaultGenerativeModel`, and `DefaultEmbeddingModel` pick a single instance when no reference is given. They SHALL iterate dialects in the existing preference order and, within a dialect, prefer the instance whose slug **equals the dialect** (the default instance), then fall back to the lexicographically smallest slug among the rest. An explicit `slug == dialect` preference is required — pure lexicographic order would let an unrelated slug such as `a-local` sort ahead of `openai`. This keeps pre-migration behavior stable and makes the choice deterministic. `Resolve`/`ResolveFor` keep **dialect** semantics for backward compatibility and gain slug-addressed siblings (`ResolveByRef`, `ResolveBySlug`); calling the dialect form when a dialect has multiple instances selects that dialect's default instance.
 
 ### D9 — Slug validation
 
@@ -100,6 +110,5 @@ A slug SHALL match `[a-z0-9][a-z0-9-]*` and SHALL NOT equal a dialect name that 
 1. Should `ProviderType` be fully renamed to `ProviderDialect` now, or kept as the permanent name with `slug` added beside it? (Affects ~34 files.)
 2. Drop the legacy `provider` columns in this change or one release later?
 3. For `kb.agent_definitions.model`, is a JSONB `provider` field acceptable, or should the provider slug become a first-class column for indexability?
-4. Does org-level custom pricing need instance granularity at all, given org provider config is deprecated?
-5. Confirm the D8 default-instance selection order (dialect preference, then smallest slug) is the intended tiebreak when a project has multiple same-dialect instances.
-6. How should a project with multiple same-dialect instances disambiguate a legacy bare model name during backfill — default instance, or fail the migration for manual resolution?
+4. Confirm the D8 default-instance selection order (dialect + explicit `slug == dialect` preference, then smallest slug) is the intended tiebreak when a project has multiple same-dialect instances.
+5. How should a project with multiple same-dialect instances disambiguate a legacy bare model name during backfill — rule (2) model-name match, or fail the row for manual resolution? (Former org-pricing question is resolved: org custom pricing stays dialect-scoped.)

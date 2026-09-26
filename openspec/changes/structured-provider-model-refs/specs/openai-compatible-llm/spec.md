@@ -27,7 +27,7 @@ The system SHALL allow a project to configure more than one OpenAI-compatible pr
 
 ### Requirement: OpenAI Chat Completions wire protocol
 
-The system SHALL communicate with the selected OpenAI-compatible instance using the OpenAI Chat Completions API format (`POST /v1/chat/completions`), sending a JSON body with `model`, `messages`, and `max_tokens` fields, and parsing the response's `choices[0].message.content` as the model output. The base URL and API key SHALL come from the instance named by the model reference.
+The system SHALL communicate with the selected OpenAI-compatible instance using the OpenAI Chat Completions API format (`POST {base_url}/chat/completions`), sending a JSON body with `model`, `messages`, and `max_tokens` fields, and parsing the response's `choices[0].message.content` as the model output. The base URL and API key SHALL come from the instance named by the model reference. The stored `base_url` SHALL be the versioned API root (e.g. `https://api.openai.com/v1`, `http://localhost:11434/v1`); the client appends `/chat/completions` and SHALL normalize trailing slashes so it never produces `/v1/v1` or drops the version path.
 
 #### Scenario: Successful generation request
 
@@ -35,6 +35,11 @@ The system SHALL communicate with the selected OpenAI-compatible instance using 
 - **THEN** the system SHALL POST to that instance's `{base_url}/chat/completions` with the correct JSON body
 - **THEN** the system SHALL set the `Authorization: Bearer {api_key}` header when the instance's API key is non-empty
 - **THEN** the system SHALL return the content from `choices[0].message.content` as the LLM response
+
+#### Scenario: Base URL with trailing slash
+
+- **WHEN** an instance's stored base URL ends with `/`
+- **THEN** the client joins it to produce exactly one `/chat/completions` segment (no double slash)
 
 #### Scenario: Endpoint returns an error status
 

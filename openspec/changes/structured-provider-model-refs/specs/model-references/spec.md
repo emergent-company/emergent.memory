@@ -42,6 +42,25 @@ The `"slug/model"` string form SHALL be accepted only at input boundaries (CLI a
 - **WHEN** an input string is `openai/` or `openai/   `
 - **THEN** parsing fails with an error naming the missing model
 
+### Requirement: Legacy values are normalized, not parsed
+
+Strict edge parsing SHALL reject a string without a provider segment. Backfill of pre-existing stored values SHALL instead use a separate, context-aware normalization operation that resolves a bare or dialect-prefixed value to an instance. The two SHALL be distinct: normalization is used only during migration/inference and is never the runtime edge parser.
+
+#### Scenario: Strict parser rejects bare input
+
+- **WHEN** `ParseModelRef` receives a bare model name with no `/`
+- **THEN** it returns an error
+
+#### Scenario: Normalization resolves a bare stored value
+
+- **WHEN** a stored value is a bare model name and the owning project has a determinable default instance for it
+- **THEN** `NormalizeLegacy` yields a structured reference with that instance
+
+#### Scenario: Normalization does not corrupt resource paths
+
+- **WHEN** a stored value is an unqualified multi-segment model id (e.g. `publishers/google/models/gemini-2.5-flash`)
+- **THEN** normalization matches it against provider configs rather than splitting it at the first `/`
+
 ### Requirement: Single parse boundary
 
 The system SHALL parse the string form in exactly one place. Provider-prefix extraction SHALL NOT occur in provider services, the model factory, cost resolution, or adapters.

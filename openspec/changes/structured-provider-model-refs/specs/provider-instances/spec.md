@@ -19,6 +19,11 @@ Each provider config SHALL have a project-scoped slug that is unique within the 
 - **THEN** the slug defaults to the dialect name
 - **AND** if that slug is already taken, the system assigns a suffixed slug (`<dialect>-2`, `<dialect>-3`, …) rather than failing
 
+#### Scenario: Concurrent no-slug creates
+
+- **WHEN** two no-slug creates for the same dialect arrive concurrently
+- **THEN** both succeed with distinct suffixed slugs (allocation is transactional or retried on unique-constraint conflict), and neither fails
+
 #### Scenario: Duplicate slug rejected
 
 - **WHEN** a caller creates a second config in the same project with an existing slug
@@ -42,6 +47,20 @@ A project SHALL be permitted to hold multiple provider configs that share the sa
 
 - **WHEN** a model reference names one of the two instances
 - **THEN** the request uses that instance's credentials and base URL, not the other instance's
+
+### Requirement: Deterministic default-instance selection
+
+When no instance is named, the system SHALL select a default instance deterministically: iterate dialects in the configured preference order and, within the chosen dialect, prefer the instance whose slug equals the dialect, then the lexicographically smallest slug. An unrelated slug SHALL NOT pre-empt the dialect-named default.
+
+#### Scenario: Dialect-named default wins
+
+- **WHEN** a project has instances `a-local` (dialect `openai`) and `openai` (dialect `openai`) and resolution names no instance
+- **THEN** the `openai` instance is selected, not `a-local`
+
+#### Scenario: Single instance unaffected
+
+- **WHEN** a dialect has exactly one instance
+- **THEN** that instance is selected
 
 ### Requirement: Slug-first resolution with dialect fallback
 
