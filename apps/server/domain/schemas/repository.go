@@ -848,6 +848,26 @@ func (r *Repository) GetPack(ctx context.Context, packID, projectID string) (*Gr
 	return &pack, nil
 }
 
+// GetAssignablePack returns a schema visible to the given project: owned by the
+// project or a global builtin (source='builtin'). Any other schema — another
+// project's, or a NULL-project non-builtin — is a 404. This is the same
+// template-visibility filter the schema-get tool uses, shared by the MCP
+// schema-assign seam so a caller cannot install a schema it cannot see
+// (issue #1114/#1041).
+func (r *Repository) GetAssignablePack(ctx context.Context, packID, projectID string) (*GraphMemorySchema, error) {
+	var pack GraphMemorySchema
+	err := r.db.NewSelect().
+		Model(&pack).
+		Where("id = ?", packID).
+		Where("(project_id = ? OR source = 'builtin')", projectID).
+		Scan(ctx)
+	if err != nil {
+		r.log.Error("failed to get assignable schema", logger.Error(err))
+		return nil, apperror.NewNotFound("schema", packID)
+	}
+	return &pack, nil
+}
+
 // UpdatePack partially updates a schema the caller owns.
 // Only non-nil / non-empty fields in req are applied.
 func (r *Repository) UpdatePack(ctx context.Context, packID, projectID string, req *UpdatePackRequest) (*GraphMemorySchema, error) {
@@ -920,6 +940,15 @@ func (r *Repository) UpdatePack(ctx context.Context, packID, projectID string, r
 // DeletePack deletes a schema the caller owns from the registry.
 // Returns an error if the pack is assigned to any projects.
 func (r *Repository) DeletePack(ctx context.Context, packID, projectID string) error {
+	// Ownership/existence oracle first: a schema the caller does not own
+	// (foreign or nonexistent) is a 404, matching the REST convention. Only
+	// after ownership is confirmed do we reject an owned-but-assigned schema
+	// with 400 (issue #1116). Previously the assignment check ran first, so a
+	// foreign schema that happened to be assigned anywhere leaked a 400.
+	if _, err := r.GetPack(ctx, packID, projectID); err != nil {
+		return err
+	}
+
 	// Check if assigned to any projects
 	assignedCount, err := r.db.NewSelect().
 		Model((*ProjectMemorySchema)(nil)).
