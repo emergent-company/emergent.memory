@@ -120,6 +120,7 @@ func splitBySize(text string, cfg Config) []string {
 	start := 0
 
 	for start < len(runes) {
+		iterStart := start
 		end := start + cfg.ChunkSize
 		if end > len(runes) {
 			end = len(runes)
@@ -151,6 +152,13 @@ func splitBySize(text string, cfg Config) []string {
 		// absorb the overlap. With no whitespace at all the cut is unavoidably
 		// mid-word, so honour ChunkOverlap instead of dropping it.
 		if end >= len(runes) || (hasWordBoundary && start <= end-cfg.ChunkOverlap) {
+			start = end
+		}
+		// Forward-progress guard: when the nearest word boundary sits within
+		// ChunkOverlap of the window start, `end - ChunkOverlap` lands on (or
+		// before) already-emitted text and the loop would stall. Skip the
+		// overlap entirely and advance to `end`, which is always > iterStart.
+		if start <= iterStart {
 			start = end
 		}
 	}
