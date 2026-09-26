@@ -879,10 +879,13 @@ div:has(> #_layout-topbar) {
    only — the accent still drives the border and the tint, and the count pill
    keeps its own solid-token pair. */
 .memory-rail-badge {
-  display: inline-flex;
+  /* The badge now sits ABOVE the title inside the row's grow column, so it is
+     block-level and hugs its own content width (fit-content) rather than
+     stretching; margin-bottom keeps it off the title below. */
+  display: flex;
   align-items: center;
   gap: 0.25rem;
-  align-self: center;
+  width: fit-content;
   padding: 0.1rem 0.4rem;
   border-radius: 9999px;
   font-size: 0.625rem;
@@ -891,6 +894,7 @@ div:has(> #_layout-topbar) {
   text-transform: uppercase;
   white-space: nowrap;
   border: 1px solid transparent;
+  margin-bottom: 0.25rem;
 }
 /* A two-class selector is required to hide the badge: the injected copy of
    this sheet (chat-components.js) is appended to <head> after the compiled
