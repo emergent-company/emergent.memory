@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"sort"
 	"strconv"
 	"time"
@@ -173,6 +174,19 @@ func (s *Server) uiUsage(c echo.Context) error {
 	}
 
 	return s.page(c, pageTitle("Usage"), UsagePage(summary, series, payload, monthSpend, hasMonthSpend, days, nil))
+}
+
+// usageInstanceSlug returns the provider instance that served a usage row,
+// falling back to the dialect for legacy rows recorded before instances
+// existed.
+func usageInstanceSlug(r UsageSummaryRow) string {
+	return cmp.Or(r.ProviderSlug, r.Provider)
+}
+
+// usageDialectDistinct reports whether a usage row's dialect differs from its
+// instance slug (so the dialect is worth showing alongside the slug).
+func usageDialectDistinct(r UsageSummaryRow) bool {
+	return r.ProviderSlug != "" && r.ProviderSlug != r.Provider
 }
 
 // usageModels returns the per-model rows for the table, sorted by cost
