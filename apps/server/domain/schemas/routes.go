@@ -12,11 +12,20 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g := e.Group("/api/schemas")
 	g.Use(authMiddleware.RequireAuth())
 
-	// Global template pack CRUD (not project-scoped)
-	g.POST("", h.CreatePack)
-	g.GET("/:packId", h.GetPack)
-	g.PUT("/:packId", h.UpdatePack)
-	g.DELETE("/:packId", h.DeletePack)
+	// Template pack CRUD addressed by the resolved credential (X-Project-ID for
+	// human sessions, the token's binding for project-bound tokens). The
+	// addressed project is validated server-side against membership / token
+	// binding, so a client-supplied X-Project-ID can never redirect the
+	// operation to another project (issue #1023). The same guards already
+	// protect the project-scoped routes below.
+	global := g.Group("")
+	global.Use(authMiddleware.RequireProjectTokenScope())
+	global.Use(authMiddleware.RequireProjectMember())
+
+	global.POST("", h.CreatePack)
+	global.GET("/:packId", h.GetPack)
+	global.PUT("/:packId", h.UpdatePack)
+	global.DELETE("/:packId", h.DeletePack)
 
 	// Project-scoped template pack routes
 	projects := g.Group("/projects/:projectId")
