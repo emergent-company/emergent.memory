@@ -163,6 +163,7 @@ func (r *Repository) CompleteRun(ctx context.Context, runID string, summary map[
 		Model((*AgentRun)(nil)).
 		Set("status = ?", RunStatusSuccess).
 		Set("completed_at = ?", now).
+		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
 		Set("summary = ?", summary).
 		Where("id = ?", runID).
 		Exec(ctx)
@@ -176,6 +177,7 @@ func (r *Repository) SkipRun(ctx context.Context, runID string, reason string) e
 		Model((*AgentRun)(nil)).
 		Set("status = ?", RunStatusSkipped).
 		Set("completed_at = ?", now).
+		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
 		Set("skip_reason = ?", reason).
 		Where("id = ?", runID).
 		Exec(ctx)
@@ -2549,6 +2551,7 @@ func (r *Repository) CompleteJob(ctx context.Context, jobID, runID string) error
 			Model((*AgentRun)(nil)).
 			Set("status = ?", RunStatusSuccess).
 			Set("completed_at = ?", now).
+			Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
 			Where("id = ?", runID).
 			Exec(ctx); err != nil {
 			return fmt.Errorf("complete run: %w", err)
@@ -2605,6 +2608,7 @@ func (r *Repository) FailJob(ctx context.Context, jobID, runID, errMsg string, r
 				Model((*AgentRun)(nil)).
 				Set("status = ?", RunStatusError).
 				Set("completed_at = ?", now).
+				Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
 				Set("error_message = ?", errMsg).
 				Where("id = ?", runID).
 				Exec(ctx); err != nil {
