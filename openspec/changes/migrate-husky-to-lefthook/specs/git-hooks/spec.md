@@ -85,6 +85,20 @@ The root `task lint` SHALL run this group. The web-ui `task lint` SHALL run a `l
 - **WHEN** a developer runs `task lint` in `apps/web-ui`
 - **THEN** lefthook runs the `lint-webui` group (web UI + connector only)
 
+### Requirement: Tracked-file gofmt guard
+
+The `lint` group SHALL include a repo-wide gofmt check over **tracked** Go files (`git ls-files '*.go' | xargs gofmt -l`), covering trees beyond the per-app scopes (e.g. `e2e/`, `blueprints/`, `tools/`), so an unformatted tracked Go file cannot land silently. Per-tree gofmt jobs SHALL also operate on tracked files via `git ls-files` rather than `find`, so generated and untracked artifacts produce no noise. This mirrors the CI `gofmt (tracked Go files)` guard (see #1058 / #1061).
+
+#### Scenario: Unformatted tracked file in a non-app tree
+
+- **WHEN** a tracked Go file under `e2e/` (or another tree outside `apps/`) is not gofmt-formatted
+- **THEN** `task lint` fails and reports the file
+
+#### Scenario: Untracked artifact is ignored
+
+- **WHEN** a generated or untracked `.go` file is present
+- **THEN** the gofmt lint does not flag it (only tracked files are checked)
+
 ### Requirement: Gateway build prerequisites
 
 Gateway Go jobs (`go vet`, `go build`, `go test`, `golangci-lint`) SHALL require generated assets that are not committed (templ output and compiled CSS). When those assets are absent on an un-warmed tree, the jobs SHALL skip with an actionable message (naming `task dev` / `task generate && task css`) instead of failing. CI generates the assets before building, so the checks still run there.
