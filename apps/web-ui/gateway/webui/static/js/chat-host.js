@@ -272,6 +272,7 @@
     // h = {
     //   getStreaming, setBubbleHTML, updateBubbleText, scrollToBottom,
     //   handleToolEvent, renderQuestion, renderApproval, failStream,
+    //   renderUI(evt),   // optional (A2UI surface cards)
     //   onMeta(evt),     // page-local meta handling (required)
     //   onThinking(evt), // optional (chat only)
     //   onToken(evt),    // optional (raw delta append; hosts without it skip)
@@ -304,6 +305,9 @@
           break;
         case "approval":
           if (evt.questionId) h.renderApproval(evt);
+          break;
+        case "ui":
+          if (evt.surfaceId && h.renderUI) h.renderUI(evt);
           break;
         case "error":
           h.failStream(evt.error || "The agent hit an error.");

@@ -100,6 +100,9 @@
     handleToolEvent: function (evt) { handleToolEvent(evt); },
     renderQuestion: function (evt) { renderQuestion(evt); },
     renderApproval: function (evt) { renderApproval(evt); },
+    renderUI: function (evt) {
+      MemoryChatComponents.renderA2UISurface(evt.surfaceId, evt.messages, badgeCtx);
+    },
     failStream: function (msg) { failStream(msg); },
     onToken: function (evt) { appendToken(evt.token); },
     isAborted: function () { return !!(aborter && aborter.signal.aborted); },

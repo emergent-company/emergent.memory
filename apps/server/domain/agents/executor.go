@@ -27,6 +27,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
 	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/a2ui"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
@@ -53,6 +54,9 @@ const (
 	// (non-final assistant text) so callers can surface it separately from the
 	// final answer.
 	StreamEventThinking
+	// StreamEventA2UI is emitted when the agent produces declarative A2UI
+	// surface messages (structured cards) in a ```a2ui fenced block.
+	StreamEventA2UI
 )
 
 // StreamEvent is a single event emitted during agent execution via StreamCallback.
@@ -65,6 +69,8 @@ type StreamEvent struct {
 	Error      string         // For Error/ToolCallEnd: error message
 	QuestionID string         // For ToolApproval: the confirmation question ID
 	Role       string         // For Thinking: "operator" (planning text) or "reasoning" (chain-of-thought)
+	SurfaceID  string         // For A2UI: the stable surface identifier
+	A2UI       []a2ui.Message // For A2UI: the ordered surface messages
 }
 
 // StreamCallback is an optional function invoked for each streaming event during execution.
@@ -127,12 +133,44 @@ func thinkingTexts(parts []*genai.Part) (operator, reasoning []string) {
 // thinking mode that answers entirely in reasoning_content) the Thought text IS
 // the answer and is emitted as a text delta so callers still receive a non-empty
 // final response. Nil and empty parts are skipped.
+//
+// When the plain answer text contains a valid ```a2ui fenced block, the surface
+// messages are emitted as a single StreamEventA2UI and the remaining text
+// (fences stripped) is emitted as a text delta, preserving reasoning alongside.
 func finalResponseStreamEvents(parts []*genai.Part) []StreamEvent {
 	hasAnswerText := false
 	for _, part := range parts {
 		if part != nil && part.Text != "" && !part.Thought {
 			hasAnswerText = true
 			break
+		}
+	}
+
+	// If there is plain answer text, check it for an embedded A2UI surface.
+	if hasAnswerText {
+		if msgs, plainText, surfaceID := extractA2UIFromParts(parts); len(msgs) > 0 {
+			var events []StreamEvent
+			events = append(events, StreamEvent{
+				Type:      StreamEventA2UI,
+				SurfaceID: surfaceID,
+				A2UI:      msgs,
+			})
+			if plainText != "" {
+				events = append(events, StreamEvent{
+					Type: StreamEventTextDelta,
+					Text: plainText,
+				})
+			}
+			for _, part := range parts {
+				if part != nil && part.Text != "" && part.Thought {
+					events = append(events, StreamEvent{
+						Type: StreamEventThinking,
+						Role: "reasoning",
+						Text: part.Text,
+					})
+				}
+			}
+			return events
 		}
 	}
 
@@ -155,6 +193,38 @@ func finalResponseStreamEvents(parts []*genai.Part) []StreamEvent {
 		}
 	}
 	return events
+}
+
+// extractA2UIFromParts concatenates the non-Thought text of a final response and
+// attempts to extract an A2UI surface from any ```a2ui fenced block. It returns
+// the decoded messages, the remaining plain text (fences stripped when found,
+// otherwise the full concatenated text), and the derived stable surface id.
+func extractA2UIFromParts(parts []*genai.Part) (a2uiMsgs []a2ui.Message, plainText string, surfaceID string) {
+	var b strings.Builder
+	for _, part := range parts {
+		if part == nil || part.Text == "" || part.Thought {
+			continue
+		}
+		b.WriteString(part.Text)
+	}
+	text := b.String()
+
+	msgs, rest, found := a2ui.ExtractFromText(text)
+	if !found {
+		return nil, text, ""
+	}
+	return msgs, rest, deriveSurfaceID(msgs)
+}
+
+// deriveSurfaceID returns the first createSurface surfaceId if present, else a
+// stable default identifier.
+func deriveSurfaceID(msgs []a2ui.Message) string {
+	for _, m := range msgs {
+		if m.CreateSurface != nil && m.CreateSurface.SurfaceID != "" {
+			return m.CreateSurface.SurfaceID
+		}
+	}
+	return "surface-1"
 }
 
 // ModelLimitsLookup is a narrow interface for querying model token limits

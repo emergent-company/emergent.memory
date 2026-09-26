@@ -167,6 +167,14 @@ func rewriteChatStream(w io.Writer, r io.Reader) error {
 			if _, err := w.Write(raw); err != nil {
 				return err
 			}
+		case "ui":
+			// A2UI declarative-card surface update streamed by the agent. The
+			// server has already validated the envelope, so re-emit it to the
+			// client verbatim — the client renders the cards; the gateway does
+			// not interpret or sanitize it beyond normal forwarding.
+			if _, err := w.Write(raw); err != nil {
+				return err
+			}
 		default:
 			if _, err := w.Write(raw); err != nil {
 				return err
