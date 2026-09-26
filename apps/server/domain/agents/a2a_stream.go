@@ -11,6 +11,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/emergent-company/emergent.memory/domain/events"
+	"github.com/emergent-company/emergent.memory/pkg/a2ui"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/sse"
 )
@@ -108,6 +109,15 @@ func (t *a2aStreamTranslator) translate(ev StreamEvent) []StreamResponse {
 			},
 		}}
 
+	case StreamEventA2UI:
+		return []StreamResponse{{
+			ArtifactUpdate: &TaskArtifactUpdateEvent{
+				TaskID:    t.taskID,
+				ContextID: t.contextID,
+				Artifact:  Artifact{ArtifactID: "a2ui-" + ev.SurfaceID, Parts: []Part{a2uiDataPart(ev.A2UI)}},
+			},
+		}}
+
 	case StreamEventError:
 		return []StreamResponse{a2aStatusUpdate(t.taskID, t.contextID, TaskStateFailed, ev.Error)}
 
@@ -118,6 +128,16 @@ func (t *a2aStreamTranslator) translate(ev StreamEvent) []StreamResponse {
 
 	default:
 		return nil
+	}
+}
+
+// a2uiDataPart builds the A2A data part carrying an ordered array of A2UI
+// surface messages, marked with the application/a2ui+json MIME type so A2UI-
+// capable clients render it and others ignore it.
+func a2uiDataPart(msgs []a2ui.Message) Part {
+	return Part{
+		Data:     msgs,
+		Metadata: map[string]any{"mimeType": A2UIMimeType},
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/emergent-company/emergent.memory/pkg/a2ui"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
@@ -120,6 +121,43 @@ func TestA2AStreamTranslator_ToolApproval_NoStreamMember(t *testing.T) {
 	tr := newA2aStreamTranslator("t1", "c1")
 	resps := tr.translate(StreamEvent{Type: StreamEventToolApproval, Tool: "run", Input: map[string]any{}})
 	assert.Empty(t, resps, "tool-approval gate is reported only as the terminal INPUT_REQUIRED statusUpdate")
+}
+
+func TestA2AStreamTranslator_A2UI_DataPart(t *testing.T) {
+	tr := newA2aStreamTranslator("t1", "c1")
+	msgs := []a2ui.Message{
+		{CreateSurface: &a2ui.CreateSurface{SurfaceID: "s1", CatalogID: a2ui.CatalogID}},
+		{UpdateComponents: &a2ui.UpdateComponents{
+			SurfaceID: "s1",
+			Components: []a2ui.Component{
+				{ID: "p1", Component: "proposal", Props: map[string]any{"kind": "change", "summary": "hi"}},
+			},
+		}},
+	}
+
+	resps := tr.translate(StreamEvent{Type: StreamEventA2UI, SurfaceID: "s1", A2UI: msgs})
+	require.Len(t, resps, 1)
+	au := resps[0].ArtifactUpdate
+	require.NotNil(t, au)
+	assert.Equal(t, "a2ui-s1", au.Artifact.ArtifactID)
+	require.Len(t, au.Artifact.Parts, 1)
+	part := au.Artifact.Parts[0]
+	assert.Nil(t, part.Text)
+	require.NotNil(t, part.Metadata)
+	assert.Equal(t, A2UIMimeType, part.Metadata["mimeType"])
+
+	data, ok := part.Data.([]a2ui.Message)
+	require.True(t, ok, "A2UI must map to a data part whose data is []a2ui.Message")
+	require.Len(t, data, 2)
+	assert.Equal(t, "s1", data[0].CreateSurface.SurfaceID)
+
+	// Exactly one A2A stream member is set (artifactUpdate). We assert this
+	// directly rather than via assertSingleMember, whose blunt no-"kind"
+	// heuristic would false-positive on the proposal card's `kind` prop.
+	assert.NotNil(t, resps[0].ArtifactUpdate)
+	assert.Nil(t, resps[0].Task)
+	assert.Nil(t, resps[0].Message)
+	assert.Nil(t, resps[0].StatusUpdate)
 }
 
 // ============================================================================

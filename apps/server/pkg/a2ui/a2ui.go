@@ -18,6 +18,10 @@ import (
 // wire payload omits it.
 const DefaultVersion = "v0.9.1"
 
+// CatalogID is the canonical catalog id advertised on the AgentCard and
+// referenced by createSurface.catalogId in emitted surfaces.
+const CatalogID = "memory-basic"
+
 // Message is a single A2UI envelope. Exactly one of the four payload members
 // must be set; there is no `kind` discriminator on the wire. Version defaults
 // to DefaultVersion when absent.
