@@ -118,31 +118,6 @@ func (s *CredentialService) Resolve(ctx context.Context, provider ProviderType) 
 	return nil, fmt.Errorf("no %s provider config found for project %s — run 'memory provider configure-project %s' to set credentials", provider, projectID, provider)
 }
 
-// stripModelPrefix removes a routing prefix from a model name, returning the
-// bare model name. Provider configs may store models prefixed with their
-// routing provider (e.g. "deepseek/deepseek-v4-flash" served through an
-// OpenAI-compatible LiteLLM proxy); the resolved credential must carry the bare
-// name because the prefix is a routing concern, not part of the model name the
-// provider API expects.
-//
-// Only a name whose first '/' segment is a recognised dialect is treated as
-// prefixed. A bare name (no slash) and an unqualified multi-segment model id
-// (a Vertex resource path such as "publishers/google/models/gemini-2.0-flash")
-// are returned unchanged — those slashes are part of the model id, not a
-// routing prefix. The bare model name may itself contain slashes, so the former
-// "exactly one slash" heuristic is gone: the prefix is identified by the dialect
-// name via modelref.Parse, matching the backfill migrations.
-func stripModelPrefix(model string) string {
-	ref, err := modelref.Parse(model)
-	if err != nil {
-		return model // bare name — nothing to strip
-	}
-	if !isDialectName(ref.Provider) {
-		return model // multi-segment resource path, not a dialect routing prefix
-	}
-	return ref.Model
-}
-
 // decryptProjectConfig decrypts a project-level provider config.
 func (s *CredentialService) decryptProjectConfig(cfg *ProjectProviderConfig) (*ResolvedCredential, error) {
 	if s.encryptor == nil {
@@ -161,8 +136,8 @@ func (s *CredentialService) decryptProjectConfig(cfg *ProjectProviderConfig) (*R
 		GCPProject:      cfg.GCPProject,
 		Location:        cfg.Location,
 		BaseURL:         cfg.BaseURL,
-		GenerativeModel: stripModelPrefix(cfg.GenerativeModel),
-		EmbeddingModel:  stripModelPrefix(cfg.EmbeddingModel),
+		GenerativeModel: modelref.StripRoutingPrefix(cfg.GenerativeModel, isDialectName),
+		EmbeddingModel:  modelref.StripRoutingPrefix(cfg.EmbeddingModel, isDialectName),
 	}
 	switch cfg.Provider {
 	case ProviderGoogleAI:
@@ -312,13 +287,13 @@ func (s *CredentialService) DefaultGenerativeModel(ctx context.Context, projectI
 // executor expects.
 //
 // cred.GenerativeModel is already bare (decryptProjectConfig runs it through
-// stripModelPrefix, which leaves multi-segment Vertex resource paths like
-// "publishers/google/models/gemini-2.5-flash" untouched), so the extra Cut
-// here would corrupt those into "google-vertex/google/models/...". Routing
-// through the idempotent stripModelPrefix keeps the edge safe without changing
-// the bare-model result.
+// modelref.StripRoutingPrefix, which leaves multi-segment Vertex resource paths
+// like "publishers/google/models/gemini-2.5-flash" untouched), so an extra
+// split here would corrupt those into "google-vertex/google/models/...".
+// Routing through the idempotent modelref.StripRoutingPrefix keeps the edge
+// safe without changing the bare-model result.
 func prefixedGenerativeModelName(slug ProviderSlug, gen string) string {
-	return string(slug) + "/" + stripModelPrefix(gen)
+	return string(slug) + "/" + modelref.StripRoutingPrefix(gen, isDialectName)
 }
 
 // prefixedEmbeddingModelName prefixes the routing provider instance (slug) onto
@@ -326,7 +301,7 @@ func prefixedGenerativeModelName(slug ProviderSlug, gen string) string {
 // resolution expects. Mirror of prefixedGenerativeModelName, kept separate so
 // the two resolution chains stay independently named.
 func prefixedEmbeddingModelName(slug ProviderSlug, emb string) string {
-	return string(slug) + "/" + stripModelPrefix(emb)
+	return string(slug) + "/" + modelref.StripRoutingPrefix(emb, isDialectName)
 }
 
 // embeddingProviderOrder lists providers in preference order for embedding
@@ -599,12 +574,12 @@ func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID s
 	// routing prefix (e.g. "deepseek/deepseek-v4-flash" via a LiteLLM proxy)
 	// must be stripped here too or validation fails with "model not found".
 	if catalogSynced {
-		if bare := stripModelPrefix(req.GenerativeModel); bare != "" {
+		if bare := modelref.StripRoutingPrefix(req.GenerativeModel, isDialectName); bare != "" {
 			if err := s.validateModelInCatalog(ctx, provider, bare, ModelTypeGenerative); err != nil {
 				return nil, err
 			}
 		}
-		if bare := stripModelPrefix(req.EmbeddingModel); bare != "" {
+		if bare := modelref.StripRoutingPrefix(req.EmbeddingModel, isDialectName); bare != "" {
 			if err := s.validateModelInCatalog(ctx, provider, bare, ModelTypeEmbedding); err != nil {
 				return nil, err
 			}
@@ -858,8 +833,8 @@ func (s *CredentialService) buildTempResolvedCred(provider ProviderType, req Ups
 		Provider:        provider,
 		GCPProject:      req.GCPProject,
 		Location:        req.Location,
-		GenerativeModel: stripModelPrefix(req.GenerativeModel),
-		EmbeddingModel:  stripModelPrefix(req.EmbeddingModel),
+		GenerativeModel: modelref.StripRoutingPrefix(req.GenerativeModel, isDialectName),
+		EmbeddingModel:  modelref.StripRoutingPrefix(req.EmbeddingModel, isDialectName),
 	}
 	switch provider {
 	case ProviderGoogleAI:
