@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -20,6 +21,9 @@ import (
 const (
 	dbBackupBucket        = "database-backups"
 	dbBackupRetentionDays = 10
+	// dbBackupTimeout bounds the preflight + pg_dump + upload work so a hung
+	// pg_dump/upload cannot hold its DB connection open forever.
+	dbBackupTimeout = 30 * time.Minute
 )
 
 // DatabaseBackup represents a database backup record in kb.database_backups
@@ -42,6 +46,10 @@ type DatabaseBackupTask struct {
 	storage *storage.Service
 	cfg     *config.Config
 	log     *slog.Logger
+
+	// running guards against overlapping runs. Without it a hung run can stack
+	// additional pg_dump processes, exhausting database max_connections.
+	running atomic.Bool
 }
 
 // NewDatabaseBackupTask creates a new DatabaseBackupTask and ensures the backup bucket exists.
@@ -66,6 +74,14 @@ func NewDatabaseBackupTask(db *bun.DB, storageSvc *storage.Service, cfg *config.
 
 // Run executes the database backup task.
 func (t *DatabaseBackupTask) Run(ctx context.Context) error {
+	// Skip-if-running guard must come first, before inserting the running
+	// record, so an overlapping run does not stack a second pg_dump.
+	if !t.running.CompareAndSwap(false, true) {
+		t.log.Warn("database backup already running; skipping overlapping run")
+		return nil
+	}
+	defer t.running.Store(false)
+
 	t.log.Info("starting database backup")
 	start := time.Now()
 
@@ -81,10 +97,15 @@ func (t *DatabaseBackupTask) Run(ctx context.Context) error {
 
 	// 2. Preflight the pg_dump ↔ server version pairing before dumping, so a
 	// mismatch is persisted on the record with an actionable message. Only run
-	// the dump itself once the preflight passes.
-	backupErr := t.preflightPgDump(ctx)
+	// the dump itself once the preflight passes. Bound preflight + dump + upload
+	// with a timeout so a hung pg_dump/upload cannot run forever; the record
+	// insert and final update stay on the original ctx so a timed-out run is
+	// still marked failed.
+	backupCtx, cancel := context.WithTimeout(ctx, dbBackupTimeout)
+	defer cancel()
+	backupErr := t.preflightPgDump(backupCtx)
 	if backupErr == nil {
-		backupErr = t.runBackup(ctx, record)
+		backupErr = t.runBackup(backupCtx, record)
 	}
 
 	// 3. Update record with result

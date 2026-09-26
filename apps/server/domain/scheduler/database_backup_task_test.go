@@ -1,9 +1,33 @@
 package scheduler
 
 import (
+	"context"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 )
+
+// TestDatabaseBackupTaskSkipsOverlappingRun verifies the skip-if-running guard:
+// while a run is in flight, a second Run returns immediately (nil) without
+// touching its dependencies and without clearing the in-flight flag.
+func TestDatabaseBackupTaskSkipsOverlappingRun(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	task := &DatabaseBackupTask{log: log}
+
+	// Simulate an in-flight run. db/storage are intentionally nil: if the guard
+	// fails to short-circuit, Run will nil-deref and the test fails loudly.
+	if !task.running.CompareAndSwap(false, true) {
+		t.Fatal("failed to mark task as running")
+	}
+
+	if err := task.Run(context.Background()); err != nil {
+		t.Fatalf("overlapping Run returned error, want nil: %v", err)
+	}
+	if !task.running.Load() {
+		t.Fatal("overlapping Run cleared the running flag; in-flight run would no longer be guarded")
+	}
+}
 
 func TestPgMajorFromVersionNum(t *testing.T) {
 	tests := []struct {
