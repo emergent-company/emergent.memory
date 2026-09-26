@@ -14,7 +14,9 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/domain/skills"
+	"github.com/emergent-company/emergent.memory/domain/superadmin"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -36,7 +38,12 @@ type Service struct {
 	skillsRepo  *skills.Repository
 	graphSvc    *graph.Service
 	agentRepo   AgentRepo // optional; nil when the agents feature is off
-	log         *slog.Logger
+
+	// superadmin gates writes to the platform-global blueprint catalogue
+	// (project_id IS NULL); nil when the superadmin module is absent.
+	superadmin *superadmin.Repository
+
+	log *slog.Logger
 }
 
 // ServiceParams bundles dependencies for NewService.
@@ -52,6 +59,11 @@ type ServiceParams struct {
 
 	// Optional — only wired when the agents feature is enabled.
 	AgentRepo AgentRepo `optional:"true"`
+
+	// Optional — nil when the superadmin feature module is not loaded; global
+	// blueprint writes then fail closed (absence of the dependency is not
+	// permission).
+	Superadmin *superadmin.Repository `optional:"true"`
 }
 
 // NewService creates a new blueprints service
@@ -63,8 +75,35 @@ func NewService(p ServiceParams) *Service {
 		skillsRepo:  p.SkillsRepo,
 		graphSvc:    p.GraphSvc,
 		agentRepo:   p.AgentRepo,
+		superadmin:  p.Superadmin,
 		log:         p.Log.With(logger.Scope("blueprints.svc")),
 	}
+}
+
+// AuthorizeGlobalBlueprintWrite enforces superadmin_full for a write to the
+// platform-global blueprint catalogue (project_id IS NULL). It is the single
+// authority decision shared by the REST handler and the MCP blueprint-create /
+// blueprint-publish tools, so the two entrypoints cannot drift (issue #1041).
+// A nil superadmin module (feature disabled) fails closed: the absence of the
+// dependency is not permission, so the write is refused rather than let through.
+// Callers invoke it only after determining the addressed write targets the
+// global catalogue (project-scoped writes are unchanged).
+func (s *Service) AuthorizeGlobalBlueprintWrite(ctx context.Context) error {
+	if s.superadmin == nil {
+		return apperror.ErrForbidden
+	}
+	user, err := auth.RequireUser(ctx)
+	if err != nil {
+		return err
+	}
+	ok, err := s.superadmin.IsSuperadminFull(ctx, user.ID)
+	if err != nil {
+		return apperror.NewInternal("failed to check superadmin status", err)
+	}
+	if !ok {
+		return apperror.ErrForbidden
+	}
+	return nil
 }
 
 // guardMutable rejects mutations of global blueprints. Global (project_id IS

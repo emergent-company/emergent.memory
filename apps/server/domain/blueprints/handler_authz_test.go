@@ -27,9 +27,9 @@ func newAuthzHandler(t *testing.T) (*Handler, bun.IDB) {
 	t.Helper()
 	db := connectTestDB(t)
 	repo := NewRepository(db, testLogger())
-	svc := NewService(ServiceParams{Repo: repo, Log: testLogger()})
 	sa := superadmin.NewRepository(db)
-	return NewHandler(svc, sa), db
+	svc := NewService(ServiceParams{Repo: repo, Superadmin: sa, Log: testLogger()})
+	return NewHandler(svc), db
 }
 
 // seedSuperadmin grants an active superadmin_full row for userID. The
@@ -48,6 +48,9 @@ func seedSuperadmin(t *testing.T, ctx context.Context, db bun.IDB, userID string
 
 // newAuthzCtx builds an echo context with the authenticated user injected
 // (what RequireAuth leaves behind for auth.MustGetUser) and an optional JSON body.
+// The user is injected into BOTH the echo context (for auth.MustGetUser) and the
+// request context.Context (for the service-layer shared helper, which reads via
+// auth.RequireUser) — mirroring RequireAuth's InjectAuthContext.
 func newAuthzCtx(t *testing.T, method, target string, body []byte, user *auth.AuthUser) (echo.Context, *httptest.ResponseRecorder) {
 	t.Helper()
 	e := echo.New()
@@ -62,6 +65,8 @@ func newAuthzCtx(t *testing.T, method, target string, body []byte, user *auth.Au
 	c := e.NewContext(req, rec)
 	if user != nil {
 		c.Set(string(auth.UserContextKey), user)
+		req = req.WithContext(auth.ContextWithUser(req.Context(), user))
+		c.SetRequest(req)
 	}
 	return c, rec
 }
