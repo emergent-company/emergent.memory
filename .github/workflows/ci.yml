@@ -42,6 +42,13 @@ jobs:
             echo "Fix with: gofmt -w <file>"
             exit 1
           fi
+      # Preflight guards: the same checks lanes run locally before pushing —
+      # stale base, migration numbering (goose silently de-duplicates duplicate
+      # versions), and tracked-file gofmt. Runs here so the
+      # branch-protection-required `ci` check enforces them on merge.
+      # (See emergent-company/emergent.memory#1074.)
+      - name: Preflight guards
+        run: bash scripts/preflight/all.sh
       # Reject dynamic ${{ ... }} interpolation (refs, inputs, outputs, event
       # payloads) inside shell run:/github-script script: payloads. Runs here so
       # the branch-protection-required `ci` check enforces it repo-wide.
