@@ -41,21 +41,39 @@ func TestExecuteToolAuthorityGate(t *testing.T) {
 		})
 	}
 
-	// Sensitive admin-scoped tools are refused for untrusted runs: token minting
-	// (privilege escalation), provider config, cross-tenant traces, project
-	// creation (issue #994, RequiredScope:"admin" residual closed via
-	// TrustedInternal).
-	adminScoped := []string{
+	// Sensitive admin-scoped tools are refused for untrusted runs via the
+	// superadmin_full gate (issue #1018): their `admin` scope is token-only (no
+	// project role maps to it), so no trusted session run can hold it, and the
+	// in-process bar is raised to the identity-based superadmin_full grant.
+	// Trace tools are deliberately absent — they moved to SuperadminOnly (a
+	// stronger boundary) and are covered by TestTraceToolsSuperadminGate.
+	sensitiveAdminScoped := []string{
 		"token-list", "token-create", "token-get", "token-revoke",
-		"provider-configure-project", "provider-models-list",
-		"trace-list", "trace-get",
+		"provider-configure-project",
 		"project-create",
 	}
-	for _, name := range adminScoped {
-		t.Run("untrusted refused on admin-scoped "+name, func(t *testing.T) {
+	for _, name := range sensitiveAdminScoped {
+		t.Run("untrusted refused on sensitive admin "+name, func(t *testing.T) {
 			_, err := svc.ExecuteTool(untrustedCtx, projectID, name, map[string]any{})
 			require.Error(t, err, "in-process %s by an untrusted run must be refused", name)
-			require.Contains(t, err.Error(), "admin authority", "refusal must name the admin boundary")
+			require.Contains(t, err.Error(), "superadmin", "sensitive admin %s refusal must name the superadmin boundary", name)
+		})
+	}
+
+	// The read-only admin-scoped tool is not in the sensitive subset and stays at
+	// the trusted-internal bar.
+	t.Run("untrusted refused on admin-scoped provider-models-list", func(t *testing.T) {
+		_, err := svc.ExecuteTool(untrustedCtx, projectID, "provider-models-list", map[string]any{})
+		require.Error(t, err, "in-process provider-models-list by an untrusted run must be refused")
+		require.Contains(t, err.Error(), "admin authority", "refusal must name the admin boundary")
+	})
+
+	// Superadmin-only tools (trace-*) refuse via the superadmin gate.
+	for _, name := range []string{"trace-list", "trace-get"} {
+		t.Run("untrusted refused on superadmin "+name, func(t *testing.T) {
+			_, err := svc.ExecuteTool(untrustedCtx, projectID, name, map[string]any{})
+			require.Error(t, err, "in-process %s by an untrusted run must be refused", name)
+			require.Contains(t, err.Error(), "superadmin", "superadmin %s refusal must name the superadmin boundary", name)
 		})
 	}
 
@@ -69,14 +87,25 @@ func TestExecuteToolAuthorityGate(t *testing.T) {
 		require.True(t, result.IsError, "empty URL must yield a structured tool error, not a Go error")
 	})
 
-	// No over-correction on the admin path: a trusted run passes the gate and the
-	// token tool fails on its own argument validation (not the gate). token-create
-	// with empty args hits the name check before any token service call.
-	t.Run("trusted run passes gate on token-create", func(t *testing.T) {
-		_, err := svc.ExecuteTool(trustedCtx, projectID, "token-create", map[string]any{})
-		require.Error(t, err, "token-create with empty args must error on validation")
+	// No over-correction on the admin path: a trusted run passes the gate on the
+	// NON-sensitive admin tool (provider-models-list), whose own argument
+	// validation fires (not the gate). It is read-only and left at the
+	// trusted-internal bar.
+	t.Run("trusted run passes gate on provider-models-list", func(t *testing.T) {
+		_, err := svc.ExecuteTool(trustedCtx, projectID, "provider-models-list", map[string]any{})
+		require.Error(t, err, "provider-models-list with empty args must error on validation")
 		require.NotContains(t, err.Error(), "admin authority", "trusted run must not be gate-refused")
-		require.Contains(t, err.Error(), "name", "must reach the tool's own argument validation")
+		require.Contains(t, err.Error(), "provider_name", "must reach the tool's own argument validation")
+	})
+
+	// A trusted run still cannot reach the sensitive admin tools without a
+	// superadmin grant: the `admin` scope is token-only, so trusted-internal is
+	// the wrong axis for token minting / provider config / project creation
+	// (issue #1018).
+	t.Run("trusted non-superadmin run is refused on token-create", func(t *testing.T) {
+		_, err := svc.ExecuteTool(trustedCtx, projectID, "token-create", map[string]any{})
+		require.Error(t, err, "a trusted non-superadmin run must be refused on token-create")
+		require.Contains(t, err.Error(), "superadmin", "refusal must come from the superadmin gate")
 	})
 
 	// Ordinary project tools stay reachable for untrusted runs: they are neither

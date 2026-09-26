@@ -384,10 +384,12 @@ func (h *SSEHandler) handleToolsCall(c echo.Context, req *Request, projectID str
 
 	execCtx := WithInstanceScope(c.Request().Context(), scope)
 	// The transport already enforced per-tool AgentOnly / RequiredScope /
-	// SuperadminOnly above. Mark the call trusted so ExecuteTool's in-process
-	// trust gate (which covers the agent-run path) does not re-fire for an
-	// authenticated HTTP client.
-	execCtx = ContextWithTrustedInternal(execCtx, true)
+	// SuperadminOnly above. Mark the call transport-enforced so ExecuteTool's
+	// in-process gate (which covers the agent-run path) does not re-fire for an
+	// authenticated HTTP client. This is NOT the trusted-internal marker: relay
+	// (agent-only) tools are gated on trusted-internal only, so an HTTP caller
+	// can never reach them through the relay fallback (issue #1017).
+	execCtx = ContextWithTransportEnforced(execCtx)
 	result, err := h.svc.ExecuteTool(execCtx, projectID, params.Name, params.Arguments)
 	if err != nil {
 		h.log.Error("tool execution failed",

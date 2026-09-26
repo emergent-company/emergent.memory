@@ -44,10 +44,12 @@ type TimelineItem struct {
 	ErrorMessage string          `json:"error_message,omitempty"`
 	Role         string          `json:"role,omitempty"`
 	Content      *MessageContent `json:"content,omitempty"`
+	ID           string          `json:"id,omitempty"`
 	ToolName     string          `json:"tool_name,omitempty"`
 	ToolInput    json.RawMessage `json:"tool_input,omitempty"`
 	ToolOutput   json.RawMessage `json:"tool_output,omitempty"`
 	ToolStatus   string          `json:"tool_status,omitempty"`
+	DurationMs   *int            `json:"duration_ms,omitempty"`
 }
 
 // parseTimeline unmarshals raw timeline items into typed items, skipping any
@@ -273,6 +275,16 @@ func formatRunDuration(sec float64) string {
 		}
 		return strconv.Itoa(d) + "d " + strconv.Itoa(h) + "h"
 	}
+}
+
+// toolDurationLabel renders a tool call's execution duration in milliseconds as
+// a compact label: sub-second values stay in "ms", longer values reuse the
+// run-duration formatting ("1.2s", "5m").
+func toolDurationLabel(ms int) string {
+	if ms < 1000 {
+		return strconv.Itoa(ms) + "ms"
+	}
+	return formatRunDuration(float64(ms) / 1000)
 }
 
 // itemText renders one timeline item; run_start/run_end carry no body text.
