@@ -284,7 +284,8 @@ func (r *Repository) UpdateToolForProject(ctx context.Context, projectID, id str
 		Where("server_id IN (SELECT id FROM kb.mcp_servers WHERE project_id = ?)", projectID)
 
 	if enabled != nil {
-		q = q.Set("enabled = ?", *enabled)
+		q = q.Set("enabled = ?", *enabled).
+			Set("enabled_override = ?", *enabled)
 	}
 	if config != nil {
 		q = q.Set("config = ?", *config)
