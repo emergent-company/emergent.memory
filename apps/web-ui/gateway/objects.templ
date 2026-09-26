@@ -97,9 +97,10 @@ templ objectsStatsSection(s objectsStats) {
 	</div>
 }
 
-// objectsSearchForm is the text-query search form: a query input plus a mode
-// selector (full-text vs hybrid). The active type/branch filters ride along as
-// hidden inputs so searching doesn't drop the filters.
+// objectsSearchForm is the text-query search form: a query input plus a
+// segmented mode selector (full-text / hybrid / unified) that auto-submits on
+// change. The active type/branch filters ride along as hidden inputs so
+// searching doesn't drop the filters.
 templ objectsSearchForm(data objectsPageData) {
 	<form class="mb-4" method="get" action="/objects">
 		<div class="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -107,14 +108,14 @@ templ objectsSearchForm(data objectsPageData) {
 				@ui.IconSpan("lucide--search", "size-4 shrink-0 opacity-50")
 				<input type="search" name="q" value={ data.Query } placeholder="Search objects…" class="grow" autocomplete="off" aria-label="Search objects"/>
 			</label>
-			<div class="flex items-center gap-2">
+			<div class="flex flex-wrap items-center gap-2">
 				<div class="join" role="radiogroup" aria-label="Search mode">
 					<input
 						type="radio"
 						name="mode"
 						value="fulltext"
 						aria-label="Full-text"
-						class="join-item btn btn-sm checked:btn-primary"
+						class="join-item btn btn-sm btn-outline checked:btn-primary"
 						checked?={ data.Mode == "" || data.Mode == "fulltext" }
 						onchange="this.form.submit()"
 					/>
@@ -123,7 +124,7 @@ templ objectsSearchForm(data objectsPageData) {
 						name="mode"
 						value="hybrid"
 						aria-label="Hybrid"
-						class="join-item btn btn-sm checked:btn-primary"
+						class="join-item btn btn-sm btn-outline checked:btn-primary"
 						checked?={ data.Mode == "hybrid" }
 						onchange="this.form.submit()"
 					/>
@@ -132,7 +133,7 @@ templ objectsSearchForm(data objectsPageData) {
 						name="mode"
 						value="unified"
 						aria-label="Unified"
-						class="join-item btn btn-sm checked:btn-primary"
+						class="join-item btn btn-sm btn-outline checked:btn-primary"
 						checked?={ data.Mode == "unified" }
 						onchange="this.form.submit()"
 					/>
@@ -192,42 +193,56 @@ templ objectsFilters(data objectsPageData) {
 	}
 }
 
-// objectsKnowledge renders the "Ask the graph" RAG Q&A box: a question
-// textarea + submit that HTMX-posts to /objects/knowledge and swaps the answer
-// into the answer container. The active branch rides along as a hidden input so
-// the Q&A is scoped consistently with the browser.
+// objectsKnowledge renders the "Ask the graph" RAG Q&A box as a distinct card:
+// a question textarea + submit that HTMX-posts to /objects/knowledge and swaps
+// the answer into the answer container. The active branch rides along as a
+// hidden input so the Q&A is scoped consistently with the browser.
 templ objectsKnowledge(data objectsPageData) {
 	<div class="mb-6">
-		<form class="flex flex-col gap-2" hx-post="/objects/knowledge" hx-target="#objects-knowledge-answer" hx-swap="innerHTML">
-			<label class="text-sm font-medium" for="objects-knowledge-question">Ask the graph</label>
-			<textarea id="objects-knowledge-question" name="question" rows="2" placeholder="Ask a question about your knowledge graph…" class="textarea textarea-bordered w-full" autocomplete="off"></textarea>
-			if data.BranchID != "" {
-				<input type="hidden" name="branch" value={ data.BranchID }/>
-			}
-			<div class="flex items-center gap-2">
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeSubmit,
-					Variant: ui.ButtonPrimary,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--messages-square",
-				}) {
-					Ask
-				}
-				<span class="htmx-indicator loading loading-spinner loading-xs" aria-hidden="true"></span>
+		@components.PanelCard("", nil) {
+			<div class="flex items-start gap-3">
+				@ui.IconTile("lucide--sparkles", ui.IconTileProps{Tone: "accent"})
+				<div class="min-w-0">
+					<h2 class="text-base font-semibold">Ask the graph</h2>
+					<p class="text-base-content/50 text-sm">Ask a question in plain language. The answer is grounded in the objects memory has stored.</p>
+				</div>
 			</div>
-		</form>
+			<form class="mt-4 flex flex-col gap-3" hx-post="/objects/knowledge" hx-target="#objects-knowledge-answer" hx-swap="innerHTML">
+				<textarea id="objects-knowledge-question" name="question" rows="3" placeholder="Ask a question about your knowledge graph…" class="textarea textarea-bordered w-full" autocomplete="off" aria-label="Ask the graph"></textarea>
+				if data.BranchID != "" {
+					<input type="hidden" name="branch" value={ data.BranchID }/>
+				}
+				<div class="flex flex-wrap items-center gap-2">
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonPrimary,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--messages-square",
+					}) {
+						Ask
+					}
+					<span class="htmx-indicator loading loading-spinner loading-xs" aria-hidden="true"></span>
+					<span class="text-base-content/35 text-xs">Answers can take a few seconds.</span>
+				</div>
+			</form>
+		}
 		<div id="objects-knowledge-answer" class="mt-3"></div>
 	</div>
 }
 
-// objectsKnowledgeAnswer renders a grounded answer, with the conversation id as
-// a muted caption when the stream reported one.
+// objectsKnowledgeAnswer renders a grounded answer as sanitized markdown using
+// the shared .memory-md prose styles, with the conversation id as a muted
+// caption when the stream reported one.
 templ objectsKnowledgeAnswer(answer, sessionID string) {
-	<div class="card bg-base-100 card-border">
+	<div class="card bg-base-100 card-border memory-rise">
 		<div class="card-body p-4">
-			<p class="text-sm whitespace-pre-wrap">{ answer }</p>
+			<div class="mb-2 flex items-center gap-2">
+				@ui.IconSpan("lucide--sparkles", "size-3.5 shrink-0 text-accent")
+				<span class="text-base-content/45 text-xs font-medium tracking-wide uppercase">Answer</span>
+			</div>
+			<div class="memory-md text-sm leading-relaxed">@templ.Raw(renderMarkdown(answer))</div>
 			if sessionID != "" {
-				<p class="text-base-content/40 mt-2 text-xs">Session { sessionID }</p>
+				<p class="text-base-content/35 mt-3 border-t border-base-200 pt-2 font-mono text-[11px]">Session { sessionID }</p>
 			}
 		</div>
 	</div>
@@ -235,9 +250,9 @@ templ objectsKnowledgeAnswer(answer, sessionID string) {
 
 // objectsKnowledgeError renders the inline error state for a failed Q&A.
 templ objectsKnowledgeError(err error) {
-	<div class="text-error flex items-center gap-1.5 text-sm">
+	<div class="border-error/25 bg-error/10 text-error rounded-box flex items-center gap-2 border px-3 py-2 text-sm" role="alert">
 		@ui.IconSpan("lucide--triangle-alert", "size-4 shrink-0")
-		<span>Could not get an answer.</span>
+		<span>Could not get an answer. Try again in a moment.</span>
 	</div>
 }
 
@@ -416,19 +431,28 @@ templ objectSearchRow(r ObjectSearchResult, tui typeUI) {
 	<div class="memory-rise">
 		@components.ListRow(templ.URL("/objects/"+url.PathEscape(r.Object.ID)), typeIconTile(tui.Icon, tui.Color), graphObjectLabel(r.Object), relTime(r.Object.CreatedAt)) {
 			@objectBadges(r.Object)
-			<span class="text-base-content/40 flex shrink-0 items-center gap-1" title="Relevance score">
-				@ui.IconSpan("lucide--sparkles", "size-3 shrink-0")
-				<span class="text-xs font-medium tabular-nums">{ searchScoreLabel(r.Score) }</span>
-			</span>
+			@objectScoreBadge(r.Score)
 		}
 	</div>
 }
 
-// objectUnifiedRow is one unified-search hit: type icon tile + label/key +
-// labels + score badge. Unified results carry fields (object properties) but
-// NOT created_at/status/embedding_status, so those badges are deliberately
-// omitted here (unlike objectSearchRow); the type is shown as the row's muted
-// meta instead.
+// objectScoreBadge is the quiet relevance-score accent shared by the search
+// and unified rows: a small sparkle + tabular number, muted so each row's
+// type, labels and status stay the primary signal.
+templ objectScoreBadge(score float32) {
+	<span class="text-base-content/40 flex shrink-0 items-center gap-1" title="Relevance score">
+		@ui.IconSpan("lucide--sparkles", "size-3 shrink-0")
+		<span class="text-xs font-medium tabular-nums">{ searchScoreLabel(score) }</span>
+	</span>
+}
+
+// objectUnifiedRow is one unified-search hit: the same type icon tile, label
+// and muted relevance score as objectSearchRow, so the two modes read as one
+// list. Unified results carry object properties but NOT
+// created_at/status/embedding_status, so those trailing badges are
+// deliberately absent: the row shows the type as its muted meta line and only
+// the object's labels as chips, keeping the omission intentional rather than
+// looking like missing data.
 templ objectUnifiedRow(r ObjectSearchResult, tui typeUI) {
 	<div class="memory-rise">
 		@components.ListRow(templ.URL("/objects/"+url.PathEscape(r.Object.ID)), typeIconTile(tui.Icon, tui.Color), graphObjectLabel(r.Object), r.Object.Type) {
@@ -439,10 +463,7 @@ templ objectUnifiedRow(r ObjectSearchResult, tui typeUI) {
 					Size:    ui.BadgeSizeXS,
 				})
 			}
-			<span class="text-base-content/40 flex shrink-0 items-center gap-1" title="Relevance score">
-				@ui.IconSpan("lucide--sparkles", "size-3 shrink-0")
-				<span class="text-xs font-medium tabular-nums">{ searchScoreLabel(r.Score) }</span>
-			</span>
+			@objectScoreBadge(r.Score)
 		}
 	</div>
 }
