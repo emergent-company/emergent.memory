@@ -62,8 +62,8 @@ The **Default models** panel SHALL offer a Test action beside each dropdown (def
 
 #### Scenario: Reject an unprefixed model
 
-- **WHEN** the selected value is not in `provider/model` form
-- **THEN** no provider call is made and the user sees an error message describing the expected form
+- **WHEN** the selected model reference carries no provider instance (the model is submitted without a provider identity)
+- **THEN** no provider call is made and the user sees an error message describing the expected selection
 
 #### Scenario: Reject an unparseable selection
 

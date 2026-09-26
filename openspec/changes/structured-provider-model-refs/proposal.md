@@ -33,13 +33,15 @@ This change separates **dialect** (wire protocol + auth behavior) from **provide
 ## Impact
 
 **Server (`apps/server/`)**
-- `domain/provider/`: `entity.go` (dialect + slug, config/response entities), `service.go` (resolve by slug, dialect fallback, `ModelRef` construction), `repository.go` (slug lookups, usage/pricing keying), `registry.go` (dialect registry), `catalog.go`, `usage_service.go`, `tracking_model.go`, `handler.go`, `routes.go`, adapters in `adk_adapter.go` / `usage_tracker_adapter.go`.
-- `domain/modelconfig/`: `entity.go`, `service.go`, `adapter.go`, `store.go`.
-- `domain/agents/`: `entity.go` (`ModelConfig` gains a provider field), `executor.go` (build `ModelRef`, persist slug/dialect on the run), run/handler model fields.
-- `pkg/adk/`: `model.go` (`CreateModelWithName` takes a `ModelRef`), `credentials.go`, `embeddings` resolver seam.
-- `pkg/modelref/` (new): dependency-neutral `ModelRef`, strict `ParseModelRef`, and backfill-only `NormalizeLegacy` — shared by `pkg/adk` and `domain/provider` without an import cycle.
-- String-based model callers to convert: `domain/agents/session_compressor.go`, `domain/agents/handler.go`, `domain/agents/mcp_tools.go`, `domain/provider/project_settings_store.go`, `domain/provider/share_service.go`, `domain/extraction/usage.go`.
-- `migrations/`: new migration(s) covering provider config slug/dialect (including dropping the pre-existing unnamed `UNIQUE (…, provider)` constraints and normalizing already-prefixed model columns — recognised-prefix strip only), `project_model_config`, `agent_definitions.model`, `agent_runs`, `llm_usage_events`, and project custom pricing (backfill + uniqueness swap). `organization_custom_pricing` stays dialect-scoped.
+- `domain/provider/`: `entity.go` (dialect + slug, config/response entities), `service.go` (resolve by slug, dialect fallback, `modelref.Ref` construction, recognised-dialect-only strip), `repository.go` (slug lookups, usage/pricing keying), `usage_service.go`, `tracking_model.go`, `handler.go`, `routes.go`, adapters in `adk_adapter.go` / `usage_tracker_adapter.go`.
+- `domain/modelconfig/`: `entity.go` (slug columns), `service.go` (structured `modelref.Ref` upsert/resolve), `adapter.go` (embedding resolver parses via `modelref.Parse`), `store.go` (persist slug on conflict).
+- `domain/agents/`: `entity.go` (`ModelConfig` gains a provider field), `executor.go` (build `modelref.Ref`, persist slug/dialect on the run), `repository.go`.
+- `pkg/adk/`: `model.go` (drop the `stripRoutingPrefix` exactly-one-slash heuristic; the credential model is already bare), `credentials.go` (slug/dialect on `ResolvedCredential`).
+- `pkg/modelref/` (new): dependency-neutral `Ref` and strict `Parse` — shared by `pkg/adk` and `domain/provider` without an import cycle. Legacy-value normalization lives in the SQL backfill migrations, not in Go.
+- `migrations/`: new migration(s) covering provider config slug/dialect (including dropping the pre-existing unnamed `UNIQUE (…, provider)` constraints and normalizing already-prefixed model columns — recognised-prefix strip only), `project_model_config` (structured slug + bare model + manual-resolution flag), `agent_runs`, `llm_usage_events`, and project custom pricing (backfill + uniqueness swap). `organization_custom_pricing` stays dialect-scoped.
+
+**Deferred (not in this PR)**
+- The `adk.ModelResolver` boundary stays string-based (`ResolveGenerativeModelByID` returns the routed `"slug/model"` string); the factory's `CreateModelWithName` still takes a string. Converting those remaining string callers — `domain/agents/session_compressor.go`, `domain/agents/handler.go`, `domain/agents/mcp_tools.go`, and `domain/extraction/usage.go`'s provider-string map — to carry `modelref.Ref` end-to-end is a follow-up. `domain/provider/project_settings_store.go` and `domain/provider/share_service.go` listed in an earlier draft do not exist and were dropped.
 
 **SDK / CLI / Web UI**
 - `apps/server/pkg/sdk/provider/client.go`: slug/dialect types and slug-addressed methods.

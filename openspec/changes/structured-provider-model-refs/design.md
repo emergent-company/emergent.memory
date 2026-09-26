@@ -44,10 +44,10 @@ type ModelRef struct {
 
 Two distinct operations — they must not be conflated:
 
-- `ParseModelRef(string) (ModelRef, error)` — **strict** edge parser. Splits on the first `/`; requires a non-empty provider segment and a non-empty model; rejects a string with no `/`.
-- `NormalizeLegacy(string) (ModelRef, bool)` — **context-aware** migration/inference helper, used only while backfilling stored values. It resolves a recognised dialect or slug prefix to an instance and attributes a bare value using the owning project's default instance for the inferred dialect; it is explicitly **not** the edge parser and is not on any runtime path after migration.
+- `Parse` (`pkg/modelref`, `Parse(string) (Ref, error)`) — **strict** edge parser. Splits on the first `/`; requires a non-empty provider segment and a non-empty model; rejects a string with no `/`. The runtime edge uses only this.
+- Legacy-value normalization (resolving a bare or dialect-prefixed stored value to an instance) is implemented **directly in the SQL backfill migrations** (`kb.project_provider_configs`/`kb.org_provider_configs` normalization and the `kb.project_model_config` D6 backfill), not as a Go helper. There is no Go-side backfill path, so no `NormalizeLegacy` helper is defined; the two operations remain distinct because normalization lives only in migration SQL and is never on a runtime path.
 
-Because `Model` is allowed to contain slashes, the "exactly one slash" heuristic disappears.
+Because `Model` is allowed to contain slashes, the "exactly one slash" heuristic disappears: the runtime strip (`domain/provider.stripModelPrefix`) identifies a routing prefix by a recognised dialect name via `modelref.Parse`, not by a slash count.
 
 ### D3 — Slug-first resolution with dialect fallback
 

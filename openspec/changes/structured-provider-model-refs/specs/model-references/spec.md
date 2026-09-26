@@ -54,7 +54,7 @@ Strict edge parsing SHALL reject a string without a provider segment. Backfill o
 #### Scenario: Normalization resolves a bare stored value
 
 - **WHEN** a stored value is a bare model name and the owning project has a determinable default instance for it
-- **THEN** `NormalizeLegacy` yields a structured reference with that instance
+- **THEN** the backfill migration yields a structured reference (a provider instance slug and the bare model) with that instance
 
 #### Scenario: Normalization does not corrupt resource paths
 
