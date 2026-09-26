@@ -11,7 +11,7 @@ Authorization is enforced **per entrypoint**, so the same data is reachable with
 - **Shape A — service-call bypass**: an MCP tool calls a repository/service directly, so the handler-level gate never runs. *Fix = move the check into the service/store boundary as a shared helper both entrypoints call.* (The skills fix in #1040 is the proven pattern.)
 - **Shape B — transport guard gap**: the MCP route/group (or the in-process dispatch path) lacks a guard its HTTP equivalent has, or an existing helper mis-classifies a caller class. *Fix = one authority check at the choke point (`ExecuteTool`), plus a typed authority vocabulary that stops bare `admin` from gating project data.*
 
-**Recommendation: hybrid (Option C)** — (1) apply the #1040 shared-helper pattern to the two remaining Shape A bypasses now; (2) land `pkg/authz` + `AuthorizeTool` (the `authz-abstraction` E2 worked example) for the Shape B in-process gap; (3) add an external-package parity test as the regression guard. Nothing here depends on #812 §7/§8.
+**Recommendation: hybrid (Option C)** — (1) apply the #1040 shared-helper pattern to the **one remaining open** Shape A bypass (**blueprints global write**) now — session-messages scoping is already fixed **in flight** by #1056, using the same pattern; (2) land `pkg/authz` + `AuthorizeTool` (the `authz-abstraction` E2 worked example) for the Shape B in-process gap; (3) add an external-package parity test as the regression guard. Nothing here depends on #812 §7/§8.
 
 ---
 
@@ -21,9 +21,11 @@ Authorization is enforced **per entrypoint**, so the same data is reachable with
 
 | Surface | Count |
 |---|---|
-| MCP tools (static definitions) | **139** = 131 in `GetToolDefinitions()` + 2 `session-todo-*` + 5 agent-endpoint (`call_agent`…`list_sessions`) + 1 hidden built-in `set_session_title` |
+| MCP tools (static definitions) | **~139** — see counting note below; approximate, not a grep-stable invariant |
 | MCP route registrations | **25** across **7** auth groups |
 | MCP transports | **3** HTTP (legacy JSON-RPC, SSE, streamable HTTP) + 1 per-agent endpoint + 1 in-process dispatch (`ExecuteTool`) |
+
+**Counting method.** The tool inventory was obtained by enumerating `mcp.Service.GetToolDefinitions()` (the runtime single source of truth), which assembles the catalog from: ~46 core tools registered inline in `service.go` (including ~5 journal/remember inline) + 3 web-search tools (`brave`/`fetch`/`reddit`) + ~18 agent-run/definition tools from `agents/mcp_tools.go` + 8 `agent_ext` tools + 11 `mcpregistry` tools + 40 built from `dynamicToolBuilders` (`skills` 5, `documents` 4, `embeddings` 4, `provider` 6, `token` 4, `trace` 2, `query` 1, `domain` 4, `blueprints` 10). Added outside `GetToolDefinitions`: 2 `session-todo-*` (defined, not appended), 5 agent-endpoint (`call_agent`…`list_sessions`), 1 hidden built-in `set_session_title`. Because the catalog is assembled at runtime from inline literals + static maps + injected handler definitions, the exact total is **not** independently re-derivable by grep; the headline `~139` is a point-in-time snapshot, and the exact figure matters less than the *breakdown*, which is stable.
 
 Tool→HTTP-equivalent authority was mapped for every tool; verdicts below are the ones that are *not* plain parity.
 
@@ -46,7 +48,7 @@ Tool→HTTP-equivalent authority was mapped for every tool; verdicts below are t
 |---|---|---|---|
 | `blueprint-create` | `schema:write` (`mcp/blueprints_tools.go:30`); handler drops `ProjectID` when empty → **global** create (`blueprints/mcp_tools.go:91-94`) | global create gated by `requireSuperadminFull` (`blueprints/handler.go:31,79-83`) | **missing** (Shape A) |
 | `blueprint-publish` | `schema:write` (`mcp/blueprints_tools.go:94`); handler `PublishBlueprint` w/o superadmin gate (`blueprints/mcp_tools.go:130-141`) | publish gated by `requireSuperadminFull` for global target (`blueprints/handler.go:212-216`) | **missing** (Shape A) |
-| `session-get-messages` | `graph:read` (`mcp/service.go:789,1606`); `GetConversationFullHistoryRaw` takes only `acpSessionID`, no project/owner predicate (`service.go:3742-3766`, `agents/repository.go:3351-3352`) | REST history checks ownership then `GetConversationFullHistory` (`agents/handler.go:348-370`) | **missing** (Shape A) |
+| `session-get-messages` | `graph:read` (`mcp/service.go:789,1606`); `GetConversationFullHistoryRaw` takes only `acpSessionID`, no project/owner predicate (`service.go:3742-3766`, `agents/repository.go:3351-3352`) | REST history checks ownership then `GetConversationFullHistory` (`agents/handler.go:348-370`) | **in-flight #1056** (Shape A) — reuse of `sessiontodos.SessionAccessibleQuery` at the data-access layer, the #1040 pattern |
 | `token-list`/`-create`/`-get`/`-revoke` | `admin` (`token_tools.go:21,32,52,68`) | project membership trio (`apitoken/routes.go:20-22`) | **weaker** (Shape B, mech 2) |
 | `provider-configure-project` | `admin` (`provider_tools.go:72`); no `assertCallerOwnsProject` | `assertCallerOwnsProject` owning-org membership (`provider/access_control.go:53`, `routes.go:41-46`) | **weaker** (Shape B, mech 2) |
 | `provider-models-list` | `admin` (`provider_tools.go:104`) | `RequireAuth` catalog (`provider/routes.go:62`) | **weaker** (Shape B, mech 2) |
@@ -55,16 +57,17 @@ Tool→HTTP-equivalent authority was mapped for every tool; verdicts below are t
 | `agent-create`/`update_agent`/`agent-delete`/`trigger_agent` (+defs/runs) | `agents:write`/`agents:read` via `agentToolRequiredScope` (`service.go:1624-1649`) | `RequireAPITokenScopes("agents:write")`+membership (`agents/routes.go:30`) | **parity — fixed #1047** |
 | `trace-list`/`trace-get` | `SuperadminOnly: true` (`trace_tools.go:22,58`) | instance-wide requires `superadmin_full` (`tracing/handler.go:89`) | parity (note: re-keyed from `admin`→superadmin) |
 
-**Cross-cutting (Shape B, not a single row):** the in-process dispatch `mcp.Service.ExecuteTool` (`service.go:1929-2017`) enforces the share allowlist, `set_session_title`, `SuperadminOnly`, and — for *untrusted* runs only — `AgentOnly` and the literal scope `"admin"` (`:2009-2017`). It does **not** enforce arbitrary `RequiredScope` values (`graph:read`, `skills:write`, `agents:write`, `schema:write`, …). Those are enforced only in the three HTTP transports (`handler.go:322-367`, `sse_handler.go:342-383`, `streamable_http_handler.go:584-625`). An agent run reaching `ExecuteTool` in-process therefore bypasses per-tool scope enforcement for every scoped tool — mechanism 7, carried as the `authz-abstraction` E2 worked example.
+**Cross-cutting (Shape B, not a single row, and a LIVE exposure — not merely future work):** the in-process dispatch `mcp.Service.ExecuteTool` (`service.go:1929-2017`) enforces the share allowlist, `set_session_title`, `SuperadminOnly`, and — for *untrusted* runs only — `AgentOnly` and the literal scope `"admin"` (`:2009-2017`). It does **not** enforce arbitrary `RequiredScope` values (`graph:read`, `skills:write`, `agents:write`, `schema:write`, …); those are enforced only in the three HTTP transports (`handler.go:322-367`, `sse_handler.go:342-383`, `streamable_http_handler.go:584-625`). This path is **reachable today**: `TrustedInternal` is `false` for external surfaces — webhook, A2A, agentcompat, and public share (`service.go:1993-1997`; `agents/dto.go:708`, `agents/a2a_message.go:604`, `agents/agent_run_once.go:159`) — so an untrusted run that reaches `ExecuteTool` in-process bypasses per-tool scope enforcement for every scoped tool it is allowlisted to call. That is an **open exposure**, not an unfinished migration — mechanism 7, carried as the `authz-abstraction` E2 worked example.
 
 ### 1.4 Headline numbers
 
 | Verdict | Count |
 |---|---|
-| `missing` (Shape A, **still open**) | **3** tool declarations: `blueprint-create`, `blueprint-publish`, `session-get-messages` |
+| `missing` (Shape A, **open**) | **2** tool declarations: `blueprint-create`, `blueprint-publish` |
+| `missing` (Shape A, **in-flight #1056**) | **1**: `session-get-messages` |
 | `weaker` (Shape B, wrong authority level — bare `admin` on project data) | **7** tools: `token-*` ×4, `provider-configure-project`, `provider-models-list`, `project-create` |
 | `parity — fixed` (were Shape A/B, closed by #1040/#1047) | skills (5 tools), agents (18 tools) |
-| cross-cutting transport gap (mechanism 7, in-process) | **all** scoped tools, reached in-process only |
+| cross-cutting transport gap (mechanism 7, in-process) | **all** scoped tools reached in-process — a **live** exposure (webhook/A2A/public-share) |
 | `parity` / `n/a` (graph, schema, search, documents, branches, journal, web, relay, superadmin-operator, agent-endpoint) | remaining ~100 |
 
 ---
@@ -77,7 +80,7 @@ Tool→HTTP-equivalent authority was mapped for every tool; verdicts below are t
 
 **What it does NOT solve.**
 - It is a *design*, not shipped code — it closes nothing until adopted per-module.
-- It does **not** by itself close the two live Shape A bypasses: `AuthorizeTool` enforces a tool's *declared* `RequiredScope`, but `blueprint-create` and `session-get-messages` already declare a (correct-looking) scope; the missing check is *inside* the service (global-write gate, project scoping). Those still need the #1040 shared-helper treatment.
+- It does **not** by itself close the remaining live Shape A bypass: `AuthorizeTool` enforces a tool's *declared* `RequiredScope`, but `blueprint-create`/`blueprint-publish` already declare a (correct-looking) scope; the missing check is *inside* the service (the global-write gate). Those still need the #1040 shared-helper treatment. (`session-get-messages` is the same shape but is being fixed independently by #1056.)
 - Harness blindness (mechanism 8) is closed only by the *combination* conformance kit + CI guard + no-skip lint + production fixtures — the registry guard alone does not.
 - Long tail: removing the old `Require*` guards per-module is a multi-release program.
 
@@ -98,7 +101,7 @@ Tool→HTTP-equivalent authority was mapped for every tool; verdicts below are t
 
 ### Option C — hybrid (recommended)
 
-1. **Now (surgical):** replicate the #1040 pattern for the two live Shape A bypasses — extract a `AuthorizeBlueprintWrite`/global-write guard and a session-history ownership predicate into the blueprints / agents store, and call them from **both** the REST handler and the MCP tool. Closes `blueprint-create`, `blueprint-publish`, `session-get-messages` immediately.
+1. **Now (surgical):** replicate the #1040 pattern for the **one remaining open** Shape A bypass — extract a global-write guard into the blueprints store/service and call it from **both** the REST handler and the MCP `blueprint-create`/`blueprint-publish` tools. Closes `blueprint-create` and `blueprint-publish`. **In flight:** `session-get-messages` is already fixed the same way by #1056 (`fix/mcp-session-messages-scoping`, commit `3df1199f0`) — it reuses `sessiontodos.SessionAccessibleQuery` at the data-access layer, exactly the recommended pattern, and lands independently of this memo.
 2. **Next (structural):** land `pkg/authz` core + wire `ExecuteTool` → `AuthorizeTool` (E2), closing the Shape B in-process gap for *all* scoped tools — the one fix that prevents the class from re-appearing on the agent-run path.
 3. **Guard (safety net):** adopt the external-`mcp_test`-package parity test as the standing regression harness for the tools that remain on the old path during the strangler migration.
 
@@ -109,20 +112,20 @@ Tool→HTTP-equivalent authority was mapped for every tool; verdicts below are t
 **Option C.** The two shapes warrant **different answers**, so forcing a single mechanism (A *or* B) leaves one class open:
 
 - Shape A is fixed by **moving the check into the service/store boundary** (the #1040 precedent — "one source of truth, so the two entrypoints cannot drift"), not by another entrypoint-level check.
-- Shape B is fixed by **one choke point + a typed vocabulary** (`AuthorizeTool` + no bare `admin` on project data), not by auditing each of 139 tools by hand forever.
+- Shape B is fixed by **one choke point + a typed vocabulary** (`AuthorizeTool` + no bare `admin` on project data), not by auditing each of ~140 tools by hand forever.
 
-**Single highest-leverage first step:** land the #1040 shared-helper pattern for **blueprints global write** and **session-messages scoping** (the two open Shape A instances). Rationale: it is the lowest-risk change (mirrors an already-merged, fail-first-verified fix), it *directly closes the two remaining confirmed instances of this exact issue*, and it establishes the reusable template for every future handler-level gate ("ask what the MCP tool does, and share the helper"). `AuthorizeTool` (E2) is the higher-ceiling structural fix but closes **zero** of the currently-confirmed instances, so it is the close second, not the first step.
+**First step (re-ranked for honesty):** land the #1040 shared-helper pattern for **blueprints global write** (`blueprint-create`/`blueprint-publish`) — the one Shape A bypass still open. It is the **lowest-risk** change (mirrors an already-merged, fail-first-verified fix), closes the last *confirmed* instance of this exact issue not already handled, and sets the reusable template for every future handler-level gate ("ask what the MCP tool does, and share the helper"). It is **not** the "highest-leverage" move — half of that payoff (session-messages scoping) is already banked by #1056, and the structural class is only closed by the step-2 `AuthorizeTool` (E2) work, which is the higher-ceiling fix but touches live enforcement and closes none of the already-*confirmed* instances. Sequencing surgical-before-E2 is deliberate: close the concrete gap cheaply, then land the structural fix behind a conformance matrix.
 
 **Instances closed by the recommendation:**
 
 | Instance | Status |
 |---|---|
 | blueprints global write (`blueprint-create`/`-publish`) | **closed by step 1** |
-| session messages (`session-get-messages`) | **closed by step 1** |
+| session messages (`session-get-messages`) | **in-flight #1056** (landing independently of this memo) |
 | skills by-UUID read/write | already closed (#1040) — the template |
 | relay-over-HTTP | already closed (#1017, inverse direction) |
 | account-token claim | already closed (#1047) |
-| in-process scope bypass (mechanism 7) | **not closed by step 1** — closed by step 2 (E2) |
+| in-process scope bypass (mechanism 7) | **live exposure today** (webhook/A2A/public-share) — closed by step 2 (E2) |
 | bare `admin` mint / wrong authority on `token-*`/`project-create`/`provider-*` | **not closed by step 1 or 2** — needs E1 (scope→level mint) |
 
 **Interaction with #812 §7/§8:** none of the recommended steps depend on them. The shared helpers and `AuthorizeTool` consume *already-resolved* scopes/entitlements; they behave identically whether token-scope trust is flipped (§7) or the all-grant is deleted (§8). Conversely, a uniform, tested enforcement layer makes #812 §7/§8 *safer* to land (a flip fails loudly in a conformance matrix rather than silently in prod). The recommendation neither blocks nor waits on #812.
@@ -131,8 +134,8 @@ Tool→HTTP-equivalent authority was mapped for every tool; verdicts below are t
 
 ## 4. Open questions
 
-1. **Do the two shapes really warrant different answers?** Yes — and the recommendation reflects that. Reconfirmation wanted: is "shared helper for Shape A + `AuthorizeTool` for Shape B" acceptable, or does the team prefer to hold Shape A until `pkg/authz` lands (which would leave `blueprint-create` and `session-get-messages` open longer)?
+1. **Do the two shapes really warrant different answers?** Yes — and the recommendation reflects that. Reconfirmation wanted: is "shared helper for Shape A + `AuthorizeTool` for Shape B" acceptable, or does the team prefer to hold the remaining Shape A gap (`blueprint-create`/`blueprint-publish`) until `pkg/authz` lands?
 2. **Global-write asymmetry policy.** The #1040 skills fix deliberately made MCP *refuse* global-skill writes (403) while REST still lets a superadmin write them. Should blueprints adopt the same asymmetry (global blueprint writes REST-only), or should the MCP surface gain a superadmin path for global writes? This is a product decision, not a code decision.
 3. **Right authority for the seven `admin`-scoped tools.** Are `token-*`, `provider-configure-project`, `provider-models-list`, `project-create` meant to be *project-admin* (membership) or *platform* (superadmin)? The bare `admin` scope is being deprecated; the re-keying depends on `authz-abstraction` open question #5 (bare `admin` disposition), which must be decided before E1.
-4. **Is the in-process agent-run path in scope here**, or deferred to the `authz-abstraction` program? It is mechanism 7 and the recommendation treats it as step 2 — confirm that ordering is wanted versus bundling it into a single authz PR.
+4. **The in-process agent-run path is a live exposure, not deferred risk.** It is reachable today via webhook/A2A/agentcompat/public-share runs (untrusted, `TrustedInternal=false`) and does not enforce arbitrary `RequiredScope`. It is mechanism 7 and the recommendation treats it as step 2 (E2) — confirm that sequencing is wanted, or escalate it ahead of the blueprints fix given it is reachable now.
 5. **Parity-test home.** Which mechanism becomes authoritative — external `mcp_test` package (precedent exists), a per-domain authority table, or an expectation file? Recommend the external package (proven, no new machinery) unless the team wants the `go/analysis` pass now.
