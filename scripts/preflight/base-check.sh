@@ -6,12 +6,25 @@
 # catches that before any work is spent.
 #
 # Offline is NOT fatal: if the fetch cannot reach origin we warn and skip
-# rather than hard-fail, so a network partition never blocks a lane. The CI
-# gate (ci.yml) still enforces this on merge.
+# rather than hard-fail, so a network partition never blocks a lane.
+#
+# This is a LOCAL pre-push aid. In CI, actions/checkout checks out a detached
+# synthetic merge commit (refs/pull/N/merge) that is not a descendant of
+# origin/main, so `HEAD..origin/main` is meaningless there and reports a bogus
+# count. Branch protection's "require branches up to date before merging"
+# already enforces freshness on merge, so we skip (exit 0) in CI instead.
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
+
+# CI context: the synthetic merge commit is not a linear descendant of main,
+# so the stale-base comparison below would false-fail. Skip and let branch
+# protection enforce freshness.
+if [ -n "${CI:-}" ] || [ -n "${GITHUB_ACTIONS:-}" ]; then
+  echo "base-check: skipped in CI (branch protection enforces up-to-date before merge)"
+  exit 0
+fi
 
 base="origin/main"
 
