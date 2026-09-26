@@ -60,20 +60,53 @@ Run this loop per task:
    (`title: "Review+merge #NNN — <summary>"`).
 8. **Merge gate** — merge only when checks green + review approved. **Authors never
    self-merge.**
-9. **Archive + cleanup** — `paseo_archive_workspace`, then remove **only** clean
-   worktrees whose branch is PR-merged — **never test merge state by ancestry**: this
-   repo **squash-merges**, so a merged branch's commits are never ancestors of `main`
-   (`git rev-list --count origin/main..HEAD` stays `> 0`; `git branch --merged
-   origin/main` omits it), and an ancestry-based cleanup **silently removes nothing**
-   (`removed=0 kept=34`) while looking like a no-op, not a bug. Get the merged set from
-   `gh pr list --repo <owner>/<repo> --state merged --limit 1000 --json headRefName
-   --jq '.[].headRefName' | sort -u` (limit must exceed the repo's merged-PR count — it
-   truncates silently; this repo already has 400+), then `git worktree remove <path>` +
-   `git worktree prune` + delete the branch. Leave dirty / unmerged / detached
-   worktrees alone.
+9. **Archive + cleanup** — **order matters: archiving is destructive.** Two
+   near-identically-named commands behave differently, and conflating them is a
+   data-loss bug:
+   - `paseo archive <agent-id>` — soft-deletes an **agent**; the transcript file
+     **stays on disk** (proven: an archived agent's JSON persisted after it vanished
+     from `paseo ls`). Frees **no** disk.
+   - `paseo workspace archive <ws-id>` — archives the **workspace** **and removes the
+     worktree directory**. Only this frees disk — and only this can destroy uncommitted
+     work (a worktree holding 47 uncommitted files was archived and its contents were
+     unrecoverable).
+   Because the workspace archive removes the worktree directory, a "leave dirty
+   worktrees alone" rule placed *after* it can never run — the dirty worktree is already
+   gone. Cleanup must therefore run in this order: (a) `git -C <worktree>
+   status --porcelain` **first**; (b) if dirty → commit or report and **do not
+   archive**; (c) then `paseo_archive_workspace`; (d) then prune worktrees. For (d),
+   remove **only** clean worktrees whose branch is PR-merged — **never test merge state
+   by ancestry**: this repo **squash-merges**, so a merged branch's commits are never
+   ancestors of `main` (`git rev-list --count origin/main..HEAD` stays `> 0`;
+   `git branch --merged origin/main` omits it), and an ancestry-based cleanup
+   **silently removes nothing** (`removed=0 kept=34`) while looking like a no-op, not a
+   bug. Get the merged set from `gh pr list --repo <owner>/<repo> --state merged
+   --limit 1000 --json headRefName --jq '.[].headRefName' | sort -u` (limit must exceed
+   the repo's merged-PR count — it truncates silently; this repo already has 400+), then
+   `git worktree remove <path>` + `git worktree prune` + delete the branch. Leave dirty
+   / unmerged / detached worktrees alone.
+9a. **Post the final report before ending (durability).** A lane's final report MUST be
+    posted as a comment on its PR (or the issue) before the lane ends. Sessions are
+    ephemeral and get archived; a report that lives only in the session is destroyed by
+    archiving, so the operator hoards dead sessions instead of cleaning them. This is
+    the precondition that makes step 9 safe to run.
 10. **Reconcile** — confirm merged SHA, close the issue, report the board.
 11. **File spin-off findings** as GitHub issues (search dupes first, show draft,
     get confirmation).
+12. **Periodic reconciliation sweep** — cleanup is currently event-driven (it runs when
+    a merge notification arrives), so at 5-6 concurrent lanes it slips and old merges
+    keep live sessions. Sweep on cadence: whenever the board has **no running lanes**,
+    and after each merge batch. Sweep = enumerate `paseo workspace ls` × the
+    merged/closed PR head-branch set (`gh pr list --state all --json headRefName,state`),
+    archive **only** workspaces whose agent is idle/closed AND whose branch PR is merged
+    or closed AND whose worktree is clean; then `git worktree remove` + `git worktree
+    prune`. **Disk reality:** agent transcripts are ~2 MB total (416 files / 106 dirs) —
+    hygiene only, **not** a disk concern; worktrees are the real consumer (~2 GB and
+    growing in this repo). So sweep worktrees for disk; treat agent tidying as cheap hygiene.
+    `paseo ls` **hides archived agents and under-reports the true total ~5×** (~108 dirs
+    on disk vs ~19 listed) — enumerate `~/.paseo/agents` when the true count matters. No
+    plugin/retention feature is needed: agent archiving is a one-command,
+    operator-driven step.
 
 ---
 
@@ -134,6 +167,42 @@ gh issue list --repo <owner>/<repo> --state open --search 'is:unassigned -label:
 | `area: <domain>` | label | ownership domain / lane routing |
 | close | native | done — never used for "claimed" |
 
+### Issue taxonomy
+
+Use GitHub native **issue types** as the primary type signal, not labels:
+
+```bash
+gh issue edit <N> --type Bug|Feature|Task
+```
+
+The org-level types (`Bug`, `Feature`, `Task`) exist and are enabled. Retire
+`bug`/`enhancement` labels as the **primary** type signal — leave the existing labels
+in place, but route new issues through native `--type`. Keep the axes orthogonal:
+
+- native `--type` × `area: <domain>` (routing) × `status:` (lifecycle) ×
+  `process`/`security` (kind of work) × `priority:`.
+
+**Milestones** are the cluster/rollup mechanism:
+
+```bash
+gh issue edit <N> --milestone "<name>"
+gh api repos/<o>/<r>/milestones -f title="<name>" -f state=open
+```
+
+Live clusters in this repo: `Authz sweep`, `Retrieval quality`, `Hygiene & CI`, `iOS`.
+
+**Sub-issues** decompose an umbrella into instances:
+
+```bash
+gh api -X POST repos/<o>/<r>/issues/<parent>/sub_issues -F sub_issue_id=<child-db-id>
+```
+
+`<child-db-id>` comes from `gh api repos/<o>/<r>/issues/<N> --jq .id`; verify the link
+with `.sub_issues_summary`. **HARD RULE: an umbrella issue MUST track its instances as
+sub-issues, NEVER as prose rows in a table** — a six-instance authz class lived only as
+table rows inside a merged doc and was invisible to any reader. (Worked example:
+umbrella #1041 now carries #1051 as a sub-issue.)
+
 ### Transitions
 
 | Event | Action |
@@ -149,6 +218,22 @@ Claim is **not atomic**: two agents scanning simultaneously can both grab an
 `is:unassigned` issue. The robust fix is **ownership domains** — split issues by
 `area:` label and give each manager one area, so they never scan the same pool.
 Then the status label is confirmation, not the only lock.
+
+### Manager identity + preflight
+
+Multiple orchestrator sessions can run on one box under the **same GitHub identity**, so
+`--add-assignee @me` cannot distinguish two managers — the claim protocol is best-effort
+against a peer **session**, not against a peer **manager**. To fix the collision:
+
+- Apply a `manager: <name>` label at claim time so ownership is visible. `manager:` is
+  **not** pre-provisioned (unlike the `status:`/`process`/`area:` labels in §4) — create
+  it once on first use. (One milestone per manager is a no-label alternative.)
+- **Mandatory preflight before creating any lane:** check `paseo workspace ls`,
+  `git worktree list`, and the issue's recent comments for another manager already on
+  the same issue or the same file. If another lane already edits the target file, STOP
+  and coordinate — do not create a second writer. (Real incident: a second manager's
+  lane held this very file while this change was being planned, and had independently
+  taken over an issue this manager was deliberately holding.)
 
 ---
 
@@ -199,6 +284,8 @@ Then the status label is confirmation, not the only lock.
 | **Green PRs, RED `main`** — every PR passed its own CI, yet `main` fails after they merge | a sibling in-flight PR's test or code encoded the **old** invariant (real case: #1011 asserted `trace-list`/`trace-get` were *admin*-scoped; #1013 moved them to `SuperadminOnly`). The contradiction exists **only in the merged tree**, so per-PR green cannot catch it — re-check `main` after merging anything that changes a shared invariant (§7) |
 | **Migration version collision** — two concurrent lanes each pick "the next free version" | a duplicate version is caught by CI's `migration-order-guard`, so the collision surfaces only at merge — and locally it is **silent, not loud**: goose de-duplicates by version, so the second migration **never runs** (this is why `TestEmbeddedMigrationVersions` exists; detect it locally with `go test` or `go run ./cmd/migration-order-guard -base origin/main`). It happened twice in one session (#977 vs #981 both took `00180`; #1057 vs #1053 both took `00183`). Any lane that ADDS a migration must re-check the max version on `origin/main` **immediately before pushing** — not at implementation time — and report the order-guard output |
 | **Rebase vs a moving `main`** — `git rebase origin/main` replays the branch's patches, so main-side edits to a file the branch also touched can be lost **without a conflict**; and a `git diff origin/main HEAD` taken while `main` is advancing cannot distinguish "my operation removed main's content" from "main gained content after I branched" | after each rebase/merge, check `git diff --name-only origin/main...HEAD` enumerates exactly the branch's intended files, and prefer **merge** over rebase when `main` is moving under you. Cautionary case: a lane read a spurious `-` hunk as rebase data loss and switched to merge (#1028) — the merge was the right call, but the attribution was wrong: those lines had landed on `main` *after* its branch point, so the diff was measuring **drift, not damage**. Diagnose which before concluding |
+| **Errored-session revival race** — a resume of an `error`ed session can revive asynchronously while the operator has already spawned a replacement into the same worktree → two writers, one worktree | distinguish by whether the error **repeats**: a session that re-errors immediately is terminal — cancel it before replacing; one that merely reports `error` without a repeat may still be mid-revival, so verify the worktree before acting |
+| **Stale-branch review** — a reviewer built a plausible, code-cited exploit chain against a base 85 commits behind and blocked a PR on a hole `main` had already closed | reviewers must assert the base SHA / rebase before adjudicating — never judge a diff against a stale `main` |
 | **`gh pr create` fails** | push branch first, retry with explicit `--head <branch>` |
 | **Ambiguous decision** | use `question` tool with bounded options |
 

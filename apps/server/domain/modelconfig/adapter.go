@@ -3,7 +3,6 @@ package modelconfig
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/google/uuid"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
+	"github.com/emergent-company/emergent.memory/pkg/modelref"
 )
 
 // ADKModelResolverAdapter adapts modelconfig.Service to adk.ModelResolver.
@@ -76,20 +76,22 @@ func (a *EmbeddingResolverAdapter) ResolveEmbedding(ctx context.Context) (*embed
 		return nil, fmt.Errorf("embedding resolver: failed to resolve embedding model: %w", err)
 	}
 
-	// Fast path: model set via project_model_config (projects set-models).
+	// Fast path: model set via project_model_config (projects set-models). The
+	// resolved model is the routed "slug/model" form; parse it once at this
+	// boundary into a structured reference.
 	if model != "" {
-		parts := strings.SplitN(model, "/", 2)
-		if len(parts) != 2 {
+		ref, err := modelref.Parse(model)
+		if err != nil {
 			return nil, fmt.Errorf("embedding resolver: invalid model name %q — must be 'provider/model-name'", model)
 		}
-		cred, err := a.credsvc.ResolveFor(ctx, parts[0])
+		cred, err := a.credsvc.ResolveFor(ctx, ref.Provider)
 		if err != nil {
-			return nil, fmt.Errorf("embedding resolver: failed to get credentials for provider %q: %w", parts[0], err)
+			return nil, fmt.Errorf("embedding resolver: failed to get credentials for provider %q: %w", ref.Provider, err)
 		}
 		if cred == nil {
-			return nil, fmt.Errorf("no credentials configured for provider %q — run 'memory provider configure-project %s --api-key ...'", parts[0], parts[0])
+			return nil, fmt.Errorf("no credentials configured for provider %q — run 'memory provider configure-project %s --api-key ...'", ref.Provider, ref.Provider)
 		}
-		return a.buildEmbeddingCredential(cred, parts[1]), nil
+		return a.buildEmbeddingCredential(cred, ref.Model), nil
 	}
 
 	// Fallback: no project_model_config — use the provider credential's
@@ -100,11 +102,10 @@ func (a *EmbeddingResolverAdapter) ResolveEmbedding(ctx context.Context) (*embed
 	if cred, err := a.credsvc.ResolveAnyEmbedding(ctx); err != nil {
 		return nil, fmt.Errorf("embedding resolver: failed to resolve embedding credential: %w", err)
 	} else if cred != nil && cred.EmbeddingModel != "" {
-		emb := cred.EmbeddingModel
-		if _, bare, ok := strings.Cut(emb, "/"); ok {
-			emb = bare
-		}
-		return a.buildEmbeddingCredential(cred, emb), nil
+		// cred.EmbeddingModel is already bare (the provider service strips the
+		// routing prefix on resolution). Do not re-split it here — a
+		// multi-segment Vertex resource path would be corrupted.
+		return a.buildEmbeddingCredential(cred, cred.EmbeddingModel), nil
 	}
 
 	return nil, fmt.Errorf("no embedding model configured for project %s — run 'memory projects set-models --embedding provider/model-name' or 'memory provider configure-project <provider> --embedding-model <model>'", projectIDStr)

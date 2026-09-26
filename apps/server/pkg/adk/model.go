@@ -127,9 +127,18 @@ func (f *ModelFactory) CreateModel(ctx context.Context) (model.LLM, error) {
 			// (e.g. tests); behavior must stay identical to it.
 			if f.resolver != nil {
 				if cred, _ := f.resolver.ResolveAny(ctx); cred != nil && cred.GenerativeModel != "" {
-					name := cred.Provider + "/" + stripRoutingPrefix(cred.GenerativeModel)
+					slug := cred.Slug
+					if slug == "" {
+						slug = cred.Provider
+					}
+					// cred.GenerativeModel is already bare: the provider adapter
+					// strips the routing prefix on resolution (stripModelPrefix),
+					// so the bare name may itself contain slashes (Vertex
+					// resource paths) and must not be re-split here.
+					name := string(slug) + "/" + cred.GenerativeModel
 					f.log.Debug("resolved generative model from provider config fallback",
 						slog.String("model", name),
+						slog.String("slug", slug),
 						slog.String("provider", cred.Provider),
 						slog.String("source", cred.Source),
 						slog.String("projectID", projectID),
@@ -153,23 +162,6 @@ func (f *ModelFactory) CreateModel(ctx context.Context) (model.LLM, error) {
 		return nil, fmt.Errorf("no generative model configured: set DEEPSEEK_MODEL, OPENAI_MODEL, or VERTEX_AI_MODEL")
 	}
 	return f.CreateModelWithName(ctx, envModel)
-}
-
-// stripRoutingPrefix removes a single "provider/" routing prefix from a model
-// name, mirroring domain/provider's stripModelPrefix: only a name with exactly
-// one '/' is treated as prefixed and returned bare; bare names and multi-
-// segment resource paths (Vertex "publishers/google/models/..." or
-// "locations/.../publishers/...") are returned unchanged. It is idempotent so
-// defensive fallbacks over already-stripped credentials never double-strip a
-// routing prefix out of the middle of a resource path.
-func stripRoutingPrefix(model string) string {
-	if strings.Count(model, "/") != 1 {
-		return model
-	}
-	if _, bare, ok := strings.Cut(model, "/"); ok {
-		return bare
-	}
-	return model
 }
 
 // CreateModelWithName creates an ADK-compatible Gemini model with a specific model name.
@@ -240,7 +232,7 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 					slog.String("source", cred.Source),
 				)
 				llm := NewOpenAICompatibleModel(cred.BaseURL, cred.APIKey, resolvedModel)
-				return f.wrapModel(llm, cred.Provider), nil
+				return f.wrapModel(llm, cred.Slug, cred.Provider), nil
 			case "google-vertex":
 				clientCfg := &genai.ClientConfig{
 					Backend:  genai.BackendVertexAI,
@@ -270,7 +262,7 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 				if err != nil {
 					return nil, fmt.Errorf("failed to create Gemini model via Vertex AI (DB cred): %w", err)
 				}
-				return f.wrapModel(llm, "google-vertex"), nil
+				return f.wrapModel(llm, "google-vertex", "google-vertex"), nil
 			case "google":
 				clientCfg := &genai.ClientConfig{
 					Backend: genai.BackendGeminiAPI,
@@ -284,7 +276,7 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 				if err != nil {
 					return nil, fmt.Errorf("failed to create Gemini model via Google AI (DB cred): %w", err)
 				}
-				return f.wrapModel(llm, "google"), nil
+				return f.wrapModel(llm, "google", "google"), nil
 			}
 		}
 		// cred == nil means no DB credential found — fall through to env vars
@@ -323,7 +315,7 @@ func (f *ModelFactory) createDeepSeekEnv(bareModel string) (model.LLM, error) {
 	}
 	f.log.Debug("creating ADK model via DeepSeek (env config)", slog.String("model", bareModel))
 	llm := NewOpenAICompatibleModel("https://api.deepseek.com/v1", f.cfg.DeepSeekAPIKey, bareModel)
-	return f.wrapModel(llm, "deepseek"), nil
+	return f.wrapModel(llm, "deepseek", "deepseek"), nil
 }
 
 // createOpenAIEnv creates a model from OPENAI_API_KEY env var.
@@ -350,7 +342,7 @@ func (f *ModelFactory) createOpenAIEnv(bareModel string) (model.LLM, error) {
 		slog.String("baseURL", baseURL),
 	)
 	llm := NewOpenAICompatibleModel(baseURL, f.cfg.OpenAIAPIKey, bareModel)
-	return f.wrapModel(llm, "openai"), nil
+	return f.wrapModel(llm, "openai", "openai"), nil
 }
 
 // createVertexAIEnv creates a model from env-var Vertex AI config.
@@ -369,7 +361,7 @@ func (f *ModelFactory) createVertexAIEnv(ctx context.Context, bareModel string) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Gemini model: %w", err)
 	}
-	return f.wrapModel(llm, "google-vertex"), nil
+	return f.wrapModel(llm, "google-vertex", "google-vertex"), nil
 }
 
 // createGoogleAIEnv creates a model from env-var Google AI API key config.
@@ -385,16 +377,20 @@ func (f *ModelFactory) createGoogleAIEnv(ctx context.Context, bareModel string) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Gemini model via Google AI: %w", err)
 	}
-	return f.wrapModel(llm, "google"), nil
+	return f.wrapModel(llm, "google", "google"), nil
 }
 
 // wrapModel applies the optional ModelWrapper to the given LLM.
-// If no wrapper is configured the model is returned unchanged.
-func (f *ModelFactory) wrapModel(llm model.LLM, provider string) model.LLM {
+// If no wrapper is configured the model is returned unchanged. When no instance
+// slug is known the dialect is used as the slug (the default instance).
+func (f *ModelFactory) wrapModel(llm model.LLM, slug, dialect string) model.LLM {
 	if f.wrapper == nil {
 		return llm
 	}
-	return f.wrapper.WrapModel(llm, provider)
+	if slug == "" {
+		slug = dialect
+	}
+	return f.wrapper.WrapModel(llm, slug, dialect)
 }
 
 // DefaultGenerateConfig returns a default GenerateContentConfig for extraction tasks.

@@ -409,6 +409,33 @@ pipeline := adk.NewSequentialAgent(
 )
 ```
 
+## Authorization
+
+The full model lives in [`docs/security/authz-model.md`](../../docs/security/authz-model.md). Read it
+before adding a route, handler, or MCP tool that touches project/org-scoped data. The settled rules,
+one incident each:
+
+- **Every route declares its guard.** A route guarded by only `RequireAuth` that reads/writes
+  project- or org-scoped data is a finding. Use `RequireAuth` → `RequireProjectTokenScope` →
+  `RequireProjectMember`, or the handler-level `AuthorizeProject` / `RequireProjectMembership` /
+  `assertCallerOwnsProject` for a project id sourced from a query/body field the middleware pair
+  does not inspect. (Issue #940 — `/api/embeddings` was `RequireAuth`-only; issue #913 — eight
+  domains resolved the project from a client-supplied source.)
+- **Identity/context is never derived from client input where a token binding exists.** `X-Project-ID`,
+  `X-Org-ID`, `?project_id`, and a body `projectId` are inputs, not authorization truth. The owning
+  org is always resolved server-side from `kb.projects`; a conflicting `X-Org-ID` is rejected 403.
+  (Issues #811, #850, #877; the `RequireProjectTokenScope` name states the token guard only — #861.)
+- **One authorization decision per concept, shared.** MCP tools and REST handlers must call the same
+  helper — never re-implement. Precedents: `skills.AuthorizeSkillAccess`/`AuthorizeSkillWrite`
+  (#1040), `blueprints.AuthorizeGlobalBlueprintWrite` (#1041/#1060), `sessiontodos.SessionAccessibleQuery`
+  (#1056), `auth.superadminRole` (#940). Move the check into the service/store boundary.
+- **`superadmin_full` is a role, not a scope.** Read from `core.superadmins` via the shared
+  `auth.superadminRole`; an `admin:all` token minted by an `org_admin` cannot satisfy it. (Issue #940.)
+- **In-process ≠ transport.** `mcp.Service.ExecuteTool` (`domain/mcp/service.go:1929`) enforces a
+  coarser bar than the HTTP transports (which gate per-tool `RequiredScope` then mark
+  `TransportEnforced`). Do not treat `TrustedInternal` as "already authorized". (Issues #994, #948,
+  #1018; decision in [`../../docs/security/mcp-authz-class-decision.md`](../../docs/security/mcp-authz-class-decision.md).)
+
 ## Testing
 
 ### Test Structure
@@ -492,6 +519,24 @@ bootstrap is serialized across processes with a Postgres advisory lock.)
 
 The CI job (`.github/workflows/server.yml` → `test-db`) runs this package set
 without `-short` against a `pgvector/pgvector:pg17` service.
+
+### A test that cannot fail is a defect
+
+A test that cannot fail for the right reason hides the regression it exists to catch. Every new test
+must be able to go red when the code it guards regresses — verify with a mutation (flip the guarded
+line, watch the test fail, revert). Settled rules, one incident each:
+
+- **No fake that cannot detect the bypass.** A fake that only checked `strings.Contains` could not
+  detect a TraceQL project-scoping bypass. A fake must encode the *behaviour* under test, not a
+  superficial substring. (PR #1013 review.)
+- **Assert the set, not the count.** A count assertion (`len(scopes) == N`) passes even when the wrong
+  member replaced the right one. Assert membership/contents. (PR #777 review.)
+- **Do not skip on any error.** `t.Skip` (or a skip-on-any-tool-error guard) on *any* failure masks a
+  real regression as "skipped". A skip must be narrow and link a tracked issue. (Issue #969 —
+  `mcp_new_tools_test.go` skipped on any tool error.)
+- **DB-backed suites must not silently skip.** `REQUIRE_DB=1` turns "database unavailable" into a
+  failure; CI sets it. The integration suite silently skipped in CI for months while two production
+  bugs rotted. (Issue #911; see the `REQUIRE_DB` section above.)
 
 ### Test Utilities
 
@@ -597,7 +642,7 @@ cd apps/server
 POSTGRES_PASSWORD=emergent-dev-password go test ./tests/integration/... -v -run TestSchedulerSuite
 ```
 
-## Database Migrations
+## Migrations
 
 Migrations are managed by [Goose](https://github.com/pressly/goose):
 
@@ -615,7 +660,22 @@ go run ./cmd/migrate -c down
 go run ./cmd/migrate -c create add_new_table
 ```
 
-See `migrations/README.md` for detailed workflow.
+See `migrations/README.md` for detailed workflow (goose directives, out-of-order `-allow-missing`,
+`verify`, `mark-applied`). The settled rules, one incident each:
+
+- **Re-check the max version on `origin/main` immediately before pushing.** Two concurrent lanes each
+  picked "the next free version" and collided — #977 vs #981 both took `00180`, #1057 vs #1053 both
+  took `00183`. Verify locally with `go run ./cmd/migration-order-guard -base origin/main`, and report
+  its output. CI's `Migration Order Guard` job is what actually fails a PR.
+- **A duplicate version is silent, not loud.** Goose de-duplicates by version, so the second migration
+  **never runs** — worse than a failure. `TestEmbeddedMigrationVersions` exists to catch it; run
+  `go test` or the order guard to detect it locally.
+- **An out-of-order merge hard-blocks startup.** A higher-numbered migration merging before a lower one
+  leaves goose refusing to run ("found 2 missing migrations before current version 172") and the
+  server crash-loops — the `00172`-before-`00170`/`00171` outage (issue #750).
+- **Backfills must be tested against pre-existing rows in the *old* shape.** A happy-path test from a
+  clean state hid a real gap; seed the old-shape rows, run the backfill, then assert the migrated
+  result. (PR #1035 review.)
 
 ## Implementation Status
 

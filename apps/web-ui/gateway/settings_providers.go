@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -25,11 +26,13 @@ var providerWhitelist = map[string]bool{"google": true, "google-vertex": true, "
 
 // --- Providers settings panel (project provider configs + model rates) ---
 
-// providerRateRow is one merged (provider, model) rate row shown in the
-// Providers panel. Rates are USD per 1M tokens. Auto* come from the retail
+// providerRateRow is one merged (provider instance, model) rate row shown in
+// the Providers panel. Rates are USD per 1M tokens. Auto* come from the retail
 // pricing rows (HasAuto false = memory has no retail price for the model);
-// Override* + IsCustom come from the project pricing override.
+// Override* + IsCustom come from the project pricing override. Provider is the
+// dialect; ProviderSlug is the instance the row belongs to.
 type providerRateRow struct {
+	ProviderSlug   string
 	Provider       string
 	Model          string
 	AutoInput      float64
@@ -40,10 +43,50 @@ type providerRateRow struct {
 	HasAuto        bool
 }
 
-// providerRateGroup is one configured provider's rows, grouped for display.
+// providerRateGroup is one configured provider instance's rows, grouped for
+// display. ProviderSlug is the instance identity; Provider is its dialect.
 type providerRateGroup struct {
-	Provider string
-	Rows     []providerRateRow
+	ProviderSlug string
+	Provider     string
+	Rows         []providerRateRow
+}
+
+// providerInstanceSlug returns a configured provider's instance identity,
+// falling back to the dialect for legacy configs that predate instance slugs.
+func providerInstanceSlug(p ProjectProviderConfig) string {
+	return cmp.Or(p.Slug, p.Provider)
+}
+
+// providerGroupSlug returns a rate group's instance identity, falling back to
+// the dialect for groups assembled without a slug.
+func providerGroupSlug(g providerRateGroup) string {
+	return cmp.Or(g.ProviderSlug, g.Provider)
+}
+
+// providerRowSlug returns a rate row's instance identity, falling back to the
+// dialect for rows assembled without a slug.
+func providerRowSlug(r providerRateRow) string {
+	return cmp.Or(r.ProviderSlug, r.Provider)
+}
+
+// findProviderInstance returns the configured instance addressed by
+// slugOrDialect, preferring an exact instance-slug match and falling back to
+// the dialect's first instance (the legacy dialect alias).
+func findProviderInstance(providers []ProjectProviderConfig, slugOrDialect string) *ProjectProviderConfig {
+	if slugOrDialect == "" {
+		return nil
+	}
+	for i := range providers {
+		if providerInstanceSlug(providers[i]) == slugOrDialect {
+			return &providers[i]
+		}
+	}
+	for i := range providers {
+		if providers[i].Provider == slugOrDialect {
+			return &providers[i]
+		}
+	}
+	return nil
 }
 
 // providerPanelData is the payload of the Providers panel: grouped rate rows,
@@ -83,16 +126,21 @@ func stripVendorModelName(model string) string {
 	return strings.ToLower(strings.TrimSpace(model))
 }
 
-// mergeProviderRates joins each configured provider's models (its cached
-// catalog plus its configured generative/embedding models) with the retail
-// pricing rows and the project pricing overrides into per-model rows. A row
-// exists for every model of every configured provider; a project override
-// wins over the retail rate; a model with neither rate renders as "unknown"
-// (HasAuto false, IsCustom false). Retail-rate lookup falls back to a
-// model-only match when the exact provider+model pair is absent, so models
-// served through an OpenAI-compatible/LiteLLM proxy still surface their
-// retail rate (mirrors cost resolution in the memory backend). Duplicate
-// catalog entries for a model are collapsed.
+// mergeProviderRates joins each configured provider instance's models (its
+// dialect's cached catalog plus its configured generative/embedding models)
+// with the retail pricing rows and the project pricing overrides into
+// per-model rows. A row exists for every model of every configured instance; a
+// project override wins over the retail rate; a model with neither rate
+// renders as "unknown" (HasAuto false, IsCustom false).
+//
+// Keying follows memory's precedence (D5): retail pricing and the model
+// catalog stay dialect-scoped, while a project override is keyed by the
+// instance slug. Retail-rate lookup falls back to a model-only match when the
+// exact dialect+model pair is absent, so models served through an
+// OpenAI-compatible/LiteLLM proxy still surface their retail rate. Two
+// instances of the same dialect therefore produce two separate sets of rows,
+// each with its own override. Duplicate catalog entries for a model are
+// collapsed per instance.
 func mergeProviderRates(providers []ProjectProviderConfig, modelsByProvider map[string][]ProviderSupportedModel, pricing []ProviderPricing, overrides []ProjectCustomPricing) []providerRateRow {
 	auto := make(map[string]ProviderPricing, len(pricing))
 	autoByModel := make(map[string]ProviderPricing, len(pricing))
@@ -102,13 +150,16 @@ func mergeProviderRates(providers []ProjectProviderConfig, modelsByProvider map[
 			autoByModel[p.Model] = p
 		}
 	}
+	// Overrides are keyed by instance slug, falling back to the dialect for
+	// legacy rows written before instances existed.
 	custom := make(map[string]ProjectCustomPricing, len(overrides))
 	for _, o := range overrides {
-		custom[providerModelKey(o.Provider, o.Model)] = o
+		custom[providerModelKey(cmp.Or(o.ProviderSlug, o.Provider), o.Model)] = o
 	}
 
 	var rows []providerRateRow
 	for _, prov := range providers {
+		slug := providerInstanceSlug(prov)
 		seen := map[string]bool{}
 		// Model names to show: cached catalog models first, then the provider's
 		// configured generative/embedding models (covers LiteLLM proxies whose
@@ -128,9 +179,9 @@ func mergeProviderRates(providers []ProjectProviderConfig, modelsByProvider map[
 			}
 		}
 		for _, model := range names {
-			key := providerModelKey(prov.Provider, model)
-			row := providerRateRow{Provider: prov.Provider, Model: model}
-			if p, ok := auto[key]; ok {
+			row := providerRateRow{ProviderSlug: slug, Provider: prov.Provider, Model: model}
+			// Retail rate: dialect+model first, then a model-only fallback.
+			if p, ok := auto[providerModelKey(prov.Provider, model)]; ok {
 				row.HasAuto = true
 				row.AutoInput = p.TextInputPrice
 				row.AutoOutput = p.OutputPrice
@@ -139,7 +190,8 @@ func mergeProviderRates(providers []ProjectProviderConfig, modelsByProvider map[
 				row.AutoInput = p.TextInputPrice
 				row.AutoOutput = p.OutputPrice
 			}
-			if o, ok := custom[key]; ok {
+			// Project override: per instance slug.
+			if o, ok := custom[providerModelKey(slug, model)]; ok {
 				row.IsCustom = true
 				row.OverrideInput = o.TextInputPrice
 				row.OverrideOutput = o.OutputPrice
@@ -150,17 +202,19 @@ func mergeProviderRates(providers []ProjectProviderConfig, modelsByProvider map[
 	return rows
 }
 
-// groupProviderRows buckets rows by provider, preserving first-seen provider
-// and row order. Providers with no rows contribute no group.
+// groupProviderRows buckets rows by provider instance slug, preserving
+// first-seen instance and row order. Bucketing by the instance (not the
+// dialect) keeps two same-dialect instances from merging into one group.
 func groupProviderRows(rows []providerRateRow) []providerRateGroup {
 	var groups []providerRateGroup
 	index := map[string]int{}
 	for _, r := range rows {
-		i, ok := index[r.Provider]
+		key := cmp.Or(r.ProviderSlug, r.Provider)
+		i, ok := index[key]
 		if !ok {
 			i = len(groups)
-			index[r.Provider] = i
-			groups = append(groups, providerRateGroup{Provider: r.Provider})
+			index[key] = i
+			groups = append(groups, providerRateGroup{ProviderSlug: key, Provider: r.Provider})
 		}
 		groups[i].Rows = append(groups[i].Rows, r)
 	}
@@ -308,30 +362,37 @@ func (s *Server) invalidateProvidersMissingCache() {
 }
 
 // uiProjectSettingsProviderOverride handles the per-model override inline save
-// (HTMX → POST /settings/providers/:provider/:model). The input and output
-// prices must be non-negative numbers — an invalid value is rejected before
-// anything is written. Persists via the memory pricing-overrides API and
-// surfaces the outcome as a toast via the HX-Trigger header.
+// (HTMX → POST /settings/providers/:slug/:model). The path segment is the
+// provider instance slug; the form's hidden provider field carries the dialect
+// memory requires alongside the slug. The input and output prices must be
+// non-negative numbers — an invalid value is rejected before anything is
+// written. Persists via the memory pricing-overrides API and surfaces the
+// outcome as a toast via the HX-Trigger header.
 func (s *Server) uiProjectSettingsProviderOverride(c echo.Context) error {
 	ctx := c.Request().Context()
-	provider := strings.TrimSpace(c.Param("provider"))
+	slug := strings.TrimSpace(c.Param("provider"))
 	model := strings.TrimSpace(c.Param("model"))
-	if provider == "" || model == "" {
+	if slug == "" || model == "" {
 		return toastTrigger(c, "error", "provider and model are required")
 	}
+	// The dialect comes from a hidden field on the rate-row form. Fall back to
+	// the slug so a dialect-named default instance keeps working if the field
+	// is absent.
+	dialect := cmp.Or(strings.TrimSpace(c.FormValue("provider")), slug)
 	rates, err := overrideRatesFromForm(c)
 	if err != nil {
 		return toastTrigger(c, "error", err.Error())
 	}
-	if _, err := s.memory.UpsertProjectPricingOverride(ctx, provider, model, rates); err != nil {
+	if _, err := s.memory.UpsertProjectPricingOverride(ctx, dialect, slug, model, rates); err != nil {
 		return toastTrigger(c, "error", err.Error())
 	}
 	return toastTrigger(c, "success", "Saved")
 }
 
 // uiProjectSettingsProviderOverrideDelete handles the per-model remove action
-// (HTMX → POST /settings/providers/:provider/:model/delete), reverting the
-// model to its automatic retail rate. The outcome surfaces as a toast.
+// (HTMX → POST /settings/providers/:slug/:model/delete), reverting the model to
+// its automatic retail rate. The path segment is the provider instance slug.
+// The outcome surfaces as a toast.
 func (s *Server) uiProjectSettingsProviderOverrideDelete(c echo.Context) error {
 	ctx := c.Request().Context()
 	provider := strings.TrimSpace(c.Param("provider"))
@@ -366,6 +427,7 @@ func (s *Server) uiProjectProviderConfig(c echo.Context) error {
 		return s.renderProviderConfigError(c, "", ProviderConfigInput{}, fmt.Errorf("provider is required"))
 	}
 	in := ProviderConfigInput{
+		Slug:               strings.TrimSpace(c.FormValue("slug")),
 		APIKey:             strings.TrimSpace(c.FormValue("api_key")),
 		ServiceAccountJSON: strings.TrimSpace(c.FormValue("service_account_json")),
 		GCPProject:         strings.TrimSpace(c.FormValue("gcp_project")),
@@ -415,11 +477,14 @@ func (s *Server) renderProviderConfigError(c echo.Context, provider string, in P
 	}
 	data.GenerativeModels, data.EmbeddingModels = s.providerModelOptions(ctx)
 	if providers, lerr := s.memory.ListProjectProviders(ctx); lerr == nil {
-		for i := range providers {
-			if providers[i].Provider == provider {
-				data.Provider = &providers[i]
-				break
-			}
+		// A submitted slug identifies an existing instance to re-render in edit
+		// mode; if it matches nothing the user is creating a new instance, so
+		// stay in add mode. Without a slug the save targets the dialect's
+		// default instance.
+		if in.Slug != "" {
+			data.Provider = findProviderInstance(providers, in.Slug)
+		} else {
+			data.Provider = findProviderInstance(providers, provider)
 		}
 	}
 	return s.page(c, pageTitle("Configure provider"), providerConfigPage(data))
@@ -834,48 +899,51 @@ func rateInputValue(custom bool, hasAuto bool, customV, autoV float64) string {
 }
 
 // defaultModelCatalog returns the reachable default-model options for the
-// given modelType ("generative" or "embedding"), each prefixed by the
-// CREDENTIAL provider (the configured provider name) rather than the ROUTING
-// provider of the global catalog. The default-model config is stored as
-// "provider/model" and memory resolves that prefix against the configured
-// project providers, so a routing-provider prefix (e.g. "deepseek/…") breaks
-// at save time with "no deepseek provider config found" when deepseek models
-// are actually served through an "openai" LiteLLM-proxy credential provider.
+// given modelType ("generative" or "embedding"), each prefixed by the provider
+// INSTANCE SLUG (the configured instance) rather than the ROUTING provider of
+// the global catalog. The default-model config is stored as the structured
+// string "slug/model" and memory resolves that prefix against the configured
+// project provider instances, so a dialect prefix is used only as the legacy
+// alias when an instance slug equals its dialect.
 //
-// Options, in stable order (configured providers first, in config order):
-//   - each configured provider's per-provider catalog entries of the requested
-//     ModelType (deduped by provider+model), and
-//   - the provider's configured bare generative/embedding model — LiteLLM
+// Options, in stable order (configured instances first, in config order):
+//   - each instance's dialect catalog entries of the requested ModelType
+//     (deduped by slug+model), and
+//   - the instance's configured bare generative/embedding model — LiteLLM
 //     proxies often have an empty catalog yet a real configured model — and
 //   - the currently stored default (prefix + name), appended only when no
-//     configured provider surfaced it, so the select keeps it as selected
-//     (e.g. a legacy routing-provider value pending migration).
+//     configured instance surfaced it, so the select keeps it as selected
+//     (e.g. a legacy value pending migration).
 //
-// Catalog entries are filtered strictly by ModelType: production
-// ListProviderModels responses always set it ("generative"/"embedding"), and
-// test fixtures must too — an empty ModelType never matches.
+// Because the option value and its optgroup label both carry the instance
+// slug, two instances of one dialect that offer the same model name remain
+// distinguishable. Catalog entries are filtered strictly by ModelType:
+// production ListProviderModels responses always set it
+// ("generative"/"embedding"), and test fixtures must too — an empty ModelType
+// never matches.
 func defaultModelCatalog(d providerPanelData, modelType string) []Model {
 	var out []Model
 	seen := map[string]bool{}
-	add := func(provider, name, display string) {
-		if provider == "" || name == "" {
+	add := func(slug, name, display string) {
+		if slug == "" || name == "" {
 			return
 		}
-		key := provider + "/" + name
+		key := slug + "/" + name
 		if seen[key] {
 			return
 		}
 		seen[key] = true
-		out = append(out, Model{Provider: provider, ModelName: name, ModelType: modelType, DisplayName: display})
+		out = append(out, Model{Provider: slug, ModelName: name, ModelType: modelType, DisplayName: display})
 	}
 	for _, p := range d.Providers {
+		slug := providerInstanceSlug(p)
 		displays := map[string]string{}
 		for _, m := range d.ProviderModels[p.Provider] {
 			if m.ModelType != modelType {
 				continue
 			}
 			displays[m.ModelName] = m.DisplayName
-			add(p.Provider, m.ModelName, m.DisplayName)
+			add(slug, m.ModelName, m.DisplayName)
 		}
 		configured := ""
 		if modelType == "generative" {
@@ -883,7 +951,7 @@ func defaultModelCatalog(d providerPanelData, modelType string) []Model {
 		} else {
 			configured = p.EmbeddingModel
 		}
-		add(p.Provider, configured, displays[configured])
+		add(slug, configured, displays[configured])
 	}
 	current := ""
 	if modelType == "generative" {
@@ -1017,10 +1085,11 @@ func providerConfigEmbeddingModel(p *ProjectProviderConfig) string {
 	return p.EmbeddingModel
 }
 
-// providerFormTitle is the form heading for the add vs edit page.
+// providerFormTitle is the form heading for the add vs edit page. Edit names
+// the instance slug so two same-dialect instances are never confused.
 func providerFormTitle(p *ProjectProviderConfig) string {
 	if p == nil {
 		return "Add a provider"
 	}
-	return "Edit " + p.Provider
+	return "Edit " + providerInstanceSlug(*p)
 }
