@@ -234,6 +234,13 @@ func (s *Service) applyAgents(ctx context.Context, projectID, blueprintID, bpNam
 		if am.Name == "" {
 			return counts, apperror.ErrBadRequest.WithMessage("agent name is required")
 		}
+		if am.Visibility != "" {
+			v, ok := agents.NormalizeVisibility(agents.AgentVisibility(am.Visibility))
+			if !ok {
+				return counts, apperror.NewBadRequest("agent visibility must be one of project, external, internal")
+			}
+			am.Visibility = string(v)
+		}
 
 		existing, err := s.agentRepo.FindDefinitionByName(ctx, projectID, am.Name)
 		if err != nil {

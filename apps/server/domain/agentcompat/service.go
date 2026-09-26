@@ -94,6 +94,15 @@ func (s *Service) HandleChatCompletion(ctx context.Context, req *ChatCompletionR
 		return nil, fmt.Errorf("model %q not found: no agent definition named %q exists in this project", req.Model, agentName)
 	}
 
+	// Internal agents are "callable only by other agents, never via A2A"
+	// (entity.go:279). The OpenAI-compatible surface is external-facing, so it
+	// must not resolve or invoke an internal agent at all (issue #939). Return
+	// the same "not found" message as a missing agent so the name's existence
+	// is not revealed.
+	if agentDef.Visibility == agents.VisibilityInternal {
+		return nil, fmt.Errorf("model %q not found: no agent definition named %q exists in this project", req.Model, agentName)
+	}
+
 	// Validate client tools (check for reserved memory_ prefix).
 	if conflict := ValidateClientTools(req.Tools); conflict != "" {
 		return nil, fmt.Errorf("invalid tools: %s", conflict)
@@ -141,6 +150,14 @@ func (s *Service) handleNewRun(
 	user *auth.AuthUser,
 	projectID string,
 ) (*Result, error) {
+	// No provider wired (test harness without an LLM key). Fail cleanly rather
+	// than nil-dereferencing the executor; the handler maps this to 502/503.
+	// Placed here — after request validation and agent lookup — so request-level
+	// 400s still fire even when no provider is configured.
+	if s.executor == nil {
+		return nil, fmt.Errorf("no LLM provider configured")
+	}
+
 	// Find or create the runtime agent record.
 	// The kb.agent_runs table requires a valid agent_id, so we ensure a
 	// runtime agent row exists that is backed by this definition.
@@ -190,6 +207,7 @@ func (s *Service) handleNewRun(
 		SystemPromptAppendix: appendix,
 		UserID:               user.ID,
 		ExtraTools:           extraTools,
+		// TrustedInternal defaults false: the OpenAI-compatible surface must not reach internal agents.
 	}
 
 	if req.Stream {
@@ -208,6 +226,12 @@ func (s *Service) handleResume(
 	user *auth.AuthUser,
 	projectID string,
 ) (*Result, error) {
+	// No provider wired (test harness without an LLM key). Fail cleanly rather
+	// than nil-dereferencing the executor; the handler maps this to 502/503.
+	if s.executor == nil {
+		return nil, fmt.Errorf("no LLM provider configured")
+	}
+
 	priorRun, err := s.agentRepo.FindRunByIDProjectScoped(ctx, runID, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("run %q not found: %w", runID, err)
@@ -242,6 +266,7 @@ func (s *Service) handleResume(
 		SystemPromptAppendix: buildSystemAppendix(req.Messages, len(req.Tools) > 0, projectInfo),
 		UserID:               user.ID,
 		ExtraTools:           extraTools,
+		// TrustedInternal defaults false: the OpenAI-compatible surface must not reach internal agents.
 	}
 
 	if req.Stream {

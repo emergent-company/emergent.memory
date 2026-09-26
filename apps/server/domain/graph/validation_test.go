@@ -344,9 +344,9 @@ func TestValidatePatchProperties(t *testing.T) {
 		assert.Equal(t, "old", out["legacy_field"])
 	})
 
-	t.Run("required field missing from delta does NOT cause error (delta-only check)", func(t *testing.T) {
+	t.Run("required field missing from delta does NOT cause error (object patch)", func(t *testing.T) {
 		// name is required in schema but is not in this patch — should pass because
-		// required is only enforced at Create time, not on subsequent patches.
+		// the object patch path validates only the delta and does not enforce required.
 		_, err := validatePatchProperties(map[string]any{"age": 30}, schema)
 		assert.NoError(t, err)
 	})
@@ -366,6 +366,61 @@ func TestValidatePatchProperties(t *testing.T) {
 
 	t.Run("type coercion works on patch delta", func(t *testing.T) {
 		out, err := validatePatchProperties(map[string]any{"age": "42"}, schema)
+		assert.NoError(t, err)
+		assert.Equal(t, float64(42), out["age"])
+	})
+}
+
+func TestValidateRelationshipPatchProperties(t *testing.T) {
+	schema := agents.ObjectSchema{
+		Name: "Person",
+		Properties: map[string]agents.PropertyDef{
+			"name":  {Type: "string"},
+			"age":   {Type: "number"},
+			"since": {Type: "number"},
+		},
+		Required: []string{"name"},
+	}
+
+	t.Run("required field present in merged result passes even if absent from delta", func(t *testing.T) {
+		// "name" is required and already stored; the patch only touches "age".
+		// Required enforcement is on the merged result, so this passes.
+		_, err := validateRelationshipPatchProperties(map[string]any{"age": 30}, map[string]any{"name": "Alice", "age": 30}, schema)
+		assert.NoError(t, err)
+	})
+
+	t.Run("required field absent from merged result fails", func(t *testing.T) {
+		// The relationship has no "name" and the patch doesn't add it — rejected.
+		_, err := validateRelationshipPatchProperties(map[string]any{"age": 30}, map[string]any{"age": 30}, schema)
+		if assert.Error(t, err) {
+			assert.Contains(t, err.Error(), "name")
+		}
+	})
+
+	t.Run("clearing a required field fails", func(t *testing.T) {
+		// Patch sets "name" to null (delete) — the merged result drops it, so it fails.
+		_, err := validateRelationshipPatchProperties(map[string]any{"name": nil}, map[string]any{"age": 30}, schema)
+		if assert.Error(t, err) {
+			assert.Contains(t, err.Error(), "name")
+		}
+	})
+
+	t.Run("delta with wrong type fails", func(t *testing.T) {
+		// "age" is a number; patching it with a non-coercible string fails.
+		_, err := validateRelationshipPatchProperties(map[string]any{"age": "not-a-number"}, map[string]any{"name": "Alice", "age": "not-a-number"}, schema)
+		if assert.Error(t, err) {
+			assert.Contains(t, err.Error(), "age")
+		}
+	})
+
+	t.Run("unknown property in delta is passed through", func(t *testing.T) {
+		out, err := validateRelationshipPatchProperties(map[string]any{"legacy_field": "old"}, map[string]any{"name": "Alice", "legacy_field": "old"}, schema)
+		assert.NoError(t, err)
+		assert.Equal(t, "old", out["legacy_field"])
+	})
+
+	t.Run("type coercion works on patch delta", func(t *testing.T) {
+		out, err := validateRelationshipPatchProperties(map[string]any{"age": "42"}, map[string]any{"name": "Alice", "age": "42"}, schema)
 		assert.NoError(t, err)
 		assert.Equal(t, float64(42), out["age"])
 	})

@@ -18,7 +18,7 @@ curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/ma
 2. ✅ **Downloads Emergent** from GitHub
 3. ✅ **Generates secure passwords** automatically:
    - PostgreSQL password (64 chars, cryptographically secure)
-   - MinIO password (64 chars, cryptographically secure)
+   - Object store secret key (64 chars, cryptographically secure)
    - API key (64 chars, cryptographically secure)
 4. ✅ **Creates configuration** (.env.local with all settings)
 5. ✅ **Builds Docker image** (server + embedded CLI)
@@ -123,7 +123,7 @@ After installation, user gets:
 - Server URL
 - API Key
 - PostgreSQL connection details
-- MinIO credentials and URLs
+- SeaweedFS (object store) credentials and URL
 - Quick start commands
 
 ## Customization Options
@@ -177,7 +177,7 @@ Check Docker/Docker Compose
     ↓
 Download/clone repository
     ↓
-Generate passwords (PostgreSQL, MinIO, API key)
+Generate passwords (PostgreSQL, object store, API key)
     ↓
 Create .env.local
     ↓
@@ -277,7 +277,7 @@ Services exposed only to localhost by default:
 
 - Server: localhost:3002
 - PostgreSQL: localhost:15432
-- MinIO: localhost:19000, 19001
+- SeaweedFS: localhost:19000
 
 No network exposure without explicit configuration.
 

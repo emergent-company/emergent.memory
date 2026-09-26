@@ -305,7 +305,7 @@ templ releaseBadge(status string) {
 // comparison option. The selector is a plain GET form so it works without JS;
 // onchange submits it immediately for one-click switching.
 templ blueprintDiffCard(d *BlueprintDetail) {
-	@ui.CardRaw("card-border mb-6 overflow-hidden", "p-0", nil) {
+	@ui.CardRaw("card-border mb-6 overflow-hidden", "memory-density-flush", nil) {
 		<div class="flex flex-wrap items-center justify-between gap-3 border-b border-base-200 px-4 py-3">
 			<h2 class="text-lg font-semibold tracking-tight">
 				Changes

@@ -38,21 +38,30 @@ func (s *BootstrapService) Initialize(ctx context.Context) error {
 
 	if initialized {
 		s.log.Info("standalone environment already initialized")
-		return nil
+	} else {
+		s.log.Info("initializing standalone environment",
+			slog.String("user_email", s.cfg.Standalone.UserEmail),
+			slog.String("org_name", s.cfg.Standalone.OrgName),
+			slog.String("project_name", s.cfg.Standalone.ProjectName),
+		)
+
+		if err := s.createStandaloneResources(ctx); err != nil {
+			s.log.Error("failed to initialize standalone environment", logger.Error(err))
+			return err
+		}
+
+		s.log.Info("standalone environment initialized successfully")
 	}
 
-	s.log.Info("initializing standalone environment",
-		slog.String("user_email", s.cfg.Standalone.UserEmail),
-		slog.String("org_name", s.cfg.Standalone.OrgName),
-		slog.String("project_name", s.cfg.Standalone.ProjectName),
-	)
-
-	if err := s.createStandaloneResources(ctx); err != nil {
-		s.log.Error("failed to initialize standalone environment", logger.Error(err))
+	// The secondary identity is provisioned independently and idempotently, so
+	// a long-lived standalone DB that already holds the primary identity still
+	// gets (or refreshes) the invitee on every startup. Without this, the
+	// second-identity e2e tests silently skip on a reused database.
+	if err := s.ensureSecondUser(ctx); err != nil {
+		s.log.Error("failed to ensure secondary standalone identity", logger.Error(err))
 		return err
 	}
 
-	s.log.Info("standalone environment initialized successfully")
 	return nil
 }
 
@@ -191,4 +200,46 @@ func (s *BootstrapService) createProject(ctx context.Context, tx bun.Tx, orgID, 
 
 	s.log.Info("standalone project created", slog.String("project_id", projectID))
 	return projectID, nil
+}
+
+// ensureSecondUser provisions the secondary standalone identity (invitee in e2e
+// tests) idempotently, independent of the primary bootstrap. createSecondUser
+// uses ON CONFLICT upserts/no-ops, so it is safe to run on every startup even
+// against a long-lived database where the primary identity already exists.
+func (s *BootstrapService) ensureSecondUser(ctx context.Context) error {
+	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		return s.createSecondUser(ctx, tx)
+	})
+}
+
+// createSecondUser seeds a secondary standalone identity (invitee in e2e
+// tests) with a core.user_emails row so the invite accept/decline gate can
+// match the invite email to this user.
+func (s *BootstrapService) createSecondUser(ctx context.Context, tx bun.Tx) error {
+	if s.cfg.Standalone.UserEmail2 == "" {
+		return nil
+	}
+
+	var userID string
+	err := tx.NewRaw(`
+		INSERT INTO core.user_profiles (zitadel_user_id, display_name, created_at, updated_at)
+		VALUES ('standalone-2', ?, NOW(), NOW())
+		ON CONFLICT (zitadel_user_id) DO UPDATE SET display_name = EXCLUDED.display_name
+		RETURNING id
+	`, s.cfg.Standalone.UserEmail2).Scan(ctx, &userID)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.NewRaw(`
+		INSERT INTO core.user_emails (user_id, email, verified, created_at)
+		VALUES (?, ?, true, NOW())
+		ON CONFLICT (email) DO NOTHING
+	`, userID, s.cfg.Standalone.UserEmail2).Exec(ctx)
+	if err != nil {
+		return err
+	}
+
+	s.log.Info("standalone second user created", slog.String("user_id", userID))
+	return nil
 }

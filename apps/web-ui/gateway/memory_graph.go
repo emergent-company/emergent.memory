@@ -28,6 +28,14 @@ type GraphObject struct {
 	EmbeddingUpdatedAt string `json:"embedding_updated_at"`
 }
 
+// ObjectSearchResult is one scored search hit (FTS or hybrid). Score semantics
+// are mode-specific: FTS returns a relevance score, hybrid returns the fused
+// lexical/vector score.
+type ObjectSearchResult struct {
+	Object GraphObject
+	Score  float32
+}
+
 // SimilarObject is one object returned by the vector-similarity endpoint
 // (GET /api/graph/objects/:id/similar). Distance is the pgvector cosine
 // distance (0..2 — LOWER is more similar).
@@ -122,6 +130,50 @@ func (m *MemoryClient) ListGraphObjects(ctx context.Context, branchID, typeFilte
 	return out.Items, nil
 }
 
+// ListGraphObjectsPage lists a single page of graph objects (most-recent-first),
+// cursor-paginated. Empty branchID omits the branch filter; empty typeFilter
+// omits the type filter. nextCursor is empty when there are no more pages.
+func (m *MemoryClient) ListGraphObjectsPage(ctx context.Context, branchID, typeFilter, cursor string, limit int) ([]GraphObject, string, error) {
+	q := url.Values{}
+	q.Set("limit", strconv.Itoa(limit))
+	// The total is never read here, and the exact COUNT(*) is the endpoint's
+	// latency floor on large projects — skip it (#733).
+	q.Set("include_total", "false")
+	if typeFilter != "" {
+		q.Set("type", typeFilter)
+	}
+	if cursor != "" {
+		q.Set("cursor", cursor)
+	}
+	if branchID != "" {
+		q.Set("branch_id", branchID)
+	}
+	var out struct {
+		Items      []GraphObject `json:"items"`
+		NextCursor string        `json:"next_cursor"`
+	}
+	if err := m.doH(ctx, http.MethodGet, "/api/graph/objects/search?"+q.Encode(), nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, "", err
+	}
+	return out.Items, out.NextCursor, nil
+}
+
+// CountObjects returns the total number of graph objects, optionally scoped to
+// a branch (GET /api/graph/objects/count).
+func (m *MemoryClient) CountObjects(ctx context.Context, branchID string) (int, error) {
+	path := "/api/graph/objects/count"
+	if branchID != "" {
+		path += "?branch_id=" + url.QueryEscape(branchID)
+	}
+	var out struct {
+		Count int `json:"count"`
+	}
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
+		return 0, err
+	}
+	return out.Count, nil
+}
+
 // GetObjectEdges returns the relationships (edges) touching one object,
 // combining incoming and outgoing edges.
 func (m *MemoryClient) GetObjectEdges(ctx context.Context, objectID string) ([]GraphRelationship, error) {
@@ -211,6 +263,137 @@ func (m *MemoryClient) SearchObjectsFTS(ctx context.Context, query, typeFilter s
 	out := make([]GraphObject, 0, len(wire.Data))
 	for _, d := range wire.Data {
 		out = append(out, d.Object)
+	}
+	return out, nil
+}
+
+// searchObjectsWire is the shared response shape of both search endpoints
+// (FTS and hybrid).
+type searchObjectsWire struct {
+	Data []struct {
+		Object GraphObject `json:"object"`
+		Score  float32     `json:"score"`
+	} `json:"data"`
+	Total   int  `json:"total"`
+	HasMore bool `json:"hasMore"`
+}
+
+// searchObjectsRequestBody is the POST body for the hybrid search endpoint.
+type searchObjectsRequestBody struct {
+	Query    string   `json:"query"`
+	Limit    int      `json:"limit"`
+	Offset   int      `json:"offset"`
+	Types    []string `json:"types,omitempty"`
+	BranchID string   `json:"branchId,omitempty"`
+}
+
+// SearchObjects text-searches graph objects in one of two modes: "fulltext"
+// (GET /api/graph/objects/fts) or "hybrid" (POST /api/graph/search, which
+// auto-embeds the query and fuses lexical/vector results). types is a
+// comma-joined list of type names (empty = no type filter). hasMore reports
+// whether more results exist beyond this page.
+func (m *MemoryClient) SearchObjects(ctx context.Context, mode, query, types, branchID string, limit, offset int) ([]ObjectSearchResult, bool, error) {
+	var wire searchObjectsWire
+	switch mode {
+	case "hybrid":
+		body := searchObjectsRequestBody{Query: query, Limit: limit, Offset: offset}
+		if types != "" {
+			body.Types = strings.Split(types, ",")
+		}
+		if branchID != "" {
+			body.BranchID = branchID
+		}
+		if err := m.doH(ctx, http.MethodPost, "/api/graph/search", body, m.documentHeaders(ctx), &wire); err != nil {
+			return nil, false, err
+		}
+	default: // "fulltext"
+		q := url.Values{}
+		q.Set("q", query)
+		q.Set("limit", strconv.Itoa(limit))
+		q.Set("offset", strconv.Itoa(offset))
+		if types != "" {
+			q.Set("types", types)
+		}
+		if branchID != "" {
+			q.Set("branch_id", branchID)
+		}
+		if err := m.doH(ctx, http.MethodGet, "/api/graph/objects/fts?"+q.Encode(), nil, m.documentHeaders(ctx), &wire); err != nil {
+			return nil, false, err
+		}
+	}
+
+	results := make([]ObjectSearchResult, 0, len(wire.Data))
+	for _, d := range wire.Data {
+		results = append(results, ObjectSearchResult{Object: d.Object, Score: d.Score})
+	}
+	return results, wire.HasMore, nil
+}
+
+// unifiedSearchResult is one union item of POST /api/search/unified. The union
+// spans graph/text/relationship items; only graph items are relevant to the
+// objects browser, so the other fields (snippet, lexical/vector score) are
+// omitted here.
+type unifiedSearchResult struct {
+	Type        string         `json:"type"`
+	ID          string         `json:"id"`
+	ObjectID    string         `json:"object_id"`
+	CanonicalID string         `json:"canonical_id"`
+	ObjectType  string         `json:"object_type"`
+	Key         string         `json:"key"`
+	Fields      map[string]any `json:"fields"`
+	Labels      []string       `json:"labels"`
+	Score       float64        `json:"score"`
+}
+
+// SearchObjectsUnified runs a unified search (POST /api/search/unified) across
+// the graph, returning only the type=="graph" hits normalized to
+// ObjectSearchResult. types is a comma-joined list of type names (empty = no
+// type filter). Results below minSearchScore are dropped and the top `limit`
+// graph hits are kept. Unified results carry fields (object properties) but
+// not created_at/status/embedding_status, so callers must not render those.
+func (m *MemoryClient) SearchObjectsUnified(ctx context.Context, query, types, branchID string, limit int) ([]ObjectSearchResult, error) {
+	body := map[string]any{
+		"query":       query,
+		"limit":       limit,
+		"resultTypes": "graph",
+	}
+	if types != "" {
+		body["types"] = strings.Split(types, ",")
+	}
+	if branchID != "" {
+		body["branch_id"] = branchID
+	}
+	var wire struct {
+		Results []unifiedSearchResult `json:"results"`
+	}
+	if err := m.doH(ctx, http.MethodPost, "/api/search/unified", body, m.documentHeaders(ctx), &wire); err != nil {
+		return nil, err
+	}
+	out := make([]ObjectSearchResult, 0, limit)
+	for _, r := range wire.Results {
+		if r.Type != "graph" {
+			continue
+		}
+		if r.Score < minSearchScore {
+			continue
+		}
+		id := firstNonEmpty(r.CanonicalID, r.ObjectID, r.ID)
+		if id == "" {
+			continue
+		}
+		out = append(out, ObjectSearchResult{
+			Object: GraphObject{
+				ID:         id,
+				Type:       r.ObjectType,
+				Key:        r.Key,
+				Properties: r.Fields,
+				Labels:     r.Labels,
+			},
+			Score: float32(r.Score),
+		})
+		if len(out) == limit {
+			break
+		}
 	}
 	return out, nil
 }

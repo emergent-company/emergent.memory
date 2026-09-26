@@ -123,6 +123,18 @@ func TestRequireProjectMemberEndToEnd(t *testing.T) {
 		}
 	})
 
+	t.Run("malformed project id -> 404, not 500", func(t *testing.T) {
+		// A non-UUID must be treated as "no such project" so the raw string is
+		// never cast to the uuid column (which Postgres rejects with a 500).
+		err := run(&AuthUser{ID: memberID}, "not-a-uuid")
+		if err == nil {
+			t.Fatal("want error for malformed project id")
+		}
+		if status, _ := apperror.ToHTTPError(err); status != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404", status)
+		}
+	})
+
 	t.Run("api token -> pass through (scoped by token)", func(t *testing.T) {
 		err := run(&AuthUser{ID: memberID, APITokenID: "tok-1", APITokenProjectID: proj}, proj)
 		if err != nil {

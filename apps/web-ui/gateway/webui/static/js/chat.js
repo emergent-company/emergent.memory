@@ -751,6 +751,23 @@
     // right after "Run started".
     items = MemoryChatHost.sortTimeline(items);
 
+    // The run's composed system instruction (recorded as a `system` message)
+    // renders once, as a collapsed agent-prompt card above the transcript.
+    // Later system records are skipped — the instruction is stable across a
+    // conversation's runs, so a card per run would just duplicate it.
+    for (var pi = 0; pi < items.length; pi++) {
+      var pit = items[pi];
+      if (pit && pit.kind === "message" && pit.role === "system") {
+        var promptText = (pit.content && pit.content.text) || "";
+        if (promptText) {
+          if (MemoryChatComponents.agentPromptCard) {
+            MemoryChatComponents.agentPromptCard(badgeCtx, promptText);
+          }
+          break;
+        }
+      }
+    }
+
     var runStatus = ""; // status of the run being rendered (set by run_start)
     var runError = ""; // error_message of that run, if the server attached one
     var runEnded = false; // whether a run_end was seen for the current run
@@ -841,6 +858,8 @@
             output: out,
             inputHtml: item.tool_input_html,
             outputHtml: item.tool_output_html,
+            id: item.id,
+            durationMs: item.duration_ms,
             meta: meta,
           });
           break;
@@ -848,6 +867,11 @@
           var content = item.content || {};
           var text = content.text || "";
           var html = content.html || "";
+          if (item.role === "system") {
+            // The composed system instruction — already rendered once as the
+            // agent-prompt card above; never a chat bubble.
+            break;
+          }
           if (item.role === "user") {
             if (text && !isResumePrompt(text)) addUserMessage(stripContextPreamble(text), false, meta);
           } else if (item.role === "tool") {

@@ -134,7 +134,14 @@ func (s *Service) Search(ctx context.Context, projectID uuid.UUID, req *UnifiedS
 	// Option B: inject src/dst node stubs from relationship results into graph pool.
 	// This ensures relationship endpoints appear as graph objects in the fused output,
 	// giving the judge full node-level context even when graph object search returns nothing.
-	graphResults = s.injectRelationshipNodes(graphResults, relationshipRes.results)
+	//
+	// Only inject when the relationship leg is a genuine first-class contributor
+	// (explicit relationship weight). When the weight is unset/0, injecting endpoint
+	// stubs with relationship scores lets relationship candidates displace the graph
+	// leg's ranking (issue #996).
+	if s.relationshipWeightEnabled(req.Weights) {
+		graphResults = s.injectRelationshipNodes(graphResults, relationshipRes.results)
+	}
 
 	span.SetAttributes(attribute.String("memory.search.strategy", string(fusionStrategy)))
 
@@ -662,6 +669,19 @@ func (s *Service) injectRelationshipNodes(graphResults []*UnifiedSearchGraphResu
 	return graphResults
 }
 
+// relationshipWeightEnabled reports whether the relationship leg should act as a
+// first-class contributor to the weighted fusion. It is enabled when either the
+// env default (SEARCH_RELATIONSHIP_WEIGHT) or an explicit per-request weight is
+// greater than zero. When false, the relationship leg must not be promoted to
+// graphWeight and relationship nodes must not be injected onto their endpoints
+// (issue #996).
+func (s *Service) relationshipWeightEnabled(weights *UnifiedSearchWeights) bool {
+	if s.relWeight > 0 {
+		return true
+	}
+	return weights != nil && weights.RelationshipWeight > 0
+}
+
 // expandRelationships fetches relationships for graph results
 func (s *Service) expandRelationships(ctx context.Context, projectID uuid.UUID, results []*UnifiedSearchGraphResult, options *UnifiedSearchRelationshipOptions) []*UnifiedSearchGraphResult {
 	if options == nil || !options.Enabled || options.MaxDepth == 0 {
@@ -787,14 +807,15 @@ func (s *Service) fuseWeighted(graphResults []*UnifiedSearchGraphResult, textRes
 			relationshipWeight /= totalWeight
 		}
 	} else {
-		// Backward-compatible: two-way normalize graph+text only
-		// Relationships will use the post-normalization graphWeight
+		// Two-way normalize graph+text only. The relationship leg is NOT promoted
+		// to graphWeight: an unset relationship weight means relationships are not a
+		// first-class contributor and must not displace graph results (issue #996).
+		// relationshipWeight remains 0, so relationship items score 0 and sort last.
 		totalWeight := graphWeight + textWeight
 		if totalWeight > 0 {
 			graphWeight /= totalWeight
 			textWeight /= totalWeight
 		}
-		relationshipWeight = graphWeight // same weight as graph results
 	}
 
 	type scoredItem struct {

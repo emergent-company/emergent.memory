@@ -1654,7 +1654,7 @@ func printSystemInfo(installDir string, isStandalone bool) {
 
 	if isStandalone {
 		fmt.Println("\nContainer Versions:")
-		containers := []string{"memory-server", "memory-db", "memory-minio", "memory-kreuzberg"}
+		containers := []string{"memory-server", "memory-db", "memory-seaweedfs", "memory-kreuzberg"}
 		for _, name := range containers {
 			version := getContainerVersion(name)
 			if version == "" {

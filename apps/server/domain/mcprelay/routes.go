@@ -10,6 +10,8 @@ import (
 func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g := e.Group("/api/mcp-relay")
 	g.Use(authMiddleware.RequireAuth())
+	g.Use(authMiddleware.RequireProjectTokenScope())
+	g.Use(authMiddleware.RequireProjectMember())
 
 	// WebSocket: remote MCP providers connect here.
 	g.GET("/connect", h.Connect)

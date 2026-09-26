@@ -263,7 +263,7 @@ templ schemaObjectTypeProperties(detail *ObjectTypeDetail) {
 	@ui.Section("Properties", ui.SectionProps{
 		Margin:    "mt-6",
 		CardClass: "card-border overflow-hidden",
-		BodyClass: "p-0",
+		BodyClass: "memory-density-flush",
 		Empty:     len(detail.Properties) == 0,
 		EmptyIcon: "lucide--box", EmptyTitle: "No properties", EmptyDesc: "This object type defines no properties.",
 	}) {

@@ -11,6 +11,10 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// All monitoring routes require authentication and extraction:read scope
 	monitoring := e.Group("/api/monitoring")
 	monitoring.Use(authMiddleware.RequireAuth())
+	// Monitoring is header-scoped (user.ProjectID): enforce token binding and
+	// session org-membership against that project (issue #868, the #864 class).
+	monitoring.Use(authMiddleware.RequireProjectTokenScope())
+	monitoring.Use(authMiddleware.RequireProjectMember())
 	monitoring.Use(authMiddleware.RequireAPITokenScopes("extraction:read"))
 
 	// Extraction job endpoints

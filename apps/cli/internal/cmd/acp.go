@@ -1,10 +1,13 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/emergent-company/emergent.memory/apps/cli/internal/acp"
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/a2a"
 	"github.com/spf13/cobra"
 )
 
@@ -43,9 +46,30 @@ Only ACP JSON-RPC messages are written to stdout; diagnostics go to stderr.`,
 			return err
 		}
 
-		agent := acp.NewAgent(client, skill, Version)
+		modes := discoverModes(cmd.Context(), client)
+		agent := acp.NewAgent(client, skill, Version, modes)
 		return acp.Run(cmd.Context(), os.Stdin, os.Stdout, os.Stderr, agent)
 	},
+}
+
+// discoverModes fetches the extended AgentCard and derives the selectable agent
+// modes. A failed or empty card yields nil, which the agent degrades to a single
+// default mode — the ACP bridge still works, just without an agent selector.
+func discoverModes(ctx context.Context, client *a2a.Client) []acp.Mode {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	card, err := client.ExtendedAgentCard(ctx)
+	if err != nil || card == nil {
+		return nil
+	}
+	modes := make([]acp.Mode, 0, len(card.Skills))
+	for _, s := range card.Skills {
+		if s.ID == "" {
+			continue
+		}
+		modes = append(modes, acp.Mode{ID: s.ID, Name: s.Name, Description: s.Description})
+	}
+	return modes
 }
 
 func init() {

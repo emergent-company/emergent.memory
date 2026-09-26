@@ -816,13 +816,11 @@ categories:
     - TestMCPRegistry_ToggleTool_Success
     - TestMCPRegistry_UpdateServer_Success
     - TestMCPSSE_Session_DELETE_Terminates
-    - TestMCPSSE_Tool_AssignTemplatePack_NotFound
-    - TestMCPSSE_Tool_AssignTemplatePack_RequiresTemplatePackID
-    - TestMCPSSE_Tool_CreateTemplatePack_RequiresName
-    - TestMCPSSE_Tool_CreateTemplatePack_RequiresSchemas
-    - TestMCPSSE_Tool_CreateTemplatePack_RequiresVersion
-    - TestMCPSSE_Tool_DeleteTemplatePack_NotFound
-    - TestMCPSSE_Tool_DeleteTemplatePack_RequiresPackID
+    - TestMCPSSE_Tool_AssignSchema_NotFound
+    - TestMCPSSE_Tool_AssignSchema_RequiresSchemaID
+    - TestMCPSSE_Tool_CreateSchema_RequiresName
+    - TestMCPSSE_Tool_DeleteSchema_NotFound
+    - TestMCPSSE_Tool_DeleteSchema_RequiresSchemaID
     - TestMCPSSE_Tool_GetAvailableTemplates
     - TestMCPSSE_Tool_GetEntityEdges_NotFound
     - TestMCPSSE_Tool_GetEntityEdges_RequiresEntityID
@@ -832,16 +830,14 @@ categories:
     - TestMCPSSE_Tool_ListTemplatePacks
     - TestMCPSSE_Tool_ListTemplatePacks_WithPagination
     - TestMCPSSE_Tool_QueryEntities_EmptyResult
-    - TestMCPSSE_Tool_QueryEntities_RequiresTypeName
     - TestMCPSSE_Tool_QueryEntities_WithPagination
     - TestMCPSSE_Tool_SchemaVersion
     - TestMCPSSE_Tool_SearchEntities_EmptyResult
     - TestMCPSSE_Tool_SearchEntities_RequiresQuery
     - TestMCPSSE_Tool_SearchEntities_WithTypeFilter
-    - TestMCPSSE_Tool_UninstallTemplatePack_NotFound
-    - TestMCPSSE_Tool_UninstallTemplatePack_RequiresAssignmentID
-    - TestMCPSSE_Tool_UpdateTemplateAssignment_NotFound
-    - TestMCPSSE_Tool_UpdateTemplateAssignment_RequiresAssignmentID
+    - TestMCPSSE_Tool_UninstallSchema_NotFound
+    - TestMCPSSE_Tool_UninstallSchema_RequiresSchemaID
+    - TestMCPSSE_Tool_UpdateSchemaAssignment_RequiresSchemaID
     - TestMCPSSE_ToolsList_DiscoverAll18Tools
     - TestMCPSchemaLifecycle_CreateEntityRequiresType
     - TestMCPSchemaLifecycle_CreateRelationshipRequiresAllParams

@@ -293,3 +293,82 @@ func (r *Repository) UpdateRestore(ctx context.Context, restore *Restore) error 
 
 	return nil
 }
+
+// --- Server-side authorization predicates ---
+//
+// Every predicate below resolves authority from database membership/ownership,
+// never from a caller-supplied value (the :orgId/:projectId path params are the
+// addressed resource, not the authorization source).
+
+// OrgMembershipRole returns the caller's role in an organization ("" when not a
+// member). It is the org-tier authority source for backup management.
+func (r *Repository) OrgMembershipRole(ctx context.Context, orgID, userID string) (string, error) {
+	var role string
+	err := r.db.NewSelect().
+		TableExpr("kb.organization_memberships").
+		Column("role").
+		Where("organization_id = ?", orgID).
+		Where("user_id = ?", userID).
+		Limit(1).
+		Scan(ctx, &role)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		r.log.Error("failed to get org membership role",
+			slog.String("org_id", orgID),
+			slog.Any("error", err),
+		)
+		return "", fmt.Errorf("get org membership role: %w", err)
+	}
+	return role, nil
+}
+
+// ProjectMembershipRole returns the caller's role in a project ("" when not a
+// member). It is the project-tier authority source for project backup create and
+// overwrite-restore.
+func (r *Repository) ProjectMembershipRole(ctx context.Context, projectID, userID string) (string, error) {
+	var role string
+	err := r.db.NewSelect().
+		TableExpr("kb.project_memberships").
+		Column("role").
+		Where("project_id = ?", projectID).
+		Where("user_id = ?", userID).
+		Limit(1).
+		Scan(ctx, &role)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		r.log.Error("failed to get project membership role",
+			slog.String("project_id", projectID),
+			slog.Any("error", err),
+		)
+		return "", fmt.Errorf("get project membership role: %w", err)
+	}
+	return role, nil
+}
+
+// ProjectOrgID resolves the owning organization of a project server-side ("" when
+// the project does not exist). It is used to derive the org tier from a
+// project-scoped address.
+func (r *Repository) ProjectOrgID(ctx context.Context, projectID string) (string, error) {
+	var orgID string
+	err := r.db.NewSelect().
+		TableExpr("kb.projects").
+		Column("organization_id").
+		Where("id = ?", projectID).
+		Limit(1).
+		Scan(ctx, &orgID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		r.log.Error("failed to get project org",
+			slog.String("project_id", projectID),
+			slog.Any("error", err),
+		)
+		return "", fmt.Errorf("get project org: %w", err)
+	}
+	return orgID, nil
+}

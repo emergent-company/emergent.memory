@@ -329,6 +329,7 @@ func (s *AgentCompatTestSuite) TestListModels() {
 // ---------------------------------------------------------------------------
 
 func (s *AgentCompatTestSuite) TestChatCompletion_NonStreaming() {
+	s.requireLLM()
 	resp := s.postChat(map[string]any{
 		"model":    s.agentName,
 		"messages": []map[string]any{{"role": "user", "content": "hello"}},
@@ -341,6 +342,7 @@ func (s *AgentCompatTestSuite) TestChatCompletion_NonStreaming() {
 
 // Test with the "agent:<name>" prefix variant.
 func (s *AgentCompatTestSuite) TestChatCompletion_AgentPrefix() {
+	s.requireLLM()
 	model := "agent:" + s.agentName
 	resp := s.postChat(map[string]any{
 		"model":    model,
@@ -355,6 +357,7 @@ func (s *AgentCompatTestSuite) TestChatCompletion_AgentPrefix() {
 // ---------------------------------------------------------------------------
 
 func (s *AgentCompatTestSuite) TestChatCompletion_Streaming() {
+	s.requireLLM()
 	sse := s.postChatSSE(map[string]any{
 		"model":    s.agentName,
 		"messages": []map[string]any{{"role": "user", "content": "hello"}},
@@ -452,6 +455,7 @@ func (s *AgentCompatTestSuite) TestChatCompletion_ReservedToolPrefix() {
 // The agent may or may not call the tool depending on whether an LLM is
 // available; what we assert is that the response is a valid completion shape.
 func (s *AgentCompatTestSuite) TestChatCompletion_ClientToolDef() {
+	s.requireLLM()
 	resp := s.postChat(map[string]any{
 		"model":    s.agentName,
 		"messages": []map[string]any{{"role": "user", "content": "hello"}},

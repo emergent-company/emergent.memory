@@ -5,31 +5,6 @@ Exposes retrieval/search performance knobs as environment configuration: `ivffla
 
 ## Requirements
 
-### Requirement: Vector index probe count is configurable
-The `ivfflat.probes` value applied in chunk search transactions SHALL be configurable via environment (`SEARCH_IVFFLAT_PROBES`), defaulting to 10, and MUST be applied per-query transaction.
-
-Chunk vector search (`kb.chunks.embedding`) uses the HNSW index created by migration `00170`, graph-object vector search (`kb.graph_objects.embedding_v2`) uses the HNSW index created by migration `00164`, and relationship vector search (`kb.graph_relationships.embedding`) uses the HNSW index created by migration `00171`. None is tuned by `ivfflat.probes`, and relationship search no longer applies `SET LOCAL ivfflat.probes` at all. HNSW requires neither probe tuning nor a training step.
-
-#### Scenario: Probe count driven by environment
-- **WHEN** the server starts with `SEARCH_IVFFLAT_PROBES=40`
-- **THEN** chunk search queries MUST execute with `SET LOCAL ivfflat.probes = 40`
-
-#### Scenario: Omitted setting preserves default
-- **WHEN** `SEARCH_IVFFLAT_PROBES` is unset
-- **THEN** chunk search queries MUST use the default of 10
-
-#### Scenario: Graph-object search is not governed by the probe knob
-- **WHEN** a graph-object vector search runs
-- **THEN** it MUST use the HNSW index on `kb.graph_objects.embedding_v2`, and its results MUST NOT depend on `SEARCH_IVFFLAT_PROBES`
-
-#### Scenario: Chunk search is not governed by the probe knob
-- **WHEN** a chunk vector or hybrid search runs
-- **THEN** it MUST use the HNSW index on `kb.chunks.embedding`, and its results MUST NOT depend on `SEARCH_IVFFLAT_PROBES`
-
-#### Scenario: Relationship search is not governed by the probe knob
-- **WHEN** a relationship vector search runs
-- **THEN** it MUST use the HNSW index on `kb.graph_relationships.embedding`, and its results MUST NOT depend on `SEARCH_IVFFLAT_PROBES` or any relationship-specific probe setting
-
 ### Requirement: RRF constant and fusion weights are configurable
 The reciprocal-rank-fusion constant (`k`, default 60) and the weighted-fusion weights (graph/text/relationship, default 0.25/0.75/0) SHALL be configurable via environment.
 
@@ -110,12 +85,47 @@ The namespace denormalisation migration SHALL be reversible: its Down migration 
 - **THEN** `kb.graph_relationships.namespace` and `idx_graph_relationships_namespace` MUST no longer exist
 
 ### Requirement: Embedding ANN indexes use HNSW
-The embedding ANN indexes on `kb.graph_objects.embedding_v2` (migration `00164`), `kb.chunks.embedding` and `kb.skills.description_embedding` (migration `00170`) SHALL be pgvector HNSW indexes using `vector_cosine_ops` with `m = 16` and `ef_construction = 64`. The periodic embedding index reindex task SHALL NOT target HNSW or dropped indexes; it SHALL continue to target only indexes still built with ivfflat.
+The embedding ANN indexes on `kb.graph_objects.embedding_v2` (migration `00164`), `kb.chunks.embedding` and `kb.skills.description_embedding` (migration `00170`), and `kb.graph_relationships.embedding` (migration `00171`) SHALL be pgvector HNSW indexes using `vector_cosine_ops` with `m = 16` and `ef_construction = 64`. HNSW indexes require neither probe tuning nor a training/list step. There SHALL be no periodic embedding-index `REINDEX` scheduler task: the former `embedding_index_reindex` task targeted only ivfflat indexes and was permanently empty once every embedding index was migrated to HNSW, so it has been removed along with its schedule/interval configuration.
 
 #### Scenario: HNSW indexes present
-- **WHEN** migrations `00164` and `00170` have applied
-- **THEN** `kb.chunks.embedding` and `kb.skills.description_embedding` are served by HNSW indexes and their ivfflat indexes have been dropped
+- **WHEN** migrations `00164`, `00170` and `00171` have applied
+- **THEN** `kb.graph_objects.embedding_v2`, `kb.chunks.embedding`, `kb.skills.description_embedding` and `kb.graph_relationships.embedding` are served by HNSW indexes and their ivfflat indexes have been dropped
 
 #### Scenario: Reindex task skips migrated indexes
-- **WHEN** the scheduled embedding index reindex task runs
-- **THEN** it issues `REINDEX` only for indexes still built with ivfflat and never for an HNSW or dropped index
+- **WHEN** the scheduler starts and its registered task list is inspected
+- **THEN** it MUST NOT register an `embedding_index_reindex` task, MUST NOT read `EMBEDDING_REINDEX_SCHEDULE` or `EMBEDDING_REINDEX_INTERVAL`, and MUST NOT issue `REINDEX` against any HNSW or dropped embedding index
+
+### Requirement: Vector-search ORDER BY must not append a non-distance secondary sort key
+
+Graph-object (`kb.graph_objects.embedding_v2`), relationship
+(`kb.graph_relationships.embedding`), and chunk (`kb.chunks.embedding`) vector/hybrid
+search queries MUST order by the cosine-distance expression only, so the HNSW index is
+selected. Deterministic id tiebreaking is preserved either by re-sorting in Go (fused
+paths) or, for a single-result (`LIMIT 1`) ANN query, by wrapping it in an overfetch
+subquery ordered by distance only and re-applying the deterministic `distance ASC, id ASC`
+tiebreak in the outer query.
+
+#### Scenario: Graph-object vector search uses the HNSW index
+
+- **WHEN** a graph-object vector or hybrid search runs
+- **THEN** its `ORDER BY` MUST be the cosine-distance expression only, with no `id` sort
+  key, so the HNSW index on `kb.graph_objects.embedding_v2` is used
+
+#### Scenario: Relationship vector search uses the HNSW index
+
+- **WHEN** a relationship vector search runs
+- **THEN** its `ORDER BY` MUST be the `r.embedding <=> ?::vector` expression only, with no
+  `r.id` sort key, so the HNSW index on `kb.graph_relationships.embedding` is used
+
+#### Scenario: Chunk vector and hybrid search use the HNSW index
+
+- **WHEN** a chunk vector or hybrid search runs
+- **THEN** its `ORDER BY` MUST be the `c.embedding <=> ?::vector` expression only, with no
+  `c.id` sort key, so the HNSW index on `kb.chunks.embedding` is used
+
+#### Scenario: Deterministic tiebreak preserved for single-result ANN queries
+
+- **WHEN** a `LIMIT 1` nearest-match ANN query runs (e.g. similarity merge)
+- **THEN** it MUST use an inner overfetch subquery ordered by distance only (so the HNSW
+  index is selected) and an outer query that re-applies the deterministic
+  `distance ASC, id ASC` tiebreak before taking the single row

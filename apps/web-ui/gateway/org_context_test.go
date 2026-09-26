@@ -131,6 +131,7 @@ func TestUIOrgLanding(t *testing.T) {
 			{ID: "p2", Name: "Lab", OrgID: "o1"},
 			{ID: "p3", Name: "Archived", OrgID: "o1", DeletionStatus: "pending_deletion"},
 		},
+		orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin"}},
 	}
 	s := &Server{cfg: sessionCfg(), memory: f}
 	e := orgContextUIServer(s)
@@ -196,7 +197,7 @@ func TestUIOrgLanding(t *testing.T) {
 
 // TestUIOrgLandingEmpty covers the empty-org state with the create CTA.
 func TestUIOrgLandingEmpty(t *testing.T) {
-	f := &fakeMemory{orgs: []Org{{ID: "o1", Name: "Acme"}}}
+	f := &fakeMemory{orgs: []Org{{ID: "o1", Name: "Acme"}}, orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin"}}}
 	s := &Server{cfg: sessionCfg(), memory: f}
 	e := orgContextUIServer(s)
 
@@ -339,6 +340,7 @@ func TestUIOrgSettings(t *testing.T) {
 		orgToolSettings: []OrgToolSettingDto{
 			{ID: "ts1", OrgID: "o1", ToolName: "web_search", Enabled: true},
 		},
+		orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin"}},
 	}
 	s := &Server{cfg: sessionCfg(), memory: f}
 	e := orgContextUIServer(s)
@@ -377,7 +379,7 @@ func TestUIOrgSettings(t *testing.T) {
 }
 
 func TestUIOrgSettingsDangerZone(t *testing.T) {
-	f := &fakeMemory{orgs: []Org{{ID: "o1", Name: "Acme"}}}
+	f := &fakeMemory{orgs: []Org{{ID: "o1", Name: "Acme"}}, orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin"}}}
 	s := &Server{cfg: sessionCfg(), memory: f}
 	e := orgContextUIServer(s)
 	req := httptest.NewRequest(http.MethodGet, "/orgs/o1/settings/danger-zone", nil)
@@ -403,7 +405,7 @@ func TestUIOrgSettingsDangerZone(t *testing.T) {
 // name to memory (303 + ?renamed=1 flash), the local empty-name guard, and the
 // backend-error path.
 func TestUIOrgRename(t *testing.T) {
-	f := &fakeMemory{orgs: []Org{{ID: "o1", Name: "Acme"}}}
+	f := &fakeMemory{orgs: []Org{{ID: "o1", Name: "Acme"}}, orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin"}}}
 	s := &Server{cfg: sessionCfg(), memory: f}
 	e := orgContextUIServer(s)
 
@@ -849,4 +851,149 @@ func orgGet(t *testing.T, e *echo.Echo, path string) *httptest.ResponseRecorder 
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	return rec
+}
+
+// --- Role-gated org surfaces (org_admin vs plain member) ---
+
+// TestUIOrgLandingNonAdmin asserts a plain org member sees a read-only landing:
+// projects stay openable, but create/delete/restore/transfer affordances and
+// the Members nav entry are all absent.
+func TestUIOrgLandingNonAdmin(t *testing.T) {
+	f := &fakeMemory{
+		orgs:     []Org{{ID: "o1", Name: "Acme"}},
+		projects: []ProjectRef{{ID: "p1", Name: "Home", OrgID: "o1"}},
+		orgsAndProjects: []OrgWithProjectsDto{
+			{ID: "o1", Name: "Acme", Role: "org_member"},
+		},
+	}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	rec := orgGet(t, orgContextUIServer(s), "/orgs/o1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /orgs/o1 = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`hx-post="/projects/activate?projectId=p1"`, `title="Open Home"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("non-admin landing missing openable project %q", want)
+		}
+	}
+	for _, absent := range []string{
+		`action="/projects/delete"`,
+		`aria-label="Select all projects"`,
+		`aria-label="Actions for Home"`,
+		`id="project-delete-modal"`, `id="project-restore-form"`,
+	} {
+		if strings.Contains(body, absent) {
+			t.Errorf("non-admin landing must not render %q", absent)
+		}
+	}
+	if strings.Contains(body, `href="/orgs/o1/members"`) {
+		t.Error("non-admin org sidebar must hide Members")
+	}
+}
+
+// TestUIOrgSettingsNonAdmin asserts the Tools list stays readable to a member
+// (tool-settings read is membership) while the write controls and the
+// admin-only General/Danger-zone sub-nav entries are hidden.
+func TestUIOrgSettingsNonAdmin(t *testing.T) {
+	f := &fakeMemory{
+		orgs:            []Org{{ID: "o1", Name: "Acme"}},
+		orgToolSettings: []OrgToolSettingDto{{ID: "ts1", OrgID: "o1", ToolName: "web_search", Enabled: true}},
+		orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_member"}},
+	}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	rec := orgGet(t, orgContextUIServer(s), "/orgs/o1/settings")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /orgs/o1/settings = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "web_search") {
+		t.Error("non-admin must still read the tool-settings list")
+	}
+	for _, absent := range []string{
+		`action="/orgs/o1/tool-settings/web_search"`,
+		`action="/orgs/o1/tool-settings/web_search/delete"`,
+		`href="/orgs/o1/settings/danger-zone"`,
+		`href="/orgs/o1/settings/general"`,
+	} {
+		if strings.Contains(body, absent) {
+			t.Errorf("non-admin settings must not render %q", absent)
+		}
+	}
+}
+
+// TestUIOrgSettingsGeneralNonAdmin asserts the rename form is hidden for a
+// member, replaced by a grounded note.
+func TestUIOrgSettingsGeneralNonAdmin(t *testing.T) {
+	f := &fakeMemory{
+		orgs:            []Org{{ID: "o1", Name: "Acme"}},
+		orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_member"}},
+	}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	rec := orgGet(t, orgContextUIServer(s), "/orgs/o1/settings/general")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /orgs/o1/settings/general = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, `action="/orgs/o1/rename"`) {
+		t.Error("non-admin must not see the rename form")
+	}
+	if !strings.Contains(body, "Only organization admins can rename this organization.") {
+		t.Error("non-admin general section missing the grounded note")
+	}
+}
+
+// TestUIOrgSettingsDangerZoneNonAdmin asserts the delete-org form is hidden for
+// a member, replaced by a grounded note.
+func TestUIOrgSettingsDangerZoneNonAdmin(t *testing.T) {
+	f := &fakeMemory{
+		orgs:            []Org{{ID: "o1", Name: "Acme"}},
+		orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_member"}},
+	}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	rec := orgGet(t, orgContextUIServer(s), "/orgs/o1/settings/danger-zone")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /orgs/o1/settings/danger-zone = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, `action="/orgs/o1/delete"`) {
+		t.Error("non-admin must not see the delete-org form")
+	}
+	if !strings.Contains(body, "Only organization admins can delete this organization.") {
+		t.Error("non-admin danger zone missing the grounded note")
+	}
+}
+
+// TestOrgPageRenderSingleAccessTreeFetch asserts each org-scoped render — the
+// landing, members, and the three Settings hub sections — performs exactly ONE
+// GetOrgsAndProjects call: the access tree is threaded once per request (see
+// orgAccessTree) and shared by the page data and page()'s sidebar gating,
+// instead of being fetched by both call sites.
+func TestOrgPageRenderSingleAccessTreeFetch(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+	}{
+		{"landing", "/orgs/o1"},
+		{"members", "/orgs/o1/members"},
+		{"settings", "/orgs/o1/settings"},
+		{"settings-general", "/orgs/o1/settings/general"},
+		{"settings-danger-zone", "/orgs/o1/settings/danger-zone"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeMemory{
+				orgs:            []Org{{ID: "o1", Name: "Acme"}},
+				orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin"}},
+			}
+			s := &Server{cfg: sessionCfg(), memory: f}
+			rec := orgGet(t, orgContextUIServer(s), tc.path)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET %s = %d, want 200", tc.path, rec.Code)
+			}
+			if f.orgsAndProjectsCalls != 1 {
+				t.Errorf("GET %s performed %d GetOrgsAndProjects calls, want 1", tc.path, f.orgsAndProjectsCalls)
+			}
+		})
+	}
 }

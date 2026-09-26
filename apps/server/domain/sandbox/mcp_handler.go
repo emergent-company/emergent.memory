@@ -214,19 +214,27 @@ func (h *MCPHostingHandler) RestartServer(c echo.Context) error {
 }
 
 // RegisterMCPHostingRoutes registers MCP hosting HTTP routes.
+//
+// Authorization (issue #959): hosted MCP servers are deployment-wide
+// infrastructure (containers on the host, keyed by a workspace UUID in
+// kb.agent_sandboxes with no project/org linkage), so this surface is
+// platform-scoped and admits only an active superadmin_full principal. A scope
+// gate is deliberately NOT used: a bare `admin` scope is mintable by any
+// project member (#948/#949) and cannot authorize deployment-wide container
+// control.
 func RegisterMCPHostingRoutes(e *echo.Echo, h *MCPHostingHandler, authMiddleware *auth.Middleware, log *slog.Logger) {
 	g := e.Group("/api/v1/mcp/hosted")
 	g.Use(authMiddleware.RequireAuth())
 
 	// Read operations
 	readGroup := g.Group("")
-	readGroup.Use(authMiddleware.RequireAPITokenScopes("admin"))
+	readGroup.Use(authMiddleware.RequireSuperadminFull())
 	readGroup.GET("", h.ListServers)
 	readGroup.GET("/:id", h.GetServer)
 
 	// Write operations
 	writeGroup := g.Group("")
-	writeGroup.Use(authMiddleware.RequireAPITokenScopes("admin"))
+	writeGroup.Use(authMiddleware.RequireSuperadminFull())
 	writeGroup.POST("", h.RegisterServer)
 	writeGroup.POST("/:id/call", h.CallServer)
 	writeGroup.POST("/:id/restart", h.RestartServer)

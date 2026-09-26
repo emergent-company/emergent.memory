@@ -2,6 +2,7 @@ package tracing
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,19 +10,27 @@ import (
 	"strings"
 
 	"github.com/labstack/echo/v4"
+	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // Handler proxies Tempo query API requests so clients never talk to Tempo directly.
 type Handler struct {
 	tempoBaseURL string
 	client       *http.Client
+	// db is used for the superadmin_full resolution on the instance-wide
+	// aggregate path (no project context). Nil when the module is wired without
+	// a database (e.g. some test servers), in which case the aggregate path
+	// fails closed.
+	db bun.IDB
 }
 
 // NewHandler creates a tracing handler. When tracing is disabled the handler
 // still registers routes but returns 503 for all requests.
-func NewHandler(cfg *config.Config) *Handler {
+func NewHandler(cfg *config.Config, db bun.IDB) *Handler {
 	tempoBase := ""
 	if cfg.Otel.Enabled() {
 		// Derive the internal Tempo query URL from the exporter endpoint:
@@ -32,14 +41,22 @@ func NewHandler(cfg *config.Config) *Handler {
 	return &Handler{
 		tempoBaseURL: tempoBase,
 		client:       &http.Client{},
+		db:           db,
 	}
 }
 
 // Search proxies GET /api/search to Tempo with all query params forwarded.
 // Corresponds to Tempo's trace search API.
 //
+// The effective project is resolved server-side (RequireProjectTokenScope +
+// RequireProjectMember on the group already validated membership) and the query
+// is FORCED to that project: a client-supplied project_id or TraceQL q can never
+// widen the result set beyond the caller's own project (issue #994 mechanism
+// 1/5). With no project context, the instance-wide aggregate is refused unless
+// the caller holds superadmin_full.
+//
 // @Summary      Search traces
-// @Description  Proxies Tempo's trace search API, returning recent traces matching optional filters. Returns 503 when tracing is not enabled.
+// @Description  Proxies Tempo's trace search API, scoped to the caller's project. Returns 503 when tracing is not enabled.
 // @Tags         tracing
 // @Accept       json
 // @Produce      json
@@ -50,7 +67,7 @@ func NewHandler(cfg *config.Config) *Handler {
 // @Param        min_duration  query string false "Minimum trace duration (e.g. '100ms', '1s')"
 // @Param        start         query string false "Start time for the search window (RFC3339)"
 // @Param        end           query string false "End time for the search window (RFC3339)"
-// @Param        project_id    query string false "Scope search to a project by ID (sets a TraceQL project filter)"
+// @Param        q             query string false "TraceQL query (project predicate is enforced server-side)"
 // @Success      200 {object} map[string]any "Trace search results (Tempo passthrough)"
 // @Failure      401 {object} map[string]any "Unauthorized"
 // @Failure      403 {object} map[string]any "Insufficient permissions"
@@ -61,19 +78,50 @@ func (h *Handler) Search(c echo.Context) error {
 	if h.tempoBaseURL == "" {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "tracing not enabled")
 	}
+
+	user := auth.MustGetUser(c)
 	params := c.QueryParams()
-	if projectID := c.QueryParam("project_id"); projectID != "" && params.Get("q") == "" {
-		// Project scoping only applies when no explicit TraceQL query is given;
-		// when both are present q wins, so do not merge.
-		params.Set("q", fmt.Sprintf(`{ .memory.project.id = "%s" || .emergent.project.id = "%s" }`, projectID, projectID))
+
+	projectID := user.ProjectID
+	if projectID == "" {
+		// No project context → instance-wide aggregate. superadmin_full only
+		// (a scope is not sufficient; see issue #994 mechanism 1/5).
+		isSuperadmin, err := auth.IsSuperadminFull(c.Request().Context(), h.db)
+		if err != nil {
+			return apperror.NewInternal("failed to resolve superadmin status", err)
+		}
+		if !isSuperadmin {
+			return apperror.NewForbidden("project context required; superadmin privilege required for instance-wide trace search")
+		}
+		// Superadmin: aggregate across all tenants, honouring any explicit TraceQL.
+		return h.proxy(c, "/api/search", params)
 	}
+
+	// Project-scoped: force the project predicate into the query. The client's
+	// q (if any) is ANDed against the server's project filter, and any
+	// client-supplied project_id is discarded — it is not an authority. A q that
+	// cannot be safely composed (unbalanced parens/braces, an escaped AND term)
+	// is rejected rather than allowed to weaken the project constraint.
+	scoped, err := scopeTraceQL(params.Get("q"), projectID)
+	if err != nil {
+		return apperror.NewBadRequest("invalid trace query")
+	}
+	params.Set("q", scoped)
+	params.Del("project_id")
 	return h.proxy(c, "/api/search", params)
 }
 
 // GetTrace proxies GET /api/traces/:id to Tempo.
 //
+// Tempo's trace-by-id endpoint accepts no TraceQL filter, so ownership is
+// verified server-side: a project-scoped caller may only read a trace whose
+// memory.project.id / emergent.project.id matches the caller's authorized
+// project. A foreign or unknown project is masked as 404 (no existence oracle,
+// issue #994 mechanism 5). With no project context, the instance-wide read is
+// refused unless the caller holds superadmin_full.
+//
 // @Summary      Get trace by ID
-// @Description  Proxies Tempo's trace retrieval API, returning the full span tree for a trace. Returns 503 when tracing is not enabled.
+// @Description  Proxies Tempo's trace retrieval API, verifying the trace belongs to the caller's project. Returns 503 when tracing is not enabled.
 // @Tags         tracing
 // @Accept       json
 // @Produce      json
@@ -83,6 +131,7 @@ func (h *Handler) Search(c echo.Context) error {
 // @Success      200 {object} map[string]any "Full span tree (Tempo passthrough)"
 // @Failure      401 {object} map[string]any "Unauthorized"
 // @Failure      403 {object} map[string]any "Insufficient permissions"
+// @Failure      404 {object} map[string]any "Trace not found"
 // @Failure      503 {object} map[string]any "Tracing not enabled"
 // @Router       /api/traces/{id} [get]
 func (h *Handler) GetTrace(c echo.Context) error {
@@ -90,22 +139,47 @@ func (h *Handler) GetTrace(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "tracing not enabled")
 	}
 
+	user := auth.MustGetUser(c)
+	traceID := c.Param("id")
+
+	projectID := user.ProjectID
+	if projectID == "" {
+		isSuperadmin, err := auth.IsSuperadminFull(c.Request().Context(), h.db)
+		if err != nil {
+			return apperror.NewInternal("failed to resolve superadmin status", err)
+		}
+		if !isSuperadmin {
+			return apperror.NewForbidden("project context required; superadmin privilege required for instance-wide trace access")
+		}
+	}
+
+	// Fetch the trace buffered so ownership can be verified before any span /
+	// prompt / payload bytes are returned.
+	path := "/api/traces/" + traceID
+	resp, err := h.tempoGet(c, path)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read tempo response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return echo.NewHTTPError(resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	if projectID != "" {
+		traceProject := extractTraceProject(body)
+		if traceProject == "" || traceProject != projectID {
+			// Foreign or un-attributed trace: mask as 404 so a foreign trace id
+			// cannot be distinguished from a nonexistent one.
+			return apperror.NewNotFound("trace", traceID)
+		}
+	}
+
 	if c.QueryParam("format") == "structured" {
-		path := "/api/traces/" + c.Param("id")
-		resp, err := h.tempoGet(c, path)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return fmt.Errorf("read tempo response: %w", err)
-		}
-		if resp.StatusCode != http.StatusOK {
-			return echo.NewHTTPError(resp.StatusCode, strings.TrimSpace(string(body)))
-		}
-
 		var otlpResp otlpTraceResponse
 		if err := json.Unmarshal(body, &otlpResp); err != nil {
 			return fmt.Errorf("decode tempo response: %w", err)
@@ -113,7 +187,182 @@ func (h *Handler) GetTrace(c echo.Context) error {
 		return c.JSON(http.StatusOK, toStructuredTrace(&otlpResp))
 	}
 
-	return h.proxy(c, "/api/traces/"+c.Param("id"), nil)
+	c.Response().Header().Set(echo.HeaderContentType, resp.Header.Get(echo.HeaderContentType))
+	c.Response().WriteHeader(http.StatusOK)
+	_, err = c.Response().Write(body)
+	return err
+}
+
+// extractTraceProject parses an OTLP trace JSON payload and returns the owning
+// project id (memory.project.id, falling back to emergent.project.id), or "" if
+// the trace carries no project attribute.
+func extractTraceProject(body []byte) string {
+	var resp otlpTraceResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return ""
+	}
+	var spans []otlpSpan
+	for _, b := range resp.Batches {
+		for _, ss := range b.ScopeSpans {
+			spans = append(spans, ss.Spans...)
+		}
+	}
+	if p := firstAttrValue(spans, "memory.project.id"); p != "" {
+		return p
+	}
+	return firstAttrValue(spans, "emergent.project.id")
+}
+
+// scopeTraceQL forces a TraceQL query to be scoped to the given project by
+// ANDing a project predicate into the query's condition block. When q is empty
+// it produces a project-only query.
+//
+// The caller's q is untrusted: a string-concatenated predicate is escapable
+// (a caller can inject a `)` to close the wrapper and then `||` a foreign
+// predicate). To make that impossible under any input, the forced project
+// predicate is written as an ATOMIC parenthesized operand
+// `( .memory.project.id = "P" || .emergent.project.id = "P" )` and ANDed with a
+// separately parenthesized `( <caller conditions> )`. Because both operands are
+// fully parenthesized and joined by a single top-level `&&`, the caller's own
+// `||`/`!=`/parentheses are trapped inside the second operand and can never
+// widen the result beyond the project. The only escape is an unbalanced `)`,
+// which is rejected by wellFormedTraceQL (quote/escape-aware) before the query
+// is built.
+//
+// It returns an error when q is malformed (unbalanced parentheses/braces, an
+// unterminated string, a trailing segment that is not a `|` pipeline), so the
+// handler can fail closed with 400 rather than compose a weakened query.
+func scopeTraceQL(q, projectID string) (string, error) {
+	project := fmt.Sprintf(`( .memory.project.id = "%s" || .emergent.project.id = "%s" )`, projectID, projectID)
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return "{ " + project + " }", nil
+	}
+
+	inner, rest, ok := splitTraceQL(q)
+	if !ok {
+		return "", errInvalidTraceQL
+	}
+
+	// Keep a single space between the condition block and any trailing pipeline.
+	suffix := ""
+	if rest != "" {
+		suffix = " " + rest
+	}
+
+	inner = strings.TrimSpace(inner)
+	if inner == "" {
+		return "{ " + project + " }" + suffix, nil
+	}
+	return "{ " + project + " && ( " + inner + " ) }" + suffix, nil
+}
+
+// errInvalidTraceQL is returned when a caller-supplied TraceQL query cannot be
+// safely composed with the project predicate. It is a package sentinel so the
+// handler can fail closed without leaking the exact rejection reason.
+var errInvalidTraceQL = errors.New("invalid trace query")
+
+// splitTraceQL splits a caller-supplied TraceQL query into its condition block
+// (the text inside the leading "{ ... }", or the whole string when no braces
+// are present) and the trailing pipeline (after the "}"). It reports ok=false
+// for any input that is not well-formed — unbalanced parentheses/braces, an
+// unterminated string, a bare condition block containing a `|` pipeline, or a
+// trailing segment that is neither empty nor a `|`-delimited pipeline. Callers
+// must reject (fail closed) when ok is false.
+func splitTraceQL(q string) (inner, rest string, ok bool) {
+	if !wellFormedTraceQL(q) {
+		return "", "", false
+	}
+
+	if q[0] != '{' {
+		// Bare condition block: no braces, so a pipeline is not expressible.
+		if strings.Contains(q, "|") {
+			return "", "", false
+		}
+		return q, "", true
+	}
+
+	// Braced form: locate the matching '}' (quote/escape-aware).
+	depth := 0
+	inStr := false
+	for i := 0; i < len(q); i++ {
+		c := q[i]
+		if inStr {
+			if c == '\\' {
+				i++
+				continue
+			}
+			if c == '"' {
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				rest = q[i+1:]
+				rest = strings.TrimSpace(rest)
+				if rest != "" && (!strings.HasPrefix(rest, "|") || strings.Contains(rest, "||")) {
+					return "", "", false
+				}
+				return q[1:i], rest, true
+			}
+		}
+	}
+	return "", "", false
+}
+
+// wellFormedTraceQL reports whether s has balanced parentheses and braces,
+// respecting double-quoted string literals and backslash escapes, and contains
+// no OR operator ("||") outside a string literal. It is the structural gate that
+// prevents a caller from injecting a `)` or `}` to escape the project AND term,
+// or an `||` to widen the result beyond the project. A single `|` (pipeline
+// stage separator) is allowed; `&&` is allowed (it only narrows).
+func wellFormedTraceQL(s string) bool {
+	paren := 0
+	brace := 0
+	inStr := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inStr {
+			if c == '\\' {
+				i++
+				continue
+			}
+			if c == '"' {
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '(':
+			paren++
+		case ')':
+			paren--
+			if paren < 0 {
+				return false
+			}
+		case '{':
+			brace++
+		case '}':
+			brace--
+			if brace < 0 {
+				return false
+			}
+		case '|':
+			if i+1 < len(s) && s[i+1] == '|' {
+				return false
+			}
+		}
+	}
+	return paren == 0 && brace == 0 && !inStr
 }
 
 // tempoGet performs a GET against Tempo and returns the raw response. It

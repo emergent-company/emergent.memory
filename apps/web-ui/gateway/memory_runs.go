@@ -34,6 +34,7 @@ type AgentRunToolCall struct {
 	Input      map[string]any `json:"input"`
 	Output     map[string]any `json:"output"`
 	Status     string         `json:"status"`
+	DurationMs *int           `json:"durationMs,omitempty"`
 	StepNumber int            `json:"stepNumber"`
 	CreatedAt  string         `json:"createdAt"`
 }
