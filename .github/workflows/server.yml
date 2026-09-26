@@ -377,6 +377,11 @@ jobs:
     # execute arbitrary code or corrupt the shared module cache.
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # The guard executes PR-controlled Go source (go run ./cmd/route-authority-guard).
+    # Restrict the checkout token to read-only so a malicious PR cannot exfiltrate
+    # a write-scoped GITHUB_TOKEN to push to the repo or mint credentials.
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
