@@ -42,13 +42,13 @@ func TestExecuteToolAuthorityGate(t *testing.T) {
 	}
 
 	// Sensitive admin-scoped tools are refused for untrusted runs: token minting
-	// (privilege escalation), provider config, cross-tenant traces, project
-	// creation (issue #994, RequiredScope:"admin" residual closed via
-	// TrustedInternal).
+	// (privilege escalation), provider config, project creation (issue #994,
+	// RequiredScope:"admin" residual closed via TrustedInternal). Trace tools are
+	// deliberately absent — they moved to SuperadminOnly (a stronger boundary) and
+	// are covered by TestTraceToolsSuperadminGate, not this admin gate.
 	adminScoped := []string{
 		"token-list", "token-create", "token-get", "token-revoke",
 		"provider-configure-project", "provider-models-list",
-		"trace-list", "trace-get",
 		"project-create",
 	}
 	for _, name := range adminScoped {

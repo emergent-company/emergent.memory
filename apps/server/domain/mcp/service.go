@@ -1903,12 +1903,13 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	//   - AgentOnly tools (web-search-*, web-fetch, mcp-server-*, update_mcp_server,
 	//     toggle/sync_mcp_server_tools) are the "callable only by other agents,
 	//     never via external surfaces" class — refused for untrusted runs.
-	//   - admin-scoped tools (token-*, provider-configure-project, provider-models-list,
-	//     trace-*, project-create) are sensitive (token minting, provider config,
-	//     cross-tenant traces, project creation) — refused for untrusted runs,
+	//   - admin-scoped tools (token-*, provider-configure-project,
+	//     provider-models-list, project-create) are sensitive (token minting,
+	//     provider config, project creation) — refused for untrusted runs,
 	//     matching the HTTP RequiredScope:"admin" gate. They are admin-scoped over
 	//     HTTP, not superadmin, so the in-process bar is trusted-internal, not
-	//     superadmin_full.
+	//     superadmin_full. (Trace tools are SuperadminOnly and are gated by the
+	//     superadmin_full check above, not this admin gate.)
 	if toolDef := s.GetToolByName(toolName); toolDef != nil && !TrustedInternalFromContext(ctx) {
 		if toolDef.AgentOnly {
 			return nil, fmt.Errorf("tool %q is agent-only and not reachable from an untrusted surface", toolName)
