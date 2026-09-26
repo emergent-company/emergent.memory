@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -135,6 +136,19 @@ func retryableMemoryStatus(status int) bool {
 	default:
 		return false
 	}
+}
+
+// isTimeout reports whether err is a client-side timeout: the transport
+// deadline fired (http.Client.Timeout) or the request context was cancelled.
+// Such an error means the upstream is slow, not transiently unavailable, so the
+// retry loop must fail fast rather than replay a request that will only time
+// out again (issue #1096).
+func isTimeout(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }
 
 // retryBackoffDelay returns the delay before the next attempt: the configured
@@ -279,7 +293,12 @@ func (m *MemoryClient) doH(ctx context.Context, method, path string, body any, h
 			// A transport error is transient: retry it for an idempotent
 			// request on the same terms as a 5xx status, but fail fast for
 			// non-idempotent requests and abort immediately on cancellation.
-			if !retryable || attempts == maxMemoryAttempts || ctx.Err() != nil {
+			//
+			// A client-side timeout is NOT transient — it means the upstream is
+			// slow, and replaying the same 60s request only multiplies the
+			// outage (3×60s ≈ 180s held a page behind one slow /similar call,
+			// issue #1096). Timeout errors therefore never retry.
+			if isTimeout(lastErr) || !retryable || attempts == maxMemoryAttempts || ctx.Err() != nil {
 				break
 			}
 			if !waitRetry(ctx, retryBackoffDelay(attempts)) {

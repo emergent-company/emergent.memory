@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -195,6 +198,50 @@ func TestDoHTransportErrorGETExhaustsRetries(t *testing.T) {
 	}
 	if got := memoryStatus(err); got != 0 {
 		t.Fatalf("memoryStatus(err) = %d, want 0 for a transport error", got)
+	}
+}
+
+func TestIsTimeout(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"deadline exceeded", context.DeadlineExceeded, true},
+		{"wrapped deadline exceeded", &url.Error{Op: "Get", Err: context.DeadlineExceeded}, true},
+		{"net error with timeout", &net.DNSError{IsTimeout: true}, true},
+		{"plain error", errors.New("connection reset by peer"), false},
+		{"net error without timeout", &net.DNSError{IsTimeout: false}, false},
+		{"eof", io.EOF, false},
+		{"nil", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isTimeout(tc.err); got != tc.want {
+				t.Errorf("isTimeout(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDoHDoesNotRetryTimeout pins the load-bearing half of the retry-policy
+// change (issue #1096): a client-side timeout is a slow upstream, not a transient
+// failure, so it must fail fast with exactly one attempt instead of replaying the
+// request maxMemoryAttempts times.
+func TestDoHDoesNotRetryTimeout(t *testing.T) {
+	var calls atomic.Int32
+	mc := NewMemoryClient("http://memory.test", "proj")
+	mc.http.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return nil, context.DeadlineExceeded
+	})
+
+	err := mc.do(t.Context(), http.MethodGet, "/api/x", nil, nil)
+	if err == nil {
+		t.Fatal("do() error = nil, want non-nil")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("transport calls = %d, want 1 (a timeout must not retry)", got)
 	}
 }
 

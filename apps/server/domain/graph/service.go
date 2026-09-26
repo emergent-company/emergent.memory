@@ -89,6 +89,9 @@ type Service struct {
 	branchStore          branchStoreIface
 	events               *events.Service
 
+	// accessStamp debounces last_accessed_at writes (issue #1070).
+	accessStamp *accessStampDebouncer
+
 	// Metrics
 	metricsMu          sync.RWMutex
 	validationSuccess  int64
@@ -112,6 +115,7 @@ func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvide
 		eventSink:            sink,
 		branchStore:          branchStore,
 		events:               eventsSvc,
+		accessStamp:          newAccessStampDebouncer(),
 	}
 }
 
@@ -407,9 +411,36 @@ func (s *Service) ReindexEmbeddings(ctx context.Context, projectID uuid.UUID, re
 	return resp, nil
 }
 
-// UpdateAccessTimestamps updates last_accessed_at for the given object IDs.
+// UpdateAccessTimestamps updates last_accessed_at for the given object IDs,
+// coalescing writes so any single object is written at most once per
+// accessStampWindow (issue #1070). This is the single debounced write point:
+// every access-stamp write funnels through it — the graph search fallback
+// (FTSSearch/VectorSearch) via recordAccessTimestamps, and the unified search
+// path (search.Service.executeGraphSearch) which calls this directly. Callers
+// that want the write off their critical path invoke it from their own goroutine.
 func (s *Service) UpdateAccessTimestamps(ctx context.Context, objectIDs []uuid.UUID) error {
-	return s.repo.UpdateAccessTimestamps(ctx, objectIDs)
+	ids := s.accessStamp.filter(objectIDs)
+	if len(ids) == 0 {
+		return nil
+	}
+	return s.repo.UpdateAccessTimestamps(ctx, ids)
+}
+
+// recordAccessTimestamps asynchronously records last_accessed_at for the given
+// object IDs without blocking the read path. The debounce itself lives in
+// UpdateAccessTimestamps; this helper only adds the fire-and-forget goroutine
+// with a short timeout (issue #1070).
+func (s *Service) recordAccessTimestamps(objectIDs []uuid.UUID) {
+	if len(objectIDs) == 0 {
+		return
+	}
+	go func() {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.UpdateAccessTimestamps(bgCtx, objectIDs); err != nil {
+			s.log.Warn("failed to update access timestamps", logger.Error(err))
+		}
+	}()
 }
 
 // GetMostAccessed returns the most frequently accessed graph objects for analytics.
@@ -2281,13 +2312,7 @@ func (s *Service) FTSSearch(ctx context.Context, projectID uuid.UUID, req *FTSSe
 	}
 
 	if len(objectIDs) > 0 {
-		go func() {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := s.repo.UpdateAccessTimestamps(bgCtx, objectIDs); err != nil {
-				s.log.Warn("failed to update access timestamps", logger.Error(err))
-			}
-		}()
+		s.recordAccessTimestamps(objectIDs)
 	}
 
 	return &SearchResponse{
@@ -2346,13 +2371,7 @@ func (s *Service) VectorSearch(ctx context.Context, projectID uuid.UUID, req *Ve
 	}
 
 	if len(objectIDs) > 0 {
-		go func() {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := s.repo.UpdateAccessTimestamps(bgCtx, objectIDs); err != nil {
-				s.log.Warn("failed to update access timestamps", logger.Error(err))
-			}
-		}()
+		s.recordAccessTimestamps(objectIDs)
 	}
 
 	return &SearchResponse{
