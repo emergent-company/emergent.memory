@@ -45,6 +45,54 @@ func Relax(query string) (string, bool) {
 		return "", false
 	}
 
+	kept := terms(query)
+	if len(kept) == 0 {
+		return "", false
+	}
+
+	relaxed := strings.Join(kept, " ")
+	if relaxed == collapse(query) {
+		return "", false
+	}
+	return relaxed, true
+}
+
+// Disjoin returns an OR-form of query for retrying a full-text search whose
+// AND semantics matched nothing, and reports whether the fallback is worth
+// running.
+//
+// websearch_to_tsquery ANDs every non-stopword term, so a natural multi-term
+// query over a corpus where no single document contains every term returns
+// zero rows even though each term is individually well represented. Disjoin
+// joins the surviving terms with `|`, which a caller feeds to to_tsquery (NOT
+// websearch_to_tsquery) to match any document containing at least one term.
+// ts_rank_cd over that OR query still rewards documents that cover more of the
+// terms, so recall is restored without collapsing ranking to "any one term".
+//
+// ok is false when there is nothing to disjoin: fewer than two terms survive
+// (a single-term query is already an OR of one term, and its strict AND match
+// already runs first), or the query carries websearch_to_tsquery operator
+// syntax (a phrase, negation, or explicit OR) that an OR-disjunction would
+// strip or invert. Callers must only use the result after the strict query
+// returned no rows, so precision is never traded away for a query that already
+// worked.
+func Disjoin(query string) (string, bool) {
+	if hasOperatorSyntax(query) {
+		return "", false
+	}
+
+	kept := terms(query)
+	if len(kept) < 2 {
+		return "", false
+	}
+	return strings.Join(kept, " | "), true
+}
+
+// terms tokenizes query on non-alphanumeric boundaries, keeping only runs that
+// contain at least one letter. Numeric runs (dates, paragraph numbers,
+// document ids) carry little discriminative value next to text terms and are
+// dropped by callers that need letter-bearing terms.
+func terms(query string) []string {
 	var (
 		kept    []string
 		current []rune
@@ -69,15 +117,7 @@ func Relax(query string) (string, bool) {
 	}
 	flush()
 
-	if len(kept) == 0 {
-		return "", false
-	}
-
-	relaxed := strings.Join(kept, " ")
-	if relaxed == collapse(query) {
-		return "", false
-	}
-	return relaxed, true
+	return kept
 }
 
 // hasOperatorSyntax reports whether query carries websearch_to_tsquery operator
