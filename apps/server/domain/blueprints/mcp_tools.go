@@ -91,6 +91,16 @@ func (h *MCPBlueprintToolHandler) ExecuteBlueprintCreate(ctx context.Context, pr
 	if projectID != "" {
 		req.ProjectID = &projectID
 	}
+	// A global-scope creation (project_id IS NULL) is a write to the
+	// platform-global catalogue and requires superadmin_full; a project member
+	// may only author project-private drafts. The authority decision lives in
+	// the shared Service helper so the REST and MCP entrypoints cannot drift
+	// (issue #1041).
+	if req.ProjectID == nil {
+		if err := h.svc.AuthorizeGlobalBlueprintWrite(ctx); err != nil {
+			return errResult("forbidden: global blueprint writes require superadmin_full")
+		}
+	}
 	bp, err := h.svc.CreateBlueprint(ctx, req)
 	if err != nil {
 		return errResult("failed to create blueprint: " + err.Error())
@@ -131,6 +141,20 @@ func (h *MCPBlueprintToolHandler) ExecuteBlueprintPublish(ctx context.Context, p
 	id, _ := args["id"].(string)
 	if id == "" {
 		return errResult("id is required")
+	}
+
+	// Publishing a global blueprint is a platform-global catalogue write
+	// (superadmin_full); publishing the caller's own private draft stays
+	// project-tier and unchanged. Resolve the target first to decide which tier
+	// this write addresses, then use the shared Service helper (issue #1041).
+	target, err := h.svc.GetBlueprint(ctx, projectID, id)
+	if err != nil {
+		return errResult("failed to get blueprint: " + err.Error())
+	}
+	if target.ProjectID == nil {
+		if err := h.svc.AuthorizeGlobalBlueprintWrite(ctx); err != nil {
+			return errResult("forbidden: global blueprint writes require superadmin_full")
+		}
 	}
 
 	bp, err := h.svc.PublishBlueprint(ctx, projectID, id)
