@@ -1694,7 +1694,7 @@ type FTSSearchResult struct {
 // FTSSearch performs full-text search using PostgreSQL's websearch_to_tsquery.
 // Returns objects sorted by relevance (ts_rank_cd with length normalization).
 func (r *Repository) FTSSearch(ctx context.Context, params FTSSearchParams) ([]*FTSSearchResult, error) {
-	results, err := r.ftsSearch(ctx, params, params.Query)
+	results, err := r.ftsSearch(ctx, params, params.Query, false)
 	if err != nil {
 		return nil, err
 	}
@@ -1702,10 +1702,10 @@ func (r *Repository) FTSSearch(ctx context.Context, params FTSSearchParams) ([]*
 		return results, nil
 	}
 
-	// Only relax on the first page. FTSSearch supports offset pagination, so a
-	// later page returning zero rows means the caller has paged past every
-	// strict match, not that the strict query matched nothing. Relaxing here
-	// would refill the page with relaxed-only matches that the strict query
+	// Only relax or disjoin on the first page. FTSSearch supports offset
+	// pagination, so a later page returning zero rows means the caller has
+	// paged past every strict match, not that the strict query matched nothing.
+	// Falling back here would refill the page with matches the strict query
 	// never surfaced on earlier pages.
 	if params.Offset > 0 {
 		return results, nil
@@ -1719,20 +1719,47 @@ func (r *Repository) FTSSearch(ctx context.Context, params FTSSearchParams) ([]*
 	// represent rather than the primary recovery path. Retry once without
 	// numeric terms before reporting no results.
 	relaxed, ok := ftsquery.Relax(params.Query)
+	if ok {
+		relaxedResults, err := r.ftsSearch(ctx, params, relaxed, false)
+		if err != nil {
+			return nil, err
+		}
+		if len(relaxedResults) > 0 {
+			return relaxedResults, nil
+		}
+	}
+
+	// A natural multi-term query with no single object containing every term
+	// matches nothing under AND semantics even though each term is individually
+	// well represented (issue #996). Retry once with the terms OR-joined and
+	// ranked by ts_rank_cd, which rewards objects covering more of the terms, so
+	// recall is restored without collapsing ranking to "any one term".
+	disjoined, ok := ftsquery.Disjoin(params.Query)
 	if !ok {
 		return results, nil
 	}
-	return r.ftsSearch(ctx, params, relaxed)
+	return r.ftsSearch(ctx, params, disjoined, true)
 }
 
 // ftsSearch runs the lexical query for queryText. It is separate from FTSSearch
-// so that the relaxed fallback can reuse it verbatim.
-func (r *Repository) ftsSearch(ctx context.Context, params FTSSearchParams, queryText string) ([]*FTSSearchResult, error) {
+// so that the relaxed and disjoined fallbacks can reuse it verbatim. When
+// disjoin is true, queryText is a `|`-joined term disjunction and the query is
+// matched with to_tsquery (OR semantics) instead of websearch_to_tsquery (AND).
+func (r *Repository) ftsSearch(ctx context.Context, params FTSSearchParams, queryText string, disjoin bool) ([]*FTSSearchResult, error) {
 	if params.Limit <= 0 {
 		params.Limit = 20
 	}
 	if params.Limit > r.maxListLimit {
 		params.Limit = r.maxListLimit
+	}
+
+	// tsqueryFn selects the query constructor. The strict and relaxed passes use
+	// websearch_to_tsquery (AND semantics over the parsed terms); the disjoined
+	// fallback uses to_tsquery (OR semantics over an explicit `|` disjunction).
+	// Both take (config, text) and both apply the configuration's stemmer.
+	tsqueryFn := "websearch_to_tsquery"
+	if disjoin {
+		tsqueryFn = "to_tsquery"
 	}
 
 	// Build WHERE conditions.
@@ -1747,7 +1774,7 @@ func (r *Repository) ftsSearch(ctx context.Context, params FTSSearchParams, quer
 	conditions := []string{
 		"project_id = ?",
 		"supersedes_id IS NULL", // HEAD versions only
-		"(fts @@ websearch_to_tsquery('simple', ?) OR fts @@ websearch_to_tsquery('norwegian', ?))",
+		"(fts @@ " + tsqueryFn + "('simple', ?) OR fts @@ " + tsqueryFn + "('norwegian', ?))",
 	}
 	args := []any{params.ProjectID, queryText, queryText}
 
@@ -1774,8 +1801,8 @@ func (r *Repository) ftsSearch(ctx context.Context, params FTSSearchParams, quer
 	query := `
 		SELECT ` + graphObjectColumns + `,
 			GREATEST(
-				ts_rank_cd(fts, websearch_to_tsquery('simple', ?), 1),
-				ts_rank_cd(fts, websearch_to_tsquery('norwegian', ?), 1)
+				ts_rank_cd(fts, ` + tsqueryFn + `('simple', ?), 1),
+				ts_rank_cd(fts, ` + tsqueryFn + `('norwegian', ?), 1)
 			) AS rank
 		FROM kb.graph_objects
 		` + whereClause + `
