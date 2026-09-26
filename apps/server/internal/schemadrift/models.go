@@ -238,6 +238,8 @@ var models = []any{
 	(*extraction.ObjectExtractionJob)(nil),
 	(*extraction.ObjectExtractionLog)(nil),
 	(*extraction.GraphRelationshipEmbeddingJob)(nil),
+	(*extraction.GraphMemorySchema)(nil),
+	(*extraction.ProjectMemorySchema)(nil),
 
 	// domain/embeddingpolicies
 	(*embeddingpolicies.EmbeddingPolicy)(nil),

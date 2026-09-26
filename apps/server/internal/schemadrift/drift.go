@@ -209,11 +209,14 @@ func checkField(rep *driftReport, mt modelTable, f modelField, sc schemaColumn) 
 		key := mt.qualified() + "." + f.Name
 		if _, ok := nullabilityAllowlist[key]; ok {
 			rep.MatchedNullabilityAllowlist = append(rep.MatchedNullabilityAllowlist, key)
+			// The allowlist suppresses only the nullability mismatch; still
+			// validate the explicit type below so a type drift on an
+			// allowlisted column cannot slip through.
+		} else {
+			rep.NullabilityMismatch = append(rep.NullabilityMismatch,
+				key+" (model "+f.Model+" is NOT NULL, column is nullable)")
 			return
 		}
-		rep.NullabilityMismatch = append(rep.NullabilityMismatch,
-			key+" (model "+f.Model+" is NOT NULL, column is nullable)")
-		return
 	}
 
 	// Non-blocking: the column is nullable but the struct field cannot hold a

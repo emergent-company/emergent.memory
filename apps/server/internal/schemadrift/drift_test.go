@@ -151,10 +151,33 @@ func TestModelsMatchMigratedSchema(t *testing.T) {
 	checkUnexportedTables(t, schema)
 }
 
-// checkUnexportedTables compares the census-derived columns of the unexported
-// models (which the registry cannot reflect over) against the migrated schema at
-// name level only. This still catches the phantom-column / missing-column class
-// of drift for those tables.
+// TestCheckFieldAllowlistStillChecksType proves an allowlisted nullability
+// mismatch does not suppress the explicit type check: an allowlisted column
+// whose explicit type drifts must still fail as a TypeMismatch.
+func TestCheckFieldAllowlistStillChecksType(t *testing.T) {
+	rep := driftReport{}
+	mt := modelTable{Schema: "kb", Name: "adk_states"}
+	f := modelField{
+		Model:           "ADKState",
+		Name:            "user_id",
+		NotNull:         true,
+		HasExplicitType: true,
+		SQLType:         "int8",
+	}
+	sc := schemaColumn{Name: "user_id", Nullable: true, UDTName: "text"}
+
+	checkField(&rep, mt, f, sc)
+
+	if len(rep.MatchedNullabilityAllowlist) != 1 || rep.MatchedNullabilityAllowlist[0] != "kb.adk_states.user_id" {
+		t.Fatalf("expected allowlist match for kb.adk_states.user_id, got %v", rep.MatchedNullabilityAllowlist)
+	}
+	if len(rep.NullabilityMismatch) != 0 {
+		t.Fatalf("allowlisted column must not produce a nullability mismatch, got %v", rep.NullabilityMismatch)
+	}
+	if len(rep.TypeMismatch) == 0 {
+		t.Fatalf("allowlisted column with explicit type int8 vs column text must produce a type mismatch")
+	}
+}
 func checkUnexportedTables(t *testing.T, schema map[string]map[string]schemaColumn) {
 	c, err := census()
 	if err != nil {
