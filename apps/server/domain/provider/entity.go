@@ -154,15 +154,15 @@ type ProviderSupportedModel struct {
 type LLMUsageEvent struct {
 	bun.BaseModel `bun:"table:kb.llm_usage_events,alias:lue"`
 
-	ID               string        `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
-	ProjectID        string        `bun:"project_id,notnull,type:uuid" json:"projectId"`
-	OrgID            string        `bun:"org_id,notnull,type:uuid" json:"orgId"`
-	Provider         ProviderDialect `bun:"provider,notnull" json:"provider"`
+	ID        string          `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
+	ProjectID string          `bun:"project_id,notnull,type:uuid" json:"projectId"`
+	OrgID     string          `bun:"org_id,notnull,type:uuid" json:"orgId"`
+	Provider  ProviderDialect `bun:"provider,notnull" json:"provider"`
 	// ProviderSlug is the instance that served the request. Empty for rows
 	// recorded before instances existed (legacy).
-	ProviderSlug     ProviderSlug    `bun:"provider_slug" json:"providerSlug,omitempty"`
-	Model            string          `bun:"model,notnull" json:"model"`
-	Operation        OperationType   `bun:"operation,notnull,default:'generate'" json:"operation"`
+	ProviderSlug     ProviderSlug  `bun:"provider_slug" json:"providerSlug,omitempty"`
+	Model            string        `bun:"model,notnull" json:"model"`
+	Operation        OperationType `bun:"operation,notnull,default:'generate'" json:"operation"`
 	TextInputTokens  int64         `bun:"text_input_tokens,notnull,default:0" json:"textInputTokens"`
 	ImageInputTokens int64         `bun:"image_input_tokens,notnull,default:0" json:"imageInputTokens"`
 	VideoInputTokens int64         `bun:"video_input_tokens,notnull,default:0" json:"videoInputTokens"`
@@ -223,11 +223,11 @@ type ProjectCustomPricing struct {
 	Provider        ProviderDialect `bun:"provider,notnull" json:"provider"`
 	ProviderSlug    ProviderSlug    `bun:"provider_slug,notnull" json:"providerSlug"`
 	Model           string          `bun:"model,notnull" json:"model"`
-	TextInputPrice  float64      `bun:"text_input_price,notnull,default:0" json:"textInputPrice"`
-	ImageInputPrice float64      `bun:"image_input_price,notnull,default:0" json:"imageInputPrice"`
-	VideoInputPrice float64      `bun:"video_input_price,notnull,default:0" json:"videoInputPrice"`
-	AudioInputPrice float64      `bun:"audio_input_price,notnull,default:0" json:"audioInputPrice"`
-	OutputPrice     float64      `bun:"output_price,notnull,default:0" json:"outputPrice"`
-	CreatedAt       time.Time    `bun:"created_at,notnull,default:now()" json:"createdAt"`
-	UpdatedAt       time.Time    `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+	TextInputPrice  float64         `bun:"text_input_price,notnull,default:0" json:"textInputPrice"`
+	ImageInputPrice float64         `bun:"image_input_price,notnull,default:0" json:"imageInputPrice"`
+	VideoInputPrice float64         `bun:"video_input_price,notnull,default:0" json:"videoInputPrice"`
+	AudioInputPrice float64         `bun:"audio_input_price,notnull,default:0" json:"audioInputPrice"`
+	OutputPrice     float64         `bun:"output_price,notnull,default:0" json:"outputPrice"`
+	CreatedAt       time.Time       `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	UpdatedAt       time.Time       `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
 }

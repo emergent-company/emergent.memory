@@ -318,7 +318,7 @@ func (h *Handler) GetOrgUsageTimeSeries(c echo.Context) error {
 // UpsertProjectPricingOverridesRequest is the request body for upserting a
 // project pricing override. Prices are in USD per 1 million tokens.
 type UpsertProjectPricingOverridesRequest struct {
-	Provider        ProviderType `json:"provider"`
+	Provider ProviderType `json:"provider"`
 	// ProviderSlug identifies the provider instance. When empty, Provider is
 	// used as the slug (the default instance).
 	ProviderSlug    string  `json:"providerSlug,omitempty"`
