@@ -1150,7 +1150,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 		case agents.StreamEventToolApproval:
 			sseWriter.WriteData(sse.NewApprovalEvent(event.Tool, event.Input, event.QuestionID))
 		case agents.StreamEventA2UI:
-			sseWriter.WriteData(sse.NewUIEvent(event.SurfaceID, event.A2UI))
+			_ = sseWriter.WriteData(sse.NewUIEvent(event.SurfaceID, event.A2UI))
 		}
 	}
 
