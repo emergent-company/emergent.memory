@@ -1836,7 +1836,8 @@ func TestQueryKnowledgeBranchAndError(t *testing.T) {
 			return
 		}
 		sentError = true
-		_, _ = io.WriteString(w, "data: {\"type\":\"token\",\"token\":\"ok\"}\n\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"token\",\"token\":\"ok\"}\n\n"+
+			"data: {\"type\":\"done\"}\n\n")
 	}))
 	defer srv.Close()
 
@@ -1850,6 +1851,27 @@ func TestQueryKnowledgeBranchAndError(t *testing.T) {
 
 	if _, _, err := m.QueryKnowledge(context.Background(), "q", ""); err == nil {
 		t.Fatal("want error event to surface, got nil")
+	}
+}
+
+// TestQueryKnowledgePrematureEOF feeds a stream with token deltas but no
+// terminal done/[DONE] event and asserts QueryKnowledge surfaces an error
+// instead of returning the partial answer.
+func TestQueryKnowledgePrematureEOF(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"type\":\"token\",\"token\":\"Hel\"}\n\n"+
+			"data: {\"type\":\"token\",\"token\":\"lo\"}\n\n")
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	answer, _, err := m.QueryKnowledge(context.Background(), "q", "")
+	if err == nil {
+		t.Fatalf("want premature-EOF error, got nil (answer=%q)", answer)
+	}
+	if answer != "" {
+		t.Errorf("answer = %q, want empty on premature EOF", answer)
 	}
 }
 

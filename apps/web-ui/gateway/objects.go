@@ -222,7 +222,7 @@ func (s *Server) uiObjectsKnowledge(c echo.Context) error {
 	if err := c.Request().ParseForm(); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid form submission")
 	}
-	question := c.FormValue("question")
+	question := strings.TrimSpace(c.FormValue("question"))
 	branch := c.FormValue("branch")
 	if question == "" {
 		return c.Redirect(http.StatusSeeOther, "/objects")

@@ -819,6 +819,24 @@ func TestUIObjectsKnowledge(t *testing.T) {
 			t.Errorf("QueryKnowledge called for empty question: %q", f.lastKnowledgeQ)
 		}
 	})
+
+	t.Run("whitespace-only question redirects", func(t *testing.T) {
+		f := &fakeMemory{}
+		e := echo.New()
+		e.POST("/objects/knowledge", s(f).uiObjectsKnowledge)
+
+		req := httptest.NewRequest(http.MethodPost, "/objects/knowledge", strings.NewReader("question=+++"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/objects" {
+			t.Fatalf("status=%d location=%q, want 303 /objects", rec.Code, rec.Header().Get("Location"))
+		}
+		if f.lastKnowledgeQ != "" {
+			t.Errorf("QueryKnowledge called for whitespace-only question: %q", f.lastKnowledgeQ)
+		}
+	})
 }
 
 func TestUIObjectUpdate(t *testing.T) {
