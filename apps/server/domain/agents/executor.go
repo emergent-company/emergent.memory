@@ -1064,6 +1064,13 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 	// Propagate the run's originating principal into the run context (see Execute).
 	ctx = auth.ContextWithUser(ctx, &auth.AuthUser{ID: req.UserID})
 
+	// Propagate the run's trust marker into the context so the in-process tool
+	// dispatch (mcp.Service.ExecuteTool) can enforce the AgentOnly boundary
+	// consistently with the HTTP transports. This covers the resume confirm gate
+	// (injectToolResponse → confirmResponseBody → CallTool) which runs before
+	// runPipeline re-injects the marker (issue #994).
+	ctx = mcp.ContextWithTrustedInternal(ctx, newRun.TrustedInternal)
+
 	// Provision workspace if configured
 	hasSandboxConfig := ae.wsEnabled && ae.provisioner != nil &&
 		req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0
@@ -1711,6 +1718,13 @@ func (ae *AgentExecutor) runPipeline(
 	// spawn) inherit the run's trust rather than whatever the current transport
 	// happened to carry — a resume or re-wake must never upgrade trust.
 	req.TrustedInternal = run.TrustedInternal
+
+	// Propagate the trust marker into the context so the in-process tool dispatch
+	// (mcp.Service.ExecuteTool) can enforce the AgentOnly boundary consistently
+	// with the HTTP transports. The marker is fail-closed: it is true only for
+	// trusted/internal surfaces; external surfaces (webhook, A2A, agentcompat,
+	// public share) carry false and cannot reach agent-only tools (issue #994).
+	ctx = mcp.ContextWithTrustedInternal(ctx, req.TrustedInternal)
 
 	// Identify the ADK session ID.
 	// If the caller supplied a stable SessionID (cross-run conversation history),
