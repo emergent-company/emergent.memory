@@ -3755,7 +3755,14 @@ func (s *Service) executeGetSessionMessages(ctx context.Context, projectID strin
 	if s.sessionHistoryProvider == nil {
 		return nil, fmt.Errorf("session service not available")
 	}
-	items, err := s.sessionHistoryProvider.GetConversationFullHistoryRaw(ctx, sessionIDStr)
+	// Resolve the caller's owner identity from the run/auth context so the
+	// data-access layer can enforce the conversation ownership model (#1010).
+	// A missing identity fails closed in the repository (no owner match).
+	ownerUserID := ""
+	if u := auth.UserFromContext(ctx); u != nil {
+		ownerUserID = u.ID
+	}
+	items, err := s.sessionHistoryProvider.GetConversationFullHistoryRaw(ctx, projectID, ownerUserID, sessionIDStr)
 	if err != nil {
 		return nil, fmt.Errorf("get session messages: %w", err)
 	}
