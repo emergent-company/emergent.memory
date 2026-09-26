@@ -30,10 +30,15 @@ tasks:
     cmds:
       - task: server:test:integration
 
-  lint:
-    desc: Run Go linter
+  hooks:install:
+    desc: Install git hooks via lefthook (run once per checkout)
     cmds:
-      - task: server:lint
+      - lefthook install
+
+  lint:
+    desc: Run all linters via lefthook (server, CLI, web UI, connector)
+    cmds:
+      - lefthook run lint
 
   migrate:up:
     desc: Run database migrations up
