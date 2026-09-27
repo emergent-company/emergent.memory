@@ -1,10 +1,10 @@
 import Foundation
 
-/// `Decodable` mirrors of the `memory-connector` CLI's `--json` documents.
-///
-/// The connector emits snake_case keys; these types use idiomatic Swift names
-/// with explicit `CodingKeys`, and decode the exact wire keys below. All types
-/// are `Sendable` so decoded values can cross actor boundaries.
+// `Decodable` mirrors of the `memory-connector` CLI's `--json` documents.
+//
+// The connector emits snake_case keys; these types use idiomatic Swift names
+// with explicit `CodingKeys`, and decode the exact wire keys below. All types
+// are `Sendable` so decoded values can cross actor boundaries.
 
 /// `memory-connector auth status --json` (also `auth complete --json`).
 struct CLIAuthStatus: Decodable, Equatable, Sendable {

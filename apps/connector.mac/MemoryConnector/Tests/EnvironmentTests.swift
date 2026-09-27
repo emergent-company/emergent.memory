@@ -1,8 +1,7 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 final class EnvironmentTests: XCTestCase {
-
     func testProdConstants() {
         let prod = Environment.prod
         XCTAssertEqual(prod.id, "prod")

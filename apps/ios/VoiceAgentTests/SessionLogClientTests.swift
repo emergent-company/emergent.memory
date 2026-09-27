@@ -1,8 +1,8 @@
 import Foundation
-import Testing
 @testable import Memory
+import Testing
 
-@Suite struct SessionLogClientTests {
+struct SessionLogClientTests {
     @Test func sessionsBaseURLStripsTokenPath() {
         var config = MemoryConfig()
         config.tokenEndpoint = "http://host:8080/api/token"

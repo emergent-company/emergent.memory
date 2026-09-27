@@ -101,11 +101,11 @@ struct DeviceInfo: Sendable {
     static func platform(systemName: String, userInterfaceIdiom: UIUserInterfaceIdiom) -> String {
         switch userInterfaceIdiom {
         case .pad:
-            return "ipados"
+            "ipados"
         case .mac:
-            return "macos"
+            "macos"
         default:
-            return systemName.lowercased().contains("ipad") ? "ipados" : "ios"
+            systemName.lowercased().contains("ipad") ? "ipados" : "ios"
         }
     }
 
@@ -114,13 +114,13 @@ struct DeviceInfo: Sendable {
     static func formFactor(for idiom: UIUserInterfaceIdiom) -> String? {
         switch idiom {
         case .phone:
-            return "phone"
+            "phone"
         case .pad:
-            return "tablet"
+            "tablet"
         case .mac:
-            return "desktop"
+            "desktop"
         default:
-            return nil
+            nil
         }
     }
 

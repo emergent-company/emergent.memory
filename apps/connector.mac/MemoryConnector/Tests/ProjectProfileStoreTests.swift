@@ -1,8 +1,7 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 final class ProjectProfileStoreTests: XCTestCase {
-
     private var suiteName = ""
     private var defaults: UserDefaults!
 
@@ -69,7 +68,7 @@ final class ProjectProfileStoreTests: XCTestCase {
                        "an explicitly stored empty (all ON) set is respected")
     }
 
-    func testCorruptBlobIsToleratedAndRecoverable() throws {
+    func testCorruptBlobIsToleratedAndRecoverable() {
         defaults.set(Data("not json at all".utf8), forKey: ProjectProfileStore.key)
         let store = ProjectProfileStore(defaults: defaults)
 
@@ -128,7 +127,7 @@ final class ProjectProfileStoreTests: XCTestCase {
         XCTAssertNil(profile.instanceID)
     }
 
-    func testLegacyStoredProfileWithoutConnectedDecodesFalse() throws {
+    func testLegacyStoredProfileWithoutConnectedDecodesFalse() {
         // A profile written before `connected` existed must decode as false and
         // keep its disabledTools/instanceID.
         let legacy = #"{"p1":{"disabledTools":["notes_create"],"instanceID":"p1-connector"}}"#

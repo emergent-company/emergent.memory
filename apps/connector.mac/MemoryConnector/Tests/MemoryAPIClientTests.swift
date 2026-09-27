@@ -1,8 +1,7 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 final class MemoryAPIClientTests: XCTestCase {
-
     private let baseURL = "https://api.example.test"
     private let token = "emt_test_token"
 
@@ -64,18 +63,18 @@ final class MemoryAPIClientTests: XCTestCase {
         let json = authMeJSON
         StubURLProtocol.registry.setHandler { _ in .ok(json) }
 
-        let me = try await makeClient().authMe()
+        let identity = try await makeClient().authMe()
 
         assertRequest(path: "/api/auth/me")
-        XCTAssertNil(me.userID)
-        XCTAssertEqual(me.email, "dev@example.test")
-        XCTAssertEqual(me.scopes, ["project.read"])
-        XCTAssertEqual(me.type, "project")
-        XCTAssertEqual(me.projectID, "proj-1")
-        XCTAssertEqual(me.projectName, "Memory Dev")
-        XCTAssertEqual(me.orgID, "org-1")
-        XCTAssertEqual(me.tokenID, "tok-1")
-        XCTAssertEqual(me.tokenName, "dev")
+        XCTAssertNil(identity.userID)
+        XCTAssertEqual(identity.email, "dev@example.test")
+        XCTAssertEqual(identity.scopes, ["project.read"])
+        XCTAssertEqual(identity.type, "project")
+        XCTAssertEqual(identity.projectID, "proj-1")
+        XCTAssertEqual(identity.projectName, "Memory Dev")
+        XCTAssertEqual(identity.orgID, "org-1")
+        XCTAssertEqual(identity.tokenID, "tok-1")
+        XCTAssertEqual(identity.tokenName, "dev")
     }
 
     func testUserProfileDecodes() async throws {
@@ -125,17 +124,17 @@ final class MemoryAPIClientTests: XCTestCase {
     }
 
     func testIdentitySnapshotCombinesSources() async throws {
-        let me = authMeJSON
+        let authMeBody = authMeJSON
         let profile = profileJSON
         let project = projectJSON
         let orgs = orgsJSON
         StubURLProtocol.registry.setHandler { request in
             switch request.url?.path {
-            case "/api/auth/me": return .ok(me)
-            case "/api/user/profile": return .ok(profile)
-            case "/api/projects/current": return .ok(project)
-            case "/api/orgs": return .ok(orgs)
-            default: return .status(404)
+            case "/api/auth/me": .ok(authMeBody)
+            case "/api/user/profile": .ok(profile)
+            case "/api/projects/current": .ok(project)
+            case "/api/orgs": .ok(orgs)
+            default: .status(404)
             }
         }
 
@@ -163,16 +162,16 @@ final class MemoryAPIClientTests: XCTestCase {
     }
 
     func testSnapshotOrgNotInListLeavesOrganizationNil() async throws {
-        let me = authMeJSON
+        let authMeBody = authMeJSON
         let profile = profileJSON
         let project = projectJSON
         StubURLProtocol.registry.setHandler { request in
             switch request.url?.path {
-            case "/api/auth/me": return .ok(me)
-            case "/api/user/profile": return .ok(profile)
-            case "/api/projects/current": return .ok(project)
-            case "/api/orgs": return .ok(#"[{"id":"org-999","name":"Elsewhere"}]"#)
-            default: return .status(404)
+            case "/api/auth/me": .ok(authMeBody)
+            case "/api/user/profile": .ok(profile)
+            case "/api/projects/current": .ok(project)
+            case "/api/orgs": .ok(#"[{"id":"org-999","name":"Elsewhere"}]"#)
+            default: .status(404)
             }
         }
 
@@ -185,16 +184,16 @@ final class MemoryAPIClientTests: XCTestCase {
     }
 
     func testSnapshotToleratesOrgsFailure() async throws {
-        let me = authMeJSON
+        let authMeBody = authMeJSON
         let profile = profileJSON
         let project = projectJSON
         StubURLProtocol.registry.setHandler { request in
             switch request.url?.path {
-            case "/api/auth/me": return .ok(me)
-            case "/api/user/profile": return .ok(profile)
-            case "/api/projects/current": return .ok(project)
-            case "/api/orgs": return .status(500)
-            default: return .status(404)
+            case "/api/auth/me": .ok(authMeBody)
+            case "/api/user/profile": .ok(profile)
+            case "/api/projects/current": .ok(project)
+            case "/api/orgs": .status(500)
+            default: .status(404)
             }
         }
 
@@ -402,18 +401,18 @@ final class MemoryAPIClientTests: XCTestCase {
         let defs = try await makeClient().agentDefinitions(projectID: "proj-1", accessToken: "user-access")
 
         XCTAssertEqual(defs.count, 1)
-        let d = try XCTUnwrap(defs.first)
-        XCTAssertEqual(d.id, "def-1")
-        XCTAssertEqual(d.name, "Researcher")
-        XCTAssertEqual(d.description, "finds things")
-        XCTAssertEqual(d.model, "gpt-4o")
-        XCTAssertNil(d.tools, "tools: null stays nil")
-        XCTAssertEqual(d.bannedTools, ["shell"])
-        XCTAssertEqual(d.enabled, true)
-        XCTAssertEqual(d.visibility, "project")
-        XCTAssertEqual(d.triggerType, "manual")
-        XCTAssertEqual(d.isDefault, true)
-        XCTAssertEqual(d.flowType, "sequential")
+        let definition = try XCTUnwrap(defs.first)
+        XCTAssertEqual(definition.id, "def-1")
+        XCTAssertEqual(definition.name, "Researcher")
+        XCTAssertEqual(definition.description, "finds things")
+        XCTAssertEqual(definition.model, "gpt-4o")
+        XCTAssertNil(definition.tools, "tools: null stays nil")
+        XCTAssertEqual(definition.bannedTools, ["shell"])
+        XCTAssertEqual(definition.enabled, true)
+        XCTAssertEqual(definition.visibility, "project")
+        XCTAssertEqual(definition.triggerType, "manual")
+        XCTAssertEqual(definition.isDefault, true)
+        XCTAssertEqual(definition.flowType, "sequential")
         let request = try XCTUnwrap(StubURLProtocol.registry.capturedRequest)
         XCTAssertEqual(request.url?.absoluteString, baseURL + "/api/projects/proj-1/agent-definitions")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer user-access")
@@ -486,23 +485,23 @@ final class MemoryAPIClientTests: XCTestCase {
                                                             id: "def-1",
                                                             accessToken: "user-access")
 
-        let d = try XCTUnwrap(detail)
-        XCTAssertEqual(d.id, "def-1")
-        XCTAssertEqual(d.name, "Researcher")
-        XCTAssertEqual(d.description, "finds things")
-        XCTAssertEqual(d.systemPrompt, "You are a researcher.")
-        XCTAssertEqual(d.model, "gemini-2.0-flash", "nested model.name is flattened")
-        XCTAssertEqual(d.modelNativeTools, ["google_search", "url_context"])
-        XCTAssertEqual(d.tools, ["search", "notes"])
-        XCTAssertEqual(d.bannedTools, ["shell"])
-        XCTAssertEqual(d.skills, ["summarize"])
-        XCTAssertEqual(d.autoLoadSkills, true)
-        XCTAssertEqual(d.enabled, true)
-        XCTAssertEqual(d.isDefault, false)
-        XCTAssertEqual(d.visibility, "project")
-        XCTAssertEqual(d.triggerType, "manual")
-        XCTAssertEqual(d.flowType, "sequential")
-        XCTAssertEqual(d.workspaceTools, ["workspace_bash", "workspace_read"])
+        let definition = try XCTUnwrap(detail)
+        XCTAssertEqual(definition.id, "def-1")
+        XCTAssertEqual(definition.name, "Researcher")
+        XCTAssertEqual(definition.description, "finds things")
+        XCTAssertEqual(definition.systemPrompt, "You are a researcher.")
+        XCTAssertEqual(definition.model, "gemini-2.0-flash", "nested model.name is flattened")
+        XCTAssertEqual(definition.modelNativeTools, ["google_search", "url_context"])
+        XCTAssertEqual(definition.tools, ["search", "notes"])
+        XCTAssertEqual(definition.bannedTools, ["shell"])
+        XCTAssertEqual(definition.skills, ["summarize"])
+        XCTAssertEqual(definition.autoLoadSkills, true)
+        XCTAssertEqual(definition.enabled, true)
+        XCTAssertEqual(definition.isDefault, false)
+        XCTAssertEqual(definition.visibility, "project")
+        XCTAssertEqual(definition.triggerType, "manual")
+        XCTAssertEqual(definition.flowType, "sequential")
+        XCTAssertEqual(definition.workspaceTools, ["workspace_bash", "workspace_read"])
 
         let request = try XCTUnwrap(StubURLProtocol.registry.capturedRequest)
         XCTAssertEqual(request.httpMethod, "GET")
@@ -522,62 +521,62 @@ final class MemoryAPIClientTests: XCTestCase {
         """
         StubURLProtocol.registry.setHandler { _ in .ok(json) }
 
-        let d = try await makeClient().agentDefinition(projectID: "proj-1",
-                                                       id: "def-2",
-                                                       accessToken: "user-access")
+        let definition = try await makeClient().agentDefinition(projectID: "proj-1",
+                                                                id: "def-2",
+                                                                accessToken: "user-access")
 
-        XCTAssertEqual(d?.systemPrompt, "sys")
-        XCTAssertEqual(d?.model, "m")
-        XCTAssertEqual(d?.modelNativeTools, ["code_execution"])
-        XCTAssertEqual(d?.bannedTools, ["x"])
-        XCTAssertEqual(d?.skills, ["s"])
-        XCTAssertEqual(d?.autoLoadSkills, true)
-        XCTAssertEqual(d?.isDefault, true)
-        XCTAssertEqual(d?.triggerType, "auto")
-        XCTAssertEqual(d?.flowType, "parallel")
-        XCTAssertEqual(d?.workspaceTools, ["workspace_write"])
+        XCTAssertEqual(definition?.systemPrompt, "sys")
+        XCTAssertEqual(definition?.model, "m")
+        XCTAssertEqual(definition?.modelNativeTools, ["code_execution"])
+        XCTAssertEqual(definition?.bannedTools, ["x"])
+        XCTAssertEqual(definition?.skills, ["s"])
+        XCTAssertEqual(definition?.autoLoadSkills, true)
+        XCTAssertEqual(definition?.isDefault, true)
+        XCTAssertEqual(definition?.triggerType, "auto")
+        XCTAssertEqual(definition?.flowType, "parallel")
+        XCTAssertEqual(definition?.workspaceTools, ["workspace_write"])
     }
 
     func testAgentDefinitionNullToolsStaysNil() async throws {
         let json = #"{"success":true,"data":{"id":"d","name":"N","tools":null,"bannedTools":null}}"#
         StubURLProtocol.registry.setHandler { _ in .ok(json) }
 
-        let d = try await makeClient().agentDefinition(projectID: "proj-1",
-                                                       id: "d",
-                                                       accessToken: "user-access")
-        XCTAssertNotNil(d)
-        XCTAssertNil(d?.tools, "tools: null stays nil")
-        XCTAssertNil(d?.bannedTools)
+        let definition = try await makeClient().agentDefinition(projectID: "proj-1",
+                                                                id: "d",
+                                                                accessToken: "user-access")
+        XCTAssertNotNil(definition)
+        XCTAssertNil(definition?.tools, "tools: null stays nil")
+        XCTAssertNil(definition?.bannedTools)
     }
 
     func testAgentDefinitionEmptyToolsIsEmptyArray() async throws {
         let json = #"{"success":true,"data":{"id":"d","name":"N","tools":[],"skills":[]}}"#
         StubURLProtocol.registry.setHandler { _ in .ok(json) }
 
-        let d = try await makeClient().agentDefinition(projectID: "proj-1",
-                                                       id: "d",
-                                                       accessToken: "user-access")
-        XCTAssertEqual(d?.tools, [], "tools: [] stays an empty array")
-        XCTAssertEqual(d?.skills, [])
+        let definition = try await makeClient().agentDefinition(projectID: "proj-1",
+                                                                id: "d",
+                                                                accessToken: "user-access")
+        XCTAssertEqual(definition?.tools, [], "tools: [] stays an empty array")
+        XCTAssertEqual(definition?.skills, [])
     }
 
     func testAgentDefinitionModelAsPlainString() async throws {
         let json = #"{"success":true,"data":{"id":"d","name":"N","model":"gpt-4o"}}"#
         StubURLProtocol.registry.setHandler { _ in .ok(json) }
 
-        let d = try await makeClient().agentDefinition(projectID: "proj-1",
-                                                       id: "d",
-                                                       accessToken: "user-access")
-        XCTAssertEqual(d?.model, "gpt-4o")
-        XCTAssertNil(d?.modelNativeTools)
+        let definition = try await makeClient().agentDefinition(projectID: "proj-1",
+                                                                id: "d",
+                                                                accessToken: "user-access")
+        XCTAssertEqual(definition?.model, "gpt-4o")
+        XCTAssertNil(definition?.modelNativeTools)
     }
 
     func testAgentDefinitionMissingDataIsNil() async throws {
         StubURLProtocol.registry.setHandler { _ in .ok(#"{"success":true}"#) }
-        let d = try await makeClient().agentDefinition(projectID: "proj-1",
-                                                       id: "nope",
-                                                       accessToken: "user-access")
-        XCTAssertNil(d)
+        let definition = try await makeClient().agentDefinition(projectID: "proj-1",
+                                                                id: "nope",
+                                                                accessToken: "user-access")
+        XCTAssertNil(definition)
     }
 
     func testProjectDetailDecodesServerCasing() async throws {

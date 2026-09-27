@@ -228,6 +228,31 @@ pre-commit:
       glob: "**/*.go"
       run: go vet ./...
 
+    # ── Mac connector — apps/connector.mac ───────────────────────────────────
+    # SwiftFormat + SwiftLint over the *staged* Swift files only. SwiftFormat
+    # debt is paid down (whole tree format-clean); the residual structural
+    # SwiftLint violations are captured in apps/connector.mac/.swiftlint.baseline
+    # and ignored, so only new drift fails. No `root:` so {staged_files} stay
+    # repo-root-relative. See Scripts/lint-swift.sh for the ratchet rationale.
+    - name: connector-mac-swift
+      glob:
+        - "apps/connector.mac/*.swift"
+        - "apps/connector.mac/**/*.swift"
+      run: apps/connector.mac/Scripts/lint-swift.sh {staged_files}
+
+    # ── iOS — apps/ios ───────────────────────────────────────────────────────
+    # SwiftFormat over the *staged* Swift files (ratchet: touched files must be
+    # format-clean) + SwiftLint over the file set, with
+    # apps/ios/.swiftlint.baseline suppressing the pre-existing structural
+    # violations. The script is hard-scoped to apps/ios/**, so a staged file
+    # from another tree is never linted with the iOS config. No `root:` so
+    # {staged_files} stay repo-root-relative. See apps/ios/Scripts/lint-swift.sh.
+    - name: ios-swift
+      glob:
+        - "apps/ios/*.swift"
+        - "apps/ios/**/*.swift"
+      run: apps/ios/Scripts/lint-swift.sh {staged_files}
+
 # Pre-push: stale-base guard. Blocking a *commit* on being behind main is
 # counterproductive — a lane mid-work, with main moving underneath it, must
 # still be able to commit WIP — but a push is the moment a stale tree would
@@ -423,6 +448,17 @@ lint:
       root: apps/connector.linux
       run: GOLANGCI_LINT_CACHE="${TMPDIR:-/tmp}/em-golangci-connector" golangci-lint run --allow-parallel-runners ./...
 
+    # Swift files changed on this branch vs origin/main. See
+    # apps/connector.mac/Scripts/lint-swift.sh for the ratchet rationale.
+    - name: connector-mac-swift
+      run: apps/connector.mac/Scripts/lint-swift.sh
+
+    # SwiftLint over the whole apps/ios tree with .swiftlint.baseline (only new
+    # violations fail) + SwiftFormat over files changed vs origin/main. See
+    # apps/ios/Scripts/lint-swift.sh for the ratchet rationale.
+    - name: ios-swift
+      run: apps/ios/Scripts/lint-swift.sh
+
 # Web-ui + connector scope. `task lint` in apps/web-ui runs this group.
 lint-webui:
   parallel: true
@@ -525,3 +561,6 @@ lint-webui:
     - name: connector-golangci-lint
       root: apps/connector.linux
       run: GOLANGCI_LINT_CACHE="${TMPDIR:-/tmp}/em-golangci-connector" golangci-lint run --allow-parallel-runners ./...
+
+    - name: connector-mac-swift
+      run: apps/connector.mac/Scripts/lint-swift.sh

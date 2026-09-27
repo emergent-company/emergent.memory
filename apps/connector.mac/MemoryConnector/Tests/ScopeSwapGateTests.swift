@@ -1,11 +1,10 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 /// The scope-swap suppression gate: while a scope swap is in flight, the
 /// connected-project-id sink must not reconcile. A depth counter (not a
 /// boolean) keeps overlapping swaps suppressed until all of them settle.
 final class ScopeSwapGateTests: XCTestCase {
-
     func testAllowedBeforeAnySwap() {
         let gate = ScopeSwapGate()
         XCTAssertTrue(gate.mayReconcile)

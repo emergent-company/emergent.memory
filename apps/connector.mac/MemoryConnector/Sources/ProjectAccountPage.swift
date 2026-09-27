@@ -53,9 +53,14 @@ struct ProjectAccountPage: View {
         }
         .confirmationDialog("Sign out of Memory?",
                             isPresented: Binding(get: { accountToSignOut != nil },
-                                                 set: { if !$0 { accountToSignOut = nil } }),
+                                                 set: {
+                                                     if !$0 {
+                                                         accountToSignOut = nil
+                                                     }
+                                                 }),
                             titleVisibility: .visible,
-                            presenting: accountToSignOut) { account in
+                            presenting: accountToSignOut)
+        { account in
             Button("Sign out \(account.displayTitle)", role: .destructive) {
                 signOut(account)
             }
@@ -175,7 +180,6 @@ struct ProjectAccountPage: View {
         Task { _ = try? await accountStore.signIn(environment: environment) }
     }
 
-    @ViewBuilder
     private var signInPrompt: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Sign in with Memory to connect your account and projects.")
@@ -236,7 +240,7 @@ struct ProjectAccountPage: View {
                 ConnectorLoadingRow(caption: "Loading projects…")
             case .signedOut:
                 signedOutState
-            case .error(let message):
+            case let .error(message):
                 projectErrorState(message)
             case .loaded:
                 emptyProjectsState
@@ -248,7 +252,7 @@ struct ProjectAccountPage: View {
 
                 if case .signedOut = projectStore.state {
                     signedOutState
-                } else if case .error(let message) = projectStore.state {
+                } else if case let .error(message) = projectStore.state {
                     inlineError(message)
                 }
             }
@@ -302,7 +306,9 @@ struct ProjectAccountPage: View {
     // MARK: - States
 
     private var currentSnapshot: IdentitySnapshot? {
-        if case .loaded(let snapshot) = identity.state { return snapshot }
+        if case let .loaded(snapshot) = identity.state {
+            return snapshot
+        }
         return nil
     }
 

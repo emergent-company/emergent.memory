@@ -5,7 +5,6 @@ import Foundation
 /// degrades to a clear unavailable state instead of surfacing raw errors.
 @MainActor
 final class IdentityStore: ObservableObject {
-
     enum State: Equatable {
         case idle
         case loading
@@ -13,7 +12,9 @@ final class IdentityStore: ObservableObject {
         case unavailable(String)
 
         var isLoading: Bool {
-            if case .loading = self { return true }
+            if case .loading = self {
+                return true
+            }
             return false
         }
     }
@@ -74,11 +75,11 @@ final class IdentityStore: ObservableObject {
             return "Sign in with Memory to see your project and account."
         case .authFailed:
             return "The server rejected this session. Sign in again to continue."
-        case .unreachable(let detail):
+        case let .unreachable(detail):
             return "Could not reach the server. \(detail)"
-        case .httpStatus(let code):
+        case let .httpStatus(code):
             return "The server returned HTTP \(code)."
-        case .decoding(let detail):
+        case let .decoding(detail):
             return "Could not read the server response. \(detail)"
         }
     }

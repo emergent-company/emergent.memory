@@ -125,8 +125,12 @@ struct A2UIComponentCard: View {
     private var proposalCard: some View {
         VStack(alignment: .leading, spacing: 2 * .grid) {
             header("Proposal", badge: component.text("kind"))
-            if let summary = component.text("summary"), !summary.isEmpty { label(summary) }
-            if let body = component.text("body"), !body.isEmpty { pre(body) }
+            if let summary = component.text("summary"), !summary.isEmpty {
+                label(summary)
+            }
+            if let body = component.text("body"), !body.isEmpty {
+                pre(body)
+            }
             actions([
                 (label: "Reject", response: "reject", primary: false),
                 (label: "Accept", response: "accept", primary: true),
@@ -137,7 +141,9 @@ struct A2UIComponentCard: View {
     private var approvalCard: some View {
         VStack(alignment: .leading, spacing: 2 * .grid) {
             header("Approval", badge: component.text("tool"))
-            if let input = component.text("input"), !input.isEmpty { pre(input) }
+            if let input = component.text("input"), !input.isEmpty {
+                pre(input)
+            }
             actions([
                 (label: "Deny", response: "deny", primary: false),
                 (label: "Approve", response: "approve", primary: true),
@@ -148,7 +154,9 @@ struct A2UIComponentCard: View {
     private var questionCard: some View {
         VStack(alignment: .leading, spacing: 2 * .grid) {
             header("Question")
-            if let prompt = component.text("prompt"), !prompt.isEmpty { label(prompt) }
+            if let prompt = component.text("prompt"), !prompt.isEmpty {
+                label(prompt)
+            }
             if case let .array(options)? = component.value("options"), !options.isEmpty {
                 if submittedResponse != nil {
                     actions([])
@@ -256,7 +264,9 @@ struct A2UIComponentCard: View {
         switch item {
         case let .object(object):
             var done = false
-            if case let .bool(value)? = object["done"] { done = value }
+            if case let .bool(value)? = object["done"] {
+                done = value
+            }
             return (done, (object["label"] ?? object["text"])?.displayText ?? "")
         default:
             return (false, item.displayText)
@@ -301,17 +311,19 @@ struct A2UIComponentCard: View {
     private func objectRows(_ value: ChatUIPropValue?) -> [(String, String)] {
         switch value {
         case let .object(object):
-            return object.sorted { $0.key < $1.key }.map { ($0.key, $0.value.displayText) }
+            object.sorted { $0.key < $1.key }.map { ($0.key, $0.value.displayText) }
         case let .array(items):
-            return items.compactMap { item in
+            items.compactMap { item in
                 guard case let .object(object) = item else { return nil }
                 let key = (object["key"] ?? object["label"] ?? object["name"])?.displayText ?? ""
                 let val = (object["value"] ?? object["text"])?.displayText ?? ""
-                if key.isEmpty { return nil }
+                if key.isEmpty {
+                    return nil
+                }
                 return (key, val)
             }
         default:
-            return []
+            []
         }
     }
 

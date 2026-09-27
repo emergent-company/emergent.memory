@@ -202,8 +202,8 @@ struct AboutPage: View {
     /// must not disturb the page.
     private func signInToDevelopment(_ environment: Environment) {
         Task {
-            guard (try? await accountStore.signIn(environment: environment)) != nil else { return }
-            let token = (try? await accountStore.currentAccessToken()) ?? ""
+            guard await (try? accountStore.signIn(environment: environment)) != nil else { return }
+            let token = await (try? accountStore.currentAccessToken()) ?? ""
             await projectStore.loadProjects(accessToken: token)
         }
     }
@@ -224,7 +224,9 @@ struct AboutPage: View {
     }
 
     private var instanceID: String {
-        if let id = statusMonitor.snapshot?.instanceID, !id.isEmpty { return id }
+        if let id = statusMonitor.snapshot?.instanceID, !id.isEmpty {
+            return id
+        }
         return settings.instanceID
     }
 

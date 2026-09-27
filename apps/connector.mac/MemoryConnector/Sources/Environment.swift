@@ -24,17 +24,21 @@ struct Environment: Identifiable, Hashable, Sendable {
     let clientID: String
 
     /// `issuer` as the string the OIDC client expects (discovery trims slashes).
-    var issuerString: String { issuer.absoluteString }
+    var issuerString: String {
+        issuer.absoluteString
+    }
 
     /// `serverURL` as the string API/settings call sites expect.
-    var serverURLString: String { serverURL.absoluteString }
+    var serverURLString: String {
+        serverURL.absoluteString
+    }
 
     /// Compact badge label shown next to an account so prod/dev are never
     /// confused in the switcher, account page, or menu-bar popover.
     var shortLabel: String {
         switch id {
-        case Environment.dev.id: return "Dev"
-        default: return "Prod"
+        case Environment.dev.id: "Dev"
+        default: "Prod"
         }
     }
 

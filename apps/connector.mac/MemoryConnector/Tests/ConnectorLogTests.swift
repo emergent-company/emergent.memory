@@ -1,5 +1,5 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 /// The lifecycle logger must stay silent under hosted unit tests: the test
 /// bundle runs inside the app process, so an unguarded write would append
@@ -10,7 +10,6 @@ import XCTest
 /// that only checked `HostedTest.isRunning` would stay green if the `guard` in `append`
 /// were deleted, leaving hosted runs free to pollute the real log again.
 final class ConnectorLogTests: XCTestCase {
-
     private var tempDir: URL!
     private var logURL: URL!
     private var originalDestination: URL!
@@ -38,18 +37,21 @@ final class ConnectorLogTests: XCTestCase {
 
     func testHostedTestDetectedByConfigurationPath() {
         XCTAssertTrue(HostedTest.isRunning(
-            environment: ["XCTestConfigurationFilePath": "/tmp/x.xctestconfiguration"]))
+            environment: ["XCTestConfigurationFilePath": "/tmp/x.xctestconfiguration"]
+        ))
     }
 
     func testHostedTestDetectedByBundlePath() {
         XCTAssertTrue(HostedTest.isRunning(
-            environment: ["XCTestBundlePath": "/tmp/MemoryConnectorTests.xctest"]))
+            environment: ["XCTestBundlePath": "/tmp/MemoryConnectorTests.xctest"]
+        ))
     }
 
     func testRealRunIsNotAHostedTest() {
         XCTAssertFalse(HostedTest.isRunning(environment: [:]))
         XCTAssertFalse(HostedTest.isRunning(
-            environment: ["HOME": "/Users/someone", "PATH": "/usr/bin"]))
+            environment: ["HOME": "/Users/someone", "PATH": "/usr/bin"]
+        ))
     }
 
     /// The running suite is itself a hosted test run, so the *default* decision

@@ -45,7 +45,7 @@ final class StatusItemController: NSObject, ObservableObject {
 
     // MARK: - Click handling
 
-    @objc private func handleClick(_ sender: Any?) {
+    @objc private func handleClick(_: Any?) {
         if NSApp.currentEvent?.type == .rightMouseUp {
             showRightClickMenu()
         } else {

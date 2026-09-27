@@ -1,10 +1,9 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 /// New default: all local MCP tools are OFF until the user enables some, per
 /// project or shared. Stored data must never be migrated against the user.
 final class ConnectorSettingsToolDefaultsTests: XCTestCase {
-
     private var suiteName = ""
     private var defaults: UserDefaults!
     private var tempRoot = FileManager.default.temporaryDirectory
@@ -24,7 +23,9 @@ final class ConnectorSettingsToolDefaultsTests: XCTestCase {
         ConnectorKeychainCleanup.clearAll(defaults: defaults)
     }
 
-    private var catalogIDs: Set<String> { Set(ToolCatalog.tools.map(\.id)) }
+    private var catalogIDs: Set<String> {
+        Set(ToolCatalog.tools.map(\.id))
+    }
 
     private func writeConfig(_ content: String) throws -> URL {
         let url = tempRoot.appendingPathComponent("config.yml")

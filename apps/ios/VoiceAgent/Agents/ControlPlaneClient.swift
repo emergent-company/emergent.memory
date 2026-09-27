@@ -117,6 +117,8 @@ struct ControlPlaneClient: Sendable {
         let error: String?
         let detail: String?
 
-        var message: String? { error ?? detail }
+        var message: String? {
+            error ?? detail
+        }
     }
 }

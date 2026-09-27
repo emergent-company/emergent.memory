@@ -1,9 +1,8 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 /// Validation and payload-building rules for `MCPServerForm`, per transport.
 final class MCPServerFormTests: XCTestCase {
-
     // MARK: - Name
 
     func testNameRequired() {

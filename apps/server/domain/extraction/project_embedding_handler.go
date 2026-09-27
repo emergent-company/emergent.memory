@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/labstack/echo/v4"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
 	"github.com/emergent-company/emergent.memory/domain/projects"
@@ -46,15 +47,17 @@ func (h *ProjectEmbeddingHandler) requireProjectAdmin(c echo.Context, projectID 
 }
 
 // ProjectEmbeddingProgressResponse is the response for the progress endpoint.
+// Relationship embedding queue counts are not part of this project-scoped
+// view; they are served by GET /api/embeddings/progress (see
+// EmbeddingProgressResponse).
 type ProjectEmbeddingProgressResponse struct {
-	Objects       *GraphEmbeddingQueueStats `json:"objects"`
-	Relationships *GraphEmbeddingQueueStats `json:"relationships"`
-	Chunks        *ChunkEmbeddingQueueStats `json:"chunks"`
+	Objects *GraphEmbeddingQueueStats `json:"objects"`
+	Chunks  *ChunkEmbeddingQueueStats `json:"chunks"`
 }
 
 // Progress handles GET /api/projects/:id/embeddings/progress
 // @Summary      Get embedding queue progress for a project
-// @Description  Returns pending/processing/completed/failed counts for graph object, relationship, and chunk embedding jobs scoped to this project. Requires project_admin role.
+// @Description  Returns pending/processing/completed/failed counts for graph object and chunk embedding jobs scoped to this project. Requires project_admin role.
 // @Tags         embeddings
 // @Produce      json
 // @Param        id   path      string  true  "Project ID"
@@ -70,19 +73,27 @@ func (h *ProjectEmbeddingHandler) Progress(c echo.Context) error {
 
 	ctx := c.Request().Context()
 
-	objStats, err := h.graphJobs.StatsByProject(ctx, projectID)
-	if err != nil {
-		return apperror.NewInternal("get object embedding stats", err)
+	// The object and chunk queue aggregates are independent project-scoped
+	// counts. On large projects they each join their queue table to resolve the
+	// project (graph_objects / documents), so run both concurrently instead of
+	// serially to remove one full round of latency from the request path (same
+	// shape as the relationships queue in #1108).
+	var (
+		objStats   *GraphEmbeddingQueueStats
+		chunkStats *ChunkEmbeddingQueueStats
+		objErr     error
+		chunkErr   error
+	)
+	var g errgroup.Group
+	g.Go(func() error { objStats, objErr = h.graphJobs.StatsByProject(ctx, projectID); return nil })
+	g.Go(func() error { chunkStats, chunkErr = h.chunkJobs.StatsByProject(ctx, projectID); return nil })
+	_ = g.Wait()
+
+	if objErr != nil {
+		return apperror.NewInternal("get object embedding stats", objErr)
 	}
-
-	// Graph relationship embedding jobs use the same table but object_id points to
-	// relationship objects — they share graphJobs. Relationship-specific stats would
-	// require filtering by object type; for now we surface total graph stats once.
-	// A separate rel stats field is left nil to avoid double-counting.
-
-	chunkStats, err := h.chunkJobs.StatsByProject(ctx, projectID)
-	if err != nil {
-		return apperror.NewInternal("get chunk embedding stats", err)
+	if chunkErr != nil {
+		return apperror.NewInternal("get chunk embedding stats", chunkErr)
 	}
 
 	return c.JSON(http.StatusOK, ProjectEmbeddingProgressResponse{

@@ -30,12 +30,14 @@ import Dispatch
 import EventKit
 import Foundation
 
-// Box synchronizes a value written from an EventKit completion handler and read
-// after a semaphore wait (the semaphore provides the ordering; the reference
-// box keeps Swift's concurrency diagnostics quiet).
+/// Box synchronizes a value written from an EventKit completion handler and read
+/// after a semaphore wait (the semaphore provides the ordering; the reference
+/// box keeps Swift's concurrency diagnostics quiet).
 final class Box<T> {
     var value: T
-    init(_ value: T) { self.value = value }
+    init(_ value: T) {
+        self.value = value
+    }
 }
 
 func fail(_ message: String) -> Never {
@@ -97,7 +99,7 @@ verifyAccess()
 
 // ---- shared helpers -----------------------------------------------------
 
-func emit<T: Encodable>(_ value: T) {
+func emit(_ value: some Encodable) {
     do {
         let data = try encodeJSON(value)
         FileHandle.standardOutput.write(data)
@@ -119,8 +121,8 @@ func fetchAllReminders() -> [EKReminder] {
     return reminders.value
 }
 
-// resolveReminder maps a calendarItemIdentifier back to a live reminder. An
-// unknown or non-reminder id is a hard error naming the id (design D2/D8).
+/// resolveReminder maps a calendarItemIdentifier back to a live reminder. An
+/// unknown or non-reminder id is a hard error naming the id (design D2/D8).
 func resolveReminder(id: String) -> EKReminder {
     guard let item = store.calendarItem(withIdentifier: id) else {
         fail("no reminder found with id '\(id)'")
@@ -131,10 +133,10 @@ func resolveReminder(id: String) -> EKReminder {
     return reminder
 }
 
-// resolveList maps a list name to a modifiable reminder calendar, rejecting
-// unknown, ambiguous, non-reminder, and read-only targets (design D6). Error
-// wording deliberately contains "list" plus a not-found/invalid phrase so the
-// connector's wrapReminderMutationError maps it to ErrInvalidTarget.
+/// resolveList maps a list name to a modifiable reminder calendar, rejecting
+/// unknown, ambiguous, non-reminder, and read-only targets (design D6). Error
+/// wording deliberately contains "list" plus a not-found/invalid phrase so the
+/// connector's wrapReminderMutationError maps it to ErrInvalidTarget.
 func resolveList(name: String) -> EKCalendar {
     let matches = store.calendars(for: EKEntityType.reminder).filter { $0.title == name }
     guard !matches.isEmpty else {
@@ -153,8 +155,8 @@ func resolveList(name: String) -> EKCalendar {
     return calendar
 }
 
-// dueISOString renders the reminder's due date as RFC3339 UTC, honoring the
-// time zone stored separately on the reminder (design D7).
+/// dueISOString renders the reminder's due date as RFC3339 UTC, honoring the
+/// time zone stored separately on the reminder (design D7).
 func dueISOString(for reminder: EKReminder) -> String? {
     guard let components = reminder.dueDateComponents else { return nil }
     var calendar = components.calendar ?? Calendar.current
@@ -165,9 +167,9 @@ func dueISOString(for reminder: EKReminder) -> String? {
     return rfc3339.string(from: date)
 }
 
-// applyDueDate builds dueDateComponents in the local calendar and stores the
-// time zone on the reminder separately: embedding a time zone inside the
-// components can be silently dropped by iCloud (design D7).
+/// applyDueDate builds dueDateComponents in the local calendar and stores the
+/// time zone on the reminder separately: embedding a time zone inside the
+/// components can be silently dropped by iCloud (design D7).
 func applyDueDate(_ date: Date, to reminder: EKReminder) {
     var calendar = Calendar(identifier: .gregorian)
     let timeZone = TimeZone.current
@@ -180,10 +182,10 @@ func applyDueDate(_ date: Date, to reminder: EKReminder) {
     reminder.timeZone = timeZone
 }
 
-// reminderRow projects an EKReminder onto the JSON contract. emitNotes forces
-// the notes key (even when null, for `list --include-notes`); mutations pass
-// true only when the reminder actually has note text, so canonical write
-// results carry notes "when present".
+/// reminderRow projects an EKReminder onto the JSON contract. emitNotes forces
+/// the notes key (even when null, for `list --include-notes`); mutations pass
+/// true only when the reminder actually has note text, so canonical write
+/// results carry notes "when present".
 func reminderRow(for reminder: EKReminder, emitNotes: Bool) -> ReminderRow {
     ReminderRow(
         id: reminder.calendarItemIdentifier,
@@ -203,7 +205,7 @@ func runList(_ args: ParsedArguments) {
     var rows: [ReminderRow] = []
     rows.reserveCapacity(reminders.count)
     for reminder in reminders {
-        if !args.includeCompleted && reminder.isCompleted {
+        if !args.includeCompleted, reminder.isCompleted {
             continue
         }
         if let listName = args.listName, reminder.calendar?.title != listName {

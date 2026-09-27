@@ -36,7 +36,7 @@ struct AppShellView: View {
     @State private var qrPresented = false
 
     init(path: Binding<[AppRoute]>) {
-        self._path = path
+        _path = path
     }
 
     var body: some View {
@@ -67,9 +67,9 @@ struct AppShellView: View {
             picker
                 .navigationDestination(for: AppRoute.self) { route in
                     switch route {
-                    case .agent(let r):
+                    case let .agent(r):
                         agentDestination(r)
-                    case .session(let r):
+                    case let .session(r):
                         sessionDestination(r)
                     }
                 }

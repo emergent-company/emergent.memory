@@ -17,10 +17,10 @@ enum ConnectorCLIError: Error, Equatable, LocalizedError {
         switch self {
         case .binaryNotFound:
             return "The bundled memory-connector binary could not be found."
-        case .commandFailed(let command, let exitCode, let message):
+        case let .commandFailed(command, exitCode, message):
             let detail = message.isEmpty ? "no output" : message
             return "memory-connector \(command) failed (exit \(exitCode)): \(detail)"
-        case .decodingFailed(let command, let message):
+        case let .decodingFailed(command, message):
             return "Could not read memory-connector \(command) output: \(message)"
         }
     }
@@ -34,7 +34,6 @@ enum ConnectorCLIError: Error, Equatable, LocalizedError {
 /// existing behavior. Tests inject a `Runner` (and a `binaryURL`) to avoid
 /// spawning real processes.
 final class ConnectorCLI: @unchecked Sendable {
-
     /// Signature of one CLI invocation. `@Sendable` so the wrapper can be used
     /// from any executor without data races.
     typealias Runner = @Sendable (_ executable: URL, _ arguments: [String], _ timeout: TimeInterval) async -> ProcessResult
@@ -72,7 +71,8 @@ final class ConnectorCLI: @unchecked Sendable {
     init(binaryURL: URL? = ConnectorCLI.defaultBinaryURL(),
          runner: @escaping Runner = ConnectorCLI.defaultRunner,
          timeout: TimeInterval = 15,
-         stdinRunner: @escaping StdinRunner = ConnectorCLI.defaultStdinRunner) {
+         stdinRunner: @escaping StdinRunner = ConnectorCLI.defaultStdinRunner)
+    {
         self.binaryURL = binaryURL
         self.runner = runner
         self.stdinRunner = stdinRunner
@@ -91,28 +91,30 @@ final class ConnectorCLI: @unchecked Sendable {
                    redirectURI: String,
                    clientID: String,
                    issuer: String?,
-                   configPath: String) async throws -> CLIPKCEStart {
+                   configPath: String) async throws -> CLIPKCEStart
+    {
         try await runJSON(CLIPKCEStart.self,
                           command: "auth start",
                           arguments: ConnectorCLI.authStartArguments(serverURL: serverURL,
-                                                                      redirectURI: redirectURI,
-                                                                      clientID: clientID,
-                                                                      issuer: issuer,
-                                                                      configPath: configPath))
+                                                                     redirectURI: redirectURI,
+                                                                     clientID: clientID,
+                                                                     issuer: issuer,
+                                                                     configPath: configPath))
     }
 
     func authComplete(serverURL: String?,
                       loginID: String,
                       code: String,
                       state: String,
-                      configPath: String) async throws -> CLIAuthStatus {
+                      configPath: String) async throws -> CLIAuthStatus
+    {
         try await runJSON(CLIAuthStatus.self,
                           command: "auth complete",
                           arguments: ConnectorCLI.authCompleteArguments(serverURL: serverURL,
-                                                                         loginID: loginID,
-                                                                         code: code,
-                                                                         state: state,
-                                                                         configPath: configPath))
+                                                                        loginID: loginID,
+                                                                        code: code,
+                                                                        state: state,
+                                                                        configPath: configPath))
     }
 
     func authAccessToken(serverURL: String?, configPath: String) async throws -> CLIAccessToken {
@@ -132,14 +134,15 @@ final class ConnectorCLI: @unchecked Sendable {
                      serverURL: String?,
                      instanceID: String?,
                      disabledTools: [String]?,
-                     configPath: String) async throws -> CLIProjectUse {
+                     configPath: String) async throws -> CLIProjectUse
+    {
         try await runJSON(CLIProjectUse.self,
                           command: "projects use",
                           arguments: ConnectorCLI.projectsUseArguments(project: project,
-                                                                        serverURL: serverURL,
-                                                                        instanceID: instanceID,
-                                                                        disabledTools: disabledTools,
-                                                                        configPath: configPath))
+                                                                       serverURL: serverURL,
+                                                                       instanceID: instanceID,
+                                                                       disabledTools: disabledTools,
+                                                                       configPath: configPath))
     }
 
     /// `auth logout` emits no JSON: success is simply a zero exit.
@@ -168,7 +171,8 @@ final class ConnectorCLI: @unchecked Sendable {
                                    redirectURI: String,
                                    clientID: String,
                                    issuer: String?,
-                                   configPath: String) -> [String] {
+                                   configPath: String) -> [String]
+    {
         var arguments = ["auth", "start"] + serverArguments(serverURL)
         arguments += ["--client-id", clientID]
         if let issuer, !issuer.isEmpty {
@@ -182,7 +186,8 @@ final class ConnectorCLI: @unchecked Sendable {
                                       loginID: String,
                                       code: String,
                                       state: String,
-                                      configPath: String) -> [String] {
+                                      configPath: String) -> [String]
+    {
         ["auth", "complete"] + serverArguments(serverURL)
             + ["--login-id", loginID, "--code", code, "--state", state, "--json", "--config", configPath]
     }
@@ -199,7 +204,8 @@ final class ConnectorCLI: @unchecked Sendable {
                                      serverURL: String?,
                                      instanceID: String?,
                                      disabledTools: [String]?,
-                                     configPath: String) -> [String] {
+                                     configPath: String) -> [String]
+    {
         var arguments = ["projects", "use", project] + serverArguments(serverURL)
         if let instanceID, !instanceID.isEmpty {
             arguments += ["--instance-id", instanceID]
@@ -266,12 +272,13 @@ final class ConnectorCLI: @unchecked Sendable {
     private func runJSON<T: Decodable>(_ type: T.Type,
                                        command: String,
                                        arguments: [String],
-                                       stdin: Data?) async throws -> T {
+                                       stdin: Data?) async throws -> T
+    {
         let result = try await execute(command: command, arguments: arguments, stdin: stdin)
         return try ConnectorCLI.decodeJSON(type, command: command, stdout: result.stdout)
     }
 
-    private static func decodeJSON<T: Decodable>(_ type: T.Type, command: String, stdout: String) throws -> T {
+    private static func decodeJSON<T: Decodable>(_: T.Type, command: String, stdout: String) throws -> T {
         guard let data = stdout.data(using: .utf8) else {
             throw ConnectorCLIError.decodingFailed(command: command, message: "stdout was not valid UTF-8")
         }

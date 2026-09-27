@@ -6,7 +6,6 @@ import XCTest
 // store: they pin the CLI argument contract and the JSON shapes the Go
 // connector depends on.
 final class RemindersHelperTests: XCTestCase {
-
     // MARK: - Argument parsing
 
     func testListDefaults() throws {
@@ -235,7 +234,7 @@ final class RemindersHelperTests: XCTestCase {
 
     // MARK: - Support
 
-    private func jsonObject<T: Encodable>(_ value: T) throws -> [String: Any] {
+    private func jsonObject(_ value: some Encodable) throws -> [String: Any] {
         let data = try encodeJSON(value)
         return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
     }

@@ -59,10 +59,10 @@ struct MainWindowView: View {
     /// which keeps `AppStatus.color`.)
     private var footerColor: Color {
         switch status {
-        case .connected:    return .green
-        case .connecting:   return .orange
-        case .error:        return .red
-        case .disconnected: return .secondary
+        case .connected: .green
+        case .connecting: .orange
+        case .error: .red
+        case .disconnected: .secondary
         }
     }
 
@@ -70,8 +70,12 @@ struct MainWindowView: View {
     /// instance id. Kept to a single elided line.
     private var footerDetail: String? {
         guard let snapshot = statusMonitor.snapshot else { return nil }
-        if !snapshot.hubLine.isEmpty { return snapshot.hubLine }
-        if !snapshot.instanceID.isEmpty { return snapshot.instanceID }
+        if !snapshot.hubLine.isEmpty {
+            return snapshot.hubLine
+        }
+        if !snapshot.instanceID.isEmpty {
+            return snapshot.instanceID
+        }
         return nil
     }
 
@@ -141,7 +145,11 @@ struct MainWindowView: View {
     private var sidebarSelection: Binding<SidebarItem?> {
         Binding(
             get: { appState.selectedSidebarItem },
-            set: { if let newValue = $0 { appState.selectedSidebarItem = newValue } }
+            set: {
+                if let newValue = $0 {
+                    appState.selectedSidebarItem = newValue
+                }
+            }
         )
     }
 
@@ -151,13 +159,13 @@ struct MainWindowView: View {
     /// shallow so `NavigationSplitView` + `List` initialization stays cheap.
     private var contentView: AnyView {
         switch appState.selectedSidebarItem {
-        case .dashboard:   return AnyView(DashboardPage())
-        case .project:     return AnyView(ProjectAccountPage())
-        case .tools:       return AnyView(ToolsPage())
-        case .mcpServers:  return AnyView(MCPServersPage())
-        case .permissions: return AnyView(PermissionsPage())
-        case .connection:  return AnyView(ConnectionPage())
-        case .about:       return AnyView(AboutPage())
+        case .dashboard: AnyView(DashboardPage())
+        case .project: AnyView(ProjectAccountPage())
+        case .tools: AnyView(ToolsPage())
+        case .mcpServers: AnyView(MCPServersPage())
+        case .permissions: AnyView(PermissionsPage())
+        case .connection: AnyView(ConnectionPage())
+        case .about: AnyView(AboutPage())
         }
     }
 }

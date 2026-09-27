@@ -8,46 +8,45 @@ import Foundation
 /// mapping and persistence are pure and unit-tested; only `runProbe` spawns a
 /// real process (never invoked from tests).
 enum PermissionCenter {
-
     enum Service: String, CaseIterable {
         case notes
         case reminders
 
         var displayName: String {
             switch self {
-            case .notes: return "Notes"
-            case .reminders: return "Reminders"
+            case .notes: "Notes"
+            case .reminders: "Reminders"
             }
         }
 
         var systemImage: String {
             switch self {
-            case .notes: return "note.text"
-            case .reminders: return "checklist"
+            case .notes: "note.text"
+            case .reminders: "checklist"
             }
         }
 
         /// Harmless first touch that still requires Automation permission.
         var probeScript: String {
             switch self {
-            case .notes: return "tell application \"Notes\" to get name"
-            case .reminders: return "tell application \"Reminders\" to get name of every list"
+            case .notes: "tell application \"Notes\" to get name"
+            case .reminders: "tell application \"Reminders\" to get name of every list"
             }
         }
     }
 
     enum PermissionState: Equatable {
-        case unknown        // never probed (or nothing learned yet)
-        case requested      // a probe ran and a system prompt may be pending
+        case unknown // never probed (or nothing learned yet)
+        case requested // a probe ran and a system prompt may be pending
         case granted
         case denied
 
         var label: String {
             switch self {
-            case .unknown: return "Not granted yet"
-            case .requested: return "Waiting for macOS prompt…"
-            case .granted: return "Granted"
-            case .denied: return "Denied"
+            case .unknown: "Not granted yet"
+            case .requested: "Waiting for macOS prompt…"
+            case .granted: "Granted"
+            case .denied: "Denied"
             }
         }
     }
@@ -125,10 +124,10 @@ enum PermissionCenter {
 
     private static func stateLabelKey(_ state: PermissionState) -> String {
         switch state {
-        case .unknown: return "unknown"
-        case .requested: return "requested"
-        case .granted: return "granted"
-        case .denied: return "denied"
+        case .unknown: "unknown"
+        case .requested: "requested"
+        case .granted: "granted"
+        case .denied: "denied"
         }
     }
 }

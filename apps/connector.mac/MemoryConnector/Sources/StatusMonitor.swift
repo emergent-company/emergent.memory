@@ -8,7 +8,6 @@ import Foundation
 /// process spawns then.
 @MainActor
 final class StatusMonitor: ObservableObject {
-
     static let shared = StatusMonitor()
 
     @Published private(set) var snapshot: StatusSnapshot?
@@ -32,8 +31,8 @@ final class StatusMonitor: ObservableObject {
         task = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                await self.tick()
-                let delay = self.nextInterval()
+                await tick()
+                let delay = nextInterval()
                 try? await Task.sleep(for: .seconds(delay))
             }
         }
@@ -74,7 +73,9 @@ final class StatusMonitor: ObservableObject {
             arguments: ["status", "--json", "--config", EngineManager.defaultConfigPath],
             timeout: Self.statusTimeout
         )
-        if json.exitCode == 0 { return json }
+        if json.exitCode == 0 {
+            return json
+        }
         return await ProcessRunner.run(
             executable: engineURL,
             arguments: ["status", "--config", EngineManager.defaultConfigPath],
@@ -113,7 +114,8 @@ final class StatusMonitor: ObservableObject {
         if let burstStart,
            burstAttempts < Self.maxBurstAttempts,
            Date().timeIntervalSince(burstStart) < 40,
-           snapshot?.hubState != .connected {
+           snapshot?.hubState != .connected
+        {
             return Self.burstInterval
         }
         return Self.pollInterval

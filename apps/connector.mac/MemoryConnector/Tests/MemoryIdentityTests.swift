@@ -1,8 +1,7 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 final class MemoryIdentityTests: XCTestCase {
-
     // MARK: - initials
 
     func testInitialsVariants() {
@@ -146,7 +145,8 @@ final class MemoryIdentityTests: XCTestCase {
     private func authMe(userID: String? = "user-1",
                         email: String? = "dev@example.test",
                         projectName: String? = "Memory Dev",
-                        tokenName: String? = "dev") -> AuthMe {
+                        tokenName: String? = "dev") -> AuthMe
+    {
         AuthMe(userID: userID, email: email, scopes: ["project.read"], type: "project",
                projectID: "proj-1", projectName: projectName, orgID: "org-1",
                tokenID: "tok-1", tokenName: tokenName)
@@ -155,7 +155,8 @@ final class MemoryIdentityTests: XCTestCase {
     private func profile(displayName: String? = nil,
                          firstName: String? = nil,
                          lastName: String? = nil,
-                         email: String? = nil) -> UserProfile {
+                         email: String? = nil) -> UserProfile
+    {
         UserProfile(id: "user-1", subjectID: "sub-1", zitadelUserID: "zit-1",
                     firstName: firstName, lastName: lastName, displayName: displayName,
                     phoneE164: nil, avatarObjectKey: nil, email: email)

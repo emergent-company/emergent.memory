@@ -20,7 +20,11 @@ struct ConnectionPage: View {
         .navigationTitle("Connection")
         .alert("Memory", isPresented: Binding(
             get: { alertMessage != nil },
-            set: { if !$0 { alertMessage = nil } }
+            set: {
+                if !$0 {
+                    alertMessage = nil
+                }
+            }
         )) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -111,13 +115,21 @@ struct ConnectionPage: View {
 
     // MARK: - Active identity
 
-    private var activeAccount: Account? { accountStore.activeAccount }
+    private var activeAccount: Account? {
+        accountStore.activeAccount
+    }
 
-    private var activeName: String { activeAccount?.displayTitle ?? "" }
+    private var activeName: String {
+        activeAccount?.displayTitle ?? ""
+    }
 
-    private var activeEmail: String { activeAccount?.email ?? "" }
+    private var activeEmail: String {
+        activeAccount?.email ?? ""
+    }
 
-    private var activeInitials: String { activeAccount?.initials ?? "" }
+    private var activeInitials: String {
+        activeAccount?.initials ?? ""
+    }
 
     // MARK: - Actions
 
@@ -134,7 +146,7 @@ struct ConnectionPage: View {
                 // `AppEnvironment` applies the account scope and reloads the
                 // projects/identity for a NEW active account. Re-signing in to
                 // the same account does not change the id, so reload here too.
-                let token = (try? await accountStore.currentAccessToken()) ?? ""
+                let token = await (try? accountStore.currentAccessToken()) ?? ""
                 await projectStore.loadProjects(accessToken: token)
             } catch {
                 alertMessage = error.localizedDescription

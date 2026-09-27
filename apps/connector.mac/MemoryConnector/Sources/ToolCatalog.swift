@@ -2,22 +2,21 @@ import Foundation
 
 /// The engine's Apple MCP tools as the app knows them (Section 6 uses this to
 /// drive enable/disable toggles; the engine itself owns the schema).
-struct ToolCatalog {
-
+enum ToolCatalog {
     enum Service: String, CaseIterable {
         case notes
         case reminders
 
         var displayName: String {
             switch self {
-            case .notes: return "Apple Notes"
-            case .reminders: return "Apple Reminders"
+            case .notes: "Apple Notes"
+            case .reminders: "Apple Reminders"
             }
         }
     }
 
     struct Tool: Identifiable, Equatable {
-        let id: String          // engine tool name (must match the connector)
+        let id: String // engine tool name (must match the connector)
         let displayName: String
         let summary: String
         let service: Service

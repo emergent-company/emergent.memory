@@ -18,5 +18,7 @@ struct Memory: Identifiable, Codable, Hashable, Sendable {
 
     /// Localization key for the category/type label. Known values map to a
     /// localized name under `memory.category.<value>`.
-    var categoryDisplayNameKey: String { "memory.category.\(category)" }
+    var categoryDisplayNameKey: String {
+        "memory.category.\(category)"
+    }
 }

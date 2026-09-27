@@ -15,19 +15,19 @@ enum AppStatus: Equatable {
     static func derive(engine: EngineManager.State, snapshot: StatusSnapshot?) -> AppStatus {
         switch engine {
         case .failed:
-            return .error("Engine failed to stay running")
+            .error("Engine failed to stay running")
         case .stopped:
-            return .disconnected
+            .disconnected
         case .starting, .restarting:
-            return .connecting
+            .connecting
         case .running:
             switch snapshot?.hubState {
             case .connected:
-                return .connected
+                .connected
             case .authFailed:
-                return .error("Authentication failed")
+                .error("Authentication failed")
             case .notConnected, .unreachable, .missingConfig, .unknown, nil:
-                return .disconnected
+                .disconnected
             }
         }
     }
@@ -35,39 +35,39 @@ enum AppStatus: Equatable {
     var label: String {
         switch self {
         case .connecting:
-            return "Connecting…"
+            "Connecting…"
         case .connected:
-            return "Connected"
+            "Connected"
         case .disconnected:
-            return "Disconnected"
-        case .error(let message):
-            return message
+            "Disconnected"
+        case let .error(message):
+            message
         }
     }
 
     var symbolName: String {
         switch self {
         case .connecting:
-            return "arrow.triangle.2.circlepath"
+            "arrow.triangle.2.circlepath"
         case .connected:
-            return "circle.inset.filled"
+            "circle.inset.filled"
         case .disconnected:
-            return "circle.dashed"
+            "circle.dashed"
         case .error:
-            return "exclamationmark.triangle"
+            "exclamationmark.triangle"
         }
     }
 
     var color: Color {
         switch self {
         case .connecting:
-            return .secondary
+            .secondary
         case .connected:
-            return .green
+            .green
         case .disconnected:
-            return .secondary
+            .secondary
         case .error:
-            return .orange
+            .orange
         }
     }
 }

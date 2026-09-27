@@ -10,7 +10,6 @@ import Foundation
 /// fixed interval while the page is visible).
 @MainActor
 final class MCPServersStore: ObservableObject {
-
     /// Coarse page state. `servers` is kept across refreshes so a refresh never
     /// blanks an already-populated list.
     enum Phase: Equatable {
@@ -52,14 +51,17 @@ final class MCPServersStore: ObservableObject {
     private var pollTask: Task<Void, Never>?
 
     init(client: MCPServersAPIClient = MCPServersAPIClient(),
-         pollInterval: TimeInterval = 5) {
+         pollInterval: TimeInterval = 5)
+    {
         self.client = client
         self.pollInterval = pollInterval
     }
 
     /// Names of currently configured servers, for form validation (duplicate
     /// names are rejected by the engine with HTTP 409).
-    var existingNames: Set<String> { Set(servers.map(\.name)) }
+    var existingNames: Set<String> {
+        Set(servers.map(\.name))
+    }
 
     // MARK: - Load
 
@@ -67,7 +69,9 @@ final class MCPServersStore: ObservableObject {
     /// best-effort: a list failure is the only thing that flips the page to the
     /// error state, so a partially available API still renders.
     func load() async {
-        if servers.isEmpty { phase = .loading }
+        if servers.isEmpty {
+            phase = .loading
+        }
         isLoading = true
         defer { isLoading = false }
 
@@ -84,7 +88,9 @@ final class MCPServersStore: ObservableObject {
             lastUpdated = Date()
         } catch {
             errorMessage = error.localizedDescription
-            if servers.isEmpty { phase = .error }
+            if servers.isEmpty {
+                phase = .error
+            }
         }
     }
 
@@ -253,10 +259,18 @@ final class MCPServersStore: ObservableObject {
     /// discovered tools after a sharing write. Every request uses `try?` so a
     /// refresh failure never overrides the write's success.
     private func refreshAfterToolChange(server: String) async {
-        if let fetched = try? await client.list() { servers = fetched }
-        if let fetched = try? await client.status() { status = fetched }
-        if let detail = try? await client.get(name: server) { details[server] = detail }
-        if let tools = try? await client.tools(name: server) { toolsByServer[server] = tools }
+        if let fetched = try? await client.list() {
+            servers = fetched
+        }
+        if let fetched = try? await client.status() {
+            status = fetched
+        }
+        if let detail = try? await client.get(name: server) {
+            details[server] = detail
+        }
+        if let tools = try? await client.tools(name: server) {
+            toolsByServer[server] = tools
+        }
         lastUpdated = Date()
     }
 
@@ -284,9 +298,13 @@ final class MCPServersStore: ObservableObject {
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                try? await Task.sleep(for: .seconds(self.pollInterval))
-                if Task.isCancelled { return }
-                if EngineManager.shared.state == .running { await self.load() }
+                try? await Task.sleep(for: .seconds(pollInterval))
+                if Task.isCancelled {
+                    return
+                }
+                if EngineManager.shared.state == .running {
+                    await load()
+                }
             }
         }
     }

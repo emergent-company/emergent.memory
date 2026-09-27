@@ -7,29 +7,42 @@ import Foundation
 /// `DashboardStore.load` fills the snapshot, tolerating individual endpoint
 /// failures.
 struct DashboardSnapshot: Equatable, Sendable {
-    var project: ProjectDetail? = nil
-    var objectCount: Int? = nil
-    var relationshipCount: Int? = nil
-    var schemaStats: SchemaStats? = nil
+    var project: ProjectDetail?
+    var objectCount: Int?
+    var relationshipCount: Int?
+    var schemaStats: SchemaStats?
     /// Convenience copy of `project?.stats` (may be nil even when `project` is
     /// present, e.g. when `include_stats` returned no stats block).
-    var projectStats: ProjectStats? = nil
+    var projectStats: ProjectStats?
     /// The project's real agent DEFINITIONS (not chat-session instances).
     var agents: [AgentDefinitionSummary] = []
     /// Organisation display name resolved by matching `orgID` against
     /// `GET /api/orgs`. nil when the org id is missing, the org list is
     /// unavailable, or it has no matching entry — the UI then omits the org
     /// line rather than inventing a placeholder.
-    var organizationName: String? = nil
+    var organizationName: String?
 
-    var projectName: String? { project?.name }
-    var orgID: String? { project?.orgID }
-    var projectInfo: String? { project?.projectInfo }
+    var projectName: String? {
+        project?.name
+    }
+
+    var orgID: String? {
+        project?.orgID
+    }
+
+    var projectInfo: String? {
+        project?.projectInfo
+    }
 
     /// Total object count, preferring the project stats block when present.
-    var resolvedObjectCount: Int? { projectStats?.objectCount ?? objectCount }
+    var resolvedObjectCount: Int? {
+        projectStats?.objectCount ?? objectCount
+    }
+
     /// Total relationship count, preferring the project stats block.
-    var resolvedRelationshipCount: Int? { projectStats?.relationshipCount ?? relationshipCount }
+    var resolvedRelationshipCount: Int? {
+        projectStats?.relationshipCount ?? relationshipCount
+    }
 }
 
 /// Loads the project Dashboard's data layer.
@@ -44,7 +57,6 @@ struct DashboardSnapshot: Equatable, Sendable {
 /// partially available server still renders a page.
 @MainActor
 final class DashboardStore: ObservableObject {
-
     enum State: Equatable {
         case idle
         case loading
@@ -60,7 +72,7 @@ final class DashboardStore: ObservableObject {
     private let clientFactory: @Sendable (String, String) -> MemoryAPIClient
 
     init(session: URLSession = .shared) {
-        self.clientFactory = { serverURL, accessToken in
+        clientFactory = { serverURL, accessToken in
             MemoryAPIClient(serverURL: serverURL, token: accessToken, session: session)
         }
     }
@@ -98,7 +110,8 @@ final class DashboardStore: ObservableObject {
         let orgs = await orgsTask
 
         if detail == nil, objectCount == nil, relationshipCount == nil,
-           schemaStats == nil, agents == nil {
+           schemaStats == nil, agents == nil
+        {
             state = .error("Couldn't load the project dashboard.")
             return
         }

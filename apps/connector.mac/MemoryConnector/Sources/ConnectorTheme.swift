@@ -19,7 +19,8 @@ struct ConnectorCard<Content: View>: View {
     private let content: Content
 
     init(title: String? = nil, systemImage: String? = nil,
-         @ViewBuilder content: () -> Content) {
+         @ViewBuilder content: () -> Content)
+    {
         self.title = title
         self.systemImage = systemImage
         self.content = content()

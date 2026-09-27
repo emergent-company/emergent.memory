@@ -1,13 +1,12 @@
 import Foundation
-import Testing
 @testable import Memory
+import Testing
 
-@Suite
 @MainActor
 struct AgentStoreTests {
-    @Test func initReadsPersistedOrDefaultAgentName() {
+    @Test func initReadsPersistedOrDefaultAgentName() throws {
         let suite = "AgentStoreTests.init.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
+        let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
 
         let store = AgentStore(defaults: defaults)
@@ -16,7 +15,7 @@ struct AgentStoreTests {
 
     @Test func selectPersistsAndPublishesName() throws {
         let suite = "AgentStoreTests.select.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
+        let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
 
         let store = AgentStore(defaults: defaults)

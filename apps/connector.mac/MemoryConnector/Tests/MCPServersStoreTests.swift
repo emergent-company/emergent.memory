@@ -1,10 +1,9 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 /// Behaviour of `MCPServersStore` against a stubbed client: load, mutations,
 /// tools, and error states. Hermetic — no real network.
 final class MCPServersStoreTests: XCTestCase {
-
     private let listJSON = """
     [{"name":"filesystem","transport":"stdio","enabled":true,"connected":true,"toolCount":2}]
     """
@@ -352,7 +351,9 @@ final class MCPServersStoreTests: XCTestCase {
                 return .ok(self.serverDetailJSON(disabledTools: state.value))
             case ("GET", "/api/mcp-servers/filesystem/tools"): return .ok(self.toolsJSON)
             case ("PUT", "/api/mcp-servers/filesystem/config"):
-                if let updated = Self.disabledTools(from: request) { state.set(updated) }
+                if let updated = Self.disabledTools(from: request) {
+                    state.set(updated)
+                }
                 return .ok(self.serverDetailJSON(disabledTools: state.value))
             default: return .status(404)
             }
@@ -397,7 +398,9 @@ private final class ServerDisabledState: @unchecked Sendable {
     private let lock = NSLock()
     private var storage: [String]
 
-    init(_ initial: [String]) { storage = initial }
+    init(_ initial: [String]) {
+        storage = initial
+    }
 
     var value: [String] {
         lock.lock(); defer { lock.unlock() }

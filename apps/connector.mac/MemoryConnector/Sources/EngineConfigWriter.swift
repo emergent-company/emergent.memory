@@ -10,7 +10,6 @@ import Foundation
 /// Pure and testable: callers pass an explicit config URL and values; no
 /// singletons, no Keychain access inside.
 enum EngineConfigWriter {
-
     /// A validated connection profile ready to materialize.
     struct Values: Equatable {
         let serverURL: String
@@ -20,7 +19,8 @@ enum EngineConfigWriter {
         let disabledTools: [String]
 
         init(serverURL: String, token: String, instanceID: String,
-             projectID: String = "", disabledTools: [String] = []) {
+             projectID: String = "", disabledTools: [String] = [])
+        {
             self.serverURL = serverURL
             self.token = token
             self.instanceID = instanceID
@@ -98,7 +98,9 @@ enum EngineConfigWriter {
                 let trimmed = line.trimmingCharacters(in: .whitespaces)
                 if trimmed.hasPrefix("- ") {
                     let name = String(trimmed.dropFirst(2)).trimmingCharacters(in: .whitespaces)
-                    if !name.isEmpty { disabledTools.append(name) }
+                    if !name.isEmpty {
+                        disabledTools.append(name)
+                    }
                     continue
                 }
                 inDisabledTools = false
@@ -134,15 +136,15 @@ enum EngineConfigWriter {
     }
 
     static func write(configURL: URL, content: String) throws {
-        let fm = FileManager.default
+        let fileManager = FileManager.default
         let parent = configURL.deletingLastPathComponent()
-        if !fm.fileExists(atPath: parent.path) {
-            try fm.createDirectory(at: parent, withIntermediateDirectories: true,
-                                   attributes: [.posixPermissions: 0o700])
+        if !fileManager.fileExists(atPath: parent.path) {
+            try fileManager.createDirectory(at: parent, withIntermediateDirectories: true,
+                                            attributes: [.posixPermissions: 0o700])
         }
         let data = Data(content.utf8)
         try data.write(to: configURL, options: .atomic)
         // .atomic replaces the file via a temp rename; enforce the mode after.
-        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
+        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
     }
 }

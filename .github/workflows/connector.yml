@@ -1,0 +1,130 @@
+name: Connector CI
+
+# `apps/connector.linux` was built by connector-dev / connector-release but
+# linted nowhere in CI, and `apps/connector.mac` (Swift) had no lint coverage at
+# all. This workflow supplies both. It is path-filtered like the other app
+# workflows (server.yml, cli.yml, web-ui.yml); branch protection's required `ci`
+# context is still emitted by the repo-root ci.yml for every PR, and this
+# workflow adds a stricter `ci` gate for connector changes.
+#
+# Swift tooling runs on ubuntu using the Linux release binaries — no macOS
+# runner is needed for lint. Both tools ratchet to the changed files (see
+# apps/connector.mac/Scripts/lint-swift.sh) so pre-existing Swift debt does not
+# fail the job, while new drift does.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/connector.linux/**'
+      - 'apps/connector.mac/**'
+      - '.github/workflows/connector.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/connector.linux/**'
+      - 'apps/connector.mac/**'
+      - '.github/workflows/connector.yml'
+  workflow_dispatch:
+
+env:
+  GO_VERSION: '1.26'
+  SWIFTLINT_VERSION: '0.65.1'
+  SWIFTFORMAT_VERSION: '0.63.0'
+
+jobs:
+  linux-lint:
+    name: Linux connector lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: apps/connector.linux/go.sum
+
+      - name: gofmt
+        working-directory: apps/connector.linux
+        run: |
+          files=$(git ls-files '*.go' | xargs gofmt -l)
+          if [ -n "$files" ]; then
+            echo "gofmt: the following tracked files need formatting:"
+            echo "$files"
+            exit 1
+          fi
+
+      - name: go vet
+        working-directory: apps/connector.linux
+        run: go vet ./...
+
+      - name: go build
+        working-directory: apps/connector.linux
+        run: go build ./...
+
+      - name: Install golangci-lint
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: golangci-lint
+        working-directory: apps/connector.linux
+        env:
+          GOLANGCI_LINT_CACHE: ${{ runner.temp }}/golangci-lint-cache
+        run: golangci-lint run --allow-parallel-runners ./...
+
+  mac-lint:
+    name: Mac connector lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Need the merge base with the PR/push base to ratchet to changed files.
+          fetch-depth: 0
+
+      - name: Install Swift linters
+        run: |
+          curl -sSL -o "$RUNNER_TEMP/swiftformat.zip" \
+            "https://github.com/nicklockwood/SwiftFormat/releases/download/${SWIFTFORMAT_VERSION}/swiftformat_linux.zip"
+          unzip -q "$RUNNER_TEMP/swiftformat.zip" -d "$RUNNER_TEMP/swiftformat"
+          curl -sSL -o "$RUNNER_TEMP/swiftlint.zip" \
+            "https://github.com/realm/SwiftLint/releases/download/${SWIFTLINT_VERSION}/swiftlint_linux_amd64.zip"
+          unzip -q "$RUNNER_TEMP/swiftlint.zip" -d "$RUNNER_TEMP/swiftlint"
+          mkdir -p "$RUNNER_TEMP/bin"
+          install -m 0755 "$RUNNER_TEMP/swiftformat/swiftformat_linux" "$RUNNER_TEMP/bin/swiftformat"
+          install -m 0755 "$RUNNER_TEMP/swiftlint/swiftlint" "$RUNNER_TEMP/bin/swiftlint"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bin/swiftformat" --version
+          "$RUNNER_TEMP/bin/swiftlint" version
+
+      - name: swiftformat + swiftlint (changed files)
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: apps/connector.mac/Scripts/lint-swift.sh
+
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    # always() so the required `ci` context always reports a real result instead
+    # of being skipped when a dependency fails (same pattern as cli.yml).
+    if: ${{ always() }}
+    needs: [linux-lint, mac-lint]
+    steps:
+      - name: CI gate
+        run: |
+          failed=0
+          for result in "${{ needs.linux-lint.result }}" "${{ needs.mac-lint.result }}"; do
+            echo "dependency result: ${result}"
+            case "${result}" in
+              success|skipped) ;;
+              *) failed=1 ;;
+            esac
+          done
+          if [ "${failed}" -ne 0 ]; then
+            echo "CI gate failed: one or more required jobs did not succeed"
+            exit 1
+          fi
+          echo "CI passed"

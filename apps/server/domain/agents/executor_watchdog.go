@@ -8,6 +8,26 @@ import (
 	"time"
 )
 
+// watchdogTimer is the subset of *time.Timer the watchdog relies on. It is an
+// interface so tests can drive the watchdog deterministically instead of racing
+// the wall clock (issue #1142).
+type watchdogTimer interface {
+	Reset(d time.Duration) bool
+	Stop() bool
+}
+
+// watchdogClock arms one-shot timers. Production uses watchdogRealClock; tests
+// inject a manual clock whose time only advances on demand.
+type watchdogClock interface {
+	AfterFunc(d time.Duration, f func()) watchdogTimer
+}
+
+type watchdogRealClock struct{}
+
+func (watchdogRealClock) AfterFunc(d time.Duration, f func()) watchdogTimer {
+	return time.AfterFunc(d, f)
+}
+
 // stepWatchdog replaces the single fixed wall-clock run deadline with a
 // resettable per-step budget (issue #1072). A run whose steps keep making
 // progress is never killed by the aggregate deadline, while a step that makes
@@ -27,13 +47,22 @@ type stepWatchdog struct {
 	runID       string
 
 	mu    sync.Mutex
-	timer *time.Timer
+	timer watchdogTimer
 }
 
 // newStepWatchdog derives a cancellable context from parent and arms a timer
 // for stepTimeout. reason, when non-nil, receives the cancellation reason
 // before the context is cancelled so the run can report a meaningful error.
 func newStepWatchdog(parent context.Context, stepTimeout time.Duration, reason *string, log *slog.Logger, runID string) *stepWatchdog {
+	return newStepWatchdogWithClock(parent, stepTimeout, reason, log, runID, watchdogRealClock{})
+}
+
+// newStepWatchdogWithClock is newStepWatchdog with an injectable clock, used by
+// tests to keep watchdog timing fully deterministic (no wall-clock sleeps).
+func newStepWatchdogWithClock(parent context.Context, stepTimeout time.Duration, reason *string, log *slog.Logger, runID string, clock watchdogClock) *stepWatchdog {
+	if clock == nil {
+		clock = watchdogRealClock{}
+	}
 	ctx, cancel := context.WithCancel(parent)
 	w := &stepWatchdog{
 		ctx:         ctx,
@@ -43,7 +72,7 @@ func newStepWatchdog(parent context.Context, stepTimeout time.Duration, reason *
 		log:         log,
 		runID:       runID,
 	}
-	w.timer = time.AfterFunc(stepTimeout, w.fire)
+	w.timer = clock.AfterFunc(stepTimeout, w.fire)
 	return w
 }
 

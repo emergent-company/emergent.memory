@@ -1,10 +1,9 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 /// Endpoint + error-mapping coverage for `MCPServersAPIClient` against a
 /// stubbed `URLSession` (no real network).
 final class MCPServersAPIClientTests: XCTestCase {
-
     private let baseURL = "http://127.0.0.1:8890"
 
     private lazy var detailJSON = """
@@ -88,7 +87,7 @@ final class MCPServersAPIClientTests: XCTestCase {
                        "/api/mcp-servers/filesystem")
     }
 
-    func testGetEscapesServerNameInPath() async throws {
+    func testGetEscapesServerNameInPath() async {
         StubURLProtocol.registry.setHandler { _ in .ok(self.detailJSON) }
 
         _ = try? await makeClient().get(name: "my server")
@@ -120,7 +119,7 @@ final class MCPServersAPIClientTests: XCTestCase {
         XCTAssertEqual(request?.url?.path, "/api/mcp-servers")
         XCTAssertEqual(request?.value(forHTTPHeaderField: "Content-Type"), "application/json")
 
-        let body = HTTPBodyReader.string(from: request!)
+        let body = try HTTPBodyReader.string(from: XCTUnwrap(request))
         XCTAssertTrue(body.contains("\"name\":\"filesystem\""), body)
         XCTAssertTrue(body.contains("\"transport\":\"stdio\""), body)
         XCTAssertTrue(body.contains("\"disabled_tools\""), body)
@@ -136,7 +135,7 @@ final class MCPServersAPIClientTests: XCTestCase {
                                            headers: ["Authorization": "Bearer x"])
         _ = try await makeClient().create(config)
 
-        let body = HTTPBodyReader.string(from: StubURLProtocol.registry.capturedRequest!)
+        let body = try HTTPBodyReader.string(from: XCTUnwrap(StubURLProtocol.registry.capturedRequest))
         // Decode instead of substring-matching: Foundation's JSONEncoder escapes
         // `/` as `\/`, so an exact "url":"https://..." substring is brittle.
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
@@ -169,7 +168,7 @@ final class MCPServersAPIClientTests: XCTestCase {
         let request = StubURLProtocol.registry.capturedRequest
         XCTAssertEqual(request?.httpMethod, "PUT")
         XCTAssertEqual(request?.url?.path, "/api/mcp-servers/filesystem/enabled")
-        XCTAssertEqual(HTTPBodyReader.string(from: request!), #"{"enabled":false}"#)
+        XCTAssertEqual(try HTTPBodyReader.string(from: XCTUnwrap(request)), #"{"enabled":false}"#)
     }
 
     func testDeleteSendsDELETEAndAccepts204() async throws {
@@ -216,7 +215,7 @@ final class MCPServersAPIClientTests: XCTestCase {
             .status(400, json: #"{"error":"mcp server \"x\": command is required for stdio transport"}"#)
         }
 
-        await XCTAssertThrowsErrorAsync(try await self.makeClient().create(
+        await XCTAssertThrowsErrorAsync(try await makeClient().create(
             HostedMCPServerConfig(name: "x", transport: .stdio)
         )) { error in
             XCTAssertEqual(error as? MCPServersAPIError,
@@ -229,7 +228,7 @@ final class MCPServersAPIClientTests: XCTestCase {
             .status(409, json: #"{"error":"mcp server \"x\" already exists"}"#)
         }
 
-        await XCTAssertThrowsErrorAsync(try await self.makeClient().create(
+        await XCTAssertThrowsErrorAsync(try await makeClient().create(
             HostedMCPServerConfig(name: "x", transport: .http, url: "http://x")
         )) { error in
             XCTAssertEqual(error as? MCPServersAPIError, .server(409, "mcp server \"x\" already exists"))
@@ -239,7 +238,7 @@ final class MCPServersAPIClientTests: XCTestCase {
     func testNotFoundErrorIsMapped() async {
         StubURLProtocol.registry.setHandler { _ in .status(404, json: #"{"error":"mcp server \"gone\" not found"}"#) }
 
-        await XCTAssertThrowsErrorAsync(try await self.makeClient().get(name: "gone")) { error in
+        await XCTAssertThrowsErrorAsync(try await makeClient().get(name: "gone")) { error in
             XCTAssertEqual(error as? MCPServersAPIError, .server(404, "mcp server \"gone\" not found"))
         }
     }
@@ -247,7 +246,7 @@ final class MCPServersAPIClientTests: XCTestCase {
     func testNetworkFailureMapsToUnreachable() async {
         StubURLProtocol.registry.setHandler { _ in .failure(URLError(.cannotConnectToHost)) }
 
-        await XCTAssertThrowsErrorAsync(try await self.makeClient().list()) { error in
+        await XCTAssertThrowsErrorAsync(try await makeClient().list()) { error in
             guard case .unreachable = (error as? MCPServersAPIError) else {
                 return XCTFail("expected unreachable, got \(error)")
             }
@@ -257,7 +256,7 @@ final class MCPServersAPIClientTests: XCTestCase {
     func testInvalidJSONMapsToDecoding() async {
         StubURLProtocol.registry.setHandler { _ in .ok("not json") }
 
-        await XCTAssertThrowsErrorAsync(try await self.makeClient().list()) { error in
+        await XCTAssertThrowsErrorAsync(try await makeClient().list()) { error in
             guard case .decoding = (error as? MCPServersAPIError) else {
                 return XCTFail("expected decoding, got \(error)")
             }
@@ -267,8 +266,8 @@ final class MCPServersAPIClientTests: XCTestCase {
 
 /// Small async-aware `XCTAssertThrowsError` equivalent (the stdlib one is
 /// synchronous-only).
-func XCTAssertThrowsErrorAsync<T>(
-    _ expression: @autoclosure () async throws -> T,
+func XCTAssertThrowsErrorAsync(
+    _ expression: @autoclosure () async throws -> some Any,
     file: StaticString = #filePath,
     line: UInt = #line,
     _ handler: (Error) -> Void

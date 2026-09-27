@@ -10,7 +10,6 @@ import Foundation
 /// loading/error states so the sheet can render them and retry.
 @MainActor
 final class AgentDetailStore: ObservableObject {
-
     enum State: Equatable {
         case idle
         case loading
@@ -25,7 +24,7 @@ final class AgentDetailStore: ObservableObject {
     private let clientFactory: @Sendable (String, String) -> MemoryAPIClient
 
     init(session: URLSession = .shared) {
-        self.clientFactory = { serverURL, accessToken in
+        clientFactory = { serverURL, accessToken in
             MemoryAPIClient(serverURL: serverURL, token: accessToken, session: session)
         }
     }
@@ -41,8 +40,8 @@ final class AgentDetailStore: ObservableObject {
         let client = clientFactory(serverURL, accessToken)
         do {
             let detail = try await client.agentDefinition(projectID: projectID,
-                                                           id: id,
-                                                           accessToken: accessToken)
+                                                          id: id,
+                                                          accessToken: accessToken)
             guard let detail else {
                 state = .error("This agent definition could not be found.")
                 return

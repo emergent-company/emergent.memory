@@ -1,6 +1,6 @@
 import Foundation
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 // MARK: - Fakes
 
@@ -9,7 +9,9 @@ private final class FakeLegacySessionReader: LegacySessionReading, @unchecked Se
     private let session: LegacySession?
     private var reads = 0
 
-    init(session: LegacySession?) { self.session = session }
+    init(session: LegacySession?) {
+        self.session = session
+    }
 
     func read() -> LegacySession? {
         lock.withLock {
@@ -18,16 +20,22 @@ private final class FakeLegacySessionReader: LegacySessionReading, @unchecked Se
         }
     }
 
-    var readCount: Int { lock.withLock { reads } }
+    var readCount: Int {
+        lock.withLock { reads }
+    }
 }
 
 private final class FakeLegacySessionClearer: LegacySessionClearing, @unchecked Sendable {
     private let lock = NSLock()
     private var clearedFlag = false
 
-    func clear() { lock.withLock { clearedFlag = true } }
+    func clear() {
+        lock.withLock { clearedFlag = true }
+    }
 
-    var wasCleared: Bool { lock.withLock { clearedFlag } }
+    var wasCleared: Bool {
+        lock.withLock { clearedFlag }
+    }
 }
 
 private final class FakeLegacyKeychain: LegacyKeychainReading, @unchecked Sendable {
@@ -35,9 +43,13 @@ private final class FakeLegacyKeychain: LegacyKeychainReading, @unchecked Sendab
     private var values: [String: String]
     private var deleted: [String] = []
 
-    init(values: [String: String] = [:]) { self.values = values }
+    init(values: [String: String] = [:]) {
+        self.values = values
+    }
 
-    func load(account: String) throws -> String? { lock.withLock { values[account] } }
+    func load(account: String) throws -> String? {
+        lock.withLock { values[account] }
+    }
 
     func delete(account: String) throws {
         lock.withLock {
@@ -46,13 +58,14 @@ private final class FakeLegacyKeychain: LegacyKeychainReading, @unchecked Sendab
         }
     }
 
-    var deletedAccounts: [String] { lock.withLock { deleted } }
+    var deletedAccounts: [String] {
+        lock.withLock { deleted }
+    }
 }
 
 // MARK: - Tests
 
 final class LegacyMigratorTests: XCTestCase {
-
     private let server = "https://memory.example.test"
     private let configPath = "/tmp/memory-connector.yml"
     private let binary = URL(fileURLWithPath: "/tmp/memory-connector")
@@ -65,20 +78,29 @@ final class LegacyMigratorTests: XCTestCase {
 
     // MARK: Helpers
 
+    /// Bundle returned by `makeCLI`; a named type keeps the call sites readable
+    /// and avoids a 3-member tuple.
+    private struct CLIHarness {
+        let cli: ConnectorCLI
+        let statusRunner: CannedRunner
+        let importRunner: CannedStdinRunner
+    }
+
     private func makeDefaults() -> (UserDefaults, String) {
         let name = "LegacyMigratorTests-\(UUID().uuidString)"
         return (UserDefaults(suiteName: name)!, name)
     }
 
     private func makeCLI(status: ProcessResult,
-                         import importResult: ProcessResult) -> (ConnectorCLI, CannedRunner, CannedStdinRunner) {
+                         import importResult: ProcessResult) -> CLIHarness
+    {
         let statusRunner = CannedRunner(result: status)
         let importRunner = CannedStdinRunner(result: importResult)
         let cli = ConnectorCLI(binaryURL: binary,
                                runner: statusRunner.runner,
                                timeout: 5,
                                stdinRunner: importRunner.runner)
-        return (cli, statusRunner, importRunner)
+        return CLIHarness(cli: cli, statusRunner: statusRunner, importRunner: importRunner)
     }
 
     private func signedOut() -> ProcessResult {
@@ -109,7 +131,8 @@ final class LegacyMigratorTests: XCTestCase {
     func testSuccessImportsStdinClearsAndMarksDone() async throws {
         let (defaults, name) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: name) }
-        let (cli, statusRunner, importRunner) = makeCLI(status: signedOut(), import: importOK())
+        let harness = makeCLI(status: signedOut(), import: importOK())
+        let cli = harness.cli, statusRunner = harness.statusRunner, importRunner = harness.importRunner
         let reader = FakeLegacySessionReader(session: sample)
         let clearer = FakeLegacySessionClearer()
         let migrator = LegacyMigrator(cli: cli,
@@ -145,7 +168,8 @@ final class LegacyMigratorTests: XCTestCase {
     func testNoLegacySessionMarksDoneWithoutCallingCLI() async {
         let (defaults, name) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: name) }
-        let (cli, statusRunner, importRunner) = makeCLI(status: signedOut(), import: importOK())
+        let harness = makeCLI(status: signedOut(), import: importOK())
+        let cli = harness.cli, statusRunner = harness.statusRunner, importRunner = harness.importRunner
         let migrator = LegacyMigrator(cli: cli,
                                       serverURL: server,
                                       reader: FakeLegacySessionReader(session: nil),
@@ -163,7 +187,8 @@ final class LegacyMigratorTests: XCTestCase {
     func testNilServerMarksDoneWithoutCallingCLI() async {
         let (defaults, name) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: name) }
-        let (cli, statusRunner, importRunner) = makeCLI(status: signedOut(), import: importOK())
+        let harness = makeCLI(status: signedOut(), import: importOK())
+        let cli = harness.cli, statusRunner = harness.statusRunner, importRunner = harness.importRunner
         let migrator = LegacyMigrator(cli: cli,
                                       serverURL: nil,
                                       reader: FakeLegacySessionReader(session: sample),
@@ -181,7 +206,8 @@ final class LegacyMigratorTests: XCTestCase {
     func testEmptyServerMarksDoneWithoutCallingCLI() async {
         let (defaults, name) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: name) }
-        let (cli, statusRunner, importRunner) = makeCLI(status: signedOut(), import: importOK())
+        let harness = makeCLI(status: signedOut(), import: importOK())
+        let cli = harness.cli, statusRunner = harness.statusRunner, importRunner = harness.importRunner
         let migrator = LegacyMigrator(cli: cli,
                                       serverURL: "   ",
                                       reader: FakeLegacySessionReader(session: sample),
@@ -199,7 +225,8 @@ final class LegacyMigratorTests: XCTestCase {
     func testAlreadySignedInMarksDoneWithoutImporting() async {
         let (defaults, name) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: name) }
-        let (cli, statusRunner, importRunner) = makeCLI(status: signedIn(), import: importOK())
+        let harness = makeCLI(status: signedIn(), import: importOK())
+        let cli = harness.cli, statusRunner = harness.statusRunner, importRunner = harness.importRunner
         let clearer = FakeLegacySessionClearer()
         let migrator = LegacyMigrator(cli: cli,
                                       serverURL: server,
@@ -219,7 +246,8 @@ final class LegacyMigratorTests: XCTestCase {
     func testImportFailureLeavesFlagUnsetAndRetries() async {
         let (defaults, name) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: name) }
-        let (cli, _, importRunner) = makeCLI(status: signedOut(), import: failure())
+        let harness = makeCLI(status: signedOut(), import: failure())
+        let cli = harness.cli, importRunner = harness.importRunner
         let reader = FakeLegacySessionReader(session: sample)
         let clearer = FakeLegacySessionClearer()
         let migrator = LegacyMigrator(cli: cli,
@@ -246,7 +274,8 @@ final class LegacyMigratorTests: XCTestCase {
     func testStatusFailureLeavesFlagUnsetAndDoesNotImport() async {
         let (defaults, name) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: name) }
-        let (cli, _, importRunner) = makeCLI(status: failure(), import: importOK())
+        let harness = makeCLI(status: failure(), import: importOK())
+        let cli = harness.cli, importRunner = harness.importRunner
         let migrator = LegacyMigrator(cli: cli,
                                       serverURL: server,
                                       reader: FakeLegacySessionReader(session: sample),

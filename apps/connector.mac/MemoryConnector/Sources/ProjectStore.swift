@@ -18,7 +18,8 @@ struct ProjectStoreScope {
     /// Per-account scope rooted at `rootDirectory/accounts/<accountID>/`.
     static func account(_ account: Account,
                         environment: Environment,
-                        rootDirectory: URL) -> ProjectStoreScope {
+                        rootDirectory: URL) -> ProjectStoreScope
+    {
         let accountSecrets = AppSecretStore(
             baseDirectory: rootDirectory
                 .appendingPathComponent(AccountStore.accountsDirectoryName, isDirectory: true)
@@ -65,7 +66,6 @@ struct ProjectStoreScope {
 /// owns tokens, sessions, and engine-config writing.
 @MainActor
 final class ProjectStore: ObservableObject {
-
     enum State: Equatable {
         case idle
         case loading
@@ -106,6 +106,7 @@ final class ProjectStore: ObservableObject {
     private let stop: @MainActor () -> Void
 
     // MARK: - Connector CLI seam
+
     //
     // Project listing, token minting/reuse, and engine-config writing all run
     // through the bundled `memory-connector` CLI. Injectable so tests can
@@ -114,7 +115,7 @@ final class ProjectStore: ObservableObject {
 
     /// CLI wrapper used for `projects list` / `projects use`. Tests assign a
     /// `ConnectorCLI` built with a fake runner.
-    var connectorCLI: ConnectorCLI = ConnectorCLI()
+    var connectorCLI: ConnectorCLI = .init()
     /// `--config` path passed to the connector CLI.
     var cliConfigPath: String = EngineConfigSync.configURL.path
 
@@ -136,18 +137,19 @@ final class ProjectStore: ObservableObject {
          defaults: UserDefaults = .standard,
          profileStore: ProjectProfileStore? = nil,
          restart: @escaping @MainActor () -> Void = { EngineManager.shared.restart() },
-         stop: @escaping @MainActor () -> Void = { EngineManager.shared.stop() }) {
+         stop: @escaping @MainActor () -> Void = { EngineManager.shared.stop() })
+    {
         self.settings = settings
         self.defaults = defaults
         let store = profileStore ?? ProjectProfileStore(defaults: defaults)
         self.profileStore = store
-        self.scopedEnvironment = nil
-        self.scopedAccountID = nil
-        self.activeProjectIDKey = Self.activeProjectIDKey
+        scopedEnvironment = nil
+        scopedAccountID = nil
+        activeProjectIDKey = Self.activeProjectIDKey
         self.restart = restart
         self.stop = stop
-        self.activeProjectID = defaults.string(forKey: Self.activeProjectIDKey)
-        self.connectedProjectID = store.connectedProjectID()
+        activeProjectID = defaults.string(forKey: Self.activeProjectIDKey)
+        connectedProjectID = store.connectedProjectID()
     }
 
     /// The server URL backing the active scope (account environment or shared).
@@ -181,7 +183,9 @@ final class ProjectStore: ObservableObject {
     }
 
     /// Account id of the active scope, or nil for the shared scope.
-    var scopedAccount: String? { scopedAccountID }
+    var scopedAccount: String? {
+        scopedAccountID
+    }
 
     /// Re-materialises the engine config for the active scope's connected
     /// project through the CLI (`projects use` reuses the stored token), so a
@@ -208,7 +212,8 @@ final class ProjectStore: ObservableObject {
             stop()
             if await Self.isAuthFailure(error, cli: connectorCLI,
                                         serverURL: effectiveServerURL,
-                                        configPath: cliConfigPath) {
+                                        configPath: cliConfigPath)
+            {
                 state = .signedOut
             } else {
                 state = .error(error.localizedDescription)
@@ -232,7 +237,9 @@ final class ProjectStore: ObservableObject {
     }
 
     /// True when a project is selected (per-project profile editing applies).
-    var hasActiveProject: Bool { activeProjectID != nil }
+    var hasActiveProject: Bool {
+        activeProjectID != nil
+    }
 
     /// The active project's stored profile, when one exists.
     var activeProfile: ProjectProfile? {
@@ -254,7 +261,9 @@ final class ProjectStore: ObservableObject {
     }
 
     /// True when some project is connected (engine should be running).
-    var hasConnectedProject: Bool { connectedProjectID != nil }
+    var hasConnectedProject: Bool {
+        connectedProjectID != nil
+    }
 
     /// True when `projectID` is the connected project.
     func isConnected(_ projectID: String) -> Bool {
@@ -272,7 +281,7 @@ final class ProjectStore: ObservableObject {
     /// The CLI's project rows carry an organisation id; the `accessToken`
     /// parameter is retained for API compatibility but is no longer needed to
     /// list projects.
-    func loadProjects(accessToken: String) async {
+    func loadProjects(accessToken _: String) async {
         state = .loading
         do {
             try await fetchProjects()
@@ -319,7 +328,8 @@ final class ProjectStore: ObservableObject {
     private func handleLoadFailure(_ error: Error) async {
         guard await Self.isAuthFailure(error, cli: connectorCLI,
                                        serverURL: effectiveServerURL,
-                                       configPath: cliConfigPath) else {
+                                       configPath: cliConfigPath)
+        else {
             state = .error(error.localizedDescription)
             return
         }
@@ -332,9 +342,10 @@ final class ProjectStore: ObservableObject {
                 try await fetchProjects()
                 return
             } catch {
-                if !(await Self.isAuthFailure(error, cli: connectorCLI,
+                if await !(Self.isAuthFailure(error, cli: connectorCLI,
                                               serverURL: effectiveServerURL,
-                                              configPath: cliConfigPath)) {
+                                              configPath: cliConfigPath))
+                {
                     state = .error(error.localizedDescription)
                     return
                 }
@@ -351,9 +362,11 @@ final class ProjectStore: ObservableObject {
     static func isAuthFailure(_ error: Error,
                               cli: ConnectorCLI,
                               serverURL: String,
-                              configPath: String) async -> Bool {
+                              configPath: String) async -> Bool
+    {
         if let status = try? await cli.authStatus(serverURL: serverURL, configPath: configPath),
-           !status.signedIn {
+           !status.signedIn
+        {
             return true
         }
         return errorLooksLikeAuthFailure(error)
@@ -389,7 +402,9 @@ final class ProjectStore: ObservableObject {
     /// Organisation display name for a project, when known.
     func organizationName(for project: ProjectInfo) -> String? {
         guard let orgID = project.orgID else { return nil }
-        if let name = organizationNames[orgID], !name.isEmpty { return name }
+        if let name = organizationNames[orgID], !name.isEmpty {
+            return name
+        }
         return nil
     }
 
@@ -435,7 +450,7 @@ final class ProjectStore: ObservableObject {
     ///   config is written. If nothing is connected the engine is stopped, so
     ///   no connection lingers for a project the user is merely viewing. If a
     ///   different project is connected, that connection is left untouched.
-    func selectProject(_ id: String, accessToken: String) async {
+    func selectProject(_ id: String, accessToken _: String) async {
         state = .loading
         let profile = resolvedProfile(for: id)
 
@@ -465,7 +480,7 @@ final class ProjectStore: ObservableObject {
     /// config, then the engine restarts and exactly this project is marked
     /// connected (clearing the flag on any other project). Works with zero tools
     /// enabled — the node may report 0 tools while the user tunes them.
-    func connect(projectID: String, accessToken: String) async {
+    func connect(projectID: String, accessToken _: String) async {
         state = .loading
         do {
             // Seed the project's profile (all tools OFF) the first time, then

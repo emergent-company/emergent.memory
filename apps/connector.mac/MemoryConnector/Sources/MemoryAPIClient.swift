@@ -11,15 +11,15 @@ enum MemoryAPIError: LocalizedError, Equatable, Sendable {
     var errorDescription: String? {
         switch self {
         case .notConfigured:
-            return "No server URL or token configured."
+            "No server URL or token configured."
         case .authFailed:
-            return "Authentication failed — the server rejected the token."
-        case .unreachable(let detail):
-            return "Server unreachable: \(detail)"
-        case .httpStatus(let code):
-            return "Server returned HTTP \(code)."
-        case .decoding(let detail):
-            return "Could not read the server response: \(detail)"
+            "Authentication failed — the server rejected the token."
+        case let .unreachable(detail):
+            "Server unreachable: \(detail)"
+        case let .httpStatus(code):
+            "Server returned HTTP \(code)."
+        case let .decoding(detail):
+            "Could not read the server response: \(detail)"
         }
     }
 }
@@ -35,18 +35,19 @@ struct SchemaStats: Decodable, Equatable, Sendable {
     let totalObjects: Int
     enum CodingKeys: String, CodingKey {
         case totalTypes, enabledTypes, customTypes, totalObjects
-        case total_types, enabled_types, custom_types, total_objects
-        case TotalTypes, EnabledTypes, CustomTypes, TotalObjects
+        case totalTypesSnake = "total_types", enabledTypesSnake = "enabled_types"
+        case customTypesSnake = "custom_types", totalObjectsSnake = "total_objects"
+        case totalTypesPascal = "TotalTypes", enabledTypesPascal = "EnabledTypes"
+        case customTypesPascal = "CustomTypes", totalObjectsPascal = "TotalObjects"
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        totalTypes = try container.decodeInt(.totalTypes, .total_types, .TotalTypes) ?? 0
-        enabledTypes = try container.decodeInt(.enabledTypes, .enabled_types, .EnabledTypes) ?? 0
-        customTypes = try container.decodeInt(.customTypes, .custom_types, .CustomTypes) ?? 0
-        totalObjects = try container.decodeInt(.totalObjects, .total_objects, .TotalObjects) ?? 0
+        totalTypes = try container.decodeInt(.totalTypes, .totalTypesSnake, .totalTypesPascal) ?? 0
+        enabledTypes = try container.decodeInt(.enabledTypes, .enabledTypesSnake, .enabledTypesPascal) ?? 0
+        customTypes = try container.decodeInt(.customTypes, .customTypesSnake, .customTypesPascal) ?? 0
+        totalObjects = try container.decodeInt(.totalObjects, .totalObjectsSnake, .totalObjectsPascal) ?? 0
     }
-
 }
 
 /// One row of `GET /api/projects/{id}/agents` (`AgentDTO`, subset). The
@@ -61,7 +62,7 @@ struct AgentSummary: Decodable, Equatable, Sendable {
         case id, name, description, lastRunStatus
         case isEnabled = "enabled"
         case isEnabledAlt = "isEnabled"
-        case Enabled, IsEnabled
+        case enabledPascal = "Enabled", isEnabledPascal = "IsEnabled"
     }
 
     init(from decoder: Decoder) throws {
@@ -69,10 +70,9 @@ struct AgentSummary: Decodable, Equatable, Sendable {
         id = try container.decodeIfPresent(String.self, forKey: .id) ?? ""
         name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
         description = try container.decodeIfPresent(String.self, forKey: .description)
-        isEnabled = try container.decodeBool(.isEnabled, .isEnabledAlt, .Enabled, .IsEnabled)
+        isEnabled = try container.decodeBool(.isEnabled, .isEnabledAlt, .enabledPascal, .isEnabledPascal)
         lastRunStatus = try container.decodeIfPresent(String.self, forKey: .lastRunStatus)
     }
-
 }
 
 /// One row of `GET /api/projects/{id}/agent-definitions` (the real, reusable
@@ -97,11 +97,11 @@ struct AgentDefinitionSummary: Decodable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case id, name, description, model, tools, enabled, visibility
-        case bannedTools, banned_tools
-        case triggerType, trigger_type
-        case isDefault, is_default
-        case flowType, flow_type
-        case toolCount, tool_count
+        case bannedTools, bannedToolsSnake = "banned_tools"
+        case triggerType, triggerTypeSnake = "trigger_type"
+        case isDefault, isDefaultSnake = "is_default"
+        case flowType, flowTypeSnake = "flow_type"
+        case toolCount, toolCountSnake = "tool_count"
     }
 
     init(from decoder: Decoder) throws {
@@ -111,13 +111,30 @@ struct AgentDefinitionSummary: Decodable, Equatable, Sendable {
         description = try container.decodeString(.description)
         model = try container.decodeString(.model)
         tools = try container.decodeIfPresent([String].self, forKey: .tools)
-        bannedTools = try container.decodeStringArray(.bannedTools, .banned_tools)
+        bannedTools = try container.decodeStringArray(.bannedTools, .bannedToolsSnake)
         enabled = try container.decodeBool(.enabled)
         visibility = try container.decodeString(.visibility)
-        triggerType = try container.decodeString(.triggerType, .trigger_type)
-        isDefault = try container.decodeBool(.isDefault, .is_default)
-        flowType = try container.decodeString(.flowType, .flow_type)
-        toolCount = try container.decodeInt(.toolCount, .tool_count)
+        triggerType = try container.decodeString(.triggerType, .triggerTypeSnake)
+        isDefault = try container.decodeBool(.isDefault, .isDefaultSnake)
+        flowType = try container.decodeString(.flowType, .flowTypeSnake)
+        toolCount = try container.decodeInt(.toolCount, .toolCountSnake)
+    }
+}
+
+/// Nested `model` object shape emitted by the server (top-level so the decoder
+/// type does not exceed the nesting limit).
+private struct ModelConfigDTO: Decodable {
+    let name: String?
+    let nativeTools: [String]?
+    enum CodingKeys: String, CodingKey {
+        case name
+        case nativeTools, nativeToolsSnake = "native_tools"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decodeString(.name)
+        nativeTools = try container.decodeStringArray(.nativeTools, .nativeToolsSnake)
     }
 }
 
@@ -151,28 +168,13 @@ struct AgentDefinitionDetail: Decodable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case id, name, description, model, tools, skills, enabled, visibility
-        case systemPrompt, system_prompt
-        case bannedTools, banned_tools
-        case autoLoadSkills, auto_load_skills
-        case isDefault, is_default
-        case triggerType, trigger_type
-        case flowType, flow_type
-        case workspaceConfig, workspace_config
-    }
-
-    /// Nested `model` object shape emitted by the server.
-    private struct ModelConfigDTO: Decodable {
-        let name: String?
-        let nativeTools: [String]?
-        enum CodingKeys: String, CodingKey {
-            case name
-            case nativeTools, native_tools
-        }
-        init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            name = try container.decodeString(.name)
-            nativeTools = try container.decodeStringArray(.nativeTools, .native_tools)
-        }
+        case systemPrompt, systemPromptSnake = "system_prompt"
+        case bannedTools, bannedToolsSnake = "banned_tools"
+        case autoLoadSkills, autoLoadSkillsSnake = "auto_load_skills"
+        case isDefault, isDefaultSnake = "is_default"
+        case triggerType, triggerTypeSnake = "trigger_type"
+        case flowType, flowTypeSnake = "flow_type"
+        case workspaceConfig, workspaceConfigSnake = "workspace_config"
     }
 
     /// Keys of the nested `workspaceConfig` (sandbox) object.
@@ -185,16 +187,16 @@ struct AgentDefinitionDetail: Decodable, Equatable, Sendable {
         id = try container.decodeString(.id) ?? ""
         name = try container.decodeString(.name) ?? ""
         description = try container.decodeString(.description)
-        systemPrompt = try container.decodeString(.systemPrompt, .system_prompt)
+        systemPrompt = try container.decodeString(.systemPrompt, .systemPromptSnake)
         tools = try container.decodeIfPresent([String].self, forKey: .tools)
-        bannedTools = try container.decodeStringArray(.bannedTools, .banned_tools)
+        bannedTools = try container.decodeStringArray(.bannedTools, .bannedToolsSnake)
         skills = try container.decodeStringArray(.skills)
-        autoLoadSkills = try container.decodeBool(.autoLoadSkills, .auto_load_skills)
+        autoLoadSkills = try container.decodeBool(.autoLoadSkills, .autoLoadSkillsSnake)
         enabled = try container.decodeBool(.enabled)
-        isDefault = try container.decodeBool(.isDefault, .is_default)
+        isDefault = try container.decodeBool(.isDefault, .isDefaultSnake)
         visibility = try container.decodeString(.visibility)
-        triggerType = try container.decodeString(.triggerType, .trigger_type)
-        flowType = try container.decodeString(.flowType, .flow_type)
+        triggerType = try container.decodeString(.triggerType, .triggerTypeSnake)
+        flowType = try container.decodeString(.flowType, .flowTypeSnake)
 
         // `model` is an object on the server; accept a plain string too.
         if let modelObject = try? container.decode(ModelConfigDTO.self, forKey: .model) {
@@ -210,10 +212,12 @@ struct AgentDefinitionDetail: Decodable, Equatable, Sendable {
 
         // Sandbox tools live under `workspaceConfig.tools` (snake_case accepted).
         if let workspace = try? container.nestedContainer(keyedBy: WorkspaceKeys.self,
-                                                          forKey: .workspaceConfig) {
+                                                          forKey: .workspaceConfig)
+        {
             workspaceTools = try workspace.decodeIfPresent([String].self, forKey: .tools)
         } else if let workspace = try? container.nestedContainer(keyedBy: WorkspaceKeys.self,
-                                                                 forKey: .workspace_config) {
+                                                                 forKey: .workspaceConfigSnake)
+        {
             workspaceTools = try workspace.decodeIfPresent([String].self, forKey: .tools)
         } else {
             workspaceTools = nil
@@ -231,20 +235,24 @@ struct ProjectStats: Decodable, Equatable, Sendable {
     let queuedJobs: Int
     enum CodingKeys: String, CodingKey {
         case documentCount, objectCount, relationshipCount, totalJobs, runningJobs, queuedJobs
-        case document_count, object_count, relationship_count, total_jobs, running_jobs, queued_jobs
-        case DocumentCount, ObjectCount, RelationshipCount, TotalJobs, RunningJobs, QueuedJobs
+        case documentCountSnake = "document_count", objectCountSnake = "object_count"
+        case relationshipCountSnake = "relationship_count", totalJobsSnake = "total_jobs"
+        case runningJobsSnake = "running_jobs", queuedJobsSnake = "queued_jobs"
+        case documentCountPascal = "DocumentCount", objectCountPascal = "ObjectCount"
+        case relationshipCountPascal = "RelationshipCount", totalJobsPascal = "TotalJobs"
+        case runningJobsPascal = "RunningJobs", queuedJobsPascal = "QueuedJobs"
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        documentCount = try container.decodeInt(.documentCount, .document_count, .DocumentCount) ?? 0
-        objectCount = try container.decodeInt(.objectCount, .object_count, .ObjectCount) ?? 0
-        relationshipCount = try container.decodeInt(.relationshipCount, .relationship_count, .RelationshipCount) ?? 0
-        totalJobs = try container.decodeInt(.totalJobs, .total_jobs, .TotalJobs) ?? 0
-        runningJobs = try container.decodeInt(.runningJobs, .running_jobs, .RunningJobs) ?? 0
-        queuedJobs = try container.decodeInt(.queuedJobs, .queued_jobs, .QueuedJobs) ?? 0
+        documentCount = try container.decodeInt(.documentCount, .documentCountSnake, .documentCountPascal) ?? 0
+        objectCount = try container.decodeInt(.objectCount, .objectCountSnake, .objectCountPascal) ?? 0
+        relationshipCount = try container.decodeInt(.relationshipCount, .relationshipCountSnake,
+                                                    .relationshipCountPascal) ?? 0
+        totalJobs = try container.decodeInt(.totalJobs, .totalJobsSnake, .totalJobsPascal) ?? 0
+        runningJobs = try container.decodeInt(.runningJobs, .runningJobsSnake, .runningJobsPascal) ?? 0
+        queuedJobs = try container.decodeInt(.queuedJobs, .queuedJobsSnake, .queuedJobsPascal) ?? 0
     }
-
 }
 
 /// `GET /api/projects/{id}?include_stats=true` (`ProjectDTO`, subset).
@@ -257,20 +265,19 @@ struct ProjectDetail: Decodable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case name, stats
         case orgID = "orgId"
-        case org_id = "org_id"
-        case projectInfo = "projectInfo"
-        case project_info = "project_info"
-        case OrgId, ProjectInfo
+        case orgIDSnake = "org_id"
+        case projectInfo
+        case projectInfoSnake = "project_info"
+        case orgIDPascal = "OrgId", projectInfoPascal = "ProjectInfo"
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         name = try container.decodeIfPresent(String.self, forKey: .name)
-        orgID = try container.decodeString(.orgID, .org_id, .OrgId)
-        projectInfo = try container.decodeString(.projectInfo, .project_info, .ProjectInfo)
+        orgID = try container.decodeString(.orgID, .orgIDSnake, .orgIDPascal)
+        projectInfo = try container.decodeString(.projectInfo, .projectInfoSnake, .projectInfoPascal)
         stats = try container.decodeIfPresent(ProjectStats.self, forKey: .stats)
     }
-
 }
 
 /// Thin client for the Memory REST API.
@@ -290,7 +297,8 @@ struct MemoryAPIClient: Sendable {
          token: String,
          projectID: String? = nil,
          orgID: String? = nil,
-         session: URLSession = .shared) {
+         session: URLSession = .shared)
+    {
         self.serverURL = serverURL
         self.token = token
         self.projectID = projectID
@@ -426,7 +434,8 @@ struct MemoryAPIClient: Sendable {
     /// `{success, data}` envelope; a missing/null `data` yields nil.
     func agentDefinition(projectID: String,
                          id: String,
-                         accessToken: String) async throws -> AgentDefinitionDetail? {
+                         accessToken: String) async throws -> AgentDefinitionDetail?
+    {
         let response = try await request(method: "GET",
                                          path: "/api/projects/\(projectID)/agent-definitions/\(id)",
                                          bearer: accessToken,
@@ -471,7 +480,8 @@ struct MemoryAPIClient: Sendable {
                                        body: Data? = nil,
                                        bearer: String? = nil,
                                        projectHeader: String? = nil,
-                                       as type: T.Type) async throws -> T {
+                                       as _: T.Type) async throws -> T
+    {
         let (data, _) = try await perform(method: method, path: path, body: body,
                                           bearer: bearer, projectHeader: projectHeader)
         do {
@@ -488,14 +498,17 @@ struct MemoryAPIClient: Sendable {
                          path: String,
                          body: Data? = nil,
                          bearer: String? = nil,
-                         projectHeader: String? = nil) async throws -> (Data, HTTPURLResponse) {
+                         projectHeader: String? = nil) async throws -> (Data, HTTPURLResponse)
+    {
         let effectiveToken = bearer ?? token
         let base = serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if base.isEmpty || effectiveToken.isEmpty {
             throw MemoryAPIError.notConfigured
         }
         var trimmedBase = base
-        while trimmedBase.hasSuffix("/") { trimmedBase.removeLast() }
+        while trimmedBase.hasSuffix("/") {
+            trimmedBase.removeLast()
+        }
         guard let url = URL(string: trimmedBase + path) else {
             throw MemoryAPIError.unreachable("invalid server URL: \(base)")
         }
@@ -528,7 +541,7 @@ struct MemoryAPIClient: Sendable {
             throw MemoryAPIError.unreachable("non-HTTP response")
         }
         switch http.statusCode {
-        case 200..<300:
+        case 200 ..< 300:
             break
         case 401, 403:
             throw MemoryAPIError.authFailed
@@ -546,7 +559,9 @@ private extension KeyedDecodingContainer {
     /// when none is present. Callers pass every accepted casing for a field.
     func decodeInt(_ keys: Key...) throws -> Int? {
         for key in keys {
-            if let value = try decodeIfPresent(Int.self, forKey: key) { return value }
+            if let value = try decodeIfPresent(Int.self, forKey: key) {
+                return value
+            }
         }
         return nil
     }
@@ -554,7 +569,9 @@ private extension KeyedDecodingContainer {
     /// Decodes a `String` from the first matching candidate key.
     func decodeString(_ keys: Key...) throws -> String? {
         for key in keys {
-            if let value = try decodeIfPresent(String.self, forKey: key) { return value }
+            if let value = try decodeIfPresent(String.self, forKey: key) {
+                return value
+            }
         }
         return nil
     }
@@ -562,7 +579,9 @@ private extension KeyedDecodingContainer {
     /// Decodes a `Bool` from the first matching candidate key.
     func decodeBool(_ keys: Key...) throws -> Bool? {
         for key in keys {
-            if let value = try decodeIfPresent(Bool.self, forKey: key) { return value }
+            if let value = try decodeIfPresent(Bool.self, forKey: key) {
+                return value
+            }
         }
         return nil
     }
@@ -570,7 +589,9 @@ private extension KeyedDecodingContainer {
     /// Decodes a `[String]` from the first matching candidate key.
     func decodeStringArray(_ keys: Key...) throws -> [String]? {
         for key in keys {
-            if let value = try decodeIfPresent([String].self, forKey: key) { return value }
+            if let value = try decodeIfPresent([String].self, forKey: key) {
+                return value
+            }
         }
         return nil
     }
