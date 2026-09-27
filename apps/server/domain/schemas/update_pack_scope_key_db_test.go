@@ -12,6 +12,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/internal/testdb"
 	"github.com/emergent-company/emergent.memory/internal/testutil"
 )
 
@@ -22,7 +23,7 @@ import (
 // CreatePack-equivalent check only ran on create).
 func TestUpdatePackValidatesScopeKey(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping database integration test in short mode")
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
 	}
 	ctx := context.Background()
 	testDB := testutil.SetupTestDBOrFail(t, ctx, "updpk")
