@@ -260,6 +260,21 @@ func registerOrphanRecovery(lc fx.Lifecycle, repo *Repository, sandboxStore *san
 				)
 			}
 
+			// A durable cancel committed by a previous process can no longer be
+			// observed by any executing instance, so resolve every run parked in
+			// the intermediate "cancelling" state to its terminal "cancelled"
+			// status. A committed cancel never resolves to a failure (issue
+			// #1166).
+			if k, err := repo.FinalizeCancellingRuns(ctx, 0); err != nil {
+				log.Warn("failed to finalize orphaned cancelling agent runs on startup",
+					slog.String("error", err.Error()),
+				)
+			} else if k > 0 {
+				log.Warn("finalized orphaned cancelling agent runs as cancelled on startup",
+					slog.Int("count", k),
+				)
+			}
+
 			// Re-enqueue queued runs that lost their job row (e.g. due to crash mid-enqueue)
 			m, err := repo.RequeueOrphanedQueuedRuns(ctx)
 			if err != nil {
