@@ -13,16 +13,17 @@
 
 ## 2. Index and query shape
 
-- [x] 2.1 Add migration `00195_add_graph_objects_project_type_props_gin.sql`
-  (`btree_gin` + composite partial GIN, `CONCURRENTLY`, drop-if-exists, `NO TRANSACTION`).
+- [x] 2.1 Add migration `00197_add_graph_objects_project_type_props_gin.sql`
+  (`btree_gin` + composite partial GIN, `CONCURRENTLY`, drop-if-exists, `NO TRANSACTION`;
+  numbered 00197 to avoid the open PR #1163 migrations 00195/00196).
 - [x] 2.2 Rewrite entity-query `filters` to a bound JSONB containment predicate.
 - [x] 2.3 Re-run AFTER `EXPLAIN (ANALYZE, BUFFERS)` on the hermetic DB; record
   buffer and timing deltas.
 
 ## 3. Bounds
 
-- [x] 3.1 Add `MCPConfig` (`entity_query.timeout`, `entity_query.full_max_limit`)
-  with sane defaults.
+- [x] 3.1 Add `MCPConfig` (`MCP_ENTITY_QUERY_TIMEOUT`,
+  `MCP_ENTITY_QUERY_FULL_MAX_LIMIT`) with sane defaults.
 - [x] 3.2 Enforce a per-call deadline and a `field_strategy="full"` limit cap with a
   caller-visible warning.
 

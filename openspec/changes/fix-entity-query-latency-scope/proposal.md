@@ -29,7 +29,9 @@ Two independent defects:
   across projects would otherwise hand the GIN alone a large candidate set).
   Rewrite the filter from `properties->>'k' = 'v'` string interpolation to a bound
   JSONB containment predicate `properties @> $jsonb`, which is what the GIN serves
-  and which also removes the interpolation.
+  and which also removes the interpolation. This is a **recorded behaviour change**:
+  containment is JSON-type-exact, so `{"k":"5"}` matches a string `"5"` but no
+  longer a numeric `5` (the old `->>'k' = '5'` text comparison matched both).
 - **Bounded calls.** Hard per-call deadline (`MCP_ENTITY_QUERY_TIMEOUT`, default
   30 s) around the whole entity-query transaction, returning an explicit
   `timed out after …` error instead of a `context canceled` after minutes; and a
@@ -56,7 +58,8 @@ Two independent defects:
 
 ## Impact
 
-- **Migration** `apps/server/migrations/00195_…`: `CREATE EXTENSION IF NOT EXISTS
+- **Migration** `apps/server/migrations/00197_…` (numbered above origin/main's
+  max 00194 and above open PR #1163's 00195/00196): `CREATE EXTENSION IF NOT EXISTS
   btree_gin` + `CREATE INDEX CONCURRENTLY` (drop-if-exists guard, `NO TRANSACTION`).
 - **Server** `apps/server/domain/mcp/service.go`: filter build, `key_prefix`,
   timeout, full-limit cap, tool schema/description.

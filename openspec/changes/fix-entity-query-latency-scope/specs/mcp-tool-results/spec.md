@@ -26,6 +26,14 @@ property key SHALL be dropped.
 - **WHEN** a `filters` key is not a valid property key
 - **THEN** that key is ignored and the remaining filters still apply
 
+#### Scenario: Filter values are JSON-type exact
+
+- **WHEN** a `filters` value is compared against a property that exists as a JSON
+  string on one entity and a JSON number on another
+- **THEN** only the entity whose JSON type and value match is returned, because
+  containment is type-exact (the previous `properties->>'k' = 'v'` text comparison
+  matched both)
+
 ### Requirement: entity-query calls are bounded
 
 `entity-query` SHALL enforce a configurable hard per-call deadline and, when
