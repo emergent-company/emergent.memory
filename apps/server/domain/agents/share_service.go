@@ -50,9 +50,9 @@ type ShareRepo interface {
 	FindShareSessionByRunAndEndUser(ctx context.Context, linkID, endUserRef, runID string) (*AgentShareSession, error)
 	CountActiveShareRuns(ctx context.Context, linkID string) (int, error)
 	CreateShareRunIfUnderLimit(ctx context.Context, linkID string, maxConcurrent int, opts CreateRunOptions) (*AgentRun, error)
-	CountSessionToolApprovals(ctx context.Context, shareLinkID, acpSessionID string) (int, error)
-	ReserveAndDecideShareApproval(ctx context.Context, shareLinkID, acpSessionID, questionID, decision, message, decidedBy string, maxApprovals int) (bool, error)
-	ListPendingQuestionsForACPSession(ctx context.Context, acpSessionID string) ([]*AgentQuestion, error)
+	CountSessionToolApprovals(ctx context.Context, shareLinkID, sessionID string) (int, error)
+	ReserveAndDecideShareApproval(ctx context.Context, shareLinkID, sessionID, questionID, decision, message, decidedBy string, maxApprovals int) (bool, error)
+	ListPendingQuestionsForSession(ctx context.Context, sessionID string) ([]*AgentQuestion, error)
 	// end users
 	UpsertShareEndUser(ctx context.Context, u *AgentShareEndUser) error
 	FindShareEndUser(ctx context.Context, linkID, endUserRef string) (*AgentShareEndUser, error)
@@ -69,10 +69,10 @@ type ShareRepo interface {
 	GetOrgIDByProjectID(ctx context.Context, projectID string) (string, error)
 	FindByName(ctx context.Context, projectID, name string) (*Agent, error)
 	Create(ctx context.Context, agent *Agent) error
-	CreateACPSession(ctx context.Context, session *ACPSession) error
+	CreateSession(ctx context.Context, session *Session) error
 	FindQuestionByID(ctx context.Context, id string) (*AgentQuestion, error)
 	GetRunTokenUsage(ctx context.Context, runID string) (*RunTokenUsage, error)
-	GetConversationFullHistory(ctx context.Context, acpSessionID string) ([]*ConversationHistoryItem, error)
+	GetConversationFullHistory(ctx context.Context, sessionID string) ([]*ConversationHistoryItem, error)
 }
 
 // QuestionResponder is the shared question-respond/resume helper. *Handler
@@ -568,8 +568,8 @@ func (s *ShareService) CreateSession(ctx context.Context, binding *ShareLinkBind
 	}
 
 	agentName := binding.Definition.Name
-	acp := &ACPSession{ProjectID: binding.ProjectID, AgentName: &agentName}
-	if err := s.repo.CreateACPSession(ctx, acp); err != nil {
+	session := &Session{ProjectID: binding.ProjectID, AgentName: &agentName}
+	if err := s.repo.CreateSession(ctx, session); err != nil {
 		return nil, err
 	}
 
@@ -581,7 +581,7 @@ func (s *ShareService) CreateSession(ctx context.Context, binding *ShareLinkBind
 	}
 	sess := &AgentShareSession{
 		ShareLinkID:    binding.Link.ID,
-		ACPSessionID:   acp.ID,
+		SessionID:      session.ID,
 		EndUserRef:     endUserRef,
 		Title:          titlePtr,
 		LastActivityAt: &now,
@@ -642,13 +642,13 @@ func (s *ShareService) GetSessionEntity(ctx context.Context, binding *ShareLinkB
 }
 
 // GetSession returns one session belonging to (link, end user), including its
-// message transcript (reusing the existing ACP-session history retrieval).
+// message transcript (reusing the existing session history retrieval).
 func (s *ShareService) GetSession(ctx context.Context, binding *ShareLinkBinding, sessionID, endUserRef string) (*ShareSessionDetailDTO, error) {
 	sess, err := s.GetSessionEntity(ctx, binding, sessionID, endUserRef)
 	if err != nil {
 		return nil, err
 	}
-	messages, err := s.sessionTranscript(ctx, sess.ACPSessionID)
+	messages, err := s.sessionTranscript(ctx, sess.SessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -661,10 +661,10 @@ func (s *ShareService) GetSession(ctx context.Context, binding *ShareLinkBinding
 	}, nil
 }
 
-// sessionTranscript returns the plain user/assistant message history for an ACP
+// sessionTranscript returns the plain user/assistant message history for a
 // session, derived from the existing run-message history (never a new store).
-func (s *ShareService) sessionTranscript(ctx context.Context, acpSessionID string) ([]ShareTranscriptMessage, error) {
-	items, err := s.repo.GetConversationFullHistory(ctx, acpSessionID)
+func (s *ShareService) sessionTranscript(ctx context.Context, sessionID string) ([]ShareTranscriptMessage, error) {
+	items, err := s.repo.GetConversationFullHistory(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -728,7 +728,7 @@ func (s *ShareService) GetSessionTranscriptByID(ctx context.Context, projectID, 
 	if row == nil {
 		return nil, apperror.New(http.StatusNotFound, "not_found", "share session not found")
 	}
-	return s.sessionTranscript(ctx, row.ACPSessionID)
+	return s.sessionTranscript(ctx, row.SessionID)
 }
 
 // ownerSessionDTO maps a project-scoped share-session row to its owner DTO,
@@ -746,7 +746,7 @@ func (s *ShareService) ownerSessionDTO(row shareSessionProjectRow) *ShareOwnerSe
 		AgentDefinitionID: row.AgentDefinitionID,
 		AgentName:         row.AgentName,
 		Title:             title,
-		ACPSessionID:      row.ACPSessionID,
+		SessionID:         row.SessionID,
 		IsArchived:        row.IsArchived,
 		CreatedAt:         row.CreatedAt,
 		LastActivityAt:    row.LastActivityAt,
@@ -780,7 +780,7 @@ func (s *ShareService) PendingQuestions(ctx context.Context, binding *ShareLinkB
 		if sess == nil {
 			return nil, apperror.New(http.StatusNotFound, "not_found", "session not found")
 		}
-		questions, err = s.repo.ListPendingQuestionsForACPSession(ctx, sess.ACPSessionID)
+		questions, err = s.repo.ListPendingQuestionsForSession(ctx, sess.SessionID)
 		if err != nil {
 			return nil, err
 		}
@@ -790,7 +790,7 @@ func (s *ShareService) PendingQuestions(ctx context.Context, binding *ShareLinkB
 			return nil, err
 		}
 		for _, sess := range sessions {
-			qs, err := s.repo.ListPendingQuestionsForACPSession(ctx, sess.ACPSessionID)
+			qs, err := s.repo.ListPendingQuestionsForSession(ctx, sess.SessionID)
 			if err != nil {
 				return nil, err
 			}
@@ -902,7 +902,7 @@ func (s *ShareService) buildShareExecuteRequest(ctx context.Context, binding *Sh
 		UserID:           "", // anonymous — never target notifications
 		UserMessage:      message,
 		StreamCallback:   streamCallback,
-		ACPSessionID:     session.ACPSessionID,
+		SessionID:        session.SessionID,
 		ShareLinkID:      binding.Link.ID,
 		ShareToolDeny:    cfg.ComputeShareToolDeny(),
 		DisableAuthMint:  true, // never mint owner credentials for anonymous users
@@ -1023,7 +1023,7 @@ func (s *ShareService) recordResumeUsage(ctx context.Context, linkID string, per
 // Approvals (end-user respond/deny)
 // ============================================================================
 
-// RespondToQuestion verifies question->run->acp_session->share_session
+// RespondToQuestion verifies question->run->session->share_session
 // ownership for the caller, then delegates to the shared respond/resume helper.
 func (s *ShareService) RespondToQuestion(ctx context.Context, binding *ShareLinkBinding, sessionID, endUserRef, questionID, response, message, ipHash string) (*AgentQuestionDTO, error) {
 	if endUserRef == "" {
@@ -1084,7 +1084,7 @@ func (s *ShareService) RespondToQuestion(ctx context.Context, binding *ShareLink
 		ShareToolDeny:          binding.Config.ComputeShareToolDeny(),
 		DisableAuthMint:        true,
 		MaxApprovalsPerSession: binding.Config.MaxApprovalsPerSession,
-		ACPSessionID:           session.ACPSessionID,
+		SessionID:              session.SessionID,
 		OnRunSettled:           s.resumeSettled(binding),
 	})
 }

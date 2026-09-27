@@ -161,8 +161,8 @@ func (s *Server) uiChatTodos(c echo.Context) error {
 	ctx := c.Request().Context()
 	var items []TodoItem
 	if convID != "" {
-		if detail, err := s.memory.GetConversation(ctx, convID); err == nil && detail.ACPSessionID != "" {
-			if todos, terr := s.memory.ListSessionTodos(ctx, detail.ACPSessionID); terr == nil {
+		if detail, err := s.memory.GetConversation(ctx, convID); err == nil && detail.SessionID != "" {
+			if todos, terr := s.memory.ListSessionTodos(ctx, detail.SessionID); terr == nil {
 				items = todoItems(todos)
 			} else {
 				captureError(terr)

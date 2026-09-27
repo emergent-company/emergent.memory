@@ -321,10 +321,10 @@ func inheritedTrust(ctx context.Context, findRun func(context.Context, string) (
 	return run.TrustedInternal
 }
 
-// acpSessionIDKey is the context key used to propagate the ACP session ID
+// sessionIDKey is the context key used to propagate the session ID
 // through the execution pipeline so that built-in tools (e.g. set_session_title)
 // can update session metadata without needing it in their function signatures.
-// NOTE: defined here as a bridge — mcp.ContextWithACPSessionID / mcp.ACPSessionIDFromContext
+// NOTE: defined here as a bridge — mcp.ContextWithSessionID / mcp.SessionIDFromContext
 // use this same exported mechanism via the mcp package.
 
 // ExecuteRequest defines the parameters for executing an agent.
@@ -359,9 +359,9 @@ type ExecuteRequest struct {
 	// than system keys (MEMORY_ACCOUNT_API_KEY, MEMORY_PROJECT_ID, MEMORY_SERVER_URL).
 	EnvVars map[string]string
 
-	// ACPSessionID links this run to an ACP session so built-in tools like
+	// SessionID links this run to a session so built-in tools like
 	// set_session_title can update session metadata during execution.
-	ACPSessionID string
+	SessionID string
 
 	// SystemPromptAppendix is appended to the resolved system instruction at execution time.
 	// Use this to inject per-call constraints (e.g. response format, verbosity) without
@@ -372,11 +372,11 @@ type ExecuteRequest struct {
 	// Passed to ask_user tool so notifications target the correct user.
 	UserID string
 
-	// SessionID is a caller-supplied stable key for sharing the ADK conversation session
+	// ConversationKey is a caller-supplied stable key for sharing the ADK conversation session
 	// across multiple trigger calls (cross-run conversation history). When set, the ADK
 	// session key is derived from this value instead of the run ID, so successive triggers
-	// with the same SessionID share the same session events. Empty = per-run session (default).
-	SessionID string
+	// with the same ConversationKey share the same session events. Empty = per-run session (default).
+	ConversationKey string
 
 	// PreCreatedRun is an already-created AgentRun to use for this Resume call.
 	// When set, Resume skips CreateRunWithOptions and uses this run directly.
@@ -735,11 +735,11 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		}
 	}
 
-	// Link to ACP session if provided via request (e.g. trigger_agent sync path).
-	if req.ACPSessionID != "" {
-		run.ACPSessionID = &req.ACPSessionID
-		if updateErr := ae.repo.UpdateRunACPSessionID(dbCtx, run.ID, req.ACPSessionID); updateErr != nil {
-			ae.log.Warn("failed to persist acp_session_id on agent run",
+	// Link to session if provided via request (e.g. trigger_agent sync path).
+	if req.SessionID != "" {
+		run.SessionID = &req.SessionID
+		if updateErr := ae.repo.UpdateRunSessionID(dbCtx, run.ID, req.SessionID); updateErr != nil {
+			ae.log.Warn("failed to persist session_id on agent run",
 				slog.String("run_id", run.ID),
 				slog.String("error", updateErr.Error()),
 			)
@@ -812,18 +812,6 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	// overwritten empty-ID principal makes every operator-tool check fail closed.
 	ctx = auth.ContextWithUser(ctx, &auth.AuthUser{ID: req.UserID})
 
-	// Provision workspace if configured
-	hasSandboxConfig := ae.wsEnabled && ae.provisioner != nil &&
-		req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0
-	if hasSandboxConfig {
-		if err := ae.repo.UpdateSessionStatus(dbCtx, run.ID, SessionStatusProvisioning); err != nil {
-			ae.log.Warn("failed to update session status to provisioning",
-				slog.String("run_id", run.ID),
-				slog.String("error", err.Error()),
-			)
-		}
-	}
-
 	// Bind teardown to this run's lifetime BEFORE provisioning. The cleanup is
 	// deferred so it runs exactly once on every exit path — normal return, error
 	// return, context cancellation, and a panic inside runPipeline. Binding
@@ -866,16 +854,6 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 			Steps:    0,
 			Duration: time.Since(startTime),
 		}, nil
-	}
-
-	// Workspace provisioning complete (or skipped) — mark session active
-	if hasSandboxConfig {
-		if err := ae.repo.UpdateSessionStatus(dbCtx, run.ID, SessionStatusActive); err != nil {
-			ae.log.Warn("failed to update session status to active",
-				slog.String("run_id", run.ID),
-				slog.String("error", err.Error()),
-			)
-		}
 	}
 
 	// Build and run the pipeline
@@ -1035,18 +1013,6 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 	// Propagate the run's originating principal into the run context (see Execute).
 	ctx = auth.ContextWithUser(ctx, &auth.AuthUser{ID: req.UserID})
 
-	// Provision workspace if configured
-	hasSandboxConfig := ae.wsEnabled && ae.provisioner != nil &&
-		req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0
-	if hasSandboxConfig {
-		if err := ae.repo.UpdateSessionStatus(dbCtx, run.ID, SessionStatusProvisioning); err != nil {
-			ae.log.Warn("failed to update session status to provisioning",
-				slog.String("run_id", run.ID),
-				slog.String("error", err.Error()),
-			)
-		}
-	}
-
 	// Bind teardown to this run's lifetime BEFORE provisioning (see Execute):
 	// deferred so it runs exactly once on every exit path, including a panic in
 	// runPipeline and a provisioning failure — the latter must still revoke the
@@ -1080,15 +1046,6 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 			Steps:    0,
 			Duration: time.Since(startTime),
 		}, nil
-	}
-
-	if hasSandboxConfig {
-		if err := ae.repo.UpdateSessionStatus(ctx, run.ID, SessionStatusActive); err != nil {
-			ae.log.Warn("failed to update session status to active",
-				slog.String("run_id", run.ID),
-				slog.String("error", err.Error()),
-			)
-		}
 	}
 
 	result, err := ae.runPipeline(ctx, run, req, maxSteps, 0, startTime, wsResult, nil)
@@ -1228,11 +1185,11 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 		)
 	}
 
-	// Copy acp_session_id from prior run so the resumed run stays linked to the same session.
-	if priorRun.ACPSessionID != nil {
-		newRun.ACPSessionID = priorRun.ACPSessionID
-		if updateErr := ae.repo.UpdateRunACPSessionID(dbCtx, newRun.ID, *priorRun.ACPSessionID); updateErr != nil {
-			ae.log.Warn("failed to persist acp_session_id on resumed run",
+	// Copy session_id from prior run so the resumed run stays linked to the same session.
+	if priorRun.SessionID != nil {
+		newRun.SessionID = priorRun.SessionID
+		if updateErr := ae.repo.UpdateRunSessionID(dbCtx, newRun.ID, *priorRun.SessionID); updateErr != nil {
+			ae.log.Warn("failed to persist session_id on resumed run",
 				slog.String("run_id", newRun.ID),
 				slog.String("error", updateErr.Error()),
 			)
@@ -1302,18 +1259,6 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 	// dispatch so the confirm gate is re-gated on the run's own trust (issue #1133).
 	ctx = runDispatchContext(ctx, newRun.TrustedInternal)
 
-	// Provision workspace if configured
-	hasSandboxConfig := ae.wsEnabled && ae.provisioner != nil &&
-		req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0
-	if hasSandboxConfig {
-		if err := ae.repo.UpdateSessionStatus(dbCtx, newRun.ID, SessionStatusProvisioning); err != nil {
-			ae.log.Warn("failed to update session status to provisioning",
-				slog.String("run_id", newRun.ID),
-				slog.String("error", err.Error()),
-			)
-		}
-	}
-
 	// Bind teardown to this run's lifetime BEFORE provisioning (see Execute):
 	// deferred so it runs exactly once on every exit path, including a panic in
 	// runPipeline and a provisioning failure — the latter must still revoke the
@@ -1341,16 +1286,6 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 			Steps:    priorRun.StepCount,
 			Duration: time.Since(startTime),
 		}, nil
-	}
-
-	// Workspace provisioning complete (or skipped) — mark session active
-	if hasSandboxConfig {
-		if err := ae.repo.UpdateSessionStatus(dbCtx, newRun.ID, SessionStatusActive); err != nil {
-			ae.log.Warn("failed to update session status to active",
-				slog.String("run_id", newRun.ID),
-				slog.String("error", err.Error()),
-			)
-		}
 	}
 
 	// Inject the pending tool result into the ADK session as a proper FunctionResponse,
@@ -1964,13 +1899,13 @@ func (ae *AgentExecutor) runPipeline(
 	ctx = runDispatchContext(ctx, req.TrustedInternal)
 
 	// Identify the ADK session ID.
-	// If the caller supplied a stable SessionID (cross-run conversation history),
-	// derive a namespaced key from it so triggers with the same SessionID share
+	// If the caller supplied a stable ConversationKey (cross-run conversation history),
+	// derive a namespaced key from it so triggers with the same ConversationKey share
 	// the same ADK session and accumulate conversation history.
 	// Otherwise fall back to the root run ID (current per-run behavior).
 	var sessionID string
-	if req.SessionID != "" {
-		sessionID = agentADKSessionKey(req.ProjectID, req.SessionID)
+	if req.ConversationKey != "" {
+		sessionID = agentADKSessionKey(req.ProjectID, req.ConversationKey)
 	} else {
 		sessionID = ae.getRootRunID(ctx, run)
 	}
@@ -1978,15 +1913,15 @@ func (ae *AgentExecutor) runPipeline(
 	// Inject the current run ID into context so downstream tools (e.g. trigger_agent)
 	// can propagate it as the parent_run_id when spawning child runs.
 	ctx = contextWithCallerRunID(ctx, run.ID)
-	// Inject ACP session ID into context so built-in tools (e.g. set_session_title)
+	// Inject session ID into context so built-in tools (e.g. set_session_title)
 	// can update session metadata. If the run was created without the session ID set
 	// in-memory (e.g. via trigger_agent async path), fetch it from DB as a fallback.
-	if run.ACPSessionID != nil && *run.ACPSessionID != "" {
-		ctx = mcp.ContextWithACPSessionID(ctx, *run.ACPSessionID)
+	if run.SessionID != nil && *run.SessionID != "" {
+		ctx = mcp.ContextWithSessionID(ctx, *run.SessionID)
 	} else if run.ID != "" {
-		if freshRun, fetchErr := ae.repo.FindRunByID(dbCtx, run.ID); fetchErr == nil && freshRun != nil && freshRun.ACPSessionID != nil && *freshRun.ACPSessionID != "" {
-			run.ACPSessionID = freshRun.ACPSessionID
-			ctx = mcp.ContextWithACPSessionID(ctx, *freshRun.ACPSessionID)
+		if freshRun, fetchErr := ae.repo.FindRunByID(dbCtx, run.ID); fetchErr == nil && freshRun != nil && freshRun.SessionID != nil && *freshRun.SessionID != "" {
+			run.SessionID = freshRun.SessionID
+			ctx = mcp.ContextWithSessionID(ctx, *freshRun.SessionID)
 		}
 	}
 	// Also inject into the provider context so the tracking model can attribute

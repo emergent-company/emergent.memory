@@ -77,7 +77,7 @@ type restoreTableSpec struct {
 }
 
 // restoreTableOrder returns the dependency-safe insert order. References to
-// tables that are NOT part of the snapshot (global schemas, acp_sessions,
+// tables that are NOT part of the snapshot (global schemas, sessions,
 // org/global skills, users) are either preserved or handled specially.
 func restoreTableOrder() []restoreTableSpec {
 	byProject := func(table string) string {
@@ -139,7 +139,7 @@ func restoreTableOrder() []restoreTableSpec {
 		table("agent_definitions"),
 		{name: "agents", refs: nullRefs("agent_definition_id"), wipeSQL: byProject("kb.agents")},
 		table("agent_webhook_hooks"),
-		{name: "chat_conversations", refs: nullRefs("acp_session_id", "object_id", "agent_definition_id", "owner_user_id"),
+		{name: "chat_conversations", refs: nullRefs("session_id", "object_id", "agent_definition_id", "owner_user_id"),
 			wipeSQL: byProject("kb.chat_conversations")},
 		{name: "chat_messages", wipeSQL: "DELETE FROM kb.chat_messages WHERE conversation_id IN (SELECT id FROM kb.chat_conversations WHERE project_id = ?)"},
 		{name: "branches", selfRefs: []string{"parent_branch_id"},

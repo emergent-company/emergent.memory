@@ -224,9 +224,9 @@ func TestToolCallArtifacts_NilAndEmpty(t *testing.T) {
 
 func TestRunToA2ATask_StableID_NoResumeRunID(t *testing.T) {
 	run := &AgentRun{
-		ID:           "run-123",
-		Status:       RunStatusSuccess,
-		ACPSessionID: strPtr("session-456"),
+		ID:        "run-123",
+		Status:    RunStatusSuccess,
+		SessionID: strPtr("session-456"),
 	}
 	messages := []AgentRunMessage{
 		{Role: "user", Content: map[string]any{"text": "question"}},

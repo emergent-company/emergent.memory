@@ -432,7 +432,7 @@ func newTodosEcho(f MemoryBackend) (*Server, *echo.Echo) {
 func TestUiChatTodos(t *testing.T) {
 	t.Run("populated", func(t *testing.T) {
 		f := &fakeMemory{
-			details:      map[string]*ConversationDetail{"c1": {ID: "c1", ACPSessionID: "s1"}},
+			details:      map[string]*ConversationDetail{"c1": {ID: "c1", SessionID: "s1"}},
 			sessionTodos: []SessionTodo{{ID: "t1", Content: "Write tests", Status: "in_progress", Order: 1}},
 		}
 		_, e := newTodosEcho(f)
@@ -450,7 +450,7 @@ func TestUiChatTodos(t *testing.T) {
 		}
 	})
 	t.Run("empty todos", func(t *testing.T) {
-		f := &fakeMemory{details: map[string]*ConversationDetail{"c1": {ID: "c1", ACPSessionID: "s1"}}}
+		f := &fakeMemory{details: map[string]*ConversationDetail{"c1": {ID: "c1", SessionID: "s1"}}}
 		_, e := newTodosEcho(f)
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/partial/chat-todos?c=c1", nil))

@@ -82,17 +82,6 @@ const (
 	DefaultMaxStepsPerRun = 30
 )
 
-// SessionStatus tracks the workspace provisioning lifecycle for an agent run.
-// This is distinct from AgentRunStatus which tracks execution state.
-type SessionStatus string
-
-const (
-	SessionStatusProvisioning SessionStatus = "provisioning" // Workspace being set up
-	SessionStatusActive       SessionStatus = "active"       // Workspace ready, agent executing
-	SessionStatusCompleted    SessionStatus = "completed"    // Run finished successfully
-	SessionStatusError        SessionStatus = "error"        // Run or provisioning failed
-)
-
 // AgentProcessingStatus defines the status of agent processing for a graph object
 type AgentProcessingStatus string
 
@@ -197,9 +186,6 @@ type AgentRun struct {
 	TriggerSource   *string        `bun:"trigger_source" json:"triggerSource"`
 	TriggerMetadata map[string]any `bun:"trigger_metadata,type:jsonb" json:"triggerMetadata"`
 
-	// Workspace session lifecycle tracking (distinct from run execution status)
-	SessionStatus SessionStatus `bun:"session_status,notnull,default:'active'" json:"sessionStatus"`
-
 	// Multi-agent coordination fields
 	ParentRunID    *string `bun:"parent_run_id,type:uuid" json:"parentRunId,omitempty"`
 	StepCount      int     `bun:"step_count,notnull,default:0" json:"stepCount"`
@@ -219,8 +205,8 @@ type AgentRun struct {
 	TraceID   *string `bun:"trace_id" json:"traceId,omitempty"`
 	RootRunID *string `bun:"root_run_id,type:uuid" json:"rootRunId,omitempty"`
 
-	// ACP session linkage: optional grouping of runs under an ACP session.
-	ACPSessionID *string `bun:"acp_session_id,type:uuid" json:"acpSessionId,omitempty"`
+	// session linkage: optional grouping of runs under a session.
+	SessionID *string `bun:"session_id,type:uuid" json:"sessionId,omitempty"`
 
 	AgentDefinitionID *string `bun:"agent_definition_id,type:uuid" json:"agentDefinitionId,omitempty"`
 
@@ -613,7 +599,7 @@ type AgentToolApproval struct {
 	ShareLinkID *string `bun:"share_link_id,type:uuid" json:"shareLinkId,omitempty"`
 
 	// ConversationID is the chat conversation this approval's run belongs to,
-	// resolved via agent_runs.acp_session_id → chat_conversations.id. Populated
+	// resolved via agent_runs.session_id → chat_conversations.id. Populated
 	// only by ListToolApprovals (not a stored column).
 	ConversationID *string `bun:"-" json:"conversationId,omitempty"`
 }
@@ -647,26 +633,25 @@ type AgentRunJob struct {
 	Run *AgentRun `bun:"rel:belongs-to,join:run_id=id" json:"-"`
 }
 
-// ACPSession represents a thin session grouping for ACP runs.
+// Session represents a thin session grouping for runs.
 // Sessions track run history only — no cross-run context injection.
-// Table: kb.acp_sessions
-type ACPSession struct {
-	bun.BaseModel `bun:"table:kb.acp_sessions,alias:acps"`
+// Table: kb.sessions
+type Session struct {
+	bun.BaseModel `bun:"table:kb.sessions,alias:acps"`
 
-	ID         string    `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
-	ProjectID  string    `bun:"project_id,type:uuid,notnull" json:"projectId"`
-	AgentName  *string   `bun:"agent_name" json:"agentName,omitempty"`
-	Title      *string   `bun:"title" json:"title,omitempty"`
-	IsArchived bool      `bun:"is_archived,notnull,default:false" json:"is_archived"`
-	CreatedAt  time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
-	UpdatedAt  time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
+	ID        string    `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
+	ProjectID string    `bun:"project_id,type:uuid,notnull" json:"projectId"`
+	AgentName *string   `bun:"agent_name" json:"agentName,omitempty"`
+	Title     *string   `bun:"title" json:"title,omitempty"`
+	CreatedAt time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
+	UpdatedAt time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
 }
 
-// ACPRunEvent represents a persisted run event emitted during an agent run.
+// RunEvent represents a persisted run event emitted during an agent run.
 // Replayed by the A2A v1.0 SubscribeTask to reconstruct a task's event stream.
-// Table: kb.acp_run_events
-type ACPRunEvent struct {
-	bun.BaseModel `bun:"table:kb.acp_run_events,alias:acre"`
+// Table: kb.run_events
+type RunEvent struct {
+	bun.BaseModel `bun:"table:kb.run_events,alias:acre"`
 
 	ID        string         `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
 	RunID     string         `bun:"run_id,type:uuid,notnull" json:"runId"`
@@ -678,7 +663,7 @@ type ACPRunEvent struct {
 	Run *AgentRun `bun:"rel:belongs-to,join:run_id=id" json:"-"`
 }
 
-// ACP run event types persisted in kb.acp_run_events.event_type. Reused by the
+// run event types persisted in kb.run_events.event_type. Reused by the
 // A2A v1.0 SubscribeTask replay for task-state mapping and stream
 // reconstruction.
 const (
