@@ -55,7 +55,7 @@ A query term SHALL match only an indexed lexeme. Substring, mid-word, prefix and
 
 ### Requirement: Strict query falls back to a relaxed form once
 
-The tool SHALL run the strict full-text query first and, only when it returns no rows, retry once with `ftsquery.Relax` (dropping phrases and purely numeric terms) before reporting no results. The relaxed form MUST NOT be used when it would strip or invert `websearch_to_tsquery` operator syntax.
+The tool SHALL run the strict full-text query first and, only when it returns no rows, retry once with `ftsquery.Relax` (dropping phrases and purely numeric terms). The relaxed form MUST NOT be used when it would strip or invert `websearch_to_tsquery` operator syntax. If the relaxed form also matches nothing, the tool SHALL then try the OR-disjunction fallback below before reporting no results.
 
 #### Scenario: Relaxed retry rescues an unsatisfiable identifier
 - **WHEN** a client searches for `aksjeloven 9999-99-99-99`, a term set the strict query cannot satisfy
@@ -64,6 +64,19 @@ The tool SHALL run the strict full-text query first and, only when it returns no
 #### Scenario: Strict match is not relaxed
 - **WHEN** the strict query returns at least one row
 - **THEN** no relaxed query is run
+
+### Requirement: A multi-term query falls back to an OR disjunction once
+
+After the strict and relaxed passes both match nothing, the tool SHALL retry once with the terms OR-joined (`ftsquery.Disjoin`), matched with `to_tsquery` against both the `simple` and `norwegian` configurations. The fallback SHALL NOT run when fewer than two letter-bearing terms survive or when the query carries `websearch_to_tsquery` operator syntax (phrase, negation, or explicit OR) that an OR-disjunction would strip or invert. This restores recall for natural multi-term queries whose terms are spread across many entities, without widening single-term queries.
+
+#### Scenario: Multi-term query returns the matching entity
+- **WHEN** no single entity contains every term of a natural multi-term query
+- **THEN** the strict AND query returns no rows
+- **AND** the disjoined OR fallback returns the entities that match any term
+
+#### Scenario: Single-term query is not widened
+- **WHEN** a single-term query already matches under the strict AND query
+- **THEN** the disjoined fallback MUST NOT run, and the strict result MUST be returned verbatim
 
 ### Requirement: Queries with no lexemes return no results
 

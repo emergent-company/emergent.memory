@@ -3355,7 +3355,12 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 		// index: `go.key = ?` has no supporting index, and an OR arm that cannot
 		// be served by an index forces the planner to seq-scan the whole
 		// disjunction instead of using idx_graph_objects_fts.
-		runSearch := func(queryText string) error {
+		// tsqueryFn selects the query constructor: websearch_to_tsquery (AND
+		// semantics over the parsed terms) for the strict and relaxed passes,
+		// to_tsquery (OR semantics over an explicit `|` disjunction) for the
+		// disjoined fallback. Both take (config, text) and apply the
+		// configuration's stemmer.
+		runSearch := func(queryText, tsqueryFn string) error {
 			baseQuery := `
 			SELECT 
 				go.id,
@@ -3372,8 +3377,8 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 			WHERE go.deleted_at IS NULL
 				AND go.project_id = ?
 				AND (
-					go.fts @@ websearch_to_tsquery('simple', ?)
-					OR go.fts @@ websearch_to_tsquery('norwegian', ?)
+					go.fts @@ ` + tsqueryFn + `('simple', ?)
+					OR go.fts @@ ` + tsqueryFn + `('norwegian', ?)
 				)
 				` + branchFilter + `
 				` + namespaceClause + `
@@ -3398,7 +3403,7 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 			return tx.NewRaw(baseQuery, queryArgs...).Scan(ctx, &entities)
 		}
 
-		if err := runSearch(query); err != nil {
+		if err := runSearch(query, "websearch_to_tsquery"); err != nil {
 			return err
 		}
 		if len(entities) > 0 {
@@ -3409,12 +3414,28 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 		// hyphenated identifier that websearch_to_tsquery rewrites into a phrase)
 		// zeroes the whole clause, so retry once with the relaxed form before
 		// reporting no results — mirroring graph.FTSSearch.
-		relaxed, ok := ftsquery.Relax(query)
+		if relaxed, ok := ftsquery.Relax(query); ok {
+			entities = nil
+			if err := runSearch(relaxed, "websearch_to_tsquery"); err != nil {
+				return err
+			}
+			if len(entities) > 0 {
+				return nil
+			}
+		}
+
+		// A natural multi-term query whose terms are spread across many objects
+		// matches nothing under AND semantics even though each term is
+		// individually well represented (issue #996). Retry once with the terms
+		// OR-joined and matched via to_tsquery, so recall is restored without
+		// collapsing single-term precision (a single-term query is already an OR
+		// of one term and Disjoin requires >=2 terms).
+		disjoined, ok := ftsquery.Disjoin(query)
 		if !ok {
 			return nil
 		}
 		entities = nil
-		return runSearch(relaxed)
+		return runSearch(disjoined, "to_tsquery")
 	})
 
 	if err != nil {
