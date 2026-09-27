@@ -29,14 +29,18 @@ import (
 type Level string
 
 // The authority tiers, ordered by strength. public < auth < project-token <
-// project-member < superadmin-full. There is no superadmin-any tier: no such
-// middleware exists in pkg/auth (only RequireSuperadminFull, which checks the
-// superadmin_full role).
+// project-member < superadmin-any < superadmin-full.
+//
+//   - superadmin-any: RequireSuperadmin (an active superadmin grant, full or
+//     readonly) — the transport gate for the /api/superadmin read surfaces.
+//   - superadmin-full: RequireSuperadminFull (superadmin_full role only) — the
+//     platform-admin gate for mutations and deployment-wide operator controls.
 const (
 	LevelPublic         Level = "public"
 	LevelAuth           Level = "auth"
 	LevelProjectToken   Level = "project-token"
 	LevelProjectMember  Level = "project-member"
+	LevelSuperadminAny  Level = "superadmin-any"
 	LevelSuperadminFull Level = "superadmin-full"
 )
 
@@ -46,7 +50,8 @@ var levelRank = map[Level]int{
 	LevelAuth:           1,
 	LevelProjectToken:   2,
 	LevelProjectMember:  3,
-	LevelSuperadminFull: 4,
+	LevelSuperadminAny:  4,
+	LevelSuperadminFull: 5,
 }
 
 // ValidLevels is the set of levels the guard accepts in a declared table.
@@ -55,6 +60,7 @@ var ValidLevels = map[Level]bool{
 	LevelAuth:           true,
 	LevelProjectToken:   true,
 	LevelProjectMember:  true,
+	LevelSuperadminAny:  true,
 	LevelSuperadminFull: true,
 }
 
@@ -666,6 +672,8 @@ func (x *extractor) classifyMiddleware(expr ast.Expr) (middleware, bool) {
 			return middleware{"RequireProjectTokenScope", LevelProjectToken}, true
 		case "RequireProjectMember":
 			return middleware{"RequireProjectMember", LevelProjectMember}, true
+		case "RequireSuperadmin":
+			return middleware{"RequireSuperadmin", LevelSuperadminAny}, true
 		case "RequireSuperadminFull":
 			return middleware{"RequireSuperadminFull", LevelSuperadminFull}, true
 		case "RequireProjectID":

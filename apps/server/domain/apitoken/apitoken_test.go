@@ -517,7 +517,22 @@ func TestUserFacingTokenPathsRejectReservedWebhookTriggerScope(t *testing.T) {
 	}
 }
 
-func TestScopesContainAdminAll(t *testing.T) {
+// The ephemeral sandbox ceiling must never carry a platform scope: admin and
+// admin:all require superadmin_full (see checkPlatformScopeGrant), but the
+// ephemeral mint runs on behalf of ordinary project members. Fail-first: if a
+// platform scope is (re)added to ephemeralScopes, this test goes red.
+func TestEphemeralScopesNeverCarryPlatformScope(t *testing.T) {
+	if len(ephemeralScopes) == 0 {
+		t.Fatal("ephemeralScopes must be non-empty")
+	}
+	for _, sc := range ephemeralScopes {
+		if platformScopes[sc] {
+			t.Fatalf("ephemeralScopes carries platform scope %q; sandbox tokens must never hold admin authority", sc)
+		}
+	}
+}
+
+func TestScopesContainPlatformScope(t *testing.T) {
 	tests := []struct {
 		name   string
 		scopes []string
@@ -525,14 +540,15 @@ func TestScopesContainAdminAll(t *testing.T) {
 	}{
 		{"admin all alone", []string{"admin:all"}, true},
 		{"admin all in mixed list", []string{"data:read", "admin:all", "graph:write"}, true},
-		{"bare admin without admin all", []string{"admin", "data:read"}, false},
+		{"bare admin alone", []string{"admin"}, true},
+		{"bare admin in mixed list", []string{"admin", "data:read"}, true},
 		{"unrelated scopes", []string{"data:read", "graph:write"}, false},
 		{"empty list", []string{}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := scopesContainAdminAll(tt.scopes); got != tt.want {
-				t.Errorf("scopesContainAdminAll(%v) = %v, want %v", tt.scopes, got, tt.want)
+			if got := scopesContainPlatformScope(tt.scopes); got != tt.want {
+				t.Errorf("scopesContainPlatformScope(%v) = %v, want %v", tt.scopes, got, tt.want)
 			}
 		})
 	}

@@ -27,14 +27,21 @@ const tableHeader = `# Route -> authority conformance table.
 #   auth             RequireAuth (or a2aStreamingAuthMiddleware), no project gate
 #   project-token    RequireProjectTokenScope, no RequireProjectMember
 #   project-member   RequireProjectMember (with or without token scope)
+#   superadmin-any   RequireSuperadmin (any active superadmin grant: full or readonly)
 #   superadmin-full  RequireSuperadminFull
 #
 # The 'note' column records the full derived middleware chain for reviewer
 # context and is informational (a note-only drift warns but does not fail).
 #
-# Scope of the scan: apps/server/domain only. Handler-level authorization (e.g.
-# backups requireOrgAdmin, skills requireProjectMember) is NOT part of the
-# middleware tier and is tracked separately (#1041).
+# Scope of the scan: apps/server/domain only. Handler-level authorization is NOT
+# part of the middleware tier and is tracked separately (#1041). The
+# handler-gated surfaces are:
+#   - /api/projects/:id/embeddings/*  (requireProjectAdmin in the handler)
+#   - /api/tokens/* account-token handlers (mint-level admin/admin:all check in
+#     the apitoken service, not a route gate)
+# /api/superadmin/* is NOT in that list: it is middleware-gated since #1086
+# (RequireSuperadmin for reads, RequireSuperadminFull for mutations), with
+# /api/superadmin/me the single RequireAuth-only exception.
 `
 
 // Table is the on-disk route→authority expectations file.

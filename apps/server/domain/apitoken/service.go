@@ -73,24 +73,42 @@ var viewerReadOnlyScopes = map[string]bool{
 	"projects:read": true,
 }
 
-// errAdminAllScopeDenied is returned when a caller attempts to grant admin:all
-// without superadmin_full privileges.
-var errAdminAllScopeDenied = apperror.New(403, "admin-all-scope-denied",
-	"admin:all scope requires superadmin_full privileges")
+// platformScopes are the platform-tier scopes whose minting requires the
+// platform authority (an active superadmin_full). Bare "admin" is folded into
+// "admin:all" + platform per #1041 E1 (docs/security/mcp-authz-class-decision.md):
+// it is no longer mintable by an unprivileged caller; only a superadmin_full may
+// grant either.
+var platformScopes = map[string]bool{
+	"admin":     true,
+	"admin:all": true,
+}
 
-// scopesContainAdminAll reports whether scopes includes the admin:all scope.
-func scopesContainAdminAll(scopes []string) bool {
+// errPlatformScopeDenied is returned when a caller attempts to grant a
+// platform-tier scope (admin or admin:all) without superadmin_full privileges.
+// The code is intentionally the legacy "admin-all-scope-denied" — the gateway
+// consumers match that string (apps/web-ui/gateway/api_tokens_handlers_test.go)
+// — rather than a renamed code that would break the client contract.
+var errPlatformScopeDenied = apperror.New(403, "admin-all-scope-denied",
+	"admin and admin:all scopes require superadmin_full privileges")
+
+// scopesContainPlatformScope reports whether scopes includes a platform-tier
+// scope (bare admin or admin:all).
+func scopesContainPlatformScope(scopes []string) bool {
 	for _, sc := range scopes {
-		if sc == "admin:all" {
+		if platformScopes[sc] {
 			return true
 		}
 	}
 	return false
 }
 
-// checkAdminAllGrant rejects admin:all unless the caller is a superadmin_full.
-func (s *Service) checkAdminAllGrant(ctx context.Context, userID string, scopes []string) error {
-	if !scopesContainAdminAll(scopes) {
+// checkPlatformScopeGrant rejects platform-tier scopes (admin / admin:all)
+// unless the caller is a superadmin_full. Bare admin and admin:all share the
+// same platform authority: admin:all is the umbrella (it implies admin via
+// ScopeImplies), so a caller who may not grant admin:all may not grant bare
+// admin either (#1041 E1).
+func (s *Service) checkPlatformScopeGrant(ctx context.Context, userID string, scopes []string) error {
+	if !scopesContainPlatformScope(scopes) {
 		return nil
 	}
 	allowed, err := s.repo.CanGrantAdminAll(ctx, userID)
@@ -98,7 +116,7 @@ func (s *Service) checkAdminAllGrant(ctx context.Context, userID string, scopes 
 		return err
 	}
 	if !allowed {
-		return errAdminAllScopeDenied
+		return errPlatformScopeDenied
 	}
 	return nil
 }
@@ -149,6 +167,28 @@ var webhookTriggerScopes = []string{webhookTriggerScope, "agents:read", "agents:
 // server-side from the binding, and a leaked share key must not be able to list
 // the owner's projects or members.
 var shareChatScopes = []string{shareAgentChatScope}
+
+// ephemeralScopes is the hardcoded scope set minted on every ephemeral sandbox
+// token (Service.CreateEphemeral). It is the ceiling for the sandbox container's
+// MEMORY_ACCOUNT_API_KEY: the coarse read/write families plus the fine-grained
+// graph/schema/branches/search/journal/skills/documents scopes the agent runner
+// needs. It deliberately carries NO platform scope (admin / admin:all): those
+// require an active superadmin_full (see checkPlatformScopeGrant) and the
+// ephemeral mint runs on behalf of ordinary project members, who must never
+// obtain platform authority through the sandbox path (#1041 E1).
+var ephemeralScopes = []string{
+	// Coarse-grained (legacy) — kept for backwards compat with route middleware
+	"data:read", "data:write", "schema:read", "schema:write",
+	"agents:read", "agents:write", "projects:read", "projects:write",
+	// Fine-grained MCP scopes — agent runners need full graph + schema + branches
+	"graph:read", "graph:write",
+	"schema:migrate",
+	"branches:read", "branches:write",
+	"search",
+	"journal:read", "journal:write",
+	"skills:read", "skills:write",
+	"documents:read", "documents:write",
+}
 
 // Create creates a user-facing API token. It rejects the reserved agent-share
 // marker scope; the internal per-agent share mint path uses
@@ -256,8 +296,8 @@ func (s *Service) create(ctx context.Context, projectID string, userID *string, 
 		uid = *userID
 	}
 
-	// admin:all requires superadmin_full privileges
-	if err := s.checkAdminAllGrant(ctx, uid, scopes); err != nil {
+	// admin / admin:all require superadmin_full privileges
+	if err := s.checkPlatformScopeGrant(ctx, uid, scopes); err != nil {
 		return nil, err
 	}
 
@@ -442,8 +482,8 @@ func (s *Service) CreateAccountToken(ctx context.Context, userID, name string, s
 		}
 	}
 
-	// admin:all requires superadmin_full privileges
-	if err := s.checkAdminAllGrant(ctx, userID, scopes); err != nil {
+	// admin / admin:all require superadmin_full privileges
+	if err := s.checkPlatformScopeGrant(ctx, userID, scopes); err != nil {
 		return nil, err
 	}
 
@@ -581,21 +621,8 @@ func (s *Service) CreateEphemeral(ctx context.Context, projectID, orgID, userID 
 		Name:        fmt.Sprintf("ephemeral-sandbox-%d", time.Now().UnixMilli()),
 		TokenHash:   hashToken(raw),
 		TokenPrefix: getTokenPrefix(raw),
-		Scopes: []string{
-			// Coarse-grained (legacy) — kept for backwards compat with route middleware
-			"data:read", "data:write", "schema:read", "schema:write",
-			"agents:read", "agents:write", "projects:read", "projects:write",
-			// Fine-grained MCP scopes — agent runners need full graph + schema + branches
-			"graph:read", "graph:write",
-			"schema:migrate",
-			"branches:read", "branches:write",
-			"search",
-			"journal:read", "journal:write",
-			"skills:read", "skills:write",
-			"documents:read", "documents:write",
-			"admin",
-		},
-		ExpiresAt: &expiresAt,
+		Scopes:      ephemeralScopes,
+		ExpiresAt:   &expiresAt,
 	}
 
 	if err := s.repo.Create(ctx, token); err != nil {
@@ -647,8 +674,8 @@ func (s *Service) UpdateScopes(ctx context.Context, tokenID, projectID, userID s
 		}
 	}
 
-	// admin:all requires superadmin_full privileges
-	if err := s.checkAdminAllGrant(ctx, userID, scopes); err != nil {
+	// admin / admin:all require superadmin_full privileges
+	if err := s.checkPlatformScopeGrant(ctx, userID, scopes); err != nil {
 		return nil, err
 	}
 
@@ -710,8 +737,8 @@ func (s *Service) UpdateAccountTokenScopes(ctx context.Context, tokenID, userID 
 		}
 	}
 
-	// admin:all requires superadmin_full privileges
-	if err := s.checkAdminAllGrant(ctx, userID, scopes); err != nil {
+	// admin / admin:all require superadmin_full privileges
+	if err := s.checkPlatformScopeGrant(ctx, userID, scopes); err != nil {
 		return nil, err
 	}
 
@@ -779,6 +806,15 @@ func (s *Service) regenerate(ctx context.Context, tokenID, projectID, userID str
 				}
 			}
 		}
+	}
+
+	// Re-validate scopes through the platform gate: a token that carries a
+	// platform scope (admin / admin:all) may have been minted when the caller
+	// held superadmin_full, but the caller must still hold it to regenerate.
+	// Without this re-check a revoked grant would let a caller copy a scope it
+	// can no longer mint (#1041 E1).
+	if err := s.checkPlatformScopeGrant(ctx, userID, existing.Scopes); err != nil {
+		return nil, err
 	}
 
 	// Generate new token material before the transaction
@@ -872,6 +908,13 @@ func (s *Service) RegenerateAccountToken(ctx context.Context, tokenID, userID st
 	}
 	if existing.RevokedAt != nil {
 		return nil, apperror.New(409, "token_already_revoked", "Token is already revoked")
+	}
+
+	// Re-validate scopes through the platform gate (see regenerate): a caller
+	// must still hold superadmin_full to regenerate a token carrying admin or
+	// admin:all, so a revoked grant cannot copy a now-unmintable scope.
+	if err := s.checkPlatformScopeGrant(ctx, userID, existing.Scopes); err != nil {
+		return nil, err
 	}
 
 	// Generate new token material

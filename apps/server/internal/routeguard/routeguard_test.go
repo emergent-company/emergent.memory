@@ -222,7 +222,7 @@ func TestExtractRealTree(t *testing.T) {
 	// internal/routeguard -> apps/server
 	serverDir := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
 	if _, err := os.Stat(filepath.Join(serverDir, "domain")); err != nil {
-		t.Skipf("domain tree not available at %s: %v", serverDir, err)
+		t.Fatalf("domain tree not available at %s: %v", serverDir, err)
 	}
 
 	res, err := Extract(serverDir)
@@ -236,4 +236,49 @@ func TestExtractRealTree(t *testing.T) {
 		t.Fatal("Extract returned zero routes; expected a populated table")
 	}
 	t.Logf("extracted %d routes from the real tree", len(res.Routes))
+}
+
+// TestSuperadminRoutesAreTransportGated is the fail-first guard for #1086: every
+// /api/superadmin/* route except /me must derive a superadmin tier
+// (superadmin-any or superadmin-full) from its middleware chain, never the
+// RequireAuth-only "auth" tier. If the group middleware is removed, these routes
+// drop to LevelAuth and this test fails — the same signal that tells a reviewer
+// a newly added superadmin route is unprotected.
+func TestSuperadminRoutesAreTransportGated(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	serverDir := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
+	if _, err := os.Stat(filepath.Join(serverDir, "domain")); err != nil {
+		t.Fatalf("domain tree not available at %s: %v", serverDir, err)
+	}
+
+	res, err := Extract(serverDir)
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+
+	const prefix = "/api/superadmin/"
+	gated := 0
+	for _, r := range res.Routes {
+		if !strings.HasPrefix(r.Path, prefix) {
+			continue
+		}
+		// /me is the single intentionally RequireAuth-only surface.
+		if r.Path == "/api/superadmin/me" {
+			if r.Level != LevelAuth {
+				t.Errorf("%s %s = %s, want %s", r.Method, r.Path, r.Level, LevelAuth)
+			}
+			continue
+		}
+		if r.Level != LevelSuperadminAny && r.Level != LevelSuperadminFull {
+			t.Errorf("%s %s = %s, want superadmin-any or superadmin-full (transport gate missing?)", r.Method, r.Path, r.Level)
+		}
+		gated++
+	}
+	if gated == 0 {
+		t.Fatal("no /api/superadmin/* routes were found; the transport-gate assertion is vacuous")
+	}
+	t.Logf("asserted %d /api/superadmin routes are transport-gated (superadmin-any or superadmin-full)", gated)
 }
