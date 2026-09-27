@@ -228,6 +228,16 @@ pre-commit:
       glob: "**/*.go"
       run: go vet ./...
 
+    # ── Mac connector — apps/connector.mac ───────────────────────────────────
+    # SwiftFormat + SwiftLint over the *staged* Swift files only. Whole-tree
+    # enforcement is not used because the connector carries pre-existing Swift
+    # debt; the ratchet (see Scripts/lint-swift.sh) keeps new drift out without
+    # a mass reformat. No `root:` so {staged_files} stay repo-root-relative.
+    - name: connector-mac-swift
+      glob:
+        - "apps/connector.mac/**/*.swift"
+      run: apps/connector.mac/Scripts/lint-swift.sh {staged_files}
+
 # Pre-push: stale-base guard. Blocking a *commit* on being behind main is
 # counterproductive — a lane mid-work, with main moving underneath it, must
 # still be able to commit WIP — but a push is the moment a stale tree would
@@ -423,6 +433,11 @@ lint:
       root: apps/connector.linux
       run: GOLANGCI_LINT_CACHE="${TMPDIR:-/tmp}/em-golangci-connector" golangci-lint run --allow-parallel-runners ./...
 
+    # Swift files changed on this branch vs origin/main. See
+    # apps/connector.mac/Scripts/lint-swift.sh for the ratchet rationale.
+    - name: connector-mac-swift
+      run: apps/connector.mac/Scripts/lint-swift.sh
+
 # Web-ui + connector scope. `task lint` in apps/web-ui runs this group.
 lint-webui:
   parallel: true
@@ -525,3 +540,6 @@ lint-webui:
     - name: connector-golangci-lint
       root: apps/connector.linux
       run: GOLANGCI_LINT_CACHE="${TMPDIR:-/tmp}/em-golangci-connector" golangci-lint run --allow-parallel-runners ./...
+
+    - name: connector-mac-swift
+      run: apps/connector.mac/Scripts/lint-swift.sh
