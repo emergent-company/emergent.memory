@@ -29,7 +29,10 @@ A type schema with no `scopeKey` MUST be accepted unchanged. The declaration
 SHALL be stored inside the type's existing JSON schema (`json_schema` /
 `object_type_schemas`), so no database migration is required. Both camelCase and
 snake_case aliases (`scope_key`, `references_type`, `references_property`,
-`identity_property`) SHALL be accepted.
+`identity_property`) SHALL be accepted. When both the canonical `scopeKey` key
+and the `scope_key` alias are present, the canonical `scopeKey` SHALL win
+(consistent with the inner-property alias handling); the alias SHALL be promoted
+to the canonical form on decode and never re-emitted.
 
 #### Scenario: No declaration is accepted unchanged
 

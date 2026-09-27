@@ -2757,7 +2757,25 @@ func (s *Service) enforceEntityQueryScope(ctx context.Context, tx bun.Tx, projec
 	}
 
 	decl, perr := schemas.ParseScopeKey(json.RawMessage(raw))
-	if perr != nil || decl == nil || decl.Property == "" {
+	if perr != nil {
+		// A malformed declaration is treated as absent (no enforcement) rather
+		// than rejecting every filtered query for the type. Write paths validate
+		// declarations, so this can only be a legacy/tampered registry row.
+		// Surfaced as a warning so it is observable instead of silent.
+		if s.log != nil {
+			s.log.Warn("ignoring malformed scopeKey declaration in schema registry",
+				slog.String("project_id", projectID),
+				slog.String("type_name", typeName),
+				logger.Error(perr))
+		}
+		return nil
+	}
+	if decl == nil || decl.Property == "" {
+		if decl != nil && s.log != nil {
+			s.log.Warn("ignoring scopeKey declaration with empty property",
+				slog.String("project_id", projectID),
+				slog.String("type_name", typeName))
+		}
 		return nil
 	}
 

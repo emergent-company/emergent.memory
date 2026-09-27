@@ -1,6 +1,10 @@
 package blueprints
 
-import "github.com/emergent-company/emergent.memory/domain/schemas"
+import (
+	"encoding/json"
+
+	"github.com/emergent-company/emergent.memory/domain/schemas"
+)
 
 // BlueprintManifest is the typed shape of a blueprint's opaque manifest JSON.
 // Packs, agents, and skills are materialized with create-or-update (by name)
@@ -38,13 +42,38 @@ type ObjectTypeDef struct {
 	Label       string         `json:"label"`
 	Description string         `json:"description"`
 	Properties  map[string]any `json:"properties"`
-	// ScopeKey is the optional scope-key declaration (issue #1148). Carried as a
-	// raw map so it passes through to the schema registry untouched.
-	ScopeKey   map[string]any `json:"scopeKey,omitempty"`
-	Labels     []string       `json:"labels,omitempty"`
-	Embedding  map[string]any `json:"embedding,omitempty"`
-	Extraction map[string]any `json:"extraction,omitempty"`
-	UI         map[string]any `json:"ui,omitempty"`
+	// ScopeKey is the effective scope-key declaration (issue #1148). Carried as
+	// a raw map so it passes through to the schema registry untouched. It is the
+	// canonical (camelCase) spelling; the snake_case alias below is promoted
+	// into it on decode.
+	ScopeKey map[string]any `json:"scopeKey,omitempty"`
+	// ScopeKeySnake is the accepted top-level snake_case alias (`scope_key`). On
+	// decode it is promoted into ScopeKey and cleared, so it is never re-emitted.
+	// Precedence: canonical `scopeKey` wins when both are present, matching the
+	// inner-property alias handling.
+	ScopeKeySnake map[string]any `json:"scope_key,omitempty"`
+	Labels        []string       `json:"labels,omitempty"`
+	Embedding     map[string]any `json:"embedding,omitempty"`
+	Extraction    map[string]any `json:"extraction,omitempty"`
+	UI            map[string]any `json:"ui,omitempty"`
+}
+
+// UnmarshalJSON decodes the canonical `scopeKey` and its `scope_key` alias and
+// normalizes them (canonical wins), so a manifest authored with either spelling
+// reaches the schema validator/registry as a declaration instead of being
+// dropped.
+func (o *ObjectTypeDef) UnmarshalJSON(data []byte) error {
+	type alias ObjectTypeDef
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*o = ObjectTypeDef(a)
+	if o.ScopeKey == nil && o.ScopeKeySnake != nil {
+		o.ScopeKey = o.ScopeKeySnake
+	}
+	o.ScopeKeySnake = nil
+	return nil
 }
 
 // RelationshipTypeDef is a single relationship type schema in a pack manifest.

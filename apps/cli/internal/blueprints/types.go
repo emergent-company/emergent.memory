@@ -3,7 +3,11 @@
 // updating those resources via the Memory API.
 package blueprints
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"gopkg.in/yaml.v3"
+)
 
 // ──────────────────────────────────────────────
 // ProjectFile — project.[json|yaml|yml] (blueprint root)
@@ -48,12 +52,55 @@ type ObjectTypeDef struct {
 	Label       string         `json:"label"       yaml:"label"`
 	Description string         `json:"description" yaml:"description"`
 	Properties  map[string]any `json:"properties"  yaml:"properties"`
-	// ScopeKey is the optional scope-key declaration (issue #1148): the property
-	// on this type that scopes it to a parent document, plus the reference it
-	// points at. Passed through to the schema API untouched. omitempty keeps a
-	// nil declaration out of the marshalled payload entirely (a JSON null would
-	// otherwise be re-emitted for every type and rejected by the server).
+	// ScopeKey is the effective scope-key declaration (issue #1148): the
+	// property on this type that scopes it to a parent document, plus the
+	// reference it points at. It is the canonical (camelCase) spelling; the
+	// snake_case alias below is promoted into it on decode. omitempty keeps an
+	// absent declaration out of the marshalled payload entirely (a JSON null
+	// would otherwise be re-emitted for every type and rejected by the server).
 	ScopeKey map[string]any `json:"scopeKey,omitempty" yaml:"scopeKey,omitempty"`
+
+	// ScopeKeySnake is the accepted top-level snake_case alias (`scope_key`).
+	// On decode it is promoted into ScopeKey and cleared, so it is never emitted.
+	// Precedence: the canonical `scopeKey` wins when both are present, matching
+	// the inner-property alias handling.
+	ScopeKeySnake map[string]any `json:"scope_key,omitempty" yaml:"scope_key,omitempty"`
+}
+
+// normalizeScopeKey folds the top-level snake_case alias into the canonical
+// ScopeKey and drops the alias, so the effective declaration has a single
+// representation. Canonical `scopeKey` wins when both are present.
+func (o *ObjectTypeDef) normalizeScopeKey() {
+	if o.ScopeKey == nil && o.ScopeKeySnake != nil {
+		o.ScopeKey = o.ScopeKeySnake
+	}
+	o.ScopeKeySnake = nil
+}
+
+// UnmarshalJSON decodes the canonical `scopeKey` and its `scope_key` alias and
+// normalizes them (canonical wins).
+func (o *ObjectTypeDef) UnmarshalJSON(data []byte) error {
+	type alias ObjectTypeDef
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*o = ObjectTypeDef(a)
+	o.normalizeScopeKey()
+	return nil
+}
+
+// UnmarshalYAML decodes the canonical `scopeKey` and its `scope_key` alias and
+// normalizes them (canonical wins).
+func (o *ObjectTypeDef) UnmarshalYAML(value *yaml.Node) error {
+	type alias ObjectTypeDef
+	var a alias
+	if err := value.Decode(&a); err != nil {
+		return err
+	}
+	*o = ObjectTypeDef(a)
+	o.normalizeScopeKey()
+	return nil
 }
 
 // RelationshipTypeDef represents a single relationship type definition inside a pack file.
