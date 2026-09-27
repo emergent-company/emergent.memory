@@ -998,18 +998,24 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 	return result, nil
 }
 
-// defaultRunTimeout is the fallback wall-clock limit applied to a run when
-// neither the request nor the agent definition specifies a timeout. It exists
-// so a hung LLM/tool call cannot block the executor goroutine forever.
+// defaultRunTimeout is the fallback per-step no-progress budget applied to a
+// run when neither the request nor the agent definition specifies a timeout. It
+// is the resettable watchdog budget, NOT a fixed wall-clock ceiling: a run that
+// keeps making progress (new steps / tool calls) is never killed by it. It
+// exists so a hung LLM/tool call that makes no progress cannot block the
+// executor goroutine forever.
 const defaultRunTimeout = 10 * time.Minute
 
-// resolveRunTimeout returns the wall-clock timeout for a run, in precedence
-// order:
+// resolveRunTimeout returns the per-step watchdog budget for a run, in
+// precedence order:
 //  1. an explicit per-request timeout (ExecuteRequest.Timeout, when > 0);
 //  2. the agent definition's default_timeout (seconds, when > 0) — so an
 //     operator can opt a slow-but-legitimate agent into a longer budget on the
 //     primary surfaces (chat/A2A/scheduler/worker), not just on sub-agent spawns;
 //  3. the hard-coded defaultRunTimeout.
+//
+// The budget is a resettable per-step no-progress limit (issue #1072), not a
+// fixed wall-clock ceiling; see stepWatchdog.
 func resolveRunTimeout(req ExecuteRequest) time.Duration {
 	if req.Timeout != nil && *req.Timeout > 0 {
 		return *req.Timeout
@@ -1028,15 +1034,11 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 		return nil, fmt.Errorf("cannot resume run %s: status is %s (expected paused)", priorRun.ID, priorRun.Status)
 	}
 
-	// Apply hard timeout so a hung LLM call cannot block the goroutine forever.
-	// The timeout honours an explicit per-request value, then the agent
-	// definition's default_timeout, then the hard-coded default.
-	runTimeout := resolveRunTimeout(req)
-	{
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, runTimeout)
-		defer cancel()
-	}
+	// No fixed wall-clock deadline here: a resumed run can legitimately keep
+	// taking steps past the old 10-minute budget. The per-step watchdog applied
+	// inside runPipeline (issue #1072) still terminates a step that makes no
+	// progress, and workspace provisioning carries its own timeouts — matching
+	// the non-resume Execute path.
 
 	// Determine max steps, considering cumulative step count
 	maxSteps := MaxTotalStepsPerRun
@@ -1884,21 +1886,22 @@ func (ae *AgentExecutor) runPipeline(
 		ctx = auth.ContextWithOrgID(ctx, req.OrgID)
 	}
 
-	// Apply timeout if specified; fall back to the agent definition's
-	// default_timeout, then a hard maximum to prevent runs from blocking forever
-	// on a hung LLM HTTP call.
-	runTimeout := resolveRunTimeout(req)
-	{
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, runTimeout)
-		defer cancel()
-	}
+	// Per-step watchdog (issue #1072): instead of a single fixed wall-clock
+	// deadline that kills a legitimately slow multi-step run at 10 minutes, arm a
+	// resettable per-step budget. Progress (a new model step, a tool invocation,
+	// a tool completing) resets the budget; only a step that makes no progress
+	// for the whole budget is terminated. The budget honours the same precedence
+	// as the old wall-clock timeout (request > agent default_timeout > 10m default).
+	stepTimeout := resolveRunTimeout(req)
+	var cancelReason string // set before a run is cancelled to give a meaningful error message
+	watchdog := newStepWatchdog(ctx, stepTimeout, &cancelReason, ae.log, run.ID)
+	ctx = watchdog.ctx
+	defer watchdog.stop()
 
 	// Create a cancellable context so the doom loop detector can hard-stop the run.
 	var cancelRun context.CancelFunc
 	ctx, cancelRun = context.WithCancel(ctx)
 	defer cancelRun()
-	var cancelReason string // set before calling cancelRun() to give a meaningful error message
 
 	// Create the LLM model — per-run override takes precedence
 	modelName := req.Model
@@ -2173,6 +2176,10 @@ func (ae *AgentExecutor) runPipeline(
 
 		currentStep := tracker.increment()
 
+		// A new model step is progress: reset the per-step watchdog so a run that
+		// keeps taking steps is never killed by the aggregate duration.
+		watchdog.progress()
+
 		// Heartbeat: bump last_step_at so the stale-run reaper keys off recent
 		// activity rather than started_at, keeping long-running-but-active runs alive.
 		_ = ae.repo.TouchRun(dbCtx, run.ID)
@@ -2248,6 +2255,9 @@ func (ae *AgentExecutor) runPipeline(
 		if id := tCtx.FunctionCallID(); id != "" {
 			toolStartTimes.Store(id, time.Now())
 		}
+
+		// A tool invocation is progress: reset the per-step watchdog.
+		watchdog.progress()
 
 		// Heartbeat on tool invocation so long tool phases (sandbox build, MCP
 		// round-trips) between model steps keep refreshing last_step_at.
@@ -2396,6 +2406,9 @@ func (ae *AgentExecutor) runPipeline(
 	afterToolCb := func(tCtx tool.Context, t tool.Tool, args, result map[string]any, toolErr error) (map[string]any, error) {
 		toolName := t.Name()
 		currentStep := tracker.current()
+
+		// A completed tool call is progress: reset the per-step watchdog.
+		watchdog.progress()
 
 		// Compute the tool's actual execution window from the start stamped in
 		// beforeToolCb. A tool blocked by policy or awaiting confirmation never
@@ -3119,6 +3132,12 @@ func (ae *AgentExecutor) runPipeline(
 		} else if ctx.Err() == context.Canceled {
 			reason = "cancelled"
 			errMsg = "Run cancelled: context cancelled"
+		}
+
+		// A cancellation with an explicit reason (step watchdog timeout or doom
+		// loop) overrides the generic message so the failure is self-explanatory.
+		if cancelReason != "" {
+			errMsg = cancelReason
 		}
 
 		ae.log.Warn("run cancelled by context",

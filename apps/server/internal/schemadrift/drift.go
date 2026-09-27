@@ -14,9 +14,7 @@ import (
 // change. Each entry names its tracking issue. The guard still observes the
 // mismatch (MatchedNullabilityAllowlist) and fails on any stale entry that no
 // longer matches, so this list cannot silently grow or go out of date.
-var nullabilityAllowlist = map[string]string{
-	"kb.adk_states.user_id": "model bunsession.ADKState marks user_id pk (hence NOT NULL) but the migrated column is nullable (empty for app scope) and the real PK is id, which the model omits — tracked in #1093",
-}
+var nullabilityAllowlist = map[string]string{}
 
 // schemaColumn is one column of a migrated table, as reported by
 // information_schema.columns.
