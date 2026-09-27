@@ -9373,7 +9373,7 @@ const docTemplate = `{
         },
         "/api/projects/{id}/embeddings/progress": {
             "get": {
-                "description": "Returns pending/processing/completed/failed counts for graph object, relationship, and chunk embedding jobs scoped to this project. Requires project_admin role.",
+                "description": "Returns pending/processing/completed/failed counts for graph object and chunk embedding jobs scoped to this project. Requires project_admin role.",
                 "produces": [
                     "application/json"
                 ],
@@ -24424,9 +24424,6 @@ const docTemplate = `{
                     "$ref": "#/definitions/domain_extraction.ChunkEmbeddingQueueStats"
                 },
                 "objects": {
-                    "$ref": "#/definitions/domain_extraction.GraphEmbeddingQueueStats"
-                },
-                "relationships": {
                     "$ref": "#/definitions/domain_extraction.GraphEmbeddingQueueStats"
                 }
             }

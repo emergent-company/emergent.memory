@@ -47,15 +47,17 @@ func (h *ProjectEmbeddingHandler) requireProjectAdmin(c echo.Context, projectID 
 }
 
 // ProjectEmbeddingProgressResponse is the response for the progress endpoint.
+// Relationship embedding queue counts are not part of this project-scoped
+// view; they are served by GET /api/embeddings/progress (see
+// EmbeddingProgressResponse).
 type ProjectEmbeddingProgressResponse struct {
-	Objects       *GraphEmbeddingQueueStats `json:"objects"`
-	Relationships *GraphEmbeddingQueueStats `json:"relationships"`
-	Chunks        *ChunkEmbeddingQueueStats `json:"chunks"`
+	Objects *GraphEmbeddingQueueStats `json:"objects"`
+	Chunks  *ChunkEmbeddingQueueStats `json:"chunks"`
 }
 
 // Progress handles GET /api/projects/:id/embeddings/progress
 // @Summary      Get embedding queue progress for a project
-// @Description  Returns pending/processing/completed/failed counts for graph object, relationship, and chunk embedding jobs scoped to this project. Requires project_admin role.
+// @Description  Returns pending/processing/completed/failed counts for graph object and chunk embedding jobs scoped to this project. Requires project_admin role.
 // @Tags         embeddings
 // @Produce      json
 // @Param        id   path      string  true  "Project ID"
@@ -93,11 +95,6 @@ func (h *ProjectEmbeddingHandler) Progress(c echo.Context) error {
 	if chunkErr != nil {
 		return apperror.NewInternal("get chunk embedding stats", chunkErr)
 	}
-
-	// Graph relationship embedding jobs use the same table but object_id points to
-	// relationship objects — they share graphJobs. Relationship-specific stats would
-	// require filtering by object type; for now we surface total graph stats once.
-	// A separate rel stats field is left nil to avoid double-counting.
 
 	return c.JSON(http.StatusOK, ProjectEmbeddingProgressResponse{
 		Objects: objStats,

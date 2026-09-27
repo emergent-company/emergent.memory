@@ -73,4 +73,11 @@ func TestProjectEmbeddingProgressStatsByProject(t *testing.T) {
 	require.NotNil(t, resp.Chunks)
 	require.Equal(t, int64(2), resp.Objects.Pending, "object stats must be scoped to the project")
 	require.Equal(t, int64(3), resp.Chunks.Pending, "chunk stats must be scoped to the project")
+
+	// Relationship queue counts are served by GET /api/embeddings/progress, not
+	// this project-scoped endpoint. Pin that the response shape no longer carries
+	// an always-nil relationships field (issue #1150).
+	var body map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.NotContains(t, body, "relationships")
 }
