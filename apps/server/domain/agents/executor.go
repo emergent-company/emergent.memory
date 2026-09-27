@@ -462,6 +462,16 @@ func (c *runCleanup) Cleanup() {
 	c.once.Do(c.fn)
 }
 
+// toolPool is the subset of *ToolPool the executor depends on. It is extracted
+// as an interface so tests can inject a stub that captures the tool-dispatch
+// context (see transport_enforced_wiring_test.go, issue #1133).
+type toolPool interface {
+	ResolveTools(projectID string, agentDef *AgentDefinition, depth int, maxDepth int) ([]tool.Tool, error)
+	StripOperatorTools(ctx context.Context, tools []tool.Tool) []tool.Tool
+	ToolScopes() map[string]string
+	CallTool(ctx context.Context, projectID, toolName string, args map[string]any) (map[string]any, error)
+}
+
 // AgentExecutor is the core execution engine for running agents via ADK.
 // It builds an LLM agent pipeline with tools from the ToolPool, runs it
 // via the ADK runner, tracks steps, detects doom loops, and persists
@@ -472,7 +482,7 @@ func (c *runCleanup) Cleanup() {
 // container before the run starts and tears it down after the run completes.
 type AgentExecutor struct {
 	modelFactory   *adk.ModelFactory
-	toolPool       *ToolPool
+	toolPool       toolPool
 	repo           *Repository
 	skillRepo      skills.SkillRepo
 	embeddingsSvc  *embeddings.Service
