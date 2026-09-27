@@ -42,10 +42,16 @@ type BranchReader interface {
 	GetMainBranchID(ctx context.Context, projectID string) (*string, error)
 }
 
-// OrgMembershipReader returns a user's role in an organization.
+// OrgMembershipReader returns a user's role in an organization, and resolves
+// org-admin authority through the shared app-side entitlement check.
 // Satisfied by orgs.Repository via fx injection.
 type OrgMembershipReader interface {
 	GetMembershipRole(ctx context.Context, orgID, userID string) (string, error)
+	// IsOrgAdmin reports whether the user holds org-admin authority over the org
+	// (orgs.Repository delegates to pkg/auth.CanAdministerOrg). Org-scoped
+	// project decisions consume this single check rather than re-deriving the
+	// role locally (issue #812 §4.5, issue #1162).
+	IsOrgAdmin(ctx context.Context, orgID, userID string) (bool, error)
 }
 
 // deletionRepository abstracts the persistence operations used by the project
@@ -413,17 +419,19 @@ func (s *Service) Transfer(ctx context.Context, projectID, destOrgID, userID str
 		return nil, apperror.ErrInternal.WithInternal(errors.New("org membership reader not configured"))
 	}
 
-	// Requester must be org_admin of the project's current org.
-	role, err := s.orgMembershipReader.GetMembershipRole(ctx, sourceOrg, userID)
+	// Requester must be org_admin of the project's current org. The decision is
+	// the shared app-side org-administration check, not a locally re-derived
+	// role comparison (issue #812 §4.5, issue #1162).
+	isSourceOrgAdmin, err := s.orgMembershipReader.IsOrgAdmin(ctx, sourceOrg, userID)
 	if err != nil {
 		return nil, err
 	}
-	if role != "org_admin" {
+	if !isSourceOrgAdmin {
 		return nil, apperror.ErrForbidden.WithMessage("Only an org_admin of the project's current organization can transfer it")
 	}
 
 	// Requester must be a member of the destination org.
-	role, err = s.orgMembershipReader.GetMembershipRole(ctx, destOrgID, userID)
+	role, err := s.orgMembershipReader.GetMembershipRole(ctx, destOrgID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -665,7 +673,22 @@ func (s *Service) authorizeProject(ctx context.Context, projectID, userID string
 	isProjectMember := projectRole != ""
 	isOrgMember := orgRole != ""
 	isProjectAdmin := projectRole == RoleProjectAdmin
-	isOrgAdmin := orgRole == "org_admin"
+
+	// Org-admin authority is the single shared app-side decision
+	// (pkg/auth.CanAdministerOrg, via OrgMembershipReader.IsOrgAdmin), never a
+	// locally re-derived role comparison (issue #812 §4.5, issue #1162). Only an
+	// existing org member can be org_admin, so the extra read is skipped for
+	// non-members and only performed for the levels that consult it.
+	isOrgAdmin := false
+	if isOrgMember && level != accessProjectMember {
+		if s.orgMembershipReader == nil {
+			return apperror.ErrInternal
+		}
+		isOrgAdmin, err = s.orgMembershipReader.IsOrgAdmin(ctx, orgID, userID)
+		if err != nil {
+			return err
+		}
+	}
 
 	allowed := false
 	switch level {
@@ -723,19 +746,20 @@ func (s *Service) callerRoles(ctx context.Context, projectID, orgID, userID stri
 // AuthorizeOrgAdmin requires the caller to be an org_admin of the addressed
 // organization. It is the shared authority seam for org-addressed mutations
 // (project creation) where the org id may be client-supplied and must never be
-// trusted as authorization truth: the caller's org_admin role is resolved
-// server-side from membership tables. Both the REST Create path and the MCP
-// project-create tool call this helper so the two entrypoints cannot drift
-// (issue #1041).
+// trusted as authorization truth: the caller's org_admin authority is resolved
+// server-side through the single app-side org-administration check
+// (pkg/auth.CanAdministerOrg, via OrgMembershipReader.IsOrgAdmin). Both the REST
+// Create path and the MCP project-create tool call this helper so the two
+// entrypoints cannot drift (issue #1041; issue #812 §4.5, issue #1162).
 func (s *Service) AuthorizeOrgAdmin(ctx context.Context, orgID, userID string) error {
 	if s.orgMembershipReader == nil {
 		return apperror.ErrInternal
 	}
-	role, err := s.orgMembershipReader.GetMembershipRole(ctx, orgID, userID)
+	isAdmin, err := s.orgMembershipReader.IsOrgAdmin(ctx, orgID, userID)
 	if err != nil {
 		return err
 	}
-	if role != "org_admin" {
+	if !isAdmin {
 		return apperror.ErrForbidden
 	}
 	return nil
