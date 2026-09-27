@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # Guard migration numbering for changes to apps/server/migrations/*.sql.
 #
-# WHY THIS IS DISASTER AVOIDANCE, NOT HYGIENE: Goose de-duplicates migrations
-# BY VERSION NUMBER and silently skips the later one. If a branch adds a
-# migration whose version already exists on origin/main (or in another
-# concurrent branch), the second migration NEVER RUNS and the schema diverges
-# with no error. Two collisions have already happened: 00180 (#977 vs #981)
-# and 00183 (#1057 vs #1053).
+# WHY THIS IS DISASTER AVOIDANCE, NOT HYGIENE: with goose v3.26.0 and
+# `//go:embed *.sql`, a duplicate version makes goose PANIC at startup —
+# `panic: goose: duplicate version N detected` — so the process never comes up.
+# (Older goose releases de-duplicated by version number and silently skipped the
+# later one; this repro's goose fails loudly instead. Either way, a collision
+# means the second migration never applies and the schema diverges.) If a branch
+# adds a migration whose version already exists on origin/main (or in another
+# concurrent branch), startup panics on any environment that embeds both files.
+# Two collisions have already happened: 00180 (#977 vs #981) and 00183
+# (#1057 vs #1053).
 #
 # Rules, for *.sql files under apps/server/migrations/:
 #   1. Existing migrations (present on origin/main) must never be modified,

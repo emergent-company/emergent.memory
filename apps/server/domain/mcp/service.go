@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -39,6 +40,29 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
+// Entity-query guardrail defaults (issue #1148). Overridable via config.
+const (
+	defaultEntityQueryTimeout      = 30 * time.Second
+	defaultEntityQueryFullMaxLimit = 25
+)
+
+// entityQueryTimeout returns the configured per-call deadline, or the default.
+func (s *Service) effectiveEntityQueryTimeout() time.Duration {
+	if s.entityQueryTimeout > 0 {
+		return s.entityQueryTimeout
+	}
+	return defaultEntityQueryTimeout
+}
+
+// entityQueryFullMaxLimit returns the configured full-strategy limit cap, or the
+// default.
+func (s *Service) effectiveEntityQueryFullMaxLimit() int {
+	if s.entityQueryFullMaxLimit > 0 {
+		return s.entityQueryFullMaxLimit
+	}
+	return defaultEntityQueryFullMaxLimit
+}
+
 // Service handles MCP business logic and tool execution
 type Service struct {
 	db           bun.IDB
@@ -61,6 +85,11 @@ type Service struct {
 	// Brave Search API configuration
 	braveSearchAPIKey  string
 	braveSearchTimeout time.Duration
+
+	// entity-query guardrails (issue #1148). Zero values fall back to the
+	// package defaults so tests constructing a bare Service still get bounds.
+	entityQueryTimeout      time.Duration
+	entityQueryFullMaxLimit int
 
 	// Documents service (for document list/get/upload/delete tools)
 	documentsSvc *documents.Service
@@ -206,6 +235,8 @@ func NewService(p ServiceParams) *Service {
 		searchSvc:                 p.SearchSvc,
 		braveSearchAPIKey:         cfg.BraveSearch.APIKey,
 		braveSearchTimeout:        timeout,
+		entityQueryTimeout:        cfg.MCP.EntityQueryTimeout,
+		entityQueryFullMaxLimit:   cfg.MCP.EntityQueryFullMaxLimit,
 		log:                       p.Log.With(logger.Scope("mcp.svc")),
 		documentsSvc:              p.DocumentsSvc,
 		storageSvc:                p.StorageSvc,
@@ -345,7 +376,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					},
 					"ids": {
 						Type:        "array",
-						Description: "Optional list of canonical entity IDs to fetch directly. When provided, type_name and pagination params are ignored.",
+						Description: "Optional list of canonical entity IDs to fetch directly. When provided, type_name and pagination params are ignored. ids[] already selects entities explicitly, so combining it with key_prefix is rejected (not silently ignored).",
 						Items:       &PropertySchema{Type: "string"},
 					},
 					"branch": {
@@ -394,7 +425,11 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					},
 					"filters": {
 						Type:        "object",
-						Description: "Optional property equality filters as key-value pairs (e.g. {\"status\": \"delivered\", \"priority\": \"high\"}). Only objects whose properties match ALL filters are returned.",
+						Description: "Optional property equality filters as key-value pairs (e.g. {\"status\": \"delivered\", \"priority\": \"high\"}). Only objects whose properties match ALL filters are returned. Filters are applied within the type only; a property that is not unique to one entity identity (e.g. chapter_id, which repeats in every law) will match across documents. Combine with key_prefix to scope such filters to a single parent document.",
+					},
+					"key_prefix": {
+						Type:        "string",
+						Description: "Optional key-prefix scope restricting results to entities whose canonical key starts with this prefix (e.g. \"lov/1997-06-13-44#\" to scope a LegalParagraph chapter_id filter to one law). Use with filters/type_name when a property value is not unique to one identity. Entity keys are the type's identity and are unique per type. Not allowed together with ids (rejected).",
 					},
 				},
 				Required: []string{"type_name"},
@@ -2696,10 +2731,20 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	// Parse arguments
 	typeName, _ := args["type_name"].(string)
 
+	// Hard per-call deadline created at the tool entry so it covers EVERY path
+	// in this call: branch resolution, the ids[] fast-path, the type/pagination
+	// queries, and relationship enrichment (issue #1148 follow-up). Every
+	// downstream call derives from this context.
+	queryCtx, cancel := context.WithTimeout(ctx, s.effectiveEntityQueryTimeout())
+	defer cancel()
+
 	// Resolve optional branch parameter.
 	branchRef, _ := args["branch"].(string)
-	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
+	branchID, err := s.resolveBranchID(queryCtx, projectID, branchRef)
 	if err != nil {
+		if errors.Is(queryCtx.Err(), context.DeadlineExceeded) {
+			return nil, fmt.Errorf("query entities: timed out after %s", s.effectiveEntityQueryTimeout())
+		}
 		return nil, err
 	}
 
@@ -2717,7 +2762,18 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 			idStrs = v
 		}
 		if len(idStrs) > 0 {
-			return s.executeQueryEntitiesByIDs(ctx, projectID, idStrs, branchID, args)
+			// An explicit ids[] list already identifies entities exactly, so a
+			// key-prefix scope is meaningless there. Reject the combination
+			// fail-closed instead of silently ignoring key_prefix (issue #1148
+			// follow-up), which would otherwise contradict the scope contract.
+			if kp, _ := args["key_prefix"].(string); kp != "" {
+				return nil, fmt.Errorf("query entities: key_prefix cannot be combined with ids; ids already selects entities explicitly")
+			}
+			res, err := s.executeQueryEntitiesByIDs(queryCtx, projectID, idStrs, branchID, args)
+			if err != nil && errors.Is(queryCtx.Err(), context.DeadlineExceeded) {
+				return nil, fmt.Errorf("query entities: timed out after %s", s.effectiveEntityQueryTimeout())
+			}
+			return res, err
 		}
 	}
 
@@ -2774,6 +2830,17 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	}
 	fieldProjection := entityPropertiesProjection(strategy, args["fields"])
 
+	// A full payload is large (a statute paragraph ~14 KB), so bound the
+	// effective limit under field_strategy="full" (issue #1148). Callers asking
+	// for full text rarely need >25 rows at once and can paginate.
+	fullLimitClamped := false
+	if strategy == "full" {
+		if max := s.effectiveEntityQueryFullMaxLimit(); limit > max {
+			limit = max
+			fullLimitClamped = true
+		}
+	}
+
 	type entityRow struct {
 		ID              uuid.UUID      `bun:"id"`
 		CanonicalID     uuid.UUID      `bun:"canonical_id"`
@@ -2787,26 +2854,42 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 		TypeDescription string         `bun:"type_description"`
 	}
 
-	// Parse optional property equality filters: {"status": "delivered", "priority": "high"}
-	// Each key-value pair becomes: go.properties->>'key' = 'value'
-	// Keys are sanitized to alphanumeric+underscore+hyphen to prevent injection.
+	// Parse optional property equality filters: {"status": "delivered", "priority": "high"}.
+	// The whole map becomes a single JSONB containment predicate
+	// (go.properties @> '{"k":"v",...}') so the composite GIN index
+	// idx_graph_objects_project_type_props_gin (issue #1148) can serve it.
+	// Keys are sanitized to alphanumeric+underscore+hyphen; values are passed as
+	// a bound parameter (no string interpolation).
 	var filterClause string
+	var filterArg any
 	if rawFilters, ok := args["filters"].(map[string]any); ok {
-		var parts []string
+		safeFilters := make(map[string]any, len(rawFilters))
 		for k, v := range rawFilters {
 			if !isValidPropertyKey(k) {
 				continue
 			}
-			valStr := fmt.Sprintf("%v", v)
-			// Use parameterized-style quoting: embed value safely via fmt.Sprintf with %q
-			// then strip Go quotes — simpler to just use string interpolation with escaping.
-			// We escape single quotes in the value to prevent SQL injection.
-			safeVal := strings.ReplaceAll(valStr, "'", "''")
-			parts = append(parts, fmt.Sprintf("go.properties->>'%s' = '%s'", k, safeVal))
+			safeFilters[k] = v
 		}
-		if len(parts) > 0 {
-			filterClause = " AND " + strings.Join(parts, " AND ")
+		if len(safeFilters) > 0 {
+			encoded, err := json.Marshal(safeFilters)
+			if err != nil {
+				return nil, fmt.Errorf("query entities: encode filters: %w", err)
+			}
+			filterClause = " AND go.properties @> ?::jsonb"
+			filterArg = string(encoded)
 		}
+	}
+
+	// Optional key-prefix scope. A property filter such as `chapter_id` is not
+	// unique to one document (e.g. every law/forskrift has a chapter 2), so
+	// callers can pin results to the intended entity identity by prefixing its
+	// canonical key (LegalParagraph keys are `<law_ref_id>#<section_id>`).
+	// Generic across types: the key is the identity.
+	var keyPrefixClause string
+	var keyPrefixArg any
+	if keyPrefix, ok := args["key_prefix"].(string); ok && keyPrefix != "" {
+		keyPrefixClause = " AND starts_with(go.key, ?)"
+		keyPrefixArg = keyPrefix
 	}
 
 	type_clause := ""
@@ -2827,7 +2910,21 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 		branchArgs = []any{*branchID}
 	}
 
-	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+	// Shared predicate args, in SQL clause order: project, type, branch, filter,
+	// key_prefix. The SELECT then appends limit/offset.
+	baseArgs := []any{projectUUID}
+	baseArgs = append(baseArgs, type_args...)
+	baseArgs = append(baseArgs, branchArgs...)
+	if filterArg != nil {
+		baseArgs = append(baseArgs, filterArg)
+	}
+	if keyPrefixArg != nil {
+		baseArgs = append(baseArgs, keyPrefixArg)
+	}
+
+	selectArgs := append(append([]any{}, baseArgs...), limit, offset)
+
+	err = s.db.RunInTx(queryCtx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if err := database.SetRLSContext(ctx, tx, projectID); err != nil {
 			return err
 		}
@@ -2853,9 +2950,10 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 				`+type_clause+`
 				`+branchClause+`
 				`+filterClause+`
+				`+keyPrefixClause+`
 			ORDER BY `+orderExpr+`
 			LIMIT ? OFFSET ?
-		`, append(append([]any{projectUUID}, type_args...), append(branchArgs, limit, offset)...)...).Scan(ctx, &entities)
+		`, selectArgs...).Scan(ctx, &entities)
 		if err != nil {
 			return err
 		}
@@ -2870,11 +2968,15 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 				`+type_clause+`
 				`+branchClause+`
 				`+filterClause+`
-		`, append(append([]any{projectUUID}, type_args...), branchArgs...)...).Scan(ctx, &total)
+				`+keyPrefixClause+`
+		`, baseArgs...).Scan(ctx, &total)
 		return err
 	})
 
 	if err != nil {
+		if errors.Is(queryCtx.Err(), context.DeadlineExceeded) {
+			return nil, fmt.Errorf("query entities: timed out after %s", s.effectiveEntityQueryTimeout())
+		}
 		return nil, fmt.Errorf("query entities: %w", err)
 	}
 
@@ -2896,7 +2998,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	// Detect unrecognized parameters and surface them as a warning so callers
 	// know their extra keys (e.g. filter, status, entity_type) had no effect.
 	knownQueryEntitiesParams := map[string]struct{}{
-		"type_name": {}, "ids": {}, "limit": {}, "offset": {}, "sort_by": {}, "sort_order": {}, "include_relationships": {}, "fields": {}, "field_strategy": {}, "branch": {}, "filters": {},
+		"type_name": {}, "ids": {}, "limit": {}, "offset": {}, "sort_by": {}, "sort_order": {}, "include_relationships": {}, "fields": {}, "field_strategy": {}, "branch": {}, "filters": {}, "key_prefix": {},
 	}
 	var unknownParams []string
 	for k := range args {
@@ -2904,15 +3006,22 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 			unknownParams = append(unknownParams, k)
 		}
 	}
-	var queryEntitiesWarning string
+	var warnings []string
 	if len(unknownParams) > 0 {
 		sort.Strings(unknownParams)
-		queryEntitiesWarning = fmt.Sprintf(
+		warnings = append(warnings, fmt.Sprintf(
 			"unrecognized parameters ignored (query_entities does not support server-side filtering): %s. "+
 				"Filter results client-side by inspecting entity properties.",
 			strings.Join(unknownParams, ", "),
-		)
+		))
 	}
+	if fullLimitClamped {
+		warnings = append(warnings, fmt.Sprintf(
+			"limit capped to %d for field_strategy=full to bound the payload; paginate with offset for more rows.",
+			limit,
+		))
+	}
+	queryEntitiesWarning := strings.Join(warnings, " ")
 
 	// Optionally enrich each entity with its outgoing relationships.
 	includeRels, _ := args["include_relationships"].(bool)
@@ -2941,7 +3050,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 			dstBranchClause = "AND dst.branch_id = ?"
 			relQueryArgs = append(relQueryArgs, *branchID, *branchID)
 		}
-		_ = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		_ = s.db.RunInTx(queryCtx, nil, func(ctx context.Context, tx bun.Tx) error {
 			if err := database.SetRLSContext(ctx, tx, projectID); err != nil {
 				return err
 			}
