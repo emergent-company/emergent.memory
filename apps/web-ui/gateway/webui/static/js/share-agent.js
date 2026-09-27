@@ -179,13 +179,13 @@
     var aura = el("div", "share-terminal-aura");
     aura.setAttribute("aria-hidden", "true");
     var card = el("main", "share-terminal-card");
-    var icon = el("div", "share-terminal-icon bg-base-content/5 text-base-content/60 border-base-content/10");
+    var icon = el("div", "share-terminal-icon bg-base-content/5 text-muted-strong border-base-content/10");
     var span = el("span", "iconify " + copy.icon + " size-7");
     span.setAttribute("aria-hidden", "true");
     icon.appendChild(span);
     var title = el("h1", "text-lg font-semibold tracking-tight", copy.title);
-    var body = el("p", "text-base-content/55 mt-2 text-sm leading-relaxed", copy.body);
-    var hint = el("p", "text-base-content/35 mt-5 text-xs", "If you think this is a mistake, ask the person who shared the link for a new one.");
+    var body = el("p", "text-muted mt-2 text-sm leading-relaxed", copy.body);
+    var hint = el("p", "text-muted-faint mt-5 text-xs", "If you think this is a mistake, ask the person who shared the link for a new one.");
     card.appendChild(icon);
     card.appendChild(title);
     card.appendChild(body);
@@ -395,8 +395,8 @@
     if (!sessions.length) {
       var empty = el("div", "px-3 py-8 text-center");
       empty.setAttribute("data-testid", "share-sessions-empty");
-      empty.appendChild(el("p", "text-base-content/55 text-sm font-medium", "No chats yet"));
-      empty.appendChild(el("p", "text-base-content/40 mt-1 text-xs", "Start a new chat and it will show up here."));
+      empty.appendChild(el("p", "text-muted text-sm font-medium", "No chats yet"));
+      empty.appendChild(el("p", "text-muted-faint mt-1 text-xs", "Start a new chat and it will show up here."));
       els.railList.appendChild(empty);
       return;
     }
@@ -412,14 +412,14 @@
       btn.classList.add("bg-base-200/80", "ring-1", "ring-primary/30");
       btn.setAttribute("aria-current", "true");
     }
-    var icon = el("span", "text-base-content/35 mt-0.5 shrink-0");
+    var icon = el("span", "text-muted-faint mt-0.5 shrink-0");
     var glyph = el("span", "iconify lucide--message-square size-4");
     glyph.setAttribute("aria-hidden", "true");
     icon.appendChild(glyph);
     var main = el("span", "min-w-0 grow");
     main.appendChild(el("span", "block truncate text-sm", s.title || "Untitled chat"));
     var meta = (s.lastActivity || "") + (s.messageCount != null ? " · " + s.messageCount + " messages" : "");
-    main.appendChild(el("span", "text-base-content/45 block text-xs", meta));
+    main.appendChild(el("span", "text-muted-faint block text-xs", meta));
     btn.appendChild(icon);
     btn.appendChild(main);
     btn.addEventListener("click", function () { openSession(s.id); });
@@ -502,7 +502,7 @@
       avatar.appendChild(bot);
       wrap.appendChild(avatar);
     }
-    wrap.appendChild(el("div", "chat-header text-xs text-base-content/50", isUser ? "You" : (state.agentName || "Memory")));
+    wrap.appendChild(el("div", "chat-header text-xs text-muted", isUser ? "You" : (state.agentName || "Memory")));
     var shell = el("div", "chat-bubble " + (isUser ? "chat-bubble-primary" : "chat-bubble-neutral"));
     shell.setAttribute("data-role", role);
     var content = isUser

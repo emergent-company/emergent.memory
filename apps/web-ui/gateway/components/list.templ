@@ -12,9 +12,9 @@ templ ListRow(href templ.SafeURL, leading templ.Component, title, meta string) {
 		@leading
 		<div class="min-w-0 grow">
 			<p class="truncate text-sm font-medium">{ title }</p>
-			<p class="text-base-content/50 text-xs">{ meta }</p>
+			<p class="text-muted text-xs">{ meta }</p>
 		</div>
 		{ children... }
-		@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-base-content/25")
+		@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
 	</a>
 }

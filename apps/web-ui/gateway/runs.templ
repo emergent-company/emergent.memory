@@ -98,7 +98,7 @@ templ runMetaHeader(full *AgentRunFull, trace runTraceMeta) {
 				View trace
 			</a>
 		}
-		@monoMeta(run.ID, "text-base-content/40")
+		@monoMeta(run.ID, "text-muted-faint")
 	</div>
 	if run.ErrorMessage != nil && *run.ErrorMessage != "" {
 		@ui.Alert(ui.AlertProps{
@@ -110,6 +110,6 @@ templ runMetaHeader(full *AgentRunFull, trace runTraceMeta) {
 		})
 	}
 	if s := scheduledRunPreview(*run, run.AgentName); s != "" {
-		<p class="text-base-content/45 mb-4 text-sm">{ s }</p>
+		<p class="text-muted-faint mb-4 text-sm">{ s }</p>
 	}
 }

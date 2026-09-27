@@ -43,7 +43,7 @@
     });
     if (max === 0) {
       target.innerHTML =
-        '<p class="text-base-content/45 text-center text-xs">No usage in this range.</p>';
+        '<p class="text-muted-faint text-center text-xs">No usage in this range.</p>';
       return;
     }
 

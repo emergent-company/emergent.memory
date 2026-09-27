@@ -58,7 +58,7 @@ func TestRenderSessionPage(t *testing.T) {
 	for _, want := range []string{
 		`class="chat chat-end"`, `class="chat chat-start"`,
 		"chat-bubble-primary", "chat-bubble-neutral",
-		`class="chat-header text-xs text-base-content/50">You</div>`,
+		`class="chat-header text-xs text-muted">You</div>`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("session page missing chat markup %q", want)

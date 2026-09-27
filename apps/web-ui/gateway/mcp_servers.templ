@@ -90,7 +90,7 @@ templ mcpServerRow(srv MCPServer) {
 	>
 		<summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 select-none [&::-webkit-details-marker]:hidden">
 			<div class="flex min-w-0 items-center gap-2.5">
-				@ui.IconSpan("lucide--server", "size-4 shrink-0 text-base-content/40")
+				@ui.IconSpan("lucide--server", "size-4 shrink-0 text-muted-faint")
 				<span class="truncate text-sm font-medium">{ srv.Name }</span>
 				@ui.Badge(ui.BadgeProps{Label: mcpServerTransportForDisplay(srv.Type), Variant: mcpServerBadgeIntent(srv.Type), Size: ui.BadgeSizeXS})
 				if srv.Enabled {
@@ -109,7 +109,7 @@ templ mcpServerRow(srv MCPServer) {
 						"data-mcp-count": srv.ID,
 					},
 				})
-				@ui.IconSpan("lucide--chevron-down", "size-4 shrink-0 text-base-content/40 transition-transform group-open:rotate-180")
+				@ui.IconSpan("lucide--chevron-down", "size-4 shrink-0 text-muted-faint transition-transform group-open:rotate-180")
 			</div>
 		</summary>
 		<div class="flex flex-col border-t border-base-content/10">
@@ -117,7 +117,7 @@ templ mcpServerRow(srv MCPServer) {
 				@mcpServerRowActions(srv)
 			}
 			if srv.Type == "stdio" {
-				<p class="text-base-content/45 flex items-center gap-1.5 px-3 pt-2 text-[11px]">
+				<p class="text-muted-faint flex items-center gap-1.5 px-3 pt-2 text-[11px]">
 					@ui.IconSpan("lucide--shield-alert", "size-3.5 shrink-0 text-warning")
 					Runs <span class="font-mono">{ srv.Command }</span> on the memory host.
 				</p>
@@ -145,7 +145,7 @@ templ mcpServerRowActions(srv MCPServer) {
 					"data-mcp-server":         srv.ID,
 				},
 			})
-			<span class="text-base-content/60 text-xs">Enabled</span>
+			<span class="text-muted-strong text-xs">Enabled</span>
 		</label>
 		<div class="flex items-center gap-1">
 			@ui.Button(ui.ButtonProps{
@@ -207,7 +207,7 @@ templ mcpServerToolsList(srv MCPServer, tools []MCPTool) {
 		<div class="flex items-center justify-between px-3 pt-2">
 			@ui.Eyebrow("Cached tools", ui.EyebrowProps{Size: "text-[10px]", Margin: ""})
 			if len(tools) > 0 {
-				<span class="text-base-content/40 text-[10px]">sync refreshes this list</span>
+				<span class="text-muted-faint text-[10px]">sync refreshes this list</span>
 			}
 		</div>
 		@mcpServerToolsContainer(srv, tools)
@@ -221,7 +221,7 @@ templ mcpServerToolsList(srv MCPServer, tools []MCPTool) {
 templ mcpServerToolsContainer(srv MCPServer, tools []MCPTool) {
 	<div class="flex flex-col" data-mcp-tools={ srv.ID }>
 		if len(tools) == 0 {
-			<p class="text-base-content/45 px-3 py-2 text-xs">
+			<p class="text-muted-faint px-3 py-2 text-xs">
 				No tools cached yet
 				if !mcpServerIsBuiltin(srv) {
 					— run Sync to discover what this server offers.
@@ -257,7 +257,7 @@ templ mcpServerToolRow(srv MCPServer, t MCPTool) {
 		<span class="min-w-0">
 			<span class="block font-mono text-[13px] font-medium">{ t.ToolName }</span>
 			if t.Description != "" {
-				<span class="text-base-content/50 block truncate text-xs">{ t.Description }</span>
+				<span class="text-muted block truncate text-xs">{ t.Description }</span>
 			}
 		</span>
 	</div>
@@ -272,7 +272,7 @@ templ mcpServerInspectArea(serverID string) {
 
 // mcpServerDeleteDescription is the delete-confirm detail paragraph.
 templ mcpServerDeleteDescription(srv MCPServer) {
-	<p class="text-base-content/55 mt-1 text-sm">
+	<p class="text-muted mt-1 text-sm">
 		This permanently removes <span class="font-medium text-base-content">{ srv.Name }</span> and its cached tools. Agents referencing its tools stop offering them immediately. Irreversible.
 	</p>
 }
@@ -418,7 +418,7 @@ templ mcpServerTransportGroup(data mcpServerFormData, editing bool) {
 					<input type="radio" name="type" value={ t.Value } class="radio radio-sm mt-0.5" data-mcp-transport checked?={ data.Type == t.Value || (!editing && data.Type == "" && t.Value == "stdio") }/>
 					<span class="min-w-0">
 						<span class="block font-mono text-xs font-medium">{ t.Title }</span>
-						<span class="text-base-content/50 block text-[11px] leading-snug">{ t.Desc }</span>
+						<span class="text-muted block text-[11px] leading-snug">{ t.Desc }</span>
 					</span>
 				</label>
 			}
@@ -483,7 +483,7 @@ templ mcpServerKVEditor(id, prefix, label, hint string, rows []mcpKVField, field
 			@mcpServerKVRow(prefix, mcpKVField{})
 			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeButton, Variant: ui.ButtonGhost, Size: ui.ButtonSM, Icon: "lucide--plus", ExtraClass: "mt-1 self-start", Attrs: templ.Attributes{"data-mcp-kv-add": ""}}) { Add row }
 		</div>
-		<p class="text-base-content/45 mt-2 text-xs">Values are stored in plaintext and shown only in this form. Mark a value Secret to store it write-only — after saving it is never shown again, and leaving it blank keeps the stored value.</p>
+		<p class="text-muted-faint mt-2 text-xs">Values are stored in plaintext and shown only in this form. Mark a value Secret to store it write-only — after saving it is never shown again, and leaving it blank keeps the stored value.</p>
 	}
 }
 
@@ -518,7 +518,7 @@ templ mcpServerKVRow(prefix string, r mcpKVField) {
 			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeButton, Variant: ui.ButtonGhost, Size: ui.ButtonSM, Shape: ui.ButtonShapeSquare, Icon: "lucide--x", ExtraClass: "shrink-0", AriaLabel: "Remove row", Attrs: templ.Attributes{"data-mcp-kv-remove": ""}})
 		</div>
 		if r.Secret {
-			<p class="text-base-content/45 pl-1 text-xs">Leave blank to keep the stored value.</p>
+			<p class="text-muted-faint pl-1 text-xs">Leave blank to keep the stored value.</p>
 		}
 	</div>
 }
@@ -668,7 +668,7 @@ templ mcpServersScript() {
 					if (!k.items.length) continue;
 					listed = true;
 					var line = document.createElement('p');
-					line.className = 'text-base-content/70 mt-1.5';
+					line.className = 'text-muted-strong mt-1.5';
 					var names = [];
 					for (var j = 0; j < k.items.length && j < 5; j++) {
 						names.push(k.items[j].name || k.items[j].uri || k.items[j].uriTemplate || '?');
@@ -678,7 +678,7 @@ templ mcpServersScript() {
 				}
 				if (!listed) {
 					var none = document.createElement('p');
-					none.className = 'text-base-content/45 mt-1.5';
+					none.className = 'text-muted-faint mt-1.5';
 					none.textContent = 'No tools, prompts, or resources advertised.';
 					box.appendChild(none);
 				}

@@ -108,6 +108,11 @@
       labelEl.textContent = option
         ? option.getAttribute("data-gd-icon-label")
         : root.getAttribute("data-gd-icon-picker-default-label") || "";
+      /* Pin `text-base-content/50` — NOT the muted-scale `text-muted`. This
+         mirror must toggle the SAME class go-daisy's own server render
+         (icon-picker.templ) and runtime commit (go-daisy-icon-picker.js) apply,
+         or the remove here targets a class that is never present and the label
+         stays dimmed after a non-default selection. */
       labelEl.classList.toggle("text-base-content/50", isDefault);
     }
     var glyphEl = root.querySelector("[data-gd-icon-glyph]");

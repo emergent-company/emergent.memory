@@ -37,7 +37,7 @@ templ settingsSubNav(active string, providersMissing bool) {
 		@components.SubNavItem("/settings/overrides", active == "overrides", "lucide--wrench", "Overrides")
 		{{ activeP := active == "providers" }}
 		<a
-			class={ "flex items-center gap-2.5 rounded-box px-3 py-2 text-sm whitespace-nowrap transition-colors", templ.KV("bg-base-200 font-medium text-base-content", activeP), templ.KV("text-base-content/60 hover:bg-base-200/50 hover:text-base-content", !activeP) }
+			class={ "flex items-center gap-2.5 rounded-box px-3 py-2 text-sm whitespace-nowrap transition-colors", templ.KV("bg-base-200 font-medium text-base-content", activeP), templ.KV("text-muted-strong hover:bg-base-200/50 hover:text-base-content", !activeP) }
 			href="/settings/providers"
 			if activeP {
 				aria-current="page"
@@ -46,7 +46,7 @@ templ settingsSubNav(active string, providersMissing bool) {
 			if activeP {
 				@ui.IconSpan("lucide--server", "size-4 shrink-0 text-primary")
 			} else {
-				@ui.IconSpan("lucide--server", "size-4 shrink-0 text-base-content/40")
+				@ui.IconSpan("lucide--server", "size-4 shrink-0 text-muted-faint")
 			}
 			<span>Providers</span>
 			if providersMissing && !activeP {
@@ -187,7 +187,7 @@ templ projectInfoPanel(p *Project) {
 				<input id="budget-usd" name="budget_usd" type="number" step="0.01" min="0" value={ budgetInputValue(p.BudgetUSD) } placeholder="e.g. 25.00" class="input w-full" hx-post="/settings/project/budget_usd" hx-trigger="change delay:400ms" hx-include="this" hx-swap="none"/>
 			}
 			if p.BudgetUSD == nil {
-				<p class="text-base-content/45 -mt-2 text-xs">Budget not set.</p>
+				<p class="text-muted-faint -mt-2 text-xs">Budget not set.</p>
 			}
 		</div>
 	}
@@ -215,7 +215,7 @@ templ assistantPanel(assistantAgent string, agents []AgentDefinitionSummary) {
 				</select>
 			}
 			if assistantAgent == "" {
-				<p class="text-base-content/45 -mt-2 text-xs">Assistant is hidden until you pick an agent.</p>
+				<p class="text-muted-faint -mt-2 text-xs">Assistant is hidden until you pick an agent.</p>
 			}
 		</div>
 	}
@@ -253,7 +253,7 @@ templ overrideRow(e AgentOverrideEntry) {
 	@ui.SoftBox(ui.SoftBoxProps{Class: "flex items-start justify-between gap-3"}) {
 		<div class="min-w-0">
 			<p class="text-sm font-medium">{ e.AgentName }</p>
-			<p class="text-base-content/55 mt-0.5 text-xs">
+			<p class="text-muted mt-0.5 text-xs">
 				if e.Override != nil {
 					{ overrideSummary(*e.Override) }
 				} else {
@@ -330,7 +330,7 @@ templ editorAgentPanel(editorAgent string, agents []AgentDefinitionSummary) {
 				</select>
 			}
 			if editorAgent == "" {
-				<p class="text-base-content/45 -mt-2 text-xs">Object edits run on the default agent until you pick one.</p>
+				<p class="text-muted-faint -mt-2 text-xs">Object edits run on the default agent until you pick one.</p>
 			}
 		</div>
 	}
@@ -384,11 +384,11 @@ templ iosSetupPanel(qrImage string) {
 				<img src={ qrImage } alt="QR code that connects the Memory iOS app to this project" width="200" height="200" class="rounded-box border border-base-content/10 bg-white p-3"/>
 				<div class="min-w-0 pt-1">
 					<p class="text-sm font-medium">Scan with the Memory iOS app to connect.</p>
-					<p class="text-base-content/55 mt-1 text-xs">One-time code — gives this device its own access key. Reload the page for a new code.</p>
+					<p class="text-muted mt-1 text-xs">One-time code — gives this device its own access key. Reload the page for a new code.</p>
 				</div>
 			</div>
 		} else {
-			<p class="text-base-content/45 text-xs">QR code unavailable.</p>
+			<p class="text-muted-faint text-xs">QR code unavailable.</p>
 		}
 	}
 }
@@ -402,7 +402,7 @@ templ devicesPanel(devices []device) {
 		BodyClass: "memory-density-comfortable",
 	}) {
 		if len(devices) == 0 {
-			<p class="text-base-content/45 text-xs">No devices registered yet.</p>
+			<p class="text-muted-faint text-xs">No devices registered yet.</p>
 		} else {
 			<div class="flex flex-col gap-2">
 				for _, d := range devices {
@@ -420,7 +420,7 @@ templ deviceRow(d device) {
 	@ui.SoftBox(ui.SoftBoxProps{Class: "flex items-start justify-between gap-3"}) {
 		<div class="min-w-0">
 			<p class="text-sm font-medium">{ deviceDisplayName(d) }</p>
-			<p class="text-base-content/55 mt-0.5 text-xs">Registered { relTime(d.CreatedAt) }</p>
+			<p class="text-muted mt-0.5 text-xs">Registered { relTime(d.CreatedAt) }</p>
 		</div>
 		<form method="post" action={ templ.URL("/settings/devices/" + d.ID + "/revoke") }>
 			@ui.Button(ui.ButtonProps{
@@ -568,7 +568,7 @@ templ voicePanel(v voiceSettings) {
 				/>
 			}
 			if v.LiveKitPublicURL == "" {
-				<p class="text-base-content/45 -mt-2 text-xs">Not set.</p>
+				<p class="text-muted-faint -mt-2 text-xs">Not set.</p>
 			}
 			@settingsField("exit-keywords", "Exit keywords", "Comma-separated words that end a voice call, e.g. stop, goodbye, end.", "Comma-separated words.", nil) {
 				<input
@@ -680,7 +680,7 @@ templ voiceSecretRow(label string, set bool) {
 		if set {
 			<span class="text-success">set</span>
 		} else {
-			<span class="text-base-content/45">not set</span>
+			<span class="text-muted-faint">not set</span>
 		}
 	}
 }
@@ -718,7 +718,7 @@ templ providersPanel(d providerPanelData) {
 					Bordered:    true,
 				})
 			} else {
-				<p class="text-base-content/55 mb-4 text-xs">Rates are USD per 1M tokens. Automatic rates track retail pricing; overriding a model sets a custom rate for this project.</p>
+				<p class="text-muted mb-4 text-xs">Rates are USD per 1M tokens. Automatic rates track retail pricing; overriding a model sets a custom rate for this project.</p>
 				for _, g := range d.Groups {
 					@providerGroup(g)
 				}
@@ -783,7 +783,7 @@ templ defaultModelsPanel(d providerPanelData) {
 		Margin:    "mb-6",
 		BodyClass: "memory-density-comfortable",
 	}) {
-		<p class="text-base-content/55 mb-4 text-xs">Used when an agent has no explicit model ("Auto — default model"). Each option names the provider instance and the model.</p>
+		<p class="text-muted mb-4 text-xs">Used when an agent has no explicit model ("Auto — default model"). Each option names the provider instance and the model.</p>
 		<form class="flex flex-col gap-4" hx-post="/settings/providers/model-config" hx-trigger="change delay:400ms" hx-swap="none">
 			@defaultModelSelect("generative_model", "Default generative model", modelConfigGen(d), defaultModelCatalog(d, "generative"))
 			@defaultModelSelect("embedding_model", "Embedding model", modelConfigEmb(d), defaultModelCatalog(d, "embedding"))
@@ -864,7 +864,7 @@ templ providerManagementPanel(d providerPanelData) {
 		BodyClass: "memory-density-comfortable",
 	}) {
 		<div class="mb-4 flex items-center justify-between gap-2">
-			<p class="text-base-content/55 text-xs">Credentials for the LLM providers this project can use. Test runs a live generate call.</p>
+			<p class="text-muted text-xs">Credentials for the LLM providers this project can use. Test runs a live generate call.</p>
 			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/settings/providers/new", Variant: ui.ButtonPrimary, Size: ui.ButtonSM}) { Add provider }
 		</div>
 		if len(d.Providers) > 0 {
@@ -874,7 +874,7 @@ templ providerManagementPanel(d providerPanelData) {
 				}
 			</div>
 		} else {
-			<p class="text-base-content/45 text-sm">No providers configured yet.</p>
+			<p class="text-muted-faint text-sm">No providers configured yet.</p>
 		}
 	}
 }
@@ -888,9 +888,9 @@ templ providerConfigRow(p ProjectProviderConfig) {
 	<div class="rounded-box border border-base-content/10 bg-base-200/30 p-3" data-testid={ "provider-instance-" + slug }>
 		<div class="flex flex-wrap items-center gap-3">
 			<span class="font-mono text-sm font-medium">{ slug }</span>
-			<span class="text-base-content/55 text-xs">{ p.Provider }</span>
+			<span class="text-muted text-xs">{ p.Provider }</span>
 			if p.BaseURL != "" {
-				<span class="text-xs text-base-content/55">{ p.BaseURL }</span>
+				<span class="text-xs text-muted">{ p.BaseURL }</span>
 			}
 			<div class="ml-auto flex items-center gap-2">
 				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/settings/providers/" + url.PathEscape(slug) + "/edit", Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Edit }
@@ -972,13 +972,13 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 						value={ draft.Slug }
 					}
 				/>
-				<p class="text-base-content/45 mt-1 text-xs">Leave blank to use the provider name. Give it a name to keep a second endpoint of the same provider.</p>
+				<p class="text-muted-faint mt-1 text-xs">Leave blank to use the provider name. Give it a name to keep a second endpoint of the same provider.</p>
 			</label>
 		} else {
 			<input type="hidden" name="provider" value={ p.Provider }/>
 			<input type="hidden" name="slug" value={ providerInstanceSlug(*p) }/>
-			<p class="text-sm text-base-content/70">Name: <span class="font-mono font-semibold">{ providerInstanceSlug(*p) }</span></p>
-			<p class="text-sm text-base-content/70">Provider: <span class="font-mono font-semibold">{ p.Provider }</span></p>
+			<p class="text-sm text-muted-strong">Name: <span class="font-mono font-semibold">{ providerInstanceSlug(*p) }</span></p>
+			<p class="text-sm text-muted-strong">Provider: <span class="font-mono font-semibold">{ p.Provider }</span></p>
 		}
 		@form.PasswordField(form.PasswordFieldProps{
 			Name:        "api_key",
@@ -1011,7 +1011,7 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 			<div id="base-url-status" class="mt-1 items-center gap-1.5 text-xs" style="display:none"></div>
 		</label>
 		if p != nil {
-			<p class="text-base-content/55 text-xs">Fallback models used when the project has no default set.</p>
+			<p class="text-muted text-xs">Fallback models used when the project has no default set.</p>
 			<div id="provider-fallback-models" class="flex flex-col gap-4">
 				@providerModelSelect("generative_model", "Generative model", providerFallbackCurrent(draft, p, false), genModels)
 				@providerModelSelect("embedding_model", "Embedding model", providerFallbackCurrent(draft, p, true), embModels)
@@ -1108,10 +1108,10 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 					Connection verified — you can save.
 				</span>
 			}
-			<span id="provider-vertex-hint" class="items-center gap-1.5 text-sm text-base-content/55" style="display:none">
+			<span id="provider-vertex-hint" class="items-center gap-1.5 text-sm text-muted" style="display:none">
 				Vertex uses service-account auth, so there is no base URL to probe — test not available. Save is enabled without testing.
 			</span>
-			<span id="provider-official-hint" class="items-center gap-1.5 text-sm text-base-content/55" style="display:none">
+			<span id="provider-official-hint" class="items-center gap-1.5 text-sm text-muted" style="display:none">
 				@ui.IconSpan("lucide--info", "size-4")
 				Uses the official API — no base URL or connection test needed.
 			</span>
@@ -1289,8 +1289,8 @@ templ providerConfigSaveErrorModal(err error) {
 			@components.ConfirmIcon("lucide--alert-triangle")
 			<h3 class="text-lg font-semibold">Couldn't save provider</h3>
 		</div>
-		<p class="text-base-content/55 text-sm">Your entries are still in the form below — nothing was lost.</p>
-		<p class="text-base-content/80 mt-2 text-sm">{ err.Error() }</p>
+		<p class="text-muted text-sm">Your entries are still in the form below — nothing was lost.</p>
+		<p class="text-muted-bright mt-2 text-sm">{ err.Error() }</p>
 		<div class="mt-6 flex flex-wrap items-center justify-end gap-2">
 			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/settings/providers", Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Back to providers }
 			<form method="dialog">
@@ -1346,9 +1346,9 @@ templ providerGroup(g providerRateGroup) {
 	{{ slug := providerGroupSlug(g) }}
 	<div class="mb-5 last:mb-0" data-testid={ "rate-group-" + slug }>
 		<div class="mb-2 flex items-center gap-2">
-			<span class="iconify lucide--server size-3.5 text-base-content/40" aria-hidden="true"></span>
+			<span class="iconify lucide--server size-3.5 text-muted-faint" aria-hidden="true"></span>
 			<h3 class="font-mono text-sm font-semibold">{ slug }</h3>
-			<span class="text-base-content/45 text-xs">{ g.Provider }</span>
+			<span class="text-muted-faint text-xs">{ g.Provider }</span>
 		</div>
 		<div class="flex flex-col gap-3">
 			for _, r := range g.Rows {
@@ -1380,11 +1380,11 @@ templ providerModelRow(r providerRateRow) {
 					</span>
 					<span class="text-sm">
 						if r.IsCustom {
-							<span class="text-base-content/80 tabular-nums">{ formatRateUSD(r.OverrideInput) } in / { formatRateUSD(r.OverrideOutput) } out</span>
+							<span class="text-muted-bright tabular-nums">{ formatRateUSD(r.OverrideInput) } in / { formatRateUSD(r.OverrideOutput) } out</span>
 						} else if r.HasAuto {
-							<span class="text-base-content/80 tabular-nums">{ formatRateUSD(r.AutoInput) } in / { formatRateUSD(r.AutoOutput) } out</span>
+							<span class="text-muted-bright tabular-nums">{ formatRateUSD(r.AutoInput) } in / { formatRateUSD(r.AutoOutput) } out</span>
 						} else {
-							<span class="text-base-content/40 text-xs">unknown rate</span>
+							<span class="text-muted-faint text-xs">unknown rate</span>
 						}
 					</span>
 				</span>
@@ -1424,7 +1424,7 @@ templ providerRateBadge(r providerRateRow) {
 // per 1M tokens.
 templ providerPriceField(name, label, value string) {
 	<label class="flex flex-col gap-1">
-		<span class="text-base-content/45 text-[10px] font-semibold tracking-wider uppercase">{ label } $/1M</span>
+		<span class="text-muted-faint text-[10px] font-semibold tracking-wider uppercase">{ label } $/1M</span>
 		<input
 			type="number"
 			name={ name }

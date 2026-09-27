@@ -56,7 +56,7 @@ func TestRefactorOutputExact(t *testing.T) {
 		}
 	}
 
-	// eyebrow (now ui.Eyebrow)
+	// eyebrow (now ui.Eyebrow) — muted class owned by go-daisy upstream
 	got := render(ui.Eyebrow("Allowed tools", ui.EyebrowProps{Size: "text-[11px]", Margin: "mb-2"}))
 	want := `<p class="text-base-content/45 font-semibold tracking-[0.16em] uppercase text-[11px] mb-2">Allowed tools</p>`
 	check("eyebrow", got, want)
@@ -106,7 +106,7 @@ func TestRefactorOutputExact(t *testing.T) {
 	// ui.ConfirmDialog (was the local confirmDeleteDialog — same markup)
 	got = render(ui.ConfirmDialog(ui.ConfirmDialogProps{ID: "delete-confirm-modal", Noun: "agent"}, deleteAgentDescription()),
 		`<div class="flex justify-end gap-2 pt-2"><button type="button" class="btn btn-ghost btn-sm" data-action="close-delete-confirm">Cancel</button> <button type="button" class="btn btn-error btn-sm" id="delete-agent-go">Delete</button></div>`)
-	want = `<dialog id="delete-confirm-modal" class="modal" hx-boost="false"><div class="modal-box max-w-sm"><div class="mb-4 flex items-start gap-3"><div class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full"><span class="iconify lucide--trash-2 size-5" aria-hidden="true"></span></div><div><h3 class="text-lg font-semibold">Delete agent?</h3><p class="text-base-content/55 mt-1 text-sm">This permanently removes <span id="delete-agent-name" class="font-medium text-base-content"></span> and its definition. Irreversible.</p></div></div><div class="flex justify-end gap-2 pt-2"><button type="button" class="btn btn-ghost btn-sm" data-action="close-delete-confirm">Cancel</button> <button type="button" class="btn btn-error btn-sm" id="delete-agent-go">Delete</button></div></div><form method="dialog" class="modal-backdrop"><button>close</button></form></dialog>`
+	want = `<dialog id="delete-confirm-modal" class="modal" hx-boost="false"><div class="modal-box max-w-sm"><div class="mb-4 flex items-start gap-3"><div class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full"><span class="iconify lucide--trash-2 size-5" aria-hidden="true"></span></div><div><h3 class="text-lg font-semibold">Delete agent?</h3><p class="text-muted mt-1 text-sm">This permanently removes <span id="delete-agent-name" class="font-medium text-base-content"></span> and its definition. Irreversible.</p></div></div><div class="flex justify-end gap-2 pt-2"><button type="button" class="btn btn-ghost btn-sm" data-action="close-delete-confirm">Cancel</button> <button type="button" class="btn btn-error btn-sm" id="delete-agent-go">Delete</button></div></div><form method="dialog" class="modal-backdrop"><button>close</button></form></dialog>`
 	check("ui.ConfirmDialog", got, want)
 
 	// detailHeader default (existing callers)
@@ -144,9 +144,9 @@ func TestRefactorOutputExact(t *testing.T) {
 	got = render(checkboxPicker(checkboxPickerProps{
 		Name: "skill", EmptyID: "agent-skills-empty", EmptyNote: skillEmptyNote(),
 		LabelClass: "items-start gap-2 py-1.5", CheckboxClass: "checkbox checkbox-sm mt-0.5",
-		TitleClass: "block text-sm font-medium", DescClass: "text-base-content/50 block text-xs", WrapTitle: true,
+		TitleClass: "block text-sm font-medium", DescClass: "text-muted block text-xs", WrapTitle: true,
 	}))
-	want = `<p id="agent-skills-empty" class="text-base-content/45 text-sm">No skills yet — <a class="text-primary font-medium hover:underline" href="/skills">create one on the Skills page</a>.</p>`
+	want = `<p id="agent-skills-empty" class="text-muted-faint text-sm">No skills yet — <a class="text-primary font-medium hover:underline" href="/skills">create one on the Skills page</a>.</p>`
 	check("checkboxPicker skill empty", got, want)
 
 	// checkboxPicker — skill, with items + hidden duplicate note
@@ -154,39 +154,39 @@ func TestRefactorOutputExact(t *testing.T) {
 	got = render(checkboxPicker(checkboxPickerProps{
 		Name: "skill", EmptyID: "agent-skills-empty", EmptyNote: skillEmptyNote(),
 		LabelClass: "items-start gap-2 py-1.5", CheckboxClass: "checkbox checkbox-sm mt-0.5",
-		TitleClass: "block text-sm font-medium", DescClass: "text-base-content/50 block text-xs", WrapTitle: true,
+		TitleClass: "block text-sm font-medium", DescClass: "text-muted block text-xs", WrapTitle: true,
 		Items: skillPickerItems(sk, nil),
 	}))
-	want = `<div class="rounded-box border border-base-content/10 bg-base-200/40 p-3 flex flex-col"><label class="label flex items-start gap-2 py-1.5"><input name="skill" type="checkbox" value="summarize-email" class="checkbox checkbox-sm mt-0.5"> <span class="min-w-0"><span class="block text-sm font-medium">summarize-email</span> <span class="text-base-content/50 block text-xs">Condenses threads</span></span></label><label class="label flex items-start gap-2 py-1.5"><input name="skill" type="checkbox" value="recall-memory" class="checkbox checkbox-sm mt-0.5"> <span class="min-w-0"><span class="block text-sm font-medium">recall-memory</span> </span></label> <p id="agent-skills-empty" class="text-base-content/45 hidden text-sm">No skills yet — <a class="text-primary font-medium hover:underline" href="/skills">create one on the Skills page</a>.</p></div>`
+	want = `<div class="rounded-box border border-base-content/10 bg-base-200/40 p-3 flex flex-col"><label class="label flex items-start gap-2 py-1.5"><input name="skill" type="checkbox" value="summarize-email" class="checkbox checkbox-sm mt-0.5"> <span class="min-w-0"><span class="block text-sm font-medium">summarize-email</span> <span class="text-muted block text-xs">Condenses threads</span></span></label><label class="label flex items-start gap-2 py-1.5"><input name="skill" type="checkbox" value="recall-memory" class="checkbox checkbox-sm mt-0.5"> <span class="min-w-0"><span class="block text-sm font-medium">recall-memory</span> </span></label> <p id="agent-skills-empty" class="text-muted-faint hidden text-sm">No skills yet — <a class="text-primary font-medium hover:underline" href="/skills">create one on the Skills page</a>.</p></div>`
 	check("checkboxPicker skill items", got, want)
 
 	// checkboxPicker — skill, settings style (checked + no id)
 	got = render(checkboxPicker(checkboxPickerProps{
 		Name: "skill", EmptyNote: skillEmptyNote(),
 		LabelClass: "items-start gap-2 py-1.5", CheckboxClass: "checkbox checkbox-sm mt-0.5",
-		TitleClass: "block text-sm font-medium", DescClass: "text-base-content/50 block text-xs", WrapTitle: true,
+		TitleClass: "block text-sm font-medium", DescClass: "text-muted block text-xs", WrapTitle: true,
 		Items: skillPickerItems(sk, func(n string) bool { return n == "summarize-email" }),
 	}))
-	want = `<div class="rounded-box border border-base-content/10 bg-base-200/40 p-3 flex flex-col"><label class="label flex items-start gap-2 py-1.5"><input name="skill" type="checkbox" value="summarize-email" checked class="checkbox checkbox-sm mt-0.5"> <span class="min-w-0"><span class="block text-sm font-medium">summarize-email</span> <span class="text-base-content/50 block text-xs">Condenses threads</span></span></label><label class="label flex items-start gap-2 py-1.5"><input name="skill" type="checkbox" value="recall-memory" class="checkbox checkbox-sm mt-0.5"> <span class="min-w-0"><span class="block text-sm font-medium">recall-memory</span> </span></label> </div>`
+	want = `<div class="rounded-box border border-base-content/10 bg-base-200/40 p-3 flex flex-col"><label class="label flex items-start gap-2 py-1.5"><input name="skill" type="checkbox" value="summarize-email" checked class="checkbox checkbox-sm mt-0.5"> <span class="min-w-0"><span class="block text-sm font-medium">summarize-email</span> <span class="text-muted block text-xs">Condenses threads</span></span></label><label class="label flex items-start gap-2 py-1.5"><input name="skill" type="checkbox" value="recall-memory" class="checkbox checkbox-sm mt-0.5"> <span class="min-w-0"><span class="block text-sm font-medium">recall-memory</span> </span></label> </div>`
 	check("checkboxPicker skill checked", got, want)
 
 	// checkboxPicker — delegate, modal style (wrap id + empty id)
 	ag := []AgentDefinitionSummary{{Name: "diane"}, {Name: "milo"}}
 	got = render(checkboxPicker(checkboxPickerProps{
 		Name: "delegation-target", Wrapped: true, WrapID: "agent-delegation-targets", EmptyID: "agent-delegation-empty", EmptyNote: delegateEmptyNote(),
-		LabelClass: "gap-2 py-1", CheckboxClass: "checkbox", TitleClass: "text-base-content/80 text-sm",
+		LabelClass: "gap-2 py-1", CheckboxClass: "checkbox", TitleClass: "text-muted-bright text-sm",
 		Items: delegatePickerItems(ag, "", nil),
 	}))
-	want = `<div id="agent-delegation-targets" class="mt-2"><div class="rounded-box border border-base-content/10 bg-base-200/40 p-3 flex flex-col"><label class="label flex gap-2 py-1"><input name="delegation-target" type="checkbox" value="diane" class="checkbox"> <span class="text-base-content/80 text-sm">diane</span></label><label class="label flex gap-2 py-1"><input name="delegation-target" type="checkbox" value="milo" class="checkbox"> <span class="text-base-content/80 text-sm">milo</span></label> <p id="agent-delegation-empty" class="text-base-content/45 hidden text-sm">No other agents to delegate to.</p></div></div>`
+	want = `<div id="agent-delegation-targets" class="mt-2"><div class="rounded-box border border-base-content/10 bg-base-200/40 p-3 flex flex-col"><label class="label flex gap-2 py-1"><input name="delegation-target" type="checkbox" value="diane" class="checkbox"> <span class="text-muted-bright text-sm">diane</span></label><label class="label flex gap-2 py-1"><input name="delegation-target" type="checkbox" value="milo" class="checkbox"> <span class="text-muted-bright text-sm">milo</span></label> <p id="agent-delegation-empty" class="text-muted-faint hidden text-sm">No other agents to delegate to.</p></div></div>`
 	check("checkboxPicker delegate modal", got, want)
 
 	// checkboxPicker — delegate, settings style (exclude self, checked, no ids)
 	got = render(checkboxPicker(checkboxPickerProps{
 		Name: "delegation-target", Wrapped: true, EmptyNote: delegateEmptyNote(),
-		LabelClass: "gap-2 py-1", CheckboxClass: "checkbox", TitleClass: "text-base-content/80 text-sm",
+		LabelClass: "gap-2 py-1", CheckboxClass: "checkbox", TitleClass: "text-muted-bright text-sm",
 		Items: delegatePickerItems(ag, "diane", func(n string) bool { return n == "milo" }),
 	}))
-	want = `<div class="mt-2"><div class="rounded-box border border-base-content/10 bg-base-200/40 p-3 flex flex-col"><label class="label flex gap-2 py-1"><input name="delegation-target" type="checkbox" value="milo" checked class="checkbox"> <span class="text-base-content/80 text-sm">milo</span></label> </div></div>`
+	want = `<div class="mt-2"><div class="rounded-box border border-base-content/10 bg-base-200/40 p-3 flex flex-col"><label class="label flex gap-2 py-1"><input name="delegation-target" type="checkbox" value="milo" checked class="checkbox"> <span class="text-muted-bright text-sm">milo</span></label> </div></div>`
 	check("checkboxPicker delegate settings", got, want)
 
 	// modelSelect — modal style (no current, data-testid)
@@ -223,12 +223,12 @@ func TestRefactorOutputExact(t *testing.T) {
 
 	// chatWelcomeHero — chat variant
 	got = render(chatWelcomeHero("chat-empty", "lucide--sparkles", "gap-4 py-10", "Ready when you are", 2, "text-base", "Ask anything.", "mt-1 max-w-sm text-sm"), "<p>extra</p>")
-	want = `<div id="chat-empty" class="flex flex-col items-center justify-center gap-4 py-10 text-center"><div class="bg-primary/10 text-primary border-primary/15 grid size-14 place-items-center rounded-2xl border"><span class="iconify lucide--sparkles size-7" aria-hidden="true"></span></div><div><h2 class="text-base font-semibold">Ready when you are</h2><p class="text-base-content/50 mt-1 max-w-sm text-sm">Ask anything.</p></div><p>extra</p></div>`
+	want = `<div id="chat-empty" class="flex flex-col items-center justify-center gap-4 py-10 text-center"><div class="bg-primary/10 text-primary border-primary/15 grid size-14 place-items-center rounded-2xl border"><span class="iconify lucide--sparkles size-7" aria-hidden="true"></span></div><div><h2 class="text-base font-semibold">Ready when you are</h2><p class="text-muted mt-1 max-w-sm text-sm">Ask anything.</p></div><p>extra</p></div>`
 	check("chatWelcomeHero chat", got, want)
 
 	// chatWelcomeHero — sidepanel variant (h3)
 	got = render(chatWelcomeHero("sidepanel-empty", "lucide--bot", "gap-3 py-8", "Chat with your assistant", 3, "text-sm", "Ask anything.", "mt-0.5 max-w-60 text-xs"))
-	want = `<div id="sidepanel-empty" class="flex flex-col items-center justify-center gap-3 py-8 text-center"><div class="bg-primary/10 text-primary border-primary/15 grid size-14 place-items-center rounded-2xl border"><span class="iconify lucide--bot size-7" aria-hidden="true"></span></div><div><h3 class="text-sm font-semibold">Chat with your assistant</h3><p class="text-base-content/50 mt-0.5 max-w-60 text-xs">Ask anything.</p></div></div>`
+	want = `<div id="sidepanel-empty" class="flex flex-col items-center justify-center gap-3 py-8 text-center"><div class="bg-primary/10 text-primary border-primary/15 grid size-14 place-items-center rounded-2xl border"><span class="iconify lucide--bot size-7" aria-hidden="true"></span></div><div><h3 class="text-sm font-semibold">Chat with your assistant</h3><p class="text-muted mt-0.5 max-w-60 text-xs">Ask anything.</p></div></div>`
 	check("chatWelcomeHero sidepanel", got, want)
 
 	// chipRow — wrapped variant (migration plan grid cells)
