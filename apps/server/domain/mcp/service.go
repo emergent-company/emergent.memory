@@ -564,20 +564,20 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "schema-assignment-update",
-			Description: "Update a schema assignment. Toggle active status or modify customizations.",
+			Description: "Update a schema assignment. Toggle active status.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
-					"assignment_id": {
+					"schema_id": {
 						Type:        "string",
-						Description: "The UUID of the schema assignment to update",
+						Description: "The UUID of the schema whose assignment to update",
 					},
 					"active": {
 						Type:        "boolean",
 						Description: "Set the active status of the schema",
 					},
 				},
-				Required: []string{"assignment_id"},
+				Required: []string{"schema_id"},
 			},
 		},
 		{
@@ -586,12 +586,12 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
-					"assignment_id": {
+					"schema_id": {
 						Type:        "string",
-						Description: "The UUID of the schema assignment to remove",
+						Description: "The UUID of the schema to remove",
 					},
 				},
-				Required: []string{"assignment_id"},
+				Required: []string{"schema_id"},
 			},
 		},
 		{
