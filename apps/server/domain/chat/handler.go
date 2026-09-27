@@ -849,7 +849,21 @@ func (h *Handler) StreamChat(c echo.Context) error {
 
 	// Branch: agent-backed vs direct-LLM flow
 	if conv.AgentDefinitionID != nil {
-		agentResult := h.streamAgentChat(ctx, conv, message, user.ProjectID, user.OrgID, user.ID, sseWriter, "", "", "")
+		// The agent run must outlive the SSE request. When the browser↔gateway
+		// connection drops (reload, navigation, network blip) the request
+		// context is cancelled; bound to it, the executor would hard-fail the
+		// run with "agent stopped: context canceled" even though nothing was
+		// wrong server-side (issue #1149). Run on a detached context so a
+		// request-context cancellation only detaches this SSE consumer: the run
+		// stays bounded by the executor's per-step watchdog (defaultRunTimeout)
+		// and is stoppable via POST /api/chat/runs/:runId/cancel, and its
+		// progress is persisted to the run record either way.
+		runCtx := agents.DetachedRunContext(ctx)
+		h.log.Info("chat agent run detached from request context",
+			slog.String("conversation_id", conv.ID.String()),
+			slog.String("agent_definition_id", conv.AgentDefinitionID.String()),
+		)
+		agentResult := h.streamAgentChat(runCtx, conv, message, user.ProjectID, user.OrgID, user.ID, sseWriter, "", "", "")
 		sseWriter.WriteData(sse.NewDoneEvent())
 		sseWriter.Close()
 		if agentResult != nil && agentResult.Cleanup != nil {

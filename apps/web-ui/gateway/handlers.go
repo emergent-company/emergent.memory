@@ -277,9 +277,10 @@ func (s *Server) cancelQuestion(c echo.Context) error {
 // active run's owning runtime agent id from the run DTO, then proxies the
 // upstream project/agent-scoped cancel. Unresolvable run id or agent id, and
 // upstream failures, return a 200 with {"ok":false,"reason":…} — never an
-// error status — so the client always gets an actionable body. The upstream
-// cancel is idempotent (an already-terminal run is a non-error), so a
-// successful proxy here always reports ok:true.
+// error status — so the client always gets an actionable body. When the run
+// already reached a terminal state, memory reports cancelled:false and this
+// handler returns {"ok":false,"reason":"run already finished"} so the response
+// is consistent with the run row rather than falsely claiming a cancel.
 func (s *Server) cancelAgentRun(c echo.Context) error {
 	runID := c.Param("runId")
 	ctx := c.Request().Context()
@@ -291,9 +292,13 @@ func (s *Server) cancelAgentRun(c echo.Context) error {
 	if run == nil || run.AgentID == "" {
 		return c.JSON(http.StatusOK, map[string]any{"ok": false, "reason": "agent identifier could not be resolved"})
 	}
-	if err := s.memory.CancelAgentRun(ctx, run.AgentID, runID); err != nil {
+	cancelled, err := s.memory.CancelAgentRun(ctx, run.AgentID, runID)
+	if err != nil {
 		captureError(err)
 		return c.JSON(http.StatusOK, map[string]any{"ok": false, "reason": err.Error()})
+	}
+	if !cancelled {
+		return c.JSON(http.StatusOK, map[string]any{"ok": false, "reason": "run already finished"})
 	}
 	return c.JSON(http.StatusOK, map[string]any{"ok": true, "runId": runID})
 }

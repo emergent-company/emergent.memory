@@ -283,6 +283,9 @@ type fakeMemory struct {
 	cancelAgentID      string                         // last agent id passed to CancelAgentRun
 	cancelRunID        string                         // last run id passed to CancelAgentRun
 	cancelAgentRunErr  error                          // failure for CancelAgentRun
+	// cancelAgentRunCancelled overrides the "row actually cancelled" result of
+	// CancelAgentRun (nil → true, the common case).
+	cancelAgentRunCancelled *bool
 
 	usageSummary *UsageSummaryResponse    // returned by GetProjectUsageSummary
 	usageSeries  *UsageTimeSeriesResponse // returned by GetProjectUsageTimeSeries
@@ -626,10 +629,16 @@ func (f *fakeMemory) ListToolApprovals(ctx context.Context) ([]ToolApprovalItem,
 	return f.approvals, nil
 }
 
-func (f *fakeMemory) CancelAgentRun(ctx context.Context, agentID, runID string) error {
+func (f *fakeMemory) CancelAgentRun(ctx context.Context, agentID, runID string) (bool, error) {
 	f.cancelAgentID = agentID
 	f.cancelRunID = runID
-	return f.cancelAgentRunErr
+	if f.cancelAgentRunErr != nil {
+		return false, f.cancelAgentRunErr
+	}
+	if f.cancelAgentRunCancelled != nil {
+		return *f.cancelAgentRunCancelled, nil
+	}
+	return true, nil
 }
 
 func (f *fakeMemory) ListSessionTodos(ctx context.Context, sessionID string) ([]SessionTodo, error) {

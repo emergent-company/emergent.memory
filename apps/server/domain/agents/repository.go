@@ -29,6 +29,28 @@ func NewRepository(db bun.IDB) *Repository {
 	return &Repository{db: db}
 }
 
+// nonTerminalRunStatuses lists the run statuses from which a terminal
+// transition is still legitimate. Terminal writes are guarded on this set so
+// concurrent terminal writers — notably a successful completion racing an
+// explicit cancel (issue #1149) — cannot clobber one another: the first
+// transition wins and the loser is a no-op.
+func nonTerminalRunStatuses() []string {
+	return []string{
+		string(RunStatusQueued),
+		string(RunStatusRunning),
+		string(RunStatusPaused),
+		string(RunStatusCancelling),
+	}
+}
+
+// guardTerminalTransition restricts a terminal-status update to runs that have
+// not yet reached a terminal state, so a late terminal write cannot overwrite
+// an earlier one. The guard runs as part of the UPDATE, so Postgres row locking
+// serializes competing terminal writers and exactly one wins.
+func guardTerminalTransition(q *bun.UpdateQuery) *bun.UpdateQuery {
+	return q.Where("status IN (?)", bun.In(nonTerminalRunStatuses()))
+}
+
 // FindAll returns all agents for a project
 func (r *Repository) FindAll(ctx context.Context, projectID string) ([]*Agent, error) {
 	var agents []*Agent
@@ -159,13 +181,13 @@ func (r *Repository) CreateRun(ctx context.Context, agentID string) (*AgentRun, 
 // CompleteRun marks a run as successful
 func (r *Repository) CompleteRun(ctx context.Context, runID string, summary map[string]any) error {
 	now := time.Now()
-	_, err := r.db.NewUpdate().
+	_, err := guardTerminalTransition(r.db.NewUpdate().
 		Model((*AgentRun)(nil)).
 		Set("status = ?", RunStatusSuccess).
 		Set("completed_at = ?", now).
 		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
 		Set("summary = ?", summary).
-		Where("id = ?", runID).
+		Where("id = ?", runID)).
 		Exec(ctx)
 	return err
 }
@@ -173,13 +195,13 @@ func (r *Repository) CompleteRun(ctx context.Context, runID string, summary map[
 // SkipRun marks a run as skipped
 func (r *Repository) SkipRun(ctx context.Context, runID string, reason string) error {
 	now := time.Now()
-	_, err := r.db.NewUpdate().
+	_, err := guardTerminalTransition(r.db.NewUpdate().
 		Model((*AgentRun)(nil)).
 		Set("status = ?", RunStatusSkipped).
 		Set("completed_at = ?", now).
 		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
 		Set("skip_reason = ?", reason).
-		Where("id = ?", runID).
+		Where("id = ?", runID)).
 		Exec(ctx)
 	return err
 }
@@ -187,13 +209,13 @@ func (r *Repository) SkipRun(ctx context.Context, runID string, reason string) e
 // FailRun marks a run as failed
 func (r *Repository) FailRun(ctx context.Context, runID string, errorMessage string) error {
 	now := time.Now()
-	_, err := r.db.NewUpdate().
+	_, err := guardTerminalTransition(r.db.NewUpdate().
 		Model((*AgentRun)(nil)).
 		Set("status = ?", RunStatusError).
 		Set("completed_at = ?", now).
 		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
 		Set("error_message = ?", errorMessage).
-		Where("id = ?", runID).
+		Where("id = ?", runID)).
 		Exec(ctx)
 	return err
 }
@@ -1680,17 +1702,52 @@ func (r *Repository) PauseRun(ctx context.Context, runID string, stepCount int) 
 	return err
 }
 
-// CancelRun marks a run as cancelled.
-func (r *Repository) CancelRun(ctx context.Context, runID string) error {
+// CancelRun marks a run as cancelled, but only if the run has not already
+// reached a terminal state. It returns true when a row was actually
+// transitioned. The guard makes cancellation race-safe against a concurrent
+// terminal write (e.g. the executor completing the run): exactly one of the two
+// wins, and the loser is a no-op, so a cancel that arrives too late cannot turn
+// a completed run into "cancelled".
+func (r *Repository) CancelRun(ctx context.Context, runID string) (bool, error) {
 	now := time.Now()
-	_, err := r.db.NewUpdate().
+	res, err := guardTerminalTransition(r.db.NewUpdate().
 		Model((*AgentRun)(nil)).
 		Set("status = ?", RunStatusCancelled).
 		Set("completed_at = ?", now).
 		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
-		Where("id = ?", runID).
+		Where("id = ?", runID)).
 		Exec(ctx)
-	return err
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// CancelRunWithSteps marks a run cancelled with the step count reached and a
+// reason, but only if the run has not already reached a terminal state. It is
+// used when an explicit cancel request stops an in-flight run: unlike
+// FailRunWithSteps it records the terminal status as cancelled, not error, so a
+// user stop is not misreported as a server fault. The reason is stored in
+// error_message so the stop is self-explanatory in the run history. Like
+// CancelRun it does not touch session_status. It returns true when a row was
+// actually transitioned.
+func (r *Repository) CancelRunWithSteps(ctx context.Context, runID, reason string, stepCount int) (bool, error) {
+	now := time.Now()
+	res, err := guardTerminalTransition(r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusCancelled).
+		Set("completed_at = ?", now).
+		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
+		Set("error_message = ?", reason).
+		Set("step_count = ?", stepCount).
+		Where("id = ?", runID)).
+		Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 // CancelRunIfPaused transitions a paused (input-required) run to cancelled only
@@ -1736,10 +1793,13 @@ func (r *Repository) UpdateStepCount(ctx context.Context, runID string, stepCoun
 	return err
 }
 
-// FailRunWithSteps marks a run as failed, persisting the step count at the time of failure.
+// FailRunWithSteps marks a run as failed, persisting the step count at the time
+// of failure. Guarded like the other terminal writes so a late failure cannot
+// overwrite a run that has already reached a terminal state (notably an
+// explicit cancel).
 func (r *Repository) FailRunWithSteps(ctx context.Context, runID string, errorMessage string, stepCount int) error {
 	now := time.Now()
-	_, err := r.db.NewUpdate().
+	_, err := guardTerminalTransition(r.db.NewUpdate().
 		Model((*AgentRun)(nil)).
 		Set("status = ?", RunStatusError).
 		Set("completed_at = ?", now).
@@ -1747,15 +1807,18 @@ func (r *Repository) FailRunWithSteps(ctx context.Context, runID string, errorMe
 		Set("error_message = ?", errorMessage).
 		Set("step_count = ?", stepCount).
 		Set("session_status = ?", SessionStatusError).
-		Where("id = ?", runID).
+		Where("id = ?", runID)).
 		Exec(ctx)
 	return err
 }
 
-// CompleteRunWithSteps marks a run as successfully completed with step count and duration.
+// CompleteRunWithSteps marks a run as successfully completed with step count and
+// duration. Guarded like the other terminal writes: if an explicit cancel won
+// the terminal transition first, this is a no-op, so the row's status always
+// matches what the cancel endpoint reported (issue #1149).
 func (r *Repository) CompleteRunWithSteps(ctx context.Context, runID string, summary map[string]any, stepCount int, durationMs int) error {
 	now := time.Now()
-	_, err := r.db.NewUpdate().
+	_, err := guardTerminalTransition(r.db.NewUpdate().
 		Model((*AgentRun)(nil)).
 		Set("status = ?", RunStatusSuccess).
 		Set("completed_at = ?", now).
@@ -1763,7 +1826,7 @@ func (r *Repository) CompleteRunWithSteps(ctx context.Context, runID string, sum
 		Set("step_count = ?", stepCount).
 		Set("duration_ms = ?", durationMs).
 		Set("session_status = ?", SessionStatusCompleted).
-		Where("id = ?", runID).
+		Where("id = ?", runID)).
 		Exec(ctx)
 	return err
 }

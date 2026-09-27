@@ -947,7 +947,7 @@ func (h *A2AHandler) CancelTask(c echo.Context) error {
 	}
 
 	if latest.Status == RunStatusQueued {
-		if err := h.repo.CancelRun(ctx, latest.ID); err != nil {
+		if _, err := h.repo.CancelRun(ctx, latest.ID); err != nil {
 			h.log.Error("failed to cancel task", "task_id", taskID, "error", err)
 			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to cancel task"))
 		}

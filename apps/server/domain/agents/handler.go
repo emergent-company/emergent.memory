@@ -841,14 +841,42 @@ func (h *Handler) CancelRun(c echo.Context) error {
 		return apperror.NewNotFound("AgentRun", runID)
 	}
 
-	// Cancel the run
-	if err := h.repo.CancelRun(c.Request().Context(), runID); err != nil {
+	// Apply the cancel as a guarded terminal transition. This is authoritative:
+	// the guarded UPDATE races the executor's own terminal write (success /
+	// failure / cancel) and exactly one wins, so the row's terminal status
+	// always matches what this endpoint reports. A cancel that arrives after
+	// the run already finished returns cancelled:false and leaves the row
+	// untouched (issue #1149).
+	ctx := c.Request().Context()
+	cancelled, err := h.repo.CancelRun(ctx, runID)
+	if err != nil {
 		return apperror.NewInternal("failed to cancel run", err)
 	}
+	if !cancelled {
+		status := string(RunStatusError)
+		if current, findErr := h.repo.FindRunByID(ctx, runID); findErr == nil && current != nil {
+			status = string(current.Status)
+		}
+		return c.JSON(http.StatusOK, SuccessResponse(map[string]any{
+			"message":   "Run already " + status,
+			"runId":     runID,
+			"cancelled": false,
+			"status":    status,
+		}))
+	}
 
-	return c.JSON(http.StatusOK, SuccessResponse(map[string]string{
-		"message": "Run cancelled successfully",
-		"runId":   runID,
+	// The guarded transition won. Promptly stop an in-flight, detached run so
+	// its goroutine winds down now; its own terminal write is a no-op because
+	// the row is already cancelled. Not registered (finished, or running in
+	// another process) is fine — the row is cancelled either way.
+	if h.executor != nil {
+		h.executor.Cancel(runID, userCancelReason)
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(map[string]any{
+		"message":   "Run cancelled successfully",
+		"runId":     runID,
+		"cancelled": true,
 	}))
 }
 
