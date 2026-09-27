@@ -1,5 +1,5 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 /// Scripted `ConnectorCLI` for `AccountStore` tests. Routes by the first two
 /// arguments ("auth start", "auth complete", "auth access-token", ...) to
@@ -30,10 +30,14 @@ final class StubCLI: @unchecked Sendable {
         on(command) { _ in ProcessResult(stdout: message, exitCode: exitCode, timedOut: false) }
     }
 
-    var calls: [[String]] { lock.withLock { _calls } }
+    var calls: [[String]] {
+        lock.withLock { _calls }
+    }
 
     /// Every stdin-piped invocation (currently `auth import`), in order.
-    var stdinCalls: [StdinCall] { lock.withLock { _stdinCalls } }
+    var stdinCalls: [StdinCall] {
+        lock.withLock { _stdinCalls }
+    }
 
     func called(_ command: String) -> Bool {
         calls.contains { Array($0.prefix(2)).joined(separator: " ") == command }
@@ -64,7 +68,6 @@ final class StubCLI: @unchecked Sendable {
 /// per-account secret directories, switching, sign-out isolation, identity
 /// backfill, and legacy migration.
 final class AccountStoreTests: XCTestCase {
-
     private var suiteName = ""
     private var defaults = UserDefaults(suiteName: "") ?? .standard
     private var root = FileManager.default.temporaryDirectory
@@ -93,7 +96,9 @@ final class AccountStoreTests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
-        if !suiteName.isEmpty { defaults.removePersistentDomain(forName: suiteName) }
+        if !suiteName.isEmpty {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
         try? FileManager.default.removeItem(at: root)
         StubURLProtocol.registry.reset()
         ConnectorKeychainCleanup.clearAll(defaults: defaults)
@@ -111,7 +116,8 @@ final class AccountStoreTests: XCTestCase {
 
     private func stubComplete(email: String,
                               server: String? = nil,
-                              issuer: String = "https://auth.example.test") {
+                              issuer: String = "https://auth.example.test")
+    {
         cli.on("auth complete", json: """
         {"schema_version":1,"server":"\(server ?? prodServer)","signed_in":true,\
         "email":"\(email)","issuer":"\(issuer)","expires_at":"2030-01-02T03:04:05Z","expired":false}
@@ -174,7 +180,9 @@ final class AccountStoreTests: XCTestCase {
         let state = OAuthCallback.queryItems(from: authorizeURL)["state"] ?? "missing"
         var components = URLComponents(string: OAuthCallback.redirectURI) ?? URLComponents()
         var items = [URLQueryItem(name: "state", value: state)]
-        if let code { items.append(URLQueryItem(name: "code", value: code)) }
+        if let code {
+            items.append(URLQueryItem(name: "code", value: code))
+        }
         components.queryItems = items
         return components.url ?? URL(fileURLWithPath: "/callback")
     }
@@ -560,7 +568,7 @@ final class AccountStoreTests: XCTestCase {
         stubComplete(email: "b@example.test", server: devServer, issuer: Environment.dev.issuerString)
         let b = try await signIn(store, .dev)
 
-        let devServer = self.devServer
+        let devServer = devServer
         cli.on("auth access-token") { arguments in
             let server = Self.flagValue("--server", in: arguments) ?? ""
             if server == devServer {
@@ -593,14 +601,15 @@ final class AccountStoreTests: XCTestCase {
                              environmentID: String,
                              email: String?,
                              displayName: String?,
-                             avatarObjectKey: String? = nil) throws {
+                             avatarObjectKey: String? = nil) throws
+    {
         let account = Account(id: id,
                               environmentID: environmentID,
                               email: email,
                               displayName: displayName,
                               avatarObjectKey: avatarObjectKey)
         let index = AccountsIndex(accounts: [account])
-        try AppSecretStore(baseDirectory: root).writeData(try JSONEncoder().encode(index),
+        try AppSecretStore(baseDirectory: root).writeData(JSONEncoder().encode(index),
                                                           to: AccountStore.accountsIndexFileName)
     }
 
@@ -615,8 +624,8 @@ final class AccountStoreTests: XCTestCase {
         """
         StubURLProtocol.registry.setHandler { request in
             switch request.url?.path {
-            case "/api/user/profile": return .ok(profile)
-            default: return .status(404)
+            case "/api/user/profile": .ok(profile)
+            default: .status(404)
             }
         }
         let store = makeStore()
@@ -639,7 +648,8 @@ final class AccountStoreTests: XCTestCase {
         // test's own token as well as the path.
         let request = try XCTUnwrap(StubURLProtocol.registry.capturedRequests
             .last { $0.url?.path == "/api/user/profile"
-                && $0.value(forHTTPHeaderField: "Authorization") == "Bearer access-X" })
+                && $0.value(forHTTPHeaderField: "Authorization") == "Bearer access-X"
+            })
         XCTAssertEqual(request.httpMethod, "GET")
         XCTAssertEqual(request.url?.path, "/api/user/profile")
         XCTAssertEqual(request.url?.host, Environment.prod.serverURL.host)
@@ -653,9 +663,9 @@ final class AccountStoreTests: XCTestCase {
         stubAccessToken([prodServer: "access-W"])
         StubURLProtocol.registry.setHandler { request in
             switch request.url?.path {
-            case "/api/user/profile": return .status(500)
-            case "/api/auth/me": return .ok(#"{"email":"wade@example.test"}"#)
-            default: return .status(404)
+            case "/api/user/profile": .status(500)
+            case "/api/auth/me": .ok(#"{"email":"wade@example.test"}"#)
+            default: .status(404)
             }
         }
         let store = makeStore()

@@ -6,17 +6,25 @@ extension OIDCUserInfo {
     /// Display name precedence: `name` → `preferred_username` → email local
     /// part. Empty when the provider returned none.
     var displayName: String {
-        if let name, !name.isEmpty { return name }
-        if let preferredUsername, !preferredUsername.isEmpty { return preferredUsername }
+        if let name, !name.isEmpty {
+            return name
+        }
+        if let preferredUsername, !preferredUsername.isEmpty {
+            return preferredUsername
+        }
         if let email, let local = email.split(separator: "@").first, !local.isEmpty {
             return String(local)
         }
         return ""
     }
 
-    var displayEmail: String { email ?? "" }
+    var displayEmail: String {
+        email ?? ""
+    }
 
-    var initials: String { MemoryIdentity.initials(from: displayName) }
+    var initials: String {
+        MemoryIdentity.initials(from: displayName)
+    }
 }
 
 /// Small pill that names the environment an account belongs to, so prod and
@@ -26,8 +34,8 @@ struct EnvironmentBadge: View {
     let isDev: Bool
 
     init(environment: Environment) {
-        self.label = environment.shortLabel
-        self.isDev = environment.id == Environment.dev.id
+        label = environment.shortLabel
+        isDev = environment.id == Environment.dev.id
     }
 
     init(label: String, isDev: Bool = false) {

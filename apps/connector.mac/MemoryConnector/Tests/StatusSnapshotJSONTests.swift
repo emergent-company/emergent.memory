@@ -1,9 +1,8 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 /// Tests for the `status --json` machine contract consumed by StatusMonitor.
 final class StatusSnapshotJSONTests: XCTestCase {
-
     private func json(instance: String = "mbp-connector",
                       version: String = "0.1.0",
                       tools: [String] = ["linux-host-info"],
@@ -12,13 +11,16 @@ final class StatusSnapshotJSONTests: XCTestCase {
                       localToolCount: Int = 1,
                       sessionCount: Int = 1,
                       error: String? = nil,
-                      disabledTools: [[String: String]] = []) -> String {
+                      disabledTools: [[String: String]] = []) -> String
+    {
         var detail: [String: Any] = [
             "hub_tool_count": hubToolCount,
             "local_tool_count": localToolCount,
             "session_count": sessionCount,
         ]
-        if let error { detail["error"] = error }
+        if let error {
+            detail["error"] = error
+        }
         var doc: [String: Any] = [
             "schema_version": 1,
             "instance_id": instance,
@@ -27,7 +29,9 @@ final class StatusSnapshotJSONTests: XCTestCase {
             "hub_state": hubState,
             "hub_detail": detail,
         ]
-        if !disabledTools.isEmpty { doc["disabled_tools"] = disabledTools }
+        if !disabledTools.isEmpty {
+            doc["disabled_tools"] = disabledTools
+        }
         let data = try! JSONSerialization.data(withJSONObject: doc, options: [.sortedKeys])
         return String(data: data, encoding: .utf8)!
     }
@@ -50,7 +54,8 @@ final class StatusSnapshotJSONTests: XCTestCase {
 
     func testJSONNotConnected() {
         let snap = StatusSnapshot.parse(
-            stdout: json(tools: [], hubState: "not_connected", sessionCount: 3), exitCode: 0)
+            stdout: json(tools: [], hubState: "not_connected", sessionCount: 3), exitCode: 0
+        )
         XCTAssertEqual(snap.hubState, .notConnected)
         XCTAssertTrue(snap.toolNames.isEmpty)
         XCTAssertEqual(snap.hubLine, "not connected — instance not found among 3 hub session(s)")
@@ -64,7 +69,8 @@ final class StatusSnapshotJSONTests: XCTestCase {
 
     func testJSONUnreachable() {
         let snap = StatusSnapshot.parse(
-            stdout: json(hubState: "unreachable", error: "dial tcp: refused"), exitCode: 0)
+            stdout: json(hubState: "unreachable", error: "dial tcp: refused"), exitCode: 0
+        )
         XCTAssertEqual(snap.hubState, .unreachable)
         XCTAssertEqual(snap.hubLine, "unreachable — dial tcp: refused")
     }
@@ -83,9 +89,10 @@ final class StatusSnapshotJSONTests: XCTestCase {
         let snap = StatusSnapshot.parse(
             stdout: json(tools: ["linux-host-info"],
                          disabledTools: [
-                            ["name": "linux-fs-write", "reason": "no write-capable root configured"],
+                             ["name": "linux-fs-write", "reason": "no write-capable root configured"],
                          ]),
-            exitCode: 0)
+            exitCode: 0
+        )
         XCTAssertEqual(snap.disabledTools, [
             StatusSnapshot.DisabledTool(name: "linux-fs-write",
                                         reason: "no write-capable root configured"),

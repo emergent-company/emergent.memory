@@ -33,7 +33,8 @@ struct StatusSnapshot: Equatable {
          toolNames: [String],
          hubLine: String,
          hubState: HubState,
-         disabledTools: [DisabledTool] = []) {
+         disabledTools: [DisabledTool] = [])
+    {
         self.instanceID = instanceID
         self.version = version
         self.toolNames = toolNames
@@ -42,7 +43,9 @@ struct StatusSnapshot: Equatable {
         self.disabledTools = disabledTools
     }
 
-    var toolCount: Int { toolNames.count }
+    var toolCount: Int {
+        toolNames.count
+    }
 
     /// Parses engine `status` stdout. A non-zero exit (missing/broken config,
     /// engine binary problem) maps to `.missingConfig`. A JSON document is used
@@ -57,7 +60,9 @@ struct StatusSnapshot: Equatable {
                 hubState: .missingConfig
             )
         }
-        if let json = parseJSON(stdout) { return json }
+        if let json = parseJSON(stdout) {
+            return json
+        }
         return parseText(stdout)
     }
 
@@ -128,12 +133,12 @@ struct StatusSnapshot: Equatable {
 
     private static func hubState(fromWire wire: String?) -> HubState {
         switch wire {
-        case "connected": return .connected
-        case "not_connected": return .notConnected
-        case "auth_failed": return .authFailed
-        case "unreachable": return .unreachable
-        case "missing_config": return .missingConfig
-        default: return .unknown
+        case "connected": .connected
+        case "not_connected": .notConnected
+        case "auth_failed": .authFailed
+        case "unreachable": .unreachable
+        case "missing_config": .missingConfig
+        default: .unknown
         }
     }
 
@@ -176,7 +181,9 @@ struct StatusSnapshot: Equatable {
 
         for rawLine in stdout.split(separator: "\n", omittingEmptySubsequences: false) {
             let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-            if line.isEmpty { continue }
+            if line.isEmpty {
+                continue
+            }
             if let value = value(after: "instance: ", in: line) {
                 instanceID = value
             } else if let value = value(after: "version: ", in: line) {
@@ -202,7 +209,9 @@ struct StatusSnapshot: Equatable {
     }
 
     private static func parseToolNames(_ line: String) -> [String] {
-        if line.contains(": none") { return [] }
+        if line.contains(": none") {
+            return []
+        }
         guard let colon = line.firstIndex(of: ":") else { return [] }
         let rest = line[line.index(after: colon)...]
         return rest
@@ -212,10 +221,18 @@ struct StatusSnapshot: Equatable {
     }
 
     private static func hubState(fromText hubLine: String) -> HubState {
-        if hubLine.hasPrefix("connected") { return .connected }
-        if hubLine.hasPrefix("not connected") { return .notConnected }
-        if hubLine.hasPrefix("authentication failed") { return .authFailed }
-        if hubLine.hasPrefix("unreachable") { return .unreachable }
+        if hubLine.hasPrefix("connected") {
+            return .connected
+        }
+        if hubLine.hasPrefix("not connected") {
+            return .notConnected
+        }
+        if hubLine.hasPrefix("authentication failed") {
+            return .authFailed
+        }
+        if hubLine.hasPrefix("unreachable") {
+            return .unreachable
+        }
         return .unknown
     }
 }

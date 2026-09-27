@@ -25,7 +25,8 @@ final class LegacyMigrator: @unchecked Sendable {
          reader: LegacySessionReading,
          clearer: LegacySessionClearing,
          defaults: UserDefaults = .standard,
-         configPath: String = EngineManager.defaultConfigPath) {
+         configPath: String = EngineManager.defaultConfigPath)
+    {
         self.cli = cli
         self.serverURLProvider = serverURLProvider
         self.reader = reader
@@ -40,7 +41,8 @@ final class LegacyMigrator: @unchecked Sendable {
                      reader: LegacySessionReading,
                      clearer: LegacySessionClearing,
                      defaults: UserDefaults = .standard,
-                     configPath: String = EngineManager.defaultConfigPath) {
+                     configPath: String = EngineManager.defaultConfigPath)
+    {
         self.init(cli: cli,
                   serverURLProvider: { serverURL },
                   reader: reader,
@@ -50,7 +52,9 @@ final class LegacyMigrator: @unchecked Sendable {
     }
 
     func migrateIfNeeded() async {
-        if defaults.bool(forKey: Self.migrationDoneKey) { return }
+        if defaults.bool(forKey: Self.migrationDoneKey) {
+            return
+        }
 
         guard let legacy = reader.read() else {
             setDone()

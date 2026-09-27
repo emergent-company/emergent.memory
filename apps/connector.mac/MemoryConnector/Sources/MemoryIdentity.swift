@@ -84,16 +84,18 @@ struct CurrentProjectResponse: Decodable, Equatable, Sendable {
 /// Combines the three identity sources with sensible fallbacks so the UI can
 /// render a project/account card even when only part of the data exists.
 struct IdentitySnapshot: Equatable, Sendable {
-    var authMe: AuthMe? = nil
-    var profile: UserProfile? = nil
-    var project: ProjectInfo? = nil
+    var authMe: AuthMe?
+    var profile: UserProfile?
+    var project: ProjectInfo?
     /// Resolved organisation (matched by id against `GET /api/orgs`); nil when
     /// the list is unavailable or has no match.
-    var organization: OrgInfo? = nil
+    var organization: OrgInfo?
     /// Server-provided explanation when `project` is null (account-level token).
-    var projectMessage: String? = nil
+    var projectMessage: String?
 
-    var hasIdentity: Bool { authMe != nil || profile != nil }
+    var hasIdentity: Bool {
+        authMe != nil || profile != nil
+    }
 
     /// Project display name: `/api/projects/current` first, then `/api/auth/me`.
     var projectName: String? {
@@ -119,21 +121,35 @@ struct IdentitySnapshot: Equatable, Sendable {
     /// Display name precedence: profile display name → profile first+last →
     /// auth email local part → project name → token name.
     var displayName: String {
-        if let name = profile?.displayName?.trimmed, !name.isEmpty { return name }
-        if let combined = profile?.fullName.trimmed, !combined.isEmpty { return combined }
-        if let local = authMe?.email?.localPart, !local.isEmpty { return local }
-        if let name = authMe?.projectName?.trimmed, !name.isEmpty { return name }
-        if let name = authMe?.tokenName?.trimmed, !name.isEmpty { return name }
+        if let name = profile?.displayName?.trimmed, !name.isEmpty {
+            return name
+        }
+        if let combined = profile?.fullName.trimmed, !combined.isEmpty {
+            return combined
+        }
+        if let local = authMe?.email?.localPart, !local.isEmpty {
+            return local
+        }
+        if let name = authMe?.projectName?.trimmed, !name.isEmpty {
+            return name
+        }
+        if let name = authMe?.tokenName?.trimmed, !name.isEmpty {
+            return name
+        }
         return ""
     }
 
     /// Email precedence: profile email → auth email.
     var email: String {
-        if let email = profile?.email?.trimmed, !email.isEmpty { return email }
+        if let email = profile?.email?.trimmed, !email.isEmpty {
+            return email
+        }
         return authMe?.email?.trimmed ?? ""
     }
 
-    var initials: String { MemoryIdentity.initials(from: displayName) }
+    var initials: String {
+        MemoryIdentity.initials(from: displayName)
+    }
 }
 
 // MARK: - Pure helpers
@@ -151,7 +167,8 @@ enum MemoryIdentity {
         guard let first = words.first, let firstChar = first.first else { return "" }
         let firstInitial = String(firstChar).uppercased()
         guard words.count > 1, let second = words.dropFirst().first,
-              let secondChar = second.first else {
+              let secondChar = second.first
+        else {
             return firstInitial
         }
         return firstInitial + String(secondChar).uppercased()
@@ -161,7 +178,7 @@ enum MemoryIdentity {
 private extension UserProfile {
     var fullName: String {
         [firstName?.trimmed, lastName?.trimmed]
-            .compactMap { $0 }
+            .compactMap(\.self)
             .filter { !$0.isEmpty }
             .joined(separator: " ")
     }
@@ -169,10 +186,12 @@ private extension UserProfile {
 
 extension String {
     /// Whitespace/newline-trimmed copy.
-    var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
+    var trimmed: String {
+        trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 }
 
-extension Optional where Wrapped == String {
+extension String? {
     /// Trimmed non-empty value, else nil (collapses empty/whitespace strings).
     var cleaned: String? {
         guard let value = self?.trimmingCharacters(in: .whitespacesAndNewlines),

@@ -8,8 +8,7 @@ import Foundation
 /// `connector.` prefix. Tool enablement stores only the disabled subset here.
 @MainActor
 final class ConnectorSettings: ObservableObject {
-
-    nonisolated private static let serverURLKey = "connector.serverURL"
+    private nonisolated static let serverURLKey = "connector.serverURL"
     private static let instanceIDKey = "connector.instanceID"
     private static let disabledToolsKey = "connector.disabledTools"
     /// Presence marker: distinguishes "user saved an empty disabled set" from
@@ -24,7 +23,9 @@ final class ConnectorSettings: ObservableObject {
 
     /// Every catalog tool id. A never-configured install starts with all local
     /// MCP tools OFF, i.e. the disabled set defaults to the whole catalog.
-    static var allCatalogToolIDs: Set<String> { Set(ToolCatalog.tools.map(\.id)) }
+    static var allCatalogToolIDs: Set<String> {
+        Set(ToolCatalog.tools.map(\.id))
+    }
 
     @Published private(set) var disabledTools: Set<String>
     /// True when the last `importExistingConfigIfNeeded` pulled values from an
@@ -60,7 +61,7 @@ final class ConnectorSettings: ObservableObject {
     ///   empty set (all ON);
     /// - neither present → never configured → every catalog tool is disabled.
     private static func loadDisabledTools(defaults: UserDefaults) -> Set<String> {
-        if let stored = defaults.stringArray(forKey: Self.disabledToolsKey) {
+        if let stored = defaults.stringArray(forKey: disabledToolsKey) {
             return Set(stored)
         }
         if defaults.object(forKey: Self.disabledToolsInitializedKey) != nil {
@@ -166,7 +167,8 @@ final class ConnectorSettings: ObservableObject {
         // Only adopt when the file actually declared a disabled_tools block;
         // otherwise keep the all-tools-OFF default instead of re-enabling.
         if defaults.object(forKey: Self.disabledToolsInitializedKey) == nil,
-           parsed.hasDisabledTools {
+           parsed.hasDisabledTools
+        {
             disabledTools = Set(values.disabledTools)
             persistNeeded = true
             imported = true

@@ -1,11 +1,10 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 final class RestartPolicyTests: XCTestCase {
-
     func testFirstExitsRestart() {
         var policy = RestartPolicy(maxRestarts: 3, window: 60, restartDelay: 3)
-        let t0 = Date(timeIntervalSince1970: 1_000)
+        let t0 = Date(timeIntervalSince1970: 1000)
 
         XCTAssertEqual(policy.registerExit(at: t0), .restart(after: 3))
         XCTAssertEqual(policy.registerExit(at: t0 + 5), .restart(after: 3))
@@ -14,7 +13,7 @@ final class RestartPolicyTests: XCTestCase {
 
     func testGiveUpAfterMaxRestartsWithinWindow() {
         var policy = RestartPolicy(maxRestarts: 3, window: 60, restartDelay: 3)
-        let t0 = Date(timeIntervalSince1970: 1_000)
+        let t0 = Date(timeIntervalSince1970: 1000)
 
         // 1st, 2nd, 3rd exit: restart.
         XCTAssertEqual(policy.registerExit(at: t0), .restart(after: 3))
@@ -27,7 +26,7 @@ final class RestartPolicyTests: XCTestCase {
 
     func testWindowExpiryResetsCount() {
         var policy = RestartPolicy(maxRestarts: 3, window: 60, restartDelay: 3)
-        let t0 = Date(timeIntervalSince1970: 1_000)
+        let t0 = Date(timeIntervalSince1970: 1000)
 
         _ = policy.registerExit(at: t0)
         _ = policy.registerExit(at: t0 + 10)
@@ -41,7 +40,7 @@ final class RestartPolicyTests: XCTestCase {
 
     func testExactlyAtWindowBoundaryDoesNotReset() {
         var policy = RestartPolicy(maxRestarts: 3, window: 60, restartDelay: 3)
-        let t0 = Date(timeIntervalSince1970: 1_000)
+        let t0 = Date(timeIntervalSince1970: 1000)
 
         _ = policy.registerExit(at: t0)
         // t0+60 is not *greater* than the window, so it still counts.

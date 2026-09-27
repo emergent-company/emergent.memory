@@ -7,8 +7,8 @@ enum AccountStoreError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .unknownAccount(let id):
-            return "No signed-in account with id \(id)."
+        case let .unknownAccount(id):
+            "No signed-in account with id \(id)."
         }
     }
 }
@@ -40,7 +40,6 @@ struct AccountsIndex: Codable, Equatable, Sendable {
 /// switching accounts is a scope swap rather than a shared mutation.
 @MainActor
 final class AccountStore: ObservableObject {
-
     // MARK: - Constants
 
     nonisolated static let activeAccountIDKey = "connector.accounts.activeId"
@@ -48,7 +47,9 @@ final class AccountStore: ObservableObject {
     nonisolated static let accountsDirectoryName = "accounts"
 
     /// Default config root (shared with the single-account secret store).
-    nonisolated static var defaultRootDirectory: URL { AppSecretStore.defaultBaseDirectory }
+    nonisolated static var defaultRootDirectory: URL {
+        AppSecretStore.defaultBaseDirectory
+    }
 
     // MARK: - Published state
 
@@ -93,6 +94,7 @@ final class AccountStore: ObservableObject {
     private let memoryClientFactory: @Sendable (String, String) -> MemoryAPIClient
 
     // MARK: - Connector CLI seam
+
     //
     // Sign-in, access tokens, and sign-out run through the bundled
     // `memory-connector` CLI. Injectable so tests can supply a scripted runner;
@@ -101,7 +103,7 @@ final class AccountStore: ObservableObject {
 
     /// The CLI wrapper used for sign-in/token/logout. Tests assign a
     /// `ConnectorCLI` built with a fake runner.
-    var connectorCLI: ConnectorCLI = ConnectorCLI()
+    var connectorCLI: ConnectorCLI = .init()
     /// `--config` path passed to the connector CLI.
     var configPath: String = EngineManager.defaultConfigPath
 
@@ -112,14 +114,15 @@ final class AccountStore: ObservableObject {
          authenticator: any BrowserAuthenticator = WebAuthenticator(),
          memoryClientFactory: @escaping @Sendable (String, String) -> MemoryAPIClient = { serverURL, token in
              MemoryAPIClient(serverURL: serverURL, token: token)
-         }) {
+         })
+    {
         self.rootDirectory = rootDirectory
         self.defaults = defaults
         self.authenticator = authenticator
         self.memoryClientFactory = memoryClientFactory
-        self.indexStore = AppSecretStore(baseDirectory: rootDirectory)
-        self.accounts = Self.loadIndex(indexStore: indexStore)
-        self.activeAccountID = Self.resolveActiveID(accounts: accounts, defaults: defaults)
+        indexStore = AppSecretStore(baseDirectory: rootDirectory)
+        accounts = Self.loadIndex(indexStore: indexStore)
+        activeAccountID = Self.resolveActiveID(accounts: accounts, defaults: defaults)
     }
 
     // MARK: - Derived accessors
@@ -136,7 +139,9 @@ final class AccountStore: ObservableObject {
     /// True when the NON-secret index has an active account. This can outlive
     /// the session, so it must not drive signed-in UI — use
     /// `isEffectivelySignedIn` for that.
-    var isSignedIn: Bool { activeAccountID != nil }
+    var isSignedIn: Bool {
+        activeAccountID != nil
+    }
 
     /// The identity captured for the active account, when known (in-memory; the
     /// account index is the fallback after a relaunch).
@@ -339,16 +344,22 @@ final class AccountStore: ObservableObject {
     /// access token, the environment issuer, and the account email. Optional
     /// fields are omitted when empty so the CLI applies its own defaults.
     func connectorSessionDocument(environment: Environment,
-                                  email: String?) async -> Data? {
+                                  email: String?) async -> Data?
+    {
         guard let token = try? await connectorCLI.authAccessToken(serverURL: environment.serverURLString,
-                                                                  configPath: configPath) else {
+                                                                  configPath: configPath)
+        else {
             return nil
         }
         var payload: [String: String] = ["access_token": token.accessToken]
         let expiry = token.expiresAt.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !expiry.isEmpty { payload["expires_at"] = expiry }
+        if !expiry.isEmpty {
+            payload["expires_at"] = expiry
+        }
         let issuer = environment.issuerString.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !issuer.isEmpty { payload["issuer"] = issuer }
+        if !issuer.isEmpty {
+            payload["issuer"] = issuer
+        }
         if let email = email?.trimmingCharacters(in: .whitespacesAndNewlines), !email.isEmpty {
             payload["email"] = email
         }
@@ -397,7 +408,9 @@ final class AccountStore: ObservableObject {
     func signOut(accountID: String) async {
         guard let account = account(id: accountID) else { return }
         let wasActive = activeAccountID == accountID
-        if wasActive { engineWillStop() }
+        if wasActive {
+            engineWillStop()
+        }
 
         // Best-effort: drop the CLI-side session for this environment. Errors
         // (already signed out, CLI unavailable) are ignored.
@@ -455,12 +468,16 @@ final class AccountStore: ObservableObject {
                                                                configPath: configPath)
             needsReauth.remove(accountID)
             sessionValid[accountID] = true
-            if accountID == activeAccountID { isEffectivelySignedIn = true }
+            if accountID == activeAccountID {
+                isEffectivelySignedIn = true
+            }
             return token.accessToken
         } catch {
             needsReauth.insert(accountID)
             sessionValid[accountID] = false
-            if accountID == activeAccountID { isEffectivelySignedIn = false }
+            if accountID == activeAccountID {
+                isEffectivelySignedIn = false
+            }
             throw Self.oidcError(from: error)
         }
     }
@@ -519,12 +536,12 @@ final class AccountStore: ObservableObject {
     /// filled opportunistically during a backfill but is not itself a trigger:
     /// users may have no avatar, and re-fetching on every launch would never
     /// settle. An account with an email or a display name needs no backfill.
-    nonisolated private static func needsIdentityBackfill(_ account: Account) -> Bool {
+    private nonisolated static func needsIdentityBackfill(_ account: Account) -> Bool {
         account.email?.nilIfBlank == nil || account.displayName?.nilIfBlank == nil
     }
 
-    nonisolated private static func combinedName(_ profile: UserProfile) -> String? {
-        let parts = [profile.firstName?.nilIfBlank, profile.lastName?.nilIfBlank].compactMap { $0 }
+    private nonisolated static func combinedName(_ profile: UserProfile) -> String? {
+        let parts = [profile.firstName?.nilIfBlank, profile.lastName?.nilIfBlank].compactMap(\.self)
         return parts.isEmpty ? nil : parts.joined(separator: " ")
     }
 
@@ -546,7 +563,8 @@ final class AccountStore: ObservableObject {
 
     nonisolated static func loadIndex(indexStore: AppSecretStore) -> [Account] {
         guard let data = indexStore.readData(accountsIndexFileName),
-              let index = try? JSONDecoder().decode(AccountsIndex.self, from: data) else {
+              let index = try? JSONDecoder().decode(AccountsIndex.self, from: data)
+        else {
             return []
         }
         return index.accounts
@@ -554,7 +572,8 @@ final class AccountStore: ObservableObject {
 
     private static func resolveActiveID(accounts: [Account], defaults: UserDefaults) -> String? {
         if let id = defaults.string(forKey: activeAccountIDKey),
-           accounts.contains(where: { $0.id == id }) {
+           accounts.contains(where: { $0.id == id })
+        {
             return id
         }
         return accounts.first?.id
@@ -576,14 +595,16 @@ final class AccountStore: ObservableObject {
     /// Maps connector CLI failures onto the `OIDCError` vocabulary the app
     /// already surfaces; other errors (including `OIDCError`) pass through.
     nonisolated static func oidcError(from error: Error) -> OIDCError {
-        if let oidc = error as? OIDCError { return oidc }
+        if let oidc = error as? OIDCError {
+            return oidc
+        }
         if let cli = error as? ConnectorCLIError {
             switch cli {
             case .binaryNotFound:
                 return .invalidResponse("the bundled memory-connector CLI was not found")
-            case .commandFailed(_, _, let message):
+            case let .commandFailed(_, _, message):
                 return .invalidResponse(message)
-            case .decodingFailed(_, let message):
+            case let .decodingFailed(_, message):
                 return .invalidResponse(message)
             }
         }

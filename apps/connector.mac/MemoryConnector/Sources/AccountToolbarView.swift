@@ -107,8 +107,8 @@ struct AccountToolbarView: View {
             // The AppEnvironment hook applies the account scope + reloads data
             // for a NEW active account; re-signing in to the same account does
             // not change the id, so reload projects here as well.
-            guard (try? await accountStore.signIn(environment: environment)) != nil else { return }
-            let token = (try? await accountStore.currentAccessToken()) ?? ""
+            guard await (try? accountStore.signIn(environment: environment)) != nil else { return }
+            let token = await (try? accountStore.currentAccessToken()) ?? ""
             await projectStore.loadProjects(accessToken: token)
         }
     }

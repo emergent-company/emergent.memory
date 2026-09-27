@@ -1,8 +1,7 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 final class EngineResourceTests: XCTestCase {
-
     /// The run-script build phase embeds the engine at
     /// Contents/Resources/memory-connector; hosted tests run inside the built
     /// app bundle, so the resource must be visible via Bundle.main. This only

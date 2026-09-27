@@ -16,7 +16,6 @@ struct ProcessResult {
 /// closures inside `@unchecked Sendable` boxes (the app owns the only
 /// reference; no shared mutable state beyond the boxed flag).
 enum ProcessRunner {
-
     /// Runs `executable` with `arguments`, capturing combined stdout/stderr,
     /// bounded by `timeout`. On timeout the process is SIGTERM'd and, if still
     /// alive one second later, SIGKILL'd.
@@ -32,7 +31,8 @@ enum ProcessRunner {
     static func run(executable: URL,
                     arguments: [String],
                     stdin: Data?,
-                    timeout: TimeInterval) async -> ProcessResult {
+                    timeout: TimeInterval) async -> ProcessResult
+    {
         await withCheckedContinuation { continuation in
             let box = ProcessBox(executable: executable, arguments: arguments, stdin: stdin)
             let timedOut = TimeoutFlag()
@@ -93,7 +93,7 @@ private final class ProcessBox: @unchecked Sendable {
             proc.standardInput = stdinPipe
             self.stdinPipe = stdinPipe
         } else {
-            self.stdinPipe = nil
+            stdinPipe = nil
         }
         self.proc = proc
         self.pipe = pipe

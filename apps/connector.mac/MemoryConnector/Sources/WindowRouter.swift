@@ -24,8 +24,8 @@ final class WindowRouter: ObservableObject {
 /// (`StatusItemController`) cannot call `openWindow` directly.
 struct WindowOpenBridge: View {
     @ObservedObject private var router = WindowRouter.shared
-    // Fully qualified: the app's own `Environment` value type shadows the
-    // SwiftUI property wrapper of the same name.
+    /// Fully qualified: the app's own `Environment` value type shadows the
+    /// SwiftUI property wrapper of the same name.
     @SwiftUI.Environment(\.openWindow) private var openWindow
 
     var body: some View {

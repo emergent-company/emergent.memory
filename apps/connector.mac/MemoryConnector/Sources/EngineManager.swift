@@ -14,7 +14,6 @@ import Foundation
 /// SIGTERM path to exit 0.
 @MainActor
 final class EngineManager: ObservableObject {
-
     /// Process lifecycle for the menu-bar UI.
     enum State: Equatable {
         case stopped
@@ -61,13 +60,14 @@ final class EngineManager: ObservableObject {
     /// `restart()`'s just-SIGTERM'd process) never aborts, so its lingering
     /// socket cannot false-positive the probe.
     nonisolated static func shouldAbortStartForPortConflict(hasLiveProcess: Bool,
-                                                            portInUse: Bool) -> Bool {
+                                                            portInUse: Bool) -> Bool
+    {
         !hasLiveProcess && portInUse
     }
 
     /// Best-effort synchronous TCP connect probe: true when the connect
     /// succeeds (something is listening on `host:port`).
-    nonisolated private static func tcpConnect(host: String, port: UInt16) -> Bool {
+    private nonisolated static func tcpConnect(host: String, port: UInt16) -> Bool {
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { return false }
         defer { Darwin.close(fd) }
@@ -146,7 +146,8 @@ final class EngineManager: ObservableObject {
         // probe, while a stopped-but-not-yet-cleared child is still probed.
         if process?.isRunning != true,
            Self.shouldAbortStartForPortConflict(hasLiveProcess: false,
-                                                portInUse: Self.managementPortInUse()) {
+                                                portInUse: Self.managementPortInUse())
+        {
             state = .failed
             lastError = "management port \(Self.managementAPIPort) is already in use; not starting the engine"
             appendToLog("=== memory-connector engine start aborted: management port \(Self.managementAPIPort) already in use ===\n")
@@ -176,7 +177,9 @@ final class EngineManager: ObservableObject {
 
         stdoutHandle.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            if !data.isEmpty { self?.appendToLog(data) }
+            if !data.isEmpty {
+                self?.appendToLog(data)
+            }
         }
         stderrHandle.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
@@ -189,8 +192,12 @@ final class EngineManager: ObservableObject {
             stdoutHandle.readabilityHandler = nil
             stderrHandle.readabilityHandler = nil
             // Drain anything still buffered before the pipes close.
-            if let data = try? stdoutHandle.readToEnd(), !data.isEmpty { self?.appendToLog(data) }
-            if let data = try? stderrHandle.readToEnd(), !data.isEmpty { self?.appendToLog(data) }
+            if let data = try? stdoutHandle.readToEnd(), !data.isEmpty {
+                self?.appendToLog(data)
+            }
+            if let data = try? stderrHandle.readToEnd(), !data.isEmpty {
+                self?.appendToLog(data)
+            }
             Task { @MainActor in
                 self?.processDidExit(terminated)
             }
@@ -290,14 +297,14 @@ final class EngineManager: ObservableObject {
             state = .failed
             lastError = "engine exited \(restartCount) times within \(Int(policy.window))s — auto-restart stopped"
             appendToLog("circuit breaker tripped after \(restartCount) exits (code \(exitCode)); auto-restart stopped\n")
-        case .restart(let delay):
+        case let .restart(delay):
             state = .restarting
             appendToLog("engine exited (code \(exitCode)); restarting in \(Int(delay))s\n")
             let seconds = delay
             Task { [weak self] in
                 try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                guard let self, !self.stoppedByUser, self.process == nil else { return }
-                self.start()
+                guard let self, !self.stoppedByUser, process == nil else { return }
+                start()
             }
         }
     }
@@ -309,7 +316,7 @@ final class EngineManager: ObservableObject {
     /// dead management API after a failed bind, so the failure must be surfaced
     /// rather than left only in the raw log. Matches "management API" together
     /// with "address already in use" or "bind:".
-    nonisolated private static func looksLikeManagementPortBindFailure(in chunk: Data) -> Bool {
+    private nonisolated static func looksLikeManagementPortBindFailure(in chunk: Data) -> Bool {
         guard let text = String(data: chunk, encoding: .utf8)?.lowercased() else { return false }
         return text.contains("management api")
             && (text.contains("address already in use") || text.contains("bind:"))
@@ -324,8 +331,8 @@ final class EngineManager: ObservableObject {
         stderrBuffer.append(chunk)
         let newline = Data([0x0A])
         while let range = stderrBuffer.range(of: newline) {
-            let line = stderrBuffer.subdata(in: stderrBuffer.startIndex..<range.lowerBound)
-            stderrBuffer.removeSubrange(stderrBuffer.startIndex...range.lowerBound)
+            let line = stderrBuffer.subdata(in: stderrBuffer.startIndex ..< range.lowerBound)
+            stderrBuffer.removeSubrange(stderrBuffer.startIndex ... range.lowerBound)
             guard Self.looksLikeManagementPortBindFailure(in: line) else { continue }
             Task { @MainActor [weak self] in
                 self?.surfaceManagementPortBindFailure()

@@ -9,7 +9,6 @@ import Foundation
 /// append to the real user log (`ConnectorLog`). Keeping the check here gives
 /// those call sites a single source of truth.
 enum HostedTest {
-
     /// Detects a hosted XCTest run from the process environment. Pure so it is
     /// unit-testable without a real test harness.
     static func isRunning(

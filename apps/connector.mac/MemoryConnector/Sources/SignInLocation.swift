@@ -36,9 +36,9 @@ extension Environment {
     static func signInEnvironments(for location: SignInLocation) -> [Environment] {
         switch location {
         case .about:
-            return [.primary, .dev]
+            [.primary, .dev]
         default:
-            return [.primary]
+            [.primary]
         }
     }
 }

@@ -1,8 +1,7 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 final class MemoryAPIClientTests: XCTestCase {
-
     private let baseURL = "https://api.example.test"
     private let token = "emt_test_token"
 
@@ -131,11 +130,11 @@ final class MemoryAPIClientTests: XCTestCase {
         let orgs = orgsJSON
         StubURLProtocol.registry.setHandler { request in
             switch request.url?.path {
-            case "/api/auth/me": return .ok(me)
-            case "/api/user/profile": return .ok(profile)
-            case "/api/projects/current": return .ok(project)
-            case "/api/orgs": return .ok(orgs)
-            default: return .status(404)
+            case "/api/auth/me": .ok(me)
+            case "/api/user/profile": .ok(profile)
+            case "/api/projects/current": .ok(project)
+            case "/api/orgs": .ok(orgs)
+            default: .status(404)
             }
         }
 
@@ -168,11 +167,11 @@ final class MemoryAPIClientTests: XCTestCase {
         let project = projectJSON
         StubURLProtocol.registry.setHandler { request in
             switch request.url?.path {
-            case "/api/auth/me": return .ok(me)
-            case "/api/user/profile": return .ok(profile)
-            case "/api/projects/current": return .ok(project)
-            case "/api/orgs": return .ok(#"[{"id":"org-999","name":"Elsewhere"}]"#)
-            default: return .status(404)
+            case "/api/auth/me": .ok(me)
+            case "/api/user/profile": .ok(profile)
+            case "/api/projects/current": .ok(project)
+            case "/api/orgs": .ok(#"[{"id":"org-999","name":"Elsewhere"}]"#)
+            default: .status(404)
             }
         }
 
@@ -190,11 +189,11 @@ final class MemoryAPIClientTests: XCTestCase {
         let project = projectJSON
         StubURLProtocol.registry.setHandler { request in
             switch request.url?.path {
-            case "/api/auth/me": return .ok(me)
-            case "/api/user/profile": return .ok(profile)
-            case "/api/projects/current": return .ok(project)
-            case "/api/orgs": return .status(500)
-            default: return .status(404)
+            case "/api/auth/me": .ok(me)
+            case "/api/user/profile": .ok(profile)
+            case "/api/projects/current": .ok(project)
+            case "/api/orgs": .status(500)
+            default: .status(404)
             }
         }
 

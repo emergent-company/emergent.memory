@@ -6,8 +6,7 @@ import AppKit
 /// Cmd-Q, system shutdown).
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    func applicationDidFinishLaunching(_: Notification) {
         // Hosted unit tests run inside the app process — never spawn the
         // engine or status polling there.
         let env = ProcessInfo.processInfo.environment
@@ -20,19 +19,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         app.statusItemController.start()
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
+    func applicationWillTerminate(_: Notification) {
         AppEnvironment.shared.statusItemController.stop()
         EngineManager.shared.stop()
     }
 
     /// Menu-bar agent: closing the settings window must never quit the app.
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+    func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool {
         false
     }
 
     /// Dock-icon click / app reopen: surface the main window. If a window is
     /// already available make it key, otherwise ask SwiftUI to open it.
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows _: Bool) -> Bool {
         NSApp.activate(ignoringOtherApps: true)
         if let window = sender.windows.first(where: { $0.canBecomeKey }) {
             window.makeKeyAndOrderFront(nil)

@@ -17,7 +17,6 @@ import Foundation
 /// `~/Library/Logs/memory-connector-app.log`, polluting the file the
 /// observability lines exist to make readable.
 enum ConnectorLog {
-
     /// Destination for lifecycle lines. Defaults to the shared app log so the
     /// lines interleave with the engine's own output; injectable so tests can
     /// point it at a temporary file and assert on real writes.

@@ -18,12 +18,12 @@ enum MCPServersAPIError: LocalizedError, Equatable, Sendable {
 
     var errorDescription: String? {
         switch self {
-        case .unreachable(let detail):
-            return "Can't reach the connector's local management API (\(detail))."
-        case .server(let code, let message):
-            return message.isEmpty ? "The management API returned HTTP \(code)." : message
-        case .decoding(let detail):
-            return "Could not read the management API response: \(detail)"
+        case let .unreachable(detail):
+            "Can't reach the connector's local management API (\(detail))."
+        case let .server(code, message):
+            message.isEmpty ? "The management API returned HTTP \(code)." : message
+        case let .decoding(detail):
+            "Could not read the management API response: \(detail)"
         }
     }
 }
@@ -37,19 +37,23 @@ enum MCPTransport: String, Codable, CaseIterable, Identifiable, Sendable {
     case http
     case sse
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 
     var displayName: String {
         switch self {
-        case .stdio: return "stdio"
-        case .http:  return "http"
-        case .sse:   return "sse"
+        case .stdio: "stdio"
+        case .http: "http"
+        case .sse: "sse"
         }
     }
 
     /// stdio launches a local subprocess (command/args/env); the network
     /// transports use url/headers.
-    var usesCommand: Bool { self == .stdio }
+    var usesCommand: Bool {
+        self == .stdio
+    }
 }
 
 // MARK: - Models
@@ -64,14 +68,17 @@ struct HostedMCPServer: Codable, Equatable, Identifiable, Sendable {
     var error: String?
     var toolCount: Int
 
-    var id: String { name }
+    var id: String {
+        name
+    }
 
     init(name: String,
          transport: MCPTransport,
          enabled: Bool = true,
          connected: Bool = false,
          error: String? = nil,
-         toolCount: Int = 0) {
+         toolCount: Int = 0)
+    {
         self.name = name
         self.transport = transport
         self.enabled = enabled
@@ -89,7 +96,9 @@ struct HostedMCPTool: Codable, Equatable, Identifiable, Sendable {
     var description: String
     var inputSchema: JSONValue?
 
-    var id: String { name }
+    var id: String {
+        name
+    }
 }
 
 /// The live status block of one server (`status` on the detail response).
@@ -102,7 +111,8 @@ struct HostedMCPServerStatus: Codable, Equatable, Sendable {
     init(connected: Bool = false,
          error: String? = nil,
          toolCount: Int = 0,
-         tools: [HostedMCPTool] = []) {
+         tools: [HostedMCPTool] = [])
+    {
         self.connected = connected
         self.error = error
         self.toolCount = toolCount
@@ -140,7 +150,8 @@ struct HostedMCPServerConfig: Codable, Equatable, Sendable {
          env: [String: String]? = nil,
          url: String? = nil,
          headers: [String: String]? = nil,
-         disabledTools: [String]? = nil) {
+         disabledTools: [String]? = nil)
+    {
         self.name = name
         self.transport = transport
         self.enabled = enabled
@@ -220,12 +231,12 @@ enum JSONValue: Codable, Equatable, Sendable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
         switch self {
-        case .string(let value): try container.encode(value)
-        case .number(let value): try container.encode(value)
-        case .bool(let value): try container.encode(value)
+        case let .string(value): try container.encode(value)
+        case let .number(value): try container.encode(value)
+        case let .bool(value): try container.encode(value)
         case .null: try container.encodeNil()
-        case .array(let value): try container.encode(value)
-        case .object(let value): try container.encode(value)
+        case let .array(value): try container.encode(value)
+        case let .object(value): try container.encode(value)
         }
     }
 }
@@ -266,7 +277,7 @@ struct MCPServersAPIClient: Sendable {
     /// `POST /api/mcp-servers` — create a server (HTTP 201 + detail).
     func create(_ config: HostedMCPServerConfig) async throws -> HostedMCPServerDetail {
         let data = try await perform(method: "POST", path: "/api/mcp-servers",
-                                     body: try JSONEncoder().encode(config))
+                                     body: JSONEncoder().encode(config))
         return try decode(HostedMCPServerDetail.self, from: data)
     }
 
@@ -274,7 +285,7 @@ struct MCPServersAPIClient: Sendable {
     func update(name: String, config: HostedMCPServerConfig) async throws -> HostedMCPServerDetail {
         let data = try await perform(method: "PUT",
                                      path: "/api/mcp-servers/\(Self.pathEscape(name))/config",
-                                     body: try JSONEncoder().encode(config))
+                                     body: JSONEncoder().encode(config))
         return try decode(HostedMCPServerDetail.self, from: data)
     }
 
@@ -284,7 +295,7 @@ struct MCPServersAPIClient: Sendable {
         struct Body: Encodable { let enabled: Bool }
         let data = try await perform(method: "PUT",
                                      path: "/api/mcp-servers/\(Self.pathEscape(name))/enabled",
-                                     body: try JSONEncoder().encode(Body(enabled: enabled)))
+                                     body: JSONEncoder().encode(Body(enabled: enabled)))
         return try decode(HostedMCPServerDetail.self, from: data)
     }
 
@@ -323,7 +334,9 @@ struct MCPServersAPIClient: Sendable {
     /// `MCPServersAPIError`. Returns the raw body on any 2xx.
     private func perform(method: String, path: String, body: Data? = nil) async throws -> Data {
         var trimmedBase = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        while trimmedBase.hasSuffix("/") { trimmedBase.removeLast() }
+        while trimmedBase.hasSuffix("/") {
+            trimmedBase.removeLast()
+        }
         guard let url = URL(string: trimmedBase + path) else {
             throw MCPServersAPIError.unreachable("invalid base URL")
         }
@@ -347,7 +360,7 @@ struct MCPServersAPIClient: Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw MCPServersAPIError.unreachable("non-HTTP response")
         }
-        guard (200..<300).contains(http.statusCode) else {
+        guard (200 ..< 300).contains(http.statusCode) else {
             throw MCPServersAPIError.server(http.statusCode, Self.errorMessage(from: data))
         }
         return data

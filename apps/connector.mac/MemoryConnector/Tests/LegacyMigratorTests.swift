@@ -1,6 +1,6 @@
 import Foundation
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 // MARK: - Fakes
 
@@ -9,7 +9,9 @@ private final class FakeLegacySessionReader: LegacySessionReading, @unchecked Se
     private let session: LegacySession?
     private var reads = 0
 
-    init(session: LegacySession?) { self.session = session }
+    init(session: LegacySession?) {
+        self.session = session
+    }
 
     func read() -> LegacySession? {
         lock.withLock {
@@ -18,16 +20,22 @@ private final class FakeLegacySessionReader: LegacySessionReading, @unchecked Se
         }
     }
 
-    var readCount: Int { lock.withLock { reads } }
+    var readCount: Int {
+        lock.withLock { reads }
+    }
 }
 
 private final class FakeLegacySessionClearer: LegacySessionClearing, @unchecked Sendable {
     private let lock = NSLock()
     private var clearedFlag = false
 
-    func clear() { lock.withLock { clearedFlag = true } }
+    func clear() {
+        lock.withLock { clearedFlag = true }
+    }
 
-    var wasCleared: Bool { lock.withLock { clearedFlag } }
+    var wasCleared: Bool {
+        lock.withLock { clearedFlag }
+    }
 }
 
 private final class FakeLegacyKeychain: LegacyKeychainReading, @unchecked Sendable {
@@ -35,9 +43,13 @@ private final class FakeLegacyKeychain: LegacyKeychainReading, @unchecked Sendab
     private var values: [String: String]
     private var deleted: [String] = []
 
-    init(values: [String: String] = [:]) { self.values = values }
+    init(values: [String: String] = [:]) {
+        self.values = values
+    }
 
-    func load(account: String) throws -> String? { lock.withLock { values[account] } }
+    func load(account: String) throws -> String? {
+        lock.withLock { values[account] }
+    }
 
     func delete(account: String) throws {
         lock.withLock {
@@ -46,13 +58,14 @@ private final class FakeLegacyKeychain: LegacyKeychainReading, @unchecked Sendab
         }
     }
 
-    var deletedAccounts: [String] { lock.withLock { deleted } }
+    var deletedAccounts: [String] {
+        lock.withLock { deleted }
+    }
 }
 
 // MARK: - Tests
 
 final class LegacyMigratorTests: XCTestCase {
-
     private let server = "https://memory.example.test"
     private let configPath = "/tmp/memory-connector.yml"
     private let binary = URL(fileURLWithPath: "/tmp/memory-connector")
@@ -71,7 +84,8 @@ final class LegacyMigratorTests: XCTestCase {
     }
 
     private func makeCLI(status: ProcessResult,
-                         import importResult: ProcessResult) -> (ConnectorCLI, CannedRunner, CannedStdinRunner) {
+                         import importResult: ProcessResult) -> (ConnectorCLI, CannedRunner, CannedStdinRunner)
+    {
         let statusRunner = CannedRunner(result: status)
         let importRunner = CannedStdinRunner(result: importResult)
         let cli = ConnectorCLI(binaryURL: binary,

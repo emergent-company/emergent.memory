@@ -126,7 +126,11 @@ struct ProjectConnectionControl: View {
             get: { projectStore.isConnected(projectID) },
             set: { on in
                 guard !busy else { return }
-                if on { connect(projectID) } else { disconnect() }
+                if on {
+                    connect(projectID)
+                } else {
+                    disconnect()
+                }
             }
         )
     }
@@ -146,7 +150,7 @@ struct ProjectConnectionControl: View {
                 let token = try await accountStore.currentAccessToken()
                 await projectStore.connect(projectID: projectID, accessToken: token)
                 switch projectStore.state {
-                case .error(let message):
+                case let .error(message):
                     error = message
                 case .signedOut:
                     error = "Your session expired. Sign in to connect a project."

@@ -10,7 +10,6 @@ import Foundation
 /// Pure and testable: callers pass an explicit config URL and values; no
 /// singletons, no Keychain access inside.
 enum EngineConfigWriter {
-
     /// A validated connection profile ready to materialize.
     struct Values: Equatable {
         let serverURL: String
@@ -20,7 +19,8 @@ enum EngineConfigWriter {
         let disabledTools: [String]
 
         init(serverURL: String, token: String, instanceID: String,
-             projectID: String = "", disabledTools: [String] = []) {
+             projectID: String = "", disabledTools: [String] = [])
+        {
             self.serverURL = serverURL
             self.token = token
             self.instanceID = instanceID
@@ -98,7 +98,9 @@ enum EngineConfigWriter {
                 let trimmed = line.trimmingCharacters(in: .whitespaces)
                 if trimmed.hasPrefix("- ") {
                     let name = String(trimmed.dropFirst(2)).trimmingCharacters(in: .whitespaces)
-                    if !name.isEmpty { disabledTools.append(name) }
+                    if !name.isEmpty {
+                        disabledTools.append(name)
+                    }
                     continue
                 }
                 inDisabledTools = false

@@ -23,7 +23,6 @@ struct StubResult: Sendable {
 /// URLProtocol stub: no real network. Handler + captured request live in a
 /// lock-protected registry so background URLProtocol callbacks stay safe.
 final class StubURLProtocol: URLProtocol {
-
     final class Registry: @unchecked Sendable {
         private let lock = NSLock()
         private var handler: ((URLRequest) -> StubResult)?
@@ -65,8 +64,13 @@ final class StubURLProtocol: URLProtocol {
         return URLSession(configuration: config)
     }
 
-    override class func canInit(with request: URLRequest) -> Bool { true }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override class func canInit(with _: URLRequest) -> Bool {
+        true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
 
     override func startLoading() {
         guard let handler = StubURLProtocol.registry.currentHandler() else {

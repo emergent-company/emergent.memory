@@ -11,15 +11,15 @@ enum MemoryAPIError: LocalizedError, Equatable, Sendable {
     var errorDescription: String? {
         switch self {
         case .notConfigured:
-            return "No server URL or token configured."
+            "No server URL or token configured."
         case .authFailed:
-            return "Authentication failed — the server rejected the token."
-        case .unreachable(let detail):
-            return "Server unreachable: \(detail)"
-        case .httpStatus(let code):
-            return "Server returned HTTP \(code)."
-        case .decoding(let detail):
-            return "Could not read the server response: \(detail)"
+            "Authentication failed — the server rejected the token."
+        case let .unreachable(detail):
+            "Server unreachable: \(detail)"
+        case let .httpStatus(code):
+            "Server returned HTTP \(code)."
+        case let .decoding(detail):
+            "Could not read the server response: \(detail)"
         }
     }
 }
@@ -46,7 +46,6 @@ struct SchemaStats: Decodable, Equatable, Sendable {
         customTypes = try container.decodeInt(.customTypes, .custom_types, .CustomTypes) ?? 0
         totalObjects = try container.decodeInt(.totalObjects, .total_objects, .TotalObjects) ?? 0
     }
-
 }
 
 /// One row of `GET /api/projects/{id}/agents` (`AgentDTO`, subset). The
@@ -72,7 +71,6 @@ struct AgentSummary: Decodable, Equatable, Sendable {
         isEnabled = try container.decodeBool(.isEnabled, .isEnabledAlt, .Enabled, .IsEnabled)
         lastRunStatus = try container.decodeIfPresent(String.self, forKey: .lastRunStatus)
     }
-
 }
 
 /// One row of `GET /api/projects/{id}/agent-definitions` (the real, reusable
@@ -168,6 +166,7 @@ struct AgentDefinitionDetail: Decodable, Equatable, Sendable {
             case name
             case nativeTools, native_tools
         }
+
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             name = try container.decodeString(.name)
@@ -210,10 +209,12 @@ struct AgentDefinitionDetail: Decodable, Equatable, Sendable {
 
         // Sandbox tools live under `workspaceConfig.tools` (snake_case accepted).
         if let workspace = try? container.nestedContainer(keyedBy: WorkspaceKeys.self,
-                                                          forKey: .workspaceConfig) {
+                                                          forKey: .workspaceConfig)
+        {
             workspaceTools = try workspace.decodeIfPresent([String].self, forKey: .tools)
         } else if let workspace = try? container.nestedContainer(keyedBy: WorkspaceKeys.self,
-                                                                 forKey: .workspace_config) {
+                                                                 forKey: .workspace_config)
+        {
             workspaceTools = try workspace.decodeIfPresent([String].self, forKey: .tools)
         } else {
             workspaceTools = nil
@@ -244,7 +245,6 @@ struct ProjectStats: Decodable, Equatable, Sendable {
         runningJobs = try container.decodeInt(.runningJobs, .running_jobs, .RunningJobs) ?? 0
         queuedJobs = try container.decodeInt(.queuedJobs, .queued_jobs, .QueuedJobs) ?? 0
     }
-
 }
 
 /// `GET /api/projects/{id}?include_stats=true` (`ProjectDTO`, subset).
@@ -257,9 +257,9 @@ struct ProjectDetail: Decodable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case name, stats
         case orgID = "orgId"
-        case org_id = "org_id"
-        case projectInfo = "projectInfo"
-        case project_info = "project_info"
+        case org_id
+        case projectInfo
+        case project_info
         case OrgId, ProjectInfo
     }
 
@@ -270,7 +270,6 @@ struct ProjectDetail: Decodable, Equatable, Sendable {
         projectInfo = try container.decodeString(.projectInfo, .project_info, .ProjectInfo)
         stats = try container.decodeIfPresent(ProjectStats.self, forKey: .stats)
     }
-
 }
 
 /// Thin client for the Memory REST API.
@@ -290,7 +289,8 @@ struct MemoryAPIClient: Sendable {
          token: String,
          projectID: String? = nil,
          orgID: String? = nil,
-         session: URLSession = .shared) {
+         session: URLSession = .shared)
+    {
         self.serverURL = serverURL
         self.token = token
         self.projectID = projectID
@@ -426,7 +426,8 @@ struct MemoryAPIClient: Sendable {
     /// `{success, data}` envelope; a missing/null `data` yields nil.
     func agentDefinition(projectID: String,
                          id: String,
-                         accessToken: String) async throws -> AgentDefinitionDetail? {
+                         accessToken: String) async throws -> AgentDefinitionDetail?
+    {
         let response = try await request(method: "GET",
                                          path: "/api/projects/\(projectID)/agent-definitions/\(id)",
                                          bearer: accessToken,
@@ -471,7 +472,8 @@ struct MemoryAPIClient: Sendable {
                                        body: Data? = nil,
                                        bearer: String? = nil,
                                        projectHeader: String? = nil,
-                                       as type: T.Type) async throws -> T {
+                                       as _: T.Type) async throws -> T
+    {
         let (data, _) = try await perform(method: method, path: path, body: body,
                                           bearer: bearer, projectHeader: projectHeader)
         do {
@@ -488,14 +490,17 @@ struct MemoryAPIClient: Sendable {
                          path: String,
                          body: Data? = nil,
                          bearer: String? = nil,
-                         projectHeader: String? = nil) async throws -> (Data, HTTPURLResponse) {
+                         projectHeader: String? = nil) async throws -> (Data, HTTPURLResponse)
+    {
         let effectiveToken = bearer ?? token
         let base = serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if base.isEmpty || effectiveToken.isEmpty {
             throw MemoryAPIError.notConfigured
         }
         var trimmedBase = base
-        while trimmedBase.hasSuffix("/") { trimmedBase.removeLast() }
+        while trimmedBase.hasSuffix("/") {
+            trimmedBase.removeLast()
+        }
         guard let url = URL(string: trimmedBase + path) else {
             throw MemoryAPIError.unreachable("invalid server URL: \(base)")
         }
@@ -528,7 +533,7 @@ struct MemoryAPIClient: Sendable {
             throw MemoryAPIError.unreachable("non-HTTP response")
         }
         switch http.statusCode {
-        case 200..<300:
+        case 200 ..< 300:
             break
         case 401, 403:
             throw MemoryAPIError.authFailed
@@ -546,7 +551,9 @@ private extension KeyedDecodingContainer {
     /// when none is present. Callers pass every accepted casing for a field.
     func decodeInt(_ keys: Key...) throws -> Int? {
         for key in keys {
-            if let value = try decodeIfPresent(Int.self, forKey: key) { return value }
+            if let value = try decodeIfPresent(Int.self, forKey: key) {
+                return value
+            }
         }
         return nil
     }
@@ -554,7 +561,9 @@ private extension KeyedDecodingContainer {
     /// Decodes a `String` from the first matching candidate key.
     func decodeString(_ keys: Key...) throws -> String? {
         for key in keys {
-            if let value = try decodeIfPresent(String.self, forKey: key) { return value }
+            if let value = try decodeIfPresent(String.self, forKey: key) {
+                return value
+            }
         }
         return nil
     }
@@ -562,7 +571,9 @@ private extension KeyedDecodingContainer {
     /// Decodes a `Bool` from the first matching candidate key.
     func decodeBool(_ keys: Key...) throws -> Bool? {
         for key in keys {
-            if let value = try decodeIfPresent(Bool.self, forKey: key) { return value }
+            if let value = try decodeIfPresent(Bool.self, forKey: key) {
+                return value
+            }
         }
         return nil
     }
@@ -570,7 +581,9 @@ private extension KeyedDecodingContainer {
     /// Decodes a `[String]` from the first matching candidate key.
     func decodeStringArray(_ keys: Key...) throws -> [String]? {
         for key in keys {
-            if let value = try decodeIfPresent([String].self, forKey: key) { return value }
+            if let value = try decodeIfPresent([String].self, forKey: key) {
+                return value
+            }
         }
         return nil
     }

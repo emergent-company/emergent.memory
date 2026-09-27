@@ -1,8 +1,7 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 final class PermissionStateTests: XCTestCase {
-
     func testExitZeroMeansGranted() {
         let state = PermissionCenter.state(fromProbe: 0, stderr: "", timedOut: false, wasRequested: false)
         XCTAssertEqual(state, .granted)
@@ -16,26 +15,30 @@ final class PermissionStateTests: XCTestCase {
     func test1743ErrorIsDenied() {
         let state = PermissionCenter.state(
             fromProbe: 1, stderr: "execution error: Not authorized to send Apple events to Notes. (-1743)",
-            timedOut: false, wasRequested: true)
+            timedOut: false, wasRequested: true
+        )
         XCTAssertEqual(state, .denied)
     }
 
     func testNotAllowedTextIsDenied() {
         let state = PermissionCenter.state(
             fromProbe: 1, stderr: "osascript is not allowed assistive access",
-            timedOut: false, wasRequested: false)
+            timedOut: false, wasRequested: false
+        )
         XCTAssertEqual(state, .denied)
     }
 
     func testOtherErrorIsUnknownUnlessRequested() {
         let unrequested = PermissionCenter.state(
             fromProbe: 1, stderr: "Notes got an error: can't divide by zero",
-            timedOut: false, wasRequested: false)
+            timedOut: false, wasRequested: false
+        )
         XCTAssertEqual(unrequested, .unknown)
 
         let requested = PermissionCenter.state(
             fromProbe: 1, stderr: "Notes got an error: can't divide by zero",
-            timedOut: false, wasRequested: true)
+            timedOut: false, wasRequested: true
+        )
         XCTAssertEqual(requested, .requested)
     }
 
@@ -50,15 +53,16 @@ final class PermissionStateTests: XCTestCase {
     func testGrantedWinsOverNoise() {
         // A granted probe must never be misread as denied from stray output.
         let state = PermissionCenter.state(
-            fromProbe: 0, stderr: "not authorized leftovers", timedOut: false, wasRequested: true)
+            fromProbe: 0, stderr: "not authorized leftovers", timedOut: false, wasRequested: true
+        )
         XCTAssertEqual(state, .granted)
     }
 
     // MARK: - Persistence
 
-    func testStatePersistenceRoundTrip() {
+    func testStatePersistenceRoundTrip() throws {
         let suite = "mc-permission-test-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
 
         XCTAssertEqual(PermissionCenter.loadState(.notes, defaults: defaults), .unknown)

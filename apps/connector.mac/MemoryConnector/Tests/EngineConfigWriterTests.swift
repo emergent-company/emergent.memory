@@ -1,8 +1,7 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 final class EngineConfigWriterTests: XCTestCase {
-
     private var tempRoot: URL!
 
     override func setUpWithError() throws {
@@ -103,7 +102,6 @@ final class EngineConfigWriterTests: XCTestCase {
 // MARK: - read() — first-run import parser
 
 extension EngineConfigWriterTests {
-
     func testReadRoundTrip() throws {
         let configURL = tempRoot.appendingPathComponent("config.yml")
         let values = makeValues(disabled: ["notes_create", "reminders_add"])

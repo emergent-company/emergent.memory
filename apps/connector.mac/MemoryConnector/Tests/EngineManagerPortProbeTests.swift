@@ -1,11 +1,10 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 /// The extracted "may we spawn into a held management port?" decision. The
 /// socket probe itself is a settable closure; these tests exercise the pure
 /// decision and the probe's settability, restoring the probe in `tearDown`.
 final class EngineManagerPortProbeTests: XCTestCase {
-
     private var originalProbe: (() -> Bool)?
 
     override func setUp() {

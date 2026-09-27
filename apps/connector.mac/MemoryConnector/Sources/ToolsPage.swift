@@ -40,7 +40,11 @@ struct ToolsPage: View {
         .navigationTitle("MCP Tools")
         .alert("Memory", isPresented: Binding(
             get: { alertMessage != nil },
-            set: { if !$0 { alertMessage = nil } }
+            set: {
+                if !$0 {
+                    alertMessage = nil
+                }
+            }
         )) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -63,14 +67,16 @@ struct ToolsPage: View {
 
     private var profileScopeText: String {
         guard projectStore.hasActiveProject else { return "Shared (no project selected)" }
-        if let name = projectStore.activeProjectName { return "Applies to \(name)" }
+        if let name = projectStore.activeProjectName {
+            return "Applies to \(name)"
+        }
         return "Applies to the active project"
     }
 
     private func iconName(for service: ToolCatalog.Service) -> String {
         switch service {
-        case .notes: return "note.text"
-        case .reminders: return "checklist"
+        case .notes: "note.text"
+        case .reminders: "checklist"
         }
     }
 
@@ -101,8 +107,12 @@ struct ToolsPage: View {
     private var allToolsStateText: String {
         let total = ToolCatalog.tools.count
         let on = enabledToolCount
-        if on == 0 { return "All off" }
-        if on == total { return "All on" }
+        if on == 0 {
+            return "All off"
+        }
+        if on == total {
+            return "All on"
+        }
         return "Mixed — \(on) of \(total) on"
     }
 
@@ -122,7 +132,7 @@ struct ToolsPage: View {
             settings.updateDisabledTools(enabled ? [] : Set(ToolCatalog.tools.map(\.id)))
         }
         switch projectStore.state {
-        case .error(let message):
+        case let .error(message):
             alertMessage = message
         case .signedOut:
             alertMessage = "Your session expired. Sign in to change tools."
@@ -161,9 +171,9 @@ struct ToolsPage: View {
     /// to the active project's profile (or shared settings) and restarts.
     private func binding(for tool: ToolCatalog.Tool) -> Binding<Bool> {
         Binding<Bool>(
-            get: { !self.effectiveDisabledTools.contains(tool.id) },
+            get: { !effectiveDisabledTools.contains(tool.id) },
             set: { enabled in
-                var disabled = self.effectiveDisabledTools
+                var disabled = effectiveDisabledTools
                 if enabled {
                     disabled.remove(tool.id)
                 } else {
@@ -173,7 +183,7 @@ struct ToolsPage: View {
                     await projectStore.saveActiveProfile(disabledTools: disabled,
                                                          instanceID: projectStore.activeInstanceID)
                     switch projectStore.state {
-                    case .error(let message):
+                    case let .error(message):
                         alertMessage = message
                     case .signedOut:
                         alertMessage = "Your session expired. Sign in to change tools."

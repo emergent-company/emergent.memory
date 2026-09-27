@@ -19,8 +19,8 @@ enum HelperError: Error, CustomStringConvertible, Equatable {
 
     var description: String {
         switch self {
-        case .invalid(let message):
-            return message
+        case let .invalid(message):
+            message
         }
     }
 }
@@ -46,9 +46,9 @@ usage: memory-reminders <command> [options]
   delete --id ID
 """
 
-// ParsedArguments is the normalized result of parsing a command line. A non-nil
-// optional means "the caller supplied this flag"; clearDue/clearNotes are
-// explicit so that "leave alone" and "remove" stay distinguishable.
+/// ParsedArguments is the normalized result of parsing a command line. A non-nil
+/// optional means "the caller supplied this flag"; clearDue/clearNotes are
+/// explicit so that "leave alone" and "remove" stay distinguishable.
 struct ParsedArguments: Equatable {
     var command: HelperCommand
     var listName: String?
@@ -74,21 +74,20 @@ func parseArguments(_ argv: [String]) throws -> ParsedArguments {
         throw HelperError.invalid("unknown subcommand '\(rawCommand)'\n\(helperUsage)")
     }
 
-    let allowed: Set<String>
-    switch command {
+    let allowed: Set<String> = switch command {
     case .list:
-        allowed = ["--list", "--include-completed", "--include-notes"]
+        ["--list", "--include-completed", "--include-notes"]
     case .lists:
-        allowed = []
+        []
     case .add:
-        allowed = ["--title", "--list", "--due", "--notes"]
+        ["--title", "--list", "--due", "--notes"]
     case .update:
-        allowed = [
+        [
             "--id", "--title", "--due", "--clear-due", "--notes",
             "--clear-notes", "--priority", "--completed", "--list",
         ]
     case .delete:
-        allowed = ["--id"]
+        ["--id"]
     }
 
     var parsed = ParsedArguments(command: command)
@@ -100,7 +99,7 @@ func parseArguments(_ argv: [String]) throws -> ParsedArguments {
             throw HelperError.invalid("\(flag) requires a value")
         }
         let value = argv[index]
-        if value.isEmpty && !allowEmpty {
+        if value.isEmpty, !allowEmpty {
             throw HelperError.invalid("\(flag) requires a non-empty value")
         }
         return value
@@ -158,10 +157,10 @@ func parseArguments(_ argv: [String]) throws -> ParsedArguments {
         index += 1
     }
 
-    if parsed.due != nil && parsed.clearDue {
+    if parsed.due != nil, parsed.clearDue {
         throw HelperError.invalid("--due and --clear-due are mutually exclusive")
     }
-    if parsed.notes != nil && parsed.clearNotes {
+    if parsed.notes != nil, parsed.clearNotes {
         throw HelperError.invalid("--notes and --clear-notes are mutually exclusive")
     }
 
@@ -183,9 +182,9 @@ func parseArguments(_ argv: [String]) throws -> ParsedArguments {
 
 // MARK: - RFC3339
 
-// RFC3339 formats and parses internet timestamps without fractional seconds,
-// accepting fractional seconds on input. Kept as an instance (not a global) so
-// the pure helpers stay concurrency-clean.
+/// RFC3339 formats and parses internet timestamps without fractional seconds,
+/// accepting fractional seconds on input. Kept as an instance (not a global) so
+/// the pure helpers stay concurrency-clean.
 final class RFC3339 {
     private let basic: ISO8601DateFormatter
     private let fractional: ISO8601DateFormatter
@@ -211,18 +210,18 @@ final class RFC3339 {
 
 // MARK: - JSON shapes
 
-// encodeJSON is the single JSON encoder used for every subcommand, so stdout is
-// always compact JSON and nothing else.
-func encodeJSON<T: Encodable>(_ value: T) throws -> Data {
+/// encodeJSON is the single JSON encoder used for every subcommand, so stdout is
+/// always compact JSON and nothing else.
+func encodeJSON(_ value: some Encodable) throws -> Data {
     let encoder = JSONEncoder()
     encoder.outputFormatting = []
     return try encoder.encode(value)
 }
 
-// ReminderRow is the enriched reminder shape emitted by `list`, `add`, and
-// `update`. `name`/`due_date` keep their existing spelling; `id`, `list`, and
-// `completed` are additive. `due_date` is always present (explicit null when
-// absent). `notes` is emitted only when emitNotes is true.
+/// ReminderRow is the enriched reminder shape emitted by `list`, `add`, and
+/// `update`. `name`/`due_date` keep their existing spelling; `id`, `list`, and
+/// `completed` are additive. `due_date` is always present (explicit null when
+/// absent). `notes` is emitted only when emitNotes is true.
 struct ReminderRow: Encodable {
     let id: String
     let name: String
@@ -262,14 +261,14 @@ struct ReminderRow: Encodable {
     }
 }
 
-// ListRow is emitted by the `lists` subcommand: [{"id","name","count"},...].
+/// ListRow is emitted by the `lists` subcommand: [{"id","name","count"},...].
 struct ListRow: Encodable {
     let id: String
     let name: String
     let count: Int
 }
 
-// DeletedResult is emitted by the `delete` subcommand: {"id","deleted":true}.
+/// DeletedResult is emitted by the `delete` subcommand: {"id","deleted":true}.
 struct DeletedResult: Encodable {
     let id: String
     let deleted: Bool

@@ -54,7 +54,7 @@ struct ProjectSwitcherView: View {
         case .idle, .error, .signedOut:
             // `.signedOut` retries through `loadProjects`, which itself attempts
             // the session repair hook before falling back to the signed-out UI.
-            let token = (try? await accountStore.currentAccessToken()) ?? ""
+            let token = await (try? accountStore.currentAccessToken()) ?? ""
             await projectStore.loadProjects(accessToken: token)
         case .loading, .loaded:
             return
@@ -113,7 +113,8 @@ struct ProjectSwitcherView: View {
                     .fontWeight(.semibold)
                     .lineLimit(1)
                 if let activeID = projectStore.activeProjectID,
-                   projectStore.isConnected(activeID) {
+                   projectStore.isConnected(activeID)
+                {
                     Image(systemName: "bolt.fill")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(.green)
@@ -188,7 +189,7 @@ struct ProjectSwitcherView: View {
     /// The padding matches the account control next door (10pt) so the two
     /// trailing toolbar items read as a pair; it is the single chrome entry
     /// point, so every label state gets the same left/right space.
-    private func switcherLabel<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+    private func switcherLabel(@ViewBuilder content: () -> some View) -> some View {
         HStack(spacing: 5) {
             content()
         }
@@ -205,12 +206,16 @@ struct ProjectSwitcherView: View {
     // MARK: - Derived
 
     private var hasError: Bool {
-        if case .error = projectStore.state { return true }
+        if case .error = projectStore.state {
+            return true
+        }
         return false
     }
 
     private var switchErrorMessage: String {
-        if case .error(let message) = projectStore.state { return message }
+        if case let .error(message) = projectStore.state {
+            return message
+        }
         return "Switch project"
     }
 
@@ -235,7 +240,7 @@ struct ProjectSwitcherView: View {
         Task {
             // Project listing runs through the CLI; the app token is optional.
             // `loadProjects` owns the auth classification and repair.
-            let token = (try? await accountStore.currentAccessToken()) ?? ""
+            let token = await (try? accountStore.currentAccessToken()) ?? ""
             await projectStore.loadProjects(accessToken: token)
         }
     }
@@ -245,10 +250,10 @@ struct ProjectSwitcherView: View {
     private func signIn() {
         Task {
             let environment = accountStore.activeEnvironment ?? .prod
-            guard (try? await accountStore.signIn(environment: environment)) != nil else {
+            guard await (try? accountStore.signIn(environment: environment)) != nil else {
                 return
             }
-            let token = (try? await accountStore.currentAccessToken()) ?? ""
+            let token = await (try? accountStore.currentAccessToken()) ?? ""
             await projectStore.loadProjects(accessToken: token)
         }
     }

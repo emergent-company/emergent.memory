@@ -1,11 +1,10 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 /// The "should the engine run?" gate: engine runs iff a project is connected
 /// AND its config exists. Stale configs for non-connected projects must never
 /// start it.
 final class EngineLifecyclePolicyTests: XCTestCase {
-
     private var tempRoot = FileManager.default.temporaryDirectory
     private var configURL = FileManager.default.temporaryDirectory.appendingPathComponent("config.yml")
 
@@ -32,7 +31,8 @@ final class EngineLifecyclePolicyTests: XCTestCase {
     /// Writes a config with the given project id (omitted when `nil`) and
     /// server URL.
     private func writeConfig(projectID: String?,
-                             serverURL: String = "https://api.example.test") throws {
+                             serverURL: String = "https://api.example.test") throws
+    {
         var content = "server_url: \(serverURL)\ntoken: emt_x\ninstance_id: host-connector\n"
         if let projectID {
             content += "project_id: \(projectID)\n"

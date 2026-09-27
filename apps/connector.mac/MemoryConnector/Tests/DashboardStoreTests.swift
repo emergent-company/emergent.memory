@@ -1,8 +1,7 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 final class DashboardStoreTests: XCTestCase {
-
     private let baseURL = "https://api.example.test"
     private let accessToken = "user-access"
     private let projectID = "proj-1"
@@ -38,12 +37,12 @@ final class DashboardStoreTests: XCTestCase {
     private func successHandler() -> (URLRequest) -> StubResult {
         { request in
             switch request.url?.path {
-            case "/api/projects/proj-1": return .ok(self.detailJSON)
-            case "/api/graph/objects/count": return .ok(#"{"count":2}"#)
-            case "/api/graph/relationships/count": return .ok(#"{"count":3}"#)
-            case "/api/schema-registry/projects/proj-1/stats": return .ok(self.schemaJSON)
-            case "/api/projects/proj-1/agent-definitions": return .ok(self.agentsJSON)
-            default: return .status(404)
+            case "/api/projects/proj-1": .ok(self.detailJSON)
+            case "/api/graph/objects/count": .ok(#"{"count":2}"#)
+            case "/api/graph/relationships/count": .ok(#"{"count":3}"#)
+            case "/api/schema-registry/projects/proj-1/stats": .ok(self.schemaJSON)
+            case "/api/projects/proj-1/agent-definitions": .ok(self.agentsJSON)
+            default: .status(404)
             }
         }
     }
@@ -62,7 +61,7 @@ final class DashboardStoreTests: XCTestCase {
 
         await store.load(projectID: projectID, serverURL: baseURL, accessToken: accessToken)
 
-        guard case .loaded(let snapshot) = store.state else {
+        guard case let .loaded(snapshot) = store.state else {
             return XCTFail("expected loaded, got \(store.state)")
         }
         XCTAssertEqual(snapshot.projectName, "Memory Dev")
@@ -142,7 +141,7 @@ final class DashboardStoreTests: XCTestCase {
         let detail = requests.first { $0.url?.path == "/api/projects/proj-1" }
         XCTAssertEqual(detail?.url?.query, "include_stats=true")
 
-        guard case .loaded(let snapshot) = store.state else {
+        guard case let .loaded(snapshot) = store.state else {
             return XCTFail("expected loaded, got \(store.state)")
         }
         XCTAssertEqual(snapshot.objectCount, 2)
@@ -166,16 +165,17 @@ final class DashboardStoreTests: XCTestCase {
     """
 
     private func handler(detail: String,
-                         orgs: StubResult) -> (URLRequest) -> StubResult {
+                         orgs: StubResult) -> (URLRequest) -> StubResult
+    {
         { request in
             switch request.url?.path {
-            case "/api/projects/proj-1": return .ok(detail)
-            case "/api/graph/objects/count": return .ok(#"{"count":2}"#)
-            case "/api/graph/relationships/count": return .ok(#"{"count":3}"#)
-            case "/api/schema-registry/projects/proj-1/stats": return .ok(self.schemaJSON)
-            case "/api/projects/proj-1/agent-definitions": return .ok(self.agentsJSON)
-            case "/api/orgs": return orgs
-            default: return .status(404)
+            case "/api/projects/proj-1": .ok(detail)
+            case "/api/graph/objects/count": .ok(#"{"count":2}"#)
+            case "/api/graph/relationships/count": .ok(#"{"count":3}"#)
+            case "/api/schema-registry/projects/proj-1/stats": .ok(self.schemaJSON)
+            case "/api/projects/proj-1/agent-definitions": .ok(self.agentsJSON)
+            case "/api/orgs": orgs
+            default: .status(404)
             }
         }
     }
@@ -187,7 +187,7 @@ final class DashboardStoreTests: XCTestCase {
         let store = makeStore()
         await store.load(projectID: projectID, serverURL: baseURL, accessToken: accessToken)
 
-        guard case .loaded(let snapshot) = store.state else {
+        guard case let .loaded(snapshot) = store.state else {
             return XCTFail("expected loaded, got \(store.state)")
         }
         XCTAssertEqual(snapshot.orgID, "org-1")
@@ -201,7 +201,7 @@ final class DashboardStoreTests: XCTestCase {
         let store = makeStore()
         await store.load(projectID: projectID, serverURL: baseURL, accessToken: accessToken)
 
-        guard case .loaded(let snapshot) = store.state else {
+        guard case let .loaded(snapshot) = store.state else {
             return XCTFail("expected loaded, got \(store.state)")
         }
         XCTAssertEqual(snapshot.orgID, "org-1")
@@ -211,12 +211,12 @@ final class DashboardStoreTests: XCTestCase {
     @MainActor
     func testLoadOrganizationNameNilWhenOrgsFail() async {
         StubURLProtocol.registry.setHandler(handler(detail: detailJSON,
-                                                     orgs: .status(500)))
+                                                    orgs: .status(500)))
 
         let store = makeStore()
         await store.load(projectID: projectID, serverURL: baseURL, accessToken: accessToken)
 
-        guard case .loaded(let snapshot) = store.state else {
+        guard case let .loaded(snapshot) = store.state else {
             return XCTFail("expected loaded, got \(store.state)")
         }
         XCTAssertNil(snapshot.organizationName,
@@ -226,12 +226,12 @@ final class DashboardStoreTests: XCTestCase {
     @MainActor
     func testLoadOrganizationNameNilWhenNoOrgID() async {
         StubURLProtocol.registry.setHandler(handler(detail: detailNoOrgJSON,
-                                                     orgs: .ok(orgsJSON)))
+                                                    orgs: .ok(orgsJSON)))
 
         let store = makeStore()
         await store.load(projectID: projectID, serverURL: baseURL, accessToken: accessToken)
 
-        guard case .loaded(let snapshot) = store.state else {
+        guard case let .loaded(snapshot) = store.state else {
             return XCTFail("expected loaded, got \(store.state)")
         }
         XCTAssertNil(snapshot.orgID)
@@ -244,19 +244,19 @@ final class DashboardStoreTests: XCTestCase {
     func testLoadToleratesIndividualFailures() async {
         StubURLProtocol.registry.setHandler { request in
             switch request.url?.path {
-            case "/api/projects/proj-1": return .ok(self.detailJSON)
-            case "/api/graph/objects/count": return .status(500)
-            case "/api/graph/relationships/count": return .ok(#"{"count":3}"#)
-            case "/api/schema-registry/projects/proj-1/stats": return .status(500)
-            case "/api/projects/proj-1/agent-definitions": return .status(500)
-            default: return .status(404)
+            case "/api/projects/proj-1": .ok(self.detailJSON)
+            case "/api/graph/objects/count": .status(500)
+            case "/api/graph/relationships/count": .ok(#"{"count":3}"#)
+            case "/api/schema-registry/projects/proj-1/stats": .status(500)
+            case "/api/projects/proj-1/agent-definitions": .status(500)
+            default: .status(404)
             }
         }
 
         let store = makeStore()
         await store.load(projectID: projectID, serverURL: baseURL, accessToken: accessToken)
 
-        guard case .loaded(let snapshot) = store.state else {
+        guard case let .loaded(snapshot) = store.state else {
             return XCTFail("expected loaded, got \(store.state)")
         }
         XCTAssertEqual(snapshot.projectName, "Memory Dev")
@@ -272,19 +272,19 @@ final class DashboardStoreTests: XCTestCase {
     func testLoadDefinitionsFailureYieldsEmptyAgentsButStaysLoaded() async {
         StubURLProtocol.registry.setHandler { request in
             switch request.url?.path {
-            case "/api/projects/proj-1": return .ok(self.detailJSON)
-            case "/api/graph/objects/count": return .ok(#"{"count":2}"#)
-            case "/api/graph/relationships/count": return .ok(#"{"count":3}"#)
-            case "/api/schema-registry/projects/proj-1/stats": return .ok(self.schemaJSON)
-            case "/api/projects/proj-1/agent-definitions": return .status(500)
-            default: return .status(404)
+            case "/api/projects/proj-1": .ok(self.detailJSON)
+            case "/api/graph/objects/count": .ok(#"{"count":2}"#)
+            case "/api/graph/relationships/count": .ok(#"{"count":3}"#)
+            case "/api/schema-registry/projects/proj-1/stats": .ok(self.schemaJSON)
+            case "/api/projects/proj-1/agent-definitions": .status(500)
+            default: .status(404)
             }
         }
 
         let store = makeStore()
         await store.load(projectID: projectID, serverURL: baseURL, accessToken: accessToken)
 
-        guard case .loaded(let snapshot) = store.state else {
+        guard case let .loaded(snapshot) = store.state else {
             return XCTFail("expected loaded, got \(store.state)")
         }
         XCTAssertEqual(snapshot.agents, [], "definitions failure should not fail the snapshot")
@@ -303,19 +303,19 @@ final class DashboardStoreTests: XCTestCase {
         """
         StubURLProtocol.registry.setHandler { request in
             switch request.url?.path {
-            case "/api/projects/proj-1": return .ok(self.detailJSON)
-            case "/api/graph/objects/count": return .ok(#"{"count":2}"#)
-            case "/api/graph/relationships/count": return .ok(#"{"count":3}"#)
-            case "/api/schema-registry/projects/proj-1/stats": return .ok(self.schemaJSON)
-            case "/api/projects/proj-1/agent-definitions": return .ok(definitions)
-            default: return .status(404)
+            case "/api/projects/proj-1": .ok(self.detailJSON)
+            case "/api/graph/objects/count": .ok(#"{"count":2}"#)
+            case "/api/graph/relationships/count": .ok(#"{"count":3}"#)
+            case "/api/schema-registry/projects/proj-1/stats": .ok(self.schemaJSON)
+            case "/api/projects/proj-1/agent-definitions": .ok(definitions)
+            default: .status(404)
             }
         }
 
         let store = makeStore()
         await store.load(projectID: projectID, serverURL: baseURL, accessToken: accessToken)
 
-        guard case .loaded(let snapshot) = store.state else {
+        guard case let .loaded(snapshot) = store.state else {
             return XCTFail("expected loaded, got \(store.state)")
         }
         XCTAssertEqual(snapshot.agents.map(\.name), ["Researcher", "Summarizer"])
@@ -330,19 +330,19 @@ final class DashboardStoreTests: XCTestCase {
     func testLoadUsesEmptyAgentsWhenDefinitionsEnvelopeHasNoData() async {
         StubURLProtocol.registry.setHandler { request in
             switch request.url?.path {
-            case "/api/projects/proj-1": return .ok(self.detailJSON)
-            case "/api/graph/objects/count": return .ok(#"{"count":2}"#)
-            case "/api/graph/relationships/count": return .ok(#"{"count":3}"#)
-            case "/api/schema-registry/projects/proj-1/stats": return .ok(self.schemaJSON)
-            case "/api/projects/proj-1/agent-definitions": return .ok(#"{"success":true}"#)
-            default: return .status(404)
+            case "/api/projects/proj-1": .ok(self.detailJSON)
+            case "/api/graph/objects/count": .ok(#"{"count":2}"#)
+            case "/api/graph/relationships/count": .ok(#"{"count":3}"#)
+            case "/api/schema-registry/projects/proj-1/stats": .ok(self.schemaJSON)
+            case "/api/projects/proj-1/agent-definitions": .ok(#"{"success":true}"#)
+            default: .status(404)
             }
         }
 
         let store = makeStore()
         await store.load(projectID: projectID, serverURL: baseURL, accessToken: accessToken)
 
-        guard case .loaded(let snapshot) = store.state else {
+        guard case let .loaded(snapshot) = store.state else {
             return XCTFail("expected loaded, got \(store.state)")
         }
         XCTAssertEqual(snapshot.agents, [])

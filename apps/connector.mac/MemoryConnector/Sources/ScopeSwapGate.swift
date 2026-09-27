@@ -18,11 +18,15 @@ struct ScopeSwapGate {
     }
 
     /// True when the sink may reconcile (no swap in flight).
-    var mayReconcile: Bool { depth == 0 }
+    var mayReconcile: Bool {
+        depth == 0
+    }
 
     /// Ends one scope swap. Clamped at zero so an unbalanced end can never
     /// reopen reconciliation while a real swap is still in flight.
     mutating func end() {
-        if depth > 0 { depth -= 1 }
+        if depth > 0 {
+            depth -= 1
+        }
     }
 }

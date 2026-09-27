@@ -1,5 +1,5 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 /// Locked counter for restart/stop closures.
 final class CallCounter: @unchecked Sendable {
@@ -17,7 +17,6 @@ final class CallCounter: @unchecked Sendable {
 }
 
 final class ProjectStoreTests: XCTestCase {
-
     private var settingsSuite = ""
     private var storeSuite = ""
     private var settingsDefaults = UserDefaults(suiteName: "") ?? .standard
@@ -55,7 +54,8 @@ final class ProjectStoreTests: XCTestCase {
 
     @MainActor
     private func makeSettings(instanceID: String = "host-connector",
-                              disabled: Set<String> = []) -> ConnectorSettings {
+                              disabled: Set<String> = []) -> ConnectorSettings
+    {
         let settings = ConnectorSettings(defaults: settingsDefaults)
         settings.serverURL = "https://api.example.test"
         settings.instanceID = instanceID
@@ -66,7 +66,8 @@ final class ProjectStoreTests: XCTestCase {
     @MainActor
     private func makeStore(settings: ConnectorSettings? = nil,
                            restart: CallCounter = CallCounter(),
-                           stop: CallCounter = CallCounter()) -> ProjectStore {
+                           stop: CallCounter = CallCounter()) -> ProjectStore
+    {
         let store = ProjectStore(settings: settings ?? makeSettings(),
                                  defaults: storeDefaults,
                                  restart: { restart.increment() },
@@ -505,7 +506,7 @@ final class ProjectStoreTests: XCTestCase {
     // MARK: - Sign-out teardown
 
     @MainActor
-    func testStopAndClearClearsSelection() throws {
+    func testStopAndClearClearsSelection() {
         storeDefaults.set("p1", forKey: ProjectStore.activeProjectIDKey)
         ProjectProfileStore(defaults: storeDefaults).setConnected(true, for: "p1")
 
@@ -615,7 +616,7 @@ final class ProjectStoreTests: XCTestCase {
     }
 
     @MainActor
-    func testSaveActiveProfileWithoutProjectUpdatesSharedDefaults() async throws {
+    func testSaveActiveProfileWithoutProjectUpdatesSharedDefaults() async {
         let settings = makeSettings(instanceID: "old-shared")
         let restart = CallCounter()
         let store = makeStore(settings: settings, restart: restart)
@@ -666,8 +667,8 @@ final class ProjectStoreTests: XCTestCase {
 
     // MARK: - Organisation grouping
 
-    // Projects with a mix of organisation ids (resolved and unknown) and one
-    // without an org id at all.
+    /// Projects with a mix of organisation ids (resolved and unknown) and one
+    /// without an org id at all.
     private let orgProjectsJSON = #"{"schema_version":1,"server":"https://api.example.test","projects":[{"id":"p1","name":"One","org_id":"org-1","active":false},{"id":"p2","name":"Two","org_id":"org-1","active":false},{"id":"p3","name":"Zed","org_id":"org-9","active":false},{"id":"p4","name":"Four","active":false}]}"#
 
     @MainActor
@@ -712,8 +713,8 @@ final class ProjectStoreTests: XCTestCase {
         XCTAssertEqual(groups[0].projects.map(\.id), ["p4", "p1", "p2", "p3"])
     }
 
-    // The CLI's project rows may omit an organisation id, so every project
-    // groups under "Other" (sorted by name) instead of breaking grouping.
+    /// The CLI's project rows may omit an organisation id, so every project
+    /// groups under "Other" (sorted by name) instead of breaking grouping.
     private let noOrgProjectsJSON = #"{"schema_version":1,"server":"https://api.example.test","projects":[{"id":"p1","name":"One","active":false},{"id":"p2","name":"Two","active":false},{"id":"p3","name":"Zed","active":false},{"id":"p4","name":"Four","active":false}]}"#
 
     @MainActor

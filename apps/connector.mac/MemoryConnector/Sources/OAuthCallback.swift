@@ -19,7 +19,6 @@ protocol BrowserAuthenticator: Sendable {
 /// state (doing so traps in Swift 6's executor check). Session setup and
 /// `start()` happen on the main actor, where AppKit requires them.
 final class WebAuthenticator: NSObject, BrowserAuthenticator, @unchecked Sendable {
-
     /// Retains the live session + its anchor provider until the callback
     /// arrives (ASWebAuthenticationSession is not guaranteed to keep itself
     /// alive). Sendable so the callback can clear it off-main.
@@ -57,7 +56,7 @@ final class WebAuthenticator: NSObject, BrowserAuthenticator, @unchecked Sendabl
             lock.unlock()
         }
 
-        nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        nonisolated func presentationAnchor(for _: ASWebAuthenticationSession) -> ASPresentationAnchor {
             lock.lock()
             defer { lock.unlock() }
             return window ?? NSWindow()
@@ -117,7 +116,8 @@ enum OAuthCallback {
     /// Parses the callback URL's query into a dictionary (last value wins).
     nonisolated static func queryItems(from url: URL) -> [String: String] {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              let queryItems = components.queryItems else {
+              let queryItems = components.queryItems
+        else {
             return [:]
         }
         return Dictionary(queryItems.compactMap { item in
@@ -138,20 +138,20 @@ enum OIDCError: LocalizedError, Equatable, Sendable {
 
     var errorDescription: String? {
         switch self {
-        case .discoveryFailed(let detail):
-            return "OIDC discovery failed: \(detail)"
+        case let .discoveryFailed(detail):
+            "OIDC discovery failed: \(detail)"
         case .missingEndpoints:
-            return "The OIDC provider document is missing required endpoints."
-        case .httpStatus(let code):
-            return "The identity provider returned HTTP \(code)."
-        case .invalidResponse(let detail):
-            return "Unexpected identity provider response: \(detail)"
+            "The OIDC provider document is missing required endpoints."
+        case let .httpStatus(code):
+            "The identity provider returned HTTP \(code)."
+        case let .invalidResponse(detail):
+            "Unexpected identity provider response: \(detail)"
         case .stateMismatch:
-            return "Sign-in failed: the authorization state did not match."
+            "Sign-in failed: the authorization state did not match."
         case .notSignedIn:
-            return "Not signed in."
+            "Not signed in."
         case .cancelled:
-            return "Sign-in was cancelled."
+            "Sign-in was cancelled."
         }
     }
 }
