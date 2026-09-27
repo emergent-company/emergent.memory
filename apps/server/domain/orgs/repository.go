@@ -9,6 +9,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/internal/database"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -250,6 +251,21 @@ func (r *Repository) GetMembershipRole(ctx context.Context, orgID, userID string
 	}
 
 	return role, nil
+}
+
+// IsOrgAdmin reports whether the user holds org-admin authority over the
+// organization. It delegates to the single app-side org-administration decision
+// (pkg/auth.CanAdministerOrg) so no org-scoped decision point re-derives the
+// role locally (issue #812 §4.5, issue #1162). Fail closed on a lookup error.
+func (r *Repository) IsOrgAdmin(ctx context.Context, orgID, userID string) (bool, error) {
+	ok, err := auth.CanAdministerOrg(ctx, r.db, orgID, userID)
+	if err != nil {
+		r.log.Error("failed to check org_admin authority", logger.Error(err),
+			slog.String("orgID", orgID),
+			slog.String("userID", userID))
+		return false, dbErr(err)
+	}
+	return ok, nil
 }
 
 // ListMembers returns all members of an organization with their user profile info.

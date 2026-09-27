@@ -2,6 +2,8 @@ package orgs_test
 
 import (
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -30,6 +32,7 @@ func TestOrgWriteAuthorityMatrix(t *testing.T) {
 		{"rename/bare", http.MethodPatch, "/api/orgs/" + f.orgA, renameBody, f.bareToken, http.StatusForbidden},
 		{"rename/member-A", http.MethodPatch, "/api/orgs/" + f.orgA, renameBody, f.memberAToken, http.StatusForbidden},
 		{"rename/member-B", http.MethodPatch, "/api/orgs/" + f.orgA, renameBody, f.orgAdminBToken, http.StatusForbidden},
+		{"rename/superadmin-not-org-admin", http.MethodPatch, "/api/orgs/" + f.orgA, renameBody, f.superadminToken, http.StatusForbidden},
 		{"rename/org_admin-A", http.MethodPatch, "/api/orgs/" + f.orgA, renameBody, f.orgAdminAToken, http.StatusOK},
 		// member listing (PII)
 		{"members/unauth", http.MethodGet, "/api/orgs/" + f.orgA + "/members", "", "", http.StatusUnauthorized},
@@ -78,6 +81,7 @@ func TestOrgDeleteAuthorityMatrix(t *testing.T) {
 		{"bare", f.bareToken, http.StatusForbidden},
 		{"member-A", f.memberAToken, http.StatusForbidden},
 		{"member-B", f.orgAdminBToken, http.StatusForbidden},
+		{"superadmin-not-org-admin", f.superadminToken, http.StatusForbidden},
 		{"org_admin-A", f.orgAdminAToken, http.StatusOK},
 	}
 
@@ -89,4 +93,49 @@ func TestOrgDeleteAuthorityMatrix(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestOrgDecisionIgnoresSpoofedOrgHeader is the issue #812 Q10 / #1162 guard: a
+// client-supplied X-Org-ID must not influence an org-scoped decision. Org context
+// is route/server-derived only, so a caller cannot self-grant by naming an org in
+// the header, and a foreign org_admin cannot widen into the target org by
+// claiming it in the header.
+func TestOrgDecisionIgnoresSpoofedOrgHeader(t *testing.T) {
+	testDB, e := newAuthzServer(t)
+	f := seedAuthzFixture(t, testDB.DB)
+
+	do := func(method, path, token, orgHeader string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(`{"name":"renamed"}`))
+		req.Header.Set("Content-Type", "application/json")
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		if orgHeader != "" {
+			req.Header.Set("X-Org-ID", orgHeader)
+		}
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		return rec
+	}
+
+	t.Run("foreign org_admin claiming the target org in the header is refused", func(t *testing.T) {
+		rec := do(http.MethodPatch, "/api/orgs/"+f.orgA, f.orgAdminBToken, f.orgA)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("PATCH orgA as foreign org_admin with X-Org-ID=orgA = %d, want 403: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("bare caller cannot self-grant an org via the header", func(t *testing.T) {
+		rec := do(http.MethodPatch, "/api/orgs/"+f.orgB, f.bareToken, f.orgB)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("PATCH orgB as bare caller with X-Org-ID=orgB = %d, want 403: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("plain member cannot self-grant org-admin via the header", func(t *testing.T) {
+		rec := do(http.MethodDelete, "/api/orgs/"+f.orgDel, f.memberAToken, f.orgDel)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("DELETE orgDel as plain member with X-Org-ID=orgDel = %d, want 403: %s", rec.Code, rec.Body.String())
+		}
+	})
 }

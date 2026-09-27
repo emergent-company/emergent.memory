@@ -64,8 +64,10 @@ The project/org a request acts on is resolved server-side. `X-Project-ID`, `X-Or
 
 - **`RequireAuth`** (`pkg/auth/middleware.go:371-490`) resolves the org from the *declared
   project's owning org* via `kb.projects.organization_id` (`:412-440`). A `X-Org-ID` header that
-  conflicts with the project's owning org is rejected **403** (`:429-431`); with no project context
-  and a DB available, the header is discarded and the org is left empty (`:436-440`). The
+  conflicts with the project's owning org is rejected **403** (`:429-431`); with no
+  project-derived org the header is discarded and the org is left empty in **every** posture
+  (`:432-440`) — a bare `X-Org-ID` (including a "membership-checked" variant) is never a trust
+  source (issue #812 Q10, issue #1162). The
   `:projectId` path param is only ever a scope *hint*, and only in standalone mode, and never
   authorization truth (`:401-410`, issues #811/#850).
 - **`RequireProjectTokenScope`** (`middleware.go:515-571`) is the token-binding check: an `emt_*`
@@ -113,6 +115,7 @@ The merged, working precedents — copy one of these:
 | global blueprint write | `blueprints.Service.AuthorizeGlobalBlueprintWrite` (`domain/blueprints/service.go:91`) | REST handler (4 sites) + MCP `blueprint-create/publish/new-version` | #1041 / #1060 |
 | session-history access | `sessiontodos.SessionAccessibleQuery` (`domain/sessiontodos/repository.go:42`) | REST conversation history + MCP `session-get-messages` | #1056 |
 | platform-admin authority | `auth.superadminRole` (`pkg/auth/superadmin.go:21`) | middleware `RequireSuperadminFull` + handler `IsSuperadminFull` | #940 |
+| org-admin authority | `auth.CanAdministerOrg` / `auth.CanAdministerOrgOrPlatform` (`pkg/auth/entitlement.go`) | org settings mutations, org invitations, project create/delete/transfer | #1162 |
 
 The pattern is: **move the check into the service/store boundary**, so the two entrypoints call the
 same function and cannot drift. Entrypoint-level checks do not close the Shape-A bypass (see the

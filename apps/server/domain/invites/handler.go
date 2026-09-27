@@ -178,16 +178,12 @@ func (h *Handler) Create(c echo.Context) error {
 // orgID (or is an active superadmin_full), resolved server-side from
 // kb.organization_memberships and core.superadmins — never a client-supplied
 // value. It gates both org-tier invite actions: minting an org_admin invitation
-// (issue #967) and revoking an invitation.
+// (issue #967) and revoking an invitation. The decision is the single shared
+// org-administration entitlement check (pkg/auth.CanAdministerOrgOrPlatform), so
+// the invite surfaces cannot drift from the org/project admin surfaces
+// (issue #812 §4.5, issue #1162).
 func (h *Handler) mayAdministerOrg(ctx context.Context, orgID, userID string) (bool, error) {
-	role, err := h.orgs.GetMembershipRole(ctx, orgID, userID)
-	if err != nil {
-		return false, err
-	}
-	if role == "org_admin" {
-		return true, nil
-	}
-	return auth.IsSuperadminFull(ctx, h.db)
+	return auth.CanAdministerOrgOrPlatform(ctx, h.db, orgID, userID)
 }
 
 // Accept accepts an invitation via POST (JSON body with token)
