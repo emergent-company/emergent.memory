@@ -14,10 +14,12 @@ Two adjacent references, always read with this one:
   contract lives in code and how to extend it without re-opening a closed class.
 - **`apps/server/pkg/auth/`** — the middleware and helpers. Every guard below is named here.
 
-A note on vocabulary: there is **no `pkg/authz` package**. The typed
-`RequireAuthority(resource, level)` / `DerivePrincipal` / `Authorize` abstraction is a design
-(PR #991, `openspec/changes/authz-abstraction/`) that is **not yet merged**. Do not document it as
-if it existed; when you write code today you use the helpers below.
+A note on vocabulary: `pkg/authz` **exists** and holds the transport-neutral, fail-closed
+per-tool decision point `AuthorizeTool` (ToolAuthority/Principal), merged with the MCP in-process
+enforcement via #1130. It is only the *tool-level* seam; the typed
+`RequireAuthority(resource, level)` / `DerivePrincipal` / `Authorize` route-registry abstraction
+from PR #991 (`openspec/changes/authz-abstraction/`) is still a design. For route/domain
+authorization today you use the helpers below.
 
 ---
 
@@ -137,11 +139,11 @@ This is the distinction that matters:
 
 - **Transport-enforced trust** (`TransportEnforcedFromContext`) means an HTTP transport already did
   the fine-grained per-tool check; the in-process path may defer to it.
-- **Genuinely-internal trust** (`TrustedInternalFromContext`) is a *different* marker: it does **not**
-  carry arbitrary `RequiredScope` authority. An untrusted run that reaches `ExecuteTool` in-process
-  bypasses per-tool scope enforcement for every scoped tool it is allowlisted to call — the live
-  exposure documented in the decision doc §1.3 (mechanism 7), which the un-merged `pkg/authz`
-  `AuthorizeTool` work is intended to close.
+- **Genuinely-internal trust** (`TrustedInternalFromContext`) is a *different* marker. Since #1130
+  the `pkg/authz.AuthorizeTool` seam refuses an untrusted, non-transport run on every scoped tool,
+  and `AgentOnly` tools require trust. A trusted run still passes a tool's `RequiredScope` (token
+  scopes do not exist on the agent-run path), so `TrustedInternal` must **not** be read as
+  "already authorized" — the sensitive-tool overlay and the domain service checks are what hold.
 
 Do not confuse the two markers, and do not treat `TrustedInternal` as "already authorized".
 
