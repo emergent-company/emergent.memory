@@ -121,6 +121,39 @@ func TestEntitySearchRelaxesUnsatisfiableIdentifier(t *testing.T) {
 	assert.Equal(t, id, out.Entities[0].ID)
 }
 
+// TestEntitySearchDisjoinsMultiTermQuery is the regression test for the
+// entity-search keyword leg of issue #996: websearch_to_tsquery ANDs every
+// non-stopword term, so a natural multi-term query over a corpus where no single
+// object contains every term returns nothing even though each term is
+// individually well represented. The disjoined (OR) fallback restores recall
+// without trading away single-term precision, mirroring graph.FTSSearch.
+func TestEntitySearchDisjoinsMultiTermQuery(t *testing.T) {
+	db := connectTestDB(t)
+	_, projectID := seedProject(t, db)
+	svc := &Service{db: db}
+
+	lawID := insertSearchEntity(t, db, projectID, "Law", "lov/1997-06-13-44",
+		"Lov om aksjeselskaper (aksjeloven)", "", "", time.Now())
+	insertSearchEntity(t, db, projectID, "LegalParagraph", "lov/1997-06-13-44#kapittel-2-paragraf-7",
+		"Innbetaling av aksjekapitalen", "", "", time.Now())
+	insertSearchEntity(t, db, projectID, "LegalParagraph", "lov/1997-06-13-44#kapittel-2-paragraf-12",
+		"Innskudd penger andre formuesgoder", "", "", time.Now())
+
+	const query = "aksjeloven innbetaling av aksjekapitalen innskudd penger andre formuesgoder"
+
+	out := runEntitySearch(t, svc, projectID, map[string]any{"query": query})
+	require.NotEmpty(t, out.Entities, "multi-term query must return results via the disjoined fallback")
+
+	var foundLaw bool
+	for _, e := range out.Entities {
+		if e.ID == lawID {
+			foundLaw = true
+			break
+		}
+	}
+	assert.True(t, foundLaw, "the law object must be returned by the disjoined fallback")
+}
+
 // TestEntitySearchTitleMatch verifies the `title` property is searchable. This
 // is a deliberate widening versus the old ILIKE predicate, which only scanned
 // key, name and description.
