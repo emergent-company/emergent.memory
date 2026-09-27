@@ -150,10 +150,11 @@ Do not confuse the two markers, and do not treat `TrustedInternal` as "already a
 ### MCP tool scope taxonomy
 
 Bare `admin` is a platform-tier token scope — mintable only by a `superadmin_full` and folded into
-`admin:all` + platform (#1124). On the MCP tool surface it is reserved for the agent-only registry
-management tools (`mcp-server-*`, `update_mcp_server`, `toggle_mcp_server_tool`,
-`sync_mcp_server_tools`) and the registry `install`/`inspect` tools. Project-administration tools
-carry the project tier instead:
+`admin:all` + platform (#1124). On the MCP tool surface it survives only on the registry
+`install`/`inspect` tools (#1143 retired it from everything else; the seven agent-only
+registry-management tools now carry no `RequiredScope` — `AgentOnly` alone is their authority,
+because every HTTP transport refuses an `AgentOnly` tool before the scope check, so a scope on
+them is inert). Project-administration tools carry the project tier instead:
 
 | Tools | `RequiredScope` | HTTP-equivalent authority |
 |---|---|---|
@@ -161,6 +162,7 @@ carry the project tier instead:
 | `provider-configure-project`, `project-create` | `projects:write` | owning-org membership / `org_admin` |
 | `provider-models-list` | `projects:read` | authenticated catalog |
 | `search_mcp_registry`, `mcp-registry-get` | `projects:read` | public registry browse |
+| `mcp-server-list`, `mcp-server-get`, `mcp-server-create`, `update_mcp_server`, `mcp-server-delete`, `toggle_mcp_server_tool`, `sync_mcp_server_tools` | *(none)* — `AgentOnly` | in-process agent-only (no HTTP route) |
 | `mcp-registry-install`, `mcp-server-inspect` | `admin` | project membership (registry routes) — **intentional divergence, see below** |
 
 Listing tokens stays at the write tier (`projects:write`) rather than the share baseline
