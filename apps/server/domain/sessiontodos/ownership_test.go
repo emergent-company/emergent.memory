@@ -13,7 +13,7 @@ import (
 // SessionTodosOwnershipSuite proves the session-todo accessors enforce the
 // conversation ownership model settled in #1010: a session's todos are reachable
 // only when the session is in the caller's project AND, when the session is
-// linked to a chat conversation (kb.chat_conversations.acp_session_id), that
+// linked to a chat conversation (kb.chat_conversations.session_id), that
 // conversation is owned by the caller or non-private. A foreign member must get
 // 404 (no existence oracle) on every read/write; the owner still succeeds; and a
 // non-private (project-shared) conversation's session todos remain reachable.
@@ -50,7 +50,7 @@ func (s *SessionTodosOwnershipSuite) SetupTest() {
 	s.Require().NoError(testutil.CreateTestOrgMembership(s.Ctx, s.DB(), s.OrgID, s.userBID, "member"))
 }
 
-// seedSession inserts an ACP session, a chat conversation owned by ownerID
+// seedSession inserts a session, a chat conversation owned by ownerID
 // (private when isPrivate), and one todo in that session, returning the session
 // id and the todo id.
 func (s *SessionTodosOwnershipSuite) seedSession(ownerID string, isPrivate bool) (string, string) {
@@ -59,13 +59,13 @@ func (s *SessionTodosOwnershipSuite) seedSession(ownerID string, isPrivate bool)
 	convID := uuid.New()
 
 	_, err := s.DB().NewRaw(`
-		INSERT INTO kb.acp_sessions (id, project_id, created_at, updated_at)
+		INSERT INTO kb.sessions (id, project_id, created_at, updated_at)
 		VALUES (?, ?, NOW(), NOW())
 	`, sessionID, s.ProjectID).Exec(s.Ctx)
 	s.Require().NoError(err)
 
 	_, err = s.DB().NewRaw(`
-		INSERT INTO kb.chat_conversations (id, title, project_id, is_private, owner_user_id, acp_session_id, created_at, updated_at)
+		INSERT INTO kb.chat_conversations (id, title, project_id, is_private, owner_user_id, session_id, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())
 	`, convID, "owner-secret", s.ProjectID, isPrivate, ownerID, sessionID).Exec(s.Ctx)
 	s.Require().NoError(err)

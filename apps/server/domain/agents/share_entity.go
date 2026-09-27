@@ -67,16 +67,16 @@ func (l *AgentShareLink) IsExpired(now time.Time) bool {
 	return l.ExpiresAt != nil && now.After(*l.ExpiresAt)
 }
 
-// AgentShareSession links a share link to an ACP session, keyed by the
+// AgentShareSession links a share link to a session, keyed by the
 // end-user's anonymous reference. Run linkage rides on kb.agent_runs
-// .acp_session_id; no columns are added to kb.acp_sessions.
+// .session_id; no columns are added to kb.sessions.
 // Table: kb.agent_share_sessions
 type AgentShareSession struct {
 	bun.BaseModel `bun:"table:kb.agent_share_sessions,alias:ass"`
 
 	ID             string     `bun:"id,pk,type:uuid,default:gen_random_uuid()"`
 	ShareLinkID    string     `bun:"share_link_id,type:uuid,notnull"`
-	ACPSessionID   string     `bun:"acp_session_id,type:uuid,notnull"`
+	SessionID      string     `bun:"session_id,type:uuid,notnull"`
 	EndUserRef     string     `bun:"end_user_ref,notnull"`
 	Title          *string    `bun:"title"`
 	LastActivityAt *time.Time `bun:"last_activity_at"`
@@ -372,7 +372,7 @@ type ShareOwnerSessionDTO struct {
 	AgentDefinitionID string     `json:"agentDefinitionId"`
 	AgentName         string     `json:"agentName"`
 	Title             string     `json:"title,omitempty"`
-	ACPSessionID      string     `json:"acpSessionId"`
+	SessionID         string     `json:"sessionId"`
 	IsArchived        bool       `json:"isArchived"`
 	CreatedAt         time.Time  `json:"createdAt"`
 	LastActivityAt    *time.Time `json:"lastActivityAt,omitempty"`

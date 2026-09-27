@@ -41,7 +41,7 @@ func sampleConversation() *ConversationDetail {
 		Title:             "Capital of France",
 		AgentDefinitionID: "agent_diane",
 		ProjectID:         "proj_1",
-		ACPSessionID:      "acp_1",
+		SessionID:         "acp_1",
 		CreatedAt:         "2026-08-26T09:59:00Z",
 		UpdatedAt:         "2026-08-26T10:00:05Z",
 	}
@@ -49,7 +49,7 @@ func sampleConversation() *ConversationDetail {
 
 func sampleHistory() *ConversationHistory {
 	return &ConversationHistory{
-		ACPSessionID:   "acp_1",
+		SessionID:      "acp_1",
 		ConversationID: "conv_1",
 		Items: []json.RawMessage{
 			json.RawMessage(`{"kind":"run_start","run_id":"run_1","step_number":0,"created_at":"2026-08-26T10:00:00Z","run_status":"completed","run_model":"deepseek-v4-flash"}`),
@@ -106,7 +106,7 @@ func TestJSONDump(t *testing.T) {
 	if tool.RunID != "run_1" || tool.StepNumber != 3 || tool.ToolStatus != "completed" {
 		t.Fatalf("tool item fields wrong: %+v", tool)
 	}
-	if got.Meta.Title != "Capital of France" || got.Meta.ACPSessionID != "acp_1" {
+	if got.Meta.Title != "Capital of France" || got.Meta.SessionID != "acp_1" {
 		t.Fatalf("meta wrong: %+v", got.Meta)
 	}
 }

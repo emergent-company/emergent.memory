@@ -468,7 +468,7 @@ const server = http.createServer((req, res) => {
     const cid = histMatch[1];
     const msgs = messages[cid] || [];
     return json(res, {
-      acp_session_id: `acp-${cid}`,
+      session_id: `sess-${cid}`,
       conversation_id: cid,
       items: msgs.map((m) => ({
         kind: "message",

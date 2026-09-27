@@ -170,7 +170,7 @@ type ShareOwnerSession struct {
 	AgentDefinitionID string     `json:"agentDefinitionId"`
 	AgentName         string     `json:"agentName"`
 	Title             string     `json:"title,omitempty"`
-	ACPSessionID      string     `json:"acpSessionId"`
+	SessionID         string     `json:"sessionId"`
 	IsArchived        bool       `json:"isArchived"`
 	CreatedAt         time.Time  `json:"createdAt"`
 	LastActivityAt    *time.Time `json:"lastActivityAt,omitempty"`

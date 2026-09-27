@@ -5504,12 +5504,12 @@ func parseJournalSince(s string) (time.Time, error) {
 }
 
 // executeSetSessionTitle is the hidden built-in tool that updates the title of the
-// current ACP session. It reads the session ID from context (injected by the agent
+// current session. It reads the session ID from context (injected by the agent
 // executor) and updates the title in the database. If no session ID is found in
 // context, it falls back to the optional "session_id" argument so agents that
 // receive the session ID via a [Session: <id>] prompt tag can pass it explicitly.
 //
-// In addition to updating the ACP session record (kb.acp_sessions.title), it also
+// In addition to updating the session record (kb.sessions.title), it also
 // patches the session's graph object Properties.title so external integrations that
 // read sessions via the graph API (GET /api/graph/objects/:id) see the updated title.
 func (s *Service) executeSetSessionTitle(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
@@ -5528,13 +5528,13 @@ func (s *Service) executeSetSessionTitle(ctx context.Context, projectID string, 
 	}
 
 	// Prefer context-injected session ID; fall back to explicit arg.
-	sessionID := ACPSessionIDFromContext(ctx)
+	sessionID := SessionIDFromContext(ctx)
 	if sessionID == "" {
 		sessionID, _ = args["session_id"].(string)
 	}
 	if sessionID == "" {
 		// No session in context or args — silently succeed so agents don't fail when called
-		// outside of an ACP session (e.g. direct MCP tool invocation).
+		// outside of a session (e.g. direct MCP tool invocation).
 		return &ToolResult{
 			Content: []ContentBlock{{Type: "text", Text: `{"ok":true,"note":"no active session"}`}},
 		}, nil
@@ -5547,7 +5547,7 @@ func (s *Service) executeSetSessionTitle(ctx context.Context, projectID string, 
 		}, nil
 	}
 
-	if err := s.sessionTitleHandler.UpdateACPSessionTitle(ctx, projectID, sessionID, title); err != nil {
+	if err := s.sessionTitleHandler.UpdateSessionTitle(ctx, projectID, sessionID, title); err != nil {
 		return &ToolResult{
 			Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf(`{"error":"failed to update session title: %s"}`, err.Error())}},
 			IsError: true,
