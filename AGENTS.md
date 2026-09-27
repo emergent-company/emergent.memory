@@ -77,6 +77,7 @@ Non-trivial work is spec-driven **and** ships as a **single** pull request. The 
 - **Open exactly one PR** containing both the change directory and the implementation (code, tests, and spec edits together). A spec-only PR that waits to merge before implementation begins is **not** the workflow.
 - **Do not block on the spec.** Once the artifacts are written, keep going on the same branch; the change gets reviewed once, as part of the finished PR.
 - **Archive after merge.** Run `openspec archive` (sync delta specs → `openspec/specs/`) as a post-merge follow-up, never as a pre-implementation PR.
+- **Archiving is enforced.** `openspec archive` failing to happen is *archive drift*: `openspec/specs/` stops describing shipped behaviour. The `OpenSpec archive guard` workflow (`.github/workflows/openspec-archive.yml`, #1063) runs `scripts/preflight/openspec-archive.sh` after every push to `main` and daily; a complete change that is merged but un-archived fails the run and opens a tracking issue with the exact `openspec archive <name> --yes` commands. Run the same check locally with `task openspec:archive-check`.
 - **PR description:** link the OpenSpec change directory and summarize the delta specs.
 
 ## Out-of-Scope Findings — File a GitHub Issue
@@ -144,6 +145,7 @@ Single OpenSpec root: `./openspec` (specs, changes, archive, config). Run all `o
 | List active changes | `openspec list` |
 | List capability specs | `openspec list --specs` |
 | Validate | `openspec validate` |
+| Check for archive drift | `task openspec:archive-check` |
 
 - **Placement**: a cross-app feature (e.g. backend + UI) is ONE change under `./openspec/changes/`; capability specs live at `./openspec/specs/<capability>/spec.md`.
 - **Capability naming**: app-specific capabilities are prefixed — `web-*`, `ios-*`, `mac-*`, `cli-*`, `e2e-*`, `mcp-*`; unprefixed names only for genuinely cross-cutting capabilities.

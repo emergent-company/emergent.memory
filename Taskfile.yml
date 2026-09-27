@@ -83,6 +83,11 @@ tasks:
     cmds:
       - task: server:status
 
+  openspec:archive-check:
+    desc: "Fail if a merged OpenSpec change (on origin/main) is complete but un-archived (#1063). Use CLI_ARGS for --base/--warn/--json."
+    cmds:
+      - bash scripts/preflight/openspec-archive.sh {{.CLI_ARGS}}
+
   cli:gen-docs:
     desc: Regenerate the embedded CLI reference skill (memory-cli-reference/SKILL.md)
     dir: apps/cli
