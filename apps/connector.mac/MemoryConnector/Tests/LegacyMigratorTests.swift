@@ -225,7 +225,8 @@ final class LegacyMigratorTests: XCTestCase {
     func testAlreadySignedInMarksDoneWithoutImporting() async {
         let (defaults, name) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: name) }
-        let (cli, statusRunner, importRunner) = makeCLI(status: signedIn(), import: importOK())
+        let harness = makeCLI(status: signedIn(), import: importOK())
+        let cli = harness.cli, statusRunner = harness.statusRunner, importRunner = harness.importRunner
         let clearer = FakeLegacySessionClearer()
         let migrator = LegacyMigrator(cli: cli,
                                       serverURL: server,

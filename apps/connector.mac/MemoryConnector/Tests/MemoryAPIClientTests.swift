@@ -66,15 +66,15 @@ final class MemoryAPIClientTests: XCTestCase {
         let identity = try await makeClient().authMe()
 
         assertRequest(path: "/api/auth/me")
-        XCTAssertNil(me.userID)
-        XCTAssertEqual(me.email, "dev@example.test")
-        XCTAssertEqual(me.scopes, ["project.read"])
-        XCTAssertEqual(me.type, "project")
-        XCTAssertEqual(me.projectID, "proj-1")
-        XCTAssertEqual(me.projectName, "Memory Dev")
-        XCTAssertEqual(me.orgID, "org-1")
-        XCTAssertEqual(me.tokenID, "tok-1")
-        XCTAssertEqual(me.tokenName, "dev")
+        XCTAssertNil(identity.userID)
+        XCTAssertEqual(identity.email, "dev@example.test")
+        XCTAssertEqual(identity.scopes, ["project.read"])
+        XCTAssertEqual(identity.type, "project")
+        XCTAssertEqual(identity.projectID, "proj-1")
+        XCTAssertEqual(identity.projectName, "Memory Dev")
+        XCTAssertEqual(identity.orgID, "org-1")
+        XCTAssertEqual(identity.tokenID, "tok-1")
+        XCTAssertEqual(identity.tokenName, "dev")
     }
 
     func testUserProfileDecodes() async throws {
@@ -544,7 +544,7 @@ final class MemoryAPIClientTests: XCTestCase {
         let definition = try await makeClient().agentDefinition(projectID: "proj-1",
                                                                 id: "d",
                                                                 accessToken: "user-access")
-        XCTAssertNotNil(d)
+        XCTAssertNotNil(definition)
         XCTAssertNil(definition?.tools, "tools: null stays nil")
         XCTAssertNil(definition?.bannedTools)
     }
@@ -576,7 +576,7 @@ final class MemoryAPIClientTests: XCTestCase {
         let definition = try await makeClient().agentDefinition(projectID: "proj-1",
                                                                 id: "nope",
                                                                 accessToken: "user-access")
-        XCTAssertNil(d)
+        XCTAssertNil(definition)
     }
 
     func testProjectDetailDecodesServerCasing() async throws {
