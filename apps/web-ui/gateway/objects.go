@@ -1111,6 +1111,26 @@ func propInputValue(v any) string {
 	return string(b)
 }
 
+// dateInputValue normalizes a stored date value to yyyy-mm-dd for an
+// <input type="date">. Stored values arrive as RFC3339 ("2019-03-07T00:00:00Z")
+// or space-separated ("2019-03-08 14:30"); the browser rejects anything but
+// yyyy-mm-dd and renders the field blank.
+//
+// Contract: when the value begins with a valid yyyy-mm-dd calendar date, return
+// just that prefix. For anything empty, too short, unparseable, or an invalid
+// calendar date (e.g. "2019-99-99"), return "" so we never hand the browser a
+// value it will silently discard.
+func dateInputValue(v string) string {
+	if len(v) < len(time.DateOnly) {
+		return ""
+	}
+	prefix := v[:len(time.DateOnly)]
+	if _, err := time.Parse(time.DateOnly, prefix); err != nil {
+		return ""
+	}
+	return prefix
+}
+
 // objectPropertyDefByName returns the compiled schema def (with its Type) for a
 // stored property, so the edit form can render a type-appropriate input.
 func objectPropertyDefByName(defs []objectPropertyDef, name string) (objectPropertyDef, bool) {

@@ -459,6 +459,29 @@ func TestRenderObjectDetailTypeAwareWidgets(t *testing.T) {
 	}
 }
 
+func TestDateInputValue(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"2019-03-07T00:00:00Z", "2019-03-07"}, // RFC3339
+		{"2019-03-07T00:00:00+01:00", "2019-03-07"},
+		{"2019-03-08 14:30", "2019-03-08"}, // space-separated date-time
+		{"2019-03-09", "2019-03-09"},       // already yyyy-mm-dd
+		{"", ""},                           // empty
+		{"not-a-date", ""},                 // no yyyy-mm-dd prefix
+		{"2019-03", ""},                    // too short
+		{"2019-03-7", ""},                  // malformed, single-digit day
+		{"2019-99-99", ""},                 // yyyy-mm-dd-shaped but not a real date
+		{"2019-13-01", ""},                 // invalid month
+		{"2019-02-30", ""},                 // invalid day for month
+	}
+	for _, c := range cases {
+		if got := dateInputValue(c.in); got != c.want {
+			t.Errorf("dateInputValue(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestFilterSimilarMatches(t *testing.T) {
 	in := []SimilarObject{
 		{ID: "o1", Distance: 0.05}, // 95% — keep
