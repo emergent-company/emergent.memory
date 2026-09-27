@@ -1839,10 +1839,12 @@ var sensitiveInProcessAdminTools = map[string]bool{
 // are injected at runtime and therefore invisible to the package-level
 // derivation above. domain/agents declares agents:read/agents:write (already in
 // the derived set via the static/dynamic maps); domain/mcpregistry declares
-// "admin" for its agent-only server-management tools (and for the
-// install/inspect tools). Listing them here keeps IsToolScope — and the
-// umbrella projection — honest for handler-provided tools instead of dropping a
-// scope the moment the last static/dynamic tool stops requiring it.
+// "admin" for the registry install/inspect tools. The seven agent-only
+// registry-management tools no longer declare a scope (#1143) — AgentOnly is
+// their authority — so "admin" survives here only because of install/inspect.
+// Listing it keeps IsToolScope — and the umbrella projection — honest for
+// handler-provided tools instead of dropping a scope the moment the last
+// static/dynamic tool stops requiring it.
 var handlerProvidedToolScopes = []string{"admin"}
 
 // mcpToolScopeVocabulary is the set of scope values that can gate an MCP tool.
