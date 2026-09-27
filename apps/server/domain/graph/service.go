@@ -572,13 +572,15 @@ func (s *Service) List(ctx context.Context, params ListParams) (*SearchGraphObje
 		items[i] = obj.ToResponse()
 	}
 
-	// Apply field projection if requested (filter properties to only include specified keys)
+	// Apply property projection if requested: `fields` includes only the named
+	// keys, `exclude_fields` drops the named keys (applied after include).
 	// TODO: Push field projection down to the repository/DB layer to avoid fetching
 	// full property maps when only a subset of keys is needed. This is an optimization
 	// for large property sets — the current in-memory approach is correct but wasteful.
-	if len(params.Fields) > 0 {
+	if len(params.Fields) > 0 || len(params.ExcludeFields) > 0 {
 		projection := &GraphExpandProjection{
 			IncludeObjectProperties: params.Fields,
+			ExcludeObjectProperties: params.ExcludeFields,
 		}
 		for _, item := range items {
 			item.Properties = projectProperties(item.Properties, projection)
@@ -3309,17 +3311,24 @@ func (s *Service) ExpandGraph(ctx context.Context, projectID uuid.UUID, req *Gra
 	}, nil
 }
 
-// projectProperties applies include/exclude projection to properties.
+// projectProperties applies include/exclude projection to properties. Include is
+// applied first (whitelist), then excluded keys are removed, so
+// `fields=title,content&exclude_fields=content` yields title only. With neither
+// set the input map is returned unchanged.
 func projectProperties(props map[string]any, projection *GraphExpandProjection) map[string]any {
 	if props == nil {
 		return nil
 	}
+	if projection == nil ||
+		(len(projection.IncludeObjectProperties) == 0 && len(projection.ExcludeObjectProperties) == 0) {
+		return props
+	}
 
-	result := make(map[string]any)
+	result := make(map[string]any, len(props))
 
 	if len(projection.IncludeObjectProperties) > 0 {
 		// Whitelist mode
-		includeSet := make(map[string]bool)
+		includeSet := make(map[string]bool, len(projection.IncludeObjectProperties))
 		for _, k := range projection.IncludeObjectProperties {
 			includeSet[k] = true
 		}
@@ -3328,20 +3337,15 @@ func projectProperties(props map[string]any, projection *GraphExpandProjection) 
 				result[k] = v
 			}
 		}
-	} else if len(projection.ExcludeObjectProperties) > 0 {
-		// Blacklist mode
-		excludeSet := make(map[string]bool)
-		for _, k := range projection.ExcludeObjectProperties {
-			excludeSet[k] = true
-		}
-		for k, v := range props {
-			if !excludeSet[k] {
-				result[k] = v
-			}
-		}
 	} else {
-		// No projection, return all
-		return props
+		for k, v := range props {
+			result[k] = v
+		}
+	}
+
+	// Blacklist applied after include.
+	for _, k := range projection.ExcludeObjectProperties {
+		delete(result, k)
 	}
 
 	return result

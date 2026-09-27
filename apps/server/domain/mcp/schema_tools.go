@@ -465,10 +465,10 @@ func (s *Service) executeAssignSchema(ctx context.Context, projectID string, arg
 
 	// Delegate to the schemas service (issue #1041): the REST AssignPack handler
 	// and this MCP tool share the same service boundary, so project scoping and
-	// type registration cannot drift from the domain. The projectID is the
-	// server-derived caller project; the schemaID at most selects a resource and
-	// is scoped by AssignPack to the caller's project + builtin.
-	result, err := s.schemasSvc.AssignPack(ctx, projectID, userID, &schemas.AssignPackRequest{
+	// type registration cannot drift from the domain. AssignVisiblePack is the
+	// fail-closed visibility seam: it refuses a schema the caller's project
+	// cannot see (foreign or NULL-project non-builtin) with 404 (issue #1114).
+	result, err := s.schemasSvc.AssignVisiblePack(ctx, projectID, userID, &schemas.AssignPackRequest{
 		SchemaID: schemaID,
 		Force:    force,
 	})

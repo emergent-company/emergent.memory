@@ -273,6 +273,12 @@ func (h *Handler) ListObjects(c echo.Context) error {
 		params.Fields = splitCommaSeparated([]string{fieldsParam})
 	}
 
+	// Parse exclude_fields projection (comma-separated property keys to drop),
+	// e.g. exclude_fields=content so list views do not ship document bodies.
+	if excludeParam := c.QueryParam("exclude_fields"); excludeParam != "" {
+		params.ExcludeFields = splitCommaSeparated([]string{excludeParam})
+	}
+
 	result, err := h.svc.List(c.Request().Context(), params)
 	if err != nil {
 		return err

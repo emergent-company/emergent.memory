@@ -153,8 +153,15 @@ func TestModelsMatchMigratedSchema(t *testing.T) {
 
 // TestCheckFieldAllowlistStillChecksType proves an allowlisted nullability
 // mismatch does not suppress the explicit type check: an allowlisted column
-// whose explicit type drifts must still fail as a TypeMismatch.
+// whose explicit type drifts must still fail as a TypeMismatch. It uses a
+// synthetic entry (not the live allowlist, which is empty once the tracked
+// drift in #1093 was fixed) so the mechanism stays covered regardless of which
+// specific columns are currently deferred.
 func TestCheckFieldAllowlistStillChecksType(t *testing.T) {
+	saved := nullabilityAllowlist
+	nullabilityAllowlist = map[string]string{"kb.adk_states.user_id": "synthetic"}
+	t.Cleanup(func() { nullabilityAllowlist = saved })
+
 	rep := driftReport{}
 	mt := modelTable{Schema: "kb", Name: "adk_states"}
 	f := modelField{

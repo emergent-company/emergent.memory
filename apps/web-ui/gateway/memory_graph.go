@@ -111,6 +111,10 @@ func (m *MemoryClient) ListGraphObjects(ctx context.Context, branchID, typeFilte
 	// The total is never read here (only Items is), and the exact COUNT(*) is
 	// the endpoint's latency floor on large projects — skip it (#733).
 	q.Set("include_total", "false")
+	// The objects browser list renders only key/type/labels, never properties,
+	// so drop the document body to avoid shipping multi-MB list responses
+	// (#1106).
+	q.Set("exclude_fields", "content")
 	if typeFilter != "" {
 		q.Set("type", typeFilter)
 	}

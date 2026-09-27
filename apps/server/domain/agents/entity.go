@@ -9,6 +9,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/agents/toolgroups"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/pkg/runstatus"
 )
 
 // AgentTriggerType defines how an agent is triggered
@@ -59,18 +60,20 @@ const (
 	DispatchModeQueued AgentDispatchMode = "queued"
 )
 
-// AgentRunStatus defines the status of an agent run
+// AgentRunStatus defines the status of an agent run. The canonical string values
+// live in pkg/runstatus so domain/scheduler can filter terminal runs without
+// importing this package (an import cycle: domain/agents imports domain/scheduler).
 type AgentRunStatus string
 
 const (
-	RunStatusQueued     AgentRunStatus = "submitted" // enqueued, waiting for a worker
-	RunStatusRunning    AgentRunStatus = "working"
-	RunStatusSuccess    AgentRunStatus = "completed"
-	RunStatusSkipped    AgentRunStatus = "skipped"
-	RunStatusError      AgentRunStatus = "failed"
-	RunStatusPaused     AgentRunStatus = "input-required"
-	RunStatusCancelled  AgentRunStatus = "cancelled"
-	RunStatusCancelling AgentRunStatus = "cancelling" // ACP two-step cancel: intent acknowledged, awaiting execution stop
+	RunStatusQueued     AgentRunStatus = AgentRunStatus(runstatus.Queued)
+	RunStatusRunning    AgentRunStatus = AgentRunStatus(runstatus.Running)
+	RunStatusSuccess    AgentRunStatus = AgentRunStatus(runstatus.Success)
+	RunStatusSkipped    AgentRunStatus = AgentRunStatus(runstatus.Skipped)
+	RunStatusError      AgentRunStatus = AgentRunStatus(runstatus.Error)
+	RunStatusPaused     AgentRunStatus = AgentRunStatus(runstatus.Paused)
+	RunStatusCancelled  AgentRunStatus = AgentRunStatus(runstatus.Cancelled)
+	RunStatusCancelling AgentRunStatus = AgentRunStatus(runstatus.Cancelling)
 
 	// MaxTotalStepsPerRun is the global hard cap on cumulative steps across all resumes
 	MaxTotalStepsPerRun = 500
