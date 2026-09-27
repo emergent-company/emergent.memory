@@ -21,8 +21,8 @@ templ MetaRow(label, value string, opts ...MetaRowOpts) {
 		o = opts[0]
 	} }}
 	<div>
-		<dt class="text-base-content/45 text-[11px] font-medium tracking-wide uppercase">{ label }</dt>
-		<dd class="text-base-content/85 mt-1 text-sm break-words">
+		<dt class="text-muted-faint text-[11px] font-medium tracking-wide uppercase">{ label }</dt>
+		<dd class="text-base-content mt-1 text-sm break-words">
 			@metaRowValue(value, o)
 		</dd>
 	</div>
@@ -34,8 +34,8 @@ templ MetaRow(label, value string, opts ...MetaRowOpts) {
 // NoEmptyDash has no effect here.
 templ MetaRowCustom(label string, opts ...MetaRowOpts) {
 	<div>
-		<dt class="text-base-content/45 text-[11px] font-medium tracking-wide uppercase">{ label }</dt>
-		<dd class="text-base-content/85 mt-1 text-sm break-words">
+		<dt class="text-muted-faint text-[11px] font-medium tracking-wide uppercase">{ label }</dt>
+		<dd class="text-base-content mt-1 text-sm break-words">
 			{ children... }
 		</dd>
 	</div>
@@ -53,7 +53,7 @@ templ metaRowValue(value string, o MetaRowOpts) {
 
 // EmptyDash renders the muted em-dash fallback for an absent value.
 templ EmptyDash() {
-	<span class="text-base-content/30 text-sm">—</span>
+	<span class="text-muted-subtle text-sm">—</span>
 }
 
 // MetaGridOpts tunes a MetaGrid definition-list grid.

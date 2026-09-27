@@ -195,7 +195,7 @@ func TestAgentToolGroupDisclosureSummaryClass(t *testing.T) {
 			BorderClass:     "border-base-content/10 bg-base-100/60",
 			BodyBorderClass: "border-base-content/10",
 			Icon:            "lucide--server",
-			IconClass:       "text-base-content/40",
+			IconClass:       "text-muted-faint",
 			Title:           "builtin",
 			Count:           1,
 			Open:            true,

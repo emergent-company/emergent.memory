@@ -140,7 +140,7 @@ templ objectsSearchForm(data objectsPageData) {
 	<form class="mb-4" method="get" action="/objects">
 		<div class="flex flex-col gap-2 sm:flex-row sm:items-center">
 			<label class="input input-bordered flex w-full items-center gap-2 sm:max-w-md">
-				@ui.IconSpan("lucide--search", "size-4 shrink-0 opacity-50")
+				@ui.IconSpan("lucide--search", "size-4 shrink-0 text-muted")
 				<input type="search" name="q" value={ data.Query } placeholder="Search objects…" class="grow" autocomplete="off" aria-label="Search objects"/>
 			</label>
 			<div class="flex flex-wrap items-center gap-2">
@@ -197,7 +197,7 @@ templ objectsSearchForm(data objectsPageData) {
 templ objectsFilters(data objectsPageData) {
 	if len(data.Branches) > 0 || len(data.Types) > 0 {
 		<form class="mb-6 flex flex-wrap items-center gap-2" method="get" action="/objects">
-			<span class="text-base-content/45 flex items-center gap-1.5">
+			<span class="text-muted-faint flex items-center gap-1.5">
 				@ui.IconSpan("lucide--sliders-horizontal", "size-3.5 shrink-0")
 				<span class="text-xs font-medium">Filter</span>
 			</span>
@@ -239,7 +239,7 @@ templ objectsKnowledge(data objectsPageData) {
 				@ui.IconTile("lucide--sparkles", ui.IconTileProps{Tone: "accent"})
 				<div class="min-w-0">
 					<h2 class="text-base font-semibold">Ask the graph</h2>
-					<p class="text-base-content/50 text-sm">Ask a question in plain language. The answer is grounded in the objects memory has stored.</p>
+					<p class="text-muted text-sm">Ask a question in plain language. The answer is grounded in the objects memory has stored.</p>
 				</div>
 			</div>
 			<form class="mt-4 flex flex-col gap-3" hx-post="/objects/knowledge" hx-target="#objects-knowledge-answer" hx-swap="innerHTML">
@@ -257,7 +257,7 @@ templ objectsKnowledge(data objectsPageData) {
 						Ask
 					}
 					<span class="htmx-indicator loading loading-spinner loading-xs" aria-hidden="true"></span>
-					<span class="text-base-content/35 text-xs">Answers can take a few seconds.</span>
+					<span class="text-muted-faint text-xs">Answers can take a few seconds.</span>
 				</div>
 			</form>
 		}
@@ -273,11 +273,11 @@ templ objectsKnowledgeAnswer(answer, sessionID string) {
 		<div class="card-body p-4">
 			<div class="mb-2 flex items-center gap-2">
 				@ui.IconSpan("lucide--sparkles", "size-3.5 shrink-0 text-accent")
-				<span class="text-base-content/45 text-xs font-medium tracking-wide uppercase">Answer</span>
+				<span class="text-muted-faint text-xs font-medium tracking-wide uppercase">Answer</span>
 			</div>
 			<div class="memory-md text-sm leading-relaxed">@templ.Raw(renderMarkdown(answer))</div>
 			if sessionID != "" {
-				<p class="text-base-content/35 mt-3 border-t border-base-200 pt-2 font-mono text-[11px]">Session { sessionID }</p>
+				<p class="text-muted-faint mt-3 border-t border-base-200 pt-2 font-mono text-[11px]">Session { sessionID }</p>
 			}
 		</div>
 	</div>
@@ -311,8 +311,8 @@ templ objectsSearchResults(data objectsPageData) {
 		@objectsSearchEmpty()
 	} else {
 		<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-			<p class="text-base-content/50 min-w-0 truncate text-sm">{ countLabel(len(data.Results), "result", "results") } matching "{ data.Query }"</p>
-			<span class="text-base-content/35 shrink-0 text-xs">Ranked by relevance</span>
+			<p class="text-muted min-w-0 truncate text-sm">{ countLabel(len(data.Results), "result", "results") } matching "{ data.Query }"</p>
+			<span class="text-muted-faint shrink-0 text-xs">Ranked by relevance</span>
 		</div>
 		<div class="card bg-base-100 card-border overflow-hidden">
 			<div class="card-body p-0">
@@ -475,7 +475,7 @@ templ objectSearchRow(r ObjectSearchResult, tui typeUI) {
 // and unified rows: a small sparkle + tabular number, muted so each row's
 // type, labels and status stay the primary signal.
 templ objectScoreBadge(score float32) {
-	<span class="text-base-content/40 flex shrink-0 items-center gap-1" title="Relevance score">
+	<span class="text-muted-faint flex shrink-0 items-center gap-1" title="Relevance score">
 		@ui.IconSpan("lucide--sparkles", "size-3 shrink-0")
 		<span class="text-xs font-medium tabular-nums">{ searchScoreLabel(score) }</span>
 	</span>
@@ -602,7 +602,7 @@ templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef,
 					</form>
 				}
 			} else {
-				<p class="text-base-content/50 text-sm">Pick a type to see its fields.</p>
+				<p class="text-muted text-sm">Pick a type to see its fields.</p>
 			}
 		}
 	}
@@ -675,7 +675,7 @@ templ propertyInput(def objectPropertyDef, vals []string) {
 templ longTextarea(name string, value string) {
 	<div class="w-full" data-char-counter>
 		<textarea name={ name } rows="1" data-autogrow class="textarea w-full min-h-20 max-h-96 resize-y">{ value }</textarea>
-		<div class="text-base-content/40 mt-1 text-right text-xs" data-testid="char-count" data-char-count-value>{ charCountLabel(value) }</div>
+		<div class="text-muted-faint mt-1 text-right text-xs" data-testid="char-count" data-char-count-value>{ charCountLabel(value) }</div>
 	</div>
 }
 
@@ -728,7 +728,7 @@ templ objectDetailHeader(obj *GraphObject, typeUIByType map[string]typeUI) {
 						})
 					}
 					if obj.EmbeddingUpdatedAt != "" {
-						<span class="text-base-content/50 text-xs">Embedded { relTime(obj.EmbeddingUpdatedAt) }</span>
+						<span class="text-muted text-xs">Embedded { relTime(obj.EmbeddingUpdatedAt) }</span>
 					}
 				</div>
 				<h1 class="text-2xl font-bold tracking-tight">{ graphObjectLabel(*obj) }</h1>
@@ -832,7 +832,7 @@ templ objectRelationships(obj *GraphObject, relTypes []CompiledType, edges []Gra
 templ objectConnectDialog(obj *GraphObject, relTypes []CompiledType) {
 	@ui.Dialog(ui.DialogProps{ID: "object-connect-modal", BoxClass: "max-w-sm"}) {
 		<h3 class="text-lg font-semibold">Connect object</h3>
-		<p class="text-base-content/50 mb-4 text-sm">Link this object to another one in the knowledge graph.</p>
+		<p class="text-muted mb-4 text-sm">Link this object to another one in the knowledge graph.</p>
 		<form class="flex flex-col gap-4" method="post" action={ templ.URL("/objects/" + url.PathEscape(obj.ID) + "/relationships") }>
 			@fm.FormControl("connect-type", "Relationship type", fm.LabelAbove, "", "", nil) {
 				<select id="connect-type" name="type" required class="select w-full">
@@ -911,7 +911,7 @@ templ objectRelationshipRow(obj *GraphObject, r GraphRelationship, related []Gra
 			Icon:    "lucide--link",
 		})
 		<span class="truncate text-sm">{ objectEndpointLabel(obj, related, r.SrcID) }</span>
-		@ui.IconSpan("lucide--arrow-right", "size-4 shrink-0 text-base-content/30")
+		@ui.IconSpan("lucide--arrow-right", "size-4 shrink-0 text-muted-subtle")
 		<span class="truncate text-sm">{ objectEndpointLabel(obj, related, r.DstID) }</span>
 	</div>
 }
@@ -950,7 +950,7 @@ templ objectSimilarObjectsDeferred(obj *GraphObject) {
 		}) {
 			<div class="flex items-center gap-2 px-4 py-3">
 				<span class="htmx-indicator loading loading-spinner loading-xs" aria-hidden="true"></span>
-				<span class="text-base-content/50 text-sm">Finding similar objects…</span>
+				<span class="text-muted text-sm">Finding similar objects…</span>
 			</div>
 		}
 	</div>
@@ -963,7 +963,7 @@ templ similarObjectRow(obj *GraphObject, so SimilarObject) {
 		@ui.IconTile("lucide--box", ui.IconTileProps{Tone: "neutral"})
 		<div class="min-w-0 grow">
 			<p class="truncate text-sm font-medium">{ similarObjectLabel(so) }</p>
-			<p class="text-base-content/50 text-xs">{ so.Type }</p>
+			<p class="text-muted text-xs">{ so.Type }</p>
 		</div>
 		@ui.Badge(ui.BadgeProps{
 			Label:   similarityLabel(so.Distance),

@@ -50,7 +50,7 @@ templ shareSessionTranscriptMessage(m ShareMessage) {
 			<div class="chat-image bg-primary/10 text-primary border-primary/20 flex items-center justify-center rounded-full border p-2">
 				@ui.IconSpan("lucide--user", "size-5")
 			</div>
-			<div class="chat-header text-xs text-base-content/50">End user</div>
+			<div class="chat-header text-xs text-muted">End user</div>
 			<div class="chat-bubble chat-bubble-primary max-w-[85%]">
 				<div class="alfred-md break-words">@templ.Raw(renderMarkdown(m.Content))</div>
 			</div>
@@ -60,7 +60,7 @@ templ shareSessionTranscriptMessage(m ShareMessage) {
 			<div class="chat-image bg-primary/5 text-primary border-primary/10 flex items-center justify-center rounded-full border p-2">
 				@ui.IconSpan("lucide--bot", "size-5")
 			</div>
-			<div class="chat-header text-xs text-base-content/50">Assistant</div>
+			<div class="chat-header text-xs text-muted">Assistant</div>
 			<div class="chat-bubble chat-bubble-neutral max-w-[85%]">
 				<div class="alfred-md break-words">@templ.Raw(renderMarkdown(m.Content))</div>
 			</div>

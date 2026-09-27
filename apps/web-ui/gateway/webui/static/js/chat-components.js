@@ -55,7 +55,7 @@
     if (p && p.id) parts.push("#" + p.id);
     if (!parts.length) return "";
     return (
-      '<p class="mb-3 font-mono text-[11px] break-all text-base-content/40">' +
+      '<p class="mb-3 font-mono text-[11px] break-all text-muted-faint">' +
       escapeHTML(parts.join(" · ")) +
       "</p>"
     );
@@ -72,7 +72,7 @@
     body += detailSection("Input", p.input, p.inputHtml);
     body += detailSection("Output", p.output, p.outputHtml);
     if (!body) {
-      body = '<p class="text-base-content/40 text-sm">No details yet — the tool is still running.</p>';
+      body = '<p class="text-muted-faint text-sm">No details yet — the tool is still running.</p>';
     }
     detailEl.innerHTML = body;
   }
@@ -88,7 +88,7 @@
     })();
     return (
       '<section class="mb-5">' +
-      '<p class="mb-1.5 text-xs font-semibold tracking-wider uppercase text-base-content/50">' + label + "</p>" +
+      '<p class="mb-1.5 text-xs font-semibold tracking-wider uppercase text-muted">' + label + "</p>" +
       '<pre class="memory-scroll max-h-72 overflow-auto rounded-box border border-base-content/10 bg-base-200/50 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words">' +
       inner +
       "</pre>" +
@@ -111,8 +111,8 @@
   function summarySection(text) {
     return (
       '<section class="mb-5">' +
-      '<p class="mb-1.5 text-xs font-semibold tracking-wider uppercase text-base-content/50">Result</p>' +
-      '<p class="text-sm text-base-content/90 leading-relaxed whitespace-pre-wrap break-words">' +
+      '<p class="mb-1.5 text-xs font-semibold tracking-wider uppercase text-muted">Result</p>' +
+      '<p class="text-sm text-base-content leading-relaxed whitespace-pre-wrap break-words">' +
       escapeHTML(text) +
       "</p>" +
       "</section>"
@@ -124,7 +124,7 @@
     if (!body) return "";
     return (
       '<details open class="collapse collapse-arrow border border-base-content/10 bg-base-200/30 rounded-box">' +
-      '<summary class="collapse-title text-xs font-semibold tracking-wider uppercase text-base-content/50">Raw input / output</summary>' +
+      '<summary class="collapse-title text-xs font-semibold tracking-wider uppercase text-muted">Raw input / output</summary>' +
       '<div class="collapse-content">' + body + "</div>" +
       "</details>"
     );
@@ -152,12 +152,12 @@
     root.innerHTML =
       '<button type="button" class="memory-badge-toggle flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left" aria-expanded="false">' +
       '<span class="memory-badge-icon flex size-[22px] shrink-0 items-center justify-center">' +
-      '<span class="iconify ' + cfg.icon + ' size-4 text-base-content/40" aria-hidden="true"></span></span>' +
-      '<span class="memory-badge-label min-w-0 truncate text-xs text-base-content/50">' + escapeHTML(cfg.label) + "</span>" +
+      '<span class="iconify ' + cfg.icon + ' size-4 text-muted-faint" aria-hidden="true"></span></span>' +
+      '<span class="memory-badge-label min-w-0 truncate text-xs text-muted">' + escapeHTML(cfg.label) + "</span>" +
       (cfg.afterLabel || "") +
-      '<span class="memory-badge-secondary hidden min-w-0 max-w-[40%] shrink truncate text-xs text-base-content/40"></span>' +
+      '<span class="memory-badge-secondary hidden min-w-0 max-w-[40%] shrink truncate text-xs text-muted-faint"></span>' +
       '<span class="memory-badge-chevron ml-auto flex shrink-0 transition-transform duration-200">' +
-      '<span class="iconify lucide--chevron-down size-3.5 text-base-content/40" aria-hidden="true"></span></span>' +
+      '<span class="iconify lucide--chevron-down size-3.5 text-muted-faint" aria-hidden="true"></span></span>' +
       "</button>" +
       '<div class="memory-badge-detail hidden"></div>';
 
@@ -289,16 +289,16 @@
     if (!badge) return null;
     // reasoning text lives here; history renders markdown, live appends text
     badge.detail.innerHTML =
-      '<p class="memory-thinking-body font-mono text-xs leading-relaxed text-base-content/70 whitespace-pre-wrap break-words"></p>';
+      '<p class="memory-thinking-body font-mono text-xs leading-relaxed text-muted-strong whitespace-pre-wrap break-words"></p>';
 
     // Hover affordance: swap the brain icon for a dropdown chevron (Paseo-style).
     var iconEl = badge.root.querySelector(".memory-badge-icon .iconify");
     if (badge.toggle) {
       badge.toggle.addEventListener("mouseenter", function () {
-        if (iconEl) iconEl.setAttribute("class", "iconify lucide--chevron-down size-4 text-base-content/40");
+        if (iconEl) iconEl.setAttribute("class", "iconify lucide--chevron-down size-4 text-muted-faint");
       });
       badge.toggle.addEventListener("mouseleave", function () {
-        if (iconEl) iconEl.setAttribute("class", "iconify lucide--brain size-4 text-base-content/40");
+        if (iconEl) iconEl.setAttribute("class", "iconify lucide--brain size-4 text-muted-faint");
       });
     }
 
@@ -334,7 +334,7 @@
       container: wrap,
       renderDetails: function (detailEl) {
         detailEl.innerHTML =
-          '<p class="mb-1.5 text-xs font-semibold tracking-wider uppercase text-base-content/50">System instruction</p>' +
+          '<p class="mb-1.5 text-xs font-semibold tracking-wider uppercase text-muted">System instruction</p>' +
           '<pre class="memory-scroll max-h-72 overflow-auto rounded-box border border-base-content/10 bg-base-200/50 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words">' +
           escapeHTML(text) +
           "</pre>";
@@ -346,10 +346,10 @@
     var iconEl = badge.root.querySelector(".memory-badge-icon .iconify");
     if (badge.toggle) {
       badge.toggle.addEventListener("mouseenter", function () {
-        if (iconEl) iconEl.setAttribute("class", "iconify lucide--chevron-down size-4 text-base-content/40");
+        if (iconEl) iconEl.setAttribute("class", "iconify lucide--chevron-down size-4 text-muted-faint");
       });
       badge.toggle.addEventListener("mouseleave", function () {
-        if (iconEl) iconEl.setAttribute("class", "iconify lucide--scroll-text size-4 text-base-content/40");
+        if (iconEl) iconEl.setAttribute("class", "iconify lucide--scroll-text size-4 text-muted-faint");
       });
     }
     return badge.root;
@@ -646,7 +646,7 @@
       h.appendChild(b);
     }
     var t = document.createElement("span");
-    t.className = "text-xs uppercase tracking-wider text-base-content/50";
+    t.className = "text-xs uppercase tracking-wider text-muted";
     t.textContent = title;
     h.appendChild(t);
     return h;
@@ -654,14 +654,14 @@
 
   function a2uiLabel(text) {
     var p = document.createElement("p");
-    p.className = "text-sm text-base-content/90 leading-relaxed whitespace-pre-wrap break-words";
+    p.className = "text-sm text-base-content leading-relaxed whitespace-pre-wrap break-words";
     p.textContent = text == null ? "" : String(text);
     return p;
   }
 
   function a2uiSectionLabel(text) {
     var p = document.createElement("p");
-    p.className = "mb-0 mt-1 text-xs font-semibold tracking-wider uppercase text-base-content/50";
+    p.className = "mb-0 mt-1 text-xs font-semibold tracking-wider uppercase text-muted";
     p.textContent = text;
     return p;
   }
@@ -683,10 +683,10 @@
       var row = document.createElement("div");
       row.className = "flex flex-col";
       var key = document.createElement("span");
-      key.className = "text-[10px] font-semibold tracking-wider uppercase text-base-content/50";
+      key.className = "text-[10px] font-semibold tracking-wider uppercase text-muted";
       key.textContent = pair[0];
       var val = document.createElement("span");
-      val.className = "text-sm text-base-content/90 leading-relaxed break-words whitespace-pre-wrap";
+      val.className = "text-sm text-base-content leading-relaxed break-words whitespace-pre-wrap";
       val.textContent = pair[1];
       row.appendChild(key);
       row.appendChild(val);
@@ -858,7 +858,7 @@
         cb.checked = done;
         cb.disabled = true; // read-only for now
         var span = document.createElement("span");
-        span.className = "text-sm text-base-content/90 break-words";
+        span.className = "text-sm text-base-content break-words";
         span.textContent = a2uiText(text);
         li.appendChild(cb);
         li.appendChild(span);

@@ -161,7 +161,7 @@ templ apiTokenRowContent(t APIToken, actionBase string) {
 			</div>
 		</td>
 		<td>
-			<span class="font-mono text-xs whitespace-nowrap text-base-content/50">{ t.TokenPrefix }…</span>
+			<span class="font-mono text-xs whitespace-nowrap text-muted">{ t.TokenPrefix }…</span>
 		</td>
 		<td>
 			<div class="flex flex-wrap gap-1.5">
@@ -181,14 +181,14 @@ templ apiTokenRowContent(t APIToken, actionBase string) {
 			</div>
 		</td>
 		<td>
-			<span class="text-xs whitespace-nowrap text-base-content/50">{ relTime(t.CreatedAt) }</span>
+			<span class="text-xs whitespace-nowrap text-muted">{ relTime(t.CreatedAt) }</span>
 		</td>
 		<td>
-			<span class="text-xs whitespace-nowrap text-base-content/50">{ apiTokenLastUsedLabel(t.LastUsedAt) }</span>
+			<span class="text-xs whitespace-nowrap text-muted">{ apiTokenLastUsedLabel(t.LastUsedAt) }</span>
 		</td>
 		<td class="text-right">
 			if t.IsRevoked {
-				<span class="text-base-content/30 text-sm">—</span>
+				<span class="text-muted-subtle text-sm">—</span>
 			} else {
 				<div class="flex items-center justify-end gap-1">
 					<form method="post" action={ templ.URL(tokenBase + "/regenerate") } hx-confirm="Regenerate this token? Its current value stops working immediately and is replaced.">
@@ -366,9 +366,9 @@ templ apiTokenEditBody(actionBase string, t APIToken) {
 				@ui.IconTile("lucide--key-round", ui.IconTileProps{Tone: "primary", Size: "size-9"})
 				<div class="min-w-0 leading-tight">
 					<p class="truncate text-sm font-semibold">{ t.Name }</p>
-					<p class="text-base-content/50 mt-0.5 text-xs">
+					<p class="text-muted mt-0.5 text-xs">
 						<span class="font-mono">{ t.TokenPrefix }…</span>
-						<span class="mx-1.5 text-base-content/25">·</span>
+						<span class="mx-1.5 text-muted-subtle">·</span>
 						created { relTime(t.CreatedAt) }
 					</p>
 				</div>
@@ -405,12 +405,12 @@ templ apiTokenEditBody(actionBase string, t APIToken) {
 templ apiTokenScopePickerContent(selected []string) {
 	<div class="flex flex-col gap-4">
 		@ui.Eyebrow("Scopes", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
-		<p class="text-base-content/50 -mt-2 text-xs">Pick at least one scope. Write scopes include their read counterpart.</p>
+		<p class="text-muted -mt-2 text-xs">Pick at least one scope. Write scopes include their read counterpart.</p>
 		for _, g := range scopePickerGroups {
 			<div class="flex flex-col gap-2">
 				<div>
 					<p class="text-xs font-semibold tracking-wide">{ g.Label }</p>
-					<p class="text-base-content/45 text-[11px]">{ g.Hint }</p>
+					<p class="text-muted-faint text-[11px]">{ g.Hint }</p>
 				</div>
 				<div class="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
 					for _, opt := range g.Options {
@@ -424,7 +424,7 @@ templ apiTokenScopePickerContent(selected []string) {
 							<input type="checkbox" name="scopes" value={ opt.Value } class="checkbox checkbox-sm mt-0.5" checked?={ checked }/>
 							<span class="min-w-0">
 								<span class="block text-xs font-mono">{ opt.Value }</span>
-								<span class="text-base-content/50 block text-[11px] leading-snug">{ opt.Label }</span>
+								<span class="text-muted block text-[11px] leading-snug">{ opt.Label }</span>
 							</span>
 						</label>
 					}
@@ -454,7 +454,7 @@ templ apiTokenRevealContent(r apiTokenReveal) {
 
 // apiTokenRevealFooter is the reveal panel's dismissive note and Done action.
 templ apiTokenRevealFooter(dismissHref string) {
-	<p class="text-base-content/45 mt-2 text-xs">This token will not appear on any list or detail view again.</p>
+	<p class="text-muted-faint mt-2 text-xs">This token will not appear on any list or detail view again.</p>
 	<div class="mt-4 flex flex-wrap items-center gap-2">
 		@ui.Button(ui.ButtonProps{
 			Type:    ui.ButtonTypeLink,

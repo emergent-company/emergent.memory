@@ -157,7 +157,7 @@ templ skillRow(rowID string, s Skill, usedBy int) {
 				@ui.IconTile("lucide--sparkles", ui.IconTileProps{Tone: "primary"})
 				<div class="min-w-0">
 					<p class="truncate text-sm font-medium">{ s.Name }</p>
-					<p class="text-base-content/50 line-clamp-1 text-xs">{ s.Description }</p>
+					<p class="text-muted line-clamp-1 text-xs">{ s.Description }</p>
 				</div>
 			</a>
 		}
@@ -170,11 +170,11 @@ templ skillRow(rowID string, s Skill, usedBy int) {
 			})
 		}
 		@table.TableCell("", nil) {
-			<span class="text-base-content/50 text-xs whitespace-nowrap">{ relTime(s.UpdatedAt) }</span>
+			<span class="text-muted text-xs whitespace-nowrap">{ relTime(s.UpdatedAt) }</span>
 		}
 		@table.TableCell("text-right", nil) {
 			<a class="flex justify-end" href={ templ.URL("/skills/" + url.PathEscape(s.ID)) } aria-label={ "Open " + s.Name }>
-				@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-base-content/25")
+				@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
 			</a>
 		}
 	}
@@ -241,7 +241,7 @@ templ skillDetailMeta(s *Skill) {
 				Icon:    "lucide--check",
 			})
 		}
-		@monoMeta(s.ID, "text-base-content/40")
+		@monoMeta(s.ID, "text-muted-faint")
 	</div>
 }
 
@@ -268,8 +268,8 @@ templ skillEditForm(s *Skill) {
 	}) {
 		<form class="flex flex-col gap-4" method="post" action={ templ.URL("/skills/" + url.PathEscape(s.ID) + "/update") }>
 			@ui.SoftBox(ui.SoftBoxProps{Class: "flex flex-wrap items-center gap-2"}) {
-				@ui.IconSpan("lucide--info", "size-4 shrink-0 text-base-content/40")
-				<p class="text-base-content/55 text-xs">The name <span class="font-mono">{ s.Name }</span> can't be changed — skills are referenced by it across agents.</p>
+				@ui.IconSpan("lucide--info", "size-4 shrink-0 text-muted-faint")
+				<p class="text-muted text-xs">The name <span class="font-mono">{ s.Name }</span> can't be changed — skills are referenced by it across agents.</p>
 			}
 			@form.FormControl("edit-description", "Description", form.LabelAbove, "", "", nil) {
 				<textarea id="edit-description" name="description" rows="2" required class="textarea w-full resize-none">{ s.Description }</textarea>
@@ -304,7 +304,7 @@ templ skillDeleteSection(s *Skill) {
 				</div>
 				<div>
 					<p class="text-sm font-medium">Delete this skill</p>
-					<p class="text-base-content/50 text-xs">Removes it for every agent that references it. Irreversible.</p>
+					<p class="text-muted text-xs">Removes it for every agent that references it. Irreversible.</p>
 				</div>
 			</div>
 			@ui.Button(ui.ButtonProps{
@@ -325,7 +325,7 @@ templ skillDeleteSection(s *Skill) {
 // skillDeleteDescription is the delete-confirm detail paragraph for skills
 // (the name span is filled server-side).
 templ skillDeleteDescription(s *Skill) {
-	<p class="text-base-content/55 mt-1 text-sm">
+	<p class="text-muted mt-1 text-sm">
 		This permanently removes <span class="font-medium text-base-content">{ s.Name }</span> and its content. Agents referencing it lose the capability. Irreversible.
 	</p>
 }

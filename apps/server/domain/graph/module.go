@@ -32,6 +32,7 @@ var Module = fx.Module("graph",
 	fx.Provide(provideEmbeddingService),
 	fx.Provide(provideBranchStore),
 	fx.Invoke(RegisterRoutes),
+	fx.Invoke(RegisterIndexWarmup),
 )
 
 // provideBranchStore bridges *branches.Store to the graph.branchStoreIface.

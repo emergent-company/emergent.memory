@@ -80,7 +80,7 @@ templ appliedRow(b AppliedBlueprint, upgrade AvailableSchemaItem) {
 		@ui.IconTile("lucide--library", ui.IconTileProps{Tone: "primary"})
 		<div class="min-w-0 grow">
 			<a class="truncate text-sm font-medium hover:text-primary" href={ templ.URL("/blueprints/" + url.PathEscape(b.BlueprintID)) }>{ b.Name }</a>
-			<p class="text-base-content/50 text-xs">v{ b.Version } · { relTime(b.AppliedAt) }</p>
+			<p class="text-muted text-xs">v{ b.Version } · { relTime(b.AppliedAt) }</p>
 		</div>
 		if upgrade.Version != "" {
 			@ui.Badge(ui.BadgeProps{Label: "Update available", Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS, Icon: "lucide--arrow-up-circle"})
@@ -126,7 +126,7 @@ templ draftsSection(drafts []BlueprintRecord) {
 					@ui.IconTile("lucide--file-pen", ui.IconTileProps{Tone: "neutral"})
 					<div class="min-w-0 grow">
 						<a class="truncate text-sm font-medium hover:text-primary" href={ templ.URL("/blueprints/" + url.PathEscape(b.ID)) }>{ b.Name }</a>
-						<p class="text-base-content/50 text-xs">v{ b.Version } · draft</p>
+						<p class="text-muted text-xs">v{ b.Version } · draft</p>
 					</div>
 					<form method="post" action={ templ.URL("/blueprints/" + url.PathEscape(b.ID) + "/install") }>
 						@ui.Button(ui.ButtonProps{
@@ -173,10 +173,10 @@ templ availableSection(available []AvailableSchemaItem) {
 // the legacy schemaId install flow.
 templ availableRow(b AvailableSchemaItem) {
 	<div class="flex flex-wrap items-center gap-3 px-4 py-3">
-		@ui.IconSpan("lucide--package", "size-4 shrink-0 text-base-content/40")
+		@ui.IconSpan("lucide--package", "size-4 shrink-0 text-muted-faint")
 		<div class="min-w-0 grow">
 			<a class="truncate text-sm font-medium hover:text-primary" href={ templ.URL("/blueprints/" + url.PathEscape(b.ID)) }>{ b.Name }</a>
-			<p class="text-base-content/50 text-xs">v{ b.Version } · { b.Source }</p>
+			<p class="text-muted text-xs">v{ b.Version } · { b.Source }</p>
 		</div>
 		<form method="post" action="/blueprints/install">
 			if b.Source == "bundled" {
@@ -270,7 +270,7 @@ templ blueprintVersions(d *BlueprintDetail) {
 						@ui.Badge(ui.BadgeProps{Label: "Installed", Variant: ui.BadgeInfo, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--check"})
 					}
 					if v.CreatedAt != "" {
-						<span class="text-base-content/50 text-xs">{ relTime(v.CreatedAt) }</span>
+						<span class="text-muted text-xs">{ relTime(v.CreatedAt) }</span>
 					}
 					if v.Current {
 						<div class="ml-auto">
@@ -310,7 +310,7 @@ templ blueprintDiffCard(d *BlueprintDetail) {
 			<h2 class="text-lg font-semibold tracking-tight">
 				Changes
 				if d.CompareVersion != "" {
-					<span class="text-base-content/60 font-normal">vs</span> <span class="font-mono text-base">v{ d.CompareVersion }</span>
+					<span class="text-muted-strong font-normal">vs</span> <span class="font-mono text-base">v{ d.CompareVersion }</span>
 				}
 			</h2>
 			<form method="get" action={ templ.URL("/blueprints/" + url.PathEscape(d.ID)) } class="flex items-center gap-2">
@@ -327,7 +327,7 @@ templ blueprintDiffCard(d *BlueprintDetail) {
 		</div>
 		<div class="p-4">
 			if d.Diff == nil {
-				<p class="text-base-content/50 text-sm">Select a version to compare.</p>
+				<p class="text-muted text-sm">Select a version to compare.</p>
 			} else {
 				@blueprintDiffBody(d.Diff)
 			}
@@ -349,7 +349,7 @@ func versionOptionLabel(v BlueprintVersionView) string {
 templ blueprintDiffBody(diff *BlueprintDiff) {
 	if len(diff.ObjectTypes) == 0 && len(diff.RelationshipTypes) == 0 && len(diff.Agents) == 0 {
 		<div class="rounded-box border border-base-content/10 bg-base-200/40 px-4 py-8 text-center">
-			<p class="text-base-content/55 text-sm">
+			<p class="text-muted text-sm">
 				No changes between <span class="font-mono">v{ diff.BaseVersion }</span> and <span class="font-mono">v{ diff.TargetVersion }</span>.
 			</p>
 		</div>
@@ -384,7 +384,7 @@ templ blueprintDiffBody(diff *BlueprintDiff) {
 }
 
 templ diffSection(title string) {
-	<h3 class="text-base-content/45 text-[11px] font-semibold tracking-[0.16em] uppercase">{ title }</h3>
+	<h3 class="text-muted-faint text-[11px] font-semibold tracking-[0.16em] uppercase">{ title }</h3>
 }
 
 // diffBlockClass is the shared entity/property block tint, keyed to the change
@@ -426,14 +426,14 @@ templ diffValue(f FieldDiff) {
 		case DiffChangeChanged:
 			<span class="inline-flex flex-wrap items-baseline gap-1.5">
 				<span class="text-error line-through decoration-error/50" title="Removed">{ f.Before }</span>
-				<span class="text-base-content/35" aria-hidden="true">→</span>
+				<span class="text-muted-faint" aria-hidden="true">→</span>
 				<span class="text-success font-medium" title="Added">{ f.After }</span>
 			</span>
 		default:
 			if f.After != "" {
-				<span class="text-base-content/70">{ f.After }</span>
+				<span class="text-muted-strong">{ f.After }</span>
 			} else if f.Before != "" {
-				<span class="text-base-content/70">{ f.Before }</span>
+				<span class="text-muted-strong">{ f.Before }</span>
 			}
 	}
 }
@@ -443,7 +443,7 @@ templ diffValue(f FieldDiff) {
 templ diffField(label string, f FieldDiff) {
 	if f.Before != "" || f.After != "" {
 		<div class="mt-1 flex flex-wrap items-baseline gap-1.5 text-xs">
-			<span class="text-base-content/40 text-[10px] font-semibold tracking-[0.14em] uppercase">{ label }</span>
+			<span class="text-muted-faint text-[10px] font-semibold tracking-[0.14em] uppercase">{ label }</span>
 			@diffValue(f)
 		</div>
 	}
@@ -504,7 +504,7 @@ templ propertyDiffRow(p PropertyDiff) {
 				@diffChangeChip(p.Change)
 			}
 			if p.Type.Change != DiffChangeNone {
-				<span class="text-base-content/40 text-[10px] font-semibold tracking-[0.14em] uppercase">Type</span>
+				<span class="text-muted-faint text-[10px] font-semibold tracking-[0.14em] uppercase">Type</span>
 				@diffValue(p.Type)
 			} else if p.Type.After != "" {
 				@ui.Badge(ui.BadgeProps{Label: p.Type.After, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS})
@@ -515,7 +515,7 @@ templ propertyDiffRow(p PropertyDiff) {
 		if p.Description.Change != DiffChangeNone {
 			<div class="mt-1 text-xs">@diffValue(p.Description)</div>
 		} else if p.Description.After != "" {
-			<p class="text-base-content/50 mt-1 text-xs">{ p.Description.After }</p>
+			<p class="text-muted mt-1 text-xs">{ p.Description.After }</p>
 		}
 	</div>
 }
@@ -546,7 +546,7 @@ templ relationshipDiffBlock(rt RelationshipTypeDiff) {
 			if rt.SourceType.Change != DiffChangeNone || rt.TargetType.Change != DiffChangeNone {
 				<div class="flex items-center gap-1.5 text-xs">
 					@diffValue(rt.SourceType)
-					<span class="text-base-content/35" aria-hidden="true">→</span>
+					<span class="text-muted-faint" aria-hidden="true">→</span>
 					@diffValue(rt.TargetType)
 				</div>
 			} else if rt.SourceType.After != "" || rt.TargetType.After != "" {
@@ -628,7 +628,7 @@ templ deriveVersionDialog(d *BlueprintDetail) {
 			</div>
 			<div>
 				<h3 id="derive-version-title" class="text-lg font-semibold">Save as new version</h3>
-				<p class="text-base-content/55 mt-0.5 text-sm">Create a new draft version of { d.Name } from the object types currently in this project.</p>
+				<p class="text-muted mt-0.5 text-sm">Create a new draft version of { d.Name } from the object types currently in this project.</p>
 			</div>
 		</div>
 		<form method="post" action={ templ.URL("/schema/blueprints/" + url.PathEscape(d.ID) + "/versions/derive") } hx-boost="false" class="mt-4 flex flex-col gap-4">
@@ -668,7 +668,7 @@ templ blueprintDetailMeta(d *BlueprintDetail) {
 		if d.DocumentationURL != "" {
 			<a class="text-xs font-medium text-primary hover:underline" href={ templ.URL(d.DocumentationURL) } target="_blank" rel="noopener noreferrer">Documentation</a>
 		}
-		@monoMeta(d.ID, "text-base-content/40")
+		@monoMeta(d.ID, "text-muted-faint")
 	</div>
 }
 
@@ -707,13 +707,13 @@ templ objectTypeRow(name string, label string, description string, properties []
 			}
 		</div>
 		if description != "" {
-			<p class="text-base-content/55 mt-1 text-xs">{ description }</p>
+			<p class="text-muted mt-1 text-xs">{ description }</p>
 		}
 		if len(properties) > 0 {
 			@objectTypeProperties(properties, true)
 		}
 		if schemaLabel != "" {
-			<p class="text-base-content/50 mt-2 font-mono text-[11px]">{ schemaLabel }</p>
+			<p class="text-muted mt-2 font-mono text-[11px]">{ schemaLabel }</p>
 		}
 	</div>
 }
@@ -742,7 +742,7 @@ templ objectTypeProperties(properties []PropertyDetail, showLabel bool) {
 		<div class="flex flex-col gap-1.5 md:hidden">
 			for _, p := range properties {
 				<div class="flex flex-wrap items-center gap-2">
-					<span class="font-mono text-xs text-base-content/80">{ p.Name }</span>
+					<span class="font-mono text-xs text-muted-bright">{ p.Name }</span>
 					if p.Type != "" {
 						@ui.Badge(ui.BadgeProps{Label: p.Type, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS})
 					}
@@ -750,7 +750,7 @@ templ objectTypeProperties(properties []PropertyDetail, showLabel bool) {
 						@ui.Badge(ui.BadgeProps{Label: "required", Variant: ui.BadgeError, Size: ui.BadgeSizeXS})
 					}
 					if p.Description != "" {
-						<span class="text-base-content/50 text-xs">{ p.Description }</span>
+						<span class="text-muted text-xs">{ p.Description }</span>
 					}
 				</div>
 			}
@@ -768,7 +768,7 @@ templ objectTypeProperties(properties []PropertyDetail, showLabel bool) {
 				<tbody>
 					for _, p := range properties {
 						<tr>
-							<td class="font-mono text-xs text-base-content/80">{ p.Name }</td>
+							<td class="font-mono text-xs text-muted-bright">{ p.Name }</td>
 							<td>
 								if p.Type != "" {
 									@ui.Badge(ui.BadgeProps{Label: p.Type, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS})
@@ -779,7 +779,7 @@ templ objectTypeProperties(properties []PropertyDetail, showLabel bool) {
 									@ui.Badge(ui.BadgeProps{Label: "required", Variant: ui.BadgeError, Size: ui.BadgeSizeXS})
 								}
 							</td>
-							<td class="text-base-content/50 text-xs">{ p.Description }</td>
+							<td class="text-muted text-xs">{ p.Description }</td>
 						</tr>
 					}
 				</tbody>
@@ -809,7 +809,7 @@ templ relationshipTypeRow(rt RelationshipTypeDetail) {
 			@ui.Badge(ui.BadgeProps{Label: rt.SourceType + " → " + rt.TargetType, Variant: ui.BadgeSecondary, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--git-branch"})
 		}
 		if rt.Description != "" {
-			<span class="text-base-content/50 text-xs">{ rt.Description }</span>
+			<span class="text-muted text-xs">{ rt.Description }</span>
 		}
 	</div>
 }
@@ -857,7 +857,7 @@ templ agentDetailRow(a BundledAgent, providerNames []string) {
 			</div>
 		}
 		if a.Description != "" {
-			<p class="text-base-content/55 mt-1 text-xs">{ a.Description }</p>
+			<p class="text-muted mt-1 text-xs">{ a.Description }</p>
 		}
 		if len(a.Tools) > 0 {
 			@chipRow("Tools", "mt-4 mb-2", false) {
@@ -869,7 +869,7 @@ templ agentDetailRow(a BundledAgent, providerNames []string) {
 		if len(a.BannedTools) > 0 {
 			@chipRow("Banned tools", "mt-4 mb-2", false) {
 				for _, t := range a.BannedTools {
-					<span class="rounded-full border border-base-content/10 bg-base-200/40 px-2 py-0.5 font-mono text-[11px] text-base-content/50 line-through">{ t }</span>
+					<span class="rounded-full border border-base-content/10 bg-base-200/40 px-2 py-0.5 font-mono text-[11px] text-muted line-through">{ t }</span>
 				}
 			}
 		}

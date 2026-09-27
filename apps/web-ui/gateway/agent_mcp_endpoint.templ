@@ -25,7 +25,7 @@ templ agentMCPSection(data agentSettingsData) {
 		}) {
 			<div class="flex items-start gap-3">
 				@ui.IconTile("lucide--plug", ui.IconTileProps{Tone: "primary", Size: "size-9"})
-				<p class="text-base-content/55 max-w-3xl text-sm">
+				<p class="text-muted max-w-3xl text-sm">
 					Let an outside MCP client use this agent. The endpoint is the URL a client connects to; each key is a separate credential for that endpoint, so you can hand one out, rotate it, or revoke it without touching the others.
 				</p>
 			</div>
@@ -102,7 +102,7 @@ templ agentMCPEndpointBody(data agentSettingsData) {
 				Dot:     true,
 				Attrs:   templ.Attributes{"data-testid": "agent-mcp-endpoint-status"},
 			})
-			<span class="text-base-content/45 text-xs">
+			<span class="text-muted-faint text-xs">
 				@components.MetaChip("lucide--calendar-plus", "created "+relTime(ep.CreatedAt))
 			</span>
 			<form class="ms-auto" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.MCPAgentID) + "/mcp-endpoint/revoke") }>
@@ -121,7 +121,7 @@ templ agentMCPEndpointBody(data agentSettingsData) {
 		</div>
 		<div>
 			@ui.Eyebrow("Endpoint URL", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
-			<p class="text-base-content/50 mt-0.5 text-xs">This is what an external MCP client connects to.</p>
+			<p class="text-muted mt-0.5 text-xs">This is what an external MCP client connects to.</p>
 			if ep.MCPURL != "" {
 				<div class="mt-2 flex flex-wrap items-center gap-2">
 					<div id="agent-mcp-endpoint-url" class="rounded-box border-base-content/15 bg-base-200/50 min-w-0 flex-1 border px-3 py-2 font-mono text-xs break-all">{ ep.MCPURL }</div>
@@ -137,7 +137,7 @@ templ agentMCPEndpointBody(data agentSettingsData) {
 					}
 				</div>
 			} else {
-				<p class="text-base-content/50 mt-2 text-xs">The backend did not report a URL for this endpoint.</p>
+				<p class="text-muted mt-2 text-xs">The backend did not report a URL for this endpoint.</p>
 			}
 		</div>
 		@agentMCPEndpointRevokeDialog(data.MCPAgentID)
@@ -152,7 +152,7 @@ templ agentMCPEndpointRevokeDialog(agentID string) {
 			@components.ConfirmIcon("")
 			<div>
 				<h3 class="text-lg font-semibold">Revoke MCP endpoint?</h3>
-				<p class="text-base-content/55 mt-1 text-sm">
+				<p class="text-muted mt-1 text-sm">
 					This immediately invalidates every key on the endpoint. Any MCP client connected with those keys stops working. You can create a new endpoint afterwards.
 				</p>
 			</div>
@@ -193,7 +193,7 @@ templ agentMCPKeysBlock(data agentSettingsData) {
 				@countBadgeLabel(countLabel(len(data.MCPKeys), "key", "keys"), "lucide--key-round")
 			}
 		</div>
-		<p class="text-base-content/55 mt-1 max-w-3xl text-sm">
+		<p class="text-muted mt-1 max-w-3xl text-sm">
 			A key is a credential a client authenticates with. Its secret is shown once, when you create or rotate it, and never again.
 		</p>
 		if data.MCPKeysErr != nil {
@@ -285,14 +285,14 @@ templ agentMCPKeyRow(k AgentMCPKey) {
 			</div>
 		</td>
 		<td>
-			<span class="text-base-content/50 text-xs whitespace-nowrap">{ relTime(k.CreatedAt) }</span>
+			<span class="text-muted text-xs whitespace-nowrap">{ relTime(k.CreatedAt) }</span>
 		</td>
 		<td>
-			<span class="text-base-content/50 text-xs whitespace-nowrap">{ agentMCPKeyLastUsedLabel(k) }</span>
+			<span class="text-muted text-xs whitespace-nowrap">{ agentMCPKeyLastUsedLabel(k) }</span>
 		</td>
 		<td class="text-right">
 			if !usable {
-				<span class="text-base-content/30 text-sm">—</span>
+				<span class="text-muted-subtle text-sm">—</span>
 			} else {
 				<div class="flex items-center justify-end gap-1">
 					@ui.Button(ui.ButtonProps{
@@ -334,7 +334,7 @@ templ agentMCPKeyRevokeDialog(agentID string, k AgentMCPKey) {
 			@components.ConfirmIcon("")
 			<div>
 				<h3 class="text-lg font-semibold">Revoke key?</h3>
-				<p class="text-base-content/55 mt-1 text-sm">
+				<p class="text-muted mt-1 text-sm">
 					This immediately invalidates the secret for <span class="text-base-content font-medium">{ label }</span>. Other keys on this endpoint keep working. This cannot be undone.
 				</p>
 			</div>
@@ -375,7 +375,7 @@ templ agentMCPKeyRotateDialog(agentID string, k AgentMCPKey) {
 			</div>
 			<div>
 				<h3 class="text-lg font-semibold">Rotate key?</h3>
-				<p class="text-base-content/55 mt-1 text-sm">
+				<p class="text-muted mt-1 text-sm">
 					A new secret is issued for <span class="text-base-content font-medium">{ label }</span> and the current secret stops working immediately. The new secret is shown once. Existing sessions on this key keep working.
 				</p>
 			</div>
@@ -414,7 +414,7 @@ templ agentMCPSessionsBlock(data agentSettingsData) {
 			@ui.IconSpan("lucide--messages-square", "size-4 shrink-0 text-primary/70 mt-0.5")
 			<div>
 				<h3 class="text-sm font-semibold">Sessions</h3>
-				<p class="text-base-content/55 mt-1 max-w-3xl text-sm">
+				<p class="text-muted mt-1 max-w-3xl text-sm">
 					Conversations an external client started with this agent. Each session belongs to the key that opened it and stops being continuable once it expires.
 				</p>
 			</div>
@@ -503,7 +503,7 @@ templ agentMCPSessionRow(s AgentMCPSession) {
 	<tr data-testid="agent-mcp-session-row">
 		<td>
 			<span class="inline-flex items-center gap-1.5">
-				@ui.IconSpan("lucide--key-round", "size-3.5 shrink-0 text-base-content/40")
+				@ui.IconSpan("lucide--key-round", "size-3.5 shrink-0 text-muted-faint")
 				<span class="text-xs">{ agentMCPSessionKeyLabel(s) }</span>
 			</span>
 		</td>
@@ -517,13 +517,13 @@ templ agentMCPSessionRow(s AgentMCPSession) {
 			})
 		</td>
 		<td>
-			<span class="text-base-content/60 text-xs whitespace-nowrap">{ countLabel(s.TurnCount, "turn", "turns") }</span>
+			<span class="text-muted-strong text-xs whitespace-nowrap">{ countLabel(s.TurnCount, "turn", "turns") }</span>
 		</td>
 		<td>
-			<span class="text-base-content/50 text-xs whitespace-nowrap">{ agentMCPSessionLastActiveLabel(s) }</span>
+			<span class="text-muted text-xs whitespace-nowrap">{ agentMCPSessionLastActiveLabel(s) }</span>
 		</td>
 		<td class="hidden sm:table-cell">
-			<span class="text-base-content/50 text-xs whitespace-nowrap">{ relTime(s.CreatedAt) }</span>
+			<span class="text-muted text-xs whitespace-nowrap">{ relTime(s.CreatedAt) }</span>
 		</td>
 	</tr>
 }

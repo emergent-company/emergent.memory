@@ -163,7 +163,7 @@ templ ShareLinksHeader(props ShareLinksPageProps) {
 	<div class="flex flex-wrap items-start justify-between gap-3">
 		<div>
 			<h2 id="share-links-heading" class="text-lg font-semibold tracking-tight">Share links</h2>
-			<p class="text-base-content/55 mt-1 max-w-xl text-sm">
+			<p class="text-muted mt-1 max-w-xl text-sm">
 				Let people outside your workspace chat with this agent. Each link has its own settings, and you can turn one off at any time.
 			</p>
 		</div>
@@ -260,7 +260,7 @@ templ shareLinkRowItem(link ShareLinkRow) {
 				</div>
 			</div>
 			@shareLinkURLBlock(link)
-			<div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-base-content/55">
+			<div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
 				<span data-testid="share-link-created">
 					@components.MetaChip("lucide--calendar-plus", "created "+shareTimeCell(link.CreatedAt, link.CreatedRelative))
 				</span>
@@ -283,7 +283,7 @@ templ shareLinkRowItem(link ShareLinkRow) {
 templ shareLinkURLBlock(link ShareLinkRow) {
 	if link.Status == ShareLinkRevoked {
 		<div class="rounded-box border border-base-content/10 bg-base-200/30 px-3 py-2.5" data-testid="share-link-revoked">
-			<p class="text-base-content/55 flex items-center gap-1.5 text-xs">
+			<p class="text-muted flex items-center gap-1.5 text-xs">
 				@ui.IconSpan("lucide--ban", "size-3.5")
 				This link was revoked and no longer works.
 			</p>
@@ -291,16 +291,16 @@ templ shareLinkURLBlock(link ShareLinkRow) {
 	} else {
 		<div class="rounded-box border border-base-content/10 bg-base-200/40 p-3">
 			<div class="flex flex-wrap items-center justify-between gap-2">
-				<p class="text-base-content/50 text-[11px] font-semibold tracking-wide uppercase">Share link</p>
+				<p class="text-muted text-[11px] font-semibold tracking-wide uppercase">Share link</p>
 				if link.URL != "" {
 					@shareCopyButton(link.URL, "share-copy-link", "Copy link")
 				} else if link.RevealURL != "" {
 					@shareRevealCopyButton(link.RevealURL, "Copy link")
 				}
 			</div>
-			<p class="text-base-content/75 mt-2 font-mono text-xs break-all" data-share-link-url>{ link.URL }</p>
+			<p class="text-muted-bright mt-2 font-mono text-xs break-all" data-share-link-url>{ link.URL }</p>
 			if link.URL == "" && link.RevealURL != "" {
-				<p class="text-base-content/45 mt-1 text-xs">Copy link fetches the full URL. It isn't stored here until you do.</p>
+				<p class="text-muted-faint mt-1 text-xs">Copy link fetches the full URL. It isn't stored here until you do.</p>
 			}
 		</div>
 	}
@@ -311,7 +311,7 @@ templ shareLinkURLBlock(link ShareLinkRow) {
 // a flat chip dump.
 templ shareLinkAccessSection(link ShareLinkRow) {
 	<div class="rounded-box border border-base-200 bg-base-200/30 p-3" data-testid="share-link-access">
-		<p class="text-base-content/50 text-[11px] font-semibold tracking-wide uppercase">Access &amp; limits</p>
+		<p class="text-muted text-[11px] font-semibold tracking-wide uppercase">Access &amp; limits</p>
 		<div class="mt-2 flex flex-wrap gap-1.5">
 			@shareBehaviourChip("lucide--mail", "Requires email", link.RequireEmail)
 			@shareBehaviourChip("lucide--history", "Shows session list", link.ShowSessionList)
@@ -330,7 +330,7 @@ templ shareLinkAccessSection(link ShareLinkRow) {
 				}
 			</div>
 		} else {
-			<p class="text-base-content/45 mt-2 text-xs">No session or usage limits.</p>
+			<p class="text-muted-faint mt-2 text-xs">No session or usage limits.</p>
 		}
 	</div>
 }
@@ -381,12 +381,12 @@ templ ShareLinkRevealModal(r ShareLinkReveal) {
 templ ShareLinkCreatePanel(props ShareLinkCreatePageProps) {
 	<section class="space-y-5" data-testid="share-create-panel" aria-labelledby="share-create-heading">
 		<div>
-			<a href={ templ.URL(props.CancelURL) } class="link link-hover text-base-content/60 inline-flex items-center gap-1 text-sm" data-testid="share-create-back">
+			<a href={ templ.URL(props.CancelURL) } class="link link-hover text-muted-strong inline-flex items-center gap-1 text-sm" data-testid="share-create-back">
 				@ui.IconSpan("lucide--arrow-left", "size-4")
 				Share links
 			</a>
 			<h2 id="share-create-heading" class="mt-2 text-lg font-semibold tracking-tight">New share link</h2>
-			<p class="text-base-content/55 mt-1 max-w-xl text-sm">
+			<p class="text-muted mt-1 max-w-xl text-sm">
 				Choose how this link works. New links start active, and you can turn one off at any time.
 			</p>
 		</div>
@@ -416,7 +416,7 @@ templ ShareLinkCreateForm(props ShareLinkCreatePageProps) {
 		<div class="card-body gap-4 memory-density-compact">
 			<div>
 				<h3 class="text-sm font-semibold">Link settings</h3>
-				<p class="text-base-content/50 mt-0.5 text-xs">Every field below applies to this one link.</p>
+				<p class="text-muted mt-0.5 text-xs">Every field below applies to this one link.</p>
 			</div>
 			<div class="grid gap-4 sm:grid-cols-2">
 				@form.FormField(form.FormFieldProps{
@@ -510,10 +510,10 @@ templ ShareLinkCreateForm(props ShareLinkCreatePageProps) {
 // boxes unticked means "no tools" — the owner opts tools in explicitly.
 templ shareToolPicker(tools []ShareToolOption, selected []string) {
 	<fieldset class="rounded-box border border-base-300 p-3" data-testid="share-create-tools">
-		<legend class="px-1 text-xs font-semibold tracking-wider uppercase text-base-content/50">Allowed tools</legend>
-		<p class="text-base-content/45 mb-2 text-xs">Only ticked tools can run. Leave empty to allow none.</p>
+		<legend class="px-1 text-xs font-semibold tracking-wider uppercase text-muted">Allowed tools</legend>
+		<p class="text-muted-faint mb-2 text-xs">Only ticked tools can run. Leave empty to allow none.</p>
 		if len(tools) == 0 {
-			<p class="text-base-content/45 text-sm">This agent has no tools.</p>
+			<p class="text-muted-faint text-sm">This agent has no tools.</p>
 		}
 		if len(tools) > 0 {
 			<div class="max-h-56 space-y-1 overflow-y-auto pr-1">
@@ -535,7 +535,7 @@ templ shareToolPicker(tools []ShareToolOption, selected []string) {
 								}
 							</span>
 							if t.Description != "" {
-								<p class="text-base-content/45 text-xs">{ t.Description }</p>
+								<p class="text-muted-faint text-xs">{ t.Description }</p>
 							}
 						</span>
 					</label>
@@ -551,10 +551,10 @@ templ shareToggleRow(name string, label string, help string, icon string, checke
 		<input type="checkbox" name={ name } value="true" class="toggle toggle-sm mt-0.5" checked?={ checked }/>
 		<span class="min-w-0">
 			<span class="flex items-center gap-1.5 text-sm font-medium">
-				@ui.IconSpan(icon, "size-4 text-base-content/50")
+				@ui.IconSpan(icon, "size-4 text-muted")
 				{ label }
 			</span>
-			<span class="text-base-content/50 block text-xs">{ help }</span>
+			<span class="text-muted block text-xs">{ help }</span>
 		</span>
 	</label>
 }
@@ -569,7 +569,7 @@ templ shareSandboxToggle(checked bool) {
 					@ui.IconSpan("lucide--shield-alert", "size-4 text-warning")
 					Sandbox mode
 				</span>
-				<span class="text-base-content/55 block text-xs">Run the agent's tools in an isolated sandbox.</span>
+				<span class="text-muted block text-xs">Run the agent's tools in an isolated sandbox.</span>
 			</span>
 		</label>
 		<p class="text-warning mt-2 flex items-start gap-2 text-xs" role="note" data-testid="share-sandbox-warning">
@@ -664,12 +664,12 @@ templ shareManageScript() {
 					if (!urlEl) return;
 					urlEl.textContent = text;
 					urlEl.classList.remove("text-error");
-					urlEl.classList.add("text-base-content/75");
+					urlEl.classList.add("text-muted-bright");
 				};
 				var showError = function (text) {
 					if (!urlEl) return;
 					urlEl.textContent = text;
-					urlEl.classList.remove("text-base-content/75");
+					urlEl.classList.remove("text-muted-bright");
 					urlEl.classList.add("text-error");
 				};
 				fetch(url, { headers: { Accept: "application/json" } })

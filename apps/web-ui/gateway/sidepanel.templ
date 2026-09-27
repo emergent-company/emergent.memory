@@ -38,7 +38,7 @@ templ sidePanel(agents []AgentDefinitionSummary, assistantAgent string) {
 					@ui.IconSpan("lucide--bot", "size-4 text-primary")
 					<div class="min-w-0 leading-tight">
 						<h2 class="truncate text-sm font-semibold">Assistant</h2>
-						<p class="text-base-content/45 truncate text-[11px]">{ agentNameByID(agents, assistantAgent) }</p>
+						<p class="text-muted-faint truncate text-[11px]">{ agentNameByID(agents, assistantAgent) }</p>
 					</div>
 				</div>
 				<div class="flex shrink-0 items-center gap-1">
@@ -59,9 +59,9 @@ templ sidePanel(agents []AgentDefinitionSummary, assistantAgent string) {
 								"aria-haspopup": "menu",
 							},
 						}) {
-							<span class="iconify lucide--messages-square size-3.5 text-base-content/40" aria-hidden="true"></span>
-							<span id="sidepanel-session-label" class="max-w-24 truncate text-base-content/55">New session</span>
-							<span class="iconify lucide--chevron-down size-3 text-base-content/35" aria-hidden="true"></span>
+							<span class="iconify lucide--messages-square size-3.5 text-muted-faint" aria-hidden="true"></span>
+							<span id="sidepanel-session-label" class="max-w-24 truncate text-muted">New session</span>
+							<span class="iconify lucide--chevron-down size-3 text-muted-faint" aria-hidden="true"></span>
 						}
 						@ui.DropdownMenu(templ.Attributes{"id": "sidepanel-session-menu", "aria-label": "Assistant sessions", "class": "w-64 max-h-96 overflow-y-auto"}) {
 							<!-- populated by sidepanel.js -->
@@ -138,7 +138,7 @@ templ sidePanel(agents []AgentDefinitionSummary, assistantAgent string) {
 						})
 					</span>
 				</div>
-				<p class="text-base-content/35 mt-1.5 text-center text-[11px]">Enter to send · Shift+Enter for a new line · Escape to close</p>
+				<p class="text-muted-faint mt-1.5 text-center text-[11px]">Enter to send · Shift+Enter for a new line · Escape to close</p>
 			</form>
 		</aside>
 		<!-- Modal window mode: sidepanel.js moves #sidepanel-panel into
