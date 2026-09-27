@@ -8,6 +8,12 @@
 # The ratchet mirrors golangci-lint's `--new-from-rev` usage elsewhere in this
 # repo (`lefthook.yml`) and keeps *new* drift out.
 #
+# Hard scope: every candidate path is canonicalised (symlinks and `..`
+# resolved) and the RESOLVED path must live under the resolved
+# apps/connector.mac root. Anything outside is refused with a non-zero exit
+# and is never linted — a lexical prefix match alone is escapable because `*`
+# crosses `/` (e.g. `apps/ios/../connector.mac/...`).
+#
 # SwiftFormat debt is fully paid down — the whole tree is format-clean, so any
 # touched file must stay clean. SwiftLint still carries a small set of
 # structural violations (long files/types/functions, high cyclomatic
@@ -23,10 +29,35 @@
 #   BASE=<ref> Scripts/lint-swift.sh      # lint files changed since <ref>
 set -euo pipefail
 
-repo_root="$(git rev-parse --show-toplevel)"
+repo_root="$(cd "$(git rev-parse --show-toplevel)" && pwd -P)"
 cd "$repo_root"
 
 connector_dir="apps/connector.mac"
+# Resolved scope root — the single source of truth for the scope decision.
+connector_root="$(cd "${connector_dir}" && pwd -P)"
+
+# Canonicalise a candidate path to an absolute, symlink-resolved form. Rejects
+# `..`/`.` components outright, then resolves with `realpath -m` when available
+# (GNU / modern BSD), falling back to resolving the parent directory with
+# `cd` + `pwd -P`. Prints the resolved path on success; non-zero when the path
+# cannot be resolved. Callers must make the scope decision on this output.
+canonical_path() {
+  local path="$1" resolved dir base
+  case "/${path}/" in
+    *"/../"* | *"/./"*) return 1 ;;
+  esac
+  if command -v realpath >/dev/null 2>&1 && resolved="$(realpath -m "${path}" 2>/dev/null)"; then
+    printf '%s\n' "${resolved}"
+    return 0
+  fi
+  dir="$(dirname "${path}")"
+  base="$(basename "${path}")"
+  if resolved="$(cd "${dir}" 2>/dev/null && pwd -P)"; then
+    printf '%s/%s\n' "${resolved}" "${base}"
+    return 0
+  fi
+  return 1
+}
 
 if ! command -v swiftformat >/dev/null 2>&1 || ! command -v swiftlint >/dev/null 2>&1; then
   echo "swiftformat/swiftlint not installed, skipping Mac connector lint"
@@ -61,22 +92,43 @@ else
   mapfile -t candidates < <(git diff --name-only --diff-filter=ACMR "${base}...HEAD" -- "${swift_pathspecs[@]}" || true)
 fi
 
-# Args (e.g. lefthook `{staged_files}`) are validated with the same pathspec
-# scope, so a caller cannot widen the lint to another tree. Dedup: lefthook may
-# hand the same file once per matching glob pattern.
+# Scope is decided on the CANONICAL path (symlinks + `..` resolved), never the
+# raw string: a lexical `case` prefix match is escapable because `*` crosses
+# `/`. Anything resolving outside the connector root is refused (fail closed)
+# and never linted. Applies to explicit args AND `{staged_files}`/BASE alike.
+# Dedup: lefthook may hand the same file once per matching glob pattern, and
+# different spellings can resolve to one file.
 swift_files=()
 declare -A seen=()
+refused=0
 for f in "${candidates[@]}"; do
   f="${f#./}"
-  case "$f" in
-    "${connector_dir}"/*.swift)
-      [ -f "$f" ] || continue
-      [ -n "${seen[$f]:-}" ] && continue
-      seen[$f]=1
-      swift_files+=("$f")
+  if ! abs="$(canonical_path "$f")"; then
+    echo "lint-swift: REFUSED (unresolvable/unsafe path): ${f}" >&2
+    refused=1
+    continue
+  fi
+  case "$abs" in
+    "${connector_root}"/*.swift) ;;
+    *)
+      echo "lint-swift: REFUSED (outside ${connector_dir}): ${f}" >&2
+      refused=1
+      continue
       ;;
   esac
+  [ -f "$abs" ] || continue
+  # Lint with a repo-root-relative path so SwiftLint's --baseline (whose
+  # entries are repo-root-relative) keeps matching.
+  rel="${abs#"${repo_root}/"}"
+  [ -n "${seen[$rel]:-}" ] && continue
+  seen[$rel]=1
+  swift_files+=("$rel")
 done
+
+if [ "$refused" -ne 0 ]; then
+  echo "lint-swift: refusing to continue with out-of-scope arguments" >&2
+  exit 2
+fi
 
 if [ "${#swift_files[@]}" -eq 0 ]; then
   echo "lint-swift: no Swift files to check"
