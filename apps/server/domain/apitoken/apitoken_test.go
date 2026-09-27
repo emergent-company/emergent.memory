@@ -517,6 +517,21 @@ func TestUserFacingTokenPathsRejectReservedWebhookTriggerScope(t *testing.T) {
 	}
 }
 
+// The ephemeral sandbox ceiling must never carry a platform scope: admin and
+// admin:all require superadmin_full (see checkPlatformScopeGrant), but the
+// ephemeral mint runs on behalf of ordinary project members. Fail-first: if a
+// platform scope is (re)added to ephemeralScopes, this test goes red.
+func TestEphemeralScopesNeverCarryPlatformScope(t *testing.T) {
+	if len(ephemeralScopes) == 0 {
+		t.Fatal("ephemeralScopes must be non-empty")
+	}
+	for _, sc := range ephemeralScopes {
+		if platformScopes[sc] {
+			t.Fatalf("ephemeralScopes carries platform scope %q; sandbox tokens must never hold admin authority", sc)
+		}
+	}
+}
+
 func TestScopesContainPlatformScope(t *testing.T) {
 	tests := []struct {
 		name   string

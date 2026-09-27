@@ -85,7 +85,10 @@ var platformScopes = map[string]bool{
 
 // errPlatformScopeDenied is returned when a caller attempts to grant a
 // platform-tier scope (admin or admin:all) without superadmin_full privileges.
-var errPlatformScopeDenied = apperror.New(403, "platform-scope-denied",
+// The code is intentionally the legacy "admin-all-scope-denied" — the gateway
+// consumers match that string (apps/web-ui/gateway/api_tokens_handlers_test.go)
+// — rather than a renamed code that would break the client contract.
+var errPlatformScopeDenied = apperror.New(403, "admin-all-scope-denied",
 	"admin and admin:all scopes require superadmin_full privileges")
 
 // scopesContainPlatformScope reports whether scopes includes a platform-tier
@@ -164,6 +167,28 @@ var webhookTriggerScopes = []string{webhookTriggerScope, "agents:read", "agents:
 // server-side from the binding, and a leaked share key must not be able to list
 // the owner's projects or members.
 var shareChatScopes = []string{shareAgentChatScope}
+
+// ephemeralScopes is the hardcoded scope set minted on every ephemeral sandbox
+// token (Service.CreateEphemeral). It is the ceiling for the sandbox container's
+// MEMORY_ACCOUNT_API_KEY: the coarse read/write families plus the fine-grained
+// graph/schema/branches/search/journal/skills/documents scopes the agent runner
+// needs. It deliberately carries NO platform scope (admin / admin:all): those
+// require an active superadmin_full (see checkPlatformScopeGrant) and the
+// ephemeral mint runs on behalf of ordinary project members, who must never
+// obtain platform authority through the sandbox path (#1041 E1).
+var ephemeralScopes = []string{
+	// Coarse-grained (legacy) — kept for backwards compat with route middleware
+	"data:read", "data:write", "schema:read", "schema:write",
+	"agents:read", "agents:write", "projects:read", "projects:write",
+	// Fine-grained MCP scopes — agent runners need full graph + schema + branches
+	"graph:read", "graph:write",
+	"schema:migrate",
+	"branches:read", "branches:write",
+	"search",
+	"journal:read", "journal:write",
+	"skills:read", "skills:write",
+	"documents:read", "documents:write",
+}
 
 // Create creates a user-facing API token. It rejects the reserved agent-share
 // marker scope; the internal per-agent share mint path uses
@@ -596,21 +621,8 @@ func (s *Service) CreateEphemeral(ctx context.Context, projectID, orgID, userID 
 		Name:        fmt.Sprintf("ephemeral-sandbox-%d", time.Now().UnixMilli()),
 		TokenHash:   hashToken(raw),
 		TokenPrefix: getTokenPrefix(raw),
-		Scopes: []string{
-			// Coarse-grained (legacy) — kept for backwards compat with route middleware
-			"data:read", "data:write", "schema:read", "schema:write",
-			"agents:read", "agents:write", "projects:read", "projects:write",
-			// Fine-grained MCP scopes — agent runners need full graph + schema + branches
-			"graph:read", "graph:write",
-			"schema:migrate",
-			"branches:read", "branches:write",
-			"search",
-			"journal:read", "journal:write",
-			"skills:read", "skills:write",
-			"documents:read", "documents:write",
-			"admin",
-		},
-		ExpiresAt: &expiresAt,
+		Scopes:      ephemeralScopes,
+		ExpiresAt:   &expiresAt,
 	}
 
 	if err := s.repo.Create(ctx, token); err != nil {
@@ -796,6 +808,15 @@ func (s *Service) regenerate(ctx context.Context, tokenID, projectID, userID str
 		}
 	}
 
+	// Re-validate scopes through the platform gate: a token that carries a
+	// platform scope (admin / admin:all) may have been minted when the caller
+	// held superadmin_full, but the caller must still hold it to regenerate.
+	// Without this re-check a revoked grant would let a caller copy a scope it
+	// can no longer mint (#1041 E1).
+	if err := s.checkPlatformScopeGrant(ctx, userID, existing.Scopes); err != nil {
+		return nil, err
+	}
+
 	// Generate new token material before the transaction
 	rawToken, err := generateToken()
 	if err != nil {
@@ -887,6 +908,13 @@ func (s *Service) RegenerateAccountToken(ctx context.Context, tokenID, userID st
 	}
 	if existing.RevokedAt != nil {
 		return nil, apperror.New(409, "token_already_revoked", "Token is already revoked")
+	}
+
+	// Re-validate scopes through the platform gate (see regenerate): a caller
+	// must still hold superadmin_full to regenerate a token carrying admin or
+	// admin:all, so a revoked grant cannot copy a now-unmintable scope.
+	if err := s.checkPlatformScopeGrant(ctx, userID, existing.Scopes); err != nil {
+		return nil, err
 	}
 
 	// Generate new token material

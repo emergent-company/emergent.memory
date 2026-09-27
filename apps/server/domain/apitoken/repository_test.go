@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -197,5 +198,112 @@ func TestService_checkPlatformScopeGrant_FoldsBareAdminIntoPlatform(t *testing.T
 	t.Run("non-platform scopes need no platform grant", func(t *testing.T) {
 		err := svc.checkPlatformScopeGrant(ctx, uuid.NewString(), []string{"data:read", "graph:write"})
 		require.NoError(t, err, "project scopes must not require a platform grant")
+	})
+}
+
+// seedProject inserts a core.user_profiles row, an org, and a project in that
+// org, returning the project ID. No superadmin grant and no membership is
+// created — the project exists only so FK targets resolve.
+func seedProject(t *testing.T, db bun.IDB, userID string) (projectID string) {
+	t.Helper()
+	ctx := context.Background()
+	seedUser(t, db, userID)
+	orgID := uuid.NewString()
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgID, "Org "+orgID)
+	require.NoError(t, err)
+	projectID = uuid.NewString()
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`,
+		projectID, orgID, "Project "+projectID)
+	require.NoError(t, err)
+	return projectID
+}
+
+// seedProjectToken inserts a non-revoked, non-expired project-scoped token with
+// the given SQL scope literal, owned by userID in projectID.
+func seedProjectToken(t *testing.T, db bun.IDB, projectID, userID, scopesLiteral string) string {
+	t.Helper()
+	ctx := context.Background()
+	tokenID := uuid.NewString()
+	// token_hash has a global unique constraint, so mint a fresh value per row.
+	hash := uuid.NewString()
+	prefix := uuid.NewString()[:12]
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO core.api_tokens (id, user_id, project_id, name, token_hash, token_prefix, scopes)
+		VALUES (?, ?, ?, ?, ?, ?, `+scopesLiteral+`)`,
+		tokenID, userID, projectID, "seed-"+tokenID, hash, prefix)
+	require.NoError(t, err)
+	return tokenID
+}
+
+// CreateEphemeral must never mint a platform scope: the sandbox token is minted
+// on behalf of ordinary project members and must not carry bare admin or
+// admin:all (which require superadmin_full). Fail-first: if a platform scope is
+// (re)added to the ephemeral set, this test goes red.
+func TestService_CreateEphemeral_NeverMintsPlatformScopes(t *testing.T) {
+	db := connectTestDB(t)
+	repo := NewRepository(db, slog.Default())
+	svc := NewService(db, repo, nil, slog.Default())
+	ctx := context.Background()
+
+	userID := uuid.NewString()
+	seedUser(t, db, userID)
+
+	tokenID, raw, err := svc.CreateEphemeral(ctx, uuid.NewString(), uuid.NewString(), userID, time.Hour)
+	require.NoError(t, err)
+	require.NotEmpty(t, tokenID, "ephemeral mint must return a token id")
+	require.NotEmpty(t, raw, "ephemeral mint must return the raw token")
+
+	token, err := repo.GetByIDAndUser(ctx, tokenID, userID)
+	require.NoError(t, err)
+	require.NotNil(t, token, "ephemeral token must be persisted and retrievable")
+	for _, sc := range token.Scopes {
+		require.NotEqual(t, "admin", sc, "ephemeral token must never carry bare admin")
+		require.NotEqual(t, "admin:all", sc, "ephemeral token must never carry admin:all")
+	}
+}
+
+// Regenerate and RegenerateAccountToken must re-validate scopes through the
+// platform gate: a caller who no longer holds superadmin_full cannot regenerate
+// a token that still carries admin or admin:all. Fail-first: without the
+// re-check the regeneration would succeed and copy a now-unmintable scope.
+func TestService_Regenerate_RevalidatesPlatformScope(t *testing.T) {
+	db := connectTestDB(t)
+	repo := NewRepository(db, slog.Default())
+	svc := NewService(db, repo, nil, slog.Default())
+	ctx := context.Background()
+
+	userID := uuid.NewString()
+	projectID := seedProject(t, db, userID)
+
+	t.Run("project token carrying admin:all is refused", func(t *testing.T) {
+		tokenID := seedProjectToken(t, db, projectID, userID, `ARRAY['admin:all']`)
+		_, err := svc.Regenerate(ctx, tokenID, projectID, userID)
+		require.Error(t, err, "regenerate must re-validate platform scopes and refuse a non-superadmin")
+	})
+
+	t.Run("project token carrying bare admin is refused", func(t *testing.T) {
+		tokenID := seedProjectToken(t, db, projectID, userID, `ARRAY['admin']`)
+		_, err := svc.Regenerate(ctx, tokenID, projectID, userID)
+		require.Error(t, err, "regenerate must refuse a non-superadmin carrying bare admin")
+	})
+
+	t.Run("account token carrying admin:all is refused", func(t *testing.T) {
+		tokenID := uuid.NewString()
+		_, err := db.ExecContext(ctx, `
+			INSERT INTO core.api_tokens (id, user_id, project_id, name, token_hash, token_prefix, scopes)
+			VALUES (?, ?, NULL, ?, ?, ?, ARRAY['admin:all'])`,
+			tokenID, userID, "seed-"+tokenID, uuid.NewString(), uuid.NewString()[:12])
+		require.NoError(t, err)
+
+		_, err = svc.RegenerateAccountToken(ctx, tokenID, userID)
+		require.Error(t, err, "account regenerate must re-validate platform scopes and refuse a non-superadmin")
+	})
+
+	t.Run("project token without platform scope still regenerates", func(t *testing.T) {
+		tokenID := seedProjectToken(t, db, projectID, userID, `ARRAY['data:read']`)
+		_, err := svc.Regenerate(ctx, tokenID, projectID, userID)
+		require.NoError(t, err, "a non-platform token must still regenerate for a non-superadmin")
 	})
 }
