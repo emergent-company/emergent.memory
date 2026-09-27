@@ -495,6 +495,120 @@ type AgentExecutor struct {
 	eventsSvc      *events.Service // nil if events module not registered; used by ask_user SSE notification
 	safeguards     config.AgentSafeguardsConfig
 	log            *slog.Logger
+
+	// runCancels tracks in-flight runs by id so an explicit cancel request can
+	// stop a run whose lifetime is detached from the request context that
+	// started it (see issue #1149). Value type so a zero-value executor (as
+	// built by tests) is safe; the map is lazily initialised.
+	runCancels runCancelRegistry
+}
+
+// userCancelReason is the terminal reason recorded when a run is stopped by an
+// explicit cancel request (POST …/runs/:runId/cancel) rather than by a server
+// fault. It distinguishes a user-initiated stop from a watchdog/doom-loop
+// cancellation so the run is reported as cancelled, not errored.
+const userCancelReason = "Run cancelled by user"
+
+// DetachedRunContext returns a context carrying every value from parent (auth,
+// project/namespace, trace span) but not its cancellation. An HTTP surface uses
+// it to start an agent run whose lifetime is detached from the request: when
+// the client disconnects and the request context is cancelled, the run keeps
+// going instead of being aborted with "context canceled" (issue #1149).
+//
+// Only cancellation is dropped. The run is still bounded by the executor's own
+// per-step watchdog (resolveRunTimeout/defaultRunTimeout) and can still be
+// stopped explicitly through AgentExecutor.Cancel, which is routed by run id
+// rather than through the request context.
+func DetachedRunContext(parent context.Context) context.Context {
+	if parent == nil {
+		return context.Background()
+	}
+	return context.WithoutCancel(parent)
+}
+
+// runCancelRegistry maps a run id to the cancel handle for its in-flight,
+// detached lifetime. It exists because a run may outlive the HTTP request that
+// triggered it: the request context no longer reaches the executor, so an
+// explicit cancel must be routed by run id instead.
+type runCancelRegistry struct {
+	mu      sync.Mutex
+	handles map[string]*runCancelHandle
+}
+
+// runCancelHandle is the cancel handle for one in-flight run. It records the
+// first cancellation reason so the run can distinguish an explicit user cancel
+// from a watchdog timeout or doom-loop stop.
+type runCancelHandle struct {
+	mu     sync.Mutex
+	cancel context.CancelFunc
+	reason string
+}
+
+// register records cancel for runID and returns the handle the caller must pass
+// to unregister when the run finishes.
+func (r *runCancelRegistry) register(runID string, cancel context.CancelFunc) *runCancelHandle {
+	h := &runCancelHandle{cancel: cancel}
+	r.mu.Lock()
+	if r.handles == nil {
+		r.handles = make(map[string]*runCancelHandle)
+	}
+	r.handles[runID] = h
+	r.mu.Unlock()
+	return h
+}
+
+// unregister removes the handle only if it is still the current one, so a late
+// unregister from a finished run cannot evict a newer run that reused the id.
+func (r *runCancelRegistry) unregister(runID string, h *runCancelHandle) {
+	r.mu.Lock()
+	if r.handles[runID] == h {
+		delete(r.handles, runID)
+	}
+	r.mu.Unlock()
+}
+
+// cancel stops the run registered under runID, if any, recording reason. It
+// returns false when the run is not in flight (already finished or unknown).
+func (r *runCancelRegistry) cancel(runID, reason string) bool {
+	r.mu.Lock()
+	h := r.handles[runID]
+	r.mu.Unlock()
+	if h == nil {
+		return false
+	}
+	h.cancelWithReason(reason)
+	return true
+}
+
+func (h *runCancelHandle) cancelWithReason(reason string) {
+	h.mu.Lock()
+	if h.reason == "" {
+		h.reason = reason
+	}
+	cancel := h.cancel
+	h.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+// Reason returns the first reason recorded for this handle, or "" if none.
+func (h *runCancelHandle) Reason() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.reason
+}
+
+// Cancel stops an in-flight run by id, if one is currently executing. It is the
+// entry point used by the explicit cancel endpoint so a run whose lifetime is
+// detached from its triggering request can still be stopped. It returns false
+// when no such run is in flight, so the caller can fall back to marking the
+// persisted run row cancelled.
+func (ae *AgentExecutor) Cancel(runID, reason string) bool {
+	if ae == nil || runID == "" {
+		return false
+	}
+	return ae.runCancels.cancel(runID, reason)
 }
 
 // NewAgentExecutor creates a new AgentExecutor.
@@ -1930,6 +2044,12 @@ func (ae *AgentExecutor) runPipeline(
 	ctx, cancelRun = context.WithCancel(ctx)
 	defer cancelRun()
 
+	// Register the run's cancel handle so an explicit cancel request (routed by
+	// run id, not by a request context) can stop a run whose lifetime may be
+	// detached from the request that started it. Unregistered on every exit path.
+	cancelHandle := ae.runCancels.register(run.ID, cancelRun)
+	defer ae.runCancels.unregister(run.ID, cancelHandle)
+
 	// Create the LLM model — per-run override takes precedence
 	modelName := req.Model
 	if modelName == "" && req.AgentDefinition != nil && req.AgentDefinition.Model != nil && req.AgentDefinition.Model.Name != "" {
@@ -2188,7 +2308,12 @@ func (ae *AgentExecutor) runPipeline(
 		if ctx.Err() != nil {
 			msg := cancelReason
 			if msg == "" {
-				if ctx.Err() == context.DeadlineExceeded {
+				// An explicit cancel request (detached run) records its reason on
+				// the handle; prefer it over the generic context-canceled text so
+				// a user stop is not reported as a server fault.
+				if r := cancelHandle.Reason(); r != "" {
+					msg = r
+				} else if ctx.Err() == context.DeadlineExceeded {
 					msg = "agent stopped: timeout exceeded"
 				} else {
 					msg = "agent stopped: context canceled"
@@ -2847,6 +2972,14 @@ func (ae *AgentExecutor) runPipeline(
 		transientErr := false
 		for event, eventErr := range r.Run(ctx, "system", sess.ID(), currentContent, runCfg) {
 			if eventErr != nil {
+				// A cancelled run context — per-step watchdog, doom loop, or an
+				// explicit cancel request (issue #1149) — must be finalized by the
+				// post-loop cancellation handling, not reported as a generic
+				// pipeline error. Break out so the terminal status and reason
+				// reflect why the run actually stopped.
+				if ctx.Err() != nil {
+					break
+				}
 				steps := tracker.current()
 				errStr := eventErr.Error()
 
@@ -3136,6 +3269,13 @@ func (ae *AgentExecutor) runPipeline(
 				}
 			}
 		} // end inner for-range r.Run(...)
+
+		// A cancelled context is terminal: exit the outer retry loop so the
+		// post-loop cancellation block records the terminal status/reason.
+		if ctx.Err() != nil {
+			break
+		}
+
 		if !malformed && !transientErr && !unknownTool {
 			break // normal completion — exit outer retry loop
 		}
@@ -3152,6 +3292,7 @@ func (ae *AgentExecutor) runPipeline(
 		steps := tracker.current()
 		errMsg := "Run cancelled"
 		reason := "unknown"
+		status := RunStatusError
 
 		if ctx.Err() == context.DeadlineExceeded {
 			reason = "timeout"
@@ -3167,16 +3308,30 @@ func (ae *AgentExecutor) runPipeline(
 			errMsg = cancelReason
 		}
 
+		// An explicit cancel request (POST …/runs/:runId/cancel) is not a server
+		// fault: record the run as cancelled, not errored, and use the recorded
+		// reason. This is the only path a detached run can be stopped by, so it
+		// must be honest about why it ended.
+		if cancelHandle.Reason() == userCancelReason {
+			status = RunStatusCancelled
+			errMsg = userCancelReason
+			reason = "user_cancelled"
+		}
+
 		ae.log.Warn("run cancelled by context",
 			slog.String("run_id", run.ID),
 			slog.String("reason", reason),
 			slog.Int("steps", steps),
 		)
 
-		_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, errMsg, steps)
+		if status == RunStatusCancelled {
+			_ = ae.repo.CancelRunWithSteps(dbCtx, run.ID, errMsg, steps)
+		} else {
+			_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, errMsg, steps)
+		}
 		return &ExecuteResult{
 			RunID:    run.ID,
-			Status:   RunStatusError,
+			Status:   status,
 			Summary:  map[string]any{"error": errMsg, "reason": reason},
 			Steps:    steps,
 			Duration: time.Since(startTime),

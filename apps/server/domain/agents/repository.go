@@ -1693,6 +1693,26 @@ func (r *Repository) CancelRun(ctx context.Context, runID string) error {
 	return err
 }
 
+// CancelRunWithSteps marks a run cancelled with the step count reached and a
+// reason. It is used when an explicit cancel request stops an in-flight run:
+// unlike FailRunWithSteps it records the terminal status as cancelled, not
+// error, so a user stop is not misreported as a server fault. The reason is
+// stored in error_message so the stop is self-explanatory in the run history.
+// Like CancelRun it does not touch session_status.
+func (r *Repository) CancelRunWithSteps(ctx context.Context, runID, reason string, stepCount int) error {
+	now := time.Now()
+	_, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusCancelled).
+		Set("completed_at = ?", now).
+		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
+		Set("error_message = ?", reason).
+		Set("step_count = ?", stepCount).
+		Where("id = ?", runID).
+		Exec(ctx)
+	return err
+}
+
 // CancelRunIfPaused transitions a paused (input-required) run to cancelled only
 // if it is still paused, so a run resumed between listing and cancellation is
 // not clobbered. Returns true when a row was actually cancelled.

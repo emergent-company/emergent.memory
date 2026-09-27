@@ -841,6 +841,18 @@ func (h *Handler) CancelRun(c echo.Context) error {
 		return apperror.NewNotFound("AgentRun", runID)
 	}
 
+	// Stop an in-flight run first. A run whose lifetime is detached from its
+	// triggering request (e.g. chat, issue #1149) is not reachable through the
+	// request context, so route the cancel by run id through the executor. When
+	// the run is not in flight (already finished, or executing in another
+	// process), fall back to marking the persisted row cancelled.
+	if h.executor != nil && h.executor.Cancel(runID, userCancelReason) {
+		return c.JSON(http.StatusOK, SuccessResponse(map[string]string{
+			"message": "Run cancelled successfully",
+			"runId":   runID,
+		}))
+	}
+
 	// Cancel the run
 	if err := h.repo.CancelRun(c.Request().Context(), runID); err != nil {
 		return apperror.NewInternal("failed to cancel run", err)
