@@ -3,9 +3,11 @@
 #
 # Scope is a *ratchet*: only the files passed as arguments, or (when none are
 # passed) the Swift files changed on this branch relative to BASE (default:
-# origin/main), are checked. The connector carries pre-existing SwiftFormat and
-# SwiftLint debt, so whole-tree enforcement would fail on untouched files; the
-# ratchet mirrors golangci-lint's `--new-from-rev` usage elsewhere in this repo
+# origin/main), are checked — always constrained to apps/connector.mac so an
+# unrelated tree (e.g. apps/ios) is never linted with the connector's config.
+# The connector carries pre-existing SwiftFormat and SwiftLint debt, so
+# whole-tree enforcement would fail on untouched files; the ratchet mirrors
+# golangci-lint's `--new-from-rev` usage elsewhere in this repo
 # (`lefthook.yml`) and keeps *new* drift out without a mass reformat. Pay the
 # debt down in a dedicated follow-up, then widen this to `git ls-files`.
 #
@@ -17,7 +19,7 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
-config_dir="apps/connector.mac"
+connector_dir="apps/connector.mac"
 
 if ! command -v swiftformat >/dev/null 2>&1 || ! command -v swiftlint >/dev/null 2>&1; then
   echo "swiftformat/swiftlint not installed, skipping Mac connector lint"
@@ -26,8 +28,17 @@ if ! command -v swiftformat >/dev/null 2>&1 || ! command -v swiftlint >/dev/null
   exit 0
 fi
 
+# Swift pathspecs, scoped to the connector tree. `**/*.swift` covers nested
+# files and `*.swift` the files directly under the connector root; both are
+# listed so neither shape is missed (`**` also matches zero directories, but
+# being explicit is version-proof).
+swift_pathspecs=(
+  "${connector_dir}/**/*.swift"
+  "${connector_dir}/*.swift"
+)
+
 if [ "$#" -gt 0 ]; then
-  files=("$@")
+  candidates=("$@")
 else
   base="${BASE:-origin/main}"
   # An unset/zero BASE (e.g. a brand-new branch push) is not a usable commit;
@@ -40,13 +51,23 @@ else
     echo "lint-swift: no usable BASE ref, skipping"
     exit 0
   fi
-  mapfile -t files < <(git diff --name-only --diff-filter=ACMR "${base}...HEAD" -- '*.swift' || true)
+  mapfile -t candidates < <(git diff --name-only --diff-filter=ACMR "${base}...HEAD" -- "${swift_pathspecs[@]}" || true)
 fi
 
+# Args (e.g. lefthook `{staged_files}`) are validated with the same pathspec
+# scope, so a caller cannot widen the lint to another tree. Dedup: lefthook may
+# hand the same file once per matching glob pattern.
 swift_files=()
-for f in "${files[@]}"; do
+declare -A seen=()
+for f in "${candidates[@]}"; do
+  f="${f#./}"
   case "$f" in
-    *.swift) [ -f "$f" ] && swift_files+=("$f") ;;
+    "${connector_dir}"/*.swift)
+      [ -f "$f" ] || continue
+      [ -n "${seen[$f]:-}" ] && continue
+      seen[$f]=1
+      swift_files+=("$f")
+      ;;
   esac
 done
 
@@ -59,7 +80,7 @@ echo "lint-swift: checking ${#swift_files[@]} file(s)"
 printf '  %s\n' "${swift_files[@]}"
 
 echo "— swiftformat --lint"
-swiftformat --lint --config "${config_dir}/.swiftformat" "${swift_files[@]}"
+swiftformat --lint --config "${connector_dir}/.swiftformat" "${swift_files[@]}"
 
 echo "— swiftlint"
-swiftlint lint --strict --config "${config_dir}/.swiftlint.yml" "${swift_files[@]}"
+swiftlint lint --strict --config "${connector_dir}/.swiftlint.yml" "${swift_files[@]}"

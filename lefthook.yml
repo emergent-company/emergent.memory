@@ -235,6 +235,7 @@ pre-commit:
     # a mass reformat. No `root:` so {staged_files} stay repo-root-relative.
     - name: connector-mac-swift
       glob:
+        - "apps/connector.mac/*.swift"
         - "apps/connector.mac/**/*.swift"
       run: apps/connector.mac/Scripts/lint-swift.sh {staged_files}
 
