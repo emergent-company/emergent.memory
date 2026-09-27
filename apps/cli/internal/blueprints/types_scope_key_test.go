@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/emergent-company/emergent.memory/apps/cli/internal/blueprints"
 )
 
@@ -43,6 +45,74 @@ func TestObjectTypeDefScopeKeyMarshal(t *testing.T) {
 		}
 		if !strings.Contains(string(raw), `"scopeKey":{"`) {
 			t.Fatalf("expected scopeKey to be carried, got %s", raw)
+		}
+	})
+}
+
+// TestObjectTypeDefScopeKeySnakeAlias verifies the top-level snake_case alias
+// (`scope_key`) is accepted and normalised into the canonical declaration. RED
+// before the alias existed: a YAML/JSON pack authored with `scope_key` decoded
+// to nil and re-marshalled without any declaration, silently disabling
+// enforcement.
+func TestObjectTypeDefScopeKeySnakeAlias(t *testing.T) {
+	t.Run("yaml scope_key is promoted", func(t *testing.T) {
+		src := []byte(`
+- name: LegalParagraph
+  properties:
+    law_ref_id:
+      type: string
+  scope_key:
+    property: law_ref_id
+    references_type: Law
+    references_property: ref_id
+`)
+		var types []blueprints.ObjectTypeDef
+		if err := yaml.Unmarshal(src, &types); err != nil {
+			t.Fatalf("yaml unmarshal: %v", err)
+		}
+		if len(types) != 1 || types[0].ScopeKey == nil {
+			t.Fatalf("scope_key must be promoted to a declaration, got %+v", types)
+		}
+		if types[0].ScopeKey["property"] != "law_ref_id" {
+			t.Fatalf("unexpected declaration: %+v", types[0].ScopeKey)
+		}
+		if types[0].ScopeKeySnake != nil {
+			t.Fatalf("alias must be cleared after promotion, got %+v", types[0].ScopeKeySnake)
+		}
+		raw, err := json.Marshal(types)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if !strings.Contains(string(raw), `"scopeKey":{"property":"law_ref_id"`) {
+			t.Fatalf("promoted declaration must be emitted as canonical scopeKey, got %s", raw)
+		}
+		if strings.Contains(string(raw), "scope_key") {
+			t.Fatalf("the snake_case alias must not be re-emitted, got %s", raw)
+		}
+	})
+
+	t.Run("json scope_key is promoted", func(t *testing.T) {
+		src := []byte(`[{"name":"LegalParagraph","properties":{"law_ref_id":{"type":"string"}},"scope_key":{"property":"law_ref_id"}}]`)
+		var types []blueprints.ObjectTypeDef
+		if err := json.Unmarshal(src, &types); err != nil {
+			t.Fatalf("json unmarshal: %v", err)
+		}
+		if len(types) != 1 || types[0].ScopeKey == nil || types[0].ScopeKey["property"] != "law_ref_id" {
+			t.Fatalf("scope_key must be promoted, got %+v", types)
+		}
+	})
+
+	t.Run("canonical scopeKey wins when both are present", func(t *testing.T) {
+		src := []byte(`[{"name":"T","scopeKey":{"property":"camel"},"scope_key":{"property":"snake"}}]`)
+		var types []blueprints.ObjectTypeDef
+		if err := json.Unmarshal(src, &types); err != nil {
+			t.Fatalf("json unmarshal: %v", err)
+		}
+		if len(types) != 1 || types[0].ScopeKey["property"] != "camel" {
+			t.Fatalf("canonical scopeKey must win, got %+v", types)
+		}
+		if types[0].ScopeKeySnake != nil {
+			t.Fatalf("alias must be cleared, got %+v", types[0].ScopeKeySnake)
 		}
 	})
 }

@@ -188,3 +188,38 @@ func TestValidateSchemaDefinitions_ScopeKey(t *testing.T) {
 		}
 	})
 }
+
+// TestScopeKeyTopLevelAliasPrecedence pins the documented winner when a type
+// schema carries BOTH top-level spellings: the canonical camelCase `scopeKey`
+// wins, consistent with the inner-property alias handling (firstNonEmpty(camel,
+// snake)). The alias is only used when the canonical key is absent.
+func TestScopeKeyTopLevelAliasPrecedence(t *testing.T) {
+	t.Run("parseObjectTypeSchemasToMap keeps the canonical declaration", func(t *testing.T) {
+		data := json.RawMessage(`[{"name":"T","properties":{"a":{"type":"string"},"b":{"type":"string"}},"scopeKey":{"property":"a"},"scope_key":{"property":"b"}}]`)
+		typeMap := parseObjectTypeSchemasToMap(data)
+		requireMap := typeMap["T"]
+		if len(requireMap) == 0 {
+			t.Fatal("type T not parsed")
+		}
+		if strings.Contains(string(requireMap), "scope_key") {
+			t.Fatalf("snake alias must not survive reconstruction, got %s", requireMap)
+		}
+		decl, err := ParseScopeKey(requireMap)
+		if err != nil || decl == nil {
+			t.Fatalf("expected a declaration, got %+v (err %v)", decl, err)
+		}
+		if decl.Property != "a" {
+			t.Fatalf("canonical scopeKey must win, got %q", decl.Property)
+		}
+	})
+
+	t.Run("validateSchemaDefinitions validates the canonical declaration", func(t *testing.T) {
+		// Canonical scopeKey names a property not present (`a`), the snake alias
+		// names a valid one (`b`). If canonical wins, validation must reject.
+		raw := json.RawMessage(`[{"name":"T","properties":{"b":{"type":"string"}},"scopeKey":{"property":"a"},"scope_key":{"property":"b"}}]`)
+		errs := validateSchemaDefinitions(raw, nil)
+		if len(errs) != 1 || !strings.Contains(errs[0], `scopeKey.property "a" is not a declared property`) {
+			t.Fatalf("expected canonical declaration to be validated, got %v", errs)
+		}
+	})
+}
