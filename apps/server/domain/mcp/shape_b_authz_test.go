@@ -139,6 +139,12 @@ func (s *ShapeBAuthzSuite) TestProjectCreateOrgAdminSucceeds() {
 }
 
 // --- schema-delete (executeDeleteSchema) ---
+//
+// These schema tools declare RequiredScope "schema:write". The in-process
+// ExecuteTool gate refuses an untrusted run on that scope, so these Shape B
+// (service-layer) tests mark the context transport-enforced — exactly as the
+// HTTP transport does after its own scope check — to reach the service seam
+// being asserted here.
 
 func (s *ShapeBAuthzSuite) TestSchemaDeleteForeignProjectRefused() {
 	foreignOrg := uuid.New().String()
@@ -152,7 +158,7 @@ func (s *ShapeBAuthzSuite) TestSchemaDeleteForeignProjectRefused() {
 
 	foreignSchema := s.seedSchema(foreignProject, "foreign-secret-schema")
 
-	ctx := auth.ContextWithUser(s.Ctx, &auth.AuthUser{ID: testutil.AdminUser.ID})
+	ctx := mcp.ContextWithTransportEnforced(auth.ContextWithUser(s.Ctx, &auth.AuthUser{ID: testutil.AdminUser.ID}))
 	_, err := s.mcpSvc.ExecuteTool(ctx, s.ProjectID, "schema-delete", map[string]any{"schema_id": foreignSchema})
 	s.assertAppErrorStatus(err, 404)
 }
@@ -160,7 +166,7 @@ func (s *ShapeBAuthzSuite) TestSchemaDeleteForeignProjectRefused() {
 func (s *ShapeBAuthzSuite) TestSchemaDeleteOwnProjectSucceeds() {
 	ownSchema := s.seedSchema(s.ProjectID, "own-schema")
 
-	ctx := auth.ContextWithUser(s.Ctx, &auth.AuthUser{ID: testutil.AdminUser.ID})
+	ctx := mcp.ContextWithTransportEnforced(auth.ContextWithUser(s.Ctx, &auth.AuthUser{ID: testutil.AdminUser.ID}))
 	result, err := s.mcpSvc.ExecuteTool(ctx, s.ProjectID, "schema-delete", map[string]any{"schema_id": ownSchema})
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
@@ -195,7 +201,7 @@ func (s *ShapeBAuthzSuite) TestSchemaAssignForeignProjectRefused() {
 	foreignProject := s.seedForeignProject()
 	foreignSchema := s.seedSchema(foreignProject, "foreign-secret-schema")
 
-	ctx := auth.ContextWithUser(s.Ctx, &auth.AuthUser{ID: testutil.AdminUser.ID})
+	ctx := mcp.ContextWithTransportEnforced(auth.ContextWithUser(s.Ctx, &auth.AuthUser{ID: testutil.AdminUser.ID}))
 	_, err := s.mcpSvc.ExecuteTool(ctx, s.ProjectID, "schema-assign", map[string]any{"schema_id": foreignSchema})
 	s.assertAppErrorStatus(err, 404)
 }
@@ -203,7 +209,7 @@ func (s *ShapeBAuthzSuite) TestSchemaAssignForeignProjectRefused() {
 func (s *ShapeBAuthzSuite) TestSchemaAssignOwnProjectSucceeds() {
 	ownSchema := s.seedSchema(s.ProjectID, "own-schema")
 
-	ctx := auth.ContextWithUser(s.Ctx, &auth.AuthUser{ID: testutil.AdminUser.ID})
+	ctx := mcp.ContextWithTransportEnforced(auth.ContextWithUser(s.Ctx, &auth.AuthUser{ID: testutil.AdminUser.ID}))
 	result, err := s.mcpSvc.ExecuteTool(ctx, s.ProjectID, "schema-assign", map[string]any{"schema_id": ownSchema})
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
@@ -223,7 +229,7 @@ func (s *ShapeBAuthzSuite) TestSchemaAssignmentUpdateForeignProjectRefused() {
 	foreignProject := s.seedForeignProject()
 	foreignSchema := s.seedSchema(foreignProject, "foreign-schema")
 
-	ctx := auth.ContextWithUser(s.Ctx, &auth.AuthUser{ID: testutil.AdminUser.ID})
+	ctx := mcp.ContextWithTransportEnforced(auth.ContextWithUser(s.Ctx, &auth.AuthUser{ID: testutil.AdminUser.ID}))
 	_, err := s.mcpSvc.ExecuteTool(ctx, s.ProjectID, "schema-assignment-update", map[string]any{
 		"schema_id": foreignSchema,
 		"active":    false,
@@ -237,7 +243,7 @@ func (s *ShapeBAuthzSuite) TestSchemaUninstallForeignProjectRefused() {
 	foreignProject := s.seedForeignProject()
 	foreignSchema := s.seedSchema(foreignProject, "foreign-schema")
 
-	ctx := auth.ContextWithUser(s.Ctx, &auth.AuthUser{ID: testutil.AdminUser.ID})
+	ctx := mcp.ContextWithTransportEnforced(auth.ContextWithUser(s.Ctx, &auth.AuthUser{ID: testutil.AdminUser.ID}))
 	_, err := s.mcpSvc.ExecuteTool(ctx, s.ProjectID, "schema-uninstall", map[string]any{"schema_id": foreignSchema})
 	s.assertAppErrorStatus(err, 404)
 }
@@ -248,7 +254,7 @@ func (s *ShapeBAuthzSuite) TestSchemaUninstallForeignProjectRefused() {
 func (s *ShapeBAuthzSuite) TestSchemaAssignmentUpdateAndUninstallOwnSucceeds() {
 	ownSchema := s.seedSchema(s.ProjectID, "own-schema")
 
-	ctx := auth.ContextWithUser(s.Ctx, &auth.AuthUser{ID: testutil.AdminUser.ID})
+	ctx := mcp.ContextWithTransportEnforced(auth.ContextWithUser(s.Ctx, &auth.AuthUser{ID: testutil.AdminUser.ID}))
 
 	_, err := s.mcpSvc.ExecuteTool(ctx, s.ProjectID, "schema-assign", map[string]any{"schema_id": ownSchema})
 	s.Require().NoError(err)
@@ -295,7 +301,7 @@ func (s *ShapeBAuthzSuite) TestSchemaDeleteForeignAssignedSchemaRefused() {
 	`, foreignProject, foreignSchema).Exec(s.Ctx)
 	s.Require().NoError(err)
 
-	ctx := auth.ContextWithUser(s.Ctx, &auth.AuthUser{ID: testutil.AdminUser.ID})
+	ctx := mcp.ContextWithTransportEnforced(auth.ContextWithUser(s.Ctx, &auth.AuthUser{ID: testutil.AdminUser.ID}))
 	_, err = s.mcpSvc.ExecuteTool(ctx, s.ProjectID, "schema-delete", map[string]any{"schema_id": foreignSchema})
 	s.assertAppErrorStatus(err, 404)
 }
