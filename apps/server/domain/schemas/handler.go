@@ -177,6 +177,7 @@ func (h *Handler) GetInstalledPacks(c echo.Context) error {
 // @Success      201 {object} AssignPackResult "Created assignment"
 // @Failure      400 {object} apperror.Error "Bad request"
 // @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Schema not visible to this project"
 // @Failure      500 {object} apperror.Error "Internal server error"
 // @Router       /api/schemas/projects/{projectId}/assign [post]
 // @Security     bearerAuth
@@ -197,7 +198,7 @@ func (h *Handler) AssignPack(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("schema_id is required")
 	}
 
-	result, err := h.svc.AssignPack(c.Request().Context(), projectID, user.ID, &req)
+	result, err := h.svc.AssignVisiblePack(c.Request().Context(), projectID, user.ID, &req)
 	if err != nil {
 		return err
 	}
