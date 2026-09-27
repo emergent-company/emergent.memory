@@ -2286,8 +2286,11 @@ func (ae *AgentExecutor) runPipeline(
 		// instance's local context and cancel registry know nothing about it, so
 		// the authoritative row must be read here. Recording the user-cancel
 		// reason on the handle makes the cancellation block below finalize the
-		// run as cancelled rather than failed.
-		if ctx.Err() == nil && ae.durablyCancelling(run.ID) {
+		// run as cancelled rather than failed. The read is not gated on
+		// ctx.Err(): a durable cancel must win even when a timeout/doom-loop has
+		// already cancelled the context, so a requested cancel is never reported
+		// as failed.
+		if ae.durablyCancelling(run.ID) {
 			cancelHandle.cancelWithReason(userCancelReason)
 		}
 
@@ -3277,12 +3280,15 @@ func (ae *AgentExecutor) runPipeline(
 	// A durable cancel (issue #1166) may have landed after the last step
 	// boundary — or during a long tool call — without this instance's context
 	// being cancelled. Read the authoritative row before deciding the terminal
-	// outcome: if it is "cancelling", record the user-cancel reason and cancel
-	// the context so the cancellation block below finalizes the run as cancelled
-	// instead of reporting a success/failure the endpoint never promised. The
+	// outcome: if it is "cancelling", record the user-cancel reason so the
+	// cancellation block below finalizes the run as cancelled instead of
+	// reporting a success/failure the endpoint never promised. The read is not
+	// gated on ctx.Err(): a durable cancel must be honoured even when a timeout
+	// or doom-loop has already cancelled the context, otherwise the in-process
+	// result is reported as failed while the row is persisted as cancelled. The
 	// terminal writers are also cancel-aware, so even a cancel landing after this
 	// read finalizes as cancelled rather than clobbering it.
-	if ctx.Err() == nil && ae.durablyCancelling(run.ID) {
+	if ae.durablyCancelling(run.ID) {
 		cancelHandle.cancelWithReason(userCancelReason)
 	}
 
