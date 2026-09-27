@@ -420,7 +420,7 @@ func TestRunAgentOnceEmptyMessage(t *testing.T) {
 // RunAgentInSession (session-aware continuation)
 // ============================================================================
 
-// RunAgentInSession must set ExecuteRequest.SessionID so the executor keys the
+// RunAgentInSession must set ExecuteRequest.ConversationKey so the executor keys the
 // ADK session as session:<projectID>:<sessionRef>; RunAgentOnce must leave it
 // empty so one-shot calls keep their per-run session.
 func TestRunAgentInSessionSetsSessionIDAndKey(t *testing.T) {
@@ -435,11 +435,11 @@ func TestRunAgentInSessionSetsSessionIDAndKey(t *testing.T) {
 	assert.Equal(t, "r1", runID)
 	assert.Equal(t, 7, steps)
 
-	assert.Equal(t, sessionRef, runner.gotReq.SessionID, "SessionID must be carried to the executor")
-	assert.Equal(t, "session:proj-1:"+sessionRef, agentADKSessionKey("proj-1", runner.gotReq.SessionID))
+	assert.Equal(t, sessionRef, runner.gotReq.ConversationKey, "ConversationKey must be carried to the executor")
+	assert.Equal(t, "session:proj-1:"+sessionRef, agentADKSessionKey("proj-1", runner.gotReq.ConversationKey))
 }
 
-// RunAgentOnce keeps one-shot semantics: no SessionID and the same reply path.
+// RunAgentOnce keeps one-shot semantics: no ConversationKey and the same reply path.
 func TestRunAgentOnceLeavesSessionIDEmpty(t *testing.T) {
 	repo := &fakeOnceRepo{agent: enabledAgent(), msgs: assistantMessages("one-shot")}
 	runner := &fakeRunner{result: &ExecuteResult{RunID: "r1", Status: RunStatusSuccess}}
@@ -448,7 +448,7 @@ func TestRunAgentOnceLeavesSessionIDEmpty(t *testing.T) {
 	reply, _, err := h.RunAgentOnce(context.Background(), "proj-1", "agent-1", "ping", mcp.AgentRunBudget{})
 	require.NoError(t, err)
 	assert.Equal(t, "one-shot", reply)
-	assert.Empty(t, runner.gotReq.SessionID, "call_agent must not open a persistent session")
+	assert.Empty(t, runner.gotReq.ConversationKey, "call_agent must not open a persistent session")
 }
 
 // Error mapping is shared: a session turn that exceeds the step budget reports

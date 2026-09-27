@@ -365,7 +365,7 @@ func (tp *ToolPool) ResolveTools(projectID string, agentDef *AgentDefinition, de
 	}
 
 	// Always inject hidden built-in tools — these bypass all whitelist/scope filters.
-	// set_session_title: lets agents update the ACP session display title.
+	// set_session_title: lets agents update the session display title.
 	// Agents can opt out by adding "set_session_title" to their BannedTools list.
 	sessionTitleBanned := false
 	for _, b := range agentDef.BannedTools {
@@ -387,7 +387,7 @@ func (tp *ToolPool) ResolveTools(projectID string, agentDef *AgentDefinition, de
 					},
 					"session_id": map[string]any{
 						"type":        "string",
-						"description": "Optional ACP session ID to update. Only needed when the session ID is not already available in context (e.g. when the agent received it via a [Session: <id>] tag in the prompt). If omitted, the active session from context is used.",
+						"description": "Optional session ID to update. Only needed when the session ID is not already available in context (e.g. when the agent received it via a [Session: <id>] tag in the prompt). If omitted, the active session from context is used.",
 					},
 				},
 			},

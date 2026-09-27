@@ -29,9 +29,9 @@ type Conversation struct {
 	// Agent-backed chat: links conversation to an agent definition for tool-calling capabilities
 	AgentDefinitionID *uuid.UUID `bun:"agent_definition_id,type:uuid" json:"agentDefinitionId,omitempty"`
 
-	// ACPSessionID links this conversation to its backing kb.acp_sessions row.
+	// SessionID links this conversation to its backing kb.sessions row.
 	// Created on first agent-backed stream; reused on subsequent turns.
-	ACPSessionID *uuid.UUID `bun:"acp_session_id,type:uuid" json:"acpSessionId,omitempty"`
+	SessionID *uuid.UUID `bun:"session_id,type:uuid" json:"sessionId,omitempty"`
 
 	// Timestamps
 	CreatedAt time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`

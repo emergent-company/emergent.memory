@@ -52,7 +52,7 @@ func (s *SessionTodoToolsOwnershipSuite) SetupTest() {
 	_ = s.mcpSvc.GetToolDefinitions()
 }
 
-// seedSession inserts a private ACP session + chat conversation owned by ownerID
+// seedSession inserts a private session + chat conversation owned by ownerID
 // with one todo, returning the session and todo ids.
 func (s *SessionTodoToolsOwnershipSuite) seedSession(ownerID string) (string, string) {
 	sessionID := uuid.New()
@@ -60,13 +60,13 @@ func (s *SessionTodoToolsOwnershipSuite) seedSession(ownerID string) (string, st
 	convID := uuid.New()
 
 	_, err := s.DB().NewRaw(`
-		INSERT INTO kb.acp_sessions (id, project_id, created_at, updated_at)
+		INSERT INTO kb.sessions (id, project_id, created_at, updated_at)
 		VALUES (?, ?, NOW(), NOW())
 	`, sessionID, s.ProjectID).Exec(s.Ctx)
 	s.Require().NoError(err)
 
 	_, err = s.DB().NewRaw(`
-		INSERT INTO kb.chat_conversations (id, title, project_id, is_private, owner_user_id, acp_session_id, created_at, updated_at)
+		INSERT INTO kb.chat_conversations (id, title, project_id, is_private, owner_user_id, session_id, created_at, updated_at)
 		VALUES (?, ?, ?, true, ?, ?, NOW(), NOW())
 	`, convID, "owner-secret", s.ProjectID, ownerID, sessionID).Exec(s.Ctx)
 	s.Require().NoError(err)

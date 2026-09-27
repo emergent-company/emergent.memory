@@ -16,13 +16,13 @@ import (
 // TestGetConversationFullHistoryRaw_ScopedToCaller proves the MCP
 // session-get-messages data-access layer enforces the #1010 conversation
 // ownership model. Before the fix (issue #1032) GetConversationFullHistoryRaw
-// resolved a session by acp_session_id alone, so any caller could read another
+// resolved a session by session_id alone, so any caller could read another
 // project's (or another member's private) session messages — including the
 // composed system prompt persisted by #1006.
 //
 // The predicate is the shared sessiontodos.SessionAccessibleQuery: the session
 // must be in the caller's project AND, when it is linked to a chat conversation
-// (kb.chat_conversations.acp_session_id), that conversation must be owned by the
+// (kb.chat_conversations.session_id), that conversation must be owned by the
 // caller or non-private. A foreign/unknown session fails closed to 404 so its
 // existence does not leak.
 func TestGetConversationFullHistoryRaw_ScopedToCaller(t *testing.T) {
@@ -55,16 +55,16 @@ func TestGetConversationFullHistoryRaw_ScopedToCaller(t *testing.T) {
 
 	seedSession := func(projectID, ownerID string, isPrivate bool) string {
 		sessionID := uuid.NewString()
-		require.NoError(t, rawExec(ctx, db, `INSERT INTO kb.acp_sessions (id, project_id, created_at, updated_at) VALUES (?, ?, NOW(), NOW())`, sessionID, projectID))
+		require.NoError(t, rawExec(ctx, db, `INSERT INTO kb.sessions (id, project_id, created_at, updated_at) VALUES (?, ?, NOW(), NOW())`, sessionID, projectID))
 
 		convID := uuid.NewString()
-		require.NoError(t, rawExec(ctx, db, `INSERT INTO kb.chat_conversations (id, title, project_id, is_private, owner_user_id, acp_session_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`, convID, "session-"+sessionID, projectID, isPrivate, ownerID, sessionID))
+		require.NoError(t, rawExec(ctx, db, `INSERT INTO kb.chat_conversations (id, title, project_id, is_private, owner_user_id, session_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`, convID, "session-"+sessionID, projectID, isPrivate, ownerID, sessionID))
 
 		agentID := uuid.NewString()
 		require.NoError(t, rawExec(ctx, db, `INSERT INTO kb.agents (id, name, strategy_type, cron_schedule, project_id) VALUES (?, ?, ?, ?, ?)`, agentID, "scoping-agent", "graph", "", projectID))
 
 		runID := uuid.NewString()
-		require.NoError(t, rawExec(ctx, db, `INSERT INTO kb.agent_runs (id, agent_id, status, started_at, acp_session_id) VALUES (?, ?, 'completed', NOW(), ?)`, runID, agentID, sessionID))
+		require.NoError(t, rawExec(ctx, db, `INSERT INTO kb.agent_runs (id, agent_id, status, started_at, session_id) VALUES (?, ?, 'completed', NOW(), ?)`, runID, agentID, sessionID))
 
 		// One message with a system-prompt-like payload to mirror what #1006 made
 		// sensitive; the content is a literal so no bound JSONB casting is needed.

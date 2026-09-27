@@ -233,7 +233,7 @@ func TestA2AStreamTranslator_CompletedEvents_TerminalTaskCompleted(t *testing.T)
 	tr := newA2aStreamTranslator("t1", "c1")
 	_ = tr.translate(StreamEvent{Type: StreamEventTextDelta, Text: "done"})
 
-	latest := &AgentRun{ID: "t1", Status: RunStatusSuccess, ACPSessionID: strPtr("c1")}
+	latest := &AgentRun{ID: "t1", Status: RunStatusSuccess, SessionID: strPtr("c1")}
 	messages := []AgentRunMessage{{Role: "assistant", Content: map[string]any{"text": "done"}}}
 
 	events := tr.completedEvents(messages, latest, nil)
@@ -500,7 +500,7 @@ func TestA2AStreamPayload_RoundTripsThroughEventData(t *testing.T) {
 	require.NotNil(t, payload["stream"])
 
 	// Simulate the jsonb round-trip: marshal to JSON, decode back into
-	// map[string]any (what bun returns from the acp_run_events.data column).
+	// map[string]any (what bun returns from the run_events.data column).
 	j := mustJSON(t, payload)
 	var decoded map[string]any
 	require.NoError(t, json.Unmarshal([]byte(j), &decoded))

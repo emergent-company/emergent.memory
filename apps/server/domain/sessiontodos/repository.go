@@ -34,15 +34,15 @@ func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 // A session's content belongs to the conversation the session backs, so
 // ownership follows the chat conversation model: the session must be in the
 // caller's project AND, when the session is linked to a chat conversation
-// (kb.chat_conversations.acp_session_id), that conversation must be owned by
+// (kb.chat_conversations.session_id), that conversation must be owned by
 // the caller (owner_user_id) or be non-private (is_private = false). Sessions
 // with no linked conversation fall back to project scope (the documented
 // "scoped to an agent session" model, where sessions carry only project_id).
 // A foreign or unknown session id fails closed (no row matches).
 func SessionAccessibleQuery(ctx context.Context, db bun.IDB, sessionID, projectID, ownerUserID string) (bool, error) {
 	exists, err := db.NewSelect().
-		TableExpr("kb.acp_sessions AS s").
-		Join("LEFT JOIN kb.chat_conversations AS c ON c.acp_session_id = s.id").
+		TableExpr("kb.sessions AS s").
+		Join("LEFT JOIN kb.chat_conversations AS c ON c.session_id = s.id").
 		Where("s.id = ?", sessionID).
 		Where("s.project_id = ?", projectID).
 		Where("(c.id IS NULL OR c.owner_user_id = ? OR c.is_private = false)", ownerUserID).

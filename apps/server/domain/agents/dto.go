@@ -37,17 +37,16 @@ type AgentDTO struct {
 
 // AgentRunDTO is the response DTO for an agent run
 type AgentRunDTO struct {
-	ID            string         `json:"id"`
-	AgentID       string         `json:"agentId"`
-	AgentName     string         `json:"agentName,omitempty"`
-	Status        AgentRunStatus `json:"status"`
-	SessionStatus SessionStatus  `json:"sessionStatus"`
-	StartedAt     time.Time      `json:"startedAt"`
-	CompletedAt   *time.Time     `json:"completedAt"`
-	DurationMs    *int           `json:"durationMs"`
-	Summary       map[string]any `json:"summary"`
-	ErrorMessage  *string        `json:"errorMessage"`
-	SkipReason    *string        `json:"skipReason"`
+	ID           string         `json:"id"`
+	AgentID      string         `json:"agentId"`
+	AgentName    string         `json:"agentName,omitempty"`
+	Status       AgentRunStatus `json:"status"`
+	StartedAt    time.Time      `json:"startedAt"`
+	CompletedAt  *time.Time     `json:"completedAt"`
+	DurationMs   *int           `json:"durationMs"`
+	Summary      map[string]any `json:"summary"`
+	ErrorMessage *string        `json:"errorMessage"`
+	SkipReason   *string        `json:"skipReason"`
 
 	// Multi-agent coordination fields
 	ParentRunID *string `json:"parentRunId,omitempty"`
@@ -250,7 +249,6 @@ func (r *AgentRun) ToDTO() *AgentRunDTO {
 		ID:                r.ID,
 		AgentID:           r.AgentID,
 		Status:            r.Status,
-		SessionStatus:     r.SessionStatus,
 		StartedAt:         r.StartedAt,
 		CompletedAt:       r.CompletedAt,
 		DurationMs:        r.DurationMs,

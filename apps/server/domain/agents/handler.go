@@ -764,7 +764,7 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 			EnvVars:         triggerReq.EnvVars,
 			MaxSteps:        triggerReq.MaxSteps,
 			AuthToken:       triggerAuthToken,
-			SessionID:       triggerReq.SessionID,
+			ConversationKey: triggerReq.SessionID,
 			TrustedInternal: true, // session UI is a trusted surface (full internal coordination)
 		})
 		if execResult != nil && execResult.Cleanup != nil {
@@ -2804,7 +2804,7 @@ type RespondParams struct {
 	ShareToolDeny          []string
 	DisableAuthMint        bool
 	MaxApprovalsPerSession int
-	ACPSessionID           string
+	SessionID              string
 
 	// OnRunSettled, if non-nil, is invoked (in the resume goroutine, with a
 	// background context) once the resumed run settles, carrying the result of
@@ -2913,7 +2913,7 @@ func (h *Handler) RespondToQuestion(ctx context.Context, p RespondParams) (*Agen
 				decision = "cancelled"
 			}
 			if p.MaxApprovalsPerSession > 0 {
-				decided, decErr := h.repo.ReserveAndDecideShareApproval(ctx, p.ShareLinkID, p.ACPSessionID, p.QuestionID, decision, p.Message, p.RespondedBy, p.MaxApprovalsPerSession)
+				decided, decErr := h.repo.ReserveAndDecideShareApproval(ctx, p.ShareLinkID, p.SessionID, p.QuestionID, decision, p.Message, p.RespondedBy, p.MaxApprovalsPerSession)
 				if decErr != nil {
 					_ = h.repo.ReopenQuestion(ctx, p.QuestionID)
 					return nil, apperror.NewInternal("failed to record decision", decErr)

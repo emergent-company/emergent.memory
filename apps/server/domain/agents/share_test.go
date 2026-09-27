@@ -55,7 +55,7 @@ type fakeShareRepo struct {
 	createdRun *AgentRun
 
 	// recording
-	createdACPSession   *ACPSession
+	createdSession      *Session
 	createdShareSession *AgentShareSession
 	createdShareLink    *AgentShareLink
 	createdAgent        *Agent
@@ -225,7 +225,7 @@ func (f *fakeShareRepo) ReserveAndDecideShareApproval(_ context.Context, _, _, _
 	f.approvals++
 	return true, nil
 }
-func (f *fakeShareRepo) ListPendingQuestionsForACPSession(_ context.Context, _ string) ([]*AgentQuestion, error) {
+func (f *fakeShareRepo) ListPendingQuestionsForSession(_ context.Context, _ string) ([]*AgentQuestion, error) {
 	return nil, nil
 }
 
@@ -277,8 +277,8 @@ func (f *fakeShareRepo) Create(_ context.Context, a *Agent) error {
 	f.agents[a.Name] = a
 	return nil
 }
-func (f *fakeShareRepo) CreateACPSession(_ context.Context, s *ACPSession) error {
-	f.createdACPSession = s
+func (f *fakeShareRepo) CreateSession(_ context.Context, s *Session) error {
+	f.createdSession = s
 	return nil
 }
 func (f *fakeShareRepo) FindQuestionByID(_ context.Context, _ string) (*AgentQuestion, error) {
@@ -455,7 +455,7 @@ func TestBuildShareExecuteRequest_SandboxOffNoOwnerCreds(t *testing.T) {
 	binding := testBinding(link, def)
 
 	svc := NewShareService(repo, nil, nil, nil, "", nil)
-	session := &AgentShareSession{ID: "sess-1", ACPSessionID: "acp-1", EndUserRef: "ref-1"}
+	session := &AgentShareSession{ID: "sess-1", SessionID: "acp-1", EndUserRef: "ref-1"}
 
 	req, err := svc.buildShareExecuteRequest(context.Background(), binding, session, "hello", nil)
 	require.NoError(t, err)
@@ -495,8 +495,8 @@ func TestRespondToQuestion_ForeignEndUserRef(t *testing.T) {
 
 	// The caller's session is "sess-1" but the run maps to a DIFFERENT session
 	// (owned by another end user).
-	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, ACPSessionID: "acp-1"}
-	repo.sessionByRunAndUser = &AgentShareSession{ID: "sess-2", ShareLinkID: "link-a", EndUserRef: bob, ACPSessionID: "acp-1"}
+	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, SessionID: "acp-1"}
+	repo.sessionByRunAndUser = &AgentShareSession{ID: "sess-2", ShareLinkID: "link-a", EndUserRef: bob, SessionID: "acp-1"}
 
 	responder := &shareFakeResponder{}
 	svc := NewShareService(repo, nil, nil, responder, "", nil)
@@ -538,7 +538,7 @@ func TestRespondToQuestion_SetsOnRunSettled(t *testing.T) {
 	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
 
 	alice := "11111111-1111-1111-1111-111111111111"
-	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, ACPSessionID: "acp-1"}
+	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, SessionID: "acp-1"}
 	repo.sessionByRunAndUser = repo.sessions["sess-1"]
 	repo.question = &AgentQuestion{ID: "q-1", RunID: "run-1", ProjectID: "proj-a", Status: QuestionStatusPending}
 	repo.runUsage = &RunTokenUsage{TotalInputTokens: 10, TotalOutputTokens: 5, EstimatedCostUSD: 0.01}
@@ -586,7 +586,7 @@ func TestStreamMessage_BudgetTrip(t *testing.T) {
 	runner := &shareFakeRunner{result: &ExecuteResult{RunID: "run-1"}}
 	svc := NewShareService(repo, nil, runner, nil, "", nil)
 
-	session := &AgentShareSession{ID: "sess-1", ACPSessionID: "acp-1", EndUserRef: "alice"}
+	session := &AgentShareSession{ID: "sess-1", SessionID: "acp-1", EndUserRef: "alice"}
 	_, err := svc.StreamMessage(context.Background(), binding, session, "hello", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "budget")
@@ -735,7 +735,7 @@ func TestStreamMessage_ConcurrentRunLimit(t *testing.T) {
 	runner := &shareFakeRunner{result: &ExecuteResult{RunID: "run-1"}}
 	svc := NewShareService(repo, nil, runner, nil, "", nil)
 
-	session := &AgentShareSession{ID: "sess-1", ACPSessionID: "acp-1", EndUserRef: "alice"}
+	session := &AgentShareSession{ID: "sess-1", SessionID: "acp-1", EndUserRef: "alice"}
 	_, err := svc.StreamMessage(context.Background(), binding, session, "hello", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "concurrent")
@@ -764,7 +764,7 @@ func TestGetSessionTranscriptByID_ForeignProject404(t *testing.T) {
 // closing the RequireProjectTokenScope/RequireAPITokenScopes OAuth bypass.
 func TestGetSessionTranscriptByID_NonMemberForbidden(t *testing.T) {
 	repo := newFakeShareRepo()
-	repo.shareSessionRow = &shareSessionProjectRow{ACPSessionID: "acp-1"}
+	repo.shareSessionRow = &shareSessionProjectRow{SessionID: "acp-1"}
 	tokens := &shareFakeTokenService{roleSet: true} // role == "" → not a member
 	svc := NewShareService(repo, tokens, nil, nil, "", nil)
 
@@ -789,7 +789,7 @@ func TestListSessionsByProject_NonMemberForbidden(t *testing.T) {
 // order, dropping non-message kinds, non-user/assistant roles, and empty text.
 func TestGetSessionTranscriptByID_FiltersMessages(t *testing.T) {
 	repo := newFakeShareRepo()
-	repo.shareSessionRow = &shareSessionProjectRow{ACPSessionID: "acp-1"}
+	repo.shareSessionRow = &shareSessionProjectRow{SessionID: "acp-1"}
 	repo.historyItems = []*ConversationHistoryItem{
 		{Kind: "message", Role: "user", Content: map[string]any{"text": "hello"}},
 		{Kind: "message", Role: "assistant", Content: map[string]any{"text": "hi there"}},
@@ -834,7 +834,7 @@ func TestStreamMessage_InvokesCleanupOnSuccess(t *testing.T) {
 	}}
 	svc := NewShareService(repo, nil, runner, nil, "", nil)
 
-	session := &AgentShareSession{ID: "sess-1", ACPSessionID: "acp-1", EndUserRef: "alice"}
+	session := &AgentShareSession{ID: "sess-1", SessionID: "acp-1", EndUserRef: "alice"}
 	_, err := svc.StreamMessage(context.Background(), binding, session, "hello", nil)
 
 	require.NoError(t, err)
@@ -856,7 +856,7 @@ func TestStreamMessage_InvokesCleanupOnRunError(t *testing.T) {
 	}
 	svc := NewShareService(repo, nil, runner, nil, "", nil)
 
-	session := &AgentShareSession{ID: "sess-1", ACPSessionID: "acp-1", EndUserRef: "alice"}
+	session := &AgentShareSession{ID: "sess-1", SessionID: "acp-1", EndUserRef: "alice"}
 	_, err := svc.StreamMessage(context.Background(), binding, session, "hello", nil)
 
 	require.Error(t, err)
@@ -874,7 +874,7 @@ func TestStreamMessage_NilCleanupIsSafe(t *testing.T) {
 	runner := &shareFakeRunner{result: &ExecuteResult{RunID: "run-1"}}
 	svc := NewShareService(repo, nil, runner, nil, "", nil)
 
-	session := &AgentShareSession{ID: "sess-1", ACPSessionID: "acp-1", EndUserRef: "alice"}
+	session := &AgentShareSession{ID: "sess-1", SessionID: "acp-1", EndUserRef: "alice"}
 	_, err := svc.StreamMessage(context.Background(), binding, session, "hello", nil)
 	require.NoError(t, err)
 }

@@ -238,7 +238,7 @@ func a2aStatusUpdate(taskID, contextID string, state TaskState, msgText string) 
 	return StreamResponse{StatusUpdate: su}
 }
 
-// a2aDeltaEventType maps an internal stream event to the reused ACP run-event
+// a2aDeltaEventType maps an internal stream event to the reused run-event
 // type persisted alongside emission. Returns false when the event has no
 // persistence counterpart (tool-approval gate, unknown).
 func a2aDeltaEventType(ev StreamEvent) (string, bool) {
@@ -260,7 +260,7 @@ func a2aDeltaEventType(ev StreamEvent) (string, bool) {
 // Persistence / bus helpers
 // ---------------------------------------------------------------------------
 
-// persistA2AEvent inserts a run event into the reused kb.acp_run_events table so
+// persistA2AEvent inserts a run event into the reused kb.run_events table so
 // GetTask history and SubscribeTask replay stay consistent.
 func (h *A2AHandler) persistA2AEvent(ctx context.Context, runID, eventType string, data map[string]any) {
 	if h.repo == nil {
@@ -269,8 +269,8 @@ func (h *A2AHandler) persistA2AEvent(ctx context.Context, runID, eventType strin
 	if data == nil {
 		data = map[string]any{}
 	}
-	event := &ACPRunEvent{RunID: runID, EventType: eventType, Data: data}
-	if err := h.repo.InsertACPRunEvent(ctx, event); err != nil {
+	event := &RunEvent{RunID: runID, EventType: eventType, Data: data}
+	if err := h.repo.InsertRunEvent(ctx, event); err != nil {
 		h.log.Warn("failed to persist A2A run event",
 			slog.String("run_id", runID),
 			slog.String("event_type", eventType),
@@ -386,7 +386,7 @@ func (h *A2AHandler) streamNewTask(c echo.Context, projectID, userID, userMessag
 	}
 
 	if contextID != "" {
-		session, err := h.repo.GetACPSession(ctx, projectID, contextID)
+		session, err := h.repo.GetSession(ctx, projectID, contextID)
 		if err != nil {
 			h.log.Error("failed to load context", "context_id", contextID, "error", err)
 			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to load context"))
@@ -395,8 +395,8 @@ func (h *A2AHandler) streamNewTask(c echo.Context, projectID, userID, userMessag
 			return writeA2AError(c, a2aValidationError("unknown contextId"))
 		}
 	} else {
-		session := &ACPSession{ProjectID: projectID, AgentName: strPtr(def.Name)}
-		if err := h.repo.CreateACPSession(ctx, session); err != nil {
+		session := &Session{ProjectID: projectID, AgentName: strPtr(def.Name)}
+		if err := h.repo.CreateSession(ctx, session); err != nil {
 			h.log.Error("failed to create context", "project_id", projectID, "error", err)
 			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to create context"))
 		}
@@ -414,7 +414,7 @@ func (h *A2AHandler) streamNewTask(c echo.Context, projectID, userID, userMessag
 		return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to create run"))
 	}
 
-	if err := h.repo.UpdateRunACPSessionID(ctx, run.ID, contextID); err != nil {
+	if err := h.repo.UpdateRunSessionID(ctx, run.ID, contextID); err != nil {
 		h.log.Warn("failed to link run to context",
 			"run_id", run.ID, "context_id", contextID, "error", err.Error(),
 		)
@@ -446,7 +446,7 @@ func (h *A2AHandler) streamResumeTask(c echo.Context, projectID, userID, userMes
 	if original == nil || original.Agent == nil || original.Agent.ProjectID != projectID {
 		return writeA2AError(c, NewA2AError(A2ACodeTaskNotFound, A2AReasonTaskNotFound, "task not found"))
 	}
-	if contextID != "" && derefString(original.ACPSessionID) != contextID {
+	if contextID != "" && derefString(original.SessionID) != contextID {
 		return writeA2AError(c, a2aValidationError("contextId does not match taskId"))
 	}
 
@@ -485,7 +485,7 @@ func (h *A2AHandler) streamResumeTask(c echo.Context, projectID, userID, userMes
 		def, _ = h.repo.FindDefinitionByName(ctx, projectID, latest.Agent.Name)
 	}
 
-	streamCtxID := derefString(original.ACPSessionID)
+	streamCtxID := derefString(original.SessionID)
 	if streamCtxID == "" {
 		streamCtxID = contextID
 	}

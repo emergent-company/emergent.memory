@@ -1509,16 +1509,6 @@ func (r *Repository) DeleteDefinition(ctx context.Context, id string) error {
 
 // --- Extended Agent Run operations ---
 
-// UpdateSessionStatus updates the workspace session status for an agent run.
-func (r *Repository) UpdateSessionStatus(ctx context.Context, runID string, status SessionStatus) error {
-	_, err := r.db.NewUpdate().
-		Model((*AgentRun)(nil)).
-		Set("session_status = ?", status).
-		Where("id = ?", runID).
-		Exec(ctx)
-	return err
-}
-
 // UpdateTraceAndRootRun persists the OTel trace_id and root_run_id on an agent run.
 // Called immediately after the OTel span is created so the run row is linked to
 // its trace and to the top-level orchestration run in the same request.
@@ -1806,7 +1796,6 @@ func (r *Repository) FailRunWithSteps(ctx context.Context, runID string, errorMe
 		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
 		Set("error_message = ?", errorMessage).
 		Set("step_count = ?", stepCount).
-		Set("session_status = ?", SessionStatusError).
 		Where("id = ?", runID)).
 		Exec(ctx)
 	return err
@@ -1825,7 +1814,6 @@ func (r *Repository) CompleteRunWithSteps(ctx context.Context, runID string, sum
 		Set("summary = ?", summary).
 		Set("step_count = ?", stepCount).
 		Set("duration_ms = ?", durationMs).
-		Set("session_status = ?", SessionStatusCompleted).
 		Where("id = ?", runID)).
 		Exec(ctx)
 	return err
@@ -2278,7 +2266,7 @@ func (r *Repository) ReopenQuestion(ctx context.Context, id string) error {
 // ListToolApprovals returns tool-approval audit records for a project, newest
 // first, optionally filtered by decision (pending, approved, rejected, cancelled).
 // Each record's ConversationID is resolved by joining agent_runs (on run_id)
-// then chat_conversations (on acp_session_id); it is nil for runs without a
+// then chat_conversations (on session_id); it is nil for runs without a
 // chat conversation.
 func (r *Repository) ListToolApprovals(ctx context.Context, projectID string, decision *string) ([]*AgentToolApproval, error) {
 	type approvalRow struct {
@@ -2291,7 +2279,7 @@ func (r *Repository) ListToolApprovals(ctx context.Context, projectID string, de
 	                 cc.id AS conversation_id
 	          FROM kb.agent_tool_approvals ata
 	          LEFT JOIN kb.agent_runs ar ON ar.id = ata.run_id
-	          LEFT JOIN kb.chat_conversations cc ON cc.acp_session_id = ar.acp_session_id
+	          LEFT JOIN kb.chat_conversations cc ON cc.session_id = ar.session_id
 	          WHERE ata.project_id = ?`
 	args := []any{projectID}
 	if decision != nil {
@@ -3010,22 +2998,22 @@ func (r *Repository) FindAgentDefinitionBySlug(ctx context.Context, projectID, s
 	return nil, nil
 }
 
-// CreateACPSession inserts a new ACP session record.
-func (r *Repository) CreateACPSession(ctx context.Context, session *ACPSession) error {
+// CreateSession inserts a new session record.
+func (r *Repository) CreateSession(ctx context.Context, session *Session) error {
 	_, err := r.db.NewInsert().
 		Model(session).
 		Returning("*").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("CreateACPSession: %w", err)
+		return fmt.Errorf("CreateSession: %w", err)
 	}
 	return nil
 }
 
-// GetACPSession returns an ACP session by ID, scoped to the given project.
+// GetSession returns a session by ID, scoped to the given project.
 // Returns nil, nil when not found.
-func (r *Repository) GetACPSession(ctx context.Context, projectID, sessionID string) (*ACPSession, error) {
-	session := new(ACPSession)
+func (r *Repository) GetSession(ctx context.Context, projectID, sessionID string) (*Session, error) {
+	session := new(Session)
 	err := r.db.NewSelect().
 		Model(session).
 		Where("id = ?", sessionID).
@@ -3035,68 +3023,22 @@ func (r *Repository) GetACPSession(ctx context.Context, projectID, sessionID str
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("GetACPSession: %w", err)
+		return nil, fmt.Errorf("GetSession: %w", err)
 	}
 	return session, nil
 }
 
-// ListACPSessions returns ACP sessions for a project ordered by created_at descending.
-// By default only non-archived sessions are returned; pass includeArchived=true to include them.
-// Share-created sessions (rows linked from kb.agent_share_sessions) are excluded so
-// project members do not see anonymous public-share sessions in their session list.
-func (r *Repository) ListACPSessions(ctx context.Context, projectID string, includeArchived bool) ([]*ACPSession, error) {
-	var sessions []*ACPSession
-	q := r.db.NewSelect().
-		Model(&sessions).
-		Where("project_id = ?", projectID).
-		Where("NOT EXISTS (SELECT 1 FROM kb.agent_share_sessions AS ass WHERE ass.acp_session_id = acps.id)")
-	if !includeArchived {
-		q = q.Where("is_archived = FALSE")
-	}
-	err := q.Order("created_at DESC").Scan(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("ListACPSessions: %w", err)
-	}
-	return sessions, nil
-}
-
-// ArchiveACPSession sets is_archived=true on the given session.
-func (r *Repository) ArchiveACPSession(ctx context.Context, projectID, sessionID string) error {
-	_, err := r.db.NewUpdate().
-		TableExpr("kb.acp_sessions").
-		Set("is_archived = TRUE, updated_at = NOW()").
-		Where("id = ? AND project_id = ?", sessionID, projectID).
-		Exec(ctx)
-	if err != nil {
-		return fmt.Errorf("ArchiveACPSession: %w", err)
-	}
-	return nil
-}
-
-// UnarchiveACPSession sets is_archived=false on the given session.
-func (r *Repository) UnarchiveACPSession(ctx context.Context, projectID, sessionID string) error {
-	_, err := r.db.NewUpdate().
-		TableExpr("kb.acp_sessions").
-		Set("is_archived = FALSE, updated_at = NOW()").
-		Where("id = ? AND project_id = ?", sessionID, projectID).
-		Exec(ctx)
-	if err != nil {
-		return fmt.Errorf("UnarchiveACPSession: %w", err)
-	}
-	return nil
-}
-
-// ListSessionRunsByProjectID returns all agent runs that belong to any ACP session
+// ListSessionRunsByProjectID returns all agent runs that belong to any session
 // in the given project, with Agent relation loaded, ordered by created_at ASC.
-// Results are grouped by acp_session_id for building history URLs.
+// Results are grouped by session_id for building history URLs.
 func (r *Repository) ListSessionRunsByProjectID(ctx context.Context, projectID string) (map[string][]*AgentRun, error) {
 	var runs []*AgentRun
 	err := r.db.NewSelect().
 		Model(&runs).
 		Relation("Agent").
-		Join("JOIN kb.acp_sessions AS s ON s.id = ar.acp_session_id").
+		Join("JOIN kb.sessions AS s ON s.id = ar.session_id").
 		Where("s.project_id = ?", projectID).
-		Where("ar.acp_session_id IS NOT NULL").
+		Where("ar.session_id IS NOT NULL").
 		Order("ar.created_at ASC").
 		Scan(ctx)
 	if err != nil {
@@ -3104,16 +3046,16 @@ func (r *Repository) ListSessionRunsByProjectID(ctx context.Context, projectID s
 	}
 	grouped := make(map[string][]*AgentRun, len(runs))
 	for _, run := range runs {
-		if run.ACPSessionID != nil {
-			sid := *run.ACPSessionID
+		if run.SessionID != nil {
+			sid := *run.SessionID
 			grouped[sid] = append(grouped[sid], run)
 		}
 	}
 	return grouped, nil
 }
 
-// ACPSessionStats holds aggregated stats for a single ACP session.
-type ACPSessionStats struct {
+// SessionStats holds aggregated stats for a single session.
+type SessionStats struct {
 	SessionID    string  `bun:"session_id"`
 	MessageCount int64   `bun:"message_count"`
 	TotalTokens  int64   `bun:"total_tokens"`
@@ -3121,17 +3063,17 @@ type ACPSessionStats struct {
 }
 
 // GetSessionStatsByProjectID returns aggregated message count, token usage, and
-// estimated cost for every ACP session in the given project.
-func (r *Repository) GetSessionStatsByProjectID(ctx context.Context, projectID string) (map[string]*ACPSessionStats, error) {
-	var rows []ACPSessionStats
+// estimated cost for every session in the given project.
+func (r *Repository) GetSessionStatsByProjectID(ctx context.Context, projectID string) (map[string]*SessionStats, error) {
+	var rows []SessionStats
 	err := r.db.NewRaw(`
 		SELECT
 			s.id                                                            AS session_id,
 			COUNT(DISTINCT CASE WHEN m.role = 'user' THEN m.id END)        AS message_count,
 			COALESCE(SUM(u.text_input_tokens + u.output_tokens), 0)        AS total_tokens,
 			COALESCE(SUM(u.estimated_cost_usd), 0)                         AS total_cost_usd
-		FROM kb.acp_sessions s
-		LEFT JOIN kb.agent_runs     ar ON ar.acp_session_id = s.id
+		FROM kb.sessions s
+		LEFT JOIN kb.agent_runs     ar ON ar.session_id = s.id
 		LEFT JOIN kb.agent_run_messages m ON m.run_id = ar.id
 		LEFT JOIN kb.llm_usage_events   u  ON u.run_id  = ar.id
 		WHERE s.project_id = ?
@@ -3140,7 +3082,7 @@ func (r *Repository) GetSessionStatsByProjectID(ctx context.Context, projectID s
 	if err != nil {
 		return nil, fmt.Errorf("GetSessionStatsByProjectID: %w", err)
 	}
-	out := make(map[string]*ACPSessionStats, len(rows))
+	out := make(map[string]*SessionStats, len(rows))
 	for i := range rows {
 		out[rows[i].SessionID] = &rows[i]
 	}
@@ -3148,17 +3090,17 @@ func (r *Repository) GetSessionStatsByProjectID(ctx context.Context, projectID s
 }
 
 // GetSessionStatsBySessionID returns aggregated message count, token usage, and
-// estimated cost for a single ACP session.
-func (r *Repository) GetSessionStatsBySessionID(ctx context.Context, sessionID string) (*ACPSessionStats, error) {
-	var stats ACPSessionStats
+// estimated cost for a single session.
+func (r *Repository) GetSessionStatsBySessionID(ctx context.Context, sessionID string) (*SessionStats, error) {
+	var stats SessionStats
 	err := r.db.NewRaw(`
 		SELECT
 			s.id                                                            AS session_id,
 			COUNT(DISTINCT CASE WHEN m.role = 'user' THEN m.id END)        AS message_count,
 			COALESCE(SUM(u.text_input_tokens + u.output_tokens), 0)        AS total_tokens,
 			COALESCE(SUM(u.estimated_cost_usd), 0)                         AS total_cost_usd
-		FROM kb.acp_sessions s
-		LEFT JOIN kb.agent_runs         ar ON ar.acp_session_id = s.id
+		FROM kb.sessions s
+		LEFT JOIN kb.agent_runs         ar ON ar.session_id = s.id
 		LEFT JOIN kb.agent_run_messages m  ON m.run_id = ar.id
 		LEFT JOIN kb.llm_usage_events   u  ON u.run_id = ar.id
 		WHERE s.id = ?
@@ -3170,14 +3112,14 @@ func (r *Repository) GetSessionStatsBySessionID(ctx context.Context, sessionID s
 	return &stats, nil
 }
 
-// GetSessionRunHistory returns all agent runs linked to the given ACP session,
+// GetSessionRunHistory returns all agent runs linked to the given session,
 // ordered by created_at ascending (oldest first).
 func (r *Repository) GetSessionRunHistory(ctx context.Context, sessionID string) ([]*AgentRun, error) {
 	var runs []*AgentRun
 	err := r.db.NewSelect().
 		Model(&runs).
 		Relation("Agent").
-		Where("ar.acp_session_id = ?", sessionID).
+		Where("ar.session_id = ?", sessionID).
 		Order("ar.created_at ASC").
 		Scan(ctx)
 	if err != nil {
@@ -3186,49 +3128,49 @@ func (r *Repository) GetSessionRunHistory(ctx context.Context, sessionID string)
 	return runs, nil
 }
 
-// InsertACPRunEvent persists an SSE event emitted during an ACP run.
-func (r *Repository) InsertACPRunEvent(ctx context.Context, event *ACPRunEvent) error {
+// InsertRunEvent persists an SSE event emitted during a run.
+func (r *Repository) InsertRunEvent(ctx context.Context, event *RunEvent) error {
 	_, err := r.db.NewInsert().
 		Model(event).
 		Returning("*").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("InsertACPRunEvent: %w", err)
+		return fmt.Errorf("InsertRunEvent: %w", err)
 	}
 	return nil
 }
 
-// GetACPRunEvents returns all persisted SSE events for a run, ordered by
+// GetRunEvents returns all persisted SSE events for a run, ordered by
 // created_at ascending. Used to serve the events replay endpoint.
-func (r *Repository) GetACPRunEvents(ctx context.Context, runID string) ([]*ACPRunEvent, error) {
-	var events []*ACPRunEvent
+func (r *Repository) GetRunEvents(ctx context.Context, runID string) ([]*RunEvent, error) {
+	var events []*RunEvent
 	err := r.db.NewSelect().
 		Model(&events).
 		Where("run_id = ?", runID).
 		Order("created_at ASC").
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("GetACPRunEvents: %w", err)
+		return nil, fmt.Errorf("GetRunEvents: %w", err)
 	}
 	return events, nil
 }
 
-// GetACPRunEventsByRunIDs returns all persisted SSE events for the given run IDs
+// GetRunEventsByRunIDs returns all persisted SSE events for the given run IDs
 // in a single query, grouped by run ID. Used to bulk-load events for session history.
-func (r *Repository) GetACPRunEventsByRunIDs(ctx context.Context, runIDs []string) (map[string][]*ACPRunEvent, error) {
+func (r *Repository) GetRunEventsByRunIDs(ctx context.Context, runIDs []string) (map[string][]*RunEvent, error) {
 	if len(runIDs) == 0 {
-		return map[string][]*ACPRunEvent{}, nil
+		return map[string][]*RunEvent{}, nil
 	}
-	var events []*ACPRunEvent
+	var events []*RunEvent
 	err := r.db.NewSelect().
 		Model(&events).
 		Where("run_id IN (?)", bun.In(runIDs)).
 		Order("created_at ASC").
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("GetACPRunEventsByRunIDs: %w", err)
+		return nil, fmt.Errorf("GetRunEventsByRunIDs: %w", err)
 	}
-	grouped := make(map[string][]*ACPRunEvent, len(runIDs))
+	grouped := make(map[string][]*RunEvent, len(runIDs))
 	for _, e := range events {
 		grouped[e.RunID] = append(grouped[e.RunID], e)
 	}
@@ -3250,17 +3192,17 @@ func (r *Repository) SetRunCancelling(ctx context.Context, runID string) error {
 	return nil
 }
 
-// UpdateACPSessionTitle sets the title field on an ACP session.
-func (r *Repository) UpdateACPSessionTitle(ctx context.Context, projectID, sessionID, title string) error {
+// UpdateSessionTitle sets the title field on a session.
+func (r *Repository) UpdateSessionTitle(ctx context.Context, projectID, sessionID, title string) error {
 	_, err := r.db.NewUpdate().
-		Model((*ACPSession)(nil)).
+		Model((*Session)(nil)).
 		Set("title = ?", title).
 		Set("updated_at = now()").
 		Where("id = ?", sessionID).
 		Where("project_id = ?", projectID).
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("UpdateACPSessionTitle: %w", err)
+		return fmt.Errorf("UpdateSessionTitle: %w", err)
 	}
 	return nil
 }
@@ -3295,15 +3237,15 @@ type ConversationHistoryItem struct {
 	ErrorMessage *string    `json:"error_message,omitempty"`
 }
 
-// GetConversationFullHistory returns the unified ordered timeline for an ACP session:
+// GetConversationFullHistory returns the unified ordered timeline for a session:
 // run lifecycle events, all LLM messages (user + assistant), and all tool invocations.
 // Items are ordered by (run.created_at asc, item.step_number asc, item.created_at asc).
-func (r *Repository) GetConversationFullHistory(ctx context.Context, acpSessionID string) ([]*ConversationHistoryItem, error) {
+func (r *Repository) GetConversationFullHistory(ctx context.Context, sessionID string) ([]*ConversationHistoryItem, error) {
 	// Fetch runs ordered by start time
 	var runs []*AgentRun
 	if err := r.db.NewSelect().
 		Model(&runs).
-		Where("ar.acp_session_id = ?", acpSessionID).
+		Where("ar.session_id = ?", sessionID).
 		OrderExpr("ar.created_at ASC").
 		Scan(ctx); err != nil {
 		return nil, fmt.Errorf("GetConversationFullHistory runs: %w", err)
@@ -3440,16 +3382,16 @@ func (r *Repository) GetConversationFullHistory(ctx context.Context, acpSessionI
 // unknown session id fails closed to the domain's 404 convention so its
 // existence (and any stored messages / composed system prompt) cannot leak
 // (issue #1032).
-func (r *Repository) GetConversationFullHistoryRaw(ctx context.Context, projectID, ownerUserID, acpSessionID string) ([]map[string]any, error) {
-	ok, err := sessiontodos.SessionAccessibleQuery(ctx, r.db, acpSessionID, projectID, ownerUserID)
+func (r *Repository) GetConversationFullHistoryRaw(ctx context.Context, projectID, ownerUserID, sessionID string) ([]map[string]any, error) {
+	ok, err := sessiontodos.SessionAccessibleQuery(ctx, r.db, sessionID, projectID, ownerUserID)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return nil, apperror.NewNotFound("session", acpSessionID)
+		return nil, apperror.NewNotFound("session", sessionID)
 	}
 
-	items, err := r.GetConversationFullHistory(ctx, acpSessionID)
+	items, err := r.GetConversationFullHistory(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -3493,42 +3435,42 @@ func (r *Repository) GetConversationFullHistoryRaw(ctx context.Context, projectI
 	return out, nil
 }
 
-// EnsureConversationACPSession returns the acp_session_id linked to the given
-// chat conversation, creating a new ACPSession (and persisting the FK back onto
+// EnsureConversationSession returns the session_id linked to the given
+// chat conversation, creating a new Session (and persisting the FK back onto
 // the conversation row) if one does not yet exist.
 //
-// The chat_conversations table must have an acp_session_id uuid column (added by
-// migration 00115) and kb.acp_sessions must exist (added earlier).
-func (r *Repository) EnsureConversationACPSession(ctx context.Context, conversationID, projectID string, agentName *string) (string, error) {
+// The chat_conversations table must have a session_id uuid column (added by
+// migration 00115) and kb.sessions must exist (added earlier).
+func (r *Repository) EnsureConversationSession(ctx context.Context, conversationID, projectID string, agentName *string) (string, error) {
 	// 1. Fast path: read existing session ID from the conversation row.
 	var existing struct {
-		ACPSessionID *string `bun:"acp_session_id"`
+		SessionID *string `bun:"session_id"`
 	}
 	err := r.db.NewSelect().
 		TableExpr("kb.chat_conversations").
-		ColumnExpr("acp_session_id::text").
+		ColumnExpr("session_id::text").
 		Where("id = ?", conversationID).
 		Scan(ctx, &existing)
 	if err != nil {
-		return "", fmt.Errorf("EnsureConversationACPSession read: %w", err)
+		return "", fmt.Errorf("EnsureConversationSession read: %w", err)
 	}
-	if existing.ACPSessionID != nil && *existing.ACPSessionID != "" {
-		return *existing.ACPSessionID, nil
+	if existing.SessionID != nil && *existing.SessionID != "" {
+		return *existing.SessionID, nil
 	}
 
-	// 2. Create a new ACP session.
-	session := &ACPSession{
+	// 2. Create a new session.
+	session := &Session{
 		ProjectID: projectID,
 		AgentName: agentName,
 	}
-	if err := r.CreateACPSession(ctx, session); err != nil {
-		return "", fmt.Errorf("EnsureConversationACPSession create: %w", err)
+	if err := r.CreateSession(ctx, session); err != nil {
+		return "", fmt.Errorf("EnsureConversationSession create: %w", err)
 	}
 
 	// 3. Persist the FK back onto the conversation row.
 	_, err = r.db.NewUpdate().
 		TableExpr("kb.chat_conversations").
-		Set("acp_session_id = ?", session.ID).
+		Set("session_id = ?", session.ID).
 		Where("id = ?", conversationID).
 		Exec(ctx)
 	if err != nil {
@@ -3540,15 +3482,15 @@ func (r *Repository) EnsureConversationACPSession(ctx context.Context, conversat
 	return session.ID, nil
 }
 
-// UpdateRunACPSessionID sets the acp_session_id column on an agent run.
-func (r *Repository) UpdateRunACPSessionID(ctx context.Context, runID, sessionID string) error {
+// UpdateRunSessionID sets the session_id column on an agent run.
+func (r *Repository) UpdateRunSessionID(ctx context.Context, runID, sessionID string) error {
 	_, err := r.db.NewUpdate().
 		Model((*AgentRun)(nil)).
-		Set("acp_session_id = ?", sessionID).
+		Set("session_id = ?", sessionID).
 		Where("id = ?", runID).
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("UpdateRunACPSessionID: %w", err)
+		return fmt.Errorf("UpdateRunSessionID: %w", err)
 	}
 	return nil
 }
@@ -3859,7 +3801,7 @@ func (r *Repository) FindLatestRunInChain(ctx context.Context, runID string) (*A
 }
 
 // ListA2ARuns returns the logical A2A tasks for a project, optionally filtered
-// by context (acp_session_id) and a set of internal statuses, with the total
+// by context (session_id) and a set of internal statuses, with the total
 // count. Each logical task is represented by its resume-chain tail: a resumed
 // task leaves its root run in a non-terminal "working" state while the terminal
 // state lives on the child run created by executor.Resume, so listing the roots
@@ -3886,7 +3828,7 @@ func (r *Repository) ListA2ARuns(ctx context.Context, projectID, contextID strin
 		Where("ar.resumed_from IS NULL")
 
 	if contextID != "" {
-		rootsQuery = rootsQuery.Where("ar.acp_session_id = ?", contextID)
+		rootsQuery = rootsQuery.Where("ar.session_id = ?", contextID)
 	}
 
 	var roots []*AgentRun

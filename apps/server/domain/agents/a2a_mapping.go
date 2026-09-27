@@ -236,13 +236,13 @@ func runToA2ATaskStatus(run *AgentRun, question *AgentQuestion) TaskStatus {
 // caller-provided artifacts) to an A2A Task.
 //
 // Task.id is the stable run ID (never the internal resume_run_id);
-// contextId is derived from run.ACPSessionID; history is reconstructed from
+// contextId is derived from run.SessionID; history is reconstructed from
 // messages; artifacts carries the final assistant text (as one text artifact)
 // followed by the caller-provided artifacts (e.g. tool-call data artifacts).
 func RunToA2ATask(run *AgentRun, messages []AgentRunMessage, question *AgentQuestion, artifacts []Artifact) Task {
 	task := Task{
 		ID:        run.ID,
-		ContextID: derefString(run.ACPSessionID),
+		ContextID: derefString(run.SessionID),
 		Status:    runToA2ATaskStatus(run, question),
 		History:   MessagesToA2A(messages),
 	}

@@ -239,7 +239,7 @@ func (r *Repository) ListShareSessionsByEndUser(ctx context.Context, linkID, end
 type shareSessionProjectRow struct {
 	ID                string     `bun:"id"`
 	ShareLinkID       string     `bun:"share_link_id"`
-	ACPSessionID      string     `bun:"acp_session_id"`
+	SessionID         string     `bun:"session_id"`
 	EndUserRef        string     `bun:"end_user_ref"`
 	Title             *string    `bun:"title"`
 	LastActivityAt    *time.Time `bun:"last_activity_at"`
@@ -257,7 +257,7 @@ func shareSessionProjectQuery(q *bun.SelectQuery) *bun.SelectQuery {
 		TableExpr("kb.agent_share_sessions AS ass").
 		ColumnExpr("ass.id AS id").
 		ColumnExpr("ass.share_link_id AS share_link_id").
-		ColumnExpr("ass.acp_session_id AS acp_session_id").
+		ColumnExpr("ass.session_id AS session_id").
 		ColumnExpr("ass.end_user_ref AS end_user_ref").
 		ColumnExpr("ass.title AS title").
 		ColumnExpr("ass.last_activity_at AS last_activity_at").
@@ -348,14 +348,14 @@ func (r *Repository) TouchShareSession(ctx context.Context, sessionID string) er
 	return err
 }
 
-// FindShareSessionByRunAndEndUser verifies that a run's acp_session_id maps to a
+// FindShareSessionByRunAndEndUser verifies that a run's session_id maps to a
 // share session for (link, end user). Used by the share approval path so a
 // foreign end_user_ref can never answer another user's question.
 func (r *Repository) FindShareSessionByRunAndEndUser(ctx context.Context, linkID, endUserRef, runID string) (*AgentShareSession, error) {
 	s := new(AgentShareSession)
 	err := r.db.NewSelect().
 		Model(s).
-		Join("JOIN kb.agent_runs AS ar ON ar.acp_session_id = ass.acp_session_id").
+		Join("JOIN kb.agent_runs AS ar ON ar.session_id = ass.session_id").
 		Where("ass.share_link_id = ?", linkID).
 		Where("ass.end_user_ref = ?", endUserRef).
 		Where("ar.id = ?", runID).
@@ -370,13 +370,13 @@ func (r *Repository) FindShareSessionByRunAndEndUser(ctx context.Context, linkID
 }
 
 // CountActiveShareRuns counts in-flight runs (working/submitted) whose
-// acp_session is in one of the link's share sessions.
+// session is in one of the link's share sessions.
 func (r *Repository) CountActiveShareRuns(ctx context.Context, linkID string) (int, error) {
 	var count int
 	err := r.db.NewSelect().
 		TableExpr("kb.agent_runs AS ar").
 		ColumnExpr("COUNT(*)").
-		Join("JOIN kb.agent_share_sessions AS ass ON ass.acp_session_id = ar.acp_session_id").
+		Join("JOIN kb.agent_share_sessions AS ass ON ass.session_id = ar.session_id").
 		Where("ass.share_link_id = ?", linkID).
 		Where("ar.status IN (?)", bun.In([]string{string(RunStatusRunning), string(RunStatusQueued)})).
 		Scan(ctx, &count)
@@ -402,7 +402,7 @@ func (r *Repository) CreateShareRunIfUnderLimit(ctx context.Context, linkID stri
 			err := tx.NewSelect().
 				TableExpr("kb.agent_runs AS ar").
 				ColumnExpr("COUNT(*)").
-				Join("JOIN kb.agent_share_sessions AS ass ON ass.acp_session_id = ar.acp_session_id").
+				Join("JOIN kb.agent_share_sessions AS ass ON ass.session_id = ar.session_id").
 				Where("ass.share_link_id = ?", linkID).
 				Where("ar.status IN (?)", bun.In([]string{string(RunStatusRunning), string(RunStatusQueued)})).
 				Scan(ctx, &count)
@@ -631,7 +631,7 @@ func (r *Repository) ListPausedShareRuns(ctx context.Context) ([]shareReapCandid
 		ColumnExpr("ar.id AS run_id").
 		ColumnExpr("ass.share_link_id AS share_link_id").
 		ColumnExpr("ass.last_activity_at AS last_activity_at").
-		Join("JOIN kb.agent_share_sessions AS ass ON ass.acp_session_id = ar.acp_session_id").
+		Join("JOIN kb.agent_share_sessions AS ass ON ass.session_id = ar.session_id").
 		Where("ar.status = ?", string(RunStatusPaused)).
 		Scan(ctx, &rows)
 	if err != nil {
@@ -648,14 +648,14 @@ func (r *Repository) ListPausedShareRuns(ctx context.Context) ([]shareReapCandid
 	return out, nil
 }
 
-// ListPendingQuestionsForACPSession returns pending questions whose run belongs
-// to the given ACP session (share session linkage).
-func (r *Repository) ListPendingQuestionsForACPSession(ctx context.Context, acpSessionID string) ([]*AgentQuestion, error) {
+// ListPendingQuestionsForSession returns pending questions whose run belongs
+// to the given session (share session linkage).
+func (r *Repository) ListPendingQuestionsForSession(ctx context.Context, sessionID string) ([]*AgentQuestion, error) {
 	var questions []*AgentQuestion
 	err := r.db.NewSelect().
 		Model(&questions).
 		Join("JOIN kb.agent_runs AS ar ON ar.id = aq.run_id").
-		Where("ar.acp_session_id = ?", acpSessionID).
+		Where("ar.session_id = ?", sessionID).
 		Where("aq.status = ?", QuestionStatusPending).
 		Order("aq.created_at ASC").
 		Scan(ctx)
@@ -667,14 +667,14 @@ func (r *Repository) ListPendingQuestionsForACPSession(ctx context.Context, acpS
 
 // CountSessionToolApprovals counts decided tool-approval rows for a share
 // session (approval cap enforcement).
-func (r *Repository) CountSessionToolApprovals(ctx context.Context, shareLinkID, acpSessionID string) (int, error) {
+func (r *Repository) CountSessionToolApprovals(ctx context.Context, shareLinkID, sessionID string) (int, error) {
 	var count int
 	err := r.db.NewSelect().
 		TableExpr("kb.agent_tool_approvals AS ata").
 		ColumnExpr("COUNT(*)").
 		Join("JOIN kb.agent_runs AS ar ON ar.id = ata.run_id").
 		Where("ata.share_link_id = ?", shareLinkID).
-		Where("ar.acp_session_id = ?", acpSessionID).
+		Where("ar.session_id = ?", sessionID).
 		Where("ata.decision != ?", "pending").
 		Scan(ctx, &count)
 	if err != nil {
@@ -687,10 +687,10 @@ func (r *Repository) CountSessionToolApprovals(ctx context.Context, shareLinkID,
 // the pending approval to decided, under a per-session advisory lock so
 // concurrent approvals cannot exceed maxApprovals. Returns decided=false when
 // the cap is already reached (the pending row is left untouched).
-func (r *Repository) ReserveAndDecideShareApproval(ctx context.Context, shareLinkID, acpSessionID, questionID, decision, message, decidedBy string, maxApprovals int) (bool, error) {
+func (r *Repository) ReserveAndDecideShareApproval(ctx context.Context, shareLinkID, sessionID, questionID, decision, message, decidedBy string, maxApprovals int) (bool, error) {
 	decided := false
 	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.NewRaw("SELECT pg_advisory_xact_lock(hashtext(?))", shareLinkID+":"+acpSessionID).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw("SELECT pg_advisory_xact_lock(hashtext(?))", shareLinkID+":"+sessionID).Exec(ctx); err != nil {
 			return apperror.NewDatabase("Database operation failed", err)
 		}
 		if maxApprovals > 0 {
@@ -700,7 +700,7 @@ func (r *Repository) ReserveAndDecideShareApproval(ctx context.Context, shareLin
 				ColumnExpr("COUNT(*)").
 				Join("JOIN kb.agent_runs AS ar ON ar.id = ata.run_id").
 				Where("ata.share_link_id = ?", shareLinkID).
-				Where("ar.acp_session_id = ?", acpSessionID).
+				Where("ar.session_id = ?", sessionID).
 				Where("ata.decision != ?", "pending").
 				Scan(ctx, &count)
 			if err != nil {
