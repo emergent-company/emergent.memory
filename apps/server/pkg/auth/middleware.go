@@ -389,9 +389,11 @@ func (m *Middleware) RequireAuth() echo.MiddlewareFunc {
 			// Resolve the request organization from a validated source only
 			// (issue #811, the #764 class). The raw X-Org-ID header is untrusted
 			// input: it must never override the owning organization of the
-			// declared project, and it is not a trusted org source when no
-			// project context exists (org-scoped routes derive the org from the
-			// :orgId path parameter, not from this header).
+			// declared project, and it is never a trusted org source on its own
+			// (issue #812 Q10, issue #1162). Org context is route/project-derived
+			// only — a bare client header (including a "membership-checked"
+			// variant) is rejected as a trust source, so a spoofed header can
+			// never grant an org-tier entitlement or pass an org-scoped decision.
 			headerOrgID := c.Request().Header.Get("X-Org-ID")
 
 			projectIDForOrg := user.ProjectID
@@ -418,8 +420,7 @@ func (m *Middleware) RequireAuth() echo.MiddlewareFunc {
 					Scan(c.Request().Context(), &projectOrgID)
 			}
 
-			switch {
-			case projectOrgID != "":
+			if projectOrgID != "" {
 				// Authoritative: the owning organization of the declared project.
 				user.OrgID = projectOrgID
 				// A header that conflicts with the project's owning org is a
@@ -429,13 +430,12 @@ func (m *Middleware) RequireAuth() echo.MiddlewareFunc {
 				if headerOrgID != "" && headerOrgID != projectOrgID {
 					return m.authError(c, apperror.NewForbidden("x-org-id header does not match the project's organization"))
 				}
-			case m.db == nil:
-				// Standalone/test posture without a database: there is no trusted
-				// org source, so keep the header (single-tenant dev path).
-				user.OrgID = headerOrgID
-			default:
-				// No project context and a database is available: the header is
-				// not a trusted org source. Fail closed with an empty org.
+			} else {
+				// No trusted project-derived org context. The raw X-Org-ID header
+				// is NOT a trust source (issue #812 Q10, issue #1162), so the org
+				// is left empty (fail closed) regardless of whether a database is
+				// available; org-scoped routes derive the org from the :orgId path
+				// parameter and verify membership server-side.
 				user.OrgID = ""
 			}
 
