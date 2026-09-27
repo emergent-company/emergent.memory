@@ -112,6 +112,93 @@ func (fakeAgentHandler) RunAgentInSession(context.Context, string, string, strin
 
 var errNotDispatched = errors.New("tool dispatch must not be reached in the parity test")
 
+// #1135 scope hygiene: the registry browse/install tools previously declared no
+// RequiredScope (implicitly open in-process), and seven tools declared the
+// deprecated bare `admin` scope. This table pins the corrected authority so a
+// regression to an unscoped or over-broad declaration fails here. It is
+// deliberately exhaustive for the changed tools — the generic parity loop below
+// only asserts *some* scope is enforced, not *which*.
+var changedToolScopes = map[string]string{
+	// Registry browse/install tools: explicit least-privilege scopes.
+	"search_mcp_registry":  "projects:read",
+	"mcp-registry-get":     "projects:read",
+	"mcp-registry-install": "admin",
+	"mcp-server-inspect":   "admin",
+	// Re-keyed away from the deprecated bare `admin`: project-tier authority.
+	"token-list":                 "projects:write",
+	"token-create":               "projects:write",
+	"token-get":                  "projects:write",
+	"token-revoke":               "projects:write",
+	"provider-configure-project": "projects:write",
+	"provider-models-list":       "projects:read",
+	"project-create":             "projects:write",
+}
+
+// unscopeableToolNames are the only tools allowed to declare no RequiredScope
+// and no SuperadminOnly/AgentOnly marker. Both are session-scoped: their
+// ownership is enforced at the data-access layer by the shared
+// sessiontodos.SessionAccessible predicate, not by a project scope. Any other
+// unscoped tool is a finding — the #1135 hole was exactly an unscoped,
+// implicitly-open registry tool.
+var unscopeableToolNames = map[string]bool{
+	"session-todo-list":   true,
+	"session-todo-update": true,
+}
+
+// TestChangedToolScopesPinned asserts the declared scope of every tool changed
+// by #1135 is exactly the corrected value, and that an untrusted in-process run
+// is refused on it (the negative case). It goes RED if a changed tool reverts to
+// bare `admin` or loses its scope.
+func TestChangedToolScopesPinned(t *testing.T) {
+	svc := &mcp.Service{}
+	svc.RegisterAgentToolHandler(fakeAgentHandler{})
+	svc.RegisterMCPRegistryToolHandler(fakeRegistryHandler{})
+	_ = svc.GetToolDefinitions()
+
+	projectID := "00000000-0000-0000-0000-000000000000"
+	untrustedCtx := context.Background()
+
+	for name, want := range changedToolScopes {
+		name, want := name, want
+		t.Run(name, func(t *testing.T) {
+			def := svc.GetToolByName(name)
+			require.NotNil(t, def, "changed tool %q must be in the catalog", name)
+			require.Equal(t, want, def.RequiredScope,
+				"tool %q declared scope drifted (want %q)", name, want)
+
+			// Negative: a caller lacking the scope (untrusted in-process) is denied.
+			_, err := svc.ExecuteTool(untrustedCtx, projectID, name, map[string]any{})
+			require.Error(t, err, "in-process %s (%q) by an untrusted run must be refused", name, want)
+			msg := err.Error()
+			require.True(t, strings.Contains(msg, "untrusted surface") || strings.Contains(msg, "superadmin"),
+				"%s refusal must come from the authority gate, got: %v", name, err)
+		})
+	}
+}
+
+// TestNoUnexpectedUnscopedTools is the coverage guard for the #1135 hole: every
+// tool in the runtime catalog must declare a RequiredScope, be AgentOnly, be
+// SuperadminOnly, or be one of the session-scoped tools whose ownership is
+// enforced at the data-access layer. An unscoped, non-agent tool is implicitly
+// open to any caller — the exact defect this change closes.
+func TestNoUnexpectedUnscopedTools(t *testing.T) {
+	svc := &mcp.Service{}
+	svc.RegisterAgentToolHandler(fakeAgentHandler{})
+	svc.RegisterMCPRegistryToolHandler(fakeRegistryHandler{})
+	defs := svc.GetToolDefinitions()
+	require.NotEmpty(t, defs)
+
+	for _, def := range defs {
+		if def.RequiredScope != "" || def.AgentOnly || def.SuperadminOnly {
+			continue
+		}
+		if unscopeableToolNames[def.Name] {
+			continue
+		}
+		t.Errorf("tool %q declares no RequiredScope and no AgentOnly/SuperadminOnly marker", def.Name)
+	}
+}
+
 // TestRequiredScopeInProcessParity is the mechanism-7 regression guard: it
 // asserts, for every tool in the runtime catalog that declares a RequiredScope,
 // that an untrusted in-process caller is refused on the ExecuteTool path — the

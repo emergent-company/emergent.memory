@@ -69,7 +69,7 @@ func providerToolDefinitions() []ToolDefinition {
 		{
 			Name:          "provider-configure-project",
 			OutputSchema:  objectOutputSchema(),
-			RequiredScope: "admin",
+			RequiredScope: "projects:write",
 			Description:   "Configure or update an LLM provider at the project level, overriding the org-level config.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -101,7 +101,7 @@ func providerToolDefinitions() []ToolDefinition {
 		{
 			Name:          "provider-models-list",
 			OutputSchema:  objectOutputSchema(),
-			RequiredScope: "admin",
+			RequiredScope: "projects:read",
 			Description:   "List available models for a given LLM provider. Optionally filter by model type (generative or embedding).",
 			InputSchema: InputSchema{
 				Type: "object",

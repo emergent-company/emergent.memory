@@ -16,7 +16,7 @@ import (
 // ExecuteTool call as trusted, so the in-process trust gate (which covers the
 // agent-run path) does NOT re-fire for an authenticated HTTP client whose token
 // already passed the transport's RequiredScope check. Without this, the
-// admin-scoped tools (token-*, trace-*, provider-*, project-create) would be
+// scope-gated tools (token-*, trace-*, provider-*, project-create) would be
 // wrongly refused over HTTP (issue #994 repair).
 func TestHTTPToolsCallAdminToolNotGated(t *testing.T) {
 	svc := &Service{}
@@ -26,7 +26,7 @@ func TestHTTPToolsCallAdminToolNotGated(t *testing.T) {
 
 	user := &auth.AuthUser{
 		ID:        uuid.New().String(),
-		Scopes:    []string{"admin"}, // token carries the admin scope the transport check admits
+		Scopes:    []string{"projects:write"}, // token carries the scope the transport check admits
 		ProjectID: uuid.New().String(),
 	}
 

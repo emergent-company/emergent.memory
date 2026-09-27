@@ -603,8 +603,9 @@ func (h *MCPRegistryToolHandler) GetMCPRegistryToolDefinitions() []mcp.ToolDefin
 			},
 		},
 		{
-			Name:        "search_mcp_registry",
-			Description: "Search the official MCP registry (registry.modelcontextprotocol.io) for available MCP servers. Returns server names, descriptions, available transports (remote/stdio), and required environment variables.",
+			Name:          "search_mcp_registry",
+			RequiredScope: "projects:read",
+			Description:   "Search the official MCP registry (registry.modelcontextprotocol.io) for available MCP servers. Returns server names, descriptions, available transports (remote/stdio), and required environment variables.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]mcp.PropertySchema{
@@ -626,8 +627,9 @@ func (h *MCPRegistryToolHandler) GetMCPRegistryToolDefinitions() []mcp.ToolDefin
 			},
 		},
 		{
-			Name:        "mcp-registry-get",
-			Description: "Get detailed information about a specific server from the official MCP registry, including all available transports (remotes, packages), required environment variables, and repository links.",
+			Name:          "mcp-registry-get",
+			RequiredScope: "projects:read",
+			Description:   "Get detailed information about a specific server from the official MCP registry, including all available transports (remotes, packages), required environment variables, and repository links.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]mcp.PropertySchema{
@@ -640,8 +642,9 @@ func (h *MCPRegistryToolHandler) GetMCPRegistryToolDefinitions() []mcp.ToolDefin
 			},
 		},
 		{
-			Name:        "mcp-registry-install",
-			Description: "Install an MCP server from the official registry into the current project. Only servers with remote transports (HTTP/SSE) are supported — stdio-based packages (npm/pypi/oci) are blocked for security. Creates the server entry, attempts tool discovery, and returns required environment variables that must be configured before use.",
+			Name:          "mcp-registry-install",
+			RequiredScope: "admin",
+			Description:   "Install an MCP server from the official registry into the current project. Only servers with remote transports (HTTP/SSE) are supported — stdio-based packages (npm/pypi/oci) are blocked for security. Creates the server entry, attempts tool discovery, and returns required environment variables that must be configured before use.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]mcp.PropertySchema{
@@ -662,8 +665,9 @@ func (h *MCPRegistryToolHandler) GetMCPRegistryToolDefinitions() []mcp.ToolDefin
 			},
 		},
 		{
-			Name:        "mcp-server-inspect",
-			Description: "Inspect/test-connect an MCP server. Creates a fresh ephemeral connection, captures the server's identity (name, version, protocol), capabilities, and enumerates all tools, prompts, and resources the server exposes. Connection errors are reported in the response (status: 'error') rather than as failures.",
+			Name:          "mcp-server-inspect",
+			RequiredScope: "admin",
+			Description:   "Inspect/test-connect an MCP server. Creates a fresh ephemeral connection, captures the server's identity (name, version, protocol), capabilities, and enumerates all tools, prompts, and resources the server exposes. Connection errors are reported in the response (status: 'error') rather than as failures.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]mcp.PropertySchema{

@@ -12,7 +12,7 @@ func TestAuthorizeToolDecisionMatrix(t *testing.T) {
 	super := ToolAuthority{Name: "trace-list", SuperadminOnly: true}
 	agentOnly := ToolAuthority{Name: "web-fetch", AgentOnly: true}
 	scoped := ToolAuthority{Name: "entity-query", RequiredScope: "graph:read"}
-	adminScoped := ToolAuthority{Name: "provider-models-list", RequiredScope: "admin"}
+	adminScoped := ToolAuthority{Name: "admin-tool", RequiredScope: "admin"}
 	plain := ToolAuthority{Name: "project-get", RequiredScope: "graph:read"}
 
 	untrusted := Principal{}

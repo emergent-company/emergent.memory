@@ -989,30 +989,38 @@ func TestInstanceRestrictsContent(t *testing.T) {
 
 // TestNormalizeToolAllowlistRejectsAdminScope ensures an admin-scoped tool can
 // never be allowlisted (which would derive the "admin" scope onto a share token
-// and re-enable token chaining).
+// and re-enable token chaining). A tool requiring the project-management write
+// scope (token-*/provider-configure-project/project-create after #1135) is
+// rejected for the same reason: a share link must never be able to mint
+// credentials or reconfigure the project.
 func TestNormalizeToolAllowlistRejectsAdminScope(t *testing.T) {
 	lookup := testLookup(
 		ToolDefinition{Name: "trace-list", RequiredScope: "admin"},
 		ToolDefinition{Name: "account-key-list", RequiredScope: "account:read"},
+		ToolDefinition{Name: "token-create", RequiredScope: "projects:write"},
 		ToolDefinition{Name: "entity-search", RequiredScope: "graph:read"},
 	)
-	for _, name := range []string{"trace-list", "account-key-list"} {
+	for _, name := range []string{"trace-list", "account-key-list", "token-create"} {
 		tools := []string{name}
 		_, err := normalizeToolAllowlist(&tools, lookup)
 		require.Error(t, err, name)
 	}
 
-	// deriveScopesForToolNames must also reject admin scopes defensively.
+	// deriveScopesForToolNames must also reject admin/project-write scopes defensively.
 	_, err := deriveScopesForToolNames([]string{"trace-list"}, lookup)
+	require.Error(t, err)
+	_, err = deriveScopesForToolNames([]string{"token-create"}, lookup)
 	require.Error(t, err)
 }
 
-// TestBuildToolCatalogExcludesAdminScopedTools verifies the catalog never offers
-// a tool that would derive an administrative scope.
-func TestBuildToolCatalogExcludesAdminScopedTools(t *testing.T) {
+// TestBuildToolCatalogExcludesNonShareableTools verifies the catalog never
+// offers a tool that would derive an administrative or project-management write
+// scope onto a share token.
+func TestBuildToolCatalogExcludesNonShareableTools(t *testing.T) {
 	got := BuildToolCatalog(context.Background(), &Service{}, "")
 	for _, tool := range got {
 		assert.NotEqual(t, "admin", tool.RequiredScope, "tool %s must not be includable", tool.Name)
+		assert.NotEqual(t, "projects:write", tool.RequiredScope, "tool %s must not be includable", tool.Name)
 	}
 }
 

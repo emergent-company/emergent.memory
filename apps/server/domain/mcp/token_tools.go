@@ -18,7 +18,7 @@ func tokenToolDefinitions() []ToolDefinition {
 		{
 			Name:          "token-list",
 			OutputSchema:  objectOutputSchema(),
-			RequiredScope: "admin",
+			RequiredScope: "projects:write",
 			Description:   "List all API tokens for the current project. Returns token metadata (id, name, prefix, scopes, created at) but not the raw token value.",
 			InputSchema: InputSchema{
 				Type:       "object",
@@ -29,7 +29,7 @@ func tokenToolDefinitions() []ToolDefinition {
 		{
 			Name:          "token-create",
 			OutputSchema:  objectOutputSchema(),
-			RequiredScope: "admin",
+			RequiredScope: "projects:write",
 			Description:   "Create a new API token for the current project. Returns the token id, name, scopes, and the raw token value (shown once only).",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -49,7 +49,7 @@ func tokenToolDefinitions() []ToolDefinition {
 		{
 			Name:          "token-get",
 			OutputSchema:  objectOutputSchema(),
-			RequiredScope: "admin",
+			RequiredScope: "projects:write",
 			Description:   "Get a project API token by its ID. Returns metadata and the encrypted token value if available.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -65,7 +65,7 @@ func tokenToolDefinitions() []ToolDefinition {
 		{
 			Name:          "token-revoke",
 			OutputSchema:  objectOutputSchema(),
-			RequiredScope: "admin",
+			RequiredScope: "projects:write",
 			Description:   "Revoke (permanently disable) a project API token. This cannot be undone.",
 			InputSchema: InputSchema{
 				Type: "object",

@@ -134,6 +134,7 @@ func TestMCPExpansionPinnedToolVisibleSets(t *testing.T) {
 			"documents:read", "documents:write",
 			"graph:read", "graph:write",
 			"journal:read", "journal:write",
+			"projects:read", "projects:write",
 			"schema:migrate", "schema:read", "schema:write",
 			"search", "skills:read", "skills:write",
 		}},
