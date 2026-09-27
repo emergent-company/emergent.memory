@@ -662,7 +662,7 @@ templ propertyInput(def objectPropertyDef, vals []string) {
 			Class:   "toggle",
 		})
 	} else if def.Type == "date" {
-		<input name={ "prop_" + def.Name } type="date" value={ v } class="input w-full"/>
+		<input name={ "prop_" + def.Name } type="date" value={ dateInputValue(v) } class="input w-full"/>
 	} else if def.Type == "number" {
 		<input name={ "prop_" + def.Name } type="number" step="any" value={ v } class="input w-full"/>
 	} else if def.Type == "integer" {

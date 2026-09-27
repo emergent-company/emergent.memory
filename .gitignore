@@ -115,9 +115,7 @@ apps/server/tmp/
 /extraction-bench
 /imdb-bench
 /seed-imdb
-/seed-lovdata
 /imdb-benchmark-runner
-/lovdata-benchmark-runner
 
 # Temporary Go scripts and patches
 fix_*.go
@@ -142,7 +140,6 @@ get_*.sh
 apps/server/benchmark_script
 apps/server/extraction-bench
 apps/server/seed-imdb
-apps/server/seed-lovdata
 apps/server/main
 
 # Root level Go module files (should be in subdirectories)

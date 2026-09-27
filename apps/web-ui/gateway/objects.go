@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -1109,6 +1110,23 @@ func propInputValue(v any) string {
 		return fmt.Sprint(v)
 	}
 	return string(b)
+}
+
+// dateHeadRe matches a leading yyyy-mm-dd prefix, the only format an
+// <input type="date"> accepts.
+var dateHeadRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}`)
+
+// dateInputValue normalizes a stored date value to yyyy-mm-dd for a date
+// input. Stored values arrive as RFC3339 ("2019-03-07T00:00:00Z") or
+// space-separated ("2019-03-08 14:30"); the browser rejects anything but
+// yyyy-mm-dd and renders the field blank. When the value starts with a
+// yyyy-mm-dd prefix, return just that prefix; otherwise return it unchanged so
+// an already-invalid value still surfaces instead of being silently dropped.
+func dateInputValue(v string) string {
+	if m := dateHeadRe.FindString(v); m != "" {
+		return m
+	}
+	return v
 }
 
 // objectPropertyDefByName returns the compiled schema def (with its Type) for a

@@ -23,6 +23,5 @@ Examples:
 func init() {
 	dbCmd.AddCommand(dbDiagnoseCmd)
 	dbCmd.AddCommand(dbBenchCmd)
-	dbCmd.AddCommand(dbLovdataCmd)
 	rootCmd.AddCommand(dbCmd)
 }
