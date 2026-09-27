@@ -33,16 +33,18 @@ Two independent defects:
   containment is JSON-type-exact, so `{"k":"5"}` matches a string `"5"` but no
   longer a numeric `5` (the old `->>'k' = '5'` text comparison matched both).
 - **Bounded calls.** Hard per-call deadline (`MCP_ENTITY_QUERY_TIMEOUT`, default
-  30 s) around the whole entity-query transaction, returning an explicit
-  `timed out after …` error instead of a `context canceled` after minutes; and a
-  cap on the effective `limit` when `field_strategy="full"` and the engine is set
-  full-text
+  30 s) created at the tool entry so it covers every path — branch resolution, the
+  `ids[]` fast-path, the type/pagination queries, and relationship enrichment —
+  returning an explicit `timed out after …` error instead of a `context canceled`
+  after minutes; and a cap on the effective `limit` when `field_strategy="full"`
   (`MCP_ENTITY_QUERY_FULL_MAX_LIMIT`, default 25) with a caller-visible warning.
 - **Identity scoping.** Add an optional `key_prefix` parameter that restricts
   results to entities whose canonical key starts with the prefix, so a non-unique
   property filter (e.g. `chapter_id`) can be scoped to one document
   (`key_prefix: "lov/1997-06-13-44#"`). Generic across types: the key is the
-  identity.
+  identity. `key_prefix` combined with `ids` is **rejected** fail-closed (an
+  explicit id list already identifies entities exactly), rather than silently
+  ignored.
 
 ## Capabilities
 

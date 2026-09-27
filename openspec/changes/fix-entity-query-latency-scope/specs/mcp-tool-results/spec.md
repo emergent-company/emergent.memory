@@ -36,7 +36,9 @@ property key SHALL be dropped.
 
 ### Requirement: entity-query calls are bounded
 
-`entity-query` SHALL enforce a configurable hard per-call deadline and, when
+`entity-query` SHALL enforce a configurable hard per-call deadline created at the
+tool entry, so it covers every path of a call — branch resolution, the `ids[]`
+fast-path, the type/pagination queries, and relationship enrichment — and, when
 `field_strategy="full"` is requested, SHALL cap the effective `limit` to a
 configurable maximum and surface the cap in a warning. A call that exceeds the
 deadline SHALL return an explicit timeout error.
@@ -53,12 +55,19 @@ deadline SHALL return an explicit timeout error.
 - **WHEN** an entity-query call cannot complete within the configured deadline
 - **THEN** it returns a timeout error naming the deadline instead of blocking indefinitely
 
+#### Scenario: Deadline covers the ids fast-path
+
+- **WHEN** an `entity-query` call with `ids` cannot complete within the configured deadline
+- **THEN** it returns the same timeout error (the deadline is created at tool entry, not after the ids path)
+
 ### Requirement: entity-query supports key-prefix identity scoping
 
 `entity-query` SHALL accept an optional `key_prefix` input that restricts results
 to entities whose canonical key starts with the given prefix. The prefix scope
 SHALL combine (AND) with `type_name` and `filters`, and SHALL NOT change the
-meaning of a filter used on its own.
+meaning of a filter used on its own. Because `ids` already identifies entities
+explicitly, `key_prefix` SHALL be rejected — not silently ignored — when combined
+with `ids`.
 
 #### Scenario: Key prefix scopes a non-unique property filter
 
@@ -70,3 +79,9 @@ meaning of a filter used on its own.
 
 - **WHEN** a client calls `entity-query` with `filters` and no `key_prefix`
 - **THEN** results are the same as before key-prefix scoping existed
+
+#### Scenario: key_prefix with ids is rejected
+
+- **WHEN** a client calls `entity-query` with both `ids` and `key_prefix`
+- **THEN** the call fails with an explicit error and returns no entities
+

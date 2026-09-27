@@ -376,7 +376,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					},
 					"ids": {
 						Type:        "array",
-						Description: "Optional list of canonical entity IDs to fetch directly. When provided, type_name and pagination params are ignored.",
+						Description: "Optional list of canonical entity IDs to fetch directly. When provided, type_name and pagination params are ignored. ids[] already selects entities explicitly, so combining it with key_prefix is rejected (not silently ignored).",
 						Items:       &PropertySchema{Type: "string"},
 					},
 					"branch": {
@@ -429,7 +429,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					},
 					"key_prefix": {
 						Type:        "string",
-						Description: "Optional key-prefix scope restricting results to entities whose canonical key starts with this prefix (e.g. \"lov/1997-06-13-44#\" to scope a LegalParagraph chapter_id filter to one law). Use with filters/type_name when a property value is not unique to one identity. Entity keys are the type's identity and are unique per type.",
+						Description: "Optional key-prefix scope restricting results to entities whose canonical key starts with this prefix (e.g. \"lov/1997-06-13-44#\" to scope a LegalParagraph chapter_id filter to one law). Use with filters/type_name when a property value is not unique to one identity. Entity keys are the type's identity and are unique per type. Not allowed together with ids (rejected).",
 					},
 				},
 				Required: []string{"type_name"},
@@ -2731,10 +2731,20 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	// Parse arguments
 	typeName, _ := args["type_name"].(string)
 
+	// Hard per-call deadline created at the tool entry so it covers EVERY path
+	// in this call: branch resolution, the ids[] fast-path, the type/pagination
+	// queries, and relationship enrichment (issue #1148 follow-up). Every
+	// downstream call derives from this context.
+	queryCtx, cancel := context.WithTimeout(ctx, s.effectiveEntityQueryTimeout())
+	defer cancel()
+
 	// Resolve optional branch parameter.
 	branchRef, _ := args["branch"].(string)
-	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
+	branchID, err := s.resolveBranchID(queryCtx, projectID, branchRef)
 	if err != nil {
+		if errors.Is(queryCtx.Err(), context.DeadlineExceeded) {
+			return nil, fmt.Errorf("query entities: timed out after %s", s.effectiveEntityQueryTimeout())
+		}
 		return nil, err
 	}
 
@@ -2752,7 +2762,18 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 			idStrs = v
 		}
 		if len(idStrs) > 0 {
-			return s.executeQueryEntitiesByIDs(ctx, projectID, idStrs, branchID, args)
+			// An explicit ids[] list already identifies entities exactly, so a
+			// key-prefix scope is meaningless there. Reject the combination
+			// fail-closed instead of silently ignoring key_prefix (issue #1148
+			// follow-up), which would otherwise contradict the scope contract.
+			if kp, _ := args["key_prefix"].(string); kp != "" {
+				return nil, fmt.Errorf("query entities: key_prefix cannot be combined with ids; ids already selects entities explicitly")
+			}
+			res, err := s.executeQueryEntitiesByIDs(queryCtx, projectID, idStrs, branchID, args)
+			if err != nil && errors.Is(queryCtx.Err(), context.DeadlineExceeded) {
+				return nil, fmt.Errorf("query entities: timed out after %s", s.effectiveEntityQueryTimeout())
+			}
+			return res, err
 		}
 	}
 
@@ -2903,11 +2924,6 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 
 	selectArgs := append(append([]any{}, baseArgs...), limit, offset)
 
-	// Hard per-call deadline so one entity-query cannot stall an agent turn for
-	// minutes (issue #1148). Applies to the whole transaction (both queries).
-	queryCtx, cancel := context.WithTimeout(ctx, s.effectiveEntityQueryTimeout())
-	defer cancel()
-
 	err = s.db.RunInTx(queryCtx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if err := database.SetRLSContext(ctx, tx, projectID); err != nil {
 			return err
@@ -3034,7 +3050,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 			dstBranchClause = "AND dst.branch_id = ?"
 			relQueryArgs = append(relQueryArgs, *branchID, *branchID)
 		}
-		_ = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		_ = s.db.RunInTx(queryCtx, nil, func(ctx context.Context, tx bun.Tx) error {
 			if err := database.SetRLSContext(ctx, tx, projectID); err != nil {
 				return err
 			}

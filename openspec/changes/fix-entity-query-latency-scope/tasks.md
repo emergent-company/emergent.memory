@@ -26,14 +26,23 @@
   `MCP_ENTITY_QUERY_FULL_MAX_LIMIT`) with sane defaults.
 - [x] 3.2 Enforce a per-call deadline and a `field_strategy="full"` limit cap with a
   caller-visible warning.
+- [x] 3.3 Create the deadline at the tool entry (covers branch resolution, the
+  `ids[]` fast-path, and relationship enrichment) and derive every downstream
+  call from it; fail-first DB test for the previously-uncovered ids path.
 
 ## 4. Identity scoping
 
 - [x] 4.1 Add optional `key_prefix` scope parameter and document it in the tool schema.
 - [x] 4.2 Fail-first DB test: bare `chapter_id` leaks across laws; `key_prefix`
   scopes to one law.
+- [x] 4.3 Reject `ids` + `key_prefix` fail-closed (explicit ids already identify
+  entities) rather than silently ignoring `key_prefix`; fail-first DB test.
 
 ## 5. Tests and verification
 
 - [x] 5.1 DB tests for full-limit bound and timeout.
 - [x] 5.2 `go build ./...`, `task lint`, `gofmt -l`, `REQUIRE_DB=1` DB tests.
+- [x] 5.3 Correct the `scripts/preflight/migration-number.sh` header comment:
+  goose v3.26.0 + `//go:embed *.sql` PANICS on a duplicate version, it does not
+  silently skip it (comment-only; script logic unchanged).
+

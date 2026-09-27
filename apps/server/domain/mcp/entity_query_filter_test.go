@@ -157,3 +157,41 @@ func TestExecuteQueryEntities_Timeout(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "timed out after")
 }
+
+// TestExecuteQueryEntities_KeyPrefixWithIDsRejected pins the fail-closed
+// handling of `ids` + `key_prefix` (#1148 follow-up): an explicit id list
+// already identifies entities exactly, so a prefix scope is meaningless and must
+// be rejected rather than silently ignored.
+func TestExecuteQueryEntities_KeyPrefixWithIDsRejected(t *testing.T) {
+	db := connectTestDB(t)
+	_, projectID := seedProject(t, db)
+	svc := &Service{db: db}
+	id := insertQueryEntity(t, db, projectID, "lov/scope#p-1",
+		map[string]any{"chapter_id": "kapittel-2-kapittel-1"})
+
+	_, err := svc.executeQueryEntities(context.Background(), projectID, map[string]any{
+		"type_name":  "LegalParagraph",
+		"ids":        []any{id},
+		"key_prefix": "lov/scope#",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "key_prefix cannot be combined with ids")
+}
+
+// TestExecuteQueryEntities_TimeoutCoversIDsPath pins that the per-call deadline
+// is created at the tool entry so it also covers the ids[] fast-path, which the
+// original fix left on the caller's (undeadlined) context.
+func TestExecuteQueryEntities_TimeoutCoversIDsPath(t *testing.T) {
+	db := connectTestDB(t)
+	_, projectID := seedProject(t, db)
+	svc := &Service{db: db, entityQueryTimeout: time.Nanosecond}
+	id := insertQueryEntity(t, db, projectID, "lov/scope#p-1",
+		map[string]any{"chapter_id": "kapittel-2-kapittel-1"})
+
+	_, err := svc.executeQueryEntities(context.Background(), projectID, map[string]any{
+		"type_name": "LegalParagraph",
+		"ids":       []any{id},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timed out after")
+}
