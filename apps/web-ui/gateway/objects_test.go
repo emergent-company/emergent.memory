@@ -107,6 +107,24 @@ func TestRenderObjectsPageSearchStatsLoadMore(t *testing.T) {
 			t.Errorf("search page missing %q", want)
 		}
 	}
+	// split button: primary action labelled with the selected mode, plus a
+	// joined chevron dropdown whose options carry per-mode descriptions.
+	for _, want := range []string{
+		`id="objects-search-form"`,
+		"Hybrid Search", // primary label reflects the selected mode
+		`aria-haspopup="menu"`,
+		`aria-expanded="false"`,
+		"lucide--chevron-down",
+		`role="menuitem"`,
+		`aria-current="true"`, // selected mode flagged for assistive tech
+		"Fuses graph and text ranking for the best overall matches.",
+		"Blends keyword and semantic (vector) matching.",
+		"Keyword matching only — fast and exact.",
+	} {
+		if !strings.Contains(searchHTML, want) {
+			t.Errorf("search split button missing %q", want)
+		}
+	}
 	if strings.Contains(searchHTML, "Load more") {
 		t.Error("search mode must not render a Load more button")
 	}
@@ -151,6 +169,24 @@ func TestRenderObjectsPageSearchUnified(t *testing.T) {
 	}
 	if strings.Contains(html, "confirmed") || strings.Contains(html, "Embedded") {
 		t.Error("unified row must not render status/embedding badges")
+	}
+}
+
+// TestRenderObjectsSearchDefaultUnified pins the new default: an absent mode
+// selects Unified, so the primary button reads "Unified Search" and the hidden
+// mode input that the primary submit carries says unified (not fulltext).
+func TestRenderObjectsSearchDefaultUnified(t *testing.T) {
+	html := renderHTML(t, ObjectsPage(objectsPageData{Query: "sam"}))
+	for _, want := range []string{
+		"Unified Search",
+		`<input type="hidden" name="mode" value="unified">`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("default search control missing %q in:\n%s", want, html)
+		}
+	}
+	if strings.Contains(html, `value="fulltext"`) {
+		t.Error("default mode must not be fulltext")
 	}
 }
 
@@ -821,6 +857,36 @@ func TestUIObjectsUnifiedRoute(t *testing.T) {
 	}
 	if f.lastSearchMode != "" {
 		t.Errorf("fulltext/hybrid SearchObjects must not run for unified mode, got mode %q", f.lastSearchMode)
+	}
+}
+
+// TestUIObjectsDefaultModeUnified pins the handler default: GET /objects?q=…
+// with no mode must dispatch the unified search (the split button's default),
+// not full-text. Previously an absent mode fell back to fulltext.
+func TestUIObjectsDefaultModeUnified(t *testing.T) {
+	f := &fakeMemory{
+		unifiedResults: []ObjectSearchResult{
+			{Object: GraphObject{ID: "o1", Type: "person", Key: "sam-lee"}, Score: 0.9},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/objects", s.uiObjects)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?q=sam", nil))
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, body)
+	}
+	if f.lastUnifiedQuery != "sam" {
+		t.Errorf("omitted mode should dispatch unified search, got unified query %q", f.lastUnifiedQuery)
+	}
+	if f.lastSearchMode != "" {
+		t.Errorf("omitted mode must not dispatch fulltext/hybrid SearchObjects, got mode %q", f.lastSearchMode)
+	}
+	if !strings.Contains(body, "Unified Search") {
+		t.Errorf("default search body missing Unified Search label: %s", body)
 	}
 }
 
