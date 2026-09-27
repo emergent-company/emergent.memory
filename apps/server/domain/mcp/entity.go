@@ -114,6 +114,15 @@ func TransportEnforcedFromContext(ctx context.Context) bool {
 	return v
 }
 
+// ContextWithoutTransportEnforced strips the transport-enforced marker when
+// crossing into a nested agent run. The marker is per-dispatch evidence that an
+// HTTP transport authorized ONE ExecuteTool call; it must not be inherited by
+// the child run's own tool calls, which are re-gated on the run's trusted
+// marker (issue #1133). The run executor calls this at the agent-run boundary.
+func ContextWithoutTransportEnforced(ctx context.Context) context.Context {
+	return context.WithValue(ctx, transportEnforcedKey{}, false)
+}
+
 // MCPRegistryToolHandler is the interface for executing MCP registry management tools.
 // Implemented by the mcpregistry domain to avoid circular imports (mcpregistry → mcp).
 type MCPRegistryToolHandler interface {
