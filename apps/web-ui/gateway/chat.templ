@@ -68,7 +68,7 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 				title="Drag to resize"
 			></div>
 			<div class="border-base-content/5 flex items-center justify-between gap-2 border-b px-4 py-3">
-				<span class="text-base-content/50 text-xs font-semibold tracking-[0.14em] uppercase">Sessions</span>
+				<span class="text-muted text-xs font-semibold tracking-[0.14em] uppercase">Sessions</span>
 				@ui.Button(ui.ButtonProps{
 					Type:       ui.ButtonTypeButton,
 					Variant:    ui.ButtonGhost,
@@ -125,7 +125,7 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 					@ui.IconTile("lucide--messages-square", ui.IconTileProps{Tone: "primary"})
 					<div>
 						<h1 class="text-sm font-semibold">Chat with Memory</h1>
-						<p class="text-base-content/45 text-xs">
+						<p class="text-muted-faint text-xs">
 							if voiceEnabled {
 								Chat by text or voice.
 							} else {
@@ -150,7 +150,7 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 						<div class="flex w-full flex-col gap-3">
 							@chatWelcomeHero("chat-empty", "lucide--sparkles", "gap-4 py-10", "Ready when you are", 2, "text-base", "Ask anything — Memory answers from the selected agent's persona, using its model and tools.", "mt-1 max-w-sm text-sm") {
 								<div class="flex w-full max-w-xs flex-col items-center gap-1.5">
-									<label for="chat-agent" class="text-base-content/45 text-xs font-semibold tracking-wider uppercase">Agent</label>
+									<label for="chat-agent" class="text-muted-faint text-xs font-semibold tracking-wider uppercase">Agent</label>
 									<select id="chat-agent" class="select select-bordered w-full" aria-label="Agent">
 										for _, a := range agents {
 											<option value={ a.ID } data-icon={ agentIcon(a.UIConfig) } data-color={ agentColor(a.UIConfig) } data-warn={ modelWarnings[a.ID] } selected?={ a.ID == defaultAgentID(agents, preselect) }>{ a.Name }</option>
@@ -203,7 +203,7 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 							<div class="flex shrink-0 flex-wrap items-stretch gap-1.5 sm:gap-2">
 								if voiceEnabled {
 									<div class="flex h-9 shrink-0 items-center gap-2 self-center rounded-full border border-base-content/10 bg-base-200/50 px-2.5">
-										<span id="voice-status" class="text-base-content/45 text-xs whitespace-nowrap" aria-live="polite">idle</span>
+										<span id="voice-status" class="text-muted-faint text-xs whitespace-nowrap" aria-live="polite">idle</span>
 										<span class="bg-base-content/10 h-3.5 w-px" aria-hidden="true"></span>
 										<div id="voice-level" class="voice-level" aria-hidden="true">
 											<span class="voice-level-bar"><span class="voice-level-fill"></span></span>
@@ -259,7 +259,7 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 								</span>
 							</div>
 						</div>
-						<p class="text-base-content/35 mt-1.5 text-center text-[11px]">Enter to send · Shift+Enter for a new line · responses stream in live</p>
+						<p class="text-muted-faint mt-1.5 text-center text-[11px]">Enter to send · Shift+Enter for a new line · responses stream in live</p>
 					}
 				</form>
 			</div>
@@ -417,9 +417,9 @@ templ sessionRailItem(c Conversation, ap agentAppearance, active bool) {
 		<div class="list-col-grow">
 			@railStatusBadge(c.Bucket, c.PendingApprovals, c.PendingQuestions)
 			<div class="font-medium text-sm">{ c.Title }</div>
-			<div class="text-xs text-base-content/50">{ railSubtitle(ap.Name, c.UpdatedAt) }</div>
+			<div class="text-xs text-muted">{ railSubtitle(ap.Name, c.UpdatedAt) }</div>
 		</div>
-		@ui.IconSpan("lucide--chevron-right", "size-4 text-base-content/25")
+		@ui.IconSpan("lucide--chevron-right", "size-4 text-muted-subtle")
 	</li>
 }
 
@@ -461,7 +461,7 @@ templ scheduledRailItem(r scheduledRunRow) {
 		Title:    r.AgentName,
 		Subtitle: railRunSubtitle(r),
 		Leading:  agentInlineGlyph(r.Icon, r.Color),
-		Trailing: []templ.Component{ui.IconSpan("lucide--chevron-right", "size-4 text-base-content/25")},
+		Trailing: []templ.Component{ui.IconSpan("lucide--chevron-right", "size-4 text-muted-subtle")},
 		Attrs:    attrs,
 	})
 }
@@ -484,7 +484,7 @@ templ sharedRailItem(s sharedSessionRow) {
 		Title:    s.Title,
 		Subtitle: s.ActivityRelative,
 		Leading:  agentInlineGlyph("", ""),
-		Trailing: []templ.Component{ui.IconSpan("lucide--chevron-right", "size-4 text-base-content/25")},
+		Trailing: []templ.Component{ui.IconSpan("lucide--chevron-right", "size-4 text-muted-subtle")},
 		Attrs:    attrs,
 	})
 }
@@ -521,12 +521,12 @@ func railEmptyClass(hasConvs bool) string {
 // (hidden until the filters have no matches).
 templ chatRailEmpty(hasRows bool) {
 	<div id="chat-rail-empty" class={ railEmptyClass(hasRows) }>
-		@ui.IconSpan("lucide--messages-square", "size-6 text-base-content/25")
-		<p class="text-base-content/45 mt-2 text-xs">No sessions yet. Chat once or create a schedule and runs land here.</p>
+		@ui.IconSpan("lucide--messages-square", "size-6 text-muted-subtle")
+		<p class="text-muted-faint mt-2 text-xs">No sessions yet. Chat once or create a schedule and runs land here.</p>
 	</div>
 	<div id="chat-rail-empty-filtered" class="hidden px-3 py-6 text-center">
-		@ui.IconSpan("lucide--filter", "size-6 text-base-content/25")
-		<p class="text-base-content/45 mt-2 text-xs">No sessions match the current filter.</p>
+		@ui.IconSpan("lucide--filter", "size-6 text-muted-subtle")
+		<p class="text-muted-faint mt-2 text-xs">No sessions match the current filter.</p>
 	</div>
 }
 
@@ -563,7 +563,7 @@ templ chatModelWarningBanner(message string) {
 templ chatSuggestion(text string) {
 	<button
 		type="button"
-		class="memory-suggestion border-base-content/15 bg-base-100/50 text-base-content/70 hover:border-primary rounded-full border px-3.5 py-1.5 text-xs font-medium"
+		class="memory-suggestion border-base-content/15 bg-base-100/50 text-muted-strong hover:border-primary rounded-full border px-3.5 py-1.5 text-xs font-medium"
 		data-suggestion={ text }
 	>
 		{ text }

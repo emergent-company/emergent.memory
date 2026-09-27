@@ -968,7 +968,7 @@
     panel.innerHTML =
       '<div class="flex items-center justify-between gap-3 border-b border-base-content/10 px-5 py-4">' +
       '<div class="flex min-w-0 items-center gap-2">' +
-      '<span class="iconify lucide--wrench size-4 text-base-content/50" aria-hidden="true"></span>' +
+      '<span class="iconify lucide--wrench size-4 text-muted" aria-hidden="true"></span>' +
       '<h3 class="truncate font-mono text-sm font-semibold">' + escapeHTML(p.tool || "tool") + "</h3>" +
       '<span class="badge badge-ghost badge-xs font-normal ' + badgeClass + '">' + escapeHTML(badgeLabel) + "</span>" +
       "</div>" +
@@ -980,7 +980,7 @@
       (p.error ? MemoryChatComponents.errorSection(p.error) : "") +
       MemoryChatComponents.rawSection(p.input, p.output) +
       (!p.summary && !p.error && p.input === undefined && p.output === undefined
-        ? '<p class="text-base-content/40 text-sm">No details yet — the tool is still running.</p>'
+        ? '<p class="text-muted-faint text-sm">No details yet — the tool is still running.</p>'
         : "") +
       "</div>";
 

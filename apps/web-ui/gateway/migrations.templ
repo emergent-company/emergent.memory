@@ -176,7 +176,7 @@ templ noMigrationCard() {
 			@ui.IconSpan("lucide--check-circle", "size-5 text-success")
 			<div>
 				<p class="text-sm font-medium">No pending migrations</p>
-				<p class="text-base-content/55 text-xs">All installed schemas are up to date — nothing to merge.</p>
+				<p class="text-muted text-xs">All installed schemas are up to date — nothing to merge.</p>
 			</div>
 		</div>
 	}
@@ -191,7 +191,7 @@ templ migrationFallbackCard(data migrationData) {
 			@ui.IconSpan("lucide--shield-alert", "size-5 shrink-0 text-warning")
 			<div class="min-w-0 grow">
 				<p class="text-sm font-medium">Schema drift detected</p>
-				<p class="text-base-content/55 text-xs">{ staleObjectsMessage(data.Validation, migrationCardKindFor(data)) }</p>
+				<p class="text-muted text-xs">{ staleObjectsMessage(data.Validation, migrationCardKindFor(data)) }</p>
 			</div>
 		</div>
 	}
@@ -201,13 +201,13 @@ templ migrationForm(data migrationData) {
 	@components.PanelCard("", nil) {
 		if migrationCardKindFor(data) == migrationCardResync {
 			<h2 class="text-base font-semibold">Objects lag the installed schema</h2>
-			<p class="text-base-content/55 mt-1 text-sm">The target is the active schema (from == to). Preview then Execute re-stamps conforming objects to the installed schema version — no renames or type changes. Objects that do not conform are dropped and still block without Force.</p>
+			<p class="text-muted mt-1 text-sm">The target is the active schema (from == to). Preview then Execute re-stamps conforming objects to the installed schema version — no renames or type changes. Objects that do not conform are dropped and still block without Force.</p>
 			if data.SuggestedPack != "" {
-				<p class="text-base-content/55 mt-1 text-xs">Suggested target: <span class="text-base-content font-medium">{ data.SuggestedPack }</span></p>
+				<p class="text-muted mt-1 text-xs">Suggested target: <span class="text-base-content font-medium">{ data.SuggestedPack }</span></p>
 			}
 		} else {
 			<h2 class="text-base font-semibold">Migrate</h2>
-			<p class="text-base-content/55 mt-1 text-sm">Preview or execute a schema migration between two schema versions.</p>
+			<p class="text-muted mt-1 text-sm">Preview or execute a schema migration between two schema versions.</p>
 		}
 		<form method="post" action="/blueprints/migrate" class="mt-4 flex flex-col gap-3">
 			if migrationCardKindFor(data) == migrationCardResync && len(data.ActivePacks) > 1 {
@@ -218,7 +218,7 @@ templ migrationForm(data migrationData) {
 							<option value={ p.SchemaID } selected?={ p.SchemaID == data.FromID }>{ activePackLabel(p) }</option>
 						}
 					</select>
-					<span class="label-text-alt text-base-content/50">Each active pack re-stamps its objects to its own installed version (from == to).</span>
+					<span class="label-text-alt text-muted">Each active pack re-stamps its objects to its own installed version (from == to).</span>
 				</label>
 			} else {
 				<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -270,10 +270,10 @@ templ previewSection(data migrationData) {
 			Margin:    "mt-6",
 			BodyClass: "memory-density-comfortable",
 		}) {
-			<p class="text-base-content/55 text-sm">What the migration will change. Nothing is executed until you press Execute.</p>
+			<p class="text-muted text-sm">What the migration will change. Nothing is executed until you press Execute.</p>
 			<div class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
 				@ui.Badge(ui.BadgeProps{Label: data.Preview.OverallRiskLevel, Variant: riskBadgeVariant(data.Preview.OverallRiskLevel), Size: ui.BadgeSizeSM, Icon: "lucide--shield"})
-				<span class="text-base-content/55 text-sm">Migrates <span class="text-base-content font-medium">{ data.Preview.TotalObjects }</span> objects</span>
+				<span class="text-muted text-sm">Migrates <span class="text-base-content font-medium">{ data.Preview.TotalObjects }</span> objects</span>
 				<div class="grow"></div>
 				if data.Preview.CanProceed {
 					@ui.Badge(ui.BadgeProps{Label: "can proceed", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeXS, Dot: true})
@@ -292,8 +292,8 @@ templ previewSection(data migrationData) {
 						@chipRow("Type renames", "mb-1.5", true) {
 							for _, it := range data.Preview.Plan.TypeRenames {
 								<span class="rounded-field border border-base-content/10 bg-base-200/40 px-2 py-1 font-mono text-xs">
-									<span class="text-base-content/70">{ it.From }</span>
-									<span class="text-base-content/35"> → </span>
+									<span class="text-muted-strong">{ it.From }</span>
+									<span class="text-muted-faint"> → </span>
 									<span class="text-base-content">{ it.To }</span>
 								</span>
 							}
@@ -303,8 +303,8 @@ templ previewSection(data migrationData) {
 						@chipRow("Property renames", "mb-1.5", true) {
 							for _, it := range data.Preview.Plan.PropertyRenames {
 								<span class="rounded-field border border-base-content/10 bg-base-200/40 px-2 py-1 font-mono text-xs">
-									<span class="text-base-content/70">{ it.TypeName }.{ it.From }</span>
-									<span class="text-base-content/35"> → </span>
+									<span class="text-muted-strong">{ it.TypeName }.{ it.From }</span>
+									<span class="text-muted-faint"> → </span>
 									<span class="text-base-content">{ it.To }</span>
 								</span>
 							}
@@ -314,8 +314,8 @@ templ previewSection(data migrationData) {
 						@chipRow("Removed properties", "mb-1.5", true) {
 							for _, it := range data.Preview.Plan.RemovedProperties {
 								<span class="rounded-field border border-base-content/10 bg-base-200/40 px-2 py-1 font-mono text-xs">
-									<span class="text-base-content/60">{ it.TypeName }.{ it.Name }</span>
-									<span class="text-base-content/40"> archived</span>
+									<span class="text-muted-strong">{ it.TypeName }.{ it.Name }</span>
+									<span class="text-muted-faint"> archived</span>
 								</span>
 							}
 						}
@@ -379,7 +379,7 @@ templ previewSection(data migrationData) {
 templ rollbackForm() {
 	@components.PanelCard("", nil) {
 		<h2 class="text-base font-semibold">Rollback</h2>
-		<p class="text-base-content/55 mt-1 text-sm">Restore object data to a prior schema version (from the migration archive).</p>
+		<p class="text-muted mt-1 text-sm">Restore object data to a prior schema version (from the migration archive).</p>
 		<form method="post" action="/blueprints/migrate/rollback" class="mt-4 flex flex-wrap items-end gap-3">
 			<label class="form-control grow">
 				<span class="label-text text-xs font-medium">To version</span>
@@ -433,7 +433,7 @@ templ staleObjectGroups(groups []stalePackGroup) {
 		for _, pg := range groups {
 			<div>
 				<div class="flex flex-wrap items-center gap-2">
-					@ui.IconSpan("lucide--package", "size-4 text-base-content/45")
+					@ui.IconSpan("lucide--package", "size-4 text-muted-faint")
 					<span class="text-xs font-semibold tracking-wide uppercase">{ packGroupLabel(pg.Pack) }</span>
 					@ui.Badge(ui.BadgeProps{Label: strconv.Itoa(pg.Count) + " stale", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS})
 				</div>
@@ -454,7 +454,7 @@ templ staleObjectGroups(groups []stalePackGroup) {
 										<td class="font-mono text-xs">
 											<span class="font-medium">{ objectRefLabel(it) }</span>
 											if it.Key != "" && it.EntityID != "" {
-												<span class="text-base-content/40"> · { it.EntityID }</span>
+												<span class="text-muted-faint"> · { it.EntityID }</span>
 											}
 										</td>
 										<td>
@@ -464,7 +464,7 @@ templ staleObjectGroups(groups []stalePackGroup) {
 												}
 											</div>
 											if len(it.Issues) > 0 {
-												<span class="text-base-content/45 text-[11px]">{ strings.Join(it.Issues, "; ") }</span>
+												<span class="text-muted-faint text-[11px]">{ strings.Join(it.Issues, "; ") }</span>
 											}
 										</td>
 									</tr>
@@ -488,14 +488,14 @@ templ historySection(data migrationData) {
 				<div class="flex flex-wrap items-center gap-3 px-4 py-3">
 					<div class="min-w-0 grow">
 						<p class="truncate text-sm font-medium">{ h.Name }</p>
-						<p class="text-base-content/50 font-mono text-[11px]">v{ h.Version } · { h.SchemaID }</p>
+						<p class="text-muted font-mono text-[11px]">v{ h.Version } · { h.SchemaID }</p>
 					</div>
 					if h.Active {
 						@ui.Badge(ui.BadgeProps{Label: "active", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeXS, Dot: true})
 					} else {
 						@ui.Badge(ui.BadgeProps{Label: "removed", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Dot: true})
 					}
-				<span class="text-base-content/40 text-xs whitespace-nowrap">{ relTime(h.InstalledAt) }</span>
+				<span class="text-muted-faint text-xs whitespace-nowrap">{ relTime(h.InstalledAt) }</span>
 			</div>
 		}
 	}

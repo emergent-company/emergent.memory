@@ -266,10 +266,10 @@
       var wrap = document.createElement("div");
       wrap.className = "chat chat-end memory-rise";
       wrap.innerHTML =
-        '<div class="chat-header text-xs text-base-content/50">You</div>' +
+        '<div class="chat-header text-xs text-muted">You</div>' +
         '<div class="chat-bubble chat-bubble-primary"><p class="whitespace-pre-wrap break-words"></p></div>' +
         (meta
-          ? '<div class="chat-footer mt-1 text-[11px] text-base-content/35 font-mono">' + escapeHTML(meta) + "</div>"
+          ? '<div class="chat-footer mt-1 text-[11px] text-muted-faint font-mono">' + escapeHTML(meta) + "</div>"
           : "");
       wrap.querySelector("p").textContent = text;
       ctx.messages.appendChild(wrap);
@@ -284,10 +284,10 @@
       wrap.className = "chat chat-start memory-rise";
       wrap.innerHTML =
         agentAvatarHTML(currentAgentUI(), "lucide--bot", "bg-primary/5 text-primary border-primary/10") +
-        '<div class="chat-header text-xs text-base-content/50">' + escapeHTML(name || "Memory") + '</div>' +
+        '<div class="chat-header text-xs text-muted">' + escapeHTML(name || "Memory") + '</div>' +
         '<div class="chat-bubble chat-bubble-neutral"><div class="memory-md break-words"></div></div>' +
         (meta
-          ? '<div class="chat-footer mt-1 text-[11px] text-base-content/35 font-mono">' + escapeHTML(meta) + "</div>"
+          ? '<div class="chat-footer mt-1 text-[11px] text-muted-faint font-mono">' + escapeHTML(meta) + "</div>"
           : "");
       wrap.querySelector(".memory-md").innerHTML = html;
       if (MemoryChatComponents.enhanceMessage) MemoryChatComponents.enhanceMessage(wrap);
@@ -302,7 +302,7 @@
       b.className = "chat chat-start memory-rise";
       b.innerHTML =
         agentAvatarHTML(currentAgentUI(), "lucide--bot", "bg-primary/5 text-primary border-primary/10") +
-        '<div class="chat-header text-xs text-base-content/50">' + escapeHTML(ctx.currentAgentName()) + '</div>' +
+        '<div class="chat-header text-xs text-muted">' + escapeHTML(ctx.currentAgentName()) + '</div>' +
         '<div class="chat-bubble chat-bubble-neutral"><div class="memory-md break-words"></div></div>';
       ctx.bubble = b;
       ctx.messages.appendChild(b);
@@ -393,10 +393,10 @@
       var iconEl = chip.root.querySelector(".memory-badge-icon .iconify");
       if (chip.toggle) {
         chip.toggle.addEventListener("mouseenter", function () {
-          if (iconEl) iconEl.setAttribute("class", "iconify lucide--chevron-down size-4 text-base-content/40");
+          if (iconEl) iconEl.setAttribute("class", "iconify lucide--chevron-down size-4 text-muted-faint");
         });
         chip.toggle.addEventListener("mouseleave", function () {
-          if (iconEl) iconEl.setAttribute("class", "iconify lucide--wrench size-4 text-base-content/40");
+          if (iconEl) iconEl.setAttribute("class", "iconify lucide--wrench size-4 text-muted-faint");
         });
       }
       // structured detail for the inline expand (kept on the element, as before)
@@ -409,7 +409,7 @@
       // transcript page). Live streams / conversations / side panel omit it.
       if (p.meta) {
         var metaEl = document.createElement("div");
-        metaEl.className = "mt-1 px-2 text-[11px] text-base-content/35 font-mono";
+        metaEl.className = "mt-1 px-2 text-[11px] text-muted-faint font-mono";
         metaEl.textContent = p.meta;
         chip.root.appendChild(metaEl);
       }
@@ -433,11 +433,11 @@
         if (toggle && chevron) toggle.insertBefore(statusEl, chevron);
       }
       var ic = "lucide--loader-circle";
-      var tint = "text-base-content/40";
+      var tint = "text-muted-faint";
       var sec = "";
       switch (status) {
         case "running":
-          tint = "text-base-content/40 animate-spin";
+          tint = "text-muted-faint animate-spin";
           break;
         case "ok":
           ic = "lucide--circle-check";
@@ -536,7 +536,7 @@
       wrap.className = "chat chat-start memory-rise";
       wrap.innerHTML =
         agentAvatarHTML(currentAgentUI(), "lucide--bot", "bg-primary/5 text-primary border-primary/10") +
-        '<div class="chat-header text-xs text-base-content/50">' + escapeHTML(ctx.currentAgentName()) + '</div>';
+        '<div class="chat-header text-xs text-muted">' + escapeHTML(ctx.currentAgentName()) + '</div>';
 
       var card = document.createElement("div");
       card.className =
@@ -544,7 +544,7 @@
       card.innerHTML =
         '<div class="card-body gap-3 p-4">' +
         '<div class="q-body memory-md text-base leading-snug break-words">' + (evt.questionHtml || escapeHTML(q)) + '</div>' +
-        (hint ? '<p class="mt-0.5 text-xs text-base-content/50">' + escapeHTML(hint) + '</p>' : "") +
+        (hint ? '<p class="mt-0.5 text-xs text-muted">' + escapeHTML(hint) + '</p>' : "") +
         (evt.proposalHtml || "") +
         '<div class="q-options flex flex-col gap-2"></div>' +
         (answered
@@ -552,7 +552,7 @@
             '<span class="badge badge-success badge-sm gap-1">' +
             '<span class="iconify lucide--check size-3" aria-hidden="true"></span> Answered</span></div>'
           : '<div class="flex items-center justify-between gap-3 pt-1">' +
-            '<span class="text-xs text-base-content/40">Esc to dismiss</span>' +
+            '<span class="text-xs text-muted-faint">Esc to dismiss</span>' +
             '<button type="button" class="q-submit btn btn-primary btn-sm min-w-28" disabled>Submit</button>' +
             '</div>') +
         '</div>';
@@ -609,7 +609,7 @@
         textWrap.appendChild(label);
         if (opt.description) {
           var desc = document.createElement("span");
-          desc.className = "mt-0.5 text-xs leading-snug text-base-content/50";
+          desc.className = "mt-0.5 text-xs leading-snug text-muted";
           desc.textContent = opt.description;
           textWrap.appendChild(desc);
         }
@@ -787,7 +787,7 @@
       wrap.className = "chat chat-start memory-rise";
       wrap.innerHTML =
         agentAvatarHTML(currentAgentUI(), "lucide--shield-alert", "bg-warning/10 text-warning border-warning/20") +
-        '<div class="chat-header text-xs text-base-content/50">' + escapeHTML(ctx.currentAgentName()) + '</div>';
+        '<div class="chat-header text-xs text-muted">' + escapeHTML(ctx.currentAgentName()) + '</div>';
 
       var card = document.createElement("div");
       card.className =
@@ -795,7 +795,7 @@
       card.innerHTML =
         '<div class="card-body gap-3 p-4">' +
         '<h3 class="text-base leading-snug font-semibold break-words">Approve tool call</h3>' +
-        '<p class="mt-0.5 text-xs text-base-content/60">The agent wants to run <code class="font-mono text-xs">' + escapeHTML(tool) + '</code>.</p>' +
+        '<p class="mt-0.5 text-xs text-muted-strong">The agent wants to run <code class="font-mono text-xs">' + escapeHTML(tool) + '</code>.</p>' +
         '<pre class="approval-args max-h-40 overflow-y-auto rounded-lg bg-base-200/60 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words">' + escapeHTML(JSON.stringify(input, null, 2)) + '</pre>' +
         '<div class="approval-reject-box hidden flex-col gap-2">' +
         '<input type="text" class="approval-msg input input-sm w-full" placeholder="Reason (optional)" maxlength="500">' +

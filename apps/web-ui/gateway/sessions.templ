@@ -54,7 +54,7 @@ templ sessionsList(agents []AgentDefinitionSummary, convs []Conversation) {
 }
 
 templ sessionRow(agents []AgentDefinitionSummary, c Conversation) {
-	@components.ListRow(templ.URL("/sessions/"+url.PathEscape(c.ID)), ui.IconSpan("lucide--messages-square", "size-4 shrink-0 text-base-content/40"), chatTitle(c), "Created "+relTime(c.CreatedAt)) {
+	@components.ListRow(templ.URL("/sessions/"+url.PathEscape(c.ID)), ui.IconSpan("lucide--messages-square", "size-4 shrink-0 text-muted-faint"), chatTitle(c), "Created "+relTime(c.CreatedAt)) {
 		if c.AgentDefinitionID != "" {
 			{{ aui := agentUIForList(agents, c.AgentDefinitionID) }}
 			@agentNameChip(shortID(c.AgentDefinitionID), ui.BadgeGhost, aui.Icon, aui.Color)
@@ -151,10 +151,10 @@ func firstAgentPrompt(groups []runGroup) (string, bool) {
 templ sessionAgentPrompt(text string) {
 	<details class="rounded-box mb-6 border border-base-content/10 bg-base-200/30">
 		<summary class="flex cursor-pointer list-none items-center gap-2 p-3 [&::-webkit-details-marker]:hidden">
-			<span class="iconify lucide--scroll-text size-3.5 shrink-0 text-base-content/40" aria-hidden="true"></span>
+			<span class="iconify lucide--scroll-text size-3.5 shrink-0 text-muted-faint" aria-hidden="true"></span>
 			<span class="text-xs font-medium">Agent prompt</span>
-			<span class="ml-auto text-[10px] font-semibold tracking-wider text-base-content/40 uppercase">system instruction</span>
-			<span class="iconify lucide--chevron-right size-3 shrink-0 text-base-content/40" aria-hidden="true"></span>
+			<span class="ml-auto text-[10px] font-semibold tracking-wider text-muted-faint uppercase">system instruction</span>
+			<span class="iconify lucide--chevron-right size-3 shrink-0 text-muted-faint" aria-hidden="true"></span>
 		</summary>
 		<div class="border-t border-base-content/10 p-3">
 			<div class="alfred-md max-h-96 overflow-auto text-sm leading-relaxed break-words">@templ.Raw(renderMarkdown(text))</div>
@@ -171,7 +171,7 @@ templ sessionRunBlock(aui agentUI, n int, g runGroup) {
 	runErr := g.runError() }}
 	<div class="mb-6">
 		<div class="mb-2 flex flex-wrap items-center gap-2">
-			<span class="font-mono text-[11px] font-medium text-base-content/55">run { strconv.Itoa(n) }</span>
+			<span class="font-mono text-[11px] font-medium text-muted">run { strconv.Itoa(n) }</span>
 			if model != "" {
 				@ui.Badge(ui.BadgeProps{Label: model, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--cpu"})
 			}
@@ -265,14 +265,14 @@ templ sessionUserMessage(it TimelineItem) {
 		<div class="chat-image bg-primary/10 text-primary border-primary/20 flex items-center justify-center rounded-full border p-2">
 			@ui.IconSpan("lucide--user", "size-5")
 		</div>
-		<div class="chat-header text-xs text-base-content/50">You</div>
+		<div class="chat-header text-xs text-muted">You</div>
 		<div class="chat-bubble chat-bubble-primary">
 			if text != "" {
 				<div class="alfred-md break-words">@templ.Raw(renderMarkdown(text))</div>
 			}
 		</div>
 		if footer != "" {
-			<div class="chat-footer mt-1 font-mono text-[11px] text-base-content/35">{ footer }</div>
+			<div class="chat-footer mt-1 font-mono text-[11px] text-muted-faint">{ footer }</div>
 		}
 	</div>
 }
@@ -286,12 +286,12 @@ templ sessionAssistantBubble(author string, aui agentUI, it TimelineItem) {
 		<div class={ "chat-image flex items-center justify-center rounded-full border p-2", templ.KV("bg-primary/5 text-primary border-primary/10", aui.Color == "") } style={ typeColorStyle(aui.Color) }>
 			@agentGlyph(aui.Icon, "size-5", "text-lg")
 		</div>
-		<div class="chat-header text-xs text-base-content/50">{ author }</div>
+		<div class="chat-header text-xs text-muted">{ author }</div>
 		<div class="chat-bubble chat-bubble-neutral">
 			{ children... }
 		</div>
 		if footer != "" {
-			<div class="chat-footer mt-1 font-mono text-[11px] text-base-content/35">{ footer }</div>
+			<div class="chat-footer mt-1 font-mono text-[11px] text-muted-faint">{ footer }</div>
 		}
 	</div>
 }
@@ -305,7 +305,7 @@ templ sessionThinkingBlock(aui agentUI, reasoning string) {
 			@agentGlyph(aui.Icon, "size-5", "text-lg")
 		</div>
 		<details class="col-start-2 row-start-2 w-full">
-			<summary class="mb-1 inline-flex cursor-pointer list-none items-center gap-1.5 rounded-full border border-base-content/10 bg-base-200/40 px-2 py-0.5 text-[10px] font-medium text-base-content/50 [&::-webkit-details-marker]:hidden">
+			<summary class="mb-1 inline-flex cursor-pointer list-none items-center gap-1.5 rounded-full border border-base-content/10 bg-base-200/40 px-2 py-0.5 text-[10px] font-medium text-muted [&::-webkit-details-marker]:hidden">
 				<span class="iconify lucide--brain size-3" aria-hidden="true"></span>Thinking
 			</summary>
 			<div class="alfred-md text-sm leading-relaxed break-words">@templ.Raw(renderMarkdown(reasoning))</div>
@@ -336,20 +336,20 @@ func sessionItemFooter(it TimelineItem) string {
 templ sessionToolItem(it TimelineItem) {
 	<div class="rounded-box border border-base-content/10 bg-base-200/30 p-3">
 		<div class="flex flex-wrap items-center gap-2">
-			<span class="iconify lucide--wrench size-3.5 text-base-content/40" aria-hidden="true"></span>
+			<span class="iconify lucide--wrench size-3.5 text-muted-faint" aria-hidden="true"></span>
 			<span class="font-mono text-xs font-medium">{ it.ToolName }</span>
 			@toolStatusBadge(it.ToolStatus)
 			if it.DurationMs != nil {
 				@ui.Badge(ui.BadgeProps{Label: toolDurationLabel(*it.DurationMs), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--timer"})
 			}
 			if it.ID != "" {
-				<span class="font-mono text-[10px] text-base-content/35" title={ it.ID }>#{ shortID(it.ID) }</span>
+				<span class="font-mono text-[10px] text-muted-faint" title={ it.ID }>#{ shortID(it.ID) }</span>
 			}
 		</div>
 		if len(it.ToolInput) > 0 {
 			{{ inHL, inOK := highlightJSONValue(it.ToolInput) }}
 			<details class="mt-2">
-				<summary class="flex cursor-pointer list-none items-center gap-1 text-[10px] font-semibold tracking-wider text-base-content/40 uppercase [&::-webkit-details-marker]:hidden">Input <span class="iconify lucide--chevron-right size-3" aria-hidden="true"></span></summary>
+				<summary class="flex cursor-pointer list-none items-center gap-1 text-[10px] font-semibold tracking-wider text-muted-faint uppercase [&::-webkit-details-marker]:hidden">Input <span class="iconify lucide--chevron-right size-3" aria-hidden="true"></span></summary>
 				<div class="mt-1 max-h-56 overflow-auto rounded-box border border-base-content/10 bg-base-100 p-2 font-mono text-[11px] leading-relaxed">
 					if inOK {
 						@templ.Raw(inHL)
@@ -362,7 +362,7 @@ templ sessionToolItem(it TimelineItem) {
 		if len(it.ToolOutput) > 0 {
 			{{ outHL, outOK := highlightJSONValue(it.ToolOutput) }}
 			<details class="mt-2">
-				<summary class="flex cursor-pointer list-none items-center gap-1 text-[10px] font-semibold tracking-wider text-base-content/40 uppercase [&::-webkit-details-marker]:hidden">Output <span class="iconify lucide--chevron-right size-3" aria-hidden="true"></span></summary>
+				<summary class="flex cursor-pointer list-none items-center gap-1 text-[10px] font-semibold tracking-wider text-muted-faint uppercase [&::-webkit-details-marker]:hidden">Output <span class="iconify lucide--chevron-right size-3" aria-hidden="true"></span></summary>
 				<div class="mt-1 max-h-56 overflow-auto rounded-box border border-base-content/10 bg-base-100 p-2 font-mono text-[11px] leading-relaxed">
 					if outOK {
 						@templ.Raw(outHL)
@@ -416,9 +416,9 @@ templ sessionRunTrace(g runGroup) {
 	if len(g.spans) > 0 {
 		<details class="mt-3 rounded-box border border-base-content/10 bg-base-200/30 p-3" open>
 			<summary class="flex cursor-pointer items-center gap-2 list-none select-none [&::-webkit-details-marker]:hidden">
-				<span class="iconify lucide--activity size-3.5 text-base-content/40" aria-hidden="true"></span>
-				<span class="text-[10px] font-semibold tracking-wider text-base-content/45 uppercase">Trace</span>
-				<span class="font-mono text-[11px] text-base-content/50">{ strconv.Itoa(len(g.spans)) } span{ plural(len(g.spans)) }</span>
+				<span class="iconify lucide--activity size-3.5 text-muted-faint" aria-hidden="true"></span>
+				<span class="text-[10px] font-semibold tracking-wider text-muted-faint uppercase">Trace</span>
+				<span class="font-mono text-[11px] text-muted">{ strconv.Itoa(len(g.spans)) } span{ plural(len(g.spans)) }</span>
 			</summary>
 			<div class="mt-2 space-y-0.5 overflow-x-auto">
 				<div class="min-w-max">
@@ -446,10 +446,10 @@ templ sessionTraceRow(row traceRow) {
 		}
 	} }}
 	<div class="flex items-baseline gap-2" style={ "padding-left: " + strconv.Itoa(row.depth*16) + "px" }>
-		<span class="shrink-0 font-mono text-[10px] text-base-content/40">{ formatSpanDuration(row.span.StartUnixNano, row.span.EndUnixNano) }</span>
-		<span class="min-w-0 font-mono text-[11px] text-base-content/85">{ name }</span>
+		<span class="shrink-0 font-mono text-[10px] text-muted-faint">{ formatSpanDuration(row.span.StartUnixNano, row.span.EndUnixNano) }</span>
+		<span class="min-w-0 font-mono text-[11px] text-base-content">{ name }</span>
 		if tokenLabel != "" {
-			<span class="shrink-0 text-[10px] whitespace-nowrap text-base-content/45">{ tokenLabel }</span>
+			<span class="shrink-0 text-[10px] whitespace-nowrap text-muted-faint">{ tokenLabel }</span>
 		}
 	</div>
 }

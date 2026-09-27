@@ -67,7 +67,7 @@ templ backupsHeader(total int, ok bool) {
 // neither offers nor issues a restore request.
 templ restoreUnavailableNote() {
 	<div class="mt-6">
-		<p class="text-base-content/40 flex items-center gap-1.5 text-xs">
+		<p class="text-muted-faint flex items-center gap-1.5 text-xs">
 			@ui.IconSpan("lucide--info", "size-3.5 shrink-0")
 			Restore is not available yet — the Memory service returns "not implemented". It ships in a later Memory release.
 		</p>
@@ -115,8 +115,8 @@ templ backupCreateForm() {
 // auto-refresh poll.
 templ backupsProgressNote() {
 	@ui.SoftBox(ui.SoftBoxProps{Class: "mb-4 flex items-center gap-2"}) {
-		@ui.IconSpan("lucide--refresh-cw", "size-4 shrink-0 animate-spin text-base-content/40")
-		<p class="text-base-content/55 text-xs">Backup in progress — this page refreshes automatically until it finishes.</p>
+		@ui.IconSpan("lucide--refresh-cw", "size-4 shrink-0 animate-spin text-muted-faint")
+		<p class="text-muted text-xs">Backup in progress — this page refreshes automatically until it finishes.</p>
 	}
 }
 
@@ -194,9 +194,9 @@ templ backupRow(b Backup) {
 							Size:    ui.BadgeSizeXS,
 						})
 					</div>
-					@monoMeta(shortID(b.ID), "text-base-content/40")
+					@monoMeta(shortID(b.ID), "text-muted-faint")
 					if meta != "" {
-						<p class="text-base-content/50 line-clamp-1 mt-0.5 max-w-xs text-xs" title={ meta }>
+						<p class="text-muted line-clamp-1 mt-0.5 max-w-xs text-xs" title={ meta }>
 							{ meta }
 						</p>
 					}
@@ -214,7 +214,7 @@ templ backupRow(b Backup) {
 			if b.Status == backupStatusCreating {
 				<div class="mt-2 w-28">
 					<progress class="progress progress-info h-1 w-full" value={ b.Progress } max="100"></progress>
-					<p class="text-base-content/50 mt-1 text-[11px]">{ b.Progress }%</p>
+					<p class="text-muted mt-1 text-[11px]">{ b.Progress }%</p>
 				</div>
 			}
 			if b.ErrorMessage != nil && *b.ErrorMessage != "" && b.Status == backupStatusFailed {
@@ -222,12 +222,12 @@ templ backupRow(b Backup) {
 			}
 		}
 		@table.TableCell("", nil) {
-			<span class="text-base-content/80 text-xs whitespace-nowrap">{ backupSizeLabel(b.SizeBytes) }</span>
+			<span class="text-muted-bright text-xs whitespace-nowrap">{ backupSizeLabel(b.SizeBytes) }</span>
 		}
 		@table.TableCell("", nil) {
-			<span class="text-base-content/70 text-xs whitespace-nowrap">{ backupCreatedLabel(b.CreatedAt) }</span>
+			<span class="text-muted-strong text-xs whitespace-nowrap">{ backupCreatedLabel(b.CreatedAt) }</span>
 			if b.Status == backupStatusReady && b.ExpiresAt != nil {
-				<p class="text-base-content/40 text-[11px]">expires { backupDate(b.ExpiresAt) }</p>
+				<p class="text-muted-faint text-[11px]">expires { backupDate(b.ExpiresAt) }</p>
 			}
 		}
 		@table.TableCell("text-right", nil) {
@@ -270,7 +270,7 @@ templ backupRow(b Backup) {
 
 // backupDeleteDescription is the delete-confirm detail paragraph.
 templ backupDeleteDescription(b Backup) {
-	<p class="text-base-content/55 mt-1 text-sm">
+	<p class="text-muted mt-1 text-sm">
 		This permanently removes the <span class="font-medium text-base-content">{ backupTypeLabel(b.BackupType) }</span> backup of { backupTitle(b) } created { backupCreatedLabel(b.CreatedAt) }. Its stored archive is deleted and cannot be restored.
 	</p>
 }
@@ -418,12 +418,12 @@ templ backupDetailOverview(b *Backup) {
 			@backupDetailField("Expires", backupDate(b.ExpiresAt))
 			@backupDetailField("Created by", backupCreatedBy(b.CreatedBy))
 			<div>
-				<dt class="text-base-content/45 text-[11px] font-medium tracking-wide uppercase">Progress</dt>
-				<dd class="text-base-content/85 mt-1 text-sm">
+				<dt class="text-muted-faint text-[11px] font-medium tracking-wide uppercase">Progress</dt>
+				<dd class="text-base-content mt-1 text-sm">
 					if b.Status == backupStatusCreating {
 						<div class="flex items-center gap-2">
 							<progress class="progress progress-info h-1 w-32" value={ b.Progress } max="100"></progress>
-							<span class="text-base-content/70 text-xs">{ b.Progress }%</span>
+							<span class="text-muted-strong text-xs">{ b.Progress }%</span>
 						</div>
 					} else {
 						<span>{ b.Progress }%</span>
@@ -431,13 +431,13 @@ templ backupDetailOverview(b *Backup) {
 				</dd>
 			</div>
 			<div class="sm:col-span-2 lg:col-span-3">
-				<dt class="text-base-content/45 text-[11px] font-medium tracking-wide uppercase">Backup id</dt>
+				<dt class="text-muted-faint text-[11px] font-medium tracking-wide uppercase">Backup id</dt>
 				<dd class="mt-1">
 					<code class="rounded-field bg-base-200/60 px-1 py-0.5 font-mono text-xs break-all select-all">{ b.ID }</code>
 				</dd>
 			</div>
 			<div class="sm:col-span-2 lg:col-span-3">
-				<dt class="text-base-content/45 text-[11px] font-medium tracking-wide uppercase">Storage key</dt>
+				<dt class="text-muted-faint text-[11px] font-medium tracking-wide uppercase">Storage key</dt>
 				<dd class="mt-1">
 					<code class="rounded-field bg-base-200/60 px-1 py-0.5 font-mono text-xs break-all select-all">{ b.StorageKey }</code>
 				</dd>
@@ -454,14 +454,14 @@ templ backupDetailStats(b *Backup) {
 		{{ rows := backupStatRows(b.Stats) }}
 		if len(rows) == 0 {
 			@ui.SoftBox(ui.SoftBoxProps{Class: "flex items-center gap-2"}) {
-				@ui.IconSpan("lucide--clock", "size-4 shrink-0 text-base-content/40")
-				<p class="text-base-content/55 text-xs">Content counts are not available yet — they appear once the backup finishes.</p>
+				@ui.IconSpan("lucide--clock", "size-4 shrink-0 text-muted-faint")
+				<p class="text-muted text-xs">Content counts are not available yet — they appear once the backup finishes.</p>
 			}
 		} else {
 			<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
 				for _, row := range rows {
 					<div class="rounded-box border border-base-content/10 bg-base-200/30 p-3">
-						<p class="text-base-content/50 text-[11px] font-medium tracking-wide uppercase">{ row.Label }</p>
+						<p class="text-muted text-[11px] font-medium tracking-wide uppercase">{ row.Label }</p>
 						<p class="text-base-content mt-1 text-lg font-semibold">{ row.Value }</p>
 					</div>
 				}
@@ -474,7 +474,7 @@ templ backupDetailStats(b *Backup) {
 // the backup type and its expiry.
 templ backupDetailSettings(b *Backup) {
 	@ui.Section("Settings", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-comfortable"}) {
-		<p class="text-base-content/60 mb-3 text-sm">What the archive includes:</p>
+		<p class="text-muted-strong mb-3 text-sm">What the archive includes:</p>
 		{{ rows := backupIncludeRows(b.Includes) }}
 		<div class="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
 			for _, row := range rows {
@@ -501,26 +501,26 @@ templ backupDetailSettings(b *Backup) {
 // archive entries.
 templ backupDetailArchiveFormat(b *Backup) {
 	@ui.Section("Archive format", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-comfortable"}) {
-		<p class="text-base-content/70 text-sm">
+		<p class="text-muted-strong text-sm">
 			The archive is a ZIP stored at <code class="rounded-field bg-base-200/60 px-1 py-0.5 font-mono text-xs break-all">{ b.StorageKey }</code>. It contains:
 		</p>
-		<ul class="text-base-content/70 mt-3 flex flex-col gap-2 text-sm">
+		<ul class="text-muted-strong mt-3 flex flex-col gap-2 text-sm">
 			<li class="flex gap-2">
-				@ui.IconSpan("lucide--file-json", "mt-0.5 size-4 shrink-0 text-base-content/40")
+				@ui.IconSpan("lucide--file-json", "mt-0.5 size-4 shrink-0 text-muted-faint")
 				<span><span class="text-base-content font-medium">manifest.json</span> — backup metadata: version, schema version, creation time, backup type, project info, contents stats, the exported files map, and checksums.</span>
 			</li>
 			<li class="flex gap-2">
-				@ui.IconSpan("lucide--database", "mt-0.5 size-4 shrink-0 text-base-content/40")
+				@ui.IconSpan("lucide--database", "mt-0.5 size-4 shrink-0 text-muted-faint")
 				<span><span class="text-base-content font-medium">Database dump</span> — the project's documents, chunks, and graph data.</span>
 			</li>
 			<li class="flex gap-2">
-				@ui.IconSpan("lucide--folder-tree", "mt-0.5 size-4 shrink-0 text-base-content/40")
+				@ui.IconSpan("lucide--folder-tree", "mt-0.5 size-4 shrink-0 text-muted-faint")
 				<span><span class="text-base-content font-medium">files/</span> — the exported file tree, keyed by storage key.</span>
 			</li>
 		</ul>
 		@ui.SoftBox(ui.SoftBoxProps{Class: "mt-4 flex items-start gap-2"}) {
-			@ui.IconSpan("lucide--info", "mt-0.5 size-4 shrink-0 text-base-content/40")
-			<p class="text-base-content/55 text-xs">The Memory API exposes the backup entity (the settings and counts above) but not the manifest contents, so this panel documents the archive layout rather than listing its live entries.</p>
+			@ui.IconSpan("lucide--info", "mt-0.5 size-4 shrink-0 text-muted-faint")
+			<p class="text-muted text-xs">The Memory API exposes the backup entity (the settings and counts above) but not the manifest contents, so this panel documents the archive layout rather than listing its live entries.</p>
 		}
 	}
 }
@@ -537,7 +537,7 @@ templ backupDetailIntegrity(b *Backup) {
 				Icon:    "lucide--alert-triangle",
 				Message: backupErrorMessage(b),
 			})
-			<p class="text-base-content/50 mt-3 text-xs">Checksums are not available for a failed backup.</p>
+			<p class="text-muted mt-3 text-xs">Checksums are not available for a failed backup.</p>
 		} else if b.Status == backupStatusReady && (backupHasChecksum(b.ManifestChecksum) || backupHasChecksum(b.ContentChecksum)) {
 			<div class="flex flex-col gap-4">
 				if backupHasChecksum(b.ManifestChecksum) {
@@ -548,7 +548,7 @@ templ backupDetailIntegrity(b *Backup) {
 				}
 			</div>
 		} else {
-			<p class="text-base-content/55 text-sm">Checksums are recorded once the backup finishes — there is nothing to verify while it is { backupStatusLabel(b.Status) }.</p>
+			<p class="text-muted text-sm">Checksums are recorded once the backup finishes — there is nothing to verify while it is { backupStatusLabel(b.Status) }.</p>
 		}
 	}
 }
@@ -557,7 +557,7 @@ templ backupDetailIntegrity(b *Backup) {
 // selectable so it can be copied for verification.
 templ backupChecksumBlock(label, value string) {
 	<div>
-		<p class="text-base-content/45 text-[11px] font-medium tracking-wide uppercase">{ label }</p>
+		<p class="text-muted-faint text-[11px] font-medium tracking-wide uppercase">{ label }</p>
 		<code class="rounded-box bg-base-200/60 mt-1 block p-2 font-mono text-xs break-all select-all">{ value }</code>
 	</div>
 }

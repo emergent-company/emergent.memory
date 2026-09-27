@@ -100,6 +100,30 @@
   --radius-3xl: calc(var(--radius-selector) + var(--radius-box));
 }
 
+/* Muted scale — a single shared scale for de-emphasised foreground (text and
+ * icons) instead of the previous spread of ad-hoc `text-base-content/N`
+ * opacities (20/25/30/35/40/42/45/50/55/60/65/70/75/80/85/90/92%). Each step
+ * derives from the existing `--color-base-content` token, so the scale tracks
+ * the theme — no new palette. Named `--color-muted-*` so Tailwind generates
+ * `text-muted-*` (and `bg-/border-/fill-/stroke-*`) utilities; the `:root`
+ * variables also let app.css reference the same steps directly.
+ *
+ * Canonical steps (the value each step replaces):
+ *   muted-subtle 25%  ← 20/25/30   (placeholder, deepest de-emphasis)
+ *   muted-faint  40%  ← 35/40/42/45 (metadata, timestamps, captions)
+ *   muted        50%  ← 50/55       (default secondary text/icon)
+ *   muted-strong 65%  ← 60/65/70    (readable caption, table header, message)
+ *   muted-bright 80%  ← 75/80       (secondary content: values, names)
+ * Content text that was only faintly dimmed (85/90/92%) normalises to the full
+ * `--color-base-content` token — it is content, not muted emphasis. */
+@theme {
+  --color-muted-subtle: color-mix(in oklab, var(--color-base-content) 25%, transparent);
+  --color-muted-faint: color-mix(in oklab, var(--color-base-content) 40%, transparent);
+  --color-muted: color-mix(in oklab, var(--color-base-content) 50%, transparent);
+  --color-muted-strong: color-mix(in oklab, var(--color-base-content) 65%, transparent);
+  --color-muted-bright: color-mix(in oklab, var(--color-base-content) 80%, transparent);
+}
+
 /* Radius exception list. The "radius derives from theme variables" rule has one
  * explicit, reviewable exception: the runtime-injected badge shell in
  * webui/static/js/chat-components.js (`memory-badge-style`), whose
@@ -461,7 +485,7 @@ div:has(> #_layout-topbar) {
   font-size: 0.6875rem;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: color-mix(in oklab, var(--color-base-content) 42%, transparent);
+  color: var(--color-muted-faint);
 }
 .memory-run-marker-line {
   flex: 1 1 2rem;
@@ -477,7 +501,7 @@ div:has(> #_layout-topbar) {
   padding: 0.05rem 0.4rem;
   border-radius: var(--radius-field);
   background: color-mix(in oklab, var(--color-base-content) 8%, transparent);
-  color: color-mix(in oklab, var(--color-base-content) 60%, transparent);
+  color: var(--color-muted-strong);
 }
 /* A failed run is not a faint divider line — it is a full-width alert banner
    (daisyUI alert-error equivalent). The marker container stays, with its
@@ -488,7 +512,7 @@ div:has(> #_layout-topbar) {
 }
 .memory-run-marker[data-status="input-required"] { color: var(--color-warning); }
 .memory-run-marker[data-status="cancelled"] {
-  color: color-mix(in oklab, var(--color-base-content) 55%, transparent);
+  color: var(--color-muted);
 }
 .memory-run-marker-failure {
   display: flex;
@@ -522,7 +546,7 @@ div:has(> #_layout-topbar) {
   line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-word;
-  color: color-mix(in oklab, var(--color-base-content) 80%, transparent);
+  color: var(--color-base-content);
 }
 
 /* turn footer — model, duration, hover-revealed end time, copy-turn */
@@ -533,7 +557,7 @@ div:has(> #_layout-topbar) {
   margin-top: 0.25rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.6875rem;
-  color: color-mix(in oklab, var(--color-base-content) 35%, transparent);
+  color: var(--color-muted-faint);
 }
 .memory-turn-footer .memory-turn-time {
   max-width: 0;
@@ -556,7 +580,7 @@ div:has(> #_layout-topbar) {
   gap: 0.25rem;
   padding: 0.15rem;
   border-radius: var(--radius-field);
-  color: color-mix(in oklab, var(--color-base-content) 40%, transparent);
+  color: var(--color-muted-faint);
   background: transparent;
   border: 1px solid transparent;
   cursor: pointer;
@@ -609,7 +633,7 @@ div:has(> #_layout-topbar) {
   font-weight: 600;
   letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: color-mix(in oklab, var(--color-base-content) 45%, transparent);
+  color: var(--color-muted-faint);
 }
 .memory-queue-list {
   display: flex;
@@ -657,7 +681,7 @@ div:has(> #_layout-topbar) {
   cursor: pointer;
   font-size: 0.6875rem;
   font-weight: 600;
-  color: color-mix(in oklab, var(--color-base-content) 55%, transparent);
+  color: var(--color-muted);
 }
 .memory-queue-send {
   color: var(--color-primary);
@@ -689,7 +713,7 @@ div:has(> #_layout-topbar) {
   font-weight: 600;
   letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: color-mix(in oklab, var(--color-base-content) 65%, transparent);
+  color: var(--color-muted-strong);
 }
 .dock-count {
   display: inline-flex;
@@ -729,7 +753,7 @@ div:has(> #_layout-topbar) {
   font-weight: 700;
   letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: color-mix(in oklab, var(--color-base-content) 45%, transparent);
+  color: var(--color-muted-faint);
 }
 .dock-card-tool {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -742,7 +766,7 @@ div:has(> #_layout-topbar) {
   min-width: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.6875rem;
-  color: color-mix(in oklab, var(--color-base-content) 55%, transparent);
+  color: var(--color-muted);
   overflow-wrap: anywhere;
 }
 .dock-card-controls {
@@ -810,7 +834,7 @@ div:has(> #_layout-topbar) {
   font-weight: 600;
   letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: color-mix(in oklab, var(--color-base-content) 50%, transparent);
+  color: var(--color-muted);
 }
 .todo-card-toggle::before {
   content: "";
@@ -845,7 +869,7 @@ div:has(> #_layout-topbar) {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: color-mix(in oklab, var(--color-base-content) 45%, transparent);
+  color: var(--color-muted-faint);
   background: color-mix(in oklab, var(--color-base-content) 8%, transparent);
 }
 .todo-item[data-status="in_progress"] .todo-item-status {
@@ -857,7 +881,7 @@ div:has(> #_layout-topbar) {
   background: color-mix(in oklab, var(--color-success) 13%, transparent);
 }
 .todo-item[data-status="completed"] .todo-item-content {
-  color: color-mix(in oklab, var(--color-base-content) 45%, transparent);
+  color: var(--color-muted-faint);
   text-decoration: line-through;
 }
 
@@ -909,7 +933,7 @@ div:has(> #_layout-topbar) {
   border-color: color-mix(in oklab, var(--color-primary) 34%, transparent);
 }
 .memory-rail-badge[data-bucket="done"] {
-  color: color-mix(in oklab, var(--color-base-content) 65%, transparent);
+  color: var(--color-muted-strong);
   background: color-mix(in oklab, var(--color-base-content) 7%, transparent);
   border-color: color-mix(in oklab, var(--color-base-content) 12%, transparent);
 }
@@ -995,7 +1019,7 @@ div:has(> #_layout-topbar) {
   font-size: 0.8125rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+  color: var(--color-muted-strong);
 }
 
 /* prose */
@@ -1003,8 +1027,8 @@ div:has(> #_layout-topbar) {
 .memory-md strong { font-weight: 650; color: oklch(0.97 0.006 265); }
 .memory-md em { font-style: italic; }
 .memory-md del {
-  color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
-  text-decoration-color: color-mix(in oklch, var(--color-base-content) 40%, transparent);
+  color: var(--color-muted);
+  text-decoration-color: var(--color-muted-faint);
 }
 
 /* inline code — subtle brass-tinted pill */
@@ -1045,7 +1069,7 @@ div:has(> #_layout-topbar) {
   background: none;
   border: 0;
   padding: 0;
-  color: color-mix(in oklch, var(--color-base-content) 92%, transparent);
+  color: var(--color-base-content);
   font-size: inherit;
   line-height: inherit;
 }
@@ -1057,7 +1081,7 @@ div:has(> #_layout-topbar) {
   border-left: 3px solid color-mix(in oklch, var(--color-primary) 55%, transparent);
   border-radius: 0 var(--radius-box) var(--radius-box) 0;
   background: oklch(1 0 0 / 0.035);
-  color: color-mix(in oklch, var(--color-base-content) 75%, transparent);
+  color: var(--color-muted-bright);
 }
 .memory-md blockquote > :first-child { margin-top: 0; }
 .memory-md blockquote > :last-child { margin-bottom: 0; }
@@ -1219,9 +1243,9 @@ pre.memory-scroll::-webkit-scrollbar-thumb { background: var(--color-base-300); 
 #chat-rail .list-row[data-active="true"] .font-medium {
   color: var(--color-primary);
 }
-#chat-rail .list-row[data-active="true"] .text-base-content\/50,
-#chat-rail .list-row[data-active="true"] .text-base-content\/40,
-#chat-rail .list-row[data-active="true"] .text-base-content\/25 {
+#chat-rail .list-row[data-active="true"] .text-muted,
+#chat-rail .list-row[data-active="true"] .text-muted-faint,
+#chat-rail .list-row[data-active="true"] .text-muted-subtle {
   color: color-mix(in oklch, var(--color-primary) 60%, transparent);
 }
 

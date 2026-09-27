@@ -401,14 +401,14 @@ func TestRenderObjectEmbeddingBadges(t *testing.T) {
 	// detail header renders the muted "Embedded <time>" text when updated_at is set
 	obj := &GraphObject{ID: "o1", Type: "person", Key: "sam", EmbeddingStatus: "embedded", EmbeddingUpdatedAt: "2026-09-20T10:00:00Z"}
 	html := renderHTML(t, ObjectDetailPage(obj, nil, nil, nil, nil, nil, "", nil, nil, nil, nil))
-	if !strings.Contains(html, `class="text-base-content/50 text-xs">Embedded `) {
+	if !strings.Contains(html, `class="text-muted text-xs">Embedded `) {
 		t.Errorf("detail header missing muted embedded-at timestamp: %s", html)
 	}
 
 	// no timestamp when updated_at is empty
 	objNoTime := &GraphObject{ID: "o1", Type: "person", Key: "sam", EmbeddingStatus: "embedded"}
 	htmlNoTime := renderHTML(t, ObjectDetailPage(objNoTime, nil, nil, nil, nil, nil, "", nil, nil, nil, nil))
-	if strings.Contains(htmlNoTime, `text-base-content/50 text-xs">Embedded `) {
+	if strings.Contains(htmlNoTime, `text-muted text-xs">Embedded `) {
 		t.Errorf("detail header should omit the timestamp when updated_at is empty")
 	}
 }

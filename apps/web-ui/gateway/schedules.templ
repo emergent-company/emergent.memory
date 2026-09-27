@@ -98,7 +98,7 @@ templ scheduleRow(rowID string, a ScheduledAgent, defs []AgentDefinitionSummary)
 				@ui.IconTile("lucide--calendar-clock", ui.IconTileProps{Tone: "primary"})
 				<div class="min-w-0">
 					<p class="truncate text-sm font-medium">{ a.Name }</p>
-					@monoMeta(shortID(a.ID), "text-base-content/35")
+					@monoMeta(shortID(a.ID), "text-muted-faint")
 				</div>
 			</a>
 		}
@@ -166,7 +166,7 @@ templ scheduleDefinitionCell(defs []AgentDefinitionSummary, a ScheduledAgent) {
 		{{ aui := scheduleDefinitionUI(defs, a) }}
 		@agentNameChip(n, ui.BadgeGhost, aui.Icon, aui.Color)
 	} else {
-		<span class="text-base-content/35 text-sm">—</span>
+		<span class="text-muted-faint text-sm">—</span>
 	}
 }
 
@@ -235,7 +235,7 @@ templ scheduleDetailMeta(a *ScheduledAgent, defs []AgentDefinitionSummary) {
 			{{ aui := scheduleDefinitionUI(defs, *a) }}
 			@agentNameChip("agent "+n, ui.BadgeGhost, aui.Icon, aui.Color)
 		}
-		@monoMeta(a.ID, "text-base-content/40")
+		@monoMeta(a.ID, "text-muted-faint")
 	</div>
 }
 
@@ -290,18 +290,18 @@ templ scheduleEditForm(a *ScheduledAgent, defs []AgentDefinitionSummary) {
 templ scheduleRunsSection(runs []ScheduledAgentRun) {
 	@ui.Section("Latest runs", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-comfortable"}) {
 		if len(runs) == 0 {
-			<p class="text-base-content/50 text-sm">No runs yet. Runs appear here after the schedule fires — or after you hit Run now.</p>
+			<p class="text-muted text-sm">No runs yet. Runs appear here after the schedule fires — or after you hit Run now.</p>
 		} else {
 			<ul class="list bg-base-100 rounded-box border border-base-200">
 				for _, r := range runs {
 					<a class="list-row hover:bg-base-200/50" data-testid="schedule-run-row" href={ templ.URL("/runs/" + url.PathEscape(r.ID)) }>
-						@ui.IconSpan("lucide--activity", "size-4 shrink-0 text-base-content/40")
+						@ui.IconSpan("lucide--activity", "size-4 shrink-0 text-muted-faint")
 						<div class="list-col-grow">
 							<div class="font-medium text-sm">{ scheduleRunTitle(r) }</div>
-							<div class="text-base-content/50 text-xs">{ scheduleRunSubtitle(r) }</div>
+							<div class="text-muted text-xs">{ scheduleRunSubtitle(r) }</div>
 						</div>
 						@ui.Badge(ui.BadgeProps{Label: r.Status, Variant: scheduleStatusIntent(&r.Status), Size: ui.BadgeSizeXS, Dot: true})
-						@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-base-content/25")
+						@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
 					</a>
 				}
 			</ul>
@@ -322,7 +322,7 @@ templ scheduleDangerZone(a *ScheduledAgent) {
 				</div>
 				<div>
 					<p class="text-sm font-medium">Delete this schedule</p>
-					<p class="text-base-content/50 text-xs">Removes it and stops future runs. Irreversible.</p>
+					<p class="text-muted text-xs">Removes it and stops future runs. Irreversible.</p>
 				</div>
 			</div>
 			@ui.Button(ui.ButtonProps{
@@ -342,7 +342,7 @@ templ scheduleDangerZone(a *ScheduledAgent) {
 
 // scheduleDeleteDescription is the delete-confirm detail paragraph.
 templ scheduleDeleteDescription(a *ScheduledAgent) {
-	<p class="text-base-content/55 mt-1 text-sm">
+	<p class="text-muted mt-1 text-sm">
 		This removes <span class="font-medium text-base-content">{ a.Name }</span> and its schedule. It will no longer run. Irreversible.
 	</p>
 }

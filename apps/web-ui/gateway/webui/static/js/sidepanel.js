@@ -416,7 +416,7 @@
 
     if (!sessions.length) {
       html +=
-        '<li role="none"><span class="block px-3 py-2 text-[11px] text-base-content/40">No sessions yet — chat once and it lands here.</span></li>';
+        '<li role="none"><span class="block px-3 py-2 text-[11px] text-muted-faint">No sessions yet — chat once and it lands here.</span></li>';
     } else {
       var shown = sessionsExpanded ? sessions.length : Math.min(3, sessions.length);
       for (var i = 0; i < shown; i++) {
@@ -427,17 +427,17 @@
         html +=
           '<li role="none">' +
           '<a role="menuitem" data-action="sidepanel-resume-session" data-id="' + escapeHTML(c.id) + '" class="flex items-center gap-2 py-1.5' + (active ? " menu-active" : "") + '">' +
-          '<span class="iconify lucide--messages-square size-3.5 shrink-0 text-base-content/40" aria-hidden="true"></span>' +
+          '<span class="iconify lucide--messages-square size-3.5 shrink-0 text-muted-faint" aria-hidden="true"></span>' +
           '<span class="min-w-0 grow">' +
           '<span class="block truncate text-xs font-medium">' + escapeHTML(c.title || "Untitled") + '</span>' +
           '<span class="block truncate text-[10px] opacity-60">' + escapeHTML(relTime(c.updatedAt)) + '</span>' +
           '</span>' +
-          (active ? '<span class="iconify lucide--check size-3.5 shrink-0 text-base-content/50" aria-hidden="true"></span>' : "") +
+          (active ? '<span class="iconify lucide--check size-3.5 shrink-0 text-muted" aria-hidden="true"></span>' : "") +
           '</a></li>';
       }
       if (!sessionsExpanded && sessions.length > 3) {
         html +=
-          '<li role="none"><a role="menuitem" data-action="sidepanel-sessions-more" class="flex items-center justify-center gap-1.5 py-1.5 text-[11px] text-base-content/50">' +
+          '<li role="none"><a role="menuitem" data-action="sidepanel-sessions-more" class="flex items-center justify-center gap-1.5 py-1.5 text-[11px] text-muted">' +
           '<span class="iconify lucide--chevrons-down size-3.5" aria-hidden="true"></span>' +
           'Show all ' + sessions.length + ' sessions</a></li>';
       }

@@ -194,7 +194,7 @@ templ projectSwitcher(current *ProjectRef, currentOrgName string, activeOrg *Org
 			if current != nil {
 				if currentOrgName != "" {
 					<div class="flex min-w-0 flex-col text-left leading-tight">
-						<span class="max-w-[16rem] truncate text-[10px] font-medium tracking-[0.14em] uppercase text-base-content/60">{ currentOrgName }</span>
+						<span class="max-w-[16rem] truncate text-[10px] font-medium tracking-[0.14em] uppercase text-muted-strong">{ currentOrgName }</span>
 						<span class="max-w-[16rem] truncate text-sm">{ current.Name }</span>
 					</div>
 				} else {
@@ -202,13 +202,13 @@ templ projectSwitcher(current *ProjectRef, currentOrgName string, activeOrg *Org
 				}
 			} else if activeOrg != nil {
 				<div class="flex min-w-0 flex-col text-left leading-tight">
-					<span class="max-w-[16rem] truncate text-[10px] font-medium tracking-[0.14em] uppercase text-base-content/60">{ activeOrg.Name }</span>
-					<span class="max-w-[16rem] truncate text-sm text-base-content/60">Select project</span>
+					<span class="max-w-[16rem] truncate text-[10px] font-medium tracking-[0.14em] uppercase text-muted-strong">{ activeOrg.Name }</span>
+					<span class="max-w-[16rem] truncate text-sm text-muted-strong">Select project</span>
 				</div>
 			} else {
-				<span class="text-sm text-base-content/60">Select project</span>
+				<span class="text-sm text-muted-strong">Select project</span>
 			}
-			@ui.IconSpan("lucide--chevron-down", "size-3.5 text-base-content/40")
+			@ui.IconSpan("lucide--chevron-down", "size-3.5 text-muted-faint")
 		}
 		@ui.DropdownMenu(templ.Attributes{"aria-label": "Projects", "class": "min-w-80 border-base-content/10 z-50 max-h-96 flex-nowrap overflow-x-hidden overflow-y-auto"}) {
 			if showRecent && len(recentProjects) > 0 {
@@ -219,7 +219,7 @@ templ projectSwitcher(current *ProjectRef, currentOrgName string, activeOrg *Org
 			}
 			if len(projectGroups) == 0 {
 				<li class="pointer-events-none" aria-hidden="true">
-					<span class="text-base-content/40 text-xs">No projects yet</span>
+					<span class="text-muted-faint text-xs">No projects yet</span>
 				</li>
 			} else {
 				for _, g := range projectGroups {
@@ -231,12 +231,12 @@ templ projectSwitcher(current *ProjectRef, currentOrgName string, activeOrg *Org
 			}
 		<li class="menu-title sticky bottom-0 mt-1.5 border-t border-base-content/10 bg-base-100 px-1 py-1.5">
 			<div class="flex items-center">
-				<a href="#" onclick="openNewProjectModal(); return false;" class="flex flex-1 items-center justify-center gap-1.5 px-3 py-0.5 text-sm font-normal text-base-content/70 transition-colors hover:text-base-content">
+				<a href="#" onclick="openNewProjectModal(); return false;" class="flex flex-1 items-center justify-center gap-1.5 px-3 py-0.5 text-sm font-normal text-muted-strong transition-colors hover:text-base-content">
 					@ui.IconSpan("lucide--folder-plus", "size-3.5")
 					New project
 				</a>
 				<span class="h-4 w-px shrink-0 bg-base-content/15" aria-hidden="true"></span>
-				<a href="/orgs/new" class="flex flex-1 items-center justify-center gap-1.5 px-3 py-0.5 text-sm font-normal text-base-content/70 transition-colors hover:text-base-content">
+				<a href="/orgs/new" class="flex flex-1 items-center justify-center gap-1.5 px-3 py-0.5 text-sm font-normal text-muted-strong transition-colors hover:text-base-content">
 					@ui.IconSpan("lucide--building-2", "size-3.5")
 					New org
 				</a>
@@ -265,7 +265,7 @@ templ projectSwitcher(current *ProjectRef, currentOrgName string, activeOrg *Org
 // matches the .menu-sm item padding (.625rem) so labels and rows share the
 // same left edge.
 templ pickerSectionHeader(label string) {
-	<li class="menu-title pointer-events-none px-2.5 pt-3 pb-0.5 text-[10px] font-medium tracking-[0.14em] uppercase text-base-content/40 select-none">
+	<li class="menu-title pointer-events-none px-2.5 pt-3 pb-0.5 text-[10px] font-medium tracking-[0.14em] uppercase text-muted-faint select-none">
 		{ label }
 	</li>
 }
@@ -277,12 +277,12 @@ templ pickerSectionHeader(label string) {
 // daisyUI's .menu li > * grid rule, and px-2.5 keeps it flush with the rows.
 templ projectGroupHeader(g projectGroup) {
 	if g.OrgID != "" {
-		<li class="menu-title px-2.5 pt-3 pb-0.5 text-[10px] font-medium tracking-[0.14em] uppercase text-base-content/60">
+		<li class="menu-title px-2.5 pt-3 pb-0.5 text-[10px] font-medium tracking-[0.14em] uppercase text-muted-strong">
 			<div class="flex w-full items-center gap-1">
 				<a href={ templ.URL("/orgs/" + url.PathEscape(g.OrgID)) } class="min-w-0 flex-1 truncate text-left hover:text-base-content" title={ projectGroupLabel(g) }>
 					{ projectGroupLabel(g) }
 				</a>
-				<a href={ templ.URL("/orgs/" + url.PathEscape(g.OrgID) + "/settings") } class="shrink-0 text-base-content/40 hover:text-base-content" aria-label={ "Manage " + projectGroupLabel(g) } title="Manage organization">
+				<a href={ templ.URL("/orgs/" + url.PathEscape(g.OrgID) + "/settings") } class="shrink-0 text-muted-faint hover:text-base-content" aria-label={ "Manage " + projectGroupLabel(g) } title="Manage organization">
 					@ui.IconSpan("lucide--settings", "size-3.5")
 				</a>
 			</div>
@@ -299,7 +299,7 @@ templ projectSwitchRow(p ProjectRef, active bool) {
 		<form method="post" action="/projects/activate" class="flex w-full items-center">
 			<input type="hidden" name="projectId" value={ p.ID }/>
 			<button type="submit" role="menuitem" class="flex w-full min-w-0 cursor-pointer items-center gap-2 text-left">
-				<span class={ "min-w-0 flex-1 truncate text-sm", templ.KV("text-base-content/70", !active) }>{ p.Name }</span>
+				<span class={ "min-w-0 flex-1 truncate text-sm", templ.KV("text-muted-strong", !active) }>{ p.Name }</span>
 				if active {
 					@ui.IconSpan("lucide--check", "size-4 shrink-0 text-primary")
 				}
@@ -316,7 +316,7 @@ templ newProjectModal(orgs []Org, activeOrg *Org) {
 		<div class="mb-5 flex items-start justify-between gap-4">
 			<div>
 				<h3 class="text-lg font-semibold">New project</h3>
-				<p class="text-base-content/50 mt-0.5 text-sm">Projects group the agents, memory, and settings you work on together.</p>
+				<p class="text-muted mt-0.5 text-sm">Projects group the agents, memory, and settings you work on together.</p>
 			</div>
 			@ui.Button(ui.ButtonProps{
 				Type:      ui.ButtonTypeButton,
@@ -334,7 +334,7 @@ templ newProjectModal(orgs []Org, activeOrg *Org) {
 			}
 			@form.FormControl("new-project-org", "Organization", form.LabelAbove, "", "", nil) {
 				if len(orgs) == 0 {
-					<p class="text-base-content/45 text-sm">You need an organization first.</p>
+					<p class="text-muted-faint text-sm">You need an organization first.</p>
 				} else {
 					<select id="new-project-org" name="orgId" required class="select w-full">
 						if activeOrg != nil {

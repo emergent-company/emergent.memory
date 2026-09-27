@@ -271,7 +271,7 @@ templ shareFrame(props ShareAgentPageProps) {
 				aria-label="Your chats"
 			>
 				<div class="border-base-content/5 flex items-center justify-between gap-2 border-b px-4 py-3">
-					<span class="text-base-content/50 text-xs font-semibold tracking-[0.14em] uppercase">Your chats</span>
+					<span class="text-muted text-xs font-semibold tracking-[0.14em] uppercase">Your chats</span>
 					@ui.Button(ui.ButtonProps{
 						Type:       ui.ButtonTypeButton,
 						Variant:    ui.ButtonGhost,
@@ -296,7 +296,7 @@ templ shareFrame(props ShareAgentPageProps) {
 					}
 					if props.ShowSessionList {
 						<div class="flex items-center gap-2">
-							<label for="share-archived-filter" class="text-base-content/50 text-xs">Show</label>
+							<label for="share-archived-filter" class="text-muted text-xs">Show</label>
 							<select
 								id="share-archived-filter"
 								data-testid="share-archived-filter"
@@ -316,7 +316,7 @@ templ shareFrame(props ShareAgentPageProps) {
 					</nav>
 				}
 				if !props.ShowSessionList {
-					<div class="text-base-content/45 px-4 py-6 text-center text-xs">
+					<div class="text-muted-faint px-4 py-6 text-center text-xs">
 						Chat history is hidden for this link.
 					</div>
 				}
@@ -337,7 +337,7 @@ templ shareFrame(props ShareAgentPageProps) {
 					<div id="share-messages" class="flex flex-col gap-3"></div>
 					<div id="share-typing" class="mt-3 hidden px-1" role="status" aria-live="polite" data-testid="share-typing">
 						<span class="memory-typing"><span></span><span></span><span></span></span>
-						<span class="text-base-content/45 ml-1.5 text-xs">Thinking…</span>
+						<span class="text-muted-faint ml-1.5 text-xs">Thinking…</span>
 					</div>
 					<!-- Client-revealable terminal states for a link that runs out
 					     mid-conversation (rate limit / budget). Kept out of the
@@ -382,7 +382,7 @@ templ shareHeader(props ShareAgentPageProps) {
 					@ui.Badge(ui.BadgeProps{Label: props.ShareLabel, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Attrs: templ.Attributes{"data-testid": "share-label"}})
 				}
 			</div>
-			<p id="share-agent-description" class="text-base-content/45 line-clamp-1 text-xs hidden">{ props.AgentDescription }</p>
+			<p id="share-agent-description" class="text-muted-faint line-clamp-1 text-xs hidden">{ props.AgentDescription }</p>
 		</div>
 	</header>
 }
@@ -411,7 +411,7 @@ templ shareFirstLoad(props ShareAgentPageProps) {
 	<div id="share-first-load" data-testid="share-first-load" class="flex flex-col items-center py-10 text-center">
 		@shareAvatar(props, "share-first-load-avatar")
 		<h2 id="share-first-load-title" class="mt-4 text-lg font-semibold tracking-tight">Chat with { props.AgentName }</h2>
-		<p id="share-first-load-desc" class="text-base-content/55 mt-1.5 max-w-md text-sm">
+		<p id="share-first-load-desc" class="text-muted mt-1.5 max-w-md text-sm">
 			if props.AgentDescription != "" {
 				{ props.AgentDescription }
 			} else {
@@ -423,7 +423,7 @@ templ shareFirstLoad(props ShareAgentPageProps) {
 			@shareSuggestion("Give me a quick summary")
 			@shareSuggestion("How do I get started?")
 		</div>
-		<p class="text-base-content/35 mt-6 text-[11px]">Enter to send · Shift+Enter for a new line</p>
+		<p class="text-muted-faint mt-6 text-[11px]">Enter to send · Shift+Enter for a new line</p>
 	</div>
 }
 
@@ -433,7 +433,7 @@ templ shareSuggestion(text string) {
 		type="button"
 		data-action="share-suggestion"
 		data-text={ text }
-		class="memory-suggestion border-base-content/15 bg-base-100/50 text-base-content/70 hover:border-primary rounded-full border px-3.5 py-1.5 text-xs font-medium"
+		class="memory-suggestion border-base-content/15 bg-base-100/50 text-muted-strong hover:border-primary rounded-full border px-3.5 py-1.5 text-xs font-medium"
 	>{ text }</button>
 }
 
@@ -476,11 +476,11 @@ templ shareSessionRow(s ShareSessionItem) {
 		data-testid="share-session-row"
 		aria-current={ shareAriaCurrent(s.Active) }
 	>
-		<span class="text-base-content/35 mt-0.5 shrink-0">@ui.IconSpan("lucide--message-square", "size-4")
+		<span class="text-muted-faint mt-0.5 shrink-0">@ui.IconSpan("lucide--message-square", "size-4")
 </span>
 		<span class="min-w-0 grow">
 			<span class="block truncate text-sm">{ s.Title }</span>
-			<span class="text-base-content/45 block text-xs">{ s.LastActivity } · { strconv.Itoa(s.MessageCount) } messages</span>
+			<span class="text-muted-faint block text-xs">{ s.LastActivity } · { strconv.Itoa(s.MessageCount) } messages</span>
 		</span>
 	</button>
 }
@@ -489,10 +489,10 @@ templ shareSessionRow(s ShareSessionItem) {
 templ shareEmptySessions() {
 	<div data-testid="share-sessions-empty" class="px-3 py-8 text-center">
 		<div class="bg-base-content/5 mx-auto grid size-10 place-items-center rounded-full">
-			@ui.IconSpan("lucide--messages-square", "size-5", "text-base-content/30")
+			@ui.IconSpan("lucide--messages-square", "size-5", "text-muted-subtle")
 		</div>
-		<p class="text-base-content/55 mt-3 text-sm font-medium">No chats yet</p>
-		<p class="text-base-content/40 mt-1 text-xs">Start a new chat and it will show up here.</p>
+		<p class="text-muted mt-3 text-sm font-medium">No chats yet</p>
+		<p class="text-muted-faint mt-1 text-xs">Start a new chat and it will show up here.</p>
 	</div>
 }
 
@@ -538,7 +538,7 @@ templ shareComposer(props ShareAgentPageProps) {
 						</span>
 					</div>
 				</div>
-				<p class="text-base-content/35 mt-1.5 text-center text-[11px]">Enter to send · Shift+Enter for a new line · responses stream in live</p>
+				<p class="text-muted-faint mt-1.5 text-center text-[11px]">Enter to send · Shift+Enter for a new line · responses stream in live</p>
 			}
 		</form>
 	</div>
@@ -584,7 +584,7 @@ templ shareEmailGate(props ShareAgentPageProps) {
 						Continue
 					}
 				</div>
-				<p id="share-email-help" class="text-base-content/45 text-xs">
+				<p id="share-email-help" class="text-muted-faint text-xs">
 					The link's owner asks for an email before you can chat. It is only shared with them.
 				</p>
 				<p id="share-email-error" data-testid="share-email-error" class="text-error hidden text-xs" role="alert"></p>
@@ -614,8 +614,8 @@ templ shareTerminalScreen(state ShareTerminalState, agentName string) {
 				@ui.IconSpan(shareStateIcon(state), "size-7")
 			</div>
 			<h1 class="text-lg font-semibold tracking-tight">{ shareStateTitle(state) }</h1>
-			<p class="text-base-content/55 mt-2 text-sm leading-relaxed">{ shareStateBody(state, agentName) }</p>
-			<p class="text-base-content/35 mt-5 text-xs">If you think this is a mistake, ask the person who shared the link for a new one.</p>
+			<p class="text-muted mt-2 text-sm leading-relaxed">{ shareStateBody(state, agentName) }</p>
+			<p class="text-muted-faint mt-5 text-xs">If you think this is a mistake, ask the person who shared the link for a new one.</p>
 		</main>
 	</div>
 }
@@ -635,7 +635,7 @@ templ shareInlineTerminal(state ShareTerminalState) {
 		</span>
 		<div class="min-w-0">
 			<p class="text-sm font-semibold">{ shareStateTitle(state) }</p>
-			<p class="mt-0.5 text-xs opacity-80">{ shareStateBody(state, "") }</p>
+			<p class="mt-0.5 text-xs text-muted-bright">{ shareStateBody(state, "") }</p>
 		</div>
 	</div>
 }
@@ -697,7 +697,7 @@ func shareStateIconClass(state ShareTerminalState) string {
 	case ShareStateBudgetExceeded, ShareStateRevoked:
 		return base + "bg-error/10 text-error border-error/20"
 	case ShareStateExpired, ShareStateInvalid:
-		return base + "bg-base-content/5 text-base-content/60 border-base-content/10"
+		return base + "bg-base-content/5 text-muted-strong border-base-content/10"
 	default:
 		return base + "bg-primary/10 text-primary border-primary/20"
 	}

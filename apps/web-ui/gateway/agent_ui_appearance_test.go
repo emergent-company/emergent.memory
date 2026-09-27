@@ -145,7 +145,7 @@ func TestRenderAgentInlineGlyph(t *testing.T) {
 	// No appearance: a bare muted bot glyph — no tile frame, no border, no badge,
 	// and no style attribute at all (the fallback path only sets the muted class).
 	html := renderHTML(t, agentInlineGlyph("", ""))
-	for _, want := range []string{"lucide--bot", "size-4", "text-base-content/40"} {
+	for _, want := range []string{"lucide--bot", "size-4", "text-muted-faint"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("default inline glyph missing %q: %s", want, html)
 		}
