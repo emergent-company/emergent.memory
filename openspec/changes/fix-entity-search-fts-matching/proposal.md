@@ -6,11 +6,11 @@ The replacement path is the GIN-indexed full-text search already used by `graph.
 
 ## What Changes
 
-- `entity-search` matches with a single full-text predicate (`fts @@ websearch_to_tsquery('simple', ?) OR fts @@ websearch_to_tsquery('norwegian', ?)`), mirroring `graph.FTSSearch`, plus the existing strict→relaxed retry via `ftsquery.Relax`.
+- `entity-search` matches with a single full-text predicate (`fts @@ websearch_to_tsquery('simple', ?) OR fts @@ websearch_to_tsquery('norwegian', ?)`), mirroring `graph.FTSSearch`, plus the strict→relaxed retry via `ftsquery.Relax` and — after both match nothing — the terms-OR-joined fallback via `ftsquery.Disjoin` matched with `to_tsquery` (issue #996), so a natural multi-term query whose terms are spread across many entities still returns results.
 - The `go.key = ?` predicate is **removed**. It was redundant — migration 00174 indexes the raw and separator-normalised key into `fts`, so a composite key and its component tokens are both resolvable by the FTS predicate — and it defeated the GIN index: no index covers `key` in this query shape, and an OR arm that cannot be served by an index forces a seq scan of the whole disjunction instead of `idx_graph_objects_fts`.
 - The tool description now states what is actually searchable (key, type, title, name, description) and that matching is lexeme-based.
 - The matching semantics — both the narrowing and the widening — are specified in the `mcp-entity-search` capability.
-- Tests install the migration 00174 trigger on the throwaway test database (the schema snapshot still embeds the pre-00174 trigger) and cover component-token lookup, the relaxed retry, and `title` matching.
+- Tests install the migration 00174 trigger on the throwaway test database (the schema snapshot still embeds the pre-00174 trigger) and cover component-token lookup, the relaxed retry, `title` matching, and the multi-term OR-disjunction fallback.
 
 ### Deliberately accepted narrowing
 

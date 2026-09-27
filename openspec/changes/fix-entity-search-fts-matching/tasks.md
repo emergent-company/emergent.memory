@@ -17,6 +17,12 @@
 - [x] 3.3 Add `TestEntitySearchRelaxesUnsatisfiableIdentifier` (strict→relaxed retry).
 - [x] 3.4 Add `TestEntitySearchTitleMatch` (widened `title` field).
 
-## 4. Out of scope (reported, not fixed)
+## 4. Multi-term OR fallback (issue #996)
 
-- [ ] 4.1 Regenerate `apps/server/internal/testdb/schema.sql`, which still embeds the pre-00174 fts trigger and affects other suites that rely on the fixture vector.
+- [x] 4.1 After the strict and relaxed passes both match nothing, retry once with `ftsquery.Disjoin` matched via `to_tsquery` (OR) against both the `simple` and `norwegian` configurations.
+- [x] 4.2 Add `TestEntitySearchDisjoinsMultiTermQuery` (issue's exact multi-term query: strict = 0, recall restored).
+- [x] 4.3 Add the `mcp-entity-search` delta requirement documenting the OR-disjunction fallback.
+
+## 5. Out of scope (reported, not fixed)
+
+- [ ] 5.1 Regenerate `apps/server/internal/testdb/schema.sql`, which still embeds the pre-00174 fts trigger and affects other suites that rely on the fixture vector.
