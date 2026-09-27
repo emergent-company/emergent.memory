@@ -108,21 +108,21 @@ func (s *Service) requireOrgMember(ctx context.Context, orgID, userID string) er
 }
 
 // requireOrgAdmin returns an error unless the user is an org_admin of the
-// addressed org. The role is derived server-side from
-// kb.organization_memberships keyed on the authenticated user ID (never a
-// client-supplied org id), reusing the same GetMembershipRole primitive that
-// projects.Transfer relies on. An empty user (unauthenticated) yields
-// ErrUnauthorized; a non-member or a plain member yields ErrForbidden
-// (uniform fail-closed, no org-existence oracle — matching requireOrgMember).
+// addressed org. The decision comes from the single app-side org-administration
+// check (pkg/auth.CanAdministerOrg via orgRepository.IsOrgAdmin), keyed on the
+// authenticated user ID (never a client-supplied org id). An empty user
+// (unauthenticated) yields ErrUnauthorized; a non-member or a plain member
+// yields ErrForbidden (uniform fail-closed, no org-existence oracle — matching
+// requireOrgMember).
 func (s *Service) requireOrgAdmin(ctx context.Context, orgID, userID string) error {
 	if userID == "" {
 		return apperror.ErrUnauthorized
 	}
-	role, err := s.repo.GetMembershipRole(ctx, orgID, userID)
+	isAdmin, err := s.repo.IsOrgAdmin(ctx, orgID, userID)
 	if err != nil {
 		return err
 	}
-	if role != "org_admin" {
+	if !isAdmin {
 		return apperror.ErrForbidden
 	}
 	return nil

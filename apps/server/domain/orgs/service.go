@@ -31,6 +31,11 @@ type orgRepository interface {
 	CountUserMemberships(ctx context.Context, userID string) (int, error)
 	IsUserMember(ctx context.Context, orgID, userID string) (bool, error)
 	GetMembershipRole(ctx context.Context, orgID, userID string) (string, error)
+	// IsOrgAdmin reports whether the user holds org-admin authority over the
+	// org. It delegates to the shared app-side entitlement check
+	// (pkg/auth.CanAdministerOrg) so no domain re-derives the role locally
+	// (issue #812 §4.5, issue #1162).
+	IsOrgAdmin(ctx context.Context, orgID, userID string) (bool, error)
 	FindOrgToolSettings(ctx context.Context, orgID string) ([]OrgToolSetting, error)
 	UpsertOrgToolSetting(ctx context.Context, setting *OrgToolSetting) (*OrgToolSetting, error)
 	DeleteOrgToolSetting(ctx context.Context, orgID, toolName string) (bool, error)
