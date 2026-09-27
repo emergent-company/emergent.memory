@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
+
+	"github.com/emergent-company/emergent.memory/domain/schemas"
 )
 
 // Repository handles database operations for the schema registry
@@ -18,6 +20,29 @@ type Repository struct {
 // NewRepository creates a new schema registry repository
 func NewRepository(db bun.IDB) *Repository {
 	return &Repository{db: db}
+}
+
+// TypePropertyNames returns, for every object type registered in the project,
+// the property names declared in its json_schema. It backs scope-key reference
+// resolution at type create/update time (issue #1148).
+func (r *Repository) TypePropertyNames(ctx context.Context, projectID string) (map[string]map[string]struct{}, error) {
+	type row struct {
+		TypeName   string          `bun:"type_name"`
+		JSONSchema json.RawMessage `bun:"json_schema"`
+	}
+	var rows []row
+	if err := r.db.NewRaw(`
+		SELECT type_name, json_schema
+		FROM kb.project_object_schema_registry
+		WHERE project_id = ?
+	`, projectID).Scan(ctx, &rows); err != nil {
+		return nil, err
+	}
+	out := make(map[string]map[string]struct{}, len(rows))
+	for _, row := range rows {
+		out[row.TypeName] = schemas.TypeSchemaPropertyNames(row.JSONSchema)
+	}
+	return out, nil
 }
 
 // GetProjectTypes returns all types for a project with optional filtering
