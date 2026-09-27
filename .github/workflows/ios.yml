@@ -1,0 +1,67 @@
+name: iOS Lint
+
+# `apps/ios` ships .swiftlint.yml / .swiftformat but nothing ran them, so the
+# iOS app had no lint coverage (issue #1152). This workflow supplies it,
+# mirroring the Mac connector's ratcheted coverage (#1146/#1151): SwiftLint runs
+# over the whole apps/ios tree against apps/ios/.swiftlint.baseline (only NEW
+# violations fail), and SwiftFormat ratchets to the files changed vs the base
+# (touched files must be format-clean; pre-existing format debt is left alone).
+# See apps/ios/Scripts/lint-swift.sh for the ratchet rationale.
+#
+# The check is deliberately named `ios-lint`, NOT `ci`: the repo already emits
+# several distinct checks literally named `ci` (ci.yml, server.yml, cli.yml,
+# web-ui.yml, connector.yml); another one would make check results ambiguous
+# and blocking. Swift tooling runs on ubuntu with the Linux release binaries —
+# no macOS runner is needed for lint.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/ios/**'
+      - '.github/workflows/ios.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/ios/**'
+      - '.github/workflows/ios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SWIFTLINT_VERSION: '0.65.1'
+  SWIFTFORMAT_VERSION: '0.63.0'
+
+jobs:
+  ios-lint:
+    name: ios-lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Need the merge base with the PR/push base to ratchet SwiftFormat.
+          fetch-depth: 0
+
+      - name: Install Swift linters
+        run: |
+          curl -sSL -o "$RUNNER_TEMP/swiftformat.zip" \
+            "https://github.com/nicklockwood/SwiftFormat/releases/download/${SWIFTFORMAT_VERSION}/swiftformat_linux.zip"
+          unzip -q "$RUNNER_TEMP/swiftformat.zip" -d "$RUNNER_TEMP/swiftformat"
+          curl -sSL -o "$RUNNER_TEMP/swiftlint.zip" \
+            "https://github.com/realm/SwiftLint/releases/download/${SWIFTLINT_VERSION}/swiftlint_linux_amd64.zip"
+          unzip -q "$RUNNER_TEMP/swiftlint.zip" -d "$RUNNER_TEMP/swiftlint"
+          mkdir -p "$RUNNER_TEMP/bin"
+          install -m 0755 "$RUNNER_TEMP/swiftformat/swiftformat_linux" "$RUNNER_TEMP/bin/swiftformat"
+          # Statically linked SwiftLint: the dynamic build needs a newer glibc
+          # than some hosts expose, the static build runs everywhere.
+          install -m 0755 "$RUNNER_TEMP/swiftlint/swiftlint-static" "$RUNNER_TEMP/bin/swiftlint"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bin/swiftformat" --version
+          "$RUNNER_TEMP/bin/swiftlint" version
+
+      - name: swiftformat + swiftlint
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: apps/ios/Scripts/lint-swift.sh
