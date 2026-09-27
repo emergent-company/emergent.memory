@@ -48,6 +48,10 @@ type ObjectTypeDef struct {
 	Label       string         `json:"label"       yaml:"label"`
 	Description string         `json:"description" yaml:"description"`
 	Properties  map[string]any `json:"properties"  yaml:"properties"`
+	// ScopeKey is the optional scope-key declaration (issue #1148): the property
+	// on this type that scopes it to a parent document, plus the reference it
+	// points at. Passed through to the schema API untouched.
+	ScopeKey map[string]any `json:"scopeKey" yaml:"scopeKey"`
 }
 
 // RelationshipTypeDef represents a single relationship type definition inside a pack file.
