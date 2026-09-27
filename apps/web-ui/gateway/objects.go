@@ -34,7 +34,7 @@ type objectsStats struct {
 // mode fills Objects/HasMore/NextCursor/Stats; search mode fills Results.
 type objectsPageData struct {
 	Query        string
-	Mode         string // "" | "fulltext" | "hybrid" | "unified"
+	Mode         string // normalized to "fulltext" | "hybrid" | "unified"
 	TypeFilter   string
 	BranchID     string
 	Types        []string
@@ -55,7 +55,7 @@ func (s *Server) uiObjects(c echo.Context) error {
 	branchID := c.QueryParam("branch")
 	typeFilter := c.QueryParam("type")
 	query := c.QueryParam("q")
-	mode := c.QueryParam("mode")
+	mode := normalizeObjectsSearchMode(c.QueryParam("mode"))
 	cursor := c.QueryParam("cursor")
 
 	// Branches + compiled types feed the filter dropdowns regardless of mode
@@ -89,10 +89,6 @@ func (s *Server) uiObjects(c echo.Context) error {
 	}
 
 	if query != "" {
-		if mode == "" {
-			mode = "fulltext"
-		}
-		data.Mode = mode
 		var results []ObjectSearchResult
 		var err error
 		if mode == "unified" {
@@ -242,6 +238,58 @@ func (s *Server) uiObjectsStatsPartial(c echo.Context) error {
 // searchScoreLabel formats a search hit's relevance score for the score badge.
 func searchScoreLabel(f float32) string {
 	return strconv.FormatFloat(float64(f), 'f', 2, 32)
+}
+
+// defaultObjectsSearchMode is the search mode used when a request omits `mode`
+// (or supplies an unrecognised value). Unified fuses graph and text ranking, so
+// the default search is not keyword-only.
+const defaultObjectsSearchMode = "unified"
+
+// normalizeObjectsSearchMode coerces a raw `mode` query value to one of the
+// three modes the search handlers accept. An absent or unrecognised value falls
+// back to the default, so the rendered label, the value the form submits, and
+// the dispatched search always agree. Without this, `objectsSearchModeLabel`
+// would render the default label while `SearchObjects` fell through to its
+// full-text implementation.
+func normalizeObjectsSearchMode(mode string) string {
+	switch mode {
+	case "fulltext", "hybrid", "unified":
+		return mode
+	default:
+		return defaultObjectsSearchMode
+	}
+}
+
+// objectsSearchMode is one search mode option of the split search button's
+// dropdown: the submitted value plus its label and a short description of what
+// the mode does.
+type objectsSearchMode struct {
+	Value       string
+	Label       string
+	Description string
+}
+
+// objectsSearchModes lists the search modes in display order (best default
+// first) with their dropdown copy. The order matches the modes the search
+// handlers accept (unified / hybrid / fulltext).
+func objectsSearchModes() []objectsSearchMode {
+	return []objectsSearchMode{
+		{Value: "unified", Label: "Unified", Description: "Fuses graph and text ranking for the best overall matches."},
+		{Value: "hybrid", Label: "Hybrid", Description: "Blends keyword and semantic (vector) matching."},
+		{Value: "fulltext", Label: "Full-text", Description: "Keyword matching only — fast and exact."},
+	}
+}
+
+// objectsSearchModeLabel renders the display label for a search mode, falling
+// back to the default (Unified) for an absent or unknown value so the split
+// button always shows a mode.
+func objectsSearchModeLabel(mode string) string {
+	for _, m := range objectsSearchModes() {
+		if m.Value == mode {
+			return m.Label
+		}
+	}
+	return "Unified"
 }
 
 // uiObjectsKnowledge runs the "ask the graph" RAG Q&A (POST /objects/knowledge)

@@ -138,54 +138,77 @@ templ objectsStatsDeferred(branchID string) {
 	</div>
 }
 
-// objectsSearchForm is the text-query search form: a query input plus a
-// segmented mode selector (full-text / hybrid / unified) that auto-submits on
-// change. The active type/branch filters ride along as hidden inputs so
-// searching doesn't drop the filters.
+// objectsSearchForm is the text-query search form: a query input plus a split
+// search button. The primary action submits the form with the currently
+// selected mode; the joined chevron opens a dropdown listing the three modes,
+// each with a one-line description. Every mode option is a plain submit button
+// (`name="mode" value=…`) inside the form, so choosing a mode works with
+// JavaScript disabled: daisyUI's CSS opens the dropdown on focus and the button
+// submits the GET form. The active type/branch filters ride along as hidden
+// inputs so searching doesn't drop the filters. An absent or unrecognised mode
+// normalizes to unified — the strongest ranking — so the default search is not
+// keyword-only.
+//
+// The dropdown is daisyUI's CSS-only (focus/focus-within) dropdown, so the
+// trigger carries no aria-expanded (there is no JS to keep it truthful) and no
+// aria-haspopup; the selected option is announced via role="menuitemradio" +
+// aria-checked instead.
 templ objectsSearchForm(data objectsPageData) {
-	<form class="mb-4" method="get" action="/objects">
+	{{ mode := normalizeObjectsSearchMode(data.Mode) }}
+	<form id="objects-search-form" class="mb-4" method="get" action="/objects">
 		<div class="flex flex-col gap-2 sm:flex-row sm:items-center">
 			<label class="input input-bordered flex w-full items-center gap-2 sm:max-w-md">
 				@ui.IconSpan("lucide--search", "size-4 shrink-0 text-muted")
 				<input type="search" name="q" value={ data.Query } placeholder="Search objects…" class="grow" autocomplete="off" aria-label="Search objects"/>
 			</label>
-			<div class="flex flex-wrap items-center gap-2">
-				<div class="join" role="radiogroup" aria-label="Search mode">
-					<input
-						type="radio"
-						name="mode"
-						value="fulltext"
-						aria-label="Full-text"
-						class="join-item btn btn-sm btn-outline checked:btn-primary"
-						checked?={ data.Mode == "" || data.Mode == "fulltext" }
-						onchange="this.form.submit()"
-					/>
-					<input
-						type="radio"
-						name="mode"
-						value="hybrid"
-						aria-label="Hybrid"
-						class="join-item btn btn-sm btn-outline checked:btn-primary"
-						checked?={ data.Mode == "hybrid" }
-						onchange="this.form.submit()"
-					/>
-					<input
-						type="radio"
-						name="mode"
-						value="unified"
-						aria-label="Unified"
-						class="join-item btn btn-sm btn-outline checked:btn-primary"
-						checked?={ data.Mode == "unified" }
-						onchange="this.form.submit()"
-					/>
-				</div>
+			<div class="join">
 				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeSubmit,
-					Variant: ui.ButtonSecondary,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--search",
+					Type:       ui.ButtonTypeSubmit,
+					Variant:    ui.ButtonPrimary,
+					Size:       ui.ButtonSM,
+					Icon:       "lucide--search",
+					ExtraClass: "join-item gap-2",
+					Attrs:      templ.Attributes{"name": "mode", "value": mode},
 				}) {
-					Search
+					{ objectsSearchModeLabel(mode) + " Search" }
+				}
+				@ui.Dropdown(ui.DropdownEnd, nil) {
+					@ui.Button(ui.ButtonProps{
+						Type:       ui.ButtonTypeButton,
+						Variant:    ui.ButtonPrimary,
+						Size:       ui.ButtonSM,
+						Icon:       "lucide--chevron-down",
+						ExtraClass: "join-item",
+						AriaLabel:  "Choose search mode",
+					})
+					@ui.DropdownMenu(templ.Attributes{"aria-label": "Search mode", "class": "w-80"}) {
+						for _, m := range objectsSearchModes() {
+							{{ checked := "false"
+							if m.Value == mode {
+								checked = "true"
+							} }}
+							<li role="none">
+								<button
+									type="submit"
+									name="mode"
+									value={ m.Value }
+									role="menuitemradio"
+									aria-checked={ checked }
+									class={ "min-w-0 break-words text-left", templ.KV("menu-active", m.Value == mode) }
+								>
+									<span class="flex w-full items-start gap-2">
+										<span class="min-w-0 grow">
+											<span class="block text-sm font-medium">{ m.Label }</span>
+											<span class="text-muted-faint block text-xs whitespace-normal">{ m.Description }</span>
+										</span>
+										if m.Value == mode {
+											@ui.IconSpan("lucide--check", "mt-0.5 size-4 shrink-0 text-primary")
+										}
+									</span>
+								</button>
+							</li>
+						}
+					}
 				}
 			</div>
 		</div>
