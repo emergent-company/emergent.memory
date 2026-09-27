@@ -21821,9 +21821,6 @@ const docTemplate = `{
                 "rootRunId": {
                     "type": "string"
                 },
-                "sessionStatus": {
-                    "$ref": "#/definitions/domain_agents.SessionStatus"
-                },
                 "skipReason": {
                     "type": "string"
                 },
@@ -22296,33 +22293,6 @@ const docTemplate = `{
                     "type": "string"
                 }
             }
-        },
-        "domain_agents.SessionStatus": {
-            "type": "string",
-            "enum": [
-                "provisioning",
-                "active",
-                "completed",
-                "error"
-            ],
-            "x-enum-comments": {
-                "SessionStatusActive": "Workspace ready, agent executing",
-                "SessionStatusCompleted": "Run finished successfully",
-                "SessionStatusError": "Run or provisioning failed",
-                "SessionStatusProvisioning": "Workspace being set up"
-            },
-            "x-enum-descriptions": [
-                "Workspace being set up",
-                "Workspace ready, agent executing",
-                "Run finished successfully",
-                "Run or provisioning failed"
-            ],
-            "x-enum-varnames": [
-                "SessionStatusProvisioning",
-                "SessionStatusActive",
-                "SessionStatusCompleted",
-                "SessionStatusError"
-            ]
         },
         "domain_agents.ToolGroupDTO": {
             "type": "object",
@@ -23240,10 +23210,6 @@ const docTemplate = `{
         "domain_chat.Conversation": {
             "type": "object",
             "properties": {
-                "acpSessionId": {
-                    "description": "ACPSessionID links this conversation to its backing kb.acp_sessions row.\nCreated on first agent-backed stream; reused on subsequent turns.",
-                    "type": "string"
-                },
                 "agentDefinitionId": {
                     "description": "Agent-backed chat: links conversation to an agent definition for tool-calling capabilities",
                     "type": "string"
@@ -23288,6 +23254,10 @@ const docTemplate = `{
                 "projectId": {
                     "type": "string"
                 },
+                "sessionId": {
+                    "description": "SessionID links this conversation to its backing kb.sessions row.\nCreated on first agent-backed stream; reused on subsequent turns.",
+                    "type": "string"
+                },
                 "title": {
                     "type": "string"
                 },
@@ -23299,10 +23269,6 @@ const docTemplate = `{
         "domain_chat.ConversationWithMessages": {
             "type": "object",
             "properties": {
-                "acpSessionId": {
-                    "description": "ACPSessionID links this conversation to its backing kb.acp_sessions row.\nCreated on first agent-backed stream; reused on subsequent turns.",
-                    "type": "string"
-                },
                 "agentDefinitionId": {
                     "description": "Agent-backed chat: links conversation to an agent definition for tool-calling capabilities",
                     "type": "string"
@@ -23344,6 +23310,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "projectId": {
+                    "type": "string"
+                },
+                "sessionId": {
+                    "description": "SessionID links this conversation to its backing kb.sessions row.\nCreated on first agent-backed stream; reused on subsequent turns.",
                     "type": "string"
                 },
                 "title": {

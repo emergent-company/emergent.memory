@@ -53,19 +53,21 @@ Drop `agent_runs.session_status`, the `SessionStatus` type, `Repository.UpdateSe
 
 *Alternative:* keep it as a sub-state surfaced separately — rejected; if a distinct "setting up sandbox" display is ever needed, a nullable `workspace_ready_at` timestamp is additive and does not resurrect a competing enum.
 
-### D4: One `SessionService.Ensure` create-or-get
+### D4: One repository resolution path for sessions
 
-A single service resolves/creates a thread for a logical key (conversation, A2A context, share session). All four inline producers call it.
+A thread's Session is resolved or created only through the Repository's session methods — `EnsureConversationSession` (chat), `EnsureSessionForContext` (A2A get-or-create), and `CreateSession` (the per-share-session thread). Interfaces never insert a Session row themselves.
 
-*Why:* interfaces should adapt to one core; four inline creates drift (different `agent_name`/title handling, different failure behaviour). `EnsureConversationACPSession` is the reference behaviour.
+*Why:* interfaces should adapt to one core; the inline creates drift (different `agent_name`/title handling, different failure behaviour). `EnsureConversationSession` is the reference create-or-get behaviour.
 
-*Alternative:* leave producers inline and only rename — rejected; the proposal's goal is "interfaces are adapters", which the shared service expresses directly.
+*Alternative:* a standalone `SessionService` type — rejected: the agents package already exposes an ADK `session.Service` (fx `provideSessionService`), so a second "session service" type invites confusion for no functional gain, and the Repository is already the single DB boundary every producer holds.
 
-### D5: Rename on the wire with a dual-emit compatibility window
+### D5: Hard rename of the wire key (no dual-emit)
 
-Responses emit both `sessionId` and the legacy `acpSessionId` (same value) for one release; requests accept the legacy key. Retire `acpSessionId` in a later change.
+`acpSessionId` is renamed to `sessionId` outright across the server DTOs and the in-repo consumers (gateway, CLI, SDK, iOS). No legacy alias is emitted.
 
-*Why:* `acpSessionId` is consumed outside the monorepo (SDK/CLI/iOS), so a hard switch is externally breaking with no deprecation path.
+*Why:* the only known consumers are in-repo and are updated in the same change; A2A's client-facing identifier is `contextId`, which is unchanged. A dual-emit window would add a second field to several DTOs and a retirement deadline for no external client we can point at.
+
+*Alternative:* dual-emit `sessionId` + `acpSessionId` for one release — deferred; can be added if an out-of-repo consumer surfaces.
 
 ### D6: Two migrations, rename first, status drop second
 
@@ -82,11 +84,11 @@ Migration A renames tables/columns/indexes and updates FKs. Migration B drops `a
 
 ## Migration Plan
 
-1. Land migration A (rename) + Go type/field renames + `SessionService`. Deploy behind the dual-emit JSON.
+1. Land migration A (rename) + Go type/field renames + repository ensure methods. The wire key renames to `sessionId` across server and in-repo consumers.
 2. Land migration B (drop `session_status`) + remove `SessionStatus` type and executor writes + DTO/swagger update.
 3. Verify: `openspec validate`; server `task test` + `task test:integration`; migration up/down; gateway `go test ./...` + `task lint`; A2A message/task e2e round-trip; manual chat + share smoke.
 
-**Rollback:** migrations A and B each have a down step (rename back; re-add the column with the `00026` default). The Go rename reverts with the branch. The legacy JSON key remains emitted throughout, so no client-visible rollback step is needed.
+**Rollback:** migrations A and B each have a down step (rename back; re-add the column with the `00026` default). The Go rename reverts with the branch. No client-visible compatibility shim exists to unwind.
 
 ## Open Questions
 

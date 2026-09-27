@@ -32,14 +32,19 @@ Every interface that groups runs — the REST chat conversation, the A2A task `c
 - **WHEN** a public-share end-user session or an MCP transport session exists
 - **THEN** it is not presented as a core Session and does not create a second session identity for the same thread
 
-### Requirement: Session creation is create-or-get
+### Requirement: Session creation is centralized
 
-Every interface SHALL obtain a thread's Session through one create-or-get path, so that repeated resolution for the same logical thread returns the same Session rather than creating duplicates.
+A thread's Session SHALL be resolved or created only through the Repository's session methods; an interface SHALL NOT insert a Session row itself. Repeated resolution of the same logical thread SHALL return the same Session rather than creating a duplicate.
 
 #### Scenario: Repeated turns reuse the session
 
 - **WHEN** the same thread is resolved on successive turns
 - **THEN** the same Session is returned and no additional Session is created
+
+#### Scenario: A2A context is reused
+
+- **WHEN** an A2A task is sent with a `contextId` that already exists in the project
+- **THEN** the existing Session is reused and no new Session is created
 
 ### Requirement: Run execution status is the only per-run status
 
@@ -66,14 +71,9 @@ A Session SHALL NOT expose an execution status; clients SHALL read execution sta
 
 ### Requirement: Session identity uses the consolidated vocabulary
 
-A session's identity SHALL be exposed to clients as `sessionId`; its record SHALL live in the `sessions` table and run events in the `run_events` table. During the migration window the legacy `acpSessionId` key SHALL continue to be accepted and emitted with the same value.
+A session's identity SHALL be exposed to clients as `sessionId`; its record SHALL live in the `sessions` table and run events in the `run_events` table.
 
 #### Scenario: Client reads sessionId
 
-- **WHEN** a client reads a conversation or run bound to a session
+- **WHEN** a client reads a conversation, run, or share session bound to a session
 - **THEN** the response carries `sessionId`
-
-#### Scenario: Legacy key still works
-
-- **WHEN** a client that predates the rename reads `acpSessionId`
-- **THEN** the response still carries the legacy key with the same value

@@ -741,8 +741,6 @@ definitions:
         type: string
       rootRunId:
         type: string
-      sessionStatus:
-        $ref: '#/definitions/domain_agents.SessionStatus'
       skipReason:
         type: string
       spans:
@@ -1094,28 +1092,6 @@ definitions:
       provider:
         type: string
     type: object
-  domain_agents.SessionStatus:
-    enum:
-    - provisioning
-    - active
-    - completed
-    - error
-    type: string
-    x-enum-comments:
-      SessionStatusActive: Workspace ready, agent executing
-      SessionStatusCompleted: Run finished successfully
-      SessionStatusError: Run or provisioning failed
-      SessionStatusProvisioning: Workspace being set up
-    x-enum-descriptions:
-    - Workspace being set up
-    - Workspace ready, agent executing
-    - Run finished successfully
-    - Run or provisioning failed
-    x-enum-varnames:
-    - SessionStatusProvisioning
-    - SessionStatusActive
-    - SessionStatusCompleted
-    - SessionStatusError
   domain_agents.ToolGroupDTO:
     properties:
       description:
@@ -1745,11 +1721,6 @@ definitions:
     type: object
   domain_chat.Conversation:
     properties:
-      acpSessionId:
-        description: |-
-          ACPSessionID links this conversation to its backing kb.acp_sessions row.
-          Created on first agent-backed stream; reused on subsequent turns.
-        type: string
       agentDefinitionId:
         description: 'Agent-backed chat: links conversation to an agent definition
           for tool-calling capabilities'
@@ -1782,6 +1753,11 @@ definitions:
         type: string
       projectId:
         type: string
+      sessionId:
+        description: |-
+          SessionID links this conversation to its backing kb.sessions row.
+          Created on first agent-backed stream; reused on subsequent turns.
+        type: string
       title:
         type: string
       updatedAt:
@@ -1789,11 +1765,6 @@ definitions:
     type: object
   domain_chat.ConversationWithMessages:
     properties:
-      acpSessionId:
-        description: |-
-          ACPSessionID links this conversation to its backing kb.acp_sessions row.
-          Created on first agent-backed stream; reused on subsequent turns.
-        type: string
       agentDefinitionId:
         description: 'Agent-backed chat: links conversation to an agent definition
           for tool-calling capabilities'
@@ -1824,6 +1795,11 @@ definitions:
       ownerUserId:
         type: string
       projectId:
+        type: string
+      sessionId:
+        description: |-
+          SessionID links this conversation to its backing kb.sessions row.
+          Created on first agent-backed stream; reused on subsequent turns.
         type: string
       title:
         type: string

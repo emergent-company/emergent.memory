@@ -385,23 +385,16 @@ func (h *A2AHandler) streamNewTask(c echo.Context, projectID, userID, userMessag
 		return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to resolve agent"))
 	}
 
-	if contextID != "" {
-		session, err := h.repo.GetSession(ctx, projectID, contextID)
-		if err != nil {
-			h.log.Error("failed to load context", "context_id", contextID, "error", err)
-			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to load context"))
-		}
-		if session == nil {
-			return writeA2AError(c, a2aValidationError("unknown contextId"))
-		}
-	} else {
-		session := &Session{ProjectID: projectID, AgentName: strPtr(def.Name)}
-		if err := h.repo.CreateSession(ctx, session); err != nil {
-			h.log.Error("failed to create context", "project_id", projectID, "error", err)
-			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to create context"))
-		}
-		contextID = session.ID
+	// Resolve or lazily create the context (kb.sessions).
+	session, err := h.repo.EnsureSessionForContext(ctx, projectID, contextID, strPtr(def.Name))
+	if err != nil {
+		h.log.Error("failed to resolve context", "context_id", contextID, "project_id", projectID, "error", err)
+		return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to resolve context"))
 	}
+	if session == nil {
+		return writeA2AError(c, a2aValidationError("unknown contextId"))
+	}
+	contextID = session.ID
 
 	triggerSource := "a2a"
 	run, err := h.repo.CreateRunWithOptions(ctx, CreateRunOptions{

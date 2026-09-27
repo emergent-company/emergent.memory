@@ -10,19 +10,18 @@
 - [ ] 2.2 Rename `ExecuteRequest.ACPSessionID` → `SessionID` (thread) and `ExecuteRequest.SessionID` → `ConversationKey` (ADK key), updating all call sites in `executor.go`, `chat/handler.go`, `a2a_message.go`, `a2a_stream.go`, `share_service.go`; verify a unit test proves successive runs sharing a `ConversationKey` share ADK history while a thread `SessionID` never feeds it
 - [ ] 2.3 Rename `acpSessionId` → `sessionId` JSON tags on the affected DTOs and update the DTO tests; verify the agents unit suite passes
 
-## 3. Single SessionService create-or-get
+## 3. Centralized session resolution
 
-- [ ] 3.1 Add `SessionService.Ensure(ctx, key)` returning the existing or newly created `Session` for a logical thread key, with unit tests covering create, reuse, and failure; verify the tests pass
-- [ ] 3.2 Route the chat path (`EnsureConversationACPSession`, called from `chat/handler.go`) through `SessionService.Ensure` and delete the replaced helper; verify a unit test shows two turns on one conversation reuse a single session row
-- [ ] 3.3 Route the A2A producers (`a2a_message.go`, `a2a_stream.go`) through `SessionService.Ensure`; verify a unit test shows a reused `contextId` resolves to the same session and a missing one is created lazily
-- [ ] 3.4 Route the share producer (`share_service.go`) through `SessionService.Ensure`; verify a unit test shows one share session maps to one session row
-- [ ] 3.5 Delete the unused `ListACPSessions`, `ArchiveACPSession`, `UnarchiveACPSession`, and `Session.IsArchived`; verify `go build ./...` and `task lint` pass with no references remaining
+- [ ] 3.1 Add `Repository.EnsureSessionForContext(ctx, projectID, contextID, agentName)` returning the existing session for a supplied `contextId` and creating one when absent, with unit tests covering reuse, lazy creation, and unknown-id; verify the tests pass
+- [ ] 3.2 Confirm the chat path resolves its thread through `Repository.EnsureConversationSession` and never constructs a Session row inline; verify a unit test shows two turns on one conversation reuse a single session row
+- [ ] 3.3 Route the A2A producers (`a2a_message.go`, `a2a_stream.go`) through `EnsureSessionForContext`; verify a unit test shows a reused `contextId` resolves to the same session and a missing one is created lazily
+- [ ] 3.4 Confirm the share producer obtains its per-share-session thread through `Repository.CreateSession` and never inserts a Session row itself; verify the share unit tests pass
+- [ ] 3.5 Delete the unused `ListSessions`, `ArchiveSession`, `UnarchiveSession`, and `Session.IsArchived`; verify `go build ./...` and `task lint` pass with no references remaining
 
-## 4. Wire compatibility (gateway and clients)
+## 4. Wire rename (session identity)
 
-- [ ] 4.1 Update the gateway conversation/run DTOs and call sites (`extras.go`, `memory_share.go`, `chat_dock.go`, `ui.go`, `memory_conversations.go`, `session_dump.go`) to read `sessionId` and to emit both `sessionId` and the legacy `acpSessionId`; verify the gateway unit suite and `go build ./...` pass
-- [ ] 4.2 Add gateway tests asserting dual-emit and that a legacy `acpSessionId` response is still parsed correctly; verify they pass under `go test ./...`
-- [ ] 4.3 Update the CLI/SDK/iOS consumers of `acpSessionId` to read `sessionId`; verify each affected module builds and its unit tests pass
+- [ ] 4.1 Update the gateway conversation/run DTOs and call sites (`extras.go`, `memory_share.go`, `chat_dock.go`, `ui.go`, `memory_conversations.go`, `session_dump.go`) to read and emit `sessionId` (`session_id` for the history key); verify the gateway unit suite and `go build ./...` pass
+- [ ] 4.2 Update the CLI/SDK/iOS consumers of `acpSessionId` to `sessionId` (none remain outside the gateway per repo-wide grep); verify each affected module builds and its unit tests pass
 
 ## 5. Status consolidation — drop session_status
 

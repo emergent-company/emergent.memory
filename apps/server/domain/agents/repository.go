@@ -3028,6 +3028,21 @@ func (r *Repository) GetSession(ctx context.Context, projectID, sessionID string
 	return session, nil
 }
 
+// EnsureSessionForContext is the single create-or-get path for A2A context
+// resolution. When contextID is supplied the session must already exist (nil is
+// returned for an unknown id, which callers map to a validation error);
+// otherwise a new session is created and returned.
+func (r *Repository) EnsureSessionForContext(ctx context.Context, projectID, contextID string, agentName *string) (*Session, error) {
+	if contextID != "" {
+		return r.GetSession(ctx, projectID, contextID)
+	}
+	session := &Session{ProjectID: projectID, AgentName: agentName}
+	if err := r.CreateSession(ctx, session); err != nil {
+		return nil, fmt.Errorf("EnsureSessionForContext: %w", err)
+	}
+	return session, nil
+}
+
 // ListSessionRunsByProjectID returns all agent runs that belong to any session
 // in the given project, with Agent relation loaded, ordered by created_at ASC.
 // Results are grouped by session_id for building history URLs.
