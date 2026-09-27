@@ -145,6 +145,28 @@ This is the distinction that matters:
 
 Do not confuse the two markers, and do not treat `TrustedInternal` as "already authorized".
 
+### MCP tool scope taxonomy
+
+Bare `admin` is a platform-tier token scope — mintable only by a `superadmin_full` and folded into
+`admin:all` + platform (#1124). On the MCP tool surface it is reserved for the agent-only registry
+management tools (`mcp-server-*`, `update_mcp_server`, `toggle_mcp_server_tool`,
+`sync_mcp_server_tools`) and the registry `install`/`inspect` tools. Project-administration tools
+carry the project tier instead:
+
+| Tools | `RequiredScope` | HTTP-equivalent authority |
+|---|---|---|
+| `token-list`, `token-get`, `token-create`, `token-revoke` | `projects:write` | project membership (`/api/projects/:projectId/tokens`) |
+| `provider-configure-project`, `project-create` | `projects:write` | owning-org membership / `org_admin` |
+| `provider-models-list` | `projects:read` | authenticated catalog |
+| `search_mcp_registry`, `mcp-registry-get` | `projects:read` | public registry browse |
+| `mcp-registry-install`, `mcp-server-inspect` | `admin` | privileged registry mutation / outbound connect |
+
+Listing tokens stays at the write tier (`projects:write`) rather than the share baseline
+`projects:read`, so a read-only share link can never enumerate project credentials. Share
+instances further refuse to derive `projects:write` (or the admin/account scopes) onto their bound
+token: `isNonShareableScope` rejects such tools from both an explicit allowlist and the catalog, so
+a share link cannot mint credentials or reconfigure the project (#1135).
+
 ---
 
 ## Regression guard
