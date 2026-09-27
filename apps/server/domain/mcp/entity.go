@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// acpSessionIDKey is the context key for propagating ACP session ID into tool execution.
-type acpSessionIDKey struct{}
+// sessionIDKey is the context key for propagating session ID into tool execution.
+type sessionIDKey struct{}
 
 // RelaySession is a minimal view of a connected MCP relay session.
 type RelaySession struct {
@@ -22,13 +22,13 @@ type RelayToolProvider interface {
 	CallTool(ctx context.Context, projectID, instanceID, toolName string, args map[string]any) (map[string]any, error)
 }
 
-// SessionTitleHandler is the interface for updating ACP session titles.
+// SessionTitleHandler is the interface for updating session titles.
 // Implemented by the agents domain to avoid circular imports.
 type SessionTitleHandler interface {
-	UpdateACPSessionTitle(ctx context.Context, projectID, sessionID, title string) error
+	UpdateSessionTitle(ctx context.Context, projectID, sessionID, title string) error
 }
 
-// SessionHistoryProvider retrieves the unified timeline for an ACP session.
+// SessionHistoryProvider retrieves the unified timeline for a session.
 // Implemented by agents.Repository to avoid a circular import (mcp → agents).
 // Returns items as map[string]any so no shared types are needed across the boundary.
 //
@@ -37,7 +37,7 @@ type SessionTitleHandler interface {
 // model (#1010) at the data-access layer and refuses a foreign/unknown session
 // with a 404 (issue #1032).
 type SessionHistoryProvider interface {
-	GetConversationFullHistoryRaw(ctx context.Context, projectID, ownerUserID, acpSessionID string) ([]map[string]any, error)
+	GetConversationFullHistoryRaw(ctx context.Context, projectID, ownerUserID, sessionID string) ([]map[string]any, error)
 }
 
 // GraphObjectPatcher patches graph object Properties.title when set_session_title runs.
@@ -52,17 +52,17 @@ type GraphObjectPatcher func(ctx context.Context, projectID, objectID, title str
 // treat a nil authorizer as "not configured" and refuse the write (issue #1041).
 type ProjectOrgAdminAuthorizer func(ctx context.Context, orgID, userID string) error
 
-// ContextWithACPSessionID stores the ACP session ID in context.
+// ContextWithSessionID stores the session ID in context.
 // Called by the agent executor before running tools so that built-in tools
 // like set_session_title can update session metadata.
-func ContextWithACPSessionID(ctx context.Context, sessionID string) context.Context {
-	return context.WithValue(ctx, acpSessionIDKey{}, sessionID)
+func ContextWithSessionID(ctx context.Context, sessionID string) context.Context {
+	return context.WithValue(ctx, sessionIDKey{}, sessionID)
 }
 
-// ACPSessionIDFromContext retrieves the ACP session ID from context.
+// SessionIDFromContext retrieves the session ID from context.
 // Returns empty string if not set.
-func ACPSessionIDFromContext(ctx context.Context) string {
-	v, _ := ctx.Value(acpSessionIDKey{}).(string)
+func SessionIDFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(sessionIDKey{}).(string)
 	return v
 }
 
@@ -213,7 +213,7 @@ type AgentToolHandler interface {
 
 	// RunAgentInSession runs one agent turn inside a persistent conversation
 	// session. It behaves exactly like RunAgentOnce but carries sessionRef to the
-	// executor as ExecuteRequest.SessionID so successive turns share context.
+	// executor as ExecuteRequest.ConversationKey so successive turns share context.
 	// The returned steps is the number of agent steps the executor ran, used for
 	// the cumulative session budget.
 	RunAgentInSession(ctx context.Context, projectID, agentID, sessionRef, message string, budget AgentRunBudget) (reply string, runID string, steps int, err error)

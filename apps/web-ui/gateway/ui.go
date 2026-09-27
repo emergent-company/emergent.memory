@@ -553,8 +553,8 @@ func (s *Server) chatRunControlFor(ctx context.Context, convID string) chatRunCo
 	}
 	approvals, questions := s.pendingDockCards(ctx, convID)
 	var todos []TodoItem
-	if detail, err := s.memory.GetConversation(ctx, convID); err == nil && detail.ACPSessionID != "" {
-		if items, terr := s.memory.ListSessionTodos(ctx, detail.ACPSessionID); terr == nil {
+	if detail, err := s.memory.GetConversation(ctx, convID); err == nil && detail.SessionID != "" {
+		if items, terr := s.memory.ListSessionTodos(ctx, detail.SessionID); terr == nil {
 			todos = todoItems(items)
 		} else {
 			captureError(terr)

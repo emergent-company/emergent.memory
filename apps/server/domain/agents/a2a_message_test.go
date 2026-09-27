@@ -173,7 +173,7 @@ func TestA2AEventTypeToTaskState(t *testing.T) {
 // ============================================================================
 
 func TestBuildA2ATask_PreservesOriginalTaskID(t *testing.T) {
-	latest := &AgentRun{ID: "resume-run-2", Status: RunStatusSuccess, ACPSessionID: strPtr("ctx-1")}
+	latest := &AgentRun{ID: "resume-run-2", Status: RunStatusSuccess, SessionID: strPtr("ctx-1")}
 	messages := []AgentRunMessage{
 		{Role: "assistant", Content: map[string]any{"text": "final answer"}},
 	}
@@ -586,14 +586,14 @@ func TestAsyncTaskSnapshot_CarriesContextID(t *testing.T) {
 	assert.Equal(t, "ctx-9", task.ContextID)
 	assert.Equal(t, TaskStateWorking, task.Status.State)
 	// The input run must not be mutated.
-	assert.Nil(t, run.ACPSessionID)
+	assert.Nil(t, run.SessionID)
 }
 
 func TestResumeAsyncSnapshot_WorkingSnapshot(t *testing.T) {
 	latest := &AgentRun{
 		ID:             "resume-2",
 		Status:         RunStatusPaused,
-		ACPSessionID:   strPtr("ctx-1"),
+		SessionID:      strPtr("ctx-1"),
 		SuspendContext: map[string]any{"reason": "awaiting_human"},
 	}
 	task := resumeAsyncSnapshot(latest, "root-1")

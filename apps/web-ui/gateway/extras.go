@@ -22,7 +22,7 @@ type ConversationDetail struct {
 	Title             string    `json:"title"`
 	AgentDefinitionID string    `json:"agentDefinitionId"`
 	ProjectID         string    `json:"projectId"`
-	ACPSessionID      string    `json:"acpSessionId"`
+	SessionID         string    `json:"sessionId"`
 	CanonicalID       string    `json:"canonicalId"`
 	CreatedAt         string    `json:"createdAt"`
 	UpdatedAt         string    `json:"updatedAt"`
@@ -30,7 +30,7 @@ type ConversationDetail struct {
 }
 
 type ConversationHistory struct {
-	ACPSessionID     string                `json:"acp_session_id"`
+	SessionID        string                `json:"session_id"`
 	ConversationID   string                `json:"conversation_id"`
 	Items            []json.RawMessage     `json:"items"`
 	PendingApprovals []PendingApprovalItem `json:"pending_approvals,omitempty"`

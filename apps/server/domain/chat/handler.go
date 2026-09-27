@@ -344,7 +344,7 @@ func (h *Handler) GetConversationHistory(c echo.Context) error {
 
 	ctx := c.Request().Context()
 
-	// Load the conversation to verify ownership and get acp_session_id.
+	// Load the conversation to verify ownership and get session_id.
 	conv, err := h.svc.GetConversationWithMessages(ctx, user.ProjectID, user.ID, conversationID)
 	if err != nil {
 		return err
@@ -353,7 +353,7 @@ func (h *Handler) GetConversationHistory(c echo.Context) error {
 		return apperror.ErrNotFound.WithMessage("conversation not found")
 	}
 
-	if conv.ACPSessionID == nil {
+	if conv.SessionID == nil {
 		// No agent runs exist yet — synthesize the transcript from the
 		// conversation's stored kb.chat_messages (role/content/created_at) so
 		// user/assistant rows surface even before a run starts (e.g.
@@ -367,7 +367,7 @@ func (h *Handler) GetConversationHistory(c echo.Context) error {
 		})
 	}
 
-	items, err := h.agentRepo.GetConversationFullHistory(ctx, conv.ACPSessionID.String())
+	items, err := h.agentRepo.GetConversationFullHistory(ctx, conv.SessionID.String())
 	if err != nil {
 		return apperror.ErrInternal.WithMessage("failed to load conversation history")
 	}
@@ -381,7 +381,7 @@ func (h *Handler) GetConversationHistory(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, map[string]any{
 		"conversation_id": conversationID,
-		"acp_session_id":  conv.ACPSessionID,
+		"session_id":      conv.SessionID,
 		"items":           items,
 	})
 }
@@ -849,7 +849,21 @@ func (h *Handler) StreamChat(c echo.Context) error {
 
 	// Branch: agent-backed vs direct-LLM flow
 	if conv.AgentDefinitionID != nil {
-		agentResult := h.streamAgentChat(ctx, conv, message, user.ProjectID, user.OrgID, user.ID, sseWriter, "", "", "")
+		// The agent run must outlive the SSE request. When the browser↔gateway
+		// connection drops (reload, navigation, network blip) the request
+		// context is cancelled; bound to it, the executor would hard-fail the
+		// run with "agent stopped: context canceled" even though nothing was
+		// wrong server-side (issue #1149). Run on a detached context so a
+		// request-context cancellation only detaches this SSE consumer: the run
+		// stays bounded by the executor's per-step watchdog (defaultRunTimeout)
+		// and is stoppable via POST /api/chat/runs/:runId/cancel, and its
+		// progress is persisted to the run record either way.
+		runCtx := agents.DetachedRunContext(ctx)
+		h.log.Info("chat agent run detached from request context",
+			slog.String("conversation_id", conv.ID.String()),
+			slog.String("agent_definition_id", conv.AgentDefinitionID.String()),
+		)
+		agentResult := h.streamAgentChat(runCtx, conv, message, user.ProjectID, user.OrgID, user.ID, sseWriter, "", "", "")
 		sseWriter.WriteData(sse.NewDoneEvent())
 		sseWriter.Close()
 		if agentResult != nil && agentResult.Cleanup != nil {
@@ -1248,16 +1262,21 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 			}
 		}
 
-		// Ensure this conversation has a backing ACP session (create once, reuse on all turns).
+		// Ensure this conversation has a backing session (create once, reuse on
+		// all turns). The repository resolution is atomic — it locks the
+		// conversation row and writes the Session + backlink in one
+		// transaction — so concurrent first turns cannot create duplicate
+		// sessions. A resolution failure is still non-fatal here: the chat turn
+		// proceeds without session linkage rather than failing the user's
+		// message, and the error is logged for diagnosis.
 		agentNameForSession := def.Name
-		acpSessionID, sessionErr := h.agentRepo.EnsureConversationACPSession(ctx, conv.ID.String(), projectID, &agentNameForSession)
+		sessionID, sessionErr := h.agentRepo.EnsureConversationSession(ctx, conv.ID.String(), projectID, &agentNameForSession)
 		if sessionErr != nil {
-			h.log.Warn("failed to ensure ACP session for conversation",
+			h.log.Warn("failed to ensure session for conversation",
 				slog.String("conversation_id", conv.ID.String()),
 				slog.String("error", sessionErr.Error()),
 			)
-			// Non-fatal — run proceeds without session linkage.
-			acpSessionID = ""
+			sessionID = ""
 		}
 
 		// Execute the real agent
@@ -1271,7 +1290,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 			StreamCallback:       streamCallback,
 			AuthToken:            authToken,
 			EphemeralTokenID:     ephemeralTokenID,
-			ACPSessionID:         acpSessionID,
+			SessionID:            sessionID,
 			SystemPromptAppendix: systemPromptAppendix,
 			TrustedInternal:      true, // session UI is a trusted surface (full internal coordination)
 		}

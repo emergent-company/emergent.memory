@@ -321,10 +321,10 @@ func inheritedTrust(ctx context.Context, findRun func(context.Context, string) (
 	return run.TrustedInternal
 }
 
-// acpSessionIDKey is the context key used to propagate the ACP session ID
+// sessionIDKey is the context key used to propagate the session ID
 // through the execution pipeline so that built-in tools (e.g. set_session_title)
 // can update session metadata without needing it in their function signatures.
-// NOTE: defined here as a bridge — mcp.ContextWithACPSessionID / mcp.ACPSessionIDFromContext
+// NOTE: defined here as a bridge — mcp.ContextWithSessionID / mcp.SessionIDFromContext
 // use this same exported mechanism via the mcp package.
 
 // ExecuteRequest defines the parameters for executing an agent.
@@ -359,9 +359,9 @@ type ExecuteRequest struct {
 	// than system keys (MEMORY_ACCOUNT_API_KEY, MEMORY_PROJECT_ID, MEMORY_SERVER_URL).
 	EnvVars map[string]string
 
-	// ACPSessionID links this run to an ACP session so built-in tools like
+	// SessionID links this run to a session so built-in tools like
 	// set_session_title can update session metadata during execution.
-	ACPSessionID string
+	SessionID string
 
 	// SystemPromptAppendix is appended to the resolved system instruction at execution time.
 	// Use this to inject per-call constraints (e.g. response format, verbosity) without
@@ -372,11 +372,11 @@ type ExecuteRequest struct {
 	// Passed to ask_user tool so notifications target the correct user.
 	UserID string
 
-	// SessionID is a caller-supplied stable key for sharing the ADK conversation session
+	// ConversationKey is a caller-supplied stable key for sharing the ADK conversation session
 	// across multiple trigger calls (cross-run conversation history). When set, the ADK
 	// session key is derived from this value instead of the run ID, so successive triggers
-	// with the same SessionID share the same session events. Empty = per-run session (default).
-	SessionID string
+	// with the same ConversationKey share the same session events. Empty = per-run session (default).
+	ConversationKey string
 
 	// PreCreatedRun is an already-created AgentRun to use for this Resume call.
 	// When set, Resume skips CreateRunWithOptions and uses this run directly.
@@ -495,6 +495,120 @@ type AgentExecutor struct {
 	eventsSvc      *events.Service // nil if events module not registered; used by ask_user SSE notification
 	safeguards     config.AgentSafeguardsConfig
 	log            *slog.Logger
+
+	// runCancels tracks in-flight runs by id so an explicit cancel request can
+	// stop a run whose lifetime is detached from the request context that
+	// started it (see issue #1149). Value type so a zero-value executor (as
+	// built by tests) is safe; the map is lazily initialised.
+	runCancels runCancelRegistry
+}
+
+// userCancelReason is the terminal reason recorded when a run is stopped by an
+// explicit cancel request (POST …/runs/:runId/cancel) rather than by a server
+// fault. It distinguishes a user-initiated stop from a watchdog/doom-loop
+// cancellation so the run is reported as cancelled, not errored.
+const userCancelReason = "Run cancelled by user"
+
+// DetachedRunContext returns a context carrying every value from parent (auth,
+// project/namespace, trace span) but not its cancellation. An HTTP surface uses
+// it to start an agent run whose lifetime is detached from the request: when
+// the client disconnects and the request context is cancelled, the run keeps
+// going instead of being aborted with "context canceled" (issue #1149).
+//
+// Only cancellation is dropped. The run is still bounded by the executor's own
+// per-step watchdog (resolveRunTimeout/defaultRunTimeout) and can still be
+// stopped explicitly through AgentExecutor.Cancel, which is routed by run id
+// rather than through the request context.
+func DetachedRunContext(parent context.Context) context.Context {
+	if parent == nil {
+		return context.Background()
+	}
+	return context.WithoutCancel(parent)
+}
+
+// runCancelRegistry maps a run id to the cancel handle for its in-flight,
+// detached lifetime. It exists because a run may outlive the HTTP request that
+// triggered it: the request context no longer reaches the executor, so an
+// explicit cancel must be routed by run id instead.
+type runCancelRegistry struct {
+	mu      sync.Mutex
+	handles map[string]*runCancelHandle
+}
+
+// runCancelHandle is the cancel handle for one in-flight run. It records the
+// first cancellation reason so the run can distinguish an explicit user cancel
+// from a watchdog timeout or doom-loop stop.
+type runCancelHandle struct {
+	mu     sync.Mutex
+	cancel context.CancelFunc
+	reason string
+}
+
+// register records cancel for runID and returns the handle the caller must pass
+// to unregister when the run finishes.
+func (r *runCancelRegistry) register(runID string, cancel context.CancelFunc) *runCancelHandle {
+	h := &runCancelHandle{cancel: cancel}
+	r.mu.Lock()
+	if r.handles == nil {
+		r.handles = make(map[string]*runCancelHandle)
+	}
+	r.handles[runID] = h
+	r.mu.Unlock()
+	return h
+}
+
+// unregister removes the handle only if it is still the current one, so a late
+// unregister from a finished run cannot evict a newer run that reused the id.
+func (r *runCancelRegistry) unregister(runID string, h *runCancelHandle) {
+	r.mu.Lock()
+	if r.handles[runID] == h {
+		delete(r.handles, runID)
+	}
+	r.mu.Unlock()
+}
+
+// cancel stops the run registered under runID, if any, recording reason. It
+// returns false when the run is not in flight (already finished or unknown).
+func (r *runCancelRegistry) cancel(runID, reason string) bool {
+	r.mu.Lock()
+	h := r.handles[runID]
+	r.mu.Unlock()
+	if h == nil {
+		return false
+	}
+	h.cancelWithReason(reason)
+	return true
+}
+
+func (h *runCancelHandle) cancelWithReason(reason string) {
+	h.mu.Lock()
+	if h.reason == "" {
+		h.reason = reason
+	}
+	cancel := h.cancel
+	h.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+// Reason returns the first reason recorded for this handle, or "" if none.
+func (h *runCancelHandle) Reason() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.reason
+}
+
+// Cancel stops an in-flight run by id, if one is currently executing. It is the
+// entry point used by the explicit cancel endpoint so a run whose lifetime is
+// detached from its triggering request can still be stopped. It returns false
+// when no such run is in flight, so the caller can fall back to marking the
+// persisted run row cancelled.
+func (ae *AgentExecutor) Cancel(runID, reason string) bool {
+	if ae == nil || runID == "" {
+		return false
+	}
+	return ae.runCancels.cancel(runID, reason)
 }
 
 // NewAgentExecutor creates a new AgentExecutor.
@@ -621,11 +735,11 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		}
 	}
 
-	// Link to ACP session if provided via request (e.g. trigger_agent sync path).
-	if req.ACPSessionID != "" {
-		run.ACPSessionID = &req.ACPSessionID
-		if updateErr := ae.repo.UpdateRunACPSessionID(dbCtx, run.ID, req.ACPSessionID); updateErr != nil {
-			ae.log.Warn("failed to persist acp_session_id on agent run",
+	// Link to session if provided via request (e.g. trigger_agent sync path).
+	if req.SessionID != "" {
+		run.SessionID = &req.SessionID
+		if updateErr := ae.repo.UpdateRunSessionID(dbCtx, run.ID, req.SessionID); updateErr != nil {
+			ae.log.Warn("failed to persist session_id on agent run",
 				slog.String("run_id", run.ID),
 				slog.String("error", updateErr.Error()),
 			)
@@ -698,18 +812,6 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	// overwritten empty-ID principal makes every operator-tool check fail closed.
 	ctx = auth.ContextWithUser(ctx, &auth.AuthUser{ID: req.UserID})
 
-	// Provision workspace if configured
-	hasSandboxConfig := ae.wsEnabled && ae.provisioner != nil &&
-		req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0
-	if hasSandboxConfig {
-		if err := ae.repo.UpdateSessionStatus(dbCtx, run.ID, SessionStatusProvisioning); err != nil {
-			ae.log.Warn("failed to update session status to provisioning",
-				slog.String("run_id", run.ID),
-				slog.String("error", err.Error()),
-			)
-		}
-	}
-
 	// Bind teardown to this run's lifetime BEFORE provisioning. The cleanup is
 	// deferred so it runs exactly once on every exit path — normal return, error
 	// return, context cancellation, and a panic inside runPipeline. Binding
@@ -752,16 +854,6 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 			Steps:    0,
 			Duration: time.Since(startTime),
 		}, nil
-	}
-
-	// Workspace provisioning complete (or skipped) — mark session active
-	if hasSandboxConfig {
-		if err := ae.repo.UpdateSessionStatus(dbCtx, run.ID, SessionStatusActive); err != nil {
-			ae.log.Warn("failed to update session status to active",
-				slog.String("run_id", run.ID),
-				slog.String("error", err.Error()),
-			)
-		}
 	}
 
 	// Build and run the pipeline
@@ -921,18 +1013,6 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 	// Propagate the run's originating principal into the run context (see Execute).
 	ctx = auth.ContextWithUser(ctx, &auth.AuthUser{ID: req.UserID})
 
-	// Provision workspace if configured
-	hasSandboxConfig := ae.wsEnabled && ae.provisioner != nil &&
-		req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0
-	if hasSandboxConfig {
-		if err := ae.repo.UpdateSessionStatus(dbCtx, run.ID, SessionStatusProvisioning); err != nil {
-			ae.log.Warn("failed to update session status to provisioning",
-				slog.String("run_id", run.ID),
-				slog.String("error", err.Error()),
-			)
-		}
-	}
-
 	// Bind teardown to this run's lifetime BEFORE provisioning (see Execute):
 	// deferred so it runs exactly once on every exit path, including a panic in
 	// runPipeline and a provisioning failure — the latter must still revoke the
@@ -966,15 +1046,6 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 			Steps:    0,
 			Duration: time.Since(startTime),
 		}, nil
-	}
-
-	if hasSandboxConfig {
-		if err := ae.repo.UpdateSessionStatus(ctx, run.ID, SessionStatusActive); err != nil {
-			ae.log.Warn("failed to update session status to active",
-				slog.String("run_id", run.ID),
-				slog.String("error", err.Error()),
-			)
-		}
 	}
 
 	result, err := ae.runPipeline(ctx, run, req, maxSteps, 0, startTime, wsResult, nil)
@@ -1114,11 +1185,11 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 		)
 	}
 
-	// Copy acp_session_id from prior run so the resumed run stays linked to the same session.
-	if priorRun.ACPSessionID != nil {
-		newRun.ACPSessionID = priorRun.ACPSessionID
-		if updateErr := ae.repo.UpdateRunACPSessionID(dbCtx, newRun.ID, *priorRun.ACPSessionID); updateErr != nil {
-			ae.log.Warn("failed to persist acp_session_id on resumed run",
+	// Copy session_id from prior run so the resumed run stays linked to the same session.
+	if priorRun.SessionID != nil {
+		newRun.SessionID = priorRun.SessionID
+		if updateErr := ae.repo.UpdateRunSessionID(dbCtx, newRun.ID, *priorRun.SessionID); updateErr != nil {
+			ae.log.Warn("failed to persist session_id on resumed run",
 				slog.String("run_id", newRun.ID),
 				slog.String("error", updateErr.Error()),
 			)
@@ -1188,18 +1259,6 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 	// dispatch so the confirm gate is re-gated on the run's own trust (issue #1133).
 	ctx = runDispatchContext(ctx, newRun.TrustedInternal)
 
-	// Provision workspace if configured
-	hasSandboxConfig := ae.wsEnabled && ae.provisioner != nil &&
-		req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0
-	if hasSandboxConfig {
-		if err := ae.repo.UpdateSessionStatus(dbCtx, newRun.ID, SessionStatusProvisioning); err != nil {
-			ae.log.Warn("failed to update session status to provisioning",
-				slog.String("run_id", newRun.ID),
-				slog.String("error", err.Error()),
-			)
-		}
-	}
-
 	// Bind teardown to this run's lifetime BEFORE provisioning (see Execute):
 	// deferred so it runs exactly once on every exit path, including a panic in
 	// runPipeline and a provisioning failure — the latter must still revoke the
@@ -1227,16 +1286,6 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 			Steps:    priorRun.StepCount,
 			Duration: time.Since(startTime),
 		}, nil
-	}
-
-	// Workspace provisioning complete (or skipped) — mark session active
-	if hasSandboxConfig {
-		if err := ae.repo.UpdateSessionStatus(dbCtx, newRun.ID, SessionStatusActive); err != nil {
-			ae.log.Warn("failed to update session status to active",
-				slog.String("run_id", newRun.ID),
-				slog.String("error", err.Error()),
-			)
-		}
 	}
 
 	// Inject the pending tool result into the ADK session as a proper FunctionResponse,
@@ -1850,13 +1899,13 @@ func (ae *AgentExecutor) runPipeline(
 	ctx = runDispatchContext(ctx, req.TrustedInternal)
 
 	// Identify the ADK session ID.
-	// If the caller supplied a stable SessionID (cross-run conversation history),
-	// derive a namespaced key from it so triggers with the same SessionID share
+	// If the caller supplied a stable ConversationKey (cross-run conversation history),
+	// derive a namespaced key from it so triggers with the same ConversationKey share
 	// the same ADK session and accumulate conversation history.
 	// Otherwise fall back to the root run ID (current per-run behavior).
 	var sessionID string
-	if req.SessionID != "" {
-		sessionID = agentADKSessionKey(req.ProjectID, req.SessionID)
+	if req.ConversationKey != "" {
+		sessionID = agentADKSessionKey(req.ProjectID, req.ConversationKey)
 	} else {
 		sessionID = ae.getRootRunID(ctx, run)
 	}
@@ -1864,15 +1913,15 @@ func (ae *AgentExecutor) runPipeline(
 	// Inject the current run ID into context so downstream tools (e.g. trigger_agent)
 	// can propagate it as the parent_run_id when spawning child runs.
 	ctx = contextWithCallerRunID(ctx, run.ID)
-	// Inject ACP session ID into context so built-in tools (e.g. set_session_title)
+	// Inject session ID into context so built-in tools (e.g. set_session_title)
 	// can update session metadata. If the run was created without the session ID set
 	// in-memory (e.g. via trigger_agent async path), fetch it from DB as a fallback.
-	if run.ACPSessionID != nil && *run.ACPSessionID != "" {
-		ctx = mcp.ContextWithACPSessionID(ctx, *run.ACPSessionID)
+	if run.SessionID != nil && *run.SessionID != "" {
+		ctx = mcp.ContextWithSessionID(ctx, *run.SessionID)
 	} else if run.ID != "" {
-		if freshRun, fetchErr := ae.repo.FindRunByID(dbCtx, run.ID); fetchErr == nil && freshRun != nil && freshRun.ACPSessionID != nil && *freshRun.ACPSessionID != "" {
-			run.ACPSessionID = freshRun.ACPSessionID
-			ctx = mcp.ContextWithACPSessionID(ctx, *freshRun.ACPSessionID)
+		if freshRun, fetchErr := ae.repo.FindRunByID(dbCtx, run.ID); fetchErr == nil && freshRun != nil && freshRun.SessionID != nil && *freshRun.SessionID != "" {
+			run.SessionID = freshRun.SessionID
+			ctx = mcp.ContextWithSessionID(ctx, *freshRun.SessionID)
 		}
 	}
 	// Also inject into the provider context so the tracking model can attribute
@@ -1929,6 +1978,12 @@ func (ae *AgentExecutor) runPipeline(
 	var cancelRun context.CancelFunc
 	ctx, cancelRun = context.WithCancel(ctx)
 	defer cancelRun()
+
+	// Register the run's cancel handle so an explicit cancel request (routed by
+	// run id, not by a request context) can stop a run whose lifetime may be
+	// detached from the request that started it. Unregistered on every exit path.
+	cancelHandle := ae.runCancels.register(run.ID, cancelRun)
+	defer ae.runCancels.unregister(run.ID, cancelHandle)
 
 	// Create the LLM model — per-run override takes precedence
 	modelName := req.Model
@@ -2188,7 +2243,12 @@ func (ae *AgentExecutor) runPipeline(
 		if ctx.Err() != nil {
 			msg := cancelReason
 			if msg == "" {
-				if ctx.Err() == context.DeadlineExceeded {
+				// An explicit cancel request (detached run) records its reason on
+				// the handle; prefer it over the generic context-canceled text so
+				// a user stop is not reported as a server fault.
+				if r := cancelHandle.Reason(); r != "" {
+					msg = r
+				} else if ctx.Err() == context.DeadlineExceeded {
 					msg = "agent stopped: timeout exceeded"
 				} else {
 					msg = "agent stopped: context canceled"
@@ -2847,6 +2907,14 @@ func (ae *AgentExecutor) runPipeline(
 		transientErr := false
 		for event, eventErr := range r.Run(ctx, "system", sess.ID(), currentContent, runCfg) {
 			if eventErr != nil {
+				// A cancelled run context — per-step watchdog, doom loop, or an
+				// explicit cancel request (issue #1149) — must be finalized by the
+				// post-loop cancellation handling, not reported as a generic
+				// pipeline error. Break out so the terminal status and reason
+				// reflect why the run actually stopped.
+				if ctx.Err() != nil {
+					break
+				}
 				steps := tracker.current()
 				errStr := eventErr.Error()
 
@@ -3136,6 +3204,13 @@ func (ae *AgentExecutor) runPipeline(
 				}
 			}
 		} // end inner for-range r.Run(...)
+
+		// A cancelled context is terminal: exit the outer retry loop so the
+		// post-loop cancellation block records the terminal status/reason.
+		if ctx.Err() != nil {
+			break
+		}
+
 		if !malformed && !transientErr && !unknownTool {
 			break // normal completion — exit outer retry loop
 		}
@@ -3152,6 +3227,7 @@ func (ae *AgentExecutor) runPipeline(
 		steps := tracker.current()
 		errMsg := "Run cancelled"
 		reason := "unknown"
+		status := RunStatusError
 
 		if ctx.Err() == context.DeadlineExceeded {
 			reason = "timeout"
@@ -3167,16 +3243,30 @@ func (ae *AgentExecutor) runPipeline(
 			errMsg = cancelReason
 		}
 
+		// An explicit cancel request (POST …/runs/:runId/cancel) is not a server
+		// fault: record the run as cancelled, not errored, and use the recorded
+		// reason. This is the only path a detached run can be stopped by, so it
+		// must be honest about why it ended.
+		if cancelHandle.Reason() == userCancelReason {
+			status = RunStatusCancelled
+			errMsg = userCancelReason
+			reason = "user_cancelled"
+		}
+
 		ae.log.Warn("run cancelled by context",
 			slog.String("run_id", run.ID),
 			slog.String("reason", reason),
 			slog.Int("steps", steps),
 		)
 
-		_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, errMsg, steps)
+		if status == RunStatusCancelled {
+			_, _ = ae.repo.CancelRunWithSteps(dbCtx, run.ID, errMsg, steps)
+		} else {
+			_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, errMsg, steps)
+		}
 		return &ExecuteResult{
 			RunID:    run.ID,
-			Status:   RunStatusError,
+			Status:   status,
 			Summary:  map[string]any{"error": errMsg, "reason": reason},
 			Steps:    steps,
 			Duration: time.Since(startTime),

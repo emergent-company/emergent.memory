@@ -49,7 +49,7 @@ type agentOnceRepository interface {
 // fabricate a reply.
 //
 // It is a thin wrapper over runAgentTurn that leaves the ADK session key
-// per-run (SessionID empty), preserving one-shot semantics.
+// per-run (ConversationKey empty), preserving one-shot semantics.
 func (h *MCPToolHandler) RunAgentOnce(ctx context.Context, projectID, agentID, message string, budget mcp.AgentRunBudget) (string, string, error) {
 	reply, runID, _, err := h.runAgentTurn(ctx, projectID, agentID, "", message, budget)
 	return reply, runID, err
@@ -57,7 +57,7 @@ func (h *MCPToolHandler) RunAgentOnce(ctx context.Context, projectID, agentID, m
 
 // RunAgentInSession runs one agent turn inside a persistent conversation
 // session. It is identical to RunAgentOnce except that it sets
-// ExecuteRequest.SessionID, so the executor keys the ADK session as
+// ExecuteRequest.ConversationKey, so the executor keys the ADK session as
 // "session:<projectID>:<sessionRef>" and successive turns share history
 // (cross-run load/token-trim/LLM-compress, executor.go).
 //
@@ -71,7 +71,7 @@ func (h *MCPToolHandler) RunAgentInSession(ctx context.Context, projectID, agent
 
 // runAgentTurn is the shared execution core for RunAgentOnce and
 // RunAgentInSession. sessionRef is empty for the one-shot path; when non-empty
-// it is carried to the executor as ExecuteRequest.SessionID.
+// it is carried to the executor as ExecuteRequest.ConversationKey.
 //
 // Failures are returned as *mcp.AgentRunError; the reply extraction
 // (assistantReply) and error mapping live here and are shared, never
@@ -153,7 +153,7 @@ func (h *MCPToolHandler) runAgentTurn(ctx context.Context, projectID, agentID, s
 		ProjectID:       projectID,
 		OrgID:           orgID,
 		UserMessage:     message,
-		SessionID:       sessionRef,
+		ConversationKey: sessionRef,
 		MaxSteps:        &maxSteps,
 		Timeout:         &timeout,
 		TrustedInternal: trusted, // inherit the caller's trust; never force true
@@ -224,7 +224,7 @@ func (h *MCPToolHandler) runAgentTurn(ctx context.Context, projectID, agentID, s
 
 // agentADKSessionKey derives the ADK session key for a caller-supplied session
 // ref. It is the single definition of the cross-run session key namespace:
-// executor.Execute uses it when ExecuteRequest.SessionID is set, and the session
+// executor.Execute uses it when ExecuteRequest.ConversationKey is set, and the session
 // tests assert against it.
 func agentADKSessionKey(projectID, sessionRef string) string {
 	return "session:" + projectID + ":" + sessionRef

@@ -21,7 +21,7 @@ import (
 // POST /tasks/{id}:cancel, POST /tasks/{id}:subscribe).
 //
 // These are a stateless facade over the existing run engine: a Task maps to an
-// AgentRun, a Task.contextId maps to kb.acp_sessions, and HITL resume reuses the
+// AgentRun, a Task.contextId maps to kb.sessions, and HITL resume reuses the
 // existing question-claim pattern (repo.AnswerQuestion) + executor.Resume.
 
 // ---------------------------------------------------------------------------
@@ -160,7 +160,7 @@ func (h *A2AHandler) a2uiSurfaceActionContext(ctx context.Context, req SendMessa
 	if orig == nil {
 		return "", a2aValidationError("surface action references an unknown task")
 	}
-	if cid := derefString(orig.ACPSessionID); cid != "" {
+	if cid := derefString(orig.SessionID); cid != "" {
 		return cid, nil
 	}
 	return "", a2aValidationError("surface action references a task with no context")
@@ -368,13 +368,13 @@ func buildA2ATask(latest *AgentRun, messages []AgentRunMessage, question *AgentQ
 }
 
 // asyncTaskSnapshot builds the immediate task snapshot returned by an async
-// send. UpdateRunACPSessionID only persists the context link to the DB — the
-// in-memory run's ACPSessionID is still nil — so this attaches the context id
+// send. UpdateRunSessionID only persists the context link to the DB — the
+// in-memory run's SessionID is still nil — so this attaches the context id
 // before mapping so the returned task carries a non-empty contextId, matching
 // the synchronous path.
 func asyncTaskSnapshot(run *AgentRun, contextID string) Task {
 	r := *run
-	r.ACPSessionID = strPtr(contextID)
+	r.SessionID = strPtr(contextID)
 	return RunToA2ATask(&r, nil, nil, nil)
 }
 
@@ -636,24 +636,16 @@ func (h *A2AHandler) startA2ATask(c echo.Context, projectID, userID, userMessage
 		return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to resolve agent"))
 	}
 
-	// Resolve or lazily create the context (kb.acp_sessions).
-	if contextID != "" {
-		session, err := h.repo.GetACPSession(ctx, projectID, contextID)
-		if err != nil {
-			h.log.Error("failed to load context", "context_id", contextID, "error", err)
-			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to load context"))
-		}
-		if session == nil {
-			return writeA2AError(c, a2aValidationError("unknown contextId"))
-		}
-	} else {
-		session := &ACPSession{ProjectID: projectID, AgentName: strPtr(def.Name)}
-		if err := h.repo.CreateACPSession(ctx, session); err != nil {
-			h.log.Error("failed to create context", "project_id", projectID, "error", err)
-			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to create context"))
-		}
-		contextID = session.ID
+	// Resolve or lazily create the context (kb.sessions).
+	session, err := h.repo.EnsureSessionForContext(ctx, projectID, contextID, strPtr(def.Name))
+	if err != nil {
+		h.log.Error("failed to resolve context", "context_id", contextID, "project_id", projectID, "error", err)
+		return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to resolve context"))
 	}
+	if session == nil {
+		return writeA2AError(c, a2aValidationError("unknown contextId"))
+	}
+	contextID = session.ID
 
 	triggerSource := "a2a"
 	run, err := h.repo.CreateRunWithOptions(ctx, CreateRunOptions{
@@ -666,7 +658,7 @@ func (h *A2AHandler) startA2ATask(c echo.Context, projectID, userID, userMessage
 		return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to create run"))
 	}
 
-	if err := h.repo.UpdateRunACPSessionID(ctx, run.ID, contextID); err != nil {
+	if err := h.repo.UpdateRunSessionID(ctx, run.ID, contextID); err != nil {
 		h.log.Warn("failed to link run to context",
 			"run_id", run.ID, "context_id", contextID, "error", err.Error(),
 		)
@@ -725,7 +717,7 @@ func (h *A2AHandler) resumeA2ATask(c echo.Context, projectID, userID, userMessag
 	if original == nil || original.Agent == nil || original.Agent.ProjectID != projectID {
 		return writeA2AError(c, NewA2AError(A2ACodeTaskNotFound, A2AReasonTaskNotFound, "task not found"))
 	}
-	if contextID != "" && derefString(original.ACPSessionID) != contextID {
+	if contextID != "" && derefString(original.SessionID) != contextID {
 		return writeA2AError(c, a2aValidationError("contextId does not match taskId"))
 	}
 
@@ -947,7 +939,7 @@ func (h *A2AHandler) CancelTask(c echo.Context) error {
 	}
 
 	if latest.Status == RunStatusQueued {
-		if err := h.repo.CancelRun(ctx, latest.ID); err != nil {
+		if _, err := h.repo.CancelRun(ctx, latest.ID); err != nil {
 			h.log.Error("failed to cancel task", "task_id", taskID, "error", err)
 			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to cancel task"))
 		}
@@ -1002,7 +994,7 @@ func (h *A2AHandler) SubscribeTask(c echo.Context) error {
 	if err != nil || latest == nil {
 		return writeA2AError(c, NewA2AError(A2ACodeTaskNotFound, A2AReasonTaskNotFound, "task not found"))
 	}
-	contextID := derefString(latest.ACPSessionID)
+	contextID := derefString(latest.SessionID)
 
 	writer := sse.NewWriter(c.Response().Writer)
 	if err := writer.Start(); err != nil {
@@ -1051,7 +1043,7 @@ func (h *A2AHandler) SubscribeTask(c echo.Context) error {
 	// Replay persisted events first (best-effort). Events carrying a translated
 	// StreamResponse payload (message/artifact/error deltas) replay the payload
 	// itself; lifecycle-only events fall back to the type mapping.
-	persisted, _ := h.repo.GetACPRunEvents(ctx, taskID)
+	persisted, _ := h.repo.GetRunEvents(ctx, taskID)
 	for _, ev := range persisted {
 		if sr, ok := a2aStreamResponseFromEventData(ev.Data, taskID, contextID); ok {
 			_ = writer.WriteData(sr)

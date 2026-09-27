@@ -764,7 +764,7 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 			EnvVars:         triggerReq.EnvVars,
 			MaxSteps:        triggerReq.MaxSteps,
 			AuthToken:       triggerAuthToken,
-			SessionID:       triggerReq.SessionID,
+			ConversationKey: triggerReq.ConversationKey,
 			TrustedInternal: true, // session UI is a trusted surface (full internal coordination)
 		})
 		if execResult != nil && execResult.Cleanup != nil {
@@ -841,14 +841,42 @@ func (h *Handler) CancelRun(c echo.Context) error {
 		return apperror.NewNotFound("AgentRun", runID)
 	}
 
-	// Cancel the run
-	if err := h.repo.CancelRun(c.Request().Context(), runID); err != nil {
+	// Apply the cancel as a guarded terminal transition. This is authoritative:
+	// the guarded UPDATE races the executor's own terminal write (success /
+	// failure / cancel) and exactly one wins, so the row's terminal status
+	// always matches what this endpoint reports. A cancel that arrives after
+	// the run already finished returns cancelled:false and leaves the row
+	// untouched (issue #1149).
+	ctx := c.Request().Context()
+	cancelled, err := h.repo.CancelRun(ctx, runID)
+	if err != nil {
 		return apperror.NewInternal("failed to cancel run", err)
 	}
+	if !cancelled {
+		status := string(RunStatusError)
+		if current, findErr := h.repo.FindRunByID(ctx, runID); findErr == nil && current != nil {
+			status = string(current.Status)
+		}
+		return c.JSON(http.StatusOK, SuccessResponse(map[string]any{
+			"message":   "Run already " + status,
+			"runId":     runID,
+			"cancelled": false,
+			"status":    status,
+		}))
+	}
 
-	return c.JSON(http.StatusOK, SuccessResponse(map[string]string{
-		"message": "Run cancelled successfully",
-		"runId":   runID,
+	// The guarded transition won. Promptly stop an in-flight, detached run so
+	// its goroutine winds down now; its own terminal write is a no-op because
+	// the row is already cancelled. Not registered (finished, or running in
+	// another process) is fine — the row is cancelled either way.
+	if h.executor != nil {
+		h.executor.Cancel(runID, userCancelReason)
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(map[string]any{
+		"message":   "Run cancelled successfully",
+		"runId":     runID,
+		"cancelled": true,
 	}))
 }
 
@@ -2776,7 +2804,7 @@ type RespondParams struct {
 	ShareToolDeny          []string
 	DisableAuthMint        bool
 	MaxApprovalsPerSession int
-	ACPSessionID           string
+	SessionID              string
 
 	// OnRunSettled, if non-nil, is invoked (in the resume goroutine, with a
 	// background context) once the resumed run settles, carrying the result of
@@ -2885,7 +2913,7 @@ func (h *Handler) RespondToQuestion(ctx context.Context, p RespondParams) (*Agen
 				decision = "cancelled"
 			}
 			if p.MaxApprovalsPerSession > 0 {
-				decided, decErr := h.repo.ReserveAndDecideShareApproval(ctx, p.ShareLinkID, p.ACPSessionID, p.QuestionID, decision, p.Message, p.RespondedBy, p.MaxApprovalsPerSession)
+				decided, decErr := h.repo.ReserveAndDecideShareApproval(ctx, p.ShareLinkID, p.SessionID, p.QuestionID, decision, p.Message, p.RespondedBy, p.MaxApprovalsPerSession)
 				if decErr != nil {
 					_ = h.repo.ReopenQuestion(ctx, p.QuestionID)
 					return nil, apperror.NewInternal("failed to record decision", decErr)
