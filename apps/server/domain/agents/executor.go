@@ -290,6 +290,18 @@ func callerRunIDFromContext(ctx context.Context) string {
 	return v
 }
 
+// runDispatchContext derives the tool-dispatch context for a run at the
+// agent-run boundary. It strips any TransportEnforced marker inherited from an
+// HTTP transport dispatch — that marker is per-dispatch evidence (one
+// ExecuteTool call was already authorized), NOT run authority, and must not be
+// inherited by a nested run's own tool calls — and stamps the run's own
+// TrustedInternal marker. The strip is what makes the transport-enforced
+// authorization non-inheritable across a run boundary (issue #1133).
+func runDispatchContext(ctx context.Context, trusted bool) context.Context {
+	ctx = mcp.ContextWithoutTransportEnforced(ctx)
+	return mcp.ContextWithTrustedInternal(ctx, trusted)
+}
+
 // inheritedTrust resolves the trust to apply to a run started through a
 // delegation/coordination tool (trigger_agent, call_agent) from the invoking
 // context, so these tools inherit the caller's trust exactly as spawn_agents
@@ -1161,8 +1173,10 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 	// dispatch (mcp.Service.ExecuteTool) can enforce the AgentOnly boundary
 	// consistently with the HTTP transports. This covers the resume confirm gate
 	// (injectToolResponse → confirmResponseBody → CallTool) which runs before
-	// runPipeline re-injects the marker (issue #994).
-	ctx = mcp.ContextWithTrustedInternal(ctx, newRun.TrustedInternal)
+	// runPipeline re-injects the marker (issue #994). runDispatchContext also
+	// strips any transport-enforced marker inherited from the triggering HTTP
+	// dispatch so the confirm gate is re-gated on the run's own trust (issue #1133).
+	ctx = runDispatchContext(ctx, newRun.TrustedInternal)
 
 	// Provision workspace if configured
 	hasSandboxConfig := ae.wsEnabled && ae.provisioner != nil &&
@@ -1820,7 +1834,10 @@ func (ae *AgentExecutor) runPipeline(
 	// with the HTTP transports. The marker is fail-closed: it is true only for
 	// trusted/internal surfaces; external surfaces (webhook, A2A, agentcompat,
 	// public share) carry false and cannot reach agent-only tools (issue #994).
-	ctx = mcp.ContextWithTrustedInternal(ctx, req.TrustedInternal)
+	// runDispatchContext also strips any transport-enforced marker inherited from
+	// the triggering HTTP dispatch, so a child run's tools are re-gated on its
+	// own trust rather than the parent's per-dispatch authorization (issue #1133).
+	ctx = runDispatchContext(ctx, req.TrustedInternal)
 
 	// Identify the ADK session ID.
 	// If the caller supplied a stable SessionID (cross-run conversation history),
