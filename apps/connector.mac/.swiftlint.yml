@@ -1,0 +1,5 @@
+disabled_rules:
+  # SwiftFormat conflicts (same set the iOS app disables in apps/ios/.swiftlint.yml)
+  - trailing_comma
+  - line_length
+  - opening_brace
