@@ -84,7 +84,7 @@ func reflectModels(db *bun.DB, models []any) []modelTable {
 // is exactly what censusModel.Identity() derives from the source tree.
 func modelIdentity(m any) string {
 	t := reflect.TypeOf(m)
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	return t.PkgPath() + "." + t.Name()
