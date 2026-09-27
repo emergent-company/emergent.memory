@@ -741,8 +741,11 @@ definitions:
         type: string
       rootRunId:
         type: string
-      sessionStatus:
-        $ref: '#/definitions/domain_agents.SessionStatus'
+      sessionId:
+        description: |-
+          SessionID is the thread identity this run belongs to, when it has one.
+          Ad-hoc or scheduled runs with no thread omit it.
+        type: string
       skipReason:
         type: string
       spans:
@@ -1094,28 +1097,6 @@ definitions:
       provider:
         type: string
     type: object
-  domain_agents.SessionStatus:
-    enum:
-    - provisioning
-    - active
-    - completed
-    - error
-    type: string
-    x-enum-comments:
-      SessionStatusActive: Workspace ready, agent executing
-      SessionStatusCompleted: Run finished successfully
-      SessionStatusError: Run or provisioning failed
-      SessionStatusProvisioning: Workspace being set up
-    x-enum-descriptions:
-    - Workspace being set up
-    - Workspace ready, agent executing
-    - Run finished successfully
-    - Run or provisioning failed
-    x-enum-varnames:
-    - SessionStatusProvisioning
-    - SessionStatusActive
-    - SessionStatusCompleted
-    - SessionStatusError
   domain_agents.ToolGroupDTO:
     properties:
       description:
@@ -1745,11 +1726,6 @@ definitions:
     type: object
   domain_chat.Conversation:
     properties:
-      acpSessionId:
-        description: |-
-          ACPSessionID links this conversation to its backing kb.acp_sessions row.
-          Created on first agent-backed stream; reused on subsequent turns.
-        type: string
       agentDefinitionId:
         description: 'Agent-backed chat: links conversation to an agent definition
           for tool-calling capabilities'
@@ -1782,6 +1758,11 @@ definitions:
         type: string
       projectId:
         type: string
+      sessionId:
+        description: |-
+          SessionID links this conversation to its backing kb.sessions row.
+          Created on first agent-backed stream; reused on subsequent turns.
+        type: string
       title:
         type: string
       updatedAt:
@@ -1789,11 +1770,6 @@ definitions:
     type: object
   domain_chat.ConversationWithMessages:
     properties:
-      acpSessionId:
-        description: |-
-          ACPSessionID links this conversation to its backing kb.acp_sessions row.
-          Created on first agent-backed stream; reused on subsequent turns.
-        type: string
       agentDefinitionId:
         description: 'Agent-backed chat: links conversation to an agent definition
           for tool-calling capabilities'
@@ -1824,6 +1800,11 @@ definitions:
       ownerUserId:
         type: string
       projectId:
+        type: string
+      sessionId:
+        description: |-
+          SessionID links this conversation to its backing kb.sessions row.
+          Created on first agent-backed stream; reused on subsequent turns.
         type: string
       title:
         type: string
@@ -2554,8 +2535,6 @@ definitions:
       chunks:
         $ref: '#/definitions/domain_extraction.ChunkEmbeddingQueueStats'
       objects:
-        $ref: '#/definitions/domain_extraction.GraphEmbeddingQueueStats'
-      relationships:
         $ref: '#/definitions/domain_extraction.GraphEmbeddingQueueStats'
     type: object
   domain_extraction.ProjectEmbeddingRetriggerResponse:
@@ -14430,9 +14409,8 @@ paths:
       - projects
   /api/projects/{id}/embeddings/progress:
     get:
-      description: Returns pending/processing/completed/failed counts for graph object,
-        relationship, and chunk embedding jobs scoped to this project. Requires project_admin
-        role.
+      description: Returns pending/processing/completed/failed counts for graph object
+        and chunk embedding jobs scoped to this project. Requires project_admin role.
       parameters:
       - description: Project ID
         in: path
