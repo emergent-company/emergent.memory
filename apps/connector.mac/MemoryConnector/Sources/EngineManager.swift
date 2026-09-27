@@ -68,9 +68,9 @@ final class EngineManager: ObservableObject {
     /// Best-effort synchronous TCP connect probe: true when the connect
     /// succeeds (something is listening on `host:port`).
     private nonisolated static func tcpConnect(host: String, port: UInt16) -> Bool {
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
-        guard fd >= 0 else { return false }
-        defer { Darwin.close(fd) }
+        let socketFD = socket(AF_INET, SOCK_STREAM, 0)
+        guard socketFD >= 0 else { return false }
+        defer { Darwin.close(socketFD) }
 
         var addr = sockaddr_in()
         addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
@@ -80,7 +80,7 @@ final class EngineManager: ObservableObject {
 
         let result = withUnsafePointer(to: &addr) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                Darwin.connect(socketFD, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
             }
         }
         return result == 0
@@ -357,12 +357,12 @@ final class EngineManager: ObservableObject {
             )
             // O_APPEND makes every write an atomic append, so the Process pipe
             // callbacks cannot race `ConnectorLog`'s per-line append handle.
-            let fd = open(Self.logFileURL.path, O_WRONLY | O_APPEND | O_CREAT, 0o600)
-            guard fd >= 0 else {
+            let logFD = open(Self.logFileURL.path, O_WRONLY | O_APPEND | O_CREAT, 0o600)
+            guard logFD >= 0 else {
                 lastError = "cannot open engine log: \(String(cString: strerror(errno)))"
                 return
             }
-            logHandle = FileHandle(fileDescriptor: fd)
+            logHandle = FileHandle(fileDescriptor: logFD)
         } catch {
             lastError = "cannot open engine log: \(error.localizedDescription)"
         }

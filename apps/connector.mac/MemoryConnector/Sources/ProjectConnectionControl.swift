@@ -124,9 +124,9 @@ struct ProjectConnectionControl: View {
     private func binding(projectID: String) -> Binding<Bool> {
         Binding(
             get: { projectStore.isConnected(projectID) },
-            set: { on in
+            set: { isOn in
                 guard !busy else { return }
-                if on {
+                if isOn {
                     connect(projectID)
                 } else {
                     disconnect()

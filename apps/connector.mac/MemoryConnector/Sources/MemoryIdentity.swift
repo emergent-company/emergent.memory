@@ -204,7 +204,7 @@ private extension String {
     /// Local part of an email-like string (everything before `@`); the whole
     /// string when there is no `@`.
     var localPart: String {
-        guard let at = firstIndex(of: "@") else { return self }
-        return String(self[..<at])
+        guard let atIndex = firstIndex(of: "@") else { return self }
+        return String(self[..<atIndex])
     }
 }

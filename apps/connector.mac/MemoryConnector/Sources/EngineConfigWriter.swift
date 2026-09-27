@@ -136,15 +136,15 @@ enum EngineConfigWriter {
     }
 
     static func write(configURL: URL, content: String) throws {
-        let fm = FileManager.default
+        let fileManager = FileManager.default
         let parent = configURL.deletingLastPathComponent()
-        if !fm.fileExists(atPath: parent.path) {
-            try fm.createDirectory(at: parent, withIntermediateDirectories: true,
-                                   attributes: [.posixPermissions: 0o700])
+        if !fileManager.fileExists(atPath: parent.path) {
+            try fileManager.createDirectory(at: parent, withIntermediateDirectories: true,
+                                            attributes: [.posixPermissions: 0o700])
         }
         let data = Data(content.utf8)
         try data.write(to: configURL, options: .atomic)
         // .atomic replaces the file via a temp rename; enforce the mode after.
-        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
+        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
     }
 }

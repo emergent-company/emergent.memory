@@ -44,9 +44,9 @@ enum ConnectorLog {
             )
             // O_APPEND makes every write an atomic append, so this per-line
             // handle cannot race `EngineManager`'s streaming handle.
-            let fd = open(url.path, O_WRONLY | O_APPEND | O_CREAT, 0o600)
-            guard fd >= 0 else { return }
-            let handle = FileHandle(fileDescriptor: fd)
+            let fileDescriptor = open(url.path, O_WRONLY | O_APPEND | O_CREAT, 0o600)
+            guard fileDescriptor >= 0 else { return }
+            let handle = FileHandle(fileDescriptor: fileDescriptor)
             defer { try? handle.close() }
             handle.write(Data(line.utf8))
         } catch {

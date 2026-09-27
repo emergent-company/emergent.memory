@@ -512,8 +512,8 @@ final class AccountStore: ObservableObject {
         }
         // `/api/user/profile` is the richest source; `/api/auth/me` is the
         // fallback for the email when the profile is unavailable.
-        if email == nil, let me = try? await client.authMe() {
-            email = me.email?.nilIfBlank ?? email
+        if email == nil, let authUser = try? await client.authMe() {
+            email = authUser.email?.nilIfBlank ?? email
         }
 
         let enriched = Account(id: account.id,

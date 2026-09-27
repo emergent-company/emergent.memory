@@ -14,7 +14,7 @@ struct ToolsPage: View {
             Section {
                 profileScopeRow
                 disconnectedHint
-                masterToolsRow
+                allToolsRow
                 Divider()
                 ForEach(ToolCatalog.tools) { tool in
                     Toggle(isOn: binding(for: tool)) {
@@ -93,7 +93,7 @@ struct ToolsPage: View {
         }
     }
 
-    // MARK: - Master control
+    // MARK: - All-tools control
 
     private var enabledToolCount: Int {
         ToolCatalog.tools.filter { !effectiveDisabledTools.contains($0.id) }.count
@@ -103,28 +103,28 @@ struct ToolsPage: View {
         enabledToolCount == ToolCatalog.tools.count
     }
 
-    /// Master state rendered under the switch: all-on / all-off / mixed.
+    /// All-tools state rendered under the switch: all-on / all-off / mixed.
     private var allToolsStateText: String {
         let total = ToolCatalog.tools.count
-        let on = enabledToolCount
-        if on == 0 {
+        let enabledCount = enabledToolCount
+        if enabledCount == 0 {
             return "All off"
         }
-        if on == total {
+        if enabledCount == total {
             return "All on"
         }
-        return "Mixed — \(on) of \(total) on"
+        return "Mixed — \(enabledCount) of \(total) on"
     }
 
-    private var masterBinding: Binding<Bool> {
+    private var allToolsBinding: Binding<Bool> {
         Binding(
             get: { allToolsEnabled },
             set: { enabled in Task { await setAllTools(enabled) } }
         )
     }
 
-    /// Master on/off for every catalog tool: active project profile when one is
-    /// selected, otherwise the shared defaults.
+    /// All-tools on/off for every catalog tool: active project profile when one
+    /// is selected, otherwise the shared defaults.
     private func setAllTools(_ enabled: Bool) async {
         if let id = projectStore.activeProjectID {
             await projectStore.setAllTools(enabled: enabled, projectID: id)
@@ -141,7 +141,7 @@ struct ToolsPage: View {
         }
     }
 
-    private var masterToolsRow: some View {
+    private var allToolsRow: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: "switch.2")
                 .foregroundStyle(.secondary)
@@ -153,7 +153,7 @@ struct ToolsPage: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
-            Toggle("", isOn: masterBinding)
+            Toggle("", isOn: allToolsBinding)
                 .labelsHidden()
                 .toggleStyle(.switch)
         }

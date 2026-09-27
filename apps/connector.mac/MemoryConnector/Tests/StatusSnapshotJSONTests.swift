@@ -32,8 +32,13 @@ final class StatusSnapshotJSONTests: XCTestCase {
         if !disabledTools.isEmpty {
             doc["disabled_tools"] = disabledTools
         }
-        let data = try! JSONSerialization.data(withJSONObject: doc, options: [.sortedKeys])
-        return String(data: data, encoding: .utf8)!
+        guard let data = try? JSONSerialization.data(withJSONObject: doc, options: [.sortedKeys]),
+              let string = String(bytes: data, encoding: .utf8)
+        else {
+            XCTFail("status JSON fixture is not serializable")
+            return "{}"
+        }
+        return string
     }
 
     func testJSONConnected() {
