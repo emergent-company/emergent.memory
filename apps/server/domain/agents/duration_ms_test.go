@@ -126,7 +126,9 @@ func TestDurationMsPopulatedOnAllTerminalTransitions(t *testing.T) {
 			name: "CancelRun",
 			run: func() string {
 				id := insertRun(RunStatusRunning, time.Now().Add(-2*time.Minute))
-				require.NoError(t, repo.CancelRun(ctx, id))
+				ok, err := repo.CancelRun(ctx, id)
+				require.NoError(t, err)
+				require.True(t, ok)
 				return id
 			},
 		},

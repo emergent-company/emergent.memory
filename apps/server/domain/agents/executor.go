@@ -3325,7 +3325,7 @@ func (ae *AgentExecutor) runPipeline(
 		)
 
 		if status == RunStatusCancelled {
-			_ = ae.repo.CancelRunWithSteps(dbCtx, run.ID, errMsg, steps)
+			_, _ = ae.repo.CancelRunWithSteps(dbCtx, run.ID, errMsg, steps)
 		} else {
 			_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, errMsg, steps)
 		}

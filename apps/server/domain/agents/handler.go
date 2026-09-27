@@ -841,26 +841,42 @@ func (h *Handler) CancelRun(c echo.Context) error {
 		return apperror.NewNotFound("AgentRun", runID)
 	}
 
-	// Stop an in-flight run first. A run whose lifetime is detached from its
-	// triggering request (e.g. chat, issue #1149) is not reachable through the
-	// request context, so route the cancel by run id through the executor. When
-	// the run is not in flight (already finished, or executing in another
-	// process), fall back to marking the persisted row cancelled.
-	if h.executor != nil && h.executor.Cancel(runID, userCancelReason) {
-		return c.JSON(http.StatusOK, SuccessResponse(map[string]string{
-			"message": "Run cancelled successfully",
-			"runId":   runID,
+	// Apply the cancel as a guarded terminal transition. This is authoritative:
+	// the guarded UPDATE races the executor's own terminal write (success /
+	// failure / cancel) and exactly one wins, so the row's terminal status
+	// always matches what this endpoint reports. A cancel that arrives after
+	// the run already finished returns cancelled:false and leaves the row
+	// untouched (issue #1149).
+	ctx := c.Request().Context()
+	cancelled, err := h.repo.CancelRun(ctx, runID)
+	if err != nil {
+		return apperror.NewInternal("failed to cancel run", err)
+	}
+	if !cancelled {
+		status := string(RunStatusError)
+		if current, findErr := h.repo.FindRunByID(ctx, runID); findErr == nil && current != nil {
+			status = string(current.Status)
+		}
+		return c.JSON(http.StatusOK, SuccessResponse(map[string]any{
+			"message":   "Run already " + status,
+			"runId":     runID,
+			"cancelled": false,
+			"status":    status,
 		}))
 	}
 
-	// Cancel the run
-	if err := h.repo.CancelRun(c.Request().Context(), runID); err != nil {
-		return apperror.NewInternal("failed to cancel run", err)
+	// The guarded transition won. Promptly stop an in-flight, detached run so
+	// its goroutine winds down now; its own terminal write is a no-op because
+	// the row is already cancelled. Not registered (finished, or running in
+	// another process) is fine — the row is cancelled either way.
+	if h.executor != nil {
+		h.executor.Cancel(runID, userCancelReason)
 	}
 
-	return c.JSON(http.StatusOK, SuccessResponse(map[string]string{
-		"message": "Run cancelled successfully",
-		"runId":   runID,
+	return c.JSON(http.StatusOK, SuccessResponse(map[string]any{
+		"message":   "Run cancelled successfully",
+		"runId":     runID,
+		"cancelled": true,
 	}))
 }
 
