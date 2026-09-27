@@ -841,18 +841,20 @@ func (h *Handler) CancelRun(c echo.Context) error {
 		return apperror.NewNotFound("AgentRun", runID)
 	}
 
-	// Apply the cancel as a guarded terminal transition. This is authoritative:
-	// the guarded UPDATE races the executor's own terminal write (success /
-	// failure / cancel) and exactly one wins, so the row's terminal status
-	// always matches what this endpoint reports. A cancel that arrives after
-	// the run already finished returns cancelled:false and leaves the row
-	// untouched (issue #1149).
+	// Record the cancel as a durable, guarded transition to the intermediate
+	// "cancelling" status (issue #1166). Unlike a per-process registry, this
+	// UPDATE is authoritative in Postgres and visible to every server instance,
+	// so a cancel served here reaches a run executing anywhere. It races the
+	// executor's own terminal writes through the same guard: if the run already
+	// reached a terminal state, the transition changes no rows and the endpoint
+	// reports cancelled:false with the current status, so it never claims a
+	// cancel it did not perform (issue #1149) and never clobbers a completion.
 	ctx := c.Request().Context()
-	cancelled, err := h.repo.CancelRun(ctx, runID)
+	accepted, err := h.repo.RequestRunCancellation(ctx, runID)
 	if err != nil {
 		return apperror.NewInternal("failed to cancel run", err)
 	}
-	if !cancelled {
+	if !accepted {
 		status := string(RunStatusError)
 		if current, findErr := h.repo.FindRunByID(ctx, runID); findErr == nil && current != nil {
 			status = string(current.Status)
@@ -865,18 +867,20 @@ func (h *Handler) CancelRun(c echo.Context) error {
 		}))
 	}
 
-	// The guarded transition won. Promptly stop an in-flight, detached run so
-	// its goroutine winds down now; its own terminal write is a no-op because
-	// the row is already cancelled. Not registered (finished, or running in
-	// another process) is fine — the row is cancelled either way.
+	// The durable intent is committed. Notify the local executor so an
+	// in-flight run in this process winds down now; a run executing in another
+	// instance observes the persisted "cancelling" status at its next step
+	// boundary and finalizes itself as cancelled. This notification is a
+	// fast-path only — correctness does not depend on it.
 	if h.executor != nil {
 		h.executor.Cancel(runID, userCancelReason)
 	}
 
 	return c.JSON(http.StatusOK, SuccessResponse(map[string]any{
-		"message":   "Run cancelled successfully",
+		"message":   "Run cancellation requested",
 		"runId":     runID,
 		"cancelled": true,
+		"status":    string(RunStatusCancelling),
 	}))
 }
 
