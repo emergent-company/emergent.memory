@@ -706,31 +706,31 @@ func TestToolInputSchemas(t *testing.T) {
 		}
 	})
 
-	t.Run("update_template_assignment requires assignment_id", func(t *testing.T) {
+	t.Run("update_template_assignment requires schema_id", func(t *testing.T) {
 		tool := toolMap["schema-assignment-update"]
 		found := false
 		for _, r := range tool.InputSchema.Required {
-			if r == "assignment_id" {
+			if r == "schema_id" {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Error("update_template_assignment should require assignment_id")
+			t.Error("update_template_assignment should require schema_id")
 		}
 	})
 
-	t.Run("uninstall_template_pack requires assignment_id", func(t *testing.T) {
+	t.Run("uninstall_template_pack requires schema_id", func(t *testing.T) {
 		tool := toolMap["schema-uninstall"]
 		found := false
 		for _, r := range tool.InputSchema.Required {
-			if r == "assignment_id" {
+			if r == "schema_id" {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Error("uninstall_template_pack should require assignment_id")
+			t.Error("uninstall_template_pack should require schema_id")
 		}
 	})
 
