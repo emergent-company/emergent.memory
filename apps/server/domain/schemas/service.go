@@ -69,6 +69,19 @@ func (s *Service) GetInstalledPacks(ctx context.Context, projectID string) ([]In
 	return s.repo.GetInstalledPacks(ctx, projectID)
 }
 
+// AssignVisiblePack is the user-facing assign seam (MCP schema-assign tool):
+// it refuses a schema the project cannot see — another project's, or a
+// NULL-project non-builtin — with a 404 before delegating to AssignPack
+// (issue #1114/#1041). Blueprint materialization shares blueprint-declared
+// packs across projects and therefore calls AssignPack directly, bypassing this
+// visibility gate.
+func (s *Service) AssignVisiblePack(ctx context.Context, projectID, userID string, req *AssignPackRequest) (*AssignPackResult, error) {
+	if _, err := s.repo.GetAssignablePack(ctx, req.SchemaID, projectID); err != nil {
+		return nil, err
+	}
+	return s.AssignPack(ctx, projectID, userID, req)
+}
+
 // AssignPack assigns a schema to a project and registers its types.
 // When req.DryRun is true, returns a preview without making any changes.
 // When req.Merge is true, additively merges incoming schemas into existing types.
