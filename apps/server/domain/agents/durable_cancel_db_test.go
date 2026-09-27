@@ -187,9 +187,9 @@ func TestRunIsCancelling_MissingRunIsNotCancelling(t *testing.T) {
 
 // TestFinalizeCancellingRuns_ResolvesOrphans covers the safety net: a run stuck
 // in the intermediate "cancelling" state because no live executor observed the
-// cancel must eventually resolve to "cancelled" (never to a failure). Fresh
-// cancelling runs are spared when a threshold is applied; startup recovery
-// (threshold <= 0) finalizes every cancelling row.
+// cancel must eventually resolve to "cancelled" (never to a failure). The sweep
+// is age/heartbeat-aware, so a run still owned by a live executor — fresh
+// last_step_at — is spared; only an idle one is finalized.
 func TestFinalizeCancellingRuns_ResolvesOrphans(t *testing.T) {
 	if testing.Short() {
 		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
@@ -204,7 +204,8 @@ func TestFinalizeCancellingRuns_ResolvesOrphans(t *testing.T) {
 
 	staleID := insertAgentRun(t, tdb.DB, ctx, agentID, string(RunStatusCancelling), true)
 	freshID := insertAgentRun(t, tdb.DB, ctx, agentID, string(RunStatusCancelling), true)
-	// Backdate the stale run's activity so only it is past the threshold.
+	// Backdate the stale run's activity so only it is past the threshold; leave
+	// the fresh run's last_step_at at now (a live executor's heartbeat).
 	_, err := tdb.DB.NewRaw(
 		`UPDATE kb.agent_runs SET started_at = now() - interval '1 hour', last_step_at = now() - interval '1 hour' WHERE id = ?`,
 		staleID,
@@ -218,11 +219,11 @@ func TestFinalizeCancellingRuns_ResolvesOrphans(t *testing.T) {
 	require.Equal(t, string(RunStatusCancelling), runStatus(t, tdb, freshID),
 		"a cancelling run still winding down must be spared by the threshold")
 
-	// Startup recovery has no live executor for any cancelling row.
-	n, err = repo.FinalizeCancellingRuns(ctx, 0)
-	require.NoError(t, err)
-	require.Equal(t, 1, n)
-	require.Equal(t, string(RunStatusCancelled), runStatus(t, tdb, freshID))
+	// A non-positive age is rejected: an unconditional sweep would finalize a
+	// live run owned by another instance.
+	_, err = repo.FinalizeCancellingRuns(ctx, 0)
+	require.Error(t, err)
+	require.Equal(t, string(RunStatusCancelling), runStatus(t, tdb, freshID))
 }
 
 // TestDurableCancel_TwoInstances_CancelOnAStopsRunOnB is the end-to-end
