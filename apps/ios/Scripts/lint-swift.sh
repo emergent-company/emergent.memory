@@ -81,22 +81,75 @@ else
   candidates=("${committed[@]}" "${unstaged[@]}" "${staged[@]}" "${untracked[@]}")
 fi
 
-# Validate args/candidates with the same pathspec scope, so a caller cannot
-# widen the lint to another tree. Dedup: lefthook may hand the same file once
-# per matching glob pattern.
+# Resolved (physical) scope root — the canonical reference every candidate must
+# live under. Resolving symlinks here means a symlinked or `..`-laden path
+# cannot smuggle a file from another tree past the scope check.
+ios_root="$(cd "${ios_dir}" && pwd -P)" || {
+  echo "lint-swift: ${ios_dir} not found, skipping iOS lint"
+  exit 0
+}
+
+# Physical absolute path for an existing file, following symlinks. Prefer
+# realpath; fall back to resolving the containing directory so macOS/BSD without
+# `realpath -m` still works (the file itself must exist for the caller).
+resolve_path() {
+  local resolved=""
+  if command -v realpath >/dev/null 2>&1; then
+    resolved="$(realpath -- "$1" 2>/dev/null || true)"
+  fi
+  if [ -z "$resolved" ]; then
+    resolved="$(cd "$(dirname -- "$1")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$1")")"
+  fi
+  printf '%s' "$resolved"
+}
+
+# Validate args/candidates by RESOLVED path, not lexical prefix: `case` globs
+# let `*` cross `/`, so `apps/ios/../connector.mac/Foo.swift` starts with
+# `apps/ios/` lexically yet physically escapes the tree. Every candidate is
+# canonicalized and compared against the resolved scope root; anything outside
+# is refused (and, fail-closed, fails the run). Dedup is on the resolved path so
+# lefthook handing the same file once per glob pattern lints it once.
 swift_files=()
 declare -A seen=()
+refused=0
 for f in "${candidates[@]}"; do
   f="${f#./}"
-  case "$f" in
-    "${ios_dir}"/*.swift)
-      [ -f "$f" ] || continue
-      [ -n "${seen[$f]:-}" ] && continue
-      seen[$f]=1
-      swift_files+=("$f")
+
+  # Reject any `..` path component outright (belt-and-braces with resolution).
+  case "/$f/" in
+    */../*)
+      echo "lint-swift: refusing out-of-scope path (contains '..'): $f" >&2
+      refused=$((refused + 1))
+      continue
       ;;
   esac
+
+  [ -f "$f" ] || continue
+
+  resolved="$(resolve_path "$f")"
+  case "$resolved" in
+    "${ios_root}"/*.swift)
+      ;;
+    "${ios_root}"/*)
+      # In-tree but not a Swift file: ignore (e.g. a non-Swift staged path).
+      continue
+      ;;
+    *)
+      echo "lint-swift: refusing out-of-scope path (resolves outside ${ios_dir}): $f -> $resolved" >&2
+      refused=$((refused + 1))
+      continue
+      ;;
+  esac
+
+  [ -n "${seen[$resolved]:-}" ] && continue
+  seen[$resolved]=1
+  swift_files+=("$f")
 done
+
+if [ "$refused" -gt 0 ]; then
+  echo "lint-swift: $refused path(s) outside ${ios_dir} refused; not linting" >&2
+  exit 1
+fi
 
 # ── SwiftFormat — changed/new files only (untouched debt ignored) ────────────
 if [ "${#swift_files[@]}" -eq 0 ]; then
