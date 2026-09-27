@@ -8,6 +8,8 @@ The Objects browser exposes its three search modes (full-text, hybrid, unified) 
 - Each dropdown option shows a label and a short second-line description of what the mode does.
 - Default mode becomes **Unified** (fuses graph and text ranking). Previously an absent `mode` fell back to `fulltext`.
 - The primary button's label reflects the active mode (e.g. "Unified Search").
+- The mode is normalized to one of `unified | hybrid | fulltext` before rendering or dispatch (absent or unsupported → Unified), so the label, the value the form submits, and the search that runs always agree.
+- Every mode option is a plain form submit button, so choosing a mode works with JavaScript disabled.
 
 ## Capabilities
 

@@ -140,17 +140,21 @@ templ objectsStatsDeferred(branchID string) {
 
 // objectsSearchForm is the text-query search form: a query input plus a split
 // search button. The primary action submits the form with the currently
-// selected mode; the joined chevron opens a dropdown listing the three modes
-// (each with a one-line description) and auto-submits the form when one is
-// chosen. A hidden `mode` input carries the selected mode for the primary
-// submit; the active type/branch filters ride along as hidden inputs so
-// searching doesn't drop the filters. An absent mode defaults to unified — the
-// strongest ranking — so the default search is not keyword-only.
+// selected mode; the joined chevron opens a dropdown listing the three modes,
+// each with a one-line description. Every mode option is a plain submit button
+// (`name="mode" value=…`) inside the form, so choosing a mode works with
+// JavaScript disabled: daisyUI's CSS opens the dropdown on focus and the button
+// submits the GET form. The active type/branch filters ride along as hidden
+// inputs so searching doesn't drop the filters. An absent or unrecognised mode
+// normalizes to unified — the strongest ranking — so the default search is not
+// keyword-only.
+//
+// The dropdown is daisyUI's CSS-only (focus/focus-within) dropdown, so the
+// trigger carries no aria-expanded (there is no JS to keep it truthful) and no
+// aria-haspopup; the selected option is announced via role="menuitemradio" +
+// aria-checked instead.
 templ objectsSearchForm(data objectsPageData) {
-	{{ mode := data.Mode
-	if mode == "" {
-		mode = "unified"
-	} }}
+	{{ mode := normalizeObjectsSearchMode(data.Mode) }}
 	<form id="objects-search-form" class="mb-4" method="get" action="/objects">
 		<div class="flex flex-col gap-2 sm:flex-row sm:items-center">
 			<label class="input input-bordered flex w-full items-center gap-2 sm:max-w-md">
@@ -164,6 +168,7 @@ templ objectsSearchForm(data objectsPageData) {
 					Size:       ui.ButtonSM,
 					Icon:       "lucide--search",
 					ExtraClass: "join-item gap-2",
+					Attrs:      templ.Attributes{"name": "mode", "value": mode},
 				}) {
 					{ objectsSearchModeLabel(mode) + " Search" }
 				}
@@ -175,41 +180,38 @@ templ objectsSearchForm(data objectsPageData) {
 						Icon:       "lucide--chevron-down",
 						ExtraClass: "join-item",
 						AriaLabel:  "Choose search mode",
-						Attrs: templ.Attributes{
-							"tabindex":      "0",
-							"role":          "button",
-							"aria-haspopup": "menu",
-							"aria-expanded": "false",
-						},
 					})
 					@ui.DropdownMenu(templ.Attributes{"aria-label": "Search mode", "class": "w-80"}) {
 						for _, m := range objectsSearchModes() {
-							{{ submitJS := "this.closest('form').querySelector('input[name=mode]').value='" + m.Value + "';this.closest('form').submit()"
-							itemAttrs := templ.Attributes{
-								"tabindex":  "0",
-								"onclick":   submitJS,
-								"onkeydown": "if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}",
-							}
+							{{ checked := "false"
 							if m.Value == mode {
-								itemAttrs["aria-current"] = "true"
+								checked = "true"
 							} }}
-							@ui.DropdownItem(m.Value == mode, false, itemAttrs) {
-								<span class="flex w-full items-start gap-2">
-									<span class="min-w-0 grow">
-										<span class="block text-sm font-medium">{ m.Label }</span>
-										<span class="text-muted-faint block text-xs whitespace-normal">{ m.Description }</span>
+							<li role="none">
+								<button
+									type="submit"
+									name="mode"
+									value={ m.Value }
+									role="menuitemradio"
+									aria-checked={ checked }
+									class={ "min-w-0 break-words text-left", templ.KV("menu-active", m.Value == mode) }
+								>
+									<span class="flex w-full items-start gap-2">
+										<span class="min-w-0 grow">
+											<span class="block text-sm font-medium">{ m.Label }</span>
+											<span class="text-muted-faint block text-xs whitespace-normal">{ m.Description }</span>
+										</span>
+										if m.Value == mode {
+											@ui.IconSpan("lucide--check", "mt-0.5 size-4 shrink-0 text-primary")
+										}
 									</span>
-									if m.Value == mode {
-										@ui.IconSpan("lucide--check", "mt-0.5 size-4 shrink-0 text-primary")
-									}
-								</span>
-							}
+								</button>
+							</li>
 						}
 					}
 				}
 			</div>
 		</div>
-		<input type="hidden" name="mode" value={ mode }/>
 		if data.TypeFilter != "" {
 			<input type="hidden" name="type" value={ data.TypeFilter }/>
 		}

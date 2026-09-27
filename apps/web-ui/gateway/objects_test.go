@@ -107,23 +107,42 @@ func TestRenderObjectsPageSearchStatsLoadMore(t *testing.T) {
 			t.Errorf("search page missing %q", want)
 		}
 	}
-	// split button: primary action labelled with the selected mode, plus a
-	// joined chevron dropdown whose options carry per-mode descriptions.
+	// split button: the primary submit carries the SELECTED mode, and each
+	// dropdown option is its own submit button that announces its selected
+	// state (role=menuitemradio + aria-checked).
+	searchForm := objectSearchFormHTML(t, searchHTML)
+	if !strings.Contains(searchForm, "Hybrid Search") {
+		t.Errorf("primary label must reflect the selected mode:\n%s", searchForm)
+	}
+	if tag := firstSubmitTag(searchForm); !strings.Contains(tag, `name="mode"`) || !strings.Contains(tag, `value="hybrid"`) {
+		t.Errorf("primary submit must carry the selected mode, got %s", tag)
+	}
 	for _, want := range []string{
-		`id="objects-search-form"`,
-		"Hybrid Search", // primary label reflects the selected mode
-		`aria-haspopup="menu"`,
-		`aria-expanded="false"`,
-		"lucide--chevron-down",
-		`role="menuitem"`,
-		`aria-current="true"`, // selected mode flagged for assistive tech
 		"Fuses graph and text ranking for the best overall matches.",
 		"Blends keyword and semantic (vector) matching.",
 		"Keyword matching only — fast and exact.",
 	} {
-		if !strings.Contains(searchHTML, want) {
-			t.Errorf("search split button missing %q", want)
+		if !strings.Contains(searchForm, want) {
+			t.Errorf("search form missing mode description %q", want)
 		}
+	}
+	if got := strings.Count(searchForm, `role="menuitemradio"`); got != 3 {
+		t.Errorf("want 3 mode menuitemradio options, got %d", got)
+	}
+	if got := strings.Count(searchForm, `aria-checked="true"`); got != 1 {
+		t.Errorf("want exactly one checked mode, got %d", got)
+	}
+	if got := strings.Count(searchForm, `aria-checked="false"`); got != 2 {
+		t.Errorf("want two unchecked modes, got %d", got)
+	}
+	// Truthful ARIA: the dropdown is daisyUI's CSS-only focus dropdown, so it
+	// must not advertise a static expanded state, and mode selection must be
+	// plain form submits rather than relying on inline JS.
+	if strings.Contains(searchForm, "aria-expanded") || strings.Contains(searchForm, "aria-haspopup") {
+		t.Error("CSS-only dropdown must not claim aria-expanded/aria-haspopup")
+	}
+	if strings.Contains(searchForm, "onclick=") {
+		t.Error("mode selection must work without inline JS (plain submit buttons)")
 	}
 	if strings.Contains(searchHTML, "Load more") {
 		t.Error("search mode must not render a Load more button")
@@ -173,20 +192,54 @@ func TestRenderObjectsPageSearchUnified(t *testing.T) {
 }
 
 // TestRenderObjectsSearchDefaultUnified pins the new default: an absent mode
-// selects Unified, so the primary button reads "Unified Search" and the hidden
-// mode input that the primary submit carries says unified (not fulltext).
+// selects Unified, so the primary submit button reads "Unified Search" and
+// carries mode=unified (not fulltext). The mode rides on the submit buttons,
+// not a hidden input, so it works without JS.
 func TestRenderObjectsSearchDefaultUnified(t *testing.T) {
-	html := renderHTML(t, ObjectsPage(objectsPageData{Query: "sam"}))
-	for _, want := range []string{
-		"Unified Search",
-		`<input type="hidden" name="mode" value="unified">`,
-	} {
-		if !strings.Contains(html, want) {
-			t.Errorf("default search control missing %q in:\n%s", want, html)
-		}
+	form := objectSearchFormHTML(t, renderHTML(t, ObjectsPage(objectsPageData{Query: "sam"})))
+	if !strings.Contains(form, "Unified Search") {
+		t.Errorf("default primary label missing:\n%s", form)
 	}
-	if strings.Contains(html, `value="fulltext"`) {
-		t.Error("default mode must not be fulltext")
+	if tag := firstSubmitTag(form); !strings.Contains(tag, `name="mode"`) || !strings.Contains(tag, `value="unified"`) {
+		t.Errorf("default primary submit must carry mode=unified, got %s", tag)
+	}
+	if strings.Contains(form, `<input type="hidden" name="mode"`) {
+		t.Error("mode must be carried by the submit buttons, not a hidden input")
+	}
+}
+
+// TestRenderObjectsSearchUnknownModeNormalized pins label/dispatch agreement:
+// an unrecognised mode value normalizes to the default, so the button reads
+// "Unified Search" and no raw unknown value leaks into the control.
+func TestRenderObjectsSearchUnknownModeNormalized(t *testing.T) {
+	form := objectSearchFormHTML(t, renderHTML(t, ObjectsPage(objectsPageData{Query: "sam", Mode: "bogus"})))
+	if !strings.Contains(form, "Unified Search") {
+		t.Errorf("unknown mode must render the normalized default label:\n%s", form)
+	}
+	if tag := firstSubmitTag(form); !strings.Contains(tag, `value="unified"`) {
+		t.Errorf("unknown mode must normalize the submitted value to unified, got %s", tag)
+	}
+	if strings.Contains(form, `value="bogus"`) {
+		t.Error("raw unknown mode value must not leak into the control")
+	}
+	if got := strings.Count(form, `aria-checked="true"`); got != 1 {
+		t.Errorf("want exactly one checked mode after normalization, got %d", got)
+	}
+}
+
+// TestNormalizeObjectsSearchMode pins the normalization contract directly.
+func TestNormalizeObjectsSearchMode(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"", "unified"},
+		{"unified", "unified"},
+		{"hybrid", "hybrid"},
+		{"fulltext", "fulltext"},
+		{"bogus", "unified"},
+		{"FULLTEXT", "unified"}, // case-sensitive; unknown → default
+	} {
+		if got := normalizeObjectsSearchMode(tc.in); got != tc.want {
+			t.Errorf("normalizeObjectsSearchMode(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }
 
@@ -888,6 +941,69 @@ func TestUIObjectsDefaultModeUnified(t *testing.T) {
 	if !strings.Contains(body, "Unified Search") {
 		t.Errorf("default search body missing Unified Search label: %s", body)
 	}
+}
+
+// TestUIObjectsUnknownModeNormalized pins label/dispatch agreement at the
+// handler: an unsupported `mode` normalizes to unified, so the request does NOT
+// fall through to the full-text SearchObjects path and the rendered label says
+// "Unified Search".
+func TestUIObjectsUnknownModeNormalized(t *testing.T) {
+	f := &fakeMemory{
+		unifiedResults: []ObjectSearchResult{
+			{Object: GraphObject{ID: "o1", Type: "person", Key: "sam-lee"}, Score: 0.9},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/objects", s.uiObjects)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?q=sam&mode=bogus", nil))
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, body)
+	}
+	if f.lastUnifiedQuery != "sam" {
+		t.Errorf("unsupported mode must normalize and dispatch unified, got unified query %q", f.lastUnifiedQuery)
+	}
+	if f.lastSearchMode != "" {
+		t.Errorf("unsupported mode must not fall through to fulltext SearchObjects, got mode %q", f.lastSearchMode)
+	}
+	if !strings.Contains(body, "Unified Search") {
+		t.Errorf("unsupported mode body missing normalized label: %s", body)
+	}
+}
+
+// objectSearchFormHTML returns the objects search form region of the rendered
+// page, so split-button assertions cannot accidentally match markup elsewhere.
+func objectSearchFormHTML(t *testing.T, html string) string {
+	t.Helper()
+	i := strings.Index(html, `id="objects-search-form"`)
+	if i < 0 {
+		t.Fatalf("objects search form not found in:\n%s", html)
+	}
+	rest := html[i:]
+	j := strings.Index(rest, "</form>")
+	if j < 0 {
+		t.Fatal("objects search form close tag not found")
+	}
+	return rest[:j]
+}
+
+// firstSubmitTag returns the opening tag of the first submit button in html, so
+// tests can assert which mode the primary action submits without pinning the
+// full attribute order.
+func firstSubmitTag(html string) string {
+	const marker = `<button type="submit"`
+	i := strings.Index(html, marker)
+	if i < 0 {
+		return ""
+	}
+	rest := html[i:]
+	if j := strings.Index(rest, ">"); j >= 0 {
+		return rest[:j]
+	}
+	return rest
 }
 
 // TestUIObjectsKnowledge exercises POST /objects/knowledge: a question renders
