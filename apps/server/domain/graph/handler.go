@@ -122,6 +122,7 @@ func skipTotalFromQuery(v string) bool {
 // @Param        branch_id query string false "Branch ID (use 'null' for main branch)"
 // @Param        include_deleted query boolean false "Include soft-deleted objects"
 // @Param        fields query string false "Comma-separated property fields to include in response (projection)"
+// @Param        exclude_fields query string false "Comma-separated property fields to exclude from the response (applied after include)"
 // @Param        include_total query boolean false "Set to false to skip the exact total count and omit the 'total' field (default: true). The count is the latency floor for very large projects; cursor-only callers should opt out."
 // @Param        X-Project-ID header string true "Project ID"
 // @Success      200 {object} map[string]interface{} "Paginated list with cursor"

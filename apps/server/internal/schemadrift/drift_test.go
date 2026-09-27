@@ -190,15 +190,20 @@ func checkUnexportedTables(t *testing.T, schema map[string]map[string]schemaColu
 	if err != nil {
 		t.Fatalf("census for unexported models: %v", err)
 	}
+	byIdentity := map[string]censusModel{}
+	for _, m := range c {
+		byIdentity[m.Identity()] = m
+	}
 
-	for table, reason := range censusExclusions {
-		m, ok := c[table]
+	for id, reason := range censusExclusions {
+		m, ok := byIdentity[id]
 		if !ok {
-			t.Fatalf("excluded table %s (%s) not found by census", table, reason)
+			t.Fatalf("excluded model %s (%s) not found by census", id, reason)
 		}
+		table := m.Table
 		cols, ok := schema[table]
 		if !ok {
-			t.Errorf("excluded table %s (%s) is missing from the migrated schema", table, reason)
+			t.Errorf("excluded model %s (%s) table %s is missing from the migrated schema", id, reason, table)
 			continue
 		}
 		used := map[string]bool{}

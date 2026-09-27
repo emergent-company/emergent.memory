@@ -795,19 +795,6 @@ definitions:
     - cancelled
     - cancelling
     type: string
-    x-enum-comments:
-      RunStatusCancelling: 'ACP two-step cancel: intent acknowledged, awaiting execution
-        stop'
-      RunStatusQueued: enqueued, waiting for a worker
-    x-enum-descriptions:
-    - enqueued, waiting for a worker
-    - ""
-    - ""
-    - ""
-    - ""
-    - ""
-    - ""
-    - 'ACP two-step cancel: intent acknowledged, awaiting execution stop'
     x-enum-varnames:
     - RunStatusQueued
     - RunStatusRunning
@@ -971,6 +958,12 @@ definitions:
         items:
           type: string
         type: array
+      provider:
+        description: |-
+          Provider is the provider instance slug that serves Name. When empty, the
+          project's default instance for the dialect is used. This makes the model
+          identity structured (provider + model) rather than a single string.
+        type: string
       temperature:
         type: number
     type: object
@@ -1345,6 +1338,16 @@ definitions:
         type: array
     required:
     - scopes
+    type: object
+  domain_apitoken.createDeviceTokenRequest:
+    properties:
+      name:
+        type: string
+    type: object
+  domain_apitoken.createWebhookTriggerTokenRequest:
+    properties:
+      name:
+        type: string
     type: object
   domain_authinfo.IssuerResponse:
     properties:
@@ -4584,7 +4587,11 @@ definitions:
         type: string
       embeddingModel:
         type: string
+      embeddingProviderSlug:
+        type: string
       generativeModel:
+        type: string
+      generativeProviderSlug:
         type: string
       updatedAt:
         type: string
@@ -5205,7 +5212,9 @@ definitions:
       projectId:
         type: string
       provider:
-        $ref: '#/definitions/domain_provider.ProviderType'
+        $ref: '#/definitions/domain_provider.ProviderDialect'
+      providerSlug:
+        type: string
       textInputPrice:
         type: number
       updatedAt:
@@ -5232,7 +5241,9 @@ definitions:
       projectId:
         type: string
       provider:
-        $ref: '#/definitions/domain_provider.ProviderType'
+        $ref: '#/definitions/domain_provider.ProviderDialect'
+      slug:
+        type: string
       updatedAt:
         type: string
     type: object
@@ -5253,10 +5264,24 @@ definitions:
       location:
         type: string
       provider:
-        $ref: '#/definitions/domain_provider.ProviderType'
+        $ref: '#/definitions/domain_provider.ProviderDialect'
+      slug:
+        type: string
       updatedAt:
         type: string
     type: object
+  domain_provider.ProviderDialect:
+    enum:
+    - google
+    - google-vertex
+    - openai
+    - deepseek
+    type: string
+    x-enum-varnames:
+    - ProviderGoogleAI
+    - ProviderVertexAI
+    - ProviderOpenAI
+    - ProviderDeepSeek
   domain_provider.ProviderPricing:
     properties:
       audioInputPrice:
@@ -5355,6 +5380,11 @@ definitions:
         type: number
       provider:
         $ref: '#/definitions/domain_provider.ProviderType'
+      providerSlug:
+        description: |-
+          ProviderSlug identifies the provider instance. When empty, Provider is
+          used as the slug (the default instance).
+        type: string
       textInputPrice:
         type: number
       videoInputPrice:
@@ -5375,6 +5405,11 @@ definitions:
       location:
         type: string
       serviceAccountJson:
+        type: string
+      slug:
+        description: |-
+          Slug optionally names the provider instance. When empty the slug
+          defaults to the dialect name, with a numeric suffix on collision.
         type: string
     type: object
   domain_provider.UsageSummaryResponse:
@@ -8259,7 +8294,7 @@ info:
   license:
     name: Proprietary
   title: Memory API
-  version: 0.82.0
+  version: 0.82.2
 paths:
   /.well-known/oauth-protected-resource:
     get:
@@ -10030,6 +10065,8 @@ paths:
   /api/diagnostics:
     get:
       responses: {}
+      security:
+      - bearerAuth: []
   /api/documents:
     delete:
       consumes:
@@ -12178,6 +12215,11 @@ paths:
         in: query
         name: fields
         type: string
+      - description: Comma-separated property fields to exclude from the response
+          (applied after include)
+        in: query
+        name: exclude_fields
+        type: string
       - description: 'Set to false to skip the exact total count and omit the ''total''
           field (default: true). The count is the latency floor for very large projects;
           cursor-only callers should opt out.'
@@ -12953,6 +12995,23 @@ paths:
       summary: Traverse graph from root nodes
       tags:
       - graph
+  /api/health/scope-authority:
+    get:
+      description: Returns the scope-authority posture (token-scope trust, permissive
+        userinfo all-grant, introspection status). Authenticated only.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: scope-authority posture
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - bearerAuth: []
+      summary: Get scope-authority posture
+      tags:
+      - health
   /api/invites:
     post:
       consumes:
@@ -13316,12 +13375,13 @@ paths:
       - mcp
   /api/metrics/jobs:
     get:
-      description: Returns processing pipeline metrics for all job queues. Project-scoped
-        tokens see only their project's data. Account-level tokens see all projects
-        (optionally filtered by project_id query param).
+      description: Returns processing pipeline metrics. The effective project is resolved
+        server-side (project token binding or X-Project-ID header) and validated against
+        membership; project_id is a filter only and cannot widen access. An instance-wide
+        aggregate (no project context) requires superadmin_full.
       parameters:
-      - description: Filter by project ID (account-level tokens only; ignored for
-          project-scoped tokens)
+      - description: Filter by project ID (must match the caller's project, or any
+          project for a superadmin_full aggregate)
         in: query
         name: project_id
         type: string
@@ -13336,6 +13396,10 @@ paths:
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
       security:
       - bearerAuth: []
       summary: Get job queue metrics
@@ -13343,7 +13407,8 @@ paths:
       - metrics
   /api/metrics/scheduler:
     get:
-      description: Returns metrics for scheduled background tasks
+      description: Returns metrics for scheduled background tasks (instance-wide;
+        superadmin_full only)
       produces:
       - application/json
       responses:
@@ -13354,6 +13419,10 @@ paths:
             type: object
         "401":
           description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
       security:
@@ -13870,6 +13939,14 @@ paths:
           description: Invalid organization ID
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "404":
           description: Organization not found
           schema:
@@ -13900,6 +13977,14 @@ paths:
             $ref: '#/definitions/domain_orgs.Org'
         "400":
           description: Invalid organization ID
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "404":
@@ -13947,6 +14032,10 @@ paths:
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "404":
           description: Organization not found
           schema:
@@ -13980,6 +14069,10 @@ paths:
             type: array
         "401":
           description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "500":
@@ -15083,6 +15176,48 @@ paths:
       summary: Enable an agent
       tags:
       - agents
+  /api/projects/{projectId}/device-tokens:
+    post:
+      consumes:
+      - application/json
+      description: Mints a scoped per-device credential (device:api marker + read-only
+        scopes) for a project. Returns the full token value once.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Device credential request (name only)
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_apitoken.createDeviceTokenRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Device credential created (includes full token value)
+          schema:
+            $ref: '#/definitions/domain_apitoken.CreateApiTokenResponseDTO'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Create device credential
+      tags:
+      - api-tokens
   /api/projects/{projectId}/invites:
     get:
       description: Returns all invitations (pending, accepted, declined, revoked)
@@ -15670,6 +15805,48 @@ paths:
       security:
       - bearerAuth: []
       summary: Regenerate API token
+      tags:
+      - api-tokens
+  /api/projects/{projectId}/webhook-trigger-tokens:
+    post:
+      consumes:
+      - application/json
+      description: Mints a scoped webhook trigger credential (webhook:trigger marker
+        + ceiling) for a project. Returns the full token value once.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Webhook trigger credential request (name only)
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_apitoken.createWebhookTriggerTokenRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Webhook trigger credential created (includes full token value)
+          schema:
+            $ref: '#/definitions/domain_apitoken.CreateApiTokenResponseDTO'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Create webhook trigger credential
       tags:
       - api-tokens
   /api/projects/current:
@@ -16264,6 +16441,10 @@ paths:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "401":
           description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Schema not visible to this project
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "500":
@@ -16938,7 +17119,7 @@ paths:
       - skills
   /api/skills/{id}:
     delete:
-      description: Delete a skill by ID
+      description: Delete a global skill by ID. Superadmin_full only.
       parameters:
       - description: Skill ID (UUID)
         in: path
@@ -16958,13 +17139,17 @@ paths:
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "404":
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
       security:
       - bearerAuth: []
-      summary: Delete a skill
+      summary: Delete a global skill
       tags:
       - skills
     get:
@@ -17002,8 +17187,8 @@ paths:
     patch:
       consumes:
       - application/json
-      description: Partially update a skill. Regenerates embedding if description
-        changes.
+      description: Partially update a global skill. Superadmin_full only. Regenerates
+        embedding if description changes.
       parameters:
       - description: Skill ID (UUID)
         in: path
@@ -17031,13 +17216,17 @@ paths:
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "404":
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
       security:
       - bearerAuth: []
-      summary: Update a skill
+      summary: Update a global skill
       tags:
       - skills
   /api/superadmin/database-backups:
@@ -18487,8 +18676,8 @@ paths:
     get:
       consumes:
       - application/json
-      description: Proxies Tempo's trace search API, returning recent traces matching
-        optional filters. Returns 503 when tracing is not enabled.
+      description: Proxies Tempo's trace search API, scoped to the caller's project.
+        Returns 503 when tracing is not enabled.
       parameters:
       - description: Maximum number of traces to return
         in: query
@@ -18514,9 +18703,9 @@ paths:
         in: query
         name: end
         type: string
-      - description: Scope search to a project by ID (sets a TraceQL project filter)
+      - description: TraceQL query (project predicate is enforced server-side)
         in: query
-        name: project_id
+        name: q
         type: string
       produces:
       - application/json
@@ -18550,8 +18739,8 @@ paths:
     get:
       consumes:
       - application/json
-      description: Proxies Tempo's trace retrieval API, returning the full span tree
-        for a trace. Returns 503 when tracing is not enabled.
+      description: Proxies Tempo's trace retrieval API, verifying the trace belongs
+        to the caller's project. Returns 503 when tracing is not enabled.
       parameters:
       - description: Trace ID
         in: path
@@ -18581,6 +18770,11 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "404":
+          description: Trace not found
+          schema:
+            additionalProperties: true
+            type: object
         "503":
           description: Tracing not enabled
           schema:
@@ -18595,8 +18789,8 @@ paths:
     get:
       consumes:
       - application/json
-      description: Proxies Tempo's trace search API, returning recent traces matching
-        optional filters. Returns 503 when tracing is not enabled.
+      description: Proxies Tempo's trace search API, scoped to the caller's project.
+        Returns 503 when tracing is not enabled.
       parameters:
       - description: Maximum number of traces to return
         in: query
@@ -18622,9 +18816,9 @@ paths:
         in: query
         name: end
         type: string
-      - description: Scope search to a project by ID (sets a TraceQL project filter)
+      - description: TraceQL query (project predicate is enforced server-side)
         in: query
-        name: project_id
+        name: q
         type: string
       produces:
       - application/json
@@ -20663,6 +20857,8 @@ paths:
           schema:
             additionalProperties: true
             type: object
+      security:
+      - bearerAuth: []
       summary: Get debug information
       tags:
       - health
@@ -20694,6 +20890,10 @@ paths:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "404":
           description: Job not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: Job already in a terminal state (completed, failed, or cancelled)
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "500":

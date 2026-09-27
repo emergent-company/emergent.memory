@@ -2731,6 +2731,11 @@ const docTemplate = `{
         },
         "/api/diagnostics": {
             "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
                 "responses": {}
             }
         },
@@ -5421,6 +5426,12 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
+                        "type": "string",
+                        "description": "Comma-separated property fields to exclude from the response (applied after include)",
+                        "name": "exclude_fields",
+                        "in": "query"
+                    },
+                    {
                         "type": "boolean",
                         "description": "Set to false to skip the exact total count and omit the 'total' field (default: true). The count is the latency floor for very large projects; cursor-only callers should opt out.",
                         "name": "include_total",
@@ -7161,6 +7172,32 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/health/scope-authority": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the scope-authority posture (token-scope trust, permissive userinfo all-grant, introspection status). Authenticated only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "health"
+                ],
+                "summary": "Get scope-authority posture",
+                "responses": {
+                    "200": {
+                        "description": "scope-authority posture",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/api/invites": {
             "post": {
                 "security": [
@@ -7705,7 +7742,7 @@ const docTemplate = `{
                         "bearerAuth": []
                     }
                 ],
-                "description": "Returns processing pipeline metrics for all job queues. Project-scoped tokens see only their project's data. Account-level tokens see all projects (optionally filtered by project_id query param).",
+                "description": "Returns processing pipeline metrics. The effective project is resolved server-side (project token binding or X-Project-ID header) and validated against membership; project_id is a filter only and cannot widen access. An instance-wide aggregate (no project context) requires superadmin_full.",
                 "produces": [
                     "application/json"
                 ],
@@ -7716,7 +7753,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Filter by project ID (account-level tokens only; ignored for project-scoped tokens)",
+                        "description": "Filter by project ID (must match the caller's project, or any project for a superadmin_full aggregate)",
                         "name": "project_id",
                         "in": "query"
                     }
@@ -7733,6 +7770,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
                     }
                 }
             }
@@ -7744,7 +7787,7 @@ const docTemplate = `{
                         "bearerAuth": []
                     }
                 ],
-                "description": "Returns metrics for scheduled background tasks",
+                "description": "Returns metrics for scheduled background tasks (instance-wide; superadmin_full only)",
                 "produces": [
                     "application/json"
                 ],
@@ -7762,6 +7805,12 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -8537,6 +8586,18 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
                     "404": {
                         "description": "Organization not found",
                         "schema": {
@@ -8586,6 +8647,18 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Invalid organization ID",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -8658,6 +8731,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
                     "404": {
                         "description": "Organization not found",
                         "schema": {
@@ -8709,6 +8788,12 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -10401,6 +10486,70 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/projects/{projectId}/device-tokens": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Mints a scoped per-device credential (device:api marker + read-only scopes) for a project. Returns the full token value once.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "api-tokens"
+                ],
+                "summary": "Create device credential",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Device credential request (name only)",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_apitoken.createDeviceTokenRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Device credential created (includes full token value)",
+                        "schema": {
+                            "$ref": "#/definitions/domain_apitoken.CreateApiTokenResponseDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/projects/{projectId}/invites": {
             "get": {
                 "security": [
@@ -11296,6 +11445,70 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/projects/{projectId}/webhook-trigger-tokens": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Mints a scoped webhook trigger credential (webhook:trigger marker + ceiling) for a project. Returns the full token value once.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "api-tokens"
+                ],
+                "summary": "Create webhook trigger credential",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Webhook trigger credential request (name only)",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_apitoken.createWebhookTriggerTokenRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Webhook trigger credential created (includes full token value)",
+                        "schema": {
+                            "$ref": "#/definitions/domain_apitoken.CreateApiTokenResponseDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/schema-registry/projects/{projectId}": {
             "get": {
                 "security": [
@@ -11971,6 +12184,12 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Schema not visible to this project",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -13238,14 +13457,14 @@ const docTemplate = `{
                         "bearerAuth": []
                     }
                 ],
-                "description": "Delete a skill by ID",
+                "description": "Delete a global skill by ID. Superadmin_full only.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "skills"
                 ],
-                "summary": "Delete a skill",
+                "summary": "Delete a global skill",
                 "parameters": [
                     {
                         "type": "string",
@@ -13271,6 +13490,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
                         "schema": {
@@ -13285,7 +13510,7 @@ const docTemplate = `{
                         "bearerAuth": []
                     }
                 ],
-                "description": "Partially update a skill. Regenerates embedding if description changes.",
+                "description": "Partially update a global skill. Superadmin_full only. Regenerates embedding if description changes.",
                 "consumes": [
                     "application/json"
                 ],
@@ -13295,7 +13520,7 @@ const docTemplate = `{
                 "tags": [
                     "skills"
                 ],
-                "summary": "Update a skill",
+                "summary": "Update a global skill",
                 "parameters": [
                     {
                         "type": "string",
@@ -13329,6 +13554,12 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -15544,7 +15775,7 @@ const docTemplate = `{
                         "bearerAuth": []
                     }
                 ],
-                "description": "Proxies Tempo's trace search API, returning recent traces matching optional filters. Returns 503 when tracing is not enabled.",
+                "description": "Proxies Tempo's trace search API, scoped to the caller's project. Returns 503 when tracing is not enabled.",
                 "consumes": [
                     "application/json"
                 ],
@@ -15594,8 +15825,8 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Scope search to a project by ID (sets a TraceQL project filter)",
-                        "name": "project_id",
+                        "description": "TraceQL query (project predicate is enforced server-side)",
+                        "name": "q",
                         "in": "query"
                     }
                 ],
@@ -15638,7 +15869,7 @@ const docTemplate = `{
                         "bearerAuth": []
                     }
                 ],
-                "description": "Proxies Tempo's trace search API, returning recent traces matching optional filters. Returns 503 when tracing is not enabled.",
+                "description": "Proxies Tempo's trace search API, scoped to the caller's project. Returns 503 when tracing is not enabled.",
                 "consumes": [
                     "application/json"
                 ],
@@ -15688,8 +15919,8 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Scope search to a project by ID (sets a TraceQL project filter)",
-                        "name": "project_id",
+                        "description": "TraceQL query (project predicate is enforced server-side)",
+                        "name": "q",
                         "in": "query"
                     }
                 ],
@@ -15732,7 +15963,7 @@ const docTemplate = `{
                         "bearerAuth": []
                     }
                 ],
-                "description": "Proxies Tempo's trace retrieval API, returning the full span tree for a trace. Returns 503 when tracing is not enabled.",
+                "description": "Proxies Tempo's trace retrieval API, verifying the trace belongs to the caller's project. Returns 503 when tracing is not enabled.",
                 "consumes": [
                     "application/json"
                 ],
@@ -15775,6 +16006,13 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "Insufficient permissions",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Trace not found",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -18836,6 +19074,11 @@ const docTemplate = `{
         },
         "/debug": {
             "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
                 "description": "Returns debug information including memory stats and database pool stats (development only)",
                 "consumes": [
                     "application/json"
@@ -19094,6 +19337,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Job not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Job already in a terminal state (completed, failed, or cancelled)",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -21643,20 +21892,6 @@ const docTemplate = `{
                 "cancelled",
                 "cancelling"
             ],
-            "x-enum-comments": {
-                "RunStatusCancelling": "ACP two-step cancel: intent acknowledged, awaiting execution stop",
-                "RunStatusQueued": "enqueued, waiting for a worker"
-            },
-            "x-enum-descriptions": [
-                "enqueued, waiting for a worker",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "ACP two-step cancel: intent acknowledged, awaiting execution stop"
-            ],
             "x-enum-varnames": [
                 "RunStatusQueued",
                 "RunStatusRunning",
@@ -21873,6 +22108,10 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "provider": {
+                    "description": "Provider is the provider instance slug that serves Name. When empty, the\nproject's default instance for the dialect is used. This makes the model\nidentity structured (provider + model) rather than a single string.",
+                    "type": "string"
                 },
                 "temperature": {
                     "type": "number"
@@ -22392,6 +22631,22 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "domain_apitoken.createDeviceTokenRequest": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_apitoken.createWebhookTriggerTokenRequest": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
                 }
             }
         },
@@ -27110,7 +27365,13 @@ const docTemplate = `{
                 "embeddingModel": {
                     "type": "string"
                 },
+                "embeddingProviderSlug": {
+                    "type": "string"
+                },
                 "generativeModel": {
+                    "type": "string"
+                },
+                "generativeProviderSlug": {
                     "type": "string"
                 },
                 "updatedAt": {
@@ -28026,7 +28287,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "provider": {
-                    "$ref": "#/definitions/domain_provider.ProviderType"
+                    "$ref": "#/definitions/domain_provider.ProviderDialect"
+                },
+                "providerSlug": {
+                    "type": "string"
                 },
                 "textInputPrice": {
                     "type": "number"
@@ -28067,7 +28331,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "provider": {
-                    "$ref": "#/definitions/domain_provider.ProviderType"
+                    "$ref": "#/definitions/domain_provider.ProviderDialect"
+                },
+                "slug": {
+                    "type": "string"
                 },
                 "updatedAt": {
                     "type": "string"
@@ -28099,12 +28366,30 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "provider": {
-                    "$ref": "#/definitions/domain_provider.ProviderType"
+                    "$ref": "#/definitions/domain_provider.ProviderDialect"
+                },
+                "slug": {
+                    "type": "string"
                 },
                 "updatedAt": {
                     "type": "string"
                 }
             }
+        },
+        "domain_provider.ProviderDialect": {
+            "type": "string",
+            "enum": [
+                "google",
+                "google-vertex",
+                "openai",
+                "deepseek"
+            ],
+            "x-enum-varnames": [
+                "ProviderGoogleAI",
+                "ProviderVertexAI",
+                "ProviderOpenAI",
+                "ProviderDeepSeek"
+            ]
         },
         "domain_provider.ProviderPricing": {
             "type": "object",
@@ -28252,6 +28537,10 @@ const docTemplate = `{
                 "provider": {
                     "$ref": "#/definitions/domain_provider.ProviderType"
                 },
+                "providerSlug": {
+                    "description": "ProviderSlug identifies the provider instance. When empty, Provider is\nused as the slug (the default instance).",
+                    "type": "string"
+                },
                 "textInputPrice": {
                     "type": "number"
                 },
@@ -28282,6 +28571,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "serviceAccountJson": {
+                    "type": "string"
+                },
+                "slug": {
+                    "description": "Slug optionally names the provider instance. When empty the slug\ndefaults to the dialect name, with a numeric suffix on collision.",
                     "type": "string"
                 }
             }
@@ -32552,7 +32845,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.82.0",
+	Version:          "0.82.2",
 	Host:             "localhost:5300",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},

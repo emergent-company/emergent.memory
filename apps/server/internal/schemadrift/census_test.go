@@ -8,76 +8,78 @@ import (
 	"github.com/uptrace/bun/dialect/pgdialect"
 )
 
-// censusExclusions names the tables that the census sees a model for but the
-// registry cannot reflect because the model is unexported. Each entry must name
-// its reason; a table here is still checked at name level by the DB-backed test
-// (see drift_test.go), so it is not silently exempt.
-var censusExclusions = map[string]string{
-	"kb.auth_introspection_cache": "unexported model pkg/auth.introspectionCacheEntry; cannot be referenced cross-package",
-	"kb.embedding_cache":          "unexported model domain/extraction.embeddingCacheRow; cannot be referenced cross-package",
-}
-
-// registryTables returns the set of tables covered by the explicit model
-// registry, resolved through bun's own dialect so it matches runtime.
-func registryTables(t *testing.T) []string {
+// registryIdentities returns the sorted set of model identities covered by the
+// explicit model registry, resolved through bun's own dialect.
+func registryIdentities(t *testing.T) []string {
 	t.Helper()
 	db := bun.NewDB(nil, pgdialect.New())
 	seen := map[string]bool{}
 	for _, mt := range reflectModels(db, models) {
-		seen[mt.qualified()] = true
+		seen[mt.Identity] = true
 	}
 	return sortedKeys(seen)
 }
 
 // TestRegistryCoversEveryModel proves the explicit registry in models.go is
-// complete: every bun model struct in the source tree (found by the census)
-// maps to a table that the registry covers, except the documented exclusions.
-// This closes the coverage gap that would otherwise let a newly added model
-// drift silently.
+// complete: every bun model struct in the source tree (found by the census),
+// keyed by model identity (import path + type name), must be registered or
+// explicitly excluded. Keying by identity — not table name — means two models
+// sharing a table are each checked independently, closing the gap where a
+// duplicate-table model slipped past the old table-keyed comparison.
 func TestRegistryCoversEveryModel(t *testing.T) {
 	c, err := census()
 	if err != nil {
 		t.Fatalf("census: %v", err)
 	}
+
 	censusSet := map[string]bool{}
-	for table := range c {
-		censusSet[table] = true
+	censusCount := 0
+	for _, m := range c {
+		censusSet[m.Identity()] = true
+		censusCount++
 	}
 
 	covered := map[string]bool{}
-	for _, table := range registryTables(t) {
-		covered[table] = true
+	for _, id := range registryIdentities(t) {
+		covered[id] = true
 	}
 
-	// Registry must not reference a table the census did not find (that would
-	// mean a registered model's table tag is not being parsed).
-	for table := range covered {
-		if !censusSet[table] {
-			t.Errorf("registry covers %s but the census found no model with that table tag", table)
+	// Registry must not reference a model the census did not find (that would
+	// mean a registered model's table tag is not being parsed, or its identity
+	// no longer resolves to a source struct).
+	for id := range covered {
+		if !censusSet[id] {
+			t.Errorf("registry covers model %s but the census found no such source struct", id)
 		}
 	}
 
-	// Every census table must be covered or explicitly excluded.
+	// Every census model must be registered or explicitly excluded.
 	var missing []string
-	for table := range censusSet {
-		if covered[table] {
+	for id := range censusSet {
+		if covered[id] {
 			continue
 		}
-		if _, ok := censusExclusions[table]; ok {
+		if _, ok := censusExclusions[id]; ok {
 			continue
 		}
-		missing = append(missing, table)
+		missing = append(missing, id)
 	}
 	sort.Strings(missing)
 
-	coveredTables := sortedKeys(covered)
-	t.Logf("models covered vs present: %d registered tables covered; %d tables found by census (exclusions: %d)",
-		len(coveredTables), len(censusSet), len(censusExclusions))
+	// Exclusions must be honest: each names a real census model (a stale entry
+	// that no longer matches any source struct would silently exempt nothing).
+	for id := range censusExclusions {
+		if !censusSet[id] {
+			t.Errorf("stale censusExclusions entry names no real source model: %s", id)
+		}
+	}
+
+	t.Logf("models covered vs present: %d registered models; %d models found by census (exclusions: %d)",
+		len(covered), censusCount, len(censusExclusions))
 
 	if len(missing) > 0 {
-		for _, table := range missing {
-			t.Errorf("model for table %s (%s.%s) is not registered in models.go and not excluded — add it or name its reason",
-				table, c[table].Pkg, c[table].Name)
+		for _, id := range missing {
+			t.Errorf("model %s is not registered in models.go and not excluded — add it or name its reason", id)
 		}
 	}
 }

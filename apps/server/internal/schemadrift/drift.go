@@ -39,9 +39,10 @@ type modelField struct {
 
 // modelTable is a bun model's table and its column-mapped fields.
 type modelTable struct {
-	Schema string
-	Name   string
-	Fields []modelField
+	Schema   string
+	Name     string
+	Identity string // fully-qualified type identity (import.path.TypeName)
+	Fields   []modelField
 }
 
 // qualified returns "schema.name".
@@ -56,8 +57,9 @@ func reflectModels(db *bun.DB, models []any) []modelTable {
 	for _, m := range models {
 		t := db.Table(reflect.TypeOf(m))
 		mt := modelTable{
-			Schema: t.Schema,
-			Name:   strings.TrimPrefix(t.Name, t.Schema+"."),
+			Schema:   t.Schema,
+			Name:     strings.TrimPrefix(t.Name, t.Schema+"."),
+			Identity: modelIdentity(m),
 		}
 		for _, f := range t.Fields {
 			mt.Fields = append(mt.Fields, modelField{
@@ -74,6 +76,18 @@ func reflectModels(db *bun.DB, models []any) []modelTable {
 		out = append(out, mt)
 	}
 	return out
+}
+
+// modelIdentity returns the fully-qualified type identity ("import.path.TypeName")
+// for a registered model (a typed nil pointer). It unwraps the pointer, then
+// joins reflect.Type.PkgPath() (the full import path) with the type name, which
+// is exactly what censusModel.Identity() derives from the source tree.
+func modelIdentity(m any) string {
+	t := reflect.TypeOf(m)
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	return t.PkgPath() + "." + t.Name()
 }
 
 // canHoldNull reports whether a bun field's Go type can scan a SQL NULL without
