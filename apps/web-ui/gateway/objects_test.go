@@ -206,7 +206,7 @@ func TestRenderObjectDetailSimilar(t *testing.T) {
 	// instead of rendering it inline, so a slow /similar cannot hold the render
 	// (issue #1096).
 	htmlDeferred := renderHTML(t, ObjectDetailPage(obj, nil, nil, nil, nil, nil, "", nil, nil, nil, nil))
-	for _, want := range []string{`hx-get="/objects/o1/similar"`, "Finding similar objects"} {
+	for _, want := range []string{`hx-get="/objects/o1/similar"`, "Finding similar objects", `hx-target="this"`} {
 		if !strings.Contains(htmlDeferred, want) {
 			t.Errorf("deferred similar placeholder missing %q", want)
 		}
@@ -725,6 +725,24 @@ func TestObjectsStatsDeferredCarriesBranch(t *testing.T) {
 	}))
 	if !strings.Contains(htmlMain, `hx-get="/objects/stats"`) {
 		t.Errorf("deferred stats URL should omit an empty branch, got:\n%s", htmlMain)
+	}
+}
+
+// TestObjectsStatsDeferredTargetsItself pins the swap-target regression: the
+// page shell's <main> carries hx-target="#main-content", which htmx inherits
+// into descendants (implicitInheritance=true). Without an explicit
+// hx-target="this" the deferred stats fetch would swap #main-content itself,
+// leaving the page showing only the three stat cards with the object browser
+// gone.
+func TestObjectsStatsDeferredTargetsItself(t *testing.T) {
+	html := renderHTML(t, ObjectsPage(objectsPageData{
+		Objects: []GraphObject{{ID: "o1", Type: "person", Key: "sam-lee"}},
+	}))
+	if !strings.Contains(html, `id="objects-stats"`) {
+		t.Errorf("deferred stats placeholder id missing, got:\n%s", html)
+	}
+	if !strings.Contains(html, `hx-target="this"`) {
+		t.Errorf("deferred stats placeholder must carry hx-target=\"this\" so it does not inherit #main-content, got:\n%s", html)
 	}
 }
 

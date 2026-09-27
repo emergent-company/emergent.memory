@@ -107,8 +107,14 @@ templ objectsStatsSection(s objectsStats) {
 // count stays branch-scoped. Keeping the object-count and embedding-progress
 // aggregates off the critical path means one slow call can no longer hold the
 // whole browse page (issue #1098).
+//
+// hx-target="this" is required, not optional: the page shell's <main> carries
+// hx-target="#main-content" and htmx's implicit attribute inheritance
+// (implicitInheritance=true) would otherwise apply that target here, so the
+// swap would replace the whole main-content region with the stats row instead
+// of just this placeholder.
 templ objectsStatsDeferred(branchID string) {
-	<div id="objects-stats" hx-get={ objectsStatsURL(branchID) } hx-trigger="load" hx-swap="outerHTML">
+	<div id="objects-stats" hx-get={ objectsStatsURL(branchID) } hx-trigger="load" hx-target="this" hx-swap="outerHTML">
 		<div class="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
 			@ui.StatCard(ui.StatCardProps{
 				Label:     "objects",
@@ -935,11 +941,16 @@ templ objectSimilarObjects(obj *GraphObject, similar []SimilarObject) {
 // triggers the deferred /objects/:id/similar fetch, which swaps the real results
 // in after paint. Keeping the optional vector-similarity read off the critical
 // path means a slow /similar can no longer hold the object page (issue #1096).
+//
+// hx-target="this" overrides the hx-target="#main-content" inherited from the
+// page shell's <main> (htmx implicitInheritance=true); without it the swap
+// would replace the whole main-content region with the similar-objects card.
 templ objectSimilarObjectsDeferred(obj *GraphObject) {
 	<div
 		id="object-similar"
 		hx-get={ templ.URL("/objects/" + url.PathEscape(obj.ID) + "/similar") }
 		hx-trigger="load"
+		hx-target="this"
 		hx-swap="outerHTML"
 	>
 		@ui.Section("Similar objects", ui.SectionProps{
