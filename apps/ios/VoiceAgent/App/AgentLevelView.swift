@@ -93,5 +93,4 @@ struct AgentLevelView: View {
             .onAppear { Log.nav.info("sessions tab appear") }
             .tabItem { Label("sessions.title", systemImage: "clock") }
     }
-
 }

@@ -31,7 +31,9 @@ struct MarkdownTable: Equatable {
     let headers: [[MarkdownInline]]
     let rows: [[[MarkdownInline]]]
 
-    var columnCount: Int { headers.count }
+    var columnCount: Int {
+        headers.count
+    }
 }
 
 /// An inline element inside a paragraph/heading/etc.
@@ -151,7 +153,9 @@ private func taskMarkerForItem(_ item: Markdown.ListItem, lines: [String]) -> Bo
         text = text.dropFirst()
     } else {
         var i = text.startIndex
-        while i < text.endIndex, text[i].isNumber { i = text.index(after: i) }
+        while i < text.endIndex, text[i].isNumber {
+            i = text.index(after: i)
+        }
         if i > text.startIndex, i < text.endIndex, text[i] == "." || text[i] == ")" {
             text = text[text.index(after: i)...]
         } else {

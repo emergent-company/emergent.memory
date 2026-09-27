@@ -11,7 +11,7 @@ enum MarkdownSyntaxHighlighter {
     /// Splash 0.16 ships only the Swift grammar, so it is used for every
     /// language; unrecognized languages simply tokenize conservatively
     /// instead of failing.
-    static func highlight(_ code: String, language: String?) -> NSAttributedString? {
+    static func highlight(_ code: String, language _: String?) -> NSAttributedString? {
         let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         let theme = Splash.Theme.midnight(withFont: Splash.Font(size: 13))

@@ -23,8 +23,8 @@ struct MemoryQRScannerView: View {
     }
 
     private enum ScanPhase {
-        case requesting  // camera permission not granted yet
-        case denied      // permission denied, or no camera available
+        case requesting // camera permission not granted yet
+        case denied // permission denied, or no camera available
         case scanning
     }
 
@@ -68,10 +68,10 @@ struct MemoryQRScannerView: View {
             AVCaptureDevice.requestAccess(for: .video) { granted in
                 Task { @MainActor in
                     if granted {
-                        self.setupSession()
+                        setupSession()
                     } else {
-                        self.showOpenSettings = true
-                        self.phase = .denied
+                        showOpenSettings = true
+                        phase = .denied
                     }
                 }
             }
@@ -269,7 +269,6 @@ struct MemoryQRScannerView: View {
         UIApplication.shared.open(url)
     }
 
-    @ViewBuilder
     private func statusNote() -> some View {
         HStack(spacing: 2 * .grid) {
             Image(systemName: statusIcon)
@@ -283,19 +282,29 @@ struct MemoryQRScannerView: View {
     }
 
     private var statusIcon: String {
-        if configured { return "checkmark.circle.fill" }
-        if hasDecodeError { return "exclamationmark.triangle.fill" }
+        if configured {
+            return "checkmark.circle.fill"
+        }
+        if hasDecodeError {
+            return "exclamationmark.triangle.fill"
+        }
         return "qrcode.viewfinder"
     }
 
     private var statusColor: Color {
-        if configured { return .fgSuccess }
-        if hasDecodeError { return .fgSerious }
+        if configured {
+            return .fgSuccess
+        }
+        if hasDecodeError {
+            return .fgSerious
+        }
         return .fg3
     }
 
     private var statusText: String {
-        if configured { return NSLocalizedString("qr.configured", comment: "") }
+        if configured {
+            return NSLocalizedString("qr.configured", comment: "")
+        }
         if hasDecodeError {
             return setupErrorMessage ?? NSLocalizedString("qr.decode.failure", comment: "")
         }
@@ -318,9 +327,9 @@ struct MemoryQRScannerView: View {
             /// Metadata callbacks arrive on the delegate queue (a background
             /// thread), so SwiftUI state is only touched via the main actor.
             nonisolated func metadataOutput(
-                _ output: AVCaptureMetadataOutput,
+                _: AVCaptureMetadataOutput,
                 didOutput metadataObjects: [AVMetadataObject],
-                from connection: AVCaptureConnection
+                from _: AVCaptureConnection
             ) {
                 guard
                     let code = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
@@ -350,14 +359,19 @@ struct MemoryQRScannerView: View {
             return view
         }
 
-        func updateUIView(_ uiView: PreviewView, context: Context) {
+        func updateUIView(_ uiView: PreviewView, context _: Context) {
             uiView.videoPreviewLayer.session = session
         }
     }
 
     private final class PreviewView: UIView {
-        override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
-        var videoPreviewLayer: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
+        override class var layerClass: AnyClass {
+            AVCaptureVideoPreviewLayer.self
+        }
+
+        var videoPreviewLayer: AVCaptureVideoPreviewLayer {
+            layer as! AVCaptureVideoPreviewLayer
+        }
     }
 }
 

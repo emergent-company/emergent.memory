@@ -30,11 +30,11 @@ struct TextInteractionView: View {
                     keyboardFocus = true
                 })
                 #if os(macOS)
-                    .frame(maxWidth: 128 * .grid)
+                .frame(maxWidth: 128 * .grid)
                 #else
-                    .frame(maxWidth: horizontalSizeClass == .regular ? 128 * .grid : .infinity)
+                .frame(maxWidth: horizontalSizeClass == .regular ? 128 * .grid : .infinity)
                 #endif
-                    .blurredTop()
+                .blurredTop()
             }
             #if os(iOS)
             .contentShape(Rectangle())

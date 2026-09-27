@@ -15,7 +15,9 @@ enum ChatUIPropValue: Equatable {
 
     /// The value when it is a plain string (used for ids/actions/labels).
     var stringValue: String? {
-        if case let .string(value) = self { return value }
+        if case let .string(value) = self {
+            return value
+        }
         return nil
     }
 
@@ -25,7 +27,9 @@ enum ChatUIPropValue: Equatable {
         switch self {
         case let .string(value): return value
         case let .number(value):
-            if value.rounded() == value, abs(value) < 1e15 { return String(Int(value)) }
+            if value.rounded() == value, abs(value) < 1e15 {
+                return String(Int(value))
+            }
             return String(value)
         case let .bool(value): return value ? "true" : "false"
         case .null: return ""
@@ -99,10 +103,14 @@ struct ChatUIComponent: Identifiable, Equatable {
     let props: [String: ChatUIPropValue]
 
     /// A prop's raw value, or `nil` when absent.
-    func value(_ key: String) -> ChatUIPropValue? { props[key] }
+    func value(_ key: String) -> ChatUIPropValue? {
+        props[key]
+    }
 
     /// A prop's display text, or `nil` when absent.
-    func text(_ key: String) -> String? { props[key]?.displayText }
+    func text(_ key: String) -> String? {
+        props[key]?.displayText
+    }
 
     /// Every prop except identity, in stable key order (summary fallback).
     var extraProps: [(String, String)] {
@@ -113,15 +121,25 @@ struct ChatUIComponent: Identifiable, Equatable {
     }
 
     /// Rows from an array-of-objects prop (entity properties/relationships).
-    func rows(_ key: String) -> [(String, String)] { props[key]?.rows ?? [] }
+    func rows(_ key: String) -> [(String, String)] {
+        props[key]?.rows ?? []
+    }
 }
 
 extension ChatUIComponent: Decodable {
     private struct DynamicKey: CodingKey {
         let stringValue: String
-        init?(stringValue: String) { self.stringValue = stringValue }
-        var intValue: Int? { nil }
-        init?(intValue: Int) { nil }
+        init?(stringValue: String) {
+            self.stringValue = stringValue
+        }
+
+        var intValue: Int? {
+            nil
+        }
+
+        init?(intValue _: Int) {
+            nil
+        }
     }
 
     init(from decoder: Decoder) throws {
@@ -217,5 +235,7 @@ struct ChatUISurface: Identifiable, Equatable {
         self.submittedActions = submittedActions
     }
 
-    var hasContent: Bool { !components.isEmpty }
+    var hasContent: Bool {
+        !components.isEmpty
+    }
 }

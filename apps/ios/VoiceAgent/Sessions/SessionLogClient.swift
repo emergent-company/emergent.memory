@@ -44,7 +44,9 @@ struct SessionSummary: Identifiable, Codable, Equatable, Sendable {
     /// First user text of the session (truncated server-side to ~160 chars).
     let preview: String?
 
-    var id: String { room }
+    var id: String {
+        room
+    }
 
     enum CodingKeys: String, CodingKey {
         case room, turns, preview
@@ -137,7 +139,8 @@ private struct SessionOutput: Decodable {
             return
         }
         if let single = try? decoder.singleValueContainer(),
-           let value = try? single.decode(String.self) {
+           let value = try? single.decode(String.self)
+        {
             text = value
             isError = false
             return
@@ -328,7 +331,6 @@ struct SessionLogClient: Sendable {
     private struct ErrorResponse: Decodable {
         let error: String
     }
-
 }
 
 /// A flexible JSON value used to salvage tool-call arguments/results that the

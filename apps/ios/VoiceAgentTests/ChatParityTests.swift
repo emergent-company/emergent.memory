@@ -1,11 +1,11 @@
 import Foundation
+@testable import Memory
 import SwiftUI
 import Testing
-@testable import Memory
 
 // MARK: - 1.2 / 1.3 / 1.4 / 1.5 — Markdown parsing
 
-@Suite struct MarkdownParserTests {
+struct MarkdownParserTests {
     @Test func parsesHeadingsParagraphsAndLists() {
         let md = """
         # Title
@@ -162,7 +162,7 @@ import Testing
 
 // MARK: - Syntax highlighting (1.3)
 
-@Suite struct MarkdownSyntaxHighlighterTests {
+struct MarkdownSyntaxHighlighterTests {
     @Test func highlightsSwiftCode() {
         let output = MarkdownSyntaxHighlighter.highlight("let x = 1", language: "swift")
         #expect(output != nil)
@@ -182,7 +182,7 @@ import Testing
 
 // MARK: - 3.1 — Chat event decoding
 
-@Suite struct ChatEventDecodingTests {
+struct ChatEventDecodingTests {
     @Test func decodesToolCall() {
         let json = #"{"type":"tool_call","id":"t1","tool":"web_search","arguments":"{\"q\":\"memory\"}"}"#
         guard let event = decodeChatEvent(json) else {
@@ -269,7 +269,7 @@ import Testing
 
 // MARK: - 3.2 / 3.4 — Activity store: correlation + accumulation
 
-@Suite struct ChatActivityStoreTests {
+struct ChatActivityStoreTests {
     @MainActor
     @Test func correlatesToolCallsAndResults() {
         let store = ChatActivityStore()
@@ -281,8 +281,8 @@ import Testing
             Issue.record("expected a live turn")
             return
         }
-        let toolIDs = turn.tools.map { $0.id }
-        let allRunning = turn.tools.allSatisfy { $0.isRunning }
+        let toolIDs = turn.tools.map(\.id)
+        let allRunning = turn.tools.allSatisfy(\.isRunning)
         #expect(toolIDs == ["t1", "t2"])
         #expect(allRunning)
 
@@ -383,7 +383,7 @@ import Testing
         #expect(store.turns.isEmpty)
     }
 
-    // 3.3 — a chip + expandable details are constructible from store data.
+    /// 3.3 — a chip + expandable details are constructible from store data.
     @MainActor
     @Test func liveToolChipRendersFromStoreData() {
         let store = ChatActivityStore()
@@ -402,7 +402,7 @@ import Testing
 
 // MARK: - 4.1 / 4.2 — Interactive cards
 
-@Suite struct InteractiveCardTests {
+struct InteractiveCardTests {
     @MainActor
     @Test func approvalCardShowsControlsThenAnsweredOutcome() {
         let request = ApprovalRequest(
@@ -471,7 +471,7 @@ import Testing
 
 // MARK: - 4.3 — Decision encoding
 
-@Suite struct ChatDecisionEncodingTests {
+struct ChatDecisionEncodingTests {
     @Test func encodesApproval() {
         guard let object = decisionObject(for: .approve(questionId: "q1")) else { return }
         #expect(object["type"] == "approval")
@@ -520,7 +520,7 @@ import Testing
 
 // MARK: - 5.1 / 5.2 / 5.3 — Typing indicator, stop, suggested prompts
 
-@Suite struct ComposerStateTests {
+struct ComposerStateTests {
     @MainActor
     @Test func typingIndicatorShowsUntilFirstReplyToken() {
         let store = ChatActivityStore()
@@ -577,7 +577,7 @@ import Testing
 
 // MARK: - 6.1 / 6.2 — A2UI surface decode, store merge, render
 
-@Suite struct ChatUISurfaceTests {
+struct ChatUISurfaceTests {
     @Test func decodesSurfaceMessages() {
         let json = #"""
         {"type":"ui","surfaceId":"s1","messages":[
@@ -685,7 +685,7 @@ import Testing
 
 // MARK: - 1.6 — Shared tool-call components
 
-@Suite struct ToolCallComponentTests {
+struct ToolCallComponentTests {
     @Test func rowAndCardRenderNameArgumentsResultAndError() {
         let ok = ToolCallInfo(id: "t1", name: "web_search", arguments: #"{"q":"x"}"#, result: "3 hits", isError: false)
         let failed = ToolCallInfo(id: "t2", name: "delete_file", arguments: #"{"p":"/x"}"#, result: "permission denied", isError: true)
