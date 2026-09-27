@@ -11,8 +11,13 @@ struct ApprovalRequest: Identifiable, Equatable {
     let arguments: String
     var decision: ApprovalDecision?
 
-    var id: String { questionId }
-    var isAnswered: Bool { decision != nil }
+    var id: String {
+        questionId
+    }
+
+    var isAnswered: Bool {
+        decision != nil
+    }
 }
 
 enum ApprovalDecision: Equatable {
@@ -31,7 +36,8 @@ struct QuestionRequest: Identifiable, Equatable {
     var submittedAnswer: String?
 
     init(questionId: String, question: String, interactionType: QuestionInteractionType,
-         options: [ChatQuestionOption], placeholder: String?, maxLength: Int?, submittedAnswer: String? = nil) {
+         options: [ChatQuestionOption], placeholder: String?, maxLength: Int?, submittedAnswer: String? = nil)
+    {
         self.questionId = questionId
         self.question = question
         self.interactionType = interactionType
@@ -41,8 +47,13 @@ struct QuestionRequest: Identifiable, Equatable {
         self.submittedAnswer = submittedAnswer
     }
 
-    var id: String { questionId }
-    var isAnswered: Bool { submittedAnswer != nil }
+    var id: String {
+        questionId
+    }
+
+    var isAnswered: Bool {
+        submittedAnswer != nil
+    }
 }
 
 // MARK: - Activity store
@@ -88,8 +99,12 @@ final class ChatActivityStore: ObservableObject {
 
         /// The worker is paused waiting on the user (card shown).
         var isWaitingOnUser: Bool {
-            if let approval, approval.decision == nil { return true }
-            if let question, question.submittedAnswer == nil { return true }
+            if let approval, approval.decision == nil {
+                return true
+            }
+            if let question, question.submittedAnswer == nil {
+                return true
+            }
             return false
         }
     }
@@ -111,7 +126,9 @@ final class ChatActivityStore: ObservableObject {
 
     // MARK: - Current-turn state
 
-    var liveTurn: Turn? { turns.last }
+    var liveTurn: Turn? {
+        turns.last
+    }
 
     /// True from a new user message until the first agent reply token arrives
     /// (drives the typing indicator and the stop button pre-reply).
@@ -259,7 +276,9 @@ final class ChatActivityStore: ObservableObject {
             }
             if let create = message.createSurface {
                 if let index = list.firstIndex(where: { $0.id == id }) {
-                    if let catalogId = create.catalogId { list[index].catalogId = catalogId }
+                    if let catalogId = create.catalogId {
+                        list[index].catalogId = catalogId
+                    }
                 } else {
                     list.append(ChatUISurface(id: id, catalogId: create.catalogId))
                 }

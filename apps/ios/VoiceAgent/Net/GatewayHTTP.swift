@@ -20,7 +20,9 @@ enum GatewayHTTP {
 
         let message: String
         let reason: Reason
-        var errorDescription: String? { message }
+        var errorDescription: String? {
+            message
+        }
     }
 
     static func send(

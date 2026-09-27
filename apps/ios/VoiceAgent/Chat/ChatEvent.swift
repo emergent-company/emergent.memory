@@ -79,7 +79,8 @@ struct ChatQuestionEvent: Equatable, Decodable {
 
     /// Internal memberwise initializer (decoding uses `init(from:)`).
     init(questionId: String, question: String, interactionType: QuestionInteractionType,
-         options: [ChatQuestionOption], placeholder: String?, maxLength: Int?) {
+         options: [ChatQuestionOption], placeholder: String?, maxLength: Int?)
+    {
         self.questionId = questionId
         self.question = question
         self.interactionType = interactionType
@@ -175,7 +176,8 @@ struct ChatDecisionPayload: Encodable, Equatable {
 
     init(type: String, questionId: String? = nil, surfaceId: String? = nil,
          action: String? = nil, surfaceAction: ChatUIAction? = nil,
-         message: String? = nil, answer: String? = nil) {
+         message: String? = nil, answer: String? = nil)
+    {
         self.type = type
         self.questionId = questionId
         self.surfaceId = surfaceId

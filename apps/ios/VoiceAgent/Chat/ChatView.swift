@@ -23,15 +23,15 @@ struct ChatView: View {
     /// Scroll anchor pinned at the bottom of the message list.
     private static let bottomAnchorID = "chat.bottom"
 
-    private var store: ChatActivityStore { controller.chatActivity }
+    private var store: ChatActivityStore {
+        controller.chatActivity
+    }
 
     var body: some View {
-        Group {
-            if session.messages.isEmpty {
-                emptyState()
-            } else {
-                messageList()
-            }
+        if session.messages.isEmpty {
+            emptyState()
+        } else {
+            messageList()
         }
     }
 
@@ -176,7 +176,6 @@ struct ChatView: View {
 
     /// Renders one turn's accumulated activity: thinking block, tool chips,
     /// then the interactive card.
-    @ViewBuilder
     private func turnActivity(_ turn: ChatActivityStore.Turn) -> some View {
         VStack(alignment: .leading, spacing: 1 * .grid) {
             if !turn.thinkingText.isEmpty {
@@ -207,7 +206,6 @@ struct ChatView: View {
 
     /// Live structured-UI surfaces streamed by the agent, rendered as native
     /// SwiftUI cards. Each component's actions round-trip over `lk.chat.decision`.
-    @ViewBuilder
     private func surfaceCards() -> some View {
         ForEach(store.surfaces.filter(\.hasContent)) { surface in
             ForEach(surface.components) { component in
@@ -235,12 +233,11 @@ struct ChatView: View {
     private func decideApproval(_ request: ApprovalRequest, _ decision: ApprovalDecision) {
         guard !request.isAnswered else { return }
         store.submitApproval(questionId: request.questionId, decision: decision)
-        let chatDecision: ChatDecision
-        switch decision {
+        let chatDecision: ChatDecision = switch decision {
         case .approve:
-            chatDecision = .approve(questionId: request.questionId)
+            .approve(questionId: request.questionId)
         case let .reject(reason):
-            chatDecision = .reject(questionId: request.questionId, reason: reason)
+            .reject(questionId: request.questionId, reason: reason)
         }
         Task { await controller.sendDecision(chatDecision) }
     }
@@ -310,7 +307,7 @@ private extension ReceivedMessage.Content {
         case let .agentTranscript(text),
              let .userTranscript(text),
              let .userInput(text):
-            return text
+            text
         }
     }
 }

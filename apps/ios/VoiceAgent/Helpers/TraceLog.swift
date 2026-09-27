@@ -14,13 +14,13 @@ enum TraceLog {
     nonisolated static let fileName = "memory-trace.jsonl"
 
     /// Serializes file appends so lines never interleave or tear.
-    nonisolated private static let queue = DispatchQueue(label: "com.emergent.memory.tracelog")
+    private nonisolated static let queue = DispatchQueue(label: "com.emergent.memory.tracelog")
     /// Stable per-install identity, read once. Same value as
     /// `MemoryConfig().participantIdentity` (and same `alfred.participantIdentity`
     /// key + `memory-ios-<UUID>` generation), but read directly from
     /// `UserDefaults` because `MemoryConfig`'s initializer is MainActor-isolated
     /// while `log` is called from nonisolated contexts.
-    nonisolated private static let identity: String = {
+    private nonisolated static let identity: String = {
         let key = "alfred.participantIdentity" // MemoryConfig.participantIdentityKey
         let defaults = UserDefaults.standard
         if let stored = defaults.string(forKey: key), !stored.isEmpty {
@@ -45,7 +45,9 @@ enum TraceLog {
             "room": room,
             "event": event,
         ]
-        for (key, value) in fields { record[key] = value }
+        for (key, value) in fields {
+            record[key] = value
+        }
 
         guard let data = try? JSONSerialization.data(withJSONObject: record),
               let line = String(data: data, encoding: .utf8) else { return }

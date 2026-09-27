@@ -87,7 +87,6 @@ struct SessionDetailView: View {
 
     // MARK: - Content
 
-    @ViewBuilder
     private var content: some View {
         ZStack {
             timeline
@@ -177,8 +176,8 @@ struct SessionDetailView: View {
 /// timeline rendering is unchanged.
 extension SessionRecord {
     var toolCallDisplay: [ToolCallInfo] {
-        let calls = self.calls ?? []
-        let outputs = self.outputs ?? []
+        let calls = calls ?? []
+        let outputs = outputs ?? []
         if calls.isEmpty {
             return outputs.enumerated().map { index, output in
                 ToolCallInfo(
@@ -208,7 +207,9 @@ private struct TurnBubble: View {
     let role: String
     let text: String
 
-    private var isUser: Bool { role == "user" }
+    private var isUser: Bool {
+        role == "user"
+    }
 
     var body: some View {
         VStack(alignment: isUser ? .trailing : .leading, spacing: 1 * .grid) {

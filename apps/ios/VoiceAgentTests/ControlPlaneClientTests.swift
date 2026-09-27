@@ -1,8 +1,8 @@
 import Foundation
-import Testing
 @testable import Memory
+import Testing
 
-@Suite struct ControlPlaneClientTests {
+struct ControlPlaneClientTests {
     @Test func baseURLComesFromApiBaseURL() {
         var config = MemoryConfig()
         config.apiBaseURL = "http://192.168.1.5:8081"

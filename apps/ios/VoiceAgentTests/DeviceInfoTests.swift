@@ -1,7 +1,7 @@
 import Foundation
+@testable import Memory
 import Testing
 import UIKit
-@testable import Memory
 
 /// Tests for the device self-introduction manifest sent during one-time setup
 /// (OpenSpec "device-self-introduction", iOS tasks 3.2/3.3/4.2).
@@ -9,7 +9,6 @@ import UIKit
 /// The suite is `@MainActor` because `DeviceInfo` snapshots UIKit/Foundation
 /// singletons (`UIDevice.current`, `Bundle.main`); the app target defaults new
 /// declarations to `MainActor` isolation.
-@Suite
 @MainActor
 struct DeviceInfoTests {
     // MARK: - DeviceInfo (tasks 3.2, 3.3)

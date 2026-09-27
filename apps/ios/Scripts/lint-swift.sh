@@ -6,14 +6,14 @@
 # unrelated tree (e.g. apps/connector.mac) can never be linted with the iOS
 # config even if it is staged or passed as an argument.
 #
-# The iOS app carries pre-existing SwiftFormat and SwiftLint debt, so whole-tree
-# enforcement of both would fail on untouched files. The two tools ratchet
-# differently:
+# SwiftFormat debt is fully paid down — the whole tree is format-clean — so any
+# touched file must stay clean. SwiftLint still carries pre-existing structural
+# debt, so whole-tree enforcement would fail on untouched files. The two tools
+# ratchet differently:
 #
 #   * SwiftFormat is checked only over the files that changed on this branch /
 #     in the working tree (or the explicit argument list). Touch a file and it
-#     must be format-clean; untouched debt is left alone so this PR does not
-#     land a mass reformat. See .swiftlint.baseline's sibling debt note below.
+#     must be format-clean.
 #   * SwiftLint runs over the WHOLE apps/ios tree with
 #     --baseline apps/ios/.swiftlint.baseline. The baseline records the current
 #     structural violations (long files/types/functions, cyclomatic
@@ -25,8 +25,8 @@
 #       swiftlint lint --write-baseline apps/ios/.swiftlint.baseline \
 #         --config apps/ios/.swiftlint.yml apps/ios
 #
-# Current recorded debt (see PR/commit): SwiftFormat 33/63 files require
-# formatting; SwiftLint 36 violations (32 warnings, 4 errors) in 13 files.
+# Current recorded debt (see PR/commit): SwiftFormat 0/63 files require
+# formatting; SwiftLint 35 violations (31 warnings, 4 errors) in 13 files.
 #
 # Usage:
 #   Scripts/lint-swift.sh [file ...]      # lint the given Swift files

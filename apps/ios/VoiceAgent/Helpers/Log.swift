@@ -11,9 +11,9 @@ enum Log {
     // `nonisolated`: the app builds with default MainActor isolation, but
     // some call sites are nonisolated (e.g. the token source's SDK callbacks).
     // `os.Logger` is Sendable, so the statics are safe to share.
-    nonisolated static let nav     = Logger(subsystem: "com.emergent.memory", category: "navigation")
+    nonisolated static let nav = Logger(subsystem: "com.emergent.memory", category: "navigation")
     nonisolated static let session = Logger(subsystem: "com.emergent.memory", category: "session")
-    nonisolated static let net     = Logger(subsystem: "com.emergent.memory", category: "network")
-    nonisolated static let agents  = Logger(subsystem: "com.emergent.memory", category: "agents")
-    nonisolated static let qr      = Logger(subsystem: "com.emergent.memory", category: "qr")
+    nonisolated static let net = Logger(subsystem: "com.emergent.memory", category: "network")
+    nonisolated static let agents = Logger(subsystem: "com.emergent.memory", category: "agents")
+    nonisolated static let qr = Logger(subsystem: "com.emergent.memory", category: "qr")
 }

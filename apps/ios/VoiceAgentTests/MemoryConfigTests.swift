@@ -1,11 +1,11 @@
 import Foundation
-import Testing
 @testable import Memory
+import Testing
 
-@Suite struct MemoryConfigTests {
-    @Test func buildDefaultsApply() {
+struct MemoryConfigTests {
+    @Test func buildDefaultsApply() throws {
         let suite = "MemoryConfigTests.defaults.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
+        let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
 
         let config = MemoryConfig(defaults: defaults)
@@ -14,9 +14,9 @@ import Testing
         #expect(config.apiKey == MemoryConfig.defaultAPIKey)
     }
 
-    @Test func saveAndReloadRoundTrips() {
+    @Test func saveAndReloadRoundTrips() throws {
         let suite = "MemoryConfigTests.roundtrip.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
+        let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
 
         var config = MemoryConfig(defaults: defaults)
@@ -31,9 +31,9 @@ import Testing
         #expect(reloaded.apiKey == "sekret")
     }
 
-    @Test func resetRestoresBuildDefaults() {
+    @Test func resetRestoresBuildDefaults() throws {
         let suite = "MemoryConfigTests.reset.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
+        let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
 
         var config = MemoryConfig(defaults: defaults)

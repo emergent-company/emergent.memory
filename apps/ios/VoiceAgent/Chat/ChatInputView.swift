@@ -12,7 +12,9 @@ struct ChatInputView: View {
     @FocusState.Binding var keyboardFocus: Bool
     @Binding var text: String
 
-    private var store: ChatActivityStore { controller.chatActivity }
+    private var store: ChatActivityStore {
+        controller.chatActivity
+    }
 
     init(keyboardFocus: FocusState<Bool>.Binding, text: Binding<String>) {
         _keyboardFocus = keyboardFocus
@@ -94,7 +96,7 @@ struct ChatInputView: View {
         #else
             .buttonStyle(RoundButtonStyle())
         #endif
-        .accessibilityLabel("chat.send")
+            .accessibilityLabel("chat.send")
     }
 
     /// Stop/interrupt while a reply is generating: sends `lk.chat.interrupt`
@@ -114,9 +116,9 @@ struct ChatInputView: View {
         .padding([.bottom, .trailing], 2 * .grid)
         #endif
         #if os(visionOS)
-            .buttonStyle(.plain)
+        .buttonStyle(.plain)
         #else
-            .buttonStyle(StopButtonStyle())
+        .buttonStyle(StopButtonStyle())
         #endif
         .accessibilityLabel("chat.stop")
     }

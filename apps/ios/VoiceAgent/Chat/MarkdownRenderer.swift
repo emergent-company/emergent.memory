@@ -26,7 +26,6 @@ struct MarkdownRenderer: View {
 
     // MARK: Blocks
 
-    @ViewBuilder
     private func renderBlocks(_ blocks: [MarkdownBlock], spacing: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: spacing) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
@@ -38,26 +37,26 @@ struct MarkdownRenderer: View {
     /// Renders one block. Returns `AnyView` to break the opaque-type recursion
     /// cycle between this view tree and ``renderBlocks`` (a `.blockQuote`/list
     /// contains more blocks).
-    private func renderBlock(_ block: MarkdownBlock, spacing: CGFloat) -> AnyView {
+    private func renderBlock(_ block: MarkdownBlock, spacing _: CGFloat) -> AnyView {
         switch block {
         case let .heading(level, inlines):
-            return AnyView(
+            AnyView(
                 Text(attributedInlines(inlines))
                     .font(headingFont(level))
                     .foregroundStyle(.fg0)
                     .fixedSize(horizontal: false, vertical: true)
             )
         case let .paragraph(inlines):
-            return AnyView(
+            AnyView(
                 Text(attributedInlines(inlines))
                     .font(.system(size: Self.baseFontSize))
                     .foregroundStyle(.fg1)
                     .fixedSize(horizontal: false, vertical: true)
             )
         case let .codeBlock(language, code):
-            return AnyView(codeBlockView(language: language, code: code))
+            AnyView(codeBlockView(language: language, code: code))
         case let .blockQuote(blocks):
-            return AnyView(
+            AnyView(
                 HStack(alignment: .top, spacing: 2 * .grid) {
                     RoundedRectangle(cornerRadius: 1)
                         .fill(.fg3.opacity(0.5))
@@ -67,7 +66,7 @@ struct MarkdownRenderer: View {
                 }
             )
         case let .list(isOrdered, startIndex, items):
-            return AnyView(
+            AnyView(
                 VStack(alignment: .leading, spacing: 1 * .grid) {
                     ForEach(Array(items.enumerated()), id: \.offset) { index, item in
                         listItemView(item, isOrdered: isOrdered, startIndex: startIndex, offset: index)
@@ -75,11 +74,11 @@ struct MarkdownRenderer: View {
                 }
             )
         case let .table(table):
-            return AnyView(tableView(table))
+            AnyView(tableView(table))
         case let .image(source, alt):
-            return AnyView(imageView(source: source, alt: alt))
+            AnyView(imageView(source: source, alt: alt))
         case .thematicBreak:
-            return AnyView(
+            AnyView(
                 Divider()
                     .overlay(.fg3.opacity(0.4))
             )
@@ -89,7 +88,7 @@ struct MarkdownRenderer: View {
     private func listItemView(_ item: MarkdownListItem, isOrdered: Bool, startIndex: Int, offset: Int) -> AnyView {
         switch item {
         case let .task(isChecked, blocks):
-            return AnyView(
+            AnyView(
                 HStack(alignment: .top, spacing: 2 * .grid) {
                     Image(systemName: isChecked ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 14))
@@ -99,7 +98,7 @@ struct MarkdownRenderer: View {
                 }
             )
         case let .plain(blocks):
-            return AnyView(
+            AnyView(
                 HStack(alignment: .top, spacing: 2 * .grid) {
                     Text(isOrdered ? "\(startIndex + offset)." : "•")
                         .font(.system(size: Self.baseFontSize, weight: .medium))
@@ -127,7 +126,8 @@ struct MarkdownRenderer: View {
             .foregroundStyle(.fg3)
         if let source,
            let url = URL(string: source),
-           url.scheme == "http" || url.scheme == "https" {
+           url.scheme == "http" || url.scheme == "https"
+        {
             AsyncImage(url: url) { phase in
                 switch phase {
                 case let .success(image):
@@ -153,7 +153,6 @@ struct MarkdownRenderer: View {
 
     // MARK: Code blocks
 
-    @ViewBuilder
     private func codeBlockView(language: String?, code: String) -> some View {
         VStack(alignment: .leading, spacing: 1 * .grid) {
             if let language, !language.isEmpty {
@@ -182,7 +181,6 @@ struct MarkdownRenderer: View {
 
     // MARK: Tables
 
-    @ViewBuilder
     private func tableView(_ table: MarkdownTable) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             Grid(alignment: .leading, horizontalSpacing: 2 * .grid, verticalSpacing: 1 * .grid) {
@@ -291,8 +289,12 @@ struct MarkdownRenderer: View {
             run.backgroundColor = .bg3
         } else {
             var font = Font.system(size: Self.baseFontSize)
-            if style.isBold { font = font.weight(.semibold) }
-            if style.isItalic { font = font.italic() }
+            if style.isBold {
+                font = font.weight(.semibold)
+            }
+            if style.isItalic {
+                font = font.italic()
+            }
             run.font = font
         }
         if style.isStrikethrough {

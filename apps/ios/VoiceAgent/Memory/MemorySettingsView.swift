@@ -174,16 +174,16 @@ struct MemorySettingsView: View {
                 .font(.system(size: 15))
                 .foregroundStyle(.fg1)
                 .focused($focusedField, equals: field)
-                #if os(iOS)
-                    .keyboardType(.numberPad)
-                #endif
-                #if os(visionOS)
-                    .textFieldStyle(.roundedBorder)
-                #else
-                    .textFieldStyle(.plain)
-                    .padding(3 * .grid)
-                    .background(.bg2, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
-                #endif
+            #if os(iOS)
+                .keyboardType(.numberPad)
+            #endif
+            #if os(visionOS)
+            .textFieldStyle(.roundedBorder)
+            #else
+            .textFieldStyle(.plain)
+            .padding(3 * .grid)
+            .background(.bg2, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
+            #endif
         }
     }
 

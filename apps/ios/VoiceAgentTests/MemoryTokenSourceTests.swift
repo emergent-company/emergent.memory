@@ -1,9 +1,8 @@
 import Foundation
+@testable import Memory
 import Testing
 
-@testable import Memory
-
-@Suite struct MemoryTokenSourceTests {
+struct MemoryTokenSourceTests {
     private func makeConfig(_ mutate: (inout MemoryConfig) -> Void) -> MemoryConfig {
         let suite = "MemoryTokenSourceTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!

@@ -143,7 +143,7 @@ final class MemorySessionController: ObservableObject {
     func start() async {
         guard phase == .idle else { return }
         TraceLog.log("phase_changed", ["phase": "connecting"], room: session.room.name ?? "")
-        Log.session.info("start connect agent=\(self.config.agentName) endpoint=\(self.config.tokenEndpoint)")
+        Log.session.info("start connect agent=\(config.agentName) endpoint=\(config.tokenEndpoint)")
         registerSignalHandlers()
         phase = .connecting
         seenTranscriptIDs.removeAll()
@@ -169,7 +169,7 @@ final class MemorySessionController: ObservableObject {
         } else {
             phase = .connected
             TraceLog.log("livekit_connected", ["room": session.room.name ?? ""], room: session.room.name ?? "")
-            Log.session.info("connect ok agent=\(self.config.agentName)")
+            Log.session.info("connect ok agent=\(config.agentName)")
         }
     }
 
@@ -203,7 +203,7 @@ final class MemorySessionController: ObservableObject {
                 // One-shot trace when the agent first connects.
                 if let self, agent.error == nil, agent.isConnected, !agentJoinedTraced {
                     agentJoinedTraced = true
-                    TraceLog.log("agent_joined", ["identity": agentIdentity], room: self.session.room.name ?? "")
+                    TraceLog.log("agent_joined", ["identity": agentIdentity], room: session.room.name ?? "")
                 }
             }
             .store(in: &cancellables)
@@ -251,10 +251,10 @@ final class MemorySessionController: ObservableObject {
         transcriptScanTask = Task { @MainActor [weak self] in
             await Task.yield()
             guard !Task.isCancelled, let self else { return }
-            let count = self.session.messages.count
-            guard count != self.lastMessageCount else { return }
-            self.lastMessageCount = count
-            self.scanTranscripts()
+            let count = session.messages.count
+            guard count != lastMessageCount else { return }
+            lastMessageCount = count
+            scanTranscripts()
         }
     }
 
@@ -268,10 +268,10 @@ final class MemorySessionController: ObservableObject {
             guard !Task.isCancelled, let self else { return }
             // Trace newly arrived messages (role from ReceivedMessage.Content,
             // text truncated to ~200 chars).
-            let messages = self.session.messages
+            let messages = session.messages
             let count = messages.count
-            if count > self.lastTracedMessageCount {
-                for message in messages.suffix(count - self.lastTracedMessageCount) {
+            if count > lastTracedMessageCount {
+                for message in messages.suffix(count - lastTracedMessageCount) {
                     let role: String
                     let text: String
                     switch message.content {
@@ -279,29 +279,29 @@ final class MemorySessionController: ObservableObject {
                     case let .userTranscript(content): role = "userTranscript"; text = content
                     case let .agentTranscript(content): role = "agentTranscript"; text = content
                     }
-                    TraceLog.log("message_received", ["role": role, "text": String(text.prefix(200))], room: self.session.room.name ?? "")
+                    TraceLog.log("message_received", ["role": role, "text": String(text.prefix(200))], room: session.room.name ?? "")
                     // Drive the live chat-activity turns from message traffic:
                     // user messages open a turn (anchored to the message), the
                     // first agent transcript of the turn dismisses the typing
                     // indicator and arms the stop-quiet timer.
                     switch message.content {
-                    case .userInput(_), .userTranscript(_):
+                    case .userInput(_), .userTranscript:
                         if message.isFinal {
-                            self.chatActivity.userTurnStarted(anchorMessageID: message.id)
+                            chatActivity.userTurnStarted(anchorMessageID: message.id)
                         }
                     case .agentTranscript:
-                        self.chatActivity.agentReplyStarted()
+                        chatActivity.agentReplyStarted()
                     }
                     // Speak agent replies locally (free, client-side TTS) only
                     // when the worker is text-only (`ttsStrategy == "client"`);
                     // a `"server"` worker streams its own TTS audio.
-                    if case let .agentTranscript(agentText) = message.content, !agentText.isEmpty, self.config.ttsStrategy == "client" {
+                    if case let .agentTranscript(agentText) = message.content, !agentText.isEmpty, config.ttsStrategy == "client" {
                         let utterance = AVSpeechUtterance(string: agentText)
                         utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
                         speechSynthesizer.speak(utterance)
                     }
                 }
-                self.lastTracedMessageCount = count
+                lastTracedMessageCount = count
             }
         }
     }

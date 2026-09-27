@@ -1,14 +1,19 @@
 import Foundation
-import Testing
 @testable import Memory
+import Testing
 
 /// A `URLProtocol` stub that lets the transport tests drive `URLSession`
 /// without hitting the network.
-nonisolated final class GatewayHTTPStubProtocol: URLProtocol {
+final nonisolated class GatewayHTTPStubProtocol: URLProtocol {
     nonisolated(unsafe) static var handler: (@Sendable (URLRequest) throws -> (URLResponse, Data))?
 
-    override class func canInit(with request: URLRequest) -> Bool { true }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override class func canInit(with _: URLRequest) -> Bool {
+        true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
 
     override func startLoading() {
         guard let handler = Self.handler else {
@@ -50,7 +55,7 @@ nonisolated final class GatewayHTTPStubProtocol: URLProtocol {
 
         let (data, response) = try await GatewayHTTP.send(
             method: "GET",
-            url: URL(string: "http://example.test/api")!,
+            url: #require(URL(string: "http://example.test/api")),
             apiKey: "secret",
             session: makeSession()
         )
@@ -73,13 +78,13 @@ nonisolated final class GatewayHTTPStubProtocol: URLProtocol {
 
         _ = try await GatewayHTTP.send(
             method: "GET",
-            url: URL(string: "http://example.test/api")!,
+            url: #require(URL(string: "http://example.test/api")),
             apiKey: "secret",
             session: makeSession()
         )
     }
 
-    @Test func nonHTTPResponseThrowsTransportError() async {
+    @Test func nonHTTPResponseThrowsTransportError() async throws {
         GatewayHTTPStubProtocol.handler = { request in
             let response = URLResponse(
                 url: request.url!,
@@ -94,7 +99,7 @@ nonisolated final class GatewayHTTPStubProtocol: URLProtocol {
         do {
             _ = try await GatewayHTTP.send(
                 method: "GET",
-                url: URL(string: "http://example.test/api")!,
+                url: #require(URL(string: "http://example.test/api")),
                 apiKey: "secret",
                 session: makeSession()
             )
