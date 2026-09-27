@@ -16,6 +16,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/email"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // Service handles invitation operations
@@ -445,36 +446,14 @@ func orgMembershipRole(inviteRole string) (role string, ok bool) {
 // org_admin authority over the invitation's organization, or is an active
 // superadmin_full. It is the acceptance-side defence-in-depth counterpart to the
 // create-side role gate: an org_admin grant is refused unless its inviter could
-// have minted it (issue #967).
+// have minted it (issue #967). The decision is the single shared
+// org-administration entitlement check (pkg/auth.CanAdministerOrgOrPlatform), so
+// it cannot drift from the create-side gate (issue #812 §4.5, issue #1162).
 func (s *Service) inviterIsOrgAdmin(ctx context.Context, invite *Invite) (bool, error) {
 	if invite.InvitedByUserID == nil || *invite.InvitedByUserID == "" {
 		return false, nil
 	}
-	inviterID := *invite.InvitedByUserID
-
-	var superadminFull bool
-	if err := s.db.NewRaw(`
-		SELECT EXISTS(
-			SELECT 1 FROM core.superadmins
-			WHERE user_id = ? AND role = 'superadmin_full' AND revoked_at IS NULL
-		)
-	`, inviterID).Scan(ctx, &superadminFull); err != nil {
-		return false, err
-	}
-	if superadminFull {
-		return true, nil
-	}
-
-	var orgAdmin bool
-	if err := s.db.NewRaw(`
-		SELECT EXISTS(
-			SELECT 1 FROM kb.organization_memberships
-			WHERE organization_id = ? AND user_id = ? AND role = 'org_admin'
-		)
-	`, invite.OrganizationID, inviterID).Scan(ctx, &orgAdmin); err != nil {
-		return false, err
-	}
-	return orgAdmin, nil
+	return auth.CanAdministerOrgOrPlatform(ctx, s.db, invite.OrganizationID, *invite.InvitedByUserID)
 }
 
 // Decline declines an invitation

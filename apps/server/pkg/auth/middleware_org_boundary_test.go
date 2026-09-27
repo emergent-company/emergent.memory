@@ -125,3 +125,30 @@ func TestRequireAuthBareOrgHeaderNotTrusted(t *testing.T) {
 		t.Fatalf("user.OrgID = %v, want empty (bare X-Org-ID is not a trusted org source)", user)
 	}
 }
+
+// Fail-first (issue #812 Q10, issue #1162): the raw X-Org-ID header is not a
+// trust source even when no database is available to derive the org from the
+// declared project. Before this fix the header was assigned to user.OrgID in the
+// no-database posture, so a client could set an arbitrary org context that
+// downstream scope/tenant resolution would consume. After the fix the org is
+// left empty (fail closed).
+func TestRequireAuthNilDBDoesNotTrustOrgHeader(t *testing.T) {
+	m := newTestMiddleware(t) // db is nil
+	if m.db != nil {
+		t.Fatalf("precondition: test middleware must have a nil db")
+	}
+
+	nextCalled, user, code := runRequireAuth(t, m, map[string]string{
+		"X-Project-ID": "not-a-real-project",
+		"X-Org-ID":     orgB,
+	})
+	if !nextCalled {
+		t.Fatalf("handler did not run (code=%d); want pass-through with empty org", code)
+	}
+	if user == nil {
+		t.Fatalf("handler ran without an AuthUser")
+	}
+	if user.OrgID != "" {
+		t.Fatalf("spoofed X-Org-ID trusted without a DB: user.OrgID = %q; want empty (raw header is never a trust source)", user.OrgID)
+	}
+}

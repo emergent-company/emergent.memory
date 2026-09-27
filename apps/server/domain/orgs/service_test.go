@@ -70,6 +70,10 @@ func (f *fakeOrgRepo) GetMembershipRole(context.Context, string, string) (string
 	return f.role, nil
 }
 
+func (f *fakeOrgRepo) IsOrgAdmin(context.Context, string, string) (bool, error) {
+	return f.role == "org_admin", nil
+}
+
 func (f *fakeOrgRepo) FindOrgToolSettings(context.Context, string) ([]OrgToolSetting, error) {
 	return nil, nil
 }
