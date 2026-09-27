@@ -223,6 +223,22 @@ func (p *WorkerPool) executeJob(ctx context.Context, log *slog.Logger, job *Agen
 		return
 	}
 
+	// A durable cancel — possibly served by another instance — is a normal
+	// terminal outcome: the run is already finalized as cancelled. Retire the
+	// job without overwriting the run, and wake the parent with a cancelled
+	// status so it is not left waiting (issue #1166).
+	if result != nil && result.Status == RunStatusCancelled {
+		log.Info("queued agent run was cancelled",
+			slog.String("agent", agent.Name),
+			slog.String("run_id", run.ID),
+		)
+		if err := p.repo.PauseJob(ctx, job.ID); err != nil {
+			log.Warn("failed to retire cancelled job", slog.String("error", err.Error()))
+		}
+		p.reenqueueParent(ctx, log, run, agent.Name, "", "cancelled")
+		return
+	}
+
 	// Mark job and run as complete
 	if err := p.repo.CompleteJob(ctx, job.ID, job.RunID); err != nil {
 		log.Warn("failed to mark job completed", slog.String("error", err.Error()))

@@ -1707,6 +1707,11 @@ func (r *Repository) MarkToolConfirmationDecision(ctx context.Context, runID, qu
 	return resume, err
 }
 
+// PauseRun marks a run as paused (input-required), persisting the step count.
+// It is guarded to non-cancelling, non-terminal rows: the after-tool pause paths
+// (ask_user / suspend) race an explicit cancel, and a pause must never move a
+// "cancelling" row to "input-required" and thereby drop a durable cancel
+// committed by any instance (issue #1166).
 func (r *Repository) PauseRun(ctx context.Context, runID string, stepCount int) error {
 	now := time.Now()
 	_, err := r.db.NewUpdate().
@@ -1715,6 +1720,7 @@ func (r *Repository) PauseRun(ctx context.Context, runID string, stepCount int) 
 		Set("completed_at = ?", now).
 		Set("step_count = ?", stepCount).
 		Where("id = ?", runID).
+		Where("status IN (?)", bun.In([]string{string(RunStatusQueued), string(RunStatusRunning), string(RunStatusPaused)})).
 		Exec(ctx)
 	return err
 }
@@ -2586,6 +2592,36 @@ func (r *Repository) ClaimNextJob(ctx context.Context) (*AgentRunJob, error) {
 			return fmt.Errorf("select next job: %w", err)
 		}
 
+		// Transition the run to running only if it is still claimable. A run
+		// moved to "cancelling" by a cancel request — possibly served by another
+		// instance — must not be resurrected to "working": that would discard the
+		// durable cancel and let the worker execute a run the endpoint already
+		// reported cancelled (issue #1166). The guarded UPDATE is atomic with
+		// the claim, so a cancel that lands concurrently wins.
+		res, err := tx.NewUpdate().
+			Model((*AgentRun)(nil)).
+			Set("status = ?", RunStatusRunning).
+			Where("id = ?", j.RunID).
+			Where("status = ?", RunStatusQueued).
+			Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("update run to running: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			// The run is no longer claimable (cancelling or already terminal).
+			// Retire the job without touching the run so it is not reprocessed;
+			// the committed cancel is finalized by its owner or the reaper.
+			if _, err := tx.NewUpdate().
+				Model((*AgentRunJob)(nil)).
+				Set("status = ?", JobStatusCompleted).
+				Set("completed_at = ?", time.Now()).
+				Where("id = ?", j.ID).
+				Exec(ctx); err != nil {
+				return fmt.Errorf("retire non-claimable job: %w", err)
+			}
+			return nil
+		}
+
 		// Transition job to processing
 		if _, err := tx.NewUpdate().
 			Model(j).
@@ -2597,15 +2633,6 @@ func (r *Repository) ClaimNextJob(ctx context.Context) (*AgentRunJob, error) {
 			return fmt.Errorf("claim job: %w", err)
 		}
 
-		// Transition run to running
-		if _, err := tx.NewUpdate().
-			Model((*AgentRun)(nil)).
-			Set("status = ?", RunStatusRunning).
-			Where("id = ?", j.RunID).
-			Exec(ctx); err != nil {
-			return fmt.Errorf("update run to running: %w", err)
-		}
-
 		job = j
 		return nil
 	})
@@ -2615,7 +2642,10 @@ func (r *Repository) ClaimNextJob(ctx context.Context) (*AgentRunJob, error) {
 	return job, nil
 }
 
-// CompleteJob marks a job as completed and the run as success.
+// CompleteJob marks a job as completed and the run as success. The run write is
+// cancel-aware and guarded like every other terminal writer: a run carrying the
+// durable "cancelling" intent (or already cancelled) is finalized as cancelled,
+// never overwritten to "completed" (issue #1166).
 func (r *Repository) CompleteJob(ctx context.Context, jobID, runID string) error {
 	now := time.Now()
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -2627,12 +2657,11 @@ func (r *Repository) CompleteJob(ctx context.Context, jobID, runID string) error
 			Exec(ctx); err != nil {
 			return fmt.Errorf("complete job: %w", err)
 		}
-		if _, err := tx.NewUpdate().
+		if _, err := guardTerminalTransition(durableCancelReasonSet(setTerminalStatus(tx.NewUpdate().
 			Model((*AgentRun)(nil)).
-			Set("status = ?", RunStatusSuccess).
 			Set("completed_at = ?", now).
 			Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
-			Where("id = ?", runID).
+			Where("id = ?", runID), RunStatusSuccess))).
 			Exec(ctx); err != nil {
 			return fmt.Errorf("complete run: %w", err)
 		}
@@ -2654,11 +2683,43 @@ func (r *Repository) PauseJob(ctx context.Context, jobID string) error {
 }
 
 // FailJob marks a job failed. If requeue=true and attempt_count < max_attempts,
-// sets job back to pending with exponential backoff; otherwise marks job failed and run error.
+// sets job back to pending with exponential backoff; otherwise marks job failed
+// and run error.
+//
+// Both branches honour a durable cancel (issue #1166): a run in "cancelling" (or
+// already terminal) is never reset to queued for another attempt, and is never
+// overwritten to "failed" — a committed cancel always resolves to "cancelled".
 func (r *Repository) FailJob(ctx context.Context, jobID, runID, errMsg string, requeue bool, nextRunAt time.Time) error {
 	now := time.Now()
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if requeue {
+			// Reset the run to queued only if it is still claimable. A run moved
+			// to "cancelling" by a cancel request, or already terminal, must not
+			// be requeued: that would erase the durable cancel and let the worker
+			// run it again.
+			res, err := tx.NewUpdate().
+				Model((*AgentRun)(nil)).
+				Set("status = ?", RunStatusQueued).
+				Where("id = ?", runID).
+				Where("status IN (?)", bun.In([]string{string(RunStatusQueued), string(RunStatusRunning)})).
+				Exec(ctx)
+			if err != nil {
+				return fmt.Errorf("requeue run: %w", err)
+			}
+			if n, _ := res.RowsAffected(); n == 0 {
+				// Cancelling or terminal: do not requeue. Retire the job so it is
+				// not reprocessed; the committed cancel is finalized by its owner
+				// or the reaper.
+				if _, err := tx.NewUpdate().
+					Model((*AgentRunJob)(nil)).
+					Set("status = ?", JobStatusCompleted).
+					Set("completed_at = ?", now).
+					Where("id = ?", jobID).
+					Exec(ctx); err != nil {
+					return fmt.Errorf("retire cancelled job: %w", err)
+				}
+				return nil
+			}
 			if _, err := tx.NewUpdate().
 				Model((*AgentRunJob)(nil)).
 				Set("status = ?", JobStatusPending).
@@ -2667,33 +2728,25 @@ func (r *Repository) FailJob(ctx context.Context, jobID, runID, errMsg string, r
 				Exec(ctx); err != nil {
 				return fmt.Errorf("requeue job: %w", err)
 			}
-			// Run goes back to queued
-			if _, err := tx.NewUpdate().
-				Model((*AgentRun)(nil)).
-				Set("status = ?", RunStatusQueued).
-				Where("id = ?", runID).
-				Exec(ctx); err != nil {
-				return fmt.Errorf("requeue run: %w", err)
-			}
-		} else {
-			if _, err := tx.NewUpdate().
-				Model((*AgentRunJob)(nil)).
-				Set("status = ?", JobStatusFailed).
-				Set("completed_at = ?", now).
-				Where("id = ?", jobID).
-				Exec(ctx); err != nil {
-				return fmt.Errorf("fail job: %w", err)
-			}
-			if _, err := tx.NewUpdate().
-				Model((*AgentRun)(nil)).
-				Set("status = ?", RunStatusError).
-				Set("completed_at = ?", now).
-				Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
-				Set("error_message = ?", errMsg).
-				Where("id = ?", runID).
-				Exec(ctx); err != nil {
-				return fmt.Errorf("fail run: %w", err)
-			}
+			return nil
+		}
+
+		if _, err := tx.NewUpdate().
+			Model((*AgentRunJob)(nil)).
+			Set("status = ?", JobStatusFailed).
+			Set("completed_at = ?", now).
+			Where("id = ?", jobID).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("fail job: %w", err)
+		}
+		if _, err := guardTerminalTransition(setTerminalStatus(tx.NewUpdate().
+			Model((*AgentRun)(nil)).
+			Set("completed_at = ?", now).
+			Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
+			Set("error_message = CASE WHEN status = ? THEN ? ELSE ? END", RunStatusCancelling, userCancelReason, errMsg).
+			Where("id = ?", runID), RunStatusError)).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("fail run: %w", err)
 		}
 		return nil
 	})
@@ -3299,29 +3352,41 @@ func (r *Repository) RunIsCancelling(ctx context.Context, runID string) (bool, e
 // process died, or the run was queued and never picked up. A committed cancel
 // always resolves to "cancelled", so this never turns a cancel into a failure.
 //
-// When notBefore is positive, only runs whose last activity (COALESCE of
-// last_step_at and started_at) is older than notBefore are finalized, so a run
-// actively winding down is not clobbered. A non-positive notBefore finalizes
-// every "cancelling" row, which is what startup recovery wants: any execution
-// from the previous process is gone.
-func (r *Repository) FinalizeCancellingRuns(ctx context.Context, notBefore time.Duration) (int, error) {
+// It is always age/heartbeat-aware: only runs whose last activity (COALESCE of
+// last_step_at and started_at) is older than olderThan are finalized. A live
+// executor refreshes last_step_at, so a run still being observed — including one
+// owned by another instance during a rolling restart — is never finalized. A
+// non-positive olderThan is rejected: an unconditional sweep would finalize a
+// live run (issue #1166).
+func (r *Repository) FinalizeCancellingRuns(ctx context.Context, olderThan time.Duration) (int, error) {
+	if olderThan <= 0 {
+		return 0, fmt.Errorf("FinalizeCancellingRuns: olderThan must be positive")
+	}
 	now := time.Now()
-	q := r.db.NewUpdate().
+	res, err := r.db.NewUpdate().
 		Model((*AgentRun)(nil)).
 		Set("status = ?", RunStatusCancelled).
 		Set("completed_at = ?", now).
 		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
 		Set("error_message = COALESCE(NULLIF(error_message, ''), ?)", userCancelReason).
-		Where("status = ?", RunStatusCancelling)
-	if notBefore > 0 {
-		q = q.Where("COALESCE(last_step_at, started_at) < ?", now.Add(-notBefore))
-	}
-	res, err := q.Exec(ctx)
+		Where("status = ?", RunStatusCancelling).
+		Where("COALESCE(last_step_at, started_at) < ?", now.Add(-olderThan)).
+		Exec(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("FinalizeCancellingRuns: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	return int(n), nil
+}
+
+// FinalizeOrphanedCancellingRuns is the startup-safe sweep for runs parked in
+// "cancelling". It finalizes only runs idle past staleRunThreshold, so a live
+// executor on another instance (which refreshes last_step_at) is never finalized
+// during a rolling restart. It is the single entry point used by both startup
+// recovery and the stale-run reaper; a committed cancel is resolved to
+// "cancelled", never to a failure (issue #1166).
+func (r *Repository) FinalizeOrphanedCancellingRuns(ctx context.Context) (int, error) {
+	return r.FinalizeCancellingRuns(ctx, staleRunThreshold)
 }
 
 // UpdateSessionTitle sets the title field on a session.
