@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -425,7 +426,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					},
 					"filters": {
 						Type:        "object",
-						Description: "Optional property equality filters as key-value pairs (e.g. {\"status\": \"delivered\", \"priority\": \"high\"}). Only objects whose properties match ALL filters are returned. Filters are applied within the type only; a property that is not unique to one entity identity (e.g. chapter_id, which repeats in every law) will match across documents. Combine with key_prefix to scope such filters to a single parent document.",
+						Description: "Optional property equality filters as key-value pairs (e.g. {\"status\": \"delivered\", \"priority\": \"high\"}). Only objects whose properties match ALL filters are returned. Filters are applied within the type only; a property that is not unique to one entity identity (e.g. chapter_id, which repeats in every law) will match across documents. If the type's schema declares a scope key (e.g. LegalParagraph.law_ref_id), a filter on any non-identity property is rejected unless the declared scope key is included here (or an explicit key_prefix is supplied). Combine with key_prefix to scope such filters to a single parent document.",
 					},
 					"key_prefix": {
 						Type:        "string",
@@ -2721,6 +2722,74 @@ func entityPropertiesProjection(strategy string, rawFields any) string {
 	return "go.properties"
 }
 
+// entityQueryScopeError is returned when an entity-query filter violates a
+// type's schema-declared scope-key contract (issue #1148, option 2). Its
+// message is caller-visible and already prefixed.
+type entityQueryScopeError struct{ msg string }
+
+func (e *entityQueryScopeError) Error() string { return e.msg }
+
+// enforceEntityQueryScope applies the schema-driven scope-key contract: when the
+// queried type declares a scope key, every filter on a property that is neither
+// the declared scope property nor the declared identity property MUST be
+// accompanied by the scope property (in `filters`) or an explicit `key_prefix`.
+// Otherwise the call is rejected with an actionable error instead of silently
+// scanning across documents. Types with no declaration (or no type_name, or no
+// filters) are unaffected.
+func (s *Service) enforceEntityQueryScope(ctx context.Context, tx bun.Tx, projectID, typeName string, filters map[string]any, keyPrefix string) error {
+	if typeName == "" || len(filters) == 0 {
+		return nil
+	}
+
+	var raw string
+	err := tx.NewRaw(`
+		SELECT json_schema
+		FROM kb.project_object_schema_registry
+		WHERE project_id = ? AND type_name = ?
+		ORDER BY schema_version DESC, updated_at DESC
+		LIMIT 1
+	`, projectID, typeName).Scan(ctx, &raw)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil // type not registered: no declaration, no change
+		}
+		return err
+	}
+
+	decl, perr := schemas.ParseScopeKey(json.RawMessage(raw))
+	if perr != nil || decl == nil || decl.Property == "" {
+		return nil
+	}
+
+	// The scope is satisfied by an explicit key prefix or by the declared scope
+	// property itself appearing in the filters.
+	scopeSupplied := keyPrefix != ""
+	if _, ok := filters[decl.Property]; ok {
+		scopeSupplied = true
+	}
+	if scopeSupplied {
+		return nil
+	}
+
+	offenders := make([]string, 0, len(filters))
+	for k := range filters {
+		if k == decl.Property {
+			continue
+		}
+		if decl.IdentityProperty != "" && k == decl.IdentityProperty {
+			continue
+		}
+		offenders = append(offenders, k)
+	}
+	if len(offenders) == 0 {
+		return nil
+	}
+	sort.Strings(offenders)
+	return &entityQueryScopeError{msg: fmt.Sprintf(
+		"query entities: filter %q requires scope key %q (declared scope for type %s)",
+		offenders[0], decl.Property, typeName)}
+}
+
 // executeQueryEntities queries entities by type with pagination
 func (s *Service) executeQueryEntities(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
@@ -2862,8 +2931,9 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	// a bound parameter (no string interpolation).
 	var filterClause string
 	var filterArg any
+	var safeFilters map[string]any
 	if rawFilters, ok := args["filters"].(map[string]any); ok {
-		safeFilters := make(map[string]any, len(rawFilters))
+		safeFilters = make(map[string]any, len(rawFilters))
 		for k, v := range rawFilters {
 			if !isValidPropertyKey(k) {
 				continue
@@ -2885,11 +2955,13 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	// callers can pin results to the intended entity identity by prefixing its
 	// canonical key (LegalParagraph keys are `<law_ref_id>#<section_id>`).
 	// Generic across types: the key is the identity.
+	var keyPrefix string
 	var keyPrefixClause string
 	var keyPrefixArg any
-	if keyPrefix, ok := args["key_prefix"].(string); ok && keyPrefix != "" {
+	if kp, ok := args["key_prefix"].(string); ok && kp != "" {
+		keyPrefix = kp
 		keyPrefixClause = " AND starts_with(go.key, ?)"
-		keyPrefixArg = keyPrefix
+		keyPrefixArg = kp
 	}
 
 	type_clause := ""
@@ -2926,6 +2998,14 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 
 	err = s.db.RunInTx(queryCtx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if err := database.SetRLSContext(ctx, tx, projectID); err != nil {
+			return err
+		}
+
+		// Schema-declared scope-key enforcement (issue #1148, option 2): when the
+		// type declares a scope key, reject a non-identity property filter that
+		// is not accompanied by the scope key BEFORE any scan runs, so a rejected
+		// call can never cross-match documents.
+		if err := s.enforceEntityQueryScope(ctx, tx, projectID, typeName, safeFilters, keyPrefix); err != nil {
 			return err
 		}
 
@@ -2974,6 +3054,10 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	})
 
 	if err != nil {
+		var scopeErr *entityQueryScopeError
+		if errors.As(err, &scopeErr) {
+			return nil, scopeErr
+		}
 		if errors.Is(queryCtx.Err(), context.DeadlineExceeded) {
 			return nil, fmt.Errorf("query entities: timed out after %s", s.effectiveEntityQueryTimeout())
 		}
