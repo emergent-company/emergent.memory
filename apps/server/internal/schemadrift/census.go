@@ -26,6 +26,17 @@ type censusModel struct {
 // models. They cover every package that defines bun models.
 var censusRoots = []string{"domain", "pkg", "internal"}
 
+// censusExclusions names the tables that the census sees a model for but the
+// registry cannot reflect because the model is unexported. Each entry must name
+// its reason; a table here is still checked at name level by the DB-backed test
+// (see drift_test.go), so it is not silently exempt. Shared by both the
+// TestRegistryCoversEveryModel test and the preflight guard (CheckRegistry), so
+// it lives in this non-test file rather than the test package.
+var censusExclusions = map[string]string{
+	"kb.auth_introspection_cache": "unexported model pkg/auth.introspectionCacheEntry; cannot be referenced cross-package",
+	"kb.embedding_cache":          "unexported model domain/extraction.embeddingCacheRow; cannot be referenced cross-package",
+}
+
 // census returns every bun model struct in the source tree, keyed by table
 // name. A struct is a model when it embeds a field (typically bun.BaseModel)
 // carrying a `bun:"table:..."` tag. Columns are the non-embedded fields with a

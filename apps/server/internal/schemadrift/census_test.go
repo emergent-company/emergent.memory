@@ -8,15 +8,6 @@ import (
 	"github.com/uptrace/bun/dialect/pgdialect"
 )
 
-// censusExclusions names the tables that the census sees a model for but the
-// registry cannot reflect because the model is unexported. Each entry must name
-// its reason; a table here is still checked at name level by the DB-backed test
-// (see drift_test.go), so it is not silently exempt.
-var censusExclusions = map[string]string{
-	"kb.auth_introspection_cache": "unexported model pkg/auth.introspectionCacheEntry; cannot be referenced cross-package",
-	"kb.embedding_cache":          "unexported model domain/extraction.embeddingCacheRow; cannot be referenced cross-package",
-}
-
 // registryTables returns the set of tables covered by the explicit model
 // registry, resolved through bun's own dialect so it matches runtime.
 func registryTables(t *testing.T) []string {
