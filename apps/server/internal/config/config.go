@@ -67,6 +67,9 @@ type Config struct {
 	// Brave Search API configuration
 	BraveSearch BraveSearchConfig
 
+	// MCP tool guardrails (entity-query timeout and payload bounds).
+	MCP MCPConfig
+
 	// OpenTelemetry tracing configuration
 	Otel OtelConfig
 
@@ -600,6 +603,19 @@ type BraveSearchConfig struct {
 // IsConfigured returns true if Brave Search API key is set
 func (b *BraveSearchConfig) IsConfigured() bool {
 	return b.APIKey != ""
+}
+
+// MCPConfig holds guardrails for MCP tool calls (issue #1148).
+type MCPConfig struct {
+	// EntityQueryTimeout is the hard per-call deadline for the entity-query
+	// tool. A single filtered query must never stall an agent turn for minutes.
+	// Default: 30s.
+	EntityQueryTimeout time.Duration `env:"MCP_ENTITY_QUERY_TIMEOUT" envDefault:"30s"`
+
+	// EntityQueryFullMaxLimit caps the effective `limit` when
+	// field_strategy="full" is requested, because a full provision/paragraph
+	// payload is large (~14 KB per row) and a high limit multiplies it. Default: 25.
+	EntityQueryFullMaxLimit int `env:"MCP_ENTITY_QUERY_FULL_MAX_LIMIT" envDefault:"25"`
 }
 
 // StandaloneConfig holds configuration for standalone minimal deployment mode
