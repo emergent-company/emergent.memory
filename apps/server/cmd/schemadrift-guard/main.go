@@ -4,9 +4,10 @@
 //
 // This is the deterministic, DB-less half of the schemadrift guard. It runs the
 // static source census (census.go, go/parser) and cross-checks it against the
-// explicit registry, failing on any table the census finds that the registry
-// does not cover (unless it is named with a reason in censusExclusions), or any
-// table the registry covers that the census cannot find.
+// explicit registry, keyed by model identity (import path + type name) so two
+// models sharing a table are each checked independently. It fails on any model
+// the census finds that the registry does not cover (unless it is named with a
+// reason in censusExclusions), or any registered model the census cannot find.
 //
 // The DB-backed half — comparing every registered model's columns against the
 // real migrated PostgreSQL schema (the #1093 ADKState drift class) — lives in

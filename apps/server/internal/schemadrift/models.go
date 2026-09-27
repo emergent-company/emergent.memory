@@ -6,13 +6,16 @@
 //
 // The guard is deliberately exhaustive: every exported bun model in the tree is
 // registered here and reflected over, and a static census (census.go) parses the
-// source to prove the registry is complete. A model that is added without being
-// registered here, or registered here without a matching table, fails the test.
+// source to prove the registry is complete. The census↔registry cross-check keys
+// on MODEL identity (import path + type name), not table name, so two models
+// sharing a table are each checked independently: a model that is added without
+// being registered here fails even when another model already covers its table.
 //
 // Three model structs are unexported (auth.introspectionCacheEntry,
 // extraction.embeddingCacheRow, provider.budgetNotification) and cannot be
-// referenced from this package; their tables are covered at name level by the
-// census instead (see drift_test.go). Every other model is reflected here.
+// referenced from this package; they are named in censusExclusions (census.go)
+// and their columns are checked at name level by the DB-backed test (see
+// drift_test.go). Every other model is reflected here.
 package schemadrift
 
 import (
