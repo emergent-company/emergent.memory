@@ -7,6 +7,7 @@ A chat turn's agent run is bound to the `/api/chat/stream` HTTP request context.
 - Detach a chat agent run's context from the request context: run the executor on a value-preserving, cancellation-free context so a dropped SSE consumer does not abort the run. The run stays bounded by the existing per-step watchdog (`defaultRunTimeout`) and its progress is persisted to the run record as before.
 - Route an explicit cancel (`POST /api/chat/runs/:runId/cancel`) by run id through the executor's in-flight run registry, so the stop button still stops a run whose request context no longer reaches it.
 - Record an explicit stop honestly: terminal status `cancelled` with the reached step count, not a server `context canceled` fault.
+- Make terminal run transitions race-safe: guard every terminal write on a non-terminal status so a cancel and a completion cannot overwrite each other, and report the cancel as applied only when the row actually transitioned.
 
 ## Capabilities
 

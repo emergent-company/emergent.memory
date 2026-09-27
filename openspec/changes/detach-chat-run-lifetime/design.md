@@ -27,11 +27,17 @@ The stop button (`webui/static/js/chat.js` `stopTurn`) does two things: `aborter
 
 ### D2 — Explicit cancel routed by run id through an in-flight registry
 
-Because the request context no longer reaches a detached run, `AgentExecutor` keeps a `runCancelRegistry` keyed by run id. `runPipeline` registers its cancellable context after the watchdog is armed and unregisters on every exit path. `AgentExecutor.Cancel(runID, reason)` invokes the handle; `agents.Handler.CancelRun` calls it first and falls back to `repo.CancelRun` when the run is not in flight (already terminal, or in another process).
+Because the request context no longer reaches a detached run, `AgentExecutor` keeps a `runCancelRegistry` keyed by run id. `runPipeline` registers its cancellable context after the watchdog is armed and unregisters on every exit path. The cancel endpoint applies the cancel as a guarded persisted-row transition (D5) and then calls `AgentExecutor.Cancel(runID, reason)` best-effort to stop an in-flight, detached goroutine promptly; an in-flight run that already transitioned to a terminal state is a no-op.
 
 ### D3 — Honest terminal status
 
 A registry-initiated cancel records the first reason (`userCancelReason`) on the handle. The before-model callback and the post-loop cancellation block read it: an explicit stop finalizes as `RunStatusCancelled` via `CancelRunWithSteps` (status `cancelled`, reason in `error_message`, reached step count), while watchdog/doom-loop cancellations remain `RunStatusError`. The event-error path now breaks to the post-loop block when `ctx.Err() != nil` instead of stamping a generic pipeline error, so the terminal status always reflects why the run stopped.
+
+### D5 — Guarded, race-safe terminal transitions
+
+A cancel can land in the window between the executor's post-loop cancellation check and its success write, in which case the executor does not observe the cancellation and would complete the run. The earlier "cancel first, then fall back to the row write" ordering was racy: the handle stayed registered until the deferred unregister, so `Cancel` could return true while the row still finished `success`, and the endpoint had already answered "cancelled".
+
+All terminal writers (`CompleteRun`/`CompleteRunWithSteps`, `FailRun`/`FailRunWithSteps`, `SkipRun`, `CancelRun`/`CancelRunWithSteps`) now go through `guardTerminalTransition`, which adds `WHERE status IN ('submitted','working','input-required','cancelling')` to the UPDATE. Postgres row locking serializes competing writers: the first terminal transition is applied and every later one affects zero rows. `CancelRun`/`CancelRunWithSteps` return whether they transitioned a row, and `Handler.CancelRun` bases its response on that — `cancelled:true` only when the row actually moved, otherwise `cancelled:false` with the current terminal status. The gateway propagates the flag (`{"ok":false,"reason":"run already finished"}` when the run was already terminal), so the caller-facing response always matches the run row. This makes the cancel/complete race and the already-terminal cancel both safe.
 
 ### D4 — Bounded and discoverable
 
