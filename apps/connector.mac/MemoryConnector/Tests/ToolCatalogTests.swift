@@ -1,8 +1,7 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 final class ToolCatalogTests: XCTestCase {
-
     func testCatalogMatchesEngineToolIds() {
         // These ids must equal the engine's registered tool names — the app's
         // disabled set is written straight into the engine config.

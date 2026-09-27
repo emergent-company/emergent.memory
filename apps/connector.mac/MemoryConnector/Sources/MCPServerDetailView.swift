@@ -26,7 +26,7 @@ struct MCPServerDetailView: View {
             header
             Divider()
 
-            if form == nil && isLoading {
+            if form == nil, isLoading {
                 ConnectorLoadingRow(caption: "Loading server…")
                     .padding()
                 Spacer()
@@ -43,7 +43,8 @@ struct MCPServerDetailView: View {
         .task { await reload() }
         .confirmationDialog("Delete \(server.name)?",
                             isPresented: $confirmDelete,
-                            titleVisibility: .visible) {
+                            titleVisibility: .visible)
+        {
             Button("Delete Server", role: .destructive) { deleteServer() }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -83,9 +84,15 @@ struct MCPServerDetailView: View {
 
     private var statusText: String {
         guard let form else { return "Loading…" }
-        if !form.enabled { return "Disabled" }
-        if let error = status?.error, !error.isEmpty { return "Error: \(error)" }
-        if status?.connected == true { return "Connected" }
+        if !form.enabled {
+            return "Disabled"
+        }
+        if let error = status?.error, !error.isEmpty {
+            return "Error: \(error)"
+        }
+        if status?.connected == true {
+            return "Connected"
+        }
         return "Not connected"
     }
 
@@ -101,8 +108,8 @@ struct MCPServerDetailView: View {
     private var content: some View {
         Form {
             MCPServerFormFields(form: Binding(
-                get: { self.form ?? MCPServerForm() },
-                set: { self.form = $0 }
+                get: { form ?? MCPServerForm() },
+                set: { form = $0 }
             ), showsEnabled: false)
 
             if let errorMessage {
@@ -187,7 +194,8 @@ struct MCPServerDetailView: View {
     /// discovered list), so a tool switched off from here can always be switched
     /// back on.
     private func withConfiguredDisabledTools(_ discovered: [HostedMCPTool],
-                                             disabled: Set<String>) -> [HostedMCPTool] {
+                                             disabled: Set<String>) -> [HostedMCPTool]
+    {
         var result = discovered
         let present = Set(result.map { displayName(for: $0) })
         for own in disabled.sorted() where !present.contains(own) {
@@ -255,7 +263,9 @@ struct MCPServerDetailView: View {
         }
         errorMessage = nil
         // Only seed the form on first load so a retry preserves unsaved edits.
-        if form == nil { form = MCPServerForm(config: detail.config) }
+        if form == nil {
+            form = MCPServerForm(config: detail.config)
+        }
         status = detail.status
         let fetched = await store.fetchTools(name: server.name)
         tools = withConfiguredDisabledTools(fetched.isEmpty ? detail.status.tools : fetched,
@@ -302,7 +312,9 @@ struct MCPServerDetailView: View {
         if succeeded {
             if let detail = await store.detail(name: server.name) {
                 status = detail.status
-                if form == nil { form = MCPServerForm(config: detail.config) }
+                if form == nil {
+                    form = MCPServerForm(config: detail.config)
+                }
             }
         } else {
             form?.enabled = previous ?? enabled
@@ -390,7 +402,7 @@ private struct MCPToolShareRow: View {
                 .toggleStyle(.switch)
                 .disabled(isBusy)
                 .help(isShared ? "Stop sharing \(displayName) with Memory"
-                               : "Share \(displayName) with Memory")
+                    : "Share \(displayName) with Memory")
         }
         .padding(.vertical, 2)
     }

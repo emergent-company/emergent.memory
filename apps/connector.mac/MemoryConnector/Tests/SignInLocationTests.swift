@@ -1,11 +1,10 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 /// Guards the per-surface sign-in policy: Production is the primary target and
 /// is offered everywhere, Development is offered only by About, and the
 /// Development environment itself still exists for already-signed-in accounts.
 final class SignInLocationTests: XCTestCase {
-
     func testPrimaryIsProduction() {
         XCTAssertEqual(Environment.primary, .prod)
     }

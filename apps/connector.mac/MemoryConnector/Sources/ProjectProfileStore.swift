@@ -62,12 +62,12 @@ struct ProjectProfileStore {
 
     /// Shared/profile store backed by `UserDefaults` (single-account path).
     init(defaults: UserDefaults = .standard) {
-        self.storage = .defaults(defaults, key: Self.key)
+        storage = .defaults(defaults, key: Self.key)
     }
 
     /// Account-scoped profile store backed by a file in the account directory.
     init(secrets: AppSecretStore, fileName: String = ProjectProfileStore.defaultFileName) {
-        self.storage = .file(secrets, name: fileName)
+        storage = .file(secrets, name: fileName)
     }
 
     /// Disabled set a brand-new project profile starts with: every catalog
@@ -109,10 +109,10 @@ struct ProjectProfileStore {
 
     func loadAll() -> [String: ProjectProfile] {
         switch storage {
-        case .defaults(let defaults, let key):
+        case let .defaults(defaults, key):
             guard let data = defaults.data(forKey: key) else { return [:] }
             return (try? JSONDecoder().decode([String: ProjectProfile].self, from: data)) ?? [:]
-        case .file(let secrets, let name):
+        case let .file(secrets, name):
             guard let data = secrets.readData(name) else { return [:] }
             return (try? JSONDecoder().decode([String: ProjectProfile].self, from: data)) ?? [:]
         }
@@ -173,9 +173,9 @@ struct ProjectProfileStore {
     private func persist(_ all: [String: ProjectProfile]) {
         guard let data = try? JSONEncoder().encode(all) else { return }
         switch storage {
-        case .defaults(let defaults, let key):
+        case let .defaults(defaults, key):
             defaults.set(data, forKey: key)
-        case .file(let secrets, let name):
+        case let .file(secrets, name):
             try? secrets.writeData(data, to: name)
         }
     }

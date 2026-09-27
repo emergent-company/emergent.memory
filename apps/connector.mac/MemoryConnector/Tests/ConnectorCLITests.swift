@@ -1,6 +1,6 @@
 import Foundation
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 /// Locked, canned process runner for `ConnectorCLI` tests: it records the
 /// arguments of every invocation and returns a fixed `ProcessResult`, so no
@@ -23,7 +23,9 @@ final class CannedRunner: @unchecked Sendable {
     }
 
     /// Arguments of the most recent invocation, or `[]` when never called.
-    var lastArguments: [String] { calls.last ?? [] }
+    var lastArguments: [String] {
+        calls.last ?? []
+    }
 
     var runner: ConnectorCLI.Runner {
         { [self] _, arguments, _ in
@@ -47,13 +49,19 @@ final class CannedStdinRunner: @unchecked Sendable {
         self.result = result
     }
 
-    var calls: [(arguments: [String], stdin: Data?)] { lock.withLock { _calls } }
+    var calls: [(arguments: [String], stdin: Data?)] {
+        lock.withLock { _calls }
+    }
 
     /// Arguments of the most recent invocation, or `[]` when never called.
-    var lastArguments: [String] { calls.last?.arguments ?? [] }
+    var lastArguments: [String] {
+        calls.last?.arguments ?? []
+    }
 
     /// Stdin payload of the most recent invocation, or `nil` when never called.
-    var lastStdin: Data? { calls.last?.stdin }
+    var lastStdin: Data? {
+        calls.last?.stdin
+    }
 
     var runner: ConnectorCLI.StdinRunner {
         { [self] _, arguments, stdin, _ in
@@ -66,7 +74,6 @@ final class CannedStdinRunner: @unchecked Sendable {
 }
 
 final class ConnectorCLITests: XCTestCase {
-
     private let binary = URL(fileURLWithPath: "/tmp/memory-connector")
     private let configPath = "/tmp/memory-connector.yml"
     private let serverURL = "https://memory.example.test"
@@ -382,7 +389,7 @@ final class ConnectorCLITests: XCTestCase {
                                          configPath: configPath)
             XCTFail("expected decodingFailed")
         } catch let error as ConnectorCLIError {
-            guard case .decodingFailed(let command, let message) = error else {
+            guard case let .decodingFailed(command, message) = error else {
                 return XCTFail("unexpected error: \(error)")
             }
             XCTAssertEqual(command, "auth import")
@@ -416,7 +423,7 @@ final class ConnectorCLITests: XCTestCase {
             _ = try await cli.authStatus(serverURL: serverURL, configPath: configPath)
             XCTFail("expected decodingFailed")
         } catch let error as ConnectorCLIError {
-            guard case .decodingFailed(let command, let message) = error else {
+            guard case let .decodingFailed(command, message) = error else {
                 return XCTFail("unexpected error: \(error)")
             }
             XCTAssertEqual(command, "auth status")

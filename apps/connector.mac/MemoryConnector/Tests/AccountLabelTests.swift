@@ -1,11 +1,10 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 /// Label rules shared by the account switcher, menu-bar popover, and account
 /// page: the environment badge must always distinguish prod from dev, and the
 /// row title must never fall back to the bare initials.
 final class AccountLabelTests: XCTestCase {
-
     func testEnvironmentLabelMapsBuiltInEnvironments() {
         let prod = Account(id: "prod:u1", environmentID: "prod", email: "a@example.test")
         let dev = Account(id: "dev:u1", environmentID: "dev", email: "b@example.test")

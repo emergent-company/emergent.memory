@@ -5,7 +5,6 @@ import Foundation
 /// holding the selected sidebar item; content is switched by the window view).
 @MainActor
 final class AppState: ObservableObject {
-
     @Published var selectedSidebarItem: SidebarItem = .dashboard
 
     nonisolated init() {}
@@ -27,36 +26,38 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
     case connection
     case about
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 
     var title: String {
         switch self {
-        case .dashboard:   return "Dashboard"
-        case .project:     return "Project & Account"
-        case .tools:       return "MCP Tools"
-        case .mcpServers:  return "MCP Servers"
-        case .permissions: return "Permissions"
-        case .connection:  return "Connection"
-        case .about:       return "About"
+        case .dashboard: "Dashboard"
+        case .project: "Project & Account"
+        case .tools: "MCP Tools"
+        case .mcpServers: "MCP Servers"
+        case .permissions: "Permissions"
+        case .connection: "Connection"
+        case .about: "About"
         }
     }
 
     var systemIcon: String {
         switch self {
-        case .dashboard:   return "gauge.medium"
-        case .project:     return "person.crop.circle"
-        case .tools:       return "wrench.and.screwdriver"
-        case .mcpServers:  return "server.rack"
-        case .permissions: return "lock.shield"
-        case .connection:  return "network"
-        case .about:       return "info.circle"
+        case .dashboard: "gauge.medium"
+        case .project: "person.crop.circle"
+        case .tools: "wrench.and.screwdriver"
+        case .mcpServers: "server.rack"
+        case .permissions: "lock.shield"
+        case .connection: "network"
+        case .about: "info.circle"
         }
     }
 
     var group: Group {
         switch self {
-        case .dashboard, .project:                         return .information
-        case .tools, .mcpServers, .permissions, .connection, .about: return .settings
+        case .dashboard, .project: .information
+        case .tools, .mcpServers, .permissions, .connection, .about: .settings
         }
     }
 
@@ -65,7 +66,9 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
         case information = "Information"
         case settings = "Settings"
 
-        var id: String { rawValue }
+        var id: String {
+            rawValue
+        }
 
         var items: [SidebarItem] {
             SidebarItem.allCases.filter { $0.group == self }

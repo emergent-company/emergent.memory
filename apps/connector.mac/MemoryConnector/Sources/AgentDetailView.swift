@@ -1,7 +1,7 @@
 import SwiftUI
 
-// The dashboard's agent list and this sheet both key off the definition's `id`,
-// so it can act as the sheet's identity.
+/// The dashboard's agent list and this sheet both key off the definition's `id`,
+/// so it can act as the sheet's identity.
 extension AgentDefinitionSummary: Identifiable {}
 
 /// Read-only detail sheet for one agent definition, opened from the Dashboard
@@ -140,9 +140,9 @@ struct AgentDetailView: View {
     }
 
     /// A settings row whose value wraps (description) or hosts arbitrary views.
-    private func infoRow<Content: View>(
+    private func infoRow(
         _ label: String,
-        @ViewBuilder content: () -> Content
+        @ViewBuilder content: () -> some View
     ) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text(label)
@@ -156,15 +156,14 @@ struct AgentDetailView: View {
 
     // MARK: - Tools
 
-    @ViewBuilder
     private var toolsCard: some View {
         ConnectorCard(title: "Tools", systemImage: "wrench.and.screwdriver") {
             switch store.state {
             case .idle, .loading:
                 ConnectorLoadingRow(caption: "Loading tools…")
-            case .error(let message):
+            case let .error(message):
                 toolsError(message)
-            case .loaded(let detail):
+            case let .loaded(detail):
                 loadedTools(detail)
             }
         }
@@ -219,12 +218,15 @@ struct AgentDetailView: View {
     private func toolBlock(title: String,
                            systemImage: String,
                            names: [String],
-                           subtle: Bool = false) -> some View {
+                           subtle: Bool = false) -> some View
+    {
         VStack(alignment: .leading, spacing: 8) {
             toolHeader(title, systemImage: systemImage)
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(names.indices, id: \.self) { index in
-                    if index > names.startIndex { Divider() }
+                    if index > names.startIndex {
+                        Divider()
+                    }
                     toolRow(names[index], systemImage: systemImage, subtle: subtle)
                 }
             }
@@ -281,7 +283,9 @@ struct AgentDetailView: View {
     // MARK: - Effective values (detail supersedes the summary once loaded)
 
     private var detail: AgentDefinitionDetail? {
-        if case .loaded(let detail) = store.state { return detail }
+        if case let .loaded(detail) = store.state {
+            return detail
+        }
         return nil
     }
 
@@ -290,17 +294,36 @@ struct AgentDetailView: View {
         return name.isEmpty ? "Untitled agent" : name
     }
 
-    private var agentDescription: String? { detail?.description ?? agent.description }
-    private var enabled: Bool? { detail?.enabled ?? agent.enabled }
-    private var isDefault: Bool? { detail?.isDefault ?? agent.isDefault }
-    private var visibility: String? { detail?.visibility ?? agent.visibility }
-    private var triggerType: String? { detail?.triggerType ?? agent.triggerType }
-    private var flowType: String? { detail?.flowType ?? agent.flowType }
+    private var agentDescription: String? {
+        detail?.description ?? agent.description
+    }
+
+    private var enabled: Bool? {
+        detail?.enabled ?? agent.enabled
+    }
+
+    private var isDefault: Bool? {
+        detail?.isDefault ?? agent.isDefault
+    }
+
+    private var visibility: String? {
+        detail?.visibility ?? agent.visibility
+    }
+
+    private var triggerType: String? {
+        detail?.triggerType ?? agent.triggerType
+    }
+
+    private var flowType: String? {
+        detail?.flowType ?? agent.flowType
+    }
 
     /// The server omits the model when the agent has none; show a neutral label.
     private var modelDisplay: String {
         let model = detail?.model ?? agent.model
-        if let model, !model.isEmpty { return model }
+        if let model, !model.isEmpty {
+            return model
+        }
         return "Default"
     }
 

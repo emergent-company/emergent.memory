@@ -8,7 +8,6 @@ import SwiftUI
 /// name required, command required for stdio, url required for http/sse, and a
 /// duplicate-name check — are unit-testable.
 struct MCPServerForm: Equatable {
-
     /// One editable key/value pair (env var or header).
     struct Entry: Identifiable, Equatable {
         var id = UUID()
@@ -50,28 +49,44 @@ struct MCPServerForm: Equatable {
 
     // MARK: Validation
 
-    var trimmedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
-    var trimmedCommand: String { command.trimmingCharacters(in: .whitespacesAndNewlines) }
-    var trimmedURL: String { url.trimmingCharacters(in: .whitespacesAndNewlines) }
+    var trimmedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var trimmedCommand: String {
+        command.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var trimmedURL: String {
+        url.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     /// First blocking validation problem, or nil when the form may be submitted.
     /// `existingNames` triggers the duplicate-name check (omit the server's own
     /// name when editing).
     func validationMessage(existingNames: Set<String> = []) -> String? {
-        if trimmedName.isEmpty { return "Name is required." }
+        if trimmedName.isEmpty {
+            return "Name is required."
+        }
         if existingNames.contains(trimmedName) {
             return "A server named “\(trimmedName)” already exists."
         }
         switch transport {
         case .stdio:
-            if trimmedCommand.isEmpty { return "Command is required for a stdio server." }
+            if trimmedCommand.isEmpty {
+                return "Command is required for a stdio server."
+            }
         case .http, .sse:
-            if trimmedURL.isEmpty { return "URL is required for an \(transport.rawValue) server." }
+            if trimmedURL.isEmpty {
+                return "URL is required for an \(transport.rawValue) server."
+            }
         }
         return nil
     }
 
-    var isValid: Bool { validationMessage() == nil }
+    var isValid: Bool {
+        validationMessage() == nil
+    }
 
     // MARK: Payload
 
@@ -82,8 +97,13 @@ struct MCPServerForm: Equatable {
         return cleaned.isEmpty ? nil : cleaned
     }
 
-    var envDictionary: [String: String]? { Self.dictionary(from: env) }
-    var headerDictionary: [String: String]? { Self.dictionary(from: headers) }
+    var envDictionary: [String: String]? {
+        Self.dictionary(from: env)
+    }
+
+    var headerDictionary: [String: String]? {
+        Self.dictionary(from: headers)
+    }
 
     private static func dictionary(from entries: [Entry]) -> [String: String]? {
         var result: [String: String] = [:]
@@ -100,20 +120,20 @@ struct MCPServerForm: Equatable {
     func config() -> HostedMCPServerConfig {
         switch transport {
         case .stdio:
-            return HostedMCPServerConfig(name: trimmedName,
-                                         transport: .stdio,
-                                         enabled: enabled,
-                                         command: trimmedCommand,
-                                         args: cleanedArgs,
-                                         env: envDictionary,
-                                         disabledTools: disabledTools)
+            HostedMCPServerConfig(name: trimmedName,
+                                  transport: .stdio,
+                                  enabled: enabled,
+                                  command: trimmedCommand,
+                                  args: cleanedArgs,
+                                  env: envDictionary,
+                                  disabledTools: disabledTools)
         case .http, .sse:
-            return HostedMCPServerConfig(name: trimmedName,
-                                         transport: transport,
-                                         enabled: enabled,
-                                         url: trimmedURL,
-                                         headers: headerDictionary,
-                                         disabledTools: disabledTools)
+            HostedMCPServerConfig(name: trimmedName,
+                                  transport: transport,
+                                  enabled: enabled,
+                                  url: trimmedURL,
+                                  headers: headerDictionary,
+                                  disabledTools: disabledTools)
         }
     }
 }
@@ -321,11 +341,17 @@ struct MCPArgsEditor: View {
                 HStack(spacing: 6) {
                     TextField("Argument", text: Binding(
                         get: { index < args.count ? args[index] : "" },
-                        set: { if index < args.count { args[index] = $0 } }
+                        set: {
+                            if index < args.count {
+                                args[index] = $0
+                            }
+                        }
                     ))
                     .autocorrectionDisabled()
                     Button {
-                        if index < args.count { args.remove(at: index) }
+                        if index < args.count {
+                            args.remove(at: index)
+                        }
                     } label: {
                         Image(systemName: "minus.circle")
                     }

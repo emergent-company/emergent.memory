@@ -1,11 +1,10 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 /// First-run import of an existing engine config into app state. Uses a temp
 /// config file and an isolated defaults suite. Only non-secret settings are
 /// adopted; the connector CLI owns tokens.
 final class ConnectorSettingsImportTests: XCTestCase {
-
     private var suiteName = ""
     private var defaults = UserDefaults(suiteName: "") ?? .standard
     private var tempRoot = FileManager.default.temporaryDirectory
@@ -21,7 +20,9 @@ final class ConnectorSettingsImportTests: XCTestCase {
 
     override func tearDownWithError() throws {
         try? FileManager.default.removeItem(at: tempRoot)
-        if !suiteName.isEmpty { defaults.removePersistentDomain(forName: suiteName) }
+        if !suiteName.isEmpty {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
         ConnectorKeychainCleanup.clearAll(defaults: defaults)
     }
 

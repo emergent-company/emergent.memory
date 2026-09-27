@@ -21,14 +21,26 @@ final class AvatarStore: ObservableObject {
 
     /// The one account key both the toolbar and the card compute.
     static func accountKey(for identity: OIDCUserInfo?) -> String? {
-        if let sub = identity?.sub, !sub.isEmpty { return sub }
-        if let email = identity?.email, !email.isEmpty { return email }
+        if let sub = identity?.sub, !sub.isEmpty {
+            return sub
+        }
+        if let email = identity?.email, !email.isEmpty {
+            return email
+        }
         return nil
     }
 
-    func image(for key: String) -> NSImage? { images[key] }
-    func isMissing(_ key: String) -> Bool { missing.contains(key) }
-    func hasEntry(_ key: String) -> Bool { images[key] != nil || missing.contains(key) }
+    func image(for key: String) -> NSImage? {
+        images[key]
+    }
+
+    func isMissing(_ key: String) -> Bool {
+        missing.contains(key)
+    }
+
+    func hasEntry(_ key: String) -> Bool {
+        images[key] != nil || missing.contains(key)
+    }
 
     func store(_ image: NSImage, for key: String) {
         images[key] = image
@@ -65,7 +77,7 @@ struct MemoryAvatar: View {
     init(initials: String, size: CGFloat = 44, cacheKey: String? = nil) {
         self.initials = initials
         self.size = size
-        self.explicitCacheKey = cacheKey
+        explicitCacheKey = cacheKey
     }
 
     var body: some View {
@@ -88,13 +100,19 @@ struct MemoryAvatar: View {
     /// The shared account key (same for toolbar + card); falls back to the
     /// caller's key/initials only when no identity is available yet.
     private var effectiveKey: String {
-        if let key = AvatarStore.accountKey(for: accountStore.activeIdentity) { return key }
-        if let explicitCacheKey, !explicitCacheKey.isEmpty { return explicitCacheKey }
+        if let key = AvatarStore.accountKey(for: accountStore.activeIdentity) {
+            return key
+        }
+        if let explicitCacheKey, !explicitCacheKey.isEmpty {
+            return explicitCacheKey
+        }
         return initials.isEmpty ? "signed-out" : initials
     }
 
     /// Re-runs the load when the user or sign-in state changes.
-    private var taskID: String { "\(effectiveKey)|\(accountStore.isEffectivelySignedIn)" }
+    private var taskID: String {
+        "\(effectiveKey)|\(accountStore.isEffectivelySignedIn)"
+    }
 
     private func load() async {
         guard accountStore.isEffectivelySignedIn else {
@@ -105,7 +123,9 @@ struct MemoryAvatar: View {
         }
 
         let key = effectiveKey
-        if store.hasEntry(key) { return } // image or cached 404 — nothing to do
+        if store.hasEntry(key) {
+            return
+        } // image or cached 404 — nothing to do
 
         do {
             let token = try await accountStore.currentAccessToken()

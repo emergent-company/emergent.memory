@@ -99,7 +99,8 @@ final class DefaultLegacySessionReader: LegacySessionReading, @unchecked Sendabl
 
     init(defaults: UserDefaults = .standard,
          secrets: AppSecretStore = AppSecretStore(),
-         keychain: LegacyKeychainReading = SystemLegacyKeychain()) {
+         keychain: LegacyKeychainReading = SystemLegacyKeychain())
+    {
         self.defaults = defaults
         self.secrets = secrets
         self.keychain = keychain
@@ -107,7 +108,8 @@ final class DefaultLegacySessionReader: LegacySessionReading, @unchecked Sendabl
 
     func read() -> LegacySession? {
         if let data = secrets.readData(AppSecretStore.sessionFileName),
-           let stored = try? JSONDecoder().decode(StoredLegacySession.self, from: data) {
+           let stored = try? JSONDecoder().decode(StoredLegacySession.self, from: data)
+        {
             return stored.legacy
         }
         return readKeychain()
@@ -116,12 +118,14 @@ final class DefaultLegacySessionReader: LegacySessionReading, @unchecked Sendabl
     private func readKeychain() -> LegacySession? {
         if let json = try? keychain.load(account: Self.sessionAccount),
            let data = json.data(using: .utf8),
-           let stored = try? JSONDecoder().decode(StoredLegacySession.self, from: data) {
+           let stored = try? JSONDecoder().decode(StoredLegacySession.self, from: data)
+        {
             return stored.legacy
         }
 
         guard let accessToken = try? keychain.load(account: Self.accessAccount),
-              !accessToken.isEmpty else {
+              !accessToken.isEmpty
+        else {
             return nil
         }
         let expiresAt = (try? keychain.load(account: Self.accessExpiryAccount))
@@ -157,7 +161,8 @@ struct DefaultLegacySessionClearer: LegacySessionClearing {
     private let keychain: LegacyKeychainReading
 
     init(secrets: AppSecretStore = AppSecretStore(),
-         keychain: LegacyKeychainReading = SystemLegacyKeychain()) {
+         keychain: LegacyKeychainReading = SystemLegacyKeychain())
+    {
         self.secrets = secrets
         self.keychain = keychain
     }
@@ -218,7 +223,9 @@ enum LegacyDateParser {
     static func parse(_ string: String) -> Date? {
         let fractional = ISO8601DateFormatter()
         fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = fractional.date(from: string) { return date }
+        if let date = fractional.date(from: string) {
+            return date
+        }
 
         let plain = ISO8601DateFormatter()
         plain.formatOptions = [.withInternetDateTime]

@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+
 // Sparkle's `SPUUpdater` is not `Sendable` and its KVO surface predates Swift 6
 // concurrency annotations. `@preconcurrency` downgrades those Sendable checks
 // to warnings; the delegate protocol itself *is* `NS_SWIFT_UI_ACTOR`, so its
@@ -21,7 +22,6 @@ import Foundation
 /// calls `startUpdater()` itself only after validating the bundle.
 @MainActor
 final class UpdaterModel: NSObject, ObservableObject {
-
     /// The last known outcome of an update check, used to drive the status line.
     ///
     /// `.unavailable` means the updater was never started (Debug build, no
@@ -58,19 +58,23 @@ final class UpdaterModel: NSObject, ObservableObject {
 
     /// True when Sparkle was actually started, i.e. the manual/automatic
     /// controls have something to drive.
-    var isUpdaterAvailable: Bool { controller != nil }
+    var isUpdaterAvailable: Bool {
+        controller != nil
+    }
 
     /// Whether an update was found by the most recent check.
     var updateAvailable: Bool {
-        if case .updateAvailable = state { return true }
+        if case .updateAvailable = state {
+            return true
+        }
         return false
     }
 
     /// The marketing version of the most recently found update, if any.
     var latestVersion: String? {
         switch state {
-        case .updateAvailable(let version), .installing(let version): return version
-        default: return nil
+        case let .updateAvailable(version), let .installing(version): version
+        default: nil
         }
     }
 
@@ -78,19 +82,19 @@ final class UpdaterModel: NSObject, ObservableObject {
     var statusText: String {
         switch state {
         case .unavailable:
-            return "Update checks are unavailable in this build."
+            "Update checks are unavailable in this build."
         case .idle:
-            return "Not checked yet."
+            "Not checked yet."
         case .checking:
-            return "Checking for updates…"
+            "Checking for updates…"
         case .upToDate:
-            return "You're up to date."
-        case .updateAvailable(let version):
-            return "Update available: \(version)"
-        case .installing(let version):
-            return "Installing \(version)…"
-        case .failed(let message):
-            return message.isEmpty ? "Update check failed." : "Update check failed: \(message)"
+            "You're up to date."
+        case let .updateAvailable(version):
+            "Update available: \(version)"
+        case let .installing(version):
+            "Installing \(version)…"
+        case let .failed(message):
+            message.isEmpty ? "Update check failed." : "Update check failed: \(message)"
         }
     }
 
@@ -98,34 +102,35 @@ final class UpdaterModel: NSObject, ObservableObject {
         super.init()
 
         #if DEBUG
-        // Development builds must never check: there is no trusted feed, and a
-        // misconfigured bundle must not be able to start (or alert) Sparkle.
-        state = .unavailable
-        #else
-        guard Self.configuredFeedURL() != nil, Self.configuredPublicKey() != nil else {
-            // Missing or placeholder feed/key: do not start the updater. This is
-            // the guard that keeps a bad build from aborting at launch.
+            // Development builds must never check: there is no trusted feed, and a
+            // misconfigured bundle must not be able to start (or alert) Sparkle.
             state = .unavailable
-            return
-        }
+        #else
+            guard Self.configuredFeedURL() != nil, Self.configuredPublicKey() != nil else {
+                // Missing or placeholder feed/key: do not start the updater. This is
+                // the guard that keeps a bad build from aborting at launch.
+                state = .unavailable
+                return
+            }
 
-        let controller = SPUStandardUpdaterController(
-            startingUpdater: false,
-            updaterDelegate: self,
-            userDriverDelegate: nil)
-        self.controller = controller
+            let controller = SPUStandardUpdaterController(
+                startingUpdater: false,
+                updaterDelegate: self,
+                userDriverDelegate: nil
+            )
+            self.controller = controller
 
-        observe(controller.updater)
+            observe(controller.updater)
 
-        // Spec floor: automatic checks run no more frequently than once per hour.
-        if controller.updater.updateCheckInterval < Self.minimumAutomaticCheckInterval {
-            controller.updater.updateCheckInterval = Self.minimumAutomaticCheckInterval
-        }
+            // Spec floor: automatic checks run no more frequently than once per hour.
+            if controller.updater.updateCheckInterval < Self.minimumAutomaticCheckInterval {
+                controller.updater.updateCheckInterval = Self.minimumAutomaticCheckInterval
+            }
 
-        controller.startUpdater()
-        canCheckForUpdates = controller.updater.canCheckForUpdates
-        automaticallyChecksForUpdates = controller.updater.automaticallyChecksForUpdates
-        state = .idle
+            controller.startUpdater()
+            canCheckForUpdates = controller.updater.canCheckForUpdates
+            automaticallyChecksForUpdates = controller.updater.automaticallyChecksForUpdates
+            state = .idle
         #endif
     }
 
@@ -150,7 +155,8 @@ final class UpdaterModel: NSObject, ObservableObject {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed),
               let scheme = url.scheme?.lowercased(),
-              scheme == "https" else {
+              scheme == "https"
+        else {
             return nil
         }
         return url
@@ -191,8 +197,8 @@ final class UpdaterModel: NSObject, ObservableObject {
         updater.publisher(for: \.automaticallyChecksForUpdates)
             .receive(on: RunLoop.main)
             .sink { [weak self] value in
-                guard let self, self.automaticallyChecksForUpdates != value else { return }
-                self.automaticallyChecksForUpdates = value
+                guard let self, automaticallyChecksForUpdates != value else { return }
+                automaticallyChecksForUpdates = value
             }
             .store(in: &cancellables)
     }
@@ -228,7 +234,9 @@ final class UpdaterModel: NSObject, ObservableObject {
     private static func isBenignCompletion(_ error: Error) -> Bool {
         let nsError = error as NSError
         // "No update found" carries the reason in its userInfo.
-        if nsError.userInfo[SPUNoUpdateFoundReasonKey] != nil { return true }
+        if nsError.userInfo[SPUNoUpdateFoundReasonKey] != nil {
+            return true
+        }
         guard nsError.domain == SUSparkleErrorDomain else { return false }
         switch nsError.code {
         case Int(SUError.noUpdateError.rawValue),
@@ -243,7 +251,8 @@ final class UpdaterModel: NSObject, ObservableObject {
     private static func message(for error: Error) -> String {
         let nsError = error as NSError
         if let description = nsError.userInfo[NSLocalizedDescriptionKey] as? String,
-           !description.isEmpty {
+           !description.isEmpty
+        {
             return description
         }
         let localized = nsError.localizedDescription
@@ -259,26 +268,25 @@ final class UpdaterModel: NSObject, ObservableObject {
 // MARK: - SPUUpdaterDelegate
 
 extension UpdaterModel: SPUUpdaterDelegate {
-
-    func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+    func updater(_: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
         state = .updateAvailable(version: Self.displayVersion(of: item))
     }
 
-    func updaterDidNotFindUpdate(_ updater: SPUUpdater, error: Error) {
+    func updaterDidNotFindUpdate(_: SPUUpdater, error _: Error) {
         // Reached the feed successfully, but nothing newer/installable: a
         // completed check with no update, not a failure.
         state = .upToDate
     }
 
-    func updater(_ updater: SPUUpdater, willInstallUpdate item: SUAppcastItem) {
+    func updater(_: SPUUpdater, willInstallUpdate item: SUAppcastItem) {
         state = .installing(version: Self.displayVersion(of: item))
     }
 
-    func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
+    func updater(_: SPUUpdater, didAbortWithError error: Error) {
         applyCompletion(error: error)
     }
 
-    func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
+    func updater(_: SPUUpdater, didFinishUpdateCycleFor _: SPUUpdateCheck, error: Error?) {
         applyCompletion(error: error)
     }
 }

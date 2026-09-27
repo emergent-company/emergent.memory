@@ -115,8 +115,8 @@ struct MCPServersPage: View {
             } label: {
                 HStack(alignment: .center, spacing: 12) {
                     MCPStatusDot(color: MCPStatusStyle.color(enabled: server.enabled,
-                                                              connected: server.connected,
-                                                              error: server.error))
+                                                             connected: server.connected,
+                                                             error: server.error))
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 8) {
                             Text(server.name.isEmpty ? "Untitled server" : server.name)
@@ -199,16 +199,28 @@ struct MCPServersPage: View {
 /// orange connecting/starting, red error, gray disabled.
 enum MCPStatusStyle {
     static func color(enabled: Bool, connected: Bool, error: String?) -> Color {
-        if !enabled { return .secondary }
-        if connected { return .green }
-        if let error, !error.isEmpty { return .red }
+        if !enabled {
+            return .secondary
+        }
+        if connected {
+            return .green
+        }
+        if let error, !error.isEmpty {
+            return .red
+        }
         return .orange
     }
 
     static func label(enabled: Bool, connected: Bool, error: String?) -> String {
-        if !enabled { return "Disabled" }
-        if connected { return "Connected" }
-        if let error, !error.isEmpty { return "Error" }
+        if !enabled {
+            return "Disabled"
+        }
+        if connected {
+            return "Connected"
+        }
+        if let error, !error.isEmpty {
+            return "Error"
+        }
         return "Not connected"
     }
 }

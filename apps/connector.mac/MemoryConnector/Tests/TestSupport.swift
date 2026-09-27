@@ -19,7 +19,9 @@ enum HTTPBodyReader {
         defer { buffer.deallocate() }
         while stream.hasBytesAvailable {
             let read = stream.read(buffer, maxLength: size)
-            if read <= 0 { break }
+            if read <= 0 {
+                break
+            }
             data.append(buffer, count: read)
         }
         return String(data: data, encoding: .utf8) ?? ""
@@ -32,7 +34,7 @@ final class FakeAuthenticator: BrowserAuthenticator, @unchecked Sendable {
     var handler: ((URL) -> Result<URL, Error>) = { _ in .failure(OIDCError.cancelled) }
     private(set) var openedURLs: [URL] = []
 
-    func authenticate(url: URL, callbackURLScheme: String) async throws -> URL {
+    func authenticate(url: URL, callbackURLScheme _: String) async throws -> URL {
         openedURLs.append(url)
         return try handler(url).get()
     }

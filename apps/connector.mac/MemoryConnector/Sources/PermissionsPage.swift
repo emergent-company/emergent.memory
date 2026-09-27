@@ -25,7 +25,11 @@ struct PermissionsPage: View {
         .navigationTitle("Permissions")
         .alert("Memory", isPresented: Binding(
             get: { alertMessage != nil },
-            set: { if !$0 { alertMessage = nil } }
+            set: {
+                if !$0 {
+                    alertMessage = nil
+                }
+            }
         )) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -78,10 +82,10 @@ struct PermissionsPage: View {
 
     private func badgeColor(_ state: PermissionCenter.PermissionState) -> Color {
         switch state {
-        case .granted: return .green
-        case .denied: return .red
-        case .requested: return .orange
-        case .unknown: return .secondary
+        case .granted: .green
+        case .denied: .red
+        case .requested: .orange
+        case .unknown: .secondary
         }
     }
 

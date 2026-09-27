@@ -99,7 +99,7 @@ struct DashboardPage: View {
         do {
             let token = try await accountStore.currentAccessToken()
             await store.load(projectID: projectID, serverURL: serverURL, accessToken: token)
-            if case .loaded(let snapshot) = store.state {
+            if case let .loaded(snapshot) = store.state {
                 lastSnapshot = snapshot
                 // Backfill the org id → name map so other surfaces (project
                 // grouping) can show the organisation too.
@@ -113,7 +113,9 @@ struct DashboardPage: View {
     }
 
     private var isRefreshing: Bool {
-        if case .loading = store.state { return true }
+        if case .loading = store.state {
+            return true
+        }
         return false
     }
 
@@ -133,9 +135,9 @@ struct DashboardPage: View {
                 } else {
                     loadingCard
                 }
-            case .loaded(let snapshot):
+            case let .loaded(snapshot):
                 snapshotPrimary(snapshot)
-            case .error(let message):
+            case let .error(message):
                 errorCard(message)
             }
         }
@@ -220,7 +222,8 @@ struct DashboardPage: View {
             return name
         }
         if let orgID = snapshot.orgID,
-           let name = projectStore.organizationNames[orgID], !name.isEmpty {
+           let name = projectStore.organizationNames[orgID], !name.isEmpty
+        {
             return name
         }
         if let project = projectStore.projects.first(where: { $0.id == projectStore.activeProjectID }) {
@@ -371,14 +374,16 @@ struct DashboardPage: View {
 
     private var scopeText: String {
         guard projectStore.hasActiveProject else { return "Shared (no project selected)" }
-        if let name = projectStore.activeProjectName { return "Applies to \(name)" }
+        if let name = projectStore.activeProjectName {
+            return "Applies to \(name)"
+        }
         return "Applies to the active project"
     }
 
     private func iconName(for service: ToolCatalog.Service) -> String {
         switch service {
-        case .notes: return "note.text"
-        case .reminders: return "checklist"
+        case .notes: "note.text"
+        case .reminders: "checklist"
         }
     }
 
@@ -393,7 +398,9 @@ struct DashboardPage: View {
                     // Single-column list: one equal-height row per tool.
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(enabledTools.indices, id: \.self) { index in
-                            if index > enabledTools.startIndex { Divider() }
+                            if index > enabledTools.startIndex {
+                                Divider()
+                            }
                             toolRow(enabledTools[index])
                         }
                     }
@@ -443,7 +450,6 @@ struct DashboardPage: View {
 
     // MARK: - Agents
 
-    @ViewBuilder
     private func agentsCard(_ snapshot: DashboardSnapshot) -> some View {
         ConnectorCard(title: "Available Agents", systemImage: "person.2.wave.2") {
             if snapshot.agents.isEmpty {
@@ -462,7 +468,9 @@ struct DashboardPage: View {
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(snapshot.agents.indices, id: \.self) { index in
-                        if index > snapshot.agents.startIndex { Divider() }
+                        if index > snapshot.agents.startIndex {
+                            Divider()
+                        }
                         Button {
                             selectedAgent = snapshot.agents[index]
                         } label: {
@@ -515,8 +523,8 @@ struct DashboardPage: View {
                 Text(accountStore.isEffectivelySignedIn ? "Select a project" : "Sign in to see your dashboard")
                     .font(.headline)
                 Text(accountStore.isEffectivelySignedIn
-                     ? "Choose a project in the toolbar to see its objects, agents, and tools."
-                     : "Sign in with your Memory account to load project data.")
+                    ? "Choose a project in the toolbar to see its objects, agents, and tools."
+                    : "Sign in with your Memory account to load project data.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

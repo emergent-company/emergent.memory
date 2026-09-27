@@ -157,8 +157,8 @@ struct MenuBarView: View {
 
     private func signIn(_ environment: Environment) {
         Task {
-            guard (try? await accountStore.signIn(environment: environment)) != nil else { return }
-            let token = (try? await accountStore.currentAccessToken()) ?? ""
+            guard await (try? accountStore.signIn(environment: environment)) != nil else { return }
+            let token = await (try? accountStore.currentAccessToken()) ?? ""
             await projectStore.loadProjects(accessToken: token)
         }
     }

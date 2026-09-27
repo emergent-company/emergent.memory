@@ -39,7 +39,9 @@ struct Account: Codable, Identifiable, Hashable, Sendable {
     /// never confused. Falls back to the environment label only when the index
     /// has no email — never the initials or a generic "Signed in".
     var switcherTitle: String {
-        if let email = Self.trimmed(email) { return email }
+        if let email = Self.trimmed(email) {
+            return email
+        }
         return environmentLabel
     }
 
@@ -47,8 +49,12 @@ struct Account: Codable, Identifiable, Hashable, Sendable {
     /// name, else the email, else the environment label. Never returns a
     /// generic "Signed in" fallback.
     var displayTitle: String {
-        if let name = Self.trimmed(displayName) { return name }
-        if let email = Self.trimmed(email) { return email }
+        if let name = Self.trimmed(displayName) {
+            return name
+        }
+        if let email = Self.trimmed(email) {
+            return email
+        }
         return environmentLabel
     }
 
@@ -63,7 +69,8 @@ struct Account: Codable, Identifiable, Hashable, Sendable {
         guard let name = displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
               !name.isEmpty,
               let email = email?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !email.isEmpty else {
+              !email.isEmpty
+        else {
             return nil
         }
         return email

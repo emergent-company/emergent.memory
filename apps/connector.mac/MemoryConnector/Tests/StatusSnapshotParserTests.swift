@@ -1,13 +1,13 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 final class StatusSnapshotParserTests: XCTestCase {
-
     private func makeStdout(instance: String = "mbp-connector",
                             version: String = "0.1.0",
                             tools: String? = "notes_search, notes_create, reminders_list",
-                            hub: String = "connected — hub shows 3 tool(s), matches local set") -> String {
-        var lines: [String] = ["memory-connector status"]
+                            hub: String = "connected — hub shows 3 tool(s), matches local set") -> String
+    {
+        var lines = ["memory-connector status"]
         lines.append("instance: \(instance)")
         lines.append("version: \(version)")
         if let tools {

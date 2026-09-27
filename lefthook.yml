@@ -229,10 +229,11 @@ pre-commit:
       run: go vet ./...
 
     # ── Mac connector — apps/connector.mac ───────────────────────────────────
-    # SwiftFormat + SwiftLint over the *staged* Swift files only. Whole-tree
-    # enforcement is not used because the connector carries pre-existing Swift
-    # debt; the ratchet (see Scripts/lint-swift.sh) keeps new drift out without
-    # a mass reformat. No `root:` so {staged_files} stay repo-root-relative.
+    # SwiftFormat + SwiftLint over the *staged* Swift files only. SwiftFormat
+    # debt is paid down (whole tree format-clean); the residual structural
+    # SwiftLint violations are captured in apps/connector.mac/.swiftlint.baseline
+    # and ignored, so only new drift fails. No `root:` so {staged_files} stay
+    # repo-root-relative. See Scripts/lint-swift.sh for the ratchet rationale.
     - name: connector-mac-swift
       glob:
         - "apps/connector.mac/*.swift"

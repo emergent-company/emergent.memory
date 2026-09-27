@@ -74,7 +74,8 @@ final class AppEnvironment: ObservableObject {
         projectStore.organizationNameLoader = { [weak self] in
             guard let self,
                   let environment = self.accountStore.activeEnvironment,
-                  let token = try? await self.accountStore.currentAccessToken() else {
+                  let token = try? await self.accountStore.currentAccessToken()
+            else {
                 return [:]
             }
             let client = MemoryAPIClient(serverURL: environment.serverURLString, token: token)
@@ -109,8 +110,8 @@ final class AppEnvironment: ObservableObject {
             .dropFirst()
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                guard let self, self.scopeSwapGate.mayReconcile else { return }
-                self.syncEngineWithConnection()
+                guard let self, scopeSwapGate.mayReconcile else { return }
+                syncEngineWithConnection()
             }
             .store(in: &cancellables)
 
@@ -150,7 +151,8 @@ final class AppEnvironment: ObservableObject {
             reader: DefaultLegacySessionReader(),
             clearer: DefaultLegacySessionClearer(),
             defaults: .standard,
-            configPath: EngineManager.defaultConfigPath)
+            configPath: EngineManager.defaultConfigPath
+        )
     }
 
     /// Overall status from engine + hub state (same derivation as before).
@@ -181,7 +183,8 @@ final class AppEnvironment: ObservableObject {
         guard let scope = accountStore.projectScope(for: account.id) else { return }
         let previousConnected = projectStore.connectedProjectID
         ConnectorLog.lifecycle(
-            "applyScope account=\(account.id) environment=\(account.environmentID) previousConnected=\(previousConnected ?? "nil")")
+            "applyScope account=\(account.id) environment=\(account.environmentID) previousConnected=\(previousConnected ?? "nil")"
+        )
         // Suppress the connected-project-id sink for the whole swap: the id
         // transitions (nil → restored value) must not reconcile against the
         // stale config. The single reconcile below runs after the rewrite.
@@ -199,9 +202,9 @@ final class AppEnvironment: ObservableObject {
         settleChain = Task { [weak self] in
             await previous?.value
             guard let self else { return }
-            _ = await self.projectStore.reassertConnection()
-            self.syncEngineWithConnection()
-            self.scopeSwapGate.end()
+            _ = await projectStore.reassertConnection()
+            syncEngineWithConnection()
+            scopeSwapGate.end()
         }
     }
 
@@ -253,7 +256,8 @@ final class AppEnvironment: ObservableObject {
         let decision = EngineLifecyclePolicy.decision(
             connectedProjectID: projectStore.connectedProjectID,
             configURL: EngineConfigSync.configURL,
-            expectedServerURL: expectedServerTrimmed.isEmpty ? nil : expectedServerTrimmed)
+            expectedServerURL: expectedServerTrimmed.isEmpty ? nil : expectedServerTrimmed
+        )
         switch decision {
         case .run:
             engine.start()
@@ -262,13 +266,14 @@ final class AppEnvironment: ObservableObject {
             engine.stop()
             statusMonitor.stop()
             statusMonitor.markStopped()
-        case .missingConfig(let projectID):
+        case let .missingConfig(projectID):
             engine.stop()
             statusMonitor.stop()
             statusMonitor.markStopped()
             engine.reportConfigurationError(
-                "Engine config for connected project \(projectID) is missing; not starting.")
-        case .wrongProject(let projectID, let configured):
+                "Engine config for connected project \(projectID) is missing; not starting."
+            )
+        case let .wrongProject(projectID, configured):
             engine.stop()
             statusMonitor.stop()
             statusMonitor.markStopped()
@@ -276,17 +281,17 @@ final class AppEnvironment: ObservableObject {
             // a nil configured id means the config binds no project, and a
             // configured id equal to the connected one can only be a server
             // mismatch (the project itself matched).
-            let reason: String
-            switch configured {
+            let reason = switch configured {
             case .none:
-                reason = "the engine config binds no project"
-            case .some(let configuredID) where configuredID == projectID:
-                reason = "the engine config binds a different server for project \(projectID)"
-            case .some(let configuredID):
-                reason = "the engine config binds project \(configuredID)"
+                "the engine config binds no project"
+            case let .some(configuredID) where configuredID == projectID:
+                "the engine config binds a different server for project \(projectID)"
+            case let .some(configuredID):
+                "the engine config binds project \(configuredID)"
             }
             engine.reportConfigurationError(
-                "Engine config does not match the connected project \(projectID): \(reason); not starting.")
+                "Engine config does not match the connected project \(projectID): \(reason); not starting."
+            )
         }
     }
 

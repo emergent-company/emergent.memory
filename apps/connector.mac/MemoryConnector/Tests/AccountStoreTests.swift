@@ -1,5 +1,5 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 /// Scripted `ConnectorCLI` for `AccountStore` tests. Routes by the first two
 /// arguments ("auth start", "auth complete", "auth access-token", ...) to
@@ -30,10 +30,14 @@ final class StubCLI: @unchecked Sendable {
         on(command) { _ in ProcessResult(stdout: message, exitCode: exitCode, timedOut: false) }
     }
 
-    var calls: [[String]] { lock.withLock { _calls } }
+    var calls: [[String]] {
+        lock.withLock { _calls }
+    }
 
     /// Every stdin-piped invocation (currently `auth import`), in order.
-    var stdinCalls: [StdinCall] { lock.withLock { _stdinCalls } }
+    var stdinCalls: [StdinCall] {
+        lock.withLock { _stdinCalls }
+    }
 
     func called(_ command: String) -> Bool {
         calls.contains { Array($0.prefix(2)).joined(separator: " ") == command }
@@ -64,7 +68,6 @@ final class StubCLI: @unchecked Sendable {
 /// per-account secret directories, switching, sign-out isolation, identity
 /// backfill, and legacy migration.
 final class AccountStoreTests: XCTestCase {
-
     private var suiteName = ""
     private var defaults = UserDefaults(suiteName: "") ?? .standard
     private var root = FileManager.default.temporaryDirectory
@@ -93,7 +96,9 @@ final class AccountStoreTests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
-        if !suiteName.isEmpty { defaults.removePersistentDomain(forName: suiteName) }
+        if !suiteName.isEmpty {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
         try? FileManager.default.removeItem(at: root)
         StubURLProtocol.registry.reset()
         ConnectorKeychainCleanup.clearAll(defaults: defaults)
@@ -111,7 +116,8 @@ final class AccountStoreTests: XCTestCase {
 
     private func stubComplete(email: String,
                               server: String? = nil,
-                              issuer: String = "https://auth.example.test") {
+                              issuer: String = "https://auth.example.test")
+    {
         cli.on("auth complete", json: """
         {"schema_version":1,"server":"\(server ?? prodServer)","signed_in":true,\
         "email":"\(email)","issuer":"\(issuer)","expires_at":"2030-01-02T03:04:05Z","expired":false}
@@ -174,7 +180,9 @@ final class AccountStoreTests: XCTestCase {
         let state = OAuthCallback.queryItems(from: authorizeURL)["state"] ?? "missing"
         var components = URLComponents(string: OAuthCallback.redirectURI) ?? URLComponents()
         var items = [URLQueryItem(name: "state", value: state)]
-        if let code { items.append(URLQueryItem(name: "code", value: code)) }
+        if let code {
+            items.append(URLQueryItem(name: "code", value: code))
+        }
         components.queryItems = items
         return components.url ?? URL(fileURLWithPath: "/callback")
     }
@@ -433,22 +441,22 @@ final class AccountStoreTests: XCTestCase {
     func testTwoAccountsGetDistinctTokensAndDirectories() async throws {
         let store = makeStore()
         stubComplete(email: "a@example.test")
-        let a = try await signIn(store, .prod)
+        let prodAccount = try await signIn(store, .prod)
         stubComplete(email: "b@example.test", server: devServer, issuer: Environment.dev.issuerString)
-        let b = try await signIn(store, .dev)
+        let devAccount = try await signIn(store, .dev)
 
         XCTAssertEqual(Set(store.accounts.map(\.id)), ["prod:a@example.test", "dev:b@example.test"])
-        XCTAssertEqual(store.activeAccountID, b.id, "newest sign-in becomes active")
+        XCTAssertEqual(store.activeAccountID, devAccount.id, "newest sign-in becomes active")
 
         // Distinct directories: no file can be shared. (The directory is
         // created lazily on the next secret write; the CLI owns the session.)
-        XCTAssertNotEqual(store.accountDirectory(for: a.id), store.accountDirectory(for: b.id))
-        XCTAssertTrue(store.accountDirectory(for: a.id).path.hasSuffix("/accounts/prod:a@example.test"))
-        XCTAssertTrue(store.accountDirectory(for: b.id).path.hasSuffix("/accounts/dev:b@example.test"))
+        XCTAssertNotEqual(store.accountDirectory(for: prodAccount.id), store.accountDirectory(for: devAccount.id))
+        XCTAssertTrue(store.accountDirectory(for: prodAccount.id).path.hasSuffix("/accounts/prod:a@example.test"))
+        XCTAssertTrue(store.accountDirectory(for: devAccount.id).path.hasSuffix("/accounts/dev:b@example.test"))
 
         stubAccessToken([prodServer: "access-A", devServer: "access-B"])
-        let tokenA = try await store.currentAccessToken(for: a.id)
-        let tokenB = try await store.currentAccessToken(for: b.id)
+        let tokenA = try await store.currentAccessToken(for: prodAccount.id)
+        let tokenB = try await store.currentAccessToken(for: devAccount.id)
         XCTAssertEqual(tokenA, "access-A")
         XCTAssertEqual(tokenB, "access-B")
     }
@@ -459,18 +467,18 @@ final class AccountStoreTests: XCTestCase {
     func testSwitchToDisconnectsEngineAndValidatesViaCLI() async throws {
         let store = makeStore()
         stubComplete(email: "a@example.test")
-        let a = try await signIn(store, .prod)
+        let prodAccount = try await signIn(store, .prod)
         let afterFirst = stop.count
 
         stubComplete(email: "b@example.test", server: devServer, issuer: Environment.dev.issuerString)
         _ = try await signIn(store, .dev)
         XCTAssertEqual(stop.count, afterFirst + 1, "signing in a second account disconnects the first")
 
-        try await store.switchTo(accountID: a.id)
+        try await store.switchTo(accountID: prodAccount.id)
 
         XCTAssertEqual(stop.count, afterFirst + 2, "switch stops/disconnects the engine")
-        XCTAssertEqual(store.activeAccountID, a.id)
-        XCTAssertEqual(defaults.string(forKey: AccountStore.activeAccountIDKey), a.id)
+        XCTAssertEqual(store.activeAccountID, prodAccount.id)
+        XCTAssertEqual(defaults.string(forKey: AccountStore.activeAccountIDKey), prodAccount.id)
         XCTAssertTrue(cli.called("auth status"), "switch validates through the CLI")
         stubAccessToken([prodServer: "access-A", devServer: "access-B"])
         let activeToken = try await store.currentAccessToken()
@@ -481,18 +489,18 @@ final class AccountStoreTests: XCTestCase {
     func testSwitchToNotSignedInAccountThrows() async throws {
         let store = makeStore()
         stubComplete(email: "a@example.test")
-        let a = try await signIn(store, .prod)
+        let prodAccount = try await signIn(store, .prod)
         stubComplete(email: "b@example.test", server: devServer, issuer: Environment.dev.issuerString)
-        let b = try await signIn(store, .dev)
+        let devAccount = try await signIn(store, .dev)
 
         stubAuthStatus(signedIn: [prodServer: false])
         do {
-            try await store.switchTo(accountID: a.id)
+            try await store.switchTo(accountID: prodAccount.id)
             XCTFail("expected notSignedIn")
         } catch let error as OIDCError {
             XCTAssertEqual(error, .notSignedIn)
         }
-        XCTAssertEqual(store.activeAccountID, b.id, "failed switch leaves the active account unchanged")
+        XCTAssertEqual(store.activeAccountID, devAccount.id, "failed switch leaves the active account unchanged")
     }
 
     @MainActor
@@ -512,25 +520,25 @@ final class AccountStoreTests: XCTestCase {
     func testSignOutCallsCLIAndPromotesAnother() async throws {
         let store = makeStore()
         stubComplete(email: "a@example.test")
-        let a = try await signIn(store, .prod)
+        let prodAccount = try await signIn(store, .prod)
         stubComplete(email: "b@example.test", server: devServer, issuer: Environment.dev.issuerString)
-        let b = try await signIn(store, .dev)
-        try await store.switchTo(accountID: a.id)
+        let devAccount = try await signIn(store, .dev)
+        try await store.switchTo(accountID: prodAccount.id)
         let before = stop.count
 
-        await store.signOut(accountID: a.id)
+        await store.signOut(accountID: prodAccount.id)
 
         XCTAssertEqual(stop.count, before + 1, "signing out the active account disconnects")
-        XCTAssertEqual(store.accounts.map(\.id), [b.id])
-        XCTAssertEqual(store.activeAccountID, b.id, "another account is promoted")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: store.accountDirectory(for: a.id).path),
+        XCTAssertEqual(store.accounts.map(\.id), [devAccount.id])
+        XCTAssertEqual(store.activeAccountID, devAccount.id, "another account is promoted")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.accountDirectory(for: prodAccount.id).path),
                        "signed-out account's directory is deleted")
         XCTAssertTrue(cli.called("auth logout"))
         XCTAssertTrue(cli.calls.contains { args in
             Array(args.prefix(2)).joined(separator: " ") == "auth logout" && args.contains(prodServer)
         }, "logout is scoped to the removed account's server")
 
-        await store.signOut(accountID: b.id)
+        await store.signOut(accountID: devAccount.id)
         XCTAssertTrue(store.accounts.isEmpty)
         XCTAssertNil(store.activeAccountID)
         XCTAssertNil(defaults.string(forKey: AccountStore.activeAccountIDKey))
@@ -556,11 +564,11 @@ final class AccountStoreTests: XCTestCase {
     func testAccessTokenFailureMarksOnlyThatAccount() async throws {
         let store = makeStore()
         stubComplete(email: "a@example.test")
-        let a = try await signIn(store, .prod)
+        let prodAccount = try await signIn(store, .prod)
         stubComplete(email: "b@example.test", server: devServer, issuer: Environment.dev.issuerString)
-        let b = try await signIn(store, .dev)
+        let devAccount = try await signIn(store, .dev)
 
-        let devServer = self.devServer
+        let devServer = devServer
         cli.on("auth access-token") { arguments in
             let server = Self.flagValue("--server", in: arguments) ?? ""
             if server == devServer {
@@ -572,18 +580,18 @@ final class AccountStoreTests: XCTestCase {
             """, exitCode: 0, timedOut: false)
         }
 
-        let tokenA = try await store.currentAccessToken(for: a.id)
+        let tokenA = try await store.currentAccessToken(for: prodAccount.id)
         XCTAssertEqual(tokenA, "access-A")
-        XCTAssertFalse(store.needsReauthentication(a.id))
+        XCTAssertFalse(store.needsReauthentication(prodAccount.id))
 
         do {
-            _ = try await store.currentAccessToken(for: b.id)
+            _ = try await store.currentAccessToken(for: devAccount.id)
             XCTFail("expected an access-token failure for B")
         } catch {
             // expected
         }
-        XCTAssertTrue(store.needsReauthentication(b.id), "only account B needs re-auth")
-        XCTAssertFalse(store.needsReauthentication(a.id), "A is unaffected by B's failure")
+        XCTAssertTrue(store.needsReauthentication(devAccount.id), "only account B needs re-auth")
+        XCTAssertFalse(store.needsReauthentication(prodAccount.id), "A is unaffected by B's failure")
     }
 
     // MARK: - Identity backfill
@@ -593,14 +601,15 @@ final class AccountStoreTests: XCTestCase {
                              environmentID: String,
                              email: String?,
                              displayName: String?,
-                             avatarObjectKey: String? = nil) throws {
+                             avatarObjectKey: String? = nil) throws
+    {
         let account = Account(id: id,
                               environmentID: environmentID,
                               email: email,
                               displayName: displayName,
                               avatarObjectKey: avatarObjectKey)
         let index = AccountsIndex(accounts: [account])
-        try AppSecretStore(baseDirectory: root).writeData(try JSONEncoder().encode(index),
+        try AppSecretStore(baseDirectory: root).writeData(JSONEncoder().encode(index),
                                                           to: AccountStore.accountsIndexFileName)
     }
 
@@ -615,8 +624,8 @@ final class AccountStoreTests: XCTestCase {
         """
         StubURLProtocol.registry.setHandler { request in
             switch request.url?.path {
-            case "/api/user/profile": return .ok(profile)
-            default: return .status(404)
+            case "/api/user/profile": .ok(profile)
+            default: .status(404)
             }
         }
         let store = makeStore()
@@ -639,7 +648,8 @@ final class AccountStoreTests: XCTestCase {
         // test's own token as well as the path.
         let request = try XCTUnwrap(StubURLProtocol.registry.capturedRequests
             .last { $0.url?.path == "/api/user/profile"
-                && $0.value(forHTTPHeaderField: "Authorization") == "Bearer access-X" })
+                && $0.value(forHTTPHeaderField: "Authorization") == "Bearer access-X"
+            })
         XCTAssertEqual(request.httpMethod, "GET")
         XCTAssertEqual(request.url?.path, "/api/user/profile")
         XCTAssertEqual(request.url?.host, Environment.prod.serverURL.host)
@@ -653,9 +663,9 @@ final class AccountStoreTests: XCTestCase {
         stubAccessToken([prodServer: "access-W"])
         StubURLProtocol.registry.setHandler { request in
             switch request.url?.path {
-            case "/api/user/profile": return .status(500)
-            case "/api/auth/me": return .ok(#"{"email":"wade@example.test"}"#)
-            default: return .status(404)
+            case "/api/user/profile": .status(500)
+            case "/api/auth/me": .ok(#"{"email":"wade@example.test"}"#)
+            default: .status(404)
             }
         }
         let store = makeStore()

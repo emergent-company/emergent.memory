@@ -1,12 +1,11 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 /// Account-scoped `ProjectStore`: profiles, active project and connected flag
 /// must not cross accounts when the scope is swapped. Token minting/config
 /// writing now happen in the connector CLI, so the Swift token store stays
 /// empty by design.
 final class ProjectStoreAccountScopeTests: XCTestCase {
-
     private var suiteName = ""
     private var defaults = UserDefaults(suiteName: "") ?? .standard
     private var root = FileManager.default.temporaryDirectory
@@ -29,7 +28,9 @@ final class ProjectStoreAccountScopeTests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
-        if !suiteName.isEmpty { defaults.removePersistentDomain(forName: suiteName) }
+        if !suiteName.isEmpty {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
         try? FileManager.default.removeItem(at: root)
         StubURLProtocol.registry.reset()
         ConnectorKeychainCleanup.clearAll(defaults: defaults)

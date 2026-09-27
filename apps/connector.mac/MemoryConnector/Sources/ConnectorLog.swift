@@ -17,7 +17,6 @@ import Foundation
 /// `~/Library/Logs/memory-connector-app.log`, polluting the file the
 /// observability lines exist to make readable.
 enum ConnectorLog {
-
     /// Destination for lifecycle lines. Defaults to the shared app log so the
     /// lines interleave with the engine's own output; injectable so tests can
     /// point it at a temporary file and assert on real writes.
@@ -45,9 +44,9 @@ enum ConnectorLog {
             )
             // O_APPEND makes every write an atomic append, so this per-line
             // handle cannot race `EngineManager`'s streaming handle.
-            let fd = open(url.path, O_WRONLY | O_APPEND | O_CREAT, 0o600)
-            guard fd >= 0 else { return }
-            let handle = FileHandle(fileDescriptor: fd)
+            let fileDescriptor = open(url.path, O_WRONLY | O_APPEND | O_CREAT, 0o600)
+            guard fileDescriptor >= 0 else { return }
+            let handle = FileHandle(fileDescriptor: fileDescriptor)
             defer { try? handle.close() }
             handle.write(Data(line.utf8))
         } catch {

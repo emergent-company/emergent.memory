@@ -1,10 +1,9 @@
-import XCTest
 @testable import MemoryConnector
+import XCTest
 
 /// The engine must expose its loopback management API so the hosted-MCP-server
 /// UI can reach it. Asserted on the argument list (no process spawned).
 final class EngineArgumentsTests: XCTestCase {
-
     func testLaunchArgumentsIncludeManagementAPIPort() {
         let arguments = EngineManager.launchArguments(configPath: "/tmp/memory-connector.yml")
 
@@ -12,7 +11,8 @@ final class EngineArgumentsTests: XCTestCase {
         XCTAssertTrue(arguments.contains("--api-port"), "engine must expose the management API")
 
         guard let index = arguments.firstIndex(of: "--api-port"),
-              arguments.indices.contains(index + 1) else {
+              arguments.indices.contains(index + 1)
+        else {
             return XCTFail("--api-port missing a value: \(arguments)")
         }
         XCTAssertEqual(arguments[index + 1], "8931")
