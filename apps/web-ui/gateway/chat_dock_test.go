@@ -248,16 +248,21 @@ func TestCancelAgentRunHandler(t *testing.T) {
 			t.Errorf("cancel forwarded as agent=%q run=%q, want a1/r1", f.cancelAgentID, f.cancelRunID)
 		}
 	})
-	t.Run("already-terminal is non-error", func(t *testing.T) {
-		// The upstream cancel is idempotent: a terminal run still returns 200,
-		// so CancelAgentRun succeeds and the gateway reports ok:true.
-		f := &fakeMemory{agentRuns: map[string]*AgentRun{"r1": {AgentID: "a1"}}}
+	t.Run("already-terminal reports not cancelled", func(t *testing.T) {
+		// A cancel that arrives after the run already finished is not a
+		// success: memory reports cancelled:false and the gateway surfaces
+		// ok:false so the response matches the (terminal) run row.
+		no := false
+		f := &fakeMemory{
+			agentRuns:               map[string]*AgentRun{"r1": {AgentID: "a1"}},
+			cancelAgentRunCancelled: &no,
+		}
 		_, e := newCancelEcho(f)
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/chat/runs/r1/cancel", nil))
 		body := cancelBody(t, rec)
-		if body["ok"] != true {
-			t.Errorf("terminal-run cancel body = %+v, want ok:true", body)
+		if body["ok"] != false || body["reason"] == "" {
+			t.Errorf("terminal-run cancel body = %+v, want ok:false with a reason", body)
 		}
 	})
 	t.Run("unresolvable run id", func(t *testing.T) {
@@ -300,18 +305,58 @@ func TestCancelAgentRunClient(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath, gotMethod, gotAuth = r.URL.Path, r.Method, r.Header.Get("Authorization")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"success":true,"data":{"message":"Run cancelled successfully"}}`)
+		_, _ = io.WriteString(w, `{"success":true,"data":{"message":"Run cancelled successfully","cancelled":true}}`)
 	}))
 	defer srv.Close()
 	m := NewMemoryClient(srv.URL, "static-proj")
-	if err := m.CancelAgentRun(sessCtx("static-token"), "a1", "r1"); err != nil {
+	cancelled, err := m.CancelAgentRun(sessCtx("static-token"), "a1", "r1")
+	if err != nil {
 		t.Fatalf("CancelAgentRun: %v", err)
+	}
+	if !cancelled {
+		t.Fatal("CancelAgentRun: cancelled = false, want true")
 	}
 	if gotPath != "/api/projects/static-proj/agents/a1/runs/r1/cancel" || gotMethod != http.MethodPost {
 		t.Errorf("request = %s %s, want POST /api/projects/static-proj/agents/a1/runs/r1/cancel", gotMethod, gotPath)
 	}
 	if gotAuth != "Bearer static-token" {
 		t.Errorf("auth = %q, want static bearer", gotAuth)
+	}
+}
+
+// TestCancelAgentRunClient_AlreadyTerminal verifies the client propagates the
+// upstream cancelled flag when the run had already reached a terminal state.
+func TestCancelAgentRunClient_AlreadyTerminal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true,"data":{"message":"Run already completed","cancelled":false}}`)
+	}))
+	defer srv.Close()
+	m := NewMemoryClient(srv.URL, "proj")
+	cancelled, err := m.CancelAgentRun(context.Background(), "a1", "r1")
+	if err != nil {
+		t.Fatalf("CancelAgentRun: %v", err)
+	}
+	if cancelled {
+		t.Fatal("CancelAgentRun: cancelled = true, want false for an already-terminal run")
+	}
+}
+
+// TestCancelAgentRunClient_LegacyResponseWithoutFlag treats a response that
+// omits the cancelled field (older memory) as an idempotent cancel.
+func TestCancelAgentRunClient_LegacyResponseWithoutFlag(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true,"data":{"message":"Run cancelled successfully"}}`)
+	}))
+	defer srv.Close()
+	m := NewMemoryClient(srv.URL, "proj")
+	cancelled, err := m.CancelAgentRun(context.Background(), "a1", "r1")
+	if err != nil {
+		t.Fatalf("CancelAgentRun: %v", err)
+	}
+	if !cancelled {
+		t.Fatal("CancelAgentRun: cancelled = false for a legacy response, want true")
 	}
 }
 
@@ -323,7 +368,7 @@ func TestCancelAgentRunClientNon2xx(t *testing.T) {
 	}))
 	defer srv.Close()
 	m := NewMemoryClient(srv.URL, "proj")
-	err := m.CancelAgentRun(context.Background(), "a1", "r1")
+	_, err := m.CancelAgentRun(context.Background(), "a1", "r1")
 	if err == nil {
 		t.Fatal("non-2xx cancel must return an error")
 	}

@@ -272,17 +272,28 @@ func (m *MemoryClient) ListToolApprovals(ctx context.Context) ([]ToolApprovalIte
 // CancelAgentRun proxies the project/agent-scoped upstream cancel endpoint
 // (POST /api/projects/:projectId/agents/:id/runs/:runId/cancel). agentID is
 // the runtime agent id resolved from the run's own DTO (GetAgentRun), so the
-// upstream "run belongs to agent" guard always matches. The endpoint is
-// idempotent: memory force-transitions the run to cancelled and returns 200
-// even for an already-terminal run, so there is no special terminal-state
-// handling here — any non-2xx (unknown agent/run, backend down) surfaces as a
+// upstream "run belongs to agent" guard always matches. The response reports
+// whether the run was actually transitioned to cancelled (false when it had
+// already reached a terminal state), so the caller's response stays consistent
+// with the run row. Any non-2xx (unknown agent/run, backend down) surfaces as a
 // typed error the caller maps to {"ok":false}.
-func (m *MemoryClient) CancelAgentRun(ctx context.Context, agentID, runID string) error {
+func (m *MemoryClient) CancelAgentRun(ctx context.Context, agentID, runID string) (bool, error) {
 	path := "/api/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/agents/" + url.PathEscape(agentID) + "/runs/" + url.PathEscape(runID) + "/cancel"
-	if err := m.do(ctx, http.MethodPost, path, nil, nil); err != nil {
-		return err
+	var env struct {
+		Success bool `json:"success"`
+		Data    struct {
+			// Pointer so a legacy upstream response that omits the field is
+			// treated as an idempotent cancel, not as "not cancelled".
+			Cancelled *bool `json:"cancelled"`
+		} `json:"data"`
 	}
-	return nil
+	if err := m.do(ctx, http.MethodPost, path, nil, &env); err != nil {
+		return false, err
+	}
+	if env.Data.Cancelled == nil {
+		return true, nil
+	}
+	return *env.Data.Cancelled, nil
 }
 
 // SessionTodo mirrors memory's sessiontodos.SessionTodo for the fields the
