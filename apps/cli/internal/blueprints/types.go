@@ -50,8 +50,10 @@ type ObjectTypeDef struct {
 	Properties  map[string]any `json:"properties"  yaml:"properties"`
 	// ScopeKey is the optional scope-key declaration (issue #1148): the property
 	// on this type that scopes it to a parent document, plus the reference it
-	// points at. Passed through to the schema API untouched.
-	ScopeKey map[string]any `json:"scopeKey" yaml:"scopeKey"`
+	// points at. Passed through to the schema API untouched. omitempty keeps a
+	// nil declaration out of the marshalled payload entirely (a JSON null would
+	// otherwise be re-emitted for every type and rejected by the server).
+	ScopeKey map[string]any `json:"scopeKey,omitempty" yaml:"scopeKey,omitempty"`
 }
 
 // RelationshipTypeDef represents a single relationship type definition inside a pack file.

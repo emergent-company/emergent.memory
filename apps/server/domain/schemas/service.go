@@ -286,12 +286,15 @@ func validateSchemaDefinitions(objectTypeSchemas, relationshipTypeSchemas json.R
 					continue
 				}
 				// Validate the optional scope-key declaration (issue #1148,
-				// option 2). Fail closed on an unknown property or target.
+				// option 2). Fail closed on an unknown property or target. A
+				// JSON null means absent — treat it exactly like an omitted
+				// field so a CLI payload that serialises `"scopeKey":null` for
+				// every type without a declaration is not rejected.
 				raw := e.ScopeKey
-				if len(raw) == 0 {
+				if len(raw) == 0 || isNullJSON(raw) {
 					raw = e.ScopeKeySnake
 				}
-				if len(raw) == 0 {
+				if len(raw) == 0 || isNullJSON(raw) {
 					continue
 				}
 				decl, perr := parseScopeKeyValue(raw)
@@ -337,24 +340,39 @@ func (s *Service) GetPack(ctx context.Context, packID, projectID string) (*Graph
 }
 
 // UpdatePack partially updates an existing schema the caller owns.
-// If migration hints are present in the update, they are validated before persisting.
+// When object/relationship type schemas are supplied they are validated the
+// same way CreatePack validates them (including scope-key declarations), and
+// migration hints (if present) are validated before persisting.
 func (s *Service) UpdatePack(ctx context.Context, packID, projectID string, req *UpdatePackRequest) (*GraphMemorySchema, error) {
-	// Task 3.5: Validate migration hints if present
-	if req.Migrations != nil {
-		// For update, we need to get the schema's current type schemas for validation
+	// Resolve the effective schemas: request-provided values win, otherwise the
+	// pack's existing definitions fill the gap (needed for migration validation
+	// and for a partial schema update's cross-type scope-key resolution).
+	objSchemas := req.ObjectTypeSchemas
+	relSchemas := req.RelationshipTypeSchemas
+	hasObj := len(objSchemas) > 0
+	hasRel := len(relSchemas) > 0
+	if req.Migrations != nil || hasObj != hasRel {
 		pack, err := s.repo.GetPack(ctx, packID, projectID)
 		if err != nil {
 			return nil, err
 		}
-		// Use updated schemas if provided in the request, otherwise use existing ones
-		objSchemas := pack.ObjectTypeSchemas
-		if len(req.ObjectTypeSchemas) > 0 {
-			objSchemas = req.ObjectTypeSchemas
+		if !hasObj {
+			objSchemas = pack.ObjectTypeSchemas
 		}
-		relSchemas := pack.RelationshipTypeSchemas
-		if len(req.RelationshipTypeSchemas) > 0 {
-			relSchemas = req.RelationshipTypeSchemas
+		if !hasRel {
+			relSchemas = pack.RelationshipTypeSchemas
 		}
+	}
+
+	// Validate supplied schema definitions (mirrors CreatePack). Uses the
+	// resolved set so a partial update still resolves scope-key references.
+	if hasObj || hasRel {
+		if errs := validateSchemaDefinitions(objSchemas, relSchemas); len(errs) > 0 {
+			return nil, apperror.NewBadRequest("invalid schema definitions: " + strings.Join(errs, "; "))
+		}
+	}
+
+	if req.Migrations != nil {
 		errs := validateMigrationHints(req.Migrations, objSchemas, relSchemas)
 		if len(errs) > 0 {
 			return nil, apperror.ErrBadRequest.WithMessage("invalid migrations block: " + strings.Join(errs, "; "))

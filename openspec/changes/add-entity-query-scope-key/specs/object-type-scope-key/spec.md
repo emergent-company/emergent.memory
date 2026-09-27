@@ -19,6 +19,12 @@ property on the type that scopes it to a parent/identity document:
 - `identityProperty` (optional): the property that identifies an entity within
   the scope (e.g. `section_id`).
 
+`property` and `identityProperty` are consumed by `entity-query` enforcement.
+`referencesType`/`referencesProperty` are **declarative reference metadata**: they
+are validated (fail-closed) but intentionally have no runtime query consumer yet
+— they let tooling (schema browsers, graph navigators, future join/traverse
+features) follow the reference without guessing.
+
 A type schema with no `scopeKey` MUST be accepted unchanged. The declaration
 SHALL be stored inside the type's existing JSON schema (`json_schema` /
 `object_type_schemas`), so no database migration is required. Both camelCase and

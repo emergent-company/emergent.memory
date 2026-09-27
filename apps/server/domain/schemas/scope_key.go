@@ -36,6 +36,12 @@ type ScopeKeyDeclaration struct {
 	// property on it that Property values reference (e.g. Law.ref_id). Both are
 	// optional together, but when present they must resolve to a known object
 	// type and a property on it.
+	//
+	// These two fields are DECLARATIVE REFERENCE METADATA: they are validated
+	// (fail-closed) but deliberately have no runtime query consumer yet. They
+	// describe *what* the scope value points at so tooling (schema browsers,
+	// graph navigators, future join/traverse features) can follow the reference
+	// without guessing. The query-time scope enforcement uses Property alone.
 	ReferencesType     string `json:"referencesType,omitempty"`
 	ReferencesProperty string `json:"referencesProperty,omitempty"`
 

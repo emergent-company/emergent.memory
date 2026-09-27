@@ -31,7 +31,10 @@ func (h *Handler) validateTypeScopeKey(ctx context.Context, projectID, typeName 
 		return nil
 	}
 	known, err := h.repo.TypePropertyNames(ctx, projectID)
-	if err != nil || known == nil {
+	if err != nil {
+		return apperror.NewInternal("failed to resolve scopeKey reference targets", err)
+	}
+	if known == nil {
 		known = map[string]map[string]struct{}{}
 	}
 	// The incoming definition is authoritative for the type's own properties.
