@@ -10,13 +10,16 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
-// TestExecuteToolSensitiveAdminGate proves the sensitive admin-scoped tools
-// (token-*, provider-configure-project, project-create) are gated in-process on
-// the superadmin_full authority — NOT trusted-internal. Their `admin` scope is
-// token-only (no project role maps to it), so a non-admin member's TRUSTED
-// session-UI run (TrustedInternal=true, no superadmin grant) must be refused —
-// the residual #1018 closes here. A superadmin_full run reaches the tool's own
-// dispatch (no over-correction).
+// TestExecuteToolSensitiveAdminGate proves the privilege-sensitive tools
+// (token-*, provider-configure-project, project-create, mcp-registry-install,
+// mcp-server-inspect) are gated in-process on the superadmin_full authority —
+// NOT trusted-internal. A non-admin member's TRUSTED session-UI run
+// (TrustedInternal=true, no superadmin grant) must be refused — the residual
+// #1018 closes here. The registry install/inspect tools carry platform-tier
+// `admin` but are neither AgentOnly nor superadmin-only, so without the overlay
+// a trusted non-superadmin would pass the plain RequiredScope gate. A
+// superadmin_full run reaches the tool's own dispatch (no over-correction). The
+// overlay is name-keyed, so no registry handler is required to exercise it.
 func TestExecuteToolSensitiveAdminGate(t *testing.T) {
 	dbc, memberID, superID := setupGateDB(t)
 
@@ -39,6 +42,7 @@ func TestExecuteToolSensitiveAdminGate(t *testing.T) {
 		"token-list", "token-create", "token-get", "token-revoke",
 		"provider-configure-project",
 		"project-create",
+		"mcp-registry-install", "mcp-server-inspect",
 	} {
 		t.Run("member trusted run refused on "+tool, func(t *testing.T) {
 			_, err := svc.ExecuteTool(memberCtx, projectID, tool, map[string]any{})

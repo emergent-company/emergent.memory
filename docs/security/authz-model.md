@@ -161,13 +161,27 @@ carry the project tier instead:
 | `provider-configure-project`, `project-create` | `projects:write` | owning-org membership / `org_admin` |
 | `provider-models-list` | `projects:read` | authenticated catalog |
 | `search_mcp_registry`, `mcp-registry-get` | `projects:read` | public registry browse |
-| `mcp-registry-install`, `mcp-server-inspect` | `admin` | privileged registry mutation / outbound connect |
+| `mcp-registry-install`, `mcp-server-inspect` | `admin` | project membership (registry routes) — **intentional divergence, see below** |
 
 Listing tokens stays at the write tier (`projects:write`) rather than the share baseline
 `projects:read`, so a read-only share link can never enumerate project credentials. Share
 instances further refuse to derive `projects:write` (or the admin/account scopes) onto their bound
 token: `isNonShareableScope` rejects such tools from both an explicit allowlist and the catalog, so
 a share link cannot mint credentials or reconfigure the project (#1135).
+
+**Intentional divergence — `mcp-registry-install` / `mcp-server-inspect` (product decision).** The
+MCP tools require platform-tier `admin`, but their HTTP equivalents
+(`domain/mcpregistry/routes.go` `POST /api/admin/mcp-registry/install` and
+`POST /api/admin/mcp-servers/:id/inspect`) require only project membership
+(`RequireProjectTokenScope` + `RequireProjectMember`). This is a deliberate **MCP-stricter** bar,
+not a parity bug: install pulls an external server into the project and inspect performs a
+server-side outbound connection to a project-configured URL, so the agent-facing surface is held at
+the platform tier. Per the #1041 rule the MCP surface may be stricter than HTTP — the failure mode
+that class closed was the reverse (MCP weaker than HTTP). In-process, both tools are in
+`sensitiveInProcessAdminTools`, so a trusted non-superadmin agent run is denied as well; only a
+`superadmin_full` principal installs/inspects. This divergence needs product sign-off: if
+project-member install/inspect via MCP is wanted, the fix is to lower these two tools to
+`projects:write` / `projects:read` (matching HTTP), not to loosen HTTP.
 
 ---
 

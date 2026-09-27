@@ -1802,19 +1802,27 @@ func (s *Service) IsSuperadminOnlyTool(name string) bool {
 	return superadminOnlyToolNames[name]
 }
 
-// sensitiveInProcessAdminTools is the set of privilege-sensitive project
-// mutation tools whose in-process bar is raised to superadmin_full rather than
-// trusted-internal. These tools mints credentials (token-create), accept
-// provider API keys (provider-configure-project), or create projects
-// (project-create); an agent run reaching ExecuteTool in-process must not
+// sensitiveInProcessAdminTools is the set of privilege-sensitive tools whose
+// in-process bar is raised to superadmin_full rather than trusted-internal.
+// These tools mint credentials (token-create), accept provider API keys
+// (provider-configure-project), create projects (project-create), or install /
+// outbound-connect an external MCP server (mcp-registry-install,
+// mcp-server-inspect); an agent run reaching ExecuteTool in-process must not
 // exercise that authority on the strength of the trusted-internal marker alone
 // (issue #1018). Over HTTP the transport has already enforced the tool's
-// declared project scope and marked the call TransportEnforced, so the overlay
-// applies only to the non-transport in-process path.
+// declared scope and marked the call TransportEnforced, so the overlay applies
+// only to the non-transport in-process path.
 //
-// The subset is the sensitive six: token minting (privilege escalation),
-// provider config (accepts API keys), and project creation. The read-only
-// provider-models-list is left at the trusted-internal bar.
+// The registry install/inspect tools declare platform-tier `admin` (their HTTP
+// equivalents do an outbound connect) but are neither AgentOnly nor
+// superadmin-only; without this overlay an untrusted-or-trusted in-process run
+// would pass the plain RequiredScope gate on trust alone. They are listed here
+// so a trusted non-superadmin run is denied in-process, matching the HTTP bar.
+//
+// The subset is the sensitive eight: token minting (privilege escalation),
+// provider config (accepts API keys), project creation, and registry
+// install/inspect. The read-only provider-models-list is left at the
+// trusted-internal bar.
 var sensitiveInProcessAdminTools = map[string]bool{
 	"token-list":                 true,
 	"token-create":               true,
@@ -1822,6 +1830,8 @@ var sensitiveInProcessAdminTools = map[string]bool{
 	"token-revoke":               true,
 	"provider-configure-project": true,
 	"project-create":             true,
+	"mcp-registry-install":       true,
+	"mcp-server-inspect":         true,
 }
 
 // handlerProvidedToolScopes are the RequiredScope values declared only by
