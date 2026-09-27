@@ -5,11 +5,18 @@
 # passed) the Swift files changed on this branch relative to BASE (default:
 # origin/main), are checked — always constrained to apps/connector.mac so an
 # unrelated tree (e.g. apps/ios) is never linted with the connector's config.
-# The connector carries pre-existing SwiftFormat and SwiftLint debt, so
-# whole-tree enforcement would fail on untouched files; the ratchet mirrors
-# golangci-lint's `--new-from-rev` usage elsewhere in this repo
-# (`lefthook.yml`) and keeps *new* drift out without a mass reformat. Pay the
-# debt down in a dedicated follow-up, then widen this to `git ls-files`.
+# The ratchet mirrors golangci-lint's `--new-from-rev` usage elsewhere in this
+# repo (`lefthook.yml`) and keeps *new* drift out.
+#
+# SwiftFormat debt is fully paid down — the whole tree is format-clean, so any
+# touched file must stay clean. SwiftLint still carries a small set of
+# structural violations (long files/types/functions, high cyclomatic
+# complexity) that need refactors, not formatting; those are recorded in
+# `.swiftlint.baseline` and ignored, so only NEW violations fail. Lower that
+# baseline as the remaining debt is refactored — never raise it. Regenerate it
+# (from the repo root) after an intentional change to the remaining debt:
+#   swiftlint lint --write-baseline apps/connector.mac/.swiftlint.baseline \
+#     --config apps/connector.mac/.swiftlint.yml apps/connector.mac
 #
 # Usage:
 #   Scripts/lint-swift.sh [file ...]      # lint the given Swift files
@@ -83,4 +90,6 @@ echo "— swiftformat --lint"
 swiftformat --lint --config "${connector_dir}/.swiftformat" "${swift_files[@]}"
 
 echo "— swiftlint"
-swiftlint lint --strict --config "${connector_dir}/.swiftlint.yml" "${swift_files[@]}"
+swiftlint lint --strict --config "${connector_dir}/.swiftlint.yml" \
+  --baseline "${connector_dir}/.swiftlint.baseline" \
+  "${swift_files[@]}"
