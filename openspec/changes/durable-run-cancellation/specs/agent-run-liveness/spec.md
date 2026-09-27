@@ -47,7 +47,7 @@ Every terminal run transition (success, failure, skipped, cancelled) SHALL be gu
 
 ### Requirement: Cancellation is durable and cross-instance
 
-A cancel request SHALL be recorded as a durable status change in Postgres, so that a cancel served by one server instance can stop a run executing in a different instance whose in-process cancel registry does not know about the run. The executing instance SHALL observe its own persisted status at pipeline start, at each step boundary, and before its terminal write, and SHALL stop and finalize as `cancelled` when the status is `cancelling`. Correctness SHALL NOT depend on the per-process cancel registry. A run left in `cancelling` with no live executor SHALL be resolved to `cancelled` — never to a failure — by startup recovery and by the stale-run reaper.
+A cancel request SHALL be recorded as a durable status change in Postgres, so that a cancel served by one server instance can stop a run executing in a different instance whose in-process cancel registry does not know about the run. The executing instance SHALL observe its own persisted status at pipeline start, at each step boundary, and before its terminal write, and SHALL stop and finalize as `cancelled` when the status is `cancelling`. The observation SHALL NOT be gated on the run's context being live: when a context cancellation (timeout, disconnect) and a durable cancel arrive together, the durable cancel SHALL win the classification so the run is reported as `cancelled`, never `failed`. Correctness SHALL NOT depend on the per-process cancel registry.
 
 #### Scenario: Cancel on one instance stops a run on another
 
@@ -59,7 +59,45 @@ A cancel request SHALL be recorded as a durable status change in Postgres, so th
 - **WHEN** the executing instance reaches its terminal write after a durable cancel was committed, without having observed it at a step boundary
 - **THEN** the terminal write finalizes the run as `cancelled`, not `completed` or `failed`
 
-#### Scenario: Orphaned cancelling run is finalized as cancelled
+#### Scenario: Durable cancel wins over a context cancellation
+
+- **WHEN** a durable cancel is committed and the run's context is also cancelled (timeout or disconnect) before the executor finalizes
+- **THEN** the run is classified and reported as `cancelled`, not `failed`
+
+### Requirement: Queued and worker-pool runs honour durable cancellation
+
+Cancellation SHALL be honoured across the queued lifecycle, not only for an in-flight executor. A queued run moved to `cancelling` SHALL NOT be claimed and executed: the worker claim SHALL NOT resurrect it to `working`, and the job SHALL be retired rather than reprocessed. The worker pool's terminal writes (`CompleteJob`, `FailJob`) SHALL be routed through the same cancel-aware guarded transition as the rest of the terminal writers, so a run in `cancelling` or `cancelled` can never become `completed` or `failed`, and `FailJob` SHALL NOT requeue a cancelled run for another attempt. The after-tool pause paths SHALL be guarded so `PauseRun` cannot move a `cancelling` row to `input-required`.
+
+#### Scenario: A queued cancel is not claimed or executed
+
+- **WHEN** a queued run is moved to `cancelling` before a worker claims its job
+- **THEN** the worker does not claim or execute it, the run does not become `working`, and the job is retired
+
+#### Scenario: Worker completion cannot overwrite a cancel
+
+- **WHEN** a run is claimed, then moved to `cancelling`, and the worker's success write runs
+- **THEN** the run's terminal status is `cancelled`, not `completed`
+
+#### Scenario: Worker failure cannot requeue or overwrite a cancel
+
+- **WHEN** a run is claimed, then moved to `cancelling`, and the worker's failure path runs (with or without requeue)
+- **THEN** the run is not reset to `submitted` for another attempt and is not marked `failed`; it remains on the `cancelled` path
+
+#### Scenario: Pause cannot clobber a cancel
+
+- **WHEN** an after-tool pause path calls `PauseRun` on a run that is `cancelling`
+- **THEN** the run stays `cancelling`, not `input-required`
+
+### Requirement: Orphaned cancelling runs are finalized without overreach
+
+A run left in `cancelling` with no live executor SHALL be resolved to `cancelled` — never to a failure — by an age/heartbeat-aware sweep used by startup recovery and the stale-run reaper. The sweep SHALL finalize only runs whose last activity is older than the stale threshold, so a run still owned by a live executor on another instance (which refreshes its heartbeat) SHALL NOT be finalized during a rolling restart. An unconditional startup sweep of every `cancelling` row is forbidden.
+
+#### Scenario: Abandoned cancelling run is finalized as cancelled
 
 - **WHEN** a run is in `cancelling` status and no executing instance observes it (the process died, or a queued run was never claimed)
-- **THEN** startup recovery (for every `cancelling` row) or the stale-run reaper (for rows idle past the threshold) finalizes it as `cancelled`, never as `failed`
+- **THEN** startup recovery or the stale-run reaper finalizes it as `cancelled` once it is idle past the stale threshold, never as `failed`
+
+#### Scenario: Startup does not finalize a live run owned by another instance
+
+- **WHEN** an instance starts while another instance is executing a run parked in `cancelling`, whose heartbeat is fresh
+- **THEN** the startup sweep leaves that run in `cancelling` (it is not idle past the threshold), so the owner continues and finalizes it

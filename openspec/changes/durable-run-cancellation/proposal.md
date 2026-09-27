@@ -22,8 +22,9 @@ The run-cancel registry added by #1149/#1165 (`AgentExecutor.Cancel` → per-pro
 
 ## Impact
 
-- `apps/server/domain/agents/repository.go` — `RequestRunCancellation`, `RunIsCancelling`, `FinalizeCancellingRuns`; cancel-aware terminal writers (`CompleteRun*`, `FailRun*`, `SkipRun`); guarded `SetRunCancelling`.
-- `apps/server/domain/agents/executor.go` — `durablyCancelling` observation at pipeline start, per-step (before-model callback), and post-loop; the cancel registry stays as a fast-path notification.
+- `apps/server/domain/agents/repository.go` — `RequestRunCancellation`, `RunIsCancelling`, `FinalizeCancellingRuns`/`FinalizeOrphanedCancellingRuns`; cancel-aware terminal writers (`CompleteRun*`, `FailRun*`, `SkipRun`, `CompleteJob`, `FailJob`); guarded `SetRunCancelling`, `PauseRun`, and `ClaimNextJob` (a queued cancel is not resurrected).
+- `apps/server/domain/agents/executor.go` — `durablyCancelling` observation at pipeline start, per-step (before-model callback), and post-loop, not gated on `ctx.Err()`; the cancel registry stays as a fast-path notification.
+- `apps/server/domain/agents/worker_pool.go` — a `RunStatusCancelled` result retires the job without overwriting the run.
 - `apps/server/domain/agents/handler.go` — `CancelRun` commits the durable `cancelling` intent and reports it; local registry is notified best-effort.
-- `apps/server/domain/agents/stale_run_reaper.go`, `module.go` — finalize orphaned/stale `cancelling` rows as `cancelled`.
+- `apps/server/domain/agents/stale_run_reaper.go`, `module.go` — age/heartbeat-aware sweep finalizes only abandoned `cancelling` rows as `cancelled` (never a live run on another instance).
 - No schema migration: reuses the existing `kb.agent_runs.status` values (`working`, `cancelling`, `cancelled`).

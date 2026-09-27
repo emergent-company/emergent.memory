@@ -25,6 +25,15 @@
 - [x] 5.1 Startup `registerOrphanRecovery` finalizes every `cancelling` row to `cancelled`.
 - [x] 5.2 Stale-run reaper finalizes idle `cancelling` rows to `cancelled`.
 
+## 5b. Queued / worker-pool lifecycle (review follow-up)
+
+- [x] 5b.1 `ClaimNextJob` only transitions a `submitted` run to `working`; a non-claimable (cancelling/terminal) run is not resurrected and its job is retired.
+- [x] 5b.2 `CompleteJob`/`FailJob` run writes are cancel-aware and guarded; `FailJob` never requeues a cancelled run.
+- [x] 5b.3 Worker pool retires a `RunStatusCancelled` result without overwriting the run.
+- [x] 5b.4 Post-loop / before-model durable observation is not gated on `ctx.Err()`; a durable cancel wins a timeout/disconnect race.
+- [x] 5b.5 Startup finalize is age/heartbeat-aware (`FinalizeOrphanedCancellingRuns`), never finalizes a live run on another instance; a non-positive age is rejected.
+- [x] 5b.6 `PauseRun` is guarded so it cannot move a `cancelling` row to `input-required`.
+
 ## 6. Tests
 
 - [x] 6.1 DB: two-instance (separate repositories) completion after a cancel on the other instance finalizes `cancelled`, not `completed`.
@@ -36,6 +45,9 @@
 - [x] 6.7 Handler DB: running run reports `cancelling` intent; a later executor completion keeps `cancelled`; already-completed stays `success` with `cancelled:false`.
 - [x] 6.8 Existing #1165 terminal-transition tests still pass.
 - [x] 6.9 Fail-first RED→GREEN captured for observation disabled and for cancel-aware CASE disabled.
+- [x] 6.10 DB: queued cancel not claimed/resurrected; `CompleteJob` cannot overwrite a cancel; `FailJob` neither requeues nor overwrites a cancel.
+- [x] 6.11 DB executor seam: durable cancel wins a context cancellation (reported `cancelled`, not `failed`).
+- [x] 6.12 DB: startup finalize spares a live `cancelling` run and finalizes an abandoned one; `PauseRun` cannot clobber a `cancelling` row.
 
 ## 7. Verify
 
