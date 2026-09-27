@@ -34,6 +34,7 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/database"
 	"github.com/emergent-company/emergent.memory/internal/storage"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/authz"
 	"github.com/emergent-company/emergent.memory/pkg/ftsquery"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
@@ -1972,45 +1973,13 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	if scope := InstanceScopeFromContext(ctx); scope != nil && InstanceDeniesTool(scope, toolName) {
 		return nil, fmt.Errorf("tool not allowed by MCP share instance: %s", toolName)
 	}
-	// Defense in depth: enforce the superadmin_full authority for operator tools
-	// on the in-process dispatch path as well as in the transports. The ADK
-	// ToolPool (agent runs) calls ExecuteTool directly and never passes through a
-	// transport pre-check, so this is the authority boundary that covers it. The
-	// check resolves the caller from ctx (the run's originating principal, not the
-	// agent definition) and fails closed when that principal is unknown or lacks
-	// the grant (issue #948).
-	if s.IsSuperadminOnlyTool(toolName) {
-		ok, err := s.IsSuperadminCaller(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to authorize operator tool %q: %w", toolName, err)
-		}
-		if !ok {
-			return nil, fmt.Errorf("tool %q requires superadmin privileges", toolName)
-		}
-	}
-	// Sensitive admin-scoped tools are gated on superadmin_full in-process, not
-	// trusted-internal. Their `admin` scope is token-only (no project role maps
-	// to it), so a trusted session run can never legitimately hold it; raising the
-	// in-process bar to the identity-based superadmin_full grant aligns the
-	// in-process path with the HTTP surface's refusal of the same call. An HTTP
-	// transport already enforced the tool's `admin` scope before dispatch, so it
-	// is exempt here (issue #1018).
-	if sensitiveInProcessAdminTools[toolName] && !TransportEnforcedFromContext(ctx) {
-		ok, err := s.IsSuperadminCaller(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to authorize sensitive tool %q: %w", toolName, err)
-		}
-		if !ok {
-			return nil, fmt.Errorf("tool %q requires superadmin privileges", toolName)
-		}
-	}
-	// Defense in depth: enforce the per-tool authority boundary on the in-process
-	// dispatch path. The three HTTP transports already enforce AgentOnly (hidden)
-	// and RequiredScope (scope-gated) before dispatch via GetToolByName, but the
-	// ADK ToolPool (agent runs) calls ExecuteTool directly and never passes
-	// through a transport pre-check. This reads the SAME source of truth the HTTP
-	// transports use — GetToolByName(...).AgentOnly / .RequiredScope — so the two
-	// can never drift (issue #994).
+	// One authority decision for every transport. The three HTTP transports
+	// enforce per-tool AgentOnly / RequiredScope / SuperadminOnly before dispatch
+	// and mark the call transport-enforced; the in-process ADK ToolPool (agent
+	// runs) reaches this path without that marker and is gated here. A tool's
+	// declared authority is enforced by the single fail-closed seam
+	// authz.AuthorizeTool, so the in-process and transport decisions cannot drift
+	// (issue #1041, mechanism 7).
 	//
 	// The in-process principal is an agent run, not a token, so token scopes do
 	// not apply directly. TrustedInternal (kb.agent_runs.trusted_internal) is the
@@ -2018,24 +1987,49 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	// scheduler, MCP-triggered agent) and false for external surfaces (webhook,
 	// A2A, agentcompat, public share). Fail-closed: an absent marker resolves to
 	// untrusted. An HTTP transport marks its dispatch TransportEnforced after its
-	// own per-tool check, so that is an equally-authorized origin for the
-	// AgentOnly / RequiredScope gates below.
-	//
-	//   - AgentOnly tools (web-search-*, web-fetch, mcp-server-*, update_mcp_server,
-	//     toggle/sync_mcp_server_tools) are the "callable only by other agents,
-	//     never via external surfaces" class — refused for untrusted runs.
-	//   - admin-scoped tools (token-*, provider-*, project-create) are refused for
-	//     untrusted runs, matching the HTTP RequiredScope:"admin" gate. The most
-	//     sensitive of these are raised further — see sensitiveInProcessAdminTools
-	//     (issue #1018). Trace tools are SuperadminOnly and are gated by the
-	//     superadmin_full check above, not this admin gate.
-	if toolDef := s.GetToolByName(toolName); toolDef != nil &&
-		!TrustedInternalFromContext(ctx) && !TransportEnforcedFromContext(ctx) {
-		if toolDef.AgentOnly {
-			return nil, fmt.Errorf("tool %q is agent-only and not reachable from an untrusted surface", toolName)
+	// own per-tool check, so that is an equally-authorized origin.
+	toolDef := s.GetToolByName(toolName)
+	principal := authz.Principal{
+		Trusted:           TrustedInternalFromContext(ctx),
+		TransportEnforced: TransportEnforcedFromContext(ctx),
+	}
+
+	// The caller's platform grant (superadmin_full) is resolved lazily: only the
+	// SuperadminOnly tools and the sensitive in-process admin tools need it. The
+	// zero value (false) is fail-closed — a tool that needs the grant and cannot
+	// resolve it is refused. The check resolves the caller from ctx (the run's
+	// originating principal, not the agent definition) and fails closed on an
+	// unknown principal or a resolution error (issue #948).
+	if s.IsSuperadminOnlyTool(toolName) ||
+		(sensitiveInProcessAdminTools[toolName] && !principal.TransportEnforced) {
+		ok, err := s.IsSuperadminCaller(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to authorize tool %q: %w", toolName, err)
 		}
-		if toolDef.RequiredScope == "admin" {
-			return nil, fmt.Errorf("tool %q requires admin authority and is not reachable from an untrusted surface", toolName)
+		principal.Platform = ok
+	}
+
+	// Sensitive admin-scoped tools (token minting, provider config, project
+	// creation) declare a token-only `admin` scope: no project role maps to it,
+	// so a trusted session run can never legitimately hold it. The in-process bar
+	// is therefore the identity-based superadmin_full grant, not trusted-internal
+	// (issue #1018). This is a stricter overlay on the seam's RequiredScope gate
+	// below; an HTTP transport already enforced the `admin` scope before dispatch,
+	// so it is exempt here.
+	if sensitiveInProcessAdminTools[toolName] && !principal.TransportEnforced {
+		if !principal.Platform {
+			return nil, fmt.Errorf("tool %q requires superadmin privileges", toolName)
+		}
+	}
+
+	if toolDef != nil {
+		if err := authz.AuthorizeTool(authz.ToolAuthority{
+			Name:           toolDef.Name,
+			RequiredScope:  toolDef.RequiredScope,
+			AgentOnly:      toolDef.AgentOnly,
+			SuperadminOnly: s.IsSuperadminOnlyTool(toolName),
+		}, principal); err != nil {
+			return nil, err
 		}
 	}
 	switch toolName {
