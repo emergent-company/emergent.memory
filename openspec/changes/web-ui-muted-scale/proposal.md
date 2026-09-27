@@ -19,6 +19,9 @@ color-mix(in oklab, var(--color-base-content) N%, transparent)` foreground rules
 - Leave go-daisy's own muted classes (`ui.Eyebrow` `/45`, `nav.PageHeading` `/55`, `form.FormControl`
   `label-text-alt /60`, the empty-state `/20` `/50`) untouched — that is the go-daisy upstream track
   (#890 §7), out of scope here.
+- The gateway-owned IconPicker label mirror in `webui/static/js/app.js` stays pinned to go-daisy's
+  `text-base-content/50` (not `text-muted`) — it must toggle the same class the vendored component's
+  server render and runtime commit apply, or the remove never matches.
 
 ## Capabilities
 

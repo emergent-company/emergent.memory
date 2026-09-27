@@ -18,3 +18,8 @@ Muted text and icon emphasis in gateway-owned sources SHALL come from a single s
 
 - **WHEN** a muted class is emitted by a vendored go-daisy component (e.g. `ui.Eyebrow`, `nav.PageHeading`, `form.FormControl`)
 - **THEN** it is allowed to keep its own `text-base-content/N` literal, tracked as go-daisy upstream work rather than migrated here
+
+#### Scenario: Gateway mirrors of go-daisy runtime classes stay pinned
+
+- **WHEN** a gateway-owned JS class toggle adds or removes the same class a vendored go-daisy component applies on its server render or runtime commit (e.g. the IconPicker label toggle in `webui/static/js/app.js`)
+- **THEN** the gateway toggle pins the exact go-daisy class literal (`text-base-content/50`), not the muted-scale step (`text-muted`), so the toggle removes the class actually present rather than a scale token that was never applied
