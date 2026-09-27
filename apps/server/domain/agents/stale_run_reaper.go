@@ -101,4 +101,20 @@ func (r *StaleRunReaper) reap(ctx context.Context) {
 			slog.Int("count", n),
 		)
 	}
+
+	// A durable cancel whose executing instance never observed it (the process
+	// died, or a queued run was cancelled before it was claimed) must not sit in
+	// the intermediate "cancelling" state forever. Finalize it as cancelled once
+	// it has been idle past the same threshold; the sweep is heartbeat-aware, so
+	// a run still owned by a live executor is spared. A committed cancel always
+	// resolves to cancelled, never to a failure (issue #1166).
+	if m, err := r.repo.FinalizeOrphanedCancellingRuns(ctx); err != nil {
+		r.log.Warn("failed to finalize stale cancelling runs",
+			slog.String("error", err.Error()),
+		)
+	} else if m > 0 {
+		r.log.Info("finalized stale cancelling agent runs as cancelled",
+			slog.Int("count", m),
+		)
+	}
 }

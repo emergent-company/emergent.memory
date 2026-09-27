@@ -260,6 +260,22 @@ func registerOrphanRecovery(lc fx.Lifecycle, repo *Repository, sandboxStore *san
 				)
 			}
 
+			// Resolve runs parked in the intermediate "cancelling" state whose
+			// executor is gone, without touching a run still owned by a live
+			// instance. This sweep is age/heartbeat-aware (idle past
+			// staleRunThreshold), so a rolling restart on one instance can never
+			// finalize a run executing on another. A committed cancel always
+			// resolves to cancelled, never to a failure (issue #1166).
+			if k, err := repo.FinalizeOrphanedCancellingRuns(ctx); err != nil {
+				log.Warn("failed to finalize orphaned cancelling agent runs on startup",
+					slog.String("error", err.Error()),
+				)
+			} else if k > 0 {
+				log.Warn("finalized orphaned cancelling agent runs as cancelled on startup",
+					slog.Int("count", k),
+				)
+			}
+
 			// Re-enqueue queued runs that lost their job row (e.g. due to crash mid-enqueue)
 			m, err := repo.RequeueOrphanedQueuedRuns(ctx)
 			if err != nil {
