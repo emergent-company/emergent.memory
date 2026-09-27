@@ -14,10 +14,12 @@ Two adjacent references, always read with this one:
   contract lives in code and how to extend it without re-opening a closed class.
 - **`apps/server/pkg/auth/`** — the middleware and helpers. Every guard below is named here.
 
-A note on vocabulary: there is **no `pkg/authz` package**. The typed
-`RequireAuthority(resource, level)` / `DerivePrincipal` / `Authorize` abstraction is a design
-(PR #991, `openspec/changes/authz-abstraction/`) that is **not yet merged**. Do not document it as
-if it existed; when you write code today you use the helpers below.
+A note on vocabulary: `pkg/authz` **exists** and holds the transport-neutral, fail-closed
+per-tool decision point `AuthorizeTool` (ToolAuthority/Principal), merged with the MCP in-process
+enforcement via #1130. It is only the *tool-level* seam; the typed
+`RequireAuthority(resource, level)` / `DerivePrincipal` / `Authorize` route-registry abstraction
+from PR #991 (`openspec/changes/authz-abstraction/`) is still a design. For route/domain
+authorization today you use the helpers below.
 
 ---
 
@@ -137,13 +139,49 @@ This is the distinction that matters:
 
 - **Transport-enforced trust** (`TransportEnforcedFromContext`) means an HTTP transport already did
   the fine-grained per-tool check; the in-process path may defer to it.
-- **Genuinely-internal trust** (`TrustedInternalFromContext`) is a *different* marker: it does **not**
-  carry arbitrary `RequiredScope` authority. An untrusted run that reaches `ExecuteTool` in-process
-  bypasses per-tool scope enforcement for every scoped tool it is allowlisted to call — the live
-  exposure documented in the decision doc §1.3 (mechanism 7), which the un-merged `pkg/authz`
-  `AuthorizeTool` work is intended to close.
+- **Genuinely-internal trust** (`TrustedInternalFromContext`) is a *different* marker. Since #1130
+  the `pkg/authz.AuthorizeTool` seam refuses an untrusted, non-transport run on every scoped tool,
+  and `AgentOnly` tools require trust. A trusted run still passes a tool's `RequiredScope` (token
+  scopes do not exist on the agent-run path), so `TrustedInternal` must **not** be read as
+  "already authorized" — the sensitive-tool overlay and the domain service checks are what hold.
 
 Do not confuse the two markers, and do not treat `TrustedInternal` as "already authorized".
+
+### MCP tool scope taxonomy
+
+Bare `admin` is a platform-tier token scope — mintable only by a `superadmin_full` and folded into
+`admin:all` + platform (#1124). On the MCP tool surface it is reserved for the agent-only registry
+management tools (`mcp-server-*`, `update_mcp_server`, `toggle_mcp_server_tool`,
+`sync_mcp_server_tools`) and the registry `install`/`inspect` tools. Project-administration tools
+carry the project tier instead:
+
+| Tools | `RequiredScope` | HTTP-equivalent authority |
+|---|---|---|
+| `token-list`, `token-get`, `token-create`, `token-revoke` | `projects:write` | project membership (`/api/projects/:projectId/tokens`) |
+| `provider-configure-project`, `project-create` | `projects:write` | owning-org membership / `org_admin` |
+| `provider-models-list` | `projects:read` | authenticated catalog |
+| `search_mcp_registry`, `mcp-registry-get` | `projects:read` | public registry browse |
+| `mcp-registry-install`, `mcp-server-inspect` | `admin` | project membership (registry routes) — **intentional divergence, see below** |
+
+Listing tokens stays at the write tier (`projects:write`) rather than the share baseline
+`projects:read`, so a read-only share link can never enumerate project credentials. Share
+instances further refuse to derive `projects:write` (or the admin/account scopes) onto their bound
+token: `isNonShareableScope` rejects such tools from both an explicit allowlist and the catalog, so
+a share link cannot mint credentials or reconfigure the project (#1135).
+
+**Intentional divergence — `mcp-registry-install` / `mcp-server-inspect` (product decision).** The
+MCP tools require platform-tier `admin`, but their HTTP equivalents
+(`domain/mcpregistry/routes.go` `POST /api/admin/mcp-registry/install` and
+`POST /api/admin/mcp-servers/:id/inspect`) require only project membership
+(`RequireProjectTokenScope` + `RequireProjectMember`). This is a deliberate **MCP-stricter** bar,
+not a parity bug: install pulls an external server into the project and inspect performs a
+server-side outbound connection to a project-configured URL, so the agent-facing surface is held at
+the platform tier. Per the #1041 rule the MCP surface may be stricter than HTTP — the failure mode
+that class closed was the reverse (MCP weaker than HTTP). In-process, both tools are in
+`sensitiveInProcessAdminTools`, so a trusted non-superadmin agent run is denied as well; only a
+`superadmin_full` principal installs/inspects. This divergence needs product sign-off: if
+project-member install/inspect via MCP is wanted, the fix is to lower these two tools to
+`projects:write` / `projects:read` (matching HTTP), not to loosen HTTP.
 
 ---
 

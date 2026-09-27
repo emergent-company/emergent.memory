@@ -9,8 +9,8 @@ import (
 
 // TestExecuteToolAuthorityGate proves the in-process dispatch path — the one the
 // ADK ToolPool reaches during an agent run — enforces the same per-tool authority
-// the three HTTP transports enforce before dispatch: AgentOnly (hidden) and the
-// sensitive admin scope (RequiredScope:"admin"). This is the bypass the
+// the three HTTP transports enforce before dispatch: AgentOnly (hidden), the
+// per-tool RequiredScope, and the sensitive-admin overlay. This is the bypass the
 // HTTP-only gate missed: ExecuteTool is the single dispatch point for every
 // transport AND the in-process agent ToolPool (issue #994, mechanism 7).
 //
@@ -41,31 +41,32 @@ func TestExecuteToolAuthorityGate(t *testing.T) {
 		})
 	}
 
-	// Sensitive admin-scoped tools are refused for untrusted runs via the
-	// superadmin_full gate (issue #1018): their `admin` scope is token-only (no
-	// project role maps to it), so no trusted session run can hold it, and the
-	// in-process bar is raised to the identity-based superadmin_full grant.
-	// Trace tools are deliberately absent — they moved to SuperadminOnly (a
-	// stronger boundary) and are covered by TestTraceToolsSuperadminGate.
-	sensitiveAdminScoped := []string{
+	// Privilege-sensitive project mutation tools are refused for untrusted runs
+	// via the superadmin_full overlay (issue #1018): an agent run must not mint
+	// tokens, configure providers, or create projects on the strength of the
+	// trusted-internal marker alone. Trace tools are deliberately absent — they
+	// moved to SuperadminOnly (a stronger boundary) and are covered by
+	// TestTraceToolsSuperadminGate.
+	sensitiveToolNames := []string{
 		"token-list", "token-create", "token-get", "token-revoke",
 		"provider-configure-project",
 		"project-create",
 	}
-	for _, name := range sensitiveAdminScoped {
+	for _, name := range sensitiveToolNames {
 		t.Run("untrusted refused on sensitive admin "+name, func(t *testing.T) {
 			_, err := svc.ExecuteTool(untrustedCtx, projectID, name, map[string]any{})
 			require.Error(t, err, "in-process %s by an untrusted run must be refused", name)
-			require.Contains(t, err.Error(), "superadmin", "sensitive admin %s refusal must name the superadmin boundary", name)
+			require.Contains(t, err.Error(), "superadmin", "sensitive %s refusal must name the superadmin boundary", name)
 		})
 	}
 
-	// The read-only admin-scoped tool is not in the sensitive subset and stays at
-	// the trusted-internal bar.
-	t.Run("untrusted refused on admin-scoped provider-models-list", func(t *testing.T) {
+	// The read-only provider-models-list is not in the sensitive subset and stays
+	// at the trusted-internal bar; it now carries the project read scope rather
+	// than the deprecated bare "admin".
+	t.Run("untrusted refused on project-scoped provider-models-list", func(t *testing.T) {
 		_, err := svc.ExecuteTool(untrustedCtx, projectID, "provider-models-list", map[string]any{})
 		require.Error(t, err, "in-process provider-models-list by an untrusted run must be refused")
-		require.Contains(t, err.Error(), "admin authority", "refusal must name the admin boundary")
+		require.Contains(t, err.Error(), "projects:read", "refusal must name the project scope")
 	})
 
 	// Superadmin-only tools (trace-*) refuse via the superadmin gate.
@@ -88,13 +89,12 @@ func TestExecuteToolAuthorityGate(t *testing.T) {
 	})
 
 	// No over-correction on the admin path: a trusted run passes the gate on the
-	// NON-sensitive admin tool (provider-models-list), whose own argument
-	// validation fires (not the gate). It is read-only and left at the
-	// trusted-internal bar.
+	// NON-sensitive read-only tool (provider-models-list), whose own argument
+	// validation fires (not the gate). It is left at the trusted-internal bar.
 	t.Run("trusted run passes gate on provider-models-list", func(t *testing.T) {
 		_, err := svc.ExecuteTool(trustedCtx, projectID, "provider-models-list", map[string]any{})
 		require.Error(t, err, "provider-models-list with empty args must error on validation")
-		require.NotContains(t, err.Error(), "admin authority", "trusted run must not be gate-refused")
+		require.NotContains(t, err.Error(), "untrusted surface", "trusted run must not be gate-refused")
 		require.Contains(t, err.Error(), "provider_name", "must reach the tool's own argument validation")
 	})
 

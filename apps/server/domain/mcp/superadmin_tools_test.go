@@ -43,13 +43,13 @@ func TestSuperadminOnlyToolClassification(t *testing.T) {
 	// provider-configure-project is project-scoped (the underlying
 	// UpsertProjectConfig enforces org membership via assertCallerOwnsProject);
 	// provider-models-list is a read-only catalog with no credentials. Both stay
-	// scope-gated rather than superadmin-gated.
+	// scope-gated (project tier) rather than superadmin-gated.
 	scopeGated := []struct {
 		name  string
 		scope string
 	}{
-		{"provider-configure-project", "admin"},
-		{"provider-models-list", "admin"},
+		{"provider-configure-project", "projects:write"},
+		{"provider-models-list", "projects:read"},
 	}
 	for _, tc := range scopeGated {
 		tool := toolByName(t, tc.name)

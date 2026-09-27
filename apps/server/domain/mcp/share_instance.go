@@ -286,14 +286,18 @@ func dedupeStrings(in []string) []string {
 // toolLookupFunc resolves a tool name to its definition (nil when unknown).
 type toolLookupFunc func(name string) *ToolDefinition
 
-// isAdministrativeScope reports whether a tool's required scope grants the
-// administrative ("admin"/"admin:all") or account-level surface. Such scopes
-// are never derivable from a share-instance allowlist: emitting "admin" would
-// let a share token satisfy the share-admin route guard and chain into other
-// instances. This is the belt-and-suspenders complement to that route guard.
-func isAdministrativeScope(scope string) bool {
+// isNonShareableScope reports whether a tool's required scope is one a share
+// instance must never derive onto its bound token. Two families are excluded:
+// the administrative ("admin"/"admin:all") and account-level ("account:*")
+// scopes, which would let a share token satisfy the share-admin route guard and
+// chain into other instances; and the project-management write scope
+// ("projects:write"), which covers credential/provider/project mutations
+// (token-*, provider-configure-project, project-create) that must never be
+// reachable through a share link. This is the belt-and-suspenders complement to
+// the route guards.
+func isNonShareableScope(scope string) bool {
 	switch scope {
-	case "admin", "admin:all":
+	case "admin", "admin:all", "projects:write":
 		return true
 	}
 	return strings.HasPrefix(scope, "account:")
@@ -324,8 +328,8 @@ func normalizeToolAllowlist(tools *[]string, lookup toolLookupFunc) ([]string, e
 		if def.SuperadminOnly {
 			return nil, apperror.NewValidation("operator tool cannot be shared: " + name)
 		}
-		if isAdministrativeScope(def.RequiredScope) {
-			return nil, apperror.NewValidation("tool cannot be shared because it requires an administrative scope: " + name)
+		if isNonShareableScope(def.RequiredScope) {
+			return nil, apperror.NewValidation("tool cannot be shared because it requires an administrative or project-management scope: " + name)
 		}
 		if agentExecutionTools[name] || agentMutationTools[name] {
 			return nil, apperror.NewValidation("tool cannot be shared because its side effects run outside the instance context: " + name)
@@ -347,8 +351,8 @@ func deriveScopesForToolNames(tools []string, lookup toolLookupFunc) ([]string, 
 		if def.SuperadminOnly {
 			return nil, apperror.NewValidation("tool requires operator privileges: " + name)
 		}
-		if isAdministrativeScope(def.RequiredScope) {
-			return nil, apperror.NewValidation("tool requires an administrative scope: " + name)
+		if isNonShareableScope(def.RequiredScope) {
+			return nil, apperror.NewValidation("tool requires an administrative or project-management scope: " + name)
 		}
 		if def.RequiredScope != "" {
 			seen[def.RequiredScope] = true
@@ -1103,10 +1107,11 @@ func BuildToolCatalog(ctx context.Context, s *Service, projectID string) []Catal
 		if d.AgentOnly || d.SuperadminOnly {
 			continue
 		}
-		// Tools requiring an administrative/account scope are never includable:
-		// deriving "admin" onto a share token would let it satisfy the
-		// share-admin route guard and chain into sibling instances.
-		if isAdministrativeScope(d.RequiredScope) {
+		// Tools requiring a non-shareable scope are never includable: deriving
+		// "admin" would let a share token satisfy the share-admin route guard and
+		// chain into sibling instances, and deriving "projects:write" would let a
+		// share link mint credentials or reconfigure the project.
+		if isNonShareableScope(d.RequiredScope) {
 			continue
 		}
 		// Agent execution/mutation tools cannot be safely constrained by a

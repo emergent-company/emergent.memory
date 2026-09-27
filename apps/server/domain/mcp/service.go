@@ -1575,7 +1575,7 @@ func (s *Service) GetToolDefinitionsForProject(ctx context.Context, projectID st
 var toolRequiredScope = map[string]string{
 	// Project
 	"project-get":    "graph:read",
-	"project-create": "admin",
+	"project-create": "projects:write",
 	// Schema read
 	"schema-version":        "graph:read",
 	"entity-type-list":      "graph:read",
@@ -1802,18 +1802,27 @@ func (s *Service) IsSuperadminOnlyTool(name string) bool {
 	return superadminOnlyToolNames[name]
 }
 
-// sensitiveInProcessAdminTools is the set of admin-scoped tools whose in-process
-// bar is raised to superadmin_full rather than trusted-internal. The `admin`
-// scope these tools declare is a TOKEN-ONLY scope: no project role maps to it
-// (roleToScopes in pkg/auth deliberately excludes admin*), so no trusted session
-// run — member, project_admin, or org_admin — can hold the authority the scope
-// represents. Over HTTP these tools require a token carrying `admin`; in-process
-// there is no token scope, so the identity-based superadmin_full grant is the
-// correct fail-closed bar (issue #1018).
+// sensitiveInProcessAdminTools is the set of privilege-sensitive tools whose
+// in-process bar is raised to superadmin_full rather than trusted-internal.
+// These tools mint credentials (token-create), accept provider API keys
+// (provider-configure-project), create projects (project-create), or install /
+// outbound-connect an external MCP server (mcp-registry-install,
+// mcp-server-inspect); an agent run reaching ExecuteTool in-process must not
+// exercise that authority on the strength of the trusted-internal marker alone
+// (issue #1018). Over HTTP the transport has already enforced the tool's
+// declared scope and marked the call TransportEnforced, so the overlay applies
+// only to the non-transport in-process path.
 //
-// The subset is the sensitive six: token minting (privilege escalation),
-// provider config (accepts API keys), and project creation. The read-only
-// provider-models-list is left at the trusted-internal bar.
+// The registry install/inspect tools declare platform-tier `admin` (their HTTP
+// equivalents do an outbound connect) but are neither AgentOnly nor
+// superadmin-only; without this overlay an untrusted-or-trusted in-process run
+// would pass the plain RequiredScope gate on trust alone. They are listed here
+// so a trusted non-superadmin run is denied in-process, matching the HTTP bar.
+//
+// The subset is the sensitive eight: token minting (privilege escalation),
+// provider config (accepts API keys), project creation, and registry
+// install/inspect. The read-only provider-models-list is left at the
+// trusted-internal bar.
 var sensitiveInProcessAdminTools = map[string]bool{
 	"token-list":                 true,
 	"token-create":               true,
@@ -1821,7 +1830,20 @@ var sensitiveInProcessAdminTools = map[string]bool{
 	"token-revoke":               true,
 	"provider-configure-project": true,
 	"project-create":             true,
+	"mcp-registry-install":       true,
+	"mcp-server-inspect":         true,
 }
+
+// handlerProvidedToolScopes are the RequiredScope values declared only by
+// handler-provided tool definitions (domain/agents, domain/mcpregistry), which
+// are injected at runtime and therefore invisible to the package-level
+// derivation above. domain/agents declares agents:read/agents:write (already in
+// the derived set via the static/dynamic maps); domain/mcpregistry declares
+// "admin" for its agent-only server-management tools (and for the
+// install/inspect tools). Listing them here keeps IsToolScope — and the
+// umbrella projection — honest for handler-provided tools instead of dropping a
+// scope the moment the last static/dynamic tool stops requiring it.
+var handlerProvidedToolScopes = []string{"admin"}
 
 // mcpToolScopeVocabulary is the set of scope values that can gate an MCP tool.
 // It is derived from the tool catalog — the central static scope map plus the
@@ -1833,7 +1855,7 @@ var sensitiveInProcessAdminTools = map[string]bool{
 // assert via IsToolScope that every RequiredScope they declare is covered here,
 // so a handler-only scope fails the build rather than silently losing
 // umbrella-scope visibility: it must reuse a scope already in the vocabulary or
-// extend the derivation deliberately.
+// extend the derivation deliberately (see handlerProvidedToolScopes).
 //
 // It is the projection target for umbrella-scope implications: MCP honors an
 // implied scope only when some tool can require it.
@@ -1848,6 +1870,9 @@ var mcpToolScopeVocabulary = func() map[string]bool {
 				vocab[def.RequiredScope] = true
 			}
 		}
+	}
+	for _, s := range handlerProvidedToolScopes {
+		vocab[s] = true
 	}
 	return vocab
 }()
