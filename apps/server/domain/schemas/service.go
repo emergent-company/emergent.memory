@@ -262,17 +262,44 @@ func validateSchemaDefinitions(objectTypeSchemas, relationshipTypeSchemas json.R
 	// Validate object types
 	if len(objectTypeSchemas) > 0 {
 		var entries []struct {
-			Name string `json:"name"`
+			Name          string          `json:"name"`
+			Properties    json.RawMessage `json:"properties"`
+			ScopeKey      json.RawMessage `json:"scopeKey"`
+			ScopeKeySnake json.RawMessage `json:"scope_key"`
 		}
 		if err := json.Unmarshal(objectTypeSchemas, &entries); err != nil {
 			errs = append(errs, fmt.Sprintf("objectTypeSchemas is not a valid JSON array: %v", err))
 		} else if len(entries) == 0 {
 			errs = append(errs, "objectTypeSchemas array is empty — did you use 'objectTypes' instead of 'objectTypeSchemas'?")
 		} else {
+			// Build the known-type/property map first so scope-key reference
+			// targets can be resolved against the same definition set.
+			knownTypes := make(map[string]map[string]struct{}, len(entries))
+			for _, e := range entries {
+				if e.Name != "" {
+					knownTypes[e.Name] = propertyNamesFromProperties(e.Properties)
+				}
+			}
 			for i, e := range entries {
 				if e.Name == "" {
 					errs = append(errs, fmt.Sprintf("objectTypeSchemas[%d] is missing required field 'name'", i))
+					continue
 				}
+				// Validate the optional scope-key declaration (issue #1148,
+				// option 2). Fail closed on an unknown property or target.
+				raw := e.ScopeKey
+				if len(raw) == 0 {
+					raw = e.ScopeKeySnake
+				}
+				if len(raw) == 0 {
+					continue
+				}
+				decl, perr := parseScopeKeyValue(raw)
+				if perr != nil {
+					errs = append(errs, fmt.Sprintf("objectTypeSchemas[%d] (%q): %v", i, e.Name, perr))
+					continue
+				}
+				errs = append(errs, ValidateScopeKey(e.Name, decl, knownTypes[e.Name], knownTypes)...)
 			}
 		}
 	}
