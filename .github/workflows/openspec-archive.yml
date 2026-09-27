@@ -1,0 +1,103 @@
+name: OpenSpec archive guard
+
+# Post-merge enforcement for #1063.
+#
+# A change PR ships `openspec/changes/<name>/` in the same PR; `openspec
+# archive` (which syncs the change's delta specs into `openspec/specs/`) is a
+# documented *post-merge* follow-up. Nothing enforced the follow-up, so merged
+# change dirs accumulated and `openspec/specs/` silently drifted from shipped
+# behaviour (#898: ~34 stale changes; #842/#857/#859/#882/#906 recurrences).
+#
+# This is a *post-merge* check by design. A pre-merge gate would fire on every
+# legitimately-deferred archive, so it lives here rather than in a PR check, and
+# it is deliberately NOT part of the branch-protection-required `ci`: it must be
+# able to go red on `main` without blocking unrelated PRs, whose `ci` runs
+# against a merge commit that still contains the not-yet-archived change.
+#
+# Triggers: push to `main` (feedback right after a merge), daily (catches drift
+# that predates this workflow), and manual dispatch. On drift it fails the run
+# AND opens/updates one tracking issue with the exact archive commands.
+on:
+  push:
+    branches: [main]
+  schedule:
+    # 07:23 UTC daily — off the :00/:15 mark to avoid runner congestion.
+    - cron: '23 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  archive-drift:
+    name: archive-drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pin the CLI: archive output (spec rewrite) must be reproducible, and
+      # the check depends on `openspec list --json`'s schema.
+      - name: Install OpenSpec CLI
+        run: npm install -g @fission-ai/openspec@1.13.0
+
+      - name: Detect merged-but-un-archived changes
+        id: detect
+        run: |
+          set +e
+          bash scripts/preflight/openspec-archive.sh --base HEAD --json > drift.json
+          rc=$?
+          set -e
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          if [ "$rc" -eq 0 ]; then
+            echo "No OpenSpec archive drift." | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "## OpenSpec archive drift"
+              echo
+              jq -r '"\(.count) merged change(s) complete but un-archived on `\(.base)`:"' drift.json
+              echo
+              jq -r '.stale[] | "- `\(.name)` (\(.completedTasks)/\(.totalTasks) tasks)"' drift.json
+              echo
+              echo '```bash'
+              jq -r '.stale[] | "openspec archive \(.name) --yes"' drift.json
+              echo '```'
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Open or update tracking issue
+        if: steps.detect.outputs.rc != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          title="OpenSpec archive drift: $(jq -r '.count' drift.json) merged change(s) un-archived"
+          {
+            echo "Automated report from the [OpenSpec archive guard]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/openspec-archive.yml) workflow (#1063)."
+            echo
+            echo "These change(s) are **complete** (all tasks done) and **already merged to \`main\`**, but were never archived — their delta specs have not been synced into \`openspec/specs/\`:"
+            echo
+            jq -r '.stale[] | "- `\(.name)` (\(.completedTasks)/\(.totalTasks) tasks)"' drift.json
+            echo
+            echo "Post-merge follow-up — archive in one PR:"
+            echo
+            echo '```bash'
+            jq -r '.stale[] | "openspec archive \(.name) --yes"' drift.json
+            echo '```'
+            echo
+            echo "_Updated automatically; close once the archive follow-up merges._"
+          } > issue-body.md
+          existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search 'OpenSpec archive drift in:title' --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --repo "$GITHUB_REPOSITORY" --title "$title" --body-file issue-body.md
+            echo "Updated issue #$existing"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --label process --body-file issue-body.md
+          fi
+
+      - name: Fail run on drift
+        if: steps.detect.outputs.rc != '0'
+        run: |
+          echo "OpenSpec archive drift detected; see the tracking issue/summary above." >&2
+          exit 1
