@@ -1,5 +1,44 @@
 import Foundation
 
+// MARK: - JSON wire types (`status --json`)
+
+private struct JSONDisabledTool: Decodable {
+    let name: String
+    let reason: String
+}
+
+private struct JSONHubDetail: Decodable {
+    let hubToolCount: Int?
+    let localToolCount: Int?
+    let sessionCount: Int?
+    let error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case hubToolCount = "hub_tool_count"
+        case localToolCount = "local_tool_count"
+        case sessionCount = "session_count"
+        case error
+    }
+}
+
+private struct JSONDocument: Decodable {
+    let instanceID: String?
+    let version: String?
+    let tools: [String]?
+    let hubState: String?
+    let hubDetail: JSONHubDetail?
+    let disabledTools: [JSONDisabledTool]?
+
+    enum CodingKeys: String, CodingKey {
+        case instanceID = "instance_id"
+        case version
+        case tools
+        case hubState = "hub_state"
+        case hubDetail = "hub_detail"
+        case disabledTools = "disabled_tools"
+    }
+}
+
 /// Parsed `memory-connector status` output.
 ///
 /// The engine emits either the human-readable text form (legacy) or, with
@@ -73,43 +112,6 @@ struct StatusSnapshot: Equatable {
     }
 
     // MARK: - JSON (`status --json`)
-
-    private struct JSONDisabledTool: Decodable {
-        let name: String
-        let reason: String
-    }
-
-    private struct JSONHubDetail: Decodable {
-        let hubToolCount: Int?
-        let localToolCount: Int?
-        let sessionCount: Int?
-        let error: String?
-
-        enum CodingKeys: String, CodingKey {
-            case hubToolCount = "hub_tool_count"
-            case localToolCount = "local_tool_count"
-            case sessionCount = "session_count"
-            case error
-        }
-    }
-
-    private struct JSONDocument: Decodable {
-        let instanceID: String?
-        let version: String?
-        let tools: [String]?
-        let hubState: String?
-        let hubDetail: JSONHubDetail?
-        let disabledTools: [JSONDisabledTool]?
-
-        enum CodingKeys: String, CodingKey {
-            case instanceID = "instance_id"
-            case version
-            case tools
-            case hubState = "hub_state"
-            case hubDetail = "hub_detail"
-            case disabledTools = "disabled_tools"
-        }
-    }
 
     private static func parseJSON(_ stdout: String) -> StatusSnapshot? {
         let trimmed = stdout.trimmingCharacters(in: .whitespacesAndNewlines)

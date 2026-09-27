@@ -441,22 +441,22 @@ final class AccountStoreTests: XCTestCase {
     func testTwoAccountsGetDistinctTokensAndDirectories() async throws {
         let store = makeStore()
         stubComplete(email: "a@example.test")
-        let a = try await signIn(store, .prod)
+        let prodAccount = try await signIn(store, .prod)
         stubComplete(email: "b@example.test", server: devServer, issuer: Environment.dev.issuerString)
-        let b = try await signIn(store, .dev)
+        let devAccount = try await signIn(store, .dev)
 
         XCTAssertEqual(Set(store.accounts.map(\.id)), ["prod:a@example.test", "dev:b@example.test"])
-        XCTAssertEqual(store.activeAccountID, b.id, "newest sign-in becomes active")
+        XCTAssertEqual(store.activeAccountID, devAccount.id, "newest sign-in becomes active")
 
         // Distinct directories: no file can be shared. (The directory is
         // created lazily on the next secret write; the CLI owns the session.)
-        XCTAssertNotEqual(store.accountDirectory(for: a.id), store.accountDirectory(for: b.id))
-        XCTAssertTrue(store.accountDirectory(for: a.id).path.hasSuffix("/accounts/prod:a@example.test"))
-        XCTAssertTrue(store.accountDirectory(for: b.id).path.hasSuffix("/accounts/dev:b@example.test"))
+        XCTAssertNotEqual(store.accountDirectory(for: prodAccount.id), store.accountDirectory(for: devAccount.id))
+        XCTAssertTrue(store.accountDirectory(for: prodAccount.id).path.hasSuffix("/accounts/prod:a@example.test"))
+        XCTAssertTrue(store.accountDirectory(for: devAccount.id).path.hasSuffix("/accounts/dev:b@example.test"))
 
         stubAccessToken([prodServer: "access-A", devServer: "access-B"])
-        let tokenA = try await store.currentAccessToken(for: a.id)
-        let tokenB = try await store.currentAccessToken(for: b.id)
+        let tokenA = try await store.currentAccessToken(for: prodAccount.id)
+        let tokenB = try await store.currentAccessToken(for: devAccount.id)
         XCTAssertEqual(tokenA, "access-A")
         XCTAssertEqual(tokenB, "access-B")
     }
@@ -467,18 +467,18 @@ final class AccountStoreTests: XCTestCase {
     func testSwitchToDisconnectsEngineAndValidatesViaCLI() async throws {
         let store = makeStore()
         stubComplete(email: "a@example.test")
-        let a = try await signIn(store, .prod)
+        let prodAccount = try await signIn(store, .prod)
         let afterFirst = stop.count
 
         stubComplete(email: "b@example.test", server: devServer, issuer: Environment.dev.issuerString)
         _ = try await signIn(store, .dev)
         XCTAssertEqual(stop.count, afterFirst + 1, "signing in a second account disconnects the first")
 
-        try await store.switchTo(accountID: a.id)
+        try await store.switchTo(accountID: prodAccount.id)
 
         XCTAssertEqual(stop.count, afterFirst + 2, "switch stops/disconnects the engine")
-        XCTAssertEqual(store.activeAccountID, a.id)
-        XCTAssertEqual(defaults.string(forKey: AccountStore.activeAccountIDKey), a.id)
+        XCTAssertEqual(store.activeAccountID, prodAccount.id)
+        XCTAssertEqual(defaults.string(forKey: AccountStore.activeAccountIDKey), prodAccount.id)
         XCTAssertTrue(cli.called("auth status"), "switch validates through the CLI")
         stubAccessToken([prodServer: "access-A", devServer: "access-B"])
         let activeToken = try await store.currentAccessToken()
@@ -489,18 +489,18 @@ final class AccountStoreTests: XCTestCase {
     func testSwitchToNotSignedInAccountThrows() async throws {
         let store = makeStore()
         stubComplete(email: "a@example.test")
-        let a = try await signIn(store, .prod)
+        let prodAccount = try await signIn(store, .prod)
         stubComplete(email: "b@example.test", server: devServer, issuer: Environment.dev.issuerString)
-        let b = try await signIn(store, .dev)
+        let devAccount = try await signIn(store, .dev)
 
         stubAuthStatus(signedIn: [prodServer: false])
         do {
-            try await store.switchTo(accountID: a.id)
+            try await store.switchTo(accountID: prodAccount.id)
             XCTFail("expected notSignedIn")
         } catch let error as OIDCError {
             XCTAssertEqual(error, .notSignedIn)
         }
-        XCTAssertEqual(store.activeAccountID, b.id, "failed switch leaves the active account unchanged")
+        XCTAssertEqual(store.activeAccountID, devAccount.id, "failed switch leaves the active account unchanged")
     }
 
     @MainActor
@@ -520,25 +520,25 @@ final class AccountStoreTests: XCTestCase {
     func testSignOutCallsCLIAndPromotesAnother() async throws {
         let store = makeStore()
         stubComplete(email: "a@example.test")
-        let a = try await signIn(store, .prod)
+        let prodAccount = try await signIn(store, .prod)
         stubComplete(email: "b@example.test", server: devServer, issuer: Environment.dev.issuerString)
-        let b = try await signIn(store, .dev)
-        try await store.switchTo(accountID: a.id)
+        let devAccount = try await signIn(store, .dev)
+        try await store.switchTo(accountID: prodAccount.id)
         let before = stop.count
 
-        await store.signOut(accountID: a.id)
+        await store.signOut(accountID: prodAccount.id)
 
         XCTAssertEqual(stop.count, before + 1, "signing out the active account disconnects")
-        XCTAssertEqual(store.accounts.map(\.id), [b.id])
-        XCTAssertEqual(store.activeAccountID, b.id, "another account is promoted")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: store.accountDirectory(for: a.id).path),
+        XCTAssertEqual(store.accounts.map(\.id), [devAccount.id])
+        XCTAssertEqual(store.activeAccountID, devAccount.id, "another account is promoted")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.accountDirectory(for: prodAccount.id).path),
                        "signed-out account's directory is deleted")
         XCTAssertTrue(cli.called("auth logout"))
         XCTAssertTrue(cli.calls.contains { args in
             Array(args.prefix(2)).joined(separator: " ") == "auth logout" && args.contains(prodServer)
         }, "logout is scoped to the removed account's server")
 
-        await store.signOut(accountID: b.id)
+        await store.signOut(accountID: devAccount.id)
         XCTAssertTrue(store.accounts.isEmpty)
         XCTAssertNil(store.activeAccountID)
         XCTAssertNil(defaults.string(forKey: AccountStore.activeAccountIDKey))
@@ -564,9 +564,9 @@ final class AccountStoreTests: XCTestCase {
     func testAccessTokenFailureMarksOnlyThatAccount() async throws {
         let store = makeStore()
         stubComplete(email: "a@example.test")
-        let a = try await signIn(store, .prod)
+        let prodAccount = try await signIn(store, .prod)
         stubComplete(email: "b@example.test", server: devServer, issuer: Environment.dev.issuerString)
-        let b = try await signIn(store, .dev)
+        let devAccount = try await signIn(store, .dev)
 
         let devServer = devServer
         cli.on("auth access-token") { arguments in
@@ -580,18 +580,18 @@ final class AccountStoreTests: XCTestCase {
             """, exitCode: 0, timedOut: false)
         }
 
-        let tokenA = try await store.currentAccessToken(for: a.id)
+        let tokenA = try await store.currentAccessToken(for: prodAccount.id)
         XCTAssertEqual(tokenA, "access-A")
-        XCTAssertFalse(store.needsReauthentication(a.id))
+        XCTAssertFalse(store.needsReauthentication(prodAccount.id))
 
         do {
-            _ = try await store.currentAccessToken(for: b.id)
+            _ = try await store.currentAccessToken(for: devAccount.id)
             XCTFail("expected an access-token failure for B")
         } catch {
             // expected
         }
-        XCTAssertTrue(store.needsReauthentication(b.id), "only account B needs re-auth")
-        XCTAssertFalse(store.needsReauthentication(a.id), "A is unaffected by B's failure")
+        XCTAssertTrue(store.needsReauthentication(devAccount.id), "only account B needs re-auth")
+        XCTAssertFalse(store.needsReauthentication(prodAccount.id), "A is unaffected by B's failure")
     }
 
     // MARK: - Identity backfill
