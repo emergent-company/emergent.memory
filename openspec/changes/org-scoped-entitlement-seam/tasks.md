@@ -26,7 +26,7 @@
 
 - [x] 5.1 `cd apps/server && PATH="/root/go/bin:$PATH" go build ./...`
 - [x] 5.2 `PATH="/root/go/bin:$PATH" go test -short ./pkg/auth/... ./domain/{orgs,invites,projects}/...`
-- [ ] 5.3 DB-backed tests for `pkg/auth/...` and the org/invites/projects authorization matrices under a hermetic Postgres (`REQUIRE_DB=1`, never with `-short`)
-- [ ] 5.4 `openspec validate --all --strict`
-- [ ] 5.5 `apps/server/scripts/lint-ratchet.sh` — auth guards stay `<= 13`, no `.WithMessage`/`.WithInternal` added
-- [ ] 5.6 `gofmt -l` clean on changed files
+- [x] 5.3 DB-backed tests for `pkg/auth/...` and the org/invites/projects authorization matrices under a hermetic Postgres (`REQUIRE_DB=1`, never with `-short`)
+- [x] 5.4 `openspec validate --all --strict`
+- [x] 5.5 `apps/server/scripts/lint-ratchet.sh` — auth guards stay `<= 13`, no `.WithMessage`/`.WithInternal` added
+- [x] 5.6 `gofmt -l` clean on changed files
