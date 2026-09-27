@@ -143,4 +143,48 @@ func TestValidateSchemaDefinitions_ScopeKey(t *testing.T) {
 			t.Fatalf("expected no errors, got %v", errs)
 		}
 	})
+
+	// Regression for the CLI blueprint path: the CLI marshals its pack schemas
+	// with json.Marshal, and its ObjectTypeDef historically serialised
+	// `"scopeKey":null` for every type WITHOUT a declaration. JSON null must be
+	// treated as absent (like ParseScopeKey / isNullJSON already do), not as a
+	// present-but-empty declaration that fails `scopeKey.property is required`.
+	//
+	// The payload below is the exact wire shape produced by
+	// apps/cli/internal/blueprints.ObjectTypeDef (same field tags, no
+	// omitempty) — mirrored here because the CLI is a separate Go module the
+	// server cannot import. The CLI-side assertion that the real struct now
+	// omits the field lives in
+	// apps/cli/internal/blueprints/types_scope_key_test.go.
+	t.Run("CLI payload with scopeKey:null is accepted", func(t *testing.T) {
+		type cliObjectTypePayload struct {
+			Name        string         `json:"name"`
+			Label       string         `json:"label"`
+			Description string         `json:"description"`
+			Properties  map[string]any `json:"properties"`
+			ScopeKey    map[string]any `json:"scopeKey"` // no omitempty: emits null
+		}
+		payload, err := json.Marshal([]cliObjectTypePayload{{
+			Name:        "Person",
+			Label:       "Person",
+			Description: "A human individual",
+			Properties:  map[string]any{"name": map[string]any{"type": "string"}},
+		}})
+		if err != nil {
+			t.Fatalf("marshal CLI payload: %v", err)
+		}
+		if !strings.Contains(string(payload), `"scopeKey":null`) {
+			t.Fatalf("test payload must reproduce the CLI null shape, got %s", payload)
+		}
+		if errs := validateSchemaDefinitions(payload, nil); len(errs) != 0 {
+			t.Fatalf("expected null scopeKey to be treated as absent, got %v", errs)
+		}
+	})
+
+	t.Run("snake_case scope_key:null is accepted", func(t *testing.T) {
+		raw := json.RawMessage(`[{"name":"Person","properties":{"name":{"type":"string"}},"scope_key":null}]`)
+		if errs := validateSchemaDefinitions(raw, nil); len(errs) != 0 {
+			t.Fatalf("expected null scope_key to be treated as absent, got %v", errs)
+		}
+	})
 }
