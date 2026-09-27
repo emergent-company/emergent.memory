@@ -21821,6 +21821,10 @@ const docTemplate = `{
                 "rootRunId": {
                     "type": "string"
                 },
+                "sessionId": {
+                    "description": "SessionID is the thread identity this run belongs to, when it has one.\nAd-hoc or scheduled runs with no thread omit it.",
+                    "type": "string"
+                },
                 "skipReason": {
                     "type": "string"
                 },

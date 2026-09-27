@@ -2,12 +2,12 @@
 
 ### Requirement: ACP implementation removal
 
-The ACP server implementation SHALL have been deleted, with no A2A behavioural change. The reused persistence tables SHALL be renamed to their consolidated names (`kb.sessions`, `kb.run_events`) without changing A2A behaviour.
+The ACP **server** implementation SHALL have been deleted, with no A2A behavioural change. The reused persistence tables SHALL be renamed to their consolidated names (`kb.sessions`, `kb.run_events`) without changing A2A behaviour. The CLI's `memory acp` command is an ACP **client**-protocol bridge (it fronts a Memory agent over stdio), not the retired server session implementation, and SHALL be retained.
 
 #### Scenario: ACP handlers are removed
 
 - **WHEN** the removal milestone lands
-- **THEN** `acp_handler.go`, `acp_dto.go`, `acp_routes.go`, `pkg/sdk/acp`, and `apps/cli/internal/cmd/acp.go` no longer exist
+- **THEN** the server handlers `acp_handler.go`, `acp_dto.go`, `acp_routes.go` and the `pkg/sdk/acp` package no longer exist; `apps/cli/internal/cmd/acp.go` is the retained ACP client bridge, not the removed server implementation
 
 #### Scenario: A2A surface is unaffected by removal
 

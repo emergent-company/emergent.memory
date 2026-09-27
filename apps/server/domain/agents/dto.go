@@ -81,6 +81,10 @@ type AgentRunDTO struct {
 
 	AgentDefinitionID *string `json:"agentDefinitionId,omitempty"`
 
+	// SessionID is the thread identity this run belongs to, when it has one.
+	// Ad-hoc or scheduled runs with no thread omit it.
+	SessionID *string `json:"sessionId,omitempty"`
+
 	Tools []string `json:"tools,omitempty"`
 }
 
@@ -184,11 +188,12 @@ type TriggerRequestDTO struct {
 	Model    string            `json:"model,omitempty"`
 	EnvVars  map[string]string `json:"env_vars,omitempty"`
 	MaxSteps *int              `json:"maxSteps,omitempty"`
-	// SessionID ties this trigger to a persistent ADK conversation session.
-	// When provided, the ADK runner reuses the session associated with this ID,
+	// ConversationKey ties this trigger to a persistent ADK conversation
+	// session. It is the ADK history key, NOT a thread/Session id — when
+	// provided, the ADK runner reuses the session associated with this key,
 	// accumulating all prior turns as conversation history for the agent.
 	// When empty, each trigger starts a fresh session (current behavior).
-	SessionID string `json:"sessionId,omitempty"`
+	ConversationKey string `json:"conversationKey,omitempty"`
 }
 
 // TriggerResponseDTO is the response for triggering an agent
@@ -262,6 +267,7 @@ func (r *AgentRun) ToDTO() *AgentRunDTO {
 		TraceID:           r.TraceID,
 		RootRunID:         r.RootRunID,
 		AgentDefinitionID: r.AgentDefinitionID,
+		SessionID:         r.SessionID,
 		Tools:             r.Tools,
 	}
 	if r.Agent != nil {

@@ -764,7 +764,7 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 			EnvVars:         triggerReq.EnvVars,
 			MaxSteps:        triggerReq.MaxSteps,
 			AuthToken:       triggerAuthToken,
-			ConversationKey: triggerReq.SessionID,
+			ConversationKey: triggerReq.ConversationKey,
 			TrustedInternal: true, // session UI is a trusted surface (full internal coordination)
 		})
 		if execResult != nil && execResult.Cleanup != nil {

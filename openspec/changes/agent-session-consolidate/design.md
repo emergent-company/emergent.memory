@@ -19,7 +19,7 @@ Verified constraints that shape the approach:
 - One thread identity (`Session`) and one turn identity (`Run`) that every interface maps onto.
 - One create-or-get path for sessions, replacing four inline producers.
 - Exactly one status per run; no parallel "session" status vocabulary.
-- A reversible rename with a compatibility window for the wire key.
+- A reversible rename; the wire key is renamed hard, with every in-repo consumer updated in the same change (no compatibility window).
 
 **Non-Goals** (design-level boundaries, beyond `proposal.md`)
 
@@ -76,11 +76,11 @@ Migration A renames tables/columns/indexes and updates FKs. Migration B drops `a
 ## Risks / Trade-offs
 
 - **A missed FK/child column leaves the rename half-applied** → the migration renames all four child columns and the `session_todos` FK target; a migration up/down test plus a schema assertion covers it.
-- **Renaming the wire JSON key breaks external clients** → dual-emit `sessionId` + `acpSessionId` for one release; e2e and gateway tests assert both.
+- **Renaming the wire JSON key breaks external clients** → the only known consumers are in-repo and are renamed in the same change; A2A's client-facing `contextId` is unchanged. If an out-of-repo consumer surfaces, add a dual-emit window then.
 - **The `SessionID`/`ConversationKey` swap silently changes cross-run history sharing** → rename is mechanical; a unit test asserts successive trigger calls with the same `ConversationKey` share the ADK session and that a thread `SessionID` does not leak into it.
 - **Deleting `session_status` removes visibility a client actually reads** → grep confirms no server/gateway consumer; verify SDK/iOS before dropping, and keep the drop in its own migration so it can be reverted independently.
 - **Rename touches backup export** → `backup-export-coverage` updated; exporter table-name references are updated in the same change.
-- **Larger diff than a feature change** → phased task list; phases are individually revertable except the JSON dual-emit removal (deferred, not in this change).
+- **Larger diff than a feature change** → phased task list; each phase is individually revertable.
 
 ## Migration Plan
 
@@ -92,6 +92,6 @@ Migration A renames tables/columns/indexes and updates FKs. Migration B drops `a
 
 ## Open Questions
 
-- When to retire the `acpSessionId` legacy key (one release? until the next minor?) — deferrable; the dual-emit keeps clients working regardless.
+- Whether to add a dual-emit `sessionId` + `acpSessionId` window if an out-of-repo consumer of the old key surfaces — deferred; no known consumer today, and no legacy key is emitted.
 - Whether to rename `pkg/acpslug` → `pkg/slug` — deferred non-goal; unrelated to session identity.
 - Whether a future `workspace_ready_at` timestamp is needed for provisioning display — only if a UI requirement appears; additive, no impact on this change.

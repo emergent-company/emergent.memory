@@ -1262,7 +1262,13 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 			}
 		}
 
-		// Ensure this conversation has a backing session (create once, reuse on all turns).
+		// Ensure this conversation has a backing session (create once, reuse on
+		// all turns). The repository resolution is atomic — it locks the
+		// conversation row and writes the Session + backlink in one
+		// transaction — so concurrent first turns cannot create duplicate
+		// sessions. A resolution failure is still non-fatal here: the chat turn
+		// proceeds without session linkage rather than failing the user's
+		// message, and the error is logged for diagnosis.
 		agentNameForSession := def.Name
 		sessionID, sessionErr := h.agentRepo.EnsureConversationSession(ctx, conv.ID.String(), projectID, &agentNameForSession)
 		if sessionErr != nil {
@@ -1270,7 +1276,6 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 				slog.String("conversation_id", conv.ID.String()),
 				slog.String("error", sessionErr.Error()),
 			)
-			// Non-fatal — run proceeds without session linkage.
 			sessionID = ""
 		}
 

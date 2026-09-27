@@ -1719,9 +1719,8 @@ func (r *Repository) CancelRun(ctx context.Context, runID string) (bool, error) 
 // used when an explicit cancel request stops an in-flight run: unlike
 // FailRunWithSteps it records the terminal status as cancelled, not error, so a
 // user stop is not misreported as a server fault. The reason is stored in
-// error_message so the stop is self-explanatory in the run history. Like
-// CancelRun it does not touch session_status. It returns true when a row was
-// actually transitioned.
+// error_message so the stop is self-explanatory in the run history. It returns
+// true when a row was actually transitioned.
 func (r *Repository) CancelRunWithSteps(ctx context.Context, runID, reason string, stepCount int) (bool, error) {
 	now := time.Now()
 	res, err := guardTerminalTransition(r.db.NewUpdate().
@@ -2999,10 +2998,18 @@ func (r *Repository) FindAgentDefinitionBySlug(ctx context.Context, projectID, s
 }
 
 // CreateSession inserts a new session record.
+//
+// RETURNING lists the model's own columns explicitly rather than "*": the
+// migrated table carries a retained `is_archived` column that the Session model
+// no longer maps (the archive field was dropped as dead code), and a
+// `RETURNING *` would hand bun a column it has no field for, failing the scan.
+// The list is a single comma-joined string: bun's signature is
+// Returning(query string, args ...any), so separate arguments would be treated
+// as placeholders for one column and only the first would be returned.
 func (r *Repository) CreateSession(ctx context.Context, session *Session) error {
 	_, err := r.db.NewInsert().
 		Model(session).
-		Returning("*").
+		Returning("id, project_id, agent_name, title, created_at, updated_at").
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("CreateSession: %w", err)
@@ -3457,44 +3464,61 @@ func (r *Repository) GetConversationFullHistoryRaw(ctx context.Context, projectI
 // The chat_conversations table must have a session_id uuid column (added by
 // migration 00115) and kb.sessions must exist (added earlier).
 func (r *Repository) EnsureConversationSession(ctx context.Context, conversationID, projectID string, agentName *string) (string, error) {
-	// 1. Fast path: read existing session ID from the conversation row.
-	var existing struct {
-		SessionID *string `bun:"session_id"`
-	}
-	err := r.db.NewSelect().
-		TableExpr("kb.chat_conversations").
-		ColumnExpr("session_id::text").
-		Where("id = ?", conversationID).
-		Scan(ctx, &existing)
+	var sessionID string
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// Lock the conversation row so two concurrent first turns on a new
+		// conversation serialize: the first creates the Session and writes the
+		// backlink, the second blocks on the lock, then observes the committed
+		// backlink and reuses it. Without the lock both could read NULL and
+		// create divergent Session rows for one thread.
+		var existing struct {
+			SessionID *string `bun:"session_id"`
+		}
+		if err := tx.NewSelect().
+			TableExpr("kb.chat_conversations").
+			ColumnExpr("session_id::text").
+			Where("id = ?", conversationID).
+			For("UPDATE").
+			Scan(ctx, &existing); err != nil {
+			return fmt.Errorf("EnsureConversationSession read: %w", err)
+		}
+		if existing.SessionID != nil && *existing.SessionID != "" {
+			sessionID = *existing.SessionID
+			return nil
+		}
+
+		session := &Session{
+			ProjectID: projectID,
+			AgentName: agentName,
+		}
+		// Explicit, comma-joined column list (see CreateSession): the retained
+		// `is_archived` column is not mapped by the Session model, so
+		// `RETURNING *` would fail the scan.
+		if _, err := tx.NewInsert().
+			Model(session).
+			Returning("id, project_id, agent_name, title, created_at, updated_at").
+			Exec(ctx); err != nil {
+			return fmt.Errorf("EnsureConversationSession create: %w", err)
+		}
+
+		// Persist the FK back onto the conversation row in the same
+		// transaction: if the backlink cannot be written the Session is rolled
+		// back too, so a thread is never left with an orphaned Session.
+		if _, err := tx.NewUpdate().
+			TableExpr("kb.chat_conversations").
+			Set("session_id = ?", session.ID).
+			Where("id = ?", conversationID).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("EnsureConversationSession backlink: %w", err)
+		}
+
+		sessionID = session.ID
+		return nil
+	})
 	if err != nil {
-		return "", fmt.Errorf("EnsureConversationSession read: %w", err)
+		return "", err
 	}
-	if existing.SessionID != nil && *existing.SessionID != "" {
-		return *existing.SessionID, nil
-	}
-
-	// 2. Create a new session.
-	session := &Session{
-		ProjectID: projectID,
-		AgentName: agentName,
-	}
-	if err := r.CreateSession(ctx, session); err != nil {
-		return "", fmt.Errorf("EnsureConversationSession create: %w", err)
-	}
-
-	// 3. Persist the FK back onto the conversation row.
-	_, err = r.db.NewUpdate().
-		TableExpr("kb.chat_conversations").
-		Set("session_id = ?", session.ID).
-		Where("id = ?", conversationID).
-		Exec(ctx)
-	if err != nil {
-		// Non-fatal: session was created, just the backlink failed.
-		// Log and continue — the session ID is still usable.
-		return session.ID, nil
-	}
-
-	return session.ID, nil
+	return sessionID, nil
 }
 
 // UpdateRunSessionID sets the session_id column on an agent run.
