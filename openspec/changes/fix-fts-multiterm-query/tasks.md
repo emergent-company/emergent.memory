@@ -12,6 +12,7 @@
 ## 3. Chunks keyword leg fallback
 
 - [x] 3.1 In `search.lexicalSearch`, mirror the same strict→relax→disjoin order via the shared `ftsquery` helpers.
+- [x] 3.2 In the MCP `entity-search` keyword leg (`executeSearchEntities`) — the third `websearch_to_tsquery` call site — mirror the same strict→relax→disjoin order (spec delta owned by `fix-entity-search-fts-matching`).
 
 ## 4. Tests
 
