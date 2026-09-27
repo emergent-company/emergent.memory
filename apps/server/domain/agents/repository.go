@@ -47,8 +47,35 @@ func nonTerminalRunStatuses() []string {
 // not yet reached a terminal state, so a late terminal write cannot overwrite
 // an earlier one. The guard runs as part of the UPDATE, so Postgres row locking
 // serializes competing terminal writers and exactly one wins.
+//
+// The guard includes the intermediate "cancelling" status on purpose: a run
+// parked in "cancelling" is carrying a durable cancel committed by some instance
+// (issue #1166), and it must still be reachable by the write that finalizes it.
+// Non-cancel terminal writers pair this guard with setTerminalStatus, which
+// resolves "cancelling" to "cancelled" (never the intended success/failure), so
+// a committed cancel can never be turned into success or failure.
 func guardTerminalTransition(q *bun.UpdateQuery) *bun.UpdateQuery {
 	return q.Where("status IN (?)", bun.In(nonTerminalRunStatuses()))
+}
+
+// setTerminalStatus assigns the run's terminal status while honouring a durable
+// cancel. Postgres evaluates the right-hand side of SET against the pre-UPDATE
+// row, so the CASE reads the row's current status atomically as part of the same
+// UPDATE: when it is "cancelling" the run finalizes as "cancelled", regardless of
+// the terminal status the caller intended. This closes the check-then-write
+// window between observing a cancel and writing the terminal state, so a cancel
+// that lands concurrently is never lost or overwritten.
+func setTerminalStatus(q *bun.UpdateQuery, intended AgentRunStatus) *bun.UpdateQuery {
+	return q.Set("status = CASE WHEN status = ? THEN ? ELSE ? END",
+		RunStatusCancelling, RunStatusCancelled, intended)
+}
+
+// durableCancelReasonSet records the user-cancel reason when a durable cancel
+// wins the terminal write, otherwise leaves the existing error_message intact.
+// Used by the success/skip writers that do not carry their own message.
+func durableCancelReasonSet(q *bun.UpdateQuery) *bun.UpdateQuery {
+	return q.Set("error_message = CASE WHEN status = ? THEN ? ELSE error_message END",
+		RunStatusCancelling, userCancelReason)
 }
 
 // FindAll returns all agents for a project
@@ -178,44 +205,44 @@ func (r *Repository) CreateRun(ctx context.Context, agentID string) (*AgentRun, 
 	return run, nil
 }
 
-// CompleteRun marks a run as successful
+// CompleteRun marks a run as successful. A durable cancel committed while the
+// run was in flight wins: the run finalizes as cancelled instead (issue #1166).
 func (r *Repository) CompleteRun(ctx context.Context, runID string, summary map[string]any) error {
 	now := time.Now()
-	_, err := guardTerminalTransition(r.db.NewUpdate().
+	_, err := guardTerminalTransition(durableCancelReasonSet(setTerminalStatus(r.db.NewUpdate().
 		Model((*AgentRun)(nil)).
-		Set("status = ?", RunStatusSuccess).
 		Set("completed_at = ?", now).
 		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
 		Set("summary = ?", summary).
-		Where("id = ?", runID)).
+		Where("id = ?", runID), RunStatusSuccess))).
 		Exec(ctx)
 	return err
 }
 
-// SkipRun marks a run as skipped
+// SkipRun marks a run as skipped. A durable cancel committed while the run was
+// in flight wins: the run finalizes as cancelled instead (issue #1166).
 func (r *Repository) SkipRun(ctx context.Context, runID string, reason string) error {
 	now := time.Now()
-	_, err := guardTerminalTransition(r.db.NewUpdate().
+	_, err := guardTerminalTransition(durableCancelReasonSet(setTerminalStatus(r.db.NewUpdate().
 		Model((*AgentRun)(nil)).
-		Set("status = ?", RunStatusSkipped).
 		Set("completed_at = ?", now).
 		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
 		Set("skip_reason = ?", reason).
-		Where("id = ?", runID)).
+		Where("id = ?", runID), RunStatusSkipped))).
 		Exec(ctx)
 	return err
 }
 
-// FailRun marks a run as failed
+// FailRun marks a run as failed. A durable cancel committed while the run was
+// in flight wins: the run finalizes as cancelled instead (issue #1166).
 func (r *Repository) FailRun(ctx context.Context, runID string, errorMessage string) error {
 	now := time.Now()
-	_, err := guardTerminalTransition(r.db.NewUpdate().
+	_, err := guardTerminalTransition(setTerminalStatus(r.db.NewUpdate().
 		Model((*AgentRun)(nil)).
-		Set("status = ?", RunStatusError).
 		Set("completed_at = ?", now).
 		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
-		Set("error_message = ?", errorMessage).
-		Where("id = ?", runID)).
+		Set("error_message = CASE WHEN status = ? THEN ? ELSE ? END", RunStatusCancelling, userCancelReason, errorMessage).
+		Where("id = ?", runID), RunStatusError)).
 		Exec(ctx)
 	return err
 }
@@ -1784,18 +1811,18 @@ func (r *Repository) UpdateStepCount(ctx context.Context, runID string, stepCoun
 
 // FailRunWithSteps marks a run as failed, persisting the step count at the time
 // of failure. Guarded like the other terminal writes so a late failure cannot
-// overwrite a run that has already reached a terminal state (notably an
-// explicit cancel).
+// overwrite a run that has already reached a terminal state (notably an explicit
+// cancel). A durable cancel wins: a run parked in "cancelling" finalizes as
+// cancelled with the user-cancel reason instead of failed (issue #1166).
 func (r *Repository) FailRunWithSteps(ctx context.Context, runID string, errorMessage string, stepCount int) error {
 	now := time.Now()
-	_, err := guardTerminalTransition(r.db.NewUpdate().
+	_, err := guardTerminalTransition(setTerminalStatus(r.db.NewUpdate().
 		Model((*AgentRun)(nil)).
-		Set("status = ?", RunStatusError).
 		Set("completed_at = ?", now).
 		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
-		Set("error_message = ?", errorMessage).
+		Set("error_message = CASE WHEN status = ? THEN ? ELSE ? END", RunStatusCancelling, userCancelReason, errorMessage).
 		Set("step_count = ?", stepCount).
-		Where("id = ?", runID)).
+		Where("id = ?", runID), RunStatusError)).
 		Exec(ctx)
 	return err
 }
@@ -1803,17 +1830,20 @@ func (r *Repository) FailRunWithSteps(ctx context.Context, runID string, errorMe
 // CompleteRunWithSteps marks a run as successfully completed with step count and
 // duration. Guarded like the other terminal writes: if an explicit cancel won
 // the terminal transition first, this is a no-op, so the row's status always
-// matches what the cancel endpoint reported (issue #1149).
+// matches what the cancel endpoint reported (issue #1149). A durable cancel
+// committed by any instance wins atomically: a run parked in "cancelling"
+// finalizes as cancelled, not completed, so a cancel served by one instance can
+// never be reported cancelled while the run on another instance completes
+// (issue #1166).
 func (r *Repository) CompleteRunWithSteps(ctx context.Context, runID string, summary map[string]any, stepCount int, durationMs int) error {
 	now := time.Now()
-	_, err := guardTerminalTransition(r.db.NewUpdate().
+	_, err := guardTerminalTransition(durableCancelReasonSet(setTerminalStatus(r.db.NewUpdate().
 		Model((*AgentRun)(nil)).
-		Set("status = ?", RunStatusSuccess).
 		Set("completed_at = ?", now).
 		Set("summary = ?", summary).
 		Set("step_count = ?", stepCount).
 		Set("duration_ms = ?", durationMs).
-		Where("id = ?", runID)).
+		Where("id = ?", runID), RunStatusSuccess))).
 		Exec(ctx)
 	return err
 }
@@ -3201,17 +3231,97 @@ func (r *Repository) GetRunEventsByRunIDs(ctx context.Context, runIDs []string) 
 
 // SetRunCancelling transitions a run to the "cancelling" intermediate state.
 // This is the first step of the ACP two-step cancel protocol: the intent is
-// acknowledged but the executor hasn't stopped yet.
+// acknowledged but the executor hasn't stopped yet. It is guarded to non-terminal
+// rows so a cancel intent cannot overwrite a run that already finished.
 func (r *Repository) SetRunCancelling(ctx context.Context, runID string) error {
-	_, err := r.db.NewUpdate().
+	_, err := guardTerminalTransition(r.db.NewUpdate().
 		Model((*AgentRun)(nil)).
 		Set("status = ?", RunStatusCancelling).
-		Where("id = ?", runID).
+		Where("id = ?", runID)).
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("SetRunCancelling: %w", err)
 	}
 	return nil
+}
+
+// RequestRunCancellation records a durable cancel intent for a run by moving a
+// non-terminal row to the intermediate "cancelling" status (issue #1166). The
+// write is a single guarded UPDATE, so it is authoritative in Postgres and
+// visible to every server instance — unlike the per-process cancel registry,
+// which only reaches a run executing in the same process.
+//
+// It is idempotent: a row already in "cancelling" is matched again and reported
+// as transitioned, so a repeated cancel keeps returning accepted. It returns
+// false only when the run has already reached a terminal state, in which case
+// nothing is changed.
+//
+// Finalization to the terminal "cancelled" status is not done here: the
+// executing instance (or, for a run with no live executor, the stale-run reaper)
+// observes the durable signal and takes the guarded terminal transition. This
+// keeps exactly one terminal writer while letting any instance request the stop.
+func (r *Repository) RequestRunCancellation(ctx context.Context, runID string) (bool, error) {
+	res, err := guardTerminalTransition(r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusCancelling).
+		Where("id = ?", runID)).
+		Exec(ctx)
+	if err != nil {
+		return false, fmt.Errorf("RequestRunCancellation: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// RunIsCancelling reports whether the run currently carries the durable cancel
+// intent (status "cancelling"). The executor calls this at step boundaries to
+// observe a cancel committed by any instance, including one whose local cancel
+// registry does not know about this run (issue #1166). A missing run reports
+// false so observation never blocks a run on a read race with deletion.
+func (r *Repository) RunIsCancelling(ctx context.Context, runID string) (bool, error) {
+	var cancelling bool
+	err := r.db.NewRaw(
+		`SELECT status = ? FROM kb.agent_runs WHERE id = ?`,
+		string(RunStatusCancelling), runID,
+	).Scan(ctx, &cancelling)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return cancelling, nil
+}
+
+// FinalizeCancellingRuns transitions runs parked in the intermediate
+// "cancelling" status to the terminal "cancelled" status. It is the safety net
+// for a durable cancel whose executing instance never observed it — because the
+// process died, or the run was queued and never picked up. A committed cancel
+// always resolves to "cancelled", so this never turns a cancel into a failure.
+//
+// When notBefore is positive, only runs whose last activity (COALESCE of
+// last_step_at and started_at) is older than notBefore are finalized, so a run
+// actively winding down is not clobbered. A non-positive notBefore finalizes
+// every "cancelling" row, which is what startup recovery wants: any execution
+// from the previous process is gone.
+func (r *Repository) FinalizeCancellingRuns(ctx context.Context, notBefore time.Duration) (int, error) {
+	now := time.Now()
+	q := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusCancelled).
+		Set("completed_at = ?", now).
+		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
+		Set("error_message = COALESCE(NULLIF(error_message, ''), ?)", userCancelReason).
+		Where("status = ?", RunStatusCancelling)
+	if notBefore > 0 {
+		q = q.Where("COALESCE(last_step_at, started_at) < ?", now.Add(-notBefore))
+	}
+	res, err := q.Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("FinalizeCancellingRuns: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
 }
 
 // UpdateSessionTitle sets the title field on a session.
