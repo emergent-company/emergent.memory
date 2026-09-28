@@ -13,8 +13,7 @@
     },
     "xcodebuild": {
       "type": "local",
-      "command": "ssh",
-      "args": ["mcj-mini", "npx -y xcodebuildmcp@latest mcp"],
+      "command": ["ssh", "{env:MEMORY_MAC_HOST}", "npx -y xcodebuildmcp@latest mcp"],
       "enabled": true
     },
     "sentry": {
