@@ -143,7 +143,7 @@ final class MemorySessionController: ObservableObject {
     func start() async {
         guard phase == .idle else { return }
         TraceLog.log("phase_changed", ["phase": "connecting"], room: session.room.name ?? "")
-        Log.session.info("start connect agent=\(config.agentName) endpoint=\(config.tokenEndpoint)")
+        Log.session.info("start connect agent=\(self.config.agentName) endpoint=\(self.config.tokenEndpoint)")
         registerSignalHandlers()
         phase = .connecting
         seenTranscriptIDs.removeAll()
@@ -169,7 +169,7 @@ final class MemorySessionController: ObservableObject {
         } else {
             phase = .connected
             TraceLog.log("livekit_connected", ["room": session.room.name ?? ""], room: session.room.name ?? "")
-            Log.session.info("connect ok agent=\(config.agentName)")
+            Log.session.info("connect ok agent=\(self.config.agentName)")
         }
     }
 
