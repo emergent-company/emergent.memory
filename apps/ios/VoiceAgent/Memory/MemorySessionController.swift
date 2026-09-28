@@ -142,7 +142,7 @@ final class MemorySessionController: ObservableObject {
     /// Connects to the room and dispatches the configured agent.
     func start() async {
         guard phase == .idle else { return }
-        TraceLog.log("phase_changed", ["phase": "connecting"], room: session.room.name ?? "")
+        TraceLog.log("phase_changed", ["phase": "connecting"], room: session.room.name ?? "") // swiftformat:disable:next redundantSelf
         Log.session.info("start connect agent=\(self.config.agentName) endpoint=\(self.config.tokenEndpoint)")
         registerSignalHandlers()
         phase = .connecting
@@ -168,7 +168,7 @@ final class MemorySessionController: ObservableObject {
             Log.session.error("connect failed: \(failure.localizedDescription)")
         } else {
             phase = .connected
-            TraceLog.log("livekit_connected", ["room": session.room.name ?? ""], room: session.room.name ?? "")
+            TraceLog.log("livekit_connected", ["room": session.room.name ?? ""], room: session.room.name ?? "") // swiftformat:disable:next redundantSelf
             Log.session.info("connect ok agent=\(self.config.agentName)")
         }
     }
