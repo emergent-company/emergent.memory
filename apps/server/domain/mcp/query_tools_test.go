@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
 	"github.com/stretchr/testify/assert"
@@ -89,7 +91,8 @@ func TestExecuteQueryKnowledge_CollectsTokens(t *testing.T) {
 
 	m := parseResultMap(t, result)
 	assert.Equal(t, "Hello world", m["answer"])
-	assert.Equal(t, false, m["truncated"])
+	_, hasTruncated := m["truncated"]
+	assert.False(t, hasTruncated, "success payload must no longer carry the removed truncated field")
 	_, hasSessionID := m["session_id"]
 	assert.False(t, hasSessionID, "session_id should not be present when meta event is absent")
 }
@@ -147,7 +150,7 @@ func TestExecuteQueryKnowledge_ForwardsSessionIDInRequest(t *testing.T) {
 		raw, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(raw, &receivedBody)
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, buildSseLines(`{"type":"token","token":"ok"}`))
+		fmt.Fprint(w, buildSseLines(`{"type":"token","token":"ok"}`, `[DONE]`))
 	})
 	defer ts.Close()
 
@@ -170,7 +173,7 @@ func TestExecuteQueryKnowledge_ForwardsModeInRequest(t *testing.T) {
 		raw, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(raw, &receivedBody)
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, buildSseLines(`{"type":"token","token":"ok"}`))
+		fmt.Fprint(w, buildSseLines(`{"type":"token","token":"ok"}`, `[DONE]`))
 	})
 	defer ts.Close()
 
@@ -304,6 +307,134 @@ func TestExecuteForget_403MissingScopeSurfaced(t *testing.T) {
 	assert.Contains(t, err.Error(), "Insufficient permissions")
 	assert.Contains(t, err.Error(), "chat:use")
 	assert.Contains(t, err.Error(), "missing required scope")
+}
+
+// =============================================================================
+// Timeout / cancellation surface as errors, never as empty successes (#1187)
+// =============================================================================
+
+// A caller-supplied deadline is not the tool's internal budget: it must be
+// reported as a caller cancellation, not mis-attributed to queryKnowledgeTimeout.
+func TestExecuteQueryKnowledge_CallerDeadlineReportedAsCaller(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	svc := &Service{serverPort: 1} // never dialed: the context is already expired
+	_, err := svc.executeQueryKnowledge(ctx, "proj-id", map[string]any{"question": "q"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "caller deadline")
+	assert.NotContains(t, err.Error(), "timed out after")
+	assert.NotContains(t, err.Error(), "60s", "must not resurrect the stale 60s literal")
+}
+
+// queryKnowledgeCtxError distinguishes the tool budget, a caller deadline, and a
+// plain cancellation without needing to wait out the real 120s budget.
+func TestQueryKnowledgeCtxError_AttributesCause(t *testing.T) {
+	t.Run("internal budget when caller has no deadline", func(t *testing.T) {
+		err := queryKnowledgeCtxError(context.Background(), time.Now().Add(-time.Second), context.DeadlineExceeded)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "timed out after")
+		assert.Contains(t, err.Error(), queryKnowledgeTimeout.String())
+	})
+
+	t.Run("caller deadline sooner than the tool budget", func(t *testing.T) {
+		callerCtx, cancel := context.WithDeadline(context.Background(), time.Now().Add(time.Minute))
+		defer cancel()
+		err := queryKnowledgeCtxError(callerCtx, time.Now().Add(queryKnowledgeTimeout), context.DeadlineExceeded)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "caller deadline")
+		assert.NotContains(t, err.Error(), "timed out after")
+	})
+
+	t.Run("plain cancellation is propagated", func(t *testing.T) {
+		err := queryKnowledgeCtxError(context.Background(), time.Now().Add(queryKnowledgeTimeout), context.Canceled)
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, context.Canceled))
+		assert.Contains(t, err.Error(), "cancelled")
+		assert.NotContains(t, err.Error(), "timed out")
+	})
+}
+
+func TestExecuteQueryKnowledge_CancelledContextReturnsCancelledError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	svc := &Service{serverPort: 1}
+	_, err := svc.executeQueryKnowledge(ctx, "proj-id", map[string]any{"question": "q"})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, context.Canceled))
+	assert.Contains(t, err.Error(), "cancelled")
+	assert.NotContains(t, err.Error(), "timed out")
+}
+
+func TestExecuteQueryKnowledge_DeadlineDuringStreamReturnsError(t *testing.T) {
+	// The server emits a token then stalls. When the caller's deadline lands
+	// mid-stream the handler must fail rather than hand back the partial answer
+	// as success, and it must attribute the expiry to the caller.
+	ts, port := sseServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, buildSseLines(`{"type":"token","token":"partial answer"}`))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		select {
+		case <-r.Context().Done():
+		case <-time.After(2 * time.Second):
+		}
+	})
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+
+	svc := &Service{serverPort: port}
+	result, err := svc.executeQueryKnowledge(ctx, "proj-id", map[string]any{"question": "q"})
+	require.Error(t, err)
+	assert.Nil(t, result, "a timed-out query must not return a successful result")
+	assert.Contains(t, err.Error(), "caller deadline")
+}
+
+// A stream that ends without its terminal event (proxy/backend disconnect) must
+// fail even though no context expired and part of an answer was received.
+func TestExecuteQueryKnowledge_StreamWithoutTerminalEventReturnsError(t *testing.T) {
+	body := buildSseLines(
+		`{"type":"token","token":"partial answer"}`,
+		`{"type":"meta","conversationId":"sess-x"}`,
+	)
+	ts, port := sseServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, body)
+	})
+	defer ts.Close()
+
+	svc := &Service{serverPort: port}
+	result, err := svc.executeQueryKnowledge(context.Background(), "proj-id", map[string]any{"question": "q"})
+	require.Error(t, err)
+	assert.Nil(t, result, "an incomplete stream must not return a successful result")
+	assert.Contains(t, err.Error(), "without a terminal event")
+}
+
+// The chat handler's real terminal marker is a `done` chunk (not only the
+// `[DONE]` sentinel); both must be accepted as stream completion.
+func TestExecuteQueryKnowledge_DoneEventIsTerminal(t *testing.T) {
+	body := buildSseLines(
+		`{"type":"token","token":"Answer"}`,
+		`{"type":"done","runId":"run-1"}`,
+	)
+	ts, port := sseServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, body)
+	})
+	defer ts.Close()
+
+	svc := &Service{serverPort: port}
+	result, err := svc.executeQueryKnowledge(context.Background(), "proj-id", map[string]any{"question": "q"})
+	require.NoError(t, err)
+
+	m := parseResultMap(t, result)
+	assert.Equal(t, "Answer", m["answer"])
+	assert.Equal(t, "run-1", m["run_id"])
 }
 
 // =============================================================================
