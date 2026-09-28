@@ -38,6 +38,16 @@ const (
 	// defaultToolResultTotalBudgetBytes bounds the SUM of all tool results in a
 	// single model request. When exceeded, the oldest results are elided
 	// (most-recent retained) so per-step context does not grow with run length.
+	//
+	// Rationale for the defaults (issue #1205): 128 KiB ≈ 32k tokens per result
+	// and 512 KiB ≈ 128k tokens total. The per-result cap removes the pathological
+	// single payload; the total budget only trims the extreme tail once more than
+	// four capped results have accumulated in one request.
+	//
+	// The budget is SOFT for a single oversized newest result: older results are
+	// elided first, and if the most recent result alone still exceeds the budget
+	// it is retained whole rather than silently dropped (see the total-budget
+	// pass in boundModelRequestToolResults).
 	defaultToolResultTotalBudgetBytes = 512 << 10
 )
 
@@ -56,11 +66,18 @@ const elisionMarkerFmt = "\u2026 [elided: older tool result (%d bytes) omitted t
 // disables that layer.
 type ToolResultBounds struct {
 	// MaxBytes is the per-result cap (JSON bytes). Zero → default; <0 → disabled.
+	// A negative value disables the layer for every tool and also ignores
+	// PerToolMaxBytes (a per-tool override cannot re-enable a globally disabled
+	// cap).
 	MaxBytes int
 	// PerToolMaxBytes overrides MaxBytes for named tools (positive values only).
+	// The override applies only while the global per-result cap is enabled
+	// (MaxBytes >= 0).
 	PerToolMaxBytes map[string]int
 	// TotalBudgetBytes is the cap on the sum of all tool results in one model
-	// request. Zero → default; <0 → disabled.
+	// request. Zero → default; <0 → disabled. The budget is soft: older results
+	// are elided first, but the most recent result is never elided, so a single
+	// newest result larger than the budget is retained whole.
 	TotalBudgetBytes int
 }
 
@@ -76,10 +93,15 @@ func toolResultBoundsFromConfig(cfg config.MCPConfig) ToolResultBounds {
 }
 
 func (b ToolResultBounds) maxBytesFor(tool string) int {
+	// A negative global cap disables per-result bounding outright: a per-tool
+	// override must not re-enable a layer the operator turned off.
+	if b.MaxBytes < 0 {
+		return b.MaxBytes
+	}
 	if v, ok := b.PerToolMaxBytes[tool]; ok && v > 0 {
 		return v
 	}
-	if b.MaxBytes != 0 {
+	if b.MaxBytes > 0 {
 		return b.MaxBytes
 	}
 	return defaultToolResultMaxBytes
@@ -149,6 +171,14 @@ func boundModelRequestToolResults(req *model.LLMRequest, bounds ToolResultBounds
 	// recent result (index len(parts)-1), which the current step is reasoning
 	// about. The replacement is written back onto the part's FunctionResponse so
 	// the model sees the marker, not the dropped payload.
+	//
+	// The budget is soft by design: if the most recent result alone exceeds the
+	// budget (reachable when total < per-result, or when the per-result layer is
+	// disabled), every older result is elided and the newest is still retained
+	// whole. Silently dropping the result the current step is reasoning about
+	// would be worse than the extra tokens, and the caller can always tighten the
+	// per-result cap. The loop below therefore stops before the newest part and
+	// leaves the sum above budget in that single-result case.
 	if budget := bounds.totalBudget(); budget > 0 && len(parts) > 0 {
 		sum := 0
 		for _, p := range parts {

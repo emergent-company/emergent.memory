@@ -144,6 +144,11 @@ func TestToolResultBounds_MaxBytesFor(t *testing.T) {
 	// Non-positive overrides are ignored (fall through to the global cap).
 	b.PerToolMaxBytes["bad"] = 0
 	assert.Equal(t, 1234, b.maxBytesFor("bad"))
+	// A negative global cap disables the layer for every tool: a positive
+	// per-tool override must NOT re-enable it.
+	disabled := ToolResultBounds{MaxBytes: -1, PerToolMaxBytes: map[string]int{"entity-edges-get": 9999}}
+	assert.Equal(t, -1, disabled.maxBytesFor("entity-edges-get"))
+	assert.Equal(t, -1, disabled.maxBytesFor("entity-query"))
 }
 
 func TestToolResultBoundsFromConfig_DefaultsAndOverrides(t *testing.T) {
@@ -258,6 +263,51 @@ func TestBoundModelRequestToolResults_NeverElidesNewest(t *testing.T) {
 	assert.GreaterOrEqual(t, stats.ElidedResults, 1)
 	assert.Equal(t, newest, req.Contents[1].Parts[0].FunctionResponse.Response)
 	assert.NotEqual(t, true, req.Contents[1].Parts[0].FunctionResponse.Response["elided"])
+}
+
+// The total budget is soft: when the single most recent result alone exceeds
+// it, that result is retained whole rather than silently dropped. This is the
+// documented exception to "the sum is bounded" and is reachable when total <
+// per-result, or when the per-result layer is disabled.
+func TestBoundModelRequestToolResults_NewestOverTotalBudgetRetainedWhole(t *testing.T) {
+	newest := map[string]any{"ok": true, "data": strings.Repeat("n", 4000)}
+	req := functionResponseRequest([2]any{"entity-query", newest})
+
+	// Per-result disabled (negative) + a tiny total budget: the newest result
+	// alone is far over budget.
+	stats := boundModelRequestToolResults(req, ToolResultBounds{MaxBytes: -1, TotalBudgetBytes: 500})
+
+	// Nothing is silently dropped and nothing is elided (there is no older
+	// result to elide).
+	assert.Equal(t, 0, stats.ElidedResults)
+	assert.Equal(t, 0, stats.TruncatedResults)
+	got := req.Contents[0].Parts[0].FunctionResponse.Response
+	assert.Equal(t, newest, got, "the newest result must be retained whole")
+	assert.NotEqual(t, true, got["elided"])
+	// The sum is intentionally not bounded in this single-result case.
+	sum := mustJSONSize(t, got)
+	assert.Greater(t, sum, 500)
+}
+
+// When the newest result alone exceeds the total budget but older results also
+// exist, the older results are still elided (the soft budget only spares the
+// newest).
+func TestBoundModelRequestToolResults_NewestOverTotalBudget_ElidesOlder(t *testing.T) {
+	oldest := map[string]any{"ok": true, "data": strings.Repeat("a", 4000)}
+	middle := map[string]any{"ok": true, "data": strings.Repeat("b", 4000)}
+	newest := map[string]any{"ok": true, "data": strings.Repeat("c", 4000)}
+	req := functionResponseRequest(
+		[2]any{"entity-query", oldest},
+		[2]any{"entity-query", middle},
+		[2]any{"entity-query", newest},
+	)
+
+	stats := boundModelRequestToolResults(req, ToolResultBounds{MaxBytes: -1, TotalBudgetBytes: 500})
+
+	assert.Equal(t, 2, stats.ElidedResults)
+	assert.Equal(t, true, req.Contents[0].Parts[0].FunctionResponse.Response["elided"])
+	assert.Equal(t, true, req.Contents[1].Parts[0].FunctionResponse.Response["elided"])
+	assert.Equal(t, newest, req.Contents[2].Parts[0].FunctionResponse.Response)
 }
 
 func TestBoundModelRequestToolResults_NilSafe(t *testing.T) {
