@@ -459,3 +459,67 @@ func TestHubPollerRebroadcastsOnNewRunWithSamePendingState(t *testing.T) {
 		t.Error("new run must re-broadcast a refresh frame even with unchanged pending state")
 	}
 }
+
+// runScriptedMemory returns a fixed sequence of GetRunFull results, one per
+// call, so a test can drive two poller ticks with different run DTOs. It embeds
+// fakeMemory for the project-wide answers/approvals (both empty) and
+// GetRunQuestions (nil).
+type runScriptedMemory struct {
+	*fakeMemory
+	runs  []*AgentRunFull
+	calls int
+}
+
+func (m *runScriptedMemory) GetRunFull(ctx context.Context, runID string) (*AgentRunFull, error) {
+	if m.calls < len(m.runs) {
+		full := m.runs[m.calls]
+		m.calls++
+		return full, nil
+	}
+	return m.runs[len(m.runs)-1], nil
+}
+
+// TestHubPollerRunScopeBroadcastsOnStatusOnlyTransition is the regression test
+// for the run-scoped fingerprint: runTimelineItems emits no run_start/run_end,
+// so without reading the run DTO the run scope would stay id/status-empty and
+// a terminal status-only change would never re-broadcast. The run DTO supplies
+// the live id + status.
+func TestHubPollerRunScopeBroadcastsOnStatusOnlyTransition(t *testing.T) {
+	working := &AgentRunFull{Run: &ScheduledAgentRun{ID: "r1", Status: "working", StartedAt: "2026-01-01T00:00:00Z"}}
+	completed := &AgentRunFull{Run: &ScheduledAgentRun{ID: "r1", Status: "completed", StartedAt: "2026-01-01T00:00:00Z"}}
+	m := &runScriptedMemory{fakeMemory: &fakeMemory{}, runs: []*AgentRunFull{working, completed}}
+	s := newHubTestServer(m)
+
+	key := runScopeKey("r1")
+	ch := s.hub.subscribe(key, nil)
+	defer s.hub.unsubscribe(key, ch)
+
+	// First tick: the run is live → running bucket, broadcast with the run's id
+	// and status.
+	s.broadcastConversationChanges(context.Background(), s.hub.subscribedConvs())
+	first := <-ch
+	var p1 refreshPayload
+	if err := json.Unmarshal(first, &p1); err != nil {
+		t.Fatalf("first-tick payload is not a refresh frame: %v (%s)", err, first)
+	}
+	if p1.Bucket != runBucketRunning || p1.RunID != "r1" || p1.RunStatus != "working" {
+		t.Errorf("first-tick payload = %+v, want running bucket with run r1 status working", p1)
+	}
+
+	// Second tick: status-only transition to completed — same run, no new
+	// timeline item, no new run_end, no pending decision. Only the run DTO's
+	// status can move the fingerprint.
+	s.broadcastConversationChanges(context.Background(), s.hub.subscribedConvs())
+	select {
+	case msg := <-ch:
+		var p2 refreshPayload
+		if err := json.Unmarshal(msg, &p2); err != nil {
+			t.Fatalf("second-tick payload is not a refresh frame: %v (%s)", err, msg)
+		}
+		if p2.Bucket != runBucketDone || p2.RunID != "r1" || p2.RunStatus != "completed" {
+			t.Errorf("second-tick payload = %+v, want done bucket with run r1 status completed", p2)
+		}
+	default:
+		t.Error("a run status-only transition must re-broadcast a refresh frame (#1204 run scope)")
+	}
+}

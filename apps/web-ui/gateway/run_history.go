@@ -216,15 +216,30 @@ func runTimelineItems(full *AgentRunFull, questions []AgentQuestionItem) []json.
 // best-effort (the transcript still renders; only the Continue affordance for
 // an ask_user without a recorded tool call would be missing).
 func (s *Server) runTimeline(ctx context.Context, runID string) (*ConversationHistory, error) {
+	hist, _, err := s.runTimelineWithRun(ctx, runID)
+	return hist, err
+}
+
+// runTimelineWithRun builds the run timeline AND returns the run's own DTO.
+// runTimelineItems emits only message/tool_call items — never run_start/run_end —
+// so the timeline alone carries no run status; the run-scoped events poller needs
+// the DTO to fingerprint the run's live status (a status-only transition must
+// still broadcast). One GetRunFull + GetRunQuestions is shared by both callers.
+func (s *Server) runTimelineWithRun(ctx context.Context, runID string) (*ConversationHistory, *ScheduledAgentRun, error) {
 	full, err := s.memory.GetRunFull(ctx, runID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	questions, err := s.memory.GetRunQuestions(ctx, runID)
 	if err != nil {
 		questions = nil
 	}
-	return &ConversationHistory{ConversationID: runID, Items: runTimelineItems(full, questions)}, nil
+	hist := &ConversationHistory{ConversationID: runID, Items: runTimelineItems(full, questions)}
+	var run *ScheduledAgentRun
+	if full != nil {
+		run = full.Run
+	}
+	return hist, run, nil
 }
 
 // getRunHistory implements GET /api/runs/:runId/history — the run transcript

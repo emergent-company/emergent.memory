@@ -469,14 +469,30 @@ func (s *Server) conversationState(ctx context.Context, id string, approvals []T
 // no /api/chat conversation) and matches pending approvals by the approval's
 // run id. Used by the run-scoped events stream so a scheduled run shows live
 // step progress (issue #1204).
+//
+// The run timeline carries no run_start/run_end items, so the timeline alone
+// yields an empty run id/status and a permanent `done` bucket: the run's own
+// DTO supplies the live id + status. Without it a run's terminal status-only
+// transition would never move the fingerprint (no refresh) and the refresh
+// payload would misreport the run's status.
 func (s *Server) runState(ctx context.Context, runID string, approvals []ToolApprovalItem, questions []AgentQuestionItem) (*conversationRunState, error) {
-	hist, err := s.runTimeline(ctx, runID)
+	hist, run, err := s.runTimelineWithRun(ctx, runID)
 	if err != nil {
 		return nil, err
 	}
-	return runStateFromTimeline(parseTimeline(hist.Items), approvals, questions, func(a ToolApprovalItem) bool {
+	st := runStateFromTimeline(parseTimeline(hist.Items), approvals, questions, func(a ToolApprovalItem) bool {
 		return a.RunID == runID
-	}), nil
+	})
+	if run == nil {
+		st.activeRunID = runID
+		return st, nil
+	}
+	st.activeRunID = cmp.Or(run.ID, runID)
+	st.activeRunStatus = run.Status
+	// Recompute with the real status so run:<id> reports running/failed/…
+	// rather than a permanent done bucket.
+	st.bucket = deriveRunBucket(st.activeRunStatus, st.pendingApprovals, st.pendingQuestions)
+	return st, nil
 }
 
 // runStateFromTimeline folds a parsed transcript plus the already-fetched
