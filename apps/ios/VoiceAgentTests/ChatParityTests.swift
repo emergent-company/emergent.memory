@@ -6,7 +6,7 @@ import Testing
 // MARK: - 1.2 / 1.3 / 1.4 / 1.5 — Markdown parsing
 
 struct MarkdownParserTests {
-    @Test func parsesHeadingsParagraphsAndLists() {
+    @Test func parsesHeadingsParagraphsAndLists() throws {
         let md = """
         # Title
 
@@ -18,7 +18,7 @@ struct MarkdownParserTests {
         - two
         """
         let blocks = parseMarkdown(md)
-        #expect(blocks.count == 4)
+        try #require(blocks.count == 4)
         #expect(blocks[0] == .heading(level: 1, inlines: [.text("Title")]))
         #expect(blocks[2] == .heading(level: 2, inlines: [.text("Sub")]))
 
@@ -43,7 +43,7 @@ struct MarkdownParserTests {
         ])
     }
 
-    @Test func parsesFencedCodeBlock() {
+    @Test func parsesFencedCodeBlock() throws {
         let md = """
         Before
 
@@ -59,7 +59,7 @@ struct MarkdownParserTests {
             guard case let .codeBlock(language, code) = block else { return nil }
             return (language, code)
         }
-        #expect(codeBlocks.count == 1)
+        try #require(codeBlocks.count == 1)
         #expect(codeBlocks[0].0 == "swift")
         #expect(codeBlocks[0].1.contains("let x = 1"))
     }
@@ -271,7 +271,7 @@ struct ChatEventDecodingTests {
 
 struct ChatActivityStoreTests {
     @MainActor
-    @Test func correlatesToolCallsAndResults() {
+    @Test func correlatesToolCallsAndResults() throws {
         let store = ChatActivityStore()
         store.userTurnStarted(anchorMessageID: "m1")
         store.apply(.toolCall(ChatToolCallEvent(id: "t1", tool: "web_search", arguments: "{}")))
@@ -292,6 +292,7 @@ struct ChatActivityStoreTests {
             Issue.record("expected a live turn")
             return
         }
+        try #require(afterT2.tools.count == 2)
         #expect(afterT2.tools[1].result == "file body")
         #expect(afterT2.tools[1].isRunning == false)
         #expect(afterT2.tools[0].isRunning == true)
@@ -301,6 +302,7 @@ struct ChatActivityStoreTests {
             Issue.record("expected a live turn")
             return
         }
+        try #require(finalTurn.tools.count == 2)
         #expect(finalTurn.tools[0].isError == true)
         #expect(finalTurn.tools[0].result == "boom")
         #expect(finalTurn.tools[0].isRunning == false)
@@ -578,7 +580,7 @@ struct ComposerStateTests {
 // MARK: - 6.1 / 6.2 — A2UI surface decode, store merge, render
 
 struct ChatUISurfaceTests {
-    @Test func decodesSurfaceMessages() {
+    @Test func decodesSurfaceMessages() throws {
         let json = #"""
         {"type":"ui","surfaceId":"s1","messages":[
           {"createSurface":{"surfaceId":"s1","catalogId":"memory-basic"}},
@@ -590,7 +592,7 @@ struct ChatUISurfaceTests {
             return
         }
         #expect(surface.surfaceId == "s1")
-        #expect(surface.messages.count == 2)
+        try #require(surface.messages.count == 2)
         #expect(surface.messages[0].createSurface?.catalogId == "memory-basic")
         let component = surface.messages[1].updateComponents?.components.first
         #expect(component?.id == "root")
@@ -613,7 +615,7 @@ struct ChatUISurfaceTests {
     }
 
     @MainActor
-    @Test func mergesUpdatesAndDeletesSurface() {
+    @Test func mergesUpdatesAndDeletesSurface() throws {
         let store = ChatActivityStore()
         func apply(_ json: String) {
             guard let event = decodeChatEvent(json) else {
@@ -625,13 +627,14 @@ struct ChatUISurfaceTests {
 
         apply(#"{"type":"ui","surfaceId":"s1","messages":[{"createSurface":{"surfaceId":"s1","catalogId":"memory-basic"}}]}"#)
         apply(#"{"type":"ui","surfaceId":"s1","messages":[{"updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"code","code":"x"}]}}]}"#)
-        #expect(store.surfaces.count == 1)
+        try #require(store.surfaces.count == 1)
         #expect(store.surfaces[0].catalogId == "memory-basic")
         #expect(store.surfaces[0].components.count == 1)
 
         // Same component id updates in place rather than appending.
         apply(#"{"type":"ui","surfaceId":"s1","messages":[{"updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"code","code":"y"}]}}]}"#)
-        #expect(store.surfaces[0].components.count == 1)
+        try #require(store.surfaces.count == 1)
+        try #require(store.surfaces[0].components.count == 1)
         #expect(store.surfaces[0].components[0].text("code") == "y")
 
         apply(#"{"type":"ui","surfaceId":"s1","messages":[{"deleteSurface":{"surfaceId":"s1"}}]}"#)
@@ -639,13 +642,12 @@ struct ChatUISurfaceTests {
     }
 
     @MainActor
-    @Test func submittedActionMarksCardAnswered() {
+    @Test func submittedActionMarksCardAnswered() throws {
         let store = ChatActivityStore()
-        guard let event = decodeChatEvent(#"{"type":"ui","surfaceId":"s1","messages":[{"updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"proposal","kind":"change","summary":"hi"}]}}]}"#) else {
-            Issue.record("failed to decode")
-            return
-        }
+        let json = #"{"type":"ui","surfaceId":"s1","messages":[{"updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"proposal","kind":"change","summary":"hi"}]}}]}"#
+        let event = try #require(decodeChatEvent(json), "failed to decode")
         store.apply(event)
+        try #require(store.surfaces.count == 1)
         #expect(store.surfaces[0].submittedActions["root"] == nil)
 
         store.submitSurfaceAction(surfaceId: "s1", componentId: "root", response: .string("accept"))
@@ -653,6 +655,21 @@ struct ChatUISurfaceTests {
 
         store.reset()
         #expect(store.surfaces.isEmpty)
+    }
+
+    /// Parity with the server and web renderer: a `ui` event carrying only
+    /// `updateComponents` (no `createSurface`) must still open the surface
+    /// rather than being dropped.
+    @MainActor
+    @Test func updateComponentsWithoutCreateSurfaceOpensSurface() throws {
+        let store = ChatActivityStore()
+        let json = #"{"type":"ui","surfaceId":"s1","messages":[{"updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"proposal","kind":"change","summary":"hi"}]}}]}"#
+        let event = try #require(decodeChatEvent(json), "failed to decode")
+        store.apply(event)
+
+        try #require(store.surfaces.count == 1)
+        #expect(store.surfaces[0].id == "s1")
+        #expect(store.surfaces[0].components.map(\.id) == ["root"])
     }
 
     @MainActor
