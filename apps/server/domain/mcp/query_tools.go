@@ -28,7 +28,9 @@ func queryToolDefinitions() []ToolDefinition {
 			RequiredScope: "search",
 			Description: "Ask a natural language question against the project's knowledge graph. The system finds relevant entities and relationships, " +
 				"then generates a grounded answer using the connected LLM provider. " +
-				"Returns the assembled answer text, a truncated flag if the response was cut short, and a session_id to continue the conversation. " +
+				"Returns the assembled answer text and a session_id to continue the conversation. " +
+				"If the underlying query is cancelled or exceeds its time budget the tool call fails with an error, so an empty answer " +
+				"always means the corpus had nothing to say — never a silent timeout. " +
 				"Pass session_id from a prior call to continue a previous conversation. Pass branch to scope the query to a specific branch (e.g. \"plan/main\").",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -97,7 +99,11 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 	// The query endpoint is on the same server — use the server's own listen address.
 	url := fmt.Sprintf("http://localhost:%d/api/projects/%s/query", s.serverPort, projectID)
 
-	// Apply 60-second timeout
+	// Capture the tool-imposed budget deadline before deriving the request
+	// context: the caller's context may carry its own (possibly shorter) deadline,
+	// and both surface as context.DeadlineExceeded on queryCtx, so this value lets
+	// queryKnowledgeCtxError attribute an expiry to the right cause (issue #1187).
+	internalDeadline := time.Now().Add(queryKnowledgeTimeout)
 	queryCtx, cancel := context.WithTimeout(ctx, queryKnowledgeTimeout)
 	defer cancel()
 
@@ -126,12 +132,8 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		if queryCtx.Err() != nil {
-			return s.wrapResult(map[string]any{
-				"answer":    "",
-				"truncated": true,
-				"error":     "query timed out after 60s",
-			})
+		if ctxErr := queryCtx.Err(); ctxErr != nil {
+			return nil, queryKnowledgeCtxError(ctx, internalDeadline, ctxErr)
 		}
 		return nil, fmt.Errorf("query_knowledge: request failed: %w", err)
 	}
@@ -141,11 +143,14 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 		return nil, mcpHTTPError("query_knowledge", resp)
 	}
 
-	// Collect SSE token events and capture the session ID from the meta event.
+	// Collect SSE token events, capture the session ID, and record whether the
+	// stream reached its terminal event (`done` chunk or `[DONE]` sentinel). A
+	// stream that ends without it is incomplete and must not be reported as a
+	// successful answer.
 	var parts []string
 	var returnedSessionID string
 	var returnedRunID string
-	truncated := false
+	terminal := false
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -153,7 +158,11 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 			continue
 		}
 		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "" || payload == "[DONE]" {
+		if payload == "" {
+			continue
+		}
+		if payload == "[DONE]" {
+			terminal = true
 			continue
 		}
 		var chunk map[string]any
@@ -170,6 +179,7 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 				returnedSessionID = id
 			}
 		case "done":
+			terminal = true
 			if rid, ok := chunk["runId"].(string); ok && rid != "" {
 				returnedRunID = rid
 			}
@@ -179,19 +189,30 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 			}
 		}
 		if queryCtx.Err() != nil {
-			truncated = true
 			break
 		}
 	}
 
-	if queryCtx.Err() != nil && !truncated {
-		truncated = true
+	// A stream only counts as complete once it emitted its terminal event. A
+	// proxy/backend disconnect (or a read error) ends the stream without one and
+	// must be reported as a failure rather than assembled into a partial or empty
+	// "success". A budget/cancellation that lands before the terminal event is
+	// likewise a failed call, attributed to whichever context expired. This is
+	// what lets a caller tell "timed out"/"disconnected" apart from "the corpus
+	// has no answer" (issue #1187).
+	if !terminal {
+		if ctxErr := queryCtx.Err(); ctxErr != nil {
+			return nil, queryKnowledgeCtxError(ctx, internalDeadline, ctxErr)
+		}
+		if serr := scanner.Err(); serr != nil {
+			return nil, fmt.Errorf("query_knowledge: query stream interrupted: %w", serr)
+		}
+		return nil, fmt.Errorf("query_knowledge: query stream ended without a terminal event")
 	}
 
 	answer := strings.Join(parts, "")
 	result := map[string]any{
-		"answer":    answer,
-		"truncated": truncated,
+		"answer": answer,
 	}
 	if returnedSessionID != "" {
 		result["session_id"] = returnedSessionID
@@ -200,6 +221,28 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 		result["run_id"] = returnedRunID
 	}
 	return s.wrapResult(result)
+}
+
+// queryKnowledgeCtxError converts an expired or cancelled query context into a
+// tool error. The tool's own budget (queryKnowledgeTimeout) and a caller-supplied
+// deadline both surface as context.DeadlineExceeded on the derived context, so
+// the caller's deadline is compared against the captured internal deadline to
+// attribute the expiry accurately; a plain cancellation is propagated as such.
+// Returning an error — rather than a {"ok":true,"answer":""} result — lets
+// callers tell a failed query apart from one that simply found no answer
+// (issue #1187).
+func queryKnowledgeCtxError(callerCtx context.Context, internalDeadline time.Time, err error) error {
+	if !errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("query_knowledge: query cancelled: %w", err)
+	}
+	// A caller deadline that is not later than the tool budget is the one that
+	// expired; report it as a caller cancellation instead of mis-attributing it
+	// to queryKnowledgeTimeout.
+	if callerDeadline, ok := callerCtx.Deadline(); ok && !callerDeadline.After(internalDeadline) {
+		return fmt.Errorf("query_knowledge: query cancelled: caller deadline %s exceeded before the %s query budget",
+			callerDeadline.UTC().Format(time.RFC3339), queryKnowledgeTimeout)
+	}
+	return fmt.Errorf("query_knowledge: query timed out after %s", queryKnowledgeTimeout)
 }
 
 // tokenFromContext extracts the raw bearer/API token stored by the auth middleware.
