@@ -410,10 +410,15 @@ templ shareAvatar(props ShareAgentPageProps, id string) {
 templ shareFirstLoad(props ShareAgentPageProps) {
 	<div id="share-first-load" data-testid="share-first-load" class="flex flex-col items-center py-10 text-center">
 		@shareAvatar(props, "share-first-load-avatar")
-		<!-- Generic product copy, not the agent identity: the header bar already
-		     carries the agent name/description, so the hero stays constant
+		<!-- Generic product title, not the agent identity: the header bar already
+		     carries the agent name/description, so the title stays constant
 		     regardless of which agent the link exposes. -->
 		<h2 id="share-first-load-title" class="mt-4 text-lg font-semibold tracking-tight">Chat with Memory</h2>
+		<!-- The subtitle defaults to the generic product line; the server cannot
+		     know the owner's welcome message (the key rides the URL fragment), so
+		     share-agent.js swaps in the config welcomeMessage once the exchange
+		     resolves — and only when one is configured, leaving this default as
+		     the single fallback. -->
 		<p id="share-first-load-desc" class="text-muted mt-1.5 max-w-md text-sm">Chat by text.</p>
 		<div class="mt-5 flex flex-wrap justify-center gap-2">
 			@shareSuggestion("What can you help me with?")

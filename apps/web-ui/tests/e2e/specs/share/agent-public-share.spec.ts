@@ -74,6 +74,10 @@ test.describe('public share page', () => {
     // The exchange config is applied to the header identity.
     await expect(page.locator('#share-agent-name')).toHaveText(AGENT_NAME);
     await expect(page.locator('#share-agent-description')).toHaveText('A helpful assistant.');
+    // The hero shows the generic product copy: a static title, and the default
+    // subtitle because this link configures no welcome message.
+    await expect(page.locator('#share-first-load-title')).toHaveText('Chat with Memory');
+    await expect(page.locator('#share-first-load-desc')).toHaveText('Chat by text.');
     // The browser title mirrors the exchanged identity ("<agent> — Memory"),
     // not the generic "Shared chat — Memory" the server renders pre-exchange.
     await expect(page).toHaveTitle(`${AGENT_NAME} — Memory`);
@@ -336,10 +340,10 @@ test.describe('owner share-link options', () => {
     const key = await keyFromRow(row);
     await page.goto(PUBLIC + '#' + key);
     await expect(page.getByTestId('share-email-gate')).toBeVisible();
-    // The hero carries generic product copy — never the agent name or the
-    // owner-configured welcome message.
+    // The hero title is generic product copy — never the agent name. The
+    // subtitle shows the owner-configured welcome message when one is set.
     await expect(page.locator('#share-first-load-title')).toHaveText('Chat with Memory');
-    await expect(page.locator('#share-first-load-desc')).toHaveText('Chat by text.');
+    await expect(page.locator('#share-first-load-desc')).toHaveText('Welcome to the demo.');
   });
 
   test('a link created with never expiry shows Never', async ({ page }) => {
