@@ -34,6 +34,7 @@ templ settingsSubNav(active string, providersMissing bool) {
 	@components.SubNav("Settings sections") {
 		@components.SubNavItem("/settings", active == "general", "lucide--settings", "General")
 		@components.SubNavItem("/settings/assistant", active == "assistant", "lucide--bot", "Assistant")
+		@components.SubNavItem("/settings/members", active == "members", "lucide--users", "Members")
 		@components.SubNavItem("/settings/overrides", active == "overrides", "lucide--wrench", "Overrides")
 		{{ activeP := active == "providers" }}
 		<a

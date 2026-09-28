@@ -151,69 +151,120 @@ templ OrgCreatePage(data orgCreatePageData) {
 
 // MembersPage renders the active project's people in one table: confirmed
 // members (avatar + identity, role, joined, remove affordance — suppressed
-// for the sole project_admin) and pending invitations in a special
-// not-yet-confirmed state (email + invited role + a subdued "Not responded"
-// badge, revoke affordance). An "Add member" action navigates to the invite
-// form at /members/new.
+// for the sole project_admin and for non-admins) and pending invitations in a
+// special not-yet-confirmed state (email + invited role + a subdued "Not
+// responded" badge, revoke affordance). An "Add member" action navigates to the
+// invite form at <base>/new (admin only).
 templ MembersPage(data membersPageData) {
-	{{ title := "Members"
+	{{ base := membersBaseFor(data.Base)
+	title := "Members"
 	subtitle := "People with access to the active project."
 	if data.ProjectName != "" {
 		subtitle = "People with access to " + data.ProjectName + "."
 	} }}
 	@layout.Container(layout.ContainerLG, nil) {
 		@pageHeader("Workspace", title, subtitle) {
-			@ui.Button(ui.ButtonProps{
-				Type:    ui.ButtonTypeLink,
-				Href:    "/members/new",
-				Variant: ui.ButtonPrimary,
-				Size:    ui.ButtonSM,
-				Icon:    "lucide--user-plus",
-			}) {
-				Add member
+			if data.CanManage {
+				@addMemberButton(base)
 			}
 		}
 		@flashToasts(data.FlashMsg, data.FlashErr)
-		if data.LoadErr != nil {
-			@pageError("Members unavailable", data.LoadErr)
-		} else {
-			if data.PendingErr != nil {
-				@ui.Alert(ui.AlertProps{
-					Type:    ui.AlertError,
-					Style:   ui.AlertStyleOutline,
-					Icon:    "lucide--alert-triangle",
-					Message: "Couldn't load pending invitations: " + data.PendingErr.Error(),
-				})
+		@membersBody(data)
+	}
+}
+
+// ProjectMembersPage renders the members management section inside the Project
+// Settings rail (/settings/members), sharing membersBody with the legacy
+// top-level MembersPage. Non-admins see a read-only list (write controls are
+// gated by data.CanManage).
+templ ProjectMembersPage(data membersPageData, providersMissing bool) {
+	{{ base := membersBaseFor(data.Base)
+	subtitle := "People with access to the active project."
+	if data.ProjectName != "" {
+		subtitle = "People with access to " + data.ProjectName + "."
+	} }}
+	@layout.Container(layout.ContainerLG, nil) {
+		@detailHeader(memberDetailCrumbs(base), "", "Members", subtitle, detailHeaderOpts{Margin: "mb-6"}) {
+			if data.CanManage {
+				@addMemberButton(base)
 			}
-			if len(data.Members) == 0 && len(data.Pending) == 0 {
+		}
+		@flashToasts(data.FlashMsg, data.FlashErr)
+		@layout.Rail(settingsSubNav("members", providersMissing), nil) {
+			@membersBody(data)
+		}
+	}
+}
+
+// addMemberButton is the primary "Add member" action linking to the invite
+// form at <base>/new (admin-only; the caller gates rendering it).
+templ addMemberButton(base string) {
+	@ui.Button(ui.ButtonProps{
+		Type:    ui.ButtonTypeLink,
+		Href:    base + "/new",
+		Variant: ui.ButtonPrimary,
+		Size:    ui.ButtonSM,
+		Icon:    "lucide--user-plus",
+	}) {
+		Add member
+	}
+}
+
+// membersBody is the shared members-page body (after the header + flash
+// toasts): the whole-page error state, the pending-invite banner, the empty
+// state, or the member/invite table. Shared by MembersPage and
+// ProjectMembersPage so the two surfaces render identical list semantics.
+templ membersBody(data membersPageData) {
+	{{ base := membersBaseFor(data.Base) }}
+	if data.LoadErr != nil {
+		@pageError("Members unavailable", data.LoadErr)
+	} else {
+		if data.PendingErr != nil {
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertError,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--alert-triangle",
+				Message: "Couldn't load pending invitations: " + data.PendingErr.Error(),
+			})
+		}
+		if len(data.Members) == 0 && len(data.Pending) == 0 {
+			if data.CanManage {
 				@ui.EmptyState(ui.EmptyStateProps{
 					Icon:        "lucide--users",
 					Title:       "No members yet",
 					Description: "Invite someone to this project and they will show up here once they accept.",
 					Bordered:    true,
 					Class:       "py-12",
-					ActionHref:  "/members/new",
+					ActionHref:  base + "/new",
 					ActionLabel: "Add member",
 					ActionIcon:  "lucide--user-plus",
 				})
 			} else {
-				@components.TableCard(nil) {
-					@table.TableWithProps(table.TableProps{Bordered: false}) {
-						@table.TableHead() {
-							@table.TableHeadRow() {
-								@table.TableHeadCell("Member")
-								@table.TableHeadCell("Role")
-								@table.TableHeadCell("Since")
-								@table.TableHeadCell("")
-							}
+				@ui.EmptyState(ui.EmptyStateProps{
+					Icon:        "lucide--users",
+					Title:       "No members yet",
+					Description: "Invite someone to this project and they will show up here once they accept.",
+					Bordered:    true,
+					Class:       "py-12",
+				})
+			}
+		} else {
+			@components.TableCard(nil) {
+				@table.TableWithProps(table.TableProps{Bordered: false}) {
+					@table.TableHead() {
+						@table.TableHeadRow() {
+							@table.TableHeadCell("Member")
+							@table.TableHeadCell("Role")
+							@table.TableHeadCell("Since")
+							@table.TableHeadCell("")
 						}
-						@table.TableBody() {
-							for _, m := range data.Members {
-								@memberRow(m, canRemoveMember(data.Members, m))
-							}
-							for _, inv := range data.Pending {
-								@memberInviteRow(inv, data.CanRevokeInvite)
-							}
+					}
+					@table.TableBody() {
+						for _, m := range data.Members {
+							@memberRow(m, base, canRemoveMember(data.Members, m) && data.CanManage)
+						}
+						for _, inv := range data.Pending {
+							@memberInviteRow(inv, data.CanRevokeInvite)
 						}
 					}
 				}
@@ -225,13 +276,13 @@ templ MembersPage(data membersPageData) {
 // memberRow is one confirmed member row: avatar + identity (the name links to
 // the member details page), role badge, joined date, and (when removable) a
 // remove form.
-templ memberRow(m ProjectMemberDto, removable bool) {
+templ memberRow(m ProjectMemberDto, base string, removable bool) {
 	@table.TableRow(m.ID, true, nil) {
 		@table.TableCell("", nil) {
 			<div class="flex items-center gap-3">
 				@memberAvatar(m)
 				<div class="min-w-0">
-					<a class="truncate text-sm font-medium hover:underline" href={ templ.URL("/members/" + url.PathEscape(m.ID)) }>{ memberDisplayName(m) }</a>
+					<a class="truncate text-sm font-medium hover:underline" href={ templ.URL(base + "/" + url.PathEscape(m.ID)) }>{ memberDisplayName(m) }</a>
 					<p class="text-muted truncate text-xs">{ m.Email }</p>
 				</div>
 			</div>
@@ -245,7 +296,7 @@ templ memberRow(m ProjectMemberDto, removable bool) {
 		@table.TableCell("text-right", nil) {
 			if removable {
 				<div class="flex justify-end">
-					<form method="post" action={ templ.URL("/members/" + url.PathEscape(m.ID) + "/remove") }>
+					<form method="post" action={ templ.URL(base + "/" + url.PathEscape(m.ID) + "/remove") }>
 						@ui.Button(ui.ButtonProps{
 							Type:       ui.ButtonTypeSubmit,
 							Variant:    ui.ButtonGhost,
@@ -329,19 +380,20 @@ templ memberInviteRow(inv SentInviteDto, canRevoke bool) {
 	}
 }
 
-// MemberInvitePage renders the standalone invite-a-member page (/members/new).
+// MemberInvitePage renders the standalone invite-a-member page (<base>/new).
 // The email field autocompletes against registered users: while the user
 // types, htmx fetches /partial/invite-user-search and swaps the matches into
 // the datalist, so a click (or Enter) fills the address. The target
 // org/project are resolved server-side from the active project. When no
 // project is active the form is replaced by a hint.
 templ MemberInvitePage(data memberInvitePageData) {
-	{{ subtitle := "An email invitation with a role — they join once they accept."
+	{{ base := membersBaseFor(data.Base)
+	subtitle := "An email invitation with a role — they join once they accept."
 	if data.ProjectName != "" {
 		subtitle = "Invite someone to " + data.ProjectName + " — they join once they accept."
 	} }}
 	@layout.Container(layout.ContainerLG, nil) {
-		@detailHeader(crumbsActive(nav.Crumbs("Members", "/members", "Invite a member")), "", "Invite a member", subtitle) {}
+		@detailHeader(memberInviteCrumbs(base), "", "Invite a member", subtitle) {}
 		@flashToasts("", data.FlashErr)
 		if !data.HasProject {
 			@components.PanelCard("", nil) {
@@ -349,7 +401,7 @@ templ MemberInvitePage(data memberInvitePageData) {
 			}
 		} else {
 			@components.PanelCard("", nil) {
-				<form method="post" action="/members" class="flex flex-col gap-4">
+				<form method="post" action={ templ.URL(base) } class="flex flex-col gap-4">
 					@form.FormControl("invite-email", "Email", form.LabelAbove, "Start typing to match a registered user, or type any email address.", "", nil) {
 						<input
 							id="invite-email"
@@ -370,6 +422,7 @@ templ MemberInvitePage(data memberInvitePageData) {
 					@form.FormControl("invite-role", "Role", form.LabelAbove, "Project admins manage members, invites, and project settings; project users work with the project.", "", nil) {
 						<select id="invite-role" name="role" class="select w-full">
 							<option value="project_user" selected>Project user</option>
+							<option value="project_viewer">Project viewer</option>
 							<option value="project_admin">Project admin</option>
 						</select>
 					}
@@ -390,18 +443,18 @@ templ MemberInvitePage(data memberInvitePageData) {
 }
 
 // MemberDetailPage renders one confirmed member's details page
-// (/members/:userId): identity (avatar/initials, display name, email) plus
-// role and joined date, and — for removable members — a role-change form.
-// Memory has no member-role PATCH, so the role-change posts a remove +
-// re-invite (see memberRoleChangeSection). NotFound renders the not-found
-// state; LoadErr the whole-page error state; FlashErr surfaces PRG feedback
-// from a failed role change.
+// (<base>/:userId): identity (avatar/initials, display name, email) plus role
+// and joined date, and — for members whose role may change — an in-place
+// role-change form. NotFound renders the not-found state; LoadErr the
+// whole-page error state; FlashErr surfaces PRG feedback from a failed role
+// change.
 templ MemberDetailPage(data memberDetailPageData) {
+	{{ base := membersBaseFor(data.Base) }}
 	@layout.Container(layout.ContainerLG, nil) {
 		if data.LoadErr != nil {
 			@pageError("Member unavailable", data.LoadErr)
 		} else if data.NotFound || data.Member == nil {
-			@detailHeader(crumbsActive(nav.Crumbs("Members", "/members", "Member not found")), "", "Member not found", "") {}
+			@detailHeader(memberDetailCrumbs(base, "Member not found"), "", "Member not found", "") {}
 			@ui.EmptyState(ui.EmptyStateProps{
 				Icon:        "lucide--user",
 				Title:       "Member not found",
@@ -410,7 +463,7 @@ templ MemberDetailPage(data memberDetailPageData) {
 			})
 		} else {
 			{{ m := *data.Member }}
-			@detailHeader(crumbsActive(nav.Crumbs("Members", "/members", memberDisplayName(m))), "", memberDisplayName(m), m.Email) {
+			@detailHeader(memberDetailCrumbs(base, memberDisplayName(m)), "", memberDisplayName(m), m.Email) {
 				@roleBadge(m.Role)
 			}
 			@flashToasts("", data.FlashErr)
@@ -444,20 +497,20 @@ templ MemberDetailPage(data memberDetailPageData) {
 					@memberDetailRow("Joined", relTime(m.JoinedAt))
 				}
 			}
-			@memberRoleChangeSection(m, data.CanChangeRole)
+			@memberRoleChangeSection(m, base, data.CanChangeRole)
 		}
 	}
 }
 
 // memberRoleChangeSection is the role-management affordance on the member
-// details page: the current role plus, for removable members, a change-role
-// form. Because Memory cannot persist a role change, submitting it removes the
-// member and re-invites their email with the chosen role — the submit confirm
-// (window.confirm) spells that consequence out. The form opts out of hx-boost
-// so the browser runs a native PRG; the handler 303s back with a flash. When
-// the member is the project's only admin the control is replaced by a hint:
-// removing them would leave the project with no admin and Memory rejects it.
-templ memberRoleChangeSection(m ProjectMemberDto, canChange bool) {
+// details page: the current role plus, for members whose role may change, a
+// change-role form. Memory persists the role in place via PATCH, so the change
+// applies immediately with no re-invitation. The form opts out of hx-boost so
+// the browser runs a native PRG; the handler 303s back with a flash. When the
+// member is the project's only admin the control is replaced by a hint:
+// changing their role would leave the project with no admin and Memory rejects
+// it.
+templ memberRoleChangeSection(m ProjectMemberDto, base string, canChange bool) {
 	@ui.Section("Role", ui.SectionProps{
 		Margin:    "mb-6",
 		BodyClass: "memory-density-comfortable",
@@ -469,20 +522,20 @@ templ memberRoleChangeSection(m ProjectMemberDto, canChange bool) {
 					@roleBadge(m.Role)
 				</div>
 				<p class="text-muted mt-1 max-w-md text-xs">
-					Changing a role removes this member and sends a new invitation with the chosen role.
-					They regain access only after accepting the new invitation.
+					Changing a role updates this member's access in place — the change applies immediately.
 				</p>
 			</div>
 			if canChange {
 				<form
 					method="post"
-					action={ templ.URL("/members/" + url.PathEscape(m.ID) + "/role") }
+					action={ templ.URL(base + "/" + url.PathEscape(m.ID) + "/role") }
 					hx-boost="false"
-					onsubmit="return confirm('Change this role? The member is removed and re-invited with the new role; they must accept the new invitation to regain access.');"
+					onsubmit="return confirm('Change this role? The change applies immediately.');"
 					class="flex flex-wrap items-end gap-2"
 				>
 					<select id="member-role" name="role" required class="select select-sm w-full sm:w-44">
 						<option value="" disabled selected>Change to…</option>
+						<option value="project_viewer">Project viewer</option>
 						<option value="project_user">Project user</option>
 						<option value="project_admin">Project admin</option>
 					</select>

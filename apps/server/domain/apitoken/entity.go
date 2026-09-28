@@ -61,18 +61,18 @@ type ApiTokenListResponseDTO struct {
 // CreateApiTokenRequest is the request body for creating a token
 type CreateApiTokenRequest struct {
 	Name   string   `json:"name" validate:"required,min=1,max=255"`
-	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read schema:write data:read data:write agents:read agents:write projects:read projects:write chat:use graph:read graph:write schema:migrate branches:read branches:write search journal:read journal:write skills:read skills:write documents:read documents:write admin admin:all"`
+	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read schema:write data:read data:write agents:read agents:write projects:read projects:write chat:use graph:read graph:write schema:migrate branches:read branches:write search journal:read journal:write skills:read skills:write documents:read documents:write admin admin:all project:admin"`
 }
 
 // CreateAccountTokenRequest is the request body for creating an account-level token (no project binding)
 type CreateAccountTokenRequest struct {
 	Name   string   `json:"name" validate:"required,min=1,max=255"`
-	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read schema:write data:read data:write agents:read agents:write projects:read projects:write chat:use graph:read graph:write schema:migrate branches:read branches:write search journal:read journal:write skills:read skills:write documents:read documents:write admin admin:all"`
+	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read schema:write data:read data:write agents:read agents:write projects:read projects:write chat:use graph:read graph:write schema:migrate branches:read branches:write search journal:read journal:write skills:read skills:write documents:read documents:write admin admin:all project:admin"`
 }
 
 // UpdateApiTokenScopesRequest is the request body for updating token scopes
 type UpdateApiTokenScopesRequest struct {
-	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read schema:write data:read data:write agents:read agents:write projects:read projects:write chat:use graph:read graph:write schema:migrate branches:read branches:write search journal:read journal:write skills:read skills:write documents:read documents:write admin admin:all"`
+	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read schema:write data:read data:write agents:read agents:write projects:read projects:write chat:use graph:read graph:write schema:migrate branches:read branches:write search journal:read journal:write skills:read skills:write documents:read documents:write admin admin:all project:admin"`
 }
 
 // Available scopes for API tokens
@@ -102,6 +102,11 @@ var ValidApiTokenScopes = []string{
 	"documents:write",
 	"admin",
 	"admin:all",
+	// project:admin is a project-scoped admin umbrella, mintable by a project
+	// admin (or the owning org's org_admin) on a project-bound token only. It is
+	// NOT a platform scope: unlike admin/admin:all it grants no cross-tenant or
+	// org/platform authority (see pkg/auth.ScopeImplies).
+	"project:admin",
 	// Marker scope minted on per-agent MCP share credentials. It is reserved for
 	// the internal agent-share mint path (Service.CreateAgentShareToken): it is
 	// deliberately absent from the CreateApiTokenRequest /

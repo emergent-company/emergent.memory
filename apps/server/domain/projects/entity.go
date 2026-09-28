@@ -148,6 +148,11 @@ type ProjectMemberDTO struct {
 	LastActiveAt *time.Time `json:"lastActiveAt,omitempty"`
 }
 
+// UpdateMemberRoleRequest is the request body for changing a project member's role.
+type UpdateMemberRoleRequest struct {
+	Role string `json:"role"`
+}
+
 // CreateProjectRequest is the request body for creating a project
 type CreateProjectRequest struct {
 	Name  string `json:"name" validate:"required,min=1"`

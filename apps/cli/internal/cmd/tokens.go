@@ -57,10 +57,21 @@ var tokenScopeGroups = []struct {
 		},
 	},
 	{
+		// project:admin is a project-scoped scope: it is only valid for
+		// project-scoped tokens (created with --project), never account tokens.
+		Title: "Project admin",
+		Scopes: []tokenScope{
+			{"project:admin", "Full admin for this project - every project scope (requires project admin)"},
+		},
+	},
+	{
+		// admin and admin:all are platform-tier scopes (registry install/inspect
+		// and other platform tooling); minting either requires an active
+		// superadmin_full, not an org-admin membership.
 		Title: "Admin",
 		Scopes: []tokenScope{
-			{"admin", "MCP admin tools (project create, tokens, providers, traces, embeddings)"},
-			{"admin:all", "Full account admin - every scope (requires org admin or superadmin)"},
+			{"admin", "Platform admin - registry install/inspect and other platform tools (requires superadmin_full)"},
+			{"admin:all", "Full platform admin - every scope (requires superadmin_full)"},
 		},
 	},
 }

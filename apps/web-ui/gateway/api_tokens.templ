@@ -239,7 +239,7 @@ templ APITokenCreatePage(data apiTokenCreatePageData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "API Tokens", "/settings/tokens", "New token")), "", "New token", "Name the token and pick at least one scope. The full value is shown once at creation — store it somewhere safe.", detailHeaderOpts{Margin: "mb-6"}) {}
 		@flashToasts("", data.FlashErr)
-		@apiTokenCreateBody("/settings/tokens", data.Reveal)
+		@apiTokenCreateBody("/settings/tokens", data.Reveal, data.Picker)
 	}
 }
 
@@ -251,34 +251,34 @@ templ AccountTokenCreatePage(data apiTokenCreatePageData) {
 		@pageHeader("Account", "New token", "Name the token and pick at least one scope. The full value is shown once at creation — store it somewhere safe.") {}
 		@flashToasts("", data.FlashErr)
 		@layout.Rail(profileSubNav("tokens"), nil) {
-			@apiTokenCreateBody("/profile/tokens", data.Reveal)
+			@apiTokenCreateBody("/profile/tokens", data.Reveal, data.Picker)
 		}
 	}
 }
 
 // apiTokenCreateBody is the shared create-page card: the one-shot plaintext
 // panel (shown once after a successful create) above the create form.
-templ apiTokenCreateBody(actionBase string, reveal *apiTokenReveal) {
+templ apiTokenCreateBody(actionBase string, reveal *apiTokenReveal, cfg apiTokenScopePickerConfig) {
 	if reveal != nil {
 		<div class="mb-6">
 			@apiTokenRevealContent(*reveal)
 		</div>
 	}
 	@components.PanelCard("", nil) {
-		@apiTokenCreateFormContent(actionBase)
+		@apiTokenCreateFormContent(actionBase, cfg)
 	}
 }
 
 // apiTokenCreateFormContent is the create form (fields: name + scopes[]),
 // posting to the surface's create route at actionBase + "/new". A cancel link
 // returns to the list at actionBase.
-templ apiTokenCreateFormContent(actionBase string) {
+templ apiTokenCreateFormContent(actionBase string, cfg apiTokenScopePickerConfig) {
 	<form method="post" action={ templ.URL(actionBase + "/new") } class="flex flex-col gap-4">
 		<fieldset class="fieldset">
 			<legend class="fieldset-legend">Name</legend>
 			<input id="api-token-name" name="name" type="text" required maxlength="255" autocomplete="off" placeholder="e.g. CI deploy" class="input w-full"/>
 		</fieldset>
-		@apiTokenScopePickerContent(nil)
+		@apiTokenScopePickerContent(nil, cfg)
 		<div class="flex items-center justify-end gap-2">
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeLink,
@@ -323,7 +323,7 @@ templ APITokenEditPage(data apiTokenEditPageData) {
 		} else {
 			@detailHeader(crumbs, "", "Edit scopes", "Scopes for "+data.Token.Name+". Changes apply immediately.", detailHeaderOpts{Margin: "mb-6"}) {}
 			@flashToasts("", data.FlashErr)
-			@apiTokenEditBody("/settings/tokens", *data.Token)
+			@apiTokenEditBody("/settings/tokens", *data.Token, data.Picker)
 		}
 	}
 }
@@ -350,7 +350,7 @@ templ AccountTokenEditPage(data apiTokenEditPageData) {
 			@pageHeader("Account", "Edit scopes", "Scopes for "+data.Token.Name+". Changes apply immediately.") {}
 			@flashToasts("", data.FlashErr)
 			@layout.Rail(profileSubNav("tokens"), nil) {
-				@apiTokenEditBody("/profile/tokens", *data.Token)
+				@apiTokenEditBody("/profile/tokens", *data.Token, data.Picker)
 			}
 		}
 	}
@@ -359,7 +359,7 @@ templ AccountTokenEditPage(data apiTokenEditPageData) {
 // apiTokenEditBody is the shared edit-scopes card: the token identity line
 // (name, prefix, created) above the scope picker pre-checked with the token's
 // current scopes, saving to actionBase + "/:id/scopes".
-templ apiTokenEditBody(actionBase string, t APIToken) {
+templ apiTokenEditBody(actionBase string, t APIToken, cfg apiTokenScopePickerConfig) {
 	@components.PanelCard("", nil) {
 		<form method="post" action={ templ.URL(actionBase + "/" + url.PathEscape(t.ID) + "/scopes") } class="flex flex-col gap-4">
 			<div class="flex items-center gap-2.5 rounded-box border border-base-content/10 bg-base-200/40 px-3 py-2.5">
@@ -373,7 +373,7 @@ templ apiTokenEditBody(actionBase string, t APIToken) {
 					</p>
 				</div>
 			</div>
-			@apiTokenScopePickerContent(t.Scopes)
+			@apiTokenScopePickerContent(t.Scopes, cfg)
 			<div class="flex items-center justify-end gap-2">
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeLink,
@@ -398,15 +398,17 @@ templ apiTokenEditBody(actionBase string, t APIToken) {
 }
 
 // apiTokenScopePickerContent renders the grouped scope checkboxes by AREA
-// (Schemas, Data, …) from scopePickerGroups. admin:all is intentionally not
-// offered — only org admins can hold it, and the 403 is surfaced if Memory
-// rejects it. selected carries the currently granted scopes (edit form);
-// nil/empty means nothing is pre-checked (create form).
-templ apiTokenScopePickerContent(selected []string) {
+// (Schemas, Data, …) from scopePickerGroupsFor(cfg). admin:all is intentionally
+// not offered — only org admins can hold it, and the 403 is surfaced if Memory
+// rejects it. project:admin is offered only for project tokens held by a
+// project/org admin (see apiTokenScopePickerConfig). selected carries the
+// currently granted scopes (edit form); nil/empty means nothing is pre-checked
+// (create form).
+templ apiTokenScopePickerContent(selected []string, cfg apiTokenScopePickerConfig) {
 	<div class="flex flex-col gap-4">
 		@ui.Eyebrow("Scopes", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
 		<p class="text-muted -mt-2 text-xs">Pick at least one scope. Write scopes include their read counterpart.</p>
-		for _, g := range scopePickerGroups {
+		for _, g := range scopePickerGroupsFor(cfg) {
 			<div class="flex flex-col gap-2">
 				<div>
 					<p class="text-xs font-semibold tracking-wide">{ g.Label }</p>

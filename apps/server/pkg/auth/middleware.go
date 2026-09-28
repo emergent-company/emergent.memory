@@ -777,6 +777,31 @@ var ScopeImplies = map[string][]string{
 	"documents:write": {
 		"documents:read",
 	},
+	// project:admin is a project-scoped admin umbrella. It is deliberately a
+	// FLAT, explicit list: expandScopes is one-level only, so every project
+	// scope it covers must be listed here directly. It must NOT imply platform
+	// or org scopes (admin/admin:all/admin:read/admin:write, mcp:admin,
+	// org:* / project:invite:create / discovery:*), so a project admin can never
+	// mint a token that reaches cross-tenant or org-administered surfaces.
+	"project:admin": {
+		"data:read", "data:write",
+		"documents:read", "documents:write", "documents:delete",
+		"chunks:read", "chunks:write",
+		"search", "search:read",
+		"graph:read", "graph:write", "graph:search:read",
+		"extraction:read", "extraction:write",
+		"ingest:write",
+		"schema:read", "schema:write", "schema:migrate",
+		"tasks:read", "tasks:write",
+		"user-activity:read", "user-activity:write",
+		"notifications:read", "notifications:write",
+		"journal:read", "journal:write",
+		"agents:read", "agents:write",
+		"chat:use", "chat:admin",
+		"skills:read", "skills:write",
+		"projects:read", "projects:write",
+		"branches:read", "branches:write",
+	},
 	"admin:all": {
 		"admin", "admin:read", "admin:write",
 		"agents:read", "agents:write",

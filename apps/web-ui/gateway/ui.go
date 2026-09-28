@@ -108,6 +108,7 @@ func sidebarGroups(isOrgAdmin bool) []layout.SidebarGroup {
 			Label: "Settings",
 			Items: []layout.SidebarItem{
 				{Label: "Project", Href: "/settings", Icon: "lucide--settings"},
+				{Label: "Members", Href: "/settings/members", Icon: "lucide--users"},
 				{Label: "API Tokens", Href: "/settings/tokens", Icon: "lucide--key-round"},
 				{Label: "MCP Servers", Href: "/settings/mcp-servers", Icon: "lucide--server"},
 				{Label: "Blueprints", Href: "/blueprints", Icon: "lucide--library"},

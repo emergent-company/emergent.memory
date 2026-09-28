@@ -342,6 +342,9 @@ type fakeMemory struct {
 	members           []ProjectMemberDto    // returned by ListMembers
 	removedMember     string                // last user id passed to RemoveMember
 	removeMemberErr   error                 // failure for RemoveMember
+	updatedMemberRole string                // last user id passed to UpdateMemberRole
+	updatedRoleVal    string                // last role passed to UpdateMemberRole
+	updateRoleErr     error                 // failure for UpdateMemberRole
 	sentInvites       []SentInviteDto       // returned by ListInvites
 	createdInvites    []CreateInviteDto     // every CreateInvite request, in order
 	createInviteID    int                   // id counter for created invites
@@ -2594,6 +2597,15 @@ func (f *fakeMemory) RemoveMember(ctx context.Context, userID string) error {
 		return f.removeMemberErr
 	}
 	f.removedMember = userID
+	return nil
+}
+
+func (f *fakeMemory) UpdateMemberRole(ctx context.Context, userID, role string) error {
+	if f.updateRoleErr != nil {
+		return f.updateRoleErr
+	}
+	f.updatedMemberRole = userID
+	f.updatedRoleVal = role
 	return nil
 }
 

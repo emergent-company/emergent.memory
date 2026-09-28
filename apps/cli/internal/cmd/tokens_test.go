@@ -116,9 +116,9 @@ func TestTokenScopeGroups(t *testing.T) {
 		"graph:read", "graph:write", "schema:migrate",
 		"branches:read", "branches:write", "search",
 		"journal:read", "journal:write", "skills:read", "skills:write",
-		"documents:read", "documents:write", "admin", "admin:all",
+		"documents:read", "documents:write", "project:admin", "admin", "admin:all",
 	} {
 		assert.True(t, names[want], "scope %q missing from tokenScopeGroups", want)
 	}
-	assert.Equal(t, 23, count)
+	assert.Equal(t, 24, count)
 }

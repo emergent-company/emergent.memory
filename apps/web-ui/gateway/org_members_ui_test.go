@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -185,10 +184,12 @@ func TestRenderMembersPageMerged(t *testing.T) {
 	admin2.ID = "u-admin2"
 	admin2.DisplayName = "Lin"
 	data := membersPageData{
+		Base:            "/members",
 		Members:         []ProjectMemberDto{admin, admin2, user},
 		Pending:         []SentInviteDto{pendingInviteFixture()},
 		ProjectName:     "Home",
 		CanRevokeInvite: true,
+		CanManage:       true,
 	}
 	html := renderHTML(t, MembersPage(data))
 	for _, want := range []string{
@@ -231,7 +232,7 @@ func TestRenderMembersPageNonAdminNoRevoke(t *testing.T) {
 // the sole project_admin while other members keep theirs.
 func TestRenderMembersSoleAdmin(t *testing.T) {
 	admin, user := memberFixtures()
-	html := renderHTML(t, MembersPage(membersPageData{Members: []ProjectMemberDto{admin, user}}))
+	html := renderHTML(t, MembersPage(membersPageData{Members: []ProjectMemberDto{admin, user}, CanManage: true}))
 	if strings.Contains(html, `action="/members/u-admin/remove"`) {
 		t.Error("sole admin must not offer a remove affordance")
 	}
@@ -243,7 +244,7 @@ func TestRenderMembersSoleAdmin(t *testing.T) {
 	other := admin
 	other.ID = "u-admin2"
 	other.DisplayName = "Lin"
-	two := renderHTML(t, MembersPage(membersPageData{Members: []ProjectMemberDto{admin, other}}))
+	two := renderHTML(t, MembersPage(membersPageData{Members: []ProjectMemberDto{admin, other}, CanManage: true}))
 	for _, want := range []string{`action="/members/u-admin/remove"`, `action="/members/u-admin2/remove"`} {
 		if !strings.Contains(two, want) {
 			t.Errorf("second admin case missing remove affordance %q", want)
@@ -254,7 +255,7 @@ func TestRenderMembersSoleAdmin(t *testing.T) {
 // TestRenderMembersPageEmpty asserts the fully-empty state keeps the Add
 // member CTA, and that a pending-only list renders (no empty state).
 func TestRenderMembersPageEmpty(t *testing.T) {
-	html := renderHTML(t, MembersPage(membersPageData{}))
+	html := renderHTML(t, MembersPage(membersPageData{CanManage: true}))
 	for _, want := range []string{"No members yet", "Add member", `href="/members/new"`} {
 		if !strings.Contains(html, want) {
 			t.Errorf("empty members page missing %q", want)
@@ -346,9 +347,9 @@ func TestRenderMemberDetailPage(t *testing.T) {
 		// role management: current role + change control
 		"Current role", "Change role",
 		`action="/members/u-admin/role"`, `hx-boost="false"`,
-		`name="role"`, `value="project_user"`, `value="project_admin"`,
-		// the confirm makes the remove + re-invite consequence explicit
-		"removed and re-invited", "must accept the new invitation",
+		`name="role"`, `value="project_viewer"`, `value="project_user"`, `value="project_admin"`,
+		// the in-place role change is made explicit
+		"in place",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("member details page missing %q", want)
@@ -771,8 +772,9 @@ func TestUIMembersRoutes(t *testing.T) {
 			{ID: "inv-1", Email: "lin@example.com", Role: "project_user", Status: "pending", CreatedAt: "2026-08-20T09:00:00Z"},
 			{ID: "inv-2", Email: "old@example.com", Role: "project_admin", Status: "accepted", CreatedAt: "2026-08-18T09:00:00Z"},
 		},
-		// org_admin of the active project's org → revoke button renders.
-		orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin"}},
+		// org_admin of the active project's org (and project_admin of p1) →
+		// revoke + add/remove/role controls render.
+		orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin", Projects: []ProjectAccessDto{{ID: "p1", Name: "Home", OrgID: "o1", Role: "project_admin"}}}},
 	}
 	// dev mode: the static memory project is the active project
 	s := &Server{cfg: Config{MemoryProjectID: "p1"}, memory: f}
@@ -866,11 +868,10 @@ func TestUIMembersRoutes(t *testing.T) {
 	}
 }
 
-// TestUIChangeMemberRole exercises the details-page role change. Memory has no
-// member-role PATCH, so a change is remove + re-invite: the handler removes the
-// member, then invites their own email with the new role. It also covers the
-// failure paths: invalid / unchanged role, last-admin removal, re-invite
-// failure after removal (partial failure), and an unknown member.
+// TestUIChangeMemberRole exercises the details-page role change. Memory
+// persists the role in place via PATCH, so a change updates the member's role
+// without removing or re-inviting them. It also covers the failure paths:
+// invalid / unchanged role, a rejected PATCH, and an unknown member.
 func TestUIChangeMemberRole(t *testing.T) {
 	admin, user := memberFixtures()
 	newServer := func() (*echo.Echo, *fakeMemory) {
@@ -882,22 +883,18 @@ func TestUIChangeMemberRole(t *testing.T) {
 		return orgMemberUIServer(s), f
 	}
 
-	// success: project_user → project_admin = remove then re-invite the member's
-	// own email (never a form-supplied address) with the new role.
+	// success: project_user → project_viewer = in-place PATCH (no remove, no
+	// re-invite).
 	e, f := newServer()
-	rec := postForm(t, e, "/members/u-user/role", url.Values{"role": {"project_admin"}}.Encode())
+	rec := postForm(t, e, "/members/u-user/role", url.Values{"role": {"project_viewer"}}.Encode())
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/members?role-changed=1" {
 		t.Fatalf("change role = %d %q, want 303 /members?role-changed=1", rec.Code, rec.Header().Get("Location"))
 	}
-	if f.removedMember != "u-user" {
-		t.Errorf("remove not recorded before re-invite: %q", f.removedMember)
+	if f.updatedMemberRole != "u-user" || f.updatedRoleVal != "project_viewer" {
+		t.Errorf("PATCH not recorded correctly: user=%q role=%q", f.updatedMemberRole, f.updatedRoleVal)
 	}
-	if len(f.createdInvites) != 1 {
-		t.Fatalf("re-invite not recorded: %+v", f.createdInvites)
-	}
-	inv := f.createdInvites[0]
-	if inv.Email != "grace@example.com" || inv.Role != "project_admin" || inv.OrgID != "o1" || inv.ProjectID != "p1" {
-		t.Errorf("re-invite fields wrong: %+v", inv)
+	if f.removedMember != "" || len(f.createdInvites) != 0 {
+		t.Errorf("role change must not remove or re-invite: removed=%q invites=%d", f.removedMember, len(f.createdInvites))
 	}
 
 	// invalid role → rejected before any mutation
@@ -907,46 +904,34 @@ func TestUIChangeMemberRole(t *testing.T) {
 	if rec.Code != http.StatusSeeOther || !strings.Contains(loc, "/members/u-user?err=invalid+role") {
 		t.Errorf("invalid role = %d %q, want details-page error redirect", rec.Code, loc)
 	}
-	if f.removedMember != "" || len(f.createdInvites) != 0 {
-		t.Errorf("invalid role must not mutate: removed=%q invites=%d", f.removedMember, len(f.createdInvites))
+	if f.updatedMemberRole != "" {
+		t.Errorf("invalid role must not mutate: updated=%q", f.updatedMemberRole)
 	}
 
-	// unchanged role → rejected, no remove/invite
+	// unchanged role → rejected, no PATCH
 	e, f = newServer()
 	rec = postForm(t, e, "/members/u-user/role", url.Values{"role": {"project_user"}}.Encode())
-	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "err=member+already+has") || f.removedMember != "" {
-		t.Errorf("unchanged role = %q removed=%q, want rejection without mutation", loc, f.removedMember)
+	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "err=member+already+has") || f.updatedMemberRole != "" {
+		t.Errorf("unchanged role = %q updated=%q, want rejection without mutation", loc, f.updatedMemberRole)
 	}
 
-	// last-admin removal → clear error, no invite, no success redirect
+	// PATCH failure → error flash back to the details page, no success redirect
 	e, f = newServer()
-	f.removeMemberErr = errors.New("memory: 403 last-admin: cannot remove the last admin")
-	rec = postForm(t, e, "/members/u-admin/role", url.Values{"role": {"project_user"}}.Encode())
-	loc = rec.Header().Get("Location")
-	if rec.Code != http.StatusSeeOther || !strings.Contains(loc, "err=cannot+change+the+last+admin") {
-		t.Errorf("last-admin change = %d %q, want details-page error redirect", rec.Code, loc)
-	}
-	if strings.Contains(loc, "role-changed") || len(f.createdInvites) != 0 {
-		t.Errorf("last-admin change must not report success or invite: %q %d", loc, len(f.createdInvites))
-	}
-
-	// re-invite failure after removal → explicit partial-failure message
-	e, f = newServer()
-	f.createInviteErr = errTest
+	f.updateRoleErr = errTest
 	rec = postForm(t, e, "/members/u-user/role", url.Values{"role": {"project_admin"}}.Encode())
 	loc = rec.Header().Get("Location")
-	if !strings.Contains(loc, "err=member+removed") || !strings.Contains(loc, "invite+failed") {
-		t.Errorf("partial failure = %q, want explicit removed-but-invite-failed error", loc)
+	if rec.Code != http.StatusSeeOther || !strings.Contains(loc, "err=backend+unreachable") {
+		t.Errorf("PATCH failure = %d %q, want details-page error redirect", rec.Code, loc)
 	}
-	if f.removedMember != "u-user" {
-		t.Errorf("partial failure should record the removal, got %q", f.removedMember)
+	if strings.Contains(loc, "role-changed") {
+		t.Errorf("PATCH failure must not report success: %q", loc)
 	}
 
 	// unknown member → error, no mutation
 	e, f = newServer()
 	rec = postForm(t, e, "/members/nope/role", url.Values{"role": {"project_admin"}}.Encode())
-	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "err=member+not+found") || f.removedMember != "" {
-		t.Errorf("unknown member = %q removed=%q, want not-found rejection", loc, f.removedMember)
+	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "err=member+not+found") || f.updatedMemberRole != "" {
+		t.Errorf("unknown member = %q updated=%q, want not-found rejection", loc, f.updatedMemberRole)
 	}
 }
 

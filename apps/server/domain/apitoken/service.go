@@ -91,6 +91,13 @@ var platformScopes = map[string]bool{
 var errPlatformScopeDenied = apperror.New(403, "admin-all-scope-denied",
 	"admin and admin:all scopes require superadmin_full privileges")
 
+// errProjectAdminScopeDenied is returned when a caller attempts to grant the
+// project:admin scope without a project-bound token minted by a project admin
+// (or the owning org's org_admin). Account-level tokens (no project binding)
+// may never carry it.
+var errProjectAdminScopeDenied = apperror.New(403, "project-admin-scope-denied",
+	"project:admin requires a project-bound token minted by a project admin")
+
 // scopesContainPlatformScope reports whether scopes includes a platform-tier
 // scope (bare admin or admin:all).
 func scopesContainPlatformScope(scopes []string) bool {
@@ -117,6 +124,37 @@ func (s *Service) checkPlatformScopeGrant(ctx context.Context, userID string, sc
 	}
 	if !allowed {
 		return errPlatformScopeDenied
+	}
+	return nil
+}
+
+// scopesContainProjectAdmin reports whether scopes includes the project:admin
+// umbrella scope.
+func scopesContainProjectAdmin(scopes []string) bool {
+	for _, sc := range scopes {
+		if sc == "project:admin" {
+			return true
+		}
+	}
+	return false
+}
+
+// checkProjectAdminScopeGrant rejects the project:admin scope unless it is
+// minted on a project-bound token by a project admin (or the owning org's
+// org_admin). Account-level tokens (projectID == "") may never carry it.
+func (s *Service) checkProjectAdminScopeGrant(ctx context.Context, projectID, userID string, scopes []string) error {
+	if !scopesContainProjectAdmin(scopes) {
+		return nil
+	}
+	if projectID == "" {
+		return errProjectAdminScopeDenied
+	}
+	allowed, err := s.repo.CanGrantProjectAdmin(ctx, projectID, userID)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return errProjectAdminScopeDenied
 	}
 	return nil
 }
@@ -298,6 +336,11 @@ func (s *Service) create(ctx context.Context, projectID string, userID *string, 
 
 	// admin / admin:all require superadmin_full privileges
 	if err := s.checkPlatformScopeGrant(ctx, uid, scopes); err != nil {
+		return nil, err
+	}
+
+	// project:admin requires a project-bound token minted by a project admin
+	if err := s.checkProjectAdminScopeGrant(ctx, projectID, uid, scopes); err != nil {
 		return nil, err
 	}
 
@@ -484,6 +527,11 @@ func (s *Service) CreateAccountToken(ctx context.Context, userID, name string, s
 
 	// admin / admin:all require superadmin_full privileges
 	if err := s.checkPlatformScopeGrant(ctx, userID, scopes); err != nil {
+		return nil, err
+	}
+
+	// project:admin may not be minted on an account-level (unbound) token
+	if err := s.checkProjectAdminScopeGrant(ctx, "", userID, scopes); err != nil {
 		return nil, err
 	}
 
@@ -679,6 +727,11 @@ func (s *Service) UpdateScopes(ctx context.Context, tokenID, projectID, userID s
 		return nil, err
 	}
 
+	// project:admin requires a project-bound token minted by a project admin
+	if err := s.checkProjectAdminScopeGrant(ctx, projectID, userID, scopes); err != nil {
+		return nil, err
+	}
+
 	// Viewers may only set read-only scopes
 	if userID != "" && projectID != "" {
 		role, err := s.repo.GetUserProjectRole(ctx, projectID, userID)
@@ -739,6 +792,11 @@ func (s *Service) UpdateAccountTokenScopes(ctx context.Context, tokenID, userID 
 
 	// admin / admin:all require superadmin_full privileges
 	if err := s.checkPlatformScopeGrant(ctx, userID, scopes); err != nil {
+		return nil, err
+	}
+
+	// project:admin may not be minted on an account-level (unbound) token
+	if err := s.checkProjectAdminScopeGrant(ctx, "", userID, scopes); err != nil {
 		return nil, err
 	}
 

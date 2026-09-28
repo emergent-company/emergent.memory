@@ -220,6 +220,51 @@ func seedProject(t *testing.T, db bun.IDB, userID string) (projectID string) {
 	return projectID
 }
 
+// seedProjectWithMembership inserts a user, an org, a project in that org, and a
+// project membership for the user with the given role. Returns the projectID.
+func seedProjectWithMembership(t *testing.T, db bun.IDB, userID, role string) (projectID string) {
+	t.Helper()
+	ctx := context.Background()
+	seedUser(t, db, userID)
+	orgID := uuid.NewString()
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgID, "Org "+orgID)
+	require.NoError(t, err)
+	projectID = uuid.NewString()
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`,
+		projectID, orgID, "Project "+projectID)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO kb.project_memberships (project_id, user_id, role) VALUES (?, ?, ?)`,
+		projectID, userID, role)
+	require.NoError(t, err)
+	return projectID
+}
+
+// seedOwningOrgAdmin inserts a user, an org, a project in that org, and an
+// org_admin membership for the user. Returns the projectID. The user has NO
+// project membership — this isolates the owning-org org_admin path.
+func seedOwningOrgAdmin(t *testing.T, db bun.IDB, userID string) (projectID string) {
+	t.Helper()
+	ctx := context.Background()
+	seedUser(t, db, userID)
+	orgID := uuid.NewString()
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgID, "Org "+orgID)
+	require.NoError(t, err)
+	projectID = uuid.NewString()
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`,
+		projectID, orgID, "Project "+projectID)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO kb.organization_memberships (organization_id, user_id, role) VALUES (?, ?, 'org_admin')`,
+		orgID, userID)
+	require.NoError(t, err)
+	return projectID
+}
+
 // seedProjectToken inserts a non-revoked, non-expired project-scoped token with
 // the given SQL scope literal, owned by userID in projectID.
 func seedProjectToken(t *testing.T, db bun.IDB, projectID, userID, scopesLiteral string) string {
@@ -305,5 +350,82 @@ func TestService_Regenerate_RevalidatesPlatformScope(t *testing.T) {
 		tokenID := seedProjectToken(t, db, projectID, userID, `ARRAY['data:read']`)
 		_, err := svc.Regenerate(ctx, tokenID, projectID, userID)
 		require.NoError(t, err, "a non-platform token must still regenerate for a non-superadmin")
+	})
+}
+
+// CanGrantProjectAdmin must admit exactly two principals: a project_admin in the
+// project, and an org_admin of the project's OWNING org. Every other principal —
+// project_user, project_viewer, a foreign user, an org_admin of a different org
+// — is refused, and an empty/invalid projectID or userID fails closed.
+func TestRepository_CanGrantProjectAdmin(t *testing.T) {
+	db := connectTestDB(t)
+	repo := NewRepository(db, slog.Default())
+	ctx := context.Background()
+
+	t.Run("project_admin can grant", func(t *testing.T) {
+		userID := uuid.NewString()
+		projectID := seedProjectWithMembership(t, db, userID, "project_admin")
+
+		allowed, err := repo.CanGrantProjectAdmin(ctx, projectID, userID)
+		require.NoError(t, err)
+		require.True(t, allowed, "project_admin must mint project:admin")
+	})
+
+	t.Run("owning org_admin can grant", func(t *testing.T) {
+		userID := uuid.NewString()
+		projectID := seedOwningOrgAdmin(t, db, userID)
+
+		allowed, err := repo.CanGrantProjectAdmin(ctx, projectID, userID)
+		require.NoError(t, err)
+		require.True(t, allowed, "owning org_admin must mint project:admin")
+	})
+
+	t.Run("project_user cannot grant", func(t *testing.T) {
+		userID := uuid.NewString()
+		projectID := seedProjectWithMembership(t, db, userID, "project_user")
+
+		allowed, err := repo.CanGrantProjectAdmin(ctx, projectID, userID)
+		require.NoError(t, err)
+		require.False(t, allowed, "project_user must not mint project:admin")
+	})
+
+	t.Run("project_viewer cannot grant", func(t *testing.T) {
+		userID := uuid.NewString()
+		projectID := seedProjectWithMembership(t, db, userID, "project_viewer")
+
+		allowed, err := repo.CanGrantProjectAdmin(ctx, projectID, userID)
+		require.NoError(t, err)
+		require.False(t, allowed, "project_viewer must not mint project:admin")
+	})
+
+	t.Run("foreign user cannot grant", func(t *testing.T) {
+		userID := uuid.NewString()
+		projectID := seedProject(t, db, userID) // project exists; user has no membership
+
+		allowed, err := repo.CanGrantProjectAdmin(ctx, projectID, userID)
+		require.NoError(t, err)
+		require.False(t, allowed, "foreign user must not mint project:admin")
+	})
+
+	t.Run("foreign org_admin cannot grant", func(t *testing.T) {
+		foreignUser := uuid.NewString()
+		_ = seedOwningOrgAdmin(t, db, foreignUser) // org_admin of some other org
+		projectID := seedProjectWithMembership(t, db, uuid.NewString(), "project_admin")
+
+		allowed, err := repo.CanGrantProjectAdmin(ctx, projectID, foreignUser)
+		require.NoError(t, err)
+		require.False(t, allowed, "an org_admin of a different org must not mint project:admin here")
+	})
+
+	t.Run("empty projectID cannot grant", func(t *testing.T) {
+		allowed, err := repo.CanGrantProjectAdmin(ctx, "", uuid.NewString())
+		require.NoError(t, err)
+		require.False(t, allowed, "empty projectID must not mint project:admin")
+	})
+
+	t.Run("empty userID cannot grant", func(t *testing.T) {
+		allowed, err := repo.CanGrantProjectAdmin(ctx, uuid.NewString(), "")
+		require.NoError(t, err)
+		require.False(t, allowed, "empty userID must not mint project:admin")
 	})
 }
