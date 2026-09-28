@@ -48,6 +48,7 @@ func TestKeyPrefixRangeClause(t *testing.T) {
 		{name: "plain word", prefix: "abc", wantUpper: "abd"},
 		{name: "trailing DEL (0x7f)", prefix: "adv\x7f", wantUpper: "adv\u0080"},
 		{name: "trailing U+00BF continuation byte", prefix: "adv\u00bf", wantUpper: "adv\u00c0"},
+		{name: "trailing U+07FF (df bf)", prefix: "adv\u07ff", wantUpper: "adv\u0800"},
 		{name: "trailing U+00FF", prefix: "adv\u00ff", wantUpper: "adv\u0100"},
 		{name: "multibyte last rune", prefix: "adv\u65e5", wantUpper: "adv\u65e6"},
 		{name: "carry past trailing max rune", prefix: "a\U0010FFFF", wantUpper: "b"},
@@ -182,6 +183,7 @@ func TestExecuteQueryEntities_KeyPrefixNonASCIIUpperBound(t *testing.T) {
 	for _, k := range []string{
 		"adv\x7f#p1", "adv\x7f#p2",
 		"adv\u00bf#p1", "adv\u00bf#p2",
+		"adv\u07ff#p1",
 		"adv\u00ff#p1",
 		"adv\u65e5#p1",
 		"adv\u0100#p1",
@@ -198,7 +200,7 @@ func TestExecuteQueryEntities_KeyPrefixNonASCIIUpperBound(t *testing.T) {
 			AND go.supersedes_id IS NULL AND go.branch_id IS NULL
 			AND go.type = 'LegalParagraph'`
 
-	for _, prefix := range []string{"adv\x7f", "adv\u00bf", "adv\u00ff", "adv\u65e5", "adv\u0100", "adv", "\U0010FFFF"} {
+	for _, prefix := range []string{"adv\x7f", "adv\u00bf", "adv\u07ff", "adv\u00ff", "adv\u65e5", "adv\u0100", "adv", "\U0010FFFF"} {
 		clause, args := keyPrefixRangeClause(prefix)
 		if len(args) == 2 {
 			require.True(t, utf8.ValidString(args[1].(string)), "bound for %q must be valid UTF-8", prefix)
@@ -226,7 +228,7 @@ func TestKeyPrefixLegacyBoundRejectedAsInvalidUTF8(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close(context.Background()) })
 
-	for _, prefix := range []string{"adv\x7f", "adv\u00bf"} {
+	for _, prefix := range []string{"adv\x7f", "adv\u00bf", "adv\u07ff"} {
 		t.Run(prefix, func(t *testing.T) {
 			legacy := legacyBytewiseUpperBound(prefix)
 			require.False(t, utf8.ValidString(legacy), "legacy bound %q should be invalid UTF-8", legacy)
