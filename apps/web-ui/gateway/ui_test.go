@@ -76,3 +76,25 @@ func TestPageHistoryRestoreFullShell(t *testing.T) {
 		t.Errorf("partial navigation must include the content, got %q", body)
 	}
 }
+
+// TestChatScriptLoadedOnceFromShell guards the chat bootstrap contract: the
+// chat client scripts (chat.js in particular) load exactly once from the full
+// page shell (ui.templ), never inside the htmx-swapped #chat-root fragment
+// (ChatPage). When htmx re-executes an in-fragment script during a boosted swap
+// it races the swap — chat.js's init() finds the stale pre-swap root and the
+// fresh root is left unbound (dead composer + unbound rail grip). Re-init on
+// htmx:after:swap (chat.js) only works if the file is loaded once, globally.
+func TestChatScriptLoadedOnceFromShell(t *testing.T) {
+	// The full shell owns chat.js exactly once.
+	shell := renderPageShell(t, templ.NopComponent)
+	if got := strings.Count(shell, `/assets/js/chat.js?v=`); got != 1 {
+		t.Errorf("shell must include /assets/js/chat.js?v= exactly once, got %d", got)
+	}
+
+	// The chat page fragment must NOT emit chat.js — the shell owns it.
+	agents := []AgentDefinitionSummary{{ID: "a1", Name: "diane"}}
+	html := renderHTML(t, ChatPage(agents, nil, nil, nil, nil, "", "", "", nil, false, nil))
+	if strings.Contains(html, `src="/assets/js/chat.js`) {
+		t.Error("ChatPage fragment must not emit chat.js (the shell owns it)")
+	}
+}

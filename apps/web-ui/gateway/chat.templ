@@ -360,10 +360,11 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 				});
 			})();
 		</script>
-		<script src={ templ.SafeURL(webui.AssetPath("/js/chat-components.js")) }></script>
-		<script src={ templ.SafeURL(webui.AssetPath("/js/chat-stream.js")) }></script>
-		<script src={ templ.SafeURL(webui.AssetPath("/js/chat-host.js")) }></script>
-		<script src={ templ.SafeURL(webui.AssetPath("/js/chat.js")) }></script>
+		<!-- Chat client scripts (chat-components.js, chat-stream.js,
+		     chat-host.js, chat.js) load ONCE from the shell (ui.templ), not
+		     inside this swapped #chat-root fragment: htmx re-executing them
+		     in-fragment races the swap and leaves the composer unbound.
+		     chat.js re-inits on htmx:after:swap against the fresh root. -->
 	</div>
 }
 
