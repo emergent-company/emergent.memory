@@ -32,7 +32,9 @@ What already bounds size is insufficient:
   bound every `FunctionResponse` payload before the model call.
 - The bound has two layers: a **per-result cap** (configurable, generous
   default) and a **total budget** across all tool results in one model request
-  (oldest elided first, most-recent retained).
+  (oldest elided first, most-recent retained). The total budget is soft for a
+  single oversized newest result: the newest is never silently dropped, even if
+  it alone exceeds the budget.
 - The bound is **honest**: a truncated or elided result carries an explicit,
   actionable marker the model sees, telling it how to narrow
   (`filters`/`fields[]`/`limit`/`offset` or fetch a specific key). No silent

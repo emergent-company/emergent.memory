@@ -37,20 +37,31 @@ cap SHALL be passed through unchanged.
 ### Requirement: The total tool-result budget elides oldest results first
 
 The sum of tool results in a single model request SHALL be bounded by a
-configurable total budget. While the sum exceeds the budget, the oldest tool
+configurable total budget, with one documented exception: the budget is **soft**
+for the most recent result. While the sum exceeds the budget, the oldest tool
 results SHALL be replaced, for the model only, by a short `elided: true` marker.
-The most recent tool result SHALL NOT be elided.
+The most recent tool result SHALL NOT be elided, so if it alone exceeds the
+budget it SHALL be retained whole and the request MAY remain over budget in that
+single-result case. A request that remains over budget only because of the
+retained newest result SHALL NOT drop it silently.
 
 #### Scenario: Oldest result is elided when the total budget is exceeded
 
 - **WHEN** the combined size of tool results in a model request exceeds the total budget
-- **THEN** the oldest results SHALL be elided until the sum is within budget
+- **THEN** the oldest results SHALL be elided until the sum is within budget or only the most recent result remains
 - **THEN** each elided result SHALL carry an `elided: true` marker telling the model to re-run the tool narrowly if needed
 
 #### Scenario: Most recent result is retained
 
 - **WHEN** the total budget would require eliding the most recent tool result
 - **THEN** the most recent result SHALL be retained in full
+
+#### Scenario: The most recent result alone exceeds the total budget
+
+- **WHEN** the request contains a single tool result, or its most recent result alone, whose size exceeds the total budget
+- **THEN** every older result SHALL be elided
+- **THEN** the most recent result SHALL be retained whole and SHALL NOT be silently dropped
+- **THEN** the request MAY remain over the total budget in this single-result case
 
 ### Requirement: Only the model context is bounded
 
@@ -85,11 +96,23 @@ only to the named tool and SHALL be ignored when non-positive.
 
 #### Scenario: Per-tool override takes precedence
 
-- **WHEN** a per-tool override is configured for a tool
+- **WHEN** a per-tool override is configured for a tool and the global per-result cap is enabled
 - **THEN** that tool SHALL use the override instead of the global per-result cap
 - **THEN** every other tool SHALL use the global cap
+
+#### Scenario: Per-tool override cannot re-enable a disabled layer
+
+- **WHEN** the global per-result cap is disabled (negative) and a positive per-tool override is configured for a tool
+- **THEN** that tool's per-result truncation SHALL also be disabled and the result SHALL pass through unchanged
 
 #### Scenario: Negative value disables a layer
 
 - **WHEN** the per-result cap is set negative
 - **THEN** per-result truncation SHALL be disabled and results SHALL pass through unchanged
+- **THEN** per-tool overrides SHALL be ignored
+
+#### Scenario: Documented defaults bound the extreme tail
+
+- **WHEN** no bound-related environment variables are set
+- **THEN** the per-result cap SHALL default to 128 KiB (≈32k tokens) and the total budget SHALL default to 512 KiB (≈128k tokens)
+- **THEN** the total budget SHALL be at least the per-result cap, so with defaults the total budget elides results only once more than four capped results have accumulated in one request

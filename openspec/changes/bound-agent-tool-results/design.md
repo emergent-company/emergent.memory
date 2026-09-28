@@ -75,7 +75,7 @@ the tool-shape narrowing verbs the graph tools actually accept. The preview lets
 the model inspect the start of the payload. The envelope is shrunk iteratively
 until its JSON encoding fits the cap, so the bound is strict.
 
-### Total budget: elide oldest, keep most recent
+### Total budget: elide oldest, keep most recent (soft budget)
 
 After the per-result pass, the sum of tool-result bytes in the request is
 compared against `MCP_TOOL_RESULT_TOTAL_BUDGET_BYTES`. While over budget, the
@@ -88,6 +88,33 @@ compared against `MCP_TOOL_RESULT_TOTAL_BUDGET_BYTES`. While over budget, the
 The most recent tool result is never elided: it is what the current step reasons
 about. This keeps per-step model input from trending with run length while
 preserving the recent working set.
+
+**The budget is deliberately soft for a single oversized newest result.** If the
+most recent result alone exceeds the total budget — reachable when
+`total < per-result`, or when the per-result layer is disabled — every older
+result is elided and the newest is retained whole, so the request may remain over
+budget. The alternative (hard-clamping `total >= per-result` on load) cannot
+cover per-tool overrides without silently shrinking them, and rejecting config at
+load adds a failure mode. Retaining the result the current step is reasoning
+about is safer than silently dropping it; the caller can tighten the per-result
+cap to bound it. The spec states this exception explicitly so the two knobs are
+not contradictory.
+
+### Per-tool overrides cannot re-enable a disabled layer
+
+A negative global `MCP_TOOL_RESULT_MAX_BYTES` disables per-result truncation for
+every tool, and per-tool overrides are ignored in that case. This keeps a single
+operator switch authoritative: `-1` means "off", not "off except for tools I
+named earlier".
+
+### Default rationale
+
+`128 KiB ≈ 32k tokens` per result removes the pathological single payload
+(the observed 361 KB ≈ 90k tokens). `512 KiB ≈ 128k tokens` total only trims the
+extreme tail: with the default per-result cap, more than four capped results must
+accumulate in one request before elision starts. The total default is kept at
+512 KiB (rather than tightened) so normal multi-step runs are not elided; the
+knob is available for deployments that want a tighter budget.
 
 ### Config placement
 

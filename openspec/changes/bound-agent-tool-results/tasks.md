@@ -35,3 +35,11 @@
 - [x] 5.2 `go test ./domain/agents/... ./internal/config/...` (targeted, no DB required)
 - [x] 5.3 `task lint` and `gofmt -l` clean
 - [x] 5.4 `openspec validate bound-agent-tool-results --strict`
+
+## 6. Review follow-up (PR #1208)
+
+- [x] 6.1 Resolve the total-budget vs "newest is never elided" contradiction by making the soft budget explicit in the spec, not by clamping config: older results are elided, the newest is retained whole, and the sum may exceed budget only in that single-result case.
+- [x] 6.2 Test the `newest > total budget` case: retained whole with a single result, and older results elided when present.
+- [x] 6.3 Forbid a per-tool override from re-enabling a globally disabled per-result layer; document it in the config comment, `.env.example` and spec.
+- [x] 6.4 Document the default rationale (128 KiB ≈ 32k tokens per result; 512 KiB ≈ 128k tokens total trims the extreme tail only) in the config comment, `.env.example`, design and spec.
+- [x] 6.5 `go build ./...`, `go test ./domain/agents/ ./internal/config/`, `task lint`, `gofmt -l`, `openspec validate --all --strict`
