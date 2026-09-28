@@ -16,7 +16,7 @@
 
 - [ ] 3.1 Add `/settings/members` route + `uiProjectMembers` handler rendering the members table; add a Members entry to `settingsSubNav` and the Settings sidebar group. Verify: `go build ./...` compiles and `/settings/members` renders.
 - [ ] 3.2 Add member actions: `POST /settings/members/:userId/role` (role change), `POST /settings/members/:userId/remove`, and invite (reuse the existing invitation surface). Gate admin actions on the caller's project role (hide, not disable). Verify: `go build ./...` compiles.
-- [ ] 3.3 Redact PII: the members view SHALL NOT render email/contact PII to a non-admin caller (display name + role only). Verify: `go build ./...` compiles.
+- [ ] 3.3 Member visibility follows the existing `GET /api/projects/:id/members` contract (any project member or owning-org `org_admin`); the management actions (invite/remove/role) are admin-gated and hidden, not disabled. Verify: `go build ./...` compiles.
 - [ ] 3.4 Offer `project:admin` in the token scope picker only to project admins of the active project; surface the server `403 project-admin-scope-denied` as a readable error otherwise. Verify: `go build ./...` compiles.
 - [ ] 3.5 Write handler + `.templ` render tests (members list, admin-only controls hidden for non-admins, last-admin error surfaced, scope picker shows `project:admin` only for admins). Verify: `go test ./...` passes.
 

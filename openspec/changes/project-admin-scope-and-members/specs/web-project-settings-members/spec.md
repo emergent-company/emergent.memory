@@ -1,6 +1,6 @@
 ## Purpose
 
-Provides a web UI Members section under Project Settings for viewing and managing a project's membership — listing members, inviting, removing, and changing roles — gated to project admins, with last-admin protection surfaced, and with member PII hidden from non-admins.
+Provides a web UI Members section under Project Settings for viewing and managing a project's membership — listing members, inviting, removing, and changing roles — gated to project admins, with last-admin protection surfaced, and with member visibility following the existing list-members contract (any project member or an `org_admin` of the owning organization may see member email).
 
 ## ADDED Requirements
 
