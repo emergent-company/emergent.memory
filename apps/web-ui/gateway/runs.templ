@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/url"
 
-	"github.com/emergent-company/emergent.memory/apps/web-ui/webui"
 	"github.com/emergent-company/go-daisy/components/layout"
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
@@ -45,10 +44,8 @@ templ RunPage(data runPageData) {
 					</div>
 				</div>
 				<div id="chat-empty" class="hidden"></div>
-				<script src={ templ.SafeURL(webui.AssetPath("/js/chat-components.js")) }></script>
-				<script src={ templ.SafeURL(webui.AssetPath("/js/chat-stream.js")) }></script>
-				<script src={ templ.SafeURL(webui.AssetPath("/js/chat-host.js")) }></script>
-				<script src={ templ.SafeURL(webui.AssetPath("/js/chat.js")) }></script>
+				<!-- Chat client scripts load once from the shell (ui.templ),
+				     never in this swapped #chat-root fragment — see chat.templ. -->
 			</div>
 		}
 	</div>

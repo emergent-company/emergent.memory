@@ -73,12 +73,15 @@ func TestRenderRunPage(t *testing.T) {
 		`href="/schedules/a1"`, // breadcrumb back to the agent's schedule
 		`data-run="run-42"`,    // transcript shell handed to chat.js
 		`id="chat-messages"`,
-		`src="/assets/js/chat-components.js?v=`, `src="/assets/js/chat-stream.js?v=`,
-		`src="/assets/js/chat-host.js?v=`, `src="/assets/js/chat.js?v=`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("run page missing %q", want)
 		}
+	}
+	// Chat client scripts load once from the shell (ui.templ) — never inside
+	// the swapped #chat-root fragment, so RunPage must not emit chat.js.
+	if strings.Contains(html, `src="/assets/js/chat.js`) {
+		t.Error("run page must not emit the chat client scripts (they load once from the shell)")
 	}
 	// The transcript body is client-rendered: no server chat bubbles, and no
 	// question/respond flow or old debug transcript chrome.
