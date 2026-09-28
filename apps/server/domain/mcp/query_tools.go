@@ -99,7 +99,11 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 	// The query endpoint is on the same server — use the server's own listen address.
 	url := fmt.Sprintf("http://localhost:%d/api/projects/%s/query", s.serverPort, projectID)
 
-	// Apply the tool's query time budget.
+	// Capture the tool-imposed budget deadline before deriving the request
+	// context: the caller's context may carry its own (possibly shorter) deadline,
+	// and both surface as context.DeadlineExceeded on queryCtx, so this value lets
+	// queryKnowledgeCtxError attribute an expiry to the right cause (issue #1187).
+	internalDeadline := time.Now().Add(queryKnowledgeTimeout)
 	queryCtx, cancel := context.WithTimeout(ctx, queryKnowledgeTimeout)
 	defer cancel()
 
@@ -129,7 +133,7 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 	resp, err := client.Do(req)
 	if err != nil {
 		if ctxErr := queryCtx.Err(); ctxErr != nil {
-			return nil, queryKnowledgeCtxError(ctxErr)
+			return nil, queryKnowledgeCtxError(ctx, internalDeadline, ctxErr)
 		}
 		return nil, fmt.Errorf("query_knowledge: request failed: %w", err)
 	}
@@ -139,10 +143,14 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 		return nil, mcpHTTPError("query_knowledge", resp)
 	}
 
-	// Collect SSE token events and capture the session ID from the meta event.
+	// Collect SSE token events, capture the session ID, and record whether the
+	// stream reached its terminal event (`done` chunk or `[DONE]` sentinel). A
+	// stream that ends without it is incomplete and must not be reported as a
+	// successful answer.
 	var parts []string
 	var returnedSessionID string
 	var returnedRunID string
+	terminal := false
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -150,7 +158,11 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 			continue
 		}
 		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "" || payload == "[DONE]" {
+		if payload == "" {
+			continue
+		}
+		if payload == "[DONE]" {
+			terminal = true
 			continue
 		}
 		var chunk map[string]any
@@ -167,6 +179,7 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 				returnedSessionID = id
 			}
 		case "done":
+			terminal = true
 			if rid, ok := chunk["runId"].(string); ok && rid != "" {
 				returnedRunID = rid
 			}
@@ -180,19 +193,26 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 		}
 	}
 
-	// An expired or cancelled context means the stream never completed: the
-	// nested graph-query-agent run is cancelled along with it, so there is no
-	// answer to assemble. Report that as a failed tool call rather than an
-	// empty "successful" answer, which callers cannot distinguish from a
-	// corpus that simply has nothing to say.
-	if ctxErr := queryCtx.Err(); ctxErr != nil {
-		return nil, queryKnowledgeCtxError(ctxErr)
+	// A stream only counts as complete once it emitted its terminal event. A
+	// proxy/backend disconnect (or a read error) ends the stream without one and
+	// must be reported as a failure rather than assembled into a partial or empty
+	// "success". A budget/cancellation that lands before the terminal event is
+	// likewise a failed call, attributed to whichever context expired. This is
+	// what lets a caller tell "timed out"/"disconnected" apart from "the corpus
+	// has no answer" (issue #1187).
+	if !terminal {
+		if ctxErr := queryCtx.Err(); ctxErr != nil {
+			return nil, queryKnowledgeCtxError(ctx, internalDeadline, ctxErr)
+		}
+		if serr := scanner.Err(); serr != nil {
+			return nil, fmt.Errorf("query_knowledge: query stream interrupted: %w", serr)
+		}
+		return nil, fmt.Errorf("query_knowledge: query stream ended without a terminal event")
 	}
 
 	answer := strings.Join(parts, "")
 	result := map[string]any{
-		"answer":    answer,
-		"truncated": false,
+		"answer": answer,
 	}
 	if returnedSessionID != "" {
 		result["session_id"] = returnedSessionID
@@ -204,15 +224,25 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 }
 
 // queryKnowledgeCtxError converts an expired or cancelled query context into a
-// tool error. A timeout reports the actual budget (queryKnowledgeTimeout); a
-// parent cancellation is propagated as such. Returning an error — rather than a
-// {"ok":true,"answer":""} result — lets callers tell "timed out" apart from
-// "the corpus has no answer" (issue #1187).
-func queryKnowledgeCtxError(err error) error {
-	if errors.Is(err, context.DeadlineExceeded) {
-		return fmt.Errorf("query_knowledge: query timed out after %s", queryKnowledgeTimeout)
+// tool error. The tool's own budget (queryKnowledgeTimeout) and a caller-supplied
+// deadline both surface as context.DeadlineExceeded on the derived context, so
+// the caller's deadline is compared against the captured internal deadline to
+// attribute the expiry accurately; a plain cancellation is propagated as such.
+// Returning an error — rather than a {"ok":true,"answer":""} result — lets
+// callers tell a failed query apart from one that simply found no answer
+// (issue #1187).
+func queryKnowledgeCtxError(callerCtx context.Context, internalDeadline time.Time, err error) error {
+	if !errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("query_knowledge: query cancelled: %w", err)
 	}
-	return fmt.Errorf("query_knowledge: query cancelled: %w", err)
+	// A caller deadline that is not later than the tool budget is the one that
+	// expired; report it as a caller cancellation instead of mis-attributing it
+	// to queryKnowledgeTimeout.
+	if callerDeadline, ok := callerCtx.Deadline(); ok && !callerDeadline.After(internalDeadline) {
+		return fmt.Errorf("query_knowledge: query cancelled: caller deadline %s exceeded before the %s query budget",
+			callerDeadline.UTC().Format(time.RFC3339), queryKnowledgeTimeout)
+	}
+	return fmt.Errorf("query_knowledge: query timed out after %s", queryKnowledgeTimeout)
 }
 
 // tokenFromContext extracts the raw bearer/API token stored by the auth middleware.
