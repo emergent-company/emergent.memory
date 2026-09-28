@@ -239,6 +239,44 @@ func TestNeutralizeCitationLinksKeyRefRenderedMarkdown(t *testing.T) {
 	}
 }
 
+// TestNeutralizeCitationLinksAdversarial proves the citation render boundary is
+// injection-safe with model-generated labels/ids: a raw HTML label, a quote
+// breakout in a cited label, a quote/tag breakout in an uncited href, an
+// uncited raw anchor, and a javascript: scheme all render inert — no element,
+// script, or script-bearing URL can survive. The input always goes through
+// renderMarkdown first, exactly as the live snapshot and history render do.
+func TestNeutralizeCitationLinksAdversarial(t *testing.T) {
+	const (
+		cited = "11111111-1111-1111-1111-111111111111"
+		rel   = "33333333-3333-3333-3333-333333333333"
+	)
+	cites := []citation{
+		{Kind: "object", ID: cited, Type: "Person", Label: "Acme"},
+		{Kind: "relationship", ID: rel, Type: "works_at"},
+	}
+	cases := []struct{ name, in, notWant string }{
+		{"raw html in label", `[<img src=x onerror=alert(1)>](/objects/22222222-2222-2222-2222-222222222222)`, "/objects/2222"},
+		{"quote breakout in cited label", `["><img src=x onerror=alert(1)>](/objects/` + cited + `)`, "<img"},
+		{"quote breakout in uncited href", `[x](/objects/"><img src=x onerror=alert(1)>)`, "<img"},
+		{"uncited raw anchor stripped", `<a href="/objects/22222222-2222-2222-2222-222222222222">z</a>`, "/objects/2222"},
+		{"javascript scheme stripped", `[javascript](javascript:alert(1))`, "javascript:"},
+		{"encoded breakout with cited relationship", `[x](/objects/"><img/src=x/onerror=alert(1)#relationship-` + rel + `)`, "<img"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := neutralizeCitationLinks(renderMarkdown(tc.in), cites)
+			for _, bad := range []string{"<img", "<script", "javascript:", " onerror="} {
+				if strings.Contains(got, bad) {
+					t.Errorf("injection survived (%q): %s", bad, got)
+				}
+			}
+			if tc.notWant != "" && strings.Contains(got, tc.notWant) {
+				t.Errorf("unexpected %q in %s", tc.notWant, got)
+			}
+		})
+	}
+}
+
 func TestSplitLeadingReasoning(t *testing.T) {
 	cases := []struct {
 		name          string

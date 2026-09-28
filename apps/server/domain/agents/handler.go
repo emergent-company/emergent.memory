@@ -15,6 +15,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/emergent-company/emergent.memory/domain/chat/citations"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
@@ -2095,6 +2096,7 @@ func (h *Handler) GetProjectRunFull(c echo.Context) error {
 	for i, m := range messages {
 		msgDTOs[i] = m.ToDTO()
 	}
+	annotateRunMessageCitations(msgDTOs, messages, toolCalls)
 	tcDTOs := make([]*AgentRunToolCallDTO, len(toolCalls))
 	for i, tc := range toolCalls {
 		tcDTOs[i] = tc.ToDTO()
@@ -2117,6 +2119,32 @@ func (h *Handler) GetProjectRunFull(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, SuccessResponse(full))
+}
+
+// annotateRunMessageCitations attaches grounded citations to each agent-reply
+// message DTO in a run-full response, using the run's tool-call outputs as
+// candidates and the same derivation the chat/session history path uses. This
+// is what lets a reloaded run transcript (GET /agent-runs/:runId/full, rendered
+// by the gateway's /api/runs/:runId/history) surface the same Sources as the
+// live turn. User/tool/system turns and non-agent-reply messages are left
+// without citations. Non-fatal by construction: a message with no referable
+// text simply yields none.
+func annotateRunMessageCitations(msgDTOs []*AgentRunMessageDTO, messages []*AgentRunMessage, toolCalls []*AgentRunToolCall) {
+	outputs := make([]citations.ToolCall, 0, len(toolCalls))
+	for _, tc := range toolCalls {
+		if tc != nil {
+			outputs = append(outputs, citations.ToolCall{Output: tc.Output})
+		}
+	}
+	candidates := citations.Candidates(outputs)
+	for i, m := range messages {
+		if m == nil || i >= len(msgDTOs) || msgDTOs[i] == nil {
+			continue
+		}
+		if isAgentReplyRole(m.Role) {
+			msgDTOs[i].Citations = deriveMessageCitations(m.Content, candidates)
+		}
+	}
 }
 
 // GetProjectRunStats handles GET /api/projects/:projectId/agent-runs/stats
