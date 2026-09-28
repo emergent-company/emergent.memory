@@ -17,15 +17,30 @@
 set -uo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MAC="${MEMORY_MAC_HOST:-mcj@mcj-mini-2-1}"
-MACCTL="~/alfred/client/alfredctl"
+
+# The Mac target host comes from the shared config (MEMORY_MAC_HOST in the
+# environment or the gitignored apps/web-ui/.env) — no repo default is baked in
+# here. MACCTL is the device-side control binary; override with MEMORY_MAC_CTL
+# if it lives elsewhere. See tools/mac-remote.env.example.
+# shellcheck source=tools/lib/mac-remote.sh
+# shellcheck disable=SC1091
+. "$DIR/tools/lib/mac-remote.sh"
+mac_load_env
+MAC="${MEMORY_MAC_HOST:-}"
+MACCTL="${MEMORY_MAC_CTL:-~/alfred/client/alfredctl}"
 AGENT_LOG="/tmp/memory-agent.log"
 CLIENT_LOG="/tmp/memory-client.log"
 
 c_r=$'\033[31m'; c_g=$'\033[32m'; c_y=$'\033[33m'
 c_b=$'\033[34m'; c_d=$'\033[2m';  c_0=$'\033[0m'
 
-_ssh() { ssh -o ConnectTimeout=8 "$MAC" "$@" 2>/dev/null; }
+_ssh() {
+    if [ -z "$MAC" ]; then
+        echo "error: MEMORY_MAC_HOST is not set — set it in $DIR/.env (see tools/mac-remote.env.example)" >&2
+        return 1
+    fi
+    ssh -o ConnectTimeout=8 "$MAC" "$@" 2>/dev/null
+}
 
 # ------------------------------------------------------------------ status --
 
@@ -59,6 +74,7 @@ cmd_status() {
     if [ -z "$out" ]; then
         echo "  ${c_r}unreachable: $MAC${c_0}"
     else
+        # shellcheck disable=SC2001 # prefix every line of the (possibly multiline) output
         echo "$out" | sed 's/^/  /'
     fi
 }
@@ -113,7 +129,9 @@ cmd_logs() {
             if [ "$arg" = "-f" ]; then tail -f "$AGENT_LOG"
             else tail -n "$arg" "$AGENT_LOG"; fi ;;
         client)
-            if [ "$arg" = "-f" ]; then ssh "$MAC" "tail -f $CLIENT_LOG"
+            if [ "$arg" = "-f" ]; then
+                # shellcheck disable=SC2029 # $CLIENT_LOG is meant to expand on the Mac
+                ssh "$MAC" "tail -f $CLIENT_LOG"
             else _ssh "tail -n $arg $CLIENT_LOG"; fi ;;
         *) echo "usage: memory logs <agent|client> [-f|N]"; exit 1 ;;
     esac

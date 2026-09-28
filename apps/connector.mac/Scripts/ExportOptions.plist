@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  teamID default: 74LC88G9SC (this repo's team).
+  build-dmg.sh renders a resolved copy of this file with `plutil -replace
+  teamID` from the DEVELOPMENT_TEAM env/secret, so forks set that variable
+  instead of editing this tracked file.
+-->
 <plist version="1.0">
 <dict>
     <key>method</key>
