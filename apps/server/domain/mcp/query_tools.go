@@ -28,7 +28,9 @@ func queryToolDefinitions() []ToolDefinition {
 			RequiredScope: "search",
 			Description: "Ask a natural language question against the project's knowledge graph. The system finds relevant entities and relationships, " +
 				"then generates a grounded answer using the connected LLM provider. " +
-				"Returns the assembled answer text, a truncated flag if the response was cut short, and a session_id to continue the conversation. " +
+				"Returns the assembled answer text and a session_id to continue the conversation. " +
+				"If the underlying query is cancelled or exceeds its time budget the tool call fails with an error, so an empty answer " +
+				"always means the corpus had nothing to say — never a silent timeout. " +
 				"Pass session_id from a prior call to continue a previous conversation. Pass branch to scope the query to a specific branch (e.g. \"plan/main\").",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -97,7 +99,7 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 	// The query endpoint is on the same server — use the server's own listen address.
 	url := fmt.Sprintf("http://localhost:%d/api/projects/%s/query", s.serverPort, projectID)
 
-	// Apply 60-second timeout
+	// Apply the tool's query time budget.
 	queryCtx, cancel := context.WithTimeout(ctx, queryKnowledgeTimeout)
 	defer cancel()
 
@@ -126,12 +128,8 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		if queryCtx.Err() != nil {
-			return s.wrapResult(map[string]any{
-				"answer":    "",
-				"truncated": true,
-				"error":     "query timed out after 60s",
-			})
+		if ctxErr := queryCtx.Err(); ctxErr != nil {
+			return nil, queryKnowledgeCtxError(ctxErr)
 		}
 		return nil, fmt.Errorf("query_knowledge: request failed: %w", err)
 	}
@@ -145,7 +143,6 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 	var parts []string
 	var returnedSessionID string
 	var returnedRunID string
-	truncated := false
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -179,19 +176,23 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 			}
 		}
 		if queryCtx.Err() != nil {
-			truncated = true
 			break
 		}
 	}
 
-	if queryCtx.Err() != nil && !truncated {
-		truncated = true
+	// An expired or cancelled context means the stream never completed: the
+	// nested graph-query-agent run is cancelled along with it, so there is no
+	// answer to assemble. Report that as a failed tool call rather than an
+	// empty "successful" answer, which callers cannot distinguish from a
+	// corpus that simply has nothing to say.
+	if ctxErr := queryCtx.Err(); ctxErr != nil {
+		return nil, queryKnowledgeCtxError(ctxErr)
 	}
 
 	answer := strings.Join(parts, "")
 	result := map[string]any{
 		"answer":    answer,
-		"truncated": truncated,
+		"truncated": false,
 	}
 	if returnedSessionID != "" {
 		result["session_id"] = returnedSessionID
@@ -200,6 +201,18 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 		result["run_id"] = returnedRunID
 	}
 	return s.wrapResult(result)
+}
+
+// queryKnowledgeCtxError converts an expired or cancelled query context into a
+// tool error. A timeout reports the actual budget (queryKnowledgeTimeout); a
+// parent cancellation is propagated as such. Returning an error — rather than a
+// {"ok":true,"answer":""} result — lets callers tell "timed out" apart from
+// "the corpus has no answer" (issue #1187).
+func queryKnowledgeCtxError(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("query_knowledge: query timed out after %s", queryKnowledgeTimeout)
+	}
+	return fmt.Errorf("query_knowledge: query cancelled: %w", err)
 }
 
 // tokenFromContext extracts the raw bearer/API token stored by the auth middleware.

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
 	"github.com/stretchr/testify/assert"
@@ -304,6 +305,62 @@ func TestExecuteForget_403MissingScopeSurfaced(t *testing.T) {
 	assert.Contains(t, err.Error(), "Insufficient permissions")
 	assert.Contains(t, err.Error(), "chat:use")
 	assert.Contains(t, err.Error(), "missing required scope")
+}
+
+// =============================================================================
+// Timeout / cancellation surface as errors, never as empty successes (#1187)
+// =============================================================================
+
+func TestExecuteQueryKnowledge_ExpiredContextReturnsTimeoutError(t *testing.T) {
+	// A context already past its deadline makes client.Do fail; the handler must
+	// report a timeout rather than {"ok":true,"answer":""}.
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	svc := &Service{serverPort: 1} // never dialed: the context is already expired
+	_, err := svc.executeQueryKnowledge(ctx, "proj-id", map[string]any{"question": "q"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timed out after")
+	assert.Contains(t, err.Error(), queryKnowledgeTimeout.String())
+	assert.NotContains(t, err.Error(), "60s", "must report the actual budget, not a stale 60s string")
+}
+
+func TestExecuteQueryKnowledge_CancelledContextReturnsCancelledError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	svc := &Service{serverPort: 1}
+	_, err := svc.executeQueryKnowledge(ctx, "proj-id", map[string]any{"question": "q"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cancelled")
+	assert.NotContains(t, err.Error(), "timed out")
+}
+
+func TestExecuteQueryKnowledge_DeadlineDuringStreamReturnsError(t *testing.T) {
+	// The server emits a token then stalls. When the deadline lands mid-stream
+	// the handler must fail rather than hand back the partial answer as success.
+	ts, port := sseServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, buildSseLines(`{"type":"token","token":"partial answer"}`))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		select {
+		case <-r.Context().Done():
+		case <-time.After(2 * time.Second):
+		}
+	})
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+
+	svc := &Service{serverPort: port}
+	result, err := svc.executeQueryKnowledge(ctx, "proj-id", map[string]any{"question": "q"})
+	require.Error(t, err)
+	assert.Nil(t, result, "a timed-out query must not return a successful result")
+	assert.Contains(t, err.Error(), "timed out after")
 }
 
 // =============================================================================
