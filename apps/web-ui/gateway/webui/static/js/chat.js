@@ -263,6 +263,11 @@
     // when #chat-agent is absent.
     if (root.dataset.run) {
       activeRunId = root.dataset.run;
+      // Subscribe to the run's live push channel too: this standalone page
+      // freezes just like the in-workspace transcript otherwise. Same
+      // teardown rules as the /chat surface (openLiveStream closes any other
+      // scope before opening this one).
+      openRunStream(activeRunId);
       renderRunHistory(activeRunId);
       return;
     }
@@ -696,15 +701,25 @@
     scrollToBottom(true); // opening a run: jump to the latest message
   }
 
+  // Scope guard: a transcript fetch is async, so by the time it resolves the
+  // user may have switched scope (opened another conversation/run). Rendering
+  // then would wipe the new scope's transcript with the old scope's history.
+  // Drop the result unless the pane still shows the scope the fetch belongs to.
+  function scopeIsCurrent(id) {
+    return currentScopeIsRun() ? activeRunId === id : conversationId === id;
+  }
+
   async function renderRunHistory(runId) {
     var data = await fetchTimeline("/api/runs/" + encodeURIComponent(runId) + "/history");
     if (!data) return;
+    if (!currentScopeIsRun() || !scopeIsCurrent(runId)) return; // scope switched mid-fetch
     renderTimelineItems(data.items || [], data.pending_approvals || []);
   }
 
   async function renderHistory(id) {
     var data = await fetchTimeline("/api/conversations/" + encodeURIComponent(id) + "/history");
     if (!data) return;
+    if (currentScopeIsRun() || !scopeIsCurrent(id)) return; // scope switched mid-fetch
     renderTimelineItems(data.items || [], data.pending_approvals || []);
   }
 
