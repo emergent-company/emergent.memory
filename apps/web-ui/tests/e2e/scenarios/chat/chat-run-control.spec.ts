@@ -295,6 +295,21 @@ test.describe('chat run-control scenarios', () => {
       projectId = seeded.projectId;
       agentId = seeded.agentId;
 
+      // #1204: a brand-new conversation must subscribe to the durable
+      // conversation events stream once the meta event supplies its id (it
+      // previously opened no EventSource at all until a resume). Record the
+      // EventSource GET so the subscription is asserted, not assumed.
+      const eventsCalls: string[] = [];
+      page.on('request', (req) => {
+        try {
+          if (/^\/api\/conversations\/[^/]+\/events$/.test(new URL(req.url()).pathname)) {
+            eventsCalls.push(req.url());
+          }
+        } catch {
+          /* non-URL request */
+        }
+      });
+
       await openChat(page, agentId);
       await page.locator('#chat-input').fill('Say hello.');
       await page.locator('#chat-send').click();
@@ -315,6 +330,10 @@ test.describe('chat run-control scenarios', () => {
       // indicator (never a "Done" label on a live turn).
       const badge = row.locator('.memory-rail-badge');
       await expect(badge).toContainText('Running', { timeout: 30_000 });
+
+      // The brand-new conversation subscribed to its live channel (the meta
+      // event assigns the id mid-turn) — #1204.
+      await expect.poll(() => eventsCalls.length, { timeout: 60_000 }).toBeGreaterThan(0);
 
       await expect
         .poll(async () => (await row.getAttribute('data-bucket')) ?? '', { timeout: 180_000 })
