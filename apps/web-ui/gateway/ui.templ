@@ -165,6 +165,7 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 			<script src={ templ.SafeURL(webui.AssetPath("/js/chat-components.js")) }></script>
 			<script src={ templ.SafeURL(webui.AssetPath("/js/chat-stream.js")) }></script>
 			<script src={ templ.SafeURL(webui.AssetPath("/js/chat-host.js")) }></script>
+			<script src={ templ.SafeURL(webui.AssetPath("/js/chat.js")) }></script>
 			<script src={ templ.SafeURL(webui.AssetPath("/js/sidepanel.js")) }></script>
 			if feedbackOverlayURL != "" {
 				<script src={ templ.SafeURL(feedbackOverlayURL + "/feedback-overlay.js") } data-api={ feedbackOverlayURL } data-repo="emergent-company/emergent.memory" data-label="feedback" async></script>

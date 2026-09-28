@@ -2150,6 +2150,13 @@
   // stack duplicate listeners.
   window.addEventListener("resize", railGrip.onWindowResize);
 
+  // hx-boosted navigation swaps #main-content in place and does NOT fire
+  // DOMContentLoaded; the swapped #chat-root is a fresh element with no
+  // data-ready. Re-init after every swap (init() is idempotent per #chat-root).
+  // This file is loaded once from the shell — it must not live in the swapped
+  // fragment, where htmx re-executes it in a racy order relative to the swap.
+  document.addEventListener("htmx:after:swap", init);
+
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);
   } else {
