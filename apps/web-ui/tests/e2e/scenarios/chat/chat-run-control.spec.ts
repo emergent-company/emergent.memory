@@ -295,6 +295,21 @@ test.describe('chat run-control scenarios', () => {
       projectId = seeded.projectId;
       agentId = seeded.agentId;
 
+      // #1204: a brand-new conversation must subscribe to the durable
+      // conversation events stream once the meta event supplies its id (it
+      // previously opened no EventSource at all until a resume). Record the
+      // EventSource GET so the subscription is asserted, not assumed.
+      const eventsCalls: string[] = [];
+      page.on('request', (req) => {
+        try {
+          if (/^\/api\/conversations\/[^/]+\/events$/.test(new URL(req.url()).pathname)) {
+            eventsCalls.push(req.url());
+          }
+        } catch {
+          /* non-URL request */
+        }
+      });
+
       await openChat(page, agentId);
       await page.locator('#chat-input').fill('Say hello.');
       await page.locator('#chat-send').click();
@@ -316,6 +331,10 @@ test.describe('chat run-control scenarios', () => {
       const badge = row.locator('.memory-rail-badge');
       await expect(badge).toContainText('Running', { timeout: 30_000 });
 
+      // The brand-new conversation subscribed to its live channel (the meta
+      // event assigns the id mid-turn) — #1204.
+      await expect.poll(() => eventsCalls.length, { timeout: 60_000 }).toBeGreaterThan(0);
+
       await expect
         .poll(async () => (await row.getAttribute('data-bucket')) ?? '', { timeout: 180_000 })
         .toBe('done');
@@ -326,6 +345,66 @@ test.describe('chat run-control scenarios', () => {
       await expect(badge).not.toContainText('Done');
 
       expect(new URL(page.url()).pathname).toBe('/chat');
+    } finally {
+      await cleanup(page, agentId, projectId);
+    }
+  });
+
+  test('the standalone /runs/:runId page subscribes to its live events stream', async ({ page }) => {
+    test.setTimeout(300_000);
+    test.skip(
+      !API_KEY,
+      'E2E_SCENARIO_LLM_API_KEY is not set — the chat turn calls a real model. Set it in ' +
+        'tests/e2e/.env.e2e to run this scenario.',
+    );
+
+    const name = `E2E RunPage Stream ${Date.now()}`;
+    let projectId = '';
+    let agentId = '';
+
+    try {
+      const systemPrompt =
+        `You are an automated test assistant. Answer the user's question in one short ` +
+        `sentence. Never call tools.`;
+      const seeded = await createScratchAgent(page, name, systemPrompt, [], 'allow');
+      projectId = seeded.projectId;
+      agentId = seeded.agentId;
+
+      await openChat(page, agentId);
+      await page.locator('#chat-input').fill('Say hello.');
+      await page.locator('#chat-send').click();
+
+      // A turn on a new conversation assigns its id (meta event) and creates a
+      // run; read the newest run id back from the conversation history.
+      await expect
+        .poll(() => new URL(page.url()).searchParams.get('c') ?? '', { timeout: 60_000 })
+        .not.toBe('');
+      const cid = new URL(page.url()).searchParams.get('c')!;
+
+      const histResp = await page.request.get(`/api/conversations/${cid}/history`);
+      expect(histResp.ok()).toBeTruthy();
+      const items = ((await histResp.json()).items || []) as Array<{ run_id?: string }>;
+      let runId = '';
+      for (const it of items) if (it && it.run_id) runId = it.run_id;
+      if (!runId) {
+        test.skip(true, 'the turn has not persisted a run id yet — run page not exercised');
+        return;
+      }
+
+      // The standalone run page (#chat-root[data-run]) must open its run-scoped
+      // events stream, not just render once — otherwise it freezes mid-run.
+      const eventsCalls: string[] = [];
+      page.on('request', (req) => {
+        try {
+          if (new URL(req.url()).pathname === `/api/runs/${runId}/events`) eventsCalls.push(req.url());
+        } catch {
+          /* non-URL request */
+        }
+      });
+
+      await page.goto(`/runs/${runId}`);
+      await expect(page.locator('#chat-root[data-run]')).toBeVisible();
+      await expect.poll(() => eventsCalls.length, { timeout: 30_000 }).toBeGreaterThan(0);
     } finally {
       await cleanup(page, agentId, projectId);
     }

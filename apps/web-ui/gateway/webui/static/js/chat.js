@@ -41,7 +41,8 @@
   var filterAgent = "";   // session rail agent filter ("" = all agents)
   var filterOrigin = "";  // session rail origin filter ("" = all types)
   var aborter = null;
-  var eventSource = null;   // SSE live-update channel for the active conversation
+  var eventSource = null;   // SSE live-update channel for the active conversation/run
+  var eventSourceId = "";   // scope key the current eventSource is subscribed to ("conv:<id>" / "run:<id>")
   var streaming = false;
   var bubble = null;        // current streaming assistant bubble
   var bubbleHTML = "";      // accumulated assistant rendered HTML (snapshot)
@@ -159,6 +160,11 @@
         }
         updateUrl();
         if (isNew) refreshSessionRail();
+        // A brand-new conversation has an id now, so subscribe it to the
+        // durable push channel (the one-shot turn stream ends when the run
+        // pauses). openLiveStream dedupes an already-watched id, so a turn on
+        // an existing conversation does not stack a second source.
+        openConversationStream(evt.conversationId);
       }
     },
   });
@@ -196,9 +202,8 @@
     onStreamFail: function () {
       finalizeThinking();
       // A failed turn must clear the optimistic "Running" badge: the failure
-      // path never runs finishTurn, and a brand-new conversation has no
-      // EventSource to repaint the row, so re-pull the rail to show the
-      // server's authoritative bucket (done/failed) instead of a stuck spinner.
+      // path never runs finishTurn, so re-pull the rail to show the server's
+      // authoritative bucket (done/failed) instead of a stuck spinner.
       if (conversationId) refreshSessionRail();
     },
     answerQuestion: answerQuestion,
@@ -258,6 +263,11 @@
     // when #chat-agent is absent.
     if (root.dataset.run) {
       activeRunId = root.dataset.run;
+      // Subscribe to the run's live push channel too: this standalone page
+      // freezes just like the in-workspace transcript otherwise. Same
+      // teardown rules as the /chat surface (openLiveStream closes any other
+      // scope before opening this one).
+      openRunStream(activeRunId);
       renderRunHistory(activeRunId);
       return;
     }
@@ -457,7 +467,7 @@
   }
 
   function resetConversation() {
-    if (eventSource) { eventSource.close(); eventSource = null; }
+    closeLiveStream();
     if (aborter) aborter.abort();
     clearThinking();
     conversationId = "";
@@ -574,6 +584,50 @@
 
   /* ---------- history transcript (issue: full transcript) ---------- */
 
+  // Live-update SSE channel. One EventSource at a time, keyed by scope
+  // ("conv:<id>" or "run:<id>"). openLiveStream reuses an already-open source
+  // for the same scope and closes any other before opening, so switching
+  // surfaces never leaks connections or stacks duplicate sources. The
+  // one-shot /api/chat stream ends when a run pauses, so this durable push
+  // channel is what keeps a resumed page/run/dock current.
+  function closeLiveStream() {
+    if (eventSource) { eventSource.close(); eventSource = null; }
+    eventSourceId = "";
+  }
+
+  function openLiveStream(scopeKey, url, onRefresh) {
+    if (!scopeKey) return;
+    if (eventSource && eventSourceId === scopeKey) return; // already watching this scope
+    closeLiveStream();
+    eventSourceId = scopeKey;
+    eventSource = new EventSource(url);
+    eventSource.onmessage = function (ev) {
+      var m;
+      try { m = JSON.parse(ev.data); } catch (e) { return; }
+      if (!m || m.type !== "refresh") return;
+      handleRefreshPayload(m);
+      if (!streaming) onRefresh();
+    };
+    eventSource.onerror = function () { /* EventSource auto-reconnects; no-op */ };
+  }
+
+  // openConversationStream watches an /api/chat conversation (used by resume
+  // and by a brand-new conversation once the meta event supplies its id).
+  function openConversationStream(id) {
+    openLiveStream("conv:" + id, "/api/conversations/" + encodeURIComponent(id) + "/events", function () {
+      renderHistory(id);
+    });
+  }
+
+  // openRunStream watches a scheduled agent run's synthesized timeline, so an
+  // opened run transcript shows step progress live (a run is not an /api/chat
+  // conversation and previously had no push channel at all).
+  function openRunStream(runId) {
+    openLiveStream("run:" + runId, "/api/runs/" + encodeURIComponent(runId) + "/events", function () {
+      renderRunHistory(runId);
+    });
+  }
+
   async function resumeConversation(id, agentId, item) {
     if (aborter) aborter.abort();
     setStreaming(false);
@@ -601,18 +655,11 @@
     // Live updates for this conversation: the one-shot /api/chat SSE stream
     // ends when the run pauses (tool approval / ask_user), so watch the push
     // channel instead — it fires when the conversation's state changes
-    // (run ends, a decision lands from /settings/approvals, …). Reopened on
-    // every resume so a stale connection never lingers.
-    if (eventSource) eventSource.close();
-    eventSource = new EventSource("/api/conversations/" + encodeURIComponent(id) + "/events");
-    eventSource.onmessage = function (ev) {
-      var m;
-      try { m = JSON.parse(ev.data); } catch (e) { return; }
-      if (!m || m.type !== "refresh") return;
-      handleRefreshPayload(m);
-      if (!streaming) renderHistory(id);
-    };
-    eventSource.onerror = function () { /* EventSource auto-reconnects; no-op */ };
+    // (run ends, a step is persisted, a decision lands from
+    // /settings/approvals, …). Reopened on every resume so a stale connection
+    // never lingers; openLiveStream dedupes when this conversation is already
+    // the watched scope.
+    openConversationStream(id);
 
     // switch the agent picker to the conversation's agent (if still known)
     if (agentId && agentSelect) {
@@ -638,31 +685,41 @@
 
   // Open a scheduled run in the chat workspace: fetch its synthesized history
   // (GET /api/runs/{id}/history) and render it with the same item renderer as
-  // conversation transcripts. Runs have no /api/chat SSE push channel, so no
-  // EventSource here — answering a pending ask_user card re-renders this
-  // history via the scope-aware answerQuestion below.
+  // conversation transcripts. The run-scoped SSE stream (/api/runs/{id}/events)
+  // keeps the transcript live as the executor persists steps; answering a
+  // pending ask_user card also re-renders via the scope-aware answerQuestion.
   async function resumeRun(runId, item) {
     if (aborter) aborter.abort();
     setStreaming(false);
-    if (eventSource) { eventSource.close(); eventSource = null; }
     conversationId = ""; // a run is not an /api/chat conversation
     activeRunId = runId;
     updateUrl();
+    openRunStream(runId);
     await renderRunHistory(runId);
     markRailItem(runId);
     if (item) item.setAttribute("data-active", "true");
     scrollToBottom(true); // opening a run: jump to the latest message
   }
 
+  // Scope guard: a transcript fetch is async, so by the time it resolves the
+  // user may have switched scope (opened another conversation/run). Rendering
+  // then would wipe the new scope's transcript with the old scope's history.
+  // Drop the result unless the pane still shows the scope the fetch belongs to.
+  function scopeIsCurrent(id) {
+    return currentScopeIsRun() ? activeRunId === id : conversationId === id;
+  }
+
   async function renderRunHistory(runId) {
     var data = await fetchTimeline("/api/runs/" + encodeURIComponent(runId) + "/history");
     if (!data) return;
+    if (!currentScopeIsRun() || !scopeIsCurrent(runId)) return; // scope switched mid-fetch
     renderTimelineItems(data.items || [], data.pending_approvals || []);
   }
 
   async function renderHistory(id) {
     var data = await fetchTimeline("/api/conversations/" + encodeURIComponent(id) + "/history");
     if (!data) return;
+    if (currentScopeIsRun() || !scopeIsCurrent(id)) return; // scope switched mid-fetch
     renderTimelineItems(data.items || [], data.pending_approvals || []);
   }
 
@@ -1119,12 +1176,12 @@
     refreshActiveTranscript();
     clearHeaderStatus();
     liveRunStatus = "";
-    // A brand-new conversation has no EventSource subscription (one is opened
-    // only in resumeConversation), so no refresh payload fires to repaint its
-    // rail row after the turn. Re-pull the rail so the optimistic "Running"
-    // badge clears once the turn ends — the run's run_end item is now in
-    // history, so the server's re-derived bucket is authoritative. Fire-and-
-    // forget, like the other post-turn refresh calls.
+    // Re-pull the rail so the optimistic "Running" badge clears once the turn
+    // ends — the run's run_end item is now in history, so the server's
+    // re-derived bucket is authoritative. A brand-new conversation now also
+    // subscribes on its meta event, so this is a defence-in-depth refresh that
+    // guarantees the row repaints even if that hub frame was dropped while
+    // streaming. Fire-and-forget, like the other post-turn refresh calls.
     if (conversationId) refreshSessionRail();
     // Release the parked queue only after the engine finishes its own teardown
     // (streaming flag, bubble update) — otherwise the fresh turn this starts
@@ -1386,6 +1443,7 @@
     // /api/chat conversation, so abandon the run scope and clear its bubbles.
     if (activeRunId) {
       activeRunId = "";
+      closeLiveStream(); // drop the abandoned run's push channel
       clearActiveRailItem();
       clearThinking();
       updateUrl();

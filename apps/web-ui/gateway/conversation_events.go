@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,11 +9,26 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/labstack/echo/v4"
 )
+
+// runScopePrefix marks a hub subscription key that watches an agent run rather
+// than an /api/chat conversation (issue #1204). Conversation ids are UUIDs, so
+// a real conversation id can never collide with the prefix.
+const runScopePrefix = "run:"
+
+// runScopeKey is the hub/fingerprint key for a run-scoped subscription.
+func runScopeKey(runID string) string { return runScopePrefix + runID }
+
+// isRunScope reports whether a hub subscription key watches a run.
+func isRunScope(key string) bool { return strings.HasPrefix(key, runScopePrefix) }
+
+// runIDFromScope extracts the run id from a run-scoped subscription key.
+func runIDFromScope(key string) string { return strings.TrimPrefix(key, runScopePrefix) }
 
 // pollFailureCaptureInterval is the minimum gap between Sentry captures while a
 // background poll failure streak continues.
@@ -264,6 +280,48 @@ type conversationRunState struct {
 	activeRunID      string
 	activeRunStatus  string
 	bucket           string
+	// progressCount and progressMark are the monotonic step/message/tool
+	// progress signal: the number of step-bearing items (messages + tool calls)
+	// in the transcript and a marker (newest item id, falling back to its
+	// timestamp) that changes as items are persisted. A run that stays
+	// `running` (same bucket/runId/status) would otherwise fingerprint
+	// identically between polls, so a page reloaded mid-run stayed frozen until
+	// the run ended (issue #1203). Both are cheap to derive from the history
+	// fetch the poller already performs.
+	progressCount int
+	progressMark  string
+}
+
+// runStateFingerprint is the change-detection key the poller compares tick to
+// tick to decide whether a subscriber deserves a refresh frame. It must cover
+// every run-state transition — bucket, active run id, and active run status
+// included — so a completed run followed by a new run_start (runEndCount
+// unchanged) still re-broadcasts instead of leaving the rail stuck at "done".
+// The step/message/tool progress fields are part of the fingerprint so a run
+// that stays `running` as the executor persists steps re-broadcasts (issue
+// #1203). The poller ticks every 1.5s and each transcript item is persisted
+// once, so this yields at most one refresh per tick per conversation — never a
+// refresh storm — and stays stable while the transcript is unchanged.
+func runStateFingerprint(st *conversationRunState) string {
+	if st == nil {
+		return ""
+	}
+	return fmt.Sprintf("%d|%s|%s|%s|%v|%v|%d|%s", st.runEndCount, st.bucket, st.activeRunID, st.activeRunStatus, st.pendingApprovals, st.pendingQuestions, st.progressCount, st.progressMark)
+}
+
+// isProgressItem reports whether a timeline item is step/message/tool progress
+// (as opposed to a run lifecycle boundary, which the fingerprint already covers
+// via the bucket + active run fields).
+func isProgressItem(it TimelineItem) bool {
+	return it.Kind == "message" || it.Kind == "tool_call"
+}
+
+// progressMarker is the ordering key for the newest progress item: its
+// timestamp when present, falling back to its id. The count already detects an
+// appended step; the marker additionally catches a transcript whose newest item
+// changed identity (e.g. a re-fetched/annotated item) without changing count.
+func progressMarker(it TimelineItem) string {
+	return cmp.Or(it.CreatedAt, it.ID)
 }
 
 // refreshPayload is the shape broadcast to conversation subscribers. Existing
@@ -367,18 +425,20 @@ func (s *Server) broadcastConversationChanges(ctx context.Context, convs map[str
 			if groupSC != nil {
 				cc = withSessionContext(ctx, groupSC)
 			}
-			st, err := s.conversationState(cc, id, approvals, questions)
+			var st *conversationRunState
+			var err error
+			if isRunScope(id) {
+				st, err = s.runState(cc, runIDFromScope(id), approvals, questions)
+			} else {
+				st, err = s.conversationState(cc, id, approvals, questions)
+			}
 			if err != nil {
 				// Per-conversation failures are expected (deleted/not-yet-visible
 				// conversation) and are skipped; log for triage, never capture.
 				log.Printf("conversation poll: conversation state (%s): %v", pollLogContext(id, groupSC), err)
 				continue
 			}
-			// The fingerprint must cover every run-state transition — bucket,
-			// active run id, and active run status included — so a completed run
-			// followed by a new run_start (runEndCount unchanged) still
-			// re-broadcasts instead of leaving the rail stuck at "done".
-			fp := fmt.Sprintf("%d|%s|%s|%s|%v|%v", st.runEndCount, st.bucket, st.activeRunID, st.activeRunStatus, st.pendingApprovals, st.pendingQuestions)
+			fp := runStateFingerprint(st)
 			if !s.hub.updateFingerprint(id, fp) {
 				continue
 			}
@@ -399,8 +459,49 @@ func (s *Server) conversationState(ctx context.Context, id string, approvals []T
 	if err != nil {
 		return nil, err
 	}
+	return runStateFromTimeline(parseTimeline(hist.Items), approvals, questions, func(a ToolApprovalItem) bool {
+		return a.ConversationID == id
+	}), nil
+}
+
+// runState derives the same change-detection state as conversationState, but
+// for a scheduled agent run: it reads the run's synthesized timeline (runs have
+// no /api/chat conversation) and matches pending approvals by the approval's
+// run id. Used by the run-scoped events stream so a scheduled run shows live
+// step progress (issue #1204).
+//
+// The run timeline carries no run_start/run_end items, so the timeline alone
+// yields an empty run id/status and a permanent `done` bucket: the run's own
+// DTO supplies the live id + status. Without it a run's terminal status-only
+// transition would never move the fingerprint (no refresh) and the refresh
+// payload would misreport the run's status.
+func (s *Server) runState(ctx context.Context, runID string, approvals []ToolApprovalItem, questions []AgentQuestionItem) (*conversationRunState, error) {
+	hist, run, err := s.runTimelineWithRun(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	st := runStateFromTimeline(parseTimeline(hist.Items), approvals, questions, func(a ToolApprovalItem) bool {
+		return a.RunID == runID
+	})
+	if run == nil {
+		st.activeRunID = runID
+		return st, nil
+	}
+	st.activeRunID = cmp.Or(run.ID, runID)
+	st.activeRunStatus = run.Status
+	// Recompute with the real status so run:<id> reports running/failed/…
+	// rather than a permanent done bucket.
+	st.bucket = deriveRunBucket(st.activeRunStatus, st.pendingApprovals, st.pendingQuestions)
+	return st, nil
+}
+
+// runStateFromTimeline folds a parsed transcript plus the already-fetched
+// project-wide approval/question snapshots into one conversationRunState.
+// matchApproval selects the approvals belonging to this scope (conversation id
+// or run id). It is the single source of truth for both the SSE
+// change-detection fingerprint and the refresh payload the rail/dock consume.
+func runStateFromTimeline(items []TimelineItem, approvals []ToolApprovalItem, questions []AgentQuestionItem, matchApproval func(ToolApprovalItem) bool) *conversationRunState {
 	st := &conversationRunState{bucket: runBucketDone}
-	items := parseTimeline(hist.Items)
 	for _, it := range items {
 		switch it.Kind {
 		case "run_end":
@@ -411,6 +512,10 @@ func (s *Server) conversationState(ctx context.Context, id string, approvals []T
 			st.activeRunID = it.RunID
 			st.activeRunStatus = it.RunStatus
 		}
+		if isProgressItem(it) {
+			st.progressCount++
+			st.progressMark = max(st.progressMark, progressMarker(it))
+		}
 	}
 	answered := make(map[string]bool, len(questions))
 	for _, q := range questions {
@@ -419,7 +524,7 @@ func (s *Server) conversationState(ctx context.Context, id string, approvals []T
 		}
 	}
 	for _, a := range approvals {
-		if a.ConversationID == id && a.Decision == "pending" {
+		if matchApproval(a) && a.Decision == "pending" {
 			st.pendingApprovals = append(st.pendingApprovals, a.QuestionID)
 		}
 	}
@@ -440,14 +545,29 @@ func (s *Server) conversationState(ctx context.Context, id string, approvals []T
 		st.pendingQuestions = append(st.pendingQuestions, qid)
 	}
 	st.bucket = deriveRunBucket(st.activeRunStatus, st.pendingApprovals, st.pendingQuestions)
-	return st, nil
+	return st
 }
 
 // conversationEvents is the SSE endpoint a chat page subscribes to. It sends an
 // immediate refresh so a fresh/reconnecting client gets current state, then
 // forwards hub broadcasts plus a 25s heartbeat until the client disconnects.
 func (s *Server) conversationEvents(c echo.Context) error {
-	id := c.Param("id")
+	return s.streamEvents(c, c.Param("id"))
+}
+
+// runEvents is the run-scoped counterpart of conversationEvents: a scheduled
+// agent run has no /api/chat conversation, so it subscribes under a run-prefixed
+// hub key and the poller fingerprints the run's synthesized timeline instead.
+// This gives the run transcript page live step progress (issue #1204).
+func (s *Server) runEvents(c echo.Context) error {
+	return s.streamEvents(c, runScopeKey(c.Param("runId")))
+}
+
+// streamEvents serves one hub subscription as SSE: an immediate refresh frame,
+// then hub broadcasts plus a 25s heartbeat until the client disconnects. key is
+// the hub/fingerprint key — a conversation id, or runScopeKey(runID).
+func (s *Server) streamEvents(c echo.Context, key string) error {
+	id := key
 	w := c.Response().Writer
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")

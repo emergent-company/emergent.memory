@@ -319,6 +319,97 @@ func TestPollFailureKeyExcludesToken(t *testing.T) {
 	}
 }
 
+// TestRunStateFingerprintChangesOnStepProgress is the unit-level regression
+// test for #1203: the change-detection fingerprint MUST move when a run
+// persists a step/message/tool call, and MUST stay stable when nothing
+// changed. The "stepped" sub-case fails against the pre-fix fingerprint, which
+// ignored all step/message/tool progress.
+func TestRunStateFingerprintChangesOnStepProgress(t *testing.T) {
+	base := &conversationRunState{
+		runEndCount:     1,
+		bucket:          runBucketRunning,
+		activeRunID:     "r1",
+		activeRunStatus: "working",
+	}
+
+	// Identical state fingerprints identically — no spurious broadcasts.
+	same := &conversationRunState{runEndCount: 1, bucket: runBucketRunning, activeRunID: "r1", activeRunStatus: "working"}
+	if got, want := runStateFingerprint(base), runStateFingerprint(same); got != want {
+		t.Fatalf("identical state fingerprint = %q, want stable %q", got, want)
+	}
+
+	// A step advancing while the run stays `running` (same run id/status, no
+	// new run_end, no pending decision) MUST change the fingerprint. The legacy
+	// fingerprint carries all of those unchanged fields, so it is equal here —
+	// which is exactly the pre-fix bug the assertion guards against.
+	stepped := *base
+	stepped.progressCount = 1
+	stepped.progressMark = "m1"
+	if got, want := runStateFingerprint(&stepped), runStateFingerprint(base); got == want {
+		t.Fatalf("fingerprint did not change on step progress: %q == %q (step/message/tool progress ignored)", got, want)
+	}
+
+	// The next step changes it again.
+	stepped2 := stepped
+	stepped2.progressCount = 2
+	stepped2.progressMark = "m2"
+	if got, want := runStateFingerprint(&stepped2), runStateFingerprint(&stepped); got == want {
+		t.Fatalf("fingerprint did not change on the next step: %q == %q", got, want)
+	}
+
+	// The fields the out-of-band refresh depends on still move it.
+	variant := *base
+	variant.pendingQuestions = []string{"q1"}
+	if runStateFingerprint(&variant) == runStateFingerprint(base) {
+		t.Fatal("fingerprint must still change when a question becomes pending")
+	}
+}
+
+// TestHubPollerRebroadcastsOnStepProgressWithinRunningRun is the poller-level
+// regression test for #1203: a running run that persists a step re-broadcasts,
+// even though runEndCount/bucket/runId/status/pending are all unchanged.
+func TestHubPollerRebroadcastsOnStepProgressWithinRunningRun(t *testing.T) {
+	runStart := json.RawMessage(`{"kind":"run_start","run_id":"r1","run_status":"working"}`)
+	step := json.RawMessage(`{"kind":"tool_call","id":"t1","run_id":"r1","step_number":1,"created_at":"2026-01-01T00:00:01Z","tool_name":"search","tool_status":"completed"}`)
+	m := &scriptedMemory{
+		fakeMemory: &fakeMemory{},
+		histories: []*ConversationHistory{
+			{ConversationID: "c1", Items: []json.RawMessage{runStart}},
+			{ConversationID: "c1", Items: []json.RawMessage{runStart, step}},
+		},
+	}
+	s := newHubTestServer(m)
+
+	ch := s.hub.subscribe("c1", nil)
+	defer s.hub.unsubscribe("c1", ch)
+
+	// First tick: the run started, so the bucket flipped to running and the
+	// (empty) baseline fingerprint changed.
+	s.broadcastConversationChanges(context.Background(), s.hub.subscribedConvs())
+	select {
+	case <-ch:
+	default:
+		t.Fatal("first tick must broadcast the running state")
+	}
+
+	// Second tick: a step was persisted while the run stayed running, with no
+	// new run_end and no pending decision. Every legacy fingerprint field is
+	// unchanged; only the step/message/tool progress signal can re-broadcast.
+	s.broadcastConversationChanges(context.Background(), s.hub.subscribedConvs())
+	select {
+	case msg := <-ch:
+		var p refreshPayload
+		if err := json.Unmarshal(msg, &p); err != nil {
+			t.Fatalf("second-tick payload is not a refresh frame: %v (%s)", err, msg)
+		}
+		if p.Bucket != runBucketRunning || p.RunID != "r1" {
+			t.Errorf("second-tick payload = %+v, want running bucket with run r1", p)
+		}
+	default:
+		t.Error("a persisted step must re-broadcast a refresh frame while the run is still running (#1203)")
+	}
+}
+
 // TestHubPollerRebroadcastsOnNewRunWithSamePendingState asserts the poller
 // fingerprint covers the bucket + active run id/status, so a completed run
 // followed by a new run_start (runEndCount and pending approvals/questions both
@@ -366,5 +457,69 @@ func TestHubPollerRebroadcastsOnNewRunWithSamePendingState(t *testing.T) {
 		}
 	default:
 		t.Error("new run must re-broadcast a refresh frame even with unchanged pending state")
+	}
+}
+
+// runScriptedMemory returns a fixed sequence of GetRunFull results, one per
+// call, so a test can drive two poller ticks with different run DTOs. It embeds
+// fakeMemory for the project-wide answers/approvals (both empty) and
+// GetRunQuestions (nil).
+type runScriptedMemory struct {
+	*fakeMemory
+	runs  []*AgentRunFull
+	calls int
+}
+
+func (m *runScriptedMemory) GetRunFull(ctx context.Context, runID string) (*AgentRunFull, error) {
+	if m.calls < len(m.runs) {
+		full := m.runs[m.calls]
+		m.calls++
+		return full, nil
+	}
+	return m.runs[len(m.runs)-1], nil
+}
+
+// TestHubPollerRunScopeBroadcastsOnStatusOnlyTransition is the regression test
+// for the run-scoped fingerprint: runTimelineItems emits no run_start/run_end,
+// so without reading the run DTO the run scope would stay id/status-empty and
+// a terminal status-only change would never re-broadcast. The run DTO supplies
+// the live id + status.
+func TestHubPollerRunScopeBroadcastsOnStatusOnlyTransition(t *testing.T) {
+	working := &AgentRunFull{Run: &ScheduledAgentRun{ID: "r1", Status: "working", StartedAt: "2026-01-01T00:00:00Z"}}
+	completed := &AgentRunFull{Run: &ScheduledAgentRun{ID: "r1", Status: "completed", StartedAt: "2026-01-01T00:00:00Z"}}
+	m := &runScriptedMemory{fakeMemory: &fakeMemory{}, runs: []*AgentRunFull{working, completed}}
+	s := newHubTestServer(m)
+
+	key := runScopeKey("r1")
+	ch := s.hub.subscribe(key, nil)
+	defer s.hub.unsubscribe(key, ch)
+
+	// First tick: the run is live → running bucket, broadcast with the run's id
+	// and status.
+	s.broadcastConversationChanges(context.Background(), s.hub.subscribedConvs())
+	first := <-ch
+	var p1 refreshPayload
+	if err := json.Unmarshal(first, &p1); err != nil {
+		t.Fatalf("first-tick payload is not a refresh frame: %v (%s)", err, first)
+	}
+	if p1.Bucket != runBucketRunning || p1.RunID != "r1" || p1.RunStatus != "working" {
+		t.Errorf("first-tick payload = %+v, want running bucket with run r1 status working", p1)
+	}
+
+	// Second tick: status-only transition to completed — same run, no new
+	// timeline item, no new run_end, no pending decision. Only the run DTO's
+	// status can move the fingerprint.
+	s.broadcastConversationChanges(context.Background(), s.hub.subscribedConvs())
+	select {
+	case msg := <-ch:
+		var p2 refreshPayload
+		if err := json.Unmarshal(msg, &p2); err != nil {
+			t.Fatalf("second-tick payload is not a refresh frame: %v (%s)", err, msg)
+		}
+		if p2.Bucket != runBucketDone || p2.RunID != "r1" || p2.RunStatus != "completed" {
+			t.Errorf("second-tick payload = %+v, want done bucket with run r1 status completed", p2)
+		}
+	default:
+		t.Error("a run status-only transition must re-broadcast a refresh frame (#1204 run scope)")
 	}
 }
