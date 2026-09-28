@@ -121,6 +121,7 @@ func main() {
 	api.GET("/conversations/:id/dump", s.getConversationDump)
 	api.GET("/conversations/:id/events", s.conversationEvents)
 	api.GET("/runs/:runId/history", s.getRunHistory)
+	api.GET("/runs/:runId/events", s.runEvents)
 	api.GET("/mcp-servers", s.listMCPServers)
 	api.POST("/mcp-servers", s.createMCPServer)
 	api.GET("/mcp-servers/:id", s.getMCPServer)
