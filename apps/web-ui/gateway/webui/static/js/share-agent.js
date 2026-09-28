@@ -316,14 +316,14 @@
   }
 
   // applyConfig applies the sanitized public config returned by the exchange to
-  // the already-rendered page (header identity, first-load greeting, composer
-  // placeholder, rail visibility, require-email flag). The key itself is never
-  // touched here — only the sanitized display fields.
+  // the already-rendered page (header identity, composer placeholder, rail
+  // visibility, require-email flag). The key itself is never touched here —
+  // only the sanitized display fields. The first-load hero copy is deliberately
+  // NOT config-driven (see share_page.templ), so it stays generic.
   function applyConfig(config) {
     if (!config) return;
     var name = config.agentName || "";
     var desc = config.agentDescription || "";
-    var welcome = config.welcomeMessage || "";
 
     applyAvatar(config.icon, config.color);
 
@@ -346,13 +346,9 @@
       }
     }
 
-    var titleEl = document.getElementById("share-first-load-title");
-    if (titleEl) titleEl.textContent = name ? "Chat with " + name : "Chat";
-
-    var firstDesc = document.getElementById("share-first-load-desc");
-    if (firstDesc) {
-      firstDesc.textContent = welcome || desc || "Ask a question to get started.";
-    }
+    // The first-load hero title/description are static server-rendered copy
+    // ("Chat with Memory" / "Chat by text.") and are intentionally left alone
+    // here — the agent identity belongs to the header, not the hero.
 
     state.placeholder = name ? "Message " + name + "…" : "Type a message…";
     if (els.input) {

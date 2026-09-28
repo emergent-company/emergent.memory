@@ -336,7 +336,10 @@ test.describe('owner share-link options', () => {
     const key = await keyFromRow(row);
     await page.goto(PUBLIC + '#' + key);
     await expect(page.getByTestId('share-email-gate')).toBeVisible();
-    await expect(page.locator('#share-first-load-desc')).toContainText('Welcome to the demo.');
+    // The hero carries generic product copy — never the agent name or the
+    // owner-configured welcome message.
+    await expect(page.locator('#share-first-load-title')).toHaveText('Chat with Memory');
+    await expect(page.locator('#share-first-load-desc')).toHaveText('Chat by text.');
   });
 
   test('a link created with never expiry shows Never', async ({ page }) => {
