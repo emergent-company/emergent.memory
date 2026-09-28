@@ -494,6 +494,7 @@ type AgentExecutor struct {
 	usageService   *provider.UsageService
 	eventsSvc      *events.Service // nil if events module not registered; used by ask_user SSE notification
 	safeguards     config.AgentSafeguardsConfig
+	toolBounds     ToolResultBounds // model-context bound for tool results (issue #1205)
 	log            *slog.Logger
 
 	// runCancels tracks in-flight runs by id so an explicit cancel request can
@@ -670,6 +671,7 @@ func NewAgentExecutor(
 		usageService:   usageService,
 		eventsSvc:      eventsSvc,
 		safeguards:     cfg.AgentSafeguards,
+		toolBounds:     toolResultBoundsFromConfig(cfg.MCP),
 		log:            log.With(logger.Scope("agents.executor")),
 	}
 }
@@ -2387,6 +2389,21 @@ func (ae *AgentExecutor) runPipeline(
 		// Periodically persist step count
 		if currentStep%5 == 0 {
 			_ = ae.repo.UpdateStepCount(dbCtx, run.ID, currentStep)
+		}
+
+		// Bound tool results before the model sees them (issue #1205). ADK deep
+		// clones session content into llmReq.Contents, so this truncates only the
+		// model request: the session transcript, the persisted tool-call and
+		// message rows, and the streamed UI events keep the full payload.
+		if stats := boundModelRequestToolResults(llmReq, ae.toolBounds); stats.TruncatedResults > 0 || stats.ElidedResults > 0 {
+			ae.log.Info("bounded tool results for model context",
+				slog.String("run_id", run.ID),
+				slog.Int("step", currentStep),
+				slog.Int("truncated_results", stats.TruncatedResults),
+				slog.Int("elided_results", stats.ElidedResults),
+				slog.Int("bytes_before", stats.BytesBefore),
+				slog.Int("bytes_after", stats.BytesAfter),
+			)
 		}
 
 		return nil, nil
