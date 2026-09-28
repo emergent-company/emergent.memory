@@ -2027,6 +2027,9 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	// and cannot be blocked by scope filters or tool whitelists (subject to the
 	// instance allowlist check above).
 	if toolName == "set_session_title" {
+		// This hidden built-in can patch a graph object's title, so drop any
+		// cached reads before it runs (issue #1192).
+		toolResultCacheFromContext(ctx).invalidate()
 		return s.executeSetSessionTitle(ctx, projectID, args)
 	}
 	// Defense in depth: enforce the share-instance tool allowlist here as well as
@@ -2095,6 +2098,20 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 			return nil, err
 		}
 	}
+
+	// Intra-run tool-result cache (issue #1192). Authority is enforced above on
+	// every call, including cache hits; the cache wraps only the tool-specific
+	// dispatch below. Returns uncached when the run context carries no cache
+	// (HTTP transports, tests).
+	return executeWithToolResultCache(ctx, projectID, toolName, args, func() (*ToolResult, error) {
+		return s.dispatchTool(ctx, projectID, toolName, args)
+	})
+}
+
+// dispatchTool routes a tool name to its handler. It deliberately contains no
+// authority checks — ExecuteTool applies those before dispatch — and is split
+// out so the intra-run result cache can wrap it (issue #1192).
+func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName string, args map[string]any) (*ToolResult, error) {
 	switch toolName {
 	case "project-get":
 		return s.executeGetProjectInfo(ctx, projectID)
