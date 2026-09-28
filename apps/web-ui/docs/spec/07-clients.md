@@ -39,10 +39,14 @@ Three clients. One is the main UI (web); two are voice (iOS, Mac).
 
 ### iOS development
 
-- **Dev host is `mcj@mcj-mini-2-1`** (Mac Mini, Tailscale MagicDNS). Do all iOS work there —
-  this Linux server has no Xcode, so Swift cannot be built or type-checked here.
-- **Sync:** rsync `client/ios/` → `/Users/mcj/alfred/client/ios` (the `deploy.sh` step).
-- **Build:** `xcodebuild -project VoiceAgent.xcodeproj -scheme VoiceAgent -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build` (run on the Mac).
+- **Dev host is `MEMORY_MAC_HOST`** (this repo: `mcj-mini`, a Mac Mini on Tailscale MagicDNS).
+  Do all iOS work there — this Linux server has no Xcode, so Swift cannot be built or
+  type-checked here.
+- **Sync + build:** `tools/ios-build-mac.sh` (also run by `deploy.sh`) rsyncs `apps/ios/` into
+  `<MEMORY_MAC_PATH>/client/ios` on the Mac (guarded, scoped `--delete`) and runs `xcodebuild`
+  there. Set `MEMORY_MAC_HOST`/`MEMORY_MAC_PATH` in `apps/web-ui/.env` — see
+  `tools/mac-remote.env.example` and `tools/README.md`.
+- **Build (manual):** `xcodebuild -project VoiceAgent.xcodeproj -scheme VoiceAgent -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build` (run on the Mac).
 - Never claim an iOS change compiles until the Mac build actually passes.
 
 ## Mac — wake-word console

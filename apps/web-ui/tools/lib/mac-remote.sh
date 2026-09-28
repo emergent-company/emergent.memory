@@ -162,11 +162,16 @@ mac_resolve_target() {
 # mac_ssh <remote-command> — the single SSH invocation point. The host comes
 # from MAC_HOST (set by mac_resolve_target). Local-destination mode has no
 # remote to talk to, so fail clearly rather than invoking ssh with no host.
+#
+# Callers may set MAC_SSH_OPTS to a space-separated list of extra options
+# (e.g. "-o BatchMode=yes -o ConnectTimeout=8") to fail fast instead of
+# hanging on an unreachable host; mac-doctor.sh uses this. Unset = no change.
 mac_ssh() {
   [[ -n "${MAC_HOST:-}" ]] \
     || mac_die "mac_ssh: MAC_HOST is empty (local-destination mode has no remote host)"
-  # shellcheck disable=SC2029 # callers pass pre-escaped commands meant to expand remotely
-  ssh "$MAC_HOST" "$@"
+  # MAC_SSH_OPTS is a deliberate, word-split option list.
+  # shellcheck disable=SC2086,SC2029 # SC2029: callers pass pre-escaped commands meant to expand remotely
+  ssh ${MAC_SSH_OPTS:-} "$MAC_HOST" "$@"
 }
 
 # mac_path_exists <path> — read-only `test -e` probe, local or over ssh.
