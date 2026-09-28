@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
@@ -386,7 +387,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					},
 					"limit": {
 						Type:        "number",
-						Description: "Maximum number of results (default: 10, max: 200)",
+						Description: fmt.Sprintf("Maximum number of results (default: 10, max: 200). When field_strategy=\"full\" the effective limit is capped to %d to bound the returned properties payload; paginate with offset for more rows.", s.effectiveEntityQueryFullMaxLimit()),
 						Minimum:     intPtr(1),
 						Maximum:     intPtr(200),
 						Default:     10,
@@ -2824,6 +2825,62 @@ func (s *Service) enforceEntityQueryScope(ctx context.Context, tx bun.Tx, projec
 		offenders[0], decl.Property, typeName)}
 }
 
+// keyPrefixRangeClause builds an indexable [lo, hi) byte range for "canonical
+// key starts with prefix", replacing starts_with(go.key, ?).
+//
+// starts_with() is a function call, so the planner cannot turn it into an index
+// range and the key_prefix filter forced a parallel sequential scan of the
+// entire kb.graph_objects heap on every entity-query call (issue #1191: ~20.5s
+// per call on dev, constant regardless of the rows actually returned). The
+// existing unique index IDX_graph_objects_upsert_main (project_id, type, key)
+// uses the database default collation (en_US.utf8 on dev), whose ordering is
+// not bytewise, so a plain key >= / < range cannot bound a prefix correctly
+// (glibc ignores punctuation, so incrementing a trailing '#' over-excludes).
+// Comparing with COLLATE "C" is bytewise, matching the partial index
+// idx_graph_objects_project_type_key_c added in migration 00198.
+//
+// The upper bound is produced by prefixUpperBound: valid UTF-8, and strictly
+// greater than every extension of the prefix.
+func keyPrefixRangeClause(prefix string) (string, []any) {
+	if upper, ok := prefixUpperBound(prefix); ok {
+		return ` AND go.key COLLATE "C" >= ? AND go.key COLLATE "C" < ?`, []any{prefix, upper}
+	}
+	return " AND starts_with(go.key, ?)", []any{prefix}
+}
+
+// prefixUpperBound returns the smallest valid-UTF-8 string strictly greater than
+// every string that has prefix as a prefix, or ok=false when no such string
+// exists (a prefix made entirely of utf8.MaxRune runes).
+//
+// It is the exclusive upper bound for the key-prefix [lo, hi) range. Deriving
+// the bound by incrementing the prefix's last byte — the previous approach —
+// can emit invalid UTF-8: a prefix ending in 0x7F yields 0x80, and one ending in
+// U+00BF's continuation byte 0xBF yields the invalid lead byte 0xC0. A
+// text-protocol client then gets SQLSTATE 22021 (invalid byte sequence for
+// encoding "UTF8"), while a binary-format client such as pgx compares the raw
+// invalid bytes and silently returns the wrong rows. Incrementing the last rune
+// through the code-point space keeps the bound valid UTF-8; because UTF-8 byte
+// order matches code-point order, the result is still strictly greater than any
+// extension of the prefix (the comparison first differs at the incremented
+// rune, so no suffix can rescue the extension).
+func prefixUpperBound(prefix string) (string, bool) {
+	if prefix == "" {
+		return "", false
+	}
+	runes := []rune(prefix)
+	for i := len(runes) - 1; i >= 0; i-- {
+		next := runes[i] + 1
+		if next > utf8.MaxRune {
+			continue // no successor at this position; carry left, dropping it
+		}
+		if next >= 0xD800 && next <= 0xDFFF {
+			next = 0xE000 // skip the UTF-16 surrogate block (not valid UTF-8)
+		}
+		return string(runes[:i]) + string(next), true
+	}
+	return "", false
+}
+
 // executeQueryEntities queries entities by type with pagination
 func (s *Service) executeQueryEntities(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
@@ -2991,11 +3048,10 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	// Generic across types: the key is the identity.
 	var keyPrefix string
 	var keyPrefixClause string
-	var keyPrefixArg any
+	var keyPrefixArgs []any
 	if kp, ok := args["key_prefix"].(string); ok && kp != "" {
 		keyPrefix = kp
-		keyPrefixClause = " AND starts_with(go.key, ?)"
-		keyPrefixArg = kp
+		keyPrefixClause, keyPrefixArgs = keyPrefixRangeClause(kp)
 	}
 
 	type_clause := ""
@@ -3024,9 +3080,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	if filterArg != nil {
 		baseArgs = append(baseArgs, filterArg)
 	}
-	if keyPrefixArg != nil {
-		baseArgs = append(baseArgs, keyPrefixArg)
-	}
+	baseArgs = append(baseArgs, keyPrefixArgs...)
 
 	selectArgs := append(append([]any{}, baseArgs...), limit, offset)
 
@@ -3168,7 +3222,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 			dstBranchClause = "AND dst.branch_id = ?"
 			relQueryArgs = append(relQueryArgs, *branchID, *branchID)
 		}
-		_ = s.db.RunInTx(queryCtx, nil, func(ctx context.Context, tx bun.Tx) error {
+		err := s.db.RunInTx(queryCtx, nil, func(ctx context.Context, tx bun.Tx) error {
 			if err := database.SetRLSContext(ctx, tx, projectID); err != nil {
 				return err
 			}
@@ -3189,6 +3243,16 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 				`+relBranchClause+`
 		`, relQueryArgs...).Scan(ctx, &relRows)
 		})
+		// Enrichment is opt-in (include_relationships=true). Failing loudly keeps
+		// the deadline honest: swallowing the error here would return ok:true with
+		// every entity's relationships silently dropped, which masks a timeout the
+		// same way #1187 describes.
+		if err != nil {
+			if errors.Is(queryCtx.Err(), context.DeadlineExceeded) {
+				return nil, fmt.Errorf("query entities: timed out after %s", s.effectiveEntityQueryTimeout())
+			}
+			return nil, fmt.Errorf("query entities: enrich relationships: %w", err)
+		}
 
 		// Build an index from entity ID → edges
 		type edgeRef struct {
