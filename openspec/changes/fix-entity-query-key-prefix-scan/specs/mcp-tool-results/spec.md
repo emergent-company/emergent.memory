@@ -7,12 +7,15 @@ bytewise range on the canonical key rather than a `starts_with(go.key, ?)`
 function call, so the planner can seek the partial bytewise index
 `idx_graph_objects_project_type_key_c` instead of scanning the whole
 `kb.graph_objects` heap. The range SHALL be `key COLLATE "C" >= prefix AND key
-COLLATE "C" < upper`, where `upper` is the prefix with its final byte
-incremented (exact under bytewise comparison and correct for prefixes ending in
-a separator). Bytewise comparison is required because the database default
-collation is not bytewise and would over-exclude separator-terminated prefixes.
-The entities returned and all other scoping/filter/`ids` semantics SHALL be
-unchanged.
+COLLATE "C" < upper`, where `upper` is the prefix with its last rune incremented
+to the next valid Unicode code point — a valid-UTF-8 string strictly greater
+than every extension of the prefix. The bound MUST be valid UTF-8: incrementing
+the prefix's final **byte** can emit an invalid sequence (e.g. a prefix ending
+in `0x7F` or in U+00BF's `0xBF` continuation byte), which a text-protocol client
+rejects with SQLSTATE 22021 and a binary-format client silently mis-compares.
+Bytewise comparison is required because the database default collation is not
+bytewise and would over-exclude separator-terminated prefixes. The entities
+returned and all other scoping/filter/`ids` semantics SHALL be unchanged.
 
 #### Scenario: Key-prefix scope does not scan the whole table
 
@@ -24,7 +27,15 @@ unchanged.
 
 - **WHEN** a client passes a `key_prefix` ending in a separator (e.g. `lov/1997-06-13-44#`)
 - **THEN** exactly the entities whose key starts with that prefix are returned
-- **AND** a trailing-`0xFF` prefix with no representable successor still falls back to `starts_with` and returns the same entities
+
+#### Scenario: Non-ASCII prefix yields a valid-UTF-8 bound
+
+- **WHEN** a client passes a valid-UTF-8 `key_prefix` whose final byte cannot be
+  incremented without producing invalid UTF-8 (e.g. ending in `0x7F` or the
+  `0xBF` continuation byte of U+00BF)
+- **THEN** the derived upper bound is valid UTF-8 and the query does not fail
+  with SQLSTATE 22021
+- **AND** the returned set equals the `starts_with(key, prefix)` set exactly
 
 ## MODIFIED Requirements
 

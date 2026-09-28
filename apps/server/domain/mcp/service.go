@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
@@ -2838,28 +2839,44 @@ func (s *Service) enforceEntityQueryScope(ctx context.Context, tx bun.Tx, projec
 // Comparing with COLLATE "C" is bytewise, matching the partial index
 // idx_graph_objects_project_type_key_c added in migration 00198.
 //
-// The upper bound is the prefix with its last byte incremented (carrying past
-// trailing 0xFF bytes). That is exact: any key equal to prefix plus a suffix
-// sorts below prefix with its final byte bumped, because the comparison first
-// differs at that final byte. A prefix made only of 0xFF bytes has no
-// representable successor; canonical keys are ASCII so the starts_with
-// fallback is unreachable in practice.
+// The upper bound is produced by prefixUpperBound: valid UTF-8, and strictly
+// greater than every extension of the prefix.
 func keyPrefixRangeClause(prefix string) (string, []any) {
-	if upper, ok := bytewisePrefixUpperBound(prefix); ok {
+	if upper, ok := prefixUpperBound(prefix); ok {
 		return ` AND go.key COLLATE "C" >= ? AND go.key COLLATE "C" < ?`, []any{prefix, upper}
 	}
 	return " AND starts_with(go.key, ?)", []any{prefix}
 }
 
-// bytewisePrefixUpperBound returns the smallest byte string greater than every
-// string that has prefix as a byte prefix, or ok=false when every byte is 0xFF.
-func bytewisePrefixUpperBound(prefix string) (string, bool) {
-	b := []byte(prefix)
-	for i := len(b) - 1; i >= 0; i-- {
-		if b[i] < 0xFF {
-			b[i]++
-			return string(b[:i+1]), true
+// prefixUpperBound returns the smallest valid-UTF-8 string strictly greater than
+// every string that has prefix as a prefix, or ok=false when no such string
+// exists (a prefix made entirely of utf8.MaxRune runes).
+//
+// It is the exclusive upper bound for the key-prefix [lo, hi) range. Deriving
+// the bound by incrementing the prefix's last byte — the previous approach —
+// can emit invalid UTF-8: a prefix ending in 0x7F yields 0x80, and one ending in
+// U+00BF's continuation byte 0xBF yields the invalid lead byte 0xC0. A
+// text-protocol client then gets SQLSTATE 22021 (invalid byte sequence for
+// encoding "UTF8"), while a binary-format client such as pgx compares the raw
+// invalid bytes and silently returns the wrong rows. Incrementing the last rune
+// through the code-point space keeps the bound valid UTF-8; because UTF-8 byte
+// order matches code-point order, the result is still strictly greater than any
+// extension of the prefix (the comparison first differs at the incremented
+// rune, so no suffix can rescue the extension).
+func prefixUpperBound(prefix string) (string, bool) {
+	if prefix == "" {
+		return "", false
+	}
+	runes := []rune(prefix)
+	for i := len(runes) - 1; i >= 0; i-- {
+		next := runes[i] + 1
+		if next > utf8.MaxRune {
+			continue // no successor at this position; carry left, dropping it
 		}
+		if next >= 0xD800 && next <= 0xDFFF {
+			next = 0xE000 // skip the UTF-16 surrogate block (not valid UTF-8)
+		}
+		return string(runes[:i]) + string(next), true
 	}
 	return "", false
 }

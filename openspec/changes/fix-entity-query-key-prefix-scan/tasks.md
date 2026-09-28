@@ -6,9 +6,10 @@
 
 ## 2. Index the key-prefix range
 
-- [x] 2.1 Add `keyPrefixRangeClause` / `bytewisePrefixUpperBound`; replace the `starts_with` clause in `executeQueryEntities` (SELECT and COUNT share the clause).
+- [x] 2.1 Add `keyPrefixRangeClause` / `prefixUpperBound`; replace the `starts_with` clause in `executeQueryEntities` (SELECT and COUNT share the clause).
 - [x] 2.2 Add migration `00198_add_graph_objects_project_type_key_c.sql`: partial `idx_graph_objects_project_type_key_c (project_id, type, key COLLATE "C")` on head-main rows, built CONCURRENTLY with an `ANALYZE` afterwards.
 - [x] 2.3 Prove with `EXPLAIN (ANALYZE, BUFFERS)` that the new path uses `Index Scan using idx_graph_objects_project_type_key_c` and contains no `Seq Scan`.
+- [x] 2.4 Keep the bound valid UTF-8: increment the last rune to the next code point (skipping surrogates) instead of editing raw bytes, so non-ASCII prefixes ending in `0x7F`/`0xBF` cannot trip SQLSTATE 22021 or mis-match.
 
 ## 3. Honest deadline handling
 
@@ -21,9 +22,12 @@
 
 ## 5. Tests
 
-- [x] 5.1 `TestKeyPrefixRangeClause` — bytewise bound, punctuation suffix, carry past `0xFF`, no-successor fallback.
+- [x] 5.1 `TestKeyPrefixRangeClause` — rune-increment bound, punctuation suffix, DEL/`0xBF`/U+00FF/multibyte, carry past a trailing max rune, no-successor fallback; asserts the bound is valid UTF-8.
 - [x] 5.2 `TestExecuteQueryEntities_KeyPrefixUsesBytewiseIndex` — seeds 50k rows, asserts the plan uses the new index and contains no seq scan, and that the range returns exactly the `starts_with` rows.
 - [x] 5.3 `TestEntityQueryLimitSchemaStatesFullCap` — the default and a configured cap both appear in the `limit` schema description.
+- [x] 5.4 `TestExecuteQueryEntities_KeyPrefixNonASCIIUpperBound` — adversarial non-ASCII prefixes return exactly the `starts_with` set without error.
+- [x] 5.5 `TestKeyPrefixLegacyBoundRejectedAsInvalidUTF8` — pins the old byte-increment bound as invalid UTF-8 (SQLSTATE 22021 on a simple-protocol client) and the new bound as accepted.
+- [x] 5.6 `TestExecuteQueryEntities_RelationshipEnrichmentErrorIsSurfaced` — the fail-loud enrichment path returns the wrapped error instead of `ok:true`.
 
 ## 6. Out of scope (reported, not fixed)
 

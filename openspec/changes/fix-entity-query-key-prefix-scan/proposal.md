@@ -19,10 +19,15 @@ constant 20.5 s was the scan, not the projection.
 
 - `entity-query`'s `key_prefix` predicate is rewritten from `starts_with(go.key,
   ?)` to an explicit bytewise range `go.key COLLATE "C" >= ? AND go.key COLLATE
-  "C" < ?`. The upper bound is the prefix with its last byte incremented, which
-  is exact under bytewise comparison and works for prefixes ending in a
-  separator (glibc collations ignore punctuation, so the same increment under the
-  default collation would over-exclude and return zero rows).
+  "C" < ?`. The upper bound is the prefix with its last **rune** incremented to
+  the next valid code point — a valid-UTF-8 string strictly greater than every
+  extension of the prefix. Incrementing the final byte (an earlier draft of this
+  change) emits invalid UTF-8 for prefixes ending in `0x7F` or a `0xBF`
+  continuation byte: a text-protocol client then rejects the bind with SQLSTATE
+  22021, and a binary-format client such as pgx silently compares the invalid
+  bytes and returns the wrong rows. Bytewise `COLLATE "C"` is required because
+  the default collation is not bytewise and would over-exclude
+  separator-terminated prefixes.
 - Migration `00198_add_graph_objects_project_type_key_c.sql` adds the partial
   bytewise index `idx_graph_objects_project_type_key_c (project_id, type, key
   COLLATE "C")` on head-main rows, which serves that range. No query-shape or
