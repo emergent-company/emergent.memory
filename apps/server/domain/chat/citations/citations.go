@@ -25,7 +25,8 @@ type Citation struct {
 	ID    string `json:"id"`
 	Type  string `json:"type"` // object schema type, or relationship type
 	Label string `json:"label"`
-	URL   string `json:"url"` // "/objects/<id>"; relationship -> source object's page
+	URL   string `json:"url"`           // "/objects/<id>"; relationship -> source object's page
+	Key   string `json:"key,omitempty"` // object's human key, set when referenced by key
 }
 
 // Reference is an internal candidate/reference record used during derivation.
@@ -34,6 +35,7 @@ type Reference struct {
 	Type  string
 	Label string
 	Kind  string // "object" | "relationship"
+	Key   string // object candidate: the object's human key
 	SrcID string // relationship source object id (URL resolution)
 	DstID string // relationship target object id (label resolution)
 }
@@ -51,6 +53,11 @@ const uuidPattern = `[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}
 // relPattern matches a relationship id: a UUID in practice, or the synthesized
 // "src:type:dst" form (colons allowed).
 const relPattern = `[^)\s]+`
+
+// objRefPattern matches an object reference — a canonical UUID id or a human
+// key (which may itself contain '/', e.g. "lov/2005-06-17-90") — as everything
+// after "/objects/" up to a ')', '#', or whitespace boundary.
+const objRefPattern = `[^)#\s]+`
 
 var uuidRe = regexp.MustCompile(`^` + uuidPattern + `$`)
 
@@ -87,7 +94,8 @@ func forEachMap(v any, fn func(map[string]any)) {
 // relationship references keyed by id.
 //
 //   - object candidate: a map with a UUID string `id` and a non-empty string
-//     `type`. Label is `name` if present, else `key`, else the id.
+//     `type`. Label is `name` if present, else `key`, else the id. Key is the
+//     object's `key` when present, so key-based references can be resolved.
 //   - relationship candidate: a map with string `src_id` and `dst_id`. Type is
 //     `type`; ID is `id` if present, else `src_id+":"+type+":"+dst_id`. Label
 //     is `<src label/name> —<type>→ <dst label/name>` using object labels when
@@ -117,7 +125,8 @@ func Candidates(toolCalls []ToolCall) map[string]Reference {
 			typ, typOK := m["type"].(string)
 			if idOK && typOK && typ != "" && isUUID(id) {
 				if _, exists := objects[id]; !exists {
-					objects[id] = Reference{Kind: "object", ID: id, Type: typ, Label: objectLabel(m, id)}
+					key, _ := m["key"].(string)
+					objects[id] = Reference{Kind: "object", ID: id, Type: typ, Label: objectLabel(m, id), Key: key}
 				}
 			}
 		})
@@ -166,11 +175,12 @@ type posRef struct {
 	ref Reference
 }
 
-// Derive finds the references in answerText (markdown links `[label](/objects/<uuid>)`,
-// bare `/objects/<uuid>`, and `#relationship-<rel>` fragments) and in the A2UI
-// surfaces' component props, keeps only those whose id is a candidate, and
-// returns object/relationship citations ordered by first appearance in the text
-// (then surfaces). References are deduped by (kind, id), keeping the first label.
+// Derive finds the references in answerText (markdown links `[label](/objects/<ref>)`,
+// bare `/objects/<ref>`, and `#relationship-<rel>` fragments) and in the A2UI
+// surfaces' component props, keeps only those whose id — or, for objects, key —
+// matches a candidate, and returns object/relationship citations ordered by
+// first appearance in the text (then surfaces). References are deduped by
+// (kind, canonical id), keeping the first label.
 func Derive(answerText string, surfaces []a2ui.Message, candidates map[string]Reference) []Citation {
 	var ordered []posRef
 	ordered = append(ordered, textRefs(answerText)...)
@@ -184,30 +194,55 @@ func Derive(answerText string, surfaces []a2ui.Message, candidates map[string]Re
 		refs = append(refs, surfaceRefs(msg)...)
 	}
 
+	keyToID := make(map[string]string, len(candidates))
+	for _, ref := range candidates {
+		if ref.Kind == "object" && ref.Key != "" {
+			keyToID[ref.Key] = ref.ID
+		}
+	}
+
 	seen := make(map[string]bool)
 	var out []Citation
 	for _, r := range refs {
-		key := r.Kind + ":" + r.ID
-		if seen[key] {
-			continue
+		var (
+			cand    Reference
+			ok      bool
+			keyUsed bool
+		)
+		if r.Kind == "relationship" {
+			cand, ok = candidates[r.ID]
+		} else if cand, ok = candidates[r.ID]; !ok {
+			// Not a cited id — try a key reference.
+			if canon, kok := keyToID[r.ID]; kok {
+				cand, ok = candidates[canon], true
+				keyUsed = true
+			}
 		}
-		cand, ok := candidates[r.ID]
 		if !ok {
 			continue // referenced but not retrieved → hallucinated, drop
 		}
-		seen[key] = true
-		out = append(out, buildCitation(r, cand))
+
+		dedupID := r.ID
+		if r.Kind == "object" {
+			dedupID = cand.ID // dedupe on the canonical id after key resolution
+		}
+		k := r.Kind + ":" + dedupID
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, buildCitation(r, cand, keyUsed, keyToID))
 	}
 	return out
 }
 
 // textRefs extracts object and relationship references from answerText with
-// their byte positions.
+// their byte positions. A reference is either a canonical UUID id or a human key.
 func textRefs(text string) []posRef {
 	var out []posRef
 
-	objLinkRe := regexp.MustCompile(`\[([^\]]*)\]\(/objects/(` + uuidPattern + `)\)`)
-	relLinkRe := regexp.MustCompile(`\[([^\]]*)\]\(/objects/(` + uuidPattern + `)#relationship-(` + relPattern + `)\)`)
+	objLinkRe := regexp.MustCompile(`\[([^\]]*)\]\(/objects/(` + objRefPattern + `)\)`)
+	relLinkRe := regexp.MustCompile(`\[([^\]]*)\]\(/objects/(` + objRefPattern + `)#relationship-(` + relPattern + `)\)`)
 
 	type span struct{ start, end int }
 	var linkSpans []span
@@ -233,7 +268,7 @@ func textRefs(text string) []posRef {
 		masked = masked[:s.start] + strings.Repeat(" ", s.end-s.start) + masked[s.end:]
 	}
 
-	bareRe := regexp.MustCompile(`/objects/(` + uuidPattern + `)(?:#relationship-(` + relPattern + `))?`)
+	bareRe := regexp.MustCompile(`/objects/(` + objRefPattern + `)(?:#relationship-(` + relPattern + `))?`)
 	for _, m := range bareRe.FindAllStringSubmatchIndex(masked, -1) {
 		id := masked[m[2]:m[3]]
 		rel := ""
@@ -288,53 +323,83 @@ func relIDFromProps(m map[string]any, src, dst string) string {
 	return src + ":" + typ + ":" + dst
 }
 
-func buildCitation(r Reference, cand Reference) Citation {
+func buildCitation(r Reference, cand Reference, keyUsed bool, keyToID map[string]string) Citation {
 	label := r.Label
 	if label == "" {
 		label = cand.Label
 	}
-	url := "/objects/" + r.ID
+	id := r.ID
+	if r.Kind == "object" {
+		id = cand.ID // canonical id (== r.ID for id refs, canonical for key refs)
+	}
+	url := "/objects/" + id
 	if r.Kind == "relationship" {
 		src := r.SrcID
-		if src == "" {
+		if canon, ok := keyToID[src]; ok {
+			src = canon // resolve a key-referenced source to its object page
+		} else if src == "" {
 			src = cand.SrcID
 		}
 		url = "/objects/" + src
 	}
-	return Citation{
+	cit := Citation{
 		Kind:  r.Kind,
-		ID:    r.ID,
+		ID:    id,
 		Type:  cand.Type,
 		Label: label,
 		URL:   url,
 	}
+	// Key is set only when the reference was made by key, so the renderer can
+	// keep and re-target the original key link. (References by id omit it.)
+	if keyUsed {
+		cit.Key = r.ID
+	}
+	return cit
 }
 
-// NeutralizeLinks demotes `/objects/<id>` links whose id is not a cited object
-// to plain text, drops `#relationship-<rel>` fragments whose rel is not a cited
+// resolveTarget returns the canonical object id for a referenced id-or-key, or
+// ("", false) when the ref is neither a cited id nor a cited key.
+func resolveTarget(ref string, objIDs map[string]bool, keyToID map[string]string) (string, bool) {
+	if objIDs[ref] {
+		return ref, true
+	}
+	if id, ok := keyToID[ref]; ok {
+		return id, true
+	}
+	return "", false
+}
+
+// NeutralizeLinks demotes `/objects/<ref>` links whose ref is not a cited object
+// (by id or key) to plain text, re-targets key-referenced links to their
+// canonical id, drops `#relationship-<rel>` fragments whose rel is not a cited
 // relationship, and leaves links to other paths untouched.
 //
-//   - markdown `[label](/objects/<id>)` not cited → `label`
-//   - bare `/objects/<id>` not cited → `<id>` (plain text)
+//   - markdown `[label](/objects/<ref>)` not cited → `label`
+//   - bare `/objects/<ref>` not cited → `<ref>` (plain text)
+//   - a cited key link keeps its label with target rewritten to `/objects/<id>`
 //   - a link carrying `#relationship-<rel>` with uncited `<rel>` → fragment
 //     dropped, then the remaining object link follows the object rule
 func NeutralizeLinks(answerText string, cited []Citation) string {
 	objIDs := make(map[string]bool)
+	keyToID := make(map[string]string)
 	relIDs := make(map[string]bool)
 	for _, c := range cited {
 		switch c.Kind {
 		case "object":
 			objIDs[c.ID] = true
+			if c.Key != "" {
+				keyToID[c.Key] = c.ID
+			}
 		case "relationship":
 			relIDs[c.ID] = true
 		}
 	}
 
-	linkRe := regexp.MustCompile(`\[([^\]]*)\]\(/objects/(` + uuidPattern + `)(#relationship-(` + relPattern + `))?\)`)
+	linkRe := regexp.MustCompile(`\[([^\]]*)\]\(/objects/(` + objRefPattern + `)(#relationship-(` + relPattern + `))?\)`)
 	out := linkRe.ReplaceAllStringFunc(answerText, func(m string) string {
 		sub := linkRe.FindStringSubmatch(m)
 		label := sub[1]
-		objID := sub[2]
+		ref := sub[2]
 		frag := sub[3]
 		rel := sub[4]
 
@@ -343,21 +408,26 @@ func NeutralizeLinks(answerText string, cited []Citation) string {
 				return m // relationship cited → keep whole link
 			}
 			// drop the fragment, then apply the object rule to the remainder
-			if objIDs[objID] {
-				return "[" + label + "](/objects/" + objID + ")"
+			canonical, ok := resolveTarget(ref, objIDs, keyToID)
+			if !ok {
+				return label
 			}
+			return "[" + label + "](/objects/" + canonical + ")"
+		}
+		canonical, ok := resolveTarget(ref, objIDs, keyToID)
+		if !ok {
 			return label
 		}
-		if objIDs[objID] {
+		if canonical == ref {
 			return m
 		}
-		return label
+		return "[" + label + "](/objects/" + canonical + ")"
 	})
 
-	bareRe := regexp.MustCompile(`/objects/(` + uuidPattern + `)(#relationship-(` + relPattern + `))?`)
+	bareRe := regexp.MustCompile(`/objects/(` + objRefPattern + `)(#relationship-(` + relPattern + `))?`)
 	out = bareRe.ReplaceAllStringFunc(out, func(m string) string {
 		sub := bareRe.FindStringSubmatch(m)
-		objID := sub[1]
+		ref := sub[1]
 		frag := sub[2]
 		rel := sub[3]
 
@@ -365,15 +435,20 @@ func NeutralizeLinks(answerText string, cited []Citation) string {
 			if relIDs[rel] {
 				return m
 			}
-			if objIDs[objID] {
-				return "/objects/" + objID
+			canonical, ok := resolveTarget(ref, objIDs, keyToID)
+			if !ok {
+				return ref
 			}
-			return objID
+			return "/objects/" + canonical
 		}
-		if objIDs[objID] {
+		canonical, ok := resolveTarget(ref, objIDs, keyToID)
+		if !ok {
+			return ref
+		}
+		if canonical == ref {
 			return m
 		}
-		return objID
+		return "/objects/" + canonical
 	})
 
 	return out

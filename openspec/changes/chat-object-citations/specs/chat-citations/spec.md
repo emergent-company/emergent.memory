@@ -56,11 +56,33 @@ tools.
 - **WHEN** the answer contains `[A —works_at→ B](/objects/<src>#relationship-<rel>)` and the run retrieved relationship `<rel>`
 - **THEN** the citations SHALL include a relationship citation for `<rel>` with its type, source `A`, and target `B`
 
+### Requirement: Key-based references are resolved
+
+An answer MAY reference an object by its `key` (for example `lov/2005-06-17-90`)
+instead of its canonical identifier. When a `/objects/<ref>` reference matches
+the `key` of a retrieved object rather than its `id`, the server SHALL resolve it
+to that object's canonical id and a citation SHALL be produced for that object.
+The rendered link SHALL target `/objects/<canonical-id>` so it resolves, not the
+key. A reference that matches neither a retrieved id nor a retrieved key SHALL be
+treated as unvalidated.
+
+#### Scenario: Key reference resolves to the object
+
+- **WHEN** the answer links `/objects/lov/2005-06-17-90` and a retrieved object of the run carries that `key`
+- **THEN** the citations SHALL include that object and the rendered link SHALL target `/objects/<canonical-id>`
+
+#### Scenario: Unknown key is unvalidated
+
+- **WHEN** the answer links a key that no retrieved object of the run carries
+- **THEN** it SHALL NOT be cited and the link SHALL follow the neutralization rule
+
 ### Requirement: Citation payload shape
 
 Each citation SHALL carry `kind` (`object` or `relationship`), `id`, `type`,
 `label`, and `url`. An object citation's `url` SHALL be `/objects/<id>`; a
-relationship citation's `url` SHALL resolve to the object page of its source.
+relationship citation's `url` SHALL resolve to the object page of its source. A
+citation MAY additionally carry `key` — the object's human key — when the
+reference was made by key, so a renderer can keep and re-target such a link.
 
 #### Scenario: Shape is stable across transports
 
@@ -110,6 +132,11 @@ citation SHALL render as a working link.
 
 - **WHEN** a link carries `#relationship-<rel>` and `<rel>` is not a citation
 - **THEN** the fragment SHALL be removed and the remaining object link SHALL follow the object-link rule
+
+#### Scenario: Key-based link is kept and re-targeted
+
+- **WHEN** an answer links `/objects/<key>` and `<key>` is the key of a citation
+- **THEN** the link SHALL be kept with its target rewritten to `/objects/<canonical-id>`
 
 ### Requirement: Sources are surfaced to the user
 

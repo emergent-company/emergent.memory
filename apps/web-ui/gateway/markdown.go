@@ -39,14 +39,23 @@ type citation struct {
 	Type  string `json:"type"`
 	Label string `json:"label"`
 	URL   string `json:"url"`
+	// Key is the object's human key (e.g. "lov/2005-06-17-90") when the answer
+	// referenced it by key; the id/url remain canonical. Empty for id refs.
+	Key string `json:"key,omitempty"`
 }
 
 // neutralizeCitationLinks applies the citation link rule to sanitized answer
-// HTML: a `/objects/<id>` anchor whose id is not a validated citation is
+// HTML: a `/objects/<ref>` anchor whose ref is not a validated citation is
 // unwrapped to its label text, and an unvalidated `#relationship-<rel>`
 // fragment is dropped (the remaining object link then follows the same rule).
 // A relationship link stays a link when its relationship fragment is a
 // citation, even if its source object is not separately cited.
+//
+// A ref may be a canonical id OR an object's human key (e.g.
+// "lov/2005-06-17-90"). A key ref that resolves to a cited object is KEPT and
+// re-targeted to that object's canonical `/objects/<id>` page, so the rendered
+// link resolves; a ref that matches neither a cited id nor a cited key is
+// demoted like any unknown reference.
 //
 // Only anchors are parsed and rewritten; when nothing changes the original
 // string is returned byte-for-byte, so renderMarkdown output is untouched for
@@ -57,9 +66,14 @@ func neutralizeCitationLinks(rendered string, citations []citation) string {
 		return rendered
 	}
 	cited := make(map[string]struct{}, len(citations))
+	keys := make(map[string]string, len(citations))
 	for _, c := range citations {
-		if c.ID != "" {
-			cited[c.ID] = struct{}{}
+		if c.ID == "" {
+			continue
+		}
+		cited[c.ID] = struct{}{}
+		if c.Key != "" {
+			keys[c.Key] = c.ID
 		}
 	}
 	ctx := &xhtml.Node{Type: xhtml.ElementNode, Data: "div", DataAtom: atom.Div}
@@ -69,7 +83,7 @@ func neutralizeCitationLinks(rendered string, citations []citation) string {
 	}
 	changed := false
 	for _, n := range nodes {
-		if neutralizeNode(n, cited) {
+		if neutralizeNode(n, cited, keys) {
 			changed = true
 		}
 	}
@@ -88,25 +102,44 @@ func neutralizeCitationLinks(rendered string, citations []citation) string {
 // neutralizeNode walks n's subtree and rewrites every `/objects/` anchor in
 // place, reporting whether anything changed. An unwrapped anchor is replaced by
 // its children (label text/inline markup) so formatting survives.
-func neutralizeNode(n *xhtml.Node, cited map[string]struct{}) bool {
+func neutralizeNode(n *xhtml.Node, cited map[string]struct{}, keys map[string]string) bool {
 	changed := false
 	for c := n.FirstChild; c != nil; {
 		next := c.NextSibling
 		if c.Type == xhtml.ElementNode && c.Data == "a" {
 			if href, ok := attrVal(c, "href"); ok {
-				if objID, relID, isObj := parseObjectRef(href); isObj {
-					relValid := relID != "" && isCitation(cited, relID)
-					if relID != "" && !relValid {
-						setAttr(c, "href", "/objects/"+objID)
-						changed = true
+				if ref, relID, isObj := parseObjectRef(href); isObj {
+					canonical, known := "", false
+					if isCitation(cited, ref) {
+						canonical, known = ref, true
+					} else if id, ok := keys[ref]; ok {
+						// A key ref resolves to its object's canonical id.
+						canonical, known = id, true
 					}
-					if !isCitation(cited, objID) && !relValid {
+					relValid := relID != "" && isCitation(cited, relID)
+					frag := ""
+					if relValid {
+						frag = "#relationship-" + relID
+					}
+					if !known && !relValid {
 						unwrapNode(n, c)
 						changed = true
+					} else {
+						// Re-target a known ref to its canonical id; an unknown
+						// ref (kept only because its relationship is cited) stays
+						// as-is.
+						target := ref
+						if known {
+							target = canonical
+						}
+						if newHref := "/objects/" + target + frag; newHref != href {
+							setAttr(c, "href", newHref)
+							changed = true
+						}
 					}
 				}
 			}
-		} else if neutralizeNode(c, cited) {
+		} else if neutralizeNode(c, cited, keys) {
 			changed = true
 		}
 		c = next
@@ -114,19 +147,21 @@ func neutralizeNode(n *xhtml.Node, cited map[string]struct{}) bool {
 	return changed
 }
 
-// parseObjectRef splits a `/objects/<id>[#relationship-<rel>]` href into its
-// object id and optional relationship id. isObj reports whether the href is an
-// object reference; relID is "" when no relationship fragment is present.
-func parseObjectRef(href string) (objID, relID string, isObj bool) {
+// parseObjectRef splits a `/objects/<ref>[#relationship-<rel>]` href into its
+// object ref (a canonical id or a human key) and optional relationship id.
+// isObj reports whether the href is an object reference; relID is "" when no
+// relationship fragment is present. The ref may contain "/" (key refs like
+// `lov/2005-06-17-90`); a query string or an empty ref is rejected.
+func parseObjectRef(href string) (ref, relID string, isObj bool) {
 	path, frag, _ := strings.Cut(href, "#")
-	id, ok := strings.CutPrefix(path, "/objects/")
-	if !ok || id == "" || strings.ContainsAny(id, "/?#") {
+	ref, ok := strings.CutPrefix(path, "/objects/")
+	if !ok || ref == "" || strings.ContainsRune(ref, '?') {
 		return "", "", false
 	}
 	if rel, ok := strings.CutPrefix(frag, "relationship-"); ok {
 		relID = rel
 	}
-	return id, relID, true
+	return ref, relID, true
 }
 
 func isCitation(cited map[string]struct{}, id string) bool {

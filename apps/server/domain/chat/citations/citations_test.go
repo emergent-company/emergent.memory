@@ -252,6 +252,109 @@ func TestNeutralizeLinks_OtherPathsUntouched(t *testing.T) {
 	}
 }
 
+func TestDerive_KeyReference(t *testing.T) {
+	const key = "lov/2005-06-17-90"
+	cands := Candidates([]ToolCall{{Output: searchHybridOutput(
+		map[string]any{"id": obj1, "type": "Law", "name": "Lov", "key": key},
+	)}})
+
+	answer := "[Lov](/objects/" + key + ")"
+	cits := Derive(answer, nil, cands)
+
+	if len(cits) != 1 {
+		t.Fatalf("Derive() = %+v, want 1 citation", cits)
+	}
+	c := cits[0]
+	if c.Kind != "object" || c.ID != obj1 {
+		t.Errorf("citation = %+v, want object id %s", c, obj1)
+	}
+	if c.Key != key {
+		t.Errorf("citation.Key = %q, want %q", c.Key, key)
+	}
+	if c.URL != "/objects/"+obj1 {
+		t.Errorf("citation.URL = %q, want %q", c.URL, "/objects/"+obj1)
+	}
+	if c.Label != "Lov" {
+		t.Errorf("citation.Label = %q, want Lov", c.Label)
+	}
+}
+
+func TestDerive_UnknownKey(t *testing.T) {
+	cands := Candidates([]ToolCall{{Output: searchHybridOutput(
+		map[string]any{"id": obj1, "type": "Law", "name": "Lov", "key": "lov/2005-06-17-90"},
+	)}})
+
+	answer := "[Ghost](/objects/unknown/key)"
+	cits := Derive(answer, nil, cands)
+	if len(cits) != 0 {
+		t.Fatalf("Derive() = %+v, want no citations for unknown key", cits)
+	}
+}
+
+func TestNeutralizeLinks_Key(t *testing.T) {
+	const key = "lov/2005-06-17-90"
+	cited := []Citation{
+		{Kind: "object", ID: obj1, Key: key},
+	}
+
+	answer := "[Lov](/objects/" + key + ") and [Ghost](/objects/unknown/key) and bare /objects/" + key + " and [U](/objects/" + obj2 + ")"
+	out := NeutralizeLinks(answer, cited)
+
+	// known key markdown link re-targeted to canonical id
+	if !contains(out, "[Lov](/objects/"+obj1+")") {
+		t.Errorf("known key link not re-targeted: %q", out)
+	}
+	// no key path may remain (markdown or bare)
+	if contains(out, "/objects/"+key) {
+		t.Errorf("key path should be rewritten to canonical id: %q", out)
+	}
+	// unknown key markdown demoted to label
+	if contains(out, "/objects/unknown/key") {
+		t.Errorf("unknown key link not demoted: %q", out)
+	}
+	if !contains(out, "Ghost") {
+		t.Errorf("unknown key label not preserved as plain text: %q", out)
+	}
+	// bare known key rewritten to canonical id
+	if !contains(out, "/objects/"+obj1) {
+		t.Errorf("bare known key not re-targeted: %q", out)
+	}
+	// unknown uuid still demoted
+	if contains(out, "/objects/"+obj2) {
+		t.Errorf("unknown uuid link not demoted: %q", out)
+	}
+}
+
+func TestDerive_RelationshipWithKeySource(t *testing.T) {
+	const key = "lov/2005-06-17-90"
+	cands := Candidates([]ToolCall{
+		{Output: searchHybridOutput(
+			map[string]any{"id": obj1, "type": "Law", "name": "Lov", "key": key},
+			map[string]any{"id": obj2, "type": "Person", "name": "Bob"},
+		)},
+		{Output: relationshipListOutput(rel1, "references", obj1, obj2)},
+	})
+
+	answer := "[Lov —references→ Bob](/objects/" + key + "#relationship-" + rel1 + ")"
+	cits := Derive(answer, nil, cands)
+
+	var rel *Citation
+	for i := range cits {
+		if cits[i].Kind == "relationship" {
+			rel = &cits[i]
+		}
+	}
+	if rel == nil {
+		t.Fatalf("Derive() = %+v, want a relationship citation", cits)
+	}
+	if rel.ID != rel1 || rel.Type != "references" {
+		t.Errorf("relationship = %+v, want id %s type references", *rel, rel1)
+	}
+	if rel.URL != "/objects/"+obj1 {
+		t.Errorf("relationship url = %q, want canonical src %q", rel.URL, "/objects/"+obj1)
+	}
+}
+
 func citationIDs(cits []Citation) map[string]bool {
 	out := make(map[string]bool, len(cits))
 	for _, c := range cits {
