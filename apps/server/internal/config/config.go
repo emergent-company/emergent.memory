@@ -616,6 +616,23 @@ type MCPConfig struct {
 	// field_strategy="full" is requested, because a full provision/paragraph
 	// payload is large (~14 KB per row) and a high limit multiplies it. Default: 25.
 	EntityQueryFullMaxLimit int `env:"MCP_ENTITY_QUERY_FULL_MAX_LIMIT" envDefault:"25"`
+
+	// ToolResultMaxBytes caps the JSON size of a single tool result as seen by
+	// the model. The full result is still persisted (kb.agent_run_tool_calls,
+	// kb.agent_run_messages) and streamed to the UI; only the model context is
+	// truncated, with an actionable marker. Default: 128 KiB (131072).
+	ToolResultMaxBytes int `env:"MCP_TOOL_RESULT_MAX_BYTES" envDefault:"131072"`
+
+	// ToolResultMaxBytesOverrides overrides ToolResultMaxBytes for named tools,
+	// as a comma-separated "tool=bytes" list (e.g.
+	// "entity-edges-get=262144,session-get-messages=262144"). Default: empty.
+	ToolResultMaxBytesOverrides string `env:"MCP_TOOL_RESULT_MAX_BYTES_OVERRIDES" envDefault:""`
+
+	// ToolResultTotalBudgetBytes caps the SUM of all tool results in one model
+	// request. When exceeded, the oldest results are elided (most-recent
+	// retained) so per-step context does not grow with run length. Default:
+	// 512 KiB (524288).
+	ToolResultTotalBudgetBytes int `env:"MCP_TOOL_RESULT_TOTAL_BUDGET_BYTES" envDefault:"524288"`
 }
 
 // StandaloneConfig holds configuration for standalone minimal deployment mode
