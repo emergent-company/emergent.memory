@@ -15,9 +15,15 @@
 - [ ] 3.1 DONE: client `openConversationStream` on the `meta` event when a new conversation gets its id.
 - [ ] 3.2 DONE: single-source teardown — `openLiveStream` dedupes/closes; `resetConversation` and run abandonment close the stream.
 
-## 4. Verify
+## 4. Review follow-ups
 
-- [ ] 4.1 `templ generate` + `go build ./...` + `go test ./...` in `apps/web-ui/gateway`.
-- [ ] 4.2 `task lint` in `apps/web-ui`.
-- [ ] 4.3 `openspec validate --all --strict`.
-- [ ] 4.4 e2e: `chat-run-control.spec.ts` asserts the new-conversation events subscription (live-LLM gated; not runnable in this lane).
+- [ ] 4.1 DONE: derive `run:<id>` state from the run DTO (`runTimelineWithRun` / `GetRunFull.Run`) so id/status are real and status-only transitions broadcast; test `TestHubPollerRunScopeBroadcastsOnStatusOnlyTransition` (RED→GREEN).
+- [ ] 4.2 DONE: the standalone `/runs/:runId` page opens its run stream (`openRunStream` in the `root.dataset.run` branch); e2e case added.
+- [ ] 4.3 DONE: transcript renders are scope-guarded (`scopeIsCurrent`) so a stale fetch after a scope switch is dropped.
+
+## 5. Verify
+
+- [ ] 5.1 `templ generate` + `go build ./...` + `go test ./...` in `apps/web-ui/gateway`.
+- [ ] 5.2 `task lint` in `apps/web-ui`.
+- [ ] 5.3 `openspec validate --all --strict`.
+- [ ] 5.4 e2e: `chat-run-control.spec.ts` asserts the new-conversation events subscription and the standalone run-page subscription (live-LLM gated; not runnable in this lane).

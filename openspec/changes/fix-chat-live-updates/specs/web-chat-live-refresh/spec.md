@@ -21,12 +21,22 @@ The conversation hub SHALL include a subscribed transcript's persisted step/mess
 
 ### Requirement: Live channel for scheduled runs
 
-The gateway SHALL expose a run-scoped server-sent events endpoint, and the chat client SHALL subscribe to it when a scheduled agent run's transcript is opened, so the run shows step progress live.
+The gateway SHALL expose a run-scoped server-sent events endpoint whose change-detection state is derived from the run's own DTO (so a run has a real id and status, not a permanently empty `done` state), and the chat client SHALL subscribe to it when a scheduled agent run's transcript is opened — in the chat workspace and on the standalone run page — so the run shows step progress and status changes live.
 
 #### Scenario: Run transcript opened
 
 - **WHEN** a scheduled run is opened in the chat workspace
 - **THEN** the client opens the run's events stream and re-renders the run transcript on each refresh frame
+
+#### Scenario: Standalone run page subscribes
+
+- **WHEN** the standalone `/runs/:runId` page loads
+- **THEN** the client opens the run's events stream (not a one-shot render)
+
+#### Scenario: Run status transition without new steps
+
+- **WHEN** a subscribed run's status changes (e.g. `working` → `completed`) with no new persisted step
+- **THEN** the hub broadcasts a refresh frame carrying the run's id, status, and derived bucket
 
 ### Requirement: Live channel for new conversations
 
@@ -41,3 +51,8 @@ The chat client SHALL subscribe to the conversation events stream as soon as a b
 
 - **WHEN** the client switches from a run to a conversation, or from one conversation to another
 - **THEN** the previously open events stream is closed before the new one opens
+
+#### Scenario: Stale transcript fetch is dropped after a switch
+
+- **WHEN** a transcript refresh fetch is in flight and the user switches scope before it resolves
+- **THEN** the resolved render is dropped unless the pane still shows the scope the fetch belongs to
