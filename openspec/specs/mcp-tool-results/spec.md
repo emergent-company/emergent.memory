@@ -275,6 +275,16 @@ be scoped to that document by combining the scope predicate with the other
 filters. A type with no declared scope key SHALL keep the previous behaviour
 exactly.
 
+A declaration that is present but cannot be parsed, or that omits the required
+`property`, SHALL NOT be treated as absent. A **filtered** query against such a
+type SHALL be rejected caller-visibly (fail-closed) with an actionable error
+naming the type, rather than being run unscoped with a warning. This is the
+legacy/tampered-row case — every write path rejects such a declaration, so only
+a row written before that enforcement (or out-of-band) can reach it — and the
+availability trade-off is accepted deliberately: rejecting the filtered query is
+preferable to silently running it across documents. Queries with no `filters`
+are unaffected, because the declaration is only consulted to validate filters.
+
 #### Scenario: Non-identity filter without the scope key is rejected
 
 - **WHEN** a type `LegalParagraph` declares scope key `law_ref_id` and a client
@@ -304,3 +314,11 @@ exactly.
 - **WHEN** a type has no `scopeKey` declaration
 - **THEN** a bare non-unique property filter behaves exactly as before (no
   rejection)
+
+#### Scenario: Unparseable declaration rejects the filtered query
+
+- **WHEN** a type's registry `scopeKey` is not a JSON object (or is present but
+  omits `property`) and a client calls `entity-query` with a `filters` entry for
+  that type
+- **THEN** the call fails with a caller-visible error naming the type and no
+  entities are returned
