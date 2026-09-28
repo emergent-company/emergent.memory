@@ -284,6 +284,14 @@ final class ChatActivityStore: ObservableObject {
                 }
             }
             if let update = message.updateComponents {
+                // A `ui` event may carry `updateComponents` without a preceding
+                // `createSurface` (the server's `deriveSurfaceID` falls back to a
+                // stable default id, and the web renderer draws components
+                // directly). Open the surface lazily so the payload is not
+                // silently dropped.
+                if !list.contains(where: { $0.id == id }) {
+                    list.append(ChatUISurface(id: id, catalogId: nil))
+                }
                 guard let index = list.firstIndex(where: { $0.id == id }) else { continue }
                 for component in update.components {
                     if let existing = list[index].components.firstIndex(where: { $0.id == component.id }) {

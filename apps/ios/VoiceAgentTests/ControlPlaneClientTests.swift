@@ -27,7 +27,7 @@ struct ControlPlaneClientTests {
         ]
         """#
         let agents = try JSONDecoder().decode([Agent].self, from: Data(json.utf8))
-        #expect(agents.count == 2)
+        try #require(agents.count == 2)
         #expect(agents[0].id == "a1")
         #expect(agents[0].name == "diane")
         #expect(agents[0].flowType == "single")
