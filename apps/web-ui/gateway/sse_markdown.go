@@ -62,6 +62,7 @@ func rewriteChatStream(w io.Writer, r io.Reader) error {
 	var snapshotEmitted bool   // true once this turn's html snapshot was emitted
 	var askInput *askUserInput // ask_user args awaiting the tool's question_id
 	var seenDone bool          // true once the upstream stream emitted a `done` event
+	var citations []citation   // this turn's citations, from the terminal `citations` event
 	for sc.Scan() {
 		raw := sc.Bytes()
 		data := extractSSEData(raw)
@@ -77,11 +78,12 @@ func rewriteChatStream(w io.Writer, r io.Reader) error {
 			continue
 		}
 		var ev struct {
-			Type   string          `json:"type"`
-			Token  string          `json:"token"`
-			Tool   string          `json:"tool"`
-			Status string          `json:"status"`
-			Result json.RawMessage `json:"result"`
+			Type      string          `json:"type"`
+			Token     string          `json:"token"`
+			Tool      string          `json:"tool"`
+			Status    string          `json:"status"`
+			Result    json.RawMessage `json:"result"`
+			Citations []citation      `json:"citations"`
 		}
 		if err := json.Unmarshal([]byte(data), &ev); err != nil {
 			if _, werr := w.Write(raw); werr != nil {
@@ -99,10 +101,19 @@ func rewriteChatStream(w io.Writer, r io.Reader) error {
 			if _, err := fmtEvent(w, payload); err != nil {
 				return err
 			}
+		case "citations":
+			// The turn's grounded citations, emitted by memory once after the
+			// last token and before `done`. Capture them so the snapshot below
+			// applies the citation link rule, and forward the event verbatim so
+			// the client can render the Sources block.
+			citations = ev.Citations
+			if _, err := w.Write(raw); err != nil {
+				return err
+			}
 		case "done":
 			// Emit the authoritative snapshot before passing done through, then
 			// reset the turn buffer for any subsequent turn in this stream.
-			if err := emitMarkdownSnapshot(w, &sb, &snapshotEmitted); err != nil {
+			if err := emitMarkdownSnapshot(w, &sb, &snapshotEmitted, citations); err != nil {
 				return err
 			}
 			if _, err := w.Write(raw); err != nil {
@@ -110,6 +121,7 @@ func rewriteChatStream(w io.Writer, r io.Reader) error {
 			}
 			sb.Reset()
 			snapshotEmitted = false
+			citations = nil
 			seenDone = true
 		case "mcp_tool":
 			if ev.Tool != "ask_user" {
@@ -183,7 +195,7 @@ func rewriteChatStream(w io.Writer, r io.Reader) error {
 	}
 	// Fallback: a turn that produced text but never saw `done` (error, EOF, or
 	// scanner failure) still gets its authoritative snapshot before termination.
-	if err := emitMarkdownSnapshot(w, &sb, &snapshotEmitted); err != nil {
+	if err := emitMarkdownSnapshot(w, &sb, &snapshotEmitted, citations); err != nil {
 		return err
 	}
 	// A normal memory stream always ends with `done`. If the scan loop stopped
@@ -210,12 +222,14 @@ func rewriteChatStream(w io.Writer, r io.Reader) error {
 // accumulated turn text, unless the buffer is empty or a snapshot was already
 // emitted this turn. It renders via renderMarkdown — the same sanitized
 // renderer conversation history uses — so the live and history renders of the
-// same text are byte-identical.
-func emitMarkdownSnapshot(w io.Writer, sb *strings.Builder, snapshotEmitted *bool) error {
+// same text are byte-identical. When the turn carries citations, the same
+// citation link rule the history renderer applies is applied here too.
+func emitMarkdownSnapshot(w io.Writer, sb *strings.Builder, snapshotEmitted *bool, citations []citation) error {
 	if sb.Len() == 0 || *snapshotEmitted {
 		return nil
 	}
-	payload, err := marshalNoEscape(map[string]string{"type": "html", "html": renderMarkdown(sb.String())})
+	html := neutralizeCitationLinks(renderMarkdown(sb.String()), citations)
+	payload, err := marshalNoEscape(map[string]string{"type": "html", "html": html})
 	if err != nil {
 		return err
 	}
@@ -324,6 +338,25 @@ func splitLeadingReasoning(text string) (reasoning, answer string) {
 	return "", text
 }
 
+// decodeCitations reads a history item's `citations` value into []citation.
+// The value is already-decoded JSON (the item arrived as a raw object), so it
+// is re-marshaled once and decoded into the typed slice; any unexpected shape
+// yields nil (no citations) rather than an error.
+func decodeCitations(v any) []citation {
+	if v == nil {
+		return nil
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	var out []citation
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
 // renderHistoryHTML converts assistant message text to sanitized HTML,
 // injecting it as content.html. User/tool/system messages and non-message items
 // are left untouched; items that fail to parse are kept as-is. System records
@@ -338,6 +371,7 @@ func renderHistoryHTML(items []json.RawMessage) []json.RawMessage {
 			continue
 		}
 		kind, _ := m["kind"].(string)
+		cites := decodeCitations(m["citations"])
 
 		// ask_user tool calls carry the agent's question text; render its
 		// markdown so the client can show it formatted rather than raw.
@@ -391,13 +425,13 @@ func renderHistoryHTML(items []json.RawMessage) []json.RawMessage {
 		// leak their chain-of-thought as the leading line; split it out so the
 		// client can render it as a Thinking block above the markdown reply.
 		if calls, hasCalls := content["function_calls"].([]any); hasCalls && len(calls) > 0 {
-			content["html"] = renderMarkdown(text)
+			content["html"] = neutralizeCitationLinks(renderMarkdown(text), cites)
 		} else if reasoning, answer := splitLeadingReasoning(text); reasoning != "" {
 			content["reasoning"] = reasoning
 			content["text"] = answer
-			content["html"] = renderMarkdown(answer)
+			content["html"] = neutralizeCitationLinks(renderMarkdown(answer), cites)
 		} else {
-			content["html"] = renderMarkdown(text)
+			content["html"] = neutralizeCitationLinks(renderMarkdown(text), cites)
 		}
 		re, err := marshalNoEscape(m)
 		if err != nil {

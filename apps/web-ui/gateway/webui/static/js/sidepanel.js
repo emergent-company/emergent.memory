@@ -20,6 +20,9 @@
   var assistantAgent = "";
   var aborter = null, streaming = false;
   var bubble = null, bubbleHTML = "", bubbleText = "", conversationId = "";
+  // Grounded citations for the in-flight/just-finished assistant turn; persisted
+  // with the local transcript so a reload can re-render the Sources block.
+  var pendingCitations = [];
   // Persisted transcript: {role:"user",text} | {role:"assistant",html}
   var history = [];
   // Session picker: the assistant agent's conversations from the backend
@@ -103,6 +106,12 @@
     renderUI: function (evt) {
       MemoryChatComponents.renderA2UISurface(evt.surfaceId, evt.messages, badgeCtx);
     },
+    // Grounded citations for the live turn: remember them for persistence and
+    // mount the Sources block under the in-progress assistant bubble.
+    onCitations: function (list) {
+      pendingCitations = Array.isArray(list) ? list : [];
+      if (bubble) MemoryChatComponents.attachSources(bubble, pendingCitations);
+    },
     failStream: function (msg) { failStream(msg); },
     onToken: function (evt) { appendToken(evt.token); },
     isAborted: function () { return !!(aborter && aborter.signal.aborted); },
@@ -181,7 +190,7 @@
     if (bubble && !bubble._recorded) {
       bubble._recorded = true;
       if (bubbleHTML) {
-        history.push({ role: "assistant", html: bubbleHTML });
+        history.push({ role: "assistant", html: bubbleHTML, citations: pendingCitations });
         persist();
       }
     }
@@ -454,6 +463,7 @@
     conversationId = "";
     history = [];
     bubble = null; bubbleHTML = ""; bubbleText = "";
+    pendingCitations = [];
     setStreaming(false);
     if (messages) messages.innerHTML = "";
     if (empty) empty.classList.remove("hidden");
@@ -471,6 +481,7 @@
     if (aborter) aborter.abort();
     streaming = false;
     bubble = null; bubbleHTML = ""; bubbleText = "";
+    pendingCitations = [];
     setStreaming(false);
 
     var items = [];
@@ -591,7 +602,8 @@
             // Synthetic pause notice — the question/approval card conveys it.
             break;
           } else if (text || html) {
-            addAssistantMessage(html || escapeHTML(text), currentAgentName(), true);
+            var turnEl = addAssistantMessage(html || escapeHTML(text), currentAgentName(), true);
+            if (turnEl && item.citations) MemoryChatComponents.attachSources(turnEl, item.citations);
           }
           break;
       }
@@ -619,6 +631,7 @@
     addUserMessage(text);
     history.push({ role: "user", text: text });
     persist();
+    pendingCitations = [];
     setStreaming(true); // before the bubble: it shows the typing indicator
     openAssistantBubble();
     streamChat(currentAgent(), text);
@@ -663,7 +676,10 @@
       var m = history[i];
       if (!m) continue;
       if (m.role === "user" && m.text) addUserMessage(m.text, true);
-      else if (m.role === "assistant" && m.html) addAssistantMessage(m.html, currentAgentName(), true);
+      else if (m.role === "assistant" && m.html) {
+        var restored = addAssistantMessage(m.html, currentAgentName(), true);
+        if (restored && m.citations) MemoryChatComponents.attachSources(restored, m.citations);
+      }
     }
     if (history.length) scrollToBottom(true);
 

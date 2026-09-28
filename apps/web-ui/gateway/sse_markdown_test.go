@@ -124,9 +124,10 @@ func rewrite(t *testing.T, stream string) string {
 
 // streamEvent is the subset of stream event fields the rewrite tests assert on.
 type streamEvent struct {
-	Type  string `json:"type"`
-	Token string `json:"token"`
-	HTML  string `json:"html"`
+	Type      string     `json:"type"`
+	Token     string     `json:"token"`
+	HTML      string     `json:"html"`
+	Citations []citation `json:"citations"`
 }
 
 // parseStream decodes the SSE frames in out into a slice of streamEvents,
@@ -584,6 +585,63 @@ func (errWriter) Write([]byte) (int, error) { return 0, errTest }
 
 // TestSplitSSEEventScanner drives splitSSEEvent through bufio.Scanner to prove
 // multi-event streams and a trailing unterminated event are all yielded in order.
+// TestRewriteChatStreamCitations asserts the terminal `citations` event is
+// forwarded verbatim before `done`, and the snapshot applies the citation link
+// rule: cited object links stay, uncited ones are demoted to their label text.
+func TestRewriteChatStreamCitations(t *testing.T) {
+	cited := "11111111-1111-1111-1111-111111111111"
+	other := "22222222-2222-2222-2222-222222222222"
+	stream := strings.Join([]string{
+		`data: {"type":"token","token":"[Acme](/objects/` + cited + `) and [Ghost](/objects/` + other + `)"}`,
+		`data: {"type":"citations","citations":[{"kind":"object","id":"` + cited + `","type":"Person","label":"Acme","url":"/objects/` + cited + `"}]}`,
+		`data: {"type":"done"}`,
+	}, "\n\n") + "\n\n"
+
+	events := parseStream(t, rewrite(t, stream))
+
+	var types []string
+	var snapshot string
+	citationsForwarded := false
+	for _, ev := range events {
+		types = append(types, ev.Type)
+		switch ev.Type {
+		case "html":
+			snapshot = ev.HTML
+		case "citations":
+			if len(ev.Citations) == 1 && ev.Citations[0].ID == cited && ev.Citations[0].Type == "Person" {
+				citationsForwarded = true
+			}
+		}
+	}
+	if want := []string{"token", "citations", "html", "done"}; !slices.Equal(types, want) {
+		t.Fatalf("event sequence = %v, want %v", types, want)
+	}
+	if !citationsForwarded {
+		t.Error("citations event must be forwarded with its payload intact")
+	}
+	if !strings.Contains(snapshot, `href="/objects/`+cited+`"`) {
+		t.Errorf("cited link must stay an anchor: %s", snapshot)
+	}
+	if strings.Contains(snapshot, "/objects/"+other) {
+		t.Errorf("uncited link must be demoted (no href): %s", snapshot)
+	}
+	if !strings.Contains(snapshot, "Ghost") {
+		t.Errorf("demoted link must keep its label text: %s", snapshot)
+	}
+}
+
+// TestRewriteChatStreamNoCitationsUnchanged locks the additive contract: a
+// stream with no `citations` event carries no citations frame and renders
+// exactly as before.
+func TestRewriteChatStreamNoCitationsUnchanged(t *testing.T) {
+	stream := "data: {\"type\":\"token\",\"token\":\"plain answer\"}\n\n" +
+		"data: {\"type\":\"done\"}\n\n"
+	out := rewrite(t, stream)
+	if strings.Contains(out, `"type":"citations"`) {
+		t.Errorf("no citations event should be emitted: %s", out)
+	}
+}
+
 func TestSplitSSEEventScanner(t *testing.T) {
 	stream := `data: {"n":1}` + "\n\n" + `data: {"n":2}` + "\n\n" + `data: {"n":3}`
 	sc := bufio.NewScanner(strings.NewReader(stream))
@@ -672,9 +730,39 @@ func TestRenderHistoryHTML(t *testing.T) {
 	}
 }
 
-// TestRenderHistoryHTMLLeavesSystemUntouched locks the agent-instruction
-// contract: a `system` record keeps its raw text and never gains a markdown
-// `html` render, so the client owns its dedicated prompt card.
+// TestRenderHistoryHTMLCitations asserts a history item's `citations` are
+// preserved on the re-encoded item for the client's Sources block, and the
+// rendered answer applies the same citation link rule as the live snapshot.
+func TestRenderHistoryHTMLCitations(t *testing.T) {
+	cited := "11111111-1111-1111-1111-111111111111"
+	other := "22222222-2222-2222-2222-222222222222"
+	item := `{"kind":"message","role":"assistant",` +
+		`"citations":[{"kind":"object","id":"` + cited + `","type":"Person","label":"Acme","url":"/objects/` + cited + `"}],` +
+		`"content":{"text":"see [Acme](/objects/` + cited + `) and [Ghost](/objects/` + other + `)"}}`
+	out := renderHistoryHTML([]json.RawMessage{json.RawMessage(item)})
+	if len(out) != 1 {
+		t.Fatalf("len = %d, want 1", len(out))
+	}
+	var m map[string]any
+	if err := json.Unmarshal(out[0], &m); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m["citations"]; !ok {
+		t.Fatalf("citations must be preserved on the item: %v", m)
+	}
+	c, _ := m["content"].(map[string]any)
+	html, _ := c["html"].(string)
+	if !strings.Contains(html, `href="/objects/`+cited+`"`) {
+		t.Errorf("cited link missing anchor: %s", html)
+	}
+	if strings.Contains(html, "/objects/"+other) {
+		t.Errorf("uncited link must be demoted: %s", html)
+	}
+	if !strings.Contains(html, "Ghost") {
+		t.Errorf("demoted label text must remain: %s", html)
+	}
+}
+
 func TestRenderHistoryHTMLLeavesSystemUntouched(t *testing.T) {
 	items := []json.RawMessage{
 		json.RawMessage(`{"kind":"message","role":"system","content":{"text":"# Instructions\nBe careful."}}`),

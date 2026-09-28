@@ -273,6 +273,7 @@
     //   getStreaming, setBubbleHTML, updateBubbleText, scrollToBottom,
     //   handleToolEvent, renderQuestion, renderApproval, failStream,
     //   renderUI(evt),   // optional (A2UI surface cards)
+    //   onCitations(list), // optional (grounded citations for the turn)
     //   onMeta(evt),     // page-local meta handling (required)
     //   onThinking(evt), // optional (chat only)
     //   onToken(evt),    // optional (raw delta append; hosts without it skip)
@@ -308,6 +309,9 @@
           break;
         case "ui":
           if (evt.surfaceId && h.renderUI) h.renderUI(evt);
+          break;
+        case "citations":
+          if (h.onCitations) h.onCitations(evt.citations || []);
           break;
         case "error":
           h.failStream(evt.error || "The agent hit an error.");

@@ -358,3 +358,57 @@ func TestRunTimelineItemsToolMetadataAndSystemPrompt(t *testing.T) {
 		t.Errorf("tool duration_ms = %v, want 1250", tool["duration_ms"])
 	}
 }
+
+// TestRunTimelineItemsCitations asserts a run message's citations survive onto
+// the synthesized timeline item (from either the message DTO field or its
+// content), so the shared client renderer can surface the Sources block.
+func TestRunTimelineItemsCitations(t *testing.T) {
+	const cites = `[{"kind":"object","id":"11111111-1111-1111-1111-111111111111","type":"Person","label":"Acme","url":"/objects/11111111-1111-1111-1111-111111111111"}]`
+	full := &AgentRunFull{
+		Run: &ScheduledAgentRun{ID: "run-1", Status: "completed", StartedAt: "2026-08-26T08:00:00Z"},
+		Messages: []*AgentRunMessage{
+			{Role: "assistant", Content: map[string]any{"text": "See [Acme]."}, Citations: json.RawMessage(cites), CreatedAt: "2026-08-26T08:00:02Z", StepNumber: 1},
+			{Role: "assistant", Content: map[string]any{"text": "Also.", "citations": []any{map[string]any{"kind": "object", "id": "22222222-2222-2222-2222-222222222222", "label": "Beta", "type": "Org", "url": "/objects/22222222-2222-2222-2222-222222222222"}}}, CreatedAt: "2026-08-26T08:00:03Z", StepNumber: 2},
+		},
+	}
+	items := runTimelineItems(full, nil)
+
+	var withDTO, withContent map[string]any
+	for _, raw := range items {
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatalf("decode item: %v", err)
+		}
+		if m["kind"] != "message" {
+			continue
+		}
+		switch m["content"].(map[string]any)["text"] {
+		case "See [Acme].":
+			withDTO = m
+		case "Also.":
+			withContent = m
+		}
+	}
+	if withDTO == nil || withDTO["citations"] == nil {
+		t.Fatalf("DTO citations missing on item: %v", withDTO)
+	}
+	if withContent == nil || withContent["citations"] == nil {
+		t.Fatalf("content citations missing on item: %v", withContent)
+	}
+
+	// The citations must also survive renderHistoryHTML (passthrough) so the
+	// client receives them on the history render.
+	out := renderHistoryHTML(items)
+	for _, raw := range out {
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatalf("decode rendered item: %v", err)
+		}
+		if m["kind"] != "message" {
+			continue
+		}
+		if txt, _ := m["content"].(map[string]any)["text"].(string); txt == "See [Acme]." && m["citations"] == nil {
+			t.Error("citations dropped by renderHistoryHTML")
+		}
+	}
+}

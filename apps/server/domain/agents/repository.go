@@ -10,8 +10,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/emergent-company/emergent.memory/domain/chat/citations"
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
 	"github.com/emergent-company/emergent.memory/domain/sessiontodos"
+	"github.com/emergent-company/emergent.memory/pkg/a2ui"
 	"github.com/emergent-company/emergent.memory/pkg/acpslug"
 	"github.com/emergent-company/emergent.memory/pkg/adk/session/bunsession"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
@@ -735,7 +737,7 @@ When a question requires a complete list ("how many", "list all", "which ones"):
 Entities are versioned. Each update creates a new version; the canonical ID stays constant across versions.
 - entity-query always returns the current (HEAD) version. Each entity in the response's data.entities carries a "version" field (integer, starting at 1).
 - To see all versions of an entity: call entity-history with the canonical entity_id. Returns [{version, physical_id, updated_at}, ...].
-- To fetch a specific historical version's properties: call entity-query with ids=[physical_id] (the physical_id from entity-history, NOT the canonical_id).`
+- To fetch a specific historical version's properties: call entity-query with ids=[physical_id] (the physical_id from entity-history, NOT the canonical_id).` + "\n\n" + citationInstruction
 
 // EnsureGraphQueryAgent returns the graph-query-agent for the project, creating it if it
 // does not exist yet. Uses VisibilityInternal so it never appears in the public list.
@@ -3419,6 +3421,10 @@ type ConversationHistoryItem struct {
 	Role    string         `json:"role,omitempty"`
 	Content map[string]any `json:"content,omitempty"`
 
+	// Citations carries the grounded object/relationship citations derived for
+	// an assistant message (see GetConversationFullHistory).
+	Citations []citations.Citation `json:"citations,omitempty"`
+
 	// Fields populated for tool_call / tool_result
 	ID         string         `json:"id,omitempty"`
 	ToolName   string         `json:"tool_name,omitempty"`
@@ -3486,6 +3492,19 @@ func (r *Repository) GetConversationFullHistory(ctx context.Context, sessionID s
 		tcByRun[tc.RunID] = append(tcByRun[tc.RunID], tc)
 	}
 
+	// Derive per-run citation candidates from the tool calls already fetched
+	// above so assistant messages can be annotated without extra queries.
+	candsByRun := make(map[string]map[string]citations.Reference, len(runs))
+	for runID, tcs := range tcByRun {
+		outputs := make([]citations.ToolCall, 0, len(tcs))
+		for _, tc := range tcs {
+			if tc != nil {
+				outputs = append(outputs, citations.ToolCall{Output: tc.Output})
+			}
+		}
+		candsByRun[runID] = citations.Candidates(outputs)
+	}
+
 	var items []*ConversationHistoryItem
 
 	for _, run := range runs {
@@ -3508,17 +3527,21 @@ func (r *Repository) GetConversationFullHistory(ctx context.Context, sessionID s
 		var entries []timelineEntry
 
 		for _, m := range msgsByRun[run.ID] {
+			item := &ConversationHistoryItem{
+				Kind:       "message",
+				RunID:      run.ID,
+				StepNumber: m.StepNumber,
+				CreatedAt:  m.CreatedAt,
+				Role:       m.Role,
+				Content:    m.Content,
+			}
+			if isAgentReplyRole(m.Role) {
+				item.Citations = deriveMessageCitations(m.Content, candsByRun[run.ID])
+			}
 			entries = append(entries, timelineEntry{
 				step:      m.StepNumber,
 				createdAt: m.CreatedAt,
-				item: &ConversationHistoryItem{
-					Kind:       "message",
-					RunID:      run.ID,
-					StepNumber: m.StepNumber,
-					CreatedAt:  m.CreatedAt,
-					Role:       m.Role,
-					Content:    m.Content,
-				},
+				item:      item,
 			})
 		}
 		for _, tc := range tcByRun[run.ID] {
@@ -3565,6 +3588,19 @@ func (r *Repository) GetConversationFullHistory(ctx context.Context, sessionID s
 	}
 
 	return items, nil
+}
+
+// deriveMessageCitations derives grounded citations for an assistant message
+// from its text content (including any embedded A2UI surface) and the run's
+// citation candidates. It is a pure read-side derivation — the same inputs the
+// live turn uses — so a reloaded transcript renders the same citations.
+func deriveMessageCitations(content map[string]any, candidates map[string]citations.Reference) []citations.Citation {
+	if content == nil {
+		return nil
+	}
+	text, _ := content["text"].(string)
+	surfaces, stripped, _ := a2ui.ExtractFromText(text)
+	return citations.Derive(stripped, surfaces, candidates)
 }
 
 // GetConversationFullHistoryRaw implements mcp.SessionHistoryProvider.

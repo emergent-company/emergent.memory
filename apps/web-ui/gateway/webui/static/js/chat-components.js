@@ -551,6 +551,121 @@
     return el;
   }
 
+  /* ---------- citation sources ---------- */
+
+  // UUID-shaped id, the only object identifier we will turn into a link.
+  var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  // A trusted object-page url: /objects/<uuid> and nothing else (no scheme, no
+  // query, no fragment). Anything else is ignored rather than trusted.
+  var OBJECT_URL_RE = /^\/objects\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  function isUUID(s) {
+    return typeof s === "string" && UUID_RE.test(s);
+  }
+
+  // citationHref resolves a SAFE href for a citation, or "" when none can be
+  // trusted. An agent-supplied url is only used when it is exactly a
+  // /objects/<uuid> path; otherwise the id itself must be a UUID. This is the
+  // only place a citation becomes a link — labels/types stay textContent.
+  function citationHref(c) {
+    if (!c || typeof c !== "object") return "";
+    if (typeof c.url === "string" && OBJECT_URL_RE.test(c.url)) return c.url;
+    if (isUUID(c.id)) return "/objects/" + c.id;
+    return "";
+  }
+
+  // sourcesList renders citations as a compact list: each entry a link (when
+  // the citation resolves to a safe object url) showing its label plus a muted
+  // type badge. Label and type are UNTRUSTED text — textContent only. Entries
+  // without a label are skipped.
+  function sourcesList(citations) {
+    var ul = document.createElement("ul");
+    ul.className = "flex flex-col gap-1";
+    var list = Array.isArray(citations) ? citations : [];
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i];
+      if (!c || typeof c !== "object") {
+        // Fallback: a bare string entry renders as plain text.
+        if (typeof c === "string" && c) {
+          ul.appendChild(sourceItem(c, "", ""));
+        }
+        continue;
+      }
+      var label = (c.label != null && c.label !== "") ? String(c.label) : (c.id != null ? String(c.id) : "");
+      if (!label) continue;
+      ul.appendChild(sourceItem(label, c.type == null ? "" : String(c.type), citationHref(c)));
+    }
+    return ul;
+  }
+
+  function sourceItem(label, type, href) {
+    var li = document.createElement("li");
+    li.className = "flex min-w-0 items-baseline gap-2";
+    var nameEl;
+    if (href) {
+      nameEl = document.createElement("a");
+      nameEl.href = href;
+      nameEl.className = "link link-hover min-w-0 truncate text-xs text-base-content";
+      nameEl.setAttribute("data-testid", "citation-link");
+    } else {
+      nameEl = document.createElement("span");
+      nameEl.className = "min-w-0 truncate text-xs text-muted";
+      nameEl.setAttribute("data-testid", "citation-text");
+    }
+    nameEl.textContent = label;
+    li.appendChild(nameEl);
+    if (type) {
+      var badge = document.createElement("span");
+      badge.className = "badge badge-ghost badge-xs shrink-0 font-normal text-muted";
+      badge.textContent = type;
+      li.appendChild(badge);
+    }
+    return li;
+  }
+
+  // sourcesBlock renders the low-emphasis Sources disclosure beneath an
+  // assistant answer: a quiet, bordered list that reads as provenance, not a
+  // second content block. Returns null when there is nothing to show, so
+  // callers can omit the block entirely.
+  function sourcesBlock(citations) {
+    var list = Array.isArray(citations) ? citations : [];
+    if (!list.length) return null;
+
+    var wrap = document.createElement("div");
+    wrap.className = "chat chat-start memory-rise memory-aux memory-sources";
+    wrap.innerHTML =
+      '<div class="chat-image invisible bg-primary/5 text-primary border-primary/10 flex items-center justify-center rounded-full border p-2">' +
+      '<span class="iconify lucide--bot size-5" aria-hidden="true"></span></div>';
+    var box = document.createElement("div");
+    box.className = "col-start-2 row-start-2 w-full";
+    var inner = document.createElement("div");
+    inner.className =
+      "flex flex-col gap-1.5 rounded-box border border-base-content/10 bg-base-200/30 px-3 py-2";
+    var head = document.createElement("p");
+    head.className = "text-[10px] font-semibold tracking-wider uppercase text-muted";
+    head.textContent = "Sources";
+    inner.appendChild(head);
+    inner.appendChild(sourcesList(list));
+    box.appendChild(inner);
+    wrap.appendChild(box);
+    return wrap;
+  }
+
+  // attachSources mounts the Sources block on an assistant message wrapper (as
+  // returned by addAssistantMessage/openAssistantBubble). Idempotent — one
+  // block per wrapper — and positioned before a turn footer when one exists.
+  function attachSources(wrap, citations) {
+    if (!wrap) return null;
+    if (wrap._memorySources) return wrap._memorySources;
+    var block = sourcesBlock(citations);
+    if (!block) return null;
+    var footer = wrap.querySelector(".memory-turn-footer");
+    if (footer && footer.parentNode === wrap) wrap.insertBefore(block, footer);
+    else wrap.appendChild(block);
+    wrap._memorySources = block;
+    return block;
+  }
+
   /* ---------- A2UI declarative cards ---------- */
 
   // A2UI (v0.9.1) surface renderer. The agent streams declarative "cards" via
@@ -607,6 +722,7 @@
       case "object-form": return a2uiObjectForm(comp, surfaceId);
       case "todo": return a2uiTodo(comp, surfaceId);
       case "result": return a2uiResult(comp, surfaceId);
+      case "sources": return a2uiSources(comp, surfaceId);
       default: return a2uiSummary(comp, surfaceId);
     }
   }
@@ -636,7 +752,7 @@
     return safeJSON(v);
   }
 
-  function a2uiHeader(title, badge) {
+  function a2uiHeader(title, badge, href) {
     var h = document.createElement("div");
     h.className = "flex items-center gap-2";
     if (badge) {
@@ -645,8 +761,16 @@
       b.textContent = badge;
       h.appendChild(b);
     }
-    var t = document.createElement("span");
-    t.className = "text-xs uppercase tracking-wider text-muted";
+    var t;
+    if (href) {
+      t = document.createElement("a");
+      t.href = href;
+      t.className = "link link-hover text-xs uppercase tracking-wider text-muted";
+      t.setAttribute("data-testid", "a2ui-object-link");
+    } else {
+      t = document.createElement("span");
+      t.className = "text-xs uppercase tracking-wider text-muted";
+    }
     t.textContent = title;
     h.appendChild(t);
     return h;
@@ -674,7 +798,8 @@
     return pre;
   }
 
-  // a2uiRows renders [[label, value], ...] as stacked key/value rows.
+  // a2uiRows renders [[label, value, href?], ...] as stacked key/value rows. A
+  // third element (when present and trusted) turns the value into a link.
   function a2uiRows(rows) {
     var list = document.createElement("div");
     list.className = "flex flex-col gap-2";
@@ -685,8 +810,16 @@
       var key = document.createElement("span");
       key.className = "text-[10px] font-semibold tracking-wider uppercase text-muted";
       key.textContent = pair[0];
-      var val = document.createElement("span");
-      val.className = "text-sm text-base-content leading-relaxed break-words whitespace-pre-wrap";
+      var val;
+      if (pair[2]) {
+        val = document.createElement("a");
+        val.href = pair[2];
+        val.className = "link link-hover text-sm text-base-content leading-relaxed break-words whitespace-pre-wrap";
+        val.setAttribute("data-testid", "a2ui-object-link");
+      } else {
+        val = document.createElement("span");
+        val.className = "text-sm text-base-content leading-relaxed break-words whitespace-pre-wrap";
+      }
       val.textContent = pair[1];
       row.appendChild(key);
       row.appendChild(val);
@@ -795,7 +928,11 @@
 
   function a2uiEntity(comp, surfaceId) {
     var shell = a2uiShell();
-    shell.body.appendChild(a2uiHeader("Entity", comp.type || "entity"));
+    // The entity's `id` is the object's canonical id when it is a UUID; render
+    // the header as a link to its object page. A non-UUID id stays plain text.
+    var entityHref = isUUID(comp.id) ? "/objects/" + comp.id : "";
+    var entityName = (comp.label != null && comp.label !== "") ? String(comp.label) : "Entity";
+    shell.body.appendChild(a2uiHeader(entityName, comp.type || "entity", entityHref));
     var props = comp.properties;
     if (props && typeof props === "object" && !Array.isArray(props)) {
       var rows = [];
@@ -820,12 +957,31 @@
           continue;
         }
         var relObj = rel && typeof rel === "object" ? rel : {};
+        var target = relObj.target || relObj.entity || relObj.id || "";
+        var targetHref = isUUID(target) ? "/objects/" + target : "";
         relRows.push([
           relObj.relation || relObj.type || relObj.label || "related",
-          relObj.target || relObj.entity || relObj.id || "",
+          target,
+          targetHref,
         ]);
       }
       shell.body.appendChild(a2uiRows(relRows));
+    }
+    return shell.wrap;
+  }
+
+  // a2uiSources renders the `sources` component: a list of citations, each an
+  // item {id, type, label, url}. Items link to their object page when the
+  // citation resolves to a safe url/id; otherwise the label stays plain text.
+  // An empty or missing list falls back to a quiet placeholder.
+  function a2uiSources(comp, surfaceId) {
+    var shell = a2uiShell();
+    shell.body.appendChild(a2uiHeader("Sources", null));
+    var items = Array.isArray(comp.items) ? comp.items : [];
+    if (items.length) {
+      shell.body.appendChild(sourcesList(items));
+    } else {
+      shell.body.appendChild(a2uiLabel("No sources."));
     }
     return shell.wrap;
   }
@@ -928,5 +1084,7 @@
     turnFooter: turnFooter,
     runMarker: runMarker,
     renderA2UISurface: renderA2UISurface,
+    sourcesBlock: sourcesBlock,
+    attachSources: attachSources,
   };
 })();

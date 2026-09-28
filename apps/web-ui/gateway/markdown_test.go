@@ -44,6 +44,86 @@ func TestRenderMarkdownDeterministic(t *testing.T) {
 	}
 }
 
+func TestNeutralizeCitationLinks(t *testing.T) {
+	cited := "11111111-1111-1111-1111-111111111111"
+	other := "22222222-2222-2222-2222-222222222222"
+	rel := "33333333-3333-3333-3333-333333333333"
+	cites := []citation{
+		{Kind: "object", ID: cited, Type: "Person", Label: "Acme"},
+		{Kind: "relationship", ID: rel, Type: "works_at"},
+	}
+	cases := []struct {
+		name    string
+		in      string
+		want    []string
+		notWant []string
+		exact   bool
+	}{
+		{
+			name: "cited object link preserved",
+			in:   `<p><a href="/objects/` + cited + `">Acme</a></p>`,
+			want: []string{`href="/objects/` + cited + `"`, ">Acme<"},
+		},
+		{
+			name:    "uncited object link demoted to label text",
+			in:      `<p><a href="/objects/` + other + `">Ghost</a></p>`,
+			want:    []string{"<p>Ghost</p>"},
+			notWant: []string{"<a ", "/objects/"},
+		},
+		{
+			name:    "uncited relationship fragment dropped, object link kept",
+			in:      `<p><a href="/objects/` + cited + `#relationship-` + other + `">A —rel→ B</a></p>`,
+			want:    []string{`href="/objects/` + cited + `"`, "A —rel→ B"},
+			notWant: []string{"#relationship-"},
+		},
+		{
+			name: "cited relationship link preserved even when source object uncited",
+			in:   `<p><a href="/objects/` + other + `#relationship-` + rel + `">A —rel→ B</a></p>`,
+			want: []string{`href="/objects/` + other + `#relationship-` + rel + `"`},
+		},
+		{
+			name:    "uncited relationship and unknown object fully demoted",
+			in:      `<p><a href="/objects/` + other + `#relationship-` + other + `">A —rel→ B</a></p>`,
+			want:    []string{"<p>A —rel→ B</p>"},
+			notWant: []string{"<a ", "/objects/"},
+		},
+		{
+			name:  "non-object anchors untouched (byte-identical)",
+			in:    `<p><a href="https://example.com">x</a> <strong>y</strong></p>`,
+			exact: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := neutralizeCitationLinks(tc.in, cites)
+			if tc.exact && got != tc.in {
+				t.Errorf("unchanged input altered:\n got %q\nwant %q", got, tc.in)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("missing %q in %q", w, got)
+				}
+			}
+			for _, n := range tc.notWant {
+				if strings.Contains(got, n) {
+					t.Errorf("unexpected %q in %q", n, got)
+				}
+			}
+		})
+	}
+}
+
+// TestNeutralizeCitationLinksCodeFence proves the rule applies to real anchors
+// only: markdown code that merely looks like an object link renders as text and
+// is left untouched.
+func TestNeutralizeCitationLinksCodeFence(t *testing.T) {
+	other := "22222222-2222-2222-2222-222222222222"
+	rendered := renderMarkdown("```\n[Ghost](/objects/" + other + ")\n```")
+	if got := neutralizeCitationLinks(rendered, nil); got != rendered {
+		t.Errorf("code fence altered:\n got %q\nwant %q", got, rendered)
+	}
+}
+
 func TestSplitLeadingReasoning(t *testing.T) {
 	cases := []struct {
 		name          string

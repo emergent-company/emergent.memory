@@ -60,7 +60,7 @@ When the user asks about something they may have stored:
 - Search before create — never create a duplicate when an entity already exists.
 - Keep entity keys short and unique (slug format). Use description for full context.
 - When unsure of entity type, use Note.
-- Prefer search-hybrid over entity-query for open-ended recall questions.`
+- Prefer search-hybrid over entity-query for open-ended recall questions.` + "\n\n" + citationInstruction
 
 // EnsurePersonalKBAgent creates or returns the canonical "personal-kb-agent"
 // definition for the given project. The agent has access to entity creation,

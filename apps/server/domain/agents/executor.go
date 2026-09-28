@@ -3768,6 +3768,30 @@ func (ae *AgentExecutor) resolveDescription(req ExecuteRequest) string {
 // tool-policy outcomes injected by the executor (approve/reject/cancel).
 const toolPolicyResultInstruction = `Tool policy: some of your tool calls may require human approval before executing. When a tool result contains "policy_decision": "rejected", the human declined that action — do not retry it and do not attempt to accomplish it another way; stop that direction. When it contains "policy_decision": "cancelled" or "status": "not_taken", the action was withdrawn — continue without it. Only proceed with a tool when its result reflects actual execution.`
 
+// citationInstruction is appended to the system prompt of knowledge-base-backed
+// agents so their answers cite the objects and relationships they actually used,
+// with the exact identifiers the tools returned. It is shared across the
+// graph-query-agent and personal-kb-agent literal prompts and the executor's
+// resolveInstruction path.
+const citationInstruction = `Citing sources: cite every graph object you use as [Name](/objects/<object-id>) and every relationship as [Source —type→ Target](/objects/<source-id>#relationship-<relationship-id>). Use the exact ids from the tool results — never invent an id.`
+
+// isKnowledgeBaseAgent reports whether the agent definition is KB-backed, i.e.
+// it can retrieve graph objects/relationships and should therefore cite them.
+func isKnowledgeBaseAgent(d *AgentDefinition) bool {
+	if d == nil {
+		return false
+	}
+	for _, tool := range d.Tools {
+		switch tool {
+		case "search-hybrid", "entity-query", "entity-edges-get", "relationship-list",
+			"entity-get", "entity-search", "graph-traverse", "search-similar",
+			"entity-history", "entity-type-list":
+			return true
+		}
+	}
+	return false
+}
+
 func (ae *AgentExecutor) resolveInstruction(req ExecuteRequest) string {
 	inst := ""
 	if req.AgentDefinition != nil && req.AgentDefinition.SystemPrompt != nil {
@@ -3788,6 +3812,13 @@ func (ae *AgentExecutor) resolveInstruction(req ExecuteRequest) string {
 
 	if req.SystemPromptAppendix != "" {
 		inst += "\n\n" + req.SystemPromptAppendix
+	}
+
+	// KB-backed agents cite the objects/relationships they use. Skip when the
+	// resolved instruction already carries the instruction (the literal prompts
+	// include it) so it is never injected twice.
+	if isKnowledgeBaseAgent(req.AgentDefinition) && !strings.Contains(inst, citationInstruction) {
+		inst += "\n\n" + citationInstruction
 	}
 
 	// If tool policies can reject or cancel a tool call, tell the model how to

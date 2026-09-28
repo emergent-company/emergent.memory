@@ -50,6 +50,9 @@ type TimelineItem struct {
 	ToolOutput   json.RawMessage `json:"tool_output,omitempty"`
 	ToolStatus   string          `json:"tool_status,omitempty"`
 	DurationMs   *int            `json:"duration_ms,omitempty"`
+	// Citations are the answer's grounded references, carried through on
+	// assistant message items so the dump preserves them.
+	Citations json.RawMessage `json:"citations,omitempty"`
 }
 
 // parseTimeline unmarshals raw timeline items into typed items, skipping any
