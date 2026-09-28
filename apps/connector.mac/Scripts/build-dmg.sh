@@ -6,7 +6,11 @@
 #
 # Environment variables (for CI / notarization):
 #   VERSION             Release tag (vX.Y.Z) or bare semver (X.Y.Z).
-#   DEVELOPMENT_TEAM    Apple Developer Team ID (e.g. "XXXXXXXXXX")
+#   DEVELOPMENT_TEAM    Apple Developer Team ID. Defaults to this repo's team
+#                       (74LC88G9SC) so forks only set the env/secret — no
+#                       tracked-file edits. Substituted into a generated
+#                       build/ExportOptions.plist (xcodebuild -exportOptionsPlist
+#                       cannot read the environment).
 #   APP_CERT_NAME       Certificate name for app signing (e.g. "Developer ID Application: ...")
 #   NOTARIZE_KEY        Path to App Store Connect API key (.p8)
 #   NOTARIZE_KEY_ID     App Store Connect API key ID
@@ -37,6 +41,10 @@ CONFIGURATION="Release"
 # default so a machine holding several Developer ID identities signs
 # deterministically instead of relying on name-substring matching.
 SIGN_IDENTITY="${APP_CERT_NAME:-Developer ID Application}"
+# Development team: env/secret override with the repo's team as the documented
+# default. Used for both the archive build setting and the generated export
+# options, so forks never edit a tracked file.
+DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM:-74LC88G9SC}"
 
 # --- Version handling -----------------------------------------------------
 # VERSION is a release tag (v0.2.0) or bare semver (0.2.0). Derive two values:
@@ -100,7 +108,7 @@ xcodebuild archive \
     -configuration "${CONFIGURATION}" \
     -archivePath "${ARCHIVE_PATH}" \
     -derivedDataPath "${DERIVED_DATA}" \
-    DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM:-}" \
+    DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM}" \
     CODE_SIGN_STYLE=Manual \
     CODE_SIGN_IDENTITY="${SIGN_IDENTITY}" \
     MARKETING_VERSION="${MARKETING_VERSION}" \
@@ -110,10 +118,15 @@ xcodebuild archive \
 # Step 3: Export .app
 echo "==> Exporting .app..."
 mkdir -p "${EXPORT_PATH}"
+# xcodebuild -exportOptionsPlist cannot read the environment, so render a
+# resolved copy of the tracked template with the configured team.
+EXPORT_OPTIONS_PLIST="build/ExportOptions.plist"
+cp Scripts/ExportOptions.plist "${EXPORT_OPTIONS_PLIST}"
+plutil -replace teamID -string "${DEVELOPMENT_TEAM}" "${EXPORT_OPTIONS_PLIST}"
 xcodebuild -exportArchive \
     -archivePath "${ARCHIVE_PATH}" \
     -exportPath "${EXPORT_PATH}" \
-    -exportOptionsPlist Scripts/ExportOptions.plist
+    -exportOptionsPlist "${EXPORT_OPTIONS_PLIST}"
 
 APP_PATH="${EXPORT_PATH}/Memory.app"
 

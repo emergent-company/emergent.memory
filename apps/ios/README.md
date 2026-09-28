@@ -120,6 +120,53 @@ Before talking to Memory, set the API key in the app (settings screen or
 `MemoryConfig`) to match the server's `TOKEN_API_KEY`, and confirm the token
 endpoint is reachable from the device.
 
+## Build on your own Mac
+
+This Linux server has no Xcode, so iOS builds run on a Mac. The remote build
+scripts in `apps/web-ui/tools/` target it via one shared config — nothing is
+hardcoded, so a fork points them at its own machine without editing tracked
+files. Full reference: `apps/web-ui/tools/README.md`.
+
+Set these in the gitignored `apps/web-ui/.env` (or export them); see
+`apps/web-ui/tools/mac-remote.env.example`:
+
+| Variable | Meaning |
+|---|---|
+| `MEMORY_MAC_HOST` | SSH host of your Mac (`ssh` alias or `user@host`). |
+| `MEMORY_MAC_PATH` | Project dir on the Mac, e.g. `~/code/alftred`. |
+| `MEMORY_MAC_IOS_SUBDIR` | iOS subtree under `MEMORY_MAC_PATH` (default `client/ios`). |
+
+Expected Mac layout — `apps/ios/` is rsync'd into
+`<MEMORY_MAC_PATH>/client/ios` (the macOS connector goes to
+`<MEMORY_MAC_PATH>/client/macos`); the sync's scoped `--delete` touches only
+that subtree:
+
+```
+<MEMORY_MAC_PATH>/client/ios/     # this app
+<MEMORY_MAC_PATH>/client/macos/   # connector (apps/connector.mac)
+```
+
+Then:
+
+```sh
+cd apps/web-ui
+tools/mac-doctor.sh --check       # verify ssh, checkout, Xcode, simulator, signing
+tools/ios-build-mac.sh            # rsync + simulator build
+tools/ios-build-mac.sh --device   # signed device build (needs DEVELOPMENT_TEAM)
+```
+
+Requirements: Xcode with a developer dir selected (`sudo xcode-select -s
+/Applications/Xcode.app`) and an iOS Simulator runtime installed. This repo's
+Mac is on **Xcode 27.0**.
+
+**Signing:** simulator builds need no team. Device/TestFlight builds read
+`DEVELOPMENT_TEAM` (env or CI secret), defaulting to this repo's team
+`74LC88G9SC`; release paths render a resolved `ExportOptions.plist` from it, so
+forks set the secret instead of editing tracked files.
+
+**Fail-fast:** if `MEMORY_MAC_HOST` / `MEMORY_MAC_PATH` are unset, the scripts
+exit non-zero with an actionable message — there is no built-in default target.
+
 ## Notes & trade-offs
 
 - **Transport**: `ws://100.69.175.118:7880` over Tailscale, no TLS. The

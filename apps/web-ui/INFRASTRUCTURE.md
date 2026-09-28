@@ -72,8 +72,8 @@ have reachable external servers:
 
 ## iOS development host
 
-- **`mcj@mcj-mini-2-1`** (Mac Mini) is the iOS dev host — Swift/Xcode work happens there, never on this Linux server (no Xcode).
-- Sync `client/ios/` via rsync and build with `xcodebuild` there (`./deploy.sh` does both).
+- The iOS dev host is the Mac configured by `MEMORY_MAC_HOST` (this repo: `mcj-mini`, a Mac Mini) — Swift/Xcode work happens there, never on this Linux server (no Xcode).
+- Sync `apps/ios/` into `<MEMORY_MAC_PATH>/client/ios` and build with `xcodebuild` there (`tools/ios-build-mac.sh`, which `./deploy.sh` also runs). See `tools/README.md`.
 
 ## Client (Mac Mini, ~/alfred)
 

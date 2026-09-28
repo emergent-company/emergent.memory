@@ -50,6 +50,10 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64, mac]
     needs: check
     if: needs.check.outputs.changed == 'true'
+    # Team comes from a secret when set; the scripts below fall back to this
+    # repo's team (74LC88G9SC) so forks only set the secret.
+    env:
+      DEVELOPMENT_TEAM: ${{ secrets.DEVELOPMENT_TEAM }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -108,7 +112,7 @@ jobs:
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath build/VoiceAgent.xcarchive \
-            DEVELOPMENT_TEAM=74LC88G9SC \
+            DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM:-74LC88G9SC}" \
             CODE_SIGNING_ALLOWED=NO \
             SWIFT_VERSION=5 \
             MARKETING_VERSION="${MARKETING_VERSION}" \
@@ -117,10 +121,17 @@ jobs:
       - name: Export IPA
         working-directory: apps/ios
         run: |
+          # xcodebuild -exportOptionsPlist cannot read the environment, so render
+          # a resolved copy of the tracked template with the configured team
+          # (defaults to this repo's team so forks only set the secret).
+          DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM:-74LC88G9SC}"
+          mkdir -p build
+          cp ExportOptions.plist build/ExportOptions.plist
+          plutil -replace teamID -string "$DEVELOPMENT_TEAM" build/ExportOptions.plist
           xcodebuild -exportArchive \
             -archivePath build/VoiceAgent.xcarchive \
             -exportPath build/Export \
-            -exportOptionsPlist ExportOptions.plist \
+            -exportOptionsPlist build/ExportOptions.plist \
             -allowProvisioningUpdates \
             -authenticationKeyPath /tmp/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_KEY_ID }}.p8 \
             -authenticationKeyID ${{ secrets.APP_STORE_CONNECT_KEY_ID }} \

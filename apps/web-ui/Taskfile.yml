@@ -20,6 +20,11 @@ tasks:
       - ruff check --fix .
       - gofmt -w gateway
 
+  mac:doctor:
+    desc: Check the remote Mac build machine (ssh, checkout, Xcode, simulators, signing)
+    cmds:
+      - tools/mac-doctor.sh --check
+
   connector:build:
     desc: Build the memory-connector for the host OS into connector/dist/
     dir: connector
