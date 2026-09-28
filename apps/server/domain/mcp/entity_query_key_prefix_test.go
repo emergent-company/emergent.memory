@@ -4,7 +4,10 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
+	"github.com/emergent-company/emergent.memory/internal/testdb"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
@@ -28,8 +31,11 @@ func TestEntityQueryLimitSchemaStatesFullCap(t *testing.T) {
 	})
 }
 
-// TestKeyPrefixRangeClause pins the bytewise bound used to turn a key_prefix
-// into an indexable range (issue #1191).
+// TestKeyPrefixRangeClause pins the UTF-8-safe upper bound used to turn a
+// key_prefix into an indexable range (issue #1191). The bound must stay valid
+// UTF-8 for every prefix — a bytewise increment of a prefix ending in 0x7F or a
+// 0xBF continuation byte emits invalid UTF-8 and either errors (SQLSTATE 22021)
+// or silently returns the wrong rows.
 func TestKeyPrefixRangeClause(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -38,10 +44,14 @@ func TestKeyPrefixRangeClause(t *testing.T) {
 		wantFallbk bool
 	}{
 		{name: "alphanumeric suffix", prefix: "lov/1997-06-13-44#kapittel-2", wantUpper: "lov/1997-06-13-44#kapittel-3"},
-		{name: "punctuation suffix still bounded bytewise", prefix: "lov/1997-06-13-44#", wantUpper: "lov/1997-06-13-44$"},
+		{name: "punctuation suffix", prefix: "lov/1997-06-13-44#", wantUpper: "lov/1997-06-13-44$"},
 		{name: "plain word", prefix: "abc", wantUpper: "abd"},
-		{name: "carry past trailing 0xff", prefix: "a\xff", wantUpper: "b"},
-		{name: "all 0xff has no successor", prefix: "\xff\xff", wantFallbk: true},
+		{name: "trailing DEL (0x7f)", prefix: "adv\x7f", wantUpper: "adv\u0080"},
+		{name: "trailing U+00BF continuation byte", prefix: "adv\u00bf", wantUpper: "adv\u00c0"},
+		{name: "trailing U+00FF", prefix: "adv\u00ff", wantUpper: "adv\u0100"},
+		{name: "multibyte last rune", prefix: "adv\u65e5", wantUpper: "adv\u65e6"},
+		{name: "carry past trailing max rune", prefix: "a\U0010FFFF", wantUpper: "b"},
+		{name: "only max rune has no successor", prefix: "\U0010FFFF", wantFallbk: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -52,7 +62,12 @@ func TestKeyPrefixRangeClause(t *testing.T) {
 				return
 			}
 			assert.Equal(t, ` AND go.key COLLATE "C" >= ? AND go.key COLLATE "C" < ?`, clause)
-			assert.Equal(t, []any{tc.prefix, tc.wantUpper}, args)
+			require.Len(t, args, 2)
+			upper, ok := args[1].(string)
+			require.True(t, ok)
+			assert.Equal(t, tc.wantUpper, upper)
+			assert.True(t, utf8.ValidString(upper), "upper bound %q must be valid UTF-8", upper)
+			assert.True(t, upper > tc.prefix, "upper bound %q must exceed prefix %q", upper, tc.prefix)
 		})
 	}
 }
@@ -141,4 +156,115 @@ func TestExecuteQueryEntities_KeyPrefixUsesBytewiseIndex(t *testing.T) {
 	for _, e := range out.Entities {
 		assert.True(t, strings.HasPrefix(e.Key, prefix), "key %q must start with %q", e.Key, prefix)
 	}
+}
+
+// legacyBytewiseUpperBound reproduces the pre-#1197-follow-up bound (increment
+// the last byte) so the invalid-UTF-8 regression can be pinned in a test.
+func legacyBytewiseUpperBound(prefix string) string {
+	b := []byte(prefix)
+	for i := len(b) - 1; i >= 0; i-- {
+		if b[i] < 0xFF {
+			b[i]++
+			return string(b[:i+1])
+		}
+	}
+	return ""
+}
+
+// TestExecuteQueryEntities_KeyPrefixNonASCIIUpperBound is the #1197 follow-up
+// regression: for prefixes that are valid UTF-8 but end in a byte whose
+// increment is invalid UTF-8 (0x7F, the 0xBF continuation byte of U+00BF, …),
+// the derived range must stay valid UTF-8 and return exactly the starts_with
+// row set — not error and not over/under-match.
+func TestExecuteQueryEntities_KeyPrefixNonASCIIUpperBound(t *testing.T) {
+	db := connectTestDB(t)
+	_, projectID := seedProject(t, db)
+	for _, k := range []string{
+		"adv\x7f#p1", "adv\x7f#p2",
+		"adv\u00bf#p1", "adv\u00bf#p2",
+		"adv\u00ff#p1",
+		"adv\u65e5#p1",
+		"adv\u0100#p1",
+		"adv#p1",
+		"other#p1",
+	} {
+		insertQueryEntity(t, db, projectID, k, map[string]any{"name": "x"})
+	}
+
+	const countBase = `
+		SELECT COUNT(*) AS n
+		FROM kb.graph_objects go
+		WHERE go.deleted_at IS NULL AND go.project_id = ?::uuid
+			AND go.supersedes_id IS NULL AND go.branch_id IS NULL
+			AND go.type = 'LegalParagraph'`
+
+	for _, prefix := range []string{"adv\x7f", "adv\u00bf", "adv\u00ff", "adv\u65e5", "adv\u0100", "adv", "\U0010FFFF"} {
+		clause, args := keyPrefixRangeClause(prefix)
+		if len(args) == 2 {
+			require.True(t, utf8.ValidString(args[1].(string)), "bound for %q must be valid UTF-8", prefix)
+		}
+		var viaRange, viaStarts int
+		require.NoError(t, db.NewRaw(countBase+clause, append([]any{projectID}, args...)...).Scan(context.Background(), &viaRange),
+			"range must not error for prefix %q", prefix)
+		require.NoError(t, db.NewRaw(countBase+" AND starts_with(go.key, ?)", projectID, prefix).Scan(context.Background(), &viaStarts))
+		assert.Equal(t, viaStarts, viaRange, "prefix %q: range must equal starts_with", prefix)
+	}
+}
+
+// TestKeyPrefixLegacyBoundRejectedAsInvalidUTF8 proves the pre-fix bound was the
+// defect: on a text-protocol client it trips SQLSTATE 22021, while the new
+// rune-increment bound is accepted.
+func TestKeyPrefixLegacyBoundRejectedAsInvalidUTF8(t *testing.T) {
+	dsn, ok := testdb.URL()
+	if !ok {
+		testdb.SkipOrFatal(t, "TEST_DATABASE_URL not set; 22021 check needs a database")
+	}
+	cfg, err := pgx.ParseConfig(dsn)
+	require.NoError(t, err)
+	cfg.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+	conn, err := pgx.ConnectConfig(context.Background(), cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close(context.Background()) })
+
+	for _, prefix := range []string{"adv\x7f", "adv\u00bf"} {
+		t.Run(prefix, func(t *testing.T) {
+			legacy := legacyBytewiseUpperBound(prefix)
+			require.False(t, utf8.ValidString(legacy), "legacy bound %q should be invalid UTF-8", legacy)
+			var s string
+			err := conn.QueryRow(context.Background(), "SELECT $1::text", legacy).Scan(&s)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "22021")
+
+			_, args := keyPrefixRangeClause(prefix)
+			require.Len(t, args, 2)
+			require.True(t, utf8.ValidString(args[1].(string)))
+			require.NoError(t, conn.QueryRow(context.Background(), "SELECT $1::text", args[1].(string)).Scan(&s))
+		})
+	}
+}
+
+// TestExecuteQueryEntities_RelationshipEnrichmentErrorIsSurfaced pins the
+// fail-loud enrichment path: an include_relationships=true call whose enrichment
+// query fails must return an error, not ok:true with relationships silently
+// dropped (#1187 class).
+func TestExecuteQueryEntities_RelationshipEnrichmentErrorIsSurfaced(t *testing.T) {
+	db := connectTestDB(t)
+	_, projectID := seedProject(t, db)
+	insertQueryEntity(t, db, projectID, "law-1#p1", map[string]any{"name": "x"})
+
+	if _, err := db.ExecContext(context.Background(), "ALTER TABLE kb.graph_relationships RENAME TO graph_relationships_hidden"); err != nil {
+		t.Fatalf("hide relationships table: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(context.Background(), "ALTER TABLE kb.graph_relationships_hidden RENAME TO kb.graph_relationships")
+	})
+
+	svc := &Service{db: db}
+	res, err := svc.executeQueryEntities(context.Background(), projectID, map[string]any{
+		"type_name":             "LegalParagraph",
+		"include_relationships": true,
+	})
+	require.Error(t, err)
+	assert.Nil(t, res)
+	assert.Contains(t, err.Error(), "enrich relationships")
 }
