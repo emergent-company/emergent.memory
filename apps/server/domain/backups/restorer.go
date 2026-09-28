@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/internal/storage"
 	"github.com/emergent-company/emergent.memory/pkg/pgutils"
 	"github.com/google/uuid"
@@ -560,6 +561,14 @@ func (r *Restorer) insertTableRows(ctx context.Context, tx bun.Tx, spec restoreT
 		return 0, nil
 	}
 
+	// Fail closed on a malformed scopeKey declaration (issue #1177): restore
+	// writes json_schema verbatim, bypassing the schema service's validation, so
+	// without this check a bad declaration could enter the registry and the
+	// entity-query read path would then refuse every filtered query for the type.
+	if err := validateScopeKeyRows(spec.name, rows); err != nil {
+		return 0, err
+	}
+
 	cols, err := r.tableColumns(ctx, spec.name)
 	if err != nil {
 		return 0, err
@@ -591,6 +600,58 @@ func (r *Restorer) insertTableRows(ctx context.Context, tx bun.Tx, spec restoreT
 		count++
 	}
 	return count, nil
+}
+
+// validateScopeKeyRows rejects a snapshot row whose json_schema carries a
+// malformed scopeKey declaration. Only the object-type tables carry one; every
+// other table is a no-op. The known-type set is derived from the same table's
+// rows (they are the type definitions being restored), so a declaration's
+// reference target resolves within the snapshot.
+func validateScopeKeyRows(table string, rows []map[string]any) error {
+	var nameCol string
+	switch table {
+	case "object_type_schemas":
+		nameCol = "type"
+	case "project_object_schema_registry":
+		nameCol = "type_name"
+	default:
+		return nil
+	}
+
+	typeSchemas := make(map[string]json.RawMessage, len(rows))
+	for _, row := range rows {
+		name := stringValue(row[nameCol])
+		if name == "" {
+			continue
+		}
+		if raw := jsonRawMessage(row["json_schema"]); len(raw) > 0 {
+			typeSchemas[name] = raw
+		}
+	}
+	if errs := schemas.ValidateTypeSchemaScopeKeys(typeSchemas); len(errs) > 0 {
+		return fmt.Errorf("%s: invalid scopeKey declaration: %s", table, strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+// jsonRawMessage renders a decoded NDJSON jsonb value back to raw JSON. The
+// exporter casts jsonb::text, so the value normally arrives as a JSON string;
+// a decoded object/array is re-marshalled for robustness.
+func jsonRawMessage(v any) json.RawMessage {
+	switch t := v.(type) {
+	case nil:
+		return nil
+	case string:
+		return json.RawMessage(t)
+	case []byte:
+		return json.RawMessage(t)
+	default:
+		b, err := json.Marshal(t)
+		if err != nil {
+			return nil
+		}
+		return b
+	}
 }
 
 // remapRowUUIDs registers a fresh UUID for the row's PK on clone so the row's

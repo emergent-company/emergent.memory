@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -136,7 +137,19 @@ func insertScopedType(t *testing.T, db bun.IDB, projectID, typeName string, prop
 	require.NoError(t, err)
 }
 
-// TestExecuteQueryEntities_SchemaScopeKeyEnforced pins the schema-driven
+// insertRawScopedType registers a type with a verbatim json_schema, so a test
+// can plant a legacy/tampered declaration that the write-path validators would
+// reject today.
+func insertRawScopedType(t *testing.T, db bun.IDB, projectID, typeName, rawSchema string) {
+	t.Helper()
+	_, err := db.ExecContext(context.Background(), `
+		INSERT INTO kb.project_object_schema_registry
+			(project_id, type_name, source, json_schema, enabled, schema_version)
+		VALUES (?, ?, 'template', ?::jsonb, true, 1)
+	`, projectID, typeName, rawSchema)
+	require.NoError(t, err)
+}
+
 // scope-key contract (#1148, option 2): a type that declares a scope key makes
 // entity-query reject a filter on a non-identity property that is not
 // accompanied by the scope key, instead of silently cross-matching documents.
@@ -332,4 +345,49 @@ func TestExecuteQueryEntities_TimeoutCoversIDsPath(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "timed out after")
+}
+
+// TestExecuteQueryEntities_MalformedScopeKeyRejected pins the read-path policy
+// for issue #1177: when the registry holds a declaration that cannot be parsed
+// or lacks the required property (legacy/tampered — a row the write-path
+// validators reject today), entity-query MUST fail closed with a caller-visible
+// error rather than warn-and-continue with an unscoped query.
+func TestExecuteQueryEntities_MalformedScopeKeyRejected(t *testing.T) {
+	db := connectTestDB(t)
+	_, projectID := seedProject(t, db)
+	svc := &Service{db: db, log: slog.Default()}
+
+	insertQueryEntity(t, db, projectID, "lov/A#1", map[string]any{"chapter_id": "kapittel-2"})
+
+	t.Run("non-object scopeKey is rejected", func(t *testing.T) {
+		insertRawScopedType(t, db, projectID, "BadNonObject",
+			`{"properties":{"chapter_id":{"type":"string"}},"scopeKey":"not-an-object"}`)
+		_, err := svc.executeQueryEntities(context.Background(), projectID, map[string]any{
+			"type_name": "BadNonObject",
+			"filters":   map[string]any{"chapter_id": "kapittel-2"},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid scopeKey")
+		assert.Contains(t, err.Error(), "BadNonObject")
+	})
+
+	t.Run("scopeKey without a property is rejected", func(t *testing.T) {
+		insertRawScopedType(t, db, projectID, "BadNoProperty",
+			`{"properties":{"chapter_id":{"type":"string"}},"scopeKey":{"identityProperty":"chapter_id"}}`)
+		_, err := svc.executeQueryEntities(context.Background(), projectID, map[string]any{
+			"type_name": "BadNoProperty",
+			"filters":   map[string]any{"chapter_id": "kapittel-2"},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "without a property")
+		assert.Contains(t, err.Error(), "BadNoProperty")
+	})
+
+	// A malformed declaration only blocks filtered queries: a bare type listing
+	// (no filters) does not consult the declaration and is unaffected.
+	t.Run("unfiltered query is unaffected", func(t *testing.T) {
+		out := runEntityQuery(t, svc, projectID, map[string]any{"type_name": "BadNonObject"})
+		require.NotNil(t, out.Pagination)
+		assert.Equal(t, 0, out.Pagination.Total)
+	})
 }
