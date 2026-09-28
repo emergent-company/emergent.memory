@@ -246,6 +246,6 @@ func (c *CachedEmbeddingService) EmbedDocumentsWithUsage(ctx context.Context, do
 // cacheKey returns a deterministic SHA-256 hex key for the given model and input text.
 func (c *CachedEmbeddingService) cacheKey(modelID, text string) string {
 	h := sha256.New()
-	h.Write([]byte(fmt.Sprintf("%s:%s", modelID, text)))
+	fmt.Fprintf(h, "%s:%s", modelID, text)
 	return hex.EncodeToString(h.Sum(nil))
 }
