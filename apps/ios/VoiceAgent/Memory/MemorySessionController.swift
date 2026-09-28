@@ -142,8 +142,8 @@ final class MemorySessionController: ObservableObject {
     /// Connects to the room and dispatches the configured agent.
     func start() async {
         guard phase == .idle else { return }
-        TraceLog.log("phase_changed", ["phase": "connecting"], room: session.room.name ?? "")
-        Log.session.info("start connect agent=\(config.agentName) endpoint=\(config.tokenEndpoint)")
+        TraceLog.log("phase_changed", ["phase": "connecting"], room: session.room.name ?? "") // swiftformat:disable:next redundantSelf
+        Log.session.info("start connect agent=\(self.config.agentName) endpoint=\(self.config.tokenEndpoint)")
         registerSignalHandlers()
         phase = .connecting
         seenTranscriptIDs.removeAll()
@@ -168,8 +168,8 @@ final class MemorySessionController: ObservableObject {
             Log.session.error("connect failed: \(failure.localizedDescription)")
         } else {
             phase = .connected
-            TraceLog.log("livekit_connected", ["room": session.room.name ?? ""], room: session.room.name ?? "")
-            Log.session.info("connect ok agent=\(config.agentName)")
+            TraceLog.log("livekit_connected", ["room": session.room.name ?? ""], room: session.room.name ?? "") // swiftformat:disable:next redundantSelf
+            Log.session.info("connect ok agent=\(self.config.agentName)")
         }
     }
 
@@ -330,7 +330,7 @@ final class MemorySessionController: ObservableObject {
         let room = session.room
 
         // 4.1: cue-to-speak chime on `lk.agent.ready`.
-        Task {
+        Task { [self] in
             do {
                 try await room.registerTextStreamHandler(for: Self.agentReadyTopic) { [weak self] reader, _ in
                     _ = try await reader.readAll()
@@ -342,7 +342,7 @@ final class MemorySessionController: ObservableObject {
         }
 
         // 4.2: `lk.agent.events` — `user_state_changed` to `away` ends the session.
-        Task {
+        Task { [self] in
             do {
                 try await room.registerTextStreamHandler(for: Self.agentEventsTopic) { [weak self] reader, _ in
                     let body = try await reader.readAll()
@@ -356,7 +356,7 @@ final class MemorySessionController: ObservableObject {
         // iOS chat parity: `lk.chat.events` — rich activity (tool calls,
         // thinking, approvals, questions) rendered by the live chat. Older
         // workers never emit on this topic, so this registration is additive.
-        Task {
+        Task { [self] in
             do {
                 try await room.registerTextStreamHandler(for: Self.chatEventsTopic) { [weak self] reader, _ in
                     let body = try await reader.readAll()
