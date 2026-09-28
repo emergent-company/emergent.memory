@@ -2758,25 +2758,24 @@ func (s *Service) enforceEntityQueryScope(ctx context.Context, tx bun.Tx, projec
 
 	decl, perr := schemas.ParseScopeKey(json.RawMessage(raw))
 	if perr != nil {
-		// A malformed declaration is treated as absent (no enforcement) rather
-		// than rejecting every filtered query for the type. Write paths validate
-		// declarations, so this can only be a legacy/tampered registry row.
-		// Surfaced as a warning so it is observable instead of silent.
-		if s.log != nil {
-			s.log.Warn("ignoring malformed scopeKey declaration in schema registry",
-				slog.String("project_id", projectID),
-				slog.String("type_name", typeName),
-				logger.Error(perr))
-		}
-		return nil
+		// Fail closed (issue #1177): a declaration that cannot be parsed is
+		// corruption (legacy/tampered), so the filtered query is rejected
+		// caller-visibly rather than silently run unscoped. Write paths now
+		// validate declarations, so this only fires for rows that predate that
+		// enforcement or were written out-of-band.
+		return &entityQueryScopeError{msg: fmt.Sprintf(
+			"query entities: type %s declares an invalid scopeKey (%v); fix the type's scopeKey declaration before filtering on it",
+			typeName, perr)}
 	}
-	if decl == nil || decl.Property == "" {
-		if decl != nil && s.log != nil {
-			s.log.Warn("ignoring scopeKey declaration with empty property",
-				slog.String("project_id", projectID),
-				slog.String("type_name", typeName))
-		}
-		return nil
+	if decl == nil {
+		return nil // no declaration: no enforcement
+	}
+	if decl.Property == "" {
+		// scopeKey present but missing the required property: same corruption
+		// class, same fail-closed rejection.
+		return &entityQueryScopeError{msg: fmt.Sprintf(
+			"query entities: type %s declares a scopeKey without a property; fix the type's scopeKey declaration before filtering on it",
+			typeName)}
 	}
 
 	// The scope is satisfied by an explicit key prefix or by the declared scope

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -613,6 +614,22 @@ func (s *Service) executeCreateSchema(ctx context.Context, projectID string, arg
 	}
 	objTypeSchemasJSON, _ := json.Marshal(objTypeSchemasMap)
 	relTypeSchemasJSON, _ := json.Marshal(relTypeSchemasMap)
+
+	// Validate optional scopeKey declarations fail-closed (issue #1177): this
+	// tool writes registry json_schema directly, bypassing CreatePack/UpdatePack
+	// where that validation otherwise lives, so a malformed declaration could
+	// otherwise be persisted and later silently ignored by entity-query.
+	typeSchemaRaws := make(map[string]json.RawMessage, len(objTypeSchemasMap))
+	for typeName, ot := range objTypeSchemasMap {
+		raw, mErr := json.Marshal(ot)
+		if mErr != nil {
+			return nil, fmt.Errorf("marshal object type %s: %w", typeName, mErr)
+		}
+		typeSchemaRaws[typeName] = raw
+	}
+	if errs := schemas.ValidateTypeSchemaScopeKeys(typeSchemaRaws); len(errs) > 0 {
+		return nil, fmt.Errorf("invalid scopeKey declaration: %s", strings.Join(errs, "; "))
+	}
 
 	// Create schema
 	var schemaID string
