@@ -3,6 +3,7 @@ package schemas
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -200,4 +201,31 @@ func ValidateTypeScopeKey(typeName string, typeSchema json.RawMessage, knownType
 		return nil
 	}
 	return ValidateScopeKey(typeName, decl, TypeSchemaPropertyNames(typeSchema), knownTypes)
+}
+
+// ValidateTypeSchemaScopeKeys validates the optional scopeKey declaration on
+// each of the given type schemas, keyed by type name. The known-type set used to
+// resolve reference targets is derived from the same input, so a declaration can
+// reference any other type in the set. Returns a deterministic (sorted by type
+// name) list of actionable error strings; empty = valid. Used by write paths
+// that persist type schemas outside CreatePack/UpdatePack (the schema-create MCP
+// tool and backup restore) so a malformed declaration can never be stored.
+func ValidateTypeSchemaScopeKeys(typeSchemas map[string]json.RawMessage) []string {
+	if len(typeSchemas) == 0 {
+		return nil
+	}
+	knownTypes := make(map[string]map[string]struct{}, len(typeSchemas))
+	for name, raw := range typeSchemas {
+		knownTypes[name] = TypeSchemaPropertyNames(raw)
+	}
+	names := make([]string, 0, len(typeSchemas))
+	for name := range typeSchemas {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var errs []string
+	for _, name := range names {
+		errs = append(errs, ValidateTypeScopeKey(name, typeSchemas[name], knownTypes)...)
+	}
+	return errs
 }
