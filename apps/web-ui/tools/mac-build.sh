@@ -5,6 +5,11 @@
 # with XcodeGen, then run xcodebuild there (ad-hoc during the build, then
 # re-signed with the stable dev identity — see 'Stable signing' below).
 #
+# Source: apps/connector.mac/ in this repo; synced into the Mac checkout's
+# client/macos/ subtree — the only path this script owns, and the only path its
+# --delete is allowed to touch. Everything else on the Mac (client/ios,
+# client/apps/openspec, build/DerivedData, ...) is left untouched.
+#
 # Usage:
 #   tools/mac-build.sh                  # sync + generate + build
 #   tools/mac-build.sh --gen            # regenerate project only (no build)
@@ -12,10 +17,15 @@
 #   tools/mac-build.sh --install        # build + copy .app to ~/Applications + open
 #   tools/mac-build.sh --clean          # wipe build/DerivedData before building
 #   tools/mac-build.sh --no-sync        # skip rsync (build what's on the Mac now)
+#   tools/mac-build.sh --dry-run        # print the rsync plan only; no ssh/build
 #
-# Env overrides:
-#   MEMORY_MAC_HOST   SSH host (default: mcj-mini)
-#   MEMORY_MAC_PATH   project dir on Mac (default: ~/code/alftred, no spaces)
+# Target config (required, no repo-specific defaults — see lib/mac-remote.sh and
+# tools/mac-remote.env.example). Set in the environment or in apps/web-ui/.env:
+#   MEMORY_MAC_HOST     SSH host, e.g. mcj-mini (empty string = local dest)
+#   MEMORY_MAC_PATH     project dir on Mac, e.g. ~/code/alftred (no spaces)
+#   MEMORY_MAC_SUBTREE  Mac connector subtree (default: client/macos)
+#
+# Other env overrides:
 #   VERBOSE=1         full xcodebuild output (default: -quiet, errors only)
 #   XCODEBUILD_FLAGS  extra xcodebuild args
 #   SIGN_IDENTITY     manual Apple-Development identity override (tools/mac-sign.sh)
@@ -28,17 +38,21 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO="$(cd "$HERE/.." && pwd)"
+ROOT="$(cd "$HERE/../../.." && pwd)" # monorepo root
+MAC_SRC="$ROOT/apps/connector.mac"
 
-MAC_HOST="${MEMORY_MAC_HOST:-mcj-mini}"
-MAC_PATH="${MEMORY_MAC_PATH:-~/code/alftred}"
+# shellcheck source=lib/mac-remote.sh
+# shellcheck disable=SC1091
+. "$HERE/lib/mac-remote.sh"
+
 SYNC=1
 GEN_ONLY=0
 RUN_TESTS=0
 INSTALL=0
 CLEAN=0
+MAC_DRY_RUN=0
 
-usage() { sed -n '2,27p' "$0"; }
+usage() { sed -n '2,/^set -euo/p' "$0" | sed '$d'; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -47,55 +61,47 @@ while [[ $# -gt 0 ]]; do
     --install)  INSTALL=1; shift ;;
     --clean)    CLEAN=1; shift ;;
     --no-sync)  SYNC=0; shift ;;
+    --dry-run)  MAC_DRY_RUN=1; shift ;;
     -h|--help)  usage; exit 0 ;;
     *) echo "unknown arg: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
 
-# ---- rsync local -> Mac -------------------------------------------------
+# ---- resolve/validate the remote target (fail fast) ---------------------
+mac_resolve_target client/macos
+
+# ---- rsync local -> Mac (guarded: scoped --delete + destination guards) --
 if [[ "$SYNC" == 1 ]]; then
-  echo "==> rsync $REPO -> $MAC_HOST:$MAC_PATH"
-  rsync -az --delete \
-    --exclude '.git/' \
-    --exclude '.venv/' \
-    --exclude '.slim/' \
-    --exclude '.env' \
-    --exclude 'node_modules' \
-    --exclude 'gateway/memory' \
-    --exclude 'gateway/tmp/' \
-    --exclude 'memory' \
-    --exclude 'build/' \
-    --exclude 'DerivedData/' \
-    --exclude '.build/' \
-    --exclude '.swiftpm/' \
-    --exclude 'xcuserdata/' \
-    --exclude '__pycache__/' \
-    --exclude '*.pyc' \
-    --exclude '.DS_Store' \
-    "$REPO/" "$MAC_HOST:$MAC_PATH/"
+  mac_rsync_guarded "$MAC_SRC"
+fi
+
+if [[ "$MAC_DRY_RUN" == 1 ]]; then
+  echo "==> dry run: not generating/building"
+  exit 0
 fi
 
 # ---- regenerate the Xcode project ---------------------------------------
 # xcodegen lives in Homebrew on the Mac; export PATH so it resolves over ssh
 # (non-interactive shells may not source the brew shellenv snippet).
-# NOTE: $MAC_PATH is left UNQUOTED so the remote shell expands the leading ~
-# (a quoted "~/..." is treated as a literal path by zsh/bash). xcodegen runs
-# inside a SUBSHELL so the working directory returns to $MAC_PATH — the
-# xcodebuild step below resolves its project path relative to the repo root.
-GEN_CMD="export PATH=\"\$PATH:/opt/homebrew/bin\" && (cd $MAC_PATH/client/macos/MemoryConnector && xcodegen generate --quiet)"
+# NOTE: $MAC_CHECKOUT_PATH is left UNQUOTED so the remote shell expands the
+# leading ~ (a quoted "~/..." is treated as a literal path by zsh/bash).
+# xcodegen runs inside a SUBSHELL so the working directory returns to the
+# checkout root — the xcodebuild step below resolves its project path relative
+# to that root.
+GEN_CMD="export PATH=\"\$PATH:/opt/homebrew/bin\" && (cd $MAC_CHECKOUT_PATH/$MAC_SUBTREE/MemoryConnector && xcodegen generate --quiet)"
 
 if [[ "$GEN_ONLY" == 1 ]]; then
   echo "==> ssh $MAC_HOST: xcodegen generate"
-  ssh "$MAC_HOST" "$GEN_CMD"
+  mac_ssh "$GEN_CMD"
   exit 0
 fi
 
 # ---- build on Mac -------------------------------------------------------
 BUILD_CMD="xcodebuild"
-BUILD_CMD="$BUILD_CMD -project 'client/macos/MemoryConnector/MemoryConnector.xcodeproj'"
+BUILD_CMD="$BUILD_CMD -project '$MAC_SUBTREE/MemoryConnector/MemoryConnector.xcodeproj'"
 BUILD_CMD="$BUILD_CMD -scheme 'MemoryConnector'"
 BUILD_CMD="$BUILD_CMD -destination 'platform=macOS'"
-# relative after `cd $MAC_PATH` (avoids remote tilde-quoting issues)
+# relative after `cd $MAC_CHECKOUT_PATH` (avoids remote tilde-quoting issues)
 BUILD_CMD="$BUILD_CMD -derivedDataPath 'build/DerivedData'"
 # Force AD-HOC signing for ssh builds: the login keychain's signing key is not
 # reachable over ssh, so Xcode's automatic dev-cert signing fails with
@@ -120,7 +126,7 @@ if [[ -n "${XCODEBUILD_FLAGS:-}" ]]; then
   BUILD_CMD="$BUILD_CMD $XCODEBUILD_FLAGS"
 fi
 
-REMOTE_CMD="cd $MAC_PATH"
+REMOTE_CMD="cd $MAC_CHECKOUT_PATH"
 if [[ "$CLEAN" == 1 ]]; then
   REMOTE_CMD="$REMOTE_CMD && rm -rf 'build/DerivedData'"
 fi
@@ -192,13 +198,13 @@ REMOTE_SIGN
 fi
 
 echo "==> ssh $MAC_HOST: xcodegen + xcodebuild + codesign"
-ssh "$MAC_HOST" "$REMOTE_CMD"
+mac_ssh "$REMOTE_CMD"
 
 # ---- optional: install to ~/Applications and launch ---------------------
 if [[ "$INSTALL" == 1 ]]; then
-  APP_SRC="$MAC_PATH/build/DerivedData/Build/Products/Debug/Memory.app"
+  APP_SRC="$MAC_CHECKOUT_PATH/build/DerivedData/Build/Products/Debug/Memory.app"
   echo "==> installing $APP_SRC -> ~/Applications"
   # unquoted $APP_SRC so the remote shell expands the leading ~
   INSTALL_CMD="pkill -f '/Applications/Memory.app' 2>/dev/null; pkill -f '/Applications/MemoryConnector.app' 2>/dev/null; sleep 1; rm -rf ~/Applications/Memory.app ~/Applications/MemoryConnector.app && ditto $APP_SRC ~/Applications/Memory.app && open ~/Applications/Memory.app"
-  ssh "$MAC_HOST" "$INSTALL_CMD"
+  mac_ssh "$INSTALL_CMD"
 fi
