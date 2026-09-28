@@ -386,7 +386,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					},
 					"limit": {
 						Type:        "number",
-						Description: "Maximum number of results (default: 10, max: 200)",
+						Description: fmt.Sprintf("Maximum number of results (default: 10, max: 200). When field_strategy=\"full\" the effective limit is capped to %d to bound the returned properties payload; paginate with offset for more rows.", s.effectiveEntityQueryFullMaxLimit()),
 						Minimum:     intPtr(1),
 						Maximum:     intPtr(200),
 						Default:     10,
@@ -3205,7 +3205,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 			dstBranchClause = "AND dst.branch_id = ?"
 			relQueryArgs = append(relQueryArgs, *branchID, *branchID)
 		}
-		_ = s.db.RunInTx(queryCtx, nil, func(ctx context.Context, tx bun.Tx) error {
+		err := s.db.RunInTx(queryCtx, nil, func(ctx context.Context, tx bun.Tx) error {
 			if err := database.SetRLSContext(ctx, tx, projectID); err != nil {
 				return err
 			}
@@ -3226,6 +3226,16 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 				`+relBranchClause+`
 		`, relQueryArgs...).Scan(ctx, &relRows)
 		})
+		// Enrichment is opt-in (include_relationships=true). Failing loudly keeps
+		// the deadline honest: swallowing the error here would return ok:true with
+		// every entity's relationships silently dropped, which masks a timeout the
+		// same way #1187 describes.
+		if err != nil {
+			if errors.Is(queryCtx.Err(), context.DeadlineExceeded) {
+				return nil, fmt.Errorf("query entities: timed out after %s", s.effectiveEntityQueryTimeout())
+			}
+			return nil, fmt.Errorf("query entities: enrich relationships: %w", err)
+		}
 
 		// Build an index from entity ID → edges
 		type edgeRef struct {
