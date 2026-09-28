@@ -234,6 +234,29 @@ func (s *Server) orgAdminForCaller(c echo.Context, orgID string) bool {
 	return isOrgAdmin(tree, orgID)
 }
 
+// projectAdminForCaller reports whether the caller may administer projectID:
+// project_admin of the project itself, or org_admin of the project's owning org
+// (resolved from the caller's org access tree, whose projects nest under their
+// org). Best-effort: a failed fetch yields an empty tree → false, hiding admin
+// affordances rather than surfacing an error (the same degrade as
+// orgAdminForCaller). Used only for UI visibility — the memory service stays
+// authoritative on every write.
+func (s *Server) projectAdminForCaller(c echo.Context, projectID string) bool {
+	tree, err := s.orgAccessTree(c)
+	captureError(err)
+	for _, o := range tree {
+		for _, p := range o.Projects {
+			if p.ID != projectID {
+				continue
+			}
+			if p.Role == "project_admin" || o.Role == "org_admin" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // transferState derives the org-landing transfer affordance for the acting user
 // from their org access tree: the candidate destination orgs (their orgs minus
 // the source) and whether the per-project Transfer action is available — they

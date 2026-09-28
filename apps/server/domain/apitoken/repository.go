@@ -280,6 +280,34 @@ func (r *Repository) CanGrantAdminAll(ctx context.Context, userID string) (bool,
 	return allowed, nil
 }
 
+// CanGrantProjectAdmin reports whether the user may mint the project:admin
+// scope on a token bound to projectID. True when the user is EITHER a
+// project_admin in kb.project_memberships for projectID, OR an org_admin in
+// kb.organization_memberships for the project's owning org
+// (kb.projects.organization_id). Empty/invalid projectID or userID yields
+// false (fail closed). This is deliberately a local query: it does not import
+// the projects domain (which would import this package — a cycle).
+func (r *Repository) CanGrantProjectAdmin(ctx context.Context, projectID, userID string) (bool, error) {
+	if projectID == "" || userID == "" {
+		return false, nil
+	}
+	var allowed bool
+	err := r.db.NewRaw(`
+		SELECT EXISTS(
+			SELECT 1 FROM kb.project_memberships
+			WHERE project_id = ? AND user_id = ? AND role = 'project_admin'
+		) OR EXISTS(
+			SELECT 1 FROM kb.organization_memberships om
+			JOIN kb.projects p ON p.organization_id = om.organization_id
+			WHERE p.id = ? AND om.user_id = ? AND om.role = 'org_admin'
+		)
+	`, projectID, userID, projectID, userID).Scan(ctx, &allowed)
+	if err != nil {
+		return false, apperror.NewDatabase("failed to resolve project admin grant", err)
+	}
+	return allowed, nil
+}
+
 // RevokeByProjectAndUser revokes all active tokens for a user in a project.
 // Used when a member is removed from a project.
 func (r *Repository) RevokeByProjectAndUser(ctx context.Context, projectID, userID string) error {

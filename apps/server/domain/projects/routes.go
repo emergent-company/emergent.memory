@@ -59,4 +59,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Remove project member
 	// Scope: project:admin
 	g.DELETE("/:id/members/:userId", h.RemoveMember)
+
+	// Update project member role
+	// Scope: project:admin
+	g.PATCH("/:id/members/:userId", h.UpdateMemberRole)
 }

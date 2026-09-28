@@ -178,6 +178,7 @@ type MemoryBackend interface {
 	TransferProject(ctx context.Context, projectID, destinationOrgID string) error
 	ListMembers(ctx context.Context) ([]ProjectMemberDto, error)
 	RemoveMember(ctx context.Context, userID string) error
+	UpdateMemberRole(ctx context.Context, userID, role string) error
 	ListInvites(ctx context.Context) ([]SentInviteDto, error)
 	CreateInvite(ctx context.Context, in CreateInviteDto) (*Invite, error)
 	AcceptInvite(ctx context.Context, token string) error

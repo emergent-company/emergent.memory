@@ -918,6 +918,31 @@ func TestRemoveMember(t *testing.T) {
 	})
 }
 
+// TestUpdateMemberRole exercises PATCH /api/projects/{id}/members/{userId} with
+// the in-place role body.
+func TestUpdateMemberRole(t *testing.T) {
+	var gotPath, gotMethod, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"status":"updated"}`)
+	}))
+	defer srv.Close()
+	m := NewMemoryClient(srv.URL, "proj")
+	if err := m.UpdateMemberRole(context.Background(), "u1", "project_viewer"); err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/projects/proj/members/u1" || gotMethod != http.MethodPatch {
+		t.Errorf("request = %s %s, want PATCH /api/projects/proj/members/u1", gotMethod, gotPath)
+	}
+	if !strings.Contains(gotBody, `"role":"project_viewer"`) {
+		t.Errorf("body = %q, want role project_viewer", gotBody)
+	}
+}
+
 // TestListInvites exercises GET /api/projects/{id}/invites against the active
 // project ("proj").
 func TestListInvites(t *testing.T) {

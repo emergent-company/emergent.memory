@@ -371,3 +371,41 @@ func (h *Handler) RemoveMember(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, map[string]string{"status": "removed"})
 }
+
+// UpdateMemberRole changes a project member's role.
+// @Summary      Update project member role
+// @Description  Changes the role of a user within the specified project
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Project ID (UUID)"
+// @Param        userId path string true "User ID to update (UUID)"
+// @Param        request body UpdateMemberRoleRequest true "Role update request"
+// @Success      200 {object} map[string]string "Role update status"
+// @Failure      400 {object} apperror.Error "Invalid project ID, user ID, or role"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Project or user not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{id}/members/{userId} [patch]
+// @Security     bearerAuth
+func (h *Handler) UpdateMemberRole(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	projectID := c.Param("id")
+	userID := c.Param("userId")
+
+	var req UpdateMemberRoleRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+
+	if err := h.svc.authorizeProject(c.Request().Context(), projectID, user.ID, accessProjectAdmin); err != nil {
+		return err
+	}
+
+	if err := h.svc.UpdateMemberRole(c.Request().Context(), projectID, userID, req.Role); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"status": "updated"})
+}
