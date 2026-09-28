@@ -150,6 +150,11 @@ The chat SHALL render A2UI structured-UI surfaces with native SwiftUI views reso
 - **WHEN** a surface references a component outside the catalog
 - **THEN** the chat renders a summary fallback and does not error
 
+#### Scenario: UpdateComponents without CreateSurface opens the surface
+
+- **WHEN** a `ui` event carries `updateComponents` for a surface that has not been opened yet
+- **THEN** the chat opens the surface lazily and renders its components instead of dropping the payload
+
 #### Scenario: Surface action round-trips
 
 - **WHEN** the user taps an action on a surface card
