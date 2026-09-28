@@ -2824,6 +2824,46 @@ func (s *Service) enforceEntityQueryScope(ctx context.Context, tx bun.Tx, projec
 		offenders[0], decl.Property, typeName)}
 }
 
+// keyPrefixRangeClause builds an indexable [lo, hi) byte range for "canonical
+// key starts with prefix", replacing starts_with(go.key, ?).
+//
+// starts_with() is a function call, so the planner cannot turn it into an index
+// range and the key_prefix filter forced a parallel sequential scan of the
+// entire kb.graph_objects heap on every entity-query call (issue #1191: ~20.5s
+// per call on dev, constant regardless of the rows actually returned). The
+// existing unique index IDX_graph_objects_upsert_main (project_id, type, key)
+// uses the database default collation (en_US.utf8 on dev), whose ordering is
+// not bytewise, so a plain key >= / < range cannot bound a prefix correctly
+// (glibc ignores punctuation, so incrementing a trailing '#' over-excludes).
+// Comparing with COLLATE "C" is bytewise, matching the partial index
+// idx_graph_objects_project_type_key_c added in migration 00198.
+//
+// The upper bound is the prefix with its last byte incremented (carrying past
+// trailing 0xFF bytes). That is exact: any key equal to prefix plus a suffix
+// sorts below prefix with its final byte bumped, because the comparison first
+// differs at that final byte. A prefix made only of 0xFF bytes has no
+// representable successor; canonical keys are ASCII so the starts_with
+// fallback is unreachable in practice.
+func keyPrefixRangeClause(prefix string) (string, []any) {
+	if upper, ok := bytewisePrefixUpperBound(prefix); ok {
+		return ` AND go.key COLLATE "C" >= ? AND go.key COLLATE "C" < ?`, []any{prefix, upper}
+	}
+	return " AND starts_with(go.key, ?)", []any{prefix}
+}
+
+// bytewisePrefixUpperBound returns the smallest byte string greater than every
+// string that has prefix as a byte prefix, or ok=false when every byte is 0xFF.
+func bytewisePrefixUpperBound(prefix string) (string, bool) {
+	b := []byte(prefix)
+	for i := len(b) - 1; i >= 0; i-- {
+		if b[i] < 0xFF {
+			b[i]++
+			return string(b[:i+1]), true
+		}
+	}
+	return "", false
+}
+
 // executeQueryEntities queries entities by type with pagination
 func (s *Service) executeQueryEntities(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
@@ -2991,11 +3031,10 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	// Generic across types: the key is the identity.
 	var keyPrefix string
 	var keyPrefixClause string
-	var keyPrefixArg any
+	var keyPrefixArgs []any
 	if kp, ok := args["key_prefix"].(string); ok && kp != "" {
 		keyPrefix = kp
-		keyPrefixClause = " AND starts_with(go.key, ?)"
-		keyPrefixArg = kp
+		keyPrefixClause, keyPrefixArgs = keyPrefixRangeClause(kp)
 	}
 
 	type_clause := ""
@@ -3024,9 +3063,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	if filterArg != nil {
 		baseArgs = append(baseArgs, filterArg)
 	}
-	if keyPrefixArg != nil {
-		baseArgs = append(baseArgs, keyPrefixArg)
-	}
+	baseArgs = append(baseArgs, keyPrefixArgs...)
 
 	selectArgs := append(append([]any{}, baseArgs...), limit, offset)
 
