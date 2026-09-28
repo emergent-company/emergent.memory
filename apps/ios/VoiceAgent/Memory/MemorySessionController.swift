@@ -330,7 +330,7 @@ final class MemorySessionController: ObservableObject {
         let room = session.room
 
         // 4.1: cue-to-speak chime on `lk.agent.ready`.
-        Task {
+        Task { [self] in
             do {
                 try await room.registerTextStreamHandler(for: Self.agentReadyTopic) { [weak self] reader, _ in
                     _ = try await reader.readAll()
@@ -342,7 +342,7 @@ final class MemorySessionController: ObservableObject {
         }
 
         // 4.2: `lk.agent.events` — `user_state_changed` to `away` ends the session.
-        Task {
+        Task { [self] in
             do {
                 try await room.registerTextStreamHandler(for: Self.agentEventsTopic) { [weak self] reader, _ in
                     let body = try await reader.readAll()
@@ -356,7 +356,7 @@ final class MemorySessionController: ObservableObject {
         // iOS chat parity: `lk.chat.events` — rich activity (tool calls,
         // thinking, approvals, questions) rendered by the live chat. Older
         // workers never emit on this topic, so this registration is additive.
-        Task {
+        Task { [self] in
             do {
                 try await room.registerTextStreamHandler(for: Self.chatEventsTopic) { [weak self] reader, _ in
                     let body = try await reader.readAll()
