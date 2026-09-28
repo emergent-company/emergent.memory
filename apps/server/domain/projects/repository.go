@@ -541,6 +541,27 @@ func (r *Repository) RemoveMember(ctx context.Context, projectID, userID string)
 	return rowsAffected > 0, nil
 }
 
+// UpdateMemberRole changes a member's role in a project. Returns false when the
+// membership does not exist.
+func (r *Repository) UpdateMemberRole(ctx context.Context, projectID, userID, role string) (bool, error) {
+	result, err := r.db.NewUpdate().
+		Model((*ProjectMembership)(nil)).
+		Set("role = ?", role).
+		Where("project_id = ?", projectID).
+		Where("user_id = ?", userID).
+		Exec(ctx)
+
+	if err != nil {
+		r.log.Error("failed to update project member role", logger.Error(err),
+			slog.String("projectID", projectID),
+			slog.String("userID", userID))
+		return false, apperror.NewDatabase("failed to update project member role", err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	return rowsAffected > 0, nil
+}
+
 // GetMembership returns a user's membership in a project
 func (r *Repository) GetMembership(ctx context.Context, projectID, userID string) (*ProjectMembership, error) {
 	var membership ProjectMembership

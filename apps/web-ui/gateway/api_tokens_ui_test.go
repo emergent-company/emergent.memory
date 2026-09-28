@@ -111,7 +111,7 @@ func TestAPITokenScopeAreaMapping(t *testing.T) {
 		"graph:read": apiTokenAreaGraph, "graph:write": apiTokenAreaGraph, "search": apiTokenAreaGraph,
 		"branches:read": apiTokenAreaBranches, "branches:write": apiTokenAreaBranches,
 		"agents:read": apiTokenAreaAgents, "agents:write": apiTokenAreaAgents, "chat:use": apiTokenAreaAgents,
-		"projects:read": apiTokenAreaProjects, "projects:write": apiTokenAreaProjects,
+		"projects:read": apiTokenAreaProjects, "projects:write": apiTokenAreaProjects, "project:admin": apiTokenAreaProjects,
 		"journal:read": apiTokenAreaJournal, "journal:write": apiTokenAreaJournal,
 		"skills:read": apiTokenAreaSkills, "skills:write": apiTokenAreaSkills,
 		"admin": apiTokenAreaAdmin, "admin:all": apiTokenAreaAdmin,
@@ -164,7 +164,7 @@ func TestAPITokenAreaBadges(t *testing.T) {
 // special-cases admin/admin:all, schema:migrate, chat:use and search (none carry
 // the :write suffix), so those are asserted explicitly to catch a dropped case.
 func TestAPITokenScopeMutates(t *testing.T) {
-	for _, scope := range []string{"admin", "admin:all", "schema:migrate", "chat:use", "search"} {
+	for _, scope := range []string{"admin", "admin:all", "project:admin", "schema:migrate", "chat:use", "search"} {
 		if !apiTokenScopeMutates(scope) {
 			t.Errorf("apiTokenScopeMutates(%q) = false, want true (special-cased)", scope)
 		}
@@ -355,7 +355,7 @@ func TestRenderAccountTokenEditPage(t *testing.T) {
 // TestRenderScopePickerOmitsAdminAll asserts the picker offers every area group
 // and the admin scope but never admin:all (server-gated).
 func TestRenderScopePickerOmitsAdminAll(t *testing.T) {
-	html := renderHTML(t, apiTokenScopePickerContent([]string{"data:read", "admin"}))
+	html := renderHTML(t, apiTokenScopePickerContent([]string{"data:read", "admin"}, apiTokenScopePickerConfig{}))
 	for _, want := range []string{
 		"Schemas", "Data", "Documents", "Graph", "Branches",
 		"Agents", "Projects", "Journal", "Skills", "Admin",
@@ -403,7 +403,7 @@ func TestScopePickerGroupsCoverTaxonomy(t *testing.T) {
 		}
 	}
 	for _, scope := range apiTokenScopes {
-		if scope == "admin:all" {
+		if scope == "admin:all" || scope == "project:admin" {
 			continue
 		}
 		if seen[scope] != 1 {
@@ -414,6 +414,44 @@ func TestScopePickerGroupsCoverTaxonomy(t *testing.T) {
 		if !validAPITokenScope(scope) {
 			t.Errorf("picker offers unknown scope %q", scope)
 		}
+	}
+}
+
+// TestScopePickerProjectAdminGating asserts project:admin is offered only for
+// project tokens held by an admin caller (project_admin or owning org_admin),
+// never for account tokens or non-admin project callers.
+func TestScopePickerProjectAdminGating(t *testing.T) {
+	offered := func(cfg apiTokenScopePickerConfig) bool {
+		html := renderHTML(t, apiTokenScopePickerContent(nil, cfg))
+		return strings.Contains(html, `value="project:admin"`)
+	}
+	if !offered(apiTokenScopePickerConfig{CanManage: true}) {
+		t.Error("project admin caller should be offered project:admin")
+	}
+	if offered(apiTokenScopePickerConfig{}) {
+		t.Error("non-admin project caller must not be offered project:admin")
+	}
+	if offered(apiTokenScopePickerConfig{Account: true}) {
+		t.Error("account tokens must never offer project:admin")
+	}
+	if offered(apiTokenScopePickerConfig{Account: true, CanManage: true}) {
+		t.Error("account tokens must never offer project:admin even for an admin caller")
+	}
+	// the offered option sits in the Projects bucket
+	groups := scopePickerGroupsFor(apiTokenScopePickerConfig{CanManage: true})
+	found := false
+	for _, g := range groups {
+		if g.Label != apiTokenAreaProjects {
+			continue
+		}
+		for _, o := range g.Options {
+			if o.Value == "project:admin" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("project:admin must be offered in the Projects bucket")
 	}
 }
 

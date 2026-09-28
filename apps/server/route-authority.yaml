@@ -853,6 +853,10 @@ routes:
       path: /api/projects/:id/members/:userId
       level: auth
       note: RequireAuth, RequireAPITokenScopes(projects:read)
+    - method: PATCH
+      path: /api/projects/:id/members/:userId
+      level: auth
+      note: RequireAuth, RequireAPITokenScopes(projects:read)
     - method: POST
       path: /api/projects/:id/restore
       level: auth

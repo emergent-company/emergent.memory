@@ -76,6 +76,8 @@ var apiTokenScopes = []string{
 	"documents:read", "documents:write",
 	// admin
 	"admin", "admin:all",
+	// project-scoped admin (project membership management; project tokens only)
+	"project:admin",
 }
 
 // validAPITokenScope reports whether scope is in the supported reference set.

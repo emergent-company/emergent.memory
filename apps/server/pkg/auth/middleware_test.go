@@ -552,6 +552,51 @@ func TestExpandScopes_ProjectsWrite_NoAdminImplication(t *testing.T) {
 	}
 }
 
+func TestExpandScopes_ProjectAdmin(t *testing.T) {
+	got := expandScopes([]string{"project:admin"})
+
+	// project:admin must cover the project-scoped surface…
+	include := []string{
+		"data:read", "data:write",
+		"documents:read", "documents:write", "documents:delete",
+		"chunks:read", "chunks:write",
+		"search", "search:read",
+		"graph:read", "graph:write", "graph:search:read",
+		"extraction:read", "extraction:write",
+		"ingest:write",
+		"schema:read", "schema:write", "schema:migrate",
+		"tasks:read", "tasks:write",
+		"user-activity:read", "user-activity:write",
+		"notifications:read", "notifications:write",
+		"journal:read", "journal:write",
+		"agents:read", "agents:write",
+		"chat:use", "chat:admin",
+		"skills:read", "skills:write",
+		"projects:read", "projects:write",
+		"branches:read", "branches:write",
+	}
+	for _, scope := range include {
+		if !got[scope] {
+			t.Errorf("expandScopes([\"project:admin\"]) missing %q", scope)
+		}
+	}
+
+	// …but must never imply platform, org, or discovery authority.
+	exclude := []string{
+		"admin", "admin:all", "admin:read", "admin:write",
+		"mcp:admin",
+		"org:read", "org:invite:create", "org:project:create", "org:project:delete",
+		"project:invite:create",
+		"discovery:read", "discovery:write",
+		"graph:search:debug", "search:debug",
+	}
+	for _, scope := range exclude {
+		if got[scope] {
+			t.Errorf("expandScopes([\"project:admin\"]) must not contain %q", scope)
+		}
+	}
+}
+
 // --- user.ProjectID fallback (header-scoped groups, e.g. /api/chat) ---
 
 func TestRequireProjectTokenScope_HeaderScopedFallback_BlocksMismatch(t *testing.T) {

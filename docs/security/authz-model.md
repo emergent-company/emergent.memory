@@ -55,6 +55,16 @@ closed to an empty set — never the configured default (`scope_mapping.go:107-1
 (`RequireSuperadminFull`, `:64-84`) and the handler layer (`IsSuperadminFull`, `:48-58`) consume.
 An `admin:all` token minted by any `org_admin` can **never** satisfy it — issue #940 review.
 
+`project:admin` is a **project-tier token scope** — a project-scoped admin umbrella, not a session role.
+Its `ScopeImplies` expansion (`middleware.go:786-804`) is a flat, explicit project-tier list
+(data/schema/agents/graph/branches/journal/skills/documents/search/chat) with **no** platform scope
+(`admin`/`admin:all`/`admin:read`/`admin:write`), `mcp:admin`, or `org:*` member, so a project admin can
+never mint a token that reaches cross-tenant or org-administered surfaces. It is mintable only on a
+project-bound token, only by a `project_admin` of the project or an `org_admin` of its owning org
+(`apitoken.Service.checkProjectAdminScopeGrant` → `Repository.CanGrantProjectAdmin`); an account-level
+token never carries it (`403 project-admin-scope-denied`). The platform tier is unchanged: `admin` /
+`admin:all` remain `superadmin_full`-only, and a project/org entitlement never buys platform scope.
+
 ---
 
 ## Rule 1 — identity/context is never derived from client input where a token binding exists
@@ -116,11 +126,20 @@ The merged, working precedents — copy one of these:
 | session-history access | `sessiontodos.SessionAccessibleQuery` (`domain/sessiontodos/repository.go:42`) | REST conversation history + MCP `session-get-messages` | #1056 |
 | platform-admin authority | `auth.superadminRole` (`pkg/auth/superadmin.go:21`) | middleware `RequireSuperadminFull` + handler `IsSuperadminFull` | #940 |
 | org-admin authority | `auth.CanAdministerOrg` / `auth.CanAdministerOrgOrPlatform` (`pkg/auth/entitlement.go`) | org settings mutations, org invitations, project create/delete/transfer | #1162 |
+| project member role-change + removal | `projects.Service.authorizeProject(…, accessProjectAdmin)` (`domain/projects/service.go`) | REST `PATCH`/`DELETE /api/projects/:id/members/:userId` (no MCP entrypoint) | this change |
 
 The pattern is: **move the check into the service/store boundary**, so the two entrypoints call the
 same function and cannot drift. Entrypoint-level checks do not close the Shape-A bypass (see the
 decision doc §1.3, "blueprint-new-version" slipped past a scope-based audit because the missing
 check was *inside* the service).
+
+Project member role changes are **in-place**: `PATCH /api/projects/:id/members/:userId` accepts
+`role ∈ {project_admin, project_user, project_viewer}` (anything else → `400 invalid-role`), is gated
+to `accessProjectAdmin` (a `project_admin` of the project or an `org_admin` of its owning org), refuses
+to demote the last remaining `project_admin` (`403 last-admin`), and revokes the member's project-scoped
+tokens on downgrade (admin → user/viewer, or user → viewer) so stale privileges cannot outlive the role
+change — `domain/projects/service.go: UpdateMemberRole`. Removal (`DELETE …/members/:userId`) shares the
+same `accessProjectAdmin` gate, the same last-admin guard, and the same token revocation.
 
 ## Rule 4 — in-process vs transport are different trust markers
 

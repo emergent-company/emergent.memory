@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/emergent-company/go-daisy/components/nav"
 	"github.com/emergent-company/go-daisy/components/ui"
 	"github.com/emergent-company/go-daisy/render"
 	"github.com/labstack/echo/v4"
@@ -33,11 +34,15 @@ type orgCreatePageData struct {
 	FlashErr error
 }
 
-// membersPageData is the payload for MembersPage: the active project's people
-// — confirmed members (with their roles) plus still-pending invitations (from
-// ListInvites) that read as not-yet-confirmed members. PendingErr degrades the
-// invite fetch to a banner while the member list stays usable.
+// membersPageData is the payload for MembersPage and ProjectMembersPage: the
+// active project's people — confirmed members (with their roles) plus
+// still-pending invitations (from ListInvites) that read as not-yet-confirmed
+// members. PendingErr degrades the invite fetch to a banner while the member
+// list stays usable.
 type membersPageData struct {
+	// Base is the surface's base path ("/members" or "/settings/members"); all
+	// member links, form actions, and redirect targets derive from it.
+	Base        string
 	Members     []ProjectMemberDto
 	Pending     []SentInviteDto // Status == "pending" invitations to the active project
 	PendingErr  error
@@ -49,24 +54,32 @@ type membersPageData struct {
 	// invite is an org-tier write (org_admin of the invite's org — #1015), so
 	// only an org_admin of the active project's owning org may revoke.
 	CanRevokeInvite bool
+	// CanManage gates the member write controls (add member, remove, role
+	// change): true when the caller is project_admin of the project or
+	// org_admin of its owning org. Non-admins see a read-only list.
+	CanManage bool
 }
 
-// memberInvitePageData is the payload for MemberInvitePage (/members/new):
-// the invite form context (the active project) plus PRG error feedback from
-// the invite-create flow.
+// memberInvitePageData is the payload for MemberInvitePage (the standalone
+// invite-a-member form on the legacy or settings surface): the invite form
+// context (the active project) plus PRG error feedback from the invite-create
+// flow.
 type memberInvitePageData struct {
+	Base        string // "/members" or "/settings/members"
 	ProjectName string // active project name (best-effort)
 	HasProject  bool   // invite form is usable (active project + org resolved)
 	FlashErr    error
 }
 
-// memberDetailPageData is the payload for MemberDetailPage (/members/:userId):
-// one confirmed member of the active project, resolved from ListMembers.
-// NotFound renders the "member not found" state; LoadErr the fetch-error state.
-// CanChangeRole gates the role-change affordance (memory rejects removing the
-// project's sole admin, so that member's role cannot be changed either).
-// FlashErr carries PRG feedback from a failed role change.
+// memberDetailPageData is the payload for MemberDetailPage (the member detail
+// view on the legacy or settings surface): one confirmed member of the active
+// project, resolved from ListMembers. NotFound renders the "member not found"
+// state; LoadErr the fetch-error state. CanChangeRole gates the role-change
+// affordance (memory rejects removing the project's last admin, so that
+// member's role cannot be changed either). FlashErr carries PRG feedback from
+// a failed role change.
 type memberDetailPageData struct {
+	Base          string // "/members" or "/settings/members"
 	Member        *ProjectMemberDto
 	CanChangeRole bool
 	NotFound      bool
@@ -100,6 +113,55 @@ type invitationsPageData struct {
 	FlashErr   error
 }
 
+// membersSurface is one members-management surface: the legacy top-level page
+// (/members*) or the Project Settings section (/settings/members*). Both share
+// the same data loaders and mutation handlers, differing only in the base path
+// (links + redirect targets) and the page shell.
+type membersSurface struct {
+	base     string // "/members" or "/settings/members"
+	settings bool   // render inside the settings rail
+}
+
+var (
+	membersLegacySurface   = membersSurface{base: "/members"}
+	membersSettingsSurface = membersSurface{base: "/settings/members", settings: true}
+)
+
+// membersBaseFor resolves a members surface's base path, defaulting to the
+// legacy top-level path when unset (render tests construct payloads directly).
+func membersBaseFor(base string) string {
+	if base == "" {
+		return "/members"
+	}
+	return base
+}
+
+// membersIsSettings reports whether a resolved members base path belongs to the
+// Project Settings surface.
+func membersIsSettings(base string) bool {
+	return base == "/settings/members"
+}
+
+// memberDetailCrumbs builds the breadcrumb trail for a member detail page:
+// "Members / <leaf>…" on the legacy surface, "Settings / Members / <leaf>…"
+// on the settings surface.
+func memberDetailCrumbs(base string, leaves ...string) []nav.BreadcrumbItem {
+	parts := []string{"Members", base}
+	if membersIsSettings(base) {
+		parts = []string{"Settings", "/settings", "Members", base}
+	}
+	parts = append(parts, leaves...)
+	return crumbsActive(nav.Crumbs(parts...))
+}
+
+// memberInviteCrumbs builds the breadcrumb trail for the invite-a-member page.
+func memberInviteCrumbs(base string) []nav.BreadcrumbItem {
+	if membersIsSettings(base) {
+		return crumbsActive(nav.Crumbs("Settings", "/settings", "Members", base, "Invite a member"))
+	}
+	return crumbsActive(nav.Crumbs("Members", base, "Invite a member"))
+}
+
 // --- GET page handlers ---
 
 // uiOrgs renders the organizations page: the access tree (orgs with the
@@ -128,26 +190,45 @@ func (s *Server) uiOrgCreatePage(c echo.Context) error {
 	return s.page(c, pageTitle("New organization"), OrgCreatePage(orgCreatePageData{FlashErr: flashError(c)}))
 }
 
-// uiMembers renders the members page: one view of the active project's people
-// — confirmed members plus pending invitations (labelled "not responded"),
-// with an "Add member" action pointing at /members/new. ?ok=1 / ?revoked=1
-// surface remove/revoke success flashes; ?role-changed=1 surfaces the
-// remove + re-invite success from the details page's change-role flow.
+// uiMembers renders the legacy members page (/members). See uiMembersFor.
 func (s *Server) uiMembers(c echo.Context) error {
+	return s.uiMembersFor(membersLegacySurface, c)
+}
+
+// uiMembersFor renders a members surface: one view of the active project's
+// people — confirmed members plus pending invitations (labelled "not
+// responded"), with an "Add member" action pointing at <base>/new (admin only).
+// ?ok=1 / ?revoked=1 surface remove/revoke success flashes; ?role-changed=1
+// surfaces the in-place role-change success from the details page.
+func (s *Server) uiMembersFor(surf membersSurface, c echo.Context) error {
 	ctx := c.Request().Context()
-	data := membersPageData{}
+	data := membersPageData{Base: surf.base}
 	switch {
 	case c.QueryParam("role-changed") != "":
-		data.FlashMsg = "Role changed — the member was removed and re-invited; they regain access once they accept the new invitation."
+		data.FlashMsg = "Role changed."
 	case c.QueryParam("revoked") != "":
 		data.FlashMsg = "Invite revoked."
 	case c.QueryParam("ok") != "":
 		data.FlashMsg = "Member removed."
 	}
 	data.FlashErr = flashError(c)
+	s.loadMembersData(c, &data)
+	if surf.settings {
+		return s.page(c, pageTitle("Members"), ProjectMembersPage(data, s.projectHasNoProviders(ctx)))
+	}
+	return s.page(c, pageTitle("Members"), MembersPage(data))
+}
+
+// loadMembersData fills the members-page payload for the active project: the
+// member list, the still-pending invitations, and the role gates (revoke =
+// org_admin of the owning org; add/remove/role = project_admin or owning
+// org_admin).
+func (s *Server) loadMembersData(c echo.Context, data *membersPageData) {
+	ctx := c.Request().Context()
 	if pr, ok := s.activeProjectRef(ctx); ok {
 		data.ProjectName = pr.Name
 		data.CanRevokeInvite = s.orgAdminForCaller(c, pr.OrgID)
+		data.CanManage = s.projectAdminForCaller(c, pr.ID)
 	}
 	members, err := s.memory.ListMembers(ctx)
 	if err != nil {
@@ -165,14 +246,17 @@ func (s *Server) uiMembers(c echo.Context) error {
 			}
 		}
 	}
-	return s.page(c, pageTitle("Members"), MembersPage(data))
 }
 
-// uiMemberInvitePage renders the standalone invite-a-member page
-// (GET /members/new): email (with live user-search autofill) + role selector,
+// uiMemberInvitePage renders the standalone invite-a-member page (GET
+// /members/new): email (with live user-search autofill) + role selector,
 // posting to POST /members. ?err= surfaces PRG feedback from the create flow.
 func (s *Server) uiMemberInvitePage(c echo.Context) error {
-	data := memberInvitePageData{FlashErr: flashError(c)}
+	return s.uiMemberInvitePageFor(membersLegacySurface, c)
+}
+
+func (s *Server) uiMemberInvitePageFor(surf membersSurface, c echo.Context) error {
+	data := memberInvitePageData{Base: surf.base, FlashErr: flashError(c)}
 	if pr, ok := s.activeProjectRef(c.Request().Context()); ok {
 		data.ProjectName = pr.Name
 		data.HasProject = pr.ID != "" && pr.OrgID != ""
@@ -183,13 +267,17 @@ func (s *Server) uiMemberInvitePage(c echo.Context) error {
 // uiMemberDetails renders one confirmed member's details page
 // (GET /members/:userId). The member is resolved by re-fetching ListMembers
 // and matching the id; an unknown id renders the not-found state. The page
-// offers role management when the member is removable (memory rejects removing
-// the sole project admin). ?err= surfaces PRG feedback from a failed role
+// offers role management when the caller may administer the project and the
+// member is not the sole admin. ?err= surfaces PRG feedback from a failed role
 // change.
 func (s *Server) uiMemberDetails(c echo.Context) error {
+	return s.uiMemberDetailsFor(membersLegacySurface, c)
+}
+
+func (s *Server) uiMemberDetailsFor(surf membersSurface, c echo.Context) error {
 	ctx := c.Request().Context()
 	userID := strings.TrimSpace(c.Param("userId"))
-	data := memberDetailPageData{FlashErr: flashError(c)}
+	data := memberDetailPageData{Base: surf.base, FlashErr: flashError(c)}
 	members, err := s.memory.ListMembers(ctx)
 	if err != nil {
 		data.LoadErr = err
@@ -202,7 +290,11 @@ func (s *Server) uiMemberDetails(c echo.Context) error {
 		data.NotFound = true
 		return s.page(c, pageTitle("Member not found"), MemberDetailPage(data))
 	}
-	data.CanChangeRole = canRemoveMember(members, *data.Member)
+	canManage := false
+	if pr, ok := s.activeProjectRef(ctx); ok {
+		canManage = s.projectAdminForCaller(c, pr.ID)
+	}
+	data.CanChangeRole = canRemoveMember(members, *data.Member) && canManage
 	return s.page(c, pageTitle(memberDisplayName(*data.Member)), MemberDetailPage(data))
 }
 
@@ -320,39 +412,40 @@ func (s *Server) uiCreateOrg(c echo.Context) error {
 // on the members page. Memory enforces the last-admin guard server-side (403),
 // so a doomed remove attempt surfaces as a normal ?err= flash.
 func (s *Server) uiRemoveMember(c echo.Context) error {
+	return s.uiRemoveMemberFor(membersLegacySurface, c)
+}
+
+func (s *Server) uiRemoveMemberFor(surf membersSurface, c echo.Context) error {
 	userID := strings.TrimSpace(c.Param("userId"))
 	if userID == "" {
-		return redirectWithError(c, "/members", fmt.Errorf("member id is required"))
+		return redirectWithError(c, surf.base, fmt.Errorf("member id is required"))
 	}
 	if err := s.removeProjectMember(c.Request().Context(), userID); err != nil {
-		return redirectWithError(c, "/members", err)
+		return redirectWithError(c, surf.base, err)
 	}
-	return c.Redirect(http.StatusSeeOther, "/members?ok=1")
+	return c.Redirect(http.StatusSeeOther, surf.base+"?ok=1")
 }
 
 // uiChangeMemberRole handles the change-role form on the member details page
-// (POST /members/:userId/role; form field role). Memory has no member-role
-// PATCH, so a role change is remove + re-invite (see changeMemberRole). The
-// member's current email is read server-side from ListMembers, never trusted
-// from the form, so the re-invite always targets the member being changed.
-// On success it redirects to the members page; every failure — invalid role,
-// unknown member, last-admin removal, or a failed re-invite after removal —
-// redirects back to the member's details page with a clear flash instead of a
-// misleading success.
+// (POST /members/:userId/role; form field role). The role change is an in-place
+// PATCH (Memory persists it atomically — the member keeps their membership). On
+// success it redirects to the members page; every failure — invalid role,
+// unknown member, or a rejected PATCH — redirects back to the member's details
+// page with a clear flash instead of a misleading success.
 func (s *Server) uiChangeMemberRole(c echo.Context) error {
+	return s.uiChangeMemberRoleFor(membersLegacySurface, c)
+}
+
+func (s *Server) uiChangeMemberRoleFor(surf membersSurface, c echo.Context) error {
 	ctx := c.Request().Context()
 	userID := strings.TrimSpace(c.Param("userId"))
-	detailsPath := "/members/" + url.PathEscape(userID)
+	detailsPath := surf.base + "/" + url.PathEscape(userID)
 	if userID == "" {
-		return redirectWithError(c, "/members", fmt.Errorf("member id is required"))
+		return redirectWithError(c, surf.base, fmt.Errorf("member id is required"))
 	}
 	role := strings.TrimSpace(c.FormValue("role"))
-	if role != "project_admin" && role != "project_user" {
+	if !validProjectRole(role) {
 		return redirectWithError(c, detailsPath, fmt.Errorf("invalid role"))
-	}
-	ref, ok := s.activeProjectRef(ctx)
-	if !ok || ref.OrgID == "" {
-		return redirectWithError(c, detailsPath, fmt.Errorf("no active project to change roles in"))
 	}
 	member, err := s.findMember(ctx, userID)
 	if err != nil {
@@ -364,38 +457,42 @@ func (s *Server) uiChangeMemberRole(c echo.Context) error {
 	if member.Role == role {
 		return redirectWithError(c, detailsPath, fmt.Errorf("member already has the %s role", roleLabel(role)))
 	}
-	if err := s.changeMemberRole(ctx, ref, *member, role); err != nil {
+	if err := s.memory.UpdateMemberRole(ctx, userID, role); err != nil {
 		return redirectWithError(c, detailsPath, err)
 	}
-	return c.Redirect(http.StatusSeeOther, "/members?role-changed=1")
+	return c.Redirect(http.StatusSeeOther, surf.base+"?role-changed=1")
 }
 
-// uiMemberInviteCreate handles the invite form on /members/new (POST /members;
-// form fields email, role). The target org/project come from the session's
-// active project (never from hidden form fields), so the invitation always
-// lands in the project the sender is managing. On success it redirects to the
-// members page with ?ok=1; on failure back to the form with the error.
+// uiMemberInviteCreate handles the invite form (POST /members; form fields
+// email, role). The target org/project come from the session's active project
+// (never from hidden form fields), so the invitation always lands in the
+// project the sender is managing. On success it redirects to the members page
+// with ?ok=1; on failure back to the form with the error.
 func (s *Server) uiMemberInviteCreate(c echo.Context) error {
+	return s.uiMemberInviteCreateFor(membersLegacySurface, c)
+}
+
+func (s *Server) uiMemberInviteCreateFor(surf membersSurface, c echo.Context) error {
 	ctx := c.Request().Context()
 	ref, ok := s.activeProjectRef(ctx)
 	if !ok {
-		return redirectWithError(c, "/members/new", fmt.Errorf("no active project to invite into"))
+		return redirectWithError(c, surf.base+"/new", fmt.Errorf("no active project to invite into"))
 	}
 	if ref.OrgID == "" {
-		return redirectWithError(c, "/members/new", fmt.Errorf("the active project has no organization"))
+		return redirectWithError(c, surf.base+"/new", fmt.Errorf("the active project has no organization"))
 	}
 	email := strings.TrimSpace(c.FormValue("email"))
 	if email == "" {
-		return redirectWithError(c, "/members/new", fmt.Errorf("email is required"))
+		return redirectWithError(c, surf.base+"/new", fmt.Errorf("email is required"))
 	}
 	role := strings.TrimSpace(c.FormValue("role"))
-	if role != "project_admin" && role != "project_user" {
-		return redirectWithError(c, "/members/new", fmt.Errorf("invalid role"))
+	if !validProjectRole(role) {
+		return redirectWithError(c, surf.base+"/new", fmt.Errorf("invalid role"))
 	}
 	if err := s.createProjectInvite(ctx, ref, email, role); err != nil {
-		return redirectWithError(c, "/members/new", err)
+		return redirectWithError(c, surf.base+"/new", err)
 	}
-	return c.Redirect(http.StatusSeeOther, "/members?ok=1")
+	return c.Redirect(http.StatusSeeOther, surf.base+"?ok=1")
 }
 
 // uiRevokeInvite handles one revoke form (POST /invites/:id/revoke) on the
@@ -583,9 +680,21 @@ func roleLabel(role string) string {
 		return "project admin"
 	case "project_user":
 		return "project user"
+	case "project_viewer":
+		return "project viewer"
 	default:
 		return role
 	}
+}
+
+// validProjectRole reports whether role is a project membership role the
+// gateway forwards to memory (the PATCH member-role endpoint accepts all three).
+func validProjectRole(role string) bool {
+	switch role {
+	case "project_admin", "project_user", "project_viewer":
+		return true
+	}
+	return false
 }
 
 // profileDisplayName is the best label for the profile header: display name,
@@ -666,8 +775,7 @@ func (s *Server) removeProjectMember(ctx context.Context, userID string) error {
 }
 
 // createProjectInvite invites email into the given org/project with role — the
-// single invite-creation path shared by the standalone invite form and the
-// re-invite half of a role change.
+// single invite-creation path for the standalone invite form.
 func (s *Server) createProjectInvite(ctx context.Context, ref *ProjectRef, email, role string) error {
 	_, err := s.memory.CreateInvite(ctx, CreateInviteDto{
 		OrgID:     ref.OrgID,
@@ -676,28 +784,6 @@ func (s *Server) createProjectInvite(ctx context.Context, ref *ProjectRef, email
 		Role:      role,
 	})
 	return err
-}
-
-// changeMemberRole performs the remove + re-invite that stands in for a role
-// change (Memory has no member-role PATCH). It removes the member, then invites
-// the same email into the same org/project with the new role. Removal is the
-// point of no return: if the re-invite then fails the error makes the partial
-// failure explicit ("member removed, but …") so the operator re-invites by hand
-// instead of believing the change succeeded.
-func (s *Server) changeMemberRole(ctx context.Context, ref *ProjectRef, member ProjectMemberDto, role string) error {
-	if member.Email == "" {
-		return fmt.Errorf("member has no email address to re-invite")
-	}
-	if err := s.removeProjectMember(ctx, member.ID); err != nil {
-		if errors.Is(err, errLastAdmin) {
-			return fmt.Errorf("cannot change the last admin's role; assign another admin first")
-		}
-		return err
-	}
-	if err := s.createProjectInvite(ctx, ref, member.Email, role); err != nil {
-		return fmt.Errorf("member removed, but the new %s invite failed: %w — re-invite them from /members/new", roleLabel(role), err)
-	}
-	return nil
 }
 
 // memberDisplayName is the best human label for a member row: display name,

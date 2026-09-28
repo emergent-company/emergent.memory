@@ -272,6 +272,17 @@ func (m *MemoryClient) RemoveMember(ctx context.Context, userID string) error {
 	return m.do(ctx, http.MethodDelete, path, nil, nil)
 }
 
+// UpdateMemberRole changes a member's role in the active project in place
+// (PATCH /api/projects/{id}/members/{userId}; body {"role": ...}). Unlike a
+// remove + re-invite, the member keeps their membership — the role change is
+// atomic, and memory returns 403 last-admin when it would leave the project
+// without an admin.
+func (m *MemoryClient) UpdateMemberRole(ctx context.Context, userID, role string) error {
+	path := "/api/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/members/" + url.PathEscape(userID)
+	body := map[string]string{"role": role}
+	return m.do(ctx, http.MethodPatch, path, body, nil)
+}
+
 // Invite role enum (exact strings): org_admin, project_admin, project_user.
 
 // CreateInviteDto is the request to invite an email to an org/project

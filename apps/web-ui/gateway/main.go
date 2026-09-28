@@ -381,6 +381,14 @@ func main() {
 	e.POST("/settings/tokens/:tokenId/revoke", s.uiAPITokensRevoke)
 	e.POST("/settings/tokens/:tokenId/scopes", s.uiAPITokensScopes)
 	e.POST("/settings/tokens/:tokenId/regenerate", s.uiAPITokensRegenerate)
+	// Project members in the Settings hub (/settings/members*) — same UI as the
+	// legacy /members* pages, rendered inside the settings rail.
+	e.GET("/settings/members", s.uiSettingsMembers)
+	e.GET("/settings/members/new", s.uiSettingsMemberInvitePage)
+	e.POST("/settings/members", s.uiSettingsMemberInviteCreate)
+	e.GET("/settings/members/:userId", s.uiSettingsMemberDetails)
+	e.POST("/settings/members/:userId/remove", s.uiSettingsRemoveMember)
+	e.POST("/settings/members/:userId/role", s.uiSettingsChangeMemberRole)
 	// MCP server registry management (crumb-framed list + standalone
 	// create/edit pages under /settings/mcp-servers; see mcp_servers_handlers.go).
 	e.GET("/settings/mcp-servers", s.uiMCPServers)

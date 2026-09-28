@@ -2,9 +2,13 @@ package apitoken
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 )
 
 func TestHashToken(t *testing.T) {
@@ -306,6 +310,7 @@ func TestValidApiTokenScopes(t *testing.T) {
 		"documents:read", "documents:write",
 		"admin",
 		"admin:all",
+		"project:admin",
 		"mcp:agent-call",
 		"share:agent-chat",
 		"device:api",
@@ -552,4 +557,91 @@ func TestScopesContainPlatformScope(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestScopesContainProjectAdmin(t *testing.T) {
+	tests := []struct {
+		name   string
+		scopes []string
+		want   bool
+	}{
+		{"project admin alone", []string{"project:admin"}, true},
+		{"project admin in mixed list", []string{"data:read", "project:admin", "graph:write"}, true},
+		{"unrelated scopes", []string{"data:read", "graph:write"}, false},
+		{"platform admin not project admin", []string{"admin", "admin:all"}, false},
+		{"empty list", []string{}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := scopesContainProjectAdmin(tt.scopes); got != tt.want {
+				t.Errorf("scopesContainProjectAdmin(%v) = %v, want %v", tt.scopes, got, tt.want)
+			}
+		})
+	}
+}
+
+// project:admin is a project-scoped umbrella: a project_admin (or the owning
+// org's org_admin) may mint it on a project-bound token, but a non-admin may
+// not, and an account-level (unbound) token may never carry it. admin and
+// admin:all remain platform scopes gated by superadmin_full — project authority
+// must not buy platform authority.
+func TestService_ProjectAdminScopeMinting(t *testing.T) {
+	db := connectTestDB(t)
+	repo := NewRepository(db, slog.Default())
+	svc := NewService(db, repo, nil, slog.Default())
+	ctx := context.Background()
+
+	t.Run("project_admin mints project:admin on a project token", func(t *testing.T) {
+		userID := uuid.NewString()
+		projectID := seedProjectWithMembership(t, db, userID, "project_admin")
+
+		dto, err := svc.Create(ctx, projectID, userID, "pa-token", []string{"project:admin"})
+		require.NoError(t, err, "project_admin must mint project:admin")
+		require.NotNil(t, dto)
+		require.Contains(t, dto.Scopes, "project:admin")
+	})
+
+	t.Run("owning org_admin mints project:admin", func(t *testing.T) {
+		userID := uuid.NewString()
+		projectID := seedOwningOrgAdmin(t, db, userID)
+
+		dto, err := svc.Create(ctx, projectID, userID, "org-token", []string{"project:admin"})
+		require.NoError(t, err, "owning org_admin must mint project:admin")
+		require.NotNil(t, dto)
+	})
+
+	t.Run("non-admin cannot mint project:admin", func(t *testing.T) {
+		userID := uuid.NewString()
+		projectID := seedProjectWithMembership(t, db, userID, "project_user")
+
+		_, err := svc.Create(ctx, projectID, userID, "na-token", []string{"project:admin"})
+		require.Error(t, err, "project_user must not mint project:admin")
+	})
+
+	t.Run("account-level token cannot carry project:admin", func(t *testing.T) {
+		userID := uuid.NewString()
+		seedUser(t, db, userID)
+
+		_, err := svc.CreateAccountToken(ctx, userID, "acct-token", []string{"project:admin"})
+		require.Error(t, err, "account-level token must not mint project:admin")
+	})
+
+	t.Run("update account token scopes cannot carry project:admin", func(t *testing.T) {
+		userID := uuid.NewString()
+		seedUser(t, db, userID)
+
+		_, err := svc.UpdateAccountTokenScopes(ctx, uuid.NewString(), userID, []string{"project:admin"})
+		require.Error(t, err, "account-level update must not mint project:admin")
+	})
+
+	t.Run("project_admin still cannot mint platform admin", func(t *testing.T) {
+		userID := uuid.NewString()
+		projectID := seedProjectWithMembership(t, db, userID, "project_admin")
+
+		_, err := svc.Create(ctx, projectID, userID, "pa-admin", []string{"admin"})
+		require.Error(t, err, "project_admin must not mint bare admin")
+
+		_, err = svc.Create(ctx, projectID, userID, "pa-admin-all", []string{"admin:all"})
+		require.Error(t, err, "project_admin must not mint admin:all")
+	})
 }

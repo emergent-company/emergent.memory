@@ -621,6 +621,95 @@ func (s *Service) RemoveMember(ctx context.Context, projectID, userID string) er
 	return nil
 }
 
+// roleRank orders project roles so downgrades can be detected: higher rank
+// means more authority. Unknown roles rank -1.
+func roleRank(role string) int {
+	switch role {
+	case RoleProjectAdmin:
+		return 2
+	case RoleProjectUser:
+		return 1
+	case RoleProjectViewer:
+		return 0
+	default:
+		return -1
+	}
+}
+
+// UpdateMemberRole changes a project member's role.
+func (s *Service) UpdateMemberRole(ctx context.Context, projectID, userID, role string) error {
+	if !isValidUUID(projectID) {
+		return apperror.New(400, "invalid-uuid", "projectId must be a valid UUID")
+	}
+	if !isValidUUID(userID) {
+		return apperror.New(400, "invalid-uuid", "userId must be a valid UUID")
+	}
+	if roleRank(role) < 0 {
+		return apperror.New(400, "invalid-role", "role must be one of project_admin, project_user, project_viewer")
+	}
+
+	// Check project exists
+	project, err := s.repo.GetByID(ctx, projectID, false)
+	if err != nil {
+		return err
+	}
+	if project == nil {
+		return apperror.NewNotFound("project", projectID)
+	}
+
+	// Get the current membership to check role
+	membership, err := s.repo.GetMembership(ctx, projectID, userID)
+	if err != nil {
+		return err
+	}
+	if membership == nil {
+		return apperror.NewNotFound("member", userID)
+	}
+
+	// Guard against demoting the last admin: a project must always retain at
+	// least one project_admin.
+	if membership.Role == RoleProjectAdmin && role != RoleProjectAdmin {
+		adminCount, err := s.repo.CountAdmins(ctx, projectID)
+		if err != nil {
+			return err
+		}
+		if adminCount <= 1 {
+			return apperror.New(403, "last-admin", "Cannot remove the last admin from the project. Assign another admin first.")
+		}
+	}
+
+	// Persist the role change.
+	updated, err := s.repo.UpdateMemberRole(ctx, projectID, userID, role)
+	if err != nil {
+		return err
+	}
+	if !updated {
+		return apperror.NewNotFound("member", userID)
+	}
+
+	// On downgrade (admin → user/viewer or user → viewer) revoke the member's
+	// project-scoped tokens so stale privileges cannot outlive the role change.
+	// No revoke on upgrade or no-op.
+	if roleRank(role) < roleRank(membership.Role) {
+		if s.tokenRevoker != nil {
+			if revokeErr := s.tokenRevoker.RevokeByProjectAndUser(ctx, projectID, userID); revokeErr != nil {
+				// Non-fatal: log and continue — role is already updated
+				s.log.Warn("failed to revoke member tokens on role change",
+					slog.String("projectID", projectID),
+					slog.String("userID", userID),
+					slog.String("error", revokeErr.Error()))
+			}
+		}
+	}
+
+	s.log.Info("project member role updated",
+		slog.String("projectID", projectID),
+		slog.String("userID", userID),
+		slog.String("role", role))
+
+	return nil
+}
+
 // IsUserMember checks if a user is a member of a project
 func (s *Service) IsUserMember(ctx context.Context, projectID, userID string) (bool, error) {
 	return s.repo.IsUserMember(ctx, projectID, userID)

@@ -43,6 +43,7 @@ type apiTokensPageData struct {
 type apiTokenCreatePageData struct {
 	Reveal   *apiTokenReveal
 	FlashErr error
+	Picker   apiTokenScopePickerConfig // surface + admin gate for the scope picker
 }
 
 // apiTokenEditPageData is the payload for the per-token edit-scopes pages
@@ -54,6 +55,7 @@ type apiTokenEditPageData struct {
 	LoadErr  error
 	NotFound bool
 	FlashErr error
+	Picker   apiTokenScopePickerConfig // surface + admin gate for the scope picker
 }
 
 // apiTokenReveal is the one-shot secret panel: the plaintext value of a just
@@ -119,7 +121,7 @@ var apiTokenScopeAreas = map[string]string{
 	"graph:read": apiTokenAreaGraph, "graph:write": apiTokenAreaGraph, "search": apiTokenAreaGraph,
 	"branches:read": apiTokenAreaBranches, "branches:write": apiTokenAreaBranches,
 	"agents:read": apiTokenAreaAgents, "agents:write": apiTokenAreaAgents, "chat:use": apiTokenAreaAgents,
-	"projects:read": apiTokenAreaProjects, "projects:write": apiTokenAreaProjects,
+	"projects:read": apiTokenAreaProjects, "projects:write": apiTokenAreaProjects, "project:admin": apiTokenAreaProjects,
 	"journal:read": apiTokenAreaJournal, "journal:write": apiTokenAreaJournal,
 	"skills:read": apiTokenAreaSkills, "skills:write": apiTokenAreaSkills,
 	"admin": apiTokenAreaAdmin, "admin:all": apiTokenAreaAdmin,
@@ -138,7 +140,7 @@ func apiTokenScopeArea(scope string) string {
 // migration, or an execution like chat/search — rather than only read it.
 func apiTokenScopeMutates(scope string) bool {
 	switch scope {
-	case "admin", "admin:all", "schema:migrate", "chat:use", "search":
+	case "admin", "admin:all", "project:admin", "schema:migrate", "chat:use", "search":
 		return true
 	}
 	return strings.HasSuffix(scope, ":write")
@@ -255,6 +257,51 @@ var scopePickerGroups = []apiTokenScopeGroup{
 			{"admin", "Administer project"},
 		},
 	},
+}
+
+// apiTokenScopePickerConfig controls which scopes the scope picker offers.
+// project:admin is a project-only, admin-gated scope, so it is offered only for
+// project tokens when the caller administers the project (project_admin or
+// org_admin of the owning org). Account surfaces never offer it.
+type apiTokenScopePickerConfig struct {
+	Account   bool // account surface (never offers project:admin)
+	CanManage bool // caller may administer the project (offers project:admin)
+}
+
+// apiTokenPickerConfig derives the scope-picker config for a surface from the
+// request: account surfaces are always account-scoped; project surfaces offer
+// project:admin only to a caller who administers the active project.
+func (s *Server) apiTokenPickerConfig(c echo.Context, account bool) apiTokenScopePickerConfig {
+	cfg := apiTokenScopePickerConfig{Account: account}
+	if account {
+		return cfg
+	}
+	if pr, ok := s.activeProjectRef(c.Request().Context()); ok {
+		cfg.CanManage = s.projectAdminForCaller(c, pr.ID)
+	}
+	return cfg
+}
+
+// scopePickerGroupsFor returns the area buckets for a surface, adding
+// project:admin to the Projects bucket only when the surface offers it (project
+// token + admin caller). The static scopePickerGroups stays admin:all-free and
+// project:admin-free so the default (non-admin / account) picker never offers
+// the gated scopes.
+func scopePickerGroupsFor(cfg apiTokenScopePickerConfig) []apiTokenScopeGroup {
+	if cfg.Account || !cfg.CanManage {
+		return scopePickerGroups
+	}
+	out := make([]apiTokenScopeGroup, len(scopePickerGroups))
+	for i, g := range scopePickerGroups {
+		out[i] = g
+		if g.Label == apiTokenAreaProjects {
+			opts := make([]apiTokenScopeOption, 0, len(g.Options)+1)
+			opts = append(opts, g.Options...)
+			opts = append(opts, apiTokenScopeOption{Value: "project:admin", Label: "Manage project membership"})
+			out[i].Options = opts
+		}
+	}
+	return out
 }
 
 // apiTokenLastUsedLabel renders a token's last-used time ("never" when the
@@ -399,7 +446,7 @@ func (s *Server) renderTokenListWithReveal(c echo.Context, reveal *apiTokenRevea
 // uiTokenNewPage renders the standalone create-token page (GET <base>/new):
 // name + scope picker posting to POST <base>/new. ?err= surfaces PRG feedback.
 func (s *Server) uiTokenNewPage(c echo.Context, account bool) error {
-	flash := apiTokenCreatePageData{FlashErr: flashError(c)}
+	flash := apiTokenCreatePageData{FlashErr: flashError(c), Picker: s.apiTokenPickerConfig(c, account)}
 	if account {
 		return s.page(c, pageTitle("New account token"), AccountTokenCreatePage(flash))
 	}
@@ -409,7 +456,7 @@ func (s *Server) uiTokenNewPage(c echo.Context, account bool) error {
 // renderTokenCreatePage re-renders a surface's create page after a successful
 // create POST (no redirect — the plaintext panel must reach the browser).
 func (s *Server) renderTokenCreatePage(c echo.Context, reveal *apiTokenReveal, account bool) error {
-	data := apiTokenCreatePageData{Reveal: reveal}
+	data := apiTokenCreatePageData{Reveal: reveal, Picker: s.apiTokenPickerConfig(c, account)}
 	if account {
 		return s.page(c, pageTitle("New account token"), AccountTokenCreatePage(data))
 	}
@@ -464,7 +511,7 @@ func (s *Server) uiTokenEditPage(c echo.Context, account bool) error {
 	if err != nil {
 		return redirectWithError(c, base, err)
 	}
-	data := apiTokenEditPageData{FlashErr: flashError(c)}
+	data := apiTokenEditPageData{FlashErr: flashError(c), Picker: s.apiTokenPickerConfig(c, account)}
 	var tokens []APIToken
 	if account {
 		tokens, err = s.memory.ListAccountAPITokens(ctx)
