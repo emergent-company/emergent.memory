@@ -141,6 +141,7 @@ var BasicCatalog = Catalog{
 	"object-form": {"fields"},
 	"todo":        {"items"},
 	"result":      {"rows"},
+	"sources":     {"items"},
 }
 
 // Contains reports whether id is a known component in the catalog.

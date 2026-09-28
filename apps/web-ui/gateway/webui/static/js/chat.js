@@ -131,6 +131,12 @@
     renderUI: function (evt) {
       MemoryChatComponents.renderA2UISurface(evt.surfaceId, evt.messages, badgeCtx);
     },
+    // Grounded citations for the live turn (emitted before `done`): mount the
+    // Sources block under the in-progress assistant bubble. The next transcript
+    // refresh re-attaches the same block from the persisted history item.
+    onCitations: function (list) {
+      if (bubble) MemoryChatComponents.attachSources(bubble, list);
+    },
     failStream: function (msg) { failStream(msg); },
     onToken: function (evt) { appendToken(evt.token); },
     onThinking: handleThinkingEvent,
@@ -899,6 +905,9 @@
             }
             var turnEl = addAssistantMessage(html || escapeHTML(text), name, false, meta);
             if (turnEl && runCtx) turnFooters.push({ el: turnEl, ctx: runCtx });
+            // Grounded citations ride on the history item; render the Sources
+            // block beneath the answer (idempotent, no-op when empty).
+            if (turnEl && item.citations) MemoryChatComponents.attachSources(turnEl, item.citations);
           }
           break;
       }

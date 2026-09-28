@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/emergent-company/emergent.memory/domain/agents/toolgroups"
+	"github.com/emergent-company/emergent.memory/domain/chat/citations"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/pkg/httputil"
 )
@@ -445,6 +446,10 @@ type AgentRunMessageDTO struct {
 	Content    map[string]any `json:"content"`
 	StepNumber int            `json:"stepNumber"`
 	CreatedAt  time.Time      `json:"createdAt"`
+	// Citations carries an agent reply's grounded object/relationship citations
+	// (derived from the run's tool outputs); omitted for user/tool/system turns
+	// and when nothing is retrieved-and-referenced.
+	Citations []citations.Citation `json:"citations,omitempty"`
 }
 
 // AgentRunToolCallDTO is the response DTO for an agent run tool call

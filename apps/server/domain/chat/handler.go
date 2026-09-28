@@ -22,11 +22,13 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
+	"github.com/emergent-company/emergent.memory/domain/chat/citations"
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/search"
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/a2ui"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -1143,6 +1145,10 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 	var fullResponse strings.Builder
 	thinkingSeq := 0
 
+	// Collect any A2UI surfaces emitted during the run so they can contribute
+	// to citation derivation alongside the answer text.
+	var surfaces []a2ui.Message
+
 	// Build the StreamCallback that maps executor events to SSE events
 	streamCallback := func(event agents.StreamEvent) {
 		switch event.Type {
@@ -1165,6 +1171,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 		case agents.StreamEventToolApproval:
 			sseWriter.WriteData(sse.NewApprovalEvent(event.Tool, event.Input, event.QuestionID))
 		case agents.StreamEventA2UI:
+			surfaces = append(surfaces, event.A2UI...)
 			_ = sseWriter.WriteData(sse.NewUIEvent(event.SurfaceID, event.A2UI))
 		}
 	}
@@ -1386,6 +1393,36 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 				RetrievalContext: retrievalCtx,
 			})
 		}()
+	}
+
+	// Derive and emit grounded citations after the run completes and before the
+	// caller's `done` event. Non-fatal: derivation/load errors are logged and
+	// never fail the turn. Only emitted when at least one citation exists.
+	if result != nil && result.RunID != "" {
+		toolCalls, tcErr := h.agentRepo.FindToolCallsByRunID(ctx, result.RunID)
+		if tcErr != nil {
+			h.log.Warn("failed to load tool calls for citations",
+				slog.String("run_id", result.RunID),
+				slog.String("error", tcErr.Error()),
+			)
+		} else {
+			outputs := make([]citations.ToolCall, 0, len(toolCalls))
+			for _, tc := range toolCalls {
+				if tc != nil {
+					outputs = append(outputs, citations.ToolCall{Output: tc.Output})
+				}
+			}
+			candidates := citations.Candidates(outputs)
+			cits := citations.Derive(responseText, surfaces, candidates)
+			if len(cits) > 0 {
+				if err := sseWriter.WriteData(sse.NewCitationsEvent(cits)); err != nil {
+					h.log.Warn("failed to stream citations event",
+						slog.String("conversation_id", conv.ID.String()),
+						slog.String("error", err.Error()),
+					)
+				}
+			}
+		}
 	}
 
 	return result

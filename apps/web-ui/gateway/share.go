@@ -644,6 +644,7 @@ func rewriteShareStream(w io.Writer, r io.Reader, sessionID string) error {
 	sc.Split(splitSSEEvent)
 	var sb strings.Builder
 	var snapshotEmitted bool // true once this turn's html snapshot was emitted
+	var citations []citation // this turn's citations, from the terminal `citations` event
 	for sc.Scan() {
 		raw := sc.Bytes()
 		data := extractSSEData(raw)
@@ -651,9 +652,10 @@ func rewriteShareStream(w io.Writer, r io.Reader, sessionID string) error {
 			continue
 		}
 		var ev struct {
-			Type  string `json:"type"`
-			Token string `json:"token"`
-			Error string `json:"error"`
+			Type      string     `json:"type"`
+			Token     string     `json:"token"`
+			Error     string     `json:"error"`
+			Citations []citation `json:"citations"`
 		}
 		if err := json.Unmarshal([]byte(data), &ev); err != nil {
 			if _, werr := w.Write(raw); werr != nil {
@@ -671,10 +673,17 @@ func rewriteShareStream(w io.Writer, r io.Reader, sessionID string) error {
 			if _, werr := fmtEvent(w, payload); werr != nil {
 				return werr
 			}
+		case "citations":
+			// Capture for the snapshot's citation link rule and forward so the
+			// shared transcript can surface the same Sources block.
+			citations = ev.Citations
+			if _, werr := w.Write(raw); werr != nil {
+				return werr
+			}
 		case "done":
 			// Emit the authoritative markdown snapshot before passing done
 			// through, then reset the turn buffer for any later turn.
-			if err := emitMarkdownSnapshot(w, &sb, &snapshotEmitted); err != nil {
+			if err := emitMarkdownSnapshot(w, &sb, &snapshotEmitted, citations); err != nil {
 				return err
 			}
 			if _, werr := w.Write(raw); werr != nil {
@@ -682,6 +691,7 @@ func rewriteShareStream(w io.Writer, r io.Reader, sessionID string) error {
 			}
 			sb.Reset()
 			snapshotEmitted = false
+			citations = nil
 		case "error":
 			if code := shareSSEErrorCode(ev.Error); code != "" {
 				payload, merr := marshalNoEscape(map[string]string{"type": "error", "error": ev.Error, "code": code})
@@ -704,7 +714,7 @@ func rewriteShareStream(w io.Writer, r io.Reader, sessionID string) error {
 	}
 	// Fallback: a turn that produced text but never saw `done` (error/EOF)
 	// still gets its rendered snapshot before termination.
-	if err := emitMarkdownSnapshot(w, &sb, &snapshotEmitted); err != nil {
+	if err := emitMarkdownSnapshot(w, &sb, &snapshotEmitted, citations); err != nil {
 		return err
 	}
 	return sc.Err()

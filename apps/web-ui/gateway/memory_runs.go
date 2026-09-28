@@ -23,6 +23,10 @@ type AgentRunMessage struct {
 	Content    map[string]any `json:"content"`
 	StepNumber int            `json:"stepNumber"`
 	CreatedAt  string         `json:"createdAt"`
+	// Citations are the answer's grounded references, when the server attaches
+	// them to a run message. Carried as raw JSON so the exact wire shape
+	// survives into the synthesized chat timeline item.
+	Citations json.RawMessage `json:"citations,omitempty"`
 }
 
 // AgentRunToolCall mirrors memory's AgentRunToolCallDTO: one tool invocation

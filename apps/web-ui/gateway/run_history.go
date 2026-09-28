@@ -29,6 +29,9 @@ type runMessageItem struct {
 	CreatedAt  string         `json:"created_at,omitempty"`
 	Role       string         `json:"role"`
 	Content    map[string]any `json:"content"`
+	// Citations mirror the conversation-history item shape so the shared client
+	// renderer surfaces the Sources block for a scheduled run too.
+	Citations json.RawMessage `json:"citations,omitempty"`
 }
 
 // runToolItem is one synthesized chat timeline tool_call item: a run tool
@@ -155,7 +158,7 @@ func runTimelineItems(full *AgentRunFull, questions []AgentQuestionItem) []json.
 			created: keyTime(m.CreatedAt, fallbackCreated),
 			step:    m.StepNumber,
 			idx:     len(entries),
-			raw:     mustJSON(runMessageItem{Kind: "message", RunID: runID, StepNumber: m.StepNumber, CreatedAt: orZero(m.CreatedAt, fallbackCreated), Role: m.Role, Content: content}),
+			raw:     mustJSON(runMessageItem{Kind: "message", RunID: runID, StepNumber: m.StepNumber, CreatedAt: orZero(m.CreatedAt, fallbackCreated), Role: m.Role, Content: content, Citations: messageCitations(m)}),
 		})
 	}
 
@@ -363,4 +366,22 @@ func mustJSON(v any) json.RawMessage {
 		return json.RawMessage("null")
 	}
 	return b
+}
+
+// messageCitations returns a run message's citations as raw JSON, whether the
+// server attaches them on the message DTO or nests them in its content; nil
+// when neither is present (so the item omits the field entirely).
+func messageCitations(m *AgentRunMessage) json.RawMessage {
+	if m == nil {
+		return nil
+	}
+	if len(m.Citations) > 0 {
+		return m.Citations
+	}
+	if v, ok := m.Content["citations"]; ok && v != nil {
+		if b, err := json.Marshal(v); err == nil {
+			return b
+		}
+	}
+	return nil
 }

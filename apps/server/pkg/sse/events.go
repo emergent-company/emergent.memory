@@ -1,6 +1,9 @@
 package sse
 
-import "github.com/emergent-company/emergent.memory/pkg/a2ui"
+import (
+	"github.com/emergent-company/emergent.memory/domain/chat/citations"
+	"github.com/emergent-company/emergent.memory/pkg/a2ui"
+)
 
 // ChatEventType represents the type of SSE event in chat streaming.
 type ChatEventType string
@@ -29,6 +32,10 @@ const (
 	// EventApproval is emitted when a tool-policy confirmation gate intercepts
 	// a tool call and pauses the run awaiting user approval.
 	EventApproval ChatEventType = "approval"
+
+	// EventCitations is emitted once per turn, after the last token and before
+	// `done`, carrying the turn's grounded object/relationship citations.
+	EventCitations ChatEventType = "citations"
 
 	// EventDone is the final event, signaling end of stream.
 	EventDone ChatEventType = "done"
@@ -153,6 +160,21 @@ func NewApprovalEvent(tool string, input map[string]any, questionID string) Appr
 		Tool:       tool,
 		Input:      input,
 		QuestionID: questionID,
+	}
+}
+
+// CitationsEvent is emitted after the answer finishes, before `done`, carrying
+// the turn's grounded object/relationship citations.
+type CitationsEvent struct {
+	Type      string               `json:"type"`
+	Citations []citations.Citation `json:"citations"`
+}
+
+// NewCitationsEvent creates a new citations event.
+func NewCitationsEvent(cits []citations.Citation) CitationsEvent {
+	return CitationsEvent{
+		Type:      string(EventCitations),
+		Citations: cits,
 	}
 }
 

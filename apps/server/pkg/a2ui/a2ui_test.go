@@ -48,6 +48,22 @@ func TestValidate(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "valid updateComponents with sources component",
+			msgs: []Message{
+				{UpdateComponents: &UpdateComponents{
+					SurfaceID: "s1",
+					Components: []Component{
+						{ID: "s1", Component: "sources", Props: map[string]any{
+							"items": []any{
+								map[string]any{"id": "11111111-1111-1111-1111-111111111111", "type": "Company", "label": "Acme Corp"},
+							},
+						}},
+					},
+				}},
+			},
+			wantErr: false,
+		},
+		{
 			name: "valid updateDataModel",
 			msgs: []Message{
 				{UpdateDataModel: &UpdateDataModel{SurfaceID: "s1", Path: "/x", Value: 1}},
