@@ -555,11 +555,13 @@ func parseObjectTypeSchemasToMap(data json.RawMessage) map[string]json.RawMessag
 
 	// Try array format first (natural user file format).
 	var arr []struct {
-		Name        string          `json:"name"`
-		Label       string          `json:"label"`
-		Description string          `json:"description"`
-		Properties  json.RawMessage `json:"properties"`
-		UI          json.RawMessage `json:"ui"`
+		Name          string          `json:"name"`
+		Label         string          `json:"label"`
+		Description   string          `json:"description"`
+		Properties    json.RawMessage `json:"properties"`
+		UI            json.RawMessage `json:"ui"`
+		ScopeKey      json.RawMessage `json:"scopeKey"`
+		ScopeKeySnake json.RawMessage `json:"scope_key"`
 	}
 	if err := json.Unmarshal(data, &arr); err == nil && len(arr) > 0 {
 		result := make(map[string]json.RawMessage, len(arr))
@@ -575,6 +577,13 @@ func parseObjectTypeSchemasToMap(data json.RawMessage) map[string]json.RawMessag
 			}
 			if len(item.UI) > 0 && !isNullJSON(item.UI) {
 				schema["ui"] = item.UI
+			}
+			// Carry the optional scope-key declaration through to the registry
+			// JSON schema so entity-query can enforce it (issue #1148).
+			if len(item.ScopeKey) > 0 && !isNullJSON(item.ScopeKey) {
+				schema["scopeKey"] = item.ScopeKey
+			} else if len(item.ScopeKeySnake) > 0 && !isNullJSON(item.ScopeKeySnake) {
+				schema["scope_key"] = item.ScopeKeySnake
 			}
 			if item.Label != "" {
 				lb, _ := json.Marshal(item.Label)
@@ -1502,6 +1511,18 @@ func mergeSchemas(existing, incoming json.RawMessage) (merged json.RawMessage, a
 			return nil, nil, nil, marshalErr
 		}
 		mergedMap["properties"] = propsBytes
+	}
+	// A scope-key declaration is schema metadata (like a label). Existing wins;
+	// otherwise adopt the incoming declaration so an assignment/merge carries it
+	// into the registry (issue #1148).
+	if _, has := mergedMap["scopeKey"]; !has {
+		if _, hasSnake := mergedMap["scope_key"]; !hasSnake {
+			if v, ok := incomingMap["scopeKey"]; ok {
+				mergedMap["scopeKey"] = v
+			} else if v, ok := incomingMap["scope_key"]; ok {
+				mergedMap["scope_key"] = v
+			}
+		}
 	}
 
 	merged, err = json.Marshal(mergedMap)

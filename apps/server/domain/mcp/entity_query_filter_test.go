@@ -117,6 +117,144 @@ func TestExecuteQueryEntities_PropertyFilterScope(t *testing.T) {
 	})
 }
 
+// insertScopedType registers an object type in the project schema registry, with
+// an optional scope-key declaration, so entity-query's schema-driven scope
+// enforcement can be exercised against a real registry row.
+func insertScopedType(t *testing.T, db bun.IDB, projectID, typeName string, props map[string]any, scopeKey map[string]any) {
+	t.Helper()
+	schema := map[string]any{"properties": props}
+	if scopeKey != nil {
+		schema["scopeKey"] = scopeKey
+	}
+	encoded, err := json.Marshal(schema)
+	require.NoError(t, err)
+	_, err = db.ExecContext(context.Background(), `
+		INSERT INTO kb.project_object_schema_registry
+			(project_id, type_name, source, json_schema, enabled, schema_version)
+		VALUES (?, ?, 'template', ?::jsonb, true, 1)
+	`, projectID, typeName, string(encoded))
+	require.NoError(t, err)
+}
+
+// TestExecuteQueryEntities_SchemaScopeKeyEnforced pins the schema-driven
+// scope-key contract (#1148, option 2): a type that declares a scope key makes
+// entity-query reject a filter on a non-identity property that is not
+// accompanied by the scope key, instead of silently cross-matching documents.
+// The rejection assertion is fail-first: before the contract the bare
+// chapter_id filter returned rows across every law.
+func TestExecuteQueryEntities_SchemaScopeKeyEnforced(t *testing.T) {
+	db := connectTestDB(t)
+	_, projectID := seedProject(t, db)
+	svc := &Service{db: db}
+
+	const (
+		lawA    = "lov/1997-06-13-44" // aksjeloven
+		lawB    = "lov/2018-06-22-83"
+		chapter = "kapittel-2-kapittel-1"
+	)
+	props := map[string]any{
+		"law_ref_id": map[string]any{"type": "string"},
+		"chapter_id": map[string]any{"type": "string"},
+		"section_id": map[string]any{"type": "string"},
+	}
+	insertScopedType(t, db, projectID, "LegalParagraph", props, map[string]any{
+		"property":           "law_ref_id",
+		"referencesType":     "Law",
+		"referencesProperty": "ref_id",
+		"identityProperty":   "section_id",
+	})
+
+	insertQueryEntity(t, db, projectID, lawA+"#s-1",
+		map[string]any{"chapter_id": chapter, "law_ref_id": lawA, "section_id": "s-1"})
+	insertQueryEntity(t, db, projectID, lawA+"#s-2",
+		map[string]any{"chapter_id": chapter, "law_ref_id": lawA, "section_id": "s-2"})
+	insertQueryEntity(t, db, projectID, lawB+"#s-1",
+		map[string]any{"chapter_id": chapter, "law_ref_id": lawB, "section_id": "s-1"})
+	insertQueryEntity(t, db, projectID, lawB+"#s-2",
+		map[string]any{"chapter_id": chapter, "law_ref_id": lawB, "section_id": "s-2"})
+
+	// (a) RED against pre-contract code: a non-identity filter without the scope
+	// key must be rejected with an actionable error naming the required key.
+	t.Run("non-identity filter without scope key is rejected", func(t *testing.T) {
+		_, err := svc.executeQueryEntities(context.Background(), projectID, map[string]any{
+			"type_name": "LegalParagraph",
+			"filters":   map[string]any{"chapter_id": chapter},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `filter "chapter_id" requires scope key "law_ref_id"`)
+		assert.Contains(t, err.Error(), "declared scope for type LegalParagraph")
+	})
+
+	// (b) WITH the scope key the same filter is scoped to one law.
+	t.Run("scope key scopes the filter to one document", func(t *testing.T) {
+		out := runEntityQuery(t, svc, projectID, map[string]any{
+			"type_name": "LegalParagraph",
+			"filters":   map[string]any{"chapter_id": chapter, "law_ref_id": lawA},
+		})
+		require.NotNil(t, out.Pagination)
+		require.Equal(t, 2, out.Pagination.Total, "only law A's two paragraphs must match")
+		for _, e := range out.Entities {
+			assert.Contains(t, e.Key, lawA+"#")
+		}
+	})
+
+	// An explicit key_prefix remains a valid scoping mechanism.
+	t.Run("key_prefix satisfies the scope requirement", func(t *testing.T) {
+		out := runEntityQuery(t, svc, projectID, map[string]any{
+			"type_name":  "LegalParagraph",
+			"filters":    map[string]any{"chapter_id": chapter},
+			"key_prefix": lawA + "#",
+		})
+		require.NotNil(t, out.Pagination)
+		require.Equal(t, 2, out.Pagination.Total)
+		for _, e := range out.Entities {
+			assert.Contains(t, e.Key, lawA+"#")
+		}
+	})
+
+	// Filtering on the declared identity property alone is permitted.
+	t.Run("identity property filter is allowed alone", func(t *testing.T) {
+		out := runEntityQuery(t, svc, projectID, map[string]any{
+			"type_name": "LegalParagraph",
+			"filters":   map[string]any{"section_id": "s-1"},
+		})
+		require.NotNil(t, out.Pagination)
+		assert.Equal(t, 2, out.Pagination.Total)
+	})
+}
+
+// TestExecuteQueryEntities_TypeWithoutScopeDeclaration verifies the
+// backwards-compatibility half of the contract: a type with no declared scope
+// key keeps today's exact behaviour (the bare non-unique filter still matches
+// across documents, no rejection).
+func TestExecuteQueryEntities_TypeWithoutScopeDeclaration(t *testing.T) {
+	db := connectTestDB(t)
+	_, projectID := seedProject(t, db)
+	svc := &Service{db: db}
+
+	const chapter = "kapittel-2-kapittel-1"
+	insertScopedType(t, db, projectID, "LegalParagraph", map[string]any{
+		"law_ref_id": map[string]any{"type": "string"},
+		"chapter_id": map[string]any{"type": "string"},
+	}, nil) // registered, but no scopeKey declaration
+
+	insertQueryEntity(t, db, projectID, "lov/A#1",
+		map[string]any{"chapter_id": chapter, "law_ref_id": "lov/A"})
+	insertQueryEntity(t, db, projectID, "lov/A#2",
+		map[string]any{"chapter_id": chapter, "law_ref_id": "lov/A"})
+	insertQueryEntity(t, db, projectID, "lov/B#1",
+		map[string]any{"chapter_id": chapter, "law_ref_id": "lov/B"})
+	insertQueryEntity(t, db, projectID, "lov/B#2",
+		map[string]any{"chapter_id": chapter, "law_ref_id": "lov/B"})
+
+	out := runEntityQuery(t, svc, projectID, map[string]any{
+		"type_name": "LegalParagraph",
+		"filters":   map[string]any{"chapter_id": chapter},
+	})
+	require.NotNil(t, out.Pagination)
+	assert.Equal(t, 4, out.Pagination.Total, "no declaration: filter semantics unchanged")
+}
+
 // TestExecuteQueryEntities_FullStrategyLimitBound verifies the field_strategy
 // "full" payload bound (#1148): a large full-text limit is capped and the cap
 // is surfaced to the caller.

@@ -1,11 +1,14 @@
 package schemaregistry
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
@@ -18,6 +21,28 @@ type Handler struct {
 // NewHandler creates a new schema registry handler
 func NewHandler(repo *Repository) *Handler {
 	return &Handler{repo: repo}
+}
+
+// validateTypeScopeKey validates the optional scopeKey declaration in a type's
+// json_schema (issue #1148). It resolves reference targets against the project's
+// registered types and fails closed with an actionable message.
+func (h *Handler) validateTypeScopeKey(ctx context.Context, projectID, typeName string, schema json.RawMessage) error {
+	if len(schema) == 0 {
+		return nil
+	}
+	known, err := h.repo.TypePropertyNames(ctx, projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to resolve scopeKey reference targets", err)
+	}
+	if known == nil {
+		known = map[string]map[string]struct{}{}
+	}
+	// The incoming definition is authoritative for the type's own properties.
+	known[typeName] = schemas.TypeSchemaPropertyNames(schema)
+	if errs := schemas.ValidateTypeScopeKey(typeName, schema, known); len(errs) > 0 {
+		return apperror.NewBadRequest("invalid scopeKey: " + strings.Join(errs, "; "))
+	}
+	return nil
 }
 
 // GetProjectTypes handles GET /api/schema-registry/projects/:projectId
@@ -215,6 +240,9 @@ func (h *Handler) CreateType(c echo.Context) error {
 	if len(req.JSONSchema) == 0 {
 		return apperror.NewBadRequest("json_schema is required")
 	}
+	if err := h.validateTypeScopeKey(c.Request().Context(), projectID, req.TypeName, req.JSONSchema); err != nil {
+		return err
+	}
 
 	entry, err := h.repo.CreateType(c.Request().Context(), projectID, user.ID, &req)
 	if err != nil {
@@ -257,6 +285,9 @@ func (h *Handler) UpdateType(c echo.Context) error {
 	var req UpdateTypeRequest
 	if err := c.Bind(&req); err != nil {
 		return apperror.NewBadRequest("invalid request body")
+	}
+	if err := h.validateTypeScopeKey(c.Request().Context(), projectID, typeName, req.JSONSchema); err != nil {
+		return err
 	}
 
 	entry, err := h.repo.UpdateType(c.Request().Context(), projectID, typeName, &req)
