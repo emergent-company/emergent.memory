@@ -1923,6 +1923,14 @@ func (ae *AgentExecutor) runPipeline(
 	// own trust rather than the parent's per-dispatch authorization (issue #1133).
 	ctx = runDispatchContext(ctx, req.TrustedInternal)
 
+	// Intra-run tool-result cache (issue #1192): install a FRESH cache for this
+	// run so an identical read-only tool call later in the same run reuses the
+	// earlier result, while any mutating tool clears it. Installing a new cache
+	// here (rather than inheriting one from a parent run's context) guarantees a
+	// nested run never reads its parent's entries and that nothing survives the
+	// run. HTTP transports never install a cache, so they stay uncached.
+	ctx = mcp.ContextWithNewToolResultCache(ctx)
+
 	// Identify the ADK session ID.
 	// If the caller supplied a stable ConversationKey (cross-run conversation history),
 	// derive a namespaced key from it so triggers with the same ConversationKey share
