@@ -7,9 +7,10 @@
    navigate. The summary body is fetched with HTMX from GET /objects/:id/preview.
 
    Scoping: interception is limited to chat content — an assistant markdown
-   block (.memory-md) or a sources-block citation link ([data-testid=
-   "citation-link"]). /objects/ links elsewhere (the object list/detail pages)
-   are never hijacked.
+   block inside a chat message list (#chat-messages or #sidepanel-messages) or a
+   sources-block citation link ([data-testid="citation-link"]). Object references
+   rendered elsewhere (.memory-md on the object-detail knowledge answer, skill
+   previews, share pages, or the object list/detail pages) navigate normally.
 
    Public API: window.MemoryObjectPreview = { open, close }; */
 (function () {
@@ -40,9 +41,11 @@
     // lets us preventDefault before htmx sees the event.
     document.addEventListener("click", onDocumentClick, true);
     document.addEventListener("keydown", onKeydown);
-    // htmx v4 reports a non-2xx (and, per config, does not swap it). Surface a
-    // graceful state instead of leaving the spinner up.
+    // htmx v4 reports a non-2xx (and, per config, does not swap it) as
+    // htmx:response:error; a network drop throws htmx:error. Handle both so the
+    // drawer shows a graceful state instead of a stuck spinner.
     document.addEventListener("htmx:response:error", onResponseError);
+    document.addEventListener("htmx:error", onResponseError);
   }
 
   function isOpen() {
@@ -68,13 +71,17 @@
   }
 
   // isChatObjectRef is the whole scoping rule: an anchor to /objects/… that
-  // lives in rendered assistant markdown or a sources-block citation link.
+  // lives in a chat message list — the inline assistant markdown rendered into
+  // #chat-messages / #sidepanel-messages — or is a sources-block citation link.
+  // Other .memory-md surfaces (the object-detail knowledge answer, skill
+  // previews) and the object list/detail pages are deliberately excluded.
   function isChatObjectRef(a) {
     var href = a.getAttribute("href") || "";
     if (href.indexOf("/objects/") !== 0) return false;
     if (a.target && a.target !== "" && a.target !== "_self") return false;
     if (a.hasAttribute("download")) return false;
-    return !!a.closest(".memory-md") || a.getAttribute("data-testid") === "citation-link";
+    if (a.getAttribute("data-testid") === "citation-link") return true;
+    return !!a.closest("#chat-messages, #sidepanel-messages");
   }
 
   // parseRef splits a /objects/<id>[#relationship-<rel>] href. Returns null for
@@ -101,6 +108,7 @@
 
     setLoading();
     panel.classList.remove("translate-x-full");
+    panel.removeAttribute("inert"); // re-enter the tab order
     panel.setAttribute("aria-hidden", "false");
     if (backdrop) backdrop.classList.remove("hidden");
     focusClose();
@@ -115,6 +123,7 @@
     if (!panel || !isOpen()) return;
     panel.classList.add("translate-x-full");
     panel.setAttribute("aria-hidden", "true");
+    panel.setAttribute("inert", ""); // drop the closed drawer's controls from the tab order
     if (backdrop) backdrop.classList.add("hidden");
     body.innerHTML = "";
     if (lastFocused && typeof lastFocused.focus === "function") {

@@ -17,7 +17,7 @@ import (
 templ objectPreviewDrawer() {
 	<div id="object-preview-root">
 		<!-- Backdrop: click closes the preview (object-preview.js). -->
-		<div id="object-preview-backdrop" class="fixed inset-0 z-40 hidden bg-black/40" data-action="close-object-preview"></div>
+		<div id="object-preview-backdrop" class="fixed inset-0 z-40 hidden bg-black/40"></div>
 		<aside
 			id="object-preview-panel"
 			class="bg-base-100 fixed top-0 right-0 z-50 flex h-full w-full max-w-lg translate-x-full flex-col shadow-2xl transition-transform duration-300 ease-out"
@@ -25,6 +25,7 @@ templ objectPreviewDrawer() {
 			aria-modal="true"
 			aria-label="Object preview"
 			aria-hidden="true"
+			inert
 		>
 			<div class="border-base-content/10 flex items-center justify-between gap-2 border-b px-3 py-2.5">
 				<div class="flex min-w-0 items-center gap-2">
@@ -66,14 +67,14 @@ templ objectPreviewDrawer() {
 // objectPreviewContent is the read-only object summary swapped into
 // #object-preview-body: a scannable identity header (icon + type + display
 // label) and the object's values laid out as label→value rows — never inputs.
-// propDefs/typeUIByType carry the compiled schema's declared type accent so the
-// header icon matches the rest of the UI; relLabel, when set, is the humanised
+// typeUIByType carries the compiled types' declared ui accent so the header
+// icon matches the rest of the UI; relLabel, when set, is the humanised
 // relationship type the reference carried.
 //
 // Empty values still render (de-emphasised with a muted em dash) so the shape of
 // every property is visible; each row carries data-empty="true" so a future
 // "hide empties" toggle can fold them without a markup change.
-templ objectPreviewContent(obj *GraphObject, propDefs []objectPropertyDef, typeUIByType map[string]typeUI, relLabel string) {
+templ objectPreviewContent(obj *GraphObject, typeUIByType map[string]typeUI, relLabel string) {
 	{{ tui := typeUIOf(typeUIByType, obj.Type) }}
 	<div class="flex flex-col gap-5 p-4">
 		<div class="flex items-start gap-3">

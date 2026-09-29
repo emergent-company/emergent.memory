@@ -11,9 +11,10 @@ import (
 
 // uiObjectPreviewPartial renders the read-only object summary swapped into the
 // global preview drawer (#object-preview-body) when a chat object reference is
-// clicked. It reuses the same data seam as the object detail page
-// (GetGraphObject + GetCompiledTypes) so the preview never diverges from the
-// edit view; failures degrade to a small "unavailable" state rather than
+// clicked. It reuses the same data seam as the object detail page: GetGraphObject
+// supplies the object (including its stored Properties) and GetCompiledTypes
+// supplies the declared per-type ui accent so the header icon matches the rest
+// of the UI. Failures degrade to a small "unavailable" state rather than
 // leaving the drawer blank. The optional ?rel= fragment carries the
 // relationship id a `/objects/<src>#relationship-<rel>` reference pointed at,
 // which is humanised into a subtle "Referenced via …" line.
@@ -31,17 +32,15 @@ func (s *Server) uiObjectPreviewPartial(c echo.Context) error {
 		return nil
 	}
 
-	var propDefs []objectPropertyDef
 	var typeUIByType map[string]typeUI
 	compiled, compiledErr := s.memory.GetCompiledTypes(ctx)
 	captureError(compiledErr)
 	if compiled != nil {
-		propDefs = compiledTypePropertyDefs(compiled.ObjectTypes, obj.Type)
 		typeUIByType = objectTypeUIMap(compiled.ObjectTypes)
 	}
 
 	render.RenderPartial(c.Response().Writer, c.Request(),
-		objectPreviewContent(obj, propDefs, typeUIByType, s.objectPreviewRelationshipLabel(ctx, id, relID)))
+		objectPreviewContent(obj, typeUIByType, s.objectPreviewRelationshipLabel(ctx, id, relID)))
 	return nil
 }
 

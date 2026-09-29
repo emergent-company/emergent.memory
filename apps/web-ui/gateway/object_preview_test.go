@@ -71,7 +71,7 @@ func TestObjectPreviewContentIsReadOnly(t *testing.T) {
 			"extra":   "",
 		},
 	}
-	html := renderHTML(t, objectPreviewContent(obj, nil, nil, ""))
+	html := renderHTML(t, objectPreviewContent(obj, nil, ""))
 
 	for _, want := range []string{
 		`id="object-preview-heading"`,
@@ -98,11 +98,11 @@ func TestObjectPreviewContentIsReadOnly(t *testing.T) {
 // context line carried through from a /objects/<src>#relationship-<rel> ref.
 func TestObjectPreviewContentRelationshipLabel(t *testing.T) {
 	obj := &GraphObject{ID: "abc", Type: "note", Key: "k"}
-	withRel := renderHTML(t, objectPreviewContent(obj, nil, nil, "cites"))
+	withRel := renderHTML(t, objectPreviewContent(obj, nil, "cites"))
 	if !strings.Contains(withRel, "Referenced via") || !strings.Contains(withRel, "cites") {
 		t.Errorf("relationship context missing:\n%s", withRel)
 	}
-	withoutRel := renderHTML(t, objectPreviewContent(obj, nil, nil, ""))
+	withoutRel := renderHTML(t, objectPreviewContent(obj, nil, ""))
 	if strings.Contains(withoutRel, "Referenced via") {
 		t.Errorf("relationship context should be omitted when absent:\n%s", withoutRel)
 	}
@@ -123,9 +123,9 @@ func TestObjectPreviewDrawerContract(t *testing.T) {
 		`role="dialog"`,
 		`aria-modal="true"`,
 		`aria-hidden="true"`,
+		`inert`,
 		`data-testid="object-preview-edit"`,
 		`data-testid="object-preview-close"`,
-		`data-action="close-object-preview"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("drawer missing %q\n%s", want, html)
@@ -160,5 +160,30 @@ func TestObjectPreviewWiring(t *testing.T) {
 		if !strings.Contains(string(shellSrc), want) {
 			t.Errorf("appShell (ui.templ) missing %q", want)
 		}
+	}
+}
+
+// TestObjectPreviewInterceptionScope pins the client scoping contract: the
+// drawer opens only for references inside a chat message list (or a sources
+// citation link) — never for the .memory-md knowledge answer on the object page
+// — and both htmx error events are handled.
+func TestObjectPreviewInterceptionScope(t *testing.T) {
+	src, err := os.ReadFile("webui/static/js/object-preview.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(src)
+	for _, want := range []string{
+		`#chat-messages, #sidepanel-messages`,
+		`data-testid") === "citation-link"`,
+		`htmx:response:error`,
+		`htmx:error`,
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("object-preview.js missing %q", want)
+		}
+	}
+	if strings.Contains(js, `closest(".memory-md")`) {
+		t.Error("object-preview.js must not scope interception to .memory-md (matches non-chat surfaces too)")
 	}
 }
