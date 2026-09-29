@@ -2289,10 +2289,16 @@ func (ae *AgentExecutor) runPipeline(
 	//
 	// The stamped id is the agent DEFINITION id (kb.agent_definitions.id) — the
 	// single canonical actor_id for actor_type='agent' — NOT the kb.agents run
-	// entity id (resolveAgentID). A run whose definition cannot be resolved is
-	// left unstamped and falls back to the existing user/system attribution path.
+	// entity id (resolveAgentID).
+	//
+	// We ALWAYS stamp (resolvable → agent+id, unresolvable → the empty "clear"
+	// form) so a delegated run whose definition cannot be resolved does NOT
+	// inherit the parent's agent actor — it falls back to the normal user/system
+	// attribution instead of misattributing the child's writes to the parent.
 	if agentUUID := ae.actorAgentID(req); agentUUID != nil {
 		ctx = auth.WithActor(ctx, graph.ActorAgent, agentUUID)
+	} else {
+		ctx = auth.WithActor(ctx, "", nil)
 	}
 
 	// Accumulate cached token counts across all LLM steps in this run.

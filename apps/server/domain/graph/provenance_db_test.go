@@ -486,3 +486,96 @@ func TestProvenanceFilterRealSQL(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, contains(objs), "same UUID under actor_type=user must NOT match the agent-written object")
 }
+
+// TestProvenanceFilterProjectScoped proves the `created` subquery is scoped to
+// the requested project: a system-authored version=1 object in a DIFFERENT
+// project must not leak into this project's results. A NULL actor_id would
+// otherwise match every system row deployment-wide.
+func TestProvenanceFilterProjectScoped(t *testing.T) {
+	ctx, db, repo, svc, projectID := setupProvenanceTest(t)
+
+	// A second project in the same DB.
+	otherOrgID := uuid.NewString()
+	require.NoError(t, testutil.CreateTestOrganization(ctx, db, otherOrgID, "Other Org"))
+	otherProjectID := uuid.NewString()
+	require.NoError(t, testutil.CreateTestProject(ctx, db, testutil.TestProject{
+		ID: otherProjectID, OrgID: otherOrgID, Name: "Other Project",
+	}, testutil.AdminUser.ID))
+	otherPID := uuid.MustParse(otherProjectID)
+
+	sysCtx := auth.WithActor(ctx, graph.ActorSystem, nil)
+	own, err := svc.Create(sysCtx, projectID, &graph.CreateGraphObjectRequest{Type: "SysObj", Key: strPtr("own-sys")}, nil)
+	require.NoError(t, err)
+	other, err := svc.Create(sysCtx, otherPID, &graph.CreateGraphObjectRequest{Type: "SysObj", Key: strPtr("other-sys")}, nil)
+	require.NoError(t, err)
+
+	system := graph.ActorSystem
+	objs, err := repo.List(ctx, graph.ListParams{
+		ProjectID:  projectID,
+		ActorType:  &system,
+		Provenance: graph.ProvenanceCreated,
+	})
+	require.NoError(t, err)
+
+	foundOwn := false
+	for _, o := range objs {
+		if o.CanonicalID == own.CanonicalID {
+			foundOwn = true
+			continue
+		}
+		if o.CanonicalID == other.CanonicalID {
+			t.Errorf("created(system) leaked the other project's object %s", o.CanonicalID)
+		}
+	}
+	require.True(t, foundOwn, "this project's system-authored object must be returned")
+}
+
+// TestMergeConflictCarriesActor proves a conflict-resolved merge version carries
+// the source row's actor rather than silently becoming user+NULL.
+func TestMergeConflictCarriesActor(t *testing.T) {
+	ctx, db, _, svc, projectID := setupProvenanceTest(t)
+
+	// v1 on main authored by agent A, with a property key both sides will change.
+	agentA := uuid.New()
+	sctxA := auth.WithActor(ctx, graph.ActorAgent, &agentA)
+	created, err := svc.Create(sctxA, projectID, &graph.CreateGraphObjectRequest{
+		Type: "ConfObj", Key: strPtr("conf-key"), Properties: map[string]any{"v": 1},
+	}, nil)
+	require.NoError(t, err)
+
+	// Fork main → branch (copies v1).
+	forkResp, err := svc.ForkBranch(ctx, projectID, nil, &graph.ForkBranchRequest{Name: "conf-branch"})
+	require.NoError(t, err)
+	forkBranchID := uuid.MustParse(forkResp.BranchID)
+
+	// Patch the branch to {v:3} (agent B).
+	agentB := uuid.New()
+	sctxB := auth.WithActor(ctx, graph.ActorAgent, &agentB)
+	_, err = svc.Patch(sctxB, projectID, created.ID, &graph.PatchGraphObjectRequest{
+		BranchID: &forkBranchID, Properties: map[string]any{"v": 3},
+	}, nil)
+	require.NoError(t, err)
+
+	// Patch main to {v:2} (agent C), diverging the other way → conflict.
+	agentC := uuid.New()
+	sctxC := auth.WithActor(ctx, graph.ActorAgent, &agentC)
+	_, err = svc.Patch(sctxC, projectID, created.ID, &graph.PatchGraphObjectRequest{Properties: map[string]any{"v": 2}}, nil)
+	require.NoError(t, err)
+
+	// Merge with overwrite (mine_no_sim) → conflict, source (branch, agent B) wins.
+	_, err = svc.MergeBranch(ctx, projectID, nil, &graph.BranchMergeRequest{
+		SourceBranchID: forkBranchID, Execute: true, Policy: "mine_no_sim",
+	})
+	require.NoError(t, err)
+
+	var typ *string
+	var id *uuid.UUID
+	require.NoError(t, db.NewRaw(`
+		SELECT actor_type, actor_id FROM kb.graph_objects
+		WHERE project_id = ? AND branch_id IS NULL AND key = 'conf-key' AND supersedes_id IS NULL`,
+		projectID).Scan(ctx, &typ, &id))
+	require.NotNil(t, typ)
+	require.Equal(t, graph.ActorAgent, *typ)
+	require.NotNil(t, id)
+	require.Equal(t, agentB, *id, "conflict-resolved main HEAD must carry the source (branch/agent B) actor")
+}

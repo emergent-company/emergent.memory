@@ -9,7 +9,7 @@ enum ObjectBrowserError: LocalizedError, Sendable {
     case transport(message: String)
     /// The endpoint answered but the body could not be decoded.
     case decode(message: String)
-    /// The configured token endpoint cannot be turned into a gateway URL.
+    /// The configured `apiBaseURL` cannot be turned into a gateway URL.
     case invalidConfiguration(message: String)
 
     var errorDescription: String? {
@@ -52,10 +52,9 @@ protocol ObjectFetching: Sendable {
 
 /// Talks to the gateway's device object-browser endpoint.
 ///
-/// The gateway lives on the same host:port as the token endpoint and uses the
-/// same `X-API-Key` header. The base URL is derived from
-/// `config.tokenEndpoint` by stripping the `/api/token` path suffix, e.g.
-/// `http://host:8080/api/token` → `http://host:8080`.
+/// The gateway lives at `config.apiBaseURL` and uses the same `X-API-Key` header
+/// (see `ControlPlaneClient`). The base URL is `config.apiBaseURL` directly —
+/// not derived from the token endpoint.
 ///
 /// Endpoint:
 /// - `GET /api/agents/{id}/objects?provenance=&cursor=` →
@@ -63,18 +62,9 @@ protocol ObjectFetching: Sendable {
 struct ObjectBrowserClient: ObjectFetching {
     let config: MemoryConfig
 
-    /// The gateway base URL, derived from the token endpoint by stripping the
-    /// `/api/token` suffix.
+    /// The gateway base URL from `config.apiBaseURL`.
     var gatewayBaseURL: URL? {
-        let endpoint = config.tokenEndpoint
-        if endpoint.hasSuffix("/api/token") {
-            return URL(string: String(endpoint.dropLast("/api/token".count)))
-        }
-        // Fallback for non-standard endpoints: drop the last two path
-        // components (`/api` and `token`) to reach the host root.
-        return URL(string: endpoint)?
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
+        URL(string: config.apiBaseURL)
     }
 
     /// Fetches one page of `agentID`'s objects, filtered by `provenance`.
@@ -110,7 +100,7 @@ struct ObjectBrowserClient: ObjectFetching {
     func makeURL(agentID: String, provenance: ObjectProvenance, cursor: String?) throws -> URL {
         guard let base = gatewayBaseURL else {
             throw ObjectBrowserError.invalidConfiguration(
-                message: "Could not derive the gateway URL from the token endpoint: \(config.tokenEndpoint)"
+                message: "Could not build the object-browser URL from apiBaseURL: \(config.apiBaseURL)"
             )
         }
         let url = base

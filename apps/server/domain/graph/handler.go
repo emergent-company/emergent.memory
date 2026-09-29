@@ -107,6 +107,9 @@ func skipTotalFromQuery(v string) bool {
 // actor_type is rejected.
 func parseActorProvenance(c echo.Context, params *ListParams) error {
 	if actorType := c.QueryParam("actor_type"); actorType != "" {
+		if !validActorType(actorType) {
+			return apperror.NewBadRequest("invalid actor_type: must be one of 'user', 'agent', 'system'")
+		}
 		params.ActorType = &actorType
 	}
 	if actorIDStr := c.QueryParam("actor_id"); actorIDStr != "" {
@@ -120,6 +123,9 @@ func parseActorProvenance(c echo.Context, params *ListParams) error {
 		return apperror.NewBadRequest("actor_id requires actor_type")
 	}
 	if provenance := c.QueryParam("provenance"); provenance != "" {
+		if params.ActorType == nil {
+			return apperror.NewBadRequest("provenance requires actor_type")
+		}
 		if !validProvenance(provenance) {
 			return apperror.NewBadRequest("invalid provenance: must be one of 'created', 'updated', 'any'")
 		}

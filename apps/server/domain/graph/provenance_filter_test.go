@@ -26,6 +26,20 @@ func TestValidProvenance(t *testing.T) {
 	}
 }
 
+// TestValidActorType locks the accepted actor_type values.
+func TestValidActorType(t *testing.T) {
+	for _, a := range []string{ActorUser, ActorAgent, ActorSystem} {
+		if !validActorType(a) {
+			t.Errorf("expected validActorType(%q) == true", a)
+		}
+	}
+	for _, a := range []string{"", "USER", "bot", "human"} {
+		if validActorType(a) {
+			t.Errorf("expected validActorType(%q) == false", a)
+		}
+	}
+}
+
 // TestProvenanceFilterRendersSQL asserts the actor filter composes the right
 // WHERE fragments for each provenance mode and the (actor_type, actor_id) pair
 // rule, without a live Postgres (the query is only rendered, never executed).
@@ -43,11 +57,19 @@ func TestProvenanceFilterRendersSQL(t *testing.T) {
 		require.NotContains(t, sql, "canonical_id IN (SELECT canonical_id FROM kb.graph_objects WHERE")
 	})
 
-	t.Run("created mode uses version=1 subquery", func(t *testing.T) {
+	t.Run("created mode scopes subquery to project and main branch", func(t *testing.T) {
 		q := repo.buildObjectBaseQueryWith(repo.db, ListParams{ProjectID: pid, ActorType: &actorType, ActorID: &actorID, Provenance: ProvenanceCreated})
 		sql := q.String()
-		require.Contains(t, sql, "canonical_id IN (SELECT canonical_id FROM kb.graph_objects WHERE actor_type = 'agent' AND actor_id = '"+actorID.String()+"' AND version = 1 AND deleted_at IS NULL)")
+		require.Contains(t, sql, "canonical_id IN (SELECT canonical_id FROM kb.graph_objects WHERE actor_type = 'agent' AND actor_id = '"+actorID.String()+"' AND version = 1 AND deleted_at IS NULL AND project_id = '"+pid.String()+"' AND branch_id IS NULL)")
 		require.NotContains(t, sql, "OR canonical_id IN")
+	})
+
+	t.Run("created mode scopes subquery to a specific branch", func(t *testing.T) {
+		branchID := uuid.New()
+		q := repo.buildObjectBaseQueryWith(repo.db, ListParams{ProjectID: pid, BranchID: &branchID, ActorType: &actorType, ActorID: &actorID, Provenance: ProvenanceCreated})
+		sql := q.String()
+		require.Contains(t, sql, "branch_id = '"+branchID.String()+"'")
+		require.NotContains(t, sql, "branch_id IS NULL")
 	})
 
 	t.Run("updated mode filters the head pair only", func(t *testing.T) {
@@ -61,13 +83,13 @@ func TestProvenanceFilterRendersSQL(t *testing.T) {
 	t.Run("any mode is creator OR updater", func(t *testing.T) {
 		q := repo.buildObjectBaseQueryWith(repo.db, ListParams{ProjectID: pid, ActorType: &actorType, ActorID: &actorID, Provenance: ProvenanceAny})
 		sql := q.String()
-		require.Contains(t, sql, "(actor_type = 'agent' AND actor_id = '"+actorID.String()+"') OR canonical_id IN (SELECT canonical_id FROM kb.graph_objects WHERE actor_type = 'agent' AND actor_id = '"+actorID.String()+"' AND version = 1 AND deleted_at IS NULL)")
+		require.Contains(t, sql, "(actor_type = 'agent' AND actor_id = '"+actorID.String()+"') OR canonical_id IN (SELECT canonical_id FROM kb.graph_objects WHERE actor_type = 'agent' AND actor_id = '"+actorID.String()+"' AND version = 1 AND deleted_at IS NULL AND project_id = '"+pid.String()+"' AND branch_id IS NULL)")
 	})
 
 	t.Run("default (empty) provenance behaves like any", func(t *testing.T) {
 		q := repo.buildObjectBaseQueryWith(repo.db, ListParams{ProjectID: pid, ActorType: &actorType, ActorID: &actorID})
 		sql := q.String()
-		require.Contains(t, sql, "OR canonical_id IN (SELECT canonical_id FROM kb.graph_objects WHERE actor_type = 'agent' AND actor_id = '"+actorID.String()+"' AND version = 1 AND deleted_at IS NULL)")
+		require.Contains(t, sql, "OR canonical_id IN (SELECT canonical_id FROM kb.graph_objects WHERE actor_type = 'agent' AND actor_id = '"+actorID.String()+"' AND version = 1 AND deleted_at IS NULL AND project_id = '"+pid.String()+"' AND branch_id IS NULL)")
 	})
 
 	t.Run("nil actor_id (system) uses actor_id IS NULL", func(t *testing.T) {
@@ -75,6 +97,7 @@ func TestProvenanceFilterRendersSQL(t *testing.T) {
 		sql := q.String()
 		require.Contains(t, sql, "actor_id IS NULL")
 		require.NotContains(t, sql, "actor_id = ")
+		require.Contains(t, sql, "project_id = '"+pid.String()+"'")
 	})
 }
 
@@ -113,6 +136,20 @@ func TestParseActorProvenance(t *testing.T) {
 		err := parseActorProvenance(c, p)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "actor_id requires actor_type")
+	})
+
+	t.Run("invalid actor_type rejected", func(t *testing.T) {
+		c, p := newCtx("/?actor_type=robot")
+		err := parseActorProvenance(c, p)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid actor_type")
+	})
+
+	t.Run("provenance without actor_type rejected", func(t *testing.T) {
+		c, p := newCtx("/?provenance=created")
+		err := parseActorProvenance(c, p)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "provenance requires actor_type")
 	})
 
 	t.Run("invalid provenance rejected", func(t *testing.T) {
