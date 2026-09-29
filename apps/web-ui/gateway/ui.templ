@@ -132,6 +132,10 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 				if assistantAgent != "" {
 					@sidePanel(agents, assistantAgent)
 				}
+				<!-- Global read-only object preview, opened from inline chat
+				     references. Sibling of sidePanel and outside #main-content so
+				     HTMX navigation never destroys it. -->
+				@objectPreviewDrawer()
 			</div>
 			<link rel="stylesheet" href={ templ.SafeURL(webui.AssetPath("/css/app.css")) } data-asset-track="reload"/>
 			<!-- Compiled type name → {label,icon,color}. The chat client reads this
@@ -172,6 +176,7 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 			<script src={ templ.SafeURL(webui.AssetPath("/js/chat-host.js")) }></script>
 			<script src={ templ.SafeURL(webui.AssetPath("/js/chat.js")) }></script>
 			<script src={ templ.SafeURL(webui.AssetPath("/js/sidepanel.js")) }></script>
+			<script src={ templ.SafeURL(webui.AssetPath("/js/object-preview.js")) }></script>
 			if feedbackOverlayURL != "" {
 				<script src={ templ.SafeURL(feedbackOverlayURL + "/feedback-overlay.js") } data-api={ feedbackOverlayURL } data-repo="emergent-company/emergent.memory" data-label="feedback" async></script>
 			}
