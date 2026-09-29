@@ -154,6 +154,7 @@ func TestExecuteQueryEntities_KeyPrefixUsesBytewiseIndex(t *testing.T) {
 		"limit":          float64(25),
 	})
 	require.Len(t, out.Entities, viaStarts)
+	assert.Empty(t, out.Warning, "key_prefix is a recognized parameter; no unrecognized-parameter warning (#1207)")
 	for _, e := range out.Entities {
 		assert.True(t, strings.HasPrefix(e.Key, prefix), "key %q must start with %q", e.Key, prefix)
 	}
