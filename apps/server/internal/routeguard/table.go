@@ -181,6 +181,24 @@ func FormatViolations(violations []Violation) string {
 	return b.String()
 }
 
+// FormatUnclassified renders the fail-closed diagnostics for registration
+// patterns the extractor could not classify, plus the remediation hint. It is
+// the single source of the guard's failure text so the wrapper-handler guidance
+// is unit-testable.
+func FormatUnclassified(unclassified []string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "route-authority guard failed: %d unclassifiable registration pattern(s)\n", len(unclassified))
+	for _, u := range unclassified {
+		fmt.Fprintf(&b, "  - %s\n", u)
+	}
+	fmt.Fprintf(&b, "\nThe extractor fails closed on registration patterns it cannot classify.\n")
+	fmt.Fprintf(&b, "If this is an inline handler-method middleware value (e.g. h.rateLimitMiddleware()),\n")
+	fmt.Fprintf(&b, "register the middleware via a wrapper handler instead, so the extractor stays green:\n")
+	fmt.Fprintf(&b, "  e.POST(\"/path\", h.handleWithLimiter)  // run the check first, then delegate to h.Handle\n")
+	fmt.Fprintf(&b, "\nOtherwise, update the extractor (internal/routeguard) to handle the new pattern.\n")
+	return b.String()
+}
+
 func sortRoutes(routes []Route) {
 	sort.Slice(routes, func(i, j int) bool {
 		if routes[i].Path != routes[j].Path {

@@ -11,6 +11,29 @@
 // routes, and adds test-only /api/test/* routes). The single source of truth
 // for production registration is the fx-wired Register* functions in domain/,
 // which this scanner reads directly.
+//
+// # Supported registration pattern: wrapper handlers, not handler-method middleware
+//
+// The extractor derives a route's tier from a closed set of known middleware
+// (RequireAuth, RequireProjectTokenScope, ...). An inline middleware value
+// produced by a handler method — e.g.
+//
+//	e.POST("/api/webhooks/mailgun", h.Handle, h.rateLimitMiddleware())
+//
+// is deliberately NOT classifiable: the extractor cannot see the method body,
+// and assuming "tier-neutral" would let a later removal of an auth gate carried
+// by such a method go unnoticed — the guard would silently stop protecting the
+// route. The supported pattern is a wrapper handler that performs the
+// (tier-neutral) check first and then delegates:
+//
+//	e.POST("/api/webhooks/mailgun", h.handleWithRateLimit)
+//	// func (h *H) handleWithRateLimit(c echo.Context) error { ...check...; return h.Handle(c) }
+//
+// Any registration style the extractor cannot classify fails closed
+// (Result.Unclassified / non-zero exit). To add support for a genuinely new
+// pattern, teach classifyMiddleware about it and keep every other form
+// fail-closed — never broaden the matcher to swallow arbitrary call
+// expressions.
 package routeguard
 
 import (
@@ -510,7 +533,7 @@ func (x *extractor) handleRoute(method string, receiver ast.Expr, call *ast.Call
 	for _, a := range call.Args[argIdx+2:] {
 		m, ok := x.classifyMiddleware(a)
 		if !ok {
-			x.failClosed("%s: unrecognized inline middleware %s", x.pos(a), exprString(a))
+			x.failClosed("%s: unrecognized inline middleware %s%s", x.pos(a), exprString(a), handlerMethodMiddlewareHint(a))
 			continue
 		}
 		mw = append(mw, m)
@@ -711,6 +734,27 @@ func (x *extractor) classifyMiddleware(expr ast.Expr) (middleware, bool) {
 		return middleware{ident.Name, ""}, true
 	}
 	return middleware{}, false
+}
+
+// handlerMethodMiddlewareHint returns an actionable suffix for a fail-closed
+// inline-middleware diagnostic when expr is the handler-method middleware
+// idiom — a call whose function is a selector on a receiver identifier, e.g.
+// h.rateLimitMiddleware() — which the extractor deliberately does not classify
+// (see the package comment). It returns "" for every other shape, so the hint
+// never masks the generic fail-closed message.
+func handlerMethodMiddlewareHint(expr ast.Expr) string {
+	call, ok := expr.(*ast.CallExpr)
+	if !ok {
+		return ""
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return ""
+	}
+	if _, ok := sel.X.(*ast.Ident); !ok {
+		return ""
+	}
+	return "; handler-method middleware is not supported — register a wrapper handler instead, e.g. e.POST(path, h.handleWithLimiter)"
 }
 
 // scopeArgs renders the string-literal arguments of a middleware call, e.g.
