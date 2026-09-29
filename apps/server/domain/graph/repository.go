@@ -650,12 +650,54 @@ var graphObjectDetailColumns = []string{
 	"actor_type", "actor_id", "schema_version", "migration_archive",
 }
 
+// resolveObjectByID applies the deterministic object-resolution contract shared
+// by GetByID and GetByIDIncludeDeleted.
+//
+// objects must be ordered `supersedes_id ASC NULLS FIRST, id ASC` (HEAD rows
+// first, then id-ascending). Resolution priority:
+//
+//  1. an explicit physical id that is a HEAD — an explicit id always wins;
+//  2. the main-branch HEAD (branch_id IS NULL) — this is what makes a lookup
+//     with no branch context resolve to main even when a fork copy shares the
+//     canonical_id and sorts first by UUID (issue #1245);
+//  3. any HEAD (a branch-only object / several branch copies) — smallest id;
+//  4. the explicit physical id match on a non-HEAD version;
+//  5. the first row (a stable, caller-ordered fallback).
+func resolveObjectByID(objects []GraphObject, id uuid.UUID) *GraphObject {
+	for i := range objects {
+		if objects[i].ID == id && objects[i].SupersedesID == nil {
+			return &objects[i]
+		}
+	}
+	for i := range objects {
+		if objects[i].SupersedesID == nil && objects[i].BranchID == nil {
+			return &objects[i]
+		}
+	}
+	for i := range objects {
+		if objects[i].SupersedesID == nil {
+			return &objects[i]
+		}
+	}
+	for i := range objects {
+		if objects[i].ID == id {
+			return &objects[i]
+		}
+	}
+	return &objects[0]
+}
+
 // GetByID returns a graph object by its physical ID or canonical ID.
 // It accepts either type of ID transparently:
 //   - If the ID matches a physical id, returns that object
 //   - If the ID matches a canonical_id, returns the HEAD version
 //
 // HEAD versions (supersedes_id IS NULL) are preferred when multiple rows match.
+// When several HEADs share a canonical_id (an object forked to one or more
+// branches) the main-branch HEAD wins deterministically, so a lookup that
+// carries no branch context can never land on a fork copy; pass the fork copy's
+// physical id, or resolve with GetHeadByCanonicalID(branchID), to target a
+// branch explicitly. See resolveObjectByID for the full priority.
 func (r *Repository) GetByID(ctx context.Context, projectID, id uuid.UUID) (*GraphObject, error) {
 	var objects []GraphObject
 	err := r.db.NewSelect().
@@ -679,15 +721,7 @@ func (r *Repository) GetByID(ctx context.Context, projectID, id uuid.UUID) (*Gra
 		return nil, apperror.ErrNotFound
 	}
 
-	// Prefer the HEAD version (supersedes_id IS NULL)
-	for i := range objects {
-		if objects[i].SupersedesID == nil {
-			return &objects[i], nil
-		}
-	}
-
-	// Fallback: return the first match (exact physical id hit on a non-HEAD version)
-	return &objects[0], nil
+	return resolveObjectByID(objects, id), nil
 }
 
 // GetByIDIncludeDeleted returns a graph object by ID or canonical ID, including soft-deleted objects.
@@ -711,14 +745,7 @@ func (r *Repository) GetByIDIncludeDeleted(ctx context.Context, projectID, id uu
 		return nil, apperror.ErrNotFound
 	}
 
-	// Prefer the HEAD version (supersedes_id IS NULL)
-	for i := range objects {
-		if objects[i].SupersedesID == nil {
-			return &objects[i], nil
-		}
-	}
-
-	return &objects[0], nil
+	return resolveObjectByID(objects, id), nil
 }
 
 // GetHeadByCanonicalID returns the HEAD version of a graph object by canonical ID.
@@ -1358,8 +1385,39 @@ func (r *Repository) ListRelationships(ctx context.Context, params RelationshipL
 	return rels, nil
 }
 
+// resolveRelationshipByID mirrors resolveObjectByID for relationships: an
+// explicit physical id that is a HEAD wins, then the main-branch HEAD, then any
+// HEAD, then the non-HEAD explicit id, then the stable first row. See
+// resolveObjectByID for the rationale (issue #1245).
+func resolveRelationshipByID(rels []GraphRelationship, id uuid.UUID) *GraphRelationship {
+	for i := range rels {
+		if rels[i].ID == id && rels[i].SupersedesID == nil {
+			return &rels[i]
+		}
+	}
+	for i := range rels {
+		if rels[i].SupersedesID == nil && rels[i].BranchID == nil {
+			return &rels[i]
+		}
+	}
+	for i := range rels {
+		if rels[i].SupersedesID == nil {
+			return &rels[i]
+		}
+	}
+	for i := range rels {
+		if rels[i].ID == id {
+			return &rels[i]
+		}
+	}
+	return &rels[0]
+}
+
 // GetRelationshipByID returns a relationship by its physical ID or canonical ID.
-// Accepts either type of ID transparently, preferring the HEAD version.
+// Accepts either type of ID transparently, preferring the HEAD version. When
+// several HEADs share a canonical_id (a relationship forked to a branch) the
+// main-branch HEAD wins deterministically, so a branch-less lookup cannot land
+// on a fork copy. See resolveRelationshipByID.
 func (r *Repository) GetRelationshipByID(ctx context.Context, projectID, id uuid.UUID) (*GraphRelationship, error) {
 	var rels []GraphRelationship
 	err := r.db.NewSelect().
@@ -1381,15 +1439,7 @@ func (r *Repository) GetRelationshipByID(ctx context.Context, projectID, id uuid
 		return nil, apperror.ErrNotFound
 	}
 
-	// Prefer the HEAD version (supersedes_id IS NULL)
-	for i := range rels {
-		if rels[i].SupersedesID == nil {
-			return &rels[i], nil
-		}
-	}
-
-	// Fallback: return the first match
-	return &rels[0], nil
+	return resolveRelationshipByID(rels, id), nil
 }
 
 // GetRelationshipHead returns the HEAD version of a relationship by type, src, dst.
@@ -1545,13 +1595,22 @@ func (r *Repository) GetRelationshipHistory(ctx context.Context, projectID, cano
 }
 
 // GetRelationshipHeadByCanonicalID returns the HEAD version by canonical ID.
+//
+// The original single-row scan had no ORDER BY, so when a relationship has been
+// forked to a branch (two HEADs sharing a canonical_id) the selected row was
+// heap-order dependent. It now deterministically prefers the main-branch HEAD
+// (branch_id IS NULL) and falls back to the smallest-id branch HEAD, mirroring
+// GetHeadByCanonicalID's nil-branch default. Callers that need a specific branch
+// HEAD must use GetRelationshipHead(branchID).
 func (r *Repository) GetRelationshipHeadByCanonicalID(ctx context.Context, projectID, canonicalID uuid.UUID) (*GraphRelationship, error) {
-	var rel GraphRelationship
+	var rels []GraphRelationship
 	err := r.db.NewSelect().
-		Model(&rel).
+		Model(&rels).
 		Where("canonical_id = ?", canonicalID).
 		Where("project_id = ?", projectID).
 		Where("supersedes_id IS NULL").
+		OrderExpr("(branch_id IS NULL) DESC, id ASC").
+		Limit(1).
 		Scan(ctx)
 
 	if err != nil {
@@ -1561,7 +1620,11 @@ func (r *Repository) GetRelationshipHeadByCanonicalID(ctx context.Context, proje
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
-	return &rel, nil
+	if len(rels) == 0 {
+		return nil, apperror.ErrNotFound
+	}
+
+	return &rels[0], nil
 }
 
 // AcquireRelationshipLock acquires an advisory lock for a relationship.
