@@ -403,7 +403,7 @@ func (s *Service) applySeed(ctx context.Context, projectID uuid.UUID, actorID *u
 
 	// Relationships (endpoints referenced by seed object keys)
 	if len(seed.Relationships) > 0 {
-		created, skipped := s.applySeedRelationships(ctx, projectID, seed.Relationships)
+		created, skipped := s.applySeedRelationships(ctx, projectID, actorID, seed.Relationships)
 		counts.Created += created
 		counts.Skipped += skipped
 	}
@@ -415,7 +415,7 @@ func (s *Service) applySeed(ctx context.Context, projectID uuid.UUID, actorID *u
 // (optionally disambiguated by srcType/dstType) and bulk-creates them with
 // Upsert semantics. Relationships whose src or dst key cannot be resolved are
 // skipped (counted), never fatal.
-func (s *Service) applySeedRelationships(ctx context.Context, projectID uuid.UUID, rels []SeedRelationshipRecord) (int, int) {
+func (s *Service) applySeedRelationships(ctx context.Context, projectID uuid.UUID, actorID *uuid.UUID, rels []SeedRelationshipRecord) (int, int) {
 	created, skipped := 0, 0
 	keyCache := map[string]*uuid.UUID{} // "type\x00key" → canonical object id
 	keyOnlyWarned := false
@@ -468,7 +468,7 @@ func (s *Service) applySeedRelationships(ctx context.Context, projectID uuid.UUI
 	}
 
 	if len(items) > 0 {
-		resp, err := s.graphSvc.BulkCreateRelationships(ctx, projectID, &graph.BulkCreateRelationshipsRequest{Items: items})
+		resp, err := s.graphSvc.BulkCreateRelationships(ctx, projectID, &graph.BulkCreateRelationshipsRequest{Items: items}, actorID)
 		if err != nil {
 			s.log.Warn("seed relationship bulk create failed", logger.Error(err))
 			skipped += len(items)

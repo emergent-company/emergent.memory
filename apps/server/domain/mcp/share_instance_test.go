@@ -384,6 +384,7 @@ func (s *stubAgentHandler) GetAgentToolDefinitions() []ToolDefinition { return n
 func (s *stubAgentHandler) GetAgentToolDefinitionsForProject(context.Context, string) []ToolDefinition {
 	return nil
 }
+func (s *stubAgentHandler) ResolveAgentDefinitionID(_ context.Context, _, _ string) string { return "" }
 func (s *stubAgentHandler) RunAgentOnce(_ context.Context, _, agentID, _ string, _ AgentRunBudget) (string, string, error) {
 	s.runCalled = true
 	s.runCount++

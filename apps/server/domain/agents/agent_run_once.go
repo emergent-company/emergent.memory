@@ -69,6 +69,32 @@ func (h *MCPToolHandler) RunAgentInSession(ctx context.Context, projectID, agent
 	return h.runAgentTurn(ctx, projectID, agentID, sessionRef, message, budget)
 }
 
+// ResolveAgentDefinitionID resolves the kb.agent_definitions id backing a
+// runtime agent (kb.agents id), for actor provenance stamping. It returns ""
+// when the agent cannot be found or its definition cannot be resolved, so the
+// caller can skip stamping and leave the write unattributed (the kb.agents id is
+// a separate id space and must never be stamped as the actor_id).
+func (h *MCPToolHandler) ResolveAgentDefinitionID(ctx context.Context, projectID, agentID string) string {
+	repo := h.onceRepo
+	if repo == nil {
+		if h.repo != nil {
+			repo = h.repo
+		}
+	}
+	if repo == nil {
+		return ""
+	}
+	agent, err := repo.FindByID(ctx, agentID, &projectID)
+	if err != nil || agent == nil {
+		return ""
+	}
+	def, err := repo.ResolveDefinitionForAgent(ctx, agent)
+	if err != nil || def == nil {
+		return ""
+	}
+	return def.ID
+}
+
 // runAgentTurn is the shared execution core for RunAgentOnce and
 // RunAgentInSession. sessionRef is empty for the one-shot path; when non-empty
 // it is carried to the executor as ExecuteRequest.ConversationKey.

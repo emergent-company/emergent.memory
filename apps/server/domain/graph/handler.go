@@ -101,6 +101,33 @@ func skipTotalFromQuery(v string) bool {
 	return v == "false"
 }
 
+// parseActorProvenance parses actor_type, actor_id, and provenance query params
+// into the ListParams actor filter (issue #1193). Returns a 400 error on invalid
+// input. The (actor_type, actor_id) pair rule is enforced here: actor_id without
+// actor_type is rejected.
+func parseActorProvenance(c echo.Context, params *ListParams) error {
+	if actorType := c.QueryParam("actor_type"); actorType != "" {
+		params.ActorType = &actorType
+	}
+	if actorIDStr := c.QueryParam("actor_id"); actorIDStr != "" {
+		actorID, err := uuid.Parse(actorIDStr)
+		if err != nil {
+			return apperror.NewBadRequest("invalid actor_id")
+		}
+		params.ActorID = &actorID
+	}
+	if params.ActorID != nil && params.ActorType == nil {
+		return apperror.NewBadRequest("actor_id requires actor_type")
+	}
+	if provenance := c.QueryParam("provenance"); provenance != "" {
+		if !validProvenance(provenance) {
+			return apperror.NewBadRequest("invalid provenance: must be one of 'created', 'updated', 'any'")
+		}
+		params.Provenance = provenance
+	}
+	return nil
+}
+
 // ListObjects returns graph objects matching query parameters.
 // @Summary      List graph objects
 // @Description  Search and filter graph objects with pagination, type/label filtering, and relationship queries
@@ -123,6 +150,9 @@ func skipTotalFromQuery(v string) bool {
 // @Param        include_deleted query boolean false "Include soft-deleted objects"
 // @Param        fields query string false "Comma-separated property fields to include in response (projection)"
 // @Param        exclude_fields query string false "Comma-separated property fields to exclude from the response (applied after include)"
+// @Param        actor_type query string false "Filter by actor type (user|agent|system)"
+// @Param        actor_id query string false "Filter by actor id (UUID; requires actor_type)"
+// @Param        provenance query string false "Provenance filter mode: created|updated|any (default: any)"
 // @Param        include_total query boolean false "Set to false to skip the exact total count and omit the 'total' field (default: true). The count is the latency floor for very large projects; cursor-only callers should opt out."
 // @Param        X-Project-ID header string true "Project ID"
 // @Success      200 {object} map[string]interface{} "Paginated list with cursor"
@@ -280,6 +310,11 @@ func (h *Handler) ListObjects(c echo.Context) error {
 		params.ExcludeFields = splitCommaSeparated([]string{excludeParam})
 	}
 
+	// Parse actor provenance filter (issue #1193)
+	if err := parseActorProvenance(c, &params); err != nil {
+		return err
+	}
+
 	result, err := h.svc.List(c.Request().Context(), params)
 	if err != nil {
 		return err
@@ -304,6 +339,9 @@ func (h *Handler) ListObjects(c echo.Context) error {
 // @Param        extraction_job_id query string false "Extraction job ID filter"
 // @Param        property_filters query string false "JSON-encoded property filters"
 // @Param        branch_id query string false "Branch ID filter"
+// @Param        actor_type query string false "Filter by actor type (user|agent|system)"
+// @Param        actor_id query string false "Filter by actor id (UUID; requires actor_type)"
+// @Param        provenance query string false "Provenance filter mode: created|updated|any (default: any)"
 // @Param        X-Project-ID header string true "Project ID"
 // @Success      200 {object} map[string]int "Count result"
 // @Failure      400 {object} apperror.Error "Invalid request"
@@ -399,6 +437,11 @@ func (h *Handler) CountObjects(c echo.Context) error {
 			}
 			params.BranchID = &branchID
 		}
+	}
+
+	// Parse actor provenance filter (issue #1193)
+	if err := parseActorProvenance(c, &params); err != nil {
+		return err
 	}
 
 	count, err := h.svc.CountObjects(c.Request().Context(), params)
@@ -1030,7 +1073,8 @@ func (h *Handler) CreateRelationship(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("dst_id is required")
 	}
 
-	result, err := h.svc.CreateRelationship(c.Request().Context(), projectID, &req)
+	actorID, _ := getUserID(c)
+	result, err := h.svc.CreateRelationship(c.Request().Context(), projectID, &req, actorID)
 	if err != nil {
 		return err
 	}
@@ -1080,7 +1124,8 @@ func (h *Handler) UpsertRelationship(c echo.Context) error {
 
 	req.Upsert = true
 
-	result, created, err := h.svc.UpsertRelationship(c.Request().Context(), projectID, &req)
+	actorID, _ := getUserID(c)
+	result, created, err := h.svc.UpsertRelationship(c.Request().Context(), projectID, &req, actorID)
 	if err != nil {
 		return err
 	}
@@ -1123,7 +1168,8 @@ func (h *Handler) PatchRelationship(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid request body")
 	}
 
-	result, err := h.svc.PatchRelationship(c.Request().Context(), projectID, id, &req)
+	actorID, _ := getUserID(c)
+	result, err := h.svc.PatchRelationship(c.Request().Context(), projectID, id, &req, actorID)
 	if err != nil {
 		return err
 	}
@@ -1172,7 +1218,8 @@ func (h *Handler) DeleteRelationship(c echo.Context) error {
 	}
 	_ = c.Bind(&body)
 
-	result, err := h.svc.DeleteRelationship(c.Request().Context(), projectID, id, branchID, body.Reason)
+	actorID, _ := getUserID(c)
+	result, err := h.svc.DeleteRelationship(c.Request().Context(), projectID, id, branchID, body.Reason, actorID)
 	if err != nil {
 		return err
 	}
@@ -1205,7 +1252,8 @@ func (h *Handler) RestoreRelationship(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid relationship id")
 	}
 
-	result, err := h.svc.RestoreRelationship(c.Request().Context(), projectID, id)
+	actorID, _ := getUserID(c)
+	result, err := h.svc.RestoreRelationship(c.Request().Context(), projectID, id, actorID)
 	if err != nil {
 		return err
 	}
@@ -2081,7 +2129,8 @@ func (h *Handler) BulkCreateRelationships(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("items must not exceed " + strconv.Itoa(h.cfg.MaxBatchRelationships))
 	}
 
-	result, err := h.svc.BulkCreateRelationships(c.Request().Context(), projectID, &req)
+	actorID, _ := getUserID(c)
+	result, err := h.svc.BulkCreateRelationships(c.Request().Context(), projectID, &req, actorID)
 	if err != nil {
 		return err
 	}

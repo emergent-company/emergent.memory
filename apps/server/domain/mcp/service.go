@@ -4659,7 +4659,7 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 					Properties: relProps,
 					BranchID:   branchID,
 				}
-				relResult, err := s.graphService.CreateRelationship(ctx, projectUUID, relReq)
+				relResult, err := s.graphService.CreateRelationship(ctx, projectUUID, relReq, nil)
 				if err != nil {
 					s.log.Warn("failed to create inline relationship",
 						"rel_type", relType, "src", relSrcID, "dst", relDstID, logger.Error(err))
@@ -4846,7 +4846,7 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 			Weight:     weight,
 		}
 
-		result, err := s.graphService.CreateRelationship(ctx, projectUUID, req)
+		result, err := s.graphService.CreateRelationship(ctx, projectUUID, req, nil)
 		if err != nil {
 			results = append(results, batchResult{
 				Ok:    false,

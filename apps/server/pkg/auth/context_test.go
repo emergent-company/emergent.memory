@@ -3,6 +3,8 @@ package auth
 import (
 	"context"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestContextWithUser(t *testing.T) {
@@ -113,5 +115,52 @@ func TestInjectAuthContext_EmptyFields(t *testing.T) {
 	}
 	if oid := OrgIDFromContext(ctx); oid != "" {
 		t.Errorf("expected empty org ID, got %s", oid)
+	}
+}
+
+func TestWithActor(t *testing.T) {
+	ctx := context.Background()
+	id := uuid.New()
+
+	ctx = WithActor(ctx, "agent", &id)
+
+	actorType, actorID, ok := ActorFromContext(ctx)
+	if !ok {
+		t.Fatal("expected actor present, got ok=false")
+	}
+	if actorType != "agent" {
+		t.Errorf("expected actor type agent, got %s", actorType)
+	}
+	if actorID == nil || *actorID != id {
+		t.Errorf("expected actor id %s, got %v", id, actorID)
+	}
+}
+
+func TestWithActor_NilID(t *testing.T) {
+	ctx := context.Background()
+
+	ctx = WithActor(ctx, "system", nil)
+
+	actorType, actorID, ok := ActorFromContext(ctx)
+	if !ok {
+		t.Fatal("expected actor present, got ok=false")
+	}
+	if actorType != "system" {
+		t.Errorf("expected actor type system, got %s", actorType)
+	}
+	if actorID != nil {
+		t.Errorf("expected nil actor id, got %v", actorID)
+	}
+}
+
+func TestActorFromContext_Empty(t *testing.T) {
+	ctx := context.Background()
+
+	actorType, actorID, ok := ActorFromContext(ctx)
+	if ok {
+		t.Errorf("expected ok=false from empty context, got ok=true (%s, %v)", actorType, actorID)
+	}
+	if actorType != "" || actorID != nil {
+		t.Errorf("expected empty actor from empty context, got (%s, %v)", actorType, actorID)
 	}
 }
