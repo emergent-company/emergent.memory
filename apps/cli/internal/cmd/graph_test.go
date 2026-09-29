@@ -131,3 +131,104 @@ func TestParsePropertyFilters(t *testing.T) {
 		assert.Nil(t, got)
 	})
 }
+
+// TestGraphObjectsListCmd_ProvenanceFlagsRegistered verifies the actor
+// provenance flags are registered on `memory graph objects list`.
+func TestGraphObjectsListCmd_ProvenanceFlagsRegistered(t *testing.T) {
+	cmd := graphObjectsListCmd
+	for _, f := range []string{"actor-type", "actor-id", "provenance"} {
+		assert.NotNil(t, cmd.Flags().Lookup(f), "flag --%s should be registered", f)
+	}
+}
+
+// TestParseProvenanceFilter_Defaults verifies absent flags resolve to an empty
+// actor filter with provenance defaulting to "any".
+func TestParseProvenanceFilter_Defaults(t *testing.T) {
+	graphActorTypeFlag = ""
+	graphActorIDFlag = ""
+	graphProvenanceFlag = ""
+	t.Cleanup(func() {
+		graphActorTypeFlag = ""
+		graphActorIDFlag = ""
+		graphProvenanceFlag = ""
+	})
+
+	actorType, actorID, provenance, err := parseProvenanceFilter()
+	require.NoError(t, err)
+	assert.Equal(t, "", actorType)
+	assert.Equal(t, "", actorID)
+	assert.Equal(t, "any", provenance)
+}
+
+// TestParseProvenanceFilter_AgentScoped verifies the agent-scoped case
+// (--actor-type agent --actor-id <uuid>) resolves to the matching pair with a
+// default "any" provenance.
+func TestParseProvenanceFilter_AgentScoped(t *testing.T) {
+	const agentID = "11111111-1111-1111-1111-111111111111"
+	graphActorTypeFlag = "agent"
+	graphActorIDFlag = agentID
+	graphProvenanceFlag = ""
+	t.Cleanup(func() {
+		graphActorTypeFlag = ""
+		graphActorIDFlag = ""
+		graphProvenanceFlag = ""
+	})
+
+	actorType, actorID, provenance, err := parseProvenanceFilter()
+	require.NoError(t, err)
+	assert.Equal(t, "agent", actorType)
+	assert.Equal(t, agentID, actorID)
+	assert.Equal(t, "any", provenance)
+}
+
+// TestParseProvenanceFilter_ExplicitProvenance verifies an explicit valid value
+// is passed through unchanged.
+func TestParseProvenanceFilter_ExplicitProvenance(t *testing.T) {
+	graphActorTypeFlag = "agent"
+	graphActorIDFlag = "11111111-1111-1111-1111-111111111111"
+	graphProvenanceFlag = "created"
+	t.Cleanup(func() {
+		graphActorTypeFlag = ""
+		graphActorIDFlag = ""
+		graphProvenanceFlag = ""
+	})
+
+	_, _, provenance, err := parseProvenanceFilter()
+	require.NoError(t, err)
+	assert.Equal(t, "created", provenance)
+}
+
+// TestParseProvenanceFilter_InvalidProvenance verifies an unknown --provenance
+// value is rejected client-side.
+func TestParseProvenanceFilter_InvalidProvenance(t *testing.T) {
+	graphActorTypeFlag = "agent"
+	graphActorIDFlag = ""
+	graphProvenanceFlag = "bogus"
+	t.Cleanup(func() {
+		graphActorTypeFlag = ""
+		graphActorIDFlag = ""
+		graphProvenanceFlag = ""
+	})
+
+	_, _, _, err := parseProvenanceFilter()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--provenance")
+	assert.Contains(t, err.Error(), "bogus")
+}
+
+// TestParseProvenanceFilter_ActorIDWithoutActorType verifies --actor-id without
+// --actor-type is rejected (mirroring the server's pair rule).
+func TestParseProvenanceFilter_ActorIDWithoutActorType(t *testing.T) {
+	graphActorTypeFlag = ""
+	graphActorIDFlag = "11111111-1111-1111-1111-111111111111"
+	graphProvenanceFlag = ""
+	t.Cleanup(func() {
+		graphActorTypeFlag = ""
+		graphActorIDFlag = ""
+		graphProvenanceFlag = ""
+	})
+
+	_, _, _, err := parseProvenanceFilter()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--actor-id requires --actor-type")
+}

@@ -59,8 +59,8 @@
 
 ### 2.1 Object list actor provenance flags
 
-- [ ] 2.1.1 Add `--actor-type`, `--actor-id`, and `--provenance created|updated|any` flags to `memory graph objects list`, wired to the SDK `ListObjectsOptions` fields
-- [ ] 2.1.2 Add unit tests for flag parsing, an agent-scoped listing (actor-type=agent + actor-id), and rejection of an invalid `--provenance` value
+- [x] 2.1.1 Add `--actor-type`, `--actor-id`, and `--provenance created|updated|any` flags to `memory graph objects list`, wired to the SDK `ListObjectsOptions` fields
+- [x] 2.1.2 Add unit tests for flag parsing, an agent-scoped listing (actor-type=agent + actor-id), and rejection of an invalid `--provenance` value
 
 ## 3. Web UI (PR3)
 

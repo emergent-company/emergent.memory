@@ -130,6 +130,11 @@ var (
 	graphIDsFlag      string
 	graphForceFlag    bool
 
+	// actor provenance filter flags (graph objects list)
+	graphActorTypeFlag  string
+	graphActorIDFlag    string
+	graphProvenanceFlag string
+
 	// bulk action flags
 	graphBulkActionFlag string
 	graphBulkValueFlag  string
@@ -193,6 +198,32 @@ func parsePropertyFilters(filters []string, op string) ([]sdkgraph.PropertyFilte
 
 func getGraphClient(cmd *cobra.Command) (*sdkgraph.Client, error) {
 	return getProjectScopedGraphClient(cmd, graphProjectFlag)
+}
+
+// parseProvenanceFilter validates the actor provenance flags (--actor-type,
+// --actor-id, --provenance) and returns the resolved (actorType, actorID,
+// provenance) triple. An absent/empty --provenance defaults to "any" (matching
+// the server), an invalid --provenance is rejected eagerly, and --actor-id
+// without --actor-type is rejected (mirroring the server's pair rule).
+func parseProvenanceFilter() (actorType, actorID, provenance string, err error) {
+	actorType = graphActorTypeFlag
+	actorID = graphActorIDFlag
+	provenance = graphProvenanceFlag
+
+	if actorID != "" && actorType == "" {
+		return "", "", "", fmt.Errorf("--actor-id requires --actor-type")
+	}
+
+	switch provenance {
+	case "":
+		provenance = "any"
+	case "created", "updated", "any":
+		// valid
+	default:
+		return "", "", "", fmt.Errorf("invalid --provenance %q: must be one of created, updated, any", provenance)
+	}
+
+	return actorType, actorID, provenance, nil
 }
 
 // getProjectScopedGraphClient is the generic helper used by getGraphClient
@@ -358,12 +389,24 @@ Examples:
   memory graph objects list --filter status=active,draft --filter-op in
   memory graph objects list --filter status --filter-op exists`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Validate the actor provenance flags before any network call, so an
+		// invalid --provenance or --actor-id without --actor-type fails fast
+		// rather than relying on the server's 400.
+		actorType, actorID, provenance, err := parseProvenanceFilter()
+		if err != nil {
+			return err
+		}
+
 		g, err := getGraphClient(cmd)
 		if err != nil {
 			return err
 		}
 
-		opts := &sdkgraph.ListObjectsOptions{}
+		opts := &sdkgraph.ListObjectsOptions{
+			ActorType:  actorType,
+			ActorID:    actorID,
+			Provenance: provenance,
+		}
 		if graphTypeFlag != "" {
 			opts.Type = graphTypeFlag
 		}
@@ -2016,6 +2059,9 @@ func init() {
 	graphObjectsListCmd.Flags().StringVar(&graphStatusFlag, "status", "", "Filter by object status")
 	graphObjectsListCmd.Flags().StringVar(&graphIDsFlag, "ids", "", "Fetch specific objects by ID (comma-separated: --ids id1,id2,id3)")
 	graphObjectsListCmd.Flags().StringVar(&graphKeyFlag, "key", "", "Filter by object key (direct key-based lookup)")
+	graphObjectsListCmd.Flags().StringVar(&graphActorTypeFlag, "actor-type", "", "Filter by actor type: user, agent, or system")
+	graphObjectsListCmd.Flags().StringVar(&graphActorIDFlag, "actor-id", "", "Filter by actor ID (UUID; requires --actor-type)")
+	graphObjectsListCmd.Flags().StringVar(&graphProvenanceFlag, "provenance", "", "Provenance filter mode: created, updated, or any (default: any)")
 
 	graphObjectsGetCmd.Flags().StringVar(&graphOutputFlag, "output", "table", "Output format: table or json")
 	graphObjectsGetCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch ID or name to resolve the key against (omit for main branch)")
