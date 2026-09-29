@@ -103,6 +103,7 @@ type MemoryBackend interface {
 	SearchObjectsUnified(ctx context.Context, query, types, branchID string, limit int) ([]ObjectSearchResult, error)
 	GetEmbeddingProgress(ctx context.Context) (*EmbeddingProgress, error)
 	GetEmbeddingStatus(ctx context.Context) (*EmbeddingStatus, error)
+	GetEmbeddingCoverage(ctx context.Context) (*EmbeddingCoverageResponse, error)
 	ListBranches(ctx context.Context) ([]Branch, error)
 	GetCompiledTypes(ctx context.Context) (*CompiledSchemaTypes, error)
 	ListAllSchemas(ctx context.Context) ([]SchemaInfo, error)

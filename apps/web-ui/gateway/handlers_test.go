@@ -168,6 +168,9 @@ type fakeMemory struct {
 	embeddingStatus   *EmbeddingStatus   // returned by GetEmbeddingStatus
 	embeddingStatErr  error              // GetEmbeddingStatus failure
 
+	embeddingCoverage    *EmbeddingCoverageResponse // returned by GetEmbeddingCoverage
+	embeddingCoverageErr error                      // GetEmbeddingCoverage failure
+
 	effectiveModel    *EffectiveModelConfig // returned by GetEffectiveModelConfig
 	effectiveModelErr error                 // GetEffectiveModelConfig failure
 
@@ -1139,6 +1142,13 @@ func (f *fakeMemory) GetEmbeddingStatus(ctx context.Context) (*EmbeddingStatus, 
 		return nil, f.embeddingStatErr
 	}
 	return f.embeddingStatus, nil
+}
+
+func (f *fakeMemory) GetEmbeddingCoverage(ctx context.Context) (*EmbeddingCoverageResponse, error) {
+	if f.embeddingCoverageErr != nil {
+		return nil, f.embeddingCoverageErr
+	}
+	return f.embeddingCoverage, nil
 }
 
 func (f *fakeMemory) GetEffectiveModelConfig(ctx context.Context) (*EffectiveModelConfig, error) {

@@ -653,6 +653,52 @@ func (s *GraphEmbeddingJobsService) StatsByProject(ctx context.Context, projectI
 	return stats, nil
 }
 
+// Coverage returns deployment-wide embedding coverage for live graph objects:
+// how many already hold an embedding vector (embedded) versus how many are
+// still awaiting one (awaiting). Callers must have been authorized
+// (superadmin_full) by the Coverage handler.
+func (s *GraphEmbeddingJobsService) Coverage(ctx context.Context) (*EmbeddingCoverage, error) {
+	var row struct {
+		Embedded int64 `bun:"embedded"`
+		Awaiting int64 `bun:"awaiting"`
+	}
+	err := s.db.NewRaw(`
+		SELECT
+			(SELECT COUNT(*) FROM kb.graph_objects WHERE embedding_v2 IS NOT NULL AND deleted_at IS NULL) AS embedded,
+			(SELECT COUNT(*) FROM kb.graph_objects WHERE embedding_v2 IS NULL AND deleted_at IS NULL) AS awaiting`).
+		Scan(ctx, &row)
+	if err != nil {
+		return nil, fmt.Errorf("get object embedding coverage: %w", err)
+	}
+	return &EmbeddingCoverage{Embedded: row.Embedded, Awaiting: row.Awaiting, Total: row.Embedded + row.Awaiting}, nil
+}
+
+// CoverageByProject returns embedding coverage for live graph objects scoped to
+// a single project.
+//
+// Each half is a separate scalar subquery so the planner can serve the two
+// disjoint predicates from their own partial indexes — the embedded side from
+// idx_graph_objects_embedding_coverage (embedding_v2 IS NOT NULL) and the
+// awaiting side from idx_graph_objects_missing_embedding (embedding_v2 IS NULL)
+// — without a sequential scan of kb.graph_objects. A single
+// `COUNT(*) FILTER (WHERE embedding_v2 IS ...)` aggregate would not push the
+// embedding predicate into the scan and would fall back to a seq scan.
+func (s *GraphEmbeddingJobsService) CoverageByProject(ctx context.Context, projectID string) (*EmbeddingCoverage, error) {
+	var row struct {
+		Embedded int64 `bun:"embedded"`
+		Awaiting int64 `bun:"awaiting"`
+	}
+	err := s.db.NewRaw(`
+		SELECT
+			(SELECT COUNT(*) FROM kb.graph_objects WHERE project_id = ? AND embedding_v2 IS NOT NULL AND deleted_at IS NULL) AS embedded,
+			(SELECT COUNT(*) FROM kb.graph_objects WHERE project_id = ? AND embedding_v2 IS NULL AND deleted_at IS NULL) AS awaiting`,
+		projectID, projectID).Scan(ctx, &row)
+	if err != nil {
+		return nil, fmt.Errorf("get project object embedding coverage: %w", err)
+	}
+	return &EmbeddingCoverage{Embedded: row.Embedded, Awaiting: row.Awaiting, Total: row.Embedded + row.Awaiting}, nil
+}
+
 // RetriggerByProject resets failed and dead_letter jobs for a project to pending.
 // Returns the number of jobs reset.
 //
