@@ -2073,7 +2073,7 @@ func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID
 	}
 
 	// Re-fetch HEAD after lock
-	head, err := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID)
+	head, err := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2152,7 +2152,7 @@ func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID
 	}
 
 	// Return the new version
-	newHead, _ := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID)
+	newHead, _ := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID, nil)
 	return newHead.ToResponse(), nil
 }
 
@@ -2226,7 +2226,7 @@ func (s *Service) RestoreRelationship(ctx context.Context, projectID, id uuid.UU
 	}
 
 	// Get HEAD version
-	head, err := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID)
+	head, err := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2244,7 +2244,7 @@ func (s *Service) RestoreRelationship(ctx context.Context, projectID, id uuid.UU
 	}
 
 	// Return the restored version
-	restored, _ := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID)
+	restored, _ := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID, nil)
 
 	// Enqueue embedding — the restored version has a new physical row with NULL embedding.
 	if restored != nil {
@@ -4367,7 +4367,10 @@ func (s *Service) applyMerge(
 			if src == nil {
 				continue
 			}
-			prevHead, err := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, cid)
+			// Resolve the target branch's own HEAD. A branch-less lookup is
+			// main-preferring (#1247), so using it here would fast-forward the
+			// main relationship even when the merge target is a named branch.
+			prevHead, err := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, cid, targetBranchID)
 			if err != nil {
 				return 0, fmt.Errorf("get target rel head for fast-forward %s: %w", cid, err)
 			}
