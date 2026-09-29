@@ -915,7 +915,7 @@ templ agentToolCapabilityGroup(gv toolGroupView) {
 	}, agentToolCapabilityLeading(gv), agentToolCapabilityControls(gv)) {
 		<div class="flex flex-col divide-y divide-base-content/10 overflow-hidden rounded-box border border-base-content/10">
 			for _, t := range gv.Rows {
-				@agentToolRowView(t, true)
+				@agentToolRowView(t, !t.NoPolicy)
 			}
 		</div>
 	}
@@ -963,11 +963,11 @@ templ agentToolCapabilityControls(gv toolGroupView) {
 		if gv.Group.ID != toolGroupOtherID {
 			<select
 				name={ "groupPolicy." + gv.Group.ID }
-				class="select select-xs w-24"
+				class="select select-xs w-40"
 				aria-label={ gv.Group.Label + " approval policy" }
 				data-testid={ "tool-group-policy-" + gv.Group.ID }
 			>
-				@agentPolicyOptions(gv.Policy, "inherit")
+				@agentPolicyOptions(gv.Policy, "inherit", gv.InheritLabel)
 			</select>
 		}
 	</div>
@@ -1028,16 +1028,16 @@ type agentToolGroupProps struct {
 
 // agentToolRow is one pre-resolved tool in a group: Name is the agent-facing
 // tool name (submitted and displayed), Checked whether the agent whitelists it,
-// PolicyValue its explicit per-tool policy ("" = none), Hint the full
-// non-interactive inheritance note shown beside the policy select on wider
-// screens, and HintShort its compact all-widths form.
+// PolicyValue its explicit per-tool policy ("" = none), NoPolicy whether the row
+// omits its per-tool policy select (a ban-managed hidden builtin), and
+// InheritLabel the value its Inherit option falls back to.
 type agentToolRow struct {
-	Name        string
-	Description string
-	Checked     bool
-	PolicyValue string
-	Hint        string
-	HintShort   string
+	Name         string
+	Description  string
+	Checked      bool
+	PolicyValue  string
+	NoPolicy     bool
+	InheritLabel string
 }
 
 // agentToolGroupLeading is the source-group summary's leading block: the group
@@ -1084,10 +1084,10 @@ templ agentToolGroup(p agentToolGroupProps) {
 }
 
 // agentToolRowView is one tool row shared by every group body: an enable toggle
-// bound to the flat "tool" list, the tool name + description, an optional
-// per-tool policy select, and the non-interactive inheritance hint ("" hides
-// it). The toggle's onchange disables/dims the policy select while the tool is
-// off.
+// bound to the flat "tool" list, the tool name + description, and an optional
+// per-tool policy select. The toggle's onchange disables/dims the policy select
+// while the tool is off. A ban-managed hidden builtin passes withPolicy=false:
+// its checkbox maps to ban state and it renders no policy select.
 //
 // Two row variants exist. The default (`px-3` + hover background) suits rows
 // inside a plain group body, where the surrounding container has no horizontal
@@ -1120,13 +1120,7 @@ templ agentToolRowView(t agentToolRow, withPolicy bool, rowClass ...string) {
 			</span>
 		</label>
 		if withPolicy {
-			@toolPolicySelectValue("toolPolicy."+t.Name, t.Name, t.PolicyValue, !t.Checked)
-		}
-		if t.Hint != "" {
-			<span class="text-muted-faint hidden w-44 shrink-0 truncate text-right text-[11px] md:block" title={ t.Hint }>{ t.Hint }</span>
-		}
-		if t.HintShort != "" {
-			<span class="text-muted-faint w-16 shrink-0 truncate text-right text-[11px] md:hidden" title={ t.Hint }>{ t.HintShort }</span>
+			@toolPolicySelectValue("toolPolicy."+t.Name, t.Name, t.PolicyValue, !t.Checked, t.InheritLabel)
 		}
 	</div>
 }
@@ -1136,10 +1130,11 @@ func serverToolRows(srv MCPServer, agent *AgentDefinition) []agentToolRow {
 	rows := make([]agentToolRow, 0, len(srv.Tools))
 	for _, t := range srv.Tools {
 		rows = append(rows, agentToolRow{
-			Name:        t.ToolName,
-			Description: t.Description,
-			Checked:     containsString(agent.Tools, t.ToolName),
-			PolicyValue: toolPolicyValue(agent, t.ToolName),
+			Name:         t.ToolName,
+			Description:  t.Description,
+			Checked:      containsString(agent.Tools, t.ToolName),
+			PolicyValue:  toolPolicyValue(agent, t.ToolName),
+			InheritLabel: inheritValueLabel("", agent.DefaultToolPolicy),
 		})
 	}
 	return rows
@@ -1152,10 +1147,11 @@ func relayToolRows(node relayNode, agent *AgentDefinition) []agentToolRow {
 	for _, t := range node.Tools {
 		name := relayAgentToolName(node.Session.InstanceID, t.Name)
 		rows = append(rows, agentToolRow{
-			Name:        name,
-			Description: t.Description,
-			Checked:     containsString(agent.Tools, name),
-			PolicyValue: toolPolicyValue(agent, name),
+			Name:         name,
+			Description:  t.Description,
+			Checked:      containsString(agent.Tools, name),
+			PolicyValue:  toolPolicyValue(agent, name),
+			InheritLabel: inheritValueLabel("", agent.DefaultToolPolicy),
 		})
 	}
 	return rows
@@ -1203,7 +1199,7 @@ templ agentToolRelayGroup(node relayNode, agent *AgentDefinition) {
 templ agentToolOtherGroup(tools []string, agent *AgentDefinition) {
 	@agentToolOtherContainer("Not from a registered MCP server — kept so existing tools aren't dropped on save.", false) {
 		for _, t := range tools {
-			@agentToolRowView(agentToolRow{Name: t, Checked: true, PolicyValue: toolPolicyValue(agent, t)}, true, "flex items-center gap-2.5 py-2")
+			@agentToolRowView(agentToolRow{Name: t, Checked: true, PolicyValue: toolPolicyValue(agent, t), InheritLabel: inheritValueLabel("", agent.DefaultToolPolicy)}, true, "flex items-center gap-2.5 py-2")
 		}
 	}
 }
@@ -1211,10 +1207,15 @@ templ agentToolOtherGroup(tools []string, agent *AgentDefinition) {
 // agentPolicyOptions renders the shared Inherit / Allow / Ask / Deny option set
 // for a policy <select>. inheritValue is the Inherit option's submitted value —
 // "inherit" for the group select (its value space spells the absent policy) and
-// "" for the per-tool select ("" = no override) — and value selects the current
+// "" for the per-tool select ("" = no override) — inheritLabel the value the
+// Inherit option falls back to ("Inherit (Ask)"), and value selects the current
 // option.
-templ agentPolicyOptions(value, inheritValue string) {
-	<option value={ inheritValue } if value == inheritValue { selected }>Inherit</option>
+templ agentPolicyOptions(value, inheritValue, inheritLabel string) {
+	if inheritLabel != "" {
+		<option value={ inheritValue } if value == inheritValue { selected }>Inherit ({ inheritLabel })</option>
+	} else {
+		<option value={ inheritValue } if value == inheritValue { selected }>Inherit</option>
+	}
 	<option value="allow" if value == "allow" { selected }>Allow</option>
 	<option value="ask" if value == "ask" { selected }>Ask</option>
 	<option value="deny" if value == "deny" { selected }>Deny</option>
@@ -1222,18 +1223,18 @@ templ agentPolicyOptions(value, inheritValue string) {
 
 // toolPolicySelectValue is the value-driven form of the per-tool policy
 // dropdown: name is the form field, key the tool name carried in
-// data-tool-policy for the row's onchange lookup, and value the stored policy
-// ("" = Inherit). A group-policy row reuses it with the group's stored value.
-templ toolPolicySelectValue(name, key, value string, disabled bool) {
+// data-tool-policy for the row's onchange lookup, value the stored policy
+// ("" = Inherit), and inheritLabel the value its Inherit option falls back to.
+templ toolPolicySelectValue(name, key, value string, disabled bool, inheritLabel string) {
 	<select
 		name={ name }
-		class="select select-xs w-32 shrink-0"
+		class="select select-xs w-40 shrink-0"
 		if disabled {
 			disabled
 		}
 		data-tool-policy={ key }
 	>
-		@agentPolicyOptions(value, "")
+		@agentPolicyOptions(value, "", inheritLabel)
 	</select>
 }
 
