@@ -2,6 +2,9 @@ package mcp
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -37,15 +40,18 @@ func seedEntityQuerySortVolume(t *testing.T, db bun.IDB, projectID string, branc
 	require.NoError(t, err)
 }
 
-const sortNameQuery = `
+// sortNameQuery mirrors the exact type/pagination query entity-query builds for
+// sort_by=name (default DESC), including the bounded left(..., N) expression and
+// the go.key tiebreak that the partial index must match.
+var sortNameQuery = fmt.Sprintf(`
 	SELECT go.id, go.key, COALESCE(go.properties->>'name','') AS name
 	FROM kb.graph_objects go
 	WHERE go.deleted_at IS NULL AND go.project_id = ?::uuid
 		AND go.supersedes_id IS NULL
 		AND go.branch_id IS NULL
 		AND go.type = 'LegalParagraph'
-	ORDER BY go.properties->>'name' DESC NULLS LAST
-	LIMIT ? OFFSET 0`
+	ORDER BY left(go.properties->>'name', %d) DESC NULLS LAST, go.key
+	LIMIT ? OFFSET 0`, entityQueryNameSortKeyChars)
 
 // TestExecuteQueryEntities_NameSortUsesExpressionIndex is the #1206 ordering
 // regression: a whole-type sort_by=name (no narrowing key_prefix) must be
@@ -135,4 +141,69 @@ func TestExecuteQueryEntities_BranchKeyPrefixUsesBranchIndex(t *testing.T) {
 		assert.True(t, strings.HasPrefix(e.Key, prefix), "key %q must start with %q", e.Key, prefix)
 	}
 	assert.Empty(t, out.Warning, "key_prefix must be a recognized parameter (no warning)")
+}
+
+// longQueryEntityName returns a 20 KB high-entropy ASCII name. High entropy
+// matters: repeated input TOAST-compresses below the index tuple limit, whereas
+// incompressible JSONB text does not. Indexing the unbounded
+// properties->>'name' fails such an insert with SQLSTATE 54000.
+func longQueryEntityName(t *testing.T) string {
+	t.Helper()
+	b := make([]byte, 10240)
+	_, err := rand.Read(b)
+	require.NoError(t, err)
+	return hex.EncodeToString(b) // 20480 incompressible ASCII chars
+}
+
+// TestExecuteQueryEntities_LongNameDoesNotBreakNameSortIndex is the review
+// regression: `properties` has no size cap, so an unbounded name expression
+// index turns a previously working write into a failing one. With the bounded
+// left(..., N) expression the long-name insert succeeds, the ordering query
+// still uses the index, and no Sort node appears.
+func TestExecuteQueryEntities_LongNameDoesNotBreakNameSortIndex(t *testing.T) {
+	db := connectTestDB(t)
+	_, projectID := seedProject(t, db)
+	seedEntityQuerySortVolume(t, db, projectID, nil, 200, 5, 10) // 10k rows
+
+	const longKey = "lov/long#kapittel-1-paragraf-long"
+	insertQueryEntity(t, db, projectID, longKey,
+		map[string]any{"name": longQueryEntityName(t), "content": "x"})
+
+	var count int
+	require.NoError(t, db.NewRaw(
+		`SELECT COUNT(*) FROM kb.graph_objects WHERE project_id = ?::uuid AND key = ?`,
+		projectID, longKey).Scan(context.Background(), &count))
+	assert.Equal(t, 1, count, "long-name row must be insertable with the index present")
+
+	plan := keyPrefixExplain(t, db, sortNameQuery, projectID, 25)
+	require.Contains(t, plan, "Index Scan using idx_graph_objects_project_type_name", plan)
+	require.NotContains(t, plan, "Sort", plan)
+}
+
+// TestMigration199_NameIndexBuildsWithLongNameRow proves CREATE INDEX
+// CONCURRENTLY on the bounded expression succeeds even when an oversized name
+// row already exists — the raw-expression index (or its CONCURRENTLY build)
+// fails with SQLSTATE 54000 in that situation.
+func TestMigration199_NameIndexBuildsWithLongNameRow(t *testing.T) {
+	db := connectTestDB(t)
+	_, projectID := seedProject(t, db)
+
+	_, err := db.ExecContext(context.Background(),
+		`DROP INDEX CONCURRENTLY IF EXISTS kb.idx_graph_objects_project_type_name`)
+	require.NoError(t, err)
+
+	insertQueryEntity(t, db, projectID, "lov/long#kapittel-1-paragraf-build",
+		map[string]any{"name": longQueryEntityName(t)})
+
+	_, err = db.ExecContext(context.Background(), `
+		CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_graph_objects_project_type_name
+		  ON kb.graph_objects (project_id, type, left(properties->>'name', 256) DESC NULLS LAST, key)
+		  WHERE deleted_at IS NULL AND supersedes_id IS NULL AND branch_id IS NULL`)
+	require.NoError(t, err, "CREATE INDEX CONCURRENTLY must not fail on an oversized-name row")
+
+	var exists bool
+	require.NoError(t, db.NewRaw(
+		`SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'kb' AND indexname = 'idx_graph_objects_project_type_name')`,
+	).Scan(context.Background(), &exists))
+	require.True(t, exists)
 }

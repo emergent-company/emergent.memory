@@ -2881,6 +2881,25 @@ func prefixUpperBound(prefix string) (string, bool) {
 	return "", false
 }
 
+// entityQueryNameSortKeyChars bounds the sort_by=name ordering expression that
+// migration 00199 indexes. `properties` is user-supplied with no size cap (see
+// domain/graph/validation.go: unknown property types pass through), so indexing
+// the raw properties->>'name' can exceed the btree entry limit (~2704 B, 1/3
+// page): a single 5120-char name reproduces SQLSTATE 54000
+// ("index row size ... exceeds btree version 4 maximum") on insert. The index
+// expression is therefore left(properties->>'name', N), and the query ORDER BY
+// must use the exact same expression for the index to serve it.
+//
+// N=256 is safe under UTF-8: 256 chars x 4 bytes/char = 1024 B for the
+// expression, plus the bounded key (<=128 runes -> <=512 B) and type
+// (<=64 runes -> <=256 B) columns gives a worst case well under the ~2704 B
+// limit; N=512 (2048 B for the expression alone) risks exceeding it once the
+// key/type sit near their own limits. Names that share the first N characters
+// tie on the ordered expression and are then ordered by the canonical key, so
+// the ordering is total and deterministic (previously ties fell back to the
+// full name, which the SQL standard does not order deterministically).
+const entityQueryNameSortKeyChars = 256
+
 // executeQueryEntities queries entities by type with pagination
 func (s *Service) executeQueryEntities(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
@@ -2975,7 +2994,13 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	// Build sort expression based on field
 	orderExpr := fmt.Sprintf("go.%s %s", sortBy, sortOrder)
 	if sortBy == "name" {
-		orderExpr = fmt.Sprintf("go.properties->>'name' %s NULLS LAST", sortOrder)
+		// Bound the ordered expression to the same left(..., N) used by the
+		// partial index idx_graph_objects_project_type_name (migration 00199),
+		// and add the canonical key as a total-order tiebreak so the index
+		// serves the ordering with no Sort node. `properties` is unbounded, so
+		// indexing the raw properties->>'name' could exceed the ~2704-byte
+		// btree tuple limit (see entityQueryNameSortKeyChars).
+		orderExpr = fmt.Sprintf("left(go.properties->>'name', %d) %s NULLS LAST, go.key", entityQueryNameSortKeyChars, sortOrder)
 	}
 
 	// Resolve the field strategy the same way search-hybrid does. Defaulting to
