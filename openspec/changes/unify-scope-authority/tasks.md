@@ -1,3 +1,6 @@
+<!-- openspec:archive-hold: §7/§8 deferred per #1161; deltas ship later -->
+<!-- openspec:archive-ready -->
+
 # Implementation tasks
 
 This change is **design-only**. The tasks below are the follow-up implementation lanes, sequenced so every non-breaking change lands before any breaking one. Nothing here is executed by this change; `git diff origin/main --stat` for this PR must contain only `openspec/**`.

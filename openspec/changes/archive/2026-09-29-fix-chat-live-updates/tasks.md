@@ -1,3 +1,5 @@
+<!-- openspec:archive-ready -->
+
 ## 1. Fingerprint progress signal (#1203)
 
 - [ ] 1.1 DONE: add `progressCount` + `progressMark` to `conversationRunState`, extract `runStateFingerprint`, and include both in the fingerprint.
