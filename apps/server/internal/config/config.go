@@ -420,6 +420,10 @@ type EmailConfig struct {
 	MailgunDomain string `env:"MAILGUN_DOMAIN" envDefault:""`
 	// MailgunAPIKey is the Mailgun API key
 	MailgunAPIKey string `env:"MAILGUN_API_KEY" envDefault:""`
+	// MailgunSigningKey is the Mailgun webhook signing key. It is required to
+	// verify the HMAC signature on the public delivery webhook; when unset, the
+	// webhook rejects every request (fail closed).
+	MailgunSigningKey string `env:"MAILGUN_SIGNING_KEY" envDefault:""`
 	// FromEmail is the default from email address
 	FromEmail string `env:"EMAIL_FROM_ADDRESS" envDefault:"noreply@example.com"`
 	// FromName is the default from name

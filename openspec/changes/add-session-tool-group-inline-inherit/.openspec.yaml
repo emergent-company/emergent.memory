@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-09-29
+goal: Add a Session tool capability group (session to-dos + session title) and
+  inline the inherited policy value into the Inherit dropdown option, removing
+  the separate hint label.
