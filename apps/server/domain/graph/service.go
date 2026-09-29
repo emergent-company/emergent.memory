@@ -4179,6 +4179,10 @@ func (s *Service) applyMerge(
 				// Carry the staging source's provenance so the merged version stays
 				// attributable to the source document (not the target head's job).
 				ExtractionJobID: src.ExtractionJobID,
+				// Carry the source row's actor so a conflict-resolved version is
+				// not silently downgraded to user+NULL.
+				ActorType: src.ActorType,
+				ActorID:   src.ActorID,
 			}
 			if err := s.repo.CreateVersion(ctx, tx.Tx, prevHead, newVersion); err != nil {
 				return 0, fmt.Errorf("conflict-resolve object %s: %w", cid, err)
@@ -4250,6 +4254,10 @@ func (s *Service) applyMerge(
 					// Carry the staging source's provenance so the absorbed version
 					// stays attributable to the source document.
 					ExtractionJobID: src.ExtractionJobID,
+					// Carry the source row's actor so a similarity-absorbed version
+					// is not silently downgraded to user+NULL.
+					ActorType: src.ActorType,
+					ActorID:   src.ActorID,
 				}
 				if err := s.repo.CreateVersion(ctx, tx.Tx, existingTarget, newVersion); err != nil {
 					return 0, fmt.Errorf("absorb similar object %s into %s: %w", cid, *summary.SimilarTargetID, err)
@@ -4312,6 +4320,10 @@ func (s *Service) applyMerge(
 									"source":           "similarity-merge",
 									"similarity_score": 1.0 - dist,
 								},
+								// Carry the source row's actor so a similarity-merged
+								// relationship is not actor-less.
+								ActorType: src.ActorType,
+								ActorID:   src.ActorID,
 							}
 							if err := s.repo.CreateRelationshipVersion(ctx, tx.Tx, similarRel, newRelVersion); err != nil {
 								s.log.Warn("similar rel: failed to merge, will create new", logger.Error(err))

@@ -159,6 +159,18 @@ func validProvenance(m string) bool {
 	}
 }
 
+// validActorType reports whether t is a known actor type. The actor provenance
+// filter is keyed on the (actor_type, actor_id) pair, so an unknown actor_type
+// is rejected at the boundary rather than silently matching nothing.
+func validActorType(t string) bool {
+	switch t {
+	case ActorUser, ActorAgent, ActorSystem:
+		return true
+	default:
+		return false
+	}
+}
+
 // ListParams contains parameters for listing graph objects.
 type ListParams struct {
 	ProjectID       uuid.UUID
@@ -403,6 +415,10 @@ func (r *Repository) buildObjectBaseQueryWith(db bun.IDB, params ListParams) *bu
 	// Provenance selects which version row must carry the pair:
 	//   - updated (or any): the HEAD row (supersedes_id IS NULL) authored by the actor.
 	//   - created: the root version=1 row authored by the actor (earliest surviving).
+	//     Scoped to the same project/branch as the outer query: on a named branch,
+	//     version=1 is the branch's fork-time copy, so "created by" there is the
+	//     fork-time version's author, not necessarily the object's original creator
+	//     on main (see BulkCopyObjectsToBranch, which carries the HEAD row's actor).
 	//   - any: creator (version=1) OR latest updater (HEAD).
 	//
 	// The `created` mode is implemented as `canonical_id IN (SELECT canonical_id
@@ -413,6 +429,19 @@ func (r *Repository) buildObjectBaseQueryWith(db bun.IDB, params ListParams) *bu
 	// pagination (created_at, id) and property-based ordering, so no pagination
 	// guard is required here (unlike PropertyOrder, which rewrites ORDER BY).
 	if params.ActorType != nil {
+		// The `created` subquery must be scoped to the SAME project and branch as
+		// the outer query; otherwise a system-actor (NULL actor_id) filter would
+		// materialize every system-authored version=1 row deployment-wide, not
+		// just this project's. The project/branch predicates ride as residual
+		// filters after the (actor_type, actor_id) index lookup, preserving the
+		// partial-index-friendly shape.
+		scopeCond := "project_id = ? AND branch_id IS NULL"
+		scopeArgs := []any{params.ProjectID}
+		if params.BranchID != nil {
+			scopeCond = "project_id = ? AND branch_id = ?"
+			scopeArgs = []any{params.ProjectID, *params.BranchID}
+		}
+
 		args := []any{*params.ActorType}
 		pairCond := "actor_type = ? AND actor_id IS NULL"
 		createdCond := "actor_type = ? AND actor_id IS NULL AND version = 1 AND deleted_at IS NULL"
@@ -421,14 +450,16 @@ func (r *Repository) buildObjectBaseQueryWith(db bun.IDB, params ListParams) *bu
 			pairCond = "actor_type = ? AND actor_id = ?"
 			createdCond = "actor_type = ? AND actor_id = ? AND version = 1 AND deleted_at IS NULL"
 		}
+		createdSub := "SELECT canonical_id FROM kb.graph_objects WHERE " + createdCond + " AND " + scopeCond
+		createdArgs := append(append([]any{}, args...), scopeArgs...)
 
 		switch params.Provenance {
 		case ProvenanceCreated:
-			q = q.Where("canonical_id IN (SELECT canonical_id FROM kb.graph_objects WHERE "+createdCond+")", args...)
+			q = q.Where("canonical_id IN ("+createdSub+")", createdArgs...)
 		case ProvenanceUpdated:
 			q = q.Where(pairCond, args...)
 		default: // "" or "any": creator OR latest updater
-			q = q.Where("("+pairCond+") OR canonical_id IN (SELECT canonical_id FROM kb.graph_objects WHERE "+createdCond+")", append(args, args...)...)
+			q = q.Where("("+pairCond+") OR canonical_id IN ("+createdSub+")", append(args, createdArgs...)...)
 		}
 	}
 

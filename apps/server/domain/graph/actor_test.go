@@ -86,3 +86,22 @@ func TestActorFromContext_StampedSystem(t *testing.T) {
 		t.Errorf("expected nil stamped actor id, got %v", actorID)
 	}
 }
+
+// TestActorFromContext_Cleared covers the delegated-run fallback: a parent agent
+// actor that has been cleared (WithActor(ctx, "", nil)) must NOT inherit — the
+// mutation falls back to the user actor instead of attributing to the parent.
+func TestActorFromContext_Cleared(t *testing.T) {
+	ctx := context.Background()
+	parentID := uuid.New()
+	ctx = auth.WithActor(ctx, ActorAgent, &parentID)
+	ctx = auth.WithActor(ctx, "", nil) // clear the parent actor
+
+	fallbackUserID := uuid.New()
+	actorType, actorID := actorFromContext(ctx, &fallbackUserID)
+	if actorType != ActorUser {
+		t.Errorf("expected cleared actor to fall back to user, got %q", actorType)
+	}
+	if actorID == nil || *actorID != fallbackUserID {
+		t.Errorf("expected fallback user id %s, got %v", fallbackUserID, actorID)
+	}
+}

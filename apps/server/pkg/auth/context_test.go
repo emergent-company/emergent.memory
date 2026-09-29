@@ -164,3 +164,27 @@ func TestActorFromContext_Empty(t *testing.T) {
 		t.Errorf("expected empty actor from empty context, got (%s, %v)", actorType, actorID)
 	}
 }
+
+// TestWithActor_Clear pins the "clear" semantics (issue: provenance followups):
+// WithActor(ctx, "", nil) shadows a parent's actor so ActorFromContext reports
+// no actor — a delegated run whose definition is unresolvable falls back rather
+// than inheriting the parent agent.
+func TestWithActor_Clear(t *testing.T) {
+	parentID := uuid.New()
+	ctx := WithActor(context.Background(), "agent", &parentID)
+
+	// Sanity: the parent actor is present before clearing.
+	if _, _, ok := ActorFromContext(ctx); !ok {
+		t.Fatal("expected parent actor present before clear")
+	}
+
+	// Clear via an empty actor type.
+	ctx = WithActor(ctx, "", nil)
+	actorType, actorID, ok := ActorFromContext(ctx)
+	if ok {
+		t.Errorf("expected ok=false after clear, got ok=true (%s, %v)", actorType, actorID)
+	}
+	if actorType != "" || actorID != nil {
+		t.Errorf("expected empty actor after clear, got (%s, %v)", actorType, actorID)
+	}
+}

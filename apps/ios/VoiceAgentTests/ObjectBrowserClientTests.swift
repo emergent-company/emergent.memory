@@ -3,15 +3,25 @@ import Foundation
 import Testing
 
 struct ObjectBrowserClientTests {
-    private func client(endpoint: String = "http://host:8080/api/token") -> ObjectBrowserClient {
+    private func client(baseURL: String = "http://host:8080") -> ObjectBrowserClient {
         var config = MemoryConfig()
-        config.tokenEndpoint = endpoint
+        config.apiBaseURL = baseURL
         return ObjectBrowserClient(config: config)
     }
 
-    @Test func baseURLStripsTokenPath() {
+    @Test func baseURLUsesAPIBaseURL() {
         #expect(client().gatewayBaseURL == URL(string: "http://host:8080"))
-        #expect(client(endpoint: "https://host/gw/api/token").gatewayBaseURL == URL(string: "https://host/gw"))
+        #expect(client(baseURL: "https://host/gw").gatewayBaseURL == URL(string: "https://host/gw"))
+    }
+
+    @Test func emptyAPIBaseURLFailsConfiguration() {
+        var config = MemoryConfig()
+        config.apiBaseURL = ""
+        let client = ObjectBrowserClient(config: config)
+        #expect(client.gatewayBaseURL == nil)
+        #expect(throws: ObjectBrowserError.self) {
+            try client.makeURL(agentID: "a1", provenance: .any, cursor: nil)
+        }
     }
 
     @Test func buildsURLWithProvenanceAndNoCursor() throws {
