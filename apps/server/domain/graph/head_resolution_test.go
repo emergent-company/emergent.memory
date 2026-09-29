@@ -176,10 +176,40 @@ func TestGetRelationshipByID_ForkedRelationshipResolvesMainNotBranch(t *testing.
 
 			// The canonical-HEAD sibling resolver (no branch context) must also
 			// deterministically prefer main.
-			head, err := repo.GetRelationshipHeadByCanonicalID(ctx, projectID, canonicalID)
+			head, err := repo.GetRelationshipHeadByCanonicalID(ctx, projectID, canonicalID, nil)
 			require.NoError(t, err)
 			assert.Equal(t, mainID, head.ID, "GetRelationshipHeadByCanonicalID must prefer the main HEAD")
 			assert.Nil(t, head.BranchID)
 		})
 	}
+}
+
+// TestCreateRelationshipVersionRejectsBranchMismatch pins the loud-failure
+// contract: a caller that passes an explicit BranchID disagreeing with the
+// resolved prev-head's branch must be rejected rather than silently superseding
+// a HEAD on the wrong branch (the branch→branch merge regression). No DB is
+// needed — the guard runs before any write.
+func TestCreateRelationshipVersionRejectsBranchMismatch(t *testing.T) {
+	repo := &Repository{}
+	prevBranch := uuid.New()
+	requestedBranch := uuid.New()
+	prevHead := &GraphRelationship{
+		ID:          uuid.New(),
+		ProjectID:   uuid.New(),
+		CanonicalID: uuid.New(),
+		Version:     1,
+		BranchID:    &prevBranch,
+	}
+
+	t.Run("explicit branch disagrees with prev-head branch", func(t *testing.T) {
+		err := repo.CreateRelationshipVersion(context.Background(), bun.Tx{}, prevHead, &GraphRelationship{BranchID: &requestedBranch})
+		require.Error(t, err, "a mismatched requested branch must fail loudly")
+	})
+
+	t.Run("explicit branch disagrees with main prev-head", func(t *testing.T) {
+		mainPrevHead := *prevHead
+		mainPrevHead.BranchID = nil
+		err := repo.CreateRelationshipVersion(context.Background(), bun.Tx{}, &mainPrevHead, &GraphRelationship{BranchID: &requestedBranch})
+		require.Error(t, err, "requesting a branch while the prev-head is on main must fail loudly")
+	})
 }
