@@ -29,12 +29,16 @@ import (
 
 // mcpServersPageData is the payload for the list page (MCPServersPage): the
 // registry's servers (each already carrying its cached Tools + ToolCount from
-// memory's list DTO), a whole-page LoadErr, and PRG flash feedback.
+// memory's list DTO), the builtin server's capability-group taxonomy
+// (BuiltinGroups — empty when memory is older than the groups endpoint or the
+// fetch failed, in which case the builtin tools render as a flat list), a
+// whole-page LoadErr, and PRG flash feedback.
 type mcpServersPageData struct {
-	Servers  []MCPServer
-	LoadErr  error
-	FlashMsg string
-	FlashErr error
+	Servers       []MCPServer
+	BuiltinGroups []BuiltinToolGroup
+	LoadErr       error
+	FlashMsg      string
+	FlashErr      error
 }
 
 // mcpServerFormData is the payload shared by the create and edit pages
@@ -106,6 +110,81 @@ var mcpTransportOptions = []mcpTransportOption{
 // tool toggles).
 func mcpServerIsBuiltin(s MCPServer) bool {
 	return s.Type == "builtin"
+}
+
+// mcpServerDisplayName is the list summary's label for a server. The builtin
+// server's stored name is the literal "builtin"; the UI shows it as "Memory
+// tools" so it reads as memory's own tool source rather than a transport.
+func mcpServerDisplayName(s MCPServer) string {
+	if mcpServerIsBuiltin(s) {
+		return "Memory tools"
+	}
+	return s.Name
+}
+
+// mcpServerSummaryIcon maps a server to the list summary's leading icon: the
+// package mark for the builtin tool source, the server mark otherwise.
+func mcpServerSummaryIcon(s MCPServer) string {
+	if mcpServerIsBuiltin(s) {
+		return "lucide--package"
+	}
+	return "lucide--server"
+}
+
+// mcpServerSummaryIconClass is the leading icon's tone in the list summary.
+func mcpServerSummaryIconClass(s MCPServer) string {
+	if mcpServerIsBuiltin(s) {
+		return "size-4 shrink-0 text-primary/70"
+	}
+	return "size-4 shrink-0 text-muted-faint"
+}
+
+// mcpBuiltinToolGroupView is one rendered builtin capability group: the
+// server-owned group plus the cached tool rows it covers, in the group's own
+// membership order.
+type mcpBuiltinToolGroupView struct {
+	Group BuiltinToolGroup
+	Rows  []MCPTool
+}
+
+// mcpBuiltinToolGroups joins memory's builtin capability taxonomy to the
+// server's cached tool rows: each group carries the rows whose ToolName it
+// lists (in the group's order, dropping names with no cached row), and any
+// cached tool no group covers is returned as other so it stays reachable. The
+// taxonomy is server-owned — this only joins membership to descriptions.
+func mcpBuiltinToolGroups(tools []MCPTool, groups []BuiltinToolGroup) (grouped []mcpBuiltinToolGroupView, other []MCPTool) {
+	byName := make(map[string]MCPTool, len(tools))
+	for _, t := range tools {
+		byName[t.ToolName] = t
+	}
+	covered := make(map[string]bool, len(tools))
+	for _, g := range groups {
+		var rows []MCPTool
+		for _, name := range g.Tools {
+			t, ok := byName[name]
+			if !ok || covered[name] {
+				continue
+			}
+			covered[name] = true
+			rows = append(rows, t)
+		}
+		if len(rows) == 0 {
+			continue
+		}
+		grouped = append(grouped, mcpBuiltinToolGroupView{Group: g, Rows: rows})
+	}
+	for _, t := range tools {
+		if !covered[t.ToolName] {
+			other = append(other, t)
+		}
+	}
+	return grouped, other
+}
+
+// mcpServersHasBuiltin reports whether any listed server is the builtin tool
+// source (the only row whose tools use the grouped view).
+func mcpServersHasBuiltin(servers []MCPServer) bool {
+	return slices.ContainsFunc(servers, mcpServerIsBuiltin)
 }
 
 // mcpServerValidTransport reports whether t is a transport a user may choose
@@ -410,7 +489,7 @@ func mcpServerIsNameConflict(err error) bool {
 // a second server trip and without duplicating the row markup in JS.
 func mcpToolsFragment(s MCPServer, tools []MCPTool) (string, error) {
 	var b strings.Builder
-	if err := mcpServerToolsContainer(s, tools).Render(context.Background(), &b); err != nil {
+	if err := mcpServerToolsContainer(s, tools, nil).Render(context.Background(), &b); err != nil {
 		return "", err
 	}
 	return b.String(), nil

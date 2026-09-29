@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -227,6 +228,78 @@ func TestCallTool_ClientError_Propagates(t *testing.T) {
 	assert.Contains(t, err.Error(), "boom")
 	assert.Contains(t, err.Error(), "search")
 	assert.Contains(t, err.Error(), "myserver")
+}
+
+// --- CallToolOnServer tests (by-server path, no prefix inference) ---
+
+func TestCallToolOnServer_ForwardsArgsAndConvertsResult(t *testing.T) {
+	pm := newTestProxyManager(&fakeProxyRepo{})
+	fake := &fakeMCPClient{}
+	pm.conns["s1"] = &mcpConnection{client: fake, serverID: "s1", serverName: "myserver"}
+
+	srv := &MCPServer{ID: "s1", ProjectID: "p1", Name: "myserver", Enabled: true, Type: ServerTypeHTTP}
+	args := map[string]any{"url": "https://example.com", "depth": float64(2)}
+
+	result, err := pm.CallToolOnServer(context.Background(), srv, "web_fetch_exa", args)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "web_fetch_exa", fake.calledTool, "the raw server must receive the unprefixed tool name")
+	assert.Equal(t, args, fake.calledArgs, "arguments must be forwarded unchanged")
+	require.Len(t, result.Content, 1)
+	assert.Equal(t, "ok", result.Content[0].Text)
+}
+
+func TestCallToolOnServer_UpstreamErrorEvictsConnection(t *testing.T) {
+	pm := newTestProxyManager(&fakeProxyRepo{})
+	fake := &fakeMCPClient{callErr: errors.New("boom")}
+	pm.conns["s1"] = &mcpConnection{client: fake, serverID: "s1", serverName: "myserver"}
+
+	srv := &MCPServer{ID: "s1", ProjectID: "p1", Name: "myserver", Enabled: true, Type: ServerTypeStdio}
+
+	_, err := pm.CallToolOnServer(context.Background(), srv, "search", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "boom")
+
+	_, exists := pm.conns["s1"]
+	assert.False(t, exists, "a failed call must evict the pooled connection")
+}
+
+// blockingMCPClient blocks in CallTool until the request context is done, then
+// returns the context error. It models a hung upstream so tests can prove the
+// invoke is bounded by the caller's context deadline (what the service applies
+// via context.WithTimeout before proxying).
+type blockingMCPClient struct {
+	started chan struct{}
+}
+
+func (f *blockingMCPClient) CallTool(ctx context.Context, _ mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	close(f.started)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (f *blockingMCPClient) ListTools(context.Context, mcpgo.ListToolsRequest) (*mcpgo.ListToolsResult, error) {
+	return &mcpgo.ListToolsResult{}, nil
+}
+
+func (f *blockingMCPClient) Close() error { return nil }
+
+func TestCallToolOnServer_ContextDeadlineAborts(t *testing.T) {
+	pm := newTestProxyManager(&fakeProxyRepo{})
+	fake := &blockingMCPClient{started: make(chan struct{})}
+	pm.conns["s1"] = &mcpConnection{client: fake, serverID: "s1", serverName: "myserver"}
+
+	srv := &MCPServer{ID: "s1", ProjectID: "p1", Name: "myserver", Enabled: true, Type: ServerTypeStdio}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	_, err := pm.CallToolOnServer(ctx, srv, "search", nil)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, context.DeadlineExceeded),
+		"a hung upstream must abort on context deadline, got: %v", err)
+	_, exists := pm.conns["s1"]
+	assert.False(t, exists, "a deadline-aborted call must evict the pooled connection")
 }
 
 // --- convertToolOutputSchema tests ---
