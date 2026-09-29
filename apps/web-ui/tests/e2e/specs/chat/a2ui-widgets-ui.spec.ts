@@ -7,7 +7,7 @@ import { expectAppPage } from '../../helpers/page';
 //
 // An agent streams declarative cards to the client as a single `ui` SSE event
 // (server `pkg/sse` UIEvent → gateway rewriteChatStream passthrough → chat.js
-// renderUI → chat-components.js renderA2UISurface). In production the eight
+// renderUI → chat-components.js renderA2UISurface). In production the nine
 // catalog cards are emitted by a model, so a real turn cannot reliably exercise
 // every card — the same reason agent-proposal-card.spec.ts skips on model
 // deviation. This spec instead intercepts POST /api/chat and fulfils it with a
@@ -36,6 +36,7 @@ const SENTINEL = {
   todo: 'A2UI_TODO_SENTINEL',
   todoDone: 'A2UI_TODO_DONE_SENTINEL',
   result: 'A2UI_RESULT_SENTINEL',
+  sources: 'A2UI_SOURCES_SENTINEL',
   fallback: 'A2UI_FALLBACK_PROP_SENTINEL',
 } as const;
 
@@ -76,6 +77,11 @@ const COMPONENTS_SECOND = [
     ],
   },
   { id: 'result-1', component: 'result', rows: [{ label: 'rows', value: SENTINEL.result }] },
+  {
+    id: 'sources-1',
+    component: 'sources',
+    items: [{ id: SENTINEL.sources, type: 'document', label: SENTINEL.sources }],
+  },
   { id: 'mystery-1', component: 'future-card', someProp: SENTINEL.fallback },
 ];
 
@@ -151,9 +157,8 @@ test.describe('A2UI surface cards', () => {
   test('renders every catalog card and the unknown-component fallback', async ({ page }) => {
     const agentId = await renderSurfaces(page, `E2E A2UI Catalog ${Date.now()}`);
     try {
-      // 8 catalog components + 1 unknown → exactly 9 cards.
-      await expect(page.locator(CARD_BODIES)).toHaveCount(9, { timeout: 15_000 });
-
+      // 9 catalog components + 1 unknown → exactly 10 cards.
+      await expect(page.locator(CARD_BODIES)).toHaveCount(10, { timeout: 15_000 });
       // proposal
       const proposal = card(page, SENTINEL.proposal);
       await expect(proposal).toHaveCount(1);
@@ -203,6 +208,12 @@ test.describe('A2UI surface cards', () => {
       // result
       await expect(card(page, SENTINEL.result)).toHaveCount(1);
 
+      // sources — header + one rendered source row
+      const sources = card(page, SENTINEL.sources);
+      await expect(sources).toHaveCount(1);
+      await expect(sources.getByText('Sources', { exact: true })).toBeVisible();
+      await expect(sources.getByTestId('chat-source-name')).toHaveText(SENTINEL.sources);
+
       // unknown component → summary fallback (header + JSON), never thrown
       const fallback = card(page, SENTINEL.fallback);
       await expect(fallback).toHaveCount(1);
@@ -236,6 +247,28 @@ test.describe('A2UI surface cards', () => {
       expect(actions[0]).toEqual({
         surfaceId: SURFACE_ID,
         action: { componentId: 'proposal-1', response: 'accept' },
+      });
+
+      // Question options use a separate a2uiButton call path (a2uiQuestion) —
+      // click one and assert it also carries the surfaceId.
+      const question = card(page, SENTINEL.question);
+      await expect(question).toHaveCount(1);
+      await question.getByRole('button', { name: 'Yes' }).click();
+
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => (window as unknown as { __a2uiActions: unknown[] }).__a2uiActions.length,
+          ),
+        )
+        .toBe(2);
+
+      const afterQuestion = await page.evaluate(
+        () => (window as unknown as { __a2uiActions: unknown[] }).__a2uiActions,
+      );
+      expect(afterQuestion[1]).toEqual({
+        surfaceId: SURFACE_ID,
+        action: { componentId: 'question-1', response: 'yes' },
       });
     } finally {
       await page.request.delete(`/api/agents/${agentId}`).catch(() => {});
