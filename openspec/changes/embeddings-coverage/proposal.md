@@ -21,7 +21,7 @@ The page needs an inventory signal alongside the queue signal: how many objects/
 ## Impact
 
 **Files (`apps/server/`):**
-- `migrations/00201_graph_embedding_coverage_indexes.sql` — embedded-side partial indexes.
+- `migrations/00202_graph_embedding_coverage_indexes.sql` — embedded-side partial indexes.
 - `domain/extraction/graph_embedding_jobs.go` — `CoverageByProject` (objects).
 - `domain/extraction/graph_relationship_embedding_jobs.go` — `CoverageByProject` (relationships).
 - `domain/extraction/embedding_control_handler.go` — `EmbeddingCoverageResponse`, `Coverage` handler.

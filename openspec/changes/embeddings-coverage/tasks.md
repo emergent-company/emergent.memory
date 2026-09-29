@@ -1,6 +1,6 @@
 ## 1. Backend — indexes
 
-- [x] 1.1 Add `apps/server/migrations/00201_graph_embedding_coverage_indexes.sql` with partial indexes `(project_id)` on `kb.graph_objects WHERE embedding_v2 IS NOT NULL AND deleted_at IS NULL` and `kb.graph_relationships WHERE embedding IS NOT NULL AND deleted_at IS NULL`, plus the matching `-- +goose Down` drop. Follow the conventions in `apps/server/migrations/README.md`. Verify: `go build ./...` from `apps/server/`.
+- [x] 1.1 Add `apps/server/migrations/00202_graph_embedding_coverage_indexes.sql` with partial indexes `(project_id)` on `kb.graph_objects WHERE embedding_v2 IS NOT NULL AND deleted_at IS NULL` and `kb.graph_relationships WHERE embedding IS NOT NULL AND deleted_at IS NULL`, plus the matching `-- +goose Down` drop. Follow the conventions in `apps/server/migrations/README.md`. Verify: `go build ./...` from `apps/server/`.
 
 ## 2. Backend — coverage query + endpoint
 
