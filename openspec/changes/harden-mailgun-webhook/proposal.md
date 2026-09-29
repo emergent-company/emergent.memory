@@ -43,7 +43,7 @@ query (`btrim(mailgun_message_id, '<>') = ?`) cannot use the plain index on
 
 **Files (`apps/server/`):**
 - `domain/email/mailgun_webhook.go` — timestamp window + token replay guard +
-  rate-limit middleware; route wiring.
+  rate-limit wrapper handler; route wiring.
 - `domain/email/config.go` — new webhook config fields + defaults.
 - `domain/email/mailgun_webhook_test.go`, `domain/email/delivery_store_test.go`
   — replay/staleness/rate-limit tests.

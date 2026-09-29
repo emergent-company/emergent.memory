@@ -10,7 +10,7 @@
 
 - [x] 2.1 Add `MAILGUN_WEBHOOK_RATE_PER_MIN` / `MAILGUN_WEBHOOK_RATE_BURST` / `MAILGUN_WEBHOOK_GLOBAL_RATE_PER_MIN` / `MAILGUN_WEBHOOK_GLOBAL_RATE_BURST` to config; document in `.env.example`.
 - [x] 2.2 Fail-first tests: per-IP limiter returns 429 after the burst; normal (under-limit) traffic is unaffected (401, not 429); global backstop triggers across differing IPs.
-- [x] 2.3 Implement the per-IP + global limiter and a route middleware in `domain/email/mailgun_webhook.go`; register with the route before the handler.
+- [x] 2.3 Implement the per-IP + global limiter and apply it via a wrapper handler (`h.handleWithRateLimit`) registered as the route handler, so the limit check runs before `h.Handle` and the route declaration stays classifiable by the route-authority extractor (no inline handler-method middleware).
 - [x] 2.4 Document the WAF/proxy layering in the code and spec.
 
 ## 3. Expression index (#1221)

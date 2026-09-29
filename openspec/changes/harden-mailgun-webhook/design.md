@@ -54,6 +54,15 @@ backstop limiter is added alongside the per-IP one so a spoofed header cannot
 fully bypass the cap. The upstream WAF/proxy stays the coarse first layer; the
 in-process limiters are defence in depth and bound per-request cost.
 
+The limiter is applied by a small wrapper handler
+(`h.handleWithRateLimit`) registered as the route handler, **not** as route
+middleware. The route-authority extractor classifies inline middleware by name
+and fails closed on a handler-method middleware value such as
+`h.rateLimitMiddleware()`; a plain handler keeps the route's authority tier
+unambiguous (`public`, since the limiter is tier-neutral) and the extractor
+green, while the wrapper still runs the limit check before calling
+`h.Handle` — i.e. before HMAC verification, the body read, and any DB work.
+
 ### Expression index (#1221)
 
 The mapping query is

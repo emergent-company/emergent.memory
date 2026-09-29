@@ -118,20 +118,22 @@ func (h *MailgunWebhookHandler) timestampFresh(raw string) bool {
 	return skew <= h.cfg.WebhookTolerance()
 }
 
-// rateLimitMiddleware enforces the per-client and global webhook budgets before
-// the handler runs, so excess traffic is rejected without HMAC verification or
-// DB work. The upstream WAF/proxy is the coarse first layer of defence.
-func (h *MailgunWebhookHandler) rateLimitMiddleware() echo.MiddlewareFunc {
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			clientIP := c.RealIP()
-			if !h.limiter.allow(clientIP) {
-				h.log.Warn("rate limited Mailgun webhook", slog.String("client_ip", clientIP))
-				return apperror.New(http.StatusTooManyRequests, "rate_limited", "Too many Mailgun webhook requests")
-			}
-			return next(c)
-		}
+// handleWithRateLimit enforces the per-client and global webhook budgets before
+// the handler runs, so excess traffic is rejected without HMAC verification,
+// body reads, or DB work. The upstream WAF/proxy is the coarse first layer.
+//
+// This is a wrapper handler rather than route middleware on purpose: the
+// route-authority extractor cannot classify a handler-method middleware value
+// such as `h.rateLimitMiddleware()` and fails closed. Registering a plain
+// handler that does the rate check first keeps the route unambiguously public
+// (the limiter is tier-neutral) and the extractor green.
+func (h *MailgunWebhookHandler) handleWithRateLimit(c echo.Context) error {
+	clientIP := c.RealIP()
+	if !h.limiter.allow(clientIP) {
+		h.log.Warn("rate limited Mailgun webhook", slog.String("client_ip", clientIP))
+		return apperror.New(http.StatusTooManyRequests, "rate_limited", "Too many Mailgun webhook requests")
 	}
+	return h.Handle(c)
 }
 
 // Handle implements POST /api/webhooks/mailgun.
@@ -250,9 +252,9 @@ func deliveryEventFromMailgun(raw mailgunEventData) (DeliveryEvent, error) {
 //
 // The route is intentionally unauthenticated at the transport layer: Mailgun
 // cannot present a session, so the handler verifies the HMAC signature and fails
-// closed. There is no exemption from signature verification. A per-client and
-// global rate limiter runs first (defence in depth; the upstream WAF/proxy owns
-// the coarse layer).
+// closed. There is no exemption from signature verification. The handler
+// wrapper applies the per-client and global rate limiter first (defence in
+// depth; the upstream WAF/proxy owns the coarse layer).
 func RegisterWebhookRoutes(e *echo.Echo, h *MailgunWebhookHandler) {
-	e.POST("/api/webhooks/mailgun", h.Handle, h.rateLimitMiddleware())
+	e.POST("/api/webhooks/mailgun", h.handleWithRateLimit)
 }
