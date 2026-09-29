@@ -1510,6 +1510,23 @@ func (r *Repository) CreateRelationship(ctx context.Context, tx bun.Tx, rel *Gra
 
 // CreateRelationshipVersion creates a new version of an existing relationship.
 func (r *Repository) CreateRelationshipVersion(ctx context.Context, tx bun.Tx, prevHead *GraphRelationship, newVersion *GraphRelationship) error {
+	// The new version inherits the prev-head's branch, because a version chain
+	// cannot span branches: the write supersedes prevHead in place, so writing
+	// the replacement to a different branch would strand prevHead's branch and
+	// resurrect a HEAD on the caller's branch. Callers that pass an explicit
+	// (non-nil) BranchID are asserting which branch this version belongs to, so
+	// a disagreement with prevHead means the caller resolved the wrong head
+	// (e.g. a branch-less, main-preferring lookup for a branch-scoped write) —
+	// fail loudly instead of silently writing to the wrong branch.
+	if newVersion.BranchID != nil && (prevHead.BranchID == nil || *newVersion.BranchID != *prevHead.BranchID) {
+		prevBranch := "main"
+		if prevHead.BranchID != nil {
+			prevBranch = prevHead.BranchID.String()
+		}
+		return fmt.Errorf("relationship version branch mismatch: requested branch %s but prev-head %s is on branch %s",
+			newVersion.BranchID, prevHead.ID, prevBranch)
+	}
+
 	// New version setup
 	newVersion.ID = uuid.New()
 	newVersion.CanonicalID = prevHead.CanonicalID
@@ -1601,17 +1618,26 @@ func (r *Repository) GetRelationshipHistory(ctx context.Context, projectID, cano
 // heap-order dependent. It now deterministically prefers the main-branch HEAD
 // (branch_id IS NULL) and falls back to the smallest-id branch HEAD, mirroring
 // GetHeadByCanonicalID's nil-branch default. Callers that need a specific branch
-// HEAD must use GetRelationshipHead(branchID).
-func (r *Repository) GetRelationshipHeadByCanonicalID(ctx context.Context, projectID, canonicalID uuid.UUID) (*GraphRelationship, error) {
+// HEAD must pass that branchID (the merge fast-forward path does).
+//
+// A non-nil branchID scopes the lookup to exactly that branch's HEAD. A nil
+// branchID keeps the branch-less #1247 default above: prefer main, then the
+// smallest-id branch HEAD.
+func (r *Repository) GetRelationshipHeadByCanonicalID(ctx context.Context, projectID, canonicalID uuid.UUID, branchID *uuid.UUID) (*GraphRelationship, error) {
 	var rels []GraphRelationship
-	err := r.db.NewSelect().
+	q := r.db.NewSelect().
 		Model(&rels).
 		Where("canonical_id = ?", canonicalID).
 		Where("project_id = ?", projectID).
-		Where("supersedes_id IS NULL").
-		OrderExpr("(branch_id IS NULL) DESC, id ASC").
-		Limit(1).
-		Scan(ctx)
+		Where("supersedes_id IS NULL")
+
+	if branchID != nil {
+		q = q.Where("branch_id = ?", *branchID).OrderExpr("id ASC")
+	} else {
+		q = q.OrderExpr("(branch_id IS NULL) DESC, id ASC")
+	}
+
+	err := q.Limit(1).Scan(ctx)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
