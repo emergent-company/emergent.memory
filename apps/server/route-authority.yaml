@@ -1885,6 +1885,10 @@ routes:
       path: /api/webhooks/agents/:hookId
       level: public
       note: ""
+    - method: POST
+      path: /api/webhooks/mailgun
+      level: public
+      note: ""
     - method: GET
       path: /coverage
       level: public
