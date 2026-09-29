@@ -549,23 +549,26 @@ func TestMergeConflictCarriesActor(t *testing.T) {
 	}, nil)
 	require.NoError(t, err)
 
-	// Fork main → branch (copies v1).
+	// Patch main to {v:2} (agent C) BEFORE forking. A branch_id-less Patch
+	// resolves the target via GetByID, which matches (id OR canonical_id) across
+	// branches; once a fork shares the same canonical_id it can resolve to the
+	// branch HEAD instead of main. Patching main first keeps this step deterministic.
+	agentC := uuid.New()
+	sctxC := auth.WithActor(ctx, graph.ActorAgent, &agentC)
+	_, err = svc.Patch(sctxC, projectID, created.ID, &graph.PatchGraphObjectRequest{Properties: map[string]any{"v": 2}}, nil)
+	require.NoError(t, err)
+
+	// Fork main → branch (copies {v:2}).
 	forkResp, err := svc.ForkBranch(ctx, projectID, nil, &graph.ForkBranchRequest{Name: "conf-branch"})
 	require.NoError(t, err)
 	forkBranchID := uuid.MustParse(forkResp.BranchID)
 
-	// Patch the branch to {v:3} (agent B).
+	// Patch the branch to {v:3} (agent B), diverging the other way → conflict.
 	agentB := uuid.New()
 	sctxB := auth.WithActor(ctx, graph.ActorAgent, &agentB)
 	_, err = svc.Patch(sctxB, projectID, created.ID, &graph.PatchGraphObjectRequest{
 		BranchID: &forkBranchID, Properties: map[string]any{"v": 3},
 	}, nil)
-	require.NoError(t, err)
-
-	// Patch main to {v:2} (agent C), diverging the other way → conflict.
-	agentC := uuid.New()
-	sctxC := auth.WithActor(ctx, graph.ActorAgent, &agentC)
-	_, err = svc.Patch(sctxC, projectID, created.ID, &graph.PatchGraphObjectRequest{Properties: map[string]any{"v": 2}}, nil)
 	require.NoError(t, err)
 
 	// Merge with overwrite (mine_no_sim) → conflict, source (branch, agent B) wins.
