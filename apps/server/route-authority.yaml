@@ -38,6 +38,10 @@ routes:
       level: public
       note: ""
     - method: GET
+      path: /api/admin/builtin-tool-groups
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: GET
       path: /api/admin/builtin-tools
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
@@ -139,6 +143,10 @@ routes:
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: PATCH
       path: /api/admin/mcp-servers/:id/tools/:toolId
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: POST
+      path: /api/admin/mcp-servers/:id/tools/:toolName/call
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: GET

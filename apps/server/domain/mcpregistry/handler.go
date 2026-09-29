@@ -8,6 +8,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
@@ -338,7 +339,10 @@ func (h *Handler) CallToolOnServer(c echo.Context) error {
 		return apperror.NewBadRequest("invalid request body")
 	}
 
-	result, err := h.svc.CallToolOnServer(c.Request().Context(), user.ProjectID, serverID, toolName, req.Arguments, user.Scopes)
+	// The explicit *mcp.ToolResult declaration keeps the package import live so
+	// swag resolves the @Success type (mcp.ToolResult) in the annotation above.
+	var result *mcp.ToolResult
+	result, err := h.svc.CallToolOnServer(c.Request().Context(), user.ProjectID, serverID, toolName, req.Arguments, user.Scopes, user.APITokenID)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrServerNotFound):

@@ -548,10 +548,12 @@ const mcpToolCallTimeout = 30 * time.Second
 // dispatch, then routes builtin servers to mcp.Service.ExecuteTool and external
 // (stdio/sse/http) servers through the proxy by raw server row (no name-prefix
 // inference). Builtin dispatch is gated by the transport's per-tool authority
-// check (AuthorizeToolCall) using the caller's scopes. Errors are typed so the
-// handler can map not-found → 404, disabled → 409, forbidden → 403, and
-// upstream/connection failures → 502.
-func (s *Service) CallToolOnServer(ctx context.Context, projectID, serverID, toolName string, args map[string]any, scopes []string) (*mcp.ToolResult, error) {
+// check (AuthorizeToolCall) using the caller's scopes, and — like every MCP HTTP
+// transport — the caller's share-instance tool allowlist (deny-by-default) is
+// enforced before any dispatch. Errors are typed so the handler can map
+// not-found → 404, disabled → 409, forbidden → 403, and upstream/connection
+// failures → 502.
+func (s *Service) CallToolOnServer(ctx context.Context, projectID, serverID, toolName string, args map[string]any, scopes []string, apiTokenID string) (*mcp.ToolResult, error) {
 	server, err := s.repo.FindServerByID(ctx, serverID, &projectID)
 	if err != nil {
 		return nil, fmt.Errorf("fetching server: %w", err)
@@ -574,6 +576,20 @@ func (s *Service) CallToolOnServer(ctx context.Context, projectID, serverID, too
 		return nil, ErrToolDisabled
 	}
 
+	// Share-instance tool allowlist: the same deny-by-default check the MCP HTTP
+	// transports apply before dispatch (handler.go / sse_handler.go /
+	// streamable_http_handler.go). A token bound to a restricted share instance
+	// must not reach a tool outside its allowlist through this admin invoke route.
+	// A nil scope (unrestricted/legacy) or a resolver failure that yields an
+	// error is fail-closed.
+	instanceScope, err := s.mcpService.ResolveInstanceScope(ctx, apiTokenID)
+	if err != nil {
+		return nil, fmt.Errorf("resolving MCP share-instance scope: %w", err)
+	}
+	if mcp.InstanceDeniesTool(instanceScope, toolName) {
+		return nil, ErrToolForbidden
+	}
+
 	if server.Type == ServerTypeBuiltin {
 		if err := s.mcpService.AuthorizeToolCall(ctx, toolName, scopes); err != nil {
 			if errors.Is(err, mcp.ErrToolForbidden) {
@@ -588,8 +604,12 @@ func (s *Service) CallToolOnServer(ctx context.Context, projectID, serverID, too
 		// RequiredScope / SuperadminOnly), mirroring the HTTP transport. Mark the
 		// call transport-enforced so ExecuteTool's in-process gate (which covers
 		// the untrusted agent-run path) does not re-fire for an authenticated REST
-		// client. This is NOT the trusted-internal marker.
+		// client. This is NOT the trusted-internal marker. The resolved
+		// share-instance scope is also carried so ExecuteTool's own
+		// InstanceDeniesTool defense-in-depth fires (belt-and-braces with the
+		// explicit check above).
 		execCtx = mcp.ContextWithTransportEnforced(execCtx)
+		execCtx = mcp.WithInstanceScope(execCtx, instanceScope)
 		return s.mcpService.ExecuteTool(execCtx, projectID, toolName, args)
 	}
 
