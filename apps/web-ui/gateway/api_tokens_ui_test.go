@@ -54,8 +54,10 @@ func TestRenderAPITokensPage(t *testing.T) {
 		`title="data:read, data:write"`, `title="schema:read"`,
 		`role="img"`,
 		`aria-label="Data: data:read, data:write"`, `aria-label="Schemas: schema:read"`,
-		"Revoked", "2 tokens",
+		"Revoked", "1 token",
 		"New token", `href="/settings/tokens/new"`,
+		// revoked tokens live in a collapsed disclosure with its own count
+		`data-testid="revoked-tokens-toggle"`, `data-testid="revoked-tokens-section"`,
 		// table chrome
 		`<table class="table table-sm">`, "<th>Name</th>", "<th>Prefix</th>",
 		"<th>Scopes</th>", "<th>Created</th>", "<th>Last used</th>",
@@ -66,6 +68,23 @@ func TestRenderAPITokensPage(t *testing.T) {
 		if !strings.Contains(html, want) {
 			t.Errorf("APITokensPage missing %q", want)
 		}
+	}
+	// revoked tokens render only inside the collapsed disclosure: the primary
+	// table (everything before the revoked section) must not carry them, and the
+	// disclosure must be closed (no open attribute) and hold the revoked row.
+	revokedIdx := strings.Index(html, `data-testid="revoked-tokens-toggle"`)
+	if revokedIdx < 0 {
+		t.Fatal("APITokensPage must render the revoked disclosure")
+	}
+	primary, revokedSection := html[:revokedIdx], html[revokedIdx:]
+	if strings.Contains(primary, "old token") || strings.Contains(primary, "emt_oldtoken") || strings.Contains(primary, `data-testid="token-revoked-badge"`) {
+		t.Error("active table must not contain revoked tokens")
+	}
+	if !strings.Contains(revokedSection, "old token") || !strings.Contains(revokedSection, `data-testid="token-revoked-badge"`) {
+		t.Error("revoked token must render inside the revoked disclosure with its badge")
+	}
+	if tag := detailsTagFor(html, "revoked-tokens-section"); strings.Contains(tag, "open") {
+		t.Errorf("revoked disclosure must be collapsed by default, got %q", tag)
 	}
 	// a token with a write scope in an area gets the info tone; a read-only
 	// area stays neutral
@@ -84,6 +103,47 @@ func TestRenderAPITokensPage(t *testing.T) {
 	if strings.Contains(html, "api-token-secret") || strings.Contains(html, "shown only once") {
 		t.Error("plaintext panel must not render on the plain list page")
 	}
+}
+
+// TestRenderAPITokensPageOnlyRevoked asserts that when every token is revoked
+// the page shows the "no active tokens" state (not the "No API tokens yet"
+// empty state) while still exposing the revoked disclosure.
+func TestRenderAPITokensPageOnlyRevoked(t *testing.T) {
+	tokens := []APIToken{{
+		ID: "t2", Name: "old token", TokenPrefix: "emt_oldtoken",
+		Scopes: []string{"data:read"}, CreatedAt: "2026-08-01T10:00:00Z", IsRevoked: true,
+	}}
+	html := renderHTML(t, APITokensPage(apiTokensPageData{Tokens: tokens}))
+	if !strings.Contains(html, "No active tokens") {
+		t.Error("all-revoked page must show the no-active-tokens state")
+	}
+	if strings.Contains(html, "No API tokens yet") {
+		t.Error("all-revoked page must not claim no tokens exist")
+	}
+	if !strings.Contains(html, "0 tokens") {
+		t.Errorf("all-revoked page should show the 0 active count, html=%q", html)
+	}
+	if !strings.Contains(html, `data-testid="revoked-tokens-toggle"`) || !strings.Contains(html, "old token") {
+		t.Error("all-revoked page must keep the revoked disclosure with the revoked token")
+	}
+}
+
+// detailsTagFor returns the opening <details ...> tag carrying the given
+// data-testid, so tests can assert the disclosure is collapsed (no open attr).
+func detailsTagFor(html, testid string) string {
+	idx := strings.Index(html, `data-testid="`+testid+`"`)
+	if idx < 0 {
+		return ""
+	}
+	start := strings.LastIndex(html[:idx], "<details")
+	if start < 0 {
+		return ""
+	}
+	end := strings.Index(html[start:], ">")
+	if end < 0 {
+		return ""
+	}
+	return html[start : start+end+1]
 }
 
 // TestRenderAPITokensPageUnknownScopeShowsOther asserts an unmapped scope is
