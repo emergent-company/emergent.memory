@@ -2286,8 +2286,13 @@ func (ae *AgentExecutor) runPipeline(
 	// run's tools attribute to THIS agent rather than the HTTP principal or a
 	// parent run. Each nested/delegated run re-stamps its own id here, so a
 	// sub-agent's writes attribute to the sub-agent (issue #1193).
-	if agentUUID, err := uuid.Parse(agentID); err == nil {
-		ctx = auth.WithActor(ctx, graph.ActorAgent, &agentUUID)
+	//
+	// The stamped id is the agent DEFINITION id (kb.agent_definitions.id) — the
+	// single canonical actor_id for actor_type='agent' — NOT the kb.agents run
+	// entity id (resolveAgentID). A run whose definition cannot be resolved is
+	// left unstamped and falls back to the existing user/system attribution path.
+	if agentUUID := ae.actorAgentID(req); agentUUID != nil {
+		ctx = auth.WithActor(ctx, graph.ActorAgent, agentUUID)
 	}
 
 	// Accumulate cached token counts across all LLM steps in this run.
@@ -3772,6 +3777,22 @@ func (ae *AgentExecutor) resolveAgentID(req ExecuteRequest) string {
 		return req.AgentDefinition.ID
 	}
 	return "unknown"
+}
+
+// actorAgentID returns the agent DEFINITION id (kb.agent_definitions.id) to
+// stamp as the actor_id for actor_type='agent', or nil when no definition is
+// available. The definition id is the single canonical id the agent-scoped
+// object view filters on; the kb.agents run entity id (see resolveAgentID) is a
+// separate id space and must never be used for provenance attribution.
+func (ae *AgentExecutor) actorAgentID(req ExecuteRequest) *uuid.UUID {
+	if req.AgentDefinition == nil || req.AgentDefinition.ID == "" {
+		return nil
+	}
+	id, err := uuid.Parse(req.AgentDefinition.ID)
+	if err != nil {
+		return nil
+	}
+	return &id
 }
 
 // resolveAgentName returns a display name for the agent.

@@ -217,6 +217,12 @@ type AgentToolHandler interface {
 	// The returned steps is the number of agent steps the executor ran, used for
 	// the cumulative session budget.
 	RunAgentInSession(ctx context.Context, projectID, agentID, sessionRef, message string, budget AgentRunBudget) (reply string, runID string, steps int, err error)
+
+	// ResolveAgentDefinitionID resolves the kb.agent_definitions id backing a
+	// runtime agent (kb.agents id), or "" when the agent or its definition cannot
+	// be resolved. Used by the per-agent MCP endpoint to stamp actor provenance
+	// with the canonical definition id.
+	ResolveAgentDefinitionID(ctx context.Context, projectID, agentID string) string
 }
 
 // AgentRunBudget bounds a single synchronous run started by the per-agent MCP

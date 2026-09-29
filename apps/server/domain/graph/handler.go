@@ -112,16 +112,16 @@ func parseActorProvenance(c echo.Context, params *ListParams) error {
 	if actorIDStr := c.QueryParam("actor_id"); actorIDStr != "" {
 		actorID, err := uuid.Parse(actorIDStr)
 		if err != nil {
-			return apperror.ErrBadRequest.WithMessage("invalid actor_id")
+			return apperror.NewBadRequest("invalid actor_id")
 		}
 		params.ActorID = &actorID
 	}
 	if params.ActorID != nil && params.ActorType == nil {
-		return apperror.ErrBadRequest.WithMessage("actor_id requires actor_type")
+		return apperror.NewBadRequest("actor_id requires actor_type")
 	}
 	if provenance := c.QueryParam("provenance"); provenance != "" {
 		if !validProvenance(provenance) {
-			return apperror.ErrBadRequest.WithMessage("invalid provenance: must be one of 'created', 'updated', 'any'")
+			return apperror.NewBadRequest("invalid provenance: must be one of 'created', 'updated', 'any'")
 		}
 		params.Provenance = provenance
 	}

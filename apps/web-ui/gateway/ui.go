@@ -337,7 +337,13 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 			}
 		}
 	}
-	render.RenderPage(w, r, appShell(title, groups, providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, user, accounts, content, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL))
+	// Compiled type name → human label for the chat client's citation sources.
+	// Best-effort, like the fetches above: a failure degrades to an empty map, so
+	// the client falls back to humanized type names rather than erroring. The
+	// result is cached per project (objectTypeUIMap) so a full page render
+	// doesn't pay a serial GetCompiledTypes HTTP GET on the critical path.
+	objectTypes := s.objectTypeUIMap(c.Request().Context())
+	render.RenderPage(w, r, appShell(title, groups, providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, user, accounts, content, objectTypes, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL))
 	return nil
 }
 
@@ -970,6 +976,38 @@ func defaultAgentID(agents []AgentDefinitionSummary, preselect string) string {
 		return agents[0].ID
 	}
 	return ""
+}
+
+// agentSummaryByID finds an agent summary by id, reporting whether it exists.
+func agentSummaryByID(agents []AgentDefinitionSummary, id string) (AgentDefinitionSummary, bool) {
+	for _, a := range agents {
+		if a.ID == id {
+			return a, true
+		}
+	}
+	return AgentDefinitionSummary{}, false
+}
+
+// activeChatAgent resolves the agent whose identity the chat pane header should
+// show: the agent of the conversation named by convID when it is still in the
+// list, otherwise the default/preselected agent. ok is false only when there is
+// no agent to show at all, so the caller keeps the generic header copy. A
+// conversation whose agent is missing from the (possibly stale) list falls back
+// to the default agent rather than leaving the header blank.
+func activeChatAgent(agents []AgentDefinitionSummary, convs *ConversationList, preselect, convID string) (AgentDefinitionSummary, bool) {
+	activeID := ""
+	if convs != nil && convID != "" {
+		for _, c := range convs.Conversations {
+			if c.ID == convID {
+				activeID = c.AgentDefinitionID
+				break
+			}
+		}
+	}
+	if a, ok := agentSummaryByID(agents, activeID); ok {
+		return a, true
+	}
+	return agentSummaryByID(agents, defaultAgentID(agents, preselect))
 }
 
 // assistantAgentID returns the configured assistant agent's ID, or "" when

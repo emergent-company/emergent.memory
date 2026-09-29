@@ -148,6 +148,71 @@ func TestToolGroupsDTO_CatalogUnavailableFallback(t *testing.T) {
 	assert.Equal(t, []string{"entity-search"}, ids["graph-read"])
 }
 
+func TestToolGroupsDTO_SessionBuiltinDefaults(t *testing.T) {
+	catalog := []mcp.ToolDefinition{
+		{Name: "session-todo-list", RequiredScope: ""},
+		{Name: "session-todo-update", RequiredScope: ""},
+		{Name: "entity-search", RequiredScope: "graph:read"},
+	}
+	d := &AgentDefinition{
+		Tools: []string{"entity-search"},
+	}
+
+	dto := d.ToolGroupsWithCatalog(catalog)
+
+	var session, other *ToolGroupDTO
+	for i := range dto {
+		switch dto[i].ID {
+		case "session":
+			session = &dto[i]
+		case "other":
+			other = &dto[i]
+		}
+	}
+
+	require.NotNil(t, session, "session group must render with a real catalog")
+	// Catalog tools land first (catalog order), then the hidden builtin.
+	assert.Equal(t, []string{"session-todo-list", "session-todo-update", "set_session_title"}, session.Tools)
+	assert.True(t, session.Enabled, "set_session_title defaults on when not banned")
+	assert.Nil(t, other, "session todo tools must not land in other")
+}
+
+func TestToolGroupsDTO_SessionBuiltinBanned(t *testing.T) {
+	catalog := []mcp.ToolDefinition{
+		{Name: "entity-search", RequiredScope: "graph:read"},
+	}
+	d := &AgentDefinition{
+		Tools:       []string{"entity-search"},
+		BannedTools: []string{"set_session_title"},
+	}
+
+	dto := d.ToolGroupsWithCatalog(catalog)
+
+	var session *ToolGroupDTO
+	for i := range dto {
+		if dto[i].ID == "session" {
+			session = &dto[i]
+		}
+	}
+
+	require.NotNil(t, session, "session group must render even when the builtin is banned")
+	assert.Equal(t, []string{"set_session_title"}, session.Tools)
+	assert.False(t, session.Enabled, "banned set_session_title must be disabled")
+}
+
+func TestToolGroupsDTO_SessionAbsentWithNilCatalog(t *testing.T) {
+	d := &AgentDefinition{
+		Tools: []string{"entity-search"},
+	}
+	dto := d.ToolGroupsWithCatalog(nil)
+
+	for _, g := range dto {
+		if g.ID == "session" {
+			t.Fatalf("session group must be absent with a nil catalog, got group %q", g.ID)
+		}
+	}
+}
+
 func TestToolGroupsDTO_PolicyMapping(t *testing.T) {
 	catalog := []mcp.ToolDefinition{
 		{Name: "schema-migrate-execute", RequiredScope: "schema:migrate"},
