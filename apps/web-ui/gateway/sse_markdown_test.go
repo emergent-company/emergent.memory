@@ -221,6 +221,31 @@ func TestRewriteChatStreamRendersOncePerTurn(t *testing.T) {
 	}
 }
 
+// TestRewriteChatStreamPassesUIPassthrough asserts an A2UI `ui` event is
+// re-emitted verbatim: the gateway does not interpret the declarative-card
+// payload (memory has already validated the envelope), so the client receives
+// the exact surface frame — surfaceId + the ordered messages array — untouched.
+func TestRewriteChatStreamPassesUIPassthrough(t *testing.T) {
+	uiFrame := `data: {"type":"ui","surfaceId":"s1","messages":[` +
+		`{"createSurface":{"surfaceId":"s1","catalogId":"memory-basic"}},` +
+		`{"updateComponents":{"surfaceId":"s1","components":[{"id":"c1","component":"proposal","kind":"deploy","summary":"hi"}]}}]}`
+	stream := uiFrame + "\n\n" + `data: {"type":"done"}` + "\n\n"
+
+	out := rewrite(t, stream)
+
+	// The ui frame is re-emitted byte-for-byte: no interpret, no re-marshal.
+	if !strings.Contains(out, uiFrame) {
+		t.Fatalf("ui frame not passed through verbatim:\n got %q\nwant it to contain %q", out, uiFrame)
+	}
+	types := make([]string, 0, 3)
+	for _, ev := range parseStream(t, out) {
+		types = append(types, ev.Type)
+	}
+	if !slices.Contains(types, "ui") {
+		t.Fatalf("event types = %v, want a ui event", types)
+	}
+}
+
 // TestRewriteChatStreamDoneNoTokens asserts a `done` with no preceding token
 // emits no `html` snapshot.
 func TestRewriteChatStreamDoneNoTokens(t *testing.T) {

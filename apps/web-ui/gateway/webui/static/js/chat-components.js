@@ -929,7 +929,7 @@
     return list;
   }
 
-  function a2uiButton(label, action, primary) {
+  function a2uiButton(surfaceId, label, action, primary) {
     var btn = document.createElement("button");
     btn.type = "button";
     btn.className = primary ? "btn btn-primary btn-sm" : "btn btn-ghost btn-sm";
@@ -951,6 +951,7 @@
     row.className = "flex items-center justify-end gap-2 pt-1";
     for (var i = 0; i < pairs.length; i++) {
       row.appendChild(a2uiButton(
+        surfaceId,
         pairs[i][0],
         { componentId: comp.id, response: pairs[i][1] },
         !!pairs[i][2]
@@ -1004,6 +1005,7 @@
         var val = isObj ? (o.value != null ? o.value : o.label) : o;
         var label = isObj ? (o.label != null ? o.label : o.value) : o;
         opts.appendChild(a2uiButton(
+          surfaceId,
           label == null ? "" : String(label),
           { componentId: comp.id, response: val },
           false
