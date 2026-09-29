@@ -145,7 +145,10 @@ func TestResolveOIDCScopes(t *testing.T) {
 		projectID  string
 		defaults   []string
 		roleLookup projectRoleLookup
-		want       []string
+		// trust opts the case into token-scope trust; the standing default is
+		// off (§7.1), so cases that exercise the token-verbatim branch set it.
+		trust bool
+		want  []string
 	}{
 		{
 			name:      "introspection with standard OIDC scopes and no grant yields no scopes",
@@ -218,6 +221,7 @@ func TestResolveOIDCScopes(t *testing.T) {
 			rawScopes: []string{"openid", "data:write", "search"},
 			projectID: projectID,
 			defaults:  []string{"data:read"},
+			trust:     true,
 			want:      []string{"data:write", "search"},
 		},
 		{
@@ -225,6 +229,7 @@ func TestResolveOIDCScopes(t *testing.T) {
 			rawScopes:  []string{"data:write"},
 			projectID:  projectID,
 			roleLookup: roleOK(RoleProjectViewer),
+			trust:      true,
 			want:       []string{"data:write"},
 		},
 		{
@@ -247,6 +252,7 @@ func TestResolveOIDCScopes(t *testing.T) {
 			name:      "duplicate explicit scopes are de-duplicated",
 			rawScopes: []string{"data:read", "data:read", "openid"},
 			projectID: projectID,
+			trust:     true,
 			want:      []string{"data:read"},
 		},
 	}
@@ -255,6 +261,7 @@ func TestResolveOIDCScopes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			m := newTestMiddleware(t)
 			m.cfg.Zitadel.OIDCDefaultScopes = tt.defaults
+			m.cfg.Zitadel.TrustTokenScopes = tt.trust
 			m.roleLookup = tt.roleLookup
 
 			got := m.resolveOIDCScopes(context.Background(), "user-uuid", tt.projectID, tt.rawScopes, nil)

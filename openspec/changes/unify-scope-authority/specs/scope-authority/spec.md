@@ -126,7 +126,7 @@ The system SHALL name its scope-policy configuration with application-owned vari
 
 ### Requirement: Token-carried Memory scopes are opt-in
 
-The system SHALL honour Memory scope names carried on a validated OIDC token only while the `MEMORY_OIDC_TRUST_TOKEN_SCOPES` flag is enabled. When enabled, the token's Memory scopes SHALL be used verbatim and terminally, and SHALL NOT be combined with application-derived scopes. When the flag is disabled, the system SHALL ignore all Memory scope names on the token and SHALL resolve scopes through application entitlements, then the app-owned default set, then an empty set. The final state of the system SHALL be the flag disabled, with the token-scope grant path removed entirely.
+The system SHALL honour Memory scope names carried on a validated OIDC token only while the `MEMORY_OIDC_TRUST_TOKEN_SCOPES` flag is enabled. When enabled, the token's Memory scopes SHALL be used verbatim and terminally, and SHALL NOT be combined with application-derived scopes. When the flag is disabled, the system SHALL ignore all Memory scope names on the token and SHALL resolve scopes through application entitlements, then the app-owned default set, then an empty set. The flag SHALL be disabled by default (opt-in); while it is explicitly enabled the system SHALL emit a startup warning each boot naming the flag and stating that trust is opt-in and disabled by default. The final state of the system SHALL be the flag disabled, with the token-scope grant path removed entirely.
 
 #### Scenario: Explicit token scopes are honoured while trust is enabled
 - **GIVEN** `MEMORY_OIDC_TRUST_TOKEN_SCOPES=true`
@@ -140,6 +140,11 @@ The system SHALL honour Memory scope names carried on a validated OIDC token onl
 - **AND** the user holds `project_viewer` in the declared project
 - **WHEN** the session scopes are resolved
 - **THEN** the session receives exactly the viewer read-only scopes and never `schema:write`
+
+#### Scenario: Explicitly enabled trust warns on every boot
+- **GIVEN** `MEMORY_OIDC_TRUST_TOKEN_SCOPES=true`
+- **WHEN** the server starts
+- **THEN** a startup warning names the flag and states that token-scope trust is opt-in and disabled by default
 
 ### Requirement: Time-boxed permissive userinfo grant
 

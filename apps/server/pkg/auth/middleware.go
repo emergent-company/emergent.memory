@@ -1112,13 +1112,15 @@ func (m *Middleware) warnIfOIDCAllGrantActive() {
 	}
 }
 
-// tokenScopeTrustWarningText is the operator-facing deprecation warning emitted
-// while token-carried Memory scopes are still honoured. It names the flag and
-// the effect of the upcoming default flip.
-const tokenScopeTrustWarningText = "token-scope trust is ENABLED: Memory scope names carried on OIDC tokens are still honoured as grants (MEMORY_OIDC_TRUST_TOKEN_SCOPES defaults to true). In the next release this default flips to false and token-carried Memory scopes will stop being honoured; operators who rely on them should migrate to application-owned scopes now."
+// tokenScopeTrustWarningText is the operator-facing warning emitted each boot
+// while token-carried Memory scopes are honoured. Token-scope trust is opt-in
+// and disabled by default; this text names the flag, states the posture, and
+// gives the opt-out.
+const tokenScopeTrustWarningText = "token-scope trust is ENABLED by explicit configuration: MEMORY_OIDC_TRUST_TOKEN_SCOPES=true, so Memory scope names carried on OIDC tokens are honoured as grants. This is opt-in and disabled by default; anyone who configured Memory scope names in Zitadel keeps those grants only while this flag is set. Unset the flag (or set it false) to restore fail-closed resolution from application-owned scopes."
 
-// warnIfTokenScopesTrusted emits a startup deprecation warning while
-// MEMORY_OIDC_TRUST_TOKEN_SCOPES is enabled (the Release N default).
+// warnIfTokenScopesTrusted emits the per-boot warning while
+// MEMORY_OIDC_TRUST_TOKEN_SCOPES is explicitly enabled. The flag defaults to
+// false, so this fires only for an operator opt-in.
 func (m *Middleware) warnIfTokenScopesTrusted() {
 	if m.cfg == nil || !m.cfg.Zitadel.TrustTokenScopes {
 		return
