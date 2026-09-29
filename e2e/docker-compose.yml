@@ -107,12 +107,14 @@ services:
 
   # ─────────────────────────────────────────────────────────────────────────
   # Mailgun stub — impersonates the Mailgun send API (POST /v3/{domain}/messages)
-  # so the server's Mailgun transport can be exercised hermetically. The default
-  # stack runs in SMTP mode and never contacts it; the Mailgun CI job sets the
-  # E2E_MAILGUN_* overrides to point the server here instead of api.mailgun.net.
-  # Port 8080 is published so host-run API tests can read GET /captured.
+  # so the server's Mailgun transport can be exercised hermetically. It lives
+  # behind the "mailgun" profile: the default stack (SMTP/Mailpit) never builds,
+  # starts it, or binds its host port. The Mailgun CI job opts in with
+  # `--profile mailgun`. Port 8080 is published so host-run API tests can read
+  # GET /captured.
   # ─────────────────────────────────────────────────────────────────────────
   mailgun-stub:
+    profiles: ["mailgun"]
     build:
       context: ./stubs/mailgun
     container_name: test-mailgun-stub
@@ -143,8 +145,6 @@ services:
       test-mcp-registry:
         condition: service_healthy
       mailpit:
-        condition: service_started
-      mailgun-stub:
         condition: service_started
     environment:
       # Standalone mode — API key is used instead of Zitadel OAuth

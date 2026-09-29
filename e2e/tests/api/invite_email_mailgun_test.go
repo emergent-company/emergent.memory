@@ -8,8 +8,9 @@
 // asserts the recipient, from, subject, the accept URL embedded in the body,
 // the request path, and that an Authorization header was sent.
 //
-// The test skips (not fails) when MAILGUN_STUB_URL is unset or the stub is not
-// reachable, so it stays green against the default SMTP/Mailpit stack.
+// The test skips (not fails) only when MAILGUN_STUB_URL is unset, so it stays
+// green against the default SMTP/Mailpit stack. When the URL *is* configured an
+// unreachable stub is an environment failure and fails the test.
 package api_test
 
 import (
@@ -22,12 +23,6 @@ import (
 	"testing"
 	"time"
 )
-
-// mailgunStubBaseURL returns the Mailgun stub base URL. It is intentionally
-// empty by default so this test only runs in the Mailgun-transport CI job.
-func mailgunStubBaseURL() string {
-	return strings.TrimRight(os.Getenv("MAILGUN_STUB_URL"), "/")
-}
 
 // capturedMailgunMessage mirrors one entry served by the stub's GET /captured.
 type capturedMailgunMessage struct {
@@ -129,12 +124,9 @@ func TestInvite_EmailDeliveredViaMailgunTransport(t *testing.T) {
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
-	base := mailgunStubBaseURL()
-	if base == "" {
-		t.Skip("MAILGUN_STUB_URL not set; skipping Mailgun-transport invite-email test")
-	}
+	base := skipWithoutMailgunStub(t)
 	if !mailgunStubUp(t, base) {
-		t.Skipf("Mailgun stub not reachable at %s; skipping Mailgun-transport invite-email test", base)
+		t.Fatalf("Mailgun stub configured at MAILGUN_STUB_URL=%s but not reachable; check the stack is up with --profile mailgun", base)
 	}
 
 	_, orgID := setupProjectLogged(t, rl)

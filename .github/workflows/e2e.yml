@@ -230,15 +230,22 @@ jobs:
       - name: Start server stack (Mailgun transport)
         run: |
           cp .env.example .env 2>/dev/null || true
-          docker compose up -d --build mailgun-stub test-emergent-server
+          docker compose --profile mailgun up -d --build mailgun-stub test-emergent-server
+          healthy=0
           for i in $(seq 1 30); do
             if curl -sf http://localhost:3002/health > /dev/null 2>&1; then
               echo "Server is healthy"
+              healthy=1
               break
             fi
             echo "Waiting for server... ($i/30)"
             sleep 2
           done
+          if [ "$healthy" -ne 1 ]; then
+            echo "::error::server did not become healthy within 60s; failing instead of letting the only Mailgun test skip"
+            docker compose --profile mailgun logs --tail=100 test-emergent-server || true
+            exit 1
+          fi
 
       - name: Run Mailgun transport test
         env:
@@ -252,11 +259,11 @@ jobs:
       - name: Show server logs on failure
         if: failure()
         run: |
-          docker compose logs --tail=100
+          docker compose --profile mailgun logs --tail=100
           echo "=== email-worker / Mailgun logs ==="
-          docker compose logs test-emergent-server --tail=1000 2>/dev/null | grep -iE "email|mailgun|template|enqueue|dequeue" || echo "(no email-related server log lines)"
+          docker compose --profile mailgun logs test-emergent-server --tail=1000 2>/dev/null | grep -iE "email|mailgun|template|enqueue|dequeue" || echo "(no email-related server log lines)"
 
       - name: Stop server stack
         if: always()
-        run: docker compose down -v
+        run: docker compose --profile mailgun down -v
 
