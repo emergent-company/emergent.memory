@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -1028,57 +1027,6 @@ func (s *Server) assistantAgentID(ctx context.Context, agents []AgentDefinitionS
 		}
 	}
 	return ""
-}
-
-// --- memory browser helpers ---
-
-// confidenceLabel renders a memory confidence (0..1) as a percentage.
-func confidenceLabel(c float64) string {
-	return strconv.Itoa(int(math.Round(c*100))) + "%"
-}
-
-// matchLabel renders a memory search relevance score (0..1) as a match
-// indicator, e.g. "match 17%".
-func matchLabel(score float64) string {
-	return "match " + strconv.Itoa(int(math.Round(score*100))) + "%"
-}
-
-// memoryCategoryIntent maps a memory category to a badge colour. Unknown
-// categories stay neutral.
-func memoryCategoryIntent(c string) ui.BadgeIntent {
-	switch strings.ToLower(c) {
-	case "person":
-		return ui.BadgePrimary
-	case "contact":
-		return ui.BadgeSecondary
-	case "note":
-		return ui.BadgeInfo
-	case "task":
-		return ui.BadgeWarning
-	case "preference", "fact":
-		return ui.BadgeAccent
-	default:
-		return ui.BadgeNeutral
-	}
-}
-
-// memoryDetailURL builds the detail link for one memory, preserving the
-// active search query.
-func memoryDetailURL(id, query, memoryID string) string {
-	u := "/agents/" + url.PathEscape(id) + "/memories?memory=" + url.QueryEscape(memoryID)
-	if query != "" {
-		u += "&q=" + url.QueryEscape(query)
-	}
-	return u
-}
-
-// memoryListURL builds the back-to-list link, preserving the search query.
-func memoryListURL(id, query string) string {
-	u := "/agents/" + url.PathEscape(id) + "/memories"
-	if query != "" {
-		u += "?q=" + url.QueryEscape(query)
-	}
-	return u
 }
 
 // chatTitle is the display title of a conversation, falling back to a

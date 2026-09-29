@@ -68,7 +68,7 @@ func TestRenderAgentDashboard(t *testing.T) {
 		"web_search", "memory_lookup", "code_exec",
 		"Morning briefing", "Chat " + shortID("c2"),
 		`href="/chat?c=c1"`, `href="/chat?c=c2"`,
-		`href="/agents/a1/memories"`, "Memories",
+		`href="/agents/a1/objects"`, "Objects",
 		`href="/chat?agent=a1"`,
 	} {
 		if !strings.Contains(html, want) {
@@ -104,98 +104,10 @@ func TestRenderAgentDashboard(t *testing.T) {
 	}
 }
 
-func TestRenderMemoriesPage(t *testing.T) {
-	memories := []Memory{
-		{ID: "m1", Content: "prefers dark roast coffee", Category: "preference", Confidence: 0.92},
-		{ID: "m2", Content: "meeting with Sam on Tuesday", Category: "calendar_event", Confidence: 1},
-	}
-	html := renderHTML(t, MemoriesPage("a1", "diane", "", memories, nil, nil))
-	for _, want := range []string{
-		"Memories", "diane",
-		"prefers dark roast coffee", "preference", "92%",
-		"calendar_event", "100%",
-		`name="q"`, `href="/agents/a1"`,
-		`href="/agents/a1/memories?memory=m1"`,
-	} {
-		if !strings.Contains(html, want) {
-			t.Errorf("memories page missing %q", want)
-		}
-	}
-
-	// search form carries the active query; detail links preserve it
-	htmlSearch := renderHTML(t, MemoriesPage("a1", "diane", "dark", memories, nil, nil))
-	if !strings.Contains(htmlSearch, `value="dark"`) {
-		t.Error("search query not preserved in form")
-	}
-	if !strings.Contains(htmlSearch, `href="/agents/a1/memories?memory=m1&amp;q=dark"`) {
-		t.Error("detail link should preserve query")
-	}
-
-	// detail view shows full content + back-to-list link
-	sel := memories[0]
-	htmlDetail := renderHTML(t, MemoriesPage("a1", "diane", "dark", memories, &sel, nil))
-	if !strings.Contains(htmlDetail, "prefers dark roast coffee") || !strings.Contains(htmlDetail, "Back to list") {
-		t.Error("detail view missing content or back link")
-	}
-	if !strings.Contains(htmlDetail, `href="/agents/a1/memories?q=dark"`) {
-		t.Error("back-to-list link should preserve query")
-	}
-
-	// empty, no-match, and error states
-	htmlEmpty := renderHTML(t, MemoriesPage("a1", "diane", "", nil, nil, nil))
-	if !strings.Contains(htmlEmpty, "No memories yet") {
-		t.Error("empty state missing")
-	}
-	htmlNoMatch := renderHTML(t, MemoriesPage("a1", "diane", "zzz", nil, nil, nil))
-	if !strings.Contains(htmlNoMatch, "No matching memories") {
-		t.Error("no-match state missing")
-	}
-	htmlErr := renderHTML(t, MemoriesPage("a1", "diane", "", nil, nil, errTest))
-	if !strings.Contains(htmlErr, "Failed to load memories") {
-		t.Error("error state missing")
-	}
-}
-
-// TestRenderMemoryBadges covers the relevance/confidence badge rules in both
-// the list row and the detail view: a search result (Score > 0) shows the
-// match percentage, a list memory (Confidence > 0) shows confidence, and a
-// memory with neither shows no percentage badge at all.
-func TestRenderMemoryBadges(t *testing.T) {
-	searchHit := Memory{ID: "m1", Content: "dentist appointment", Category: "calendar_event", Score: 0.168}
-	listHit := Memory{ID: "m2", Content: "prefers dark roast", Category: "preference", Confidence: 0.92}
-	bare := Memory{ID: "m3", Content: "orphan note"}
-
-	// list row
-	htmlRow := renderHTML(t, MemoriesPage("a1", "diane", "dentist", []Memory{searchHit, listHit, bare}, nil, nil))
-	for _, want := range []string{"match 17%", "92%"} {
-		if !strings.Contains(htmlRow, want) {
-			t.Errorf("list row missing %q", want)
-		}
-	}
-	if strings.Contains(htmlRow, "match 92%") {
-		t.Error("confidence should not be rendered as a match badge")
-	}
-	if strings.Contains(htmlRow, "0%</span>") {
-		t.Error("bare memory must not render a bogus 0% badge")
-	}
-
-	// detail view
-	htmlDetail := renderHTML(t, MemoriesPage("a1", "diane", "dentist", []Memory{searchHit}, &searchHit, nil))
-	if !strings.Contains(htmlDetail, "match 17%") {
-		t.Error("detail view missing match badge")
-	}
-	if strings.Contains(htmlDetail, "0%</span>") {
-		t.Error("detail view must not render a bogus 0% badge")
-	}
-	htmlBare := renderHTML(t, MemoriesPage("a1", "diane", "", []Memory{bare}, &bare, nil))
-	if strings.Contains(htmlBare, "%</span>") {
-		t.Errorf("bare memory detail should render no percentage badge, got: %s", htmlBare)
-	}
-}
-
 // TestUIAgentRoutes exercises both UI routes against the fake backend:
-// dashboard data assembly (agent + filtered conversations) and the memories
-// subpage (search + detail), plus the unknown-agent error path.
+// dashboard data assembly (agent + filtered conversations) and the
+// agent-scoped objects subpage (provenance-prefiltered browse), plus the
+// unknown-agent error path.
 func TestUIAgentRoutes(t *testing.T) {
 	f := &fakeMemory{
 		defs: map[string]*AgentDefinition{
@@ -206,14 +118,15 @@ func TestUIAgentRoutes(t *testing.T) {
 			{ID: "c1", Title: "Briefing", AgentDefinitionID: "a1", UpdatedAt: "2026-08-26T09:00:00Z"},
 			{ID: "c2", Title: "Other agent's chat", AgentDefinitionID: "a2", UpdatedAt: "2026-08-26T10:00:00Z"},
 		},
-		memories: []Memory{
-			{ID: "m1", Content: "likes dark roast", Category: "preference", Confidence: 0.9},
+		pageObjects: []GraphObject{
+			{ID: "o1", CanonicalID: "o1", Type: "note", Key: "agent-note"},
 		},
+		nextPageCursor: "nc-2",
 	}
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
 	e.GET("/agents/:id", s.uiAgent)
-	e.GET("/agents/:id/memories", s.uiAgentMemories)
+	e.GET("/agents/:id/objects", s.uiAgentObjects)
 
 	// dashboard: agent summary + only its own conversations
 	rec := httptest.NewRecorder()
@@ -222,7 +135,7 @@ func TestUIAgentRoutes(t *testing.T) {
 		t.Fatalf("dashboard status %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"diane", "gpt-4o", "web_search", "Briefing", `/agents/a1/memories`} {
+	for _, want := range []string{"diane", "gpt-4o", "web_search", "Briefing", `/agents/a1/objects`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("dashboard route missing %q", want)
 		}
@@ -231,17 +144,24 @@ func TestUIAgentRoutes(t *testing.T) {
 		t.Error("dashboard should not list another agent's conversations")
 	}
 
-	// memories subpage: search + detail
+	// agent-scoped objects subpage: browser scoped to the agent's provenance
 	rec = httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/a1/memories?q=dark&memory=m1", nil))
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/a1/objects?provenance=updated", nil))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("memories status %d", rec.Code)
+		t.Fatalf("agent objects status %d", rec.Code)
 	}
 	body = rec.Body.String()
-	for _, want := range []string{"Memories for diane", "likes dark roast", "preference", "90%", "Back to list", `href="/agents/a1"`} {
+	for _, want := range []string{"agent-note", "Created by", "Updated by", "Any"} {
 		if !strings.Contains(body, want) {
-			t.Errorf("memories route missing %q", want)
+			t.Errorf("agent objects route missing %q", want)
 		}
+	}
+	// The route id IS the provenance actor id; the actor pair is fixed to agent.
+	if f.lastPageActorType != "agent" || f.lastPageActorID != "a1" {
+		t.Errorf("actor filter = %q/%q, want agent/a1", f.lastPageActorType, f.lastPageActorID)
+	}
+	if f.lastPageProvenance != "updated" {
+		t.Errorf("provenance = %q, want updated", f.lastPageProvenance)
 	}
 
 	// unknown agent id → whole-page error, not a broken render

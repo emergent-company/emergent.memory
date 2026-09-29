@@ -66,10 +66,10 @@
 
 ### 3.1 Agent-scoped object browse view
 
-- [ ] 3.1.1 Add an agent-provenance filter (Created by / Updated by modes) to the object list, reusing the existing browse/detail components for an agent-scoped view
-- [ ] 3.1.2 Replace the agent dashboard "memories browser" link with a link to objects created/updated by that agent
-- [ ] 3.1.3 Remove the memories subpage list/search/detail (the three memory-object requirements)
-- [ ] 3.1.4 Add unit tests (gateway templ/handler) for the provenance filter rendering and the agent-scoped link
+- [x] 3.1.1 Add an agent-provenance filter (Created by / Updated by modes) to the object list, reusing the existing browse/detail components for an agent-scoped view
+- [x] 3.1.2 Replace the agent dashboard "memories browser" link with a link to objects created/updated by that agent
+- [x] 3.1.3 Remove the memories subpage list/search/detail (the three memory-object requirements)
+- [x] 3.1.4 Add unit tests (gateway templ/handler) for the provenance filter rendering and the agent-scoped link
 
 ## 4. iOS (PR4)
 

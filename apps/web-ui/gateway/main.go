@@ -268,7 +268,7 @@ func main() {
 	e.GET("/agents/:id/sandbox", s.uiAgentSandbox)
 	e.POST("/agents/:id/sandbox/update", s.uiAgentSandboxUpdate)
 	e.GET("/agents/:id/sessions", s.uiAgentSessions)
-	e.GET("/agents/:id/memories", s.uiAgentMemories)
+	e.GET("/agents/:id/objects", s.uiAgentObjects)
 	// Agent-owned MCP endpoint, its labeled keys, and its external sessions —
 	// all on the agent's own Settings surface (see agent_mcp_endpoint_handlers.go).
 	// Create-key and rotate-key render the one-time secret reveal directly (no

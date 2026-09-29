@@ -14,9 +14,9 @@ import (
 // --- Agent dashboard ---
 
 // AgentDashboardPage renders the per-agent dashboard: summary, configured
-// tools, and recent chats, plus a memories link. A failed agent fetch
-// (LoadErr) renders the whole-page error state; a conversations failure
-// (ChatsErr) degrades only the recent-chats section.
+// tools, and recent chats, plus a link to the objects this agent created or
+// updated. A failed agent fetch (LoadErr) renders the whole-page error state; a
+// conversations failure (ChatsErr) degrades only the recent-chats section.
 templ AgentDashboardPage(data agentDashboardData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		if data.LoadErr != nil {
@@ -148,12 +148,12 @@ templ agentSummaryCard(data agentDashboardData) {
 			}
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeLink,
-				Href:    "/agents/" + url.PathEscape(data.Agent.ID) + "/memories",
+				Href:    "/agents/" + url.PathEscape(data.Agent.ID) + "/objects",
 				Variant: ui.ButtonOutline,
 				Size:    ui.ButtonSM,
-				Icon:    "lucide--brain",
+				Icon:    "lucide--box",
 			}) {
-				Memories
+				Objects
 			}
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeLink,
@@ -1256,128 +1256,5 @@ templ AgentSessionsPage(data agentSessionsData) {
 				@agentChatsList(data.ChatsErr, data.Chats, "Sessions", "", "No sessions yet")
 			}
 		}
-	}
-}
-
-// --- Agent memories ---
-
-// MemoriesPage renders the memory browser for one agent: a search form, a
-// list of memories (content, category, confidence), or a detail view when
-// selected is non-nil. Mirrors the iOS memory browser semantics: empty query
-// lists all, a query searches.
-templ MemoriesPage(id string, name string, query string, memories []Memory, selected *Memory, loadErr error) {
-	@layout.Container(layout.ContainerLG, nil) {
-		@detailHeader(crumbsActive(nav.Crumbs("Agents", "/agents", name, "/agents/"+url.PathEscape(id), "Memories")), "", "Memories for "+name, "", detailHeaderOpts{Margin: "mb-6"}) {
-			if loadErr == nil {
-				@countBadgeLabel(countLabel(len(memories), "memory", "memories"), "lucide--brain")
-			}
-		}
-		<form class="mb-6 w-full sm:max-w-md" method="get" action={ templ.URL("/agents/" + url.PathEscape(id) + "/memories") }>
-			<label class="input input-bordered flex w-full items-center gap-2">
-				@ui.IconSpan("lucide--search", "size-4 shrink-0 text-muted")
-				<input type="search" name="q" value={ query } placeholder="Search memories…" class="grow"/>
-				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM, AriaLabel: "Search"}) { Search }
-			</label>
-		</form>
-		if loadErr != nil {
-			@pageError("Failed to load memories", loadErr)
-		} else if selected != nil {
-			@memoryDetail(id, query, *selected)
-		} else if len(memories) == 0 {
-			@memoriesEmpty(query)
-		} else {
-			@memoriesList(id, query, memories)
-		}
-	}
-}
-
-templ memoriesList(id string, query string, memories []Memory) {
-	@cardList("", cardListProps{}) {
-		for _, m := range memories {
-			@memoryRow(id, query, m)
-		}
-	}
-}
-
-templ memoryRow(id string, query string, m Memory) {
-	<a
-		class="flex flex-col gap-1.5 px-4 py-3 transition-colors hover:bg-base-200/50"
-		href={ templ.URL(memoryDetailURL(id, query, m.ID)) }
-	>
-		<div class="flex flex-wrap items-center gap-2">
-			if m.Category != "" {
-				@ui.Badge(ui.BadgeProps{Label: m.Category, Variant: memoryCategoryIntent(m.Category), Size: ui.BadgeSizeXS})
-			}
-			if m.Score > 0 {
-				@ui.Badge(ui.BadgeProps{
-					Label:   matchLabel(m.Score),
-					Variant: ui.BadgeInfo,
-					Size:    ui.BadgeSizeXS,
-					Icon:    "lucide--search",
-				})
-			} else if m.Confidence > 0 {
-				@ui.Badge(ui.BadgeProps{
-					Label:   confidenceLabel(m.Confidence),
-					Variant: ui.BadgeGhost,
-					Size:    ui.BadgeSizeXS,
-					Icon:    "lucide--gauge",
-				})
-			}
-		</div>
-		<p class="line-clamp-2 text-sm text-muted-bright">{ m.Content }</p>
-	</a>
-}
-
-templ memoryDetail(id string, query string, m Memory) {
-	@components.PanelCard("", nil) {
-		<div class="flex flex-wrap items-center gap-2">
-			if m.Category != "" {
-				@ui.Badge(ui.BadgeProps{Label: m.Category, Variant: memoryCategoryIntent(m.Category), Size: ui.BadgeSizeSM})
-			}
-			if m.Score > 0 {
-				@ui.Badge(ui.BadgeProps{
-					Label:   matchLabel(m.Score),
-					Variant: ui.BadgeInfo,
-					Size:    ui.BadgeSizeSM,
-					Icon:    "lucide--search",
-				})
-			} else if m.Confidence > 0 {
-				@ui.Badge(ui.BadgeProps{
-					Label:   confidenceLabel(m.Confidence),
-					Variant: ui.BadgeGhost,
-					Size:    ui.BadgeSizeSM,
-					Icon:    "lucide--gauge",
-				})
-			}
-			<a class="ms-auto text-sm font-medium hover:text-primary" href={ templ.URL(memoryListURL(id, query)) }>Back to list</a>
-		</div>
-		<div class="bg-base-200/40 rounded-box mt-4 p-4">
-			<p class="text-sm" style="white-space: pre-wrap">{ m.Content }</p>
-		</div>
-		<div class="mt-4 border-t border-base-200 pt-3">
-			<span class="text-muted-faint font-mono text-xs">{ m.ID }</span>
-		</div>
-	}
-}
-
-// memoriesEmpty is the Memories page's full-surface empty state (list
-// replacement); py-12 keeps the panel present under the search form.
-templ memoriesEmpty(query string) {
-	if query != "" {
-		@ui.EmptyState(ui.EmptyStateProps{
-			Icon:        "lucide--search",
-			Title:       "No matching memories",
-			Description: "Nothing stored matches your search.",
-			Bordered:    true,
-			Class:       "py-12",
-		})
-	} else {
-		@ui.EmptyState(ui.EmptyStateProps{
-			Icon:        "lucide--brain",
-			Title:       "No memories yet",
-			Description: "Memories will show up here once the memory service stores something.",
-			Bordered:    true,
-			Class:       "py-12",
-		})
 	}
 }

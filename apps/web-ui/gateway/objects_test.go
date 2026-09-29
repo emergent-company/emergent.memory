@@ -90,6 +90,187 @@ func TestRenderObjectsPage(t *testing.T) {
 	}
 }
 
+// TestRenderObjectsProvenanceFilter covers the actor provenance controls on the
+// generic browser: a "Created by / Updated by / Any" mode toggle, an actor-type
+// select, and the actor-id field once an actor type is chosen. Copy is plain
+// object wording — never a memory concept.
+func TestRenderObjectsProvenanceFilter(t *testing.T) {
+	html := renderHTML(t, ObjectsPage(objectsPageData{
+		Objects:    []GraphObject{{ID: "o1", Type: "note", Key: "agent-note"}},
+		Provenance: "created",
+		ActorType:  "agent",
+		ActorID:    "11111111-1111-1111-1111-111111111111",
+	}))
+	for _, want := range []string{
+		`name="provenance"`, `value="any"`, `value="created"`, `value="updated"`,
+		"Any", "Created by", "Updated by",
+		`aria-label="Provenance"`,
+		`name="actor_type"`, `aria-label="Actor type"`, "Any actor", "Agent",
+		`name="actor_id"`, `aria-label="Actor id"`, `value="11111111-1111-1111-1111-111111111111"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("provenance filter missing %q", want)
+		}
+	}
+	// exactly one provenance mode is checked, and it is the active one.
+	if got := strings.Count(html, `name="provenance"`); got != 3 {
+		t.Errorf("provenance radios = %d, want 3", got)
+	}
+	if got := strings.Count(html, `name="provenance" value="created" checked`); got != 1 {
+		t.Errorf("active provenance mode not checked: %d", got)
+	}
+	// user/system options are offered by the actor-type select.
+	for _, want := range []string{">User<", ">System<"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("actor type select missing %q", want)
+		}
+	}
+
+	// The actor-id field is always available so the pair can be filled in before
+	// submitting; without an actor type it stays empty and applies nothing.
+	noActor := renderHTML(t, ObjectsPage(objectsPageData{
+		Objects: []GraphObject{{ID: "o1", Type: "note"}},
+	}))
+	if !strings.Contains(noActor, `aria-label="Actor id"`) {
+		t.Error("actor id field should always render beside the actor type select")
+	}
+}
+
+// TestRenderObjectsProvenanceFilterHiddenInSearch pins that the provenance and
+// actor controls are browse-only: the server's search endpoints cannot apply the
+// actor filter, so the controls are omitted (not silently ignored) in search
+// mode.
+func TestRenderObjectsProvenanceFilterHiddenInSearch(t *testing.T) {
+	html := renderHTML(t, ObjectsPage(objectsPageData{
+		Query: "sam",
+		Mode:  "unified",
+	}))
+	for _, bad := range []string{`name="provenance"`, `aria-label="Provenance"`, `aria-label="Actor type"`} {
+		if strings.Contains(html, bad) {
+			t.Errorf("search mode must not render provenance control %q", bad)
+		}
+	}
+}
+
+// TestRenderAgentScopedObjectsPage covers the agent-scoped view: an
+// agent-focused header, the provenance mode toggle, the actor pair fixed to the
+// agent (hidden inputs, no editable actor controls), and the filter form posting
+// back to the agent's own route.
+func TestRenderAgentScopedObjectsPage(t *testing.T) {
+	html := renderHTML(t, ObjectsPage(objectsPageData{
+		AgentID:    "a1",
+		AgentName:  "diane",
+		ActorType:  "agent",
+		ActorID:    "a1",
+		Provenance: "any",
+		Objects:    []GraphObject{{ID: "o1", Type: "note", Key: "agent-note"}},
+	}))
+	for _, want := range []string{
+		"Objects", "Objects created or updated by diane",
+		`href="/agents/a1"`,
+		`action="/agents/a1/objects"`,
+		`name="provenance"`, "Created by", "Updated by", "Any",
+		// actor pair fixed and carried as hidden inputs
+		`type="hidden" name="actor_type" value="agent"`,
+		`type="hidden" name="actor_id" value="a1"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("agent-scoped objects page missing %q", want)
+		}
+	}
+	// No editable actor controls: the pair is fixed to the agent.
+	for _, bad := range []string{`aria-label="Actor type"`, `aria-label="Actor id"`} {
+		if strings.Contains(html, bad) {
+			t.Errorf("agent-scoped view must not render editable actor control %q", bad)
+		}
+	}
+	// The global search and Q&A are omitted (they cannot be provenance-scoped).
+	for _, bad := range []string{`id="objects-search-form"`, "Ask the graph"} {
+		if strings.Contains(html, bad) {
+			t.Errorf("agent-scoped view must not render %q", bad)
+		}
+	}
+}
+
+// TestRenderObjectsLoadMoreCarriesProvenance pins that cursor pagination keeps
+// the active actor-provenance filter, so "Load more" appends scoped rows.
+func TestRenderObjectsLoadMoreCarriesProvenance(t *testing.T) {
+	html := renderHTML(t, ObjectsPage(objectsPageData{
+		Objects:    []GraphObject{{ID: "o1", Type: "note", Key: "agent-note"}},
+		HasMore:    true,
+		NextCursor: "cur-1",
+		ActorType:  "agent",
+		ActorID:    "a1",
+		Provenance: "created",
+	}))
+	for _, want := range []string{"actor_type=agent", "actor_id=a1", "provenance=created", "cursor=cur-1"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("load more URL missing %q", want)
+		}
+	}
+}
+
+// TestUIObjectsProvenanceParams exercises query-param parsing at the handler:
+// the actor pair and provenance mode reach ListGraphObjectsPage, an unknown
+// provenance normalizes to any, and a stray actor_id without actor_type is
+// dropped (the server rejects it).
+func TestUIObjectsProvenanceParams(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/objects", s.uiObjects)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?actor_type=agent&actor_id=abc-123&provenance=created", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if f.lastPageActorType != "agent" || f.lastPageActorID != "abc-123" || f.lastPageProvenance != "created" {
+		t.Errorf("parsed params = %q/%q/%q, want agent/abc-123/created", f.lastPageActorType, f.lastPageActorID, f.lastPageProvenance)
+	}
+
+	// unknown provenance normalizes to the default
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?provenance=bogus", nil))
+	if f.lastPageProvenance != defaultObjectProvenance {
+		t.Errorf("unknown provenance = %q, want %q", f.lastPageProvenance, defaultObjectProvenance)
+	}
+
+	// actor_id without actor_type is dropped (the server rejects the pair)
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?actor_id=abc-123", nil))
+	if f.lastPageActorType != "" || f.lastPageActorID != "" {
+		t.Errorf("stray actor_id must be dropped, got %q/%q", f.lastPageActorType, f.lastPageActorID)
+	}
+
+	// actor_type without actor_id is dropped too: it would narrow to NULL-actor
+	// rows, not a usable any-actor filter.
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?actor_type=agent", nil))
+	if f.lastPageActorType != "" || f.lastPageActorID != "" {
+		t.Errorf("actor_type without actor_id must be dropped, got %q/%q", f.lastPageActorType, f.lastPageActorID)
+	}
+}
+
+// TestUIObjectsPartialCarriesProvenance pins that the "Load more" partial
+// forwards the actor-provenance filter to ListGraphObjectsPage, so appended
+// pages stay scoped.
+func TestUIObjectsPartialCarriesProvenance(t *testing.T) {
+	f := &fakeMemory{pageObjects: []GraphObject{{ID: "o2", Type: "note", Key: "next-note"}}}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/objects/partial", s.uiObjectsPartial)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/partial?cursor=c1&actor_type=agent&actor_id=a1&provenance=updated", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if f.lastPageActorType != "agent" || f.lastPageActorID != "a1" || f.lastPageProvenance != "updated" {
+		t.Errorf("partial params = %q/%q/%q, want agent/a1/updated", f.lastPageActorType, f.lastPageActorID, f.lastPageProvenance)
+	}
+}
+
 func TestRenderObjectsPageSearchStatsLoadMore(t *testing.T) {
 	// search mode: query input, mode selector, and result rows with a score badge.
 	searchHTML := renderHTML(t, ObjectsPage(objectsPageData{
