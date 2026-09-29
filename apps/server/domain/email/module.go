@@ -20,8 +20,10 @@ var Module = fx.Module("email",
 		NewTemplateServiceFromConfig,
 		NewSender, // Uses Mailgun when configured, otherwise no-op
 		NewWorker,
+		NewMailgunWebhookHandler,
 	),
 	fx.Invoke(RegisterWorkerLifecycle),
+	fx.Invoke(RegisterWebhookRoutes),
 )
 
 // NewTemplateServiceFromConfig creates a template service with the default template directory

@@ -1,6 +1,6 @@
 ## Context
 
-The knowledge graph already stores per-row actor provenance on objects: `kb.graph_objects.actor_type` (polymorphic: `user`, `agent`, `system`) and `actor_id` (user UUID for `user`, `kb.agents` UUID for `agent`, `NULL` for `system`). `domain/graph/events.go` defines the event/actor constants (`ActorUser`, `ActorSystem`); `pkg/auth/context.go` carries the auth values in `context.Context` via typed keys (`namespaceCtxKey`, etc.). The agent run boundary is where an agent's tool writes originate; the per-agent MCP endpoint is where a specific agent's tool calls arrive.
+The knowledge graph already stores per-row actor provenance on objects: `kb.graph_objects.actor_type` (polymorphic: `user`, `agent`, `system`) and `actor_id` (user UUID for `user`, `kb.agent_definitions` UUID for `agent`, `NULL` for `system`). `domain/graph/events.go` defines the event/actor constants (`ActorUser`, `ActorSystem`); `pkg/auth/context.go` carries the auth values in `context.Context` via typed keys (`namespaceCtxKey`, etc.). The agent run boundary is where an agent's tool writes originate; the per-agent MCP endpoint is where a specific agent's tool calls arrive.
 
 What is missing is attribution discipline: graph mutators currently hardcode `"user"` instead of reading the actor from context, relationships carry no provenance at all, branch-merge clones build fresh rows without actor columns, and nothing exposes a provenance filter. This change closes those gaps so "what did agent X touch" is answerable uniformly across objects and relationships.
 
@@ -23,7 +23,9 @@ What is missing is attribution discipline: graph mutators currently hardcode `"u
 
 ### 1. Actor model: reuse `kb.graph_objects.actor_type` / `actor_id`
 
-`actor_type` is polymorphic: `user` (human / HTTP), `agent` (agent tool writes), `system` (extraction / background). `actor_id` holds the user UUID for `user`, the `kb.agents` UUID for `agent`, and `NULL` for `system`. No object migration is needed. Filtering is ALWAYS on the `(actor_type, actor_id)` pair — never `actor_id` alone — because `actor_id` alone is ambiguous across actor types.
+`actor_type` is polymorphic: `user` (human / HTTP), `agent` (agent tool writes), `system` (extraction / background). `actor_id` holds the user UUID for `user`, the `kb.agent_definitions` UUID for `agent`, and `NULL` for `system`. No object migration is needed. Filtering is ALWAYS on the `(actor_type, actor_id)` pair — never `actor_id` alone — because `actor_id` alone is ambiguous across actor types.
+
+The two agent id spaces are deliberately kept distinct: the run record, logging, and question creation key off the `kb.agents` run-entity id, while provenance attribution keys off the `kb.agent_definitions` id (the id the agent-scoped object view filters on). A run whose `kb.agents` entity has no resolvable definition is NOT stamped, so unlinked legacy schedules remain deliberately invisible in the agent-scoped view rather than stamping a `kb.agents` id that would never match. No alias/union filter is introduced.
 
 ### 2. Relationships gain provenance
 
@@ -31,7 +33,7 @@ What is missing is attribution discipline: graph mutators currently hardcode `"u
 
 ### 3. Agent identity propagation: stamp-on-run, not resolve-per-write
 
-Agent identity is propagated by stamping the actor on the context at the agent run boundary (`auth.WithActor`). Nested/delegated runs attribute to the ACTUAL writing agent because each sub-agent re-stamps its own id at its own run boundary. The per-agent MCP endpoint stamps its `endpoint.AgentID`.
+Agent identity is propagated by stamping the actor on the context at the agent run boundary (`auth.WithActor`). Nested/delegated runs attribute to the ACTUAL writing agent because each sub-agent re-stamps its own id at its own run boundary. The stamped id is the agent's `kb.agent_definitions` id. The per-agent MCP endpoint stamps its endpoint's agent definition id (resolved from the endpoint's `kb.agents` binding); if no definition resolves, it is not stamped.
 
 - **Why stamp-on-run wins over resolve-per-write:** resolving "which agent is writing right now" at each individual write would require threading agent identity through every graph mutator call site and, crucially, gets the attribution wrong for nested/delegated runs — a delegated sub-agent's write would resolve to the *parent* agent unless the resolver itself knows the current leaf. Stamping at the boundary means the leaf agent's id is already in the context by the time any mutator reads it; mutators simply read `ActorFromContext` and never reason about run topology. The stamping is idempotent and cheap (one `context.WithValue` per run), and re-stamping is exactly what makes delegation correct.
 

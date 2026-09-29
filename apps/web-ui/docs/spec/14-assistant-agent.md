@@ -294,12 +294,21 @@ dispatching a tool, independent of the model's behaviour.
   MCP-server and relay-node listings are nested as sub-groups inside the
   capability group that owns their tools, keeping their labels and the
   agent-facing `<instance>_<tool>` relay names. Each tool row keeps its own
-  on/off toggle and policy dropdown (disabled/dimmed while the tool is off), and
-  shows what it inherits ("Inherits Graph · Write · Ask") unless it carries an
-  explicit override, which it shows instead. Groups with no member tools are not
-  rendered; a group with enabled members opens by default, idle groups collapse.
-  When memory reports no `toolGroups` the panel falls back to the previous
-  source-only grouping.
+  on/off toggle and policy dropdown (disabled/dimmed while the tool is off). The
+  inherited value is carried by the dropdown's Inherit option itself —
+  `Inherit (Ask)`, `Inherit (Default)` — resolved as the owning group's policy
+  when set, else the agent default; there is no separate inheritance hint label.
+  Groups with no member tools are not rendered; a group with enabled members
+  opens by default, idle groups collapse. When memory reports no `toolGroups` the
+  panel falls back to the previous source-only grouping.
+- **Session group** — the taxonomy includes a "Session" capability group owning
+  the session-scoped tools: `session-todo-list`, `session-todo-update`, and the
+  always-injected hidden builtin `set_session_title`. The session-title builtin is
+  **ban-managed**: the server injects it regardless of the allowed-tools whitelist,
+  so its row checkbox maps to the banned-tools list (checked = not banned) and it
+  renders no per-tool policy select; unchecking it (or turning the Session group
+  off) records it in `BannedTools`, and checking it removes it. The group reports
+  enabled whenever the tool is not banned.
 - **Interception** — when an `ask`-policy tool is called, the executor pauses the
   run, emits an in-stream `approval` event, and records a pending
   `agent_tool_approvals` row. The gateway renders an approval card (tool + args)

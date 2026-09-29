@@ -18,7 +18,7 @@ import (
 )
 
 // setupProvenanceTest opens a throwaway test database (which runs the embedded
-// migrations, including 00200), seeds an org+project, and returns the graph
+// migrations, including 00201), seeds an org+project, and returns the graph
 // Repository + Service wired with a NoopEventSink (no journal/embedding deps).
 func setupProvenanceTest(t *testing.T) (context.Context, bun.IDB, *graph.Repository, *graph.Service, uuid.UUID) {
 	t.Helper()
@@ -118,7 +118,7 @@ func TestObjectActorPersistence(t *testing.T) {
 }
 
 // TestRelationshipActorPersistence proves relationship create/update/bulk record
-// the actor, human actorID is persisted, and the 00200 migration columns + CHECK
+// the actor, human actorID is persisted, and the 00201 migration columns + CHECK
 // + index exist (task 1.5.3).
 func TestRelationshipActorPersistence(t *testing.T) {
 	ctx, db, _, svc, projectID := setupProvenanceTest(t)
