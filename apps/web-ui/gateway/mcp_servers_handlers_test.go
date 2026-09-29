@@ -29,6 +29,7 @@ func mcpServerTestServer(s *Server) *echo.Echo {
 	e.POST("/api/mcp-servers/:id/inspect", s.inspectMCPServer)
 	e.GET("/api/mcp-servers/:id/tools", s.listMCPServerTools)
 	e.PATCH("/api/mcp-servers/:id/tools/:toolId", s.setMCPServerToolEnabled)
+	e.POST("/api/mcp-servers/:id/tools/:toolName/call", s.callMCPServerTool)
 	return e
 }
 
@@ -106,6 +107,18 @@ type mcpTestBackend struct {
 	syncTo          []MCPTool // when set, SyncMCPServer replaces the server's tools
 	lastToolID      string
 	lastToolEnabled *bool
+
+	// call* drive the per-tool invoke proxy (POST /tools/:toolName/call).
+	callResult   *MCPToolCallResult
+	callErr      error
+	lastCallID   string
+	lastCallTool string
+	lastCallArgs map[string]any
+
+	// builtinGroups is served by ListBuiltinToolGroups; builtinGroupsErr lets a
+	// test assert the page degrades to the flat builtin list on failure.
+	builtinGroups    []BuiltinToolGroup
+	builtinGroupsErr error
 }
 
 func newMCPTestBackend(servers []MCPServer) *mcpTestBackend {
@@ -258,6 +271,24 @@ func (b *mcpTestBackend) SetMCPServerToolEnabled(ctx context.Context, id, toolID
 		}
 	}
 	return fmt.Errorf("memory 404 mcp_server_tool not found")
+}
+
+func (b *mcpTestBackend) CallMCPServerTool(ctx context.Context, id, toolName string, args map[string]any) (*MCPToolCallResult, error) {
+	if b.callErr != nil {
+		return nil, b.callErr
+	}
+	b.lastCallID, b.lastCallTool, b.lastCallArgs = id, toolName, args
+	if b.callResult != nil {
+		return b.callResult, nil
+	}
+	return &MCPToolCallResult{Content: []MCPToolCallContent{{Type: "text", Text: `{"ok":true}`}}}, nil
+}
+
+func (b *mcpTestBackend) ListBuiltinToolGroups(ctx context.Context) ([]BuiltinToolGroup, error) {
+	if b.builtinGroupsErr != nil {
+		return nil, b.builtinGroupsErr
+	}
+	return b.builtinGroups, nil
 }
 
 // --- list page ---
@@ -866,5 +897,119 @@ func TestUIMCPServersToolToggleFailureIsJSON(t *testing.T) {
 	rec := mcpServerJSON(e, http.MethodPatch, "/api/mcp-servers/srv-http/tools/nope", `{"enabled":true}`)
 	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "tool not found") {
 		t.Errorf("tool toggle failure = %d %s, want 502 with the memory error", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUIMCPServersCallToolProxies(t *testing.T) {
+	f := newMCPTestBackend(mcpTestRegistryFixture())
+	f.callResult = &MCPToolCallResult{
+		Content:           []MCPToolCallContent{{Type: "text", Text: `{"ok":true,"data":42}`}},
+		StructuredContent: json.RawMessage(`{"ok":true}`),
+	}
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpServerTestServer(s)
+
+	rec := mcpServerJSON(e, http.MethodPost, "/api/mcp-servers/srv-http/tools/search_issues/call", `{"arguments":{"query":"hello"}}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("call = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if f.lastCallID != "srv-http" || f.lastCallTool != "search_issues" {
+		t.Errorf("backend call target = %s %s", f.lastCallID, f.lastCallTool)
+	}
+	if f.lastCallArgs["query"] != "hello" {
+		t.Errorf("backend args = %v, want query=hello", f.lastCallArgs)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`"type":"text"`, `"isError":false`, `"structuredContent":{"ok":true}`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("call body missing %q (%s)", want, body)
+		}
+	}
+}
+
+func TestUIMCPServersCallToolBuiltinAllowed(t *testing.T) {
+	f := newMCPTestBackend(mcpTestRegistryFixture())
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpServerTestServer(s)
+
+	rec := mcpServerJSON(e, http.MethodPost, "/api/mcp-servers/srv-builtin/tools/memory_lookup/call", `{}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("builtin call = %d, want 200 (builtin tools are runnable)", rec.Code)
+	}
+	if f.lastCallTool != "memory_lookup" {
+		t.Errorf("builtin call tool = %q", f.lastCallTool)
+	}
+}
+
+func TestUIMCPServersCallToolBadBody(t *testing.T) {
+	f := newMCPTestBackend(mcpTestRegistryFixture())
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpServerTestServer(s)
+
+	rec := mcpServerJSON(e, http.MethodPost, "/api/mcp-servers/srv-http/tools/search_issues/call", `{"arguments":[1,2]}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("non-object arguments = %d, want 400 (%s)", rec.Code, rec.Body.String())
+	}
+	if f.lastCallTool != "" {
+		t.Error("invalid body must not reach the backend")
+	}
+}
+
+func TestUIMCPServersCallToolFailureIsJSON(t *testing.T) {
+	f := newMCPTestBackend(mcpTestRegistryFixture())
+	f.callErr = fmt.Errorf("memory 502 mcp_connection_error: server unreachable")
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpServerTestServer(s)
+
+	rec := mcpServerJSON(e, http.MethodPost, "/api/mcp-servers/srv-http/tools/search_issues/call", `{}`)
+	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "server unreachable") {
+		t.Errorf("call failure = %d %s, want 502 with the memory error", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUIMCPServersCallToolPreservesForbiddenStatus(t *testing.T) {
+	f := newMCPTestBackend(mcpTestRegistryFixture())
+	f.callErr = &memoryHTTPError{Status: http.StatusForbidden, Code: "mcp_tool_forbidden", Message: "not authorized to invoke this tool"}
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpServerTestServer(s)
+
+	rec := mcpServerJSON(e, http.MethodPost, "/api/mcp-servers/srv-builtin/tools/web-fetch/call", `{}`)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "not authorized") {
+		t.Errorf("forbidden call = %d %s, want 403 with the memory message", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUIMCPServersListLoadsBuiltinGroups(t *testing.T) {
+	f := newMCPTestBackend(mcpTestRegistryFixture())
+	f.builtinGroups = []BuiltinToolGroup{
+		{ID: "graph", Label: "Graph", Enabled: true, Tools: []string{"memory_lookup"}},
+	}
+	e := mcpServerTestServer(&Server{cfg: Config{}, memory: f})
+
+	rec := mcpServerGet(e, "/settings/mcp-servers")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `data-mcp-group="graph"`) {
+		t.Error("list must render the builtin capability groups when memory provides them")
+	}
+}
+
+func TestUIMCPServersListBuiltinGroupsFailureDegrades(t *testing.T) {
+	f := newMCPTestBackend(mcpTestRegistryFixture())
+	f.builtinGroupsErr = fmt.Errorf("memory 404 not_found")
+	e := mcpServerTestServer(&Server{cfg: Config{}, memory: f})
+
+	rec := mcpServerGet(e, "/settings/mcp-servers")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list with groups failure = %d, want 200 (additive endpoint must not fail the page)", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "data-mcp-builtin-groups") {
+		t.Error("groups failure must fall back to the flat builtin list")
+	}
+	// the builtin tool rows still render flat
+	if !strings.Contains(body, `data-mcp-tools="srv-builtin"`) || !strings.Contains(body, "memory_lookup") {
+		t.Error("builtin tools must stay reachable when the groups fetch fails")
 	}
 }

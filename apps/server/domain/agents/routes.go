@@ -64,6 +64,16 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	defsWrite.PUT("/overrides/:agentName", h.SetAgentOverride)
 	defsWrite.DELETE("/overrides/:agentName", h.DeleteAgentOverride)
 
+	// --- Builtin tool groups (project-scoped, header-carried project ID) ---
+	// The project's builtin tool catalog grouped into the server-owned capability
+	// taxonomy. Uses the same flat /api/admin/* shape as the MCP registry so the
+	// gateway can list builtin groups without addressing an MCPServer record.
+	builtinToolGroups := e.Group("/api/admin/builtin-tool-groups")
+	builtinToolGroups.Use(authMiddleware.RequireAuth())
+	builtinToolGroups.Use(authMiddleware.RequireProjectTokenScope())
+	builtinToolGroups.Use(authMiddleware.RequireProjectMember())
+	builtinToolGroups.GET("", h.ListBuiltinToolGroups)
+
 	// --- Generic project settings (key/value config) ---
 	settings := e.Group("/api/projects/:projectId/settings")
 	settings.Use(authMiddleware.RequireAuth())

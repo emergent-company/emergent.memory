@@ -529,6 +529,52 @@ var workspaceToolNames = []string{
 // group for the picker to govern them (enable by default, ban to hide).
 var sessionBuiltinToolNames = []string{"set_session_title"}
 
+// catalogGroupMembership computes the group→tools membership from a tool
+// catalog (deterministic catalog order), deduplicated by tool name. It is the
+// single code path for catalog grouping, shared by ToolGroupsWithCatalog (agent
+// definitions) and ToolGroupsFromCatalog (the builtin tool-groups endpoint). The
+// returned seen map tracks every tool already placed so callers that union
+// additional tool sources never re-add a catalog tool.
+func catalogGroupMembership(catalog []mcp.ToolDefinition) (membership map[string][]string, seen map[string]bool) {
+	membership = make(map[string][]string)
+	seen = make(map[string]bool)
+	for _, td := range catalog {
+		if td.Name == "" || seen[td.Name] {
+			continue
+		}
+		g := toolgroups.GroupForScope(td.RequiredScope, td.Name)
+		membership[g] = append(membership[g], td.Name)
+		seen[td.Name] = true
+	}
+	return membership, seen
+}
+
+// ToolGroupsFromCatalog computes the tool-group catalog from a tool catalog
+// alone, with no agent definition. Groups with zero members are omitted and the
+// result follows toolgroups.Groups' frozen order. Enabled is always true and
+// Policy is always "" — these are the builtin server's tools, so every group is
+// available and no agent group policy applies.
+func ToolGroupsFromCatalog(catalog []mcp.ToolDefinition) []ToolGroupDTO {
+	membership, _ := catalogGroupMembership(catalog)
+
+	out := make([]ToolGroupDTO, 0, len(toolgroups.Groups))
+	for _, g := range toolgroups.Groups {
+		tools := membership[g.ID]
+		if len(tools) == 0 {
+			continue
+		}
+		out = append(out, ToolGroupDTO{
+			ID:          g.ID,
+			Label:       g.Label,
+			Description: g.Description,
+			Policy:      "",
+			Enabled:     true,
+			Tools:       tools,
+		})
+	}
+	return out
+}
+
 // ToolGroupsWithCatalog computes the group catalog for the definition. Each
 // group's `tools` is its full membership — the union of the group's catalog
 // tools, the agent's own Tools ∪ BannedTools, and (when the workspace is
@@ -550,19 +596,9 @@ func (d *AgentDefinition) ToolGroupsWithCatalog(catalog []mcp.ToolDefinition) []
 		defaultOn[t] = true
 	}
 
-	membership := make(map[string][]string)
-	seen := make(map[string]bool)
-
 	// 1. Catalog tools (deterministic catalog order) — full group membership for
 	//    built-in and dynamic tools, resolved from the catalog's RequiredScope.
-	for _, td := range catalog {
-		if td.Name == "" || seen[td.Name] {
-			continue
-		}
-		g := toolgroups.GroupForScope(td.RequiredScope, td.Name)
-		membership[g] = append(membership[g], td.Name)
-		seen[td.Name] = true
-	}
+	membership, seen := catalogGroupMembership(catalog)
 
 	// 2. Agent-referenced tools (Tools then BannedTools) not already covered by
 	//    the catalog — external/relay names, or anything the catalog missed. A

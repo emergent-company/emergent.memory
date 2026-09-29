@@ -43,6 +43,14 @@ func (s *Server) uiMCPServers(c echo.Context) error {
 		data.LoadErr = err
 	} else {
 		data.Servers = servers
+		// The builtin tool taxonomy is additive: when the groups endpoint is
+		// unavailable (older memory) or the fetch fails, the builtin rows fall
+		// back to the flat cached-tool list rather than failing the page.
+		if mcpServersHasBuiltin(servers) {
+			if groups, gerr := s.memory.ListBuiltinToolGroups(ctx); gerr == nil {
+				data.BuiltinGroups = groups
+			}
+		}
 	}
 	return s.page(c, pageTitle("MCP Servers"), MCPServersPage(data))
 }
@@ -323,6 +331,31 @@ func (s *Server) setMCPServerToolEnabled(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]bool{"ok": true})
 }
 
+// callMCPServerTool handles POST /api/mcp-servers/:id/tools/:toolName/call:
+// the page's per-tool "Run" affordance. The body is {"arguments": <JSON
+// object>} (absent or empty = no arguments); it proxies to memory's
+// same-shaped admin call route and relays the result. A bad body (non-object
+// arguments) is rejected with 400; an upstream failure is surfaced as 502.
+func (s *Server) callMCPServerTool(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := strings.TrimSpace(c.Param("id"))
+	toolName := strings.TrimSpace(c.Param("toolName"))
+	if id == "" || toolName == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "server id and tool name are required"})
+	}
+	var body struct {
+		Arguments map[string]any `json:"arguments"`
+	}
+	if err := c.Bind(&body); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body: {\"arguments\": {}} is required"})
+	}
+	res, err := s.memory.CallMCPServerTool(ctx, id, toolName, body.Arguments)
+	if err != nil {
+		return mcpToolCallJSONErr(c, err)
+	}
+	return c.JSON(http.StatusOK, res)
+}
+
 // --- shared helpers ---
 
 // mcpServerFieldErrsNonEmpty reports whether any inline field error is set.
@@ -337,6 +370,18 @@ func mcpServerJSONErr(c echo.Context, err error) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "unknown error"})
 	}
 	return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
+}
+
+// mcpToolCallJSONErr relays a tool-invoke failure to the page, preserving the
+// upstream memory status (e.g. 403 forbidden, 409 disabled) so the dialog can
+// present the right state; a non-memory error or a status outside the HTTP
+// error range falls back to 502.
+func mcpToolCallJSONErr(c echo.Context, err error) error {
+	status := memoryStatus(err)
+	if status < 400 || status > 599 {
+		status = http.StatusBadGateway
+	}
+	return c.JSON(status, map[string]string{"error": err.Error()})
 }
 
 func errServerIDRequired() error { return fmt.Errorf("server id is required") }

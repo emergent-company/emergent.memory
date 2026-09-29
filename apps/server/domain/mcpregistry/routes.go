@@ -37,6 +37,11 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	admin.PATCH("/:id/tools/:toolId", h.ToggleTool)
 	admin.POST("/:id/sync", h.SyncTools)
 
+	// Per-tool invoke (builtin runs in-process; external is proxied). The :id
+	// server is authoritative and project-scoped (issue #978); a foreign or
+	// missing server is 404.
+	admin.POST("/:id/tools/:toolName/call", h.CallToolOnServer)
+
 	// Built-in tools — separate endpoint family that never exposes the internal
 	// "builtin" MCPServer record, only the flat tool list with inheritance info.
 	builtins := e.Group("/api/admin/builtin-tools")

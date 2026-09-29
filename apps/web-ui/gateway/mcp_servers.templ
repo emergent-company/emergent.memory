@@ -68,11 +68,12 @@ templ MCPServersPage(data mcpServersPageData) {
 			@components.TableCard(nil) {
 				<div class="flex flex-col divide-y divide-base-200">
 					for _, srv := range data.Servers {
-						@mcpServerRow(srv)
+						@mcpServerRow(srv, data.BuiltinGroups)
 					}
 				</div>
 			}
 		}
+		@mcpToolInvokeDialog()
 		@mcpServersScript()
 	}
 }
@@ -80,8 +81,11 @@ templ MCPServersPage(data mcpServersPageData) {
 // mcpServerRow is one registry entry: a collapsible <details> whose summary
 // shows the server identity (name, transport badge, enabled badge, cached
 // tool count) and whose body lists the cached tools. Builtin servers render
-// read-only: no action buttons, no enabled toggle, no per-tool toggles.
-templ mcpServerRow(srv MCPServer) {
+// read-only: no action buttons, no enabled toggle, no per-tool toggles. The
+// builtin row shows "Memory tools" with a package mark and a "Built-in" badge
+// instead of the literal name + duplicated type badge; when builtinGroups is
+// non-empty its cached tools render grouped by capability instead of flat.
+templ mcpServerRow(srv MCPServer, builtinGroups []BuiltinToolGroup) {
 	{{ builtin := mcpServerIsBuiltin(srv) }}
 	<details
 		class="group rounded-box border border-base-content/10 bg-base-200/40"
@@ -90,9 +94,13 @@ templ mcpServerRow(srv MCPServer) {
 	>
 		<summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 select-none [&::-webkit-details-marker]:hidden">
 			<div class="flex min-w-0 items-center gap-2.5">
-				@ui.IconSpan("lucide--server", "size-4 shrink-0 text-muted-faint")
-				<span class="truncate text-sm font-medium">{ srv.Name }</span>
-				@ui.Badge(ui.BadgeProps{Label: mcpServerTransportForDisplay(srv.Type), Variant: mcpServerBadgeIntent(srv.Type), Size: ui.BadgeSizeXS})
+				@ui.IconSpan(mcpServerSummaryIcon(srv), mcpServerSummaryIconClass(srv))
+				<span class="truncate text-sm font-medium">{ mcpServerDisplayName(srv) }</span>
+				if builtin {
+					@ui.Badge(ui.BadgeProps{Label: "Built-in", Variant: ui.BadgePrimary, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--package"})
+				} else {
+					@ui.Badge(ui.BadgeProps{Label: mcpServerTransportForDisplay(srv.Type), Variant: mcpServerBadgeIntent(srv.Type), Size: ui.BadgeSizeXS})
+				}
 				if srv.Enabled {
 					@ui.Badge(ui.BadgeProps{Label: "enabled", Variant: ui.BadgeSuccess, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--check"})
 				} else {
@@ -122,7 +130,7 @@ templ mcpServerRow(srv MCPServer) {
 					Runs <span class="font-mono">{ srv.Command }</span> on the memory host.
 				</p>
 			}
-			@mcpServerToolsList(srv, srv.Tools)
+			@mcpServerToolsList(srv, srv.Tools, builtinGroups)
 			@mcpServerInspectArea(srv.ID)
 			if !builtin {
 				@mcpServerDeleteDialog(srv)
@@ -201,24 +209,27 @@ templ mcpServerRowActions(srv MCPServer) {
 // mcpServerToolsList renders the "Cached tools" section header above the rows
 // container for one server. The rows container itself is rendered by
 // mcpServerToolsContainer so a completed sync can swap in the exact same
-// subtree (mcpToolsFragment).
-templ mcpServerToolsList(srv MCPServer, tools []MCPTool) {
+// subtree (mcpToolsFragment). builtinGroups is only consulted for the builtin
+// server (its grouped view); external servers ignore it.
+templ mcpServerToolsList(srv MCPServer, tools []MCPTool, builtinGroups []BuiltinToolGroup) {
 	<div class="flex flex-col">
 		<div class="flex items-center justify-between px-3 pt-2">
 			@ui.Eyebrow("Cached tools", ui.EyebrowProps{Size: "text-[10px]", Margin: ""})
-			if len(tools) > 0 {
+			if len(tools) > 0 && !mcpServerIsBuiltin(srv) {
 				<span class="text-muted-faint text-[10px]">sync refreshes this list</span>
 			}
 		</div>
-		@mcpServerToolsContainer(srv, tools)
+		@mcpServerToolsContainer(srv, tools, builtinGroups)
 	</div>
 }
 
 // mcpServerToolsContainer is the data-mcp-tools rows container for one
 // server's cached tools: per-tool rows (with toggle-sm for external servers,
 // read-only for builtin) or the no-tools hint. Rendered identically on the
-// initial page and into the sync JSON payload.
-templ mcpServerToolsContainer(srv MCPServer, tools []MCPTool) {
+// initial page and into the sync JSON payload. For the builtin server with a
+// non-empty taxonomy it switches to the grouped view (mcpServerBuiltinTools);
+// external servers always render the flat list.
+templ mcpServerToolsContainer(srv MCPServer, tools []MCPTool, builtinGroups []BuiltinToolGroup) {
 	<div class="flex flex-col" data-mcp-tools={ srv.ID }>
 		if len(tools) == 0 {
 			<p class="text-muted-faint px-3 py-2 text-xs">
@@ -229,6 +240,8 @@ templ mcpServerToolsContainer(srv MCPServer, tools []MCPTool) {
 					.
 				}
 			</p>
+		} else if mcpServerIsBuiltin(srv) && len(builtinGroups) > 0 {
+			@mcpServerBuiltinTools(srv, tools, builtinGroups)
 		} else {
 			for _, t := range tools {
 				@mcpServerToolRow(srv, t)
@@ -237,9 +250,82 @@ templ mcpServerToolsContainer(srv MCPServer, tools []MCPTool) {
 	</div>
 }
 
+// mcpServerBuiltinTools renders the builtin server's cached tools grouped by
+// memory's capability taxonomy, mirroring the agent tool picker's grouped
+// language: one collapsed Disclosure per group (layers icon + label + tool
+// count + optional description). Cached tools the taxonomy does not cover stay
+// reachable in the dashed "Other" fallback.
+templ mcpServerBuiltinTools(srv MCPServer, tools []MCPTool, builtinGroups []BuiltinToolGroup) {
+	{{ grouped, other := mcpBuiltinToolGroups(tools, builtinGroups) }}
+	<div class="flex flex-col gap-2 p-3" data-mcp-builtin-groups>
+		for _, gv := range grouped {
+			@mcpBuiltinToolGroup(srv, gv)
+		}
+		if len(other) > 0 {
+			@mcpBuiltinOtherGroup(srv, other)
+		}
+	</div>
+}
+
+// mcpBuiltinToolGroup is one capability group inside the builtin server's
+// grouped tool view: a collapsed ui.Disclosure (default collapsed — the builtin
+// source carries well over a hundred tools) whose header shows the group label,
+// member count, and optional description, and whose body lists the group's
+// cached tool rows. The named `group/cap` keeps nested disclosure chevrons
+// independent.
+templ mcpBuiltinToolGroup(srv MCPServer, gv mcpBuiltinToolGroupView) {
+	@ui.Disclosure(ui.DisclosureProps{
+		GroupClass:  "group/cap",
+		ItemsStart:  true,
+		DetailsBase: "rounded-box border border-base-content/10",
+		Attrs:       templ.Attributes{"data-testid": "mcp-builtin-group", "data-mcp-group": gv.Group.ID},
+		SummaryAttrs: templ.Attributes{
+			"data-testid": "mcp-builtin-group-header-" + gv.Group.ID,
+		},
+	}, mcpBuiltinGroupLeading(gv), agentToolCountBadge(len(gv.Rows))) {
+		<div class="flex flex-col divide-y divide-base-content/10 overflow-hidden rounded-box border border-base-content/10">
+			for _, t := range gv.Rows {
+				@mcpServerToolRow(srv, t)
+			}
+		</div>
+	}
+}
+
+// mcpBuiltinGroupLeading is a builtin capability-group header's leading block:
+// the layers icon, the group label, and the optional description — matching
+// the agent tool picker's capability-group header.
+templ mcpBuiltinGroupLeading(gv mcpBuiltinToolGroupView) {
+	<div class="flex min-w-0 flex-col gap-0.5">
+		<div class="flex min-w-0 items-center gap-2.5">
+			@ui.IconSpan("lucide--layers", "size-4 shrink-0 text-muted-faint")
+			<span class="truncate text-sm font-medium">{ gv.Group.Label }</span>
+		</div>
+		if gv.Group.Description != "" {
+			<p class="text-muted truncate pl-[26px] text-xs">{ gv.Group.Description }</p>
+		}
+	</div>
+}
+
+// mcpBuiltinOtherGroup is the builtin grouped view's dashed "Other" fallback,
+// mirroring the agent picker's other container: it keeps cached tools no
+// capability group covers reachable (so they can still be run from here).
+templ mcpBuiltinOtherGroup(srv MCPServer, tools []MCPTool) {
+	<div class="rounded-box border border-dashed border-base-content/20 bg-base-200/40 p-3" data-testid="mcp-builtin-group-other">
+		@ui.Eyebrow("Other", ui.EyebrowProps{Size: "text-[11px]"})
+		<p class="text-muted mt-0.5 mb-2 text-xs">Not part of a capability group.</p>
+		<div class="flex flex-col divide-y divide-base-content/10">
+			for _, t := range tools {
+				@mcpServerToolRow(srv, t)
+			}
+		</div>
+	</div>
+}
+
 // mcpServerToolRow is one cached tool row: a toggle-sm (external servers)
 // plus the tool name (mono) and its muted description, mirroring the agent
-// tool picker row visuals. Builtin rows drop the toggle (read-only).
+// tool picker row visuals. Builtin rows drop the toggle (read-only). Every row
+// carries a "Run" affordance that opens the shared invoke dialog pre-filled
+// with this row's server + tool.
 templ mcpServerToolRow(srv MCPServer, t MCPTool) {
 	<div class="flex items-center gap-2.5 px-3 py-1.5" data-mcp-tool-row>
 		if !mcpServerIsBuiltin(srv) {
@@ -254,13 +340,83 @@ templ mcpServerToolRow(srv MCPServer, t MCPTool) {
 				},
 			})
 		}
-		<span class="min-w-0">
+		<span class="min-w-0 flex-1">
 			<span class="block font-mono text-[13px] font-medium">{ t.ToolName }</span>
 			if t.Description != "" {
 				<span class="text-muted block truncate text-xs">{ t.Description }</span>
 			}
 		</span>
+		@ui.Button(ui.ButtonProps{
+			Type:       ui.ButtonTypeButton,
+			Variant:    ui.ButtonGhost,
+			Size:       ui.ButtonSM,
+			Shape:      ui.ButtonShapeSquare,
+			Icon:       "lucide--play",
+			ExtraClass: "shrink-0",
+			AriaLabel:  "Run " + t.ToolName,
+			Attrs: templ.Attributes{
+				"data-mcp-invoke-open": true,
+				"data-mcp-server":      srv.ID,
+				"data-mcp-tool":        t.ToolName,
+				"data-testid":          "mcp-tool-run",
+				"title":                "Run this tool with arguments",
+			},
+		})
 	</div>
+}
+
+// mcpToolInvokeDialog is the single shared per-page invoke dialog the tool rows
+// open: a JSON-arguments textarea (empty = no arguments), a Run button, and a
+// result region. The dialog's server + tool are set by mcpServersScript when a
+// row's Run button is clicked; the result is built as DOM nodes (never
+// innerHTML) since tool output is untrusted.
+templ mcpToolInvokeDialog() {
+	@ui.Dialog(ui.DialogProps{
+		ID:       "mcp-tool-invoke-dialog",
+		BoxClass: "max-w-2xl",
+		Attrs:    templ.Attributes{"data-testid": "mcp-tool-invoke-dialog"},
+	}) {
+		<div class="flex flex-col gap-3">
+			<div class="flex min-w-0 items-start justify-between gap-3">
+				<div class="flex min-w-0 flex-col gap-0.5">
+					<div class="flex items-center gap-2">
+						@ui.IconSpan("lucide--play", "size-4 shrink-0 text-primary")
+						<span class="text-sm font-semibold">Run tool</span>
+					</div>
+					<span class="text-muted truncate font-mono text-xs" data-mcp-invoke-title data-testid="mcp-tool-invoke-title"></span>
+				</div>
+			</div>
+			@form.FormControl("mcp-tool-invoke-args", "Arguments", form.LabelAbove, "Optional JSON object passed as the tool's arguments. Leave empty to run with no arguments.", "", nil) {
+				<textarea id="mcp-tool-invoke-args" name="arguments" rows="5" placeholder="{}" class="textarea w-full resize-y font-mono" data-testid="mcp-tool-invoke-args"></textarea>
+			}
+			<p class="text-error -mt-2 text-xs" data-mcp-invoke-args-error data-testid="mcp-tool-invoke-args-error" hidden></p>
+			<div class="flex items-center justify-end gap-2">
+				<form method="dialog">
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonGhost,
+						Size:    ui.ButtonSM,
+						Attrs:   templ.Attributes{"data-testid": "mcp-tool-invoke-close"},
+					}) {
+						Close
+					}
+				</form>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--play",
+					Attrs: templ.Attributes{
+						"data-mcp-invoke-run": "",
+						"data-testid":         "mcp-tool-invoke-run",
+					},
+				}) {
+					Run
+				}
+			</div>
+			<div data-mcp-invoke-result data-testid="mcp-tool-invoke-result" hidden></div>
+		</div>
+	}
 }
 
 // mcpServerInspectArea is the per-row target for the inspect result rendered
@@ -692,6 +848,157 @@ templ mcpServersScript() {
 			}
 			function textNode(s) { return document.createTextNode(s); }
 
+			// --- per-tool invoke (shared dialog) ---------------------------
+			// One dialog per page; opening a row's Run button points it at that
+			// server + tool and resets the previous args/result.
+			function invokeDialog() { return document.getElementById('mcp-tool-invoke-dialog'); }
+
+			function openInvoke(btn) {
+				var dlg = invokeDialog();
+				if (!dlg) return;
+				dlg.setAttribute('data-mcp-invoke-server', btn.getAttribute('data-mcp-server') || '');
+				dlg.setAttribute('data-mcp-invoke-tool', btn.getAttribute('data-mcp-tool') || '');
+				var title = dlg.querySelector('[data-mcp-invoke-title]');
+				if (title) title.textContent = dlg.getAttribute('data-mcp-invoke-tool') || '';
+				var args = dlg.querySelector('[data-mcp-invoke-args]');
+				if (args) args.value = '';
+				hideArgsError(dlg);
+				var result = dlg.querySelector('[data-mcp-invoke-result]');
+				if (result) { result.hidden = true; result.replaceChildren(); }
+				if (typeof dlg.showModal === 'function' && !dlg.open) dlg.showModal();
+			}
+
+			function argsErrorEl(dlg) { return dlg.querySelector('[data-mcp-invoke-args-error]'); }
+			function showArgsError(dlg, msg) {
+				var el = argsErrorEl(dlg);
+				if (!el) return;
+				el.textContent = msg;
+				el.hidden = false;
+			}
+			function hideArgsError(dlg) {
+				var el = argsErrorEl(dlg);
+				if (el) { el.hidden = true; el.textContent = ''; }
+			}
+
+			// prettyJSONText re-indents text that is valid JSON; plain text is
+			// returned unchanged.
+			function prettyJSONText(s) {
+				var t = String(s == null ? '' : s);
+				try { return JSON.stringify(JSON.parse(t), null, 2); } catch (e) { return t; }
+			}
+
+			async function runInvoke(btn) {
+				var dlg = btn.closest('dialog');
+				if (!dlg) return;
+				var server = dlg.getAttribute('data-mcp-invoke-server') || '';
+				var tool = dlg.getAttribute('data-mcp-invoke-tool') || '';
+				var argsEl = dlg.querySelector('[data-mcp-invoke-args]');
+				var raw = argsEl ? argsEl.value.trim() : '';
+				var args = {};
+				if (raw !== '') {
+					try {
+						args = JSON.parse(raw);
+					} catch (e) {
+						showArgsError(dlg, 'Arguments must be valid JSON.');
+						return;
+					}
+					if (args === null || typeof args !== 'object' || Array.isArray(args)) {
+						showArgsError(dlg, 'Arguments must be a JSON object, e.g. {"key": "value"}.');
+						return;
+					}
+				}
+				hideArgsError(dlg);
+				setBusy(btn, true);
+				try {
+					var resp = await fetch('/api/mcp-servers/' + encodeURIComponent(server) + '/tools/' + encodeURIComponent(tool) + '/call', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ arguments: args })
+					});
+					var j = await readJSON(resp);
+					if (!resp.ok) {
+						renderInvokeError(dlg, j.error || ('Call failed (' + resp.status + ').'));
+						return;
+					}
+					renderInvokeResult(dlg, j);
+				} catch (e) {
+					renderInvokeError(dlg, 'Call failed: ' + (e && e.message ? e.message : 'network error'));
+				} finally {
+					setBusy(btn, false);
+				}
+			}
+
+			// renderInvokeResult builds the result box from DOM nodes (never
+			// innerHTML) because tool output is untrusted: text content blocks
+			// are pretty-printed when they are JSON, other block types fall back
+			// to a label, and isError gets a clear error treatment.
+			function renderInvokeResult(dlg, r) {
+				var box = dlg.querySelector('[data-mcp-invoke-result]');
+				if (!box) return;
+				box.hidden = false;
+				box.replaceChildren();
+				var isErr = !!(r && r.isError);
+				var wrap = document.createElement('div');
+				wrap.className = 'rounded-box border px-3 py-2.5 text-xs ' +
+					(isErr ? 'border-error/30 bg-error/5' : 'border-base-content/15 bg-base-200/40');
+				var head = document.createElement('p');
+				head.className = 'mb-1.5 flex items-center gap-1.5 text-xs font-semibold' + (isErr ? ' text-error' : '');
+				head.appendChild(icon(isErr ? 'lucide--circle-x' : 'lucide--check-circle'));
+				head.appendChild(textNode(isErr ? 'Tool reported an error' : 'Result'));
+				wrap.appendChild(head);
+				var blocks = (r && r.content) || [];
+				var rendered = 0;
+				for (var i = 0; i < blocks.length; i++) {
+					var b = blocks[i] || {};
+					if (b.type === 'text') {
+						var pre = document.createElement('pre');
+						pre.className = 'mt-1 max-h-80 overflow-auto break-words whitespace-pre-wrap font-mono text-[11px] leading-relaxed';
+						pre.textContent = prettyJSONText(b.text || '');
+						wrap.appendChild(pre);
+						rendered++;
+					} else {
+						var note = document.createElement('p');
+						note.className = 'text-muted mt-1';
+						note.textContent = '[' + (b.type || 'unknown') + ' content]';
+						wrap.appendChild(note);
+						rendered++;
+					}
+				}
+				if (!rendered && r && r.structuredContent) {
+					var pre = document.createElement('pre');
+					pre.className = 'mt-1 max-h-80 overflow-auto break-words whitespace-pre-wrap font-mono text-[11px] leading-relaxed';
+					pre.textContent = prettyJSONText(JSON.stringify(r.structuredContent));
+					wrap.appendChild(pre);
+					rendered++;
+				}
+				if (!rendered) {
+					var none = document.createElement('p');
+					none.className = 'text-muted-faint';
+					none.textContent = 'Tool returned no content.';
+					wrap.appendChild(none);
+				}
+				box.appendChild(wrap);
+			}
+
+			function renderInvokeError(dlg, msg) {
+				var box = dlg.querySelector('[data-mcp-invoke-result]');
+				if (!box) return;
+				box.hidden = false;
+				box.replaceChildren();
+				var wrap = document.createElement('div');
+				wrap.className = 'rounded-box border border-error/30 bg-error/5 px-3 py-2.5 text-xs';
+				var head = document.createElement('p');
+				head.className = 'mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-error';
+				head.appendChild(icon('lucide--circle-x'));
+				head.appendChild(textNode('Call failed'));
+				wrap.appendChild(head);
+				var err = document.createElement('p');
+				err.className = 'text-error';
+				err.textContent = msg;
+				wrap.appendChild(err);
+				box.appendChild(wrap);
+			}
+
 			async function toggleServerEnabled(input) {
 				var id = input.getAttribute('data-mcp-server');
 				var enabled = input.checked;
@@ -796,6 +1103,10 @@ templ mcpServersScript() {
 					else if (action === 'inspect') { e.preventDefault(); inspectServer(btn); }
 					return;
 				}
+				var invokeOpen = btn.closest('[data-mcp-invoke-open]');
+				if (invokeOpen) { e.preventDefault(); openInvoke(invokeOpen); return; }
+				var invokeRun = btn.closest('[data-mcp-invoke-run]');
+				if (invokeRun) { e.preventDefault(); runInvoke(invokeRun); return; }
 				var kvAdd = btn.closest('[data-mcp-kv-add]');
 				if (kvAdd) { e.preventDefault(); addKVRow(kvAdd.closest('[data-mcp-kv]')); return; }
 				var kvRemove = btn.closest('[data-mcp-kv-remove]');
