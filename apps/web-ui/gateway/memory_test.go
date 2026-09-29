@@ -1604,7 +1604,8 @@ func TestSearchObjectsFTSNoTypeFilter(t *testing.T) {
 }
 
 // TestListGraphObjectsPage exercises the cursor-paginated object list: limit,
-// cursor, type and branch_id query params plus the items/next_cursor envelope.
+// cursor, type, branch_id, and the actor provenance params (actor_type,
+// actor_id, provenance) plus the items/next_cursor envelope.
 func TestListGraphObjectsPage(t *testing.T) {
 	var gotPath string
 	var gotQuery url.Values
@@ -1620,7 +1621,15 @@ func TestListGraphObjectsPage(t *testing.T) {
 	defer srv.Close()
 
 	m := NewMemoryClient(srv.URL, "proj")
-	items, next, err := m.ListGraphObjectsPage(context.Background(), "b1", "person", "cur-0", 25)
+	items, next, err := m.ListGraphObjectsPage(context.Background(), ObjectListParams{
+		BranchID:   "b1",
+		TypeFilter: "person",
+		Cursor:     "cur-0",
+		Limit:      25,
+		ActorType:  "agent",
+		ActorID:    "a1b2c3d4-0000-0000-0000-000000000001",
+		Provenance: "created",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1633,11 +1642,38 @@ func TestListGraphObjectsPage(t *testing.T) {
 	if gotQuery.Get("include_total") != "false" {
 		t.Errorf("include_total = %q, want false", gotQuery.Get("include_total"))
 	}
+	// Provenance params mirror the server param names verbatim.
+	if gotQuery.Get("actor_type") != "agent" || gotQuery.Get("actor_id") != "a1b2c3d4-0000-0000-0000-000000000001" || gotQuery.Get("provenance") != "created" {
+		t.Errorf("actor provenance query = %v", gotQuery)
+	}
 	if len(items) != 2 || items[0].ID != "o1" || items[1].Key != "call dentist" {
 		t.Errorf("items = %+v", items)
 	}
 	if next != "nc-1" {
 		t.Errorf("next_cursor = %q, want nc-1", next)
+	}
+}
+
+// TestListGraphObjectsPageOmitsActorIDWithoutType pins the server's pair rule:
+// actor_id without actor_type is never sent, because the server rejects it.
+func TestListGraphObjectsPageOmitsActorIDWithoutType(t *testing.T) {
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"items":[],"next_cursor":""}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	if _, _, err := m.ListGraphObjectsPage(context.Background(), ObjectListParams{
+		Limit:   25,
+		ActorID: "a1b2c3d4-0000-0000-0000-000000000001",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if gotQuery.Has("actor_id") || gotQuery.Has("actor_type") {
+		t.Errorf("actor pair must be omitted when actor_type is empty, got %v", gotQuery)
 	}
 }
 

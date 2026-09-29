@@ -15,25 +15,39 @@ import (
 // --- Objects browser ---
 
 // ObjectsPage renders the objects browser: searchable graph objects, filterable
-// by type and branch, with a small stats section and cursor-paginated browse.
-// data.TypeUIByType carries the compiled types' declared ui accents (icon/color)
-// keyed by object type name, so rows can render each type's icon.
+// by type, branch, and actor provenance, with a small stats section and
+// cursor-paginated browse. data.TypeUIByType carries the compiled types'
+// declared ui accents (icon/color) keyed by object type name, so rows can render
+// each type's icon.
+//
+// When data.AgentID is set the page is the agent-scoped view: the actor filter
+// is fixed to that agent, the stats row and the global search / Q&A are omitted
+// (the server's search endpoints cannot be provenance-scoped), and the browse
+// list is scoped to the agent's created/updated objects.
 templ ObjectsPage(data objectsPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@objectsHeader()
+		if data.AgentID != "" {
+			@objectsAgentHeader(data)
+		} else {
+			@objectsHeader()
+		}
 		if data.LoadErr != nil {
 			@pageError("Failed to load objects", data.LoadErr)
 		} else {
-			if data.Query == "" {
+			if data.Query == "" && data.AgentID == "" {
 				if data.Stats == nil {
 					@objectsStatsDeferred(data.BranchID)
 				} else {
 					@objectsStatsSection(*data.Stats)
 				}
 			}
-			@objectsSearchForm(data)
+			if data.AgentID == "" {
+				@objectsSearchForm(data)
+			}
 			@objectsFilters(data)
-			@objectsKnowledge(data)
+			if data.AgentID == "" {
+				@objectsKnowledge(data)
+			}
 			if data.Query != "" {
 				@objectsSearchResults(data)
 			} else {
@@ -55,6 +69,18 @@ templ objectsHeader() {
 			New object
 		}
 	}
+}
+
+// objectsAgentHeader is the agent-scoped objects view's header: a breadcrumb
+// back through the agent, with the provenance-scoped subtitle.
+templ objectsAgentHeader(data objectsPageData) {
+	@detailHeader(
+		crumbsActive(nav.Crumbs("Agents", "/agents", data.AgentName, "/agents/"+url.PathEscape(data.AgentID), "Objects")),
+		"",
+		"Objects",
+		objectsScopeDescription(data.AgentName),
+		detailHeaderOpts{Margin: "mb-6"},
+	)
 }
 
 // objectsStatsSection renders the browse overview as a three-up stat row:
@@ -221,40 +247,107 @@ templ objectsSearchForm(data objectsPageData) {
 	</form>
 }
 
-// objectsFilters renders the type/branch filter dropdowns, preserving an active
-// query/mode via hidden inputs so filtering while searching doesn't drop it.
+// objectsFilters renders the browse filter bar: a provenance mode toggle
+// (Any / Created by / Updated by), an actor type + actor id pair, and the
+// type/branch dropdowns. An active query/mode is preserved via hidden inputs so
+// filtering while searching doesn't drop it.
+//
+// The provenance and actor controls are browse-only: the server's search
+// endpoints do not accept the actor filter, so they are hidden in search mode
+// rather than silently ignored.
+//
+// On the agent-scoped view the actor pair is fixed to the agent, so it rides
+// along as hidden inputs and the filter form posts back to the agent's route.
 templ objectsFilters(data objectsPageData) {
-	if len(data.Branches) > 0 || len(data.Types) > 0 {
-		<form class="mb-6 flex flex-wrap items-center gap-2" method="get" action="/objects">
-			<span class="text-muted-faint flex items-center gap-1.5">
-				@ui.IconSpan("lucide--sliders-horizontal", "size-3.5 shrink-0")
-				<span class="text-xs font-medium">Filter</span>
-			</span>
-			if data.Query != "" {
-				<input type="hidden" name="q" value={ data.Query }/>
-				<input type="hidden" name="mode" value={ data.Mode }/>
+	{{ scoped := data.AgentID != ""
+	action := "/objects"
+	if scoped {
+		action = "/agents/" + url.PathEscape(data.AgentID) + "/objects"
+	} }}
+	<form class="mb-6 flex flex-wrap items-center gap-2" method="get" action={ templ.URL(action) }>
+		<span class="text-muted-faint flex items-center gap-1.5">
+			@ui.IconSpan("lucide--sliders-horizontal", "size-3.5 shrink-0")
+			<span class="text-xs font-medium">Filter</span>
+		</span>
+		if data.Query != "" {
+			<input type="hidden" name="q" value={ data.Query }/>
+			<input type="hidden" name="mode" value={ data.Mode }/>
+		}
+		if scoped {
+			<input type="hidden" name="actor_type" value={ data.ActorType }/>
+			if data.ActorID != "" {
+				<input type="hidden" name="actor_id" value={ data.ActorID }/>
 			}
-			if len(data.Branches) > 0 {
-				<select name="branch" class="select select-bordered select-sm" onchange="this.form.submit()">
-					<option value="" selected?={ data.BranchID == "" }>Main branch</option>
-					for _, b := range data.Branches {
-						<option value={ b.ID } selected?={ b.ID == data.BranchID }>{ b.Name }</option>
-					}
-				</select>
+		}
+		if len(data.Branches) > 0 {
+			<select name="branch" class="select select-bordered select-sm" aria-label="Branch" onchange="this.form.submit()">
+				<option value="" selected?={ data.BranchID == "" }>Main branch</option>
+				for _, b := range data.Branches {
+					<option value={ b.ID } selected?={ b.ID == data.BranchID }>{ b.Name }</option>
+				}
+			</select>
+		}
+		if len(data.Types) > 0 {
+			<select name="type" class="select select-bordered select-sm" aria-label="Object type" onchange="this.form.submit()">
+				<option value="">All types</option>
+				for _, t := range data.Types {
+					<option value={ t } selected?={ t == data.TypeFilter }>{ t }</option>
+				}
+			</select>
+		}
+		if data.Query == "" {
+			@objectsProvenanceFilter(data)
+			if !scoped {
+				@objectsActorFilter(data)
 			}
-			if len(data.Types) > 0 {
-				<select name="type" class="select select-bordered select-sm" onchange="this.form.submit()">
-					<option value="">All types</option>
-					for _, t := range data.Types {
-						<option value={ t } selected?={ t == data.TypeFilter }>{ t }</option>
-					}
-				</select>
-			}
-			<noscript>
-				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Filter }
-			</noscript>
-		</form>
-	}
+		}
+		@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Apply }
+	</form>
+}
+
+// objectsProvenanceFilter is the "Created by / Updated by / Any" provenance
+// toggle: a joined group of radio buttons, each auto-submitting the filter form
+// on change so the list re-narrows without extra chrome. The labels are plain
+// (Any / Created by / Updated by) and never name a memory concept.
+templ objectsProvenanceFilter(data objectsPageData) {
+	<div class="join" role="group" aria-label="Provenance">
+		for _, m := range objectProvenanceModes() {
+			<label class={ "btn btn-sm join-item", templ.KV("btn-active", data.Provenance == m.Value) }>
+				<input
+					type="radio"
+					name="provenance"
+					value={ m.Value }
+					checked?={ data.Provenance == m.Value }
+					onchange="this.form.submit()"
+					class="sr-only"
+				/>
+				{ m.Label }
+			</label>
+		}
+	</div>
+}
+
+// objectsActorFilter narrows the browse list to one actor's provenance: an actor
+// type select (Any actor / User / Agent / System) and the actor's UUID. The pair
+// is submitted explicitly (the Apply button or Enter), not per keystroke, and the
+// filter only applies when both parts are present.
+templ objectsActorFilter(data objectsPageData) {
+	<select name="actor_type" class="select select-bordered select-sm" aria-label="Actor type">
+		<option value="" selected?={ data.ActorType == "" }>Any actor</option>
+		for _, t := range objectActorTypes {
+			<option value={ t } selected?={ t == data.ActorType }>{ actorTypeLabel(t) }</option>
+		}
+	</select>
+	<input
+		type="text"
+		name="actor_id"
+		value={ data.ActorID }
+		placeholder="Actor id (UUID)"
+		class="input input-bordered input-sm w-64 font-mono"
+		autocomplete="off"
+		spellcheck="false"
+		aria-label="Actor id"
+	/>
 }
 
 // objectsKnowledge renders the "Ask the graph" RAG Q&A box as a distinct card:
