@@ -32,6 +32,34 @@ type EmbeddingProgress struct {
 	Relationships EmbeddingQueueStats `json:"relationships"`
 }
 
+// EmbeddingCoverage carries the live-row embedding inventory for a single
+// queue: how many rows already hold a vector (Embedded), how many still await
+// one (Awaiting), and their live total. Rows are live (non-deleted) only.
+type EmbeddingCoverage struct {
+	Embedded int64 `json:"embedded"`
+	Awaiting int64 `json:"awaiting"`
+	Total    int64 `json:"total"`
+}
+
+// EmbeddingCoverageResponse is the response for GET /api/embeddings/coverage:
+// the embedding inventory per queue. Unlike the job counters it is not subject
+// to the terminal-row purge, so an idle, fully-embedded project still reads as
+// embedded rather than absent.
+type EmbeddingCoverageResponse struct {
+	Objects       EmbeddingCoverage `json:"objects"`
+	Relationships EmbeddingCoverage `json:"relationships"`
+}
+
+// TotalRows reports the combined live object and relationship row count.
+func (c EmbeddingCoverageResponse) TotalRows() int64 {
+	return c.Objects.Total + c.Relationships.Total
+}
+
+// AwaitingRows reports how many combined live rows still lack a vector.
+func (c EmbeddingCoverageResponse) AwaitingRows() int64 {
+	return c.Objects.Awaiting + c.Relationships.Awaiting
+}
+
 // EmbeddingWorkerStatus describes the running/paused state of a single worker.
 type EmbeddingWorkerStatus struct {
 	Running bool `json:"running"`
@@ -62,6 +90,15 @@ type EmbeddingStatus struct {
 func (m *MemoryClient) GetEmbeddingProgress(ctx context.Context) (*EmbeddingProgress, error) {
 	var out EmbeddingProgress
 	if err := m.doH(ctx, http.MethodGet, "/api/embeddings/progress", nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetEmbeddingCoverage fetches the per-queue embedding inventory.
+func (m *MemoryClient) GetEmbeddingCoverage(ctx context.Context) (*EmbeddingCoverageResponse, error) {
+	var out EmbeddingCoverageResponse
+	if err := m.doH(ctx, http.MethodGet, "/api/embeddings/coverage", nil, m.documentHeaders(ctx), &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -124,9 +161,14 @@ func embeddingProgressZero(p EmbeddingProgress) bool {
 
 // embeddingPageData carries everything the embeddings status page renders.
 //
-// Progress/Status carry the successful responses; ProgressErr/StatusErr carry
-// per-section fetch failures. The page renders each section independently so a
-// failure in one section (queue counts vs worker state) does not hide the other.
+// Progress/Status/Coverage carry the successful responses; ProgressErr/
+// StatusErr/CoverageErr carry per-section fetch failures. The page renders each
+// section independently so a failure in one section (queue counts vs worker
+// state vs coverage) does not hide the others.
+//
+// Empty means every queue counter is zero. The template resolves that case
+// against Coverage: coverageComplete distinguishes an idle, fully-embedded
+// project from one with no embedding data at all.
 //
 // EmbeddingModel/EmbeddingModelMissing carry the effective model config's
 // embedding state. Missing is true only when the config fetch succeeded and
@@ -135,12 +177,22 @@ func embeddingProgressZero(p EmbeddingProgress) bool {
 type embeddingPageData struct {
 	Progress    *EmbeddingProgress
 	Status      *EmbeddingStatus
+	Coverage    *EmbeddingCoverageResponse
 	ProgressErr error
 	StatusErr   error
+	CoverageErr error
 	Empty       bool
 
 	EmbeddingModel        string
 	EmbeddingModelMissing bool
+}
+
+// coverageComplete reports whether coverage positively shows no pending
+// embedding work: it is available, live rows exist, and none await a vector.
+// Nil or errored coverage is not evidence of completion.
+func (d embeddingPageData) coverageComplete() bool {
+	return d.CoverageErr == nil && d.Coverage != nil &&
+		d.Coverage.TotalRows() > 0 && d.Coverage.AwaitingRows() == 0
 }
 
 // uiEmbeddings renders the embeddings status/progress page.
@@ -150,14 +202,17 @@ func (s *Server) uiEmbeddings(c echo.Context) error {
 		progress *EmbeddingProgress
 		status   *EmbeddingStatus
 		modelCfg *EffectiveModelConfig
+		coverage *EmbeddingCoverageResponse
 		progErr  error
 		statErr  error
 		modelErr error
+		covErr   error
 	)
 	var g errgroup.Group
 	g.Go(func() error { progress, progErr = s.memory.GetEmbeddingProgress(ctx); return nil })
 	g.Go(func() error { status, statErr = s.memory.GetEmbeddingStatus(ctx); return nil })
 	g.Go(func() error { modelCfg, modelErr = s.memory.GetEffectiveModelConfig(ctx); return nil })
+	g.Go(func() error { coverage, covErr = s.memory.GetEmbeddingCoverage(ctx); return nil })
 	_ = g.Wait()
 
 	// Report failures to Sentry, but keep rendering: each section degrades
@@ -165,12 +220,15 @@ func (s *Server) uiEmbeddings(c echo.Context) error {
 	captureError(progErr)
 	captureError(statErr)
 	captureError(modelErr)
+	captureError(covErr)
 
 	data := embeddingPageData{
 		Progress:    progress,
 		Status:      status,
+		Coverage:    coverage,
 		ProgressErr: progErr,
 		StatusErr:   statErr,
+		CoverageErr: covErr,
 	}
 	if progErr == nil && (progress == nil || embeddingProgressZero(*progress)) {
 		data.Empty = true

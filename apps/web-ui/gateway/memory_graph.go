@@ -134,23 +134,49 @@ func (m *MemoryClient) ListGraphObjects(ctx context.Context, branchID, typeFilte
 	return out.Items, nil
 }
 
+// ObjectListParams narrows one page of graph objects. The zero value is the
+// newest page of every object on the main branch. ActorType, ActorID, and
+// Provenance mirror the server's actor_type / actor_id / provenance query
+// params on GET /api/graph/objects/search: the provenance filter always keys on
+// the (actor_type, actor_id) pair, and the server rejects actor_id without
+// actor_type, so ActorID is only sent alongside a non-empty ActorType.
+type ObjectListParams struct {
+	BranchID   string
+	TypeFilter string
+	Cursor     string
+	Limit      int
+	ActorType  string
+	ActorID    string
+	Provenance string
+}
+
 // ListGraphObjectsPage lists a single page of graph objects (most-recent-first),
-// cursor-paginated. Empty branchID omits the branch filter; empty typeFilter
-// omits the type filter. nextCursor is empty when there are no more pages.
-func (m *MemoryClient) ListGraphObjectsPage(ctx context.Context, branchID, typeFilter, cursor string, limit int) ([]GraphObject, string, error) {
+// cursor-paginated. Empty fields in p omit their filter. nextCursor is empty
+// when there are no more pages.
+func (m *MemoryClient) ListGraphObjectsPage(ctx context.Context, p ObjectListParams) ([]GraphObject, string, error) {
 	q := url.Values{}
-	q.Set("limit", strconv.Itoa(limit))
+	q.Set("limit", strconv.Itoa(p.Limit))
 	// The total is never read here, and the exact COUNT(*) is the endpoint's
 	// latency floor on large projects — skip it (#733).
 	q.Set("include_total", "false")
-	if typeFilter != "" {
-		q.Set("type", typeFilter)
+	if p.TypeFilter != "" {
+		q.Set("type", p.TypeFilter)
 	}
-	if cursor != "" {
-		q.Set("cursor", cursor)
+	if p.Cursor != "" {
+		q.Set("cursor", p.Cursor)
 	}
-	if branchID != "" {
-		q.Set("branch_id", branchID)
+	if p.BranchID != "" {
+		q.Set("branch_id", p.BranchID)
+	}
+	if p.ActorType != "" {
+		q.Set("actor_type", p.ActorType)
+		// actor_id requires actor_type; the server 400s on actor_id alone.
+		if p.ActorID != "" {
+			q.Set("actor_id", p.ActorID)
+		}
+	}
+	if p.Provenance != "" {
+		q.Set("provenance", p.Provenance)
 	}
 	var out struct {
 		Items      []GraphObject `json:"items"`

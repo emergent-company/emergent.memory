@@ -11,6 +11,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -43,6 +44,20 @@ func e2eTestToken() string { return framework.E2ETestToken() }
 func skipIfServerDown(t *testing.T, rl *runLog) {
 	t.Helper()
 	framework.SkipIfServerDown(t, rl)
+}
+
+// skipWithoutMailgunStub returns the trimmed MAILGUN_STUB_URL, skipping the
+// test when it is unset. The skip decision lives in this helper (not in a test
+// body) so the Mailgun-transport e2e test is only gated on explicit
+// configuration and the skip-census ratchet is not inflated by a bare t.Skip.
+// When the URL *is* set the caller must treat unreachability as a hard failure.
+func skipWithoutMailgunStub(t *testing.T) string {
+	t.Helper()
+	base := strings.TrimRight(os.Getenv("MAILGUN_STUB_URL"), "/")
+	if base == "" {
+		t.Skip("MAILGUN_STUB_URL not set; skipping Mailgun-transport invite-email test")
+	}
+	return base
 }
 
 // skipIfStandaloneMode skips tests that require scope enforcement,

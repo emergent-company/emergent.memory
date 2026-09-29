@@ -50,7 +50,8 @@ func TestGroupsOrderMatchesContract(t *testing.T) {
 	want := []string{
 		"search", "graph-read", "graph-write", "schema-read", "schema-write",
 		"schema-migrate", "branches", "journal", "documents", "skills", "agents",
-		"projects", "chat", "admin", "workspace-read", "workspace-exec", "web", "other",
+		"projects", "chat", "session", "admin", "workspace-read", "workspace-exec",
+		"web", "other",
 	}
 	if len(Groups) != len(want) {
 		t.Fatalf("len(Groups) = %d, want %d", len(Groups), len(want))
@@ -67,6 +68,30 @@ func TestGroupsOrderMatchesContract(t *testing.T) {
 		if g.Label == "" || g.Description == "" {
 			t.Errorf("group %q has empty label or description", g.ID)
 		}
+	}
+}
+
+func TestSessionGroupMembership(t *testing.T) {
+	found := false
+	for _, g := range Groups {
+		if g.ID == GroupSession {
+			found = true
+			if g.Label != "Session" {
+				t.Errorf("GroupSession label = %q, want %q", g.Label, "Session")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("GroupSession (%q) not found in Groups", GroupSession)
+	}
+	if got := GroupForScope("", "session-todo-list"); got != GroupSession {
+		t.Errorf("GroupForScope(\"\", \"session-todo-list\") = %q, want %q", got, GroupSession)
+	}
+	if got := GroupForScope("", "session-todo-update"); got != GroupSession {
+		t.Errorf("GroupForScope(\"\", \"session-todo-update\") = %q, want %q", got, GroupSession)
+	}
+	if got := GroupForTool("set_session_title"); got != GroupSession {
+		t.Errorf("GroupForTool(\"set_session_title\") = %q, want %q", got, GroupSession)
 	}
 }
 
@@ -178,6 +203,8 @@ func TestGroupForScope(t *testing.T) {
 		{"graph:write", "entity-delete", "graph-write"},
 		{"", "workspace_bash", "workspace-exec"},
 		{"", "web-fetch", "web"},
+		{"", "session-todo-list", "session"},
+		{"", "session-todo-update", "session"},
 		{"", "unknown-tool", "other"},
 		{"data:read", "whatever", "other"}, // umbrella scope, never a tool's RequiredScope
 		{"account:read", "account-key-list", "other"},

@@ -5,11 +5,12 @@ struct AgentRoute: Hashable {
     let agentName: String
 }
 
-/// A navigation destination pushed onto the level-1 agents stack: either an
-/// agent's second level or a session detail.
+/// A navigation destination pushed onto the level-1 agents stack: an agent's
+/// second level, a session detail, or an agent's object browser.
 enum AppRoute: Hashable {
     case agent(AgentRoute)
     case session(SessionRoute)
+    case objects(ObjectRoute)
 }
 
 /// Level 1: the two-tab root shell.
@@ -71,6 +72,8 @@ struct AppShellView: View {
                         agentDestination(r)
                     case let .session(r):
                         sessionDestination(r)
+                    case let .objects(objects):
+                        objectsDestination(objects)
                     }
                 }
         }
@@ -87,6 +90,12 @@ struct AppShellView: View {
     private func sessionDestination(_ route: SessionRoute) -> some View {
         Log.nav.info("push SessionDetailView \(route.room)")
         return SessionDetailView(room: route.room)
+    }
+
+    /// Logs the push, then builds the agent's object browser.
+    private func objectsDestination(_ route: ObjectRoute) -> some View {
+        Log.nav.info("push ObjectBrowserView \(route.agentName)")
+        return ObjectBrowserView(agentID: route.agentID, agentName: route.agentName)
     }
 
     /// Tab 2: connection settings plus the QR-auth entry point.

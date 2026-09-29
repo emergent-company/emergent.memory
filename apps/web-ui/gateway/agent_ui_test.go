@@ -68,7 +68,7 @@ func TestRenderAgentDashboard(t *testing.T) {
 		"web_search", "memory_lookup", "code_exec",
 		"Morning briefing", "Chat " + shortID("c2"),
 		`href="/chat?c=c1"`, `href="/chat?c=c2"`,
-		`href="/agents/a1/memories"`, "Memories",
+		`href="/agents/a1/objects"`, "Objects",
 		`href="/chat?agent=a1"`,
 	} {
 		if !strings.Contains(html, want) {
@@ -104,98 +104,10 @@ func TestRenderAgentDashboard(t *testing.T) {
 	}
 }
 
-func TestRenderMemoriesPage(t *testing.T) {
-	memories := []Memory{
-		{ID: "m1", Content: "prefers dark roast coffee", Category: "preference", Confidence: 0.92},
-		{ID: "m2", Content: "meeting with Sam on Tuesday", Category: "calendar_event", Confidence: 1},
-	}
-	html := renderHTML(t, MemoriesPage("a1", "diane", "", memories, nil, nil))
-	for _, want := range []string{
-		"Memories", "diane",
-		"prefers dark roast coffee", "preference", "92%",
-		"calendar_event", "100%",
-		`name="q"`, `href="/agents/a1"`,
-		`href="/agents/a1/memories?memory=m1"`,
-	} {
-		if !strings.Contains(html, want) {
-			t.Errorf("memories page missing %q", want)
-		}
-	}
-
-	// search form carries the active query; detail links preserve it
-	htmlSearch := renderHTML(t, MemoriesPage("a1", "diane", "dark", memories, nil, nil))
-	if !strings.Contains(htmlSearch, `value="dark"`) {
-		t.Error("search query not preserved in form")
-	}
-	if !strings.Contains(htmlSearch, `href="/agents/a1/memories?memory=m1&amp;q=dark"`) {
-		t.Error("detail link should preserve query")
-	}
-
-	// detail view shows full content + back-to-list link
-	sel := memories[0]
-	htmlDetail := renderHTML(t, MemoriesPage("a1", "diane", "dark", memories, &sel, nil))
-	if !strings.Contains(htmlDetail, "prefers dark roast coffee") || !strings.Contains(htmlDetail, "Back to list") {
-		t.Error("detail view missing content or back link")
-	}
-	if !strings.Contains(htmlDetail, `href="/agents/a1/memories?q=dark"`) {
-		t.Error("back-to-list link should preserve query")
-	}
-
-	// empty, no-match, and error states
-	htmlEmpty := renderHTML(t, MemoriesPage("a1", "diane", "", nil, nil, nil))
-	if !strings.Contains(htmlEmpty, "No memories yet") {
-		t.Error("empty state missing")
-	}
-	htmlNoMatch := renderHTML(t, MemoriesPage("a1", "diane", "zzz", nil, nil, nil))
-	if !strings.Contains(htmlNoMatch, "No matching memories") {
-		t.Error("no-match state missing")
-	}
-	htmlErr := renderHTML(t, MemoriesPage("a1", "diane", "", nil, nil, errTest))
-	if !strings.Contains(htmlErr, "Failed to load memories") {
-		t.Error("error state missing")
-	}
-}
-
-// TestRenderMemoryBadges covers the relevance/confidence badge rules in both
-// the list row and the detail view: a search result (Score > 0) shows the
-// match percentage, a list memory (Confidence > 0) shows confidence, and a
-// memory with neither shows no percentage badge at all.
-func TestRenderMemoryBadges(t *testing.T) {
-	searchHit := Memory{ID: "m1", Content: "dentist appointment", Category: "calendar_event", Score: 0.168}
-	listHit := Memory{ID: "m2", Content: "prefers dark roast", Category: "preference", Confidence: 0.92}
-	bare := Memory{ID: "m3", Content: "orphan note"}
-
-	// list row
-	htmlRow := renderHTML(t, MemoriesPage("a1", "diane", "dentist", []Memory{searchHit, listHit, bare}, nil, nil))
-	for _, want := range []string{"match 17%", "92%"} {
-		if !strings.Contains(htmlRow, want) {
-			t.Errorf("list row missing %q", want)
-		}
-	}
-	if strings.Contains(htmlRow, "match 92%") {
-		t.Error("confidence should not be rendered as a match badge")
-	}
-	if strings.Contains(htmlRow, "0%</span>") {
-		t.Error("bare memory must not render a bogus 0% badge")
-	}
-
-	// detail view
-	htmlDetail := renderHTML(t, MemoriesPage("a1", "diane", "dentist", []Memory{searchHit}, &searchHit, nil))
-	if !strings.Contains(htmlDetail, "match 17%") {
-		t.Error("detail view missing match badge")
-	}
-	if strings.Contains(htmlDetail, "0%</span>") {
-		t.Error("detail view must not render a bogus 0% badge")
-	}
-	htmlBare := renderHTML(t, MemoriesPage("a1", "diane", "", []Memory{bare}, &bare, nil))
-	if strings.Contains(htmlBare, "%</span>") {
-		t.Errorf("bare memory detail should render no percentage badge, got: %s", htmlBare)
-	}
-}
-
 // TestUIAgentRoutes exercises both UI routes against the fake backend:
-// dashboard data assembly (agent + filtered conversations) and the memories
-// subpage (search + detail), plus the unknown-agent error path.
+// dashboard data assembly (agent + filtered conversations) and the
+// agent-scoped objects subpage (provenance-prefiltered browse), plus the
+// unknown-agent error path.
 func TestUIAgentRoutes(t *testing.T) {
 	f := &fakeMemory{
 		defs: map[string]*AgentDefinition{
@@ -206,14 +118,15 @@ func TestUIAgentRoutes(t *testing.T) {
 			{ID: "c1", Title: "Briefing", AgentDefinitionID: "a1", UpdatedAt: "2026-08-26T09:00:00Z"},
 			{ID: "c2", Title: "Other agent's chat", AgentDefinitionID: "a2", UpdatedAt: "2026-08-26T10:00:00Z"},
 		},
-		memories: []Memory{
-			{ID: "m1", Content: "likes dark roast", Category: "preference", Confidence: 0.9},
+		pageObjects: []GraphObject{
+			{ID: "o1", CanonicalID: "o1", Type: "note", Key: "agent-note"},
 		},
+		nextPageCursor: "nc-2",
 	}
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
 	e.GET("/agents/:id", s.uiAgent)
-	e.GET("/agents/:id/memories", s.uiAgentMemories)
+	e.GET("/agents/:id/objects", s.uiAgentObjects)
 
 	// dashboard: agent summary + only its own conversations
 	rec := httptest.NewRecorder()
@@ -222,7 +135,7 @@ func TestUIAgentRoutes(t *testing.T) {
 		t.Fatalf("dashboard status %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"diane", "gpt-4o", "web_search", "Briefing", `/agents/a1/memories`} {
+	for _, want := range []string{"diane", "gpt-4o", "web_search", "Briefing", `/agents/a1/objects`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("dashboard route missing %q", want)
 		}
@@ -231,17 +144,24 @@ func TestUIAgentRoutes(t *testing.T) {
 		t.Error("dashboard should not list another agent's conversations")
 	}
 
-	// memories subpage: search + detail
+	// agent-scoped objects subpage: browser scoped to the agent's provenance
 	rec = httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/a1/memories?q=dark&memory=m1", nil))
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/a1/objects?provenance=updated", nil))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("memories status %d", rec.Code)
+		t.Fatalf("agent objects status %d", rec.Code)
 	}
 	body = rec.Body.String()
-	for _, want := range []string{"Memories for diane", "likes dark roast", "preference", "90%", "Back to list", `href="/agents/a1"`} {
+	for _, want := range []string{"agent-note", "Created by", "Updated by", "Any"} {
 		if !strings.Contains(body, want) {
-			t.Errorf("memories route missing %q", want)
+			t.Errorf("agent objects route missing %q", want)
 		}
+	}
+	// The route id IS the provenance actor id; the actor pair is fixed to agent.
+	if f.lastPageActorType != "agent" || f.lastPageActorID != "a1" {
+		t.Errorf("actor filter = %q/%q, want agent/a1", f.lastPageActorType, f.lastPageActorID)
+	}
+	if f.lastPageProvenance != "updated" {
+		t.Errorf("provenance = %q, want updated", f.lastPageProvenance)
 	}
 
 	// unknown agent id → whole-page error, not a broken render
@@ -1889,9 +1809,9 @@ func TestApplyAgentToolsSectionGroups(t *testing.T) {
 // TestRenderAgentSettingsToolGroups covers the source-first capability panel:
 // the top-level "Built-in" section, a collapsible header per capability group
 // with its enable switch + policy select, the group's member tools as direct
-// rows (no nested "builtin" server sub-group), inheritance hints on rows
-// without an override and the explicit value on rows with one, an "Other" group
-// for uncovered tools, and no header for a group with no member tools.
+// rows (no nested "builtin" server sub-group), the inherited value inlined into
+// each policy select's Inherit option, an "Other" group for uncovered tools,
+// and no header for a group with no member tools.
 func TestRenderAgentSettingsToolGroups(t *testing.T) {
 	data := agentSettingsData{
 		Section: "tools",
@@ -1930,8 +1850,8 @@ func TestRenderAgentSettingsToolGroups(t *testing.T) {
 		`data-testid="tool-group-enabled-graph-write"`,
 		`type="checkbox" name="tool" value="entity-create" class="toggle toggle-sm shrink-0" checked`,
 		`type="checkbox" name="tool" value="entity-delete"`,
-		"Override · Ask",               // entity-create has an explicit entry
-		"Inherits Graph · Write · Ask", // entity-delete has none
+		"Inherit (Ask)",     // graph-write's policy, shown inline on inheriting rows
+		"Inherit (Default)", // the agent default, shown on rows whose group inherits
 		"Web", `name="groupPolicy.web"`,
 		`type="checkbox" name="tool" value="web_search"`,
 		`data-testid="tool-group-other"`,
@@ -1940,6 +1860,11 @@ func TestRenderAgentSettingsToolGroups(t *testing.T) {
 		if !strings.Contains(html, want) {
 			t.Errorf("grouped tools page missing %q", want)
 		}
+	}
+	// the separate inheritance hint labels are gone: the Inherit option carries
+	// the value instead.
+	if strings.Contains(html, "Inherits ") || strings.Contains(html, "→ ") {
+		t.Error("the separate inheritance hint labels must be inlined into the policy select")
 	}
 	// the builtin server is no longer a nested sub-group: its tools render as
 	// direct rows inside their capability group.
@@ -2036,6 +1961,91 @@ func TestApplyAgentToolsSectionGroupsFullMembership(t *testing.T) {
 	})
 }
 
+// TestApplyAgentToolsSectionBanManagedTools covers the write-side reconciliation
+// of the ban-managed hidden builtin set_session_title when the Session group was
+// rendered: a submitted membership keeps the tool out of BannedTools; an absent
+// membership (row unchecked) adds it. In every case the builtin is stripped from
+// the allowed-tools whitelist — its enable state lives only in BannedTools.
+func TestApplyAgentToolsSectionBanManagedTools(t *testing.T) {
+	newServer := func(f *fakeMemory) *echo.Echo {
+		s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+		e := echo.New()
+		e.POST("/agents/:id/settings/tools", s.uiAgentUpdateTools)
+		return e
+	}
+	post := func(e *echo.Echo, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/agents/a1/settings/tools", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		e.ServeHTTP(rec, req)
+		return rec
+	}
+	def := func() *AgentDefinition {
+		return &AgentDefinition{
+			ID: "a1", Name: "diane",
+			Tools: []string{"session-todo-list"},
+			ToolGroups: []ToolGroup{{
+				ID: "session", Label: "Session", Enabled: true,
+				Tools: []string{"session-todo-list", "session-todo-update", "set_session_title"},
+			}},
+		}
+	}
+
+	t.Run("submitted tool is kept out of BannedTools", func(t *testing.T) {
+		f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": def()}}
+		// the Session group is rendered (groupWasEnabled.session) and the row is
+		// checked, so set_session_title is present in the submitted membership.
+		post(newServer(f), "tool=session-todo-list&tool=set_session_title&groupWasEnabled.session=true&groupEnabled.session=on")
+		u := f.updatedAgent
+		if containsString(u.BannedTools, "set_session_title") {
+			t.Errorf("a checked ban-managed tool must not be banned: %v", u.BannedTools)
+		}
+		if containsString(u.Tools, "set_session_title") {
+			t.Errorf("a checked ban-managed tool must not persist in Tools: %v", u.Tools)
+		}
+	})
+
+	t.Run("absent tool is added to BannedTools", func(t *testing.T) {
+		f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": def()}}
+		// row unchecked → no tool=set_session_title entry in the submitted form.
+		post(newServer(f), "tool=session-todo-list&groupWasEnabled.session=true&groupEnabled.session=on")
+		u := f.updatedAgent
+		if !containsString(u.BannedTools, "set_session_title") {
+			t.Errorf("an unchecked ban-managed tool must be banned: %v", u.BannedTools)
+		}
+		if containsString(u.Tools, "set_session_title") {
+			t.Errorf("a banned ban-managed tool must not persist in Tools: %v", u.Tools)
+		}
+	})
+
+	t.Run("enabling the Session group does not persist the builtin in Tools", func(t *testing.T) {
+		d := def()
+		d.Tools = nil
+		d.ToolGroups[0].Enabled = false
+		f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": d}}
+		// baseline off → switched on: the group fan-out appends every member,
+		// including the hidden builtin, to Tools; it must be stripped again.
+		post(newServer(f), "groupWasEnabled.session=false&groupEnabled.session=on")
+		u := f.updatedAgent
+		if containsString(u.Tools, "set_session_title") {
+			t.Errorf("group enable must not persist the ban-managed builtin in Tools: %v", u.Tools)
+		}
+		if containsString(u.BannedTools, "set_session_title") {
+			t.Errorf("enabling the group must leave the builtin un-banned: %v", u.BannedTools)
+		}
+	})
+
+	t.Run("no session group rendered leaves BannedTools untouched", func(t *testing.T) {
+		f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": def()}}
+		// a save from a panel without the Session group must not ban the tool.
+		post(newServer(f), "tool=session-todo-list")
+		u := f.updatedAgent
+		if containsString(u.BannedTools, "set_session_title") {
+			t.Errorf("without the Session group the ban state must be left untouched: %v", u.BannedTools)
+		}
+	})
+}
+
 // TestGroupWritePathIgnoresToolGroups asserts the write path never depends on
 // the read-only toolGroups field: with toolGroups populated, a save makes only
 // the intended Tools / ToolPolicies / BannedTools changes.
@@ -2093,7 +2103,7 @@ func TestSanitizeAgentWriteDropsToolGroups(t *testing.T) {
 // switch off and every member row unchecked (so it can be switched on), each
 // member renders exactly once and never leaks into Other, a banned-only member
 // still appears in its group, a relay tool renders in its own top-level source
-// block (not Other), and the inheritance hint stays visible at all widths.
+// block (not Other), and the inherited value is inlined into the policy select.
 func TestRenderAgentSettingsToolGroupsFullMembership(t *testing.T) {
 	data := agentSettingsData{
 		Section: "tools",
@@ -2164,12 +2174,66 @@ func TestRenderAgentSettingsToolGroupsFullMembership(t *testing.T) {
 		t.Errorf("relay tool rendered %d times, want 1", got)
 	}
 
-	// inheritance stays visible at all widths: compact form alongside the full one
-	if !strings.Contains(html, "→ Default") {
-		t.Error("compact inheritance hint should render for inherited rows")
+	// the inherited value is inlined into the Inherit option at all widths (no
+	// separate hint label): rows whose group inherits fall back to the default.
+	if !strings.Contains(html, "Inherit (Default)") {
+		t.Error("the Inherit option should carry the inherited value")
 	}
-	if !strings.Contains(html, "Inherits Graph · Write · Default") {
-		t.Error("full inheritance hint should render for inherited rows")
+	if strings.Contains(html, "Inherits ") || strings.Contains(html, "→ ") {
+		t.Error("the separate inheritance hint labels must be gone")
+	}
+}
+
+// TestRenderAgentSettingsSessionBanManagedRow covers the ban-managed hidden
+// builtin (set_session_title): its row maps to ban state (checked unless banned)
+// and carries no per-tool policy select, while its ordinary session-group
+// siblings keep theirs.
+func TestRenderAgentSettingsSessionBanManagedRow(t *testing.T) {
+	newData := func(banned bool) agentSettingsData {
+		var bannedTools []string
+		if banned {
+			bannedTools = []string{"set_session_title"}
+		}
+		return agentSettingsData{
+			Section: "tools",
+			Agent: &AgentDefinition{
+				ID: "a1", Name: "diane",
+				Tools:       []string{"session-todo-list"},
+				BannedTools: bannedTools,
+				ToolGroups: []ToolGroup{{
+					ID: "session", Label: "Session", Enabled: true,
+					Tools: []string{"session-todo-list", "session-todo-update", "set_session_title"},
+				}},
+			},
+			Agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+			MCPServers: []MCPServer{{Name: "builtin", Type: "builtin", ToolCount: 3, Tools: []MCPTool{
+				{ToolName: "session-todo-list"},
+				{ToolName: "session-todo-update"},
+				{ToolName: "set_session_title"},
+			}}},
+		}
+	}
+
+	html := renderHTML(t, AgentSettingsPage(newData(false)))
+	// not banned → the row renders checked (checked = not banned).
+	if !strings.Contains(html, `type="checkbox" name="tool" value="set_session_title" class="toggle toggle-sm shrink-0" checked`) {
+		t.Error("the set_session_title row must render checked when not banned")
+	}
+	// the ban-managed row carries no per-tool policy select ...
+	if strings.Contains(html, `name="toolPolicy.set_session_title"`) {
+		t.Error("the set_session_title row must render no per-tool policy select")
+	}
+	// ... while its ordinary session siblings keep theirs.
+	for _, sibling := range []string{"session-todo-list", "session-todo-update"} {
+		if !strings.Contains(html, `name="toolPolicy.`+sibling+`"`) {
+			t.Errorf("%s must keep its per-tool policy select", sibling)
+		}
+	}
+
+	// banned → the row renders unchecked.
+	bannedHTML := renderHTML(t, AgentSettingsPage(newData(true)))
+	if strings.Contains(bannedHTML, `value="set_session_title" class="toggle toggle-sm shrink-0" checked`) {
+		t.Error("the set_session_title row must render unchecked when banned")
 	}
 }
 
@@ -2461,16 +2525,14 @@ func TestGoldenToolGroupsFixtureContract(t *testing.T) {
 		t.Error("documents group policy select should show Ask")
 	}
 
-	// (c) an explicit per-tool override renders its own value; a tool without one
-	//     renders the inherited hint for its group.
-	for _, want := range []string{
-		"Override · Ask",                   // entity-create (README's per-tool entry)
-		"Override · Deny",                  // document-list overrides its ask group
-		"Inherits Documents · Ask",         // document-create inherits ask
-		"Inherits Graph · Write · Default", // entity-update inherits the graph-write group
-	} {
-		if !strings.Contains(html, want) {
-			t.Errorf("hint %q is missing from the rendered panel", want)
+	// (c) the inherited value is inlined into each policy select's Inherit
+	//     option; the separate hint labels are gone.
+	if !strings.Contains(html, "Inherit (") {
+		t.Error("the Inherit option must carry the inherited value")
+	}
+	for _, gone := range []string{"Override · ", "Inherits ", "→ Default"} {
+		if strings.Contains(html, gone) {
+			t.Errorf("removed hint text %q must not render", gone)
 		}
 	}
 

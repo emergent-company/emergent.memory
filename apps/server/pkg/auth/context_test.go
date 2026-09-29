@@ -3,6 +3,8 @@ package auth
 import (
 	"context"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestContextWithUser(t *testing.T) {
@@ -113,5 +115,76 @@ func TestInjectAuthContext_EmptyFields(t *testing.T) {
 	}
 	if oid := OrgIDFromContext(ctx); oid != "" {
 		t.Errorf("expected empty org ID, got %s", oid)
+	}
+}
+
+func TestWithActor(t *testing.T) {
+	ctx := context.Background()
+	id := uuid.New()
+
+	ctx = WithActor(ctx, "agent", &id)
+
+	actorType, actorID, ok := ActorFromContext(ctx)
+	if !ok {
+		t.Fatal("expected actor present, got ok=false")
+	}
+	if actorType != "agent" {
+		t.Errorf("expected actor type agent, got %s", actorType)
+	}
+	if actorID == nil || *actorID != id {
+		t.Errorf("expected actor id %s, got %v", id, actorID)
+	}
+}
+
+func TestWithActor_NilID(t *testing.T) {
+	ctx := context.Background()
+
+	ctx = WithActor(ctx, "system", nil)
+
+	actorType, actorID, ok := ActorFromContext(ctx)
+	if !ok {
+		t.Fatal("expected actor present, got ok=false")
+	}
+	if actorType != "system" {
+		t.Errorf("expected actor type system, got %s", actorType)
+	}
+	if actorID != nil {
+		t.Errorf("expected nil actor id, got %v", actorID)
+	}
+}
+
+func TestActorFromContext_Empty(t *testing.T) {
+	ctx := context.Background()
+
+	actorType, actorID, ok := ActorFromContext(ctx)
+	if ok {
+		t.Errorf("expected ok=false from empty context, got ok=true (%s, %v)", actorType, actorID)
+	}
+	if actorType != "" || actorID != nil {
+		t.Errorf("expected empty actor from empty context, got (%s, %v)", actorType, actorID)
+	}
+}
+
+// TestWithActor_Clear pins the "clear" semantics (issue: provenance followups):
+// WithActor(ctx, "", nil) shadows a parent's actor so ActorFromContext reports
+// no actor — a delegated run whose definition is unresolvable falls back rather
+// than inheriting the parent agent.
+func TestWithActor_Clear(t *testing.T) {
+	parentID := uuid.New()
+	ctx := WithActor(context.Background(), "agent", &parentID)
+
+	// Sanity: the parent actor is present before clearing.
+	if _, _, ok := ActorFromContext(ctx); !ok {
+		t.Fatal("expected parent actor present before clear")
+	}
+
+	// Clear via an empty actor type.
+	ctx = WithActor(ctx, "", nil)
+	actorType, actorID, ok := ActorFromContext(ctx)
+	if ok {
+		t.Errorf("expected ok=false after clear, got ok=true (%s, %v)", actorType, actorID)
+	}
+	if actorType != "" || actorID != nil {
+		t.Errorf("expected empty actor after clear, got (%s, %v)", actorType, actorID)
 	}
 }

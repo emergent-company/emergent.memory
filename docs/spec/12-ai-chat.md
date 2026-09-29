@@ -125,11 +125,23 @@ Use only daisyUI components and Tailwind utilities per our styling rules. Below 
 - Typing/streaming indicator:
   - `loading loading-dots loading-sm` shown inside a small bubble or below the composer.
 - Citations inside assistant message:
-  - Use `collapse collapse-arrow` with `collapse-title` (e.g., “Sources (3)”) and `collapse-content` for per-source list.
-  - Each source row can include:
-    - `badge badge-info` for the source label (e.g., document filename)
-    - `link link-primary` to open the source (if URL exists)
-    - Use `divider` between citations if content is long
+  - Render sources as a footer INSIDE the assistant `.chat-bubble`, after the
+    markdown — never as a separate `chat chat-start` message row. It must read
+    as agent-side content and must not distort the assistant bubble.
+  - Use a collapsed `collapse collapse-arrow` `<details>` (summary
+    “N sources”, singular “1 source”) with `collapse-content` for the
+    per-source list. Collapsed by default.
+  - Each source renders as one compact, linkable box in the spirit of the
+    entity row (see `extractedObjectRow`): the source name plus a human type
+    badge. The raw schema type name is never shown; use the compiled type's
+    `label` (e.g. `LegalParagraph` → “Legal paragraph”), falling back to a
+    humanized type name. The type map (`name → {label,icon,color}`) is embedded
+    in the shell as `<script type="application/json" id="memory-object-types">`.
+  - The same row renderer is shared by live streaming, history replay, the side
+    panel, and the A2UI `sources` card.
+  - Source names/types are untrusted: set them with `textContent`, never
+    `innerHTML`; only link when the citation resolves to a safe
+    `/objects/<uuid>` (or a UUID `id`).
 - Message actions:
   - `btn btn-xs btn-ghost` actions (Copy, Regenerate, Stop)
   - Icons via Iconify: `<span class="iconify lucide--copy"></span>`, `lucide--rotate-ccw`, `lucide--square`.

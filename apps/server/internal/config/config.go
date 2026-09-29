@@ -438,6 +438,11 @@ type EmailConfig struct {
 	WorkerBatchSize int `env:"EMAIL_WORKER_BATCH_SIZE" envDefault:"10"`
 	// MailgunRegion is the Mailgun region ("us" or "eu", default: "us")
 	MailgunRegion string `env:"MAILGUN_REGION" envDefault:"us"`
+	// MailgunAPIBase overrides the Mailgun API base URL (the value passed to the
+	// Mailgun SDK's SetAPIBase, including the /v3 path segment). When empty the
+	// SDK default is used, or the EU base when MailgunRegion is "eu". This is
+	// used by the e2e harness to point the Mailgun transport at a local stub.
+	MailgunAPIBase string `env:"MAILGUN_API_BASE" envDefault:""`
 	// Transport selects the email transport ("mailgun" or "smtp", default: "mailgun")
 	Transport string `env:"EMAIL_TRANSPORT" envDefault:"mailgun"`
 	// SMTPHost is the SMTP server host

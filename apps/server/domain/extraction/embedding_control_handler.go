@@ -230,6 +230,22 @@ type EmbeddingProgressResponse struct {
 	Relationships EmbeddingQueueStats `json:"relationships"`
 }
 
+// EmbeddingCoverage describes embedding coverage for a single queue: how many
+// live graph rows already hold an embedding vector (embedded) versus how many
+// are still awaiting one (awaiting). Total is the live row count
+// (embedded + awaiting) and never includes deleted rows.
+type EmbeddingCoverage struct {
+	Embedded int64 `json:"embedded"`
+	Awaiting int64 `json:"awaiting"`
+	Total    int64 `json:"total"`
+}
+
+// EmbeddingCoverageResponse is the response for GET /api/embeddings/coverage.
+type EmbeddingCoverageResponse struct {
+	Objects       EmbeddingCoverage `json:"objects"`
+	Relationships EmbeddingCoverage `json:"relationships"`
+}
+
 // Progress returns per-queue embedding job statistics, project-scoped when a
 // project context is present. A caller with no project context may only obtain
 // the deployment-wide view when they hold an active superadmin_full grant;
@@ -332,6 +348,97 @@ func embeddingProgressResponse(objStats *GraphEmbeddingQueueStats, relStats *Gra
 			StaleFailed: relStats.StaleFailed,
 			DeadLetter:  relStats.DeadLetter,
 		},
+	}
+}
+
+// Coverage returns per-queue embedding coverage (embedded / awaiting / total
+// live rows), project-scoped when a project context is present. A caller with no
+// project context may only obtain the deployment-wide view when they hold an
+// active superadmin_full grant; otherwise the request is refused — the same
+// authorization posture as Progress (issue #940).
+// @Summary      Get embedding coverage
+// @Description  Returns embedded/awaiting/total counts for live graph objects and relationships. Project-scoped for a caller with project context; deployment-wide requires an active superadmin_full grant.
+// @Tags         embeddings
+// @Produce      json
+// @Success      200  {object}  EmbeddingCoverageResponse
+// @Router       /api/embeddings/coverage [get]
+func (h *EmbeddingControlHandler) Coverage(c echo.Context) error {
+	ctx := c.Request().Context()
+	user := auth.MustGetUser(c)
+
+	projectID := user.APITokenProjectID
+	if projectID == "" {
+		projectID = user.ProjectID
+	}
+
+	if projectID == "" {
+		isSuperadmin, err := auth.IsSuperadminFull(ctx, h.objectJobsSvc.DB())
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
+		if !isSuperadmin {
+			return c.JSON(http.StatusForbidden, map[string]any{
+				"error": "superadmin privilege required for deployment-wide embedding coverage",
+			})
+		}
+		return h.coverageGlobal(ctx, c)
+	}
+	return h.coverageByProject(ctx, c, projectID)
+}
+
+// coverageByProject returns embedding coverage scoped to a single project.
+func (h *EmbeddingControlHandler) coverageByProject(ctx context.Context, c echo.Context, projectID string) error {
+	// The two per-queue counts are independent; run both concurrently instead of
+	// serially (same shape as progressByProject).
+	var (
+		objCov *EmbeddingCoverage
+		relCov *EmbeddingCoverage
+		objErr error
+		relErr error
+	)
+	var g errgroup.Group
+	g.Go(func() error { objCov, objErr = h.objectJobsSvc.CoverageByProject(ctx, projectID); return nil })
+	g.Go(func() error { relCov, relErr = h.relJobsSvc.CoverageByProject(ctx, projectID); return nil })
+	_ = g.Wait()
+
+	if objErr != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": objErr.Error()})
+	}
+	if relErr != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": relErr.Error()})
+	}
+	return c.JSON(http.StatusOK, embeddingCoverageResponse(objCov, relCov))
+}
+
+// coverageGlobal returns the deployment-wide embedding coverage. Callers must
+// have already been authorized (superadmin_full) by the Coverage handler.
+func (h *EmbeddingControlHandler) coverageGlobal(ctx context.Context, c echo.Context) error {
+	var (
+		objCov *EmbeddingCoverage
+		relCov *EmbeddingCoverage
+		objErr error
+		relErr error
+	)
+	var g errgroup.Group
+	g.Go(func() error { objCov, objErr = h.objectJobsSvc.Coverage(ctx); return nil })
+	g.Go(func() error { relCov, relErr = h.relJobsSvc.Coverage(ctx); return nil })
+	_ = g.Wait()
+
+	if objErr != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": objErr.Error()})
+	}
+	if relErr != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": relErr.Error()})
+	}
+	return c.JSON(http.StatusOK, embeddingCoverageResponse(objCov, relCov))
+}
+
+// embeddingCoverageResponse folds object and relationship coverage into the wire
+// shape shared by the project-scoped and global coverage paths.
+func embeddingCoverageResponse(objCov, relCov *EmbeddingCoverage) EmbeddingCoverageResponse {
+	return EmbeddingCoverageResponse{
+		Objects:       *objCov,
+		Relationships: *relCov,
 	}
 }
 

@@ -10,11 +10,14 @@ import (
 // --- Embeddings status/progress ---
 
 // EmbeddingsPage renders the embedding pipeline status: per-queue job counts,
-// worker running/paused state, and the active configuration. Each section
-// degrades independently: a failed progress fetch renders an error for the
-// queue section (leaving the worker section intact), a failed status fetch
-// renders an error for the worker section (leaving the queue section intact),
-// and empty (all-zero) queues render a "no statistics yet" state.
+// the live embedding coverage, worker running/paused state, and the active
+// configuration. Each section degrades independently: a failed progress fetch
+// renders an error for the queue section (leaving the worker section intact), a
+// failed status fetch renders an error for the worker section (leaving the
+// queue section intact), and a failed coverage fetch renders a coverage-only
+// error. An all-zero queue renders the "no statistics yet" state, unless
+// coverage shows live rows that are all embedded — then it reads as no
+// pending embedding work instead.
 templ EmbeddingsPage(data embeddingPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@embeddingsHeader(data.ProgressErr == nil && data.StatusErr == nil)
@@ -24,9 +27,18 @@ templ EmbeddingsPage(data embeddingPageData) {
 		if data.ProgressErr != nil {
 			@pageError("Failed to load embedding statistics", data.ProgressErr)
 		} else if data.Empty {
-			@embeddingsEmpty()
+			if data.coverageComplete() {
+				@embeddingsComplete(data.Coverage)
+			} else {
+				@embeddingsEmpty()
+			}
 		} else {
 			@queueCountsSection(data.Progress)
+		}
+		if data.CoverageErr != nil {
+			@coverageSectionError(data.CoverageErr)
+		} else if data.Coverage != nil {
+			@coverageSection(data.Coverage)
 		}
 		if data.StatusErr != nil {
 			@workerStateError(data.StatusErr)
@@ -77,7 +89,8 @@ templ embeddingsModelWarning() {
 
 // embeddingsEmpty is the "no statistics yet" state: the queue counters are all
 // zero (or unavailable), so the page shows a single clear message instead of a
-// row of zeroes.
+// row of zeroes. It is also the fallback when coverage is unavailable or
+// reports no live rows.
 templ embeddingsEmpty() {
 	@ui.EmptyState(ui.EmptyStateProps{
 		Icon:        "lucide--scan-line",
@@ -85,7 +98,68 @@ templ embeddingsEmpty() {
 		Description: "Once objects and relationships flow through the embedding pipeline, queue counts will show up here.",
 		Bordered:    true,
 		Class:       "py-12",
+		Attrs:       templ.Attributes{"data-testid": "embeddings-empty"},
 	})
+}
+
+// embeddingsComplete is the queue empty state for an idle, fully-embedded
+// project: every live row holds a vector and no queue work is pending, so the
+// all-zero counters are explained rather than left reading as "no data". It
+// names the embedded object and relationship counts.
+templ embeddingsComplete(c *EmbeddingCoverageResponse) {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon: "lucide--check",
+		Title: "No embedding work pending",
+		Description: groupDigits(c.Objects.Embedded) + " objects and " + groupDigits(c.Relationships.Embedded) +
+			" relationships hold embeddings. Completed embedding jobs are removed after a retention window, so the queue counters read zero.",
+		Bordered: true,
+		Class:    "py-12",
+		Attrs:    templ.Attributes{"data-testid": "embeddings-complete"},
+	})
+}
+
+// coverageSection renders the embedding inventory per queue: live rows that
+// already hold a vector, rows still awaiting one, and their total. Unlike the
+// job counters above it is not subject to the terminal-row purge, so an idle
+// project that is fully embedded still shows its vectors here.
+templ coverageSection(c *EmbeddingCoverageResponse) {
+	<div class="mb-6" data-testid="embeddings-coverage">
+		@ui.Section("Coverage", ui.SectionProps{BodyClass: "memory-density-comfortable"}) {
+			<div class="flex flex-col gap-5">
+				@coverageQueueRow("objects", "Objects", c.Objects)
+				@coverageQueueRow("relationships", "Relationships", c.Relationships)
+			</div>
+		}
+	</div>
+}
+
+// coverageQueueRow renders one queue's embedded/awaiting/total counts as stat
+// cards under a small queue label.
+templ coverageQueueRow(queue, title string, cov EmbeddingCoverage) {
+	<div>
+		@ui.Eyebrow(title, ui.EyebrowProps{Size: "text-[11px]", Margin: "mb-2"})
+		@statRow([]ui.StatCardProps{
+			{Label: "Embedded", Value: groupDigits(cov.Embedded), Icon: "lucide--check", IconColor: "bg-success/10 text-success", Attrs: templ.Attributes{"data-testid": "coverage-" + queue + "-embedded"}},
+			{Label: "Awaiting", Value: groupDigits(cov.Awaiting), Icon: "lucide--clock", IconColor: "bg-warning/10 text-warning", Attrs: templ.Attributes{"data-testid": "coverage-" + queue + "-awaiting"}},
+			{Label: "Total", Value: groupDigits(cov.Total), Icon: "lucide--layers", IconColor: "bg-base-200/60 text-base-content", Attrs: templ.Attributes{"data-testid": "coverage-" + queue + "-total"}},
+		}, "")
+	</div>
+}
+
+// coverageSectionError renders the Coverage section's failure state as an
+// inline error, so the queue and worker sections stay usable when only the
+// coverage endpoint failed.
+templ coverageSectionError(err error) {
+	<div class="mb-6" data-testid="embeddings-coverage-error">
+		@ui.Section("Coverage", ui.SectionProps{BodyClass: "memory-density-comfortable"}) {
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertError,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--alert-triangle",
+				Message: err.Error(),
+			})
+		}
+	</div>
 }
 
 // queueCountsSection renders the object and relationship queue counters as two
