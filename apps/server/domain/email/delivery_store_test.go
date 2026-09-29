@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/internal/testdb"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
 func connectEmailTestDB(t *testing.T) *bun.DB {
@@ -154,8 +156,10 @@ func TestDeliveryStore_ComplaintAndUnmatchedEvent(t *testing.T) {
 	require.False(t, jobRef.Valid, "unmatched event records a null job id")
 }
 
-// The full webhook path: a validly signed request is accepted with 200 and a
-// retry is accepted again without double-applying.
+// The full webhook path: a validly signed request is accepted with 200; a
+// Mailgun retry that re-signs with a fresh timestamp+token is accepted again
+// without double-applying; replaying the original envelope (same token) is
+// rejected as a replay.
 func TestMailgunWebhook_EndToEndAcceptsVerifiedSignature(t *testing.T) {
 	db := connectEmailTestDB(t)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -164,12 +168,11 @@ func TestMailgunWebhook_EndToEndAcceptsVerifiedSignature(t *testing.T) {
 
 	jobID := seedSentJob(t, db, "<msg-1@example.com>")
 
-	const ts = "1700000000"
-	const token = "tok"
-	payload := buildWebhookPayload(t, signMailgunBody(cfg.MailgunSigningKey, ts, token), ts, token, "evt-e2e")
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
 
-	send := func() *httptest.ResponseRecorder {
+	send := func(token string) *httptest.ResponseRecorder {
 		t.Helper()
+		payload := buildWebhookPayload(t, signMailgunBody(cfg.MailgunSigningKey, ts, token), ts, token, "evt-e2e")
 		e := echo.New()
 		req := httptest.NewRequest(http.MethodPost, "/api/webhooks/mailgun", strings.NewReader(payload))
 		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
@@ -179,12 +182,25 @@ func TestMailgunWebhook_EndToEndAcceptsVerifiedSignature(t *testing.T) {
 		return rec
 	}
 
-	require.Equal(t, http.StatusOK, send().Code)
+	require.Equal(t, http.StatusOK, send("tok-e2e-1").Code)
 	status, _ := jobDeliveryStatus(t, db, jobID)
 	require.Equal(t, "bounced", status)
 
-	require.Equal(t, http.StatusOK, send().Code, "retry is acknowledged so Mailgun stops retrying")
+	// Mailgun retries the same event id with a fresh signature token; the event
+	// is acknowledged again but not re-applied.
+	require.Equal(t, http.StatusOK, send("tok-e2e-2").Code, "retry is acknowledged so Mailgun stops retrying")
 	require.Equal(t, 1, countEmailLogs(t, db, "evt-e2e"), "retry does not double-apply")
+
+	// Replaying the original envelope (same token) is refused.
+	rec := httptest.NewRecorder()
+	replayPayload := buildWebhookPayload(t, signMailgunBody(cfg.MailgunSigningKey, ts, "tok-e2e-1"), ts, "tok-e2e-1", "evt-e2e")
+	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/mailgun", strings.NewReader(replayPayload))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	err := h.Handle(echo.New().NewContext(req, rec))
+	require.Error(t, err)
+	statusCode, _ := apperror.ToHTTPError(err)
+	require.Equal(t, http.StatusUnauthorized, statusCode)
+	require.Equal(t, 1, countEmailLogs(t, db, "evt-e2e"), "replay adds no log row")
 }
 
 // A synthetic id is derived when Mailgun omits the event id, and it is stable so

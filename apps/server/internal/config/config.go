@@ -424,6 +424,21 @@ type EmailConfig struct {
 	// verify the HMAC signature on the public delivery webhook; when unset, the
 	// webhook rejects every request (fail closed).
 	MailgunSigningKey string `env:"MAILGUN_SIGNING_KEY" envDefault:""`
+	// MailgunWebhookTolerance is the maximum age (and future skew) accepted for
+	// a webhook signature timestamp. Mailgun's HMAC binds only timestamp+token,
+	// not the body, so a timestamp outside this window is rejected as a replay.
+	// Default: 5m.
+	MailgunWebhookTolerance time.Duration `env:"MAILGUN_WEBHOOK_TOLERANCE" envDefault:"5m"`
+	// MailgunWebhookRatePerMin caps webhook requests per client IP per minute.
+	// Default: 120.
+	MailgunWebhookRatePerMin int `env:"MAILGUN_WEBHOOK_RATE_PER_MIN" envDefault:"120"`
+	// MailgunWebhookRateBurst is the per-IP burst allowance. Default: 40.
+	MailgunWebhookRateBurst int `env:"MAILGUN_WEBHOOK_RATE_BURST" envDefault:"40"`
+	// MailgunWebhookGlobalRatePerMin caps total webhook requests per minute
+	// across all client IPs, backstopping a spoofed X-Forwarded-For. Default: 1200.
+	MailgunWebhookGlobalRatePerMin int `env:"MAILGUN_WEBHOOK_GLOBAL_RATE_PER_MIN" envDefault:"1200"`
+	// MailgunWebhookGlobalRateBurst is the global burst allowance. Default: 300.
+	MailgunWebhookGlobalRateBurst int `env:"MAILGUN_WEBHOOK_GLOBAL_RATE_BURST" envDefault:"300"`
 	// FromEmail is the default from email address
 	FromEmail string `env:"EMAIL_FROM_ADDRESS" envDefault:"noreply@example.com"`
 	// FromName is the default from name
