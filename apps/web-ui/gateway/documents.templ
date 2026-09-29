@@ -43,7 +43,7 @@ templ uploadForm(flashMsg string, flashErr error) {
 	<div class="mb-6">
 		@flashToasts(flashMsg, flashErr)
 		@components.PanelCard("", nil) {
-			<form method="post" action="/documents" enctype="multipart/form-data" class="flex flex-wrap items-center gap-3">
+			<form method="post" action="/documents" enctype="multipart/form-data" data-document-upload class="flex flex-wrap items-center gap-3">
 				<input type="file" name="file" class="file-input file-input-bordered file-input-sm grow"/>
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeSubmit,
@@ -56,6 +56,24 @@ templ uploadForm(flashMsg string, flashErr error) {
 			</form>
 			<p class="text-muted-faint mt-3 text-xs">Single file up to 10 MB. Text-based files chunk and extract best.</p>
 		}
+		<script>
+		// Clicking Upload with no file chosen opens the file picker instead of
+		// posting an empty multipart form (which the API rejects with a 400).
+		// Delegated from document so it survives htmx-boosted navigations; the
+		// one-shot guard keeps it from stacking listeners across visits.
+		if (!window.__documentsUploadInit) {
+			window.__documentsUploadInit = true;
+			document.addEventListener('submit', function (event) {
+				var form = event.target;
+				if (!form || !form.matches('[data-document-upload]')) return;
+				var input = form.querySelector('input[type="file"]');
+				if (input && input.files && input.files.length === 0) {
+					event.preventDefault();
+					input.click();
+				}
+			});
+		}
+		</script>
 	</div>
 }
 

@@ -486,6 +486,21 @@ func TestRenderDocumentsPage(t *testing.T) {
 	}
 }
 
+// TestRenderDocumentsUploadPicker pins the upload-form contract: the form is
+// tagged for the picker wiring, and the page ships the script that opens the
+// file dialog when Upload is pressed with no file chosen.
+func TestRenderDocumentsUploadPicker(t *testing.T) {
+	html := renderHTML(t, DocumentsPage(nil, "", nil, "", nil))
+	for _, want := range []string{
+		`data-document-upload`, `enctype="multipart/form-data"`, `name="file"`,
+		`__documentsUploadInit`, `form.matches('[data-document-upload]')`, `input.click()`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("upload picker wiring missing %q", want)
+		}
+	}
+}
+
 func TestRenderDocumentDetailPage(t *testing.T) {
 	doc := &Document{ID: "d1", Filename: "Spec.md", Chunks: 2, ExtractionStatus: "completed", ObjectsCreated: 15}
 	chunks := []Chunk{
