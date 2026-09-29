@@ -723,6 +723,11 @@ func (w *ObjectExtractionWorker) persistResults(
 		return nil, fmt.Errorf("parse job id: %w", err)
 	}
 
+	// Extraction writes are system-originated: stamp the system actor so the
+	// objects/relationships this job persists are attributed to `system` (NULL
+	// actor_id) rather than any HTTP principal (issue #1193).
+	ctx = auth.WithActor(ctx, graph.ActorSystem, nil)
+
 	// Map temp_id -> created object ID
 	tempIDToObjectID := make(map[string]uuid.UUID)
 	createdObjectIDs := make([]string, 0)
@@ -824,7 +829,7 @@ func (w *ObjectExtractionWorker) persistResults(
 			DstID:      dstID,
 			Properties: properties,
 			BranchID:   stagingBranchID,
-		})
+		}, nil)
 		if err != nil {
 			w.log.Warn("failed to create relationship",
 				slog.String("type", rel.Type),

@@ -32,7 +32,7 @@ templ APITokensPage(data apiTokensPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "API Tokens")), "", "API Tokens", "Scoped tokens that let programs act as this project without a browser session.", detailHeaderOpts{Margin: "mb-6"}) {
 			if data.LoadErr == nil {
-				@countBadge(len(data.Tokens), "token", "lucide--key-round")
+				@countBadge(apiTokenActiveCount(data.Tokens), "token", "lucide--key-round")
 				@apiTokenNewTokenLink("/settings/tokens")
 			}
 		}
@@ -49,7 +49,7 @@ templ AccountTokensPage(data apiTokensPageData) {
 		@pageHeader("Account", "API tokens", "Account tokens act as you across every project you can access — use them for personal scripts and tools that keep working wherever you log in.") {
 			if data.LoadErr == nil {
 				<div class="flex items-center gap-2">
-					@countBadge(len(data.Tokens), "token", "lucide--key-round")
+					@countBadge(apiTokenActiveCount(data.Tokens), "token", "lucide--key-round")
 					@apiTokenNewTokenLink("/profile/tokens")
 				</div>
 			}
@@ -102,13 +102,17 @@ templ apiTokenListState(actionBase string, data apiTokensPageData, emptyTitle, e
 	}
 }
 
-// apiTokenTable renders the shared token table: one row per token with name
-// (and a "Revoked" badge when revoked), mono prefix, one composed AREA badge
-// per scope area the token holds scopes in, created / last-used times, and —
-// for live tokens only — the regenerate / edit / revoke actions. A surface with
-// no tokens renders its empty state with a "New token" CTA. Never includes
-// plaintext values.
+// apiTokenTable renders the shared token list: the active tokens as the primary
+// table, plus — when any exist — the revoked tokens in a SECOND table inside a
+// collapsed disclosure. One row per token with name (and a "Revoked" badge when
+// revoked), mono prefix, one composed AREA badge per scope area the token holds
+// scopes in, created / last-used times, and — for live tokens only — the
+// regenerate / edit / revoke actions. With no tokens at all it renders the
+// surface's empty state with a "New token" CTA; with only revoked tokens it
+// renders a "no active tokens" state that still exposes the revoked disclosure.
+// Never includes plaintext values.
 templ apiTokenTable(tokens []APIToken, actionBase, emptyTitle, emptyDesc string) {
+	{{ active, revoked := apiTokenPartition(tokens) }}
 	if len(tokens) == 0 {
 		@ui.EmptyState(ui.EmptyStateProps{
 			Icon:        "lucide--key-round",
@@ -121,28 +125,77 @@ templ apiTokenTable(tokens []APIToken, actionBase, emptyTitle, emptyDesc string)
 			ActionIcon:  "lucide--plus",
 		})
 	} else {
-		@components.TableCard(nil) {
-			<div class="overflow-x-auto">
-				<table class="table table-sm">
-					<thead>
-						<tr>
-							<th>Name</th>
-							<th>Prefix</th>
-							<th>Scopes</th>
-							<th>Created</th>
-							<th>Last used</th>
-							<th class="text-right">Actions</th>
-						</tr>
-					</thead>
-					<tbody>
-						for _, t := range tokens {
-							@apiTokenRowContent(t, actionBase)
-						}
-					</tbody>
-				</table>
+		if len(active) == 0 {
+			@ui.EmptyState(ui.EmptyStateProps{
+				Icon:        "lucide--key-round",
+				Title:       "No active tokens",
+				Description: "Every token here has been revoked. Create a new token to replace it.",
+				Bordered:    true,
+				Class:       "py-12",
+				ActionHref:  actionBase + "/new",
+				ActionLabel: "New token",
+				ActionIcon:  "lucide--plus",
+			})
+		} else {
+			@components.TableCard(nil) {
+				<div class="overflow-x-auto">
+					@apiTokenRowsTable(active, actionBase)
+				</div>
+			}
+		}
+		if len(revoked) > 0 {
+			<div class="mt-6">
+				@apiTokenRevokedSection(revoked, actionBase)
 			</div>
 		}
 	}
+}
+
+// apiTokenRowsTable is the shared token table markup (header columns + one row
+// per token via apiTokenRowContent) used by both the primary active table and
+// the collapsed revoked table.
+templ apiTokenRowsTable(rows []APIToken, actionBase string) {
+	<table class="table table-sm">
+		<thead>
+			<tr>
+				<th>Name</th>
+				<th>Prefix</th>
+				<th>Scopes</th>
+				<th>Created</th>
+				<th>Last used</th>
+				<th class="text-right">Actions</th>
+			</tr>
+		</thead>
+		<tbody>
+			for _, t := range rows {
+				@apiTokenRowContent(t, actionBase)
+			}
+		</tbody>
+	</table>
+}
+
+// apiTokenRevokedSection renders the revoked tokens in their own table inside a
+// ui.Disclosure that is COLLAPSED BY DEFAULT (Open is never set). The summary
+// carries a "Revoked" label and the revoked count; the body reuses the shared
+// row component, so revoked rows keep their badge and show "—" for actions.
+templ apiTokenRevokedSection(revoked []APIToken, actionBase string) {
+	@ui.Disclosure(ui.DisclosureProps{
+		Attrs:        templ.Attributes{"data-testid": "revoked-tokens-section"},
+		SummaryAttrs: templ.Attributes{"data-testid": "revoked-tokens-toggle"},
+	}, apiTokenRevokedSummary(), countBadge(len(revoked), "token", "lucide--key-round")) {
+		<div class="overflow-x-auto">
+			@apiTokenRowsTable(revoked, actionBase)
+		</div>
+	}
+}
+
+// apiTokenRevokedSummary is the collapsed disclosure's summary label block: a
+// ban icon and the plain "Revoked" label, sitting beside the revoked count.
+templ apiTokenRevokedSummary() {
+	<div class="flex min-w-0 items-center gap-2.5">
+		@ui.IconSpan("lucide--ban", "size-4 shrink-0 text-muted-faint")
+		<span class="truncate text-sm font-medium">Revoked</span>
+	</div>
 }
 
 // apiTokenRowContent is one token in the shared table: name + revocation

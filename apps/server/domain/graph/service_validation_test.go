@@ -170,7 +170,7 @@ func TestService_CreateRelationship_Validation(t *testing.T) {
 			Type:  "ANY_REL",
 			SrcID: uuid.New(),
 			DstID: uuid.New(),
-		})
+		}, nil)
 	})
 
 	t.Run("unknown relationship type rejected", func(t *testing.T) {

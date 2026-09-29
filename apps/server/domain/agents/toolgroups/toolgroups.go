@@ -26,6 +26,7 @@ const (
 	GroupAgents        = "agents"
 	GroupProjects      = "projects"
 	GroupChat          = "chat"
+	GroupSession       = "session"
 	GroupAdmin         = "admin"
 	GroupWorkspaceRead = "workspace-read"
 	GroupWorkspaceExec = "workspace-exec"
@@ -58,6 +59,7 @@ var Groups = []Group{
 	{ID: GroupAgents, Label: "Agents", Description: "Read and manage agents and agent definitions."},
 	{ID: GroupProjects, Label: "Projects", Description: "Read and manage project resources."},
 	{ID: GroupChat, Label: "Chat", Description: "Read and administer chat sessions."},
+	{ID: GroupSession, Label: "Session", Description: "Session to-dos and the session title."},
 	{ID: GroupAdmin, Label: "Admin", Description: "Administrative operations requiring elevated scope."},
 	{ID: GroupWorkspaceRead, Label: "Workspace · Read", Description: "Read files and search the workspace."},
 	{ID: GroupWorkspaceExec, Label: "Workspace · Execute", Description: "Run commands and write files in the workspace."},
@@ -121,6 +123,10 @@ var staticToolGroup = map[string]string{
 	"web-fetch":         GroupWeb,
 	"web-search-brave":  GroupWeb,
 	"web-search-reddit": GroupWeb,
+
+	"session-todo-list":   GroupSession,
+	"session-todo-update": GroupSession,
+	"set_session_title":   GroupSession,
 }
 
 // GroupForScope returns the group id for a tool given its required scope (the

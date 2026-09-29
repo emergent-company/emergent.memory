@@ -46,7 +46,7 @@ type agentDashboardData struct {
 }
 
 // uiAgent renders the per-agent dashboard: summary, configured tools, and
-// recent chats, with a link to the memories subpage.
+// recent chats, with a link to the objects this agent created or updated.
 func (s *Server) uiAgent(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
@@ -89,44 +89,6 @@ func (s *Server) uiAgent(c echo.Context) error {
 		})
 	}
 	return s.page(c, pageTitle(agent.Name), AgentDashboardPage(data))
-}
-
-// uiAgentMemories renders the memory browser for one agent: a searchable
-// list with a detail view when ?memory=<id> selects an item from the fetched
-// list (no extra fetch needed). Empty query lists all memories, a query
-// searches — mirroring the iOS memory browser.
-func (s *Server) uiAgentMemories(c echo.Context) error {
-	ctx := c.Request().Context()
-	id := c.Param("id")
-
-	// The agent name is only for display; memory is project-scoped, not
-	// per-agent, so the agent fetch failure is the whole-page error.
-	agent, err := s.memory.GetAgentDefinition(ctx, id)
-	if err != nil {
-		return s.page(c, pageTitle("Memories"), MemoriesPage(id, "", "", nil, nil, err))
-	}
-	query := c.QueryParam("q")
-
-	var memories []Memory
-	if query != "" {
-		memories, err = s.memory.SearchMemories(ctx, query)
-	} else {
-		memories, err = s.memory.ListMemories(ctx)
-	}
-	if err != nil {
-		return s.page(c, pageTitle("Memories"), MemoriesPage(id, agent.Name, query, nil, nil, err))
-	}
-
-	var selected *Memory
-	if mid := c.QueryParam("memory"); mid != "" {
-		for i := range memories {
-			if memories[i].ID == mid {
-				selected = &memories[i]
-				break
-			}
-		}
-	}
-	return s.page(c, pageTitle(agent.Name, "Memories"), MemoriesPage(id, agent.Name, query, memories, selected, nil))
 }
 
 // agentSettingsData is the payload for AgentSettingsPage: the agent being
@@ -347,18 +309,21 @@ func (s *Server) uiAgentUpdateDelegation(c echo.Context) error {
 	return s.applyAgentSettingsSection(c, sectionDelegation, applyAgentDelegationSection)
 }
 
-// applyAgentGeneralSection maps the General form (name, system prompt,
-// language, appearance, visibility) onto the definition. Name is trimmed and
-// required; language persists to Config["language"] (deleted when empty); the
-// icon + color appearance persists to the uiConfig blob (both empty clears it);
-// visibility accepts only project/external/internal, with empty/missing
-// defaulting to project (the server default) and anything else rejected.
+// applyAgentGeneralSection maps the General form (name, short description,
+// system prompt, language, appearance, visibility) onto the definition. Name is
+// trimmed and required; the short description is trimmed and shown under the
+// agent's name in chat (empty clears it); language persists to Config["language"]
+// (deleted when empty); the icon + color appearance persists to the uiConfig
+// blob (both empty clears it); visibility accepts only project/external/internal,
+// with empty/missing defaulting to project (the server default) and anything else
+// rejected.
 func applyAgentGeneralSection(def *AgentDefinition, c echo.Context) error {
 	name := strings.TrimSpace(c.FormValue("name"))
 	if name == "" {
 		return fmt.Errorf("name is required")
 	}
 	def.Name = name
+	def.Description = strings.TrimSpace(c.FormValue("description"))
 	def.SystemPrompt = c.FormValue("systemPrompt")
 	def.UIConfig = agentUIConfig(c.FormValue("icon"), c.FormValue("color"))
 	lang := strings.TrimSpace(c.FormValue("language"))
@@ -419,6 +384,21 @@ func applyAgentToolsSection(def *AgentDefinition, c echo.Context) error {
 	def.BannedTools = removeItems(def.BannedTools, def.Tools...)
 	def.DefaultToolPolicy = strings.TrimSpace(c.FormValue("defaultToolPolicy"))
 
+	// Ban-managed hidden builtins (e.g. set_session_title) are always injected
+	// by the server; the picker row's checkbox therefore maps to ban state, and
+	// the only way to disable one is BannedTools. Reconcile it here: if the row
+	// was rendered (groupWasEnabled.session present) and the tool is absent from
+	// the submitted membership it is banned, otherwise it is un-banned.
+	if form.Has("groupWasEnabled.session") {
+		for name := range banManagedTools {
+			if containsString(def.Tools, name) {
+				def.BannedTools = removeItems(def.BannedTools, name)
+			} else {
+				def.BannedTools = appendUnique(def.BannedTools, name)
+			}
+		}
+	}
+
 	// Start from the existing policies so per-tool overrides and @group: entries
 	// for tools/groups this save does not render are preserved, not deleted.
 	policies := maps.Clone(def.ToolPolicies)
@@ -447,6 +427,17 @@ func applyAgentToolsSection(def *AgentDefinition, c echo.Context) error {
 		}
 	}
 	applyToolGroups(def, form, policies)
+
+	// Ban-managed hidden builtins are never stored in the allowed-tools
+	// whitelist; their enable state lives entirely in BannedTools. Group
+	// fan-out above appends every member to Tools when a group is enabled, so
+	// strip them again to keep the invariant (a ban-managed tool in Tools would
+	// also make the picker row disagree with the ban state and let a saved
+	// definition re-expose the Session group without a catalog).
+	for name := range banManagedTools {
+		def.Tools = removeItems(def.Tools, name)
+	}
+
 	def.ToolPolicies = policies
 	return nil
 }
@@ -721,6 +712,13 @@ const toolGroupPolicyPrefix = "@group:"
 // per-tool policy control.
 const toolGroupOtherID = "other"
 
+// banManagedTools are hidden builtin tools the server always injects into a
+// capability group regardless of the agent's Tools list. The ONLY way to
+// disable one is BannedTools, so its picker row maps to ban state (checked =
+// not banned) and renders no per-tool policy select. The applier reconciles
+// BannedTools against the submitted "tool" membership for these rows.
+var banManagedTools = map[string]bool{"set_session_title": true}
+
 // toolGroupPolicyKey returns the ToolPolicies key for a group id.
 func toolGroupPolicyKey(groupID string) string {
 	return toolGroupPolicyPrefix + groupID
@@ -751,7 +749,7 @@ func groupWasEnabledValue(enabled bool) string {
 	return "false"
 }
 
-// policyTitle renders a policy value for an inheritance hint ("Ask", "Deny").
+// policyTitle renders a policy value for an inheritance label ("Ask", "Deny").
 func policyTitle(v string) string {
 	switch v {
 	case "allow":
@@ -765,49 +763,39 @@ func policyTitle(v string) string {
 	}
 }
 
-// toolPolicyHint explains what a tool row falls back to: its own explicit
-// override when it has one, otherwise the owning capability group's policy (or
-// the agent default when the group inherits too). "" means the row says
-// nothing — e.g. an uncovered "Other" tool with no override.
-func toolPolicyHint(agent *AgentDefinition, tool, groupLabel, groupPolicy string) string {
-	if v := toolPolicyValue(agent, tool); v != "" {
-		return "Override · " + policyTitle(v)
-	}
-	if groupLabel == "" {
-		return ""
-	}
+// inheritValueLabel resolves the value a policy select's Inherit option falls
+// back to, so the dropdown itself carries the inherited value ("Inherit (Ask)")
+// instead of a separate hint label: the owning group's policy when it is set,
+// else the agent default, else "Default" when neither is configured.
+func inheritValueLabel(groupPolicy, defaultPolicy string) string {
 	if groupPolicy != "" {
-		return "Inherits " + groupLabel + " · " + policyTitle(groupPolicy)
+		return policyTitle(groupPolicy)
 	}
-	return "Inherits " + groupLabel + " · Default"
-}
-
-// toolPolicyHintShort is the compact, all-widths form of toolPolicyHint
-// ("→ Ask"), shown on narrow screens where the full sentence would crowd out
-// the tool name.
-func toolPolicyHintShort(agent *AgentDefinition, tool, groupLabel, groupPolicy string) string {
-	if v := toolPolicyValue(agent, tool); v != "" {
-		return "→ " + policyTitle(v)
+	if defaultPolicy != "" {
+		return policyTitle(defaultPolicy)
 	}
-	if groupLabel == "" {
-		return ""
-	}
-	if groupPolicy != "" {
-		return "→ " + policyTitle(groupPolicy)
-	}
-	return "→ Default"
+	return "Default"
 }
 
 // toolRow resolves one tool into a picker row: its toggle state, the explicit
-// per-tool policy value, and the inheritance hints for its owning group.
-func toolRow(agent *AgentDefinition, name, description, groupLabel, groupPolicy string) agentToolRow {
+// per-tool policy value, whether it carries a policy select at all, and the
+// value its Inherit option falls back to (the owning group policy, else the
+// agent default).
+func toolRow(agent *AgentDefinition, name, description, groupPolicy string) agentToolRow {
+	checked := containsString(agent.Tools, name)
+	if banManagedTools[name] {
+		// Ban-managed rows carry no whitelist membership: their checkbox maps
+		// to ban state directly, so an inconsistent stored state can never make
+		// a banned builtin render as checked.
+		checked = !containsString(agent.BannedTools, name)
+	}
 	return agentToolRow{
-		Name:        name,
-		Description: description,
-		Checked:     containsString(agent.Tools, name),
-		PolicyValue: toolPolicyValue(agent, name),
-		Hint:        toolPolicyHint(agent, name, groupLabel, groupPolicy),
-		HintShort:   toolPolicyHintShort(agent, name, groupLabel, groupPolicy),
+		Name:         name,
+		Description:  description,
+		Checked:      checked,
+		PolicyValue:  toolPolicyValue(agent, name),
+		NoPolicy:     banManagedTools[name],
+		InheritLabel: inheritValueLabel(groupPolicy, agent.DefaultToolPolicy),
 	}
 }
 
@@ -817,12 +805,13 @@ func toolRow(agent *AgentDefinition, name, description, groupLabel, groupPolicy 
 // body. Tools owned by an external MCP server or a relay node are excluded
 // here; they render in their own top-level source block.
 type toolGroupView struct {
-	Group   ToolGroup
-	Policy  string // "inherit" | "allow" | "ask" | "deny"
-	Enabled bool
-	Open    bool
-	Count   int
-	Rows    []agentToolRow
+	Group        ToolGroup
+	Policy       string // "inherit" | "allow" | "ask" | "deny"
+	InheritLabel string // value the group's Inherit option falls back to (the agent default)
+	Enabled      bool
+	Open         bool
+	Count        int
+	Rows         []agentToolRow
 }
 
 // toolPickerView is the fully resolved source-first model for the Tools picker:
@@ -905,7 +894,7 @@ func buildToolPickerView(data agentSettingsData) toolPickerView {
 					continue
 				}
 				claimed[t.ToolName] = true
-				rows = append(rows, toolRow(agent, t.ToolName, t.Description, g.Label, policy))
+				rows = append(rows, toolRow(agent, t.ToolName, t.Description, policy))
 			}
 		}
 		// Native members no source offers render inline. Delegation-managed
@@ -915,18 +904,19 @@ func buildToolPickerView(data agentSettingsData) toolPickerView {
 				continue
 			}
 			claimed[t] = true
-			rows = append(rows, toolRow(agent, t, descriptions[t], g.Label, policy))
+			rows = append(rows, toolRow(agent, t, descriptions[t], policy))
 		}
 		if len(rows) == 0 {
 			continue
 		}
 		view.BuiltinGroups = append(view.BuiltinGroups, toolGroupView{
-			Group:   g,
-			Policy:  groupPolicyFormValue(policy),
-			Enabled: g.Enabled,
-			Open:    g.Enabled,
-			Count:   len(rows),
-			Rows:    rows,
+			Group:        g,
+			Policy:       groupPolicyFormValue(policy),
+			InheritLabel: inheritValueLabel("", agent.DefaultToolPolicy),
+			Enabled:      g.Enabled,
+			Open:         g.Enabled,
+			Count:        len(rows),
+			Rows:         rows,
 		})
 	}
 
@@ -990,10 +980,11 @@ func unclaimedServerRows(srv MCPServer, agent *AgentDefinition, claimed map[stri
 		}
 		claimed[t.ToolName] = true
 		rows = append(rows, agentToolRow{
-			Name:        t.ToolName,
-			Description: t.Description,
-			Checked:     containsString(agent.Tools, t.ToolName),
-			PolicyValue: toolPolicyValue(agent, t.ToolName),
+			Name:         t.ToolName,
+			Description:  t.Description,
+			Checked:      containsString(agent.Tools, t.ToolName),
+			PolicyValue:  toolPolicyValue(agent, t.ToolName),
+			InheritLabel: inheritValueLabel("", agent.DefaultToolPolicy),
 		})
 	}
 	return rows
@@ -1010,10 +1001,11 @@ func unclaimedRelayRows(node relayNode, agent *AgentDefinition, claimed map[stri
 		}
 		claimed[name] = true
 		rows = append(rows, agentToolRow{
-			Name:        name,
-			Description: t.Description,
-			Checked:     containsString(agent.Tools, name),
-			PolicyValue: toolPolicyValue(agent, name),
+			Name:         name,
+			Description:  t.Description,
+			Checked:      containsString(agent.Tools, name),
+			PolicyValue:  toolPolicyValue(agent, name),
+			InheritLabel: inheritValueLabel("", agent.DefaultToolPolicy),
 		})
 	}
 	return rows
@@ -1089,10 +1081,11 @@ func uncoveredRows(data agentSettingsData, claimed map[string]bool, descriptions
 		}
 		seen[name] = true
 		rows = append(rows, agentToolRow{
-			Name:        name,
-			Description: descriptions[name],
-			Checked:     containsString(agent.Tools, name),
-			PolicyValue: toolPolicyValue(agent, name),
+			Name:         name,
+			Description:  descriptions[name],
+			Checked:      containsString(agent.Tools, name),
+			PolicyValue:  toolPolicyValue(agent, name),
+			InheritLabel: inheritValueLabel("", agent.DefaultToolPolicy),
 		})
 	}
 	return rows

@@ -574,96 +574,197 @@
     return "";
   }
 
-  // sourcesList renders citations as a compact list: each entry a link (when
-  // the citation resolves to a safe object url) showing its label plus a muted
-  // type badge. Label and type are UNTRUSTED text — textContent only. Entries
-  // without a label are skipped.
-  function sourcesList(citations) {
-    var ul = document.createElement("ul");
-    ul.className = "flex flex-col gap-1";
-    var list = Array.isArray(citations) ? citations : [];
-    for (var i = 0; i < list.length; i++) {
-      var c = list[i];
-      if (!c || typeof c !== "object") {
-        // Fallback: a bare string entry renders as plain text.
-        if (typeof c === "string" && c) {
-          ul.appendChild(sourceItem(c, "", ""));
-        }
-        continue;
-      }
-      var label = (c.label != null && c.label !== "") ? String(c.label) : (c.id != null ? String(c.id) : "");
-      if (!label) continue;
-      ul.appendChild(sourceItem(label, c.type == null ? "" : String(c.type), citationHref(c)));
+  /* ---------- compiled type labels ---------- */
+
+  // The shell embeds a JSON map of compiled type name → {label,icon,color}
+  // (<script id="memory-object-types">), so citations can show the schema's
+  // human label instead of the raw type name. Parsed lazily and cached for the
+  // page; a missing/malformed map degrades to {} (every lookup then humanizes).
+  var _objectTypes = null;
+  function objectTypes() {
+    if (_objectTypes) return _objectTypes;
+    _objectTypes = {};
+    var el = document.getElementById("memory-object-types");
+    if (el) {
+      try {
+        var parsed = JSON.parse(el.textContent || "{}");
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) _objectTypes = parsed;
+      } catch (e) { /* malformed map — fall back to humanizing the type name */ }
     }
-    return ul;
+    return _objectTypes;
   }
 
-  function sourceItem(label, type, href) {
+  // humanizeTypeName turns a raw schema type name into a quiet human label:
+  // "LegalParagraph" → "Legal paragraph", "legal_paragraph" → "Legal paragraph".
+  function humanizeTypeName(name) {
+    var s = String(name == null ? "" : name).trim();
+    if (!s) return "";
+    s = s
+      .replace(/[._-]+/g, " ")
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2") // camelCase boundary
+      .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2") // acronym boundary (MCPTool)
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+    return s.replace(/^./, function (c) { return c.toUpperCase(); });
+  }
+
+  // objectTypeLabel resolves a citation/item type to its human label: the
+  // compiled type's label when the embedded map knows it, else a humanized form
+  // of the raw name. An empty type resolves to "".
+  function objectTypeLabel(typeName) {
+    var name = typeName == null ? "" : String(typeName);
+    if (!name) return "";
+    var t = objectTypes()[name];
+    if (t && typeof t.label === "string" && t.label) return t.label;
+    return humanizeTypeName(name);
+  }
+
+  // objectTypeAccent returns the type's declared {icon,color} when the map
+  // carries one, else null. Both fields are free-form schema metadata.
+  function objectTypeAccent(typeName) {
+    var t = objectTypes()[typeName];
+    if (!t || typeof t !== "object") return null;
+    var icon = typeof t.icon === "string" ? t.icon : "";
+    var color = typeof t.color === "string" ? t.color : "";
+    if (!icon && !color) return null;
+    return { icon: icon, color: color };
+  }
+
+  /* ---------- citation sources (one shared renderer) ---------- */
+
+  // sourceName resolves a source item's display name (citations and A2UI
+  // sources items alike): label, else key, else id. A bare string item is its
+  // own name. Untrusted — always rendered with textContent.
+  function sourceName(item) {
+    if (typeof item === "string") return item;
+    if (!item || typeof item !== "object") return "";
+    if (item.label != null && item.label !== "") return String(item.label);
+    if (item.key != null && item.key !== "") return String(item.key);
+    if (item.id != null && item.id !== "") return String(item.id);
+    return "";
+  }
+
+  // sourceRow renders one source as a compact, linkable box in the spirit of
+  // the entity row: the name (grow/truncate) plus its human type badge, tinted
+  // by the type's declared color when present. Name and type are UNTRUSTED —
+  // textContent only; the href is the validated citationHref.
+  function sourceRow(item) {
     var li = document.createElement("li");
-    li.className = "flex min-w-0 items-baseline gap-2";
-    var nameEl;
+    li.className = "flex";
+    li.setAttribute("data-testid", "chat-source");
+
+    var isObj = item && typeof item === "object";
+    var name = sourceName(item);
+    var href = isObj ? citationHref(item) : "";
+
+    var row;
     if (href) {
-      nameEl = document.createElement("a");
-      nameEl.href = href;
-      nameEl.className = "link link-hover min-w-0 truncate text-xs text-base-content";
-      nameEl.setAttribute("data-testid", "citation-link");
+      row = document.createElement("a");
+      row.href = href;
+      row.className = "memory-source flex min-w-0 w-full items-center gap-2 rounded-field border border-base-content/10 bg-base-200/30 px-2.5 py-1.5 transition-colors hover:bg-base-200/60";
     } else {
-      nameEl = document.createElement("span");
-      nameEl.className = "min-w-0 truncate text-xs text-muted";
-      nameEl.setAttribute("data-testid", "citation-text");
+      row = document.createElement("span");
+      row.className = "memory-source flex min-w-0 w-full items-center gap-2 rounded-field border border-base-content/10 bg-base-200/30 px-2.5 py-1.5";
     }
-    nameEl.textContent = label;
-    li.appendChild(nameEl);
-    if (type) {
+
+    var nameEl = document.createElement("span");
+    nameEl.className = "min-w-0 grow truncate text-xs text-base-content";
+    nameEl.setAttribute("data-testid", "chat-source-name");
+    nameEl.textContent = name;
+    row.appendChild(nameEl);
+
+    var type = isObj ? (item.type == null ? "" : String(item.type)) : "";
+    var typeLabel = objectTypeLabel(type);
+    if (typeLabel) {
       var badge = document.createElement("span");
-      badge.className = "badge badge-ghost badge-xs shrink-0 font-normal text-muted";
-      badge.textContent = type;
-      li.appendChild(badge);
+      badge.className = "badge badge-ghost badge-xs shrink-0 font-normal";
+      badge.setAttribute("data-testid", "chat-source-type");
+      badge.textContent = typeLabel;
+      var accent = objectTypeAccent(type);
+      if (accent && /^#[0-9a-fA-F]{3,8}$/.test(accent.color)) {
+        badge.setAttribute(
+          "style",
+          "color:" + accent.color +
+            ";background-color:color-mix(in oklch," + accent.color + " 10%,transparent)" +
+            ";border-color:color-mix(in oklch," + accent.color + " 15%,transparent)"
+        );
+      }
+      row.appendChild(badge);
     }
+
+    li.appendChild(row);
     return li;
   }
 
-  // sourcesBlock renders the low-emphasis Sources disclosure beneath an
-  // assistant answer: a quiet, bordered list that reads as provenance, not a
-  // second content block. Returns null when there is nothing to show, so
-  // callers can omit the block entirely.
-  function sourcesBlock(citations) {
-    var list = Array.isArray(citations) ? citations : [];
-    if (!list.length) return null;
-
-    var wrap = document.createElement("div");
-    wrap.className = "chat chat-start memory-rise memory-aux memory-sources";
-    wrap.innerHTML =
-      '<div class="chat-image invisible bg-primary/5 text-primary border-primary/10 flex items-center justify-center rounded-full border p-2">' +
-      '<span class="iconify lucide--bot size-5" aria-hidden="true"></span></div>';
-    var box = document.createElement("div");
-    box.className = "col-start-2 row-start-2 w-full";
-    var inner = document.createElement("div");
-    inner.className =
-      "flex flex-col gap-1.5 rounded-box border border-base-content/10 bg-base-200/30 px-3 py-2";
-    var head = document.createElement("p");
-    head.className = "text-[10px] font-semibold tracking-wider uppercase text-muted";
-    head.textContent = "Sources";
-    inner.appendChild(head);
-    inner.appendChild(sourcesList(list));
-    box.appendChild(inner);
-    wrap.appendChild(box);
-    return wrap;
+  // sourceRows builds the shared source list from citations or A2UI items,
+  // skipping entries with no displayable name. Returns { list, count } or null
+  // when nothing is renderable — so callers can omit the block entirely.
+  function sourceRows(items) {
+    var list = Array.isArray(items) ? items : [];
+    var ul = document.createElement("ul");
+    ul.className = "flex flex-col gap-1.5";
+    var count = 0;
+    for (var i = 0; i < list.length; i++) {
+      if (!sourceName(list[i])) continue;
+      ul.appendChild(sourceRow(list[i]));
+      count++;
+    }
+    if (!count) return null;
+    return { list: ul, count: count };
   }
 
-  // attachSources mounts the Sources block on an assistant message wrapper (as
-  // returned by addAssistantMessage/openAssistantBubble). Idempotent — one
-  // block per wrapper — and positioned before a turn footer when one exists.
+  // sourcesCountLabel renders the singular-aware source count ("1 source").
+  function sourcesCountLabel(n) {
+    return n + (n === 1 ? " source" : " sources");
+  }
+
+  // sourcesFooter renders the in-bubble Sources disclosure: a quiet, collapsed
+  // daisyUI collapse-arrow <details> whose summary reads "N sources". Returns
+  // null when there is nothing to show.
+  function sourcesFooter(citations) {
+    var rows = sourceRows(citations);
+    if (!rows) return null;
+
+    var details = document.createElement("details");
+    details.className =
+      "collapse collapse-arrow mt-3 rounded-box border border-base-content/10 bg-base-200/20";
+    details.setAttribute("data-testid", "chat-sources");
+
+    var summary = document.createElement("summary");
+    summary.className =
+      "collapse-title flex min-h-0 items-center gap-2 py-1.5 text-[11px] font-medium text-muted";
+    summary.setAttribute("data-testid", "chat-sources-toggle");
+    summary.innerHTML =
+      '<span class="iconify lucide--link size-3.5 shrink-0" aria-hidden="true"></span>' +
+      '<span data-testid="chat-sources-count"></span>';
+    summary.querySelector('[data-testid="chat-sources-count"]').textContent = sourcesCountLabel(rows.count);
+
+    var content = document.createElement("div");
+    content.className = "collapse-content";
+    content.appendChild(rows.list);
+
+    details.appendChild(summary);
+    details.appendChild(content);
+    return details;
+  }
+
+  // attachSources mounts the Sources footer INSIDE the assistant bubble, after
+  // the rendered markdown, so it reads as agent-side content and never occupies
+  // a separate message row. Accepts the assistant wrapper (from
+  // addAssistantMessage/openAssistantBubble) or the bubble itself; idempotent —
+  // one footer per bubble.
   function attachSources(wrap, citations) {
     if (!wrap) return null;
-    if (wrap._memorySources) return wrap._memorySources;
-    var block = sourcesBlock(citations);
-    if (!block) return null;
-    var footer = wrap.querySelector(".memory-turn-footer");
-    if (footer && footer.parentNode === wrap) wrap.insertBefore(block, footer);
-    else wrap.appendChild(block);
-    wrap._memorySources = block;
-    return block;
+    var bubble = wrap.querySelector ? (wrap.querySelector(".chat-bubble") || wrap) : wrap;
+    if (bubble._memorySources) return bubble._memorySources;
+    var footer = sourcesFooter(citations);
+    if (!footer) return null;
+    var md = bubble.querySelector ? bubble.querySelector(".memory-md") : null;
+    if (md && md.parentNode === bubble) bubble.insertBefore(footer, md.nextSibling);
+    else bubble.appendChild(footer);
+    bubble._memorySources = footer;
+    return footer;
   }
 
   /* ---------- A2UI declarative cards ---------- */
@@ -972,16 +1073,18 @@
     return shell.wrap;
   }
 
-  // a2uiSources renders the `sources` component: a list of citations, each an
-  // item {id, type, label, url}. Items link to their object page when the
-  // citation resolves to a safe url/id; otherwise the label stays plain text.
-  // An empty or missing list falls back to a quiet placeholder.
+  // a2uiSources renders the `sources` component: a list of item objects
+  // {id, type, label, url}. Each item uses the SAME compact source row as the
+  // in-bubble footer (human type label, link when the url/id is a safe object
+  // ref); the count shows in the header. Empty/missing list falls back to a
+  // quiet placeholder.
   function a2uiSources(comp, surfaceId) {
     var shell = a2uiShell();
-    shell.body.appendChild(a2uiHeader("Sources", null));
     var items = Array.isArray(comp.items) ? comp.items : [];
-    if (items.length) {
-      shell.body.appendChild(sourcesList(items));
+    var rows = sourceRows(items);
+    shell.body.appendChild(a2uiHeader("Sources", rows ? String(rows.count) : null));
+    if (rows) {
+      shell.body.appendChild(rows.list);
     } else {
       shell.body.appendChild(a2uiLabel("No sources."));
     }
@@ -1086,7 +1189,8 @@
     turnFooter: turnFooter,
     runMarker: runMarker,
     renderA2UISurface: renderA2UISurface,
-    sourcesBlock: sourcesBlock,
+    humanizeTypeName: humanizeTypeName,
+    sourcesFooter: sourcesFooter,
     attachSources: attachSources,
   };
 })();

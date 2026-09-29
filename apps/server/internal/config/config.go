@@ -420,6 +420,10 @@ type EmailConfig struct {
 	MailgunDomain string `env:"MAILGUN_DOMAIN" envDefault:""`
 	// MailgunAPIKey is the Mailgun API key
 	MailgunAPIKey string `env:"MAILGUN_API_KEY" envDefault:""`
+	// MailgunSigningKey is the Mailgun webhook signing key. It is required to
+	// verify the HMAC signature on the public delivery webhook; when unset, the
+	// webhook rejects every request (fail closed).
+	MailgunSigningKey string `env:"MAILGUN_SIGNING_KEY" envDefault:""`
 	// FromEmail is the default from email address
 	FromEmail string `env:"EMAIL_FROM_ADDRESS" envDefault:"noreply@example.com"`
 	// FromName is the default from name
@@ -434,6 +438,11 @@ type EmailConfig struct {
 	WorkerBatchSize int `env:"EMAIL_WORKER_BATCH_SIZE" envDefault:"10"`
 	// MailgunRegion is the Mailgun region ("us" or "eu", default: "us")
 	MailgunRegion string `env:"MAILGUN_REGION" envDefault:"us"`
+	// MailgunAPIBase overrides the Mailgun API base URL (the value passed to the
+	// Mailgun SDK's SetAPIBase, including the /v3 path segment). When empty the
+	// SDK default is used, or the EU base when MailgunRegion is "eu". This is
+	// used by the e2e harness to point the Mailgun transport at a local stub.
+	MailgunAPIBase string `env:"MAILGUN_API_BASE" envDefault:""`
 	// Transport selects the email transport ("mailgun" or "smtp", default: "mailgun")
 	Transport string `env:"EMAIL_TRANSPORT" envDefault:"mailgun"`
 	// SMTPHost is the SMTP server host

@@ -14,6 +14,10 @@ type Config struct {
 	MailgunDomain string
 	// MailgunAPIKey is the Mailgun API key
 	MailgunAPIKey string
+	// MailgunSigningKey is the Mailgun webhook signing key, used to verify the
+	// HMAC signature on the public delivery webhook. Empty disables the webhook
+	// (fail closed).
+	MailgunSigningKey string
 	// FromEmail is the default from email address
 	FromEmail string
 	// FromName is the default from name
@@ -28,6 +32,10 @@ type Config struct {
 	WorkerBatchSize int
 	// MailgunRegion is the Mailgun region ("us" or "eu")
 	MailgunRegion string
+	// MailgunAPIBase overrides the Mailgun API base URL (including the /v3 path
+	// segment). When empty the SDK default is used, or the EU base when
+	// MailgunRegion is "eu".
+	MailgunAPIBase string
 	// Transport selects the email transport ("mailgun" or "smtp")
 	Transport string
 	// SMTPHost is the SMTP server host
@@ -45,22 +53,24 @@ type Config struct {
 // NewConfig creates email configuration from the app config
 func NewConfig(cfg *config.Config) *Config {
 	return &Config{
-		Enabled:          cfg.Email.Enabled,
-		MailgunDomain:    cfg.Email.MailgunDomain,
-		MailgunAPIKey:    cfg.Email.MailgunAPIKey,
-		FromEmail:        cfg.Email.FromEmail,
-		FromName:         cfg.Email.FromName,
-		MaxRetries:       cfg.Email.MaxRetries,
-		RetryDelaySec:    cfg.Email.RetryDelaySec,
-		WorkerIntervalMs: cfg.Email.WorkerIntervalMs,
-		WorkerBatchSize:  cfg.Email.WorkerBatchSize,
-		MailgunRegion:    cfg.Email.MailgunRegion,
-		Transport:        cfg.Email.Transport,
-		SMTPHost:         cfg.Email.SMTPHost,
-		SMTPPort:         cfg.Email.SMTPPort,
-		SMTPUsername:     cfg.Email.SMTPUsername,
-		SMTPPassword:     cfg.Email.SMTPPassword,
-		SMTPTLS:          cfg.Email.SMTPTLS,
+		Enabled:           cfg.Email.Enabled,
+		MailgunDomain:     cfg.Email.MailgunDomain,
+		MailgunAPIKey:     cfg.Email.MailgunAPIKey,
+		MailgunSigningKey: cfg.Email.MailgunSigningKey,
+		FromEmail:         cfg.Email.FromEmail,
+		FromName:          cfg.Email.FromName,
+		MaxRetries:        cfg.Email.MaxRetries,
+		RetryDelaySec:     cfg.Email.RetryDelaySec,
+		WorkerIntervalMs:  cfg.Email.WorkerIntervalMs,
+		WorkerBatchSize:   cfg.Email.WorkerBatchSize,
+		MailgunRegion:     cfg.Email.MailgunRegion,
+		MailgunAPIBase:    cfg.Email.MailgunAPIBase,
+		Transport:         cfg.Email.Transport,
+		SMTPHost:          cfg.Email.SMTPHost,
+		SMTPPort:          cfg.Email.SMTPPort,
+		SMTPUsername:      cfg.Email.SMTPUsername,
+		SMTPPassword:      cfg.Email.SMTPPassword,
+		SMTPTLS:           cfg.Email.SMTPTLS,
 	}
 }
 

@@ -16,7 +16,7 @@ The app SHALL provide a navigation entry that opens the objects page.
 
 ### Requirement: List objects
 
-The objects page SHALL list the knowledge graph's objects in browse mode as the 25 most-recent per page (newest first), each showing its name, type, status, and embedding status, with a "Load more" control when a further page exists.
+The objects page SHALL list the knowledge graph's objects in browse mode as the 25 most-recent per page (newest first), each showing its name, type, status, and embedding status, with a "Load more" control when a further page exists. When an agent-provenance filter is active, the list SHALL show only objects matching that filter.
 
 #### Scenario: Objects present
 
@@ -267,3 +267,22 @@ The objects browser SHALL derive the project server-side from the signed session
 
 - **WHEN** the backing endpoint is called without authentication
 - **THEN** it returns 401
+
+### Requirement: Filter objects by agent provenance
+
+The objects page SHALL let the user filter the list by agent provenance, in Created-by or Updated-by modes, and SHALL reuse the same browse/detail components for an agent-scoped view.
+
+#### Scenario: Filter by creator
+
+- **WHEN** the user selects an agent-provenance filter in "Created by" mode
+- **THEN** only objects whose earliest surviving version was authored by that agent are listed
+
+#### Scenario: Filter by updater
+
+- **WHEN** the user selects an agent-provenance filter in "Updated by" mode
+- **THEN** only objects whose HEAD version was authored by that agent are listed
+
+#### Scenario: Agent-scoped view reuses browse components
+
+- **WHEN** the user opens an agent-scoped object view from the agent dashboard
+- **THEN** the existing object browse and detail components render, scoped to that agent's provenance, with no memory-specific naming
