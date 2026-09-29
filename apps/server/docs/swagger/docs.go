@@ -857,6 +857,52 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/admin/builtin-tool-groups": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the project's builtin tool groups computed from the builtin tool catalog",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "List builtin tool groups",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "X-Project-ID",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Builtin tool groups",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.APIResponse-array_domain_agents_ToolGroupDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "X-Project-ID header required",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/admin/mcp-servers": {
             "get": {
                 "security": [
@@ -1109,6 +1155,88 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/admin/mcp-servers/{id}/tools/{toolName}/call": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Invoke a single tool on the addressed MCP server (builtin tools run in-process; external tools are proxied)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp-registry"
+                ],
+                "summary": "Call a tool on an MCP server",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Server ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Tool name",
+                        "name": "toolName",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Call arguments: {\\",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_mcpregistry.APIResponse-github_com_emergent-company_emergent_memory_domain_mcp_ToolResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -5196,6 +5324,24 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
+                        "description": "Filter by actor type (user|agent|system)",
+                        "name": "actor_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by actor id (UUID; requires actor_type)",
+                        "name": "actor_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Provenance filter mode: created|updated|any (default: any)",
+                        "name": "provenance",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "description": "Project ID",
                         "name": "X-Project-ID",
                         "in": "header",
@@ -5449,6 +5595,24 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Comma-separated property fields to exclude from the response (applied after include)",
                         "name": "exclude_fields",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by actor type (user|agent|system)",
+                        "name": "actor_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by actor id (UUID; requires actor_type)",
+                        "name": "actor_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Provenance filter mode: created|updated|any (default: any)",
+                        "name": "provenance",
                         "in": "query"
                     },
                     {
@@ -21319,6 +21483,26 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_agents.APIResponse-array_domain_agents_ToolGroupDTO": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_agents.ToolGroupDTO"
+                    }
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
         "domain_agents.APIResponse-domain_agents_AgentDTO": {
             "type": "object",
             "properties": {
@@ -25565,6 +25749,13 @@ const docTemplate = `{
         "domain_graph.GraphObjectResponse": {
             "type": "object",
             "properties": {
+                "actor_id": {
+                    "type": "string"
+                },
+                "actor_type": {
+                    "description": "Actor tracking (provenance)",
+                    "type": "string"
+                },
                 "branch_id": {
                     "type": "string"
                 },
@@ -25664,6 +25855,13 @@ const docTemplate = `{
         "domain_graph.GraphRelationship": {
             "type": "object",
             "properties": {
+                "actor_id": {
+                    "type": "string"
+                },
+                "actor_type": {
+                    "description": "Actor tracking",
+                    "type": "string"
+                },
                 "branch_id": {
                     "type": "string"
                 },
@@ -25741,6 +25939,13 @@ const docTemplate = `{
         "domain_graph.GraphRelationshipResponse": {
             "type": "object",
             "properties": {
+                "actor_id": {
+                    "type": "string"
+                },
+                "actor_type": {
+                    "description": "Actor tracking (provenance)",
+                    "type": "string"
+                },
                 "branch_id": {
                     "type": "string"
                 },
@@ -27069,6 +27274,23 @@ const docTemplate = `{
             "properties": {
                 "data": {
                     "$ref": "#/definitions/domain_mcpregistry.MCPServerDetailDTO"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_mcpregistry.APIResponse-github_com_emergent-company_emergent_memory_domain_mcp_ToolResult": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/github_com_emergent-company_emergent_memory_domain_mcp.ToolResult"
                 },
                 "error": {
                     "type": "string"
@@ -32811,6 +33033,36 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_emergent-company_emergent_memory_domain_mcp.ContentBlock": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_emergent-company_emergent_memory_domain_mcp.ToolResult": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_emergent-company_emergent_memory_domain_mcp.ContentBlock"
+                    }
+                },
+                "isError": {
+                    "type": "boolean"
+                },
+                "structuredContent": {
+                    "description": "StructuredContent is the structured JSON object result (MCP 2025-06-18\n` + "`" + `structuredContent` + "`" + `). It mirrors the JSON object serialized into the text\ncontent block and is only set when that payload is a JSON object.",
+                    "type": "object",
+                    "additionalProperties": {}
+                }
+            }
+        },
         "github_com_emergent-company_emergent_memory_domain_sandbox.AgentSandboxConfig": {
             "type": "object",
             "properties": {
@@ -32947,7 +33199,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.82.2",
+	Version:          "0.83.0",
 	Host:             "localhost:5300",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},
