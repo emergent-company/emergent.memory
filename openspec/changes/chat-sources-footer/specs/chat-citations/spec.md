@@ -105,7 +105,7 @@ SHALL be additive and SHALL NOT change the envelope or existing components.
 ### Requirement: Human type labels are available to the client renderer
 
 The web shell SHALL embed a machine-readable map from compiled type name to its
-display label (and optional icon/color), covering object and relationship types,
+display label (and optional color), covering object and relationship types,
 so the client can render human type labels synchronously. When the map is absent
 or a type is missing from it, the renderer SHALL degrade to a humanized type
 name rather than showing the raw machine name or failing.
@@ -114,7 +114,7 @@ name rather than showing the raw machine name or failing.
 
 - **WHEN** the shell renders a page
 - **THEN** it SHALL include a JSON map of compiled type name → label (and
-  optional icon/color)
+  optional color)
 
 #### Scenario: Missing map degrades
 

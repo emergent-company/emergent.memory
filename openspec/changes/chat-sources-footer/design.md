@@ -29,7 +29,7 @@ Two options were considered:
   compiled types. Works for the iOS bridge/share and is server-authoritative,
   but touches `apps/server`, does not cover A2UI `sources` items (agent-supplied
   props that bypass citation derivation), and changes the wire contract.
-- **(b) Embed a `name → {label,icon,color}` map in the shell and resolve
+- **(b) Embed a `name → {label,color}` map in the shell and resolve
   client-side.** Web-UI only; covers every client surface uniformly including
   the A2UI card; degrades to a humanized type name when a type is missing.
 
@@ -39,9 +39,10 @@ existing citation wire shape (and therefore the iOS/share consumers) untouched.
 The map is derived from the already-available `GetCompiledTypes` projection
 (`objectTypeMapFor`) covering object and relationship types.
 
-Trade-off: a page that never received the map (a non-chat page opening the side
-panel) falls back to the humanized type name. This is acceptable — the fallback
-is the specified graceful degradation, and the chat page always carries the map.
+Trade-off: the map is embedded in the shell by `page()`/`appShell` on every full
+page (chat, side panel, A2UI alike), so the humanized fallback fires only when
+the type-map fetch errors (empty map) or when a type is absent from the map. Both
+are the specified graceful degradation.
 
 ### Collapsed disclosure
 
@@ -84,12 +85,12 @@ The embedded map is server-derived schema metadata, HTML-escaped by
 Embedded as `<script type="application/json" id="memory-object-types">`:
 
 ```json
-{ "LegalParagraph": { "label": "Legal paragraph", "icon": "lucide--file-text", "color": "#4F46E5" } }
+{ "LegalParagraph": { "label": "Legal paragraph", "color": "#4F46E5" } }
 ```
 
 - key: compiled type `name` (object and relationship types merged);
 - `label`: `compiledTypeLabel` (falls back to the name server-side);
-- `icon`/`color`: `compiledTypeIcon`/`compiledTypeColor` (omitted when empty).
+- `color`: `compiledTypeColor` (omitted when empty).
 - Unknown/absent map → client humanizes the raw type name (`LegalParagraph` →
   "Legal paragraph").
 

@@ -17,7 +17,7 @@ func compiledType(name, label, ui string) CompiledType {
 	return t
 }
 
-// objectTypeMapFor must carry the human label and the declared ui accent, merge
+// objectTypeMapFor must carry the human label and the declared ui color, merge
 // object and relationship types, and skip empty names.
 func TestObjectTypeMapFor(t *testing.T) {
 	objs := []CompiledType{
@@ -34,7 +34,7 @@ func TestObjectTypeMapFor(t *testing.T) {
 	if len(m) != 3 {
 		t.Fatalf("expected 3 entries, got %d (%v)", len(m), m)
 	}
-	if got := m["LegalParagraph"]; got.Label != "Legal paragraph" || got.Icon != "lucide--file-text" || got.Color != "#4F46E5" {
+	if got := m["LegalParagraph"]; got.Label != "Legal paragraph" || got.Color != "#4F46E5" {
 		t.Errorf("LegalParagraph entry = %+v", got)
 	}
 	// No label declared → the name is the label (compiledTypeLabel fallback).

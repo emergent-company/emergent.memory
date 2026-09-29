@@ -340,11 +340,10 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 	}
 	// Compiled type name → human label for the chat client's citation sources.
 	// Best-effort, like the fetches above: a failure degrades to an empty map, so
-	// the client falls back to humanized type names rather than erroring.
-	var objectTypes map[string]objectTypeUI
-	if compiled, cerr := s.memory.GetCompiledTypes(c.Request().Context()); cerr == nil && compiled != nil {
-		objectTypes = objectTypeMapFor(compiled.ObjectTypes, compiled.RelationshipTypes)
-	}
+	// the client falls back to humanized type names rather than erroring. The
+	// result is cached per project (objectTypeUIMap) so a full page render
+	// doesn't pay a serial GetCompiledTypes HTTP GET on the critical path.
+	objectTypes := s.objectTypeUIMap(c.Request().Context())
 	render.RenderPage(w, r, appShell(title, groups, providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, user, accounts, content, objectTypes, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL))
 	return nil
 }

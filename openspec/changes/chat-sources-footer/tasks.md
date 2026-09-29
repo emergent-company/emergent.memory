@@ -4,10 +4,10 @@ Worktree: `/root/emergent.memory-wt/chat-sources-footer` (branch `feat/chat-sour
 
 ## 1. Gateway — type map
 
-- [x] 1.1 `type_ui.go`: `objectTypeUI{Label,Icon,Color}` + `objectTypeMapFor(objectTypes, relationshipTypes []CompiledType) map[string]objectTypeUI` (skips shadowed/empty names); `objectTypeMapJSON` serializer (`encoding/json`, HTML-escaped so it cannot break out of a `<script>`); `objectTypeMapScript` (templ treats `<script>` bodies as raw text, so the element is emitted raw)
+- [x] 1.1 `type_ui.go`: `objectTypeUI{Label,Color}` + `objectTypeMapFor(objectTypes, relationshipTypes []CompiledType) map[string]objectTypeUI` (skips shadowed/empty names); `objectTypeMapJSON` serializer (`encoding/json`, HTML-escaped so it cannot break out of a `<script>`); `objectTypeMapScript` (templ treats `<script>` bodies as raw text, so the element is emitted raw); `objectTypeUIMap` (project-keyed TTL cache + singleflight, best-effort)
 - [x] 1.2 `ui.templ`: emit `<script type="application/json" id="memory-object-types">` in the shell
 - [x] 1.3 `ui.go page()`: build the map best-effort from `GetCompiledTypes`; empty map on error
-- [x] 1.4 Unit tests: map includes label/icon/color, merges relationship types, skips empty/shadowed names; serializer round-trips and escapes `<`/`>`/`&`; shell renders the script for non-empty and empty maps
+- [x] 1.4 Unit tests: map includes label/color, merges relationship types, skips empty/shadowed names; serializer round-trips and escapes `<`/`>`/`&`; shell renders the script for non-empty and empty maps
 
 ## 2. Web — shared sources renderer
 
@@ -25,7 +25,7 @@ Worktree: `/root/emergent.memory-wt/chat-sources-footer` (branch `feat/chat-sour
 
 ## 4. E2E
 
-- [x] 4.1 Playwright spec `specs/sessions/chat-sources-footer.spec.ts` asserting collapsed-by-default footer, expand, and the `chat-source*` testids (deterministic, no LLM: builds a bubble in-page and calls `attachSources`)
+- [x] 4.1 Playwright spec `specs/sessions/chat-sources-footer.spec.ts` asserting collapsed-by-default footer, expand, and the `chat-source*` testids (deterministic, no LLM: builds a bubble in-page and calls `attachSources`). Seeds `<script id="memory-object-types">` with a map label distinct from the humanizer output (`LegalParagraph` → `Legal provision` vs `Legal paragraph`) and asserts the rendered badge equals the map label, plus a second badge asserting the humanizer fallback for a type absent from the map.
 
 ## 5. Verify
 
@@ -33,8 +33,8 @@ Worktree: `/root/emergent.memory-wt/chat-sources-footer` (branch `feat/chat-sour
 - [x] 5.2 `go build ./...` && `go test ./...` in `apps/web-ui/gateway`
 - [x] 5.3 `task lint` in `apps/web-ui`
 - [x] 5.4 `openspec validate chat-sources-footer --strict`
-- [ ] 5.5 Playwright spec run against a gateway built from this branch (skipped — no session-mode gateway from this worktree; the shared dev server runs stale code). Spec is discovered/compiled by Playwright and executed in CI where the branch gateway is up.
+- [x] 5.5 Playwright spec run against a gateway built from this branch (3/3 passed). Recipe: `task build` in `apps/web-ui/gateway` → run `./memory` on `:18095` with the shared `memory-dev` env (`AUTH_MODE=session`, `SESSION_SECRET`, `ZITADEL_*`, `MEMORY_URL=https://api.dev.emergent-company.ai`; `PUBLIC_BASE_URL`/`ZITADEL_REDIRECT_URI` repointed to `:18095`); mint a session by running the e2e `setup` project against `:8095` and reuse the host-scoped cookie via a throwaway Playwright config in `/tmp/opencode`. Rendered `[data-testid=chat-source-type]` = `Legal provision` (map label) for `LegalParagraph`, and `Zzz unknown type` (humanizer fallback) for the absent type `ZZZUnknownType`.
 
 ## 6. Ship
 
-- [ ] 6.1 Commit on `feat/chat-sources-footer`, push, `gh pr create --base main` (do NOT merge)
+- [x] 6.1 Commit on `feat/chat-sources-footer`, push, and update PR #1228 (do NOT merge)

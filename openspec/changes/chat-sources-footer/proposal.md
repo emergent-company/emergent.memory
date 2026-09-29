@@ -23,7 +23,7 @@ label (falling back to a humanized type name) instead of the machine name.
   the spirit of the existing entity row: human type badge + name + object link.
 - **Human type labels.** The raw schema type is replaced by the compiled type's
   `label` (`LegalParagraph` → "Legal paragraph"), with a humanized-type-name
-  fallback when the type is unknown. A `name → {label,icon,color}` map is
+  fallback when the type is unknown. A `name → {label,color}` map is
   embedded in the shell so the client resolves labels synchronously.
 - **One renderer everywhere.** The live SSE path, history replay, side panel,
   and the A2UI `sources` card all use the same row builder and label resolver.
@@ -48,7 +48,7 @@ None.
 
 ## Impact
 
-- `apps/web-ui/gateway/type_ui.go` — `objectTypeUI` (label + icon + color) and
+- `apps/web-ui/gateway/type_ui.go` — `objectTypeUI` (label + color) and
   `objectTypeMapFor`, mapping both object and relationship compiled types.
 - `apps/web-ui/gateway/ui.templ` — embed the map as a `<script
   type="application/json" id="memory-object-types">` in the shell.
