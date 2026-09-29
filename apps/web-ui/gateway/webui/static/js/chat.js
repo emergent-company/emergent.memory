@@ -52,6 +52,8 @@
   var transcriptRefreshPending = false; // one history re-render at a time
   var thinkingMap = {};     // live thinking segments: id -> {details, body, setLive, done}
   var thinkingOrder = [];   // thinking segment ids in insertion order
+  var replayFrames = [];    // active run's open thinking + running-tool frames (live_replay)
+  var transcriptReady = false; // persisted history rendered at least once for this scope
 
   // --- agentic run-control state ---
   var liveRunId = "";       // active run id (refresh payload runId / newest run lifecycle item)
@@ -470,6 +472,8 @@
     closeLiveStream();
     if (aborter) aborter.abort();
     clearThinking();
+    replayFrames = [];
+    transcriptReady = false;
     conversationId = "";
     activeRunId = "";
     updateUrl();
@@ -604,9 +608,32 @@
     eventSource.onmessage = function (ev) {
       var m;
       try { m = JSON.parse(ev.data); } catch (e) { return; }
-      if (!m || m.type !== "refresh") return;
-      handleRefreshPayload(m);
-      if (!streaming) onRefresh();
+      if (!m) return;
+      if (m.type === "refresh") {
+        handleRefreshPayload(m);
+        // A resumed run has no one-shot /api/chat stream, so its activity must
+        // be reflected from the refresh-reported status. Clear in-flight replay
+        // state once the run stops (run end / needs_input).
+        if (isRunWorking(m.runStatus)) {
+          if (transcriptReady && !streaming) setStreaming(true);
+        } else {
+          // Run stopped (end / needs_input): drop the retained in-flight tail and
+          // release the composer. Stale thinking tracking is left for flushReplay /
+          // finalizeThinking to clear, so a live stream winding down is never
+          // disturbed here.
+          replayFrames = [];
+          setStreaming(false);
+        }
+        if (!streaming) onRefresh();
+      } else if (m.type === "live_replay") {
+        // Replayed in-flight frames render through the same dispatcher as the
+        // live path. Only open thinking segments + running tools are retained
+        // server-side, so persisted rows never duplicate. Flush immediately when
+        // history is already on screen; otherwise afterTranscriptRender does it
+        // once the pending render lands (before any live tail).
+        replayFrames = Array.isArray(m.frames) ? m.frames.slice() : [];
+        if (transcriptReady) flushReplay();
+      }
     };
     eventSource.onerror = function () { /* EventSource auto-reconnects; no-op */ };
   }
@@ -631,6 +658,9 @@
   async function resumeConversation(id, agentId, item) {
     if (aborter) aborter.abort();
     setStreaming(false);
+    clearThinking();
+    replayFrames = [];
+    transcriptReady = false;
 
     var detail = null;
     try {
@@ -691,6 +721,9 @@
   async function resumeRun(runId, item) {
     if (aborter) aborter.abort();
     setStreaming(false);
+    clearThinking();
+    replayFrames = [];
+    transcriptReady = false;
     conversationId = ""; // a run is not an /api/chat conversation
     activeRunId = runId;
     updateUrl();
@@ -996,6 +1029,10 @@
         renderApproval({ questionId: pa.questionId, tool: pa.tool, input: pa.input });
       }
     }
+
+    // Persisted history is on screen: (re-)apply the in-flight replay tail and
+    // reflect a still-working run in the composer.
+    afterTranscriptRender();
   }
 
   // memory ACP wraps each user turn with "## Prior conversation context";
@@ -1212,7 +1249,20 @@
       result: p.result,
       error: p.error,
       resultHtml: p.resultHtml,
+      id: p.id,
     });
+  }
+
+  // Test hook: inject a synthetic live_replay frame through the shared
+  // dispatcher so replayed in-flight state (thinking badge / running tool chip)
+  // can be verified in the browser without a live reconnect.
+  function debugReplay(payload) {
+    var p = payload || {};
+    handleEvent(JSON.stringify({
+      type: "live_replay",
+      runId: p.runId || "debug",
+      frames: Array.isArray(p.frames) ? p.frames : [],
+    }));
   }
 
   // Test hook: open the in-progress assistant bubble directly (mirrors the
@@ -1446,6 +1496,8 @@
       closeLiveStream(); // drop the abandoned run's push channel
       clearActiveRailItem();
       clearThinking();
+      replayFrames = [];
+      transcriptReady = false;
       updateUrl();
       if (messages) messages.innerHTML = "";
       bubble = null; bubbleHTML = ""; bubbleText = "";
@@ -1807,6 +1859,41 @@
   }
 
   // --- live status + refresh payload --------------------------------------
+
+  // isRunWorking reports whether a refresh `runStatus` means the run is still
+  // actively executing (working/submitted/running/cancelling) — as opposed to
+  // stopped (completed/failed/cancelled) or paused awaiting input.
+  function isRunWorking(status) {
+    return status === "working" || status === "submitted" ||
+           status === "running" || status === "cancelling";
+  }
+
+  // flushReplay renders the retained in-flight frames through the shared
+  // dispatcher. Called after a transcript render (so the frames append after
+  // persisted history, not get wiped by it) and on live_replay arrival when
+  // history is already on screen. Skipped while a live /api/chat turn is
+  // streaming (the live path already owns the in-flight state).
+  function flushReplay() {
+    if (streaming) return;
+    if (!replayFrames.length) return;
+    // A prior render wiped #chat-messages, orphaning any thinking badges the
+    // last flush created — drop their tracking so a re-applied frame re-creates
+    // its badge instead of appending to a detached node.
+    clearThinking();
+    var frames = replayFrames.slice();
+    for (var i = 0; i < frames.length; i++) {
+      handleEvent(JSON.stringify(frames[i]));
+    }
+  }
+
+  // afterTranscriptRender runs at the end of every persisted-history render:
+  // mark the transcript ready, (re-)apply the in-flight replay tail, and reflect
+  // a still-working run in the composer (stop button / parked sends).
+  function afterTranscriptRender() {
+    transcriptReady = true;
+    flushReplay();
+    if (isRunWorking(liveRunStatus) && !streaming) setStreaming(true);
+  }
 
   function handleRefreshPayload(m) {
     if (m.runId) liveRunId = m.runId;
@@ -2226,6 +2313,7 @@
     _debugThinking: debugThinking,
     _debugTool: debugTool,
     _debugOpenBubble: debugOpenBubble,
+    _debugReplay: debugReplay,
     refreshSessionRail: refreshSessionRail,
     applyRailBadges: applyRailBadges,
     refreshDock: refreshDock,

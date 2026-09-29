@@ -1143,7 +1143,6 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 
 	// Collect the full response text for persistence
 	var fullResponse strings.Builder
-	thinkingSeq := 0
 
 	// Collect any A2UI surfaces emitted during the run so they can contribute
 	// to citation derivation alongside the answer text.
@@ -1156,16 +1155,18 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 			fullResponse.WriteString(event.Text)
 			sseWriter.WriteData(sse.NewTokenEvent(event.Text))
 		case agents.StreamEventThinking:
-			thinkingSeq++
-			sseWriter.WriteData(sse.NewThinkingEvent(strconv.Itoa(thinkingSeq), event.Role, event.Text))
+			_ = sseWriter.WriteData(sse.NewThinkingEvent(event.ID, event.Role, event.Text, event.Done))
 		case agents.StreamEventToolCallStart:
-			sseWriter.WriteData(sse.NewMCPToolEvent(event.Tool, "started", event.Input, ""))
+			_ = sseWriter.WriteData(sse.NewMCPToolEventWithID(event.Tool, "started", event.ID, event.Input, ""))
 		case agents.StreamEventToolCallEnd:
-			status := "completed"
-			if event.Error != "" {
-				status = "error"
+			status := event.Status
+			if status == "" {
+				status = "completed"
+				if event.Error != "" {
+					status = "error"
+				}
 			}
-			sseWriter.WriteData(sse.NewMCPToolEvent(event.Tool, status, event.Output, event.Error))
+			_ = sseWriter.WriteData(sse.NewMCPToolEventWithID(event.Tool, status, event.ID, event.Output, event.Error))
 		case agents.StreamEventError:
 			sseWriter.WriteData(sse.NewErrorEvent(event.Error))
 		case agents.StreamEventToolApproval:

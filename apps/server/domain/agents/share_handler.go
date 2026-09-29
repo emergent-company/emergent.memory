@@ -3,7 +3,6 @@ package agents
 import (
 	"context"
 	"net/http"
-	"strconv"
 
 	"github.com/labstack/echo/v4"
 
@@ -260,22 +259,23 @@ func (h *ShareHandler) Stream(c echo.Context) error {
 	writer := sse.NewWriter(c.Response().Writer)
 	_ = writer.Start()
 
-	thinkingSeq := 0
 	streamCallback := func(event StreamEvent) {
 		switch event.Type {
 		case StreamEventTextDelta:
 			_ = writer.WriteData(sse.NewTokenEvent(event.Text))
 		case StreamEventThinking:
-			thinkingSeq++
-			_ = writer.WriteData(sse.NewThinkingEvent(strconv.Itoa(thinkingSeq), event.Role, event.Text))
+			_ = writer.WriteData(sse.NewThinkingEvent(event.ID, event.Role, event.Text, event.Done))
 		case StreamEventToolCallStart:
-			_ = writer.WriteData(sse.NewMCPToolEvent(event.Tool, "started", event.Input, ""))
+			_ = writer.WriteData(sse.NewMCPToolEventWithID(event.Tool, "started", event.ID, event.Input, ""))
 		case StreamEventToolCallEnd:
-			status := "completed"
-			if event.Error != "" {
-				status = "error"
+			status := event.Status
+			if status == "" {
+				status = "completed"
+				if event.Error != "" {
+					status = "error"
+				}
 			}
-			_ = writer.WriteData(sse.NewMCPToolEvent(event.Tool, status, event.Output, event.Error))
+			_ = writer.WriteData(sse.NewMCPToolEventWithID(event.Tool, status, event.ID, event.Output, event.Error))
 		case StreamEventError:
 			_ = writer.WriteData(sse.NewErrorEvent(event.Error))
 		case StreamEventToolApproval:

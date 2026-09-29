@@ -279,10 +279,15 @@
     //   onToken(evt),    // optional (raw delta append; hosts without it skip)
     //   isAborted(),     // optional (sidepanel drops frames from aborted streams)
     // }
-    return function (raw) {
-      var evt;
-      try { evt = JSON.parse(raw); } catch (e) { return; }
-      if (h.isAborted && h.isAborted()) return;
+    //
+    // dispatchFrame handles a single parsed frame. The top-level handler parses
+    // the raw SSE payload then delegates here; a `live_replay` frame re-runs the
+    // same per-frame switch over its in-order `frames` array, so replayed
+    // in-flight state (thinking / mcp_tool / approval / question / ui) renders
+    // through the exact handlers the live path uses. A host that omitted an
+    // optional hook (onThinking/renderUI) simply skips those frames.
+    function dispatchFrame(evt) {
+      if (!evt || typeof evt !== "object") return;
       switch (evt.type) {
         case "meta":
           h.onMeta(evt);
@@ -316,9 +321,23 @@
         case "error":
           h.failStream(evt.error || "The agent hit an error.");
           break;
+        case "live_replay": {
+          var frames = evt.frames;
+          if (Array.isArray(frames)) {
+            for (var i = 0; i < frames.length; i++) dispatchFrame(frames[i]);
+          }
+          break;
+        }
         case "done":
           break;
       }
+    }
+
+    return function (raw) {
+      var evt;
+      try { evt = JSON.parse(raw); } catch (e) { return; }
+      if (h.isAborted && h.isAborted()) return;
+      dispatchFrame(evt);
     };
   }
 

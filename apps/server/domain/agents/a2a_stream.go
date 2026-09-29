@@ -77,6 +77,11 @@ func (t *a2aStreamTranslator) translate(ev StreamEvent) []StreamResponse {
 
 	case StreamEventThinking:
 		// Never its own stream member; folded into final-message metadata.
+		// Skip the segment-closing event (Done:true, empty text) — it only
+		// marks the end of an open segment and carries no content.
+		if ev.Done {
+			return nil
+		}
 		t.thinking = append(t.thinking, ev.Text)
 		return nil
 

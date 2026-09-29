@@ -479,6 +479,22 @@ func TestRewriteChatStreamToolResultHTML(t *testing.T) {
 	}
 }
 
+// TestRewriteChatStreamToolResultPreservesIDStatus locks the additive mcp_tool
+// contract: the new `id` and the existing `status` field survive the
+// emitToolResultHTML re-marshal (map[string]json.RawMessage) verbatim.
+func TestRewriteChatStreamToolResultPreservesIDStatus(t *testing.T) {
+	in := `data: {"type":"mcp_tool","id":"call-42","tool":"web_search","status":"awaiting_confirmation","result":{"answer":1}}` + "\n\n"
+	out := rewrite(t, in)
+	if out == in {
+		t.Fatalf("JSON tool result should be re-framed, got verbatim: %s", out)
+	}
+	for _, want := range []string{`"id":"call-42"`, `"status":"awaiting_confirmation"`, `"resultHtml"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in output: %s", want, out)
+		}
+	}
+}
+
 // TestRewriteChatStreamToolResultNonJSONPassthrough asserts a tool result that
 // isn't a JSON object/array falls back to the verbatim raw event, followed by a
 // synthesized terminal `error` (no `done`).

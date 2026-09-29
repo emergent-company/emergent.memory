@@ -418,6 +418,32 @@ div:has(> #_layout-topbar) {
 .memory-tool-chip[data-status="ok"] { border-color: oklch(0.71 0.15 152 / 0.35); }
 .memory-tool-chip[data-status="error"] { border-color: oklch(0.63 0.2 26 / 0.45); }
 
+/* Tool-chip trailing status slot (chat-stream.js → setToolStatus). The slot
+   reserves one icon's worth of space so a status swap (running → ok/error)
+   never nudges the row. app.css owns the chip's status tint, the awaiting
+   motion, and the reduced-motion fallback for the running spinner; the spin
+   itself stays the Tailwind `animate-spin` utility on the icon. */
+.memory-tool-status {
+  justify-content: center;
+  min-width: 0.875rem; /* one size-3.5 icon */
+  min-height: 0.875rem;
+  line-height: 1;
+}
+/* running: the trailing loader-circle spins (Tailwind `animate-spin` on the
+   icon). Lift it off `text-muted-faint` so the wait reads clearly, still quiet. */
+.memory-tool-chip[data-status="running"] .memory-tool-status .iconify {
+  color: var(--color-muted-strong);
+}
+/* awaiting_confirmation: a calm clock that breathes — "waiting on you", neither
+   the running spinner nor a green check. */
+.memory-tool-chip[data-status="awaiting_confirmation"] .memory-tool-status .iconify {
+  animation: memory-tool-wait 2.4s ease-in-out infinite;
+}
+@keyframes memory-tool-wait {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+
 /* suggestion chips in chat welcome state */
 .memory-suggestion {
   transition: transform 0.15s ease, border-color 0.15s ease, color 0.15s ease;
@@ -1429,4 +1455,14 @@ pre.memory-scroll::-webkit-scrollbar-thumb { background: var(--color-base-300); 
   .memory-caret { animation: none; opacity: 0.6; }
   .memory-typing span { animation: none; }
   .memory-run-status[data-state="working"] .memory-run-status-dot { animation: none; }
+  /* Tool status: no motion, but state stays legible — the static loader-circle
+     (running) and clock (awaiting) keep their glyph and tint, just dimmed. */
+  .memory-tool-chip[data-status="running"] .memory-tool-status .iconify {
+    animation: none;
+    opacity: 0.7;
+  }
+  .memory-tool-chip[data-status="awaiting_confirmation"] .memory-tool-status .iconify {
+    animation: none;
+    opacity: 0.7;
+  }
 }

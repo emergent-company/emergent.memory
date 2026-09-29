@@ -71,6 +71,20 @@ type StreamEvent struct {
 	Role       string         // For Thinking: "operator" (planning text) or "reasoning" (chain-of-thought)
 	SurfaceID  string         // For A2UI: the stable surface identifier
 	A2UI       []a2ui.Message // For A2UI: the ordered surface messages
+	// ID is a stable correlation key:
+	//   - For Thinking: the segment id ("step-<n>-<role>") shared by every delta
+	//     of one reasoning/planning segment and its closing event.
+	//   - For ToolCallStart/End: the ADK function-call id, identical on a tool's
+	//     start and terminal events so parallel/repeated invocations correlate.
+	ID string
+	// Done is true only on the thinking segment-closing event (Text is empty on
+	// close); every incremental delta carries Done:false.
+	Done bool
+	// Status is the explicit terminal status of a ToolCallEnd event:
+	// "completed", "error", or "awaiting_confirmation". It is carried explicitly
+	// (rather than inferred from Error) so a paused/blocked tool is reported
+	// faithfully instead of as success.
+	Status string
 }
 
 // StreamCallback is an optional function invoked for each streaming event during execution.
@@ -122,6 +136,99 @@ func thinkingTexts(parts []*genai.Part) (operator, reasoning []string) {
 		}
 	}
 	return operator, reasoning
+}
+
+// thinkingSegmentID derives the stable segment id for a (step, role) thinking
+// segment. Every delta of one segment shares this id so clients can group
+// incremental deltas and stop their in-progress state when the closing event
+// (done:true) arrives.
+func thinkingSegmentID(step int, role string) string {
+	return fmt.Sprintf("step-%d-%s", step, role)
+}
+
+// resolveToolStreamStatus derives the SSE terminal status of a tool call from
+// the execution error and any status carried by beforeToolCb (set for tools
+// that did not execute: policy-blocked, share-denied, or awaiting confirmation).
+func resolveToolStreamStatus(toolErr error, carried string) string {
+	if toolErr != nil {
+		return "error"
+	}
+	if carried != "" {
+		return carried
+	}
+	return "completed"
+}
+
+// thinkingTracker assigns stable segment ids to thinking events and emits
+// exactly one done:true close per segment. It owns the currently-open
+// (step, role) segment, emitting a close before switching segments, and tracks
+// which steps already streamed partial reasoning deltas so the whole non-partial
+// block does not append the reasoning a second time.
+type thinkingTracker struct {
+	cb               StreamCallback
+	open             bool
+	openStep         int
+	openRole         string
+	openID           string
+	reasoningPartial map[int]bool
+}
+
+func newThinkingTracker(cb StreamCallback) *thinkingTracker {
+	return &thinkingTracker{
+		cb:               cb,
+		reasoningPartial: map[int]bool{},
+	}
+}
+
+// emit streams a thinking delta for the given step and role, closing the
+// previously-open segment first if the (step, role) changed.
+func (t *thinkingTracker) emit(step int, role, text string) {
+	id := thinkingSegmentID(step, role)
+	if t.open && (t.openStep != step || t.openRole != role) {
+		t.close()
+	}
+	if t.cb != nil {
+		t.cb(StreamEvent{
+			Type: StreamEventThinking,
+			ID:   id,
+			Role: role,
+			Text: text,
+			Done: false,
+		})
+	}
+	t.open = true
+	t.openStep = step
+	t.openRole = role
+	t.openID = id
+}
+
+// close emits the terminal done:true for the currently-open segment, if any.
+// It is a no-op when no segment is open, so it is safe to call defensively.
+func (t *thinkingTracker) close() {
+	if !t.open {
+		return
+	}
+	if t.cb != nil {
+		t.cb(StreamEvent{
+			Type: StreamEventThinking,
+			ID:   t.openID,
+			Role: t.openRole,
+			Done: true,
+		})
+	}
+	t.open = false
+}
+
+// markReasoningPartial records that a step streamed partial reasoning deltas.
+func (t *thinkingTracker) markReasoningPartial(step int) {
+	t.reasoningPartial[step] = true
+}
+
+// reasoningWasPartial reports whether the step already streamed partial
+// reasoning deltas, in which case the whole non-partial reasoning block for the
+// same step must be suppressed to avoid emitting the reasoning twice.
+func (t *thinkingTracker) reasoningWasPartial(step int) bool {
+	return t.reasoningPartial[step]
 }
 
 // finalResponseStreamEvents classifies the parts of a final-response event into
@@ -2289,6 +2396,19 @@ func (ae *AgentExecutor) runPipeline(
 	// execution window (duration_ms) even across parallel tool calls.
 	var toolStartTimes sync.Map // functionCallID -> time.Time
 
+	// toolStreamStatuses records the explicit stream status of tool calls that
+	// did not execute normally (policy-blocked, share-denied, or awaiting
+	// confirmation), keyed by the ADK function-call id, so afterToolCb reports
+	// the honest terminal status instead of inferring it from the result shape.
+	var toolStreamStatuses sync.Map // functionCallID -> string
+
+	// thinkTrack owns thinking segment boundaries: it assigns stable segment ids,
+	// emits done:false on open deltas and exactly one done:true per close, and
+	// suppresses the whole-block reasoning path when a step already streamed
+	// partial reasoning deltas.
+	thinkTrack := newThinkingTracker(req.StreamCallback)
+	defer thinkTrack.close()
+
 	// Set up before-model callback for step tracking
 	beforeModelCb := func(cbCtx agent.CallbackContext, llmReq *model.LLMRequest) (*model.LLMResponse, error) {
 		// Observe a durable cancel at this step boundary (issue #1166). A cancel
@@ -2416,10 +2536,14 @@ func (ae *AgentExecutor) runPipeline(
 
 	// Set up before-tool callback for streaming ToolCallStart events and tool policy enforcement
 	beforeToolCb := func(tCtx tool.Context, t tool.Tool, args map[string]any) (map[string]any, error) {
+		// FunctionCallID is stable across the before/after callback pair, even
+		// for parallel tool calls. Capture it once so the start event, the
+		// terminal status, and the duration window all share the same id.
+		id := tCtx.FunctionCallID()
+
 		// Stamp the invocation start so afterToolCb can compute the real
-		// execution window (duration_ms). FunctionCallID is stable across the
-		// before/after callback pair, even for parallel tool calls.
-		if id := tCtx.FunctionCallID(); id != "" {
+		// execution window (duration_ms).
+		if id != "" {
 			toolStartTimes.Store(id, time.Now())
 		}
 
@@ -2430,10 +2554,15 @@ func (ae *AgentExecutor) runPipeline(
 		// round-trips) between model steps keep refreshing last_step_at.
 		_ = ae.repo.TouchRun(dbCtx, run.ID)
 
+		// A tool start closes any open thinking segment: the pre-tool
+		// monologue/reasoning phase has ended.
+		thinkTrack.close()
+
 		if req.StreamCallback != nil {
 			req.StreamCallback(StreamEvent{
 				Type:  StreamEventToolCallStart,
 				Tool:  t.Name(),
+				ID:    id,
 				Input: args,
 			})
 		}
@@ -2453,6 +2582,9 @@ func (ae *AgentExecutor) runPipeline(
 				slog.String("run_id", run.ID),
 				slog.String("tool", t.Name()),
 			)
+			if id != "" {
+				toolStreamStatuses.Store(id, "error")
+			}
 			return map[string]any{
 				"error":  fmt.Sprintf("tool %q is disabled by policy and cannot be called", t.Name()),
 				"policy": "disabled",
@@ -2468,6 +2600,9 @@ func (ae *AgentExecutor) runPipeline(
 						slog.String("run_id", run.ID),
 						slog.String("tool", t.Name()),
 					)
+					if id != "" {
+						toolStreamStatuses.Store(id, "error")
+					}
 					return map[string]any{
 						"error":  fmt.Sprintf("tool %q is not allowed on this share link", t.Name()),
 						"policy": "share_deny",
@@ -2554,6 +2689,11 @@ func (ae *AgentExecutor) runPipeline(
 					ToolName:       t.Name(),
 					ToolArgs:       args,
 				})
+				// The tool did not execute: carry its non-terminal status so
+				// afterToolCb reports awaiting_confirmation instead of success.
+				if id != "" {
+					toolStreamStatuses.Store(id, "awaiting_confirmation")
+				}
 				// Return synthetic result — skips actual tool.Run(); afterToolCb will still fire.
 				return map[string]any{
 					"status":      "awaiting_confirmation",
@@ -2595,6 +2735,15 @@ func (ae *AgentExecutor) runPipeline(
 		if toolErr != nil {
 			status = "failed"
 		}
+		// Stream status is distinct from the persisted status: it reports the
+		// honest terminal state for the SSE surface, including non-execution.
+		// A tool that was policy-blocked, share-denied, or awaiting confirmation
+		// carries its explicit status from beforeToolCb.
+		var carried string
+		if v, ok := toolStreamStatuses.LoadAndDelete(tCtx.FunctionCallID()); ok {
+			carried, _ = v.(string)
+		}
+		streamStatus := resolveToolStreamStatus(toolErr, carried)
 		output := result
 		if output == nil {
 			output = map[string]any{}
@@ -2719,10 +2868,17 @@ func (ae *AgentExecutor) runPipeline(
 			evt := StreamEvent{
 				Type:   StreamEventToolCallEnd,
 				Tool:   toolName,
+				ID:     tCtx.FunctionCallID(),
+				Status: streamStatus,
 				Output: output,
 			}
 			if toolErr != nil {
 				evt.Error = toolErr.Error()
+			} else if streamStatus == "error" {
+				// Blocked tools surface the synthetic error carried in the result.
+				if errStr, ok := output["error"].(string); ok {
+					evt.Error = errStr
+				}
 			}
 			req.StreamCallback(evt)
 		}
@@ -3192,11 +3348,9 @@ func (ae *AgentExecutor) runPipeline(
 						continue
 					}
 					if part.Thought {
-						req.StreamCallback(StreamEvent{
-							Type: StreamEventThinking,
-							Role: "reasoning",
-							Text: part.Text,
-						})
+						step := tracker.current()
+						thinkTrack.markReasoningPartial(step)
+						thinkTrack.emit(step, "reasoning", part.Text)
 					} else {
 						req.StreamCallback(StreamEvent{
 							Type: StreamEventTextDelta,
@@ -3216,25 +3370,27 @@ func (ae *AgentExecutor) runPipeline(
 			// the final answer. Thought parts → "reasoning"; regular text (the
 			// pre-tool planning monologue) → "operator".
 			if event.Content != nil && !event.Partial && !event.IsFinalResponse() && req.StreamCallback != nil {
+				step := tracker.current()
 				operatorText, reasoningText := thinkingTexts(event.Content.Parts)
 				if len(operatorText) > 0 {
-					req.StreamCallback(StreamEvent{
-						Type: StreamEventThinking,
-						Role: "operator",
-						Text: strings.Join(operatorText, "\n"),
-					})
+					thinkTrack.emit(step, "operator", strings.Join(operatorText, "\n"))
 				}
-				if len(reasoningText) > 0 {
-					req.StreamCallback(StreamEvent{
-						Type: StreamEventThinking,
-						Role: "reasoning",
-						Text: strings.Join(reasoningText, "\n"),
-					})
+				// If this step already streamed partial reasoning deltas, the
+				// whole-block reasoning is a duplicate — skip it (the operator
+				// text is never partial-streamed and stays on this path).
+				if len(reasoningText) > 0 && !thinkTrack.reasoningWasPartial(step) {
+					thinkTrack.emit(step, "reasoning", strings.Join(reasoningText, "\n"))
 				}
 			}
 
 			if event.IsFinalResponse() {
 				lastEvent = event
+				// The final answer begins: close any open thinking segment from a
+				// prior step (the planning/reasoning phase has ended). A reasoning
+				// segment at this same step continues below.
+				if step := tracker.current(); thinkTrack.open && thinkTrack.openStep != step {
+					thinkTrack.close()
+				}
 				// Emit the final answer as token events. Thought (reasoning) parts
 				// are surfaced as thinking events rather than dropped, so a reasoner
 				// that returns chain-of-thought alongside its final answer is not
@@ -3247,8 +3403,13 @@ func (ae *AgentExecutor) runPipeline(
 				// mapped to a Thought part), the Thought text IS the answer: emit it
 				// as text deltas so callers receive a non-empty final response.
 				if event.Content != nil && req.StreamCallback != nil {
+					step := tracker.current()
 					for _, streamEvent := range finalResponseStreamEvents(event.Content.Parts) {
-						req.StreamCallback(streamEvent)
+						if streamEvent.Type == StreamEventThinking {
+							thinkTrack.emit(step, streamEvent.Role, streamEvent.Text)
+						} else {
+							req.StreamCallback(streamEvent)
+						}
 					}
 				}
 			}

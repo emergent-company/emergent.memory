@@ -196,7 +196,8 @@
   // also wins the cascade against app.css's unlayered tool-chip rules.
   //
   // This is the ONLY runtime-injected stylesheet, and it owns just the
-  // expandable-badge shell + shimmer that app.css deliberately does not define.
+  // expandable-badge shell + its live affordances (the label shimmer and the
+  // thinking-icon bob) that app.css deliberately does not define.
   // Single source of truth: nothing here re-declares an app.css rule except the
   // two documented `.memory-tool-chip[data-status]` border overrides below. The
   // `.memory-badge` `border-radius: .625rem` literal is a documented JS-only
@@ -246,7 +247,20 @@
       "-webkit-background-clip:text;background-clip:text;" +
       "animation:memory-shimmer 1.6s linear infinite}" +
       "@keyframes memory-shimmer{0%{background-position:-100% 0}100%{background-position:0 0}}" +
-      "@media (prefers-reduced-motion:reduce){.memory-badge-live .memory-badge-label{animation:none}}";
+      // live thinking: the leading icon breathes while the segment is open
+      // (the label shimmers above). Scoped to `.memory-thinking` so the tool
+      // chip's wrench never bobs, and to `:not(.lucide--chevron-down)` so the
+      // hover-swapped chevron stays still. Class-gated on `.memory-badge-live`,
+      // so `done:true` removing the class stops it cleanly — same trigger as
+      // the shimmer, live and replayed alike.
+      ".memory-badge-live.memory-thinking .memory-badge-icon .iconify:not(.lucide--chevron-down){" +
+      "animation:memory-badge-bob 2.4s ease-in-out infinite;transform-origin:50% 50%}" +
+      "@keyframes memory-badge-bob{" +
+      "0%,100%{opacity:.5;transform:translateY(0) scale(1)}" +
+      "50%{opacity:1;transform:translateY(-1px) scale(1.05)}}" +
+      "@media (prefers-reduced-motion:reduce){" +
+      ".memory-badge-live .memory-badge-label{animation:none}" +
+      ".memory-badge-live.memory-thinking .memory-badge-icon .iconify:not(.lucide--chevron-down){animation:none;opacity:.85}}";
     document.head.appendChild(st);
   }
 

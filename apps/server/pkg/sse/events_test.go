@@ -237,15 +237,17 @@ func TestNewThinkingEvent(t *testing.T) {
 		id   string
 		role string
 		text string
+		done bool
 	}{
-		{name: "operator planning", id: "1", role: "operator", text: "Let me plan this."},
-		{name: "reasoning", id: "2", role: "reasoning", text: "hidden chain-of-thought"},
-		{name: "empty text", id: "3", role: "operator", text: ""},
+		{name: "operator planning open", id: "step-1-operator", role: "operator", text: "Let me plan this.", done: false},
+		{name: "reasoning open", id: "step-1-reasoning", role: "reasoning", text: "hidden chain-of-thought", done: false},
+		{name: "reasoning close", id: "step-1-reasoning", role: "reasoning", text: "", done: true},
+		{name: "empty text open", id: "step-2-operator", role: "operator", text: "", done: false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			event := NewThinkingEvent(tt.id, tt.role, tt.text)
+			event := NewThinkingEvent(tt.id, tt.role, tt.text, tt.done)
 			if event.Type != string(EventThinking) {
 				t.Errorf("Type = %q, want %q", event.Type, string(EventThinking))
 			}
@@ -258,10 +260,36 @@ func TestNewThinkingEvent(t *testing.T) {
 			if event.Text != tt.text {
 				t.Errorf("Text = %q, want %q", event.Text, tt.text)
 			}
-			if !event.Done {
-				t.Error("Done should be true")
+			if event.Done != tt.done {
+				t.Errorf("Done = %v, want %v", event.Done, tt.done)
 			}
 		})
+	}
+}
+
+func TestNewMCPToolEventWithID(t *testing.T) {
+	event := NewMCPToolEventWithID("search", "started", "call-123", nil, "")
+
+	if event.Type != string(EventMCPTool) {
+		t.Errorf("Type = %q, want %q", event.Type, string(EventMCPTool))
+	}
+	if event.ID != "call-123" {
+		t.Errorf("ID = %q, want call-123", event.ID)
+	}
+	if event.Tool != "search" {
+		t.Errorf("Tool = %q, want search", event.Tool)
+	}
+	if event.Status != "started" {
+		t.Errorf("Status = %q, want started", event.Status)
+	}
+
+	// NewMCPToolEvent (no id) must remain a valid zero-id constructor.
+	legacy := NewMCPToolEvent("search", "completed", map[string]int{"n": 1}, "")
+	if legacy.ID != "" {
+		t.Errorf("legacy ID = %q, want empty", legacy.ID)
+	}
+	if legacy.Status != "completed" {
+		t.Errorf("legacy Status = %q, want completed", legacy.Status)
 	}
 }
 

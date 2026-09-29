@@ -42,6 +42,7 @@ func main() {
 	sup := NewSupervisor(cfg.BridgeBin, cfg.BridgeArgs, cfg.BridgeWorkdir, cfg.SupervisorInterval, cfg.WorkerIdleTTL, workerCreds, "http://127.0.0.1:"+cfg.Port)
 	s := &Server{cfg: cfg, memory: memory, supervisor: sup, bindings: newVoiceBindingStore(), workerCreds: workerCreds, shutdownCh: make(chan struct{})}
 	s.hub = newConversationHub(s)
+	s.live = newLiveStateHub()
 	s.registry = newAccountRegistry()
 	s.shareIPLimiter = newKeyedRateLimiter(cfg.ShareRateIPPerMin, cfg.ShareRateIPBurst)
 	s.shareLinkLimiter = newKeyedRateLimiter(cfg.ShareRateLinkPerMin, cfg.ShareRateLinkBurst)
