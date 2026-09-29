@@ -282,3 +282,110 @@ func TestSuperadminRoutesAreTransportGated(t *testing.T) {
 	}
 	t.Logf("asserted %d /api/superadmin routes are transport-gated (superadmin-any or superadmin-full)", gated)
 }
+
+// TestFormatUnclassifiedNamesWrapperHandlerFix is the option-(b) guard for
+// #1254: the guard's fail-closed message must name the wrapper-handler fix so
+// the next author resolves the red job in seconds.
+func TestFormatUnclassifiedNamesWrapperHandlerFix(t *testing.T) {
+	msg := FormatUnclassified([]string{
+		`/x/routes.go:10:5: unrecognized inline middleware h.rateLimitMiddleware(...)`,
+	})
+	for _, want := range []string{
+		"1 unclassifiable registration pattern",
+		"wrapper handler",
+		"h.handleWithLimiter",
+		"h.rateLimitMiddleware",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("FormatUnclassified message missing %q:\n%s", want, msg)
+		}
+	}
+}
+
+// TestExtractHandlerMethodMiddlewareFailsClosed proves the #1254 idiom is still
+// rejected (option b): the extractor cannot derive the tier of a handler-method
+// middleware, so it must fail closed and attach the wrapper-handler hint rather
+// than guessing "neutral" (which would let a later removal of an auth gate go
+// unnoticed).
+func TestExtractHandlerMethodMiddlewareFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	domainDir := filepath.Join(dir, "domain", "demo")
+	if err := os.MkdirAll(domainDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := `package demo
+
+import "github.com/labstack/echo/v4"
+
+type Handler struct{}
+
+func (h *Handler) Handle(c echo.Context) error { return nil }
+func (h *Handler) rateLimitMiddleware() echo.MiddlewareFunc { return nil }
+
+func RegisterRoutes(e *echo.Echo, h *Handler) {
+	e.POST("/api/webhooks/x", h.Handle, h.rateLimitMiddleware())
+}
+`
+	if err := os.WriteFile(filepath.Join(domainDir, "routes.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Extract(dir)
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if len(res.Unclassified) != 1 {
+		t.Fatalf("expected exactly 1 unclassified entry for the handler-method middleware, got %v", res.Unclassified)
+	}
+	got := res.Unclassified[0]
+	for _, want := range []string{"rateLimitMiddleware", "wrapper handler", "h.handleWithLimiter"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("diagnostic missing %q: %s", want, got)
+		}
+	}
+}
+
+// TestExtractUnknownInlineMiddlewareStillFailsClosed proves the fail-closed
+// property survives option (b): bare-identifier, package-function, and
+// package-selector middleware forms the extractor does not know are all
+// rejected. A selector on an identifier gets the hint, never acceptance.
+func TestExtractUnknownInlineMiddlewareStillFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	domainDir := filepath.Join(dir, "domain", "demo")
+	if err := os.MkdirAll(domainDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := `package demo
+
+import (
+	"github.com/labstack/echo/v4"
+	"example.com/mystery"
+)
+
+type Handler struct{}
+
+func (h *Handler) Handle(c echo.Context) error { return nil }
+
+func RegisterRoutes(e *echo.Echo, h *Handler) {
+	e.POST("/a", h.Handle, mysteryMiddleware)
+	e.POST("/b", h.Handle, wrapMiddleware("x"))
+	e.POST("/c", h.Handle, mystery.Unknown())
+}
+`
+	if err := os.WriteFile(filepath.Join(domainDir, "routes.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Extract(dir)
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if len(res.Unclassified) != 3 {
+		t.Fatalf("expected 3 unclassified entries, got %d: %v", len(res.Unclassified), res.Unclassified)
+	}
+	for _, u := range res.Unclassified {
+		if !strings.Contains(u, "unrecognized inline middleware") {
+			t.Errorf("diagnostic is not a fail-closed inline-middleware message: %s", u)
+		}
+	}
+}

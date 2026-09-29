@@ -62,12 +62,7 @@ func run() int {
 	}
 
 	if len(res.Unclassified) > 0 {
-		fmt.Fprintf(os.Stderr, "route-authority guard failed: %d unclassifiable registration pattern(s)\n", len(res.Unclassified))
-		for _, u := range res.Unclassified {
-			fmt.Fprintf(os.Stderr, "  - %s\n", u)
-		}
-		fmt.Fprintf(os.Stderr, "\nThe extractor fails closed on registration patterns it cannot classify.\n")
-		fmt.Fprintf(os.Stderr, "Update the extractor (internal/routeguard) to handle the new pattern.\n")
+		fmt.Fprint(os.Stderr, routeguard.FormatUnclassified(res.Unclassified))
 		return 1
 	}
 
