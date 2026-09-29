@@ -1,3 +1,5 @@
+<!-- openspec:archive-ready -->
+
 ## 1. Diagnose the per-call cost (issue #1191)
 
 - [x] 1.1 Reproduce on a hermetic throwaway Postgres seeded like the issue (120k `LegalParagraph` rows): time `entity-query` with `key_prefix` and `field_strategy="full"`.

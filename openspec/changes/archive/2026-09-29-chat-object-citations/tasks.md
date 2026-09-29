@@ -1,3 +1,5 @@
+<!-- openspec:archive-ready -->
+
 # Tasks
 
 Worktree: `/root/emergent.memory-wt/chat-object-citations` (branch `feat/chat-object-citations`).
