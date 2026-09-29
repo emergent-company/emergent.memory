@@ -33,7 +33,9 @@ rows.
 A tool row whose enable state is managed by the agent's banned tools rather than its
 allowed tools SHALL render a checkbox reflecting ban state (checked = not banned) and
 SHALL NOT render a per-tool policy select. Toggling it SHALL add or remove the tool
-from the agent's banned tools on save.
+from the agent's banned tools on save. Saving the Tools panel SHALL NOT persist a
+ban-managed tool in the agent's allowed-tools whitelist, including when the owning
+group's enable fan-out would otherwise add it.
 
 #### Scenario: Ban-managed row has no policy select
 
@@ -49,3 +51,8 @@ from the agent's banned tools on save.
 
 - **WHEN** the user checks a previously banned `set_session_title` and saves the Tools panel
 - **THEN** the saved agent no longer lists it in banned tools
+
+#### Scenario: Never persisted in allowed tools
+
+- **WHEN** the user checks `set_session_title` or enables the Session group and saves the Tools panel
+- **THEN** the saved agent does not list it in its allowed tools

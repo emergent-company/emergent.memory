@@ -462,6 +462,17 @@ func applyAgentToolsSection(def *AgentDefinition, c echo.Context) error {
 		}
 	}
 	applyToolGroups(def, form, policies)
+
+	// Ban-managed hidden builtins are never stored in the allowed-tools
+	// whitelist; their enable state lives entirely in BannedTools. Group
+	// fan-out above appends every member to Tools when a group is enabled, so
+	// strip them again to keep the invariant (a ban-managed tool in Tools would
+	// also make the picker row disagree with the ban state and let a saved
+	// definition re-expose the Session group without a catalog).
+	for name := range banManagedTools {
+		def.Tools = removeItems(def.Tools, name)
+	}
+
 	def.ToolPolicies = policies
 	return nil
 }
@@ -806,10 +817,17 @@ func inheritValueLabel(groupPolicy, defaultPolicy string) string {
 // value its Inherit option falls back to (the owning group policy, else the
 // agent default).
 func toolRow(agent *AgentDefinition, name, description, groupPolicy string) agentToolRow {
+	checked := containsString(agent.Tools, name)
+	if banManagedTools[name] {
+		// Ban-managed rows carry no whitelist membership: their checkbox maps
+		// to ban state directly, so an inconsistent stored state can never make
+		// a banned builtin render as checked.
+		checked = !containsString(agent.BannedTools, name)
+	}
 	return agentToolRow{
 		Name:         name,
 		Description:  description,
-		Checked:      containsString(agent.Tools, name) || (banManagedTools[name] && !containsString(agent.BannedTools, name)),
+		Checked:      checked,
 		PolicyValue:  toolPolicyValue(agent, name),
 		NoPolicy:     banManagedTools[name],
 		InheritLabel: inheritValueLabel(groupPolicy, agent.DefaultToolPolicy),

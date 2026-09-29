@@ -2044,7 +2044,8 @@ func TestApplyAgentToolsSectionGroupsFullMembership(t *testing.T) {
 // TestApplyAgentToolsSectionBanManagedTools covers the write-side reconciliation
 // of the ban-managed hidden builtin set_session_title when the Session group was
 // rendered: a submitted membership keeps the tool out of BannedTools; an absent
-// membership (row unchecked) adds it.
+// membership (row unchecked) adds it. In every case the builtin is stripped from
+// the allowed-tools whitelist — its enable state lives only in BannedTools.
 func TestApplyAgentToolsSectionBanManagedTools(t *testing.T) {
 	newServer := func(f *fakeMemory) *echo.Echo {
 		s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
@@ -2079,6 +2080,9 @@ func TestApplyAgentToolsSectionBanManagedTools(t *testing.T) {
 		if containsString(u.BannedTools, "set_session_title") {
 			t.Errorf("a checked ban-managed tool must not be banned: %v", u.BannedTools)
 		}
+		if containsString(u.Tools, "set_session_title") {
+			t.Errorf("a checked ban-managed tool must not persist in Tools: %v", u.Tools)
+		}
 	})
 
 	t.Run("absent tool is added to BannedTools", func(t *testing.T) {
@@ -2088,6 +2092,26 @@ func TestApplyAgentToolsSectionBanManagedTools(t *testing.T) {
 		u := f.updatedAgent
 		if !containsString(u.BannedTools, "set_session_title") {
 			t.Errorf("an unchecked ban-managed tool must be banned: %v", u.BannedTools)
+		}
+		if containsString(u.Tools, "set_session_title") {
+			t.Errorf("a banned ban-managed tool must not persist in Tools: %v", u.Tools)
+		}
+	})
+
+	t.Run("enabling the Session group does not persist the builtin in Tools", func(t *testing.T) {
+		d := def()
+		d.Tools = nil
+		d.ToolGroups[0].Enabled = false
+		f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": d}}
+		// baseline off → switched on: the group fan-out appends every member,
+		// including the hidden builtin, to Tools; it must be stripped again.
+		post(newServer(f), "groupWasEnabled.session=false&groupEnabled.session=on")
+		u := f.updatedAgent
+		if containsString(u.Tools, "set_session_title") {
+			t.Errorf("group enable must not persist the ban-managed builtin in Tools: %v", u.Tools)
+		}
+		if containsString(u.BannedTools, "set_session_title") {
+			t.Errorf("enabling the group must leave the builtin un-banned: %v", u.BannedTools)
 		}
 	})
 
