@@ -20,8 +20,11 @@ import (
 	"google.golang.org/adk/tool"
 	"google.golang.org/genai"
 
+	"github.com/google/uuid"
+
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
 	"github.com/emergent-company/emergent.memory/domain/events"
+	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
@@ -2278,6 +2281,14 @@ func (ae *AgentExecutor) runPipeline(
 
 	// Resolve agentID once for use in question creation
 	agentID := ae.resolveAgentID(req)
+
+	// Stamp the acting agent on the context so graph mutations performed by this
+	// run's tools attribute to THIS agent rather than the HTTP principal or a
+	// parent run. Each nested/delegated run re-stamps its own id here, so a
+	// sub-agent's writes attribute to the sub-agent (issue #1193).
+	if agentUUID, err := uuid.Parse(agentID); err == nil {
+		ctx = auth.WithActor(ctx, graph.ActorAgent, &agentUUID)
+	}
 
 	// Accumulate cached token counts across all LLM steps in this run.
 	// Used to surface cache hit visibility in the run summary.

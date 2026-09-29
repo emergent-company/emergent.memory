@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
@@ -146,6 +148,13 @@ func (h *AgentEndpointHandler) handleToolsCall(ctx context.Context, req *Request
 	}
 	if params.Name == "" {
 		return NewErrorResponse(req.ID, ErrCodeInvalidParams, "Missing required parameter: name", map[string]any{"required": []string{"name"}})
+	}
+
+	// Stamp the endpoint's agent as the acting actor so any graph writes made by
+	// these tools (call_agent, session tools) attribute to this endpoint's agent
+	// rather than the HTTP credential principal (issue #1193).
+	if agentUUID, err := uuid.Parse(endpoint.AgentID); err == nil {
+		ctx = auth.WithActor(ctx, graph.ActorAgent, &agentUUID)
 	}
 
 	switch params.Name {

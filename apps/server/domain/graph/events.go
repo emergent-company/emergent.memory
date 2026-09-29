@@ -21,6 +21,7 @@ const (
 // Actor type constants.
 const (
 	ActorUser   = "user"
+	ActorAgent  = "agent"
 	ActorSystem = "system"
 )
 
