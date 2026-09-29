@@ -10,32 +10,67 @@
 # check that closes the loop (#1063).
 #
 # WHAT "STALE" MEANS (the exact line drawn):
-#   A change is stale when BOTH hold:
-#     1. all of its tasks are complete (`totalTasks > 0 && completed == total`),
-#        i.e. `openspec list` reports `status: complete`; AND
-#     2. its directory is already on the base ref (`--base`, default
-#        `origin/main`) — proof the implementation PR was merged, since an
-#        in-flight change lives only on a feature branch, not on main.
+#   A change is stale when ALL hold:
+#     1. its directory exists on the base ref (`--base`, default `origin/main`)
+#        at `openspec/changes/<name>/` — proof the change was merged, since an
+#        in-flight change lives only on a feature branch, not on main;
+#     2. it is not yet under `openspec/changes/archive/` (archiving moves the
+#        directory there, so a merged change still at the top level is
+#        un-archived); AND
+#     3. it DECLARES itself archive-ready (see ARCHIVE-READY below).
 #
-#   Condition 2 is what keeps the guard from false-positiving on an in-flight
-#   change whose tasks are all ticked but whose PR is still open: on a feature
-#   branch that change does NOT exist on `origin/main`, so it is not flagged.
-#   A just-merged complete change IS flagged — deliberately: that is the
-#   post-merge follow-up window this guard exists to surface. Run it from the
-#   scheduled/post-merge workflow, not as a pre-merge gate (a pre-merge gate
-#   would fire on every legitimately-deferred archive).
+#   Condition 1 alone is NOT readiness. This repo commits many change dirs to
+#   `main` before (or without) any implementation — spec-only/design PRs, openspec
+#   re-homing, in-progress-work commits. Treating "dir exists on base" as
+#   "archivable" would flag ~all active changes and, if archived, sync
+#   requirements describing unimplemented behaviour (the #906 bug). Readiness is
+#   therefore DECLARED per change, never inferred from base membership.
 #
-#   Changes with no tasks (`totalTasks == 0`) and changes with incomplete tasks
-#   are never flagged: their archive state is ambiguous, and a guard that cries
-#   wolf is worse than no guard.
+# ARCHIVE-READY (replaces the old `completed == total` gate):
+#   A merged, un-archived change is stale when EITHER:
+#     (i) every task in its `tasks.md` is ticked
+#         (`totalTasks > 0 && completedTasks == totalTasks`) — preserves the
+#         long-standing behaviour for well-ticked changes; OR
+#     (ii) its `tasks.md` carries an explicit readiness marker
+#          (`<!-- openspec:archive-ready -->`), for implementations that merged
+#          with the checkboxes un-backfilled. This is the escape hatch that
+#          un-strands changes the tick gate used to hide (#1210/#1211 lineage).
+#
+#   The guard always REPORTS the tick state (`completedTasks`/`totalTasks`) in
+#   both output modes, but ticks are evidence, not the sole gate.
+#
+#   Condition 1 is what keeps the guard from false-positiving on an in-flight
+#   change whose PR is still open: on a feature branch that change does NOT
+#   exist on `origin/main`, so it is not flagged. A just-merged ready change IS
+#   flagged — deliberately: that is the post-merge follow-up window this guard
+#   exists to surface. Run it from the scheduled/post-merge workflow, not as a
+#   pre-merge gate (a pre-merge gate would fire on every legitimately-deferred
+#   archive).
+#
+# SAFETY VALVE (opt-out for deliberately-incomplete merged changes):
+#   A merged change whose remaining tasks are intentionally deferred can opt out
+#   of the drift report with a marker comment anywhere in its `tasks.md`:
+#
+#     <!-- openspec:archive-hold: <reason> -->
+#
+#   Hold wins over archive-ready. The guard skips held changes and LISTS them,
+#   with their reason, in both the human and `--json` output, so it does not nag
+#   about a change whose milestones are deliberately deferred — e.g.
+#   `unify-scope-authority`, whose §1–§6 shipped but §7/§8 are deferred by
+#   decision (#1161), so archiving now would sync requirements describing
+#   unimplemented behaviour. Markers are read from the working-tree `tasks.md`.
 #
 # Usage:
 #   scripts/preflight/openspec-archive.sh [--base <ref>] [--warn] [--json]
 #     --base <ref>  Base ref whose tree proves "merged" (default: origin/main;
 #                   use HEAD for a post-merge run on main).
 #     --warn        Report drift but exit 0 (advisory).
-#     --json        Emit a machine-readable result on stdout.
+#     --json        Emit a machine-readable result on stdout (stale + held).
 #   Exit: 0 clean, 1 drift found, 2 usage error.
+#
+#   Declare readiness with `<!-- openspec:archive-ready -->` and opt out with
+#   `<!-- openspec:archive-hold: <reason> -->`, both in `tasks.md`. Held changes
+#   are still listed for visibility. See ARCHIVE-READY / SAFETY VALVE above.
 #
 # Offline / tooling is tolerated the way base-check.sh tolerates it: if the base
 # ref cannot be resolved or the `openspec` CLI is missing, warn and skip (0) so
@@ -53,7 +88,7 @@ while [ $# -gt 0 ]; do
     --base) base="${2:-}"; shift 2 ;;
     --warn) warn=1; shift ;;
     --json) json=1; shift ;;
-    -h|--help) sed -n '2,45p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,76p' "$0"; exit 0 ;;
     *) echo "openspec-archive: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -80,13 +115,15 @@ if ! openspec list --json >"$list_json" 2>/dev/null; then
   exit 0
 fi
 
-# Filter candidates (complete changes), then keep only those present on the
-# base ref. Python does the JSON work; `git cat-file` proves base membership.
+# Keep changes that are merged on the base ref, un-archived, DECLARED
+# archive-ready, and not held. Python does the JSON work; `git rev-parse`
+# proves base membership of the change directory.
 set +e
 OPENSPEC_ARCHIVE_BASE="$base" OPENSPEC_ARCHIVE_JSON="$json" \
 python3 - "$list_json" <<'PY'
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -98,37 +135,87 @@ with open(sys.argv[1], encoding="utf-8") as fh:
 
 changes = data.get("changes", []) if isinstance(data, dict) else data
 
-stale = []
-for c in changes:
-    total = c.get("totalTasks", 0)
-    done = c.get("completedTasks", 0)
-    if total <= 0 or done < total:
-        continue
-    name = c.get("name", "")
-    # Present on the base ref => merged. tasks.md always exists for a change
-    # that has tasks.
-    probe = f"{base}:openspec/changes/{name}/tasks.md"
-    if subprocess.run(
-        ["git", "cat-file", "-e", probe],
+READY_RE = re.compile(r"<!--\s*openspec:archive-ready\s*-->")
+HOLD_RE = re.compile(r"<!--\s*openspec:archive-hold:\s*(.*?)\s*-->", re.S)
+
+
+def merged_on_base(name):
+    """True when the change dir exists on the base ref (=> merged).
+
+    Archived changes live under `openspec/changes/archive/`, so a top-level
+    `openspec/changes/<name>` on the base ref means merged-but-un-archived.
+    """
+    probe = f"{base}:openspec/changes/{name}"
+    return subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", probe],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-    ).returncode == 0:
-        stale.append(
-            {
-                "name": name,
-                "completedTasks": done,
-                "totalTasks": total,
-                "lastModified": c.get("lastModified"),
-            }
-        )
+    ).returncode == 0
+
+
+def read_tasks(name):
+    """Working-tree tasks.md text, or '' when absent."""
+    path = f"openspec/changes/{name}/tasks.md"
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+    except OSError:
+        return ""
+
+
+def hold_reason(text):
+    """Return the opt-out reason when tasks.md carries the hold marker."""
+    match = HOLD_RE.search(text)
+    if not match:
+        return None
+    return match.group(1).strip() or "(no reason given)"
+
+
+def is_ready(text, done, total):
+    """A change is archivable when all tasks are ticked, or it declares ready."""
+    return (total > 0 and done >= total) or bool(READY_RE.search(text))
+
+
+stale = []
+held = []
+for c in changes:
+    name = c.get("name", "")
+    if not name or not merged_on_base(name):
+        continue
+    done = c.get("completedTasks", 0)
+    total = c.get("totalTasks", 0)
+    entry = {
+        "name": name,
+        "completedTasks": done,
+        "totalTasks": total,
+        "lastModified": c.get("lastModified"),
+    }
+    text = read_tasks(name)
+    reason = hold_reason(text)
+    if reason is not None:
+        held.append({**entry, "reason": reason})
+    elif is_ready(text, done, total):
+        stale.append(entry)
 
 stale.sort(key=lambda x: x["name"])
+held.sort(key=lambda x: x["name"])
 
 if as_json:
-    print(json.dumps({"base": base, "count": len(stale), "stale": stale}, indent=2))
+    print(
+        json.dumps(
+            {
+                "base": base,
+                "count": len(stale),
+                "stale": stale,
+                "heldCount": len(held),
+                "held": held,
+            },
+            indent=2,
+        )
+    )
 else:
     if not stale:
-        print(f"openspec-archive: OK (no merged-but-un-archived changes on {base})")
+        print(f"openspec-archive: OK (no merged-but-un-archived ready changes on {base})")
     else:
         print(
             f"openspec-archive: {len(stale)} merged-but-un-archived change(s) on {base}:",
@@ -147,6 +234,16 @@ else:
         print(
             "  Or locally: task openspec:archive-check", file=sys.stderr
         )
+    if held:
+        print(
+            f"openspec-archive: {len(held)} merged change(s) HELD (exempt via marker):",
+            file=sys.stderr,
+        )
+        for h in held:
+            print(
+                f"  - {h['name']} ({h['completedTasks']}/{h['totalTasks']} tasks): {h['reason']}",
+                file=sys.stderr,
+            )
 
 sys.exit(1 if stale else 0)
 PY

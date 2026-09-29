@@ -84,7 +84,7 @@ tasks:
       - task: server:status
 
   openspec:archive-check:
-    desc: "Fail if a merged OpenSpec change (on origin/main) is complete but un-archived (#1063). Use CLI_ARGS for --base/--warn/--json."
+    desc: "Fail if a merged OpenSpec change (on origin/main) is archive-ready but un-archived; ready = all tasks ticked or <!-- openspec:archive-ready -->, held via <!-- openspec:archive-hold: <reason> --> (#1063). Use CLI_ARGS for --base/--warn/--json."
     cmds:
       - bash scripts/preflight/openspec-archive.sh {{.CLI_ARGS}}
 

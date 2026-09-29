@@ -14,6 +14,13 @@ name: OpenSpec archive guard
 # able to go red on `main` without blocking unrelated PRs, whose `ci` runs
 # against a merge commit that still contains the not-yet-archived change.
 #
+# Readiness is DECLARED, not inferred: a merged, un-archived change is flagged
+# when every task is ticked OR its tasks.md carries
+# `<!-- openspec:archive-ready -->`. A change can opt out with
+# `<!-- openspec:archive-hold: <reason> -->` and is then listed as HELD. The
+# bare "dir exists on main" test is NOT readiness — many spec-only change dirs
+# are committed to main before implementation (see scripts/preflight/openspec-archive.sh).
+#
 # Triggers: push to `main` (feedback right after a merge), daily (catches drift
 # that predates this workflow), and manual dispatch. On drift it fails the run
 # AND opens/updates one tracking issue with the exact archive commands.
@@ -55,13 +62,19 @@ jobs:
             {
               echo "## OpenSpec archive drift"
               echo
-              jq -r '"\(.count) merged change(s) complete but un-archived on `\(.base)`:"' drift.json
+              jq -r '"\(.count) merged change(s) archive-ready but un-archived on `\(.base)`:"' drift.json
               echo
               jq -r '.stale[] | "- `\(.name)` (\(.completedTasks)/\(.totalTasks) tasks)"' drift.json
               echo
               echo '```bash'
               jq -r '.stale[] | "openspec archive \(.name) --yes"' drift.json
               echo '```'
+              if [ "$(jq -r '.heldCount' drift.json)" != "0" ]; then
+                echo
+                echo "Held (exempt via \`<!-- openspec:archive-hold: <reason> -->\`):"
+                echo
+                jq -r '.held[] | "- `\(.name)` (\(.completedTasks)/\(.totalTasks) tasks): \(.reason)"' drift.json
+              fi
             } | tee -a "$GITHUB_STEP_SUMMARY"
           fi
 
@@ -75,7 +88,7 @@ jobs:
           {
             echo "Automated report from the [OpenSpec archive guard]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/openspec-archive.yml) workflow (#1063)."
             echo
-            echo "These change(s) are **complete** (all tasks done) and **already merged to \`main\`**, but were never archived — their delta specs have not been synced into \`openspec/specs/\`:"
+            echo "These change(s) are **archive-ready** (all tasks ticked or \`<!-- openspec:archive-ready -->\`) and **already merged to \`main\`**, but were never archived — their delta specs have not been synced into \`openspec/specs/\`:"
             echo
             jq -r '.stale[] | "- `\(.name)` (\(.completedTasks)/\(.totalTasks) tasks)"' drift.json
             echo
@@ -84,6 +97,12 @@ jobs:
             echo '```bash'
             jq -r '.stale[] | "openspec archive \(.name) --yes"' drift.json
             echo '```'
+            if [ "$(jq -r '.heldCount' drift.json)" != "0" ]; then
+              echo
+              echo "Held (exempt via \`<!-- openspec:archive-hold: <reason> -->\`):"
+              echo
+              jq -r '.held[] | "- `\(.name)` (\(.completedTasks)/\(.totalTasks) tasks): \(.reason)"' drift.json
+            fi
             echo
             echo "_Updated automatically; close once the archive follow-up merges._"
           } > issue-body.md
