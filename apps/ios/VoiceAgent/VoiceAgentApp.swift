@@ -26,19 +26,15 @@ struct VoiceAgentApp: App {
     /// the hardcoded `AgentSelection` list as the selection source of truth
     /// (still persisted under `alfred.agentName`).
     @StateObject private var agentStore: AgentStore
-    /// Memory capability + list state for the selected agent.
-    @StateObject private var memoryStore: MemoryStore
 
     init() {
         _agentStore = StateObject(wrappedValue: AgentStore())
-        _memoryStore = StateObject(wrappedValue: MemoryStore())
     }
 
     var body: some Scene {
         WindowGroup {
             AgentSessionRoot()
                 .environmentObject(agentStore)
-                .environmentObject(memoryStore)
         }
         #if os(macOS)
         .defaultSize(width: 900, height: 900)
@@ -54,7 +50,6 @@ struct VoiceAgentApp: App {
 /// Owns the `MemorySessionController` (and the objects derived from it) and
 /// recreates them whenever the selected agent changes, so the new agent name
 /// reaches the token endpoint on the next connect — no relaunch needed.
-/// Also re-checks memory capability for the newly selected agent.
 ///
 /// `MemorySessionController` captures its `MemoryConfig` once at init, so the
 /// controller (and its `Session`/`LocalMedia`) is rebuilt from a fresh config
@@ -65,7 +60,6 @@ struct VoiceAgentApp: App {
 /// only torn down when the selected agent actually changes.
 private struct AgentSessionRoot: View {
     @EnvironmentObject private var agentStore: AgentStore
-    @EnvironmentObject private var memoryStore: MemoryStore
 
     @State private var controller: MemorySessionController?
     @State private var audioOptions: AudioOptions?
@@ -89,11 +83,9 @@ private struct AgentSessionRoot: View {
         }
         .onAppear {
             install()
-            memoryStore.refreshCapability(agent: agentStore.selectedAgentName)
         }
         .onChange(of: agentStore.selectedAgentName) { _, _ in
             install()
-            memoryStore.refreshCapability(agent: agentStore.selectedAgentName)
         }
         .onReceive(NotificationCenter.default.publisher(for: .memoryConfigChanged)) { _ in
             install()

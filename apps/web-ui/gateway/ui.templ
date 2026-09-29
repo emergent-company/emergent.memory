@@ -24,7 +24,7 @@ import (
 // can load its own self-contained htmx v4 build (webui/static/js/htmx.min.js)
 // instead of go-daisy's bundled htmx 2.x, with v2-compat config applied right
 // after load. Everything else mirrors PageFull's document structure.
-templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool, agents []AgentDefinitionSummary, assistantAgent string, currentProject *ProjectRef, currentOrgName string, activeOrg *Org, projectGroups []projectGroup, orgs []Org, recentProjects []ProjectRef, showRecent bool, user *currentUser, accounts []currentUser, content templ.Component, sentryDSN string, sentryEnvironment string, sentryTracesSampleRate float64, sentryReplaySessionSampleRate float64, sentryReplayOnErrorSampleRate float64, feedbackOverlayURL string) {
+templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool, agents []AgentDefinitionSummary, assistantAgent string, currentProject *ProjectRef, currentOrgName string, activeOrg *Org, projectGroups []projectGroup, orgs []Org, recentProjects []ProjectRef, showRecent bool, user *currentUser, accounts []currentUser, content templ.Component, objectTypes map[string]objectTypeUI, sentryDSN string, sentryEnvironment string, sentryTracesSampleRate float64, sentryReplaySessionSampleRate float64, sentryReplayOnErrorSampleRate float64, feedbackOverlayURL string) {
 	<!DOCTYPE html>
 	<html lang="en" data-theme="dark" class="group/html" data-asset-track="reload">
 		<head>
@@ -138,6 +138,11 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 				@objectPreviewDrawer()
 			</div>
 			<link rel="stylesheet" href={ templ.SafeURL(webui.AssetPath("/css/app.css")) } data-asset-track="reload"/>
+			<!-- Compiled type name → {label,icon,color}. The chat client reads this
+			     to render human type labels on citation sources (with a humanized-
+			     name fallback when a type is absent). Server-derived schema metadata,
+			     HTML-escaped by objectTypeMapJSON so it cannot break out of <script>. -->
+			@objectTypeMapScript(objectTypes)
 			<!-- htmx v4, self-hosted (embedded via webui/static) -->
 			<script src={ templ.SafeURL(webui.AssetPath("/js/htmx.min.js")) }></script>
 			<script>

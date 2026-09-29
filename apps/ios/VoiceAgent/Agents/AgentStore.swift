@@ -5,9 +5,9 @@ import Foundation
 /// Lives for the whole app session; the agent picker drives `load()` (the list
 /// is read-only — agent configuration happens on web/desktop, not the phone).
 /// All state is `@MainActor`; network work runs through a fresh
-/// ``ControlPlaneClient`` built from `MemoryConfig()` per call (same pattern as
-/// ``MemoryStore``), with stale-result guards so a slow older load can never
-/// overwrite a newer one.
+/// ``ControlPlaneClient`` built from `MemoryConfig()` per call (the same
+/// pattern as ``ObjectBrowserStore``), with stale-result guards so a slow older
+/// load can never overwrite a newer one.
 @MainActor
 final class AgentStore: ObservableObject {
     /// Load state for the agent list.

@@ -106,6 +106,30 @@ services:
       - "1025:1025"
 
   # ─────────────────────────────────────────────────────────────────────────
+  # Mailgun stub — impersonates the Mailgun send API (POST /v3/{domain}/messages)
+  # so the server's Mailgun transport can be exercised hermetically. It lives
+  # behind the "mailgun" profile: the default stack (SMTP/Mailpit) never builds,
+  # starts it, or binds its host port. The Mailgun CI job opts in with
+  # `--profile mailgun`. Port 8080 is published so host-run API tests can read
+  # GET /captured.
+  # ─────────────────────────────────────────────────────────────────────────
+  mailgun-stub:
+    profiles: ["mailgun"]
+    build:
+      context: ./stubs/mailgun
+    container_name: test-mailgun-stub
+    ports:
+      # Host port is configurable: 8080 is commonly held by another proxy on
+      # shared dev hosts (e.g. traefik). CI keeps the 8080 default.
+      - "${E2E_MAILGUN_STUB_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+
+  # ─────────────────────────────────────────────────────────────────────────
   # Memory API server (standalone mode)
   # ─────────────────────────────────────────────────────────────────────────
   test-emergent-server:
@@ -163,12 +187,19 @@ services:
       KREUZBERG_ENABLED: "false"
       WHISPER_ENABLED: "false"
 
-      # Email — SMTP transport into Mailpit so e2e can capture real email.
+      # Email — SMTP transport into Mailpit by default so e2e captures real
+      # email. The E2E_* overrides switch the same stack to the Mailgun
+      # transport pointed at the local mailgun-stub (see the Mailgun CI job).
+      # With no overrides set this resolves to exactly the previous values.
       EMAIL_ENABLED: "true"
-      EMAIL_TRANSPORT: "smtp"
-      SMTP_HOST: mailpit
+      EMAIL_TRANSPORT: "${E2E_EMAIL_TRANSPORT:-smtp}"
+      SMTP_HOST: "${E2E_SMTP_HOST:-mailpit}"
       SMTP_PORT: "1025"
       SMTP_TLS: "none"
+      MAILGUN_DOMAIN: "${E2E_MAILGUN_DOMAIN:-}"
+      MAILGUN_API_KEY: "${E2E_MAILGUN_API_KEY:-}"
+      MAILGUN_API_BASE: "${E2E_MAILGUN_API_BASE:-}"
+      MAILGUN_REGION: "${E2E_MAILGUN_REGION:-us}"
       EMAIL_WORKER_INTERVAL_MS: "1000"
     healthcheck:
       test: ["CMD-SHELL", "curl -fs http://localhost:3002/health || exit 1"]
@@ -200,6 +231,9 @@ services:
       CI: "true"
       TEST_RUN: "${TEST_RUN:-}"
       MAILPIT_BASE_URL: "http://mailpit:8025"
+      # Only set in the Mailgun-transport run; empty by default so the
+      # Mailgun invite-email test skips when the stack runs in SMTP mode.
+      MAILGUN_STUB_URL: "${E2E_MAILGUN_STUB_URL:-}"
     volumes:
       # Persist test session logs to the host so they survive container exit.
       - ./test-logs:/test-logs

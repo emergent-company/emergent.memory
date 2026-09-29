@@ -93,7 +93,9 @@ func TestUIAPITokensListRoute(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"API Tokens", "CI deploy", "old token", "emt_cideployx", "emt_oldtoken",
-		"data:read", "data:write", "Revoked",
+		"data:read", "data:write", "Revoked", "1 token",
+		// revoked tokens live in a collapsed disclosure, not the primary table
+		`data-testid="revoked-tokens-toggle"`,
 		// no inline create form; create moved to /new
 		`href="/settings/tokens/new"`, "New token",
 		`action="/settings/tokens/t1/revoke"`,
@@ -102,6 +104,18 @@ func TestUIAPITokensListRoute(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("GET /settings/tokens missing %q", want)
 		}
+	}
+	// the revoked disclosure is collapsed and holds the revoked row; the primary
+	// table must not carry it.
+	revokedIdx := strings.Index(body, `data-testid="revoked-tokens-toggle"`)
+	if revokedIdx < 0 {
+		t.Fatal("GET /settings/tokens must render the revoked disclosure")
+	}
+	if primary := body[:revokedIdx]; strings.Contains(primary, "old token") || strings.Contains(primary, `data-testid="token-revoked-badge"`) {
+		t.Error("active table must not contain revoked tokens")
+	}
+	if tag := detailsTagFor(body, "revoked-tokens-section"); strings.Contains(tag, "open") {
+		t.Errorf("revoked disclosure must be collapsed by default, got %q", tag)
 	}
 	if strings.Contains(body, `action="/settings/tokens/new"`) {
 		t.Error("list page must not embed the create form (it moved to /settings/tokens/new)")

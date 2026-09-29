@@ -32,6 +32,10 @@ type Config struct {
 	WorkerBatchSize int
 	// MailgunRegion is the Mailgun region ("us" or "eu")
 	MailgunRegion string
+	// MailgunAPIBase overrides the Mailgun API base URL (including the /v3 path
+	// segment). When empty the SDK default is used, or the EU base when
+	// MailgunRegion is "eu".
+	MailgunAPIBase string
 	// Transport selects the email transport ("mailgun" or "smtp")
 	Transport string
 	// SMTPHost is the SMTP server host
@@ -60,6 +64,7 @@ func NewConfig(cfg *config.Config) *Config {
 		WorkerIntervalMs:  cfg.Email.WorkerIntervalMs,
 		WorkerBatchSize:   cfg.Email.WorkerBatchSize,
 		MailgunRegion:     cfg.Email.MailgunRegion,
+		MailgunAPIBase:    cfg.Email.MailgunAPIBase,
 		Transport:         cfg.Email.Transport,
 		SMTPHost:          cfg.Email.SMTPHost,
 		SMTPPort:          cfg.Email.SMTPPort,

@@ -27,7 +27,11 @@ func NewMailgunSender(cfg *Config, log *slog.Logger) *MailgunSender {
 	}
 
 	client := mailgun.NewMailgun(cfg.MailgunDomain, cfg.MailgunAPIKey)
-	if cfg.MailgunRegion == "eu" {
+	// An explicit API base (e.g. a local stub in e2e) takes precedence over the
+	// region default so tests can exercise the Mailgun transport hermetically.
+	if cfg.MailgunAPIBase != "" {
+		client.SetAPIBase(cfg.MailgunAPIBase)
+	} else if cfg.MailgunRegion == "eu" {
 		client.SetAPIBase(mailgun.APIBaseEU)
 	}
 

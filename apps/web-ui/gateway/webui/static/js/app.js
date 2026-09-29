@@ -153,12 +153,19 @@
     if (/^#[0-9a-fA-F]{6}$/.test(h)) swatch.value = h;
   }
 
+  /* The agent's stored short description, hydrated when editing and echoed back
+     on save. The dialog has no description field; carrying the value keeps an
+     edit from clearing a description set on the agent's General settings form
+     (the write is a full PUT). */
+  var agentDialogDescription = "";
+
   /* open with an agent id, or "" for create */
   function openAgentForm(id) {
     var d = formDialog();
     if (!d) return;
     var form = el("agent-form");
     form.reset();
+    agentDialogDescription = "";
     resetDelegationTargets();
     resetSkills();
     setIconPickerValue("agent-icon", "");
@@ -181,6 +188,7 @@
         .then(function (a) {
           if (!a || !a.name) throw new Error("bad agent payload");
           el("agent-name").value = a.name || "";
+          agentDialogDescription = a.description || "";
           el("agent-prompt").value = a.systemPrompt || "";
           setIconPickerValue("agent-icon", a.uiConfig && a.uiConfig.icon);
           setColorPickerValue("agent-color", a.uiConfig && a.uiConfig.color);
@@ -311,6 +319,7 @@
 
     var body = {
       name: name,
+      description: agentDialogDescription,
       systemPrompt: el("agent-prompt").value,
       tools: splitList(el("agent-tools").value),
     };

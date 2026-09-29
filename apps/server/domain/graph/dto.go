@@ -53,6 +53,11 @@ type GraphObjectResponse struct {
 	Properties    map[string]any `json:"properties"`
 	Labels        []string       `json:"labels"`
 	SchemaVersion *string        `json:"schema_version,omitempty"`
+
+	// Actor tracking (provenance)
+	ActorType *string    `json:"actor_type,omitempty"`
+	ActorID   *uuid.UUID `json:"actor_id,omitempty"`
+
 	DeletedAt     *time.Time     `json:"deleted_at,omitempty"`
 	DeleteReason  *string        `json:"delete_reason,omitempty"`
 	ChangeSummary map[string]any `json:"change_summary,omitempty"`
@@ -112,6 +117,8 @@ func (o *GraphObject) ToResponse() *GraphObjectResponse {
 		Properties:         o.Properties,
 		Labels:             o.Labels,
 		SchemaVersion:      o.SchemaVersion,
+		ActorType:          o.ActorType,
+		ActorID:            o.ActorID,
 		DeletedAt:          o.DeletedAt,
 		DeleteReason:       o.DeleteReason,
 		ChangeSummary:      o.ChangeSummary,
@@ -260,6 +267,11 @@ type GraphRelationshipResponse struct {
 	DeleteReason  *string        `json:"delete_reason,omitempty"`
 	ChangeSummary map[string]any `json:"change_summary,omitempty"`
 	CreatedAt     time.Time      `json:"created_at"`
+
+	// Actor tracking (provenance)
+	ActorType *string    `json:"actor_type,omitempty"`
+	ActorID   *uuid.UUID `json:"actor_id,omitempty"`
+
 	// InverseRelationship is populated when an inverse relationship was auto-created
 	// based on the template pack's inverseType declaration.
 	InverseRelationship *GraphRelationshipResponse `json:"inverse_relationship,omitempty"`
@@ -299,6 +311,8 @@ func (r *GraphRelationship) ToResponse() *GraphRelationshipResponse {
 		DeleteReason:  r.DeleteReason,
 		ChangeSummary: r.ChangeSummary,
 		CreatedAt:     r.CreatedAt,
+		ActorType:     r.ActorType,
+		ActorID:       r.ActorID,
 	}
 }
 

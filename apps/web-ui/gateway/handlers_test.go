@@ -87,7 +87,6 @@ type fakeMemory struct {
 	convCanonicalID     string                          // last canonicalID passed to CreateObjectConversation
 	convTitle           string                          // last title passed to CreateObjectConversation
 	convMessage         string                          // last message passed to CreateObjectConversation
-	memories            []Memory
 	created             []AgentDefinition
 	updatedAgent        *AgentDefinition // last agent passed to UpdateAgentDefinition
 	chatMsg             string
@@ -101,7 +100,6 @@ type fakeMemory struct {
 	approvals           []ToolApprovalItem
 	convErr             error // ListConversations failure
 	histErr             error // GetConversationHistory failure
-	memErr              error // SearchMemories/ListMemories failure
 	documents           []Document
 	chunks              []Chunk
 	docErr              error                      // ListDocuments/GetDocument/ListChunks failure
@@ -132,36 +130,39 @@ type fakeMemory struct {
 	ftsTypeFilter       string                     // last type filter passed to SearchObjectsFTS
 
 	// objects browser: cursor pagination + count + search.
-	pageObjects      []GraphObject        // returned by ListGraphObjectsPage
-	nextPageCursor   string               // returned by ListGraphObjectsPage
-	pageErr          error                // ListGraphObjectsPage failure
-	lastPageCursor   string               // last cursor passed to ListGraphObjectsPage
-	lastPageBranch   string               // last branchID passed to ListGraphObjectsPage
-	lastPageType     string               // last typeFilter passed to ListGraphObjectsPage
-	lastPageLimit    int                  // last limit passed to ListGraphObjectsPage
-	objectCount      int                  // returned by CountObjects
-	objectCountErr   error                // CountObjects failure
-	lastCountBranch  string               // last branchID passed to CountObjects
-	searchResults    []ObjectSearchResult // returned by SearchObjects
-	searchHasMore    bool                 // returned by SearchObjects
-	searchObjectsErr error                // SearchObjects failure
-	lastSearchMode   string               // last mode passed to SearchObjects
-	lastSearchQuery  string               // last query passed to SearchObjects
-	lastSearchTypes  string               // last types passed to SearchObjects
-	lastSearchBranch string               // last branchID passed to SearchObjects
-	lastSearchLimit  int                  // last limit passed to SearchObjects
-	lastSearchOffset int                  // last offset passed to SearchObjects
-	unifiedResults   []ObjectSearchResult // returned by SearchObjectsUnified
-	unifiedErr       error                // SearchObjectsUnified failure
-	lastUnifiedQuery string               // last query passed to SearchObjectsUnified
-	lastUnifiedTypes string               // last types passed to SearchObjectsUnified
-	lastUnifiedBrnch string               // last branchID passed to SearchObjectsUnified
-	lastUnifiedLimit int                  // last limit passed to SearchObjectsUnified
-	knowledgeAnswer  string               // returned by QueryKnowledge
-	knowledgeSession string               // returned by QueryKnowledge
-	knowledgeErr     error                // QueryKnowledge failure
-	lastKnowledgeQ   string               // last question passed to QueryKnowledge
-	lastKnowledgeBr  string               // last branch passed to QueryKnowledge
+	pageObjects        []GraphObject        // returned by ListGraphObjectsPage
+	nextPageCursor     string               // returned by ListGraphObjectsPage
+	pageErr            error                // ListGraphObjectsPage failure
+	lastPageCursor     string               // last cursor passed to ListGraphObjectsPage
+	lastPageBranch     string               // last branchID passed to ListGraphObjectsPage
+	lastPageType       string               // last typeFilter passed to ListGraphObjectsPage
+	lastPageLimit      int                  // last limit passed to ListGraphObjectsPage
+	lastPageActorType  string               // last actorType passed to ListGraphObjectsPage
+	lastPageActorID    string               // last actorID passed to ListGraphObjectsPage
+	lastPageProvenance string               // last provenance passed to ListGraphObjectsPage
+	objectCount        int                  // returned by CountObjects
+	objectCountErr     error                // CountObjects failure
+	lastCountBranch    string               // last branchID passed to CountObjects
+	searchResults      []ObjectSearchResult // returned by SearchObjects
+	searchHasMore      bool                 // returned by SearchObjects
+	searchObjectsErr   error                // SearchObjects failure
+	lastSearchMode     string               // last mode passed to SearchObjects
+	lastSearchQuery    string               // last query passed to SearchObjects
+	lastSearchTypes    string               // last types passed to SearchObjects
+	lastSearchBranch   string               // last branchID passed to SearchObjects
+	lastSearchLimit    int                  // last limit passed to SearchObjects
+	lastSearchOffset   int                  // last offset passed to SearchObjects
+	unifiedResults     []ObjectSearchResult // returned by SearchObjectsUnified
+	unifiedErr         error                // SearchObjectsUnified failure
+	lastUnifiedQuery   string               // last query passed to SearchObjectsUnified
+	lastUnifiedTypes   string               // last types passed to SearchObjectsUnified
+	lastUnifiedBrnch   string               // last branchID passed to SearchObjectsUnified
+	lastUnifiedLimit   int                  // last limit passed to SearchObjectsUnified
+	knowledgeAnswer    string               // returned by QueryKnowledge
+	knowledgeSession   string               // returned by QueryKnowledge
+	knowledgeErr       error                // QueryKnowledge failure
+	lastKnowledgeQ     string               // last question passed to QueryKnowledge
+	lastKnowledgeBr    string               // last branch passed to QueryKnowledge
 
 	embeddingProgress *EmbeddingProgress // returned by GetEmbeddingProgress
 	embeddingProgErr  error              // GetEmbeddingProgress failure
@@ -886,20 +887,6 @@ func (f *fakeMemory) ListModels(ctx context.Context) ([]Model, error) {
 	return []Model{{Provider: "deepseek", ModelName: "deepseek-v4-flash", DisplayName: "DeepSeek V4 Flash"}}, nil
 }
 
-func (f *fakeMemory) SearchMemories(ctx context.Context, query string) ([]Memory, error) {
-	if f.memErr != nil {
-		return nil, f.memErr
-	}
-	return f.memories, nil
-}
-
-func (f *fakeMemory) ListMemories(ctx context.Context) ([]Memory, error) {
-	if f.memErr != nil {
-		return nil, f.memErr
-	}
-	return f.memories, nil
-}
-
 func (f *fakeMemory) ListDocuments(ctx context.Context, cursor string) ([]Document, string, error) {
 	if f.docErr != nil {
 		return nil, "", f.docErr
@@ -1060,22 +1047,25 @@ func (f *fakeMemory) SearchObjectsFTS(ctx context.Context, query, typeFilter str
 	return f.ftsResults, nil
 }
 
-func (f *fakeMemory) ListGraphObjectsPage(ctx context.Context, branchID, typeFilter, cursor string, limit int) ([]GraphObject, string, error) {
+func (f *fakeMemory) ListGraphObjectsPage(ctx context.Context, p ObjectListParams) ([]GraphObject, string, error) {
 	if f.pageErr != nil {
 		return nil, "", f.pageErr
 	}
-	f.lastPageBranch = branchID
-	f.lastPageType = typeFilter
-	f.lastPageCursor = cursor
-	f.lastPageLimit = limit
+	f.lastPageBranch = p.BranchID
+	f.lastPageType = p.TypeFilter
+	f.lastPageCursor = p.Cursor
+	f.lastPageLimit = p.Limit
+	f.lastPageActorType = p.ActorType
+	f.lastPageActorID = p.ActorID
+	f.lastPageProvenance = p.Provenance
 	// Filter pageObjects by branch/type (mirrors ListGraphObjects) so route
 	// tests can assert filter behaviour with a plain slice.
 	var out []GraphObject
 	for _, o := range f.pageObjects {
-		if o.BranchID != branchID {
+		if o.BranchID != p.BranchID {
 			continue
 		}
-		if typeFilter != "" && o.Type != typeFilter {
+		if p.TypeFilter != "" && o.Type != p.TypeFilter {
 			continue
 		}
 		out = append(out, o)

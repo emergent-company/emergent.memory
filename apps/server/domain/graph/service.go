@@ -677,7 +677,7 @@ func (s *Service) ValidateObject(ctx context.Context, projectID uuid.UUID, req *
 }
 
 func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGraphObjectRequest, actorID *uuid.UUID) (*GraphObjectResponse, error) {
-	actorType := "user"
+	actorType, actorID := actorFromContext(ctx, actorID)
 
 	validatedProps, err := s.validateObjectProperties(ctx, projectID, req.Type, req.Properties)
 	if err != nil {
@@ -723,7 +723,7 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 			EventType:  EventTypeCreated,
 			EntityType: &entityType,
 			ObjectType: &objType,
-			ActorType:  ActorUser,
+			ActorType:  actorType,
 			ActorID:    actorID,
 			Metadata: map[string]any{
 				"key":         *obj.Key,
@@ -775,7 +775,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 		return nil, false, err
 	}
 
-	actorType := "user"
+	actorType, actorID := actorFromContext(ctx, actorID)
 
 	if existing == nil {
 		// Create new object
@@ -1059,7 +1059,7 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		newKey = req.Key
 	}
 
-	actorType := "user"
+	actorType, actorID := actorFromContext(ctx, actorID)
 	newVersion := &GraphObject{
 		Type:       current.Type,
 		Key:        newKey,
@@ -1125,7 +1125,7 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 			EventType:  EventTypeUpdated,
 			EntityType: &entityType,
 			ObjectType: &objType,
-			ActorType:  ActorUser,
+			ActorType:  actorType,
 			ActorID:    actorID,
 			Metadata: map[string]any{
 				"key":            *newVersion.Key,
@@ -1143,6 +1143,8 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 
 // Delete soft-deletes a graph object by creating a tombstone version.
 func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *uuid.UUID, branchID *uuid.UUID, reason *string) error {
+	actorType, actorID := actorFromContext(ctx, actorID)
+
 	current, err := s.repo.GetByID(ctx, projectID, id)
 	if err != nil {
 		return err
@@ -1176,12 +1178,12 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *
 			if merr != nil {
 				return merr
 			}
-			if err := s.repo.SoftDeleteOnBranch(ctx, tx.Tx, mainHead, branchID, actorID, reason); err != nil {
+			if err := s.repo.SoftDeleteOnBranch(ctx, tx.Tx, mainHead, branchID, actorType, actorID, reason); err != nil {
 				return err
 			}
 			current = mainHead
 		} else {
-			if err := s.repo.SoftDelete(ctx, tx.Tx, branchHead, actorID, reason); err != nil {
+			if err := s.repo.SoftDelete(ctx, tx.Tx, branchHead, actorType, actorID, reason); err != nil {
 				return err
 			}
 			current = branchHead
@@ -1192,7 +1194,7 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *
 		if err != nil {
 			return err
 		}
-		if err := s.repo.SoftDelete(ctx, tx.Tx, current, actorID, reason); err != nil {
+		if err := s.repo.SoftDelete(ctx, tx.Tx, current, actorType, actorID, reason); err != nil {
 			return err
 		}
 	}
@@ -1204,7 +1206,7 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *
 		return apperror.ErrDatabase.WithInternal(fmt.Errorf("cascade delete edges: %w", err))
 	}
 	for _, rel := range append(incoming, outgoing...) {
-		if err := s.repo.SoftDeleteRelationship(ctx, tx.Tx, rel, reason); err != nil {
+		if err := s.repo.SoftDeleteRelationship(ctx, tx.Tx, rel, actorType, actorID, reason); err != nil {
 			return apperror.ErrDatabase.WithInternal(fmt.Errorf("cascade delete relationship %s: %w", rel.CanonicalID, err))
 		}
 	}
@@ -1222,7 +1224,7 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *
 			EventType:  EventTypeDeleted,
 			EntityType: &entityType,
 			ObjectType: &objType,
-			ActorType:  ActorUser,
+			ActorType:  actorType,
 			ActorID:    actorID,
 			Metadata: map[string]any{
 				"key":         *current.Key,
@@ -1239,6 +1241,8 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *
 
 // Restore restores a soft-deleted graph object.
 func (s *Service) Restore(ctx context.Context, projectID, id uuid.UUID, actorID *uuid.UUID) (*GraphObjectResponse, error) {
+	actorType, actorID := actorFromContext(ctx, actorID)
+
 	current, err := s.repo.GetByIDIncludeDeleted(ctx, projectID, id)
 	if err != nil {
 		return nil, err
@@ -1264,7 +1268,7 @@ func (s *Service) Restore(ctx context.Context, projectID, id uuid.UUID, actorID 
 		return nil, err
 	}
 
-	if err := s.repo.Restore(ctx, tx.Tx, current, actorID); err != nil {
+	if err := s.repo.Restore(ctx, tx.Tx, current, actorType, actorID); err != nil {
 		return nil, err
 	}
 
@@ -1287,7 +1291,7 @@ func (s *Service) Restore(ctx context.Context, projectID, id uuid.UUID, actorID 
 			EventType:  EventTypeRestored,
 			EntityType: &entityType,
 			ObjectType: &objType,
-			ActorType:  ActorUser,
+			ActorType:  actorType,
 			ActorID:    actorID,
 			Metadata: map[string]any{
 				"key":         *restored.Key,
@@ -1641,11 +1645,13 @@ func (s *Service) GetRelationship(ctx context.Context, projectID, id uuid.UUID) 
 }
 
 // CreateRelationship creates a new relationship or returns existing if properties match.
-func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, req *CreateGraphRelationshipRequest) (*GraphRelationshipResponse, error) {
+func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, req *CreateGraphRelationshipRequest, actorID *uuid.UUID) (*GraphRelationshipResponse, error) {
 	// Validate: no self-loops
 	if req.SrcID == req.DstID {
 		return nil, apperror.ErrBadRequest.WithMessage("self_loop_not_allowed")
 	}
+
+	actorType, actorID := actorFromContext(ctx, actorID)
 
 	// Pre-load inverse map to avoid mutex deadlock with DB connection pool
 	// If the cache is empty, this fetches from DB before we hold a transaction.
@@ -1714,6 +1720,8 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 		Properties: req.Properties,
 		Weight:     req.Weight,
 		Namespace:  srcObj.Namespace,
+		ActorType:  &actorType,
+		ActorID:    actorID,
 	}
 	rel.ChangeSummary = computeChangeSummary(nil, req.Properties)
 
@@ -1727,7 +1735,7 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 		var inverseResponse *GraphRelationshipResponse
 		var inverseRelID string
 		if s.inverseTypeProvider != nil {
-			inverseResponse, inverseRelID = s.maybeCreateInverse(ctx, tx.Tx, projectID, effectiveBranchID, req.Type, srcObj, dstObj, req.Properties, req.Weight)
+			inverseResponse, inverseRelID = s.maybeCreateInverse(ctx, tx.Tx, projectID, effectiveBranchID, req.Type, srcObj, dstObj, req.Properties, req.Weight, actorType, actorID)
 		}
 
 		if err := tx.Commit(); err != nil {
@@ -1754,7 +1762,8 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 				BranchID:   effectiveBranchID,
 				EventType:  EventTypeRelated,
 				EntityType: &entityType,
-				ActorType:  ActorUser,
+				ActorType:  actorType,
+				ActorID:    actorID,
 				Metadata: map[string]any{
 					"src_key":  srcKey,
 					"rel_type": req.Type,
@@ -1819,6 +1828,8 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 			Properties: req.Properties,
 			Weight:     req.Weight,
 			DeletedAt:  nil,
+			ActorType:  &actorType,
+			ActorID:    actorID,
 		}
 		newVersion.ChangeSummary = computeChangeSummary(existing.Properties, req.Properties)
 
@@ -1852,6 +1863,8 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 		Properties:    req.Properties,
 		Weight:        req.Weight,
 		ChangeSummary: diff,
+		ActorType:     &actorType,
+		ActorID:       actorID,
 	}
 
 	if err := s.repo.CreateRelationshipVersion(ctx, tx2.Tx, existing, newVersion); err != nil {
@@ -1875,10 +1888,10 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 // Dedup key: (project_id, branch_id, type, src_id, dst_id).
 // Returns (response, created=true) when a new relationship is inserted.
 // Returns (response, created=false) when an existing relationship is returned or updated.
-func (s *Service) UpsertRelationship(ctx context.Context, projectID uuid.UUID, req *CreateGraphRelationshipRequest) (*GraphRelationshipResponse, bool, error) {
+func (s *Service) UpsertRelationship(ctx context.Context, projectID uuid.UUID, req *CreateGraphRelationshipRequest, actorID *uuid.UUID) (*GraphRelationshipResponse, bool, error) {
 	// Delegate to CreateRelationship which already implements full upsert logic.
 	// We detect "created" by checking whether the returned relationship is version 1.
-	resp, err := s.CreateRelationship(ctx, projectID, req)
+	resp, err := s.CreateRelationship(ctx, projectID, req, actorID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1898,6 +1911,8 @@ func (s *Service) maybeCreateInverse(
 	srcObj, dstObj *GraphObject,
 	properties map[string]any,
 	weight *float32,
+	actorType string,
+	actorID *uuid.UUID,
 ) (*GraphRelationshipResponse, string) {
 	inverseType, ok := s.inverseTypeProvider.GetInverseType(ctx, projectID.String(), relType)
 	if !ok || inverseType == "" {
@@ -1954,6 +1969,8 @@ func (s *Service) maybeCreateInverse(
 			Properties: properties,
 			Weight:     weight,
 			DeletedAt:  nil,
+			ActorType:  &actorType,
+			ActorID:    actorID,
 		}
 		newVersion.ChangeSummary = computeChangeSummary(existingInverse.Properties, properties)
 
@@ -1979,6 +1996,8 @@ func (s *Service) maybeCreateInverse(
 		Properties: properties,
 		Weight:     weight,
 		Namespace:  dstObj.Namespace,
+		ActorType:  &actorType,
+		ActorID:    actorID,
 	}
 	inverseRel.ChangeSummary = computeChangeSummary(nil, properties)
 
@@ -1999,7 +2018,9 @@ func (s *Service) maybeCreateInverse(
 }
 
 // PatchRelationship updates a relationship by creating a new version.
-func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID, req *PatchGraphRelationshipRequest) (*GraphRelationshipResponse, error) {
+func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID, req *PatchGraphRelationshipRequest, actorID *uuid.UUID) (*GraphRelationshipResponse, error) {
+	actorType, actorID := actorFromContext(ctx, actorID)
+
 	current, err := s.repo.GetRelationshipByID(ctx, projectID, id)
 	if err != nil {
 		return nil, err
@@ -2052,7 +2073,7 @@ func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID
 	}
 
 	// Re-fetch HEAD after lock
-	head, err := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID)
+	head, err := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2092,6 +2113,8 @@ func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID
 		Properties:    newProps,
 		Weight:        req.Weight,
 		ChangeSummary: diff,
+		ActorType:     &actorType,
+		ActorID:       actorID,
 	}
 	if newVersion.Weight == nil {
 		newVersion.Weight = current.Weight
@@ -2129,12 +2152,14 @@ func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID
 	}
 
 	// Return the new version
-	newHead, _ := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID)
+	newHead, _ := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID, nil)
 	return newHead.ToResponse(), nil
 }
 
 // DeleteRelationship soft-deletes a relationship.
-func (s *Service) DeleteRelationship(ctx context.Context, projectID, id uuid.UUID, branchID *uuid.UUID, reason *string) (*GraphRelationshipResponse, error) {
+func (s *Service) DeleteRelationship(ctx context.Context, projectID, id uuid.UUID, branchID *uuid.UUID, reason *string, actorID *uuid.UUID) (*GraphRelationshipResponse, error) {
+	actorType, actorID := actorFromContext(ctx, actorID)
+
 	current, err := s.repo.GetRelationshipByID(ctx, projectID, id)
 	if err != nil {
 		return nil, err
@@ -2164,7 +2189,7 @@ func (s *Service) DeleteRelationship(ctx context.Context, projectID, id uuid.UUI
 		return nil, apperror.ErrBadRequest.WithMessage("already_deleted")
 	}
 
-	if err := s.repo.SoftDeleteRelationship(ctx, tx.Tx, head, reason); err != nil {
+	if err := s.repo.SoftDeleteRelationship(ctx, tx.Tx, head, actorType, actorID, reason); err != nil {
 		return nil, err
 	}
 
@@ -2181,7 +2206,9 @@ func (s *Service) DeleteRelationship(ctx context.Context, projectID, id uuid.UUI
 }
 
 // RestoreRelationship restores a soft-deleted relationship.
-func (s *Service) RestoreRelationship(ctx context.Context, projectID, id uuid.UUID) (*GraphRelationshipResponse, error) {
+func (s *Service) RestoreRelationship(ctx context.Context, projectID, id uuid.UUID, actorID *uuid.UUID) (*GraphRelationshipResponse, error) {
+	actorType, actorID := actorFromContext(ctx, actorID)
+
 	current, err := s.repo.GetRelationshipByID(ctx, projectID, id)
 	if err != nil {
 		return nil, err
@@ -2199,7 +2226,7 @@ func (s *Service) RestoreRelationship(ctx context.Context, projectID, id uuid.UU
 	}
 
 	// Get HEAD version
-	head, err := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID)
+	head, err := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2208,7 +2235,7 @@ func (s *Service) RestoreRelationship(ctx context.Context, projectID, id uuid.UU
 		return nil, apperror.ErrBadRequest.WithMessage("relationship_not_deleted")
 	}
 
-	if err := s.repo.RestoreRelationship(ctx, tx.Tx, head); err != nil {
+	if err := s.repo.RestoreRelationship(ctx, tx.Tx, head, actorType, actorID); err != nil {
 		return nil, err
 	}
 
@@ -2217,7 +2244,7 @@ func (s *Service) RestoreRelationship(ctx context.Context, projectID, id uuid.UU
 	}
 
 	// Return the restored version
-	restored, _ := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID)
+	restored, _ := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID, nil)
 
 	// Enqueue embedding — the restored version has a new physical row with NULL embedding.
 	if restored != nil {
@@ -2733,6 +2760,8 @@ func (s *Service) GetTags(ctx context.Context, projectID uuid.UUID, params *GetD
 
 // BulkUpdateStatus updates the status of multiple objects.
 func (s *Service) BulkUpdateStatus(ctx context.Context, projectID uuid.UUID, req *BulkUpdateStatusRequest, actorID *uuid.UUID) (*BulkUpdateStatusResponse, error) {
+	actorType, actorID := actorFromContext(ctx, actorID)
+
 	results := make([]BulkUpdateStatusResult, len(req.IDs))
 
 	// Parse UUIDs and track valid ones
@@ -2764,7 +2793,7 @@ func (s *Service) BulkUpdateStatus(ctx context.Context, projectID uuid.UUID, req
 	}
 
 	// Perform bulk update
-	updated, err := s.repo.BulkUpdateStatus(ctx, projectID, validIDs, req.Status, actorID)
+	updated, err := s.repo.BulkUpdateStatus(ctx, projectID, validIDs, req.Status, actorType, actorID)
 	if err != nil {
 		return nil, err
 	}
@@ -2783,6 +2812,8 @@ func (s *Service) BulkUpdateStatus(ctx context.Context, projectID uuid.UUID, req
 // BulkCreateObjects creates multiple objects in a single batch.
 // Each object is created independently and concurrently — failures do not roll back other successes.
 func (s *Service) BulkCreateObjects(ctx context.Context, projectID uuid.UUID, req *BulkCreateObjectsRequest, actorID *uuid.UUID) (*BulkCreateObjectsResponse, error) {
+	actorType, actorID := actorFromContext(ctx, actorID)
+
 	results := make([]BulkCreateObjectResult, len(req.Items))
 
 	workerCtx := context.WithoutCancel(ctx)
@@ -2823,7 +2854,7 @@ func (s *Service) BulkCreateObjects(ctx context.Context, projectID uuid.UUID, re
 		s.eventSink.Log(ctx, LogParams{
 			ProjectID: projectID,
 			EventType: EventTypeBatch,
-			ActorType: ActorUser,
+			ActorType: actorType,
 			ActorID:   actorID,
 			Metadata: map[string]any{
 				"created": successCount,
@@ -2842,6 +2873,8 @@ func (s *Service) BulkCreateObjects(ctx context.Context, projectID uuid.UUID, re
 // BulkUpdateObjects updates multiple objects in a single batch.
 // Each object is updated independently and concurrently — failures do not roll back other successes.
 func (s *Service) BulkUpdateObjects(ctx context.Context, projectID uuid.UUID, req *BulkUpdateObjectsRequest, actorID *uuid.UUID) (*BulkUpdateObjectsResponse, error) {
+	actorType, actorID := actorFromContext(ctx, actorID)
+
 	results := make([]BulkUpdateObjectResult, len(req.Items))
 
 	workerCtx := context.WithoutCancel(ctx)
@@ -2890,7 +2923,7 @@ func (s *Service) BulkUpdateObjects(ctx context.Context, projectID uuid.UUID, re
 		s.eventSink.Log(ctx, LogParams{
 			ProjectID: projectID,
 			EventType: EventTypeBatch,
-			ActorType: ActorUser,
+			ActorType: actorType,
 			ActorID:   actorID,
 			Metadata: map[string]any{
 				"updated": successCount,
@@ -2908,7 +2941,9 @@ func (s *Service) BulkUpdateObjects(ctx context.Context, projectID uuid.UUID, re
 // BulkCreateRelationships creates multiple relationships in a single batch.
 // Each relationship is created independently and concurrently — failures do not roll back other successes.
 // Inverse relationships are auto-created per template pack inverseType declarations.
-func (s *Service) BulkCreateRelationships(ctx context.Context, projectID uuid.UUID, req *BulkCreateRelationshipsRequest) (*BulkCreateRelationshipsResponse, error) {
+func (s *Service) BulkCreateRelationships(ctx context.Context, projectID uuid.UUID, req *BulkCreateRelationshipsRequest, actorID *uuid.UUID) (*BulkCreateRelationshipsResponse, error) {
+	actorType, actorID := actorFromContext(ctx, actorID)
+
 	results := make([]BulkCreateRelationshipResult, len(req.Items))
 
 	workerCtx := context.WithoutCancel(ctx)
@@ -2920,7 +2955,7 @@ func (s *Service) BulkCreateRelationships(ctx context.Context, projectID uuid.UU
 	}
 
 	for i, item := range req.Items {
-		resp, err := s.CreateRelationship(workerCtx, projectID, &item)
+		resp, err := s.CreateRelationship(workerCtx, projectID, &item, actorID)
 		if err != nil {
 			errMsg := err.Error()
 			s.log.Debug("bulk relationship creation failed",
@@ -2947,7 +2982,8 @@ func (s *Service) BulkCreateRelationships(ctx context.Context, projectID uuid.UU
 		s.eventSink.Log(ctx, LogParams{
 			ProjectID: projectID,
 			EventType: EventTypeBatch,
-			ActorType: ActorUser,
+			ActorType: actorType,
+			ActorID:   actorID,
 			Metadata: map[string]any{
 				"created": successCount,
 			},
@@ -3888,11 +3924,13 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 			}
 			// Attribute the merge to the source branch so the event appears in that
 			// branch's own journal history, alongside the objects it contained.
+			mergeActorType, mergeActorID := actorFromContext(ctx, nil)
 			s.eventSink.Log(ctx, LogParams{
 				ProjectID: projectID,
 				BranchID:  &req.SourceBranchID,
 				EventType: EventTypeMerge,
-				ActorType: ActorUser,
+				ActorType: mergeActorType,
+				ActorID:   mergeActorID,
 				Metadata: map[string]any{
 					"source_branch_id":        req.SourceBranchID.String(),
 					"target_branch_id":        targetID,
@@ -3995,6 +4033,8 @@ func (s *Service) applyMerge(
 				Labels:          labels,
 				Properties:      props,
 				ExtractionJobID: src.ExtractionJobID,
+				ActorType:       src.ActorType,
+				ActorID:         src.ActorID,
 			}
 			clone.ContentHash = computeContentHash(clone.Properties, clone.Status, clone.Key, clone.Labels)
 			now := time.Now()
@@ -4061,6 +4101,9 @@ func (s *Service) applyMerge(
 				// Carry the staging source's provenance so the merged version stays
 				// attributable to the source document (not the target head's job).
 				ExtractionJobID: src.ExtractionJobID,
+				// Carry the source row's actor so a fast-forward clone is not actor-less.
+				ActorType: src.ActorType,
+				ActorID:   src.ActorID,
 			}
 			if err := s.repo.CreateVersion(ctx, tx.Tx, prevHead, newVersion); err != nil {
 				return 0, fmt.Errorf("fast-forward object %s: %w", cid, err)
@@ -4136,6 +4179,10 @@ func (s *Service) applyMerge(
 				// Carry the staging source's provenance so the merged version stays
 				// attributable to the source document (not the target head's job).
 				ExtractionJobID: src.ExtractionJobID,
+				// Carry the source row's actor so a conflict-resolved version is
+				// not silently downgraded to user+NULL.
+				ActorType: src.ActorType,
+				ActorID:   src.ActorID,
 			}
 			if err := s.repo.CreateVersion(ctx, tx.Tx, prevHead, newVersion); err != nil {
 				return 0, fmt.Errorf("conflict-resolve object %s: %w", cid, err)
@@ -4150,7 +4197,8 @@ func (s *Service) applyMerge(
 			if err != nil {
 				return 0, fmt.Errorf("get target head for delete %s: %w", summary.CanonicalID, err)
 			}
-			if err := s.repo.SoftDelete(ctx, tx.Tx, targetHead, nil, nil); err != nil {
+			delActorType, delActorID := actorFromContext(ctx, nil)
+			if err := s.repo.SoftDelete(ctx, tx.Tx, targetHead, delActorType, delActorID, nil); err != nil {
 				return 0, fmt.Errorf("delete object %s: %w", summary.CanonicalID, err)
 			}
 			appliedCount++
@@ -4206,6 +4254,10 @@ func (s *Service) applyMerge(
 					// Carry the staging source's provenance so the absorbed version
 					// stays attributable to the source document.
 					ExtractionJobID: src.ExtractionJobID,
+					// Carry the source row's actor so a similarity-absorbed version
+					// is not silently downgraded to user+NULL.
+					ActorType: src.ActorType,
+					ActorID:   src.ActorID,
 				}
 				if err := s.repo.CreateVersion(ctx, tx.Tx, existingTarget, newVersion); err != nil {
 					return 0, fmt.Errorf("absorb similar object %s into %s: %w", cid, *summary.SimilarTargetID, err)
@@ -4268,6 +4320,10 @@ func (s *Service) applyMerge(
 									"source":           "similarity-merge",
 									"similarity_score": 1.0 - dist,
 								},
+								// Carry the source row's actor so a similarity-merged
+								// relationship is not actor-less.
+								ActorType: src.ActorType,
+								ActorID:   src.ActorID,
 							}
 							if err := s.repo.CreateRelationshipVersion(ctx, tx.Tx, similarRel, newRelVersion); err != nil {
 								s.log.Warn("similar rel: failed to merge, will create new", logger.Error(err))
@@ -4294,6 +4350,8 @@ func (s *Service) applyMerge(
 				DstID:       dstID,
 				Properties:  props,
 				Namespace:   src.Namespace,
+				ActorType:   src.ActorType,
+				ActorID:     src.ActorID,
 			}
 			rel.ContentHash = computeContentHash(rel.Properties, nil, nil, nil)
 			rel.CreatedAt = time.Now()
@@ -4309,7 +4367,10 @@ func (s *Service) applyMerge(
 			if src == nil {
 				continue
 			}
-			prevHead, err := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, cid)
+			// Resolve the target branch's own HEAD. A branch-less lookup is
+			// main-preferring (#1247), so using it here would fast-forward the
+			// main relationship even when the merge target is a named branch.
+			prevHead, err := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, cid, targetBranchID)
 			if err != nil {
 				return 0, fmt.Errorf("get target rel head for fast-forward %s: %w", cid, err)
 			}
@@ -4321,6 +4382,9 @@ func (s *Service) applyMerge(
 				Properties: props,
 				BranchID:   targetBranchID,
 				ProjectID:  projectID,
+				// Carry the source row's actor so a fast-forward relationship clone is not actor-less.
+				ActorType: src.ActorType,
+				ActorID:   src.ActorID,
 			}
 			if err := s.repo.CreateRelationshipVersion(ctx, tx.Tx, prevHead, newVersion); err != nil {
 				return 0, fmt.Errorf("fast-forward relationship %s: %w", cid, err)
@@ -4679,7 +4743,7 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 	}
 	defer tx.Rollback()
 
-	actorType := "user"
+	actorType, actorID := actorFromContext(ctx, actorID)
 	refMap := make(map[string]uuid.UUID, len(req.Objects))
 	objResponses := make([]*GraphObjectResponse, 0, len(req.Objects))
 	objByRef := make(map[string]*GraphObject, len(req.Objects))
@@ -4791,6 +4855,8 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 			Properties: relReq.Properties,
 			Weight:     relReq.Weight,
 			Namespace:  srcObj.Namespace,
+			ActorType:  &actorType,
+			ActorID:    actorID,
 		}
 
 		// Compute change summary
@@ -4804,7 +4870,7 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 		var inverseResponse *GraphRelationshipResponse
 		var inverseRelID string
 		if s.inverseTypeProvider != nil {
-			inverseResponse, inverseRelID = s.maybeCreateInverse(ctx, tx.Tx, projectID, srcObj.BranchID, relReq.Type, srcObj, dstObj, relReq.Properties, relReq.Weight)
+			inverseResponse, inverseRelID = s.maybeCreateInverse(ctx, tx.Tx, projectID, srcObj.BranchID, relReq.Type, srcObj, dstObj, relReq.Properties, relReq.Weight, actorType, actorID)
 		}
 
 		resp := rel.ToResponse()
@@ -4860,6 +4926,8 @@ func branchLabel(id *uuid.UUID) string {
 //  6. Moves the object version chain + relationship version chains in one transaction
 //  7. Re-queues embeddings and logs journal entry
 func (s *Service) MoveObject(ctx context.Context, projectID, objectID uuid.UUID, req *MoveObjectRequest, actorID *uuid.UUID) (*MoveObjectResponse, error) {
+	actorType, actorID := actorFromContext(ctx, actorID)
+
 	// 1. Fetch the object (resolve HEAD by any ID — version_id or entity_id)
 	current, err := s.repo.GetByID(ctx, projectID, objectID)
 	if err != nil {
@@ -4972,7 +5040,7 @@ func (s *Service) MoveObject(ctx context.Context, projectID, objectID uuid.UUID,
 			EventType:  EventTypeMoved,
 			EntityType: &entityType,
 			ObjectType: &objType,
-			ActorType:  ActorUser,
+			ActorType:  actorType,
 			ActorID:    actorID,
 			Metadata: map[string]any{
 				"key":                 *current.Key,
@@ -5047,11 +5115,13 @@ func (s *Service) ForkBranch(ctx context.Context, projectID uuid.UUID, sourceBra
 
 	// Journal log
 	{
+		forkActorType, forkActorID := actorFromContext(ctx, nil)
 		s.eventSink.Log(ctx, LogParams{
 			ProjectID: projectID,
 			BranchID:  &targetBranchID,
 			EventType: EventTypeBatch,
-			ActorType: ActorUser,
+			ActorType: forkActorType,
+			ActorID:   forkActorID,
 			Metadata: map[string]any{
 				"action":                "fork",
 				"source_branch_id":      sourceBranchID,
@@ -5113,6 +5183,8 @@ func (s *Service) BulkAction(ctx context.Context, projectID uuid.UUID, req *Bulk
 		return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("limit exceeds maximum of %d", bulkActionMaxLimit))
 	}
 
+	actorType, actorID := actorFromContext(ctx, actorID)
+
 	matched, affected, err := s.repo.BulkActionByFilter(ctx, BulkActionParams{
 		ProjectID:  projectID,
 		Filter:     req.Filter,
@@ -5122,6 +5194,8 @@ func (s *Service) BulkAction(ctx context.Context, projectID uuid.UUID, req *Bulk
 		Labels:     req.Labels,
 		Limit:      limit,
 		DryRun:     req.DryRun,
+		ActorType:  actorType,
+		ActorID:    actorID,
 	})
 	if err != nil {
 		return nil, err
@@ -5135,10 +5209,6 @@ func (s *Service) BulkAction(ctx context.Context, projectID uuid.UUID, req *Bulk
 
 	// Write journal entry for non-dry-run operations
 	if !req.DryRun {
-		actorType := ActorSystem
-		if actorID != nil {
-			actorType = ActorUser
-		}
 		entityType := entityTypeObject
 		s.eventSink.Log(ctx, LogParams{
 			ProjectID:  projectID,

@@ -36,6 +36,33 @@ type APIToken struct {
 	Token       string     `json:"token,omitempty"`
 }
 
+// apiTokenPartition splits a token list into its active and revoked halves,
+// preserving list order within each. The list pages render the active half as
+// the primary table and the revoked half inside a collapsed disclosure.
+func apiTokenPartition(tokens []APIToken) (active, revoked []APIToken) {
+	for i := range tokens {
+		if tokens[i].IsRevoked {
+			revoked = append(revoked, tokens[i])
+		} else {
+			active = append(active, tokens[i])
+		}
+	}
+	return active, revoked
+}
+
+// apiTokenActiveCount counts the tokens that are not revoked. The page header
+// badge reports the active inventory — revoked tokens live in a collapsed
+// section with their own count.
+func apiTokenActiveCount(tokens []APIToken) int {
+	n := 0
+	for i := range tokens {
+		if !tokens[i].IsRevoked {
+			n++
+		}
+	}
+	return n
+}
+
 // APITokenList is the wrapped list response shape {tokens, total}.
 type APITokenList struct {
 	Tokens []APIToken `json:"tokens"`

@@ -35,6 +35,7 @@ Set the following environment variables on the server:
 | `MAILGUN_API_KEY` | Yes | Mailgun private API key |
 | `EMAIL_FROM_ADDRESS` | Yes | Sender email address, e.g. `noreply@example.com` |
 | `EMAIL_FROM_NAME` | No | Sender display name, e.g. `Memory Platform` |
+| `MAILGUN_API_BASE` | No | Override the Mailgun API base URL, including the `/v3` segment (e.g. a local stub). Defaults to the SDK US base, or the EU base when `MAILGUN_REGION=eu` |
 | `EMAIL_TEMPLATE_DIR` | No | Path to Handlebars email templates (defaults to `templates/email`) |
 
 When `MAILGUN_DOMAIN` or `MAILGUN_API_KEY` are absent or empty, the email system falls back to a no-op sender that logs all emails without sending them. This is the default in development.

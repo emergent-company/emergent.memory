@@ -8,9 +8,8 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// documentItem is the client-facing document shape (mirrors memoryItem): name
-// is derived from memory's `filename` field so list and detail views share one
-// consistent field.
+// documentItem is the client-facing document shape: name is derived from
+// memory's `filename` field so list and detail views share one consistent field.
 type documentItem struct {
 	ID               string `json:"id"`
 	Name             string `json:"name"`

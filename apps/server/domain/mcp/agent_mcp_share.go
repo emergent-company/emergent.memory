@@ -76,6 +76,19 @@ func (s *Service) resolveProjectAgent(ctx context.Context, projectID, agentID st
 	return dir.FindProjectAgentByID(ctx, projectID, agentID)
 }
 
+// ResolveAgentDefinitionID resolves the kb.agent_definitions id backing a
+// runtime agent (kb.agents id), or "" when unresolvable. It delegates to the
+// agents-domain tool handler (which owns the ResolveDefinitionForAgent lookup),
+// returning "" when the handler is not wired or the definition cannot be found.
+// Used by the per-agent MCP endpoint to stamp actor provenance with the
+// canonical definition id.
+func (s *Service) ResolveAgentDefinitionID(ctx context.Context, projectID, agentID string) string {
+	if s.agentToolHandler == nil {
+		return ""
+	}
+	return s.agentToolHandler.ResolveAgentDefinitionID(ctx, projectID, agentID)
+}
+
 // resolveAgentShareTarget resolves an incoming agent reference for the
 // per-agent endpoint surface. It accepts either a runtime agent ID or an
 // agent-definition ID; for a definition ID it returns the definition's primary

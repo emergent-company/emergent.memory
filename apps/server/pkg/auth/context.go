@@ -3,6 +3,8 @@ package auth
 import (
 	"context"
 
+	"github.com/google/uuid"
+
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
@@ -15,7 +17,17 @@ type (
 	orgIDCtxKey     struct{}
 	rawTokenCtxKey  struct{}
 	namespaceCtxKey struct{}
+	actorCtxKey     struct{}
 )
+
+// actorValue carries the acting actor for provenance attribution. It is stamped
+// on the context at run/endpoint boundaries (agent run, per-agent MCP endpoint,
+// extraction worker) and read by downstream graph mutations to attribute writes
+// to the actual writer rather than the HTTP principal.
+type actorValue struct {
+	ActorType string
+	ActorID   *uuid.UUID
+}
 
 // ContextWithUser returns a new context with the AuthUser embedded.
 func ContextWithUser(ctx context.Context, user *AuthUser) context.Context {
@@ -84,6 +96,28 @@ func NamespaceFromContext(ctx context.Context) string {
 		return ns
 	}
 	return ""
+}
+
+// WithActor stamps the acting actor on the context. Downstream graph mutations
+// read this (via ActorFromContext) to attribute writes to the actual writer —
+// `agent` for an agent run's tool writes, `system` for background/extraction —
+// overriding the fallback user actor that HTTP handlers pass explicitly.
+//
+// An empty actorType is the "clear" form: it shadows any actor stamped by a
+// parent context (e.g. a delegated run) so ActorFromContext reports no actor and
+// the mutation falls back to its normal user/system attribution.
+func WithActor(ctx context.Context, actorType string, actorID *uuid.UUID) context.Context {
+	return context.WithValue(ctx, actorCtxKey{}, actorValue{ActorType: actorType, ActorID: actorID})
+}
+
+// ActorFromContext extracts the stamped actor from a standard context.Context.
+// The bool is false when no actor was stamped — including the "clear" form
+// (WithActor with an empty actorType), which shadows a parent's actor.
+func ActorFromContext(ctx context.Context) (actorType string, actorID *uuid.UUID, ok bool) {
+	if a, ok := ctx.Value(actorCtxKey{}).(actorValue); ok && a.ActorType != "" {
+		return a.ActorType, a.ActorID, true
+	}
+	return "", nil, false
 }
 
 // ContextWithRawToken returns a new context with the raw bearer/API token embedded.

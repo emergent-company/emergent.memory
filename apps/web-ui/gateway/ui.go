@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -338,7 +337,13 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 			}
 		}
 	}
-	render.RenderPage(w, r, appShell(title, groups, providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, user, accounts, content, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL))
+	// Compiled type name → human label for the chat client's citation sources.
+	// Best-effort, like the fetches above: a failure degrades to an empty map, so
+	// the client falls back to humanized type names rather than erroring. The
+	// result is cached per project (objectTypeUIMap) so a full page render
+	// doesn't pay a serial GetCompiledTypes HTTP GET on the critical path.
+	objectTypes := s.objectTypeUIMap(c.Request().Context())
+	render.RenderPage(w, r, appShell(title, groups, providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, user, accounts, content, objectTypes, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL))
 	return nil
 }
 
@@ -973,6 +978,38 @@ func defaultAgentID(agents []AgentDefinitionSummary, preselect string) string {
 	return ""
 }
 
+// agentSummaryByID finds an agent summary by id, reporting whether it exists.
+func agentSummaryByID(agents []AgentDefinitionSummary, id string) (AgentDefinitionSummary, bool) {
+	for _, a := range agents {
+		if a.ID == id {
+			return a, true
+		}
+	}
+	return AgentDefinitionSummary{}, false
+}
+
+// activeChatAgent resolves the agent whose identity the chat pane header should
+// show: the agent of the conversation named by convID when it is still in the
+// list, otherwise the default/preselected agent. ok is false only when there is
+// no agent to show at all, so the caller keeps the generic header copy. A
+// conversation whose agent is missing from the (possibly stale) list falls back
+// to the default agent rather than leaving the header blank.
+func activeChatAgent(agents []AgentDefinitionSummary, convs *ConversationList, preselect, convID string) (AgentDefinitionSummary, bool) {
+	activeID := ""
+	if convs != nil && convID != "" {
+		for _, c := range convs.Conversations {
+			if c.ID == convID {
+				activeID = c.AgentDefinitionID
+				break
+			}
+		}
+	}
+	if a, ok := agentSummaryByID(agents, activeID); ok {
+		return a, true
+	}
+	return agentSummaryByID(agents, defaultAgentID(agents, preselect))
+}
+
 // assistantAgentID returns the configured assistant agent's ID, or "" when
 // unset or the referenced agent no longer exists.
 func (s *Server) assistantAgentID(ctx context.Context, agents []AgentDefinitionSummary) string {
@@ -990,57 +1027,6 @@ func (s *Server) assistantAgentID(ctx context.Context, agents []AgentDefinitionS
 		}
 	}
 	return ""
-}
-
-// --- memory browser helpers ---
-
-// confidenceLabel renders a memory confidence (0..1) as a percentage.
-func confidenceLabel(c float64) string {
-	return strconv.Itoa(int(math.Round(c*100))) + "%"
-}
-
-// matchLabel renders a memory search relevance score (0..1) as a match
-// indicator, e.g. "match 17%".
-func matchLabel(score float64) string {
-	return "match " + strconv.Itoa(int(math.Round(score*100))) + "%"
-}
-
-// memoryCategoryIntent maps a memory category to a badge colour. Unknown
-// categories stay neutral.
-func memoryCategoryIntent(c string) ui.BadgeIntent {
-	switch strings.ToLower(c) {
-	case "person":
-		return ui.BadgePrimary
-	case "contact":
-		return ui.BadgeSecondary
-	case "note":
-		return ui.BadgeInfo
-	case "task":
-		return ui.BadgeWarning
-	case "preference", "fact":
-		return ui.BadgeAccent
-	default:
-		return ui.BadgeNeutral
-	}
-}
-
-// memoryDetailURL builds the detail link for one memory, preserving the
-// active search query.
-func memoryDetailURL(id, query, memoryID string) string {
-	u := "/agents/" + url.PathEscape(id) + "/memories?memory=" + url.QueryEscape(memoryID)
-	if query != "" {
-		u += "&q=" + url.QueryEscape(query)
-	}
-	return u
-}
-
-// memoryListURL builds the back-to-list link, preserving the search query.
-func memoryListURL(id, query string) string {
-	u := "/agents/" + url.PathEscape(id) + "/memories"
-	if query != "" {
-		u += "?q=" + url.QueryEscape(query)
-	}
-	return u
 }
 
 // chatTitle is the display title of a conversation, falling back to a

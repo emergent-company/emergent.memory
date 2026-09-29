@@ -8,6 +8,7 @@ use (
 	./apps/web-ui/gateway
 	./e2e
 	./e2e/stubs/mcp-registry
+	./e2e/stubs/mailgun
 	./blueprints/code-memory-blueprint/tools/api-audit
 	./blueprints/code-memory-blueprint/tools/branch-verify
 	./blueprints/code-memory-blueprint/tools/coverage-audit
