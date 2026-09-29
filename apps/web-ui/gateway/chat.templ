@@ -111,7 +111,7 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 		</aside>
 		<div class="flex min-w-0 grow flex-col">
 			<div class="border-base-content/5 flex flex-wrap items-center justify-between gap-3 border-b bg-base-100 px-4 py-3 lg:px-6">
-				<div class="flex items-center gap-3">
+				<div class="flex min-w-0 items-center gap-3" data-testid="chat-agent-header">
 					@ui.Button(ui.ButtonProps{
 						Type:       ui.ButtonTypeButton,
 						Variant:    ui.ButtonGhost,
@@ -122,16 +122,33 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 						ExtraClass: "md:hidden",
 						Attrs:      templ.Attributes{"data-action": "toggle-chat-rail"},
 					})
-					@ui.IconTile("lucide--messages-square", ui.IconTileProps{Tone: "primary"})
-					<div>
-						<h1 class="text-sm font-semibold">Chat with Memory</h1>
-						<p class="text-muted-faint text-xs">
-							if voiceEnabled {
-								Chat by text or voice.
-							} else {
-								Chat by text.
-							}
-						</p>
+					{{ activeAgent, hasActiveAgent := activeChatAgent(agents, convs, preselect, convID)
+						headerTitle := "Chat with Memory"
+						headerDesc := ""
+						if hasActiveAgent {
+							headerTitle = activeAgent.Name
+							headerDesc = activeAgent.Description
+						} }}
+					<div id="chat-header-icon" class="shrink-0">
+						if hasActiveAgent {
+							@agentIconTile(agentIcon(activeAgent.UIConfig), agentColor(activeAgent.UIConfig))
+						} else {
+							@ui.IconTile("lucide--messages-square", ui.IconTileProps{Tone: "primary"})
+						}
+					</div>
+					<div class="min-w-0">
+						<h1 id="chat-header-title" class="truncate text-sm font-semibold">{ headerTitle }</h1>
+						if hasActiveAgent {
+							<p id="chat-header-desc" class={ "text-muted-faint truncate text-xs", templ.KV("hidden", headerDesc == "") }>{ headerDesc }</p>
+						} else {
+							<p id="chat-header-desc" class="text-muted-faint text-xs">
+								if voiceEnabled {
+									Chat by text or voice.
+								} else {
+									Chat by text.
+								}
+							</p>
+						}
 					</div>
 				</div>
 				<!-- Live turn status (working / waiting-on-you / failed), filled in
@@ -153,7 +170,7 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 									<label for="chat-agent" class="text-muted-faint text-xs font-semibold tracking-wider uppercase">Agent</label>
 									<select id="chat-agent" class="select select-bordered w-full" aria-label="Agent">
 										for _, a := range agents {
-											<option value={ a.ID } data-icon={ agentIcon(a.UIConfig) } data-color={ agentColor(a.UIConfig) } data-warn={ modelWarnings[a.ID] } selected?={ a.ID == defaultAgentID(agents, preselect) }>{ a.Name }</option>
+											<option value={ a.ID } data-icon={ agentIcon(a.UIConfig) } data-color={ agentColor(a.UIConfig) } data-warn={ modelWarnings[a.ID] } data-description={ a.Description } selected?={ a.ID == defaultAgentID(agents, preselect) }>{ a.Name }</option>
 										}
 									</select>
 								</div>

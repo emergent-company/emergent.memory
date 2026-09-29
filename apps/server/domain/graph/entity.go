@@ -107,6 +107,10 @@ type GraphRelationship struct {
 	ChangeSummary map[string]any `bun:"change_summary,type:jsonb" json:"change_summary,omitempty"`
 	ContentHash   []byte         `bun:"content_hash,type:bytea" json:"-"`
 
+	// Actor tracking
+	ActorType *string    `bun:"actor_type" json:"actor_type,omitempty"`
+	ActorID   *uuid.UUID `bun:"actor_id,type:uuid" json:"actor_id,omitempty"`
+
 	EmbeddingUpdatedAt *time.Time `bun:"embedding_updated_at" json:"-"`
 
 	// Temporal validity

@@ -3543,6 +3543,26 @@
                 "responses": {}
             }
         },
+        "/api/embeddings/coverage": {
+            "get": {
+                "description": "Returns embedded/awaiting/total counts for live graph objects and relationships. Project-scoped for a caller with project context; deployment-wide requires an active superadmin_full grant.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "embeddings"
+                ],
+                "summary": "Get embedding coverage",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_extraction.EmbeddingCoverageResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/embeddings/pause": {
             "post": {
                 "responses": {}
@@ -9596,6 +9616,84 @@
                     },
                     "400": {
                         "description": "Invalid project ID or user ID",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Project or user not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Changes the role of a user within the specified project",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "projects"
+                ],
+                "summary": "Update project member role",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "User ID to update (UUID)",
+                        "name": "userId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Role update request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_projects.UpdateMemberRoleRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Role update status",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid project ID, user ID, or role",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -24352,6 +24450,31 @@
                 }
             }
         },
+        "domain_extraction.EmbeddingCoverage": {
+            "type": "object",
+            "properties": {
+                "awaiting": {
+                    "type": "integer"
+                },
+                "embedded": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_extraction.EmbeddingCoverageResponse": {
+            "type": "object",
+            "properties": {
+                "objects": {
+                    "$ref": "#/definitions/domain_extraction.EmbeddingCoverage"
+                },
+                "relationships": {
+                    "$ref": "#/definitions/domain_extraction.EmbeddingCoverage"
+                }
+            }
+        },
         "domain_extraction.GraphEmbeddingQueueStats": {
             "type": "object",
             "properties": {
@@ -28128,6 +28251,14 @@
             ],
             "properties": {
                 "orgId": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_projects.UpdateMemberRoleRequest": {
+            "type": "object",
+            "properties": {
+                "role": {
                     "type": "string"
                 }
             }

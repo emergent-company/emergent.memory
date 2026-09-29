@@ -11,189 +11,6 @@ import (
 	"testing"
 )
 
-// TestMemoryFromParts covers the entity→Memory normalization (parity with
-// admin.py _memory_item + _memory_content).
-func TestMemoryFromParts(t *testing.T) {
-	cases := []struct {
-		name    string
-		id      string
-		objType string
-		props   map[string]any
-		wantMem Memory
-	}{
-		{
-			name:    "note keeps its own category and confidence",
-			id:      "e1",
-			objType: "Note",
-			props:   map[string]any{"content": "likes dark roast", "category": "preference", "confidence": 0.92},
-			wantMem: Memory{ID: "e1", Content: "likes dark roast", Category: "preference", Confidence: 0.92},
-		},
-		{
-			name:    "person derives name + relationship",
-			id:      "e2",
-			objType: "person",
-			props:   map[string]any{"first_name": "Sam", "last_name": "Lee", "relationship": "colleague"},
-			wantMem: Memory{ID: "e2", Content: "Sam Lee (colleague)", Category: "person", Confidence: 1},
-		},
-		{
-			name:    "task uses title",
-			id:      "e3",
-			objType: "task",
-			props:   map[string]any{"title": "water the plants"},
-			wantMem: Memory{ID: "e3", Content: "water the plants", Category: "task", Confidence: 1},
-		},
-		{
-			name:    "note confidence may arrive as int",
-			id:      "e4",
-			objType: "Note",
-			props:   map[string]any{"content": "x", "category": "fact", "confidence": 1},
-			wantMem: Memory{ID: "e4", Content: "x", Category: "fact", Confidence: 1},
-		},
-		{
-			name:    "unknown type falls back to a known property then the type",
-			id:      "e5",
-			objType: "widget",
-			props:   map[string]any{"summary": "a widget"},
-			wantMem: Memory{ID: "e5", Content: "a widget", Category: "widget", Confidence: 1},
-		},
-		{
-			name:    "typed entity with no props returns empty content (parity with admin.py)",
-			id:      "e6",
-			objType: "place",
-			props:   map[string]any{},
-			wantMem: Memory{ID: "e6", Category: "place", Confidence: 1},
-		},
-		{
-			name:    "note with missing fields degrades to zero values",
-			id:      "e7",
-			objType: "Note",
-			props:   map[string]any{},
-			wantMem: Memory{ID: "e7"},
-		},
-	}
-	for _, c := range cases {
-		got := memoryFromParts(c.id, c.objType, c.props)
-		if got != c.wantMem {
-			t.Errorf("%s: got %+v, want %+v", c.name, got, c.wantMem)
-		}
-	}
-}
-
-// TestSearchMemories exercises POST /api/search/unified end-to-end:
-// request shape, response parsing, score capture, and normalization of graph
-// results (Note, typed) plus a text-chunk result with no graph fields.
-// Results below minSearchScore (0.08) are filtered out.
-func TestSearchMemories(t *testing.T) {
-	var gotBody map[string]any
-	var gotAuth string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/search/unified" {
-			t.Errorf("path = %q, want /api/search/unified", r.URL.Path)
-		}
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %s, want POST", r.Method)
-		}
-		gotAuth = r.Header.Get("Authorization")
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"results":[
-			{"type":"graph","id":"oid1","object_id":"oid1","canonical_id":"m1","object_type":"Note","key":"m1","score":0.168,"fields":{"content":"likes dark roast","category":"preference"}},
-			{"type":"graph","id":"oid2","object_id":"oid2","canonical_id":"m2","object_type":"person","key":"sam-person","score":0.31,"fields":{"first_name":"Sam","relationship":"colleague"}},
-			{"type":"graph","id":"oid3","object_id":"oid3","canonical_id":"m3","object_type":"task","key":"t3","score":0.05,"fields":{"title":"water the plants"}},
-			{"type":"text","id":"chunk1","snippet":"a chunk of text","score":0.22},
-			{"type":"relationship","id":"rel1","score":0.03}
-		],"metadata":{}}`)
-	}))
-	defer srv.Close()
-
-	m := NewMemoryClient(srv.URL, "proj")
-	mems, err := m.SearchMemories(sessCtx("tok123"), "dark roast")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gotBody["query"] != "dark roast" {
-		t.Errorf("query = %v, want dark roast", gotBody["query"])
-	}
-	if gotBody["limit"] != float64(50) {
-		t.Errorf("limit = %v, want 50", gotBody["limit"])
-	}
-	if gotAuth != "Bearer tok123" {
-		t.Errorf("auth = %q", gotAuth)
-	}
-	// m3 (0.05) and rel1 (0.03) are below minSearchScore and must be dropped.
-	want := []Memory{
-		{ID: "m1", Content: "likes dark roast", Category: "preference", Score: 0.168},
-		{ID: "m2", Content: "Sam (colleague)", Category: "person", Confidence: 1, Score: 0.31},
-		// text chunk: no graph fields, falls back to its snippet
-		{ID: "chunk1", Content: "a chunk of text", Confidence: 1, Score: 0.22},
-	}
-	if len(mems) != len(want) {
-		t.Fatalf("got %d memories, want %d: %+v", len(mems), len(want), mems)
-	}
-	for i := range want {
-		if mems[i] != want[i] {
-			t.Errorf("memory %d = %+v, want %+v", i, mems[i], want[i])
-		}
-	}
-}
-
-// TestSearchMemoriesError surfaces non-2xx responses as errors.
-func TestSearchMemoriesError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusBadGateway)
-		_, _ = io.WriteString(w, `{"error":{"code":"upstream","message":"memory down"}}`)
-	}))
-	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "proj")
-	if _, err := m.SearchMemories(context.Background(), "x"); err == nil {
-		t.Fatal("want error, got nil")
-	}
-}
-
-// TestListMemories exercises the REST memory list: GET /api/graph/objects/search
-// (no type filter) normalized to []Memory — replaces the old MCP entity-query flow.
-func TestListMemories(t *testing.T) {
-	var sawPath, sawMethod, sawAuth string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sawPath = r.URL.Path
-		sawMethod = r.Method
-		sawAuth = r.Header.Get("Authorization")
-		if r.URL.Path != "/api/graph/objects/search" {
-			t.Errorf("path = %q, want /api/graph/objects/search", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"items":[
-			{"id":"e1","type":"Note","properties":{"content":"prefers dark roast","category":"preference","confidence":0.9}},
-			{"id":"e2","type":"person","properties":{"first_name":"Sam","relationship":"colleague"}}
-		],"total":2}`)
-	}))
-	defer srv.Close()
-
-	m := NewMemoryClient(srv.URL, "proj")
-	mems, err := m.ListMemories(sessCtx("tok123"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sawPath != "/api/graph/objects/search" || sawMethod != http.MethodGet {
-		t.Errorf("request = %s %s", sawMethod, sawPath)
-	}
-	if sawAuth != "Bearer tok123" {
-		t.Errorf("auth = %q", sawAuth)
-	}
-	want := []Memory{
-		{ID: "e1", Content: "prefers dark roast", Category: "preference", Confidence: 0.9},
-		{ID: "e2", Content: "Sam (colleague)", Category: "person", Confidence: 1},
-	}
-	if len(mems) != len(want) {
-		t.Fatalf("got %d memories, want %d: %+v", len(mems), len(want), mems)
-	}
-	for i := range want {
-		if mems[i] != want[i] {
-			t.Errorf("memory %d = %+v, want %+v", i, mems[i], want[i])
-		}
-	}
-}
-
 // --- blueprint/schema client methods ---
 
 func TestGetCompiledTypes(t *testing.T) {
@@ -1604,7 +1421,8 @@ func TestSearchObjectsFTSNoTypeFilter(t *testing.T) {
 }
 
 // TestListGraphObjectsPage exercises the cursor-paginated object list: limit,
-// cursor, type and branch_id query params plus the items/next_cursor envelope.
+// cursor, type, branch_id, and the actor provenance params (actor_type,
+// actor_id, provenance) plus the items/next_cursor envelope.
 func TestListGraphObjectsPage(t *testing.T) {
 	var gotPath string
 	var gotQuery url.Values
@@ -1620,7 +1438,15 @@ func TestListGraphObjectsPage(t *testing.T) {
 	defer srv.Close()
 
 	m := NewMemoryClient(srv.URL, "proj")
-	items, next, err := m.ListGraphObjectsPage(context.Background(), "b1", "person", "cur-0", 25)
+	items, next, err := m.ListGraphObjectsPage(context.Background(), ObjectListParams{
+		BranchID:   "b1",
+		TypeFilter: "person",
+		Cursor:     "cur-0",
+		Limit:      25,
+		ActorType:  "agent",
+		ActorID:    "a1b2c3d4-0000-0000-0000-000000000001",
+		Provenance: "created",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1633,11 +1459,38 @@ func TestListGraphObjectsPage(t *testing.T) {
 	if gotQuery.Get("include_total") != "false" {
 		t.Errorf("include_total = %q, want false", gotQuery.Get("include_total"))
 	}
+	// Provenance params mirror the server param names verbatim.
+	if gotQuery.Get("actor_type") != "agent" || gotQuery.Get("actor_id") != "a1b2c3d4-0000-0000-0000-000000000001" || gotQuery.Get("provenance") != "created" {
+		t.Errorf("actor provenance query = %v", gotQuery)
+	}
 	if len(items) != 2 || items[0].ID != "o1" || items[1].Key != "call dentist" {
 		t.Errorf("items = %+v", items)
 	}
 	if next != "nc-1" {
 		t.Errorf("next_cursor = %q, want nc-1", next)
+	}
+}
+
+// TestListGraphObjectsPageOmitsActorIDWithoutType pins the server's pair rule:
+// actor_id without actor_type is never sent, because the server rejects it.
+func TestListGraphObjectsPageOmitsActorIDWithoutType(t *testing.T) {
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"items":[],"next_cursor":""}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	if _, _, err := m.ListGraphObjectsPage(context.Background(), ObjectListParams{
+		Limit:   25,
+		ActorID: "a1b2c3d4-0000-0000-0000-000000000001",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if gotQuery.Has("actor_id") || gotQuery.Has("actor_type") {
+		t.Errorf("actor pair must be omitted when actor_type is empty, got %v", gotQuery)
 	}
 }
 

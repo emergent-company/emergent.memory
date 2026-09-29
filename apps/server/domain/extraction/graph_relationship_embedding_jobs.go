@@ -341,6 +341,51 @@ func (s *GraphRelationshipEmbeddingJobsService) StatsByProject(ctx context.Conte
 	return stats, nil
 }
 
+// Coverage returns deployment-wide embedding coverage for live graph
+// relationships: how many already hold an embedding vector (embedded) versus how
+// many are still awaiting one (awaiting). Callers must have been authorized
+// (superadmin_full) by the Coverage handler.
+func (s *GraphRelationshipEmbeddingJobsService) Coverage(ctx context.Context) (*EmbeddingCoverage, error) {
+	var row struct {
+		Embedded int64 `bun:"embedded"`
+		Awaiting int64 `bun:"awaiting"`
+	}
+	err := s.db.NewRaw(`
+		SELECT
+			(SELECT COUNT(*) FROM kb.graph_relationships WHERE embedding IS NOT NULL AND deleted_at IS NULL) AS embedded,
+			(SELECT COUNT(*) FROM kb.graph_relationships WHERE embedding IS NULL AND deleted_at IS NULL) AS awaiting`).
+		Scan(ctx, &row)
+	if err != nil {
+		return nil, fmt.Errorf("get relationship embedding coverage: %w", err)
+	}
+	return &EmbeddingCoverage{Embedded: row.Embedded, Awaiting: row.Awaiting, Total: row.Embedded + row.Awaiting}, nil
+}
+
+// CoverageByProject returns embedding coverage for live graph relationships
+// scoped to a single project.
+//
+// Each half is a separate scalar subquery so the planner can serve the two
+// disjoint predicates from their own partial indexes — the embedded side from
+// idx_graph_relationships_embedding_coverage (embedding IS NOT NULL) and the
+// awaiting side from idx_graph_relationships_missing_embedding (embedding IS
+// NULL) — without a sequential scan of kb.graph_relationships (same rationale
+// as GraphEmbeddingJobsService.CoverageByProject).
+func (s *GraphRelationshipEmbeddingJobsService) CoverageByProject(ctx context.Context, projectID string) (*EmbeddingCoverage, error) {
+	var row struct {
+		Embedded int64 `bun:"embedded"`
+		Awaiting int64 `bun:"awaiting"`
+	}
+	err := s.db.NewRaw(`
+		SELECT
+			(SELECT COUNT(*) FROM kb.graph_relationships WHERE project_id = ? AND embedding IS NOT NULL AND deleted_at IS NULL) AS embedded,
+			(SELECT COUNT(*) FROM kb.graph_relationships WHERE project_id = ? AND embedding IS NULL AND deleted_at IS NULL) AS awaiting`,
+		projectID, projectID).Scan(ctx, &row)
+	if err != nil {
+		return nil, fmt.Errorf("get project relationship embedding coverage: %w", err)
+	}
+	return &EmbeddingCoverage{Embedded: row.Embedded, Awaiting: row.Awaiting, Total: row.Embedded + row.Awaiting}, nil
+}
+
 // ResetSchedule sets scheduled_at = now() for all pending relationship embedding jobs
 // so they are immediately eligible for dequeue regardless of backoff delay.
 // Returns the number of rows updated.

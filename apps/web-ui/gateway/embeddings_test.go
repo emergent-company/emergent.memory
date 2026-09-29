@@ -128,6 +128,38 @@ func TestGetEmbeddingStatus(t *testing.T) {
 	}
 }
 
+func TestGetEmbeddingCoverage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/embeddings/coverage" {
+			t.Errorf("path = %q, want /api/embeddings/coverage", r.URL.Path)
+		}
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %s, want GET", r.Method)
+		}
+		if got := r.Header.Get("X-Project-ID"); got != "proj" {
+			t.Errorf("X-Project-ID = %q, want proj", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"objects":{"embedded":107233,"awaiting":0,"total":107233},"relationships":{"embedded":81919,"awaiting":0,"total":81919}}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	c, err := m.GetEmbeddingCoverage(context.Background())
+	if err != nil {
+		t.Fatalf("GetEmbeddingCoverage: %v", err)
+	}
+	if c.Objects.Embedded != 107233 || c.Objects.Awaiting != 0 || c.Objects.Total != 107233 {
+		t.Errorf("objects = %+v", c.Objects)
+	}
+	if c.Relationships.Embedded != 81919 || c.Relationships.Awaiting != 0 || c.Relationships.Total != 81919 {
+		t.Errorf("relationships = %+v", c.Relationships)
+	}
+	if c.TotalRows() != 189152 || c.AwaitingRows() != 0 {
+		t.Errorf("combined = total %d awaiting %d, want 189152/0", c.TotalRows(), c.AwaitingRows())
+	}
+}
+
 func TestGetEffectiveModelConfig(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/projects/proj/model-config/effective" {
@@ -308,6 +340,101 @@ func TestEmbeddingsRoute(t *testing.T) {
 			t.Errorf("model-config failure blanked the page: %s", body)
 		}
 	})
+
+	t.Run("coverage populates the coverage section", func(t *testing.T) {
+		f := &fakeMemory{
+			embeddingProgress: &EmbeddingProgress{Objects: EmbeddingQueueStats{Pending: 3}},
+			embeddingStatus:   &EmbeddingStatus{Objects: EmbeddingWorkerStatus{Running: true}},
+			embeddingCoverage: &EmbeddingCoverageResponse{
+				Objects:       EmbeddingCoverage{Embedded: 107233, Awaiting: 0, Total: 107233},
+				Relationships: EmbeddingCoverage{Embedded: 81919, Awaiting: 0, Total: 81919},
+			},
+		}
+		_, e := newServer(f)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/embeddings", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		body := rec.Body.String()
+		for _, want := range []string{"Coverage", "Embedded", "Awaiting", "Total", "107,233", "81,919"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("coverage section missing %q", want)
+			}
+		}
+	})
+
+	t.Run("all-zero queue with complete coverage shows no pending work", func(t *testing.T) {
+		f := &fakeMemory{
+			embeddingCoverage: &EmbeddingCoverageResponse{
+				Objects:       EmbeddingCoverage{Embedded: 107233, Awaiting: 0, Total: 107233},
+				Relationships: EmbeddingCoverage{Embedded: 81919, Awaiting: 0, Total: 81919},
+			},
+		}
+		_, e := newServer(f)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/embeddings", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, "No embedding work pending") {
+			t.Errorf("complete state missing: %s", body)
+		}
+		if !strings.Contains(body, "107,233") || !strings.Contains(body, "81,919") {
+			t.Errorf("complete state should name the embedded totals: %s", body)
+		}
+		if !strings.Contains(body, `data-testid="embeddings-complete"`) {
+			t.Errorf("complete state testid missing: %s", body)
+		}
+		if strings.Contains(body, "No embedding statistics yet") {
+			t.Errorf("complete state must not render the no-data empty state: %s", body)
+		}
+	})
+
+	t.Run("all-zero queue with empty coverage shows the no-data state", func(t *testing.T) {
+		f := &fakeMemory{embeddingCoverage: &EmbeddingCoverageResponse{}}
+		_, e := newServer(f)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/embeddings", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, "No embedding statistics yet") {
+			t.Errorf("no-data empty state missing: %s", body)
+		}
+		if strings.Contains(body, "No embedding work pending") {
+			t.Errorf("no-data state must not render the complete state: %s", body)
+		}
+	})
+
+	t.Run("coverage failure degrades independently", func(t *testing.T) {
+		f := &fakeMemory{
+			embeddingProgress:    &EmbeddingProgress{Objects: EmbeddingQueueStats{Pending: 3}},
+			embeddingStatus:      &EmbeddingStatus{Objects: EmbeddingWorkerStatus{Running: true}},
+			embeddingCoverageErr: fmt.Errorf("coverage boom"),
+		}
+		_, e := newServer(f)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/embeddings", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `data-testid="embeddings-coverage-error"`) {
+			t.Errorf("coverage error state missing: %s", body)
+		}
+		if !strings.Contains(body, "coverage boom") {
+			t.Errorf("coverage error message missing: %s", body)
+		}
+		if !strings.Contains(body, "Object embedding queue") || !strings.Contains(body, "Workers") {
+			t.Errorf("coverage failure blanked the queue/worker sections: %s", body)
+		}
+		if strings.Contains(body, `data-testid="coverage-objects-embedded"`) {
+			t.Errorf("coverage stat rows must not render on error: %s", body)
+		}
+	})
 }
 
 func TestRenderEmbeddingsPage(t *testing.T) {
@@ -410,5 +537,84 @@ func TestRenderObjectEmbeddingBadges(t *testing.T) {
 	htmlNoTime := renderHTML(t, ObjectDetailPage(objNoTime, nil, nil, nil, nil, nil, "", nil, nil, nil, nil))
 	if strings.Contains(htmlNoTime, `text-muted text-xs">Embedded `) {
 		t.Errorf("detail header should omit the timestamp when updated_at is empty")
+	}
+}
+
+func TestRenderEmbeddingsCoverage(t *testing.T) {
+	coverage := &EmbeddingCoverageResponse{
+		Objects:       EmbeddingCoverage{Embedded: 107233, Awaiting: 0, Total: 107233},
+		Relationships: EmbeddingCoverage{Embedded: 81919, Awaiting: 0, Total: 81919},
+	}
+
+	html := renderHTML(t, EmbeddingsPage(embeddingPageData{
+		Progress: &EmbeddingProgress{Objects: EmbeddingQueueStats{Pending: 1}},
+		Status:   &EmbeddingStatus{Objects: EmbeddingWorkerStatus{Running: true}},
+		Coverage: coverage,
+	}))
+	for _, want := range []string{
+		"Coverage", "Embedded", "Awaiting", "Total", "107,233", "81,919",
+		`data-testid="embeddings-coverage"`,
+		`data-testid="coverage-objects-embedded"`,
+		`data-testid="coverage-objects-awaiting"`,
+		`data-testid="coverage-objects-total"`,
+		`data-testid="coverage-relationships-embedded"`,
+		`data-testid="coverage-relationships-total"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("coverage section missing %q", want)
+		}
+	}
+
+	htmlComplete := renderHTML(t, EmbeddingsPage(embeddingPageData{
+		Progress: &EmbeddingProgress{},
+		Empty:    true,
+		Coverage: coverage,
+	}))
+	if !strings.Contains(htmlComplete, "No embedding work pending") {
+		t.Errorf("complete state missing: %s", htmlComplete)
+	}
+	if !strings.Contains(htmlComplete, "107,233") || !strings.Contains(htmlComplete, "81,919") {
+		t.Errorf("complete state should name the embedded totals: %s", htmlComplete)
+	}
+	if strings.Contains(htmlComplete, "No embedding statistics yet") {
+		t.Error("complete state must not render the no-data empty state")
+	}
+
+	htmlNoData := renderHTML(t, EmbeddingsPage(embeddingPageData{
+		Progress: &EmbeddingProgress{},
+		Empty:    true,
+		Coverage: &EmbeddingCoverageResponse{},
+	}))
+	if !strings.Contains(htmlNoData, "No embedding statistics yet") {
+		t.Errorf("zero-coverage empty state missing: %s", htmlNoData)
+	}
+	if strings.Contains(htmlNoData, "No embedding work pending") {
+		t.Error("zero-coverage must not render the complete state")
+	}
+
+	htmlNoCoverage := renderHTML(t, EmbeddingsPage(embeddingPageData{
+		Progress: &EmbeddingProgress{},
+		Empty:    true,
+	}))
+	if !strings.Contains(htmlNoCoverage, "No embedding statistics yet") {
+		t.Errorf("missing-coverage empty state missing: %s", htmlNoCoverage)
+	}
+
+	htmlErr := renderHTML(t, EmbeddingsPage(embeddingPageData{
+		Progress:    &EmbeddingProgress{Objects: EmbeddingQueueStats{Pending: 1}},
+		Status:      &EmbeddingStatus{Objects: EmbeddingWorkerStatus{Running: true}},
+		CoverageErr: errTest,
+	}))
+	if !strings.Contains(htmlErr, `data-testid="embeddings-coverage-error"`) {
+		t.Errorf("coverage error state missing: %s", htmlErr)
+	}
+	if !strings.Contains(htmlErr, "backend unreachable") {
+		t.Errorf("coverage error message missing: %s", htmlErr)
+	}
+	if !strings.Contains(htmlErr, "Object embedding queue") || !strings.Contains(htmlErr, "Workers") {
+		t.Errorf("coverage failure blanked the queue/worker sections: %s", htmlErr)
+	}
+	if strings.Contains(htmlErr, `data-testid="coverage-objects-embedded"`) {
+		t.Error("coverage stat rows must not render on error")
 	}
 }

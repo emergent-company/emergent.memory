@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -46,21 +47,108 @@ type objectsPageData struct {
 	Stats        *objectsStats // nil → deferred stats partial; non-nil → loaded
 	TypeUIByType map[string]typeUI
 	LoadErr      error
+
+	// Actor provenance filter (mirrors the server's actor_type / actor_id /
+	// provenance params). ActorType is "" for "any actor"; ActorID is only
+	// meaningful when ActorType is set. Provenance is normalized to
+	// created|updated|any.
+	ActorType  string
+	ActorID    string
+	Provenance string
+
+	// AgentID/AgentName mark the agent-scoped view (GET /agents/:id/objects):
+	// the provenance filter is fixed to (agent, AgentID), the page renders an
+	// agent-scoped header, and the global search / Q&A are omitted because the
+	// server's search endpoints cannot be provenance-scoped.
+	AgentID   string
+	AgentName string
 }
 
-// uiObjects renders the objects browser: searchable graph objects, filterable
-// by type and branch, with a small stats section and cursor-paginated browse.
-func (s *Server) uiObjects(c echo.Context) error {
-	ctx := c.Request().Context()
-	branchID := c.QueryParam("branch")
-	typeFilter := c.QueryParam("type")
-	query := c.QueryParam("q")
-	mode := normalizeObjectsSearchMode(c.QueryParam("mode"))
-	cursor := c.QueryParam("cursor")
+// listParams builds the graph-object list query for this page's active filters
+// at one cursor position.
+func (d objectsPageData) listParams(cursor string) ObjectListParams {
+	return ObjectListParams{
+		BranchID:   d.BranchID,
+		TypeFilter: d.TypeFilter,
+		Cursor:     cursor,
+		Limit:      25,
+		ActorType:  d.ActorType,
+		ActorID:    d.ActorID,
+		Provenance: d.Provenance,
+	}
+}
 
-	// Branches + compiled types feed the filter dropdowns regardless of mode
-	// (browse or search). Both are best-effort: a failure leaves the dropdowns
-	// empty rather than blanking the page.
+// objectProvenanceMode is one selectable provenance mode: the server value plus
+// its display label.
+type objectProvenanceMode struct {
+	Value string
+	Label string
+}
+
+// defaultObjectProvenance is the provenance mode used when a request omits
+// `provenance` (or supplies an unrecognised value): "any" applies no
+// provenance narrowing.
+const defaultObjectProvenance = "any"
+
+// objectProvenanceModes lists the provenance modes in display order with their
+// copy. The values match the server's accepted `provenance` param.
+func objectProvenanceModes() []objectProvenanceMode {
+	return []objectProvenanceMode{
+		{Value: "any", Label: "Any"},
+		{Value: "created", Label: "Created by"},
+		{Value: "updated", Label: "Updated by"},
+	}
+}
+
+// normalizeObjectProvenance coerces a raw `provenance` query value to one the
+// server accepts (created|updated|any). An absent or unrecognised value falls
+// back to "any", so the rendered control and the dispatched list always agree.
+func normalizeObjectProvenance(provenance string) string {
+	switch provenance {
+	case "created", "updated", "any":
+		return provenance
+	default:
+		return defaultObjectProvenance
+	}
+}
+
+// objectActorTypes lists the actor types the server's provenance filter accepts,
+// in display order.
+var objectActorTypes = []string{"user", "agent", "system"}
+
+// normalizeObjectActorType keeps a raw `actor_type` value only when the server
+// accepts it; anything else (empty or unknown) becomes "any actor".
+func normalizeObjectActorType(actorType string) string {
+	if slices.Contains(objectActorTypes, actorType) {
+		return actorType
+	}
+	return ""
+}
+
+// actorTypeLabel renders the display label for an actor type value.
+func actorTypeLabel(actorType string) string {
+	switch actorType {
+	case "user":
+		return "User"
+	case "agent":
+		return "Agent"
+	case "system":
+		return "System"
+	default:
+		return "Any actor"
+	}
+}
+
+// objectsScopeDescription is the subtitle for an agent-scoped objects view.
+func objectsScopeDescription(agentName string) string {
+	return "Objects created or updated by " + agentName + "."
+}
+
+// loadObjectFilterOptions fills the filter dropdowns' data (branches + compiled
+// types), shared by the generic and agent-scoped objects views. Both fetches are
+// best-effort: a failure leaves the dropdowns empty rather than blanking the
+// page.
+func (s *Server) loadObjectFilterOptions(ctx context.Context, data *objectsPageData) {
 	var (
 		branches    []Branch
 		branchesErr error
@@ -74,21 +162,55 @@ func (s *Server) uiObjects(c echo.Context) error {
 	captureError(branchesErr)
 	captureError(compiledErr)
 
-	data := objectsPageData{
-		Query:      query,
-		Mode:       mode,
-		TypeFilter: typeFilter,
-		BranchID:   branchID,
-		Branches:   branches,
-	}
+	data.Branches = branches
 	if compiled != nil {
 		data.TypeUIByType = objectTypeUIMap(compiled.ObjectTypes)
 		for _, t := range compiled.ObjectTypes {
 			data.Types = append(data.Types, t.Name)
 		}
 	}
+}
+
+// loadObjectBrowsePage fetches one cursor page of objects into data, applying
+// the active filters (branch/type/actor/provenance). It is shared by the
+// generic browse view and the agent-scoped view so both paginate identically.
+func (s *Server) loadObjectBrowsePage(ctx context.Context, data *objectsPageData, cursor string) error {
+	objects, nextCursor, err := s.memory.ListGraphObjectsPage(ctx, data.listParams(cursor))
+	if err != nil {
+		return err
+	}
+	data.Objects = objects
+	data.HasMore = nextCursor != ""
+	data.NextCursor = nextCursor
+	return nil
+}
+
+// uiObjects renders the objects browser: searchable graph objects, filterable
+// by type, branch, and actor provenance, with a small stats section and
+// cursor-paginated browse.
+func (s *Server) uiObjects(c echo.Context) error {
+	ctx := c.Request().Context()
+	branchID := c.QueryParam("branch")
+	typeFilter := c.QueryParam("type")
+	query := c.QueryParam("q")
+	mode := normalizeObjectsSearchMode(c.QueryParam("mode"))
+	cursor := c.QueryParam("cursor")
+	actorType, actorID := objectActorFilter(c)
+
+	data := objectsPageData{
+		Query:      query,
+		Mode:       mode,
+		TypeFilter: typeFilter,
+		BranchID:   branchID,
+		ActorType:  actorType,
+		ActorID:    actorID,
+		Provenance: normalizeObjectProvenance(c.QueryParam("provenance")),
+	}
+	s.loadObjectFilterOptions(ctx, &data)
 
 	if query != "" {
+		// Search endpoints do not accept the actor provenance filter, so search
+		// mode stays project-wide; the provenance control is hidden there.
 		var results []ObjectSearchResult
 		var err error
 		if mode == "unified" {
@@ -110,15 +232,57 @@ func (s *Server) uiObjects(c echo.Context) error {
 	// ~6s), so they are fetched by a deferred HTMX partial (/objects/stats)
 	// after first paint instead of gating the browse render. data.Stats is left
 	// nil to select that deferred path.
-	objects, nextCursor, objectsErr := s.memory.ListGraphObjectsPage(ctx, branchID, typeFilter, cursor, 25)
-	if objectsErr != nil {
-		data.LoadErr = objectsErr
+	if err := s.loadObjectBrowsePage(ctx, &data, cursor); err != nil {
+		data.LoadErr = err
 		return s.page(c, pageTitle("Objects"), ObjectsPage(data))
 	}
-	data.Objects = objects
-	data.HasMore = nextCursor != ""
-	data.NextCursor = nextCursor
 	return s.page(c, pageTitle("Objects"), ObjectsPage(data))
+}
+
+// objectActorFilter reads and normalizes the actor provenance pair from the
+// request. The filter always keys on the (actor_type, actor_id) pair: the server
+// rejects actor_id without actor_type, and an actor_type with no id would narrow
+// to rows whose actor id is NULL — not a usable "any user/agent" filter — so an
+// incomplete pair is dropped rather than forwarded.
+func objectActorFilter(c echo.Context) (actorType, actorID string) {
+	actorType = normalizeObjectActorType(c.QueryParam("actor_type"))
+	actorID = strings.TrimSpace(c.QueryParam("actor_id"))
+	if actorType == "" || actorID == "" {
+		return "", ""
+	}
+	return actorType, actorID
+}
+
+// uiAgentObjects renders the object browser scoped to one agent's provenance:
+// the objects that agent created or updated. It reuses ObjectsPage, objectsList
+// and the browse partial, fixing the actor filter to (agent, id). The route id
+// IS the kb.agents UUID the provenance columns store, so it maps straight to
+// actor_id.
+func (s *Server) uiAgentObjects(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := c.Param("id")
+
+	agent, err := s.memory.GetAgentDefinition(ctx, id)
+	if err != nil {
+		return s.page(c, pageTitle("Objects"), ObjectsPage(objectsPageData{LoadErr: err}))
+	}
+
+	data := objectsPageData{
+		AgentID:    id,
+		AgentName:  agent.Name,
+		ActorType:  "agent",
+		ActorID:    id,
+		Provenance: normalizeObjectProvenance(c.QueryParam("provenance")),
+		TypeFilter: c.QueryParam("type"),
+		BranchID:   c.QueryParam("branch"),
+	}
+	s.loadObjectFilterOptions(ctx, &data)
+
+	if err := s.loadObjectBrowsePage(ctx, &data, c.QueryParam("cursor")); err != nil {
+		data.LoadErr = err
+		return s.page(c, pageTitle(agent.Name, "Objects"), ObjectsPage(data))
+	}
+	return s.page(c, pageTitle(agent.Name, "Objects"), ObjectsPage(data))
 }
 
 // uiObjectsPartial returns the next page of object rows plus a replacement
@@ -132,6 +296,8 @@ func (s *Server) uiObjectsPartial(c echo.Context) error {
 	query := c.QueryParam("q")
 	mode := c.QueryParam("mode")
 	cursor := c.QueryParam("cursor")
+	actorType, actorID := objectActorFilter(c)
+	provenance := normalizeObjectProvenance(c.QueryParam("provenance"))
 
 	// Search mode has no cursor pagination (it renders the top 25 only).
 	if query != "" {
@@ -139,28 +305,26 @@ func (s *Server) uiObjectsPartial(c echo.Context) error {
 		return nil
 	}
 
-	objects, nextCursor, err := s.memory.ListGraphObjectsPage(ctx, branchID, typeFilter, cursor, 25)
-	if err != nil {
+	data := objectsPageData{
+		Query:      query,
+		Mode:       mode,
+		TypeFilter: typeFilter,
+		BranchID:   branchID,
+		ActorType:  actorType,
+		ActorID:    actorID,
+		Provenance: provenance,
+	}
+	if err := s.loadObjectBrowsePage(ctx, &data, cursor); err != nil {
 		captureError(err)
 		return echo.NewHTTPError(http.StatusBadGateway, "failed to load more objects")
 	}
 
 	compiled, _ := s.memory.GetCompiledTypes(ctx)
-	var typeUIByType map[string]typeUI
 	if compiled != nil {
-		typeUIByType = objectTypeUIMap(compiled.ObjectTypes)
+		data.TypeUIByType = objectTypeUIMap(compiled.ObjectTypes)
 	}
 
-	render.RenderPartial(c.Response().Writer, c.Request(), objectsRowsPartial(objectsPageData{
-		Query:        query,
-		Mode:         mode,
-		TypeFilter:   typeFilter,
-		BranchID:     branchID,
-		Objects:      objects,
-		HasMore:      nextCursor != "",
-		NextCursor:   nextCursor,
-		TypeUIByType: typeUIByType,
-	}))
+	render.RenderPartial(c.Response().Writer, c.Request(), objectsRowsPartial(data))
 	return nil
 }
 
@@ -182,6 +346,15 @@ func objectsPartialURL(data objectsPageData) string {
 	}
 	if data.BranchID != "" {
 		q.Set("branch", data.BranchID)
+	}
+	if data.ActorType != "" {
+		q.Set("actor_type", data.ActorType)
+		if data.ActorID != "" {
+			q.Set("actor_id", data.ActorID)
+		}
+	}
+	if data.Provenance != "" && data.Provenance != defaultObjectProvenance {
+		q.Set("provenance", data.Provenance)
 	}
 	return "/objects/partial?" + q.Encode()
 }
@@ -1176,13 +1349,13 @@ func charCountLabel(s string) string {
 	if n == 1 {
 		noun = "character"
 	}
-	return groupDigits(n) + " " + noun
+	return groupDigits(int64(n)) + " " + noun
 }
 
 // groupDigits inserts thousands separators into a non-negative integer
 // ("41594" -> "41,594") so long counts stay readable.
-func groupDigits(n int) string {
-	digits := strconv.Itoa(n)
+func groupDigits(n int64) string {
+	digits := strconv.FormatInt(n, 10)
 	if len(digits) <= 3 {
 		return digits
 	}

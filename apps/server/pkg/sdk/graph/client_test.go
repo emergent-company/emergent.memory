@@ -1085,3 +1085,45 @@ func TestGraphObject_UnmarshalJSON_ViaSDKClient(t *testing.T) {
 		t.Errorf("EntityID = %q, want can_e2e", result.EntityID)
 	}
 }
+
+// TestGraphListObjectsActorProvenance pins the SDK wiring for the actor
+// provenance filter (issue #1193): ActorType/ActorID/Provenance must serialize
+// as actor_type/actor_id/provenance query params.
+func TestGraphListObjectsActorProvenance(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	mock.On("GET", "/api/graph/objects/search", func(w http.ResponseWriter, r *http.Request) {
+		testutil.AssertHeader(t, r, "X-API-Key", "test_key")
+		if got := r.URL.Query().Get("actor_type"); got != "agent" {
+			t.Errorf("expected actor_type=agent, got %q", got)
+		}
+		if got := r.URL.Query().Get("actor_id"); got != "11111111-1111-1111-1111-111111111111" {
+			t.Errorf("expected actor_id=11111111-1111-1111-1111-111111111111, got %q", got)
+		}
+		if got := r.URL.Query().Get("provenance"); got != "created" {
+			t.Errorf("expected provenance=created, got %q", got)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		testutil.JSONResponse(t, w, map[string]interface{}{
+			"items": []map[string]interface{}{},
+			"total": 0,
+		})
+	})
+
+	client, _ := sdk.New(sdk.Config{
+		ServerURL: mock.URL,
+		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: "test_key"},
+	})
+
+	_, err := client.Graph.ListObjects(context.Background(), &graph.ListObjectsOptions{
+		ActorType:  "agent",
+		ActorID:    "11111111-1111-1111-1111-111111111111",
+		Provenance: "created",
+	})
+	if err != nil {
+		t.Fatalf("ListObjects() error = %v", err)
+	}
+}

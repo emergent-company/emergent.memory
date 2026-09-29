@@ -83,8 +83,6 @@ type MemoryBackend interface {
 	ListRelaySessions(ctx context.Context) ([]RelaySession, error)
 	GetRelaySessionTools(ctx context.Context, instanceID string) ([]RelayTool, error)
 	ListModels(ctx context.Context) ([]Model, error)
-	SearchMemories(ctx context.Context, query string) ([]Memory, error)
-	ListMemories(ctx context.Context) ([]Memory, error)
 	ListDocuments(ctx context.Context, cursor string) ([]Document, string, error)
 	GetDocument(ctx context.Context, id string) (*Document, error)
 	DeleteDocument(ctx context.Context, id string) error
@@ -101,12 +99,13 @@ type MemoryBackend interface {
 	CreateObject(ctx context.Context, req *CreateObjectRequest) (*GraphObject, error)
 	CreateRelationship(ctx context.Context, req *CreateRelationshipRequest) error
 	SearchObjectsFTS(ctx context.Context, query, typeFilter string) ([]GraphObject, error)
-	ListGraphObjectsPage(ctx context.Context, branchID, typeFilter, cursor string, limit int) ([]GraphObject, string, error)
+	ListGraphObjectsPage(ctx context.Context, params ObjectListParams) ([]GraphObject, string, error)
 	CountObjects(ctx context.Context, branchID string) (int, error)
 	SearchObjects(ctx context.Context, mode, query, types, branchID string, limit, offset int) ([]ObjectSearchResult, bool, error)
 	SearchObjectsUnified(ctx context.Context, query, types, branchID string, limit int) ([]ObjectSearchResult, error)
 	GetEmbeddingProgress(ctx context.Context) (*EmbeddingProgress, error)
 	GetEmbeddingStatus(ctx context.Context) (*EmbeddingStatus, error)
+	GetEmbeddingCoverage(ctx context.Context) (*EmbeddingCoverageResponse, error)
 	ListBranches(ctx context.Context) ([]Branch, error)
 	GetCompiledTypes(ctx context.Context) (*CompiledSchemaTypes, error)
 	ListAllSchemas(ctx context.Context) ([]SchemaInfo, error)

@@ -49,6 +49,16 @@ type Server struct {
 	labelCacheMu          sync.Mutex
 	labelCache            map[string]labelSuggestionsEntry
 	labelSuggestionsGroup singleflight.Group
+	// Compiled object/relationship type map cache backing objectTypeUIMap: each
+	// project's name → {label,color} map lives ~compiledTypesTTL so a full page
+	// render doesn't pay a serial GetCompiledTypes HTTP GET on the critical
+	// path. Nil map = cold cache. Guarded by compiledTypesMu.
+	// compiledTypesGroup coalesces concurrent cold/expired misses per project so
+	// a stampede of page renders triggers one GetCompiledTypes, not one per
+	// request.
+	compiledTypesMu    sync.Mutex
+	compiledTypesCache map[string]compiledTypesEntry
+	compiledTypesGroup singleflight.Group
 	// schemaWritePolicy optionally gates schema mutation routes. Nil means every
 	// gateway-authenticated caller is allowed (memory enforces token scopes on
 	// the mutation endpoints); a deployment or test can inject a stricter policy.

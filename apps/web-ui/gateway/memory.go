@@ -394,16 +394,19 @@ func (m *MemoryClient) doOnce(ctx context.Context, method, path string, body []b
 // --- agent definitions ---
 
 type AgentDefinitionSummary struct {
-	ID         string   `json:"id"`
-	Name       string   `json:"name"`
-	FlowType   string   `json:"flowType"`
-	Visibility string   `json:"visibility"`
-	ToolCount  int      `json:"toolCount"`
-	Skills     []string `json:"skills"`
-	IsDefault  bool     `json:"isDefault"`
-	Enabled    bool     `json:"enabled"`
-	CreatedAt  string   `json:"createdAt"`
-	UpdatedAt  string   `json:"updatedAt"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Description is the agent's stored short description, shown under its name
+	// in the chat pane header. Absent/empty means no description.
+	Description string   `json:"description,omitempty"`
+	FlowType    string   `json:"flowType"`
+	Visibility  string   `json:"visibility"`
+	ToolCount   int      `json:"toolCount"`
+	Skills      []string `json:"skills"`
+	IsDefault   bool     `json:"isDefault"`
+	Enabled     bool     `json:"enabled"`
+	CreatedAt   string   `json:"createdAt"`
+	UpdatedAt   string   `json:"updatedAt"`
 	// EffectiveModel is the model this agent would run with (explicit override
 	// wins, else the project's resolved generative default). Present on the
 	// list endpoint from memory ≥ the effective-model deploy; empty means
@@ -471,10 +474,14 @@ type ToolGroup struct {
 }
 
 type AgentDefinition struct {
-	ID           string       `json:"id"`
-	ProjectID    string       `json:"projectId"`
-	Name         string       `json:"name"`
-	Description  string       `json:"description,omitempty"`
+	ID        string `json:"id"`
+	ProjectID string `json:"projectId"`
+	Name      string `json:"name"`
+	// Description is deliberately NOT omitempty: the General settings form
+	// clears it by submitting an empty value, and memory's PATCH treats an
+	// absent key as "leave unchanged" while an explicit "" clears. Omitting it
+	// would silently keep the old description.
+	Description  string       `json:"description"`
 	SystemPrompt string       `json:"systemPrompt,omitempty"`
 	Model        *ModelConfig `json:"model,omitempty"`
 	// EffectiveModel is the resolved generative model memory will use when this
