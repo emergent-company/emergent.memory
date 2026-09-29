@@ -30,7 +30,7 @@ AI: "There are 3 tasks assigned to @[Login Feature](obj_abc123):
 - @[Write API documentation for auth endpoints](obj_ghi101) - Status: To Do"
 ```
 
-Users can click any `@[...]` mention to navigate directly to that object.
+Users can click any `@[...]` mention to open a read-only preview drawer for that object (icon, type, label, and properties as label/value pairs), with a control to jump to the object edit view. Plain clicks open the drawer in-context; modified clicks (cmd/ctrl/shift/alt, middle button) still navigate to the object page. See the `web-object-reference-preview` capability spec for the shipped behaviour.
 
 ### 1.2. Use Cases
 
@@ -57,7 +57,7 @@ Users can click any `@[...]` mention to navigate directly to that object.
 ### 1.3. Key Features
 
 - **Rich Object Mentions**: Structured references with IDs, names, types
-- **Interactive Links**: Click to navigate to object detail page
+- **Interactive Links**: Click to open a read-only object preview drawer (jump to the edit view from the drawer)
 - **Inline Metadata**: Show key properties (status, assignee, priority) in mention
 - **Hover Previews**: Tooltip with quick object summary on hover
 - **Batch Linking**: Multiple objects referenced in single response
