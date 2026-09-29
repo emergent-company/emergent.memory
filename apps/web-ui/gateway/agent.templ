@@ -377,6 +377,9 @@ templ agentGeneralSettingsForm(data agentSettingsData) {
 				@form.FormControl("agent-settings-name", "Name", form.LabelAbove, "", "", nil) {
 					<input id="agent-settings-name" name="name" type="text" required value={ data.Agent.Name } placeholder="e.g. Support Butler" class="input w-full"/>
 				}
+				@form.FormControl("agent-settings-description", "Short description", form.LabelAbove, "Shown under the agent's name in chat.", "", nil) {
+					<input id="agent-settings-description" name="description" type="text" value={ data.Agent.Description } placeholder="e.g. Keeps the household running" class="input w-full"/>
+				}
 				@form.FormControl("agent-settings-prompt", "System prompt", form.LabelAbove, "Sets tone, constraints, and how the agent uses memory.", "", nil) {
 					<textarea id="agent-settings-prompt" name="systemPrompt" rows="5" placeholder="You are Memory, the household agent. You answer concisely, with wit and precision…" class="textarea w-full resize-none">{ data.Agent.SystemPrompt }</textarea>
 				}

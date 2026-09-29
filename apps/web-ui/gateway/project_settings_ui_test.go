@@ -371,6 +371,11 @@ func TestRenderVoicePanel(t *testing.T) {
 // includes them when enabled. The kept <style> block mentions the voice
 // controls in CSS comments/selectors, so absence is asserted on the element
 // ids and the script src rather than the bare names.
+//
+// The "Chat by text[ or voice]." subtitle is no longer a voice-gating signal:
+// the chat pane header now shows the active agent's identity, and the generic
+// voice-aware copy survives only on the no-agent fallback (covered by
+// TestChatHeaderFallbackCopy).
 func TestRenderChatPageVoiceGating(t *testing.T) {
 	agents := []AgentDefinitionSummary{{ID: "a1", Name: "memory"}}
 
@@ -380,18 +385,12 @@ func TestRenderChatPageVoiceGating(t *testing.T) {
 			t.Errorf("disabled chat page must not contain %q", absent)
 		}
 	}
-	if !strings.Contains(disabled, "Chat by text.") {
-		t.Error("disabled chat page should say 'Chat by text.'")
-	}
 
 	enabled := renderHTML(t, ChatPage(agents, nil, nil, nil, nil, "", "", "", nil, true, nil))
-	for _, want := range []string{`id="voice-call-btn"`, `id="voice-mute-btn"`, `id="voice-status"`, `id="agent-audio"`, `js/voice.js`, "Chat by text or voice."} {
+	for _, want := range []string{`id="voice-call-btn"`, `id="voice-mute-btn"`, `id="voice-status"`, `id="agent-audio"`, `js/voice.js`} {
 		if !strings.Contains(enabled, want) {
 			t.Errorf("enabled chat page missing %q", want)
 		}
-	}
-	if strings.Contains(enabled, "Chat by text.") {
-		t.Error("enabled chat page must not render the text-only subtitle")
 	}
 }
 
