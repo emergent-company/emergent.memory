@@ -274,6 +274,7 @@
   function open() {
     if (!panel) return;
     panel.classList.remove("translate-x-full");
+    panel.removeAttribute("inert"); // re-enter the tab order
     if (backdrop) backdrop.classList.remove("hidden");
     panel.setAttribute("aria-hidden", "false");
     setToggleState(true);
@@ -284,8 +285,9 @@
     if (!panel) return;
     if (modalMode) backToDrawer();
     panel.classList.add("translate-x-full");
-    if (backdrop) backdrop.classList.add("hidden");
     panel.setAttribute("aria-hidden", "true");
+    panel.setAttribute("inert", ""); // drop the closed drawer's controls from the tab order
+    if (backdrop) backdrop.classList.add("hidden");
     setToggleState(false);
   }
 
