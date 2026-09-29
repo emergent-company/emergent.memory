@@ -87,7 +87,6 @@ type fakeMemory struct {
 	convCanonicalID     string                          // last canonicalID passed to CreateObjectConversation
 	convTitle           string                          // last title passed to CreateObjectConversation
 	convMessage         string                          // last message passed to CreateObjectConversation
-	memories            []Memory
 	created             []AgentDefinition
 	updatedAgent        *AgentDefinition // last agent passed to UpdateAgentDefinition
 	chatMsg             string
@@ -101,7 +100,6 @@ type fakeMemory struct {
 	approvals           []ToolApprovalItem
 	convErr             error // ListConversations failure
 	histErr             error // GetConversationHistory failure
-	memErr              error // SearchMemories/ListMemories failure
 	documents           []Document
 	chunks              []Chunk
 	docErr              error                      // ListDocuments/GetDocument/ListChunks failure
@@ -887,20 +885,6 @@ func (f *fakeMemory) GetRelaySessionTools(ctx context.Context, instanceID string
 func (f *fakeMemory) ListModels(ctx context.Context) ([]Model, error) {
 	f.recordCatalog("ListModels")
 	return []Model{{Provider: "deepseek", ModelName: "deepseek-v4-flash", DisplayName: "DeepSeek V4 Flash"}}, nil
-}
-
-func (f *fakeMemory) SearchMemories(ctx context.Context, query string) ([]Memory, error) {
-	if f.memErr != nil {
-		return nil, f.memErr
-	}
-	return f.memories, nil
-}
-
-func (f *fakeMemory) ListMemories(ctx context.Context) ([]Memory, error) {
-	if f.memErr != nil {
-		return nil, f.memErr
-	}
-	return f.memories, nil
 }
 
 func (f *fakeMemory) ListDocuments(ctx context.Context, cursor string) ([]Document, string, error) {

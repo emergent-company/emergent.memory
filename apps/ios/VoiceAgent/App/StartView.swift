@@ -7,29 +7,28 @@ import SwiftUI
 /// The agent is chosen on the first level (the picker) and fixed for this
 /// second level, so the old in-screen picker and the settings/QR top-bar
 /// buttons live in `AppShellView` instead. This screen keeps the connect
-/// affordance, the audio options, and the selected agent's memories entry.
+/// affordance, the audio options, and the selected agent's objects entry.
 struct StartView: View {
     @EnvironmentObject private var controller: MemorySessionController
-    @EnvironmentObject private var store: MemoryStore
+    @EnvironmentObject private var agentStore: AgentStore
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Namespace private var button
 
     @State private var audioOptionsPresented = false
-    @State private var memoriesPresented = false
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
             VStack(spacing: 8 * .grid) {
                 bars()
-                if store.capability == .available {
-                    memoriesButton()
+                if let agent = agentStore.selectedAgent {
+                    objectsLink(agent: agent)
                         .transition(.opacity)
                 }
                 connectButton()
                 audioOptionsButton()
             }
-            .animation(.default, value: store.capability)
+            .animation(.default, value: agentStore.selectedAgentName)
             .padding(.horizontal, horizontalSizeClass == .regular ? 32 * .grid : 16 * .grid)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -112,30 +111,26 @@ struct StartView: View {
         }
     }
 
-    /// Opens the selected agent's memories (only shown when the agent is
-    /// memory-capable, e.g. Diane; Memory has no memory).
-    private func memoriesButton() -> some View {
-        Button {
-            memoriesPresented = true
-        } label: {
+    /// Pushes the selected agent's object browser — the objects it created or
+    /// updated. Hidden until the agent list has loaded and an agent is
+    /// selected, so there is never an entry point scoped to no agent.
+    private func objectsLink(agent: Agent) -> some View {
+        NavigationLink(value: AppRoute.objects(ObjectRoute(agentID: agent.id, agentName: agent.name))) {
             HStack(spacing: .grid) {
-                Image(systemName: "text.book.closed")
-                Text("memories.title")
+                Image(systemName: "square.stack.3d.up")
+                Text("objects.title")
             }
             .font(.system(size: 13))
             .foregroundStyle(.fg3)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("memories.title")
-        .sheet(isPresented: $memoriesPresented) {
-            MemoriesView()
-        }
+        .accessibilityLabel("objects.title")
     }
 }
 
 #Preview {
     StartView()
         .environmentObject(MemorySessionController(config: MemoryConfig()))
-        .environmentObject(MemoryStore())
+        .environmentObject(AgentStore())
 }

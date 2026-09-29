@@ -568,20 +568,26 @@ func deviceCredentialToken(c echo.Context) string {
 }
 
 // deviceSurfacePath reports whether a gateway request path/method is within the
-// device surface: room-token mint, agent picker (list/detail), chat relay,
-// session log/records, and memory browsing. A device credential is rejected on
-// everything else (defence in depth over the server's own surface guard).
+// device surface: room-token mint, agent picker (list/detail), the per-agent
+// object browser, chat relay, session log/records, and memory browsing. A
+// device credential is rejected on everything else (defence in depth over the
+// server's own surface guard).
 func deviceSurfacePath(method, path string) bool {
 	switch method {
 	case http.MethodGet:
 		switch {
 		case path == "/api/agents":
 			return true
-		case strings.HasPrefix(path, "/api/agents/") && !strings.Contains(strings.TrimPrefix(path, "/api/agents/"), "/"):
-			return true
+		case strings.HasPrefix(path, "/api/agents/"):
+			// /api/agents/{id} or /api/agents/{id}/objects only — one path
+			// segment for the id, nothing deeper.
+			rest := strings.TrimPrefix(path, "/api/agents/")
+			if !strings.Contains(rest, "/") {
+				return true
+			}
+			id, ok := strings.CutSuffix(rest, "/objects")
+			return ok && id != "" && !strings.Contains(id, "/")
 		case path == "/api/sessions" || path == "/api/session":
-			return true
-		case path == "/api/memories" || path == "/api/memories/capability":
 			return true
 		}
 		return false
