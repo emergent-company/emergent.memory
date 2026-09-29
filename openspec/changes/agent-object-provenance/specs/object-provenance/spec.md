@@ -2,7 +2,7 @@
 
 ### Requirement: Objects record actor on every version write
 
-Every graph object version write SHALL record an actor as a `(actor_type, actor_id)` pair. `actor_type` SHALL be polymorphic: `user` (human / HTTP), `agent` (agent tool writes), or `system` (extraction / background). `actor_id` SHALL hold the user UUID for `user`, the `kb.agents` UUID for `agent`, and `NULL` for `system`.
+Every graph object version write SHALL record an actor as a `(actor_type, actor_id)` pair. `actor_type` SHALL be polymorphic: `user` (human / HTTP), `agent` (agent tool writes), or `system` (extraction / background). `actor_id` SHALL hold the user UUID for `user`, the `kb.agent_definitions` UUID for `agent`, and `NULL` for `system`. The `kb.agent_definitions` id is the single canonical `actor_id` for `actor_type='agent'`; the separate `kb.agents` run-entity id is never used for provenance.
 
 #### Scenario: Human write records the user actor
 
@@ -12,7 +12,7 @@ Every graph object version write SHALL record an actor as a `(actor_type, actor_
 #### Scenario: Agent tool write records the agent actor
 
 - **WHEN** an agent's tool writes an object
-- **THEN** the object version is stored with `actor_type = agent` and `actor_id` set to the writing agent's `kb.agents` UUID
+- **THEN** the object version is stored with `actor_type = agent` and `actor_id` set to the writing agent's `kb.agent_definitions` UUID
 
 #### Scenario: Background write records the system actor
 
@@ -78,17 +78,22 @@ Object listing SHALL support filtering by provenance. The filter SHALL accept a 
 
 ### Requirement: Agent identity propagation through nested and delegated runs
 
-Agent identity SHALL be propagated by stamping the actor on the context at the agent run boundary, and nested or delegated runs SHALL attribute writes to the ACTUAL writing agent.
+Agent identity SHALL be propagated by stamping the actor on the context at the agent run boundary, and nested or delegated runs SHALL attribute writes to the ACTUAL writing agent. The stamped id SHALL be the `kb.agent_definitions` id of the writing agent.
 
 #### Scenario: Delegated sub-agent re-stamps its own identity
 
 - **WHEN** a parent agent delegates a sub-run to a sub-agent that writes an object
-- **THEN** the write is attributed to the sub-agent's `kb.agents` UUID, not the parent agent's
+- **THEN** the write is attributed to the sub-agent's `kb.agent_definitions` UUID, not the parent agent's
 
-#### Scenario: Per-agent MCP endpoint attributes to its agent
+#### Scenario: Per-agent MCP endpoint attributes to its agent's definition
 
 - **WHEN** a tool call arrives through a per-agent MCP endpoint
-- **THEN** the resulting write is attributed to that endpoint's `AgentID`
+- **THEN** the resulting write is attributed to the endpoint's agent definition id, resolved from its `kb.agents` endpoint binding
+
+#### Scenario: Run whose definition cannot be resolved is not stamped
+
+- **WHEN** a run's `kb.agents` entity has no resolvable `kb.agent_definitions` (e.g. an unlinked legacy schedule)
+- **THEN** the run is not stamped with an agent actor and its writes stay unattributed to an agent (rather than stamping a `kb.agents` id the agent-scoped view cannot match)
 
 ### Requirement: Branch-merge provenance preservation
 

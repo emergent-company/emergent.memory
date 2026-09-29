@@ -75,6 +75,16 @@
     ]
   },
   {
+    "id": "session",
+    "label": "Session",
+    "description": "Session to-dos and the session title.",
+    "policy": "",
+    "enabled": true,
+    "tools": [
+      "set_session_title"
+    ]
+  },
+  {
     "id": "other",
     "label": "Other",
     "description": "Tools without a specific capability group.",

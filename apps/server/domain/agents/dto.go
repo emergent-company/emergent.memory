@@ -522,6 +522,13 @@ var workspaceToolNames = []string{
 	"run_python", "run_go",
 }
 
+// sessionBuiltinToolNames are the always-injected hidden builtins that
+// ToolPool.ResolveTools injects regardless of the Tools whitelist
+// (toolpool.go:377); the only opt-out is BannedTools. They are not catalog tools
+// and are not stored in def.Tools, so they must appear in the computed Session
+// group for the picker to govern them (enable by default, ban to hide).
+var sessionBuiltinToolNames = []string{"set_session_title"}
+
 // ToolGroupsWithCatalog computes the group catalog for the definition. Each
 // group's `tools` is its full membership — the union of the group's catalog
 // tools, the agent's own Tools ∪ BannedTools, and (when the workspace is
@@ -537,6 +544,10 @@ func (d *AgentDefinition) ToolGroupsWithCatalog(catalog []mcp.ToolDefinition) []
 	enabled := make(map[string]bool, len(d.Tools))
 	for _, t := range d.Tools {
 		enabled[t] = true
+	}
+	defaultOn := make(map[string]bool, len(sessionBuiltinToolNames))
+	for _, t := range sessionBuiltinToolNames {
+		defaultOn[t] = true
 	}
 
 	membership := make(map[string][]string)
@@ -580,6 +591,24 @@ func (d *AgentDefinition) ToolGroupsWithCatalog(catalog []mcp.ToolDefinition) []
 		}
 	}
 
+	// 4. Hidden session builtins (set_session_title) surface only when a real
+	//    catalog is present — the nil-catalog fallback stays
+	//    agent-referenced-tools-only. This mirrors workspaceToolNames: a hidden
+	//    builtin is never a catalog tool and never stored in def.Tools, so
+	//    without this step the Session group cannot render and the picker cannot
+	//    govern it. BannedTools remains the sole opt-out; the default-on flag
+	//    below keeps it enabled (not banned) by default.
+	if len(catalog) > 0 {
+		for _, t := range sessionBuiltinToolNames {
+			if seen[t] {
+				continue
+			}
+			g := toolgroups.GroupForTool(t)
+			membership[g] = append(membership[g], t)
+			seen[t] = true
+		}
+	}
+
 	var out []ToolGroupDTO
 	for _, g := range toolgroups.Groups {
 		tools := membership[g.ID]
@@ -599,18 +628,18 @@ func (d *AgentDefinition) ToolGroupsWithCatalog(catalog []mcp.ToolDefinition) []
 			Label:       g.Label,
 			Description: g.Description,
 			Policy:      policy,
-			Enabled:     groupEnabled(tools, enabled, banned),
+			Enabled:     groupEnabled(tools, enabled, banned, defaultOn),
 			Tools:       tools,
 		})
 	}
 	return out
 }
 
-// groupEnabled reports whether at least one member tool is in Tools and not in
-// BannedTools.
-func groupEnabled(tools []string, enabled, banned map[string]bool) bool {
+// groupEnabled reports whether at least one member tool is enabled: in Tools
+// (or default-on, for always-injected builtins) and not in BannedTools.
+func groupEnabled(tools []string, enabled, banned, defaultOn map[string]bool) bool {
 	for _, t := range tools {
-		if enabled[t] && !banned[t] {
+		if (enabled[t] || defaultOn[t]) && !banned[t] {
 			return true
 		}
 	}

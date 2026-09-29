@@ -109,6 +109,7 @@ func (fakeAgentHandler) RunAgentOnce(context.Context, string, string, string, mc
 func (fakeAgentHandler) RunAgentInSession(context.Context, string, string, string, string, mcp.AgentRunBudget) (string, string, int, error) {
 	return "", "", 0, errNotDispatched
 }
+func (fakeAgentHandler) ResolveAgentDefinitionID(context.Context, string, string) string { return "" }
 
 var errNotDispatched = errors.New("tool dispatch must not be reached in the parity test")
 
