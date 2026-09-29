@@ -265,6 +265,17 @@ registered kind degraded to a summary-only card). A fetch interceptor tees the
 `/api/chat` SSE stream and records the `question` events, so a gateway render
 regression can no longer masquerade as a skip.
 
+A2UI surface cards: `specs/chat/a2ui-widgets.spec.ts` renders the A2UI (v0.9.1)
+eight-card catalog end-to-end in the browser without an LLM. It intercepts
+`POST /api/chat` and fulfils it with a canned SSE `ui` event carrying all eight
+catalog components plus an unknown one, then asserts each card's DOM
+(`proposal`/`approval`/`question`/`code`/`entity`/`object-form`/`todo`/`result`),
+the unknown-component summary fallback, and that a card action emits the
+`a2ui:action` CustomEvent carrying the `surfaceId` and the
+`{componentId, response}` action. Deterministic and ungated — no provider, no
+LLM, no env var. The gateway's verbatim `ui` passthrough is covered by the Go
+unit test `gateway/sse_markdown_test.go`.
+
 Chat (agent switch): `chat-agent-switch.spec.ts` proves the chat area's
 navigation on a fresh scratch project — start a conversation with agent A, switch
 to agent B via "New chat", then resume A's conversation from the session rail. It
