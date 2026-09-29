@@ -26,6 +26,7 @@ node_modules/
 /gateway/tmp/
 test-results/
 test-results-share/
+test-results-js/
 playwright-report/
 tests/e2e/.auth/
 

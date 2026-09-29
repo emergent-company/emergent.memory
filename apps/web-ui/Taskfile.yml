@@ -59,6 +59,12 @@ tasks:
     cmds:
       - npx playwright test
 
+  e2e:js:
+    desc: Run the hermetic DOM-level JS wiring specs (no gateway, no auth) — the CI JS gate; run `npm ci` + `npx playwright install chromium` first
+    dir: tests/e2e
+    cmds:
+      - npx playwright test --config=js-dom.config.ts
+
   e2e:ui:
     desc: Open the Playwright UI runner (observe + run tests interactively) on https://alfred-dev.tail0358fa.ts.net:8444 — auto-managed via systemd playwright-ui.service + air
     dir: tests/e2e

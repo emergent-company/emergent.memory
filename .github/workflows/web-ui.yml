@@ -85,10 +85,61 @@ jobs:
           GOLANGCI_LINT_CACHE: ${{ runner.temp }}/golangci-lint-cache
         run: golangci-lint run ./...
 
+  # ───────────────────────────────────────────────────────────────────────────
+  # js: hermetic JS-wiring gate. The full Playwright suite (tests/e2e) needs a
+  # live gateway in session mode + a Zitadel test user + the real memory API, so
+  # it cannot run in CI. The DOM specs under tests/e2e/specs/js/ instead load
+  # the shipped static JS verbatim into a real Chromium engine and drive its
+  # event wiring — no gateway, no auth, no `.env.e2e`. This is the automated
+  # guard for the #1216 class (a handler referencing an undefined identifier is
+  # a runtime ReferenceError, invisible to `go test` and to `node --check`).
+  # ───────────────────────────────────────────────────────────────────────────
+  js:
+    name: JS wiring (Playwright DOM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/web-ui/tests/e2e
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: apps/web-ui/tests/e2e/package-lock.json
+
+      - name: Install e2e deps
+        run: npm ci
+
+      # Cheap syntax gate first: a malformed static JS file fails fast with a
+      # precise message, before the browser install/run.
+      - name: Syntax-check static JS
+        working-directory: apps/web-ui
+        run: |
+          for f in gateway/webui/static/js/*.js; do
+            node --check "$f"
+          done
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('apps/web-ui/tests/e2e/package-lock.json') }}
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run DOM wiring specs
+        run: npx playwright test --config=js-dom.config.ts
+
   ci:
     name: ci
     runs-on: ubuntu-latest
-    needs: [gateway]
+    needs: [gateway, js]
     steps:
       - name: CI gate
         run: echo "CI passed"
