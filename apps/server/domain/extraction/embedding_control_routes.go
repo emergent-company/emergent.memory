@@ -10,11 +10,11 @@ import (
 //
 // The group mixes three authorization postures (issue #940):
 //
-//   - Read surface (status, progress): project-scoped. Both are consumed by the
-//     gateway embeddings page on behalf of a project member, so they are gated
-//     by project membership (the shared token-scope + membership pair), never
-//     platform admin. progress additionally scopes its queue counts to the
-//     caller's own project in the handler.
+//   - Read surface (status, progress, coverage): project-scoped. All three are
+//     consumed by the gateway embeddings page on behalf of a project member, so
+//     they are gated by project membership (the shared token-scope + membership
+//     pair), never platform admin. progress and coverage additionally scope
+//     their counts to the caller's own project in the handler.
 //   - Operator write surface (pause, resume, config, queue, reset-schedule):
 //     deployment-wide controls that affect the whole embedding fleet, not a
 //     single project, so they require platform admin authority: an active
@@ -31,6 +31,7 @@ func RegisterEmbeddingControlRoutes(e *echo.Echo, h *EmbeddingControlHandler, au
 	read.Use(authMiddleware.RequireProjectTokenScope(), authMiddleware.RequireProjectMember())
 	read.GET("/status", h.Status)
 	read.GET("/progress", h.Progress)
+	read.GET("/coverage", h.Coverage)
 
 	write := g.Group("")
 	write.Use(authMiddleware.RequireSuperadminFull())

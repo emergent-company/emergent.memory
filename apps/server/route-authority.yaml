@@ -394,6 +394,10 @@ routes:
       level: superadmin-full
       note: RequireAuth, RequireSuperadminFull
     - method: GET
+      path: /api/embeddings/coverage
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: GET
       path: /api/embeddings/diagnose
       level: superadmin-full
       note: RequireAuth, RequireSuperadminFull

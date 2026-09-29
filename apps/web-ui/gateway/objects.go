@@ -1349,13 +1349,13 @@ func charCountLabel(s string) string {
 	if n == 1 {
 		noun = "character"
 	}
-	return groupDigits(n) + " " + noun
+	return groupDigits(int64(n)) + " " + noun
 }
 
 // groupDigits inserts thousands separators into a non-negative integer
 // ("41594" -> "41,594") so long counts stay readable.
-func groupDigits(n int) string {
-	digits := strconv.Itoa(n)
+func groupDigits(n int64) string {
+	digits := strconv.FormatInt(n, 10)
 	if len(digits) <= 3 {
 		return digits
 	}
