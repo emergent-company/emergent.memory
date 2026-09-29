@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 )
 
@@ -129,4 +130,65 @@ func (m *MemoryClient) ListMCPServerTools(ctx context.Context, id string) ([]MCP
 // PATCH. The response body is ignored; only the transport error matters.
 func (m *MemoryClient) SetMCPServerToolEnabled(ctx context.Context, id string, toolID string, enabled bool) error {
 	return m.do(ctx, http.MethodPatch, "/api/admin/mcp-servers/"+id+"/tools/"+toolID, map[string]any{"enabled": enabled}, nil)
+}
+
+// BuiltinToolGroup mirrors one entry of memory's builtin tool capability
+// taxonomy (GET /api/admin/builtin-tool-groups). It is the server-owned
+// grouping of memory's native tools: frozen group order, tool membership as the
+// same tool-name strings the flat MCPTool rows carry. Policy/Enabled are
+// present for parity with the agent picker's ToolGroup but this view always
+// reports the tools as enabled with no policy.
+type BuiltinToolGroup struct {
+	ID          string   `json:"id"`
+	Label       string   `json:"label"`
+	Description string   `json:"description,omitempty"`
+	Policy      string   `json:"policy,omitempty"`
+	Enabled     bool     `json:"enabled"`
+	Tools       []string `json:"tools"`
+}
+
+// MCPToolCallContent is one content block in a tool-call result. It mirrors the
+// MCP spec's content union; only the text variant is rendered specially, other
+// types fall back to a label.
+type MCPToolCallContent struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+}
+
+// MCPToolCallResult mirrors memory's tool-call response data (the `data` field
+// of POST /api/admin/mcp-servers/:id/tools/:toolName/call). Content holds the
+// MCP content blocks; IsError is true only when the call itself failed (an
+// unknown tool or invalid invocation), not for a negative business result.
+type MCPToolCallResult struct {
+	Content           []MCPToolCallContent `json:"content"`
+	IsError           bool                 `json:"isError"`
+	StructuredContent json.RawMessage      `json:"structuredContent,omitempty"`
+}
+
+// ListBuiltinToolGroups fetches memory's builtin tool capability taxonomy: the
+// frozen ordered groups (id/label/description) with their member tool names.
+// The gateway only renders this grouping; it never derives it locally.
+func (m *MemoryClient) ListBuiltinToolGroups(ctx context.Context) ([]BuiltinToolGroup, error) {
+	var env successEnvelope[[]BuiltinToolGroup]
+	if err := m.do(ctx, http.MethodGet, "/api/admin/builtin-tool-groups", nil, &env); err != nil {
+		return nil, err
+	}
+	return env.Data, nil
+}
+
+// CallMCPServerTool invokes one tool on one server with the given JSON-object
+// arguments (an empty/nil map runs the tool with no arguments) and returns the
+// call result. Memory answers 200 for a completed call — including a negative
+// business result and a call-level failure reported in IsError — so only a
+// transport/HTTP failure surfaces as an error here.
+func (m *MemoryClient) CallMCPServerTool(ctx context.Context, id, toolName string, args map[string]any) (*MCPToolCallResult, error) {
+	if args == nil {
+		args = map[string]any{}
+	}
+	path := "/api/admin/mcp-servers/" + id + "/tools/" + toolName + "/call"
+	var env successEnvelope[MCPToolCallResult]
+	if err := m.do(ctx, http.MethodPost, path, map[string]any{"arguments": args}, &env); err != nil {
+		return nil, err
+	}
+	return &env.Data, nil
 }

@@ -725,6 +725,14 @@ func (f *fakeMemory) SetMCPServerToolEnabled(ctx context.Context, id string, too
 	return nil
 }
 
+func (f *fakeMemory) CallMCPServerTool(ctx context.Context, id, toolName string, args map[string]any) (*MCPToolCallResult, error) {
+	return &MCPToolCallResult{}, nil
+}
+
+func (f *fakeMemory) ListBuiltinToolGroups(ctx context.Context) ([]BuiltinToolGroup, error) {
+	return nil, nil
+}
+
 // MCP share instances: the base fake returns zero values so unrelated tests
 // compile; share-handler tests use mcpShareTestBackend (mcp_shares_handlers_test.go),
 // which overrides these with real semantics.

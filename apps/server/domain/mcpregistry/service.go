@@ -3,10 +3,12 @@ package mcpregistry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/pkg/crypto"
@@ -533,6 +535,78 @@ func (s *Service) InspectServer(ctx context.Context, serverID string, projectID 
 // "myserver_search"). The proxy strips the prefix and forwards to the real server.
 func (s *Service) CallExternalTool(ctx context.Context, projectID, prefixedToolName string, args map[string]any) (*mcp.ToolResult, error) {
 	return s.proxy.CallTool(ctx, projectID, prefixedToolName, args)
+}
+
+// mcpToolCallTimeout bounds a single tool invocation (builtin or external) so a
+// hung upstream cannot pin a request handler. External MCP servers may be remote
+// and slow; 30s balances user patience against dropping a legitimate
+// long-running tool.
+const mcpToolCallTimeout = 30 * time.Second
+
+// CallToolOnServer invokes a single tool on a specific MCP server, resolved by
+// ID scoped to the project. It enforces server and tool enablement before
+// dispatch, then routes builtin servers to mcp.Service.ExecuteTool and external
+// (stdio/sse/http) servers through the proxy by raw server row (no name-prefix
+// inference). Builtin dispatch is gated by the transport's per-tool authority
+// check (AuthorizeToolCall) using the caller's scopes. Errors are typed so the
+// handler can map not-found → 404, disabled → 409, forbidden → 403, and
+// upstream/connection failures → 502.
+func (s *Service) CallToolOnServer(ctx context.Context, projectID, serverID, toolName string, args map[string]any, scopes []string) (*mcp.ToolResult, error) {
+	server, err := s.repo.FindServerByID(ctx, serverID, &projectID)
+	if err != nil {
+		return nil, fmt.Errorf("fetching server: %w", err)
+	}
+	if server == nil {
+		return nil, ErrServerNotFound
+	}
+	if !server.Enabled {
+		return nil, ErrServerDisabled
+	}
+
+	tool, err := s.repo.FindToolByServerAndName(ctx, serverID, toolName)
+	if err != nil {
+		return nil, fmt.Errorf("fetching tool: %w", err)
+	}
+	if tool == nil {
+		return nil, ErrToolNotFound
+	}
+	if !tool.Enabled {
+		return nil, ErrToolDisabled
+	}
+
+	if server.Type == ServerTypeBuiltin {
+		if err := s.mcpService.AuthorizeToolCall(ctx, toolName, scopes); err != nil {
+			if errors.Is(err, mcp.ErrToolForbidden) {
+				return nil, ErrToolForbidden
+			}
+			return nil, fmt.Errorf("authorizing tool %q: %w", toolName, err)
+		}
+
+		execCtx, cancel := context.WithTimeout(ctx, mcpToolCallTimeout)
+		defer cancel()
+		// The per-tool authority was already enforced above (AgentOnly /
+		// RequiredScope / SuperadminOnly), mirroring the HTTP transport. Mark the
+		// call transport-enforced so ExecuteTool's in-process gate (which covers
+		// the untrusted agent-run path) does not re-fire for an authenticated REST
+		// client. This is NOT the trusted-internal marker.
+		execCtx = mcp.ContextWithTransportEnforced(execCtx)
+		return s.mcpService.ExecuteTool(execCtx, projectID, toolName, args)
+	}
+
+	callCtx, cancel := context.WithTimeout(ctx, mcpToolCallTimeout)
+	defer cancel()
+	result, err := s.proxy.CallToolOnServer(callCtx, server, toolName, args)
+	if err != nil {
+		// Log the full detail server-side (stdio command lines / URLs), but never
+		// surface it to the caller — the handler returns a sanitized 502 message.
+		s.log.Error("upstream MCP tool call failed",
+			slog.String("server_id", serverID),
+			slog.String("tool", toolName),
+			logger.Error(err),
+		)
+		return nil, fmt.Errorf("%w: %v", ErrUpstreamFailure, err)
+	}
+	return result, nil
 }
 
 // DiscoverAndSyncTools connects to an external MCP server, calls tools/list,

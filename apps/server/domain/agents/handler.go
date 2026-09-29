@@ -1506,6 +1506,38 @@ func (h *Handler) toDefinitionDTO(ctx context.Context, def *AgentDefinition) *Ag
 	return dto
 }
 
+// ListBuiltinToolGroups handles GET /api/admin/builtin-tool-groups
+//
+// Returns the current project's builtin tool groups — the server-owned capability
+// taxonomy computed from the project's builtin tool catalog. Unlike the agent
+// definition read path (which unions catalog + agent Tools/BannedTools), this is
+// catalog-only grouping: groups are emitted in toolgroups.Groups' frozen order,
+// empty groups are omitted, every group is enabled=true, and policy is always "".
+// @Summary      List builtin tool groups
+// @Description  Returns the project's builtin tool groups computed from the builtin tool catalog
+// @Tags         agents
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} APIResponse[[]ToolGroupDTO] "Builtin tool groups"
+// @Failure      400 {object} apperror.Error "X-Project-ID header required"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/admin/builtin-tool-groups [get]
+// @Security     bearerAuth
+func (h *Handler) ListBuiltinToolGroups(c echo.Context) error {
+	user := auth.MustGetUser(c)
+	if user.ProjectID == "" {
+		return apperror.NewBadRequest("X-Project-ID header is required")
+	}
+
+	if h.mcpService == nil {
+		return c.JSON(http.StatusOK, SuccessResponse([]ToolGroupDTO{}))
+	}
+
+	catalog := h.mcpService.GetToolDefinitionsForProject(c.Request().Context(), user.ProjectID)
+	groups := ToolGroupsFromCatalog(catalog)
+	return c.JSON(http.StatusOK, SuccessResponse(groups))
+}
+
 // normalizeUIConfig maps the documented "no appearance" wire value to the
 // canonical ui_config representation so a bare jsonb `null` is never persisted.
 // Semantics: len 0 (nil or empty) → nil — on create that omits the field so the

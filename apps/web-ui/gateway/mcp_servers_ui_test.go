@@ -60,6 +60,97 @@ func TestRenderMCPServersPage(t *testing.T) {
 	}
 }
 
+// TestRenderMCPServersBuiltinIdentity asserts the builtin server renders as
+// "Memory tools" with the package mark + a distinct Built-in badge, and that
+// external rows keep their transport type badge.
+func TestRenderMCPServersBuiltinIdentity(t *testing.T) {
+	html := renderHTML(t, MCPServersPage(mcpServersPageData{Servers: mcpTestRegistryFixture()}))
+	for _, want := range []string{
+		"Memory tools",
+		"Built-in",
+		"lucide--package",
+		// external rows keep the transport badge
+		">http<", ">stdio<",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("MCPServersPage missing %q", want)
+		}
+	}
+	// The builtin row must not render the raw transport type badge (the old
+	// duplicated "builtin" badge).
+	if strings.Contains(html, ">builtin<") {
+		t.Error("builtin row still renders the literal type badge")
+	}
+}
+
+// TestRenderMCPServersBuiltinGrouped asserts the builtin server's cached tools
+// render grouped (collapsible per-capability disclosures + the dashed Other
+// fallback) when the taxonomy is present.
+func TestRenderMCPServersBuiltinGrouped(t *testing.T) {
+	groups := []BuiltinToolGroup{
+		{ID: "graph", Label: "Graph", Description: "Entity and relation tools", Enabled: true, Tools: []string{"memory_lookup"}},
+	}
+	html := renderHTML(t, MCPServersPage(mcpServersPageData{
+		Servers:       mcpTestRegistryFixture(),
+		BuiltinGroups: groups,
+	}))
+	for _, want := range []string{
+		"data-mcp-builtin-groups",
+		`data-testid="mcp-builtin-group"`,
+		`data-mcp-group="graph"`,
+		"Graph", "Entity and relation tools", "lucide--layers",
+		// the uncovered tool stays reachable in the Other fallback
+		`data-testid="mcp-builtin-group-other"`,
+		"Other",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("grouped MCPServersPage missing %q", want)
+		}
+	}
+}
+
+// TestMCPBuiltinToolGroupsJoin asserts the group join: a group carries the rows
+// whose ToolName it lists, in the group's membership order; names with no
+// cached row are dropped; uncovered tools fall through to other.
+func TestMCPBuiltinToolGroupsJoin(t *testing.T) {
+	tools := []MCPTool{{ToolName: "a"}, {ToolName: "b"}, {ToolName: "c"}}
+	groups := []BuiltinToolGroup{
+		{ID: "g1", Label: "One", Tools: []string{"c", "a", "missing"}},
+		{ID: "empty", Label: "Empty", Tools: []string{"missing"}},
+	}
+	grouped, other := mcpBuiltinToolGroups(tools, groups)
+	if len(grouped) != 1 || grouped[0].Group.ID != "g1" {
+		t.Fatalf("grouped = %+v, want only g1 (empty groups dropped)", grouped)
+	}
+	if len(grouped[0].Rows) != 2 || grouped[0].Rows[0].ToolName != "c" || grouped[0].Rows[1].ToolName != "a" {
+		t.Errorf("group rows = %+v, want [c a] in membership order", grouped[0].Rows)
+	}
+	if len(other) != 1 || other[0].ToolName != "b" {
+		t.Errorf("other = %+v, want [b]", other)
+	}
+}
+
+// TestRenderMCPServersInvokeAffordances asserts every tool row carries a Run
+// button, and the page mounts the shared invoke dialog with its args input,
+// run button, and result region.
+func TestRenderMCPServersInvokeAffordances(t *testing.T) {
+	html := renderHTML(t, MCPServersPage(mcpServersPageData{Servers: mcpTestRegistryFixture()}))
+	for _, want := range []string{
+		`data-testid="mcp-tool-invoke-dialog"`,
+		`data-testid="mcp-tool-invoke-args"`,
+		`data-testid="mcp-tool-invoke-run"`,
+		`data-testid="mcp-tool-invoke-result"`,
+		"data-mcp-invoke-open",
+		"data-mcp-invoke-run",
+		`data-mcp-tool="memory_lookup"`,
+		`data-mcp-tool="search_issues"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("MCPServersPage missing invoke affordance %q", want)
+		}
+	}
+}
+
 // TestRenderMCPServersPageEmpty asserts the shared EmptyState with the CTA.
 func TestRenderMCPServersPageEmpty(t *testing.T) {
 	html := renderHTML(t, MCPServersPage(mcpServersPageData{}))

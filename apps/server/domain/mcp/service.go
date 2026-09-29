@@ -1962,6 +1962,48 @@ func (s *Service) GetToolByName(name string) *ToolDefinition {
 	return toolIndex[name]
 }
 
+// ErrToolForbidden is returned by AuthorizeToolCall when a caller is not
+// authorized to invoke a tool (agent-only, superadmin-only, or a RequiredScope
+// the caller lacks). Callers map it to an HTTP 403 without revealing which
+// authority was missing.
+var ErrToolForbidden = errors.New("tool not authorized")
+
+// AuthorizeToolCall applies the transport's per-tool authority check to an
+// authenticated caller. It mirrors handler.go / sse_handler.go /
+// streamable_http_handler.go: AgentOnly tools are refused; SuperadminOnly tools
+// require the platform grant (resolved from the authenticated context); and a
+// RequiredScope must be present in the caller's effective (expanded) scopes.
+//
+// It returns nil when the caller may invoke the tool — including when the tool
+// is unknown to the catalog (dispatch still gates unknown names). ErrToolForbidden
+// is returned for every authorization denial; a superadmin-grant resolution
+// failure returns a non-forbidden error (fail-closed) so the caller can map it
+// to a server error rather than a denial.
+func (s *Service) AuthorizeToolCall(ctx context.Context, toolName string, scopes []string) error {
+	toolDef := s.GetToolByName(toolName)
+	if toolDef == nil {
+		return nil
+	}
+	if toolDef.AgentOnly {
+		return ErrToolForbidden
+	}
+	if toolDef.SuperadminOnly {
+		ok, err := s.IsSuperadminCaller(ctx)
+		if err != nil {
+			return fmt.Errorf("authorize tool %q: %w", toolName, err)
+		}
+		if !ok {
+			return ErrToolForbidden
+		}
+	}
+	if toolDef.RequiredScope != "" {
+		if !expandScopesSet(scopes)[toolDef.RequiredScope] {
+			return ErrToolForbidden
+		}
+	}
+	return nil
+}
+
 func (s *Service) GetResourceDefinitions() []ResourceDefinition {
 	return []ResourceDefinition{
 		{

@@ -290,6 +290,79 @@ func (h *Handler) ToggleTool(c echo.Context) error {
 	})
 }
 
+// callToolRequest is the request body for POST
+// /api/admin/mcp-servers/:id/tools/:toolName/call. Arguments is nil when the
+// body is absent or empty.
+type callToolRequest struct {
+	Arguments map[string]any `json:"arguments"`
+}
+
+// CallToolOnServer handles POST /api/admin/mcp-servers/:id/tools/:toolName/call
+//
+// Invokes a single tool on the addressed server with the provided arguments.
+// Builtin tools execute in-process; external (stdio/sse/http) tools are proxied
+// to their MCP server. The result is an mcp.ToolResult in the standard envelope.
+// @Summary      Call a tool on an MCP server
+// @Description  Invoke a single tool on the addressed MCP server (builtin tools run in-process; external tools are proxied)
+// @Tags         mcp-registry
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Server ID"
+// @Param        toolName path string true "Tool name"
+// @Param        request body object false "Call arguments: {\"arguments\": {}}"
+// @Success      200 {object} mcpregistry.APIResponse[mcp.ToolResult]
+// @Failure      400 {object} apperror.Error
+// @Failure      401 {object} apperror.Error
+// @Failure      404 {object} apperror.Error
+// @Failure      409 {object} apperror.Error
+// @Failure      502 {object} apperror.Error
+// @Router       /api/admin/mcp-servers/{id}/tools/{toolName}/call [post]
+// @Security     bearerAuth
+func (h *Handler) CallToolOnServer(c echo.Context) error {
+	user := auth.MustGetUser(c)
+	if user.ProjectID == "" {
+		return apperror.NewBadRequest("X-Project-ID header is required")
+	}
+
+	serverID := c.Param("id")
+	if serverID == "" {
+		return apperror.NewBadRequest("server ID is required")
+	}
+	toolName := c.Param("toolName")
+	if toolName == "" {
+		return apperror.NewBadRequest("tool name is required")
+	}
+
+	var req callToolRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+
+	result, err := h.svc.CallToolOnServer(c.Request().Context(), user.ProjectID, serverID, toolName, req.Arguments, user.Scopes)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrServerNotFound):
+			return apperror.NewNotFound("mcp_server", serverID)
+		case errors.Is(err, ErrToolNotFound):
+			return apperror.NewNotFound("mcp_server_tool", toolName)
+		case errors.Is(err, ErrServerDisabled):
+			return apperror.New(http.StatusConflict, "mcp_server_disabled", "MCP server is disabled")
+		case errors.Is(err, ErrToolDisabled):
+			return apperror.New(http.StatusConflict, "mcp_tool_disabled", "MCP tool is disabled")
+		case errors.Is(err, ErrToolForbidden):
+			return apperror.New(http.StatusForbidden, "mcp_tool_forbidden", "not authorized to invoke this tool")
+		case errors.Is(err, ErrUpstreamFailure):
+			// The detail (stdio command lines / URLs) is logged server-side in the
+			// service; return a sanitized message so it never leaks to the caller.
+			return apperror.New(http.StatusBadGateway, "mcp_upstream_failure", "upstream MCP server call failed")
+		default:
+			return apperror.NewInternal("failed to call tool", err)
+		}
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(result))
+}
+
 // InspectServer handles POST /api/admin/mcp-servers/:id/inspect
 //
 // Performs a diagnostic test-connection to an MCP server. Creates a fresh

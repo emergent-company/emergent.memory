@@ -52,6 +52,10 @@ type MemoryBackend interface {
 	InspectMCPServer(ctx context.Context, id string) (*MCPInspectResult, error)
 	ListMCPServerTools(ctx context.Context, id string) ([]MCPTool, error)
 	SetMCPServerToolEnabled(ctx context.Context, id string, toolID string, enabled bool) error
+	CallMCPServerTool(ctx context.Context, id, toolName string, args map[string]any) (*MCPToolCallResult, error)
+	// ListBuiltinToolGroups returns memory's builtin tool capability taxonomy
+	// (the grouped view of the builtin server's tools).
+	ListBuiltinToolGroups(ctx context.Context) ([]BuiltinToolGroup, error)
 	// MCP share instances (project-scoped MCP exposure; see mcp_shares.go).
 	// The raw key is only ever present on Create/Rotate results.
 	ListMCPShareInstances(ctx context.Context) ([]MCPShareInstance, error)

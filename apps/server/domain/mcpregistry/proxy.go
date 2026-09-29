@@ -121,6 +121,38 @@ func (pm *ProxyManager) CallTool(ctx context.Context, projectID, prefixedToolNam
 	return convertCallToolResult(result), nil
 }
 
+// CallToolOnServer forwards a tool call to a specific external MCP server given
+// its raw MCPServer row. Unlike CallTool, the server is already resolved — no
+// name-prefix parsing or slug inference is performed. The result carries only
+// the tool's content/isError/structuredContent, never the server's env or
+// headers.
+func (pm *ProxyManager) CallToolOnServer(ctx context.Context, server *MCPServer, toolName string, args map[string]any) (*mcp.ToolResult, error) {
+	conn, err := pm.getOrConnect(ctx, server)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to MCP server %q: %w", server.Name, err)
+	}
+
+	pm.log.Debug("proxying tool call (by server)",
+		slog.String("server", server.Name),
+		slog.String("server_id", server.ID),
+		slog.String("tool", toolName),
+	)
+
+	result, err := conn.client.CallTool(ctx, mcpgo.CallToolRequest{
+		Params: mcpgo.CallToolParams{
+			Name:      toolName,
+			Arguments: args,
+		},
+	})
+	if err != nil {
+		// On call failure, evict the connection so the next call reconnects.
+		pm.evict(server.ID)
+		return nil, fmt.Errorf("calling tool %q on server %q: %w", toolName, server.Name, err)
+	}
+
+	return convertCallToolResult(result), nil
+}
+
 // resolveServerForTool maps a prefixed tool name ("<server>_<tool>") to the raw
 // MCPServer row and the unprefixed tool name to forward to that server.
 //

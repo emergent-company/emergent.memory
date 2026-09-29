@@ -289,3 +289,85 @@ func TestMCPServerToolsUnreachable(t *testing.T) {
 		t.Error("SetMCPServerToolEnabled: want transport error, got nil")
 	}
 }
+
+func TestListBuiltinToolGroups(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod = r.URL.Path, r.Method
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true,"data":[
+			{"id":"graph","label":"Graph","description":"Entity + relation tools","policy":"","enabled":true,"tools":["graph_write","memory_lookup"]}
+		]}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	groups, err := m.ListBuiltinToolGroups(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/admin/builtin-tool-groups" || gotMethod != http.MethodGet {
+		t.Errorf("request = %s %s, want GET /api/admin/builtin-tool-groups", gotMethod, gotPath)
+	}
+	if len(groups) != 1 || groups[0].ID != "graph" || groups[0].Label != "Graph" ||
+		groups[0].Description != "Entity + relation tools" || !groups[0].Enabled {
+		t.Errorf("groups = %+v", groups)
+	}
+	if len(groups[0].Tools) != 2 || groups[0].Tools[0] != "graph_write" {
+		t.Errorf("group tools = %v", groups[0].Tools)
+	}
+}
+
+func TestCallMCPServerTool(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod = r.URL.Path, r.Method
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true,"data":{
+			"content":[{"type":"text","text":"{\"ok\":true}"}],
+			"isError":false,
+			"structuredContent":{"ok":true}
+		}}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	res, err := m.CallMCPServerTool(context.Background(), "srv-1", "memory_lookup", map[string]any{"query": "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/admin/mcp-servers/srv-1/tools/memory_lookup/call" || gotMethod != http.MethodPost {
+		t.Errorf("request = %s %s, want POST /api/admin/mcp-servers/srv-1/tools/memory_lookup/call", gotMethod, gotPath)
+	}
+	args, _ := gotBody["arguments"].(map[string]any)
+	if len(gotBody) != 1 || args["query"] != "hello" {
+		t.Errorf("body = %v, want {arguments:{query:hello}}", gotBody)
+	}
+	if len(res.Content) != 1 || res.Content[0].Type != "text" || res.Content[0].Text != `{"ok":true}` || res.IsError {
+		t.Errorf("result = %+v", res)
+	}
+	if len(res.StructuredContent) == 0 {
+		t.Error("structuredContent dropped from the result")
+	}
+}
+
+func TestCallMCPServerToolNilArgsSendsEmptyObject(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true,"data":{"content":[],"isError":false}}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	if _, err := m.CallMCPServerTool(context.Background(), "srv-1", "ping", nil); err != nil {
+		t.Fatal(err)
+	}
+	args, ok := gotBody["arguments"].(map[string]any)
+	if !ok || len(args) != 0 {
+		t.Errorf("arguments = %v, want an empty object", gotBody["arguments"])
+	}
+}

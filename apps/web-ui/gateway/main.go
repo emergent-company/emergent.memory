@@ -132,6 +132,9 @@ func main() {
 	api.POST("/mcp-servers/:id/inspect", s.inspectMCPServer)
 	api.GET("/mcp-servers/:id/tools", s.listMCPServerTools)
 	api.PATCH("/mcp-servers/:id/tools/:toolId", s.setMCPServerToolEnabled)
+	// Per-tool invocation (the row "Run" affordance); same method/body as
+	// memory's admin call route.
+	api.POST("/mcp-servers/:id/tools/:toolName/call", s.callMCPServerTool)
 	// MCP share instances (project-scoped MCP exposure; see mcp_shares_handlers.go).
 	api.GET("/mcp-shares", s.listMCPShares)
 	api.POST("/mcp-shares", s.createMCPShare)
