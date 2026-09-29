@@ -740,7 +740,7 @@ func (s *Service) executeUpdateRelationship(ctx context.Context, projectID strin
 
 	opts := responseOptsFromArgs(args)
 
-	result, err := s.graphService.PatchRelationship(ctx, projectUUID, relID, req)
+	result, err := s.graphService.PatchRelationship(ctx, projectUUID, relID, req, nil)
 	if err != nil {
 		return nil, fmt.Errorf("update relationship: %w", err)
 	}
@@ -774,7 +774,7 @@ func (s *Service) executeDeleteRelationship(ctx context.Context, projectID strin
 		reason = &r
 	}
 
-	_, err = s.graphService.DeleteRelationship(ctx, projectUUID, relID, nil, reason)
+	_, err = s.graphService.DeleteRelationship(ctx, projectUUID, relID, nil, reason, nil)
 	if err != nil {
 		return nil, fmt.Errorf("delete relationship: %w", err)
 	}

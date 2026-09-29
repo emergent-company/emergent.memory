@@ -320,6 +320,7 @@
       agentSelect.addEventListener("change", function () {
         resetConversation();
         updateModelWarning();
+        updateChatHeader();
       });
     }
 
@@ -455,6 +456,71 @@
       banner.classList.remove("hidden");
     } else {
       banner.classList.add("hidden");
+    }
+  }
+
+  // headerIconClass resolves an agent's stored icon to a compiled iconify class
+  // (shared normalization with the chat bubbles). Empty means "render the icon
+  // value as a raw text glyph" (emoji / symbol); the caller then falls back to
+  // the bot class only when the icon is empty.
+  function headerIconClass(icon) {
+    var s = String(icon || "").trim();
+    if (!s) return "lucide--bot";
+    if (window.MemoryChatStream && MemoryChatStream.agentIconifyClass) {
+      return MemoryChatStream.agentIconifyClass(s, "") || "";
+    }
+    return "";
+  }
+
+  // renderHeaderIcon rebuilds the chat pane header's icon tile to match an
+  // agent's declared appearance. It mirrors agentIconTile (chat.templ): a
+  // framed square with the agent glyph, tinted via inline colors when a color
+  // is declared, else the neutral primary tone. Built with DOM nodes (never
+  // innerHTML) because the icon value is user/agent-authored.
+  function renderHeaderIcon(container, icon, color) {
+    var cls = headerIconClass(icon);
+    var frame = document.createElement("div");
+    frame.className = "grid size-9 shrink-0 place-items-center rounded-lg border";
+    if (color) {
+      frame.style.color = color;
+      frame.style.backgroundColor = "color-mix(in oklch," + color + " 10%,transparent)";
+      frame.style.borderColor = "color-mix(in oklch," + color + " 15%,transparent)";
+    } else {
+      frame.className += " bg-primary/10 text-primary border-primary/15";
+    }
+    var glyph = document.createElement("span");
+    glyph.setAttribute("aria-hidden", "true");
+    if (cls) {
+      glyph.className = "iconify " + cls + " size-4.5";
+    } else {
+      glyph.className = "shrink-0 leading-none text-lg";
+      glyph.textContent = String(icon || "");
+    }
+    frame.appendChild(glyph);
+    container.replaceChildren(frame);
+  }
+
+  // updateChatHeader mirrors the selected #chat-agent option's identity — icon,
+  // name, and short description — into the chat pane header, which the server
+  // renders for the active agent on first paint. The description is written
+  // with textContent (never innerHTML): it is user/agent-authored. No-op when
+  // the header mounts are absent (e.g. read-only run-transcript pages) or the
+  // picker has no selection (keep the server-rendered fallback).
+  function updateChatHeader() {
+    var titleEl = document.getElementById("chat-header-title");
+    var descEl = document.getElementById("chat-header-desc");
+    var iconEl = document.getElementById("chat-header-icon");
+    if (!titleEl && !descEl && !iconEl) return;
+    var opt = agentSelect && agentSelect.selectedOptions.length ? agentSelect.selectedOptions[0] : null;
+    if (!opt) return;
+    if (titleEl) titleEl.textContent = opt.textContent || "";
+    if (descEl) {
+      var desc = opt.getAttribute("data-description") || "";
+      descEl.textContent = desc;
+      descEl.classList.toggle("hidden", desc === "");
+    }
+    if (iconEl) {
+      renderHeaderIcon(iconEl, opt.getAttribute("data-icon") || "", opt.getAttribute("data-color") || "");
     }
   }
 
@@ -670,6 +736,8 @@
       }
       if (match) agentSelect.value = agentId;
       updateModelWarning();
+      // the header follows the same hook: reflect the conversation's agent
+      updateChatHeader();
     }
 
     await refreshDock();

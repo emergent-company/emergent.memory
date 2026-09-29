@@ -21,6 +21,7 @@ templ sidePanel(agents []AgentDefinitionSummary, assistantAgent string) {
 			class="bg-base-100 fixed top-0 right-0 z-50 flex h-full w-full max-w-md translate-x-full flex-col shadow-2xl transition-transform duration-300 ease-out"
 			aria-label="Assistant conversation"
 			aria-hidden="true"
+			inert
 			data-agent-id={ assistantAgent }
 		>
 			<!-- Drag-to-resize grip on the left edge. Width is driven by

@@ -224,6 +224,14 @@ type ListObjectsOptions struct {
 	IDs             []string
 	ExtractionJobID string
 	PropertyFilters []PropertyFilter // JSONB property filters (JSON-encoded in query param)
+
+	// Actor provenance filter (issue #1193). ActorID requires ActorType; the
+	// pair is always sent together. Provenance is created|updated|any ("" sends
+	// nothing and the server defaults to "any").
+	ActorType  string
+	ActorID    string
+	Provenance string
+
 	// SkipTotal sends include_total=false: the server then skips the exact
 	// COUNT(*) and omits the response's `total` field (SearchObjectsResponse.Total
 	// stays 0). Use it for cursor-only iteration or list views that ignore the
@@ -1206,6 +1214,15 @@ func (c *Client) ListObjects(ctx context.Context, opts *ListObjectsOptions) (*Se
 		}
 		if opts.ExtractionJobID != "" {
 			q.Set("extraction_job_id", opts.ExtractionJobID)
+		}
+		if opts.ActorType != "" {
+			q.Set("actor_type", opts.ActorType)
+		}
+		if opts.ActorID != "" {
+			q.Set("actor_id", opts.ActorID)
+		}
+		if opts.Provenance != "" {
+			q.Set("provenance", opts.Provenance)
 		}
 		if len(opts.PropertyFilters) > 0 {
 			pfJSON, err := json.Marshal(opts.PropertyFilters)

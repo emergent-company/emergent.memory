@@ -46,7 +46,7 @@ type agentDashboardData struct {
 }
 
 // uiAgent renders the per-agent dashboard: summary, configured tools, and
-// recent chats, with a link to the memories subpage.
+// recent chats, with a link to the objects this agent created or updated.
 func (s *Server) uiAgent(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
@@ -89,44 +89,6 @@ func (s *Server) uiAgent(c echo.Context) error {
 		})
 	}
 	return s.page(c, pageTitle(agent.Name), AgentDashboardPage(data))
-}
-
-// uiAgentMemories renders the memory browser for one agent: a searchable
-// list with a detail view when ?memory=<id> selects an item from the fetched
-// list (no extra fetch needed). Empty query lists all memories, a query
-// searches — mirroring the iOS memory browser.
-func (s *Server) uiAgentMemories(c echo.Context) error {
-	ctx := c.Request().Context()
-	id := c.Param("id")
-
-	// The agent name is only for display; memory is project-scoped, not
-	// per-agent, so the agent fetch failure is the whole-page error.
-	agent, err := s.memory.GetAgentDefinition(ctx, id)
-	if err != nil {
-		return s.page(c, pageTitle("Memories"), MemoriesPage(id, "", "", nil, nil, err))
-	}
-	query := c.QueryParam("q")
-
-	var memories []Memory
-	if query != "" {
-		memories, err = s.memory.SearchMemories(ctx, query)
-	} else {
-		memories, err = s.memory.ListMemories(ctx)
-	}
-	if err != nil {
-		return s.page(c, pageTitle("Memories"), MemoriesPage(id, agent.Name, query, nil, nil, err))
-	}
-
-	var selected *Memory
-	if mid := c.QueryParam("memory"); mid != "" {
-		for i := range memories {
-			if memories[i].ID == mid {
-				selected = &memories[i]
-				break
-			}
-		}
-	}
-	return s.page(c, pageTitle(agent.Name, "Memories"), MemoriesPage(id, agent.Name, query, memories, selected, nil))
 }
 
 // agentSettingsData is the payload for AgentSettingsPage: the agent being
@@ -347,18 +309,21 @@ func (s *Server) uiAgentUpdateDelegation(c echo.Context) error {
 	return s.applyAgentSettingsSection(c, sectionDelegation, applyAgentDelegationSection)
 }
 
-// applyAgentGeneralSection maps the General form (name, system prompt,
-// language, appearance, visibility) onto the definition. Name is trimmed and
-// required; language persists to Config["language"] (deleted when empty); the
-// icon + color appearance persists to the uiConfig blob (both empty clears it);
-// visibility accepts only project/external/internal, with empty/missing
-// defaulting to project (the server default) and anything else rejected.
+// applyAgentGeneralSection maps the General form (name, short description,
+// system prompt, language, appearance, visibility) onto the definition. Name is
+// trimmed and required; the short description is trimmed and shown under the
+// agent's name in chat (empty clears it); language persists to Config["language"]
+// (deleted when empty); the icon + color appearance persists to the uiConfig
+// blob (both empty clears it); visibility accepts only project/external/internal,
+// with empty/missing defaulting to project (the server default) and anything else
+// rejected.
 func applyAgentGeneralSection(def *AgentDefinition, c echo.Context) error {
 	name := strings.TrimSpace(c.FormValue("name"))
 	if name == "" {
 		return fmt.Errorf("name is required")
 	}
 	def.Name = name
+	def.Description = strings.TrimSpace(c.FormValue("description"))
 	def.SystemPrompt = c.FormValue("systemPrompt")
 	def.UIConfig = agentUIConfig(c.FormValue("icon"), c.FormValue("color"))
 	lang := strings.TrimSpace(c.FormValue("language"))

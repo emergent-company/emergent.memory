@@ -11,7 +11,8 @@ import (
 )
 
 // TestDeviceSurfacePath pins the gateway device-surface allowlist: room-token
-// mint, agent picker, chat relay, session log/records and memory browsing only.
+// mint, agent picker, the per-agent object browser, chat relay, session
+// log/records and memory browsing only.
 func TestDeviceSurfacePath(t *testing.T) {
 	cases := []struct {
 		method, path string
@@ -20,11 +21,12 @@ func TestDeviceSurfacePath(t *testing.T) {
 		{"POST", "/api/token", true},
 		{"GET", "/api/agents", true},
 		{"GET", "/api/agents/abc", true},
+		{"GET", "/api/agents/abc/objects", true},
+		{"GET", "/api/agents/abc/objects/extra", false},
+		{"GET", "/api/agents/abc/other", false},
 		{"POST", "/api/chat", true},
 		{"GET", "/api/sessions", true},
 		{"GET", "/api/session", true},
-		{"GET", "/api/memories", true},
-		{"GET", "/api/memories/capability", true},
 
 		{"GET", "/api/agents/abc/mcp-endpoint", false},
 		{"POST", "/api/agents", false},
@@ -46,7 +48,6 @@ func deviceCredentialEcho(f *fakeMemory) (*Server, *echo.Echo) {
 	s := &Server{cfg: Config{AuthMode: "session", SessionSecret: "test-secret"}, memory: f}
 	e := echo.New()
 	e.GET("/api/agents", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
-	e.GET("/api/memories", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
 	e.Use(s.requireSessionOrKey)
 	return s, e
 }
@@ -172,7 +173,7 @@ func TestRequireDeviceCredentialMissingProjectFailsClosed(t *testing.T) {
 	f := &fakeMemory{introspectInfo: &deviceTokenInfo{Type: "api_token", Scopes: []string{"device:api", "agents:read", "data:read"}}}
 	_, e := deviceCredentialEcho(f)
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/memories", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/agents", nil)
 	req.Header.Set("Authorization", "Bearer emt_x")
 	e.ServeHTTP(rec, req)
 	// The gateway still recognises the credential but the surface/derivation

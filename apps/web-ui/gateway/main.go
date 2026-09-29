@@ -111,6 +111,10 @@ func main() {
 	api.DELETE("/agents/:id", s.deleteAgent)
 	api.POST("/agents/:id/activate", s.activateAgent)
 	api.POST("/agents/:id/deactivate", s.deactivateAgent)
+	// Device-reachable JSON object browser: an agent's created/updated objects,
+	// cursor-paginated (see agent_objects.go). The iOS device credential is
+	// allowed on this path via deviceSurfacePath (auth.go).
+	api.GET("/agents/:id/objects", s.listAgentObjects)
 	api.POST("/chat", s.chat)
 	api.POST("/chat/questions/:questionId/respond", s.respondQuestion)
 	api.POST("/chat/questions/:questionId/cancel", s.cancelQuestion)
@@ -163,8 +167,6 @@ func main() {
 	api.DELETE("/schedules/:id", s.deleteScheduledAgent)
 	api.POST("/schedules/:id/trigger", s.triggerScheduledAgent)
 	api.GET("/schedules/:id/runs", s.listScheduledAgentRuns)
-	api.GET("/memories/capability", s.memoryCapability)
-	api.GET("/memories", s.listMemories)
 	api.GET("/documents", s.listDocuments)
 	api.POST("/documents", s.uploadDocument)
 	api.GET("/documents/:id", s.getDocument)
@@ -268,7 +270,7 @@ func main() {
 	e.GET("/agents/:id/sandbox", s.uiAgentSandbox)
 	e.POST("/agents/:id/sandbox/update", s.uiAgentSandboxUpdate)
 	e.GET("/agents/:id/sessions", s.uiAgentSessions)
-	e.GET("/agents/:id/memories", s.uiAgentMemories)
+	e.GET("/agents/:id/objects", s.uiAgentObjects)
 	// Agent-owned MCP endpoint, its labeled keys, and its external sessions —
 	// all on the agent's own Settings surface (see agent_mcp_endpoint_handlers.go).
 	// Create-key and rotate-key render the one-time secret reveal directly (no

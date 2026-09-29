@@ -142,6 +142,35 @@ type PropertyOrderSpec struct {
 	Direction string // asc or desc
 }
 
+// Provenance filter modes for the object actor filter (issue #1193).
+const (
+	ProvenanceAny     = "any"
+	ProvenanceCreated = "created"
+	ProvenanceUpdated = "updated"
+)
+
+// validProvenance reports whether m is a known provenance mode.
+func validProvenance(m string) bool {
+	switch m {
+	case ProvenanceAny, ProvenanceCreated, ProvenanceUpdated:
+		return true
+	default:
+		return false
+	}
+}
+
+// validActorType reports whether t is a known actor type. The actor provenance
+// filter is keyed on the (actor_type, actor_id) pair, so an unknown actor_type
+// is rejected at the boundary rather than silently matching nothing.
+func validActorType(t string) bool {
+	switch t {
+	case ActorUser, ActorAgent, ActorSystem:
+		return true
+	default:
+		return false
+	}
+}
+
 // ListParams contains parameters for listing graph objects.
 type ListParams struct {
 	ProjectID       uuid.UUID
@@ -164,6 +193,13 @@ type ListParams struct {
 	ExcludeFields   []string           // Property field projection (drop these property keys)
 	Namespace       *string            // Filter by namespace
 	PropertyOrder   *PropertyOrderSpec // optional property-based ordering
+
+	// Actor provenance filter (issue #1193). Filtering is ALWAYS keyed on the
+	// (actor_type, actor_id) pair — actor_id alone is ignored/rejected upstream.
+	// A nil ActorID means the NULL actor_id (the `system` actor).
+	ActorType  *string    // "user" | "agent" | "system"
+	ActorID    *uuid.UUID // user UUID for user, kb.agents UUID for agent, NULL for system
+	Provenance string     // "created" | "updated" | "any" ("" defaults to "any")
 
 	// SkipTotal tells the list service not to run the exact COUNT(*) that
 	// populates SearchGraphObjectsResponse.Total. The zero value (false) keeps
@@ -372,6 +408,61 @@ func (r *Repository) buildObjectBaseQueryWith(db bun.IDB, params ListParams) *bu
 		)`, *params.RelatedToID, params.ProjectID)
 	}
 
+	// Actor provenance filter (issue #1193). Always keyed on the (actor_type,
+	// actor_id) pair — actor_id alone is rejected upstream. A nil ActorID selects
+	// actor_id IS NULL (the `system` actor).
+	//
+	// Provenance selects which version row must carry the pair:
+	//   - updated (or any): the HEAD row (supersedes_id IS NULL) authored by the actor.
+	//   - created: the root version=1 row authored by the actor (earliest surviving).
+	//     Scoped to the same project/branch as the outer query: on a named branch,
+	//     version=1 is the branch's fork-time copy, so "created by" there is the
+	//     fork-time version's author, not necessarily the object's original creator
+	//     on main (see BulkCopyObjectsToBranch, which carries the HEAD row's actor).
+	//   - any: creator (version=1) OR latest updater (HEAD).
+	//
+	// The `created` mode is implemented as `canonical_id IN (SELECT canonical_id
+	// FROM kb.graph_objects WHERE actor_type=? AND actor_id=? AND version=1 AND
+	// deleted_at IS NULL)` so the partial actor index (idx_graph_objects_actor)
+	// drives the inner scan — NOT a correlated EXISTS/LATERAL over every HEAD row.
+	// Because it is a plain WHERE-IN filter it composes with both keyset cursor
+	// pagination (created_at, id) and property-based ordering, so no pagination
+	// guard is required here (unlike PropertyOrder, which rewrites ORDER BY).
+	if params.ActorType != nil {
+		// The `created` subquery must be scoped to the SAME project and branch as
+		// the outer query; otherwise a system-actor (NULL actor_id) filter would
+		// materialize every system-authored version=1 row deployment-wide, not
+		// just this project's. The project/branch predicates ride as residual
+		// filters after the (actor_type, actor_id) index lookup, preserving the
+		// partial-index-friendly shape.
+		scopeCond := "project_id = ? AND branch_id IS NULL"
+		scopeArgs := []any{params.ProjectID}
+		if params.BranchID != nil {
+			scopeCond = "project_id = ? AND branch_id = ?"
+			scopeArgs = []any{params.ProjectID, *params.BranchID}
+		}
+
+		args := []any{*params.ActorType}
+		pairCond := "actor_type = ? AND actor_id IS NULL"
+		createdCond := "actor_type = ? AND actor_id IS NULL AND version = 1 AND deleted_at IS NULL"
+		if params.ActorID != nil {
+			args = append(args, *params.ActorID)
+			pairCond = "actor_type = ? AND actor_id = ?"
+			createdCond = "actor_type = ? AND actor_id = ? AND version = 1 AND deleted_at IS NULL"
+		}
+		createdSub := "SELECT canonical_id FROM kb.graph_objects WHERE " + createdCond + " AND " + scopeCond
+		createdArgs := append(append([]any{}, args...), scopeArgs...)
+
+		switch params.Provenance {
+		case ProvenanceCreated:
+			q = q.Where("canonical_id IN ("+createdSub+")", createdArgs...)
+		case ProvenanceUpdated:
+			q = q.Where(pairCond, args...)
+		default: // "" or "any": creator OR latest updater
+			q = q.Where("("+pairCond+") OR canonical_id IN ("+createdSub+")", append(args, createdArgs...)...)
+		}
+	}
+
 	return q
 }
 
@@ -559,12 +650,54 @@ var graphObjectDetailColumns = []string{
 	"actor_type", "actor_id", "schema_version", "migration_archive",
 }
 
+// resolveObjectByID applies the deterministic object-resolution contract shared
+// by GetByID and GetByIDIncludeDeleted.
+//
+// objects must be ordered `supersedes_id ASC NULLS FIRST, id ASC` (HEAD rows
+// first, then id-ascending). Resolution priority:
+//
+//  1. an explicit physical id that is a HEAD — an explicit id always wins;
+//  2. the main-branch HEAD (branch_id IS NULL) — this is what makes a lookup
+//     with no branch context resolve to main even when a fork copy shares the
+//     canonical_id and sorts first by UUID (issue #1245);
+//  3. any HEAD (a branch-only object / several branch copies) — smallest id;
+//  4. the explicit physical id match on a non-HEAD version;
+//  5. the first row (a stable, caller-ordered fallback).
+func resolveObjectByID(objects []GraphObject, id uuid.UUID) *GraphObject {
+	for i := range objects {
+		if objects[i].ID == id && objects[i].SupersedesID == nil {
+			return &objects[i]
+		}
+	}
+	for i := range objects {
+		if objects[i].SupersedesID == nil && objects[i].BranchID == nil {
+			return &objects[i]
+		}
+	}
+	for i := range objects {
+		if objects[i].SupersedesID == nil {
+			return &objects[i]
+		}
+	}
+	for i := range objects {
+		if objects[i].ID == id {
+			return &objects[i]
+		}
+	}
+	return &objects[0]
+}
+
 // GetByID returns a graph object by its physical ID or canonical ID.
 // It accepts either type of ID transparently:
 //   - If the ID matches a physical id, returns that object
 //   - If the ID matches a canonical_id, returns the HEAD version
 //
 // HEAD versions (supersedes_id IS NULL) are preferred when multiple rows match.
+// When several HEADs share a canonical_id (an object forked to one or more
+// branches) the main-branch HEAD wins deterministically, so a lookup that
+// carries no branch context can never land on a fork copy; pass the fork copy's
+// physical id, or resolve with GetHeadByCanonicalID(branchID), to target a
+// branch explicitly. See resolveObjectByID for the full priority.
 func (r *Repository) GetByID(ctx context.Context, projectID, id uuid.UUID) (*GraphObject, error) {
 	var objects []GraphObject
 	err := r.db.NewSelect().
@@ -588,15 +721,7 @@ func (r *Repository) GetByID(ctx context.Context, projectID, id uuid.UUID) (*Gra
 		return nil, apperror.ErrNotFound
 	}
 
-	// Prefer the HEAD version (supersedes_id IS NULL)
-	for i := range objects {
-		if objects[i].SupersedesID == nil {
-			return &objects[i], nil
-		}
-	}
-
-	// Fallback: return the first match (exact physical id hit on a non-HEAD version)
-	return &objects[0], nil
+	return resolveObjectByID(objects, id), nil
 }
 
 // GetByIDIncludeDeleted returns a graph object by ID or canonical ID, including soft-deleted objects.
@@ -620,14 +745,7 @@ func (r *Repository) GetByIDIncludeDeleted(ctx context.Context, projectID, id uu
 		return nil, apperror.ErrNotFound
 	}
 
-	// Prefer the HEAD version (supersedes_id IS NULL)
-	for i := range objects {
-		if objects[i].SupersedesID == nil {
-			return &objects[i], nil
-		}
-	}
-
-	return &objects[0], nil
+	return resolveObjectByID(objects, id), nil
 }
 
 // GetHeadByCanonicalID returns the HEAD version of a graph object by canonical ID.
@@ -774,7 +892,7 @@ func (r *Repository) CreateVersion(ctx context.Context, tx bun.Tx, prevHead *Gra
 }
 
 // SoftDelete marks a graph object as deleted by creating a tombstone version.
-func (r *Repository) SoftDelete(ctx context.Context, tx bun.Tx, obj *GraphObject, actorID *uuid.UUID, reason *string) error {
+func (r *Repository) SoftDelete(ctx context.Context, tx bun.Tx, obj *GraphObject, actorType string, actorID *uuid.UUID, reason *string) error {
 	now := time.Now()
 	tombstone := &GraphObject{
 		Type:         obj.Type,
@@ -784,10 +902,9 @@ func (r *Repository) SoftDelete(ctx context.Context, tx bun.Tx, obj *GraphObject
 		Labels:       obj.Labels,
 		DeletedAt:    &now,
 		DeleteReason: reason,
+		ActorType:    &actorType,
 		ActorID:      actorID,
 	}
-	actorType := "user"
-	tombstone.ActorType = &actorType
 
 	return r.CreateVersion(ctx, tx, obj, tombstone)
 }
@@ -795,9 +912,8 @@ func (r *Repository) SoftDelete(ctx context.Context, tx bun.Tx, obj *GraphObject
 // SoftDeleteOnBranch creates a branch-local tombstone for an object that only exists on main.
 // Unlike SoftDelete (which inherits branch from prevHead), this inserts a new HEAD directly
 // on the target branch with deleted_at set, without modifying the main-branch HEAD.
-func (r *Repository) SoftDeleteOnBranch(ctx context.Context, tx bun.Tx, mainHead *GraphObject, branchID *uuid.UUID, actorID *uuid.UUID, reason *string) error {
+func (r *Repository) SoftDeleteOnBranch(ctx context.Context, tx bun.Tx, mainHead *GraphObject, branchID *uuid.UUID, actorType string, actorID *uuid.UUID, reason *string) error {
 	now := time.Now()
-	actorType := "user"
 	tombstone := &GraphObject{
 		ID:              uuid.New(),
 		CanonicalID:     mainHead.CanonicalID,
@@ -828,7 +944,7 @@ func (r *Repository) SoftDeleteOnBranch(ctx context.Context, tx bun.Tx, mainHead
 }
 
 // Restore removes the deleted_at flag by creating a new non-deleted version.
-func (r *Repository) Restore(ctx context.Context, tx bun.Tx, obj *GraphObject, actorID *uuid.UUID) error {
+func (r *Repository) Restore(ctx context.Context, tx bun.Tx, obj *GraphObject, actorType string, actorID *uuid.UUID) error {
 	restored := &GraphObject{
 		Type:       obj.Type,
 		Key:        obj.Key,
@@ -836,10 +952,9 @@ func (r *Repository) Restore(ctx context.Context, tx bun.Tx, obj *GraphObject, a
 		Properties: obj.Properties,
 		Labels:     obj.Labels,
 		DeletedAt:  nil,
+		ActorType:  &actorType,
 		ActorID:    actorID,
 	}
-	actorType := "user"
-	restored.ActorType = &actorType
 
 	return r.CreateVersion(ctx, tx, obj, restored)
 }
@@ -1270,8 +1385,39 @@ func (r *Repository) ListRelationships(ctx context.Context, params RelationshipL
 	return rels, nil
 }
 
+// resolveRelationshipByID mirrors resolveObjectByID for relationships: an
+// explicit physical id that is a HEAD wins, then the main-branch HEAD, then any
+// HEAD, then the non-HEAD explicit id, then the stable first row. See
+// resolveObjectByID for the rationale (issue #1245).
+func resolveRelationshipByID(rels []GraphRelationship, id uuid.UUID) *GraphRelationship {
+	for i := range rels {
+		if rels[i].ID == id && rels[i].SupersedesID == nil {
+			return &rels[i]
+		}
+	}
+	for i := range rels {
+		if rels[i].SupersedesID == nil && rels[i].BranchID == nil {
+			return &rels[i]
+		}
+	}
+	for i := range rels {
+		if rels[i].SupersedesID == nil {
+			return &rels[i]
+		}
+	}
+	for i := range rels {
+		if rels[i].ID == id {
+			return &rels[i]
+		}
+	}
+	return &rels[0]
+}
+
 // GetRelationshipByID returns a relationship by its physical ID or canonical ID.
-// Accepts either type of ID transparently, preferring the HEAD version.
+// Accepts either type of ID transparently, preferring the HEAD version. When
+// several HEADs share a canonical_id (a relationship forked to a branch) the
+// main-branch HEAD wins deterministically, so a branch-less lookup cannot land
+// on a fork copy. See resolveRelationshipByID.
 func (r *Repository) GetRelationshipByID(ctx context.Context, projectID, id uuid.UUID) (*GraphRelationship, error) {
 	var rels []GraphRelationship
 	err := r.db.NewSelect().
@@ -1293,15 +1439,7 @@ func (r *Repository) GetRelationshipByID(ctx context.Context, projectID, id uuid
 		return nil, apperror.ErrNotFound
 	}
 
-	// Prefer the HEAD version (supersedes_id IS NULL)
-	for i := range rels {
-		if rels[i].SupersedesID == nil {
-			return &rels[i], nil
-		}
-	}
-
-	// Fallback: return the first match
-	return &rels[0], nil
+	return resolveRelationshipByID(rels, id), nil
 }
 
 // GetRelationshipHead returns the HEAD version of a relationship by type, src, dst.
@@ -1372,6 +1510,23 @@ func (r *Repository) CreateRelationship(ctx context.Context, tx bun.Tx, rel *Gra
 
 // CreateRelationshipVersion creates a new version of an existing relationship.
 func (r *Repository) CreateRelationshipVersion(ctx context.Context, tx bun.Tx, prevHead *GraphRelationship, newVersion *GraphRelationship) error {
+	// The new version inherits the prev-head's branch, because a version chain
+	// cannot span branches: the write supersedes prevHead in place, so writing
+	// the replacement to a different branch would strand prevHead's branch and
+	// resurrect a HEAD on the caller's branch. Callers that pass an explicit
+	// (non-nil) BranchID are asserting which branch this version belongs to, so
+	// a disagreement with prevHead means the caller resolved the wrong head
+	// (e.g. a branch-less, main-preferring lookup for a branch-scoped write) —
+	// fail loudly instead of silently writing to the wrong branch.
+	if newVersion.BranchID != nil && (prevHead.BranchID == nil || *newVersion.BranchID != *prevHead.BranchID) {
+		prevBranch := "main"
+		if prevHead.BranchID != nil {
+			prevBranch = prevHead.BranchID.String()
+		}
+		return fmt.Errorf("relationship version branch mismatch: requested branch %s but prev-head %s is on branch %s",
+			newVersion.BranchID, prevHead.ID, prevBranch)
+	}
+
 	// New version setup
 	newVersion.ID = uuid.New()
 	newVersion.CanonicalID = prevHead.CanonicalID
@@ -1411,24 +1566,28 @@ func (r *Repository) CreateRelationshipVersion(ctx context.Context, tx bun.Tx, p
 }
 
 // SoftDeleteRelationship marks a relationship as deleted by creating a tombstone version.
-func (r *Repository) SoftDeleteRelationship(ctx context.Context, tx bun.Tx, rel *GraphRelationship, reason *string) error {
+func (r *Repository) SoftDeleteRelationship(ctx context.Context, tx bun.Tx, rel *GraphRelationship, actorType string, actorID *uuid.UUID, reason *string) error {
 	now := time.Now()
 	tombstone := &GraphRelationship{
 		Properties:   rel.Properties,
 		Weight:       rel.Weight,
 		DeletedAt:    &now,
 		DeleteReason: reason,
+		ActorType:    &actorType,
+		ActorID:      actorID,
 	}
 
 	return r.CreateRelationshipVersion(ctx, tx, rel, tombstone)
 }
 
 // RestoreRelationship removes the deleted_at flag by creating a new non-deleted version.
-func (r *Repository) RestoreRelationship(ctx context.Context, tx bun.Tx, rel *GraphRelationship) error {
+func (r *Repository) RestoreRelationship(ctx context.Context, tx bun.Tx, rel *GraphRelationship, actorType string, actorID *uuid.UUID) error {
 	restored := &GraphRelationship{
 		Properties: rel.Properties,
 		Weight:     rel.Weight,
 		DeletedAt:  nil,
+		ActorType:  &actorType,
+		ActorID:    actorID,
 	}
 
 	return r.CreateRelationshipVersion(ctx, tx, rel, restored)
@@ -1453,14 +1612,32 @@ func (r *Repository) GetRelationshipHistory(ctx context.Context, projectID, cano
 }
 
 // GetRelationshipHeadByCanonicalID returns the HEAD version by canonical ID.
-func (r *Repository) GetRelationshipHeadByCanonicalID(ctx context.Context, projectID, canonicalID uuid.UUID) (*GraphRelationship, error) {
-	var rel GraphRelationship
-	err := r.db.NewSelect().
-		Model(&rel).
+//
+// The original single-row scan had no ORDER BY, so when a relationship has been
+// forked to a branch (two HEADs sharing a canonical_id) the selected row was
+// heap-order dependent. It now deterministically prefers the main-branch HEAD
+// (branch_id IS NULL) and falls back to the smallest-id branch HEAD, mirroring
+// GetHeadByCanonicalID's nil-branch default. Callers that need a specific branch
+// HEAD must pass that branchID (the merge fast-forward path does).
+//
+// A non-nil branchID scopes the lookup to exactly that branch's HEAD. A nil
+// branchID keeps the branch-less #1247 default above: prefer main, then the
+// smallest-id branch HEAD.
+func (r *Repository) GetRelationshipHeadByCanonicalID(ctx context.Context, projectID, canonicalID uuid.UUID, branchID *uuid.UUID) (*GraphRelationship, error) {
+	var rels []GraphRelationship
+	q := r.db.NewSelect().
+		Model(&rels).
 		Where("canonical_id = ?", canonicalID).
 		Where("project_id = ?", projectID).
-		Where("supersedes_id IS NULL").
-		Scan(ctx)
+		Where("supersedes_id IS NULL")
+
+	if branchID != nil {
+		q = q.Where("branch_id = ?", *branchID).OrderExpr("id ASC")
+	} else {
+		q = q.OrderExpr("(branch_id IS NULL) DESC, id ASC")
+	}
+
+	err := q.Limit(1).Scan(ctx)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -1469,7 +1646,11 @@ func (r *Repository) GetRelationshipHeadByCanonicalID(ctx context.Context, proje
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
-	return &rel, nil
+	if len(rels) == 0 {
+		return nil, apperror.ErrNotFound
+	}
+
+	return &rels[0], nil
 }
 
 // AcquireRelationshipLock acquires an advisory lock for a relationship.
@@ -2085,9 +2266,14 @@ func (r *Repository) GetDistinctTags(ctx context.Context, projectID uuid.UUID, p
 
 // BulkUpdateStatus updates the status of multiple objects.
 // Accepts either physical ids or canonical_ids.
-func (r *Repository) BulkUpdateStatus(ctx context.Context, projectID uuid.UUID, ids []uuid.UUID, status string, actorID *uuid.UUID) (int, error) {
+func (r *Repository) BulkUpdateStatus(ctx context.Context, projectID uuid.UUID, ids []uuid.UUID, status string, actorType string, actorID *uuid.UUID) (int, error) {
 	if len(ids) == 0 {
 		return 0, nil
+	}
+	// Default an empty actor type to "user" (mirrors BulkActionByFilter) so the
+	// actor_type UPDATE never violates chk_graph_objects_actor_type.
+	if actorType == "" {
+		actorType = ActorUser
 	}
 
 	now := time.Now()
@@ -2095,6 +2281,7 @@ func (r *Repository) BulkUpdateStatus(ctx context.Context, projectID uuid.UUID, 
 		Model((*GraphObject)(nil)).
 		Set("status = ?", status).
 		Set("updated_at = ?", now).
+		Set("actor_type = ?", actorType).
 		Set("actor_id = ?", actorID).
 		Where("(id IN (?) OR canonical_id IN (?))", bun.In(ids), bun.In(ids)).
 		Where("project_id = ?", projectID).
@@ -2759,6 +2946,8 @@ type BranchObjectHead struct {
 	// to a target branch by a prior merge (the merge ledger).
 	MergedToCanonicalID *uuid.UUID
 	ExtractionJobID     *uuid.UUID
+	ActorType           *string
+	ActorID             *uuid.UUID
 }
 
 // GetBranchObjectHeads returns HEAD versions of all objects on a branch.
@@ -2768,7 +2957,7 @@ func (r *Repository) GetBranchObjectHeads(ctx context.Context, projectID uuid.UU
 
 	q := r.db.NewSelect().
 		Model(&objects).
-		Column("id", "canonical_id", "content_hash", "type", "key", "status", "namespace", "labels", "properties", "deleted_at", "merged_to_canonical_id", "extraction_job_id").
+		Column("id", "canonical_id", "content_hash", "type", "key", "status", "namespace", "labels", "properties", "deleted_at", "merged_to_canonical_id", "extraction_job_id", "actor_type", "actor_id").
 		Where("project_id = ?", projectID).
 		Where("supersedes_id IS NULL")
 
@@ -2798,6 +2987,8 @@ func (r *Repository) GetBranchObjectHeads(ctx context.Context, projectID uuid.UU
 			DeletedAt:           obj.DeletedAt,
 			MergedToCanonicalID: obj.MergedToCanonicalID,
 			ExtractionJobID:     obj.ExtractionJobID,
+			ActorType:           obj.ActorType,
+			ActorID:             obj.ActorID,
 		}
 	}
 
@@ -2815,6 +3006,8 @@ type BranchRelationshipHead struct {
 	SrcID       uuid.UUID
 	DstID       uuid.UUID
 	Namespace   *string
+	ActorType   *string
+	ActorID     *uuid.UUID
 }
 
 // GetBranchRelationshipHeads returns HEAD versions of all relationships on a branch.
@@ -2824,7 +3017,7 @@ func (r *Repository) GetBranchRelationshipHeads(ctx context.Context, projectID u
 
 	q := r.db.NewSelect().
 		Model(&rels).
-		Column("id", "canonical_id", "content_hash", "type", "properties", "src_id", "dst_id", "namespace").
+		Column("id", "canonical_id", "content_hash", "type", "properties", "src_id", "dst_id", "namespace", "actor_type", "actor_id").
 		Where("project_id = ?", projectID).
 		Where("supersedes_id IS NULL").
 		Where("deleted_at IS NULL")
@@ -2851,6 +3044,8 @@ func (r *Repository) GetBranchRelationshipHeads(ctx context.Context, projectID u
 			SrcID:       rel.SrcID,
 			DstID:       rel.DstID,
 			Namespace:   rel.Namespace,
+			ActorType:   rel.ActorType,
+			ActorID:     rel.ActorID,
 		}
 	}
 
@@ -3037,6 +3232,9 @@ func (r *Repository) BulkCopyObjectsToBranch(ctx context.Context, projectID uuid
 			Labels:          obj.Labels,
 			ContentHash:     obj.ContentHash,
 			ExtractionJobID: obj.ExtractionJobID,
+			// Carry the source row's actor so a fork copy is not actor-less.
+			ActorType: obj.ActorType,
+			ActorID:   obj.ActorID,
 		}
 		batch = append(batch, newObj)
 		copiedCanonicals[obj.CanonicalID] = true
@@ -3110,6 +3308,9 @@ func (r *Repository) BulkCopyRelationshipsToBranch(ctx context.Context, projectI
 			Weight:      rel.Weight,
 			ContentHash: rel.ContentHash,
 			Namespace:   rel.Namespace,
+			// Carry the source row's actor so a fork copy is not actor-less.
+			ActorType: rel.ActorType,
+			ActorID:   rel.ActorID,
 		}
 		batch = append(batch, newRel)
 		copied++
@@ -3144,12 +3345,20 @@ type BulkActionParams struct {
 	Labels     []string       // for add/remove/set_labels
 	Limit      int
 	DryRun     bool
+	ActorType  string
 	ActorID    *uuid.UUID
 }
 
 // BulkActionByFilter executes a filter-then-action bulk operation on graph objects.
 // Supports dry_run (returns count without mutating) and all BulkAction* action types.
 func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionParams) (matched int, affected int, err error) {
+	// An empty actor type (e.g. a direct repo caller that doesn't resolve the
+	// actor) defaults to "user" so the actor_type UPDATE never violates the
+	// chk_graph_objects_actor_type CHECK constraint.
+	if params.ActorType == "" {
+		params.ActorType = ActorUser
+	}
+
 	// Pre-process property filters: resolve relative time values.
 	resolvedFilters := make([]PropertyFilter, 0, len(params.Filter.PropertyFilters))
 	for _, pf := range params.Filter.PropertyFilters {
@@ -3194,7 +3403,9 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 		q := r.db.NewUpdate().
 			TableExpr("kb.graph_objects").
 			Set("status = ?", params.Value).
-			Set("updated_at = ?", now)
+			Set("updated_at = ?", now).
+			Set("actor_type = ?", params.ActorType).
+			Set("actor_id = ?", params.ActorID)
 		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
@@ -3207,7 +3418,9 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 		q := r.db.NewUpdate().
 			TableExpr("kb.graph_objects").
 			Set("deleted_at = ?", now).
-			Set("updated_at = ?", now)
+			Set("updated_at = ?", now).
+			Set("actor_type = ?", params.ActorType).
+			Set("actor_id = ?", params.ActorID)
 		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
@@ -3246,7 +3459,9 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 		q := r.db.NewUpdate().
 			TableExpr("kb.graph_objects").
 			Set("properties = properties || ?::jsonb", string(propsJSON)).
-			Set("updated_at = ?", now)
+			Set("updated_at = ?", now).
+			Set("actor_type = ?", params.ActorType).
+			Set("actor_id = ?", params.ActorID)
 		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
@@ -3263,7 +3478,9 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 		q := r.db.NewUpdate().
 			TableExpr("kb.graph_objects").
 			Set("properties = ?::jsonb", string(propsJSON)).
-			Set("updated_at = ?", now)
+			Set("updated_at = ?", now).
+			Set("actor_type = ?", params.ActorType).
+			Set("actor_id = ?", params.ActorID)
 		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
@@ -3276,7 +3493,9 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 		q := r.db.NewUpdate().
 			TableExpr("kb.graph_objects").
 			Set("labels = ?::text[]", formatTextArray(params.Labels)).
-			Set("updated_at = ?", now)
+			Set("updated_at = ?", now).
+			Set("actor_type = ?", params.ActorType).
+			Set("actor_id = ?", params.ActorID)
 		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
@@ -3289,7 +3508,9 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 		q := r.db.NewUpdate().
 			TableExpr("kb.graph_objects").
 			Set("labels = ARRAY(SELECT DISTINCT unnest(labels || ?::text[]))", formatTextArray(params.Labels)).
-			Set("updated_at = ?", now)
+			Set("updated_at = ?", now).
+			Set("actor_type = ?", params.ActorType).
+			Set("actor_id = ?", params.ActorID)
 		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
@@ -3302,7 +3523,9 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 		q := r.db.NewUpdate().
 			TableExpr("kb.graph_objects").
 			Set("labels = ARRAY(SELECT unnest(labels) EXCEPT SELECT unnest(?::text[]))", formatTextArray(params.Labels)).
-			Set("updated_at = ?", now)
+			Set("updated_at = ?", now).
+			Set("actor_type = ?", params.ActorType).
+			Set("actor_id = ?", params.ActorID)
 		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
