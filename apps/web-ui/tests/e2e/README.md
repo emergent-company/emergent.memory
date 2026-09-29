@@ -329,6 +329,55 @@ The remaining gaps above are tracked as an OpenSpec change:
 `openspec/changes/web-ui-e2e-coverage/` (phases per feature area, with per-task
 status and the blocked items recorded in `tasks.md`).
 
+## CI — hermetic JS wiring gate
+
+The session-mode suite above **does not run in CI**: it needs a gateway running
+in session mode (`AUTH_MODE=session` + Zitadel), a Zitadel test user in
+`.env.e2e`, and the real dev memory API. None of that is reproducible on a
+GitHub runner without shipping credentials, so historically `web-ui.yml` ran
+only `go build / vet / test / lint` — and every JavaScript-side regression was
+unguarded (e.g. #1216: `a2uiButton` referenced an undefined `surfaceId`, so
+every A2UI card-button click threw and never dispatched; #1201).
+
+The CI gate is therefore a **hermetic DOM-level Playwright run**, added as the
+`js` job in `.github/workflows/web-ui.yml` and folded into the required `ci`
+aggregate:
+
+```bash
+cd tests/e2e
+npm ci
+npx playwright install chromium   # once
+npx playwright test --config=js-dom.config.ts   # or: task e2e:js
+```
+
+- `js-dom.config.ts` targets only `specs/js/`; it starts **no** server.
+- `specs/js/a2ui-wiring.spec.ts` loads the shipped
+  `gateway/webui/static/js/chat-components.js` verbatim into a bare page
+  (`page.addScriptTag`) and drives `renderA2UISurface` — the exact path the
+  browser takes for an A2UI `ui` SSE event. It clicks the proposal/approval
+  action rows (`a2uiActions`) and a question option (`a2uiQuestion`) and
+  asserts each emits `a2ui:action` carrying `{surfaceId, action:{componentId,
+  response}}`, and that no `pageerror` (e.g. a `ReferenceError` for an undefined
+  identifier) is raised. It also asserts an unknown component degrades to a
+  summary card without throwing.
+- The same CI job runs `node --check` over every
+  `gateway/webui/static/js/*.js` first — a fast syntax gate.
+- The gateway-free specs are excluded from the live `chromium` project
+  (`playwright.config.ts` `testIgnore`) so a local full-suite run does not
+  schedule them behind `setup`.
+
+**What the gate covers:** the wiring of the shipped static JS in a real browser
+engine — A2UI card rendering + action-event dispatch + no uncaught runtime
+errors on the exercised paths, plus JS syntax across the static bundle.
+
+**What it does NOT cover:** the gateway↔browser round trip (SSE passthrough,
+htmx swaps), session/auth flows, and the rest of the session-mode suite
+(navigation, mutations, live-LLM scenarios). Those still require the running
+dev installation and stay manual / not-in-CI. Making the full suite hermetic
+would need a stub gateway + memory fixtures that cover every surface (the
+existing `mock-memory.mjs` implements only the public agent-share surface) —
+tracked as follow-up, not attempted here.
+
 ## Notes
 
 - The suite reuses the already-running gateway; it does **not** start one.

@@ -44,6 +44,10 @@ export default defineConfig({
         /-ui\.spec\.ts/,
         /specs\/connector\/.*\.spec\.ts/,
         /specs\/share\/.*\.spec\.ts/,
+        // Gateway-free DOM wiring specs run under their own config
+        // (`js-dom.config.ts`) — they need no gateway/session, so the live
+        // suite must not schedule them behind `setup`.
+        /specs\/js\/.*\.spec\.ts/,
       ],
       use: { ...devices['Desktop Chrome'], storageState: STORAGE_STATE },
       dependencies: ['setup'],
