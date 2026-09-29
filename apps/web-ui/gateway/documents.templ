@@ -59,8 +59,13 @@ templ uploadForm(flashMsg string, flashErr error) {
 		<script>
 		// Clicking Upload with no file chosen opens the file picker instead of
 		// posting an empty multipart form (which the API rejects with a 400).
-		// Delegated from document so it survives htmx-boosted navigations; the
-		// one-shot guard keeps it from stacking listeners across visits.
+		// The page shell boosts forms (hx-boost on <main>), so htmx has already
+		// claimed the submit by the time a bubbling handler runs: preventDefault
+		// alone cannot stop its request. Listen in the capture phase and
+		// stopPropagation so the event never reaches htmx's per-form listener,
+		// then open the picker. Delegated from document so it survives
+		// htmx-boosted navigations; the one-shot guard keeps it from stacking
+		// listeners across visits.
 		if (!window.__documentsUploadInit) {
 			window.__documentsUploadInit = true;
 			document.addEventListener('submit', function (event) {
@@ -69,9 +74,10 @@ templ uploadForm(flashMsg string, flashErr error) {
 				var input = form.querySelector('input[type="file"]');
 				if (input && input.files && input.files.length === 0) {
 					event.preventDefault();
+					event.stopPropagation();
 					input.click();
 				}
-			});
+			}, true);
 		}
 		</script>
 	</div>

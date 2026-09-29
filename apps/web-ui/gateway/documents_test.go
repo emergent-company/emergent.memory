@@ -488,12 +488,16 @@ func TestRenderDocumentsPage(t *testing.T) {
 
 // TestRenderDocumentsUploadPicker pins the upload-form contract: the form is
 // tagged for the picker wiring, and the page ships the script that opens the
-// file dialog when Upload is pressed with no file chosen.
+// file dialog when Upload is pressed with no file chosen. The listener must be
+// registered in the capture phase (`, true`) and stop propagation — otherwise
+// htmx's boosted-form submit handler, attached to the form, fires first and the
+// empty multipart request still reaches the API.
 func TestRenderDocumentsUploadPicker(t *testing.T) {
 	html := renderHTML(t, DocumentsPage(nil, "", nil, "", nil))
 	for _, want := range []string{
 		`data-document-upload`, `enctype="multipart/form-data"`, `name="file"`,
-		`__documentsUploadInit`, `form.matches('[data-document-upload]')`, `input.click()`,
+		`__documentsUploadInit`, `form.matches('[data-document-upload]')`,
+		`event.preventDefault()`, `event.stopPropagation()`, `input.click()`, `}, true);`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("upload picker wiring missing %q", want)
