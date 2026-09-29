@@ -28,8 +28,7 @@ GET    /api/agents/{id}                → one agent
 POST   /api/chat        (SSE)          → chat relay
 GET    /api/sessions                   → session log
 GET    /api/session?room=…             → session records
-GET    /api/memories/capability?agent=…→ {agent, hasMemory}
-GET    /api/memories?agent=…&query=…   → memories
+GET    /api/agents/{id}/objects?provenance=…&cursor=… → {items, next_cursor}
 ```
 
 A device credential outside that surface → 403; a missing/invalid/non-device bearer → 401.
@@ -77,8 +76,7 @@ GET    /api/conversations/{id}/dump       → formatted session dump (?format=te
 POST   /api/token                      → {identity, agent, room?} → {server_url, participant_token}
 GET    /api/sessions                   → session log
 GET    /api/session?room=…             → session records
-GET    /api/memories/capability?agent=…→ {agent, hasMemory}
-GET    /api/memories?agent=…&query=…   → memories
+GET    /api/agents/{id}/objects?provenance=…&cursor=… → {items, next_cursor}
 ```
 
 ### 1a. Device setup (QR onboarding, NO auth)

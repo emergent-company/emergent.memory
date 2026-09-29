@@ -30,7 +30,7 @@ token.
 | `POST /api/token` | iOS room-join JWT | LiveKit API (server-side key) |
 | `POST /api/setup` | one-time-token → device credential exchange (no auth) | one-time setup tokens + memory device-token mint |
 | `GET /api/sessions`, `GET /api/session` | iOS session log/records | memory conversations/history |
-| `GET /api/memories`, `GET /api/memories/capability` | iOS memory list/capability | memory search/entity-query |
+| `GET /api/agents/{id}/objects` | iOS agent object browser (actor provenance) | memory graph objects, actor-filtered |
 
 Notes:
 - Chat is a **pass-through relay** (or the web UI could call memory directly — but relaying

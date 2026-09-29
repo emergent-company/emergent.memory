@@ -51,15 +51,6 @@ The dashboard SHALL list the agent's most recent conversations (not other agents
 - **WHEN** the dashboard loads for an agent with no conversations
 - **THEN** a clear "no chats yet" state is shown
 
-### Requirement: Link to the memories browser
-
-The dashboard SHALL provide a link to the memories subpage.
-
-#### Scenario: Memories link present
-
-- **WHEN** the dashboard loads
-- **THEN** a link to the memories subpage is shown
-
 ### Requirement: Navigate agent sections
 
 The agent pages SHALL show a vertical sub-menu with Dashboard, Settings, Sandbox, and Sessions sections scoped to that agent. On any agent Settings subpage, the Settings entry SHALL expand into a group of six indented subpage links — General, Model, Tools, Skills, Delegation, and MCP sharing — with the active subpage highlighted.
@@ -172,43 +163,6 @@ The Sessions section SHALL list that agent's conversations, most recent first, e
 - **WHEN** the Sessions section loads and the agent has no conversations
 - **THEN** a clear empty state is shown
 
-### Requirement: List memory objects
-
-The memories subpage SHALL list memory objects, each showing its content, category, and confidence.
-
-#### Scenario: Memories present
-
-- **WHEN** the memories subpage loads and memory objects exist
-- **THEN** the objects are listed, each showing content, category, and confidence
-
-#### Scenario: No memories
-
-- **WHEN** the memories subpage loads and no memory objects exist
-- **THEN** a clear "no memories yet" state is shown
-
-### Requirement: Search memory objects
-
-The memories subpage SHALL let the user search memory objects and display the matching results.
-
-#### Scenario: Search with matches
-
-- **WHEN** the user enters a query that matches stored objects
-- **THEN** the matching objects are listed
-
-#### Scenario: Search with no matches
-
-- **WHEN** the user enters a query with no matching objects
-- **THEN** a clear "no matches" state is shown
-
-### Requirement: Show a memory's full content
-
-Selecting a memory SHALL show its full content.
-
-#### Scenario: Open a memory detail
-
-- **WHEN** the user selects a memory in the list
-- **THEN** the memory's full content is displayed
-
 ### Requirement: Surface load failures without crashing
 
 The dashboard and memories subpage SHALL show a clear error state when a backend fetch fails and SHALL NOT render a broken page.
@@ -217,3 +171,12 @@ The dashboard and memories subpage SHALL show a clear error state when a backend
 
 - **WHEN** a required backend request fails
 - **THEN** the affected section shows an error message while the rest of the page remains usable
+
+### Requirement: Link to objects created/updated by this agent
+
+The dashboard SHALL provide a link to a subpage that browses the project's objects filtered by provenance — objects created by or updated by this agent.
+
+#### Scenario: Objects link present
+
+- **WHEN** the dashboard loads
+- **THEN** a link to the agent's created/updated objects subpage is shown

@@ -82,4 +82,4 @@
 
 ## 5. Archive
 
-- [ ] 5.1 After the final PR merges and CI is green, run `openspec archive agent-object-provenance --yes` to sync delta specs into `openspec/specs/`
+- [x] 5.1 After the final PR merges and CI is green, run `openspec archive agent-object-provenance --yes` to sync delta specs into `openspec/specs/`
