@@ -55,10 +55,10 @@ Sequencing rule: **never remove a grant path in the same release that removes it
 
 ## 7. [BREAKING] Flip the token-scope trust default off (Release N+1)
 
-- [ ] 7.1 Change `MEMORY_OIDC_TRUST_TOKEN_SCOPES` default to `false`; operators who need it set it explicitly and get a per-boot warning
-- [ ] 7.2 Remove the `ZITADEL_OIDC_DEFAULT_SCOPES` and `ZITADEL_USERINFO_GRANT_ALL_SCOPES` aliases
-- [ ] 7.3 Update release notes with the exact break ("anyone who configured Memory scope names in Zitadel loses those grants on upgrade; set `MEMORY_OIDC_TRUST_TOKEN_SCOPES=true` to retain them temporarily") and verify unit tests assert the new default
-- [ ] 7.4 Verify the flip only narrows: with the flag off, no caller receives a token-derived scope (exact-set regression test per tier). D4's entitlement widenings are Release-N and already reviewed; this task asserts the flip itself introduces no new grant
+- [x] 7.1 Change `MEMORY_OIDC_TRUST_TOKEN_SCOPES` default to `false`; operators who need it set it explicitly and get a per-boot warning
+- [x] 7.2 Remove the `ZITADEL_OIDC_DEFAULT_SCOPES` and `ZITADEL_USERINFO_GRANT_ALL_SCOPES` aliases
+- [x] 7.3 Update release notes with the exact break ("anyone who configured Memory scope names in Zitadel loses those grants on upgrade; set `MEMORY_OIDC_TRUST_TOKEN_SCOPES=true` to retain them temporarily") and verify unit tests assert the new default
+- [x] 7.4 Verify the flip only narrows: with the flag off, no caller receives a token-derived scope (exact-set regression test per tier). D4's entitlement widenings are Release-N and already reviewed; this task asserts the flip itself introduces no new grant
 
 ## 8. [BREAKING] Remove the duplicate authority (Release N+2)
 

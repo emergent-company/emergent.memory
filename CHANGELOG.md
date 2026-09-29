@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### BREAKING CHANGES
+
+**Token-carried OIDC scopes are no longer honoured by default** (2026-09-29)
+
+`MEMORY_OIDC_TRUST_TOKEN_SCOPES` now defaults to `false`. Anyone who configured Memory scope
+names in Zitadel loses those grants on upgrade; set `MEMORY_OIDC_TRUST_TOKEN_SCOPES=true` to
+retain them temporarily. When set, the server emits a startup warning on every boot and the
+flag remains opt-in; migrate IdP-configured Memory scope names to application-owned scopes
+(project memberships, `org_admin`, superadmin grants, or `MEMORY_OIDC_DEFAULT_SCOPES`) before
+removing it. The deprecated `ZITADEL_OIDC_DEFAULT_SCOPES` and
+`ZITADEL_USERINFO_GRANT_ALL_SCOPES` aliases are removed in this release.
+
 ### Added
 
 **Recent Items Page** (2025-12-15)

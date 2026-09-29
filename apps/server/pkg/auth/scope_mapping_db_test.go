@@ -300,7 +300,7 @@ func TestResolveOIDCScopesWrongUserHasNoMembership(t *testing.T) {
 	}
 
 	// Keep the zero-scopes assertion deterministic: an ambient
-	// ZITADEL_OIDC_DEFAULT_SCOPES would otherwise be returned for the
+	// MEMORY_OIDC_DEFAULT_SCOPES would otherwise be returned for the
 	// non-member by resolveOIDCScopes' default-set branch.
 	clearZitadelEnv(t)
 	m := newTestMiddleware(t)

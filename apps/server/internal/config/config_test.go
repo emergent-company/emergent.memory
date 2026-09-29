@@ -485,7 +485,7 @@ func TestMCPRegistryConfig_BaseURL(t *testing.T) {
 
 func TestZitadelOIDCScopeConfig(t *testing.T) {
 	clearScopePolicyEnv(t)
-	t.Setenv("ZITADEL_OIDC_DEFAULT_SCOPES", "data:read,search")
+	t.Setenv("MEMORY_OIDC_DEFAULT_SCOPES", "data:read,search")
 
 	cfg, err := NewConfig(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
@@ -495,10 +495,28 @@ func TestZitadelOIDCScopeConfig(t *testing.T) {
 	if len(cfg.Zitadel.OIDCDefaultScopes) != 2 ||
 		cfg.Zitadel.OIDCDefaultScopes[0] != "data:read" ||
 		cfg.Zitadel.OIDCDefaultScopes[1] != "search" {
-		t.Fatalf("OIDCDefaultScopes = %v, want [data:read search] (via deprecated alias)", cfg.Zitadel.OIDCDefaultScopes)
+		t.Fatalf("OIDCDefaultScopes = %v, want [data:read search]", cfg.Zitadel.OIDCDefaultScopes)
 	}
 	if !cfg.Zitadel.UserinfoGrantAllScopes {
 		t.Fatal("UserinfoGrantAllScopes default should be true")
+	}
+	// §7.1 — token-scope trust is opt-in: the standing default must be false.
+	if cfg.Zitadel.TrustTokenScopes {
+		t.Fatal("TrustTokenScopes default must be false (token-scope trust is opt-in)")
+	}
+}
+
+// §7.1 — an operator can still opt in explicitly, and only then is trust on.
+func TestZitadelTrustTokenScopesExplicitOptIn(t *testing.T) {
+	clearScopePolicyEnv(t)
+	t.Setenv("MEMORY_OIDC_TRUST_TOKEN_SCOPES", "true")
+
+	cfg, err := NewConfig(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	if !cfg.Zitadel.TrustTokenScopes {
+		t.Fatal("explicit MEMORY_OIDC_TRUST_TOKEN_SCOPES=true must enable token-scope trust")
 	}
 }
 

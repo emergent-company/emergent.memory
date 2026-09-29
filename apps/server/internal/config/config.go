@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
-	"os"
 	"time"
 
 	"github.com/caarlos0/env/v11"
@@ -204,9 +203,7 @@ type ZitadelConfig struct {
 	// whose token carries no explicit Memory scope and whose project role has no
 	// defined mapping. Comma-separated. Empty (the default) grants nothing,
 	// which preserves the fail-closed behaviour of the introspection path.
-	// The canonical name is MEMORY_OIDC_DEFAULT_SCOPES; ZITADEL_OIDC_DEFAULT_SCOPES
-	// is accepted as a deprecated alias for one release (see
-	// reconcileScopePolicyAliases).
+	// The application-owned name is MEMORY_OIDC_DEFAULT_SCOPES.
 	OIDCDefaultScopes []string `env:"MEMORY_OIDC_DEFAULT_SCOPES"`
 
 	// UserinfoGrantAllScopes preserves the legacy all-or-nothing behaviour of the
@@ -215,22 +212,15 @@ type ZitadelConfig struct {
 	// user receives GetAllScopes(). It is ignored once introspection is
 	// configured, so adding introspection credentials disables the all-grant even
 	// if this flag is left at its default.
-	// The canonical name is MEMORY_USERINFO_GRANT_ALL_SCOPES;
-	// ZITADEL_USERINFO_GRANT_ALL_SCOPES is accepted as a deprecated alias for one
-	// release (see reconcileScopePolicyAliases).
+	// The application-owned name is MEMORY_USERINFO_GRANT_ALL_SCOPES.
 	UserinfoGrantAllScopes bool `env:"MEMORY_USERINFO_GRANT_ALL_SCOPES" envDefault:"true"`
 
-	// Deprecated aliases. These are populated only to implement the one-release
-	// alias window; they are reconciled into the canonical fields in
-	// reconcileScopePolicyAliases and are not read elsewhere. Removed next release.
-	OIDCDefaultScopesAlias      []string `env:"ZITADEL_OIDC_DEFAULT_SCOPES"`
-	UserinfoGrantAllScopesAlias bool     `env:"ZITADEL_USERINFO_GRANT_ALL_SCOPES"`
-
 	// TrustTokenScopes governs whether Memory scope names carried on a validated
-	// OIDC token are honoured as a grant. Introduced enabled so Release N changes
-	// no behaviour; the standing default flips to disabled in the following
-	// release, after which the token-scope grant path is removed.
-	TrustTokenScopes bool `env:"MEMORY_OIDC_TRUST_TOKEN_SCOPES" envDefault:"true"`
+	// OIDC token are honoured as a grant. It is opt-in: the standing default is
+	// disabled (fail closed), so a validated token cannot mint a Memory scope
+	// unless an operator explicitly sets MEMORY_OIDC_TRUST_TOKEN_SCOPES=true.
+	// When enabled, the middleware emits a per-boot warning naming the flag.
+	TrustTokenScopes bool `env:"MEMORY_OIDC_TRUST_TOKEN_SCOPES" envDefault:"false"`
 
 	// TrustRoleSuperadmin governs whether a standing Zitadel project role maps to
 	// the superadmin_full entitlement (issue #812 Q6). Default OFF; the role must
@@ -268,56 +258,6 @@ func (z *ZitadelConfig) UserinfoAllGrantActive() bool {
 		return false
 	}
 	return z.UserinfoGrantAllScopes && !z.IntrospectionConfigured()
-}
-
-// reconcileScopePolicyAliases applies the one-release deprecation window for the
-// scope-policy knobs: each previously shipped ZITADEL_* name is honoured as an
-// alias of its canonical MEMORY_* name, with a startup warning. When both the
-// canonical name and its alias are set, the canonical name wins and the alias is
-// ignored (also with a warning). It is idempotent and logs nothing when no alias
-// is present.
-func (z *ZitadelConfig) reconcileScopePolicyAliases(log *slog.Logger) {
-	if z == nil {
-		return
-	}
-	const (
-		canonicalDefaultScopes = "MEMORY_OIDC_DEFAULT_SCOPES"
-		aliasDefaultScopes     = "ZITADEL_OIDC_DEFAULT_SCOPES"
-		canonicalGrantAll      = "MEMORY_USERINFO_GRANT_ALL_SCOPES"
-		aliasGrantAll          = "ZITADEL_USERINFO_GRANT_ALL_SCOPES"
-	)
-
-	_, defaultCanonicalSet := os.LookupEnv(canonicalDefaultScopes)
-	if _, aliasSet := os.LookupEnv(aliasDefaultScopes); aliasSet {
-		if defaultCanonicalSet {
-			log.Warn("deprecated scope-policy alias ignored: canonical name is also set",
-				slog.String("canonical", canonicalDefaultScopes),
-				slog.String("alias", aliasDefaultScopes),
-			)
-		} else {
-			z.OIDCDefaultScopes = z.OIDCDefaultScopesAlias
-			log.Warn("deprecated scope-policy alias in use; migrate to the canonical name",
-				slog.String("alias", aliasDefaultScopes),
-				slog.String("canonical", canonicalDefaultScopes),
-			)
-		}
-	}
-
-	_, grantCanonicalSet := os.LookupEnv(canonicalGrantAll)
-	if _, aliasSet := os.LookupEnv(aliasGrantAll); aliasSet {
-		if grantCanonicalSet {
-			log.Warn("deprecated scope-policy alias ignored: canonical name is also set",
-				slog.String("canonical", canonicalGrantAll),
-				slog.String("alias", aliasGrantAll),
-			)
-		} else {
-			z.UserinfoGrantAllScopes = z.UserinfoGrantAllScopesAlias
-			log.Warn("deprecated scope-policy alias in use; migrate to the canonical name",
-				slog.String("alias", aliasGrantAll),
-				slog.String("canonical", canonicalGrantAll),
-			)
-		}
-	}
 }
 
 // EmbeddingsConfig holds embedding service configuration
@@ -819,8 +759,6 @@ func NewConfig(log *slog.Logger) (*Config, error) {
 	if err := env.Parse(cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
-
-	cfg.Zitadel.reconcileScopePolicyAliases(log)
 
 	log.Info("configuration loaded",
 		slog.String("environment", cfg.Environment),

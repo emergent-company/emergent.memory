@@ -22,8 +22,6 @@ func clearZitadelEnv(t *testing.T) {
 	for _, k := range []string{
 		"ZITADEL_CLIENT_JWT",
 		"ZITADEL_CLIENT_JWT_PATH",
-		"ZITADEL_USERINFO_GRANT_ALL_SCOPES",
-		"ZITADEL_OIDC_DEFAULT_SCOPES",
 		"DISABLE_ZITADEL_INTROSPECTION",
 		"MEMORY_USERINFO_GRANT_ALL_SCOPES",
 		"MEMORY_OIDC_DEFAULT_SCOPES",
@@ -71,7 +69,7 @@ func TestAdversarialIntrospectionOutageDoesNotReenableAllGrant(t *testing.T) {
 // Shipped default posture: with no Zitadel credentials, the userinfo path still
 // receives the full catalogue (pre-existing pilot behaviour preserved by #730).
 // This documents that #667 is only mitigated when the operator configures
-// introspection or sets ZITADEL_USERINFO_GRANT_ALL_SCOPES=false.
+// introspection or sets MEMORY_USERINFO_GRANT_ALL_SCOPES=false.
 func TestAdversarialShippedDefaultStillAllGrantsUserinfo(t *testing.T) {
 	clearZitadelEnv(t)
 	cfg, err := config.NewConfig(slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -79,7 +77,7 @@ func TestAdversarialShippedDefaultStillAllGrantsUserinfo(t *testing.T) {
 		t.Fatalf("config.NewConfig: %v", err)
 	}
 	if !cfg.Zitadel.UserinfoGrantAllScopes {
-		t.Fatal("expected the shipped default ZITADEL_USERINFO_GRANT_ALL_SCOPES=true")
+		t.Fatal("expected the shipped default MEMORY_USERINFO_GRANT_ALL_SCOPES=true")
 	}
 
 	m := &Middleware{
@@ -122,12 +120,14 @@ func TestAdversarialNonMemberReceivesConfiguredDefault(t *testing.T) {
 }
 
 // Explicit Memory scopes in the token are returned verbatim with no project or
-// membership check. This is by design (issuer-granted), but a token carrying
-// Memory scopes is honoured for ANY declared project. Requires issuer
-// cooperation to be exploitable.
+// membership check, but ONLY while token-scope trust is explicitly enabled
+// (§7.1: opt-in, disabled by default). This is by design (issuer-granted), but a
+// token carrying Memory scopes is honoured for ANY declared project. Requires
+// issuer cooperation to be exploitable.
 func TestAdversarialExplicitScopesBypassMembership(t *testing.T) {
 	clearZitadelEnv(t)
 	m := newTestMiddleware(t)
+	m.cfg.Zitadel.TrustTokenScopes = true                                                    // opt in: the standing default is off
 	m.roleLookup = func(ctx context.Context, p, u string) (string, error) { return "", nil } // non-member
 
 	got := m.resolveOIDCScopes(context.Background(), "user-uuid", "foreign-project", []string{"data:write", "openid"}, nil)

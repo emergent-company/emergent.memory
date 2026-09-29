@@ -200,7 +200,8 @@ func extractZitadelProjectRoles(claims map[string]any) []ZitadelProjectRole {
 //
 // Resolution order (app-owned, issue #812 D4):
 //  0. explicit Memory scopes carried by the token, verbatim — only while
-//     MEMORY_OIDC_TRUST_TOKEN_SCOPES is enabled (terminal when it applies);
+//     MEMORY_OIDC_TRUST_TOKEN_SCOPES is explicitly enabled (opt-in; disabled by
+//     default). Terminal when it applies;
 //  1. an active superadmin_full grant (app-side core.superadmins row, or a
 //     standing Zitadel project role) — terminal: the full catalogue;
 //  2. an org_admin membership for the request organization — the

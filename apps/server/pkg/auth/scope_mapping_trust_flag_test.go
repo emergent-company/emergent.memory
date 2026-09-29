@@ -10,11 +10,12 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/config"
 )
 
-// §2 — MEMORY_OIDC_TRUST_TOKEN_SCOPES gates the token-scope grant branch. When
-// enabled (the Release N default) a vocabulary-matching token scope is honoured
-// verbatim and terminally; when disabled the token branch is skipped entirely and
-// the resolver proceeds to app-derived entitlements → default → empty, never
-// unioning token scopes with app-derived scopes.
+// §2/§7 — MEMORY_OIDC_TRUST_TOKEN_SCOPES gates the token-scope grant branch.
+// As of the §7 flip the standing default is OFF (opt-in): a token-carried
+// vocabulary-matching scope is honoured verbatim and terminally only when an
+// operator explicitly enables the flag; otherwise the token branch is skipped
+// entirely and the resolver proceeds to app-derived entitlements → default →
+// empty, never unioning token scopes with app-derived scopes.
 
 func TestTrustTokenScopesOnHonoursTokenScopesVerbatim(t *testing.T) {
 	m := newTestMiddleware(t)

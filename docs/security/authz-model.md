@@ -31,7 +31,7 @@ order in `resolveOIDCScopes` (`pkg/auth/scope_mapping.go:218-276`).
 
 | Tier | Grant source | Result | Code |
 |---|---|---|---|
-| 0 | token-carried Memory scope (OIDC) | verbatim, terminal **only while** `MEMORY_OIDC_TRUST_TOKEN_SCOPES` is enabled | `scope_mapping.go:220-224` |
+| 0 | token-carried Memory scope (OIDC) | verbatim, terminal **only while** `MEMORY_OIDC_TRUST_TOKEN_SCOPES` is enabled (opt-in; disabled by default) | `scope_mapping.go:220-224` |
 | 1 | `superadmin_full` | full scope catalogue, terminal | `scope_mapping.go:226-236`, `superadmin.go:21-40` |
 | 2 | `org_admin` membership | `org:read`, `org:invite:create`, `org:project:create`, `org:project:delete` — **no** `project:*`/data/schema/agent scope | `scope_mapping.go:29-32`, `:355-375` |
 | 3 | project membership role | viewer ⊂ user ⊂ admin (nested by construction) | `scope_mapping.go:52-57`, `:107-118` |
