@@ -1,0 +1,181 @@
+package main
+
+import (
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// objectPreviewDrawer is the global, right-hand read-only object preview. It
+// lives OUTSIDE #main-content in appShell (sibling of sidePanel), so HTMX
+// sidebar navigation never destroys it. object-preview.js drives open/close and
+// loads the body from GET /objects/:id/preview. The static header carries the
+// close button and the "open full object page" action the caller asks for; the
+// object's own icon/type/label identity is rendered by the swapped partial.
+//
+// The empty <div id="object-preview-actions-slot"> at the foot of the partial
+// is the extension point for future surfaces (comments, actions) — it renders
+// nothing today.
+templ objectPreviewDrawer() {
+	<div id="object-preview-root">
+		<!-- Backdrop: click closes the preview (object-preview.js). -->
+		<div id="object-preview-backdrop" class="fixed inset-0 z-40 hidden bg-black/40"></div>
+		<aside
+			id="object-preview-panel"
+			class="bg-base-100 fixed top-0 right-0 z-50 flex h-full w-full max-w-lg translate-x-full flex-col shadow-2xl transition-transform duration-300 ease-out"
+			role="dialog"
+			aria-modal="true"
+			aria-label="Object preview"
+			aria-hidden="true"
+			inert
+		>
+			<div class="border-base-content/10 flex items-center justify-between gap-2 border-b px-3 py-2.5">
+				<div class="flex min-w-0 items-center gap-2">
+					@ui.IconSpan("lucide--scan-eye", "size-4 text-primary")
+					<span class="text-muted-faint truncate text-[11px] font-medium tracking-wider uppercase">Preview</span>
+				</div>
+				<div class="flex shrink-0 items-center gap-1">
+					<!-- Jump to the edit page. object-preview.js points this at the
+					     clicked reference's href on open, so it resolves even before
+					     the preview body has loaded. -->
+					@ui.Button(ui.ButtonProps{
+						Type:      ui.ButtonTypeLink,
+						Href:      "#",
+						Variant:   ui.ButtonGhost,
+						Size:      ui.ButtonSM,
+						Shape:     ui.ButtonShapeCircle,
+						Icon:      "lucide--pencil",
+						AriaLabel: "Open full object page",
+						Attrs:     templ.Attributes{"id": "object-preview-edit", "data-testid": "object-preview-edit", "title": "Open full object page"},
+					})
+					@ui.Button(ui.ButtonProps{
+						Type:      ui.ButtonTypeButton,
+						Variant:   ui.ButtonGhost,
+						Size:      ui.ButtonSM,
+						Shape:     ui.ButtonShapeCircle,
+						Icon:      "lucide--x",
+						AriaLabel: "Close object preview",
+						Attrs:     templ.Attributes{"id": "object-preview-close", "data-testid": "object-preview-close"},
+					})
+				</div>
+			</div>
+			<!-- hx target for GET /objects/:id/preview; object-preview.js swaps the
+			     partial in here and renders a spinner / error state around it. -->
+			<div id="object-preview-body" class="min-h-0 grow overflow-y-auto" aria-live="polite"></div>
+		</aside>
+	</div>
+}
+
+// objectPreviewContent is the read-only object summary swapped into
+// #object-preview-body: a scannable identity header (icon + type + display
+// label) and the object's values laid out as label→value rows — never inputs.
+// typeUIByType carries the compiled types' declared ui accent so the header
+// icon matches the rest of the UI; relLabel, when set, is the humanised
+// relationship type the reference carried.
+//
+// Empty values still render (de-emphasised with a muted em dash) so the shape of
+// every property is visible; each row carries data-empty="true" so a future
+// "hide empties" toggle can fold them without a markup change.
+templ objectPreviewContent(obj *GraphObject, typeUIByType map[string]typeUI, relLabel string) {
+	{{ tui := typeUIOf(typeUIByType, obj.Type) }}
+	<div class="flex flex-col gap-5 p-4">
+		<div class="flex items-start gap-3">
+			@typeIconTile(tui.Icon, tui.Color)
+			<div class="min-w-0">
+				<div class="mb-1 flex flex-wrap items-center gap-2">
+					@typeNameChip(obj.Type, ui.BadgePrimary, tui.Icon, tui.Color)
+					if obj.Status != "" {
+						@ui.Badge(ui.BadgeProps{
+							Label:   obj.Status,
+							Variant: ui.BadgeGhost,
+							Size:    ui.BadgeSizeSM,
+						})
+					}
+				</div>
+				<h3 id="object-preview-heading" class="text-base leading-tight font-semibold break-words">{ graphObjectLabel(*obj) }</h3>
+				if relLabel != "" {
+					<p class="text-muted mt-1 flex items-center gap-1 text-xs">
+						@ui.IconSpan("lucide--link", "size-3")
+						<span>Referenced via { relLabel }</span>
+					</p>
+				}
+			</div>
+		</div>
+
+		@objectPreviewSection("Properties") {
+			{{ props := objectPreviewProperties(*obj) }}
+			if len(props) == 0 {
+				<p class="text-muted text-sm">No properties recorded.</p>
+			} else {
+				<dl class="divide-base-content/10 flex flex-col divide-y">
+					for _, p := range props {
+						@objectPreviewRow(p.Key, p.Value, p.Value == "")
+					}
+				</dl>
+			}
+		}
+
+		@objectPreviewSection("Details") {
+			<dl class="divide-base-content/10 flex flex-col divide-y">
+				@objectPreviewRow("Type", obj.Type, obj.Type == "")
+				@objectPreviewRow("Key", obj.Key, obj.Key == "")
+				@objectPreviewRow("Status", obj.Status, obj.Status == "")
+				@objectPreviewRow("Created", objectPreviewCreated(obj.CreatedAt), obj.CreatedAt == "")
+				@objectPreviewRow("ID", obj.ID, obj.ID == "")
+			</dl>
+		}
+
+		@objectPreviewSection("Labels") {
+			if len(obj.Labels) == 0 {
+				<p class="text-muted-faint text-sm">—</p>
+			} else {
+				<div class="flex flex-wrap gap-1.5">
+					for _, l := range obj.Labels {
+						@ui.Badge(ui.BadgeProps{
+							Label:   l,
+							Variant: ui.BadgeGhost,
+							Size:    ui.BadgeSizeSM,
+						})
+					}
+				</div>
+			}
+		}
+
+		<!-- Extension point for future preview surfaces (comments, actions). -->
+		<div id="object-preview-actions-slot"></div>
+	</div>
+}
+
+// objectPreviewSection is the drawer's lightweight titled section: a muted
+// eyebrow heading over its content. Lighter than ui.Section's card chrome,
+// which reads too heavy inside the narrow drawer.
+templ objectPreviewSection(title string) {
+	<section class="flex flex-col gap-2">
+		<h4 class="text-muted-faint text-[11px] font-semibold tracking-wider uppercase">{ title }</h4>
+		{ children... }
+	</section>
+}
+
+// objectPreviewRow renders one label→value row of the summary. A value that is
+// empty ("" or the em dash placeholder) is visually de-emphasised and its row
+// is tagged data-empty="true" for a future fold-empties toggle.
+templ objectPreviewRow(label string, value string, empty bool) {
+	<div class="flex flex-col gap-0.5 py-2 sm:flex-row sm:gap-3" data-preview-field data-empty?={ empty }>
+		<dt class="text-muted w-full shrink-0 text-xs font-medium sm:w-36">{ label }</dt>
+		<dd class={ "min-w-0 grow text-sm break-words", templ.KV("text-muted-faint font-mono", empty), templ.KV("font-mono", label == "ID" && !empty) }>
+			if empty {
+				—
+			} else {
+				{ value }
+			}
+		</dd>
+	</div>
+}
+
+// objectPreviewNotFound is the drawer's graceful "could not load" state,
+// rendered when GET /objects/:id/preview fails or the object is gone.
+templ objectPreviewNotFound() {
+	<div class="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
+		@ui.IconSpan("lucide--circle-alert", "size-8 text-warning")
+		<p class="text-sm font-medium">Object unavailable</p>
+		<p class="text-muted text-xs">This reference could not be loaded. It may have been removed or renamed.</p>
+	</div>
+}
