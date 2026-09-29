@@ -2,7 +2,10 @@ package email
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -213,28 +216,26 @@ func (w *Worker) processJob(ctx context.Context, job *EmailJob) error {
 		templateContext["recipientName"] = *job.ToName
 	}
 
-	var htmlContent, textContent string
-
-	// Check if template exists
-	if w.templates.HasTemplate(job.TemplateName) {
-		result, err := w.templates.Render(job.TemplateName, templateContext, "default")
-		if err != nil {
-			w.log.Warn("template render failed, using fallback",
-				slog.String("template", job.TemplateName),
-				slog.String("error", err.Error()))
-			htmlContent = w.generateFallbackHTML(job, templateContext)
-			textContent = w.generateFallbackText(job, templateContext)
-		} else {
-			htmlContent = result.HTML
-			textContent = result.Text
-		}
-	} else {
-		// No template found, use fallback
-		w.log.Debug("template not found, using fallback",
-			slog.String("template", job.TemplateName))
-		htmlContent = w.generateFallbackHTML(job, templateContext)
-		textContent = w.generateFallbackText(job, templateContext)
+	// A missing template or a render error is a job failure, not a reason to
+	// send a degraded message: the generic fallback cannot be trusted to carry
+	// required transactional content (e.g. an invitation's accept link), and
+	// marking such a job sent hides the failure (issue #1214). Failing the job
+	// surfaces it as a retry/dead-letter with last_error set.
+	if !w.templates.HasTemplate(job.TemplateName) {
+		return w.failJob(ctx, job.ID, fmt.Errorf("email template %q not found", job.TemplateName))
 	}
+
+	if err := w.validateJobContent(job, templateContext); err != nil {
+		return w.failJob(ctx, job.ID, err)
+	}
+
+	rendered, err := w.templates.Render(job.TemplateName, templateContext, "default")
+	if err != nil {
+		return w.failJob(ctx, job.ID, fmt.Errorf("render email template %q: %w", job.TemplateName, err))
+	}
+
+	htmlContent := rendered.HTML
+	textContent := rendered.Text
 
 	// Send the email
 	toName := ""
@@ -252,25 +253,12 @@ func (w *Worker) processJob(ctx context.Context, job *EmailJob) error {
 
 	if err != nil {
 		// Sender error
-		if markErr := w.jobs.MarkFailed(ctx, job.ID, err); markErr != nil {
-			w.log.Error("failed to mark job as failed",
-				slog.String("job_id", job.ID),
-				slog.String("error", markErr.Error()))
-		}
-		w.incrementFailure()
-		return err
+		return w.failJob(ctx, job.ID, err)
 	}
 
 	if !result.Success {
 		// Mailgun returned an error
-		sendErr := &sendError{message: result.Error}
-		if markErr := w.jobs.MarkFailed(ctx, job.ID, sendErr); markErr != nil {
-			w.log.Error("failed to mark job as failed",
-				slog.String("job_id", job.ID),
-				slog.String("error", markErr.Error()))
-		}
-		w.incrementFailure()
-		return sendErr
+		return w.failJob(ctx, job.ID, &sendError{message: result.Error})
 	}
 
 	// Mark as sent
@@ -291,6 +279,62 @@ func (w *Worker) processJob(ctx context.Context, job *EmailJob) error {
 
 	w.incrementSuccess()
 	return nil
+}
+
+// failJob records a job failure (retry or dead-letter depending on attempts)
+// and increments the failure metric. It returns the original error so callers
+// can propagate it.
+func (w *Worker) failJob(ctx context.Context, jobID string, jobErr error) error {
+	if markErr := w.jobs.MarkFailed(ctx, jobID, jobErr); markErr != nil {
+		w.log.Error("failed to mark job as failed",
+			slog.String("job_id", jobID),
+			slog.String("error", markErr.Error()))
+	}
+	w.incrementFailure()
+	return jobErr
+}
+
+// requiredTemplateContent declares the template-data keys that must be present
+// for a transactional template to be delivered. A job whose template renders
+// without them would produce a degraded message (for example an invitation
+// with no accept link), so it is failed instead of sent (issue #1214).
+var requiredTemplateContent = map[string]struct {
+	textKeys []string
+	urlKeys  []string
+}{
+	"project-invitation": {textKeys: []string{"acceptUrl"}, urlKeys: []string{"acceptUrl"}},
+	"mcp-invite":         {textKeys: []string{"mcpUrl", "apiKey"}, urlKeys: []string{"mcpUrl"}},
+}
+
+// validateJobContent fails a job whose template data would not produce a usable
+// transactional message. urlKeys must be absolute http(s) URLs because a
+// relative link is dead in an email client.
+func (w *Worker) validateJobContent(job *EmailJob, ctx TemplateContext) error {
+	required, ok := requiredTemplateContent[job.TemplateName]
+	if !ok {
+		return nil
+	}
+	for _, key := range required.textKeys {
+		value, _ := ctx[key].(string)
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("email template %q requires non-empty %q in template data", job.TemplateName, key)
+		}
+	}
+	for _, key := range required.urlKeys {
+		value, _ := ctx[key].(string)
+		if !isAbsoluteHTTPURL(value) {
+			return fmt.Errorf("email template %q requires an absolute http(s) %q, got %q", job.TemplateName, key, value)
+		}
+	}
+	return nil
+}
+
+func isAbsoluteHTTPURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	return (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
 // generateFallbackHTML creates a simple HTML email when template is not available
