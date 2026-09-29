@@ -25,6 +25,7 @@ type Server struct {
 	memory      MemoryBackend
 	supervisor  *Supervisor
 	hub         *conversationHub   // live conversation-state push (SSE), nil in bare test servers
+	live        *liveStateHub      // in-flight tail (open thinking / running tools), nil in bare test servers
 	registry    *accountRegistry   // in-memory multi-account registry (nil in bare test servers)
 	bindings    *voiceBindingStore // per-room voice bindings (nil in bare test servers)
 	workerCreds *workerRegistry    // per-worker credentials → agent (nil in bare test servers)
@@ -213,9 +214,18 @@ func (s *Server) chat(c echo.Context) error {
 		}
 	}()
 	pr, pw := io.Pipe()
+	// Tee the rewritten frames into the live-state hub so a mid-run reload can
+	// reconstruct the in-flight tail. The conversation id comes from the request
+	// body (empty for a brand-new conversation) and is resolved from the
+	// stream's `meta` frame when absent. Bare test servers have a nil hub, in
+	// which case the tee is skipped and the stream is written straight through.
+	var streamW io.Writer = pw
+	if s.live != nil {
+		streamW = newLiveTee(pw, s.live, in.ConversationID)
+	}
 	go func() {
 		defer func() { _ = pw.Close() }()
-		if err := rewriteChatStream(pw, body); err != nil {
+		if err := rewriteChatStream(streamW, body); err != nil {
 			// A closed pipe just means the client went away; don't report it.
 			if !errors.Is(err, io.ErrClosedPipe) && !errors.Is(err, io.EOF) {
 				captureError(err)

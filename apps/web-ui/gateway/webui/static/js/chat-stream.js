@@ -91,6 +91,11 @@
       case "failed":
       case "failure":
         return "error";
+      // A tool paused awaiting user confirmation is neither running (actively
+      // streaming) nor terminal (done/failed) — it is its own non-terminal,
+      // non-success state that the chip renders as "waiting", never green/red.
+      case "awaiting_confirmation":
+        return "awaiting_confirmation";
       default:
         return raw || "running";
     }
@@ -389,6 +394,10 @@
       if (!chip) return null;
       chip.label.textContent = MemoryChatComponents.humanizeToolName(tool);
       chip.root.setAttribute("data-tool", tool); // stable raw key for live updates
+      // Stable call id for live correlation (parallel/repeated same-name calls).
+      // Additive — absent on chips whose payload carries no id and on servers
+      // that predate the `mcp_tool.id` field.
+      if (p.id != null && p.id !== "") chip.root.setAttribute("data-call-id", String(p.id));
       // Hover affordance: swap the wrench for a dropdown chevron (like thinking).
       var iconEl = chip.root.querySelector(".memory-badge-icon .iconify");
       if (chip.toggle) {
@@ -439,6 +448,14 @@
         case "running":
           tint = "text-muted-faint animate-spin";
           break;
+        case "awaiting_confirmation":
+          // Distinct pending state: a quiet clock (not a green check, not a red
+          // alert, not the running spinner). `data-status` on the chip is the
+          // seam Lane D uses to animate the waiting affordance.
+          ic = "lucide--clock";
+          tint = "text-warning";
+          sec = detail || "Waiting for confirmation";
+          break;
         case "ok":
           ic = "lucide--circle-check";
           tint = "text-success";
@@ -467,22 +484,53 @@
 
     function handleToolEvent(evt) {
       var tool = evt.tool || "tool";
+      var callId = evt.id != null && evt.id !== "" ? String(evt.id) : "";
       var chips = Array.prototype.slice.call(ctx.messages.querySelectorAll(".memory-tool-chip"));
       var target = null;
-      // Chips carry the raw tool id in data-tool (set by toolChip); the visible
-      // label is humanized, so identity is matched on the attribute.
-      for (var i = chips.length - 1; i >= 0; i--) {
-        if (chips[i].getAttribute("data-tool") === tool) { target = chips[i]; break; }
+      // Correlate by stable call id FIRST (parallel/repeated same-name calls
+      // never collide). Only fall back to the last same-name chip when the
+      // event carries no id (older server / older client). A terminal event
+      // whose id matches an open chip updates that chip; it never fabricates a
+      // duplicate when a matching chip exists.
+      if (callId) {
+        for (var i = chips.length - 1; i >= 0; i--) {
+          if (chips[i].getAttribute("data-call-id") === callId) { target = chips[i]; break; }
+        }
+      } else {
+        for (var i = chips.length - 1; i >= 0; i--) {
+          if (chips[i].getAttribute("data-tool") === tool) { target = chips[i]; break; }
+        }
       }
 
-      // "started" events carry the input args in `result`, not output — don't
-      // classify them. Just surface the chip as running.
-      if (normalizeStatus(evt.status || "running") === "running") {
+      var status = normalizeStatus(evt.status || "running");
+
+      // "started"/"running" events carry the input args in `result`, not output
+      // — don't classify them. Just surface the chip as running.
+      if (status === "running") {
         if (!target) {
           toolChip(tool, "running", "", {
             tool: tool, status: "running", input: evt.result, inputHtml: evt.resultHtml,
+            id: callId || undefined,
           });
         }
+        return;
+      }
+
+      // awaiting_confirmation is a distinct NON-terminal state: the chip stays
+      // pending (clock + "Waiting for confirmation"), never green/red, never the
+      // running spinner. It updates the running chip in place when one exists.
+      if (status === "awaiting_confirmation") {
+        if (target) {
+          setToolStatus(target, "awaiting_confirmation", "Waiting for confirmation");
+          target.setAttribute("data-status", "awaiting_confirmation");
+          target._payload = target._payload || { tool: tool };
+          target._payload.status = "awaiting_confirmation";
+        } else {
+          toolChip(tool, "awaiting_confirmation", "Waiting for confirmation", {
+            tool: tool, status: "awaiting_confirmation", id: callId || undefined,
+          });
+        }
+        ctx.scrollToBottom();
         return;
       }
 
@@ -502,7 +550,7 @@
       } else {
         toolChip(tool, cls.status, detail, {
           tool: tool, status: cls.status, summary: cls.summary, error: cls.error,
-          output: evt.result, outputHtml: evt.resultHtml,
+          output: evt.result, outputHtml: evt.resultHtml, id: callId || undefined,
         });
       }
       ctx.scrollToBottom();

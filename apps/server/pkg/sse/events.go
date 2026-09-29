@@ -96,14 +96,15 @@ type ThinkingEvent struct {
 
 // NewThinkingEvent creates a new thinking event. id is a stable identifier for
 // the reasoning segment so clients can group incremental deltas; role selects
-// "operator" (planning) or "reasoning" (chain-of-thought).
-func NewThinkingEvent(id, role, text string) ThinkingEvent {
+// "operator" (planning) or "reasoning" (chain-of-thought). done is true only on
+// the segment-closing event; every incremental delta carries done:false.
+func NewThinkingEvent(id, role, text string, done bool) ThinkingEvent {
 	return ThinkingEvent{
 		Type: string(EventThinking),
 		ID:   id,
 		Role: role,
 		Text: text,
-		Done: true,
+		Done: done,
 	}
 }
 
@@ -111,17 +112,28 @@ func NewThinkingEvent(id, role, text string) ThinkingEvent {
 type MCPToolEvent struct {
 	Type   string `json:"type"`
 	Tool   string `json:"tool"`
-	Status string `json:"status"` // "started", "completed", "error"
+	Status string `json:"status"` // "started", "completed", "error", "awaiting_confirmation"
+	ID     string `json:"id,omitempty"`
 	Result any    `json:"result,omitempty"`
 	Error  string `json:"error,omitempty"`
 }
 
-// NewMCPToolEvent creates a new MCP tool event.
+// NewMCPToolEvent creates a new MCP tool event with no call id. It is retained
+// for backward compatibility; prefer NewMCPToolEventWithID when the ADK
+// function-call id is available so clients can correlate start/end events.
 func NewMCPToolEvent(tool, status string, result any, errMsg string) MCPToolEvent {
+	return NewMCPToolEventWithID(tool, status, "", result, errMsg)
+}
+
+// NewMCPToolEventWithID creates a new MCP tool event carrying the stable call
+// id. The id is identical on the tool's start and terminal events so clients
+// can correlate parallel or repeated invocations of the same tool.
+func NewMCPToolEventWithID(tool, status, id string, result any, errMsg string) MCPToolEvent {
 	return MCPToolEvent{
 		Type:   string(EventMCPTool),
 		Tool:   tool,
 		Status: status,
+		ID:     id,
 		Result: result,
 		Error:  errMsg,
 	}

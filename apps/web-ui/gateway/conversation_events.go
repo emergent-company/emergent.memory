@@ -438,6 +438,11 @@ func (s *Server) broadcastConversationChanges(ctx context.Context, convs map[str
 				log.Printf("conversation poll: conversation state (%s): %v", pollLogContext(id, groupSC), err)
 				continue
 			}
+			// Clear the in-flight tail once the run is no longer running, so a
+			// later connect does not replay a finished run's stale frames.
+			if s.live != nil && !isRunScope(id) {
+				s.live.clearIfNotRunning(id, st.bucket)
+			}
 			fp := runStateFingerprint(st)
 			if !s.hub.updateFingerprint(id, fp) {
 				continue
@@ -599,6 +604,16 @@ func (s *Server) streamEvents(c echo.Context, key string) error {
 	defer s.hub.unsubscribe(id, ch)
 
 	sendSSE(w, flusher, `{"type":"refresh"}`)
+
+	// Additive in-flight replay: after the initial refresh and before any live
+	// tail, emit the active run's open thinking segments and running tool calls
+	// so a reloaded page reconstructs what is happening now. Clients that do not
+	// handle `live_replay` ignore it (they only read `type:"refresh"`). Only
+	// conversation-scoped subscriptions have live state (runs have no /api/chat
+	// stream), so the run scope is skipped.
+	if s.live != nil && !isRunScope(id) {
+		sendSSE(w, flusher, string(s.live.replayFrame(id)))
+	}
 
 	heartbeat := time.NewTicker(25 * time.Second)
 	defer heartbeat.Stop()
