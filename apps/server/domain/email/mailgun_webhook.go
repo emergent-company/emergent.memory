@@ -10,6 +10,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -29,17 +31,24 @@ const maxWebhookBodySize = 1 << 20 // 1 MiB
 // This is a PUBLIC endpoint: the Mailgun HMAC signature is the authentication,
 // and a request without a valid signature is rejected fail-closed.
 type MailgunWebhookHandler struct {
-	store *DeliveryStore
-	cfg   *Config
-	log   *slog.Logger
+	store   *DeliveryStore
+	cfg     *Config
+	log     *slog.Logger
+	now     func() time.Time
+	replay  *replayGuard
+	limiter *webhookRateLimiter
 }
 
 // NewMailgunWebhookHandler creates the Mailgun delivery webhook handler.
 func NewMailgunWebhookHandler(db bun.IDB, cfg *Config, log *slog.Logger) *MailgunWebhookHandler {
+	now := time.Now
 	return &MailgunWebhookHandler{
-		store: NewDeliveryStore(db, log),
-		cfg:   cfg,
-		log:   log.With(logger.Scope("email.webhook")),
+		store:   NewDeliveryStore(db, log),
+		cfg:     cfg,
+		log:     log.With(logger.Scope("email.webhook")),
+		now:     now,
+		replay:  newReplayGuard(cfg.WebhookTolerance(), defaultReplayGuardMax, now),
+		limiter: newWebhookRateLimiter(cfg.WebhookRatePerMin(), cfg.WebhookRateBurst(), cfg.WebhookGlobalRatePerMin(), cfg.WebhookGlobalRateBurst(), now),
 	}
 }
 
@@ -93,6 +102,40 @@ func VerifyMailgunSignature(signingKey, timestamp, token, signature string) bool
 	return hmac.Equal(mac.Sum(nil), provided)
 }
 
+// timestampFresh reports whether the Mailgun signature timestamp is within the
+// configured tolerance of the server clock. A missing or non-numeric timestamp
+// is stale by definition (the HMAC path already rejects those).
+func (h *MailgunWebhookHandler) timestampFresh(raw string) bool {
+	sec, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil {
+		return false
+	}
+
+	skew := h.now().Sub(time.Unix(sec, 0))
+	if skew < 0 {
+		skew = -skew
+	}
+	return skew <= h.cfg.WebhookTolerance()
+}
+
+// handleWithRateLimit enforces the per-client and global webhook budgets before
+// the handler runs, so excess traffic is rejected without HMAC verification,
+// body reads, or DB work. The upstream WAF/proxy is the coarse first layer.
+//
+// This is a wrapper handler rather than route middleware on purpose: the
+// route-authority extractor cannot classify a handler-method middleware value
+// such as `h.rateLimitMiddleware()` and fails closed. Registering a plain
+// handler that does the rate check first keeps the route unambiguously public
+// (the limiter is tier-neutral) and the extractor green.
+func (h *MailgunWebhookHandler) handleWithRateLimit(c echo.Context) error {
+	clientIP := c.RealIP()
+	if !h.limiter.allow(clientIP) {
+		h.log.Warn("rate limited Mailgun webhook", slog.String("client_ip", clientIP))
+		return apperror.New(http.StatusTooManyRequests, "rate_limited", "Too many Mailgun webhook requests")
+	}
+	return h.Handle(c)
+}
+
 // Handle implements POST /api/webhooks/mailgun.
 func (h *MailgunWebhookHandler) Handle(c echo.Context) error {
 	body, err := io.ReadAll(io.LimitReader(c.Request().Body, maxWebhookBodySize))
@@ -108,6 +151,19 @@ func (h *MailgunWebhookHandler) Handle(c echo.Context) error {
 	if !VerifyMailgunSignature(h.cfg.MailgunSigningKey,
 		envelope.Signature.Timestamp, envelope.Signature.Token, envelope.Signature.Signature) {
 		h.log.Warn("rejected Mailgun webhook with invalid signature")
+		return apperror.New(http.StatusUnauthorized, "invalid_signature", "Invalid Mailgun signature")
+	}
+
+	// Mailgun's HMAC binds only timestamp+token, not the body (#1222). Reject a
+	// timestamp outside the tolerance window and treat each token as single-use
+	// so a captured envelope cannot be replayed (or re-paired with a forged
+	// body). Both failures are reported identically to an invalid signature.
+	if !h.timestampFresh(envelope.Signature.Timestamp) {
+		h.log.Warn("rejected Mailgun webhook with stale signature timestamp")
+		return apperror.New(http.StatusUnauthorized, "invalid_signature", "Invalid Mailgun signature")
+	}
+	if !h.replay.consume(envelope.Signature.Token) {
+		h.log.Warn("rejected replayed Mailgun webhook token")
 		return apperror.New(http.StatusUnauthorized, "invalid_signature", "Invalid Mailgun signature")
 	}
 
@@ -196,7 +252,9 @@ func deliveryEventFromMailgun(raw mailgunEventData) (DeliveryEvent, error) {
 //
 // The route is intentionally unauthenticated at the transport layer: Mailgun
 // cannot present a session, so the handler verifies the HMAC signature and fails
-// closed. There is no exemption from signature verification.
+// closed. There is no exemption from signature verification. The handler
+// wrapper applies the per-client and global rate limiter first (defence in
+// depth; the upstream WAF/proxy owns the coarse layer).
 func RegisterWebhookRoutes(e *echo.Echo, h *MailgunWebhookHandler) {
-	e.POST("/api/webhooks/mailgun", h.Handle)
+	e.POST("/api/webhooks/mailgun", h.handleWithRateLimit)
 }
