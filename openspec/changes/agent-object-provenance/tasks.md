@@ -75,9 +75,10 @@
 
 ### 4.1 Agent object browser
 
-- [ ] 4.1.1 Add a native SwiftUI object browser scoped to an agent's provenance (list objects created/updated by the agent, search, view object detail, gate on agent availability, fresh data), replacing the memory browser
-- [ ] 4.1.2 Remove the memories browser views and their entry point
-- [ ] 4.1.3 Add unit tests for the object list/search/detail view models and the agent-availability gate
+- [x] 4.1.1 Add a native SwiftUI object browser scoped to an agent's provenance (list objects created/updated by the agent, search, view object detail, gate on agent availability, fresh data), replacing the memory browser
+- [x] 4.1.2 Remove the memories browser views and their entry point
+- [x] 4.1.3 Add unit tests for the object list/search/detail view models and the agent-availability gate
+- [x] 4.1.4 Retire the legacy gateway memories API (routes `/api/memories` + `/api/memories/capability`, `MemoryClient.SearchMemories`/`ListMemories`, `MemoryBackend` memory methods, and the memory-capability check) now that no client uses it
 
 ## 5. Archive
 
