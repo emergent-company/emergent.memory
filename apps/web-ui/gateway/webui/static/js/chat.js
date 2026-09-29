@@ -682,11 +682,12 @@
         // state once the run stops (run end / needs_input).
         if (isRunWorking(m.runStatus)) {
           if (transcriptReady && !streaming) setStreaming(true);
-        } else {
+        } else if (!streaming) {
           // Run stopped (end / needs_input): drop the retained in-flight tail and
-          // release the composer. Stale thinking tracking is left for flushReplay /
-          // finalizeThinking to clear, so a live stream winding down is never
-          // disturbed here.
+          // release the composer. Guarded on !streaming: the bare connect refresh
+          // carries no runStatus, and clearing streaming here (then re-rendering
+          // below) would clobber a live /api/chat turn's in-flight bubble. Stale
+          // thinking tracking is left for flushReplay / finalizeThinking to clear.
           replayFrames = [];
           setStreaming(false);
         }
