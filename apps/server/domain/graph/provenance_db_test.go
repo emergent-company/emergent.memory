@@ -492,6 +492,12 @@ func TestProvenanceFilterRealSQL(t *testing.T) {
 // project must not leak into this project's results. A NULL actor_id would
 // otherwise match every system row deployment-wide.
 func TestProvenanceFilterProjectScoped(t *testing.T) {
+	// Note: the outer query already filters project_id and canonical_id is globally
+	// unique, so this end-to-end test passes with or without the subquery scoping —
+	// it guards behaviour, not the scoping delta. The scoping itself (project_id +
+	// branch predicates inside the created subquery) is asserted directly on the
+	// rendered SQL in provenance_filter_test.go ("created mode scopes subquery to
+	// project and main branch" / "...to a specific branch").
 	ctx, db, repo, svc, projectID := setupProvenanceTest(t)
 
 	// A second project in the same DB.

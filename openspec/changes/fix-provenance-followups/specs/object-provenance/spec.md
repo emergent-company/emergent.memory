@@ -2,7 +2,7 @@
 
 ### Requirement: Object provenance filter with created/updated/any modes
 
-Object listing SHALL support filtering by provenance. The filter SHALL accept a `(actor_type, actor_id)` pair and a mode of `created`, `updated`, or `any`. "Created by actor X" SHALL match objects whose earliest SURVIVING version row was authored by X (the root row, `version=1` in the normal case), scoped to the SAME project and branch as the outer query. "Updated by actor X" SHALL match objects whose HEAD row (`supersedes_id IS NULL`) was authored by X. `any` SHALL match objects where X is either the creator or the latest updater. The API SHALL validate `actor_type` against the known set (`user`, `agent`, `system`) and SHALL reject `provenance` without `actor_type`.
+Object listing SHALL support filtering by provenance. The filter SHALL accept a `(actor_type, actor_id)` pair and a mode of `created`, `updated`, or `any`. "Created by actor X" SHALL match objects whose earliest SURVIVING version row was authored by X (the root row, `version=1` in the normal case), scoped to the SAME project and branch as the outer query. On a named branch, `version=1` is the branch's fork-time copy, so "created by" there reflects the version author at fork time and may differ from the object's original creator on `main`. "Updated by actor X" SHALL match objects whose HEAD row (`supersedes_id IS NULL`) was authored by X. `any` SHALL match objects where X is either the creator or the latest updater. The API SHALL validate `actor_type` against the known set (`user`, `agent`, `system`) and SHALL reject `provenance` without `actor_type`.
 
 #### Scenario: Filter by creator
 

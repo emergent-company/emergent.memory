@@ -415,6 +415,10 @@ func (r *Repository) buildObjectBaseQueryWith(db bun.IDB, params ListParams) *bu
 	// Provenance selects which version row must carry the pair:
 	//   - updated (or any): the HEAD row (supersedes_id IS NULL) authored by the actor.
 	//   - created: the root version=1 row authored by the actor (earliest surviving).
+	//     Scoped to the same project/branch as the outer query: on a named branch,
+	//     version=1 is the branch's fork-time copy, so "created by" there is the
+	//     fork-time version's author, not necessarily the object's original creator
+	//     on main (see BulkCopyObjectsToBranch, which carries the HEAD row's actor).
 	//   - any: creator (version=1) OR latest updater (HEAD).
 	//
 	// The `created` mode is implemented as `canonical_id IN (SELECT canonical_id
