@@ -992,6 +992,7 @@
     summarizeText: summarizeText,
     tryParseJSON: tryParseJSON,
     classifyTool: classifyTool,
+    agentIconifyClass: agentIconifyClass,
     createEngine: createEngine,
   };
 })();

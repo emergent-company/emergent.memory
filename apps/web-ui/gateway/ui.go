@@ -979,6 +979,38 @@ func defaultAgentID(agents []AgentDefinitionSummary, preselect string) string {
 	return ""
 }
 
+// agentSummaryByID finds an agent summary by id, reporting whether it exists.
+func agentSummaryByID(agents []AgentDefinitionSummary, id string) (AgentDefinitionSummary, bool) {
+	for _, a := range agents {
+		if a.ID == id {
+			return a, true
+		}
+	}
+	return AgentDefinitionSummary{}, false
+}
+
+// activeChatAgent resolves the agent whose identity the chat pane header should
+// show: the agent of the conversation named by convID when it is still in the
+// list, otherwise the default/preselected agent. ok is false only when there is
+// no agent to show at all, so the caller keeps the generic header copy. A
+// conversation whose agent is missing from the (possibly stale) list falls back
+// to the default agent rather than leaving the header blank.
+func activeChatAgent(agents []AgentDefinitionSummary, convs *ConversationList, preselect, convID string) (AgentDefinitionSummary, bool) {
+	activeID := ""
+	if convs != nil && convID != "" {
+		for _, c := range convs.Conversations {
+			if c.ID == convID {
+				activeID = c.AgentDefinitionID
+				break
+			}
+		}
+	}
+	if a, ok := agentSummaryByID(agents, activeID); ok {
+		return a, true
+	}
+	return agentSummaryByID(agents, defaultAgentID(agents, preselect))
+}
+
 // assistantAgentID returns the configured assistant agent's ID, or "" when
 // unset or the referenced agent no longer exists.
 func (s *Server) assistantAgentID(ctx context.Context, agents []AgentDefinitionSummary) string {

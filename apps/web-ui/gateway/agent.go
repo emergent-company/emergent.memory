@@ -347,18 +347,21 @@ func (s *Server) uiAgentUpdateDelegation(c echo.Context) error {
 	return s.applyAgentSettingsSection(c, sectionDelegation, applyAgentDelegationSection)
 }
 
-// applyAgentGeneralSection maps the General form (name, system prompt,
-// language, appearance, visibility) onto the definition. Name is trimmed and
-// required; language persists to Config["language"] (deleted when empty); the
-// icon + color appearance persists to the uiConfig blob (both empty clears it);
-// visibility accepts only project/external/internal, with empty/missing
-// defaulting to project (the server default) and anything else rejected.
+// applyAgentGeneralSection maps the General form (name, short description,
+// system prompt, language, appearance, visibility) onto the definition. Name is
+// trimmed and required; the short description is trimmed and shown under the
+// agent's name in chat (empty clears it); language persists to Config["language"]
+// (deleted when empty); the icon + color appearance persists to the uiConfig
+// blob (both empty clears it); visibility accepts only project/external/internal,
+// with empty/missing defaulting to project (the server default) and anything else
+// rejected.
 func applyAgentGeneralSection(def *AgentDefinition, c echo.Context) error {
 	name := strings.TrimSpace(c.FormValue("name"))
 	if name == "" {
 		return fmt.Errorf("name is required")
 	}
 	def.Name = name
+	def.Description = strings.TrimSpace(c.FormValue("description"))
 	def.SystemPrompt = c.FormValue("systemPrompt")
 	def.UIConfig = agentUIConfig(c.FormValue("icon"), c.FormValue("color"))
 	lang := strings.TrimSpace(c.FormValue("language"))
