@@ -264,6 +264,7 @@ func main() {
 	e.GET("/agents/:id/settings", s.uiAgentSettings)
 	e.GET("/agents/:id/settings/:section", s.uiAgentSettingsSection)
 	e.POST("/agents/:id/settings/general", s.uiAgentUpdateGeneral)
+	e.POST("/agents/:id/settings/general/autosave", s.uiAgentAutosaveGeneral)
 	e.POST("/agents/:id/settings/model", s.uiAgentUpdateModel)
 	e.POST("/agents/:id/settings/tools", s.uiAgentUpdateTools)
 	e.POST("/agents/:id/settings/skills", s.uiAgentUpdateSkills)

@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-09-30
+goal: Auto-save the agent General settings form (debounced text edits) and make
+  the Tools picker's inheritance indicators recompute live without folding
+  capability groups.
