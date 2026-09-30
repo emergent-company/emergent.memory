@@ -411,7 +411,7 @@ The collapsible tool-picker group shell (capability groups and source/relay grou
 #### Scenario: Capability group maps to Disclosure props
 
 - **WHEN** a capability tool group is rendered
-- **THEN** it calls `ui.Disclosure` with `GroupClass: "group/cap"`, `ItemsStart: true`, `Open` from the group's open state, `Attrs` carrying `data-testid="tool-group"` and `data-tool-group=<id>`, and `SummaryAttrs` carrying `data-testid="tool-group-header-<id>"`, with the capability leading block as the header and the capability controls as the trailing slot
+- **THEN** it calls `ui.Disclosure` with `GroupClass: "group/cap"`, `ItemsStart: true`, `Open` from the group's open state, `Attrs` carrying `data-testid="tool-group"` and `data-tool-group=<id>`, and `SummaryAttrs` carrying `data-testid="tool-group-header-<id>"`, with the capability leading block as the header, the group enable switch as the trailing slot, and the group approval-policy select in the disclosure body so it is not a descendant of the interactive `<summary>`
 
 #### Scenario: Source/relay group replaces the details and body bases
 
