@@ -243,9 +243,9 @@ test('registers an MCP server via the settings UI end-to-end', async ({ page }) 
     }
 
     // 5. EDIT (UI): change the URL, save, and verify persistence on the
-    // pre-filled edit page. Transport is fixed after registration, so the URL
-    // is the editable connection detail. Memory re-validates only URL syntax
-    // here, so this step runs in both env-gated modes.
+    // pre-filled edit page. Transport is now editable after registration, so
+    // the URL is one of two editable connection details. Memory re-validates
+    // only URL syntax here, so this step runs in both env-gated modes.
     await page.goto(`${MCP_BASE}/${serverId}/edit`);
     await expectAppPage(page, /Edit server/);
     await expect(page.locator('#mcp-server-url')).toHaveValue(createUrl);
@@ -254,6 +254,36 @@ test('registers an MCP server via the settings UI end-to-end', async ({ page }) 
     await page.waitForURL(/\/settings\/mcp-servers\?updated=1/);
     await expectAppPage(page, /MCP Servers/);
     await expect(page.locator('[data-mcp-row]', { hasText: name })).toBeVisible();
+    await page.goto(`${MCP_BASE}/${serverId}/edit`);
+    await expectAppPage(page, /Edit server/);
+    await expect(page.locator('#mcp-server-url')).toHaveValue(editedUrl);
+
+    // 5b. TRANSPORT ROUND-TRIP: switch http → stdio (command replaces URL),
+    // save, and assert the list badge flips to stdio; then switch back to http
+    // with the edited URL and assert the badge flips back. This verifies
+    // transport is editable after registration and that switching transport
+    // replaces the previous transport's connection settings.
+    await page.locator('input[name="type"][value="stdio"]').check();
+    await expect(page.locator('#mcp-server-command')).toBeVisible();
+    await page.locator('#mcp-server-command').fill('npx -y files-mcp');
+    await page.getByRole('button', { name: 'Save changes' }).click();
+    await page.waitForURL(/\/settings\/mcp-servers\?updated=1/);
+    await expectAppPage(page, /MCP Servers/);
+    row = page.locator('[data-mcp-row]', { hasText: name });
+    await expect(row).toBeVisible();
+    await expect(row.getByText('stdio', { exact: true })).toBeVisible();
+
+    await page.goto(`${MCP_BASE}/${serverId}/edit`);
+    await expectAppPage(page, /Edit server/);
+    await page.locator('input[name="type"][value="http"]').check();
+    await expect(page.locator('#mcp-server-url')).toBeVisible();
+    await page.locator('#mcp-server-url').fill(editedUrl);
+    await page.getByRole('button', { name: 'Save changes' }).click();
+    await page.waitForURL(/\/settings\/mcp-servers\?updated=1/);
+    await expectAppPage(page, /MCP Servers/);
+    row = page.locator('[data-mcp-row]', { hasText: name });
+    await expect(row).toBeVisible();
+    await expect(row.getByText('http', { exact: true })).toBeVisible();
     await page.goto(`${MCP_BASE}/${serverId}/edit`);
     await expectAppPage(page, /Edit server/);
     await expect(page.locator('#mcp-server-url')).toHaveValue(editedUrl);
