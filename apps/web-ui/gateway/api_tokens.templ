@@ -241,7 +241,7 @@ templ apiTokenRowContent(t APIToken, actionBase string) {
 		</td>
 		<td class="text-right">
 			if t.IsRevoked {
-				<span class="text-muted-subtle text-sm">—</span>
+				@components.EmptyDash()
 			} else {
 				<div class="flex items-center justify-end gap-1">
 					<form method="post" action={ templ.URL(tokenBase + "/regenerate") } hx-confirm="Regenerate this token? Its current value stops working immediately and is replaced.">
