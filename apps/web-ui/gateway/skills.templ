@@ -278,14 +278,7 @@ templ skillEditForm(s *Skill) {
 				<textarea id="edit-content" name="content" rows="10" required class="textarea w-full resize-y">{ s.Content }</textarea>
 			}
 			@form.FormActions("", "") {
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeSubmit,
-					Variant: ui.ButtonPrimary,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--save",
-				}) {
-					Save changes
-				}
+				@components.SaveChangesButton()
 			}
 		</form>
 	}

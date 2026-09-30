@@ -275,13 +275,10 @@ func (s *Server) projectOrgID(ctx context.Context, projectID string) (string, er
 // ?deleted=1 / ?err=1 surface PRG feedback.
 func (s *Server) uiBackups(c echo.Context) error {
 	ctx := c.Request().Context()
-	var flashMsg string
-	switch {
-	case c.QueryParam("created") != "":
-		flashMsg = "Backup started — the page refreshes until it finishes."
-	case c.QueryParam("deleted") != "":
-		flashMsg = "Backup deleted."
-	}
+	flashMsg := flashFromQuery(c, []flashParam{
+		{key: "created", msg: "Backup started — the page refreshes until it finishes."},
+		{key: "deleted", msg: "Backup deleted."},
+	})
 	flashErr := flashError(c)
 
 	orgID, err := s.backupsOrgID(ctx)

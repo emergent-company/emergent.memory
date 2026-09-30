@@ -29,6 +29,22 @@ templ SelectOptionGroups(groups []SelectOptionGroup) {
 	}
 }
 
+// SaveChangesButton renders the shared primary submit button every settings and
+// mutation form footer uses: primary, small, save icon, "Save changes" label.
+// The surrounding FormActions/margin wrapper stays at each call site because it
+// varies (gap-4 forms, cancel/create branches, raw footers with a cancel link),
+// so only the button itself is a clean shared unit.
+templ SaveChangesButton() {
+	@ui.Button(ui.ButtonProps{
+		Type:    ui.ButtonTypeSubmit,
+		Variant: ui.ButtonPrimary,
+		Size:    ui.ButtonSM,
+		Icon:    "lucide--save",
+	}) {
+		Save changes
+	}
+}
+
 // ToggleField renders a settings row that pairs a toggle with a label and an
 // optional explanatory tip. attrs carries the row's htmx wiring.
 templ ToggleField(name, label, tip string, checked bool, attrs templ.Attributes) {
