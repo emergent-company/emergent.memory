@@ -986,6 +986,26 @@ routes:
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: GET
+      path: /api/projects/:projectId/agent-queues
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(agents:read)
+    - method: POST
+      path: /api/projects/:projectId/agent-queues
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(agents:write)
+    - method: DELETE
+      path: /api/projects/:projectId/agent-queues/:name
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(agents:write)
+    - method: PATCH
+      path: /api/projects/:projectId/agent-queues/:name
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(agents:write)
+    - method: POST
+      path: /api/projects/:projectId/agent-queues/:name/enqueue
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(agents:write)
+    - method: GET
       path: /api/projects/:projectId/agent-runs
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(agents:read)

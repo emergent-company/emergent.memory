@@ -342,7 +342,9 @@ func registerRelayToolPoolInvalidator(relayService *mcprelay.Service, toolPool *
 
 // provideWorkerPool creates a WorkerPool from fx dependencies.
 func provideWorkerPool(repo *Repository, executor *AgentExecutor, cfg *config.Config, log *slog.Logger) *WorkerPool {
-	return NewWorkerPool(repo, executor, log, cfg.AgentWorkerPoolSize, cfg.AgentWorkerPollInterval)
+	pool := NewWorkerPool(repo, executor, log, cfg.AgentWorkerPoolSize, cfg.AgentWorkerPollInterval)
+	pool.SetRefreshInterval(cfg.AgentWorkerQueueRefreshInterval)
+	return pool
 }
 
 // registerWorkerPool wires the WorkerPool into the fx lifecycle.
