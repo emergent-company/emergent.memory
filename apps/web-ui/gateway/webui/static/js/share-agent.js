@@ -73,6 +73,10 @@
     sessionId: root.getAttribute("data-active-session") || "",
     streaming: false,
     aborter: null,
+    // streamStopped flags that an `error` frame has already terminalised the
+    // in-flight stream, so the transport's trailing onFinish("done") is
+    // suppressed (mirrors chat-stream.js's streamFailed guard).
+    streamStopped: false,
     bubble: null,
     bubbleText: "",
     // agentName labels each assistant bubble's header (mirrors the app chat's
@@ -656,52 +660,37 @@
 
   function streamChat(text) {
     state.aborter = new AbortController();
+    state.streamStopped = false;
     var payload = { message: text };
     if (state.sessionId) payload.sessionId = state.sessionId;
     // Defensive: carry the email on the chat request too, so a session created
     // implicitly by the server still satisfies a requireEmail link.
     if (state.email) payload.email = state.email;
 
-    fetch(API + "/chat", {
-      method: "POST",
+    MemoryChatTransport.streamSSE(API + "/chat", {
       credentials: "include",
       headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
       body: JSON.stringify(payload),
       signal: state.aborter.signal,
-    })
-      .then(function (res) {
-        if (!res.ok || !res.body) {
-          throw new Error("Gateway error " + res.status);
-        }
-        var reader = res.body.getReader();
-        var decoder = new TextDecoder();
-        var buf = "";
-        function read() {
-          return reader.read().then(function (chunk) {
-            if (chunk.done) return finish("done");
-            buf += decoder.decode(chunk.value, { stream: true });
-            var idx;
-            // Manual `data:` line parsing, mirroring chat-stream.js.
-            while ((idx = buf.indexOf("\n")) !== -1) {
-              var line = buf.slice(0, idx).trim();
-              buf = buf.slice(idx + 1);
-              if (!line) continue;
-              if (line.indexOf("data:") === 0) handleEvent(line.slice(5).trim());
-            }
-            return read();
-          });
-        }
-        return read();
-      })
-      .catch(function (err) {
-        if (err && err.name === "AbortError") return finish("aborted");
-        failStream(err && err.message ? err.message : "Something went wrong.");
-      });
+      onFrame: handleEvent,
+      onHTTPError: function (res) {
+        failStream("Gateway error " + res.status);
+      },
+      isStopped: function () {
+        return state.streamStopped;
+      },
+      onFinish: function () {
+        // finish() is reason-agnostic: "done" and "aborted" finalize the bubble
+        // and rail identically, so the reason string is not used here.
+        finish();
+      },
+    }).catch(function (err) {
+      failStream(err && err.message ? err.message : "Something went wrong.");
+    });
   }
 
-  function handleEvent(raw) {
-    var evt;
-    try { evt = JSON.parse(raw); } catch (e) { return; }
+  function handleEvent(evt) {
+    if (!evt || typeof evt !== "object") return;
     switch (evt.type) {
       case "meta":
         if (evt.sessionId) state.sessionId = evt.sessionId;
@@ -721,6 +710,7 @@
         loadQuestions();
         break;
       case "error":
+        state.streamStopped = true;
         if (evt.code && TERMINAL_COPY[evt.code]) {
           finish("error");
           showInlineTerminal(evt.code);
