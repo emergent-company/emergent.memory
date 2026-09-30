@@ -1,7 +1,11 @@
 import { test, expect, type Page } from '@playwright/test';
-import { readBootstrap, createProject } from '../../helpers/bootstrap';
-import { expectAppPage } from '../../helpers/page';
-import { addProvider } from '../../helpers/providers';
+import {
+  API_KEY,
+  SKIP_NO_KEY,
+  cleanup,
+  createScratchAgent,
+  openChat,
+} from '../../helpers/live-chat';
 
 // Chat run-control scenarios (gateway lane A/B + the dock/queue/rail surfaces):
 // on a FRESH scratch project, a live agent run drives the pending-work dock, the
@@ -16,101 +20,8 @@ import { addProvider } from '../../helpers/providers';
 // or finishes before the signal can be observed) — mirroring
 // agent-proposal-card.spec.ts and mcp-servers-tool-call.spec.ts.
 //
-// Env vars (all reused — see tests/e2e/.env.e2e.example, no new keys):
-//   E2E_SCENARIO_LLM_PROVIDER/API_KEY/BASE_URL/MODEL  live provider for the
-//       scratch project (chat turn calls a real model; skip when key unset)
-const PROVIDER = process.env.E2E_SCENARIO_LLM_PROVIDER || 'openai';
-const API_KEY = process.env.E2E_SCENARIO_LLM_API_KEY || '';
-const BASE_URL = process.env.E2E_SCENARIO_LLM_BASE_URL || 'http://litellm:4000/v1';
-// The add-provider form renders the base_url field only for the OpenAI-
-// compatible provider; passing a base URL for any other provider would make
-// fillProviderForm wait on a non-existent field and time out.
-const PROVIDER_BASE_URL = PROVIDER === 'openai' ? BASE_URL : undefined;
-// The scenario suite treats E2E_SCENARIO_LLM_MODEL as the already-prefixed
-// "provider/model" catalog value; tolerate a bare value but never double-prefix.
-const MODEL = process.env.E2E_SCENARIO_LLM_MODEL || 'openai/deepseek-v4-flash';
-const AGENT_MODEL = MODEL.includes('/') ? MODEL : `${PROVIDER}/${MODEL}`;
-
-function requireBootstrap() {
-  const bootstrap = readBootstrap();
-  expect(bootstrap, 'setup project must run first').toBeTruthy();
-  return bootstrap!;
-}
-
-// All steps best-effort: idempotent across repeated runs, skips, and failures.
-async function cleanup(page: Page, agentId: string, projectId: string): Promise<void> {
-  const bootstrap = readBootstrap();
-  if (agentId) await page.request.delete(`/api/agents/${agentId}`).catch(() => {});
-  if (bootstrap?.projectId) {
-    await page.request.post(`/api/projects/${bootstrap.projectId}/activate`).catch(() => {});
-  }
-  if (projectId && bootstrap?.orgId) {
-    await page.request
-      .post(`/projects/delete?projectId=${projectId}&orgId=${bootstrap.orgId}`)
-      .catch(() => {});
-  }
-}
-
-// createScratchAgent seeds a fresh project, saves the live provider, and creates
-// one agent via the API (the agent modal cannot express the deterministic
-// system prompt + tool-policy config these tests need). Returns the ids, or
-// skips the test when the environment rejects a step.
-async function createScratchAgent(
-  page: Page,
-  name: string,
-  systemPrompt: string,
-  tools: string[],
-  defaultToolPolicy: string,
-): Promise<{ projectId: string; agentId: string }> {
-  const bootstrap = requireBootstrap();
-
-  const projectId = await createProject(page, bootstrap.orgId, name);
-
-  const saved = await addProvider(page, PROVIDER, API_KEY, PROVIDER_BASE_URL);
-  if (saved !== 'saved') {
-    let detail = "couldn't save provider";
-    const modal = page.locator('#provider-save-error-modal');
-    if (await modal.isVisible().catch(() => false)) {
-      const reason = await modal.locator('p').last().textContent().catch(() => null);
-      if (reason?.trim()) detail = reason.trim();
-    }
-    test.skip(
-      true,
-      `provider save rejected by memory backend (catalog unsynced or invalid key): ${detail}`,
-    );
-  }
-
-  const createResp = await page.request.post('/api/agents', {
-    data: {
-      name,
-      systemPrompt,
-      tools,
-      skills: [],
-      defaultToolPolicy,
-      model: { name: AGENT_MODEL, temperature: 0, maxTokens: 4096 },
-    },
-  });
-  if (!createResp.ok()) {
-    const detail = ((await createResp.text().catch(() => '')) || `HTTP ${createResp.status()}`).slice(0, 300);
-    test.info().annotations.push({
-      type: 'skipped-step',
-      description: `agent create rejected by memory backend: ${detail}`,
-    });
-    test.skip(true, `agent create rejected by memory backend: ${detail}`);
-  }
-  const created = (await createResp.json()) as { id: string };
-  return { projectId, agentId: created.id };
-}
-
-// openChat navigates to /chat for an agent and waits for the composer.
-async function openChat(page: Page, agentId: string): Promise<void> {
-  await page.goto(`/chat?agent=${agentId}`);
-  await expectAppPage(page, /Chat/);
-  const agentSelect = page.locator('#chat-agent');
-  await expect(agentSelect).toBeVisible();
-  await agentSelect.selectOption(agentId);
-  await expect(page.locator('#chat-input')).toBeEnabled();
-}
+// Shared scaffolding (provider save, scratch agent, openChat, cleanup) lives in
+// helpers/live-chat.ts.
 
 // waitForDock polls until the dock mount (#chat-dock) is populated with at
 // least one card (or the transcript surfaces a run error). Returns the state.
@@ -154,12 +65,7 @@ test.describe('chat run-control scenarios', () => {
   test('dock renders a pending question with decision controls and a count', async ({ page }) => {
     // Provider save and the chat turn are both network-bound live calls.
     test.setTimeout(300_000);
-    test.skip(
-      !API_KEY,
-      'E2E_SCENARIO_LLM_API_KEY is not set — the provider save is live-validated ' +
-        'and the chat turn calls a real model. Set it in tests/e2e/.env.e2e to run ' +
-        'this scenario (defaults target the dev litellm: openai @ http://litellm:4000/v1).',
-    );
+    test.skip(!API_KEY, SKIP_NO_KEY);
 
     const name = `E2E RunControl Dock ${Date.now()}`;
     let projectId = '';
@@ -219,17 +125,13 @@ test.describe('chat run-control scenarios', () => {
         });
       }
     } finally {
-      await cleanup(page, agentId, projectId);
+      await cleanup(page, { agentIds: [agentId], projectId });
     }
   });
 
   test('a queued follow-up auto-releases when the turn ends', async ({ page }) => {
     test.setTimeout(300_000);
-    test.skip(
-      !API_KEY,
-      'E2E_SCENARIO_LLM_API_KEY is not set — the chat turn calls a real model. Set it in ' +
-        'tests/e2e/.env.e2e to run this scenario.',
-    );
+    test.skip(!API_KEY, SKIP_NO_KEY);
 
     const name = `E2E RunControl Queue ${Date.now()}`;
     let projectId = '';
@@ -271,17 +173,13 @@ test.describe('chat run-control scenarios', () => {
       await expect(userBubbles.nth(1)).toContainText('what is a leap second');
       await expect(userBubbles.nth(2)).toContainText('Gregorian calendar');
     } finally {
-      await cleanup(page, agentId, projectId);
+      await cleanup(page, { agentIds: [agentId], projectId });
     }
   });
 
   test('the session-rail badge reflects a bucket change without a reload', async ({ page }) => {
     test.setTimeout(300_000);
-    test.skip(
-      !API_KEY,
-      'E2E_SCENARIO_LLM_API_KEY is not set — the chat turn calls a real model. Set it in ' +
-        'tests/e2e/.env.e2e to run this scenario.',
-    );
+    test.skip(!API_KEY, SKIP_NO_KEY);
 
     const name = `E2E RunControl Rail ${Date.now()}`;
     let projectId = '';
@@ -346,17 +244,13 @@ test.describe('chat run-control scenarios', () => {
 
       expect(new URL(page.url()).pathname).toBe('/chat');
     } finally {
-      await cleanup(page, agentId, projectId);
+      await cleanup(page, { agentIds: [agentId], projectId });
     }
   });
 
   test('the standalone /runs/:runId page subscribes to its live events stream', async ({ page }) => {
     test.setTimeout(300_000);
-    test.skip(
-      !API_KEY,
-      'E2E_SCENARIO_LLM_API_KEY is not set — the chat turn calls a real model. Set it in ' +
-        'tests/e2e/.env.e2e to run this scenario.',
-    );
+    test.skip(!API_KEY, SKIP_NO_KEY);
 
     const name = `E2E RunPage Stream ${Date.now()}`;
     let projectId = '';
@@ -406,7 +300,7 @@ test.describe('chat run-control scenarios', () => {
       await expect(page.locator('#chat-root[data-run]')).toBeVisible();
       await expect.poll(() => eventsCalls.length, { timeout: 30_000 }).toBeGreaterThan(0);
     } finally {
-      await cleanup(page, agentId, projectId);
+      await cleanup(page, { agentIds: [agentId], projectId });
     }
   });
 });
