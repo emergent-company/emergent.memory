@@ -219,6 +219,15 @@ func TestSelectOptionGroups(t *testing.T) {
 	)
 }
 
+func TestSaveChangesButtonRendersSubmitContract(t *testing.T) {
+	html := renderHTML(t, SaveChangesButton())
+	assertContains(t, html,
+		`type="submit"`,
+		"lucide--save",
+		"Save changes",
+	)
+}
+
 // --- nav ---
 
 func TestSubNavRendersItemsWithActiveState(t *testing.T) {

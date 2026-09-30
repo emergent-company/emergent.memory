@@ -33,17 +33,12 @@ func (s *Server) uiSchedules(c echo.Context) error {
 	defs, defsErr := s.memory.ListAgentDefinitions(ctx)
 	captureError(defsErr)
 	flashErr := flashError(c)
-	var flashMsg string
-	switch {
-	case c.QueryParam("created") != "":
-		flashMsg = "Schedule created."
-	case c.QueryParam("updated") != "":
-		flashMsg = "Schedule updated."
-	case c.QueryParam("deleted") != "":
-		flashMsg = "Schedule deleted."
-	case c.QueryParam("triggered") != "":
-		flashMsg = "Run triggered."
-	}
+	flashMsg := flashFromQuery(c, []flashParam{
+		{key: "created", msg: "Schedule created."},
+		{key: "updated", msg: "Schedule updated."},
+		{key: "deleted", msg: "Schedule deleted."},
+		{key: "triggered", msg: "Run triggered."},
+	})
 	return s.page(c, pageTitle("Schedules"), SchedulesPage(schedules, defs, err, flashMsg, flashErr))
 }
 

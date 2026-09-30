@@ -86,10 +86,9 @@ func (s *Server) uiSchema(c echo.Context) error {
 			prov[t.Name] = p
 		}
 	}
-	var flashMsg string
-	if c.QueryParam("installed") != "" {
-		flashMsg = "Schema installed."
-	}
+	flashMsg := flashFromQuery(c, []flashParam{
+		{key: "installed", msg: "Schema installed."},
+	})
 	return s.page(c, pageTitle("Schema"), SchemaPage(&SchemaListView{
 		Compiled:   visible,
 		Provenance: prov,
