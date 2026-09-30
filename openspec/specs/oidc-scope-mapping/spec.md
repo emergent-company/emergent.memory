@@ -1,7 +1,7 @@
 # oidc-scope-mapping Specification
 
 ## Purpose
-Defines how Memory derives the effective scope set for OIDC-authenticated requests: explicit Memory scopes carried on the token are authoritative; otherwise scopes are derived from the caller's role in the project declared by `X-Project-ID`; otherwise, for a caller with no project membership, a configurable default scope set applies; otherwise resolution fails closed to an empty set. Derived scopes are re-evaluated per request so role or configuration changes take effect immediately.
+Defines how Memory derives the effective scope set for OIDC-authenticated requests: an application entitlement (an active superadmin grant or an `org_admin` membership) or the caller's role in the project declared by `X-Project-ID`; otherwise, for a caller with no membership and no entitlement, a configurable default scope set applies; otherwise resolution fails closed to an empty set. Token-carried Memory scopes are never a grant. Derived scopes are re-evaluated per request so role or configuration changes take effect immediately.
 
 ## Requirements
 
@@ -11,19 +11,19 @@ When an OIDC session is authenticated and the request declares a project via `X-
 #### Scenario: Viewer restricted to read-only in the declared project
 - **GIVEN** an OIDC user holds `role = 'project_viewer'` in project P
 - **AND** the request declares `X-Project-ID: P`
-- **WHEN** the token carries no explicit Memory scope
+- **WHEN** the session scopes are resolved
 - **THEN** the session's scopes are exactly `data:read`, `schema:read`, `agents:read`, `projects:read`
 
 #### Scenario: User receives the viewer set plus data:write
 - **GIVEN** an OIDC user holds `role = 'project_user'` in project P
 - **AND** the request declares `X-Project-ID: P`
-- **WHEN** the token carries no explicit Memory scope
+- **WHEN** the session scopes are resolved
 - **THEN** the session's scopes are exactly `data:read`, `schema:read`, `agents:read`, `projects:read`, `data:write`
 
 #### Scenario: Admin receives the write-inclusive set
 - **GIVEN** an OIDC user holds `role = 'project_admin'` in project P
 - **AND** the request declares `X-Project-ID: P`
-- **WHEN** the token carries no explicit Memory scope
+- **WHEN** the session scopes are resolved
 - **THEN** the session's scopes are exactly `data:read`, `schema:read`, `agents:read`, `projects:read`, `data:write`, `agents:write`, `schema:write`
 
 #### Scenario: Role sets are nested
@@ -37,11 +37,11 @@ When an OIDC session is authenticated and the request declares a project via `X-
 #### Scenario: No cross-project widening
 - **GIVEN** an OIDC user holds `project_admin` in project A and `project_viewer` in project B
 - **AND** the request declares `X-Project-ID: B`
-- **WHEN** the token carries no explicit Memory scope
+- **WHEN** the session scopes are resolved
 - **THEN** the session receives exactly the viewer read-only scopes and never any admin scope
 
 ### Requirement: Configurable default scope set
-The system SHALL support a configurable default scope set for authenticated OIDC users who have no explicit Memory grant. The default SHALL be read from the application-owned `MEMORY_OIDC_DEFAULT_SCOPES` environment variable as a comma-separated list and SHALL be empty when unset. The previously shipped `ZITADEL_OIDC_DEFAULT_SCOPES` name SHALL be accepted as a deprecated alias for one release and SHALL emit a startup warning when used; when both names are set, `MEMORY_OIDC_DEFAULT_SCOPES` SHALL win. The default SHALL apply only to an OIDC user who has no project membership in the declared project and holds no application entitlement; a user whose membership carries an unrecognised role SHALL NOT receive the default set.
+The system SHALL support a configurable default scope set for authenticated OIDC users who have no explicit Memory grant. The default SHALL be read from the application-owned `MEMORY_OIDC_DEFAULT_SCOPES` environment variable as a comma-separated list and SHALL be empty when unset. The previously shipped `ZITADEL_OIDC_DEFAULT_SCOPES` alias SHALL be absent and SHALL NOT be read. The default SHALL apply only to an OIDC user who has no project membership in the declared project and holds no application entitlement; a user whose membership carries an unrecognised role SHALL NOT receive the default set.
 
 #### Scenario: Default scope set applied when the user has no membership
 - **GIVEN** `MEMORY_OIDC_DEFAULT_SCOPES=data:read,search` is configured
@@ -56,18 +56,18 @@ The system SHALL support a configurable default scope set for authenticated OIDC
 - **THEN** the session receives no Memory scopes
 
 #### Scenario: Empty default preserves fail-closed behaviour
-- **GIVEN** `MEMORY_OIDC_DEFAULT_SCOPES` is unset and its deprecated alias is unset
+- **GIVEN** `MEMORY_OIDC_DEFAULT_SCOPES` is unset
 - **AND** an OIDC user has no explicit Memory scope, no application entitlement, and no project membership
 - **WHEN** the token is validated through introspection
 - **THEN** the session receives no Memory scopes
 
-#### Scenario: Deprecated name still configures the default set with a warning
+#### Scenario: Removed alias does not configure the default set
 - **GIVEN** only `ZITADEL_OIDC_DEFAULT_SCOPES=data:read` is set
 - **WHEN** the server starts
-- **THEN** the effective default scope set is `data:read` and a deprecation warning naming both variables is emitted
+- **THEN** the alias is not read and the effective default scope set is empty
 
 ### Requirement: Fail-closed resolution
-The system SHALL resolve OIDC scopes in the order: explicit Memory scopes from the token (honoured only while the token-scope trust flag is enabled, and terminal when they apply), then application entitlements (an active superadmin grant, then an `org_admin` organization membership, then a mapped canonical project role), then the configured default set for a user with no project membership and no entitlement, then an empty set. The system SHALL NOT union token-carried scopes with application-derived scopes. The organization-administration set from the `org_admin` tier and the project role set from the project-membership tier SHALL be combined, because they govern disjoint resource families. A project-role lookup error, an unrecognised project role, an unrecognised issuer, a failed token validation, or a disabled token-scope trust flag with no application entitlement and no default configuration SHALL yield an empty scope set and SHALL NOT yield the default set or the full scope catalogue.
+The system SHALL resolve OIDC scopes in the order: application entitlements (an active superadmin grant, then an `org_admin` organization membership, then a mapped canonical project role), then the configured default set for a user with no project membership and no entitlement, then an empty set. Token-carried Memory scopes SHALL NOT be consulted at any point and SHALL NOT be unioned with application-derived scopes. The organization-administration set from the `org_admin` tier and the project role set from the project-membership tier SHALL be combined, because they govern disjoint resource families. A project-role lookup error, an unrecognised project role, an unrecognised issuer, a failed token validation, a superadmin lookup error, or no application entitlement with no default configuration SHALL yield an empty scope set and SHALL NOT yield the default set or the full scope catalogue.
 
 #### Scenario: Unmapped role yields no scopes even with a default configured
 - **GIVEN** `MEMORY_OIDC_DEFAULT_SCOPES` is configured
@@ -81,9 +81,8 @@ The system SHALL resolve OIDC scopes in the order: explicit Memory scopes from t
 - **WHEN** the token is validated
 - **THEN** the session receives no Memory scopes
 
-#### Scenario: Token scopes are not consulted when trust is disabled
-- **GIVEN** the token-scope trust flag is disabled
-- **AND** the token carries a Memory scope
+#### Scenario: Token scopes are never consulted
+- **GIVEN** the token carries a Memory scope
 - **AND** the user has no application entitlement and no default is configured
 - **WHEN** the token is validated
 - **THEN** the session receives no Memory scopes
@@ -103,15 +102,15 @@ When evaluating authorization the system SHALL expand a role's scope set through
 - **WHEN** the `project_admin` role scopes are expanded
 - **THEN** the result is exactly the expanded user set plus `agents:write`, `chat:admin`, `skills:write`, and `schema:migrate`, and contains no `admin*`, `mcp:admin`, `org:*`, `project:invite:create`, or `account:*` scope
 
-### Requirement: Explicit Memory scopes are authoritative
-When a validated token carries scopes that are part of the Memory scope vocabulary, the system SHALL use those scopes verbatim and terminally — adding no role-derived, entitlement, or default scopes — but only while the `MEMORY_OIDC_TRUST_TOKEN_SCOPES` flag is enabled. The flag SHALL be introduced enabled so that the introduction release changes no effective grant, and its standing default SHALL be disabled from the following release (see `scope-authority` 'Sequenced rollout preserves existing grants'). When that flag is disabled, the system SHALL ignore Memory scope names carried by the token and resolve scopes solely from application-owned state. Non-Memory OIDC scopes (such as `openid`, `profile`, `email`, `offline_access`) SHALL NOT be treated as an explicit grant in any configuration.
+### Requirement: Token-carried Memory scopes are never a grant
 
-#### Scenario: Explicit token scopes win over role derivation
-- **GIVEN** `MEMORY_OIDC_TRUST_TOKEN_SCOPES=true`
+When a validated token carries scopes that are part of the Memory scope vocabulary, the system SHALL ignore them: they SHALL NOT be honoured, filtered, or unioned into the effective scope set under any configuration. Scopes SHALL be resolved solely from application-owned state. Non-Memory OIDC scopes (such as `openid`, `profile`, `email`, `offline_access`) SHALL likewise never be treated as an explicit Memory grant.
+
+#### Scenario: Memory token scopes are ignored in favour of role derivation
+- **GIVEN** a validated token carries the Memory scope `data:write`
 - **AND** an OIDC user holds `project_viewer` in the declared project
-- **AND** the token carries the Memory scope `data:write`
 - **WHEN** the token is validated
-- **THEN** the session receives `data:write` and is not additionally restricted to the viewer read-only set
+- **THEN** the session receives exactly the viewer read-only scopes and never `data:write`
 
 #### Scenario: Standard OIDC scopes are not an explicit grant
 - **GIVEN** an introspected token carries `openid profile email offline_access`
@@ -119,31 +118,25 @@ When a validated token carries scopes that are part of the Memory scope vocabula
 - **WHEN** the token is validated
 - **THEN** the session receives no Memory scopes
 
-#### Scenario: Explicit token scopes are ignored once trust is disabled
-- **GIVEN** `MEMORY_OIDC_TRUST_TOKEN_SCOPES=false`
-- **AND** an OIDC user holds `project_viewer` in the declared project
-- **AND** the token carries the Memory scope `data:write`
-- **WHEN** the token is validated
+#### Scenario: No configuration restores token-scope grants
+- **WHEN** the server starts
+- **THEN** no environment variable enables token-carried Memory scopes
+
+### Requirement: Userinfo fallback uses fail-closed resolution
+
+The permissive userinfo all-or-nothing grant SHALL be removed: the grant flag (`MEMORY_USERINFO_GRANT_ALL_SCOPES` and its `ZITADEL_*` alias) and its grant path SHALL be absent, and the userinfo fallback SHALL use the standard fail-closed resolution like every other path. A userinfo-authenticated user SHALL receive exactly the application-derived scopes for their membership (or the app-owned default, or nothing), and SHALL never receive the full scope catalogue without an explicit entitlement.
+
+#### Scenario: Userinfo user receives exactly their entitlement
+- **GIVEN** an OIDC user is authenticated via the userinfo fallback
+- **AND** the user holds `project_viewer` in the declared project
+- **WHEN** the session scopes are resolved
 - **THEN** the session receives exactly the viewer read-only scopes
 
-### Requirement: Gated all-or-nothing userinfo grant
-The system SHALL grant `GetAllScopes()` to an OIDC user validated via the userinfo endpoint only when the app-owned `MEMORY_USERINFO_GRANT_ALL_SCOPES` flag is enabled AND introspection is not configured. The previously shipped `ZITADEL_USERINFO_GRANT_ALL_SCOPES` name SHALL be accepted as a deprecated alias for one release with a startup warning. While the grant is active the system SHALL emit a startup warning and report the active state through health. When introspection is configured, or the flag is disabled, the userinfo path SHALL resolve scopes using the standard fail-closed resolution and SHALL NOT substitute the full scope catalogue. The flag and its grant path SHALL be removed once introspection is the norm.
-
-#### Scenario: Pilot all-grant preserved when introspection is unconfigured
-- **GIVEN** `MEMORY_USERINFO_GRANT_ALL_SCOPES=true` and no introspection client credentials are configured
-- **WHEN** a user is authenticated via the userinfo endpoint
-- **THEN** the session receives the full scope catalogue, a startup warning is emitted, and health reports the grant as active
-
-#### Scenario: All-grant suppressed once introspection is configured
-- **GIVEN** introspection client credentials are configured
-- **AND** `MEMORY_USERINFO_GRANT_ALL_SCOPES=true`
-- **WHEN** a user is authenticated via the userinfo fallback
-- **THEN** the session receives scopes from the standard resolution and never the full scope catalogue
-
-#### Scenario: Deprecated name still enables the grant with a warning
-- **GIVEN** only `ZITADEL_USERINFO_GRANT_ALL_SCOPES=true` is set and introspection is not configured
-- **WHEN** the server starts
-- **THEN** the grant behaviour applies and a deprecation warning naming both variables is emitted
+#### Scenario: Userinfo user with no entitlement receives nothing
+- **GIVEN** an OIDC user is authenticated via the userinfo fallback
+- **AND** the user has no membership and no app-owned default is configured
+- **WHEN** the session scopes are resolved
+- **THEN** the session receives no scopes and never the full scope catalogue
 
 ### Requirement: Derived scopes are never cached
 The system SHALL cache only raw OIDC claims and SHALL re-derive effective scopes on every request, so that a project-role change or a default-scope-set change takes effect on the next request.

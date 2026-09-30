@@ -838,14 +838,7 @@ templ profileEditForm(p *UserProfileDto) {
 				<input id="profile-phone" name="phoneE164" type="tel" value={ p.PhoneE164 } placeholder="+14155552671" class="input w-full"/>
 			}
 			@form.FormActions("", "") {
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeSubmit,
-					Variant: ui.ButtonPrimary,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--save",
-				}) {
-					Save changes
-				}
+				@components.SaveChangesButton()
 			}
 		</form>
 	}

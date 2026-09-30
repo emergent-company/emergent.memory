@@ -166,7 +166,7 @@ templ scheduleDefinitionCell(defs []AgentDefinitionSummary, a ScheduledAgent) {
 		{{ aui := scheduleDefinitionUI(defs, a) }}
 		@agentNameChip(n, ui.BadgeGhost, aui.Icon, aui.Color)
 	} else {
-		<span class="text-muted-faint text-sm">—</span>
+		@components.EmptyDash()
 	}
 }
 
@@ -272,14 +272,7 @@ templ scheduleEditForm(a *ScheduledAgent, defs []AgentDefinitionSummary) {
 				<input id="edit-sched-enabled" name="enabled" type="checkbox" if a.Enabled { checked } class="checkbox"/>
 			</label>
 			@form.FormActions("", "") {
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeSubmit,
-					Variant: ui.ButtonPrimary,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--save",
-				}) {
-					Save changes
-				}
+				@components.SaveChangesButton()
 			}
 		</form>
 	}

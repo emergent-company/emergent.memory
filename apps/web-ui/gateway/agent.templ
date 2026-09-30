@@ -354,14 +354,7 @@ templ agentSettingsSectionPanel(data agentSettingsData) {
 templ agentSettingsSave() {
 	<div class="mt-6">
 		@form.FormActions("", "") {
-			@ui.Button(ui.ButtonProps{
-				Type:    ui.ButtonTypeSubmit,
-				Variant: ui.ButtonPrimary,
-				Size:    ui.ButtonSM,
-				Icon:    "lucide--save",
-			}) {
-				Save changes
-			}
+			@components.SaveChangesButton()
 		}
 	</div>
 }
@@ -398,6 +391,10 @@ templ agentGeneralSettingsForm(data agentSettingsData) {
 			Margin:    "mt-6",
 			BodyClass: "memory-density-comfortable",
 		}) {
+			// This icon/color pair is intentionally NOT extracted into a shared
+			// AppearanceFields component: the three sites (agent create dialog,
+			// this settings form, object type) diverge on grid gap, per-column
+			// wrapper divs, and help copy (web-ui-component-conventions).
 			<div class="grid gap-x-8 gap-y-6 sm:grid-cols-2">
 				<div class="flex min-w-0 flex-col [&>fieldset]:min-w-0 [&>fieldset]:grow [&_.label-text-alt]:whitespace-normal">
 					@form.FormControl("agent-settings-icon", "Icon", form.LabelAbove, "Pick a supported Lucide icon. The default falls back to the bot.", "", nil) {
@@ -802,18 +799,7 @@ templ agentSandboxForm(data agentSandboxData) {
 				}
 			</div>
 		}
-		<div class="mt-6">
-			@form.FormActions("", "") {
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeSubmit,
-					Variant: ui.ButtonPrimary,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--save",
-				}) {
-					Save changes
-				}
-			}
-		</div>
+		@agentSettingsSave()
 	</form>
 }
 

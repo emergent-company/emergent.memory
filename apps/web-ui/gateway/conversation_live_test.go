@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -243,6 +244,21 @@ func (r *sseRecorder) Write(p []byte) (int, error) { return r.buf.Write(p) }
 func (r *sseRecorder) WriteHeader(int)             {}
 func (r *sseRecorder) Flush()                      {}
 
+// sseFrames splits a captured SSE stream body into its ordered frame payloads
+// (the JSON following each "data: " prefix).
+func sseFrames(t *testing.T, body string) []string {
+	t.Helper()
+	var out []string
+	for _, chunk := range strings.Split(body, "\n\n") {
+		chunk = strings.TrimSpace(chunk)
+		if !strings.HasPrefix(chunk, "data: ") {
+			continue
+		}
+		out = append(out, strings.TrimPrefix(chunk, "data: "))
+	}
+	return out
+}
+
 func startEventsStream(t *testing.T, s *Server, key string) (*sseRecorder, func()) {
 	t.Helper()
 	e := echo.New()
@@ -313,5 +329,67 @@ func TestConversationEventsEmitsEmptyLiveReplay(t *testing.T) {
 	}
 	if !strings.Contains(body, `"frames":[]`) {
 		t.Errorf("empty live_replay must carry an empty frames array: %q", body)
+	}
+}
+
+// TestConversationEventsReplaysCachedRefreshFrame asserts a subscriber that
+// connects AFTER a previous broadcast receives that cached state-bearing
+// refresh frame (bucket/runId/runStatus) before live_replay — the fix for a
+// page opened mid-run, while an existing subscriber already holds the
+// conversation, showing no "agent is working" indicator.
+func TestConversationEventsReplaysCachedRefreshFrame(t *testing.T) {
+	live := newLiveStateHub()
+	live.beginRun("c1", "r1")
+	live.observeThinking("c1", thinkingJSON("s1", "x", false))
+
+	runStart := json.RawMessage(`{"kind":"run_start","run_id":"r1","run_status":"working"}`)
+	m := &scriptedMemory{
+		fakeMemory: &fakeMemory{},
+		histories:  []*ConversationHistory{{ConversationID: "c1", Items: []json.RawMessage{runStart}}},
+	}
+
+	s := &Server{cfg: Config{AuthMode: "dev"}, shutdownCh: make(chan struct{})}
+	s.hub = newConversationHub(s)
+	s.live = live
+	s.memory = m
+
+	// An existing subscriber holds the conversation and triggers a broadcast
+	// whose refresh frame carries the running run state. That broadcast now
+	// populates the hub's per-conversation cache.
+	first := s.hub.subscribe("c1", nil)
+	defer s.hub.unsubscribe("c1", first)
+	s.broadcastConversationChanges(context.Background(), s.hub.subscribedConvs())
+	select {
+	case <-first:
+	default:
+		t.Fatal("first broadcast must deliver a refresh frame to the existing subscriber")
+	}
+
+	// A second subscriber connects and must receive the cached state-bearing
+	// refresh frame (not a bare refresh) before live_replay.
+	rec, stop := startEventsStream(t, s, "c1")
+	time.Sleep(100 * time.Millisecond)
+	stop()
+
+	frames := sseFrames(t, rec.buf.String())
+	if len(frames) < 2 {
+		t.Fatalf("expected refresh then live_replay frames, got %d: %q", len(frames), rec.buf.String())
+	}
+	var rf refreshPayload
+	if err := json.Unmarshal([]byte(frames[0]), &rf); err != nil {
+		t.Fatalf("first frame is not a refresh payload: %v (%s)", err, frames[0])
+	}
+	if rf.Type != "refresh" {
+		t.Fatalf("first frame type = %q, want refresh", rf.Type)
+	}
+	if rf.Bucket != runBucketRunning || rf.RunID != "r1" || rf.RunStatus != "working" {
+		t.Fatalf("cached refresh frame = %+v, want running bucket with run r1 status working", rf)
+	}
+	var replay map[string]any
+	if err := json.Unmarshal([]byte(frames[1]), &replay); err != nil {
+		t.Fatalf("second frame is not JSON: %v (%s)", err, frames[1])
+	}
+	if replay["type"] != "live_replay" {
+		t.Fatalf("second frame type = %v, want live_replay", replay["type"])
 	}
 }

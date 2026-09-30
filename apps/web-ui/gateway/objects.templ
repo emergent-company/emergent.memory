@@ -903,14 +903,7 @@ templ objectPropertiesCard(obj *GraphObject, propDefs []objectPropertyDef, label
 				}
 			}
 			@fm.FormActions("", "") {
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeSubmit,
-					Variant: ui.ButtonPrimary,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--save",
-				}) {
-					Save changes
-				}
+				@components.SaveChangesButton()
 			}
 		</form>
 	}
