@@ -343,6 +343,7 @@ type AgentDefinitionDTO struct {
 	DefaultTimeout    *int                  `json:"defaultTimeout,omitempty"`
 	Visibility        AgentVisibility       `json:"visibility"`
 	DispatchMode      AgentDispatchMode     `json:"dispatchMode"`
+	DefaultQueue      string                `json:"defaultQueue"`
 	ACPConfig         *ACPConfig            `json:"acpConfig,omitempty"`
 	Config            map[string]any        `json:"config,omitempty"`
 	SandboxConfig     map[string]any        `json:"workspaceConfig,omitempty"`
@@ -403,6 +404,7 @@ type CreateAgentDefinitionDTO struct {
 	DefaultTimeout    *int                  `json:"defaultTimeout"`
 	Visibility        AgentVisibility       `json:"visibility"`
 	DispatchMode      AgentDispatchMode     `json:"dispatchMode"`
+	DefaultQueue      string                `json:"defaultQueue"`
 	ACPConfig         *ACPConfig            `json:"acpConfig"`
 	Config            map[string]any        `json:"config"`
 	SandboxConfig     map[string]any        `json:"workspaceConfig"`
@@ -428,6 +430,7 @@ type UpdateAgentDefinitionDTO struct {
 	DefaultTimeout    *int                  `json:"defaultTimeout"`
 	Visibility        *AgentVisibility      `json:"visibility"`
 	DispatchMode      *AgentDispatchMode    `json:"dispatchMode"`
+	DefaultQueue      *string               `json:"defaultQueue"`
 	ACPConfig         *ACPConfig            `json:"acpConfig"`
 	Config            map[string]any        `json:"config"`
 	SandboxConfig     map[string]any        `json:"workspaceConfig"`
@@ -500,6 +503,7 @@ func (d *AgentDefinition) ToDTO() *AgentDefinitionDTO {
 		DefaultTimeout:    d.DefaultTimeout,
 		Visibility:        d.Visibility,
 		DispatchMode:      d.DispatchMode,
+		DefaultQueue:      d.DefaultQueue,
 		ACPConfig:         d.ACPConfig,
 		Config:            d.Config,
 		SandboxConfig:     d.SandboxConfig,

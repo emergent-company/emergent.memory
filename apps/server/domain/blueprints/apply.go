@@ -513,6 +513,10 @@ func buildAgentDefinition(m *AgentManifest, projectID string) *agents.AgentDefin
 		MaxSteps:       m.MaxSteps,
 		DefaultTimeout: m.DefaultTimeout,
 	}
+	def.DefaultQueue = m.DefaultQueue
+	if def.DefaultQueue == "" {
+		def.DefaultQueue = agents.DefaultQueueName
+	}
 	if m.IsDefault != nil {
 		def.IsDefault = *m.IsDefault
 	}
@@ -602,6 +606,9 @@ func applyAgentManifestToExisting(def *agents.AgentDefinition, m *AgentManifest)
 	}
 	if m.DispatchMode != "" {
 		def.DispatchMode = agents.AgentDispatchMode(m.DispatchMode)
+	}
+	if m.DefaultQueue != "" {
+		def.DefaultQueue = m.DefaultQueue
 	}
 	// Optional pointer/map fields are applied only when the manifest provides
 	// them; omitted means "keep current value" (preserve-when-omitted).
