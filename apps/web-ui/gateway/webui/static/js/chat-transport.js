@@ -7,6 +7,13 @@
  *
  *   parseSSE(buf, acc)          pure frame splitter
  *   streamSSE(url, opts)        fetch + stream + parse + dispatch
+ *   agentIconifyClass(icon, fallback)
+ *                               pure agent-icon → iconify-class normalizer
+ *
+ * The icon normalizer is a pure, DOM-free helper the two chat clients
+ * (chat-stream.js on the shell, the deliberately engine-free share-agent.js on
+ * the public share page) both need, so it lives in this, the one module both
+ * surfaces already load rather than being copied into each.
  *
  * Nothing here touches the DOM or any page state — callers own their message
  * stream container and page-local callbacks. Load this BEFORE any client that
@@ -40,6 +47,25 @@
     return { frames: frames, rest: data };
   }
 
+  // agentIconifyClass maps a stored agent icon to an iconify class compiled
+  // into app.css. Values are normally bare Lucide kebab names ("bot"), but
+  // blueprint manifests and the API also accept prefixed ("lucide--bot",
+  // "lucide:bot") or camelCase/underscore spellings, which the server
+  // normalizes. Mirroring that normalization here avoids emitting a broken
+  // "lucide--lucide--bot" glyph and keeps every client's avatar consistent with
+  // the server-rendered tiles. Empty/unresolvable input returns fallbackIcon;
+  // share-agent.js passes "" so a raw glyph (emoji) falls through to text, and
+  // chat.js/chat-stream.js pass "lucide--bot" so an absent icon is the bot.
+  function agentIconifyClass(icon, fallbackIcon) {
+    var s = String(icon || "").trim();
+    if (!s) return fallbackIcon;
+    if (/^lucide--[a-z0-9-]+$/.test(s)) return s;
+    s = s.replace(/^lucide:/, "");
+    s = s.replace(/[_\s]+/g, "-").replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+    s = s.replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+    return /^[a-z0-9-]+$/.test(s) ? "lucide--" + s : fallbackIcon;
+  }
+
   // streamSSE POSTs `opts.body` to `url` and consumes the response as a
   // server-sent-event stream. For each complete frame it JSON.parses the
   // `data:` payload and calls opts.onFrame(parsedObject) (invalid-JSON frames
@@ -48,9 +74,15 @@
   // Terminal signalling:
   //   - stream ends cleanly           → opts.onFinish("done")  (unless opts.isStopped())
   //   - abort (AbortError)            → opts.onFinish("aborted")
-  //   - non-ok / missing body         → opts.onHTTPError(res), or a thrown
-  //                                      "Gateway error <status>" when absent
-  //   - other fetch/stream errors     → rethrown to the caller's .catch
+  //   - non-ok / missing body         → opts.onHTTPError(res) (its return value
+  //                                      is awaited), or a thrown "Gateway error
+  //                                      <status>" when absent
+  //   - other fetch/stream errors     → rethrown to the caller's .catch. An error
+  //                                      thrown while READING the response body is
+  //                                      tagged `err.streamInterrupted = true` so a
+  //                                      caller can distinguish a mid-stream drop
+  //                                      from a request that never connected
+  //                                      (chat-stream.js renders them differently).
   //
   // opts.isStopped() reproduces the callers' stop-guard (chat-stream.js's
   // streamFailed flag): when an `error` frame has already terminalised the
@@ -70,8 +102,9 @@
       .then(function (res) {
         if (!res.ok || !res.body) {
           if (opts.onHTTPError) {
-            opts.onHTTPError(res);
-            return;
+            // Await the handler's result so callers that read the error body
+            // (res.json()) finish before streamSSE's promise resolves.
+            return opts.onHTTPError(res);
           }
           throw new Error("Gateway error " + res.status);
         }
@@ -100,7 +133,14 @@
             return read();
           });
         }
-        return read();
+        // Tag errors raised while reading the body (not while fetching it) so
+        // the caller can tell a mid-stream drop from a failed connection.
+        return read().catch(function (err) {
+          if (err && err.name !== "AbortError" && typeof err === "object") {
+            err.streamInterrupted = true;
+          }
+          throw err;
+        });
       })
       .catch(function (err) {
         if (err && err.name === "AbortError") {
@@ -114,5 +154,6 @@
   window.MemoryChatTransport = {
     parseSSE: parseSSE,
     streamSSE: streamSSE,
+    agentIconifyClass: agentIconifyClass,
   };
 })();

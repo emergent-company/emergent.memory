@@ -12,10 +12,14 @@ import path from 'node:path';
 // a2ui spec only drives chat-components.js's renderer in isolation), so this is
 // the regression guard for that behavior.
 //
-// No gateway, no memory API, no Zitadel, no `.env.e2e` — runs in CI. The four
-// shipped scripts are loaded verbatim (dependencies first) into a bare page and
-// fed a stubbed fetch + EventSource.
+// No gateway, no memory API, no Zitadel, no `.env.e2e` — runs in CI. The shipped
+// scripts are loaded verbatim (dependencies first: chat-transport.js before the
+// engine that resolves it) into a bare page and fed a stubbed fetch + EventSource.
 
+const CHAT_TRANSPORT_JS = path.resolve(
+  __dirname,
+  '../../../../gateway/webui/static/js/chat-transport.js',
+);
 const CHAT_COMPONENTS_JS = path.resolve(
   __dirname,
   '../../../../gateway/webui/static/js/chat-components.js',
@@ -280,6 +284,7 @@ async function bootstrap(
     { convId: CONV_ID, runId: RUN_ID, items, runItems, dockHtml },
   );
 
+  await page.addScriptTag({ path: CHAT_TRANSPORT_JS });
   await page.addScriptTag({ path: CHAT_COMPONENTS_JS });
   await page.addScriptTag({ path: CHAT_HOST_JS });
   await page.addScriptTag({ path: CHAT_STREAM_JS });
