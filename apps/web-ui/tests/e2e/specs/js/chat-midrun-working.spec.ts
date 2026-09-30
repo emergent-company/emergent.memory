@@ -290,6 +290,49 @@ async function emitSSE(page: Page, frame: unknown): Promise<void> {
   }, frame);
 }
 
+// Mark the currently-rendered transcript (its first non-placeholder .chat row,
+// e.g. a tool chip) so a later query can prove a rebuild actually re-created it,
+// and flag the working placeholder so its node identity can be re-checked.
+async function markWorkingProbe(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const w = window as unknown as { __memProbe?: Element | null };
+    const ph = document.querySelector('#chat-messages [data-memory-working]');
+    if (ph) (ph as Element & { __memWorking?: boolean }).__memWorking = true;
+    w.__memProbe = document.querySelector('#chat-messages .chat:not([data-memory-working])');
+  });
+}
+
+// True once the marked transcript row has been replaced — proof that a
+// refresh-driven rebuild (the one that must preserve the placeholder) has run.
+async function transcriptRebuilt(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const w = window as unknown as { __memProbe?: Element | null };
+    return !!w.__memProbe && !w.__memProbe.isConnected;
+  });
+}
+
+// True while the working placeholder still carries the marker set before the
+// rebuild — i.e. the SAME DOM node survived, so its CSS animation never reset.
+async function placeholderSurvived(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const el = document.querySelector('#chat-messages [data-memory-working]');
+    return !!el && (el as Element & { __memWorking?: boolean }).__memWorking === true;
+  });
+}
+
+// The live CSS animation on the placeholder's first typing dot, or null when
+// absent. startTime is non-null while running and resets to a new value (or
+// null) when an animation is restarted — so an unchanged startTime across a
+// re-render proves the animation kept running continuously.
+async function typingAnimationStartTime(page: Page): Promise<number | null | undefined> {
+  return page.evaluate(() => {
+    const span = document.querySelector('#chat-messages [data-memory-working] .memory-typing span');
+    if (!span || typeof span.getAnimations !== 'function') return undefined;
+    const anims = span.getAnimations();
+    return anims.length ? anims[0].startTime : undefined;
+  });
+}
+
 test.describe('chat.js mid-run open (chat-components/chat-host/chat-stream/chat)', () => {
   test('shows a working bubble + indicator mid-run, releases the composer when the run completes', async ({ page }) => {
     const errors = await bootstrap(page);
@@ -327,6 +370,73 @@ test.describe('chat.js mid-run open (chat-components/chat-host/chat-stream/chat)
     await expect(page.locator('#chat-send')).toBeEnabled();
     // The persisted transcript is still rendered after the re-render.
     await expect(page.locator('#chat-messages .chat')).not.toHaveCount(0);
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
+  // REGRESSION guard (animation reset): the working placeholder must be the SAME
+  // DOM node across refresh-driven re-renders, and its typing animation must
+  // keep running continuously. A mid-run page re-renders on every persisted
+  // step; recreating the node — or moving it, which also restarts a CSS
+  // animation in Chromium — resets the waiting icon to frame 0. The js-dom
+  // harness loads no app.css, so a minimal keyframe rule is injected here to
+  // make the continuity assertable in the real engine.
+  test('keeps the same working placeholder node across refresh re-renders', async ({ page }) => {
+    const errors = await bootstrap(page);
+    const working = page.locator('#chat-messages [data-memory-working]');
+    await expect(working).toHaveCount(1);
+
+    await page.addStyleTag({
+      content:
+        '@keyframes memTestBob{0%{transform:translateY(0)}50%{transform:translateY(-10px)}100%{transform:translateY(0)}}' +
+        ' .memory-typing span{animation:memTestBob 1.2s linear infinite}',
+    });
+    // A freshly-styled CSS animation has a null startTime until its first frame;
+    // wait for it to be genuinely running before sampling.
+    await expect.poll(() => typingAnimationStartTime(page)).not.toBeNull();
+
+    const refresh = {
+      type: 'refresh',
+      bucket: 'running',
+      runId: 'r1',
+      runStatus: 'working',
+      pendingApprovals: 0,
+      pendingQuestions: 0,
+    };
+
+    for (let i = 0; i < 2; i++) {
+      await markWorkingProbe(page);
+      // The probe only proves a rebuild when a non-placeholder row exists.
+      expect(
+        await page.evaluate(
+          () => !!(window as unknown as { __memProbe?: Element }).__memProbe,
+        ),
+      ).toBe(true);
+
+      // The typing animation is live and running before the rebuild.
+      const beforeStart = await typingAnimationStartTime(page);
+      expect(beforeStart).not.toBeNull();
+      expect(beforeStart).toBeDefined();
+
+      await emitSSE(page, refresh);
+
+      // The rebuild re-created the probe row ...
+      await expect.poll(() => transcriptRebuilt(page)).toBe(true);
+      // ... while the placeholder stayed the same node (animation not reset).
+      expect(await placeholderSurvived(page)).toBe(true);
+      await expect(working).toHaveCount(1);
+      // The SAME animation is still running: an unchanged startTime proves the
+      // re-render neither recreated nor moved the animated node.
+      expect(await typingAnimationStartTime(page)).toBe(beforeStart);
+      // It is planted last, after the rebuilt transcript.
+      expect(
+        await page.evaluate(() => {
+          const m = document.getElementById('chat-messages');
+          const ph = m && m.querySelector('[data-memory-working]');
+          return !!m && !!ph && m.lastElementChild === ph;
+        }),
+      ).toBe(true);
+    }
 
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });
