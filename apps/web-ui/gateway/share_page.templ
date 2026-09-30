@@ -245,6 +245,7 @@ templ ShareAgentPage(props ShareAgentPageProps) {
 			} else {
 				@shareFrame(props)
 			}
+			<script src={ templ.SafeURL(webui.AssetPath("/js/chat-transport.js")) } defer></script>
 			<script src={ templ.SafeURL(webui.AssetPath("/js/share-agent.js")) } defer></script>
 		</body>
 	</html>
