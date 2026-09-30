@@ -502,8 +502,9 @@ templ MCPServerEditPage(data mcpServerFormData) {
 
 // mcpServerFormBody is the shared create/edit form card. editing selects the
 // POST target (/new vs /:id/update), the submit label, and whether the
-// transport radio group stays live (edit re-renders on a transport change
-// with an inline error — memory cannot change a server's transport).
+// transport radio group shows the transport-change hint (edit lets the user
+// switch a server's transport; memory clears the previous transport's
+// connection fields).
 templ mcpServerFormBody(data mcpServerFormData, editing bool) {
 	@components.PanelCard("", nil) {
 		{{ action := mcpServerSettingsBase + "/new"
@@ -564,7 +565,8 @@ templ mcpServerFormBody(data mcpServerFormData, editing bool) {
 
 // mcpServerTransportGroup renders the transport radio picker (stdio/sse/http).
 // Panels show/hide via mcpServersScript; the type fieldset error renders under
-// the radios.
+// the radios. In edit mode a muted hint explains that switching transport
+// replaces the previous transport's connection settings.
 templ mcpServerTransportGroup(data mcpServerFormData, editing bool) {
 	<div class="flex flex-col gap-1.5">
 		@ui.Eyebrow("Transport", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
@@ -579,6 +581,9 @@ templ mcpServerTransportGroup(data mcpServerFormData, editing bool) {
 				</label>
 			}
 		</div>
+		if editing {
+			<p class="text-muted text-[11px]">Changing transport replaces the previous transport's connection settings.</p>
+		}
 		if data.FieldErrs.Type != "" {
 			<p class="text-error text-xs">{ data.FieldErrs.Type }</p>
 		}
