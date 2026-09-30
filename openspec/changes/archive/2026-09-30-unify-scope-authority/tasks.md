@@ -1,4 +1,3 @@
-<!-- openspec:archive-hold: §7/§8 deferred per #1161; deltas ship later -->
 <!-- openspec:archive-ready -->
 
 # Implementation tasks
@@ -69,8 +68,8 @@ Sequencing rule: **never remove a grant path in the same release that removes it
 
 ## 9. Verification (every implementation PR)
 
-- [ ] 9.1 `cd apps/server && PATH="/root/go/bin:$PATH" go build ./...`
-- [ ] 9.2 `PATH="/root/go/bin:$PATH" go test -count=1 ./pkg/auth/... ./domain/apitoken/... ./domain/health/... ./domain/standalone/... ./internal/config/...`
+- [x] 9.1 `cd apps/server && PATH="/root/go/bin:$PATH" go build ./...`
+- [x] 9.2 `PATH="/root/go/bin:$PATH" go test -count=1 ./pkg/auth/... ./domain/apitoken/... ./domain/health/... ./domain/standalone/... ./internal/config/...`
 - [ ] 9.3 `PATH="/root/go/bin:$PATH" golangci-lint run ./...`
 - [ ] 9.4 Integration/migration test for 5.2 against a throwaway Postgres (`TEST_DATABASE_URL` + `REQUIRE_DB=1`)
-- [ ] 9.5 `openspec validate unify-scope-authority --strict` passes for this design; re-run for the archiving PR
+- [x] 9.5 `openspec validate unify-scope-authority --strict` passes for this design; re-run for the archiving PR
