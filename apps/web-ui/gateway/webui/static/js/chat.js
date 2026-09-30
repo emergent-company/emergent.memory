@@ -1557,6 +1557,21 @@
     return el;
   }
 
+  // The queue is a swapped/server-rendered surface (#chat-queue is rendered by
+  // chat.templ), so its row controls are delegated at the document level — the
+  // same pattern as the dock and tool-panel handlers. Binding on element
+  // creation missed the server-rendered mount entirely, leaving "Send next" and
+  // remove inert (#1301).
+  function onQueueClick(ev) {
+    var mount = document.getElementById("chat-queue");
+    if (!mount || !ev.target || !mount.contains(ev.target)) return;
+    var btn = ev.target.closest("[data-queue-action]");
+    if (!btn) return;
+    var id = btn.getAttribute("data-queue-id");
+    if (btn.getAttribute("data-queue-action") === "send") sendNow(id);
+    else removeQueued(id);
+  }
+
   function ensureQueueMount() {
     if (mounts.queue && document.contains(mounts.queue)) return mounts.queue;
     var wrap = composerWrapper();
@@ -1570,13 +1585,6 @@
       var form = document.getElementById("chat-form");
       if (form && form.parentNode === wrap) wrap.insertBefore(el, form);
       else wrap.appendChild(el);
-      el.addEventListener("click", function (ev) {
-        var btn = ev.target.closest("[data-queue-action]");
-        if (!btn) return;
-        var id = btn.getAttribute("data-queue-id");
-        if (btn.getAttribute("data-queue-action") === "send") sendNow(id);
-        else removeQueued(id);
-      });
     }
     mounts.queue = el;
     return el;
@@ -2411,6 +2419,9 @@
   document.addEventListener("click", onDockClick);
   document.addEventListener("keydown", onDockKeydown);
   document.addEventListener("input", onDockInput);
+  // document-level: the queue rows live under the server-rendered #chat-queue
+  // mount, so their controls are delegated too (survives every render/swap).
+  document.addEventListener("click", onQueueClick);
   // window-level: re-clamp the session rail width when the viewport shrinks.
   // Registered once here (not in init()) so re-renders of #chat-root never
   // stack duplicate listeners.
