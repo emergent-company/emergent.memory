@@ -180,11 +180,11 @@ The visibility listbox's `style="display:none"` is **not** redundant with
 
 ## 5. Alpine vs `data-*` vs go-daisy — policy
 
-**Current reality.** Alpine is used in exactly two templ spots:
+**Current reality.** Alpine is bootstrapped once in the app shell
+(`@alpine.Tag()`, `ui.templ:172`) and then drives **two** custom widgets:
 
-- `@alpine.Tag()` in the shell (`ui.templ:172`) — bootstraps the runtime.
-- The visibility listbox (`agent.templ:440-517`) — the one custom Alpine widget.
-- The org bulk-delete toolbar `x-data`/`x-show` (`org_context.templ:289,310,330`).
+- The visibility listbox (`agent.templ:440-517`) — Alpine `x-data`/`x-show`/`x-cloak`.
+- The org bulk-delete toolbar (`org_context.templ:289,310,330`) — Alpine `x-data`/`x-show`.
 
 The toast queue (`ui.templ:80`) is Alpine-owned but comes from go-daisy
 (`ui.ToastQueueWithProps`). Everything else is:
@@ -199,8 +199,9 @@ The toast queue (`ui.templ:80`) is Alpine-owned but comes from go-daisy
 1. Prefer **go-daisy L0** if it exists (icon/color picker, dropdown, dialog,
    popover, palette, disclosure, toast queue). Do not reimplement.
 2. For a genuinely custom control, prefer **`data-*` delegation in `app.js`**
-   over Alpine — it is the established, single-file pattern and the only thing
-   the js-dom/unit contract tests exercise.
+   over Alpine — it is the established, single-file pattern, and its `data-*`
+   attributes are what the unit contract tests assert on
+   (`components/components_test.go`).
 3. Reach for **Alpine only when the widget needs reactive local state
    keyboard/ARIA listbox semantics** (the visibility listbox case), and then
    follow §6's closed-state rule strictly.
