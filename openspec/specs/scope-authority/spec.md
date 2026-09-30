@@ -2,22 +2,20 @@
 
 ## Purpose
 
-Defines the single-authority posture for Memory's fine-grained authorization: the application is the sole authority for fine-grained Memory scopes, and the identity provider authenticates only. It specifies the two mutually exclusive authentication planes, the OIDC session scope resolution tiers and the exact grant of each tier, the opt-in trust model for scopes carried on OIDC tokens, the time-boxed permissive userinfo grant, the organization-scoped entitlement check, the canonical organization membership role, the sequenced rollout, and the observability of the authority posture.
+Defines the single-authority posture for Memory's fine-grained authorization: the application is the sole authority for fine-grained Memory scopes, and the identity provider authenticates only. It specifies the two mutually exclusive authentication planes, the OIDC session scope resolution tiers and the exact grant of each tier, the removal of the duplicate token-scope authority (token-carried scopes are never a grant and the permissive userinfo all-grant is gone), the organization-scoped entitlement check, the canonical organization membership role, the sequenced rollout, and the observability of the authority posture.
 
 ## Requirements
 
 ### Requirement: Single fine-grained scope authority
 
-The system SHALL treat the application as the sole authority for fine-grained Memory scopes. The identity provider SHALL be used for authentication only: it establishes the subject identity and MAY carry at most one coarse, app-defined signal. An OIDC token SHALL NOT be able to grant a fine-grained Memory scope in the target state: the standing default of the token-scope trust flag SHALL be disabled. During the sequenced rollout the flag is introduced enabled and flips to disabled in the following release (see 'Sequenced rollout preserves existing grants'). No other third party SHALL be an authority for Memory scopes. Where an identity-provider-side coarse signal is configured, it SHALL map to at most one application-side superadmin grant and SHALL NOT populate any other entitlement tier. The coarse signal is delivered only through RFC 7662 token introspection: the userinfo fallback carries no role claims, so a role-derived superadmin grant is introspection-only and re-resolved on every request. The signal is a Zitadel project role carried in the token's `urn:zitadel:iam:org:project:{projectID}:roles` claim, whose value is `{role: {orgID: orgDomain}}` — organization IDs are the KEYS of the inner map (org domains are the values); a claim of any other shape SHALL yield no grant (fail closed).
+The system SHALL treat the application as the sole authority for fine-grained Memory scopes. The identity provider SHALL be used for authentication only: it establishes the subject identity and MAY carry at most one coarse, app-defined signal. An OIDC token SHALL NOT be able to grant a fine-grained Memory scope: the token-scope grant path SHALL be absent entirely, so no token-carried scope, role, or claim other than the one coarse superadmin signal can produce a fine-grained grant. No configuration flag SHALL reintroduce a token-carried fine-grained grant. No other third party SHALL be an authority for Memory scopes. Where an identity-provider-side coarse signal is configured, it SHALL map to at most one application-side superadmin grant and SHALL NOT populate any other entitlement tier. The coarse signal is delivered only through RFC 7662 token introspection: the userinfo fallback carries no role claims, so a role-derived superadmin grant is introspection-only and re-resolved on every request. The signal is a Zitadel project role carried in the token's `urn:zitadel:iam:org:project:{projectID}:roles` claim, whose value is `{role: {orgID: orgDomain}}` — organization IDs are the KEYS of the inner map (org domains are the values); a claim of any other shape SHALL yield no grant (fail closed).
 
-#### Scenario: A token-carried Memory scope is not a grant by default
-- **GIVEN** the token-scope trust flag is disabled
-- **AND** a validated OIDC token carries the Memory scope `data:write`
+#### Scenario: A token-carried Memory scope is never a grant
+- **GIVEN** a validated OIDC token carries the Memory scope `data:write`
 - **WHEN** the session scopes are resolved
 - **THEN** the token-carried `data:write` is not granted
 
 #### Scenario: The identity provider is not consulted for fine-grained grants
-- **GIVEN** the token-scope trust flag is disabled
 - **WHEN** the session scopes are resolved for an OIDC user
 - **THEN** every granted scope originates from application-owned state (`core.api_tokens`, `core.superadmins`, `kb.organization_memberships`, `kb.project_memberships`, or the app-owned default set)
 
@@ -28,7 +26,7 @@ The system SHALL treat the application as the sole authority for fine-grained Me
 
 ### Requirement: Target scope resolution order
 
-The system SHALL resolve effective scopes from exactly one of two mutually exclusive authentication planes. For an `emt_*` API token, the effective scopes SHALL be the token's own scopes. For an OIDC session, the system SHALL resolve scopes in the order: token-carried Memory scopes (only while the token-scope trust flag is enabled, and terminal when it applies), then a superadmin grant, then an `org_admin` organization membership, then the project membership role for the project declared by `X-Project-ID`, then the app-owned default scope set, then an empty set. Resolution SHALL fail closed to an empty set when no tier grants a scope. The system SHALL NOT union token-carried scopes with application-derived scopes.
+The system SHALL resolve effective scopes from exactly one of two mutually exclusive authentication planes. For an `emt_*` API token, the effective scopes SHALL be the token's own scopes. For an OIDC session, the system SHALL resolve scopes in the order: a superadmin grant, then an `org_admin` organization membership, then the project membership role for the project declared by `X-Project-ID`, then the app-owned default scope set, then an empty set. Resolution SHALL fail closed to an empty set when no tier grants a scope. The system SHALL NOT union token-carried scopes with application-derived scopes.
 
 #### Scenario: API-token scopes are the effective scopes for machine callers
 - **GIVEN** a request authenticated with an `emt_*` API token carrying `projects:read`
@@ -37,14 +35,12 @@ The system SHALL resolve effective scopes from exactly one of two mutually exclu
 
 #### Scenario: Application entitlements are evaluated for OIDC sessions
 - **GIVEN** an OIDC-authenticated request with no API token
-- **AND** the token-scope trust flag is disabled
 - **AND** the user holds `project_viewer` in the project declared by `X-Project-ID`
 - **WHEN** the session scopes are resolved
 - **THEN** the session receives exactly the viewer read-only scopes
 
 #### Scenario: No tier grants a scope fails closed
 - **GIVEN** an OIDC-authenticated request
-- **AND** the token-scope trust flag is disabled
 - **AND** the user has no superadmin grant, no organization membership, no project membership, and no app-owned default is configured
 - **WHEN** the session scopes are resolved
 - **THEN** the session receives no Memory scopes
@@ -112,48 +108,46 @@ The system SHALL authorize organization-scoped decisions with a check of: an act
 
 ### Requirement: App-owned configuration vocabulary
 
-The system SHALL name its scope-policy configuration with application-owned variable names: `MEMORY_OIDC_DEFAULT_SCOPES`, `MEMORY_USERINFO_GRANT_ALL_SCOPES`, and `MEMORY_OIDC_TRUST_TOKEN_SCOPES`. Each previously shipped `ZITADEL_*` name SHALL be accepted as a deprecated alias for one release and SHALL emit a startup warning when used. When both the canonical name and its alias are set, the canonical name SHALL win and the alias SHALL be ignored with a warning. The aliases SHALL be removed in the release following the deprecation.
+The system SHALL name its remaining scope-policy configuration with an application-owned variable name: `MEMORY_OIDC_DEFAULT_SCOPES`. The other two scope-policy knobs — `MEMORY_USERINFO_GRANT_ALL_SCOPES` and `MEMORY_OIDC_TRUST_TOKEN_SCOPES` — SHALL be absent together with their grant paths and SHALL NOT be read. The previously shipped `ZITADEL_*` aliases SHALL also be absent. No environment variable SHALL enable a token-carried Memory scope grant or a permissive userinfo all-grant.
 
-#### Scenario: Canonical name is preferred over the deprecated alias
-- **GIVEN** both `MEMORY_OIDC_DEFAULT_SCOPES=data:read` and `ZITADEL_OIDC_DEFAULT_SCOPES=data:write` are set
+#### Scenario: Default scope set is configured by its application-owned name
+- **GIVEN** `MEMORY_OIDC_DEFAULT_SCOPES=data:read` is set
 - **WHEN** the configuration is loaded
-- **THEN** the effective default scope set is `data:read` and a warning is emitted
+- **THEN** the effective default scope set is `data:read`
 
-#### Scenario: Deprecated alias is honoured with a warning
-- **GIVEN** only `ZITADEL_OIDC_DEFAULT_SCOPES=data:read` is set
-- **WHEN** the configuration is loaded
-- **THEN** the effective default scope set is `data:read` and a deprecation warning naming both variables is emitted
+#### Scenario: Removed knobs are not read
+- **WHEN** the server starts
+- **THEN** `MEMORY_USERINFO_GRANT_ALL_SCOPES`, `MEMORY_OIDC_TRUST_TOKEN_SCOPES`, and the `ZITADEL_*` aliases are not read, and no environment variable enables a token-carried Memory scope grant or a permissive userinfo all-grant
 
-### Requirement: Token-carried Memory scopes are opt-in
+### Requirement: Token-carried Memory scopes are never a grant
 
-The system SHALL honour Memory scope names carried on a validated OIDC token only while the `MEMORY_OIDC_TRUST_TOKEN_SCOPES` flag is enabled. When enabled, the token's Memory scopes SHALL be used verbatim and terminally, and SHALL NOT be combined with application-derived scopes. When the flag is disabled, the system SHALL ignore all Memory scope names on the token and SHALL resolve scopes through application entitlements, then the app-owned default set, then an empty set. The final state of the system SHALL be the flag disabled, with the token-scope grant path removed entirely.
+The system SHALL ignore every Memory scope name carried on a validated OIDC token. It SHALL resolve scopes through application entitlements, then the app-owned default set, then an empty set, and SHALL NOT honour, filter, or union token-carried Memory scope names under any configuration. The token-scope grant path and the `MEMORY_OIDC_TRUST_TOKEN_SCOPES` flag SHALL be absent.
 
-#### Scenario: Explicit token scopes are honoured while trust is enabled
-- **GIVEN** `MEMORY_OIDC_TRUST_TOKEN_SCOPES=true`
-- **AND** a validated token carries the Memory scope `schema:write`
-- **WHEN** the session scopes are resolved
-- **THEN** the session receives `schema:write` verbatim and no role-derived or default scope is added
-
-#### Scenario: Token scopes are ignored once trust is disabled
-- **GIVEN** `MEMORY_OIDC_TRUST_TOKEN_SCOPES=false`
-- **AND** a validated token carries the Memory scope `schema:write`
+#### Scenario: Token scopes are ignored
+- **GIVEN** a validated token carries the Memory scope `schema:write`
 - **AND** the user holds `project_viewer` in the declared project
 - **WHEN** the session scopes are resolved
 - **THEN** the session receives exactly the viewer read-only scopes and never `schema:write`
 
-### Requirement: Time-boxed permissive userinfo grant
+#### Scenario: No configuration restores token-scope grants
+- **WHEN** the server starts
+- **THEN** no environment variable enables token-carried Memory scopes
 
-While the permissive userinfo all-or-nothing grant is active (the grant flag is enabled and token introspection is not configured), the system SHALL emit a startup warning naming the flag and the introspection precondition, and SHALL expose the state through a health field. The system SHALL remove the grant flag and its grant path once introspection is the norm, after which the userinfo fallback SHALL use the standard fail-closed resolution. The entitlement tiers SHALL exist before the grant path is removed.
+### Requirement: Userinfo fallback uses fail-closed resolution
 
-#### Scenario: Permissive grant is visible while active
-- **GIVEN** the userinfo grant-all flag is enabled and introspection is not configured
-- **WHEN** the server starts and the health endpoint is queried
-- **THEN** a startup warning is emitted and the health response reports the permissive grant as active
+The permissive userinfo all-or-nothing grant SHALL be removed: the grant flag and its grant path SHALL be absent, and the userinfo fallback SHALL use the standard fail-closed resolution like every other path. A userinfo-authenticated user SHALL receive exactly the application-derived scopes for their membership (or the app-owned default, or nothing), and SHALL never receive the full scope catalogue without an explicit entitlement.
 
-#### Scenario: Enabling introspection disables the permissive grant
-- **GIVEN** the userinfo grant-all flag is enabled and introspection client credentials are configured
-- **WHEN** a user is authenticated via the userinfo fallback
-- **THEN** the session receives scopes from the standard resolution and never the full scope catalogue, and the health field reports the permissive grant as inactive
+#### Scenario: Userinfo user receives exactly their entitlement
+- **GIVEN** an OIDC user is authenticated via the userinfo fallback
+- **AND** the user holds `project_viewer` in the declared project
+- **WHEN** the session scopes are resolved
+- **THEN** the session receives exactly the viewer read-only scopes
+
+#### Scenario: Userinfo user with no entitlement receives nothing
+- **GIVEN** an OIDC user is authenticated via the userinfo fallback
+- **AND** the user has no membership and no app-owned default is configured
+- **WHEN** the session scopes are resolved
+- **THEN** the session receives no scopes and never the full scope catalogue
 
 ### Requirement: Canonical organization membership role
 
@@ -174,36 +168,29 @@ The canonical role stored in `kb.organization_memberships` SHALL be `org_admin`.
 
 ### Requirement: Sequenced rollout preserves existing grants
 
-The system SHALL introduce the app-owned vocabulary, the entitlement tiers, and the token-scope trust flag before changing any default, and SHALL NOT remove a grant path in the same release that removes its replacement. The token-scope trust flag SHALL default to enabled when introduced and to disabled in the following release. The `ZITADEL_*` aliases SHALL be removed in the release following the deprecation. A default change introduced by the rollout SHALL be reversible by explicit configuration in the release in which it takes effect.
+The system SHALL land the app-owned vocabulary, the entitlement tiers, and the token-scope trust flag before changing any default, SHALL NOT remove a grant path in the same release that removes its replacement, and SHALL then remove the flag and the token-scope grant path once the app-owned entitlement tiers exist. The rollout SHALL proceed in order: introduce the flag enabled (no behaviour change), flip its default off (opt-in), then remove the flag and the token-scope grant path entirely. The `ZITADEL_*` aliases SHALL be removed in the release following the deprecation.
 
-#### Scenario: Introduction of the trust flag does not change effective grants
-- **GIVEN** the token-scope trust flag is introduced with its default enabled
-- **AND** a token carries a Memory scope
-- **WHEN** the session scopes are resolved
-- **THEN** the effective scopes are unchanged from before the flag was introduced
+#### Scenario: The rollout preserved grants at every step
+- **GIVEN** the app-owned entitlement tiers exist
+- **WHEN** the token-scope grant path is removed
+- **THEN** every principal reaches their grants through application-owned state
 
-#### Scenario: The default flip is announced before it happens
-- **GIVEN** the token-scope trust flag is enabled by default in the current release
+#### Scenario: The removed flag cannot be re-enabled
 - **WHEN** the server starts
-- **THEN** a deprecation warning states that token-carried Memory scopes will stop being honoured in the next release and names the flag
-
-#### Scenario: A flipped default is reversible without a downgrade
-- **GIVEN** the token-scope trust flag has flipped to disabled by default
-- **WHEN** an operator sets the flag to enabled
-- **THEN** token-carried Memory scopes are honoured again in that deployment
+- **THEN** `MEMORY_OIDC_TRUST_TOKEN_SCOPES` is not read and token-carried Memory scopes remain ignored
 
 ### Requirement: Scope-authority observability
 
-The system SHALL expose the scope-authority posture through a dedicated `scope_authority` object in the health response, distinct from the generic `checks` map, with the boolean fields `token_scopes_trusted`, `permissive_all_grant`, and `introspection_configured`. The object SHALL be additive and SHALL NOT change the status of the existing checks.
+The system SHALL expose the scope-authority posture through a dedicated `scope_authority` object in the health response, served on an authenticated endpoint and distinct from the generic `checks` map, with the boolean field `introspection_configured`. The object SHALL be additive and SHALL NOT change the status of the existing checks. The `token_scopes_trusted` and `permissive_all_grant` fields SHALL be removed with their grant paths.
 
 #### Scenario: Health reports the authority posture
 - **WHEN** the health endpoint is queried
-- **THEN** the response contains a `scope_authority` object with the fields `token_scopes_trusted`, `permissive_all_grant`, and `introspection_configured`
+- **THEN** the response contains a `scope_authority` object with the field `introspection_configured`
 
 #### Scenario: Posture fields reflect configuration
-- **GIVEN** the token-scope trust flag is disabled and introspection is configured
+- **GIVEN** introspection is configured
 - **WHEN** the health endpoint is queried
-- **THEN** `token_scopes_trusted` is false, `introspection_configured` is true, and `permissive_all_grant` is false
+- **THEN** `introspection_configured` is true
 
 ### Requirement: Route-derived organization context
 
