@@ -34,11 +34,16 @@ An object type SHALL be able to be flagged board-enabled; a board-enabled type S
 
 ### Requirement: A single writer owns work status
 
-For board-enabled types, `status` SHALL be authoritative and SHALL be changed only through the platform's work path, which creates the next version and keeps `properties["status"]` consistent. A direct agent write to `status` on a board-enabled type SHALL be rejected.
+For board-enabled types, `status` SHALL be authoritative and SHALL be changed only through the platform's work path, which creates the next version and keeps `properties["status"]` consistent. A direct agent write that sets work status SHALL be rejected — covering **both** the `status` field **and** `properties["status"]`, at every write entry point (create, create-or-update, patch, bulk status update).
 
 #### Scenario: Agent cannot set status directly
 
 - **WHEN** an agent attempts to write `status` on a board-enabled work object through a direct graph write
+- **THEN** the write is rejected and the object is unchanged
+
+#### Scenario: Agent cannot smuggle status through properties
+
+- **WHEN** an agent attempts to write `properties["status"]` on a board-enabled work object
 - **THEN** the write is rejected and the object is unchanged
 
 #### Scenario: Platform transition keeps both copies consistent
@@ -48,7 +53,7 @@ For board-enabled types, `status` SHALL be authoritative and SHALL be changed on
 
 ### Requirement: Listening agents subscribe to a type and are deduplicated
 
-An agent SHALL subscribe to work through a reaction trigger over an object type and the `created` event. Dispatch SHALL be deduplicated so a repeated `created` delivery for the same agent, object, and object version results in a single run.
+An agent SHALL subscribe to work through a reaction trigger over an object type and the `created` event. Dispatch SHALL be deduplicated so a repeated `created` delivery for the same agent, object, and object version results in a single run. The dedup key SHALL use the object's canonical identity (`canonical_id`) so a version bump does not defeat dedup.
 
 #### Scenario: Created object wakes a listener
 
@@ -82,7 +87,7 @@ Waking a listening agent SHALL enqueue a run on the agent's queue rather than ex
 #### Scenario: Unroutable object is surfaced
 
 - **WHEN** a board-enabled object has an assignee matching no listener, or its type has no listener
-- **THEN** the object is marked unroutable rather than left silently pending
+- **THEN** the object is surfaced as unroutable (a derived predicate) rather than left silently pending
 
 ### Requirement: Correct, crash-safe claim
 
@@ -105,7 +110,7 @@ Claiming SHALL transition the object from the ready status to the in-progress st
 
 ### Requirement: Claimed work is reclaimed when its run dies
 
-A claim whose run is missing or terminal beyond a threshold SHALL be reclaimed, and ready board-enabled objects with no live run SHALL be reconciled and enqueued.
+A claim whose run is missing or terminal beyond a threshold SHALL be reclaimed, and ready board-enabled objects with no live run SHALL be reconciled and enqueued. A run paused for human input SHALL count as live and SHALL NOT be reclaimed.
 
 #### Scenario: Stranded in-progress is released
 
@@ -162,7 +167,7 @@ Every run end state SHALL map to a defined item transition and a defined failure
 
 ### Requirement: Per-agent review on the main graph, with explicit rework
 
-Review SHALL use the object's existing review fields on the main graph. Approval SHALL finalize; a change request SHALL record append-only feedback and explicitly enqueue a rework run that carries all prior feedback; a revision cap SHALL escalate to a human.
+Review SHALL use the object's `needs_review`/`reviewed_by`/`reviewed_at` columns on the main graph; this change builds the write path for those (currently dormant) fields. Approval SHALL finalize; a change request SHALL record append-only feedback and explicitly enqueue a rework run that carries all prior feedback; a revision cap SHALL escalate to a human.
 
 #### Scenario: Approval finalizes
 

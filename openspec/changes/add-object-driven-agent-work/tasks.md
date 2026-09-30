@@ -9,8 +9,8 @@
 - [ ] 1.1 Migration `00205`: add `kb.graph_objects.assignee TEXT NULL` + index; add `kb.agent_runs.subject_object_id UUID NULL`, `subject_object_type TEXT`, `failure_class TEXT NULL` + index on `subject_object_id`. Verify `task migrate:up`.
 - [ ] 1.2 Add `assignee` to graph object create/update/list DTOs and filters, meaningful only for board-enabled types. Verify `go test ./domain/graph/...`.
 - [ ] 1.3 Add `workConfig` to the agent definition (status map, `requiresReview`, `failureLimit`, `retryPolicy`) with defaults; expose in definition DTOs. Verify `go test ./domain/agents/...`.
-- [ ] 1.4 Change `triggers.go` so a matched reaction enqueues a run instead of calling `executor.Execute` inline; dedup against `kb.agent_processing_log` (`agent_id+graph_object_id+object_version+event_type`); take HEAD `version` at dispatch (not from the batch payload). Gate on `workConfig`/`dispatchMode`. Verify unit + DB tests.
-- [ ] 1.5 Routing: enqueue only the listener matching `assignee` within the object's project; mark unroutable objects explicitly. Enforce `ConcurrencyStrategy: skip`. Verify tests.
+- [ ] 1.4 Change `triggers.go` so a matched reaction enqueues a run instead of calling `executor.Execute` inline; dedup against `kb.agent_processing_log` (`agent_id+graph_object_id+object_version+event_type`, with `graph_object_id` = the object's `canonical_id`); take HEAD `version` at dispatch (not from the batch payload). Gate on `workConfig`/`dispatchMode`. Verify unit + DB tests.
+- [ ] 1.5 Routing: enqueue only the listener matching `assignee` within the object's project; surface unroutable objects via a **derived** predicate (board-enabled + no matching listener) — no new persisted status. Enforce `ConcurrencyStrategy: skip`. Verify tests.
 - [ ] 1.6 Claim: `AcquireObjectUpsertLock` → `FindHeadByTypeAndKey` → `CreateVersion(in_progress)` in one tx; lost race → run `skipped`, no budget burn. Require non-null `key` for board-enabled types. Verify with a two-claim concurrency test (hard gate).
 - [ ] 1.7 Persist `subject_object_id`/`subject_object_type` on the run at enqueue. Verify DB test.
 
@@ -18,15 +18,15 @@
 
 - [ ] 2.1 Run-finalizing tools `work_complete` (→ done | review) and `work_block` (→ blocked + `kb.tasks`); platform ends the run on the terminator call. Verify tool tests.
 - [ ] 2.2 Implement the exhaustive run-end → item-transition → budget-impact mapping (design table); add a test per row.
-- [ ] 2.3 Single-work-status write path: advisory lock + `CreateVersion` + consistent `properties["status"]`; reject direct agent status writes on board-enabled types. Verify tests.
-- [ ] 2.4 Work-status reaper: `in-progress` objects whose run is missing/terminal past threshold → `ready` (budget-aware) or `blocked`. Model on `StaleRunReaper`. Verify tests.
-- [ ] 2.5 Reconciler: enqueue `ready` board-enabled objects with no live run/job (covers event-bus loss + pending-cap skip). Verify tests.
-- [ ] 2.6 Failure classification (retryable / deterministic / human; quota is agent-level); per-item budget; unassign→ready with requeue backoff and attempt history retained. Verify DB tests.
+- [ ] 2.3 Single-work-status write path: advisory lock + `CreateVersion` + consistent `properties["status"]`; **reject** direct agent work-status writes (both the `status` field and `properties["status"]`) at every entry point — `Create`, `CreateOrUpdate`, `Patch`, `BulkUpdateStatus`, bulk actions. Verify tests.
+- [ ] 2.4 Work-status reaper: `in-progress` objects with no **live** run past threshold → `ready` (budget-aware) or `blocked`. Model on `StaleRunReaper`; define liveness explicitly (live = `queued`/`running`/**`paused`**), **exclude `paused` runs**, and coordinate with `MarkStaleRunsAsError`'s `last_step_at` threshold so the two reapers never race. Verify tests.
+- [ ] 2.5 Reconciler: enqueue `ready` board-enabled objects with no live run and no live job (live job = `pending`/`processing`), tolerating the window between a job completing as `skipped` and the item transition committing. Verify tests.
+- [ ] 2.6 Failure classification (retryable / deterministic / human); add the net-new provider→executor **quota/429 error typing** required for the "quota is agent-level" rule; per-item budget; unassign→ready with requeue backoff and attempt history retained. Verify DB tests.
 - [ ] 2.7 Extend the existing breaker (`ConsecutiveFailures`/auto-disable) with thresholds; poison-item vs broken-agent distinction. Verify tests.
 
 ## 3. P3 — Review, rework, and human actions
 
-- [ ] 3.1 `requiresReview` → `status=review` + `needs_review=true`; approve → `reviewed_by`/`reviewed_at` + `needs_review=false` + `status=done`. Verify tests.
+- [ ] 3.1 `requiresReview` → `status=review` + `needs_review=true`; approve → `reviewed_by`/`reviewed_at` + `needs_review=false` + `status=done`. **Build the write path for these columns — they are declared and read but never written today.** Note the accepted trade-off: produced objects are visible/searchable before approval. Verify tests.
 - [ ] 3.2 Request changes → `status=revision` + append-only `feedback[] {round,author,text,runId}` (non-empty required) + rework enqueue carrying all prior feedback; revision cap → `kb.tasks` escalation. Verify tests.
 - [ ] 3.3 Human-action API: approve / request-changes / retry / reassign / cancel — handlers + DTOs + auth (project-member) + `route-authority.yaml` entries. Verify handler tests + `go run ./cmd/route-authority-guard`.
 - [ ] 3.4 Escalation surfaces through `kb.tasks` (`type=work-escalation`) with full feedback history. Verify tests.
