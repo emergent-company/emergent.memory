@@ -388,13 +388,11 @@ func (h *Handler) databaseBackupCheck(ctx context.Context) Check {
 	}
 }
 
-// ScopeAuthorityInfo is the scope-authority posture: which authority is
-// currently minting fine-grained scopes and whether the permissive pilot posture
-// is active. It is served only on an authenticated endpoint (issue #812 Q5) so
-// the all-grant/permissive posture is never visible to anonymous callers.
+// ScopeAuthorityInfo is the scope-authority posture. After §8 (issue #1161) the
+// app is the sole authority for fine-grained Memory scopes, so the only
+// remaining transitional signal is whether RFC 7662 introspection is configured.
+// It is served only on an authenticated endpoint (issue #812 Q5).
 type ScopeAuthorityInfo struct {
-	TokenScopesTrusted      bool `json:"token_scopes_trusted"`
-	PermissiveAllGrant      bool `json:"permissive_all_grant"`
 	IntrospectionConfigured bool `json:"introspection_configured"`
 }
 
@@ -403,18 +401,15 @@ func (h *Handler) scopeAuthorityInfo() *ScopeAuthorityInfo {
 	if h.cfg == nil {
 		return &ScopeAuthorityInfo{}
 	}
-	z := h.cfg.Zitadel
 	return &ScopeAuthorityInfo{
-		TokenScopesTrusted:      z.TrustTokenScopes,
-		PermissiveAllGrant:      z.UserinfoAllGrantActive(),
-		IntrospectionConfigured: z.IntrospectionConfigured(),
+		IntrospectionConfigured: h.cfg.Zitadel.IntrospectionConfigured(),
 	}
 }
 
 // ScopeAuthority returns the scope-authority posture. It is registered behind
-// RequireAuth so the permissive posture is not exposed anonymously.
+// RequireAuth so the posture is not exposed anonymously.
 // @Summary      Get scope-authority posture
-// @Description  Returns the scope-authority posture (token-scope trust, permissive userinfo all-grant, introspection status). Authenticated only.
+// @Description  Returns the scope-authority posture (introspection status). Authenticated only.
 // @Tags         health
 // @Produce      json
 // @Success      200 {object} map[string]any "scope-authority posture"

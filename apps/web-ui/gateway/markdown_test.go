@@ -124,6 +124,112 @@ func TestNeutralizeCitationLinksCodeFence(t *testing.T) {
 	}
 }
 
+// TestLinkifyRelationshipRefs covers the bare-relationship linkify rule: only
+// full-UUID references that map to a validated relationship citation become
+// links; truncated forms, code, and already-linked references stay untouched.
+func TestLinkifyRelationshipRefs(t *testing.T) {
+	const (
+		src   = "2abaf19c-dd38-4eac-9da7-4a8c3decf896"
+		other = "99999999-9999-4999-9999-999999999999"
+	)
+	cites := []citation{
+		{Kind: "relationship", ID: src, Type: "works_at", URL: "/objects/" + src},
+	}
+	cases := []struct {
+		name    string
+		in      string
+		want    []string
+		notWant []string
+	}{
+		{
+			name: "bracketed bare ref becomes a link",
+			in:   "[#relationship-" + src + "]",
+			want: []string{"[#relationship-" + src + "](/objects/" + src + "#relationship-" + src + ")"},
+		},
+		{
+			name: "bare ref without brackets becomes a link",
+			in:   "see #relationship-" + src + " here",
+			want: []string{"[#relationship-" + src + "](/objects/" + src + "#relationship-" + src + ")"},
+		},
+		{
+			name:    "truncated ref stays plain text",
+			in:      "see #relationship-2abaf19c... here",
+			want:    []string{"#relationship-2abaf19c..."},
+			notWant: []string{"](/objects/", "](http"},
+		},
+		{
+			name:    "existing link target not double-wrapped",
+			in:      "[A —rel→ B](/objects/" + other + "#relationship-" + src + ")",
+			want:    []string{"[A —rel→ B](/objects/" + other + "#relationship-" + src + ")"},
+			notWant: []string{"](#relationship-", "](/objects/" + src + "#relationship-" + src},
+		},
+		{
+			name:    "inline code span left alone",
+			in:      "`#relationship-" + src + "`",
+			want:    []string{"`#relationship-" + src + "`"},
+			notWant: []string{"](/objects/"},
+		},
+		{
+			name:    "fenced code block left alone",
+			in:      "```\n#relationship-" + src + "\n```",
+			want:    []string{"#relationship-" + src},
+			notWant: []string{"](/objects/"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := linkifyRelationshipRefs(tc.in, cites)
+			for _, w := range tc.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("missing %q in %q", w, got)
+				}
+			}
+			for _, n := range tc.notWant {
+				if strings.Contains(got, n) {
+					t.Errorf("unexpected %q in %q", n, got)
+				}
+			}
+		})
+	}
+}
+
+// TestLinkifyRelationshipRefsNoCitations proves the no-citation and no-match
+// cases return the input byte-for-byte, so rendering is untouched when there is
+// nothing to linkify.
+func TestLinkifyRelationshipRefsNoCitations(t *testing.T) {
+	const src = "2abaf19c-dd38-4eac-9da7-4a8c3decf896"
+	cases := []struct {
+		name  string
+		in    string
+		cites []citation
+	}{
+		{"nil citations", "[#relationship-" + src + "]", nil},
+		{"empty citations", "#relationship-" + src, []citation{}},
+		{"object citation only", "[#relationship-" + src + "]", []citation{{Kind: "object", ID: src}}},
+		{"relationship with non-canonical url", "#relationship-" + src, []citation{{Kind: "relationship", ID: src, URL: "/objects/nope"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := linkifyRelationshipRefs(tc.in, tc.cites)
+			if got != tc.in {
+				t.Errorf("linkifyRelationshipRefs(%q, %v) altered input:\n got %q\nwant %q", tc.in, tc.cites, got, tc.in)
+			}
+		})
+	}
+}
+
+// TestLinkifiedRefSurvivesNeutralize proves a linkified bare ref renders to a
+// surviving anchor when its relationship id is cited: renderCitedMarkdown
+// produces a link that neutralizeCitationLinks keeps.
+func TestLinkifiedRefSurvivesNeutralize(t *testing.T) {
+	const rel = "2abaf19c-dd38-4eac-9da7-4a8c3decf896"
+	cites := []citation{{Kind: "relationship", ID: rel, Type: "works_at", URL: "/objects/" + rel}}
+	got := renderCitedMarkdown("[#relationship-"+rel+"]", cites)
+	if !strings.Contains(got, `href="/objects/`+rel+`#relationship-`+rel+`"`) {
+		t.Errorf("linkified ref did not survive neutralization: %q", got)
+	}
+}
+
 // TestParseObjectRef locks the ref grammar: UUID refs, key refs containing "/",
 // an optional relationship fragment, and rejection of empty / query refs.
 func TestParseObjectRef(t *testing.T) {

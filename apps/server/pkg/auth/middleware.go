@@ -160,9 +160,6 @@ func NewMiddleware(p MiddlewareParams) *Middleware {
 		m.debugToken = "Bearer " + p.Cfg.Zitadel.DebugToken
 	}
 
-	m.warnIfOIDCAllGrantActive()
-	m.warnIfTokenScopesTrusted()
-
 	return m
 }
 
@@ -1062,74 +1059,23 @@ func (m *Middleware) finalizeOIDCUser(ctx context.Context, claims *TokenClaims, 
 		return nil, err
 	}
 
-	// Legacy all-or-nothing grant: only for the userinfo path and only while
-	// introspection is unconfigured (single-user pilot posture). Enabling
-	// introspection disables it.
-	if claims.AuthSource == authSourceUserinfo && m.oidcAllGrantEnabled() {
-		user.Scopes = GetAllScopes()
-		return user, nil
-	}
-
+	// Every OIDC path (introspection, cache, and the userinfo fallback) uses the
+	// same standard fail-closed resolution: app-derived entitlements → app-owned
+	// default → empty. The userinfo fallback carries no role claims, so it only
+	// ever reaches the project-membership/default tiers.
 	roles := m.trustedSuperadminRoles(claims.Issuer, claims.Roles)
 	user.Scopes = m.resolveOIDCScopes(ctx, user.ID, projectID, claims.Scopes, roles)
 	return user, nil
 }
 
 // oidcAuthSource records which validation path produced a set of claims, so the
-// legacy userinfo all-grant can be applied consistently across cache hits.
+// raw claims can be cached and rehydrated without re-resolving scopes.
 type oidcAuthSource string
 
 const (
 	authSourceIntrospection oidcAuthSource = "introspection"
 	authSourceUserinfo      oidcAuthSource = "userinfo"
 )
-
-// oidcAllGrantWarningText is the operator-facing warning emitted when the legacy
-// userinfo all-grant is active. It names the effect and both remediations.
-const oidcAllGrantWarningText = "OIDC all-scope grant is ACTIVE: MEMORY_USERINFO_GRANT_ALL_SCOPES is enabled and token introspection is not configured, so every OIDC user authenticated via the userinfo fallback receives the full Memory scope catalogue (GetAllScopes). Remediate by configuring ZITADEL_CLIENT_JWT (or ZITADEL_CLIENT_JWT_PATH) to enable introspection (DISABLE_ZITADEL_INTROSPECTION must not be enabled), or by setting MEMORY_USERINFO_GRANT_ALL_SCOPES=false."
-
-// oidcAllGrantWarning returns the startup warning to emit when the legacy
-// userinfo all-grant is active, or "" when it is not (flag disabled, or
-// introspection configured).
-func oidcAllGrantWarning(z *config.ZitadelConfig) string {
-	if !z.UserinfoAllGrantActive() {
-		return ""
-	}
-	return oidcAllGrantWarningText
-}
-
-// warnIfOIDCAllGrantActive emits the loud startup warning when the legacy
-// userinfo all-grant is in effect. Visibility only — it changes no behaviour.
-func (m *Middleware) warnIfOIDCAllGrantActive() {
-	if m.cfg == nil {
-		return
-	}
-	if msg := oidcAllGrantWarning(&m.cfg.Zitadel); msg != "" {
-		m.log.Warn(msg,
-			slog.String("config", "MEMORY_USERINFO_GRANT_ALL_SCOPES"),
-			slog.Bool("introspection_configured", false),
-		)
-	}
-}
-
-// tokenScopeTrustWarningText is the operator-facing warning emitted each boot
-// while token-carried Memory scopes are honoured. Token-scope trust is opt-in
-// and disabled by default; this text names the flag, states the posture, and
-// gives the opt-out.
-const tokenScopeTrustWarningText = "token-scope trust is ENABLED by explicit configuration: MEMORY_OIDC_TRUST_TOKEN_SCOPES=true, so Memory scope names carried on OIDC tokens are honoured as grants. This is opt-in and disabled by default; anyone who configured Memory scope names in Zitadel keeps those grants only while this flag is set. Unset the flag (or set it false) to restore fail-closed resolution from application-owned scopes."
-
-// warnIfTokenScopesTrusted emits the per-boot warning while
-// MEMORY_OIDC_TRUST_TOKEN_SCOPES is explicitly enabled. The flag defaults to
-// false, so this fires only for an operator opt-in.
-func (m *Middleware) warnIfTokenScopesTrusted() {
-	if m.cfg == nil || !m.cfg.Zitadel.TrustTokenScopes {
-		return
-	}
-	m.log.Warn(tokenScopeTrustWarningText,
-		slog.String("config", "MEMORY_OIDC_TRUST_TOKEN_SCOPES"),
-		slog.Bool("token_scopes_trusted", true),
-	)
-}
 
 // TokenClaims represents parsed token claims
 type TokenClaims struct {

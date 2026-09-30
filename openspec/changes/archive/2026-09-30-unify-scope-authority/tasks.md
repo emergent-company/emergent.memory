@@ -1,4 +1,3 @@
-<!-- openspec:archive-hold: §7/§8 deferred per #1161; deltas ship later -->
 <!-- openspec:archive-ready -->
 
 # Implementation tasks
@@ -62,15 +61,15 @@ Sequencing rule: **never remove a grant path in the same release that removes it
 
 ## 8. [BREAKING] Remove the duplicate authority (Release N+2)
 
-- [ ] 8.1 Delete the token-trust flag and the `filterMemoryScopes` grant branch. `memoryScopeVocabulary` then loses its only production consumer (API-token creation validates against `domain/apitoken.ValidApiTokenScopes`), so delete it too unless a new consumer is deliberately wired; verify no dead reference remains
-- [ ] 8.2 Delete `UserinfoGrantAllScopes`, the `authSourceUserinfo` all-grant branch in `finalizeOIDCUser`, and the `permissive_all_grant` health field
-- [ ] 8.3 Verify the userinfo fallback now uses the standard fail-closed resolution with an exact-set test; verify `openspec validate --all --strict` passes
-- [ ] 8.4 Re-scope #736 item 3 against the reduced live-Zitadel surface and update the issue
+- [x] 8.1 Delete the token-trust flag and the `filterMemoryScopes` grant branch. `memoryScopeVocabulary` then loses its only production consumer (API-token creation validates against `domain/apitoken.ValidApiTokenScopes`), so delete it too unless a new consumer is deliberately wired; verify no dead reference remains
+- [x] 8.2 Delete `UserinfoGrantAllScopes`, the `authSourceUserinfo` all-grant branch in `finalizeOIDCUser`, and the `permissive_all_grant` health field
+- [x] 8.3 Verify the userinfo fallback now uses the standard fail-closed resolution with an exact-set test; verify `openspec validate --all --strict` passes
+- [x] 8.4 Re-scope #736 item 3 against the reduced live-Zitadel surface and update the issue
 
 ## 9. Verification (every implementation PR)
 
-- [ ] 9.1 `cd apps/server && PATH="/root/go/bin:$PATH" go build ./...`
-- [ ] 9.2 `PATH="/root/go/bin:$PATH" go test -count=1 ./pkg/auth/... ./domain/apitoken/... ./domain/health/... ./domain/standalone/... ./internal/config/...`
+- [x] 9.1 `cd apps/server && PATH="/root/go/bin:$PATH" go build ./...`
+- [x] 9.2 `PATH="/root/go/bin:$PATH" go test -count=1 ./pkg/auth/... ./domain/apitoken/... ./domain/health/... ./domain/standalone/... ./internal/config/...`
 - [ ] 9.3 `PATH="/root/go/bin:$PATH" golangci-lint run ./...`
 - [ ] 9.4 Integration/migration test for 5.2 against a throwaway Postgres (`TEST_DATABASE_URL` + `REQUIRE_DB=1`)
-- [ ] 9.5 `openspec validate unify-scope-authority --strict` passes for this design; re-run for the archiving PR
+- [x] 9.5 `openspec validate unify-scope-authority --strict` passes for this design; re-run for the archiving PR

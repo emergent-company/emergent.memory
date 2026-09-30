@@ -14,14 +14,15 @@ Usage:
     --limit N           Max objects/relationships to fetch per page (default: 200)
     --stats-only        Print counts only, no full object list
 
-Defaults (hardcoded for bench project):
+Defaults (bench project):
     URL:     https://memory.emergent-company.ai
-    TOKEN:   emt_90e466b66031ef242148336a85152d30f78ba3e723fb81dc7ebed0fefc9156de
+    TOKEN:   $MEMORY_API_TOKEN (required; pass --token to override)
     PROJECT: ea1fe3b1-6ec9-48a0-8469-46211895f3be
 """
 
 import argparse
 import json
+import os
 import sys
 import urllib.request
 import urllib.parse
@@ -29,7 +30,7 @@ from collections import defaultdict
 from pathlib import Path
 
 DEFAULT_URL     = "https://memory.emergent-company.ai"
-DEFAULT_TOKEN   = "emt_90e466b66031ef242148336a85152d30f78ba3e723fb81dc7ebed0fefc9156de"
+DEFAULT_TOKEN   = os.environ.get("MEMORY_API_TOKEN", "")
 DEFAULT_PROJECT = "ea1fe3b1-6ec9-48a0-8469-46211895f3be"
 
 
@@ -163,12 +164,14 @@ def main():
     p = argparse.ArgumentParser(description="Dump Memory graph entities/relationships for a namespace")
     p.add_argument("--namespace", required=True, help="Namespace to query")
     p.add_argument("--url",     default=DEFAULT_URL,     help="Memory API base URL")
-    p.add_argument("--token",   default=DEFAULT_TOKEN,   help="Memory API token")
+    p.add_argument("--token",   default=DEFAULT_TOKEN,   help="Memory API token (defaults to $MEMORY_API_TOKEN)")
     p.add_argument("--project", default=DEFAULT_PROJECT, help="Memory project UUID")
     p.add_argument("--output",  default="",              help="Output file path (default: stdout)")
     p.add_argument("--limit",   type=int, default=200,   help="Page size for API calls")
     p.add_argument("--stats-only", action="store_true",  help="Print counts only, no object list")
     args = p.parse_args()
+    if not args.token:
+        p.error("no Memory API token: pass --token or set the MEMORY_API_TOKEN environment variable")
 
     dump(args, sys.stdout)
 

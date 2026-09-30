@@ -13,6 +13,7 @@ Usage:
 
 import argparse
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -21,7 +22,7 @@ import requests
 
 DATA_FILE     = Path(__file__).parent / "locomo" / "data" / "locomo10.json"
 DEEPSEEK_BASE = "https://api.deepseek.com/v1"
-DEEPSEEK_KEY  = "sk-bfa5b8465aad4a1e907474714936b0ff"
+DEEPSEEK_KEY  = os.environ.get("DEEPSEEK_KEY", "")
 MODEL         = "deepseek-v4-flash"
 
 # ---------------------------------------------------------------------------
@@ -276,6 +277,8 @@ def main():
     parser.add_argument("--dump", action="store_true", help="Print raw extraction output")
     parser.add_argument("--per-session", action="store_true", help="Run extraction per session and merge")
     args = parser.parse_args()
+    if not DEEPSEEK_KEY:
+        parser.error("DEEPSEEK_KEY is not set - export it before running this benchmark")
 
     if "-" in args.sessions:
         a, b = args.sessions.split("-")
