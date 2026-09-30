@@ -2,7 +2,10 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"html"
+	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/microcosm-cc/bluemonday"
@@ -42,6 +45,105 @@ type citation struct {
 	// Key is the object's human key (e.g. "lov/2005-06-17-90") when the answer
 	// referenced it by key; the id/url remain canonical. Empty for id refs.
 	Key string `json:"key,omitempty"`
+}
+
+// relUUIDPattern matches a canonical relationship id: a full UUID. Truncated
+// forms (e.g. "#relationship-2abaf19c...") are deliberately not matched.
+const relUUIDPattern = `[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`
+
+var (
+	// relUUIDRe recognizes a full-UUID relationship id.
+	relUUIDRe = regexp.MustCompile(`^` + relUUIDPattern + `$`)
+	// relObjectURLRe is the canonical object page the client itself trusts for a
+	// relationship link target: exactly `/objects/<uuid>`.
+	relObjectURLRe = regexp.MustCompile(`^/objects/` + relUUIDPattern + `$`)
+	// bareRelRefRe matches a bare `#relationship-<uuid>` reference.
+	bareRelRefRe = regexp.MustCompile(`#relationship-(` + relUUIDPattern + `)`)
+	// Span masks — regions already carrying a link or code that must not be
+	// re-written: fenced code blocks, inline code spans, and markdown links.
+	fencedCodeRe   = regexp.MustCompile("(?s)```.*?```|~~~.*?~~~")
+	inlineCodeRe   = regexp.MustCompile("`[^`\\n]*`")
+	markdownLinkRe = regexp.MustCompile(`\[[^\]]*\]\([^)]*\)`)
+)
+
+// renderCitedMarkdown renders answer/thinking markdown to sanitized HTML and
+// applies the citation link rule, first linkifying bare relationship references
+// against the turn's grounded citations. It is the single rendering boundary for
+// cited chat markdown, shared by the live snapshot and history renderers so both
+// produce identical output.
+func renderCitedMarkdown(text string, cites []citation) string {
+	return neutralizeCitationLinks(renderMarkdown(linkifyRelationshipRefs(text, cites)), cites)
+}
+
+// linkifyRelationshipRefs rewrites bare `#relationship-<uuid>` references in an
+// answer/thinking markdown source into real links, using the turn's grounded
+// relationship citations as the only source of truth. A relationship id becomes
+// a link only when it is cited with a validated canonical object page URL
+// (`/objects/<uuid>` — the same trust rule the client applies); the target is
+// that page plus the `#relationship-<id>` fragment. Truncated forms, references
+// already inside a markdown link target, and references inside inline/fenced
+// code are left untouched. When nothing matches, text is returned byte-for-byte.
+func linkifyRelationshipRefs(text string, citations []citation) string {
+	hrefs := make(map[string]string, len(citations))
+	for _, c := range citations {
+		if c.Kind != "relationship" || !relUUIDRe.MatchString(c.ID) || !relObjectURLRe.MatchString(c.URL) {
+			continue
+		}
+		hrefs[c.ID] = c.URL + "#relationship-" + c.ID
+	}
+	if len(hrefs) == 0 {
+		return text
+	}
+
+	// Mask link targets and code spans so the bare scan below never rewrites a
+	// reference that is already a link or code (mirrors textRefs' mask-then-scan).
+	masked := text
+	for _, s := range maskSpans(text) {
+		masked = masked[:s.start] + strings.Repeat(" ", s.end-s.start) + masked[s.end:]
+	}
+
+	var out strings.Builder
+	changed := false
+	last := 0
+	for _, m := range bareRelRefRe.FindAllStringSubmatchIndex(masked, -1) {
+		relID := text[m[2]:m[3]]
+		target, ok := hrefs[relID]
+		if !ok {
+			continue
+		}
+		// Absorb a surrounding [...] so the bracketed form
+		// `[#relationship-<uuid>]` becomes a single link, not a nested one.
+		start, end := m[0], m[1]
+		if start > 0 && end < len(masked) && masked[start-1] == '[' && masked[end] == ']' {
+			start, end = start-1, end+1
+		}
+		out.WriteString(text[last:start])
+		out.WriteString("[#relationship-" + relID + "](" + target + ")")
+		last = end
+		changed = true
+	}
+	if !changed {
+		return text
+	}
+	out.WriteString(text[last:])
+	return out.String()
+}
+
+// relSpan is a [start, end) byte span of the source markdown.
+type relSpan struct{ start, end int }
+
+// maskSpans returns the byte spans of text that carry an existing markdown link
+// or code (fenced or inline), ordered by descending start so each can be blanked
+// in place without shifting later positions.
+func maskSpans(text string) []relSpan {
+	var spans []relSpan
+	for _, re := range []*regexp.Regexp{fencedCodeRe, inlineCodeRe, markdownLinkRe} {
+		for _, m := range re.FindAllStringIndex(text, -1) {
+			spans = append(spans, relSpan{m[0], m[1]})
+		}
+	}
+	slices.SortFunc(spans, func(a, b relSpan) int { return cmp.Compare(b.start, a.start) })
+	return spans
 }
 
 // neutralizeCitationLinks applies the citation link rule to sanitized answer
