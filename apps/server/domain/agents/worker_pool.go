@@ -10,73 +10,184 @@ import (
 	"time"
 )
 
-// WorkerPool executes queued agent runs using a fixed pool of goroutines.
-// Workers poll kb.agent_run_jobs using FOR UPDATE SKIP LOCKED, claim jobs,
-// execute them via AgentExecutor, and update status atomically.
+// WorkerPool executes queued agent runs using per-queue worker sets. A
+// supervisor reconciles the enabled queues (kb.agent_queues) on an interval and
+// maintains each queue's configured number of workers; each worker claims jobs
+// from its own queue using FOR UPDATE SKIP LOCKED and executes them via
+// AgentExecutor.
 type WorkerPool struct {
 	repo         *Repository
 	executor     *AgentExecutor
 	log          *slog.Logger
-	size         int
+	globalSize   int
 	pollInterval time.Duration
+
+	// refreshInterval is how often the supervisor reconciles queue configuration.
+	refreshInterval time.Duration
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+
+	mu      sync.Mutex
+	workers map[string]*queueWorkerSet
+	workWG  sync.WaitGroup
 }
 
-// NewWorkerPool creates a WorkerPool. size=0 disables the pool.
+// queueWorkerSet is the running worker set for one queue.
+type queueWorkerSet struct {
+	cancel context.CancelFunc
+	count  int
+}
+
+// NewWorkerPool creates a WorkerPool. size=0 disables the pool; otherwise size
+// is the number of workers for the "default" queue (non-default queues use
+// their own configured concurrency).
 func NewWorkerPool(repo *Repository, executor *AgentExecutor, log *slog.Logger, size int, pollInterval time.Duration) *WorkerPool {
 	return &WorkerPool{
-		repo:         repo,
-		executor:     executor,
-		log:          log,
-		size:         size,
-		pollInterval: pollInterval,
+		repo:            repo,
+		executor:        executor,
+		log:             log,
+		globalSize:      size,
+		pollInterval:    pollInterval,
+		refreshInterval: 30 * time.Second,
+		workers:         make(map[string]*queueWorkerSet),
 	}
 }
 
-// Start launches the worker goroutines. It is idempotent — safe to call once.
+// SetRefreshInterval overrides how often the supervisor reconciles queues.
+func (p *WorkerPool) SetRefreshInterval(d time.Duration) {
+	if d > 0 {
+		p.refreshInterval = d
+	}
+}
+
+// Start launches the supervisor. It is idempotent — safe to call once.
 func (p *WorkerPool) Start(ctx context.Context) error {
-	if p.size <= 0 {
+	if p.globalSize <= 0 {
 		p.log.Info("agent worker pool disabled (AGENT_WORKER_POOL_SIZE=0)")
 		return nil
 	}
 
 	ctx, p.cancel = context.WithCancel(ctx)
-	p.log.Info("starting agent worker pool", slog.Int("size", p.size), slog.Duration("poll_interval", p.pollInterval))
+	p.log.Info("starting agent worker pool",
+		slog.Int("default_queue_size", p.globalSize),
+		slog.Duration("poll_interval", p.pollInterval),
+	)
 
-	for i := 0; i < p.size; i++ {
-		p.wg.Add(1)
-		go p.runWorker(ctx, i)
-	}
+	p.wg.Add(1)
+	go p.supervise(ctx)
 	return nil
 }
 
-// Stop signals all workers to stop and waits for them to finish.
+// Stop signals the supervisor and all queue workers to stop and waits for them.
 func (p *WorkerPool) Stop() {
 	if p.cancel == nil {
 		return
 	}
 	p.cancel()
 	p.wg.Wait()
+	p.workWG.Wait()
 	p.log.Info("agent worker pool stopped")
 }
 
-// runWorker is the main loop for a single worker goroutine.
-func (p *WorkerPool) runWorker(ctx context.Context, workerID int) {
+// supervise reconciles per-queue worker sets on an interval.
+func (p *WorkerPool) supervise(ctx context.Context) {
 	defer p.wg.Done()
-	log := p.log.With(slog.Int("worker", workerID))
-	log.Debug("agent worker started")
+
+	interval := p.refreshInterval
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	p.reconcile(ctx)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			p.stopAllWorkers()
+			return
+		case <-ticker.C:
+			p.reconcile(ctx)
+		}
+	}
+}
+
+// reconcile sizes each enabled queue's worker set to its configured concurrency.
+func (p *WorkerPool) reconcile(ctx context.Context) {
+	if err := p.repo.EnsureDefaultQueues(ctx); err != nil {
+		p.log.Warn("ensure default queues failed", slog.String("error", err.Error()))
+	}
+	queues, err := p.repo.ListEnabledQueues(ctx)
+	if err != nil {
+		p.log.Warn("queue refresh failed", slog.String("error", err.Error()))
+		return
+	}
+
+	desired := make(map[string]int, len(queues))
+	for _, q := range queues {
+		c := q.Concurrency
+		if q.Name == DefaultQueueName && p.globalSize > 0 {
+			c = p.globalSize
+		}
+		if c < 1 {
+			c = 1
+		}
+		desired[q.Name] = c
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Stop queues that were removed or disabled.
+	for name, set := range p.workers {
+		if _, ok := desired[name]; !ok {
+			set.cancel()
+			delete(p.workers, name)
+		}
+	}
+	// Start queues that are new, or resize those whose concurrency changed.
+	for name, count := range desired {
+		if set, ok := p.workers[name]; ok {
+			if set.count == count {
+				continue
+			}
+			set.cancel()
+			delete(p.workers, name)
+		}
+		qctx, qcancel := context.WithCancel(ctx)
+		p.workers[name] = &queueWorkerSet{cancel: qcancel, count: count}
+		for i := 0; i < count; i++ {
+			p.workWG.Add(1)
+			go p.runQueueWorker(qctx, name, i)
+		}
+		p.log.Info("started queue workers", slog.String("queue", name), slog.Int("workers", count))
+	}
+}
+
+func (p *WorkerPool) stopAllWorkers() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for name, set := range p.workers {
+		set.cancel()
+		delete(p.workers, name)
+	}
+}
+
+// runQueueWorker is the main loop for a single queue worker.
+func (p *WorkerPool) runQueueWorker(ctx context.Context, queue string, workerID int) {
+	defer p.workWG.Done()
+	log := p.log.With(slog.String("queue", queue), slog.Int("worker", workerID))
+	log.Debug("queue worker started")
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Debug("agent worker stopping")
+			log.Debug("queue worker stopping")
 			return
 		default:
 		}
 
-		job, err := p.repo.ClaimNextJob(ctx)
+		job, err := p.repo.ClaimNextJobInQueue(ctx, queue)
 		if err != nil {
 			if ctx.Err() != nil {
 				return

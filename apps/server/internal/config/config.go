@@ -59,6 +59,9 @@ type Config struct {
 	// Agent worker pool configuration
 	AgentWorkerPoolSize     int           `env:"AGENT_WORKER_POOL_SIZE" envDefault:"5"`
 	AgentWorkerPollInterval time.Duration `env:"AGENT_WORKER_POLL_INTERVAL" envDefault:"5s"`
+	// AgentWorkerQueueRefreshInterval is how often the worker supervisor
+	// reconciles the named queue configuration (kb.agent_queues).
+	AgentWorkerQueueRefreshInterval time.Duration `env:"AGENT_WORKER_QUEUE_REFRESH_INTERVAL" envDefault:"30s"`
 
 	// Agent safeguards configuration
 	AgentSafeguards AgentSafeguardsConfig

@@ -103,6 +103,7 @@ type AgentManifest struct {
 	DefaultTimeout  *int                       `json:"defaultTimeout,omitempty"`
 	Visibility      string                     `json:"visibility,omitempty"`
 	DispatchMode    string                     `json:"dispatchMode,omitempty"`
+	DefaultQueue    string                     `json:"defaultQueue,omitempty"`
 	Config          map[string]any             `json:"config,omitempty"`
 	WorkspaceConfig map[string]any             `json:"workspaceConfig,omitempty"`
 	ToolPolicies    map[string]AgentToolPolicy `json:"toolPolicies,omitempty"`
