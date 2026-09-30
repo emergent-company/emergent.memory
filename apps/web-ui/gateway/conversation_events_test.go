@@ -244,6 +244,46 @@ func TestHubPollerGroupsBySession(t *testing.T) {
 	}
 }
 
+// TestHubBroadcastCachesAndClearsLastFrame asserts the hub caches the last
+// broadcast refresh frame per conversation (so a later subscriber replays it)
+// and drops the cache when the conversation's last subscriber unsubscribes (so
+// a stale frame is never replayed into a brand-new conversation). Run-scoped
+// broadcasts never populate the cache.
+func TestHubBroadcastCachesAndClearsLastFrame(t *testing.T) {
+	h := newConversationHub(nil)
+
+	frame := refreshFrame(&conversationRunState{
+		bucket:          runBucketRunning,
+		activeRunID:     "r1",
+		activeRunStatus: "working",
+	})
+
+	if got := h.cachedFrame("c1"); got != nil {
+		t.Fatalf("cachedFrame before broadcast = %s, want nil", got)
+	}
+
+	ch := h.subscribe("c1", nil)
+	h.broadcast("c1", frame)
+	if got := h.cachedFrame("c1"); string(got) != string(frame) {
+		t.Fatalf("cachedFrame after broadcast = %s, want %s", got, frame)
+	}
+
+	// Run-scoped broadcasts must not populate the conversation cache.
+	runKey := runScopeKey("r9")
+	chRun := h.subscribe(runKey, nil)
+	h.broadcast(runKey, frame)
+	if got := h.cachedFrame(runKey); got != nil {
+		t.Fatalf("run-scoped frame must not be cached, got %s", got)
+	}
+
+	// Unsubscribing the last conversation subscriber clears the cache.
+	h.unsubscribe("c1", ch)
+	if got := h.cachedFrame("c1"); got != nil {
+		t.Fatalf("cachedFrame after unsubscribe = %s, want nil", got)
+	}
+	h.unsubscribe(runKey, chRun)
+}
+
 // TestHubSubscribeFirstSessionWins asserts the first subscriber's session
 // context is the one stored for the conversation (later subscribers share it).
 func TestHubSubscribeFirstSessionWins(t *testing.T) {

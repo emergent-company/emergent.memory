@@ -43,7 +43,8 @@
   var aborter = null;
   var eventSource = null;   // SSE live-update channel for the active conversation/run
   var eventSourceId = "";   // scope key the current eventSource is subscribed to ("conv:<id>" / "run:<id>")
-  var streaming = false;
+  var streaming = false;    // turn-busy flag: composer stop, queue-on-send, rail "Running"
+  var liveTurn = false;     // THIS page is DOM-owning a live /api/chat stream (raised in openAssistantBubble, cleared at turn teardown)
   var bubble = null;        // current streaming assistant bubble
   var bubbleHTML = "";      // accumulated assistant rendered HTML (snapshot)
   var bubbleText = "";      // accumulated raw token deltas (pre-snapshot)
@@ -192,6 +193,11 @@
     setStreaming: setStreaming,
     scrollToBottom: scrollToBottom,
     hideEmpty: hideEmpty,
+    // Raised by the engine from openAssistantBubble on EVERY live turn start
+    // (send / answer / dock decision / inline approval): this page now owns the
+    // turn's DOM, so history renders and refresh re-renders must stand down.
+    // The side panel omits this hook and is unaffected.
+    onLiveTurnStart: function () { liveTurn = true; },
     onStreamStart: function () {
       clearThinking();
       // Repaint immediately so the active row shows "Running" on every turn —
@@ -203,6 +209,9 @@
     onStreamFinish: finishTurn,
     onStreamFail: function () {
       finalizeThinking();
+      // The failure path never reaches finishTurn, so DOM ownership must be
+      // released here too.
+      liveTurn = false;
       // A failed turn must clear the optimistic "Running" badge: the failure
       // path never runs finishTurn, so re-pull the rail to show the server's
       // authoritative bucket (done/failed) instead of a stuck spinner.
@@ -217,7 +226,15 @@
   var stream = MemoryChatStream.createEngine(streamCtx);
   var addUserMessage = stream.addUserMessage;
   var addAssistantMessage = stream.addAssistantMessage;
-  var openAssistantBubble = stream.openAssistantBubble;
+  // Page-local wrapper: opening the live streaming bubble takes over the turn,
+  // so any mid-run "working" placeholder planted by a history render is torn
+  // down first. Every page-side open (send / answer / decision / debug) routes
+  // through here; the engine's internal approval-gate open is covered by the
+  // clearHeaderStatus teardown that follows every decision.
+  var openAssistantBubble = function () {
+    removeWorkingPlaceholder();
+    return stream.openAssistantBubble();
+  };
   var updateBubbleText = stream.updateBubbleText;
   var appendToken = stream.appendToken;
   var toolChip = stream.toolChip;
@@ -547,6 +564,7 @@
     if (messages) messages.innerHTML = "";
     bubble = null; bubbleHTML = ""; bubbleText = "";
     if (empty) empty.classList.remove("hidden");
+    liveTurn = false;
     setStreaming(false);
     clearDock();
     clearTodos();
@@ -682,16 +700,18 @@
         // state once the run stops (run end / needs_input).
         if (isRunWorking(m.runStatus)) {
           if (transcriptReady && !streaming) setStreaming(true);
-        } else if (!streaming) {
+        } else if (!liveTurn) {
           // Run stopped (end / needs_input): drop the retained in-flight tail and
-          // release the composer. Guarded on !streaming: the bare connect refresh
-          // carries no runStatus, and clearing streaming here (then re-rendering
-          // below) would clobber a live /api/chat turn's in-flight bubble. Stale
-          // thinking tracking is left for flushReplay / finalizeThinking to clear.
+          // release the composer. Guarded on !liveTurn (DOM ownership, not
+          // busy): the bare connect refresh carries no runStatus, and clearing
+          // the composer here would clobber a live /api/chat turn this page is
+          // rendering. A resumed page (liveTurn false) DOES take this path, so
+          // its composer clears when the run ends. Stale thinking tracking is
+          // left for flushReplay / finalizeThinking to clear.
           replayFrames = [];
           setStreaming(false);
         }
-        if (!streaming) onRefresh();
+        if (!liveTurn) onRefresh();
       } else if (m.type === "live_replay") {
         // Replayed in-flight frames render through the same dispatcher as the
         // live path. Only open thinking segments + running tools are retained
@@ -724,6 +744,7 @@
 
   async function resumeConversation(id, agentId, item) {
     if (aborter) aborter.abort();
+    liveTurn = false;
     setStreaming(false);
     clearThinking();
     replayFrames = [];
@@ -789,6 +810,7 @@
   // pending ask_user card also re-renders via the scope-aware answerQuestion.
   async function resumeRun(runId, item) {
     if (aborter) aborter.abort();
+    liveTurn = false;
     setStreaming(false);
     clearThinking();
     replayFrames = [];
@@ -899,12 +921,13 @@
   // renderTimelineItems renders a raw history payload (conversation or run) —
   // the item vocabulary, sorting, and rendering are identical for both.
   function renderTimelineItems(items, pendingApprovals) {
-    // Guard: never render history over a live stream. Wiping #chat-messages
-    // mid-stream would destroy the in-flight assistant bubble, and appending
-    // the same turn beside it would duplicate it. Callers re-render only when
-    // !streaming; this backstop keeps a refresh that races a fresh send from
-    // clobbering the new stream's bubbles.
-    if (streaming) return;
+    // Guard: never render history over a live stream THIS page owns. Wiping
+    // #chat-messages mid-stream would destroy the in-flight assistant bubble,
+    // and appending the same turn beside it would duplicate it. Gated on
+    // liveTurn (DOM ownership), not streaming (busy): a page opened on an
+    // active run it did NOT start is busy but does not own the DOM, and must
+    // keep re-rendering as steps persist.
+    if (liveTurn) return;
     messages.innerHTML = "";
     hideEmpty();
     var name = currentAgentName();
@@ -1099,6 +1122,17 @@
       }
     }
 
+    // A newest run that is still active means this page was opened mid-flight:
+    // no live stream owns the turn, so reflect the run in the header chip (the
+    // placeholder bubble itself is planted in afterTranscriptRender, after the
+    // replay tail, so replayed/persisted chips render above it). A stopped run
+    // (completed / failed / cancelled / skipped / paused-on-input) leaves the
+    // header and placeholder untouched.
+    if (isRunWorking(newestRunStatus)) {
+      liveRunStatus = newestRunStatus;
+      renderHeaderStatus(newestRunStatus, "", 0, 0);
+    }
+
     // Persisted history is on screen: (re-)apply the in-flight replay tail and
     // reflect a still-working run in the composer.
     afterTranscriptRender();
@@ -1279,6 +1313,10 @@
   // releases in order — but NOT after a mid-turn abort.
   function finishTurn(reason) {
     finalizeThinking();
+    // The engine's live turn is over: this page no longer owns the DOM, so the
+    // re-render below is allowed (and clears the placeholder via
+    // clearHeaderStatus).
+    liveTurn = false;
     refreshActiveTranscript();
     clearHeaderStatus();
     liveRunStatus = "";
@@ -1369,13 +1407,13 @@
 
   // Re-render the transcript that is currently in the pane after a decision
   // lands or a turn's stream finishes. Guarded two ways: never re-render while
-  // a stream is live (the wipe in renderTimelineItems would destroy the
-  // in-flight bubble), and never stack concurrent refreshes — finishStream
-  // already triggers one via onStreamFinish → finishTurn, so the answer/
-  // decision paths' explicit calls here collapse into that in-flight fetch
-  // instead of double-rendering.
+  // THIS page is DOM-owning a live stream (the wipe in renderTimelineItems
+  // would destroy the in-flight bubble; gated on liveTurn, not the busy flag),
+  // and never stack concurrent refreshes — finishStream already triggers one
+  // via onStreamFinish → finishTurn, so the answer/decision paths' explicit
+  // calls here collapse into that in-flight fetch instead of double-rendering.
   async function refreshActiveTranscript() {
-    if (streaming || transcriptRefreshPending) return;
+    if (liveTurn || transcriptRefreshPending) return;
     transcriptRefreshPending = true;
     try {
       if (activeRunId) await renderRunHistory(activeRunId);
@@ -1940,27 +1978,37 @@
   // flushReplay renders the retained in-flight frames through the shared
   // dispatcher. Called after a transcript render (so the frames append after
   // persisted history, not get wiped by it) and on live_replay arrival when
-  // history is already on screen. Skipped while a live /api/chat turn is
-  // streaming (the live path already owns the in-flight state).
+  // history is already on screen. Skipped while THIS page DOM-owns a live
+  // /api/chat turn (the live path already owns the in-flight state).
   function flushReplay() {
-    if (streaming) return;
+    if (liveTurn) return;
     if (!replayFrames.length) return;
     // A prior render wiped #chat-messages, orphaning any thinking badges the
     // last flush created — drop their tracking so a re-applied frame re-creates
     // its badge instead of appending to a detached node.
     clearThinking();
     var frames = replayFrames.slice();
+    // Consume the buffer: a later history re-render must not re-append these
+    // connect-time frames on top of freshly rendered persisted history. An
+    // EventSource reconnect re-emits live_replay and repopulates the buffer.
+    replayFrames = [];
     for (var i = 0; i < frames.length; i++) {
       handleEvent(JSON.stringify(frames[i]));
     }
   }
 
   // afterTranscriptRender runs at the end of every persisted-history render:
-  // mark the transcript ready, (re-)apply the in-flight replay tail, and reflect
-  // a still-working run in the composer (stop button / parked sends).
+  // mark the transcript ready, (re-)apply the in-flight replay tail, plant the
+  // mid-run working placeholder (AFTER the replay tail so replayed thinking /
+  // tool chips render above it), and reflect a still-working run in the
+  // composer (stop button / parked sends).
   function afterTranscriptRender() {
     transcriptReady = true;
     flushReplay();
+    // Single quiet placeholder for a run already in flight on page open. Gated
+    // on liveTurn (DOM ownership), never on streaming: a resumed page is busy
+    // but must still show the agent bubble.
+    if (isRunWorking(liveRunStatus) && !liveTurn) ensureWorkingPlaceholder();
     if (isRunWorking(liveRunStatus) && !streaming) setStreaming(true);
   }
 
@@ -2009,11 +2057,61 @@
   }
 
   function clearHeaderStatus() {
+    // The header stands down exactly when a run stops (or the scope resets):
+    // the mid-run placeholder belongs to that same "working" state, so drop it
+    // here too — the single teardown point shared by finishTurn,
+    // resetConversation, and the non-active branch of renderHeaderStatus.
+    removeWorkingPlaceholder();
     var el = mounts.status || document.getElementById("chat-run-status");
     if (!el) return;
     el.className = "memory-run-status hidden";
     el.removeAttribute("data-state");
     el.innerHTML = "";
+  }
+
+  // --- mid-run working placeholder ----------------------------------------
+  //
+  // A page opened while a run is already in flight never enters the live
+  // streaming path, so without this it would render persisted history and no
+  // agent bubble at all. When the newest run in history is still active,
+  // renderTimelineItems plants one placeholder — the same chat-start shell and
+  // .memory-typing dots as the live bubble, but with no text and no copy action.
+  // It is status, not an answer. Exactly one exists at a time (it carries
+  // data-memory-working), and it is removed the moment the live stream takes
+  // over (openAssistantBubble), the run stops (clearHeaderStatus), or a
+  // re-render no longer reports an active newest run (the wipe in
+  // renderTimelineItems).
+
+  function workingPlaceholder() {
+    return messages ? messages.querySelector("[data-memory-working]") : null;
+  }
+
+  function ensureWorkingPlaceholder(name) {
+    if (!messages) return null;
+    var existing = workingPlaceholder();
+    if (existing) return existing;
+    // Same shell as a real assistant bubble (avatar + agent header + neutral
+    // bubble) so the placeholder aligns and tints identically.
+    var wrap = addAssistantMessage("", name || currentAgentName(), true);
+    if (!wrap) return null;
+    wrap.setAttribute("data-memory-working", "");
+    // Not a message: drop the whole-message copy affordance addAssistantMessage
+    // attaches to every assistant bubble.
+    var copy = wrap.querySelector(".memory-copy-msg");
+    if (copy && copy.parentNode) copy.parentNode.removeChild(copy);
+    var body = wrap.querySelector(".memory-md");
+    if (body) {
+      body.innerHTML = '<span class="memory-typing"><span></span><span></span><span></span></span>';
+    }
+    return wrap;
+  }
+
+  function removeWorkingPlaceholder() {
+    if (!messages) return;
+    var nodes = messages.querySelectorAll("[data-memory-working]");
+    for (var i = 0; i < nodes.length; i++) {
+      if (nodes[i].parentNode) nodes[i].parentNode.removeChild(nodes[i]);
+    }
   }
 
   // --- rail badges --------------------------------------------------------
