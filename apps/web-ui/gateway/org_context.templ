@@ -753,15 +753,16 @@ templ OrgInvitePage(data orgInvitePageData) {
 // landing them on a page they cannot use. Tools stays visible: tool-settings
 // read remains on membership.
 templ orgSettingsSubNav(orgID string, active string, isAdmin bool) {
-	@components.SubNav("Organization settings sections") {
-		if isAdmin {
-			@components.SubNavItem("/orgs/"+url.PathEscape(orgID)+"/settings/general", active == "general", "lucide--building-2", "General")
-		}
-		@components.SubNavItem("/orgs/"+url.PathEscape(orgID)+"/settings", active == "tools", "lucide--sliders-horizontal", "Tools")
-		if isAdmin {
-			@components.SubNavItem("/orgs/"+url.PathEscape(orgID)+"/settings/danger-zone", active == "danger-zone", "lucide--shield-alert", "Danger zone")
-		}
+	{{ base := "/orgs/" + url.PathEscape(orgID)
+	items := []components.RailItem{}
+	if isAdmin {
+		items = append(items, components.RailItem{Key: "general", Href: base + "/settings/general", Icon: "lucide--building-2", Label: "General"})
 	}
+	items = append(items, components.RailItem{Key: "tools", Href: base + "/settings", Icon: "lucide--sliders-horizontal", Label: "Tools"})
+	if isAdmin {
+		items = append(items, components.RailItem{Key: "danger-zone", Href: base + "/settings/danger-zone", Icon: "lucide--shield-alert", Label: "Danger zone"})
+	} }}
+	@components.SettingsRail("Organization settings sections", active, items)
 }
 
 // OrgSettingsPage renders the Tools section of the org Settings hub (GET

@@ -573,9 +573,7 @@ templ agentFormDialog(agents []AgentDefinitionSummary, models []Model, skills []
 // deleteAgentDescription is the delete-confirm detail paragraph for agents
 // (the name span is filled by app.js's openDeleteConfirm).
 templ deleteAgentDescription() {
-	<p class="text-muted mt-1 text-sm">
-		This permanently removes <span id="delete-agent-name" class="font-medium text-base-content"></span> and its definition. Irreversible.
-	</p>
+	@components.DeleteWarning("", "and its definition. Irreversible.", components.DeleteWarningProps{SubjectID: "delete-agent-name"})
 }
 
 // deleteConfirmDialog confirms agent deletion before the DELETE call.
