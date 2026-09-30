@@ -228,7 +228,7 @@ func emitMarkdownSnapshot(w io.Writer, sb *strings.Builder, snapshotEmitted *boo
 	if sb.Len() == 0 || *snapshotEmitted {
 		return nil
 	}
-	html := neutralizeCitationLinks(renderMarkdown(sb.String()), citations)
+	html := renderCitedMarkdown(sb.String(), citations)
 	payload, err := marshalNoEscape(map[string]string{"type": "html", "html": html})
 	if err != nil {
 		return err
@@ -425,13 +425,13 @@ func renderHistoryHTML(items []json.RawMessage) []json.RawMessage {
 		// leak their chain-of-thought as the leading line; split it out so the
 		// client can render it as a Thinking block above the markdown reply.
 		if calls, hasCalls := content["function_calls"].([]any); hasCalls && len(calls) > 0 {
-			content["html"] = neutralizeCitationLinks(renderMarkdown(text), cites)
+			content["html"] = renderCitedMarkdown(text, cites)
 		} else if reasoning, answer := splitLeadingReasoning(text); reasoning != "" {
 			content["reasoning"] = reasoning
 			content["text"] = answer
-			content["html"] = neutralizeCitationLinks(renderMarkdown(answer), cites)
+			content["html"] = renderCitedMarkdown(answer, cites)
 		} else {
-			content["html"] = neutralizeCitationLinks(renderMarkdown(text), cites)
+			content["html"] = renderCitedMarkdown(text, cites)
 		}
 		re, err := marshalNoEscape(m)
 		if err != nil {

@@ -90,6 +90,60 @@ func forEachMap(v any, fn func(map[string]any)) {
 	}
 }
 
+// forEachSliceMap invokes fn for each map at the top level of a JSON slice
+// (`[]any` from decoding or `[]map[string]any` from literal construction),
+// without recursing into the entries.
+func forEachSliceMap(v any, fn func(map[string]any)) {
+	switch t := v.(type) {
+	case []any:
+		for _, e := range t {
+			if m, ok := e.(map[string]any); ok {
+				fn(m)
+			}
+		}
+	case []map[string]any:
+		for _, e := range t {
+			fn(e)
+		}
+	}
+}
+
+// edgeRefs builds relationship References from an entity-edges-get envelope. For
+// an outgoing edge the source is the envelope's entity and the target is the
+// edge's connected entity; for an incoming edge the direction is reversed.
+func edgeRefs(m map[string]any, entityID string) []Reference {
+	var refs []Reference
+	for _, dir := range []struct {
+		listKey        string
+		entityIsSource bool
+	}{
+		{"outgoing", true},
+		{"incoming", false},
+	} {
+		forEachSliceMap(m[dir.listKey], func(edge map[string]any) {
+			relID, _ := edge["relationship_id"].(string)
+			relType, _ := edge["relationship_type"].(string)
+			ce, _ := edge["connected_entity"].(map[string]any)
+			if relID == "" {
+				return
+			}
+			ceID := ""
+			if ce != nil {
+				ceID, _ = ce["id"].(string)
+			}
+			if ceID == "" {
+				return
+			}
+			src, dst := entityID, ceID
+			if !dir.entityIsSource {
+				src, dst = ceID, entityID
+			}
+			refs = append(refs, Reference{Kind: "relationship", ID: relID, Type: relType, SrcID: src, DstID: dst})
+		})
+	}
+	return refs
+}
+
 // Candidates walks every tool call's Output and collects candidate object and
 // relationship references keyed by id.
 //
@@ -100,6 +154,12 @@ func forEachMap(v any, fn func(map[string]any)) {
 //     `type`; ID is `id` if present, else `src_id+":"+type+":"+dst_id`. Label
 //     is `<src label/name> —<type>→ <dst label/name>` using object labels when
 //     known, else the raw ids. URL source is `src_id`.
+//   - entity-edges-get envelope: a map with a string `entity_id` and
+//     `incoming`/`outgoing` lists of edges. Each edge's `relationship_id` and
+//     `relationship_type` form a relationship candidate whose source/target are
+//     the envelope's `entity_id` and the edge's `connected_entity.id` (reversed
+//     for `incoming`). The `connected_entity` map is itself collected as an
+//     object candidate by the object rule below.
 //
 // A relationship map (src_id + dst_id) takes precedence over the object rule so
 // its own `id` is never mis-read as an object id.
@@ -109,6 +169,10 @@ func Candidates(toolCalls []ToolCall) map[string]Reference {
 
 	for _, tc := range toolCalls {
 		forEachMap(tc.Output, func(m map[string]any) {
+			if entityID, ok := m["entity_id"].(string); ok && entityID != "" {
+				rels = append(rels, edgeRefs(m, entityID)...)
+			}
+
 			src, srcOK := m["src_id"].(string)
 			dst, dstOK := m["dst_id"].(string)
 			if srcOK && dstOK {
@@ -228,6 +292,18 @@ func Derive(answerText string, surfaces []a2ui.Message, candidates map[string]Re
 		}
 		k := r.Kind + ":" + dedupID
 		if seen[k] {
+			// Already cited by canonical id. If this later reference was made
+			// by key and the existing citation has no Key, record the key so the
+			// renderer can re-target key-based links. First-label behavior is
+			// otherwise preserved.
+			if keyUsed {
+				for i := range out {
+					if out[i].Kind == r.Kind && out[i].ID == dedupID && out[i].Key == "" {
+						out[i].Key = r.ID
+						break
+					}
+				}
+			}
 			continue
 		}
 		seen[k] = true
