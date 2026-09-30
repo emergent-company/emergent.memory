@@ -1,6 +1,7 @@
 package main
 
 import (
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
 
@@ -125,7 +126,7 @@ templ objectPreviewContent(obj *GraphObject, typeUIByType map[string]typeUI, rel
 
 		@objectPreviewSection("Labels") {
 			if len(obj.Labels) == 0 {
-				<p class="text-muted-faint text-sm">—</p>
+				@components.EmptyDash()
 			} else {
 				<div class="flex flex-wrap gap-1.5">
 					for _, l := range obj.Labels {

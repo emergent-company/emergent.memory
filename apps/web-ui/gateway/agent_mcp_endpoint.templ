@@ -292,7 +292,7 @@ templ agentMCPKeyRow(k AgentMCPKey) {
 		</td>
 		<td class="text-right">
 			if !usable {
-				<span class="text-muted-subtle text-sm">—</span>
+				@components.EmptyDash()
 			} else {
 				<div class="flex items-center justify-end gap-1">
 					@ui.Button(ui.ButtonProps{
