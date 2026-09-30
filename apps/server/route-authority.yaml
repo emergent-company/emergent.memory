@@ -769,6 +769,10 @@ routes:
       path: /api/notifications
       level: auth
       note: RequireAuth
+    - method: POST
+      path: /api/notifications/:id/clear
+      level: auth
+      note: RequireAuth
     - method: DELETE
       path: /api/notifications/:id/dismiss
       level: auth
@@ -777,12 +781,40 @@ routes:
       path: /api/notifications/:id/read
       level: auth
       note: RequireAuth
+    - method: POST
+      path: /api/notifications/:id/resolve
+      level: auth
+      note: RequireAuth
+    - method: POST
+      path: /api/notifications/:id/restore
+      level: auth
+      note: RequireAuth
+    - method: POST
+      path: /api/notifications/:id/snooze
+      level: auth
+      note: RequireAuth
+    - method: POST
+      path: /api/notifications/:id/unread
+      level: auth
+      note: RequireAuth
+    - method: POST
+      path: /api/notifications/:id/unsnooze
+      level: auth
+      note: RequireAuth
     - method: GET
       path: /api/notifications/counts
       level: auth
       note: RequireAuth
     - method: POST
       path: /api/notifications/mark-all-read
+      level: auth
+      note: RequireAuth
+    - method: GET
+      path: /api/notifications/preferences
+      level: auth
+      note: RequireAuth
+    - method: PUT
+      path: /api/notifications/preferences
       level: auth
       note: RequireAuth
     - method: GET
