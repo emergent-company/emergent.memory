@@ -472,6 +472,15 @@ templ agentGeneralSettingsForm(data agentSettingsData) {
 							</span>
 							<span class="iconify lucide--chevron-down size-4 shrink-0 text-muted-strong" aria-hidden="true"></span>
 						</button>
+						// `style="display: none"` is the server-rendered closed
+						// state, not just a redundancy with `x-show`/`x-cloak`:
+						// htmx v4's innerHTML swap copies then restores attributes
+						// for same-id elements, which strips the inline `display`
+						// that Alpine's `x-show` set on the previous DOM. Without
+						// a rendered `display: none`, a boosted PRG save (the
+						// settings form) would leave the listbox visible — the
+						// "dropdown opens by itself" report. Alpine removes the
+						// inline display on open and restores it on close.
 						<ul
 							id="agent-settings-visibility-listbox"
 							x-ref="list"
@@ -479,6 +488,7 @@ templ agentGeneralSettingsForm(data agentSettingsData) {
 							aria-label="Visibility"
 							x-show="open"
 							x-cloak
+							style="display: none"
 							class="rounded-box border-base-300 bg-base-100 absolute z-50 mt-1 max-h-72 w-full overflow-y-auto overscroll-contain border p-1 shadow-lg"
 							@keydown.arrow-down.prevent="move(1)"
 							@keydown.arrow-up.prevent="move(-1)"
