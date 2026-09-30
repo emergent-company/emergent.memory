@@ -77,14 +77,12 @@ type mcpShareReveal struct {
 // uiMCPShares renders the share list (GET /settings/mcp-servers/shares).
 func (s *Server) uiMCPShares(c echo.Context) error {
 	ctx := c.Request().Context()
-	data := mcpSharesPageData{}
-	switch {
-	case c.QueryParam("created") != "":
-		data.FlashMsg = "Share created."
-	case c.QueryParam("updated") != "":
-		data.FlashMsg = "Share updated."
-	case c.QueryParam("revoked") != "":
-		data.FlashMsg = "Share revoked."
+	data := mcpSharesPageData{
+		FlashMsg: flashFromQuery(c, []flashParam{
+			{key: "created", msg: "Share created."},
+			{key: "updated", msg: "Share updated."},
+			{key: "revoked", msg: "Share revoked."},
+		}),
 	}
 	data.FlashErr = flashError(c)
 	shares, err := s.memory.ListMCPShareInstances(ctx)
