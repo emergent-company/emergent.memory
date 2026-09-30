@@ -311,6 +311,10 @@
         '<div class="chat-bubble chat-bubble-neutral"><div class="memory-md break-words"></div></div>';
       ctx.bubble = b;
       ctx.messages.appendChild(b);
+      // Single hook every live-turn start funnels through (send / answer /
+      // decision / inline approval): the host page marks the turn as DOM-owned
+      // by its live stream. Hosts without the hook (side panel) skip it.
+      if (ctx.onLiveTurnStart) ctx.onLiveTurnStart();
       ctx.bubbleHTML = "";
       ctx.bubbleText = "";
       b._recorded = false;
