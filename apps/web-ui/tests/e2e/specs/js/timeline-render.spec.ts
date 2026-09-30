@@ -86,8 +86,17 @@ const ITEMS: HistoryItem[] = [
   { kind: 'run_end', run_id: RUN_ID, run_status: 'completed', created_at: T0, completed_at: T2 },
 ];
 
-const CHAT_FLAGS = { showRunMarkers: true, showThinking: true, showMeta: true, silent: false };
-const SIDEPANEL_FLAGS = { showRunMarkers: false, showThinking: false, showMeta: false, silent: true };
+// A run whose terminal status is "failed". The start marker is a divider and
+// must not carry that status — app.css turns a failed status into a
+// display:block alert banner, which collapsed the start row into a
+// left-aligned, unspaced line (issue #1300). The end marker owns the banner.
+const FAILED_ITEMS: HistoryItem[] = [
+  { kind: 'run_start', run_id: RUN_ID, run_status: 'failed', run_model: 'test-model', created_at: T0 },
+  { kind: 'message', role: 'user', content: { text: 'do the thing' }, step_number: 1, created_at: T0 },
+  { kind: 'run_end', run_id: RUN_ID, run_status: 'failed', error_message: 'boom', created_at: T0, completed_at: T2 },
+];
+
+const CHAT_FLAGS = { showRunMarkers: true, showThinking: true, showMeta: true, silent: false };const SIDEPANEL_FLAGS = { showRunMarkers: false, showThinking: false, showMeta: false, silent: true };
 
 interface StubWindow {
   __eventsources: unknown[];
@@ -329,6 +338,32 @@ test.describe('shared timeline renderer — /chat surface (chat.js)', () => {
     await expect(messages.locator('[data-tool="entity-query"]')).toHaveCount(1);
     await expect(messages.locator('.chat-end p')).toHaveText('do the thing');
     await expect(messages.locator('.memory-md')).toContainText('all done');
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
+  test('a failed run keeps the "Run started" marker a flex divider (no terminal status) — #1300', async ({ page }) => {
+    await page.setContent(CHAT_SKELETON);
+    await installStubs(page, FAILED_ITEMS);
+    const errors = await loadChatSurface(page);
+
+    await page.locator(`[data-action="open-run"][data-id="${RUN_ID}"]`).click();
+    await expect(page.locator(`[data-action="open-run"][data-id="${RUN_ID}"]`)).toHaveAttribute('data-active', 'true');
+
+    const messages = page.locator('#chat-messages');
+    const start = messages.locator('.memory-run-marker[data-phase="start"]');
+    await expect(start).toHaveCount(1);
+    // The start marker carries no terminal status, so app.css's
+    // [data-phase="end"][data-status="failed"] banner rule (display:block) can
+    // never collapse its flex row into a left-aligned, unspaced line.
+    await expect(start).toHaveAttribute('data-status', '');
+    await expect(messages.locator('.memory-run-marker[data-phase="start"][data-status="failed"]')).toHaveCount(0);
+
+    // The end marker is the one that owns the failure banner.
+    const end = messages.locator('.memory-run-marker[data-phase="end"]');
+    await expect(end).toHaveCount(1);
+    await expect(end).toHaveAttribute('data-status', 'failed');
+    await expect(end.locator('.memory-run-marker-failure')).toHaveCount(1);
 
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });
