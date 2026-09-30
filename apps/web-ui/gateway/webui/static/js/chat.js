@@ -697,17 +697,20 @@
         handleRefreshPayload(m);
         // A resumed run has no one-shot /api/chat stream, so its activity must
         // be reflected from the refresh-reported status. Clear in-flight replay
-        // state once the run stops (run end / needs_input).
-        if (isRunWorking(m.runStatus)) {
+        // state once the run stops (run end / needs_input). A parked run
+        // (needs_input) reports runStatus "working" but is NOT working from the
+        // user's point of view — it waits on a decision — so treat it like a
+        // stop here and release the composer (issue #1272).
+        if (isRunWorking(m.runStatus) && !runIsParked()) {
           if (transcriptReady && !streaming) setStreaming(true);
         } else if (!liveTurn) {
-          // Run stopped (end / needs_input): drop the retained in-flight tail and
-          // release the composer. Guarded on !liveTurn (DOM ownership, not
-          // busy): the bare connect refresh carries no runStatus, and clearing
-          // the composer here would clobber a live /api/chat turn this page is
-          // rendering. A resumed page (liveTurn false) DOES take this path, so
-          // its composer clears when the run ends. Stale thinking tracking is
-          // left for flushReplay / finalizeThinking to clear.
+          // Run stopped (end) or parked on a decision: drop the retained
+          // in-flight tail and release the composer. Guarded on !liveTurn (DOM
+          // ownership, not busy): the bare connect refresh carries no runStatus,
+          // and clearing the composer here would clobber a live /api/chat turn
+          // this page is rendering. A resumed page (liveTurn false) DOES take
+          // this path, so its composer clears when the run ends/parks. Stale
+          // thinking tracking is left for flushReplay / finalizeThinking.
           replayFrames = [];
           setStreaming(false);
         }
@@ -1095,6 +1098,16 @@
             // Planning/thinking monologue (carries function_calls): a
             // collapsible thinking block, markdown-rendered. Applies to any
             // agent — the role is the agent name, not a fixed "operator".
+            //
+            // Deliberate de-emphasis: for an intermediate tool step the
+            // persisted content.reasoning (the model's chain-of-thought) is NOT
+            // re-rendered here. A non-final event keeps its Thought text in
+            // content.reasoning (executor.go persistedEventText), and that
+            // segment already streamed live as a thinking event; this branch
+            // deliberately shows only the operator's pre-tool monologue
+            // (content.text / content.html) so replayed history does not
+            // re-surface the raw CoT for every intermediate step. The final
+            // reply's reasoning IS rendered, just below. See #1263 / #1289.
             renderThinkingBlock(text, html, "reasoning");
           } else if (isPauseNotice(text)) {
             // Synthetic "Execution paused…" message the executor injects when a
@@ -1166,10 +1179,15 @@
     var pendingCount = pendingApprovals ? pendingApprovals.length : 0;
     var bucket = liveBucket;
     if (bucket !== "needs_input" && pendingCount > 0) bucket = "needs_input";
+    liveBucket = bucket;
     var runActive = isRunWorking(newestRunStatus) || bucket === "running" || bucket === "needs_input";
     if (runActive) {
       if (newestRunStatus) liveRunStatus = newestRunStatus;
       renderHeaderStatus(liveRunStatus, bucket, pendingCount, 0);
+      // A run parked on a decision still shows the "Waiting on you" header, but
+      // it is not working: release the placeholder bubble and the busy composer
+      // so the run does not look stuck and the answer path is usable (#1272).
+      if (runIsParked()) releaseParkedWorkingState();
     } else if (!currentScopeIsRun()) {
       releaseWorkingState();
     }
@@ -1472,7 +1490,13 @@
   // JSON (not an SSE stream), so the assistant's continuation is read back from
   // history rather than streamed live.
   async function answerQuestion(questionId, answerValue) {
-    if (streaming || !questionId) return false;
+    // A parked run (needs_input) reports runStatus "working", and the refresh
+    // path may have set the busy flag before this release landed. Answering is
+    // exactly how a parked run progresses, so do not bail on `streaming` while
+    // the run is parked on a decision (#1272). Only a genuinely live turn
+    // (streaming, not parked) blocks a second send.
+    if (streaming && !runIsParked()) return false;
+    if (!questionId) return false;
     hideEmpty();
     setStreaming(true);
     openAssistantBubble();
@@ -2016,6 +2040,17 @@
            status === "running" || status === "cancelling";
   }
 
+  // runIsParked reports whether the active run is paused awaiting a human
+  // decision (an ask_user question or a tool approval). The refresh reports the
+  // "needs_input" bucket while runStatus can still read "working" (the run is
+  // alive but parked), so the bucket is the authority; a run_end item may also
+  // carry "input-required". A parked run keeps the "Waiting on you" header but
+  // must not hold the working placeholder or the busy composer — it waits on
+  // the user, so the composer has to be usable (#1272).
+  function runIsParked() {
+    return liveBucket === "needs_input" || liveRunStatus === "input-required";
+  }
+
   // flushReplay renders the retained in-flight frames through the shared
   // dispatcher. Called after a transcript render (so the frames append after
   // persisted history, not get wiped by it) and on live_replay arrival when
@@ -2055,8 +2090,11 @@
     // placeholder node is never removed or re-inserted, so .memory-typing
     // keeps animating continuously. When the run is not active no placeholder
     // may survive the render (a run-scope timeline has no run_start/run_end, so
-    // it never reaches releaseWorkingState) — drop it here.
-    if (isRunWorking(liveRunStatus) && !liveTurn) {
+    // it never reaches releaseWorkingState) — drop it here. A parked run
+    // (needs_input) is active-but-waiting, not working, so it must not plant or
+    // keep the placeholder either (#1272).
+    var working = isRunWorking(liveRunStatus) && !runIsParked() && !liveTurn;
+    if (working) {
       var workingEl = ensureWorkingPlaceholder();
       if (workingEl && workingEl.parentNode === messages) {
         var n = workingEl.nextSibling;
@@ -2065,7 +2103,13 @@
     } else {
       removeWorkingPlaceholder();
     }
-    if (isRunWorking(liveRunStatus) && !streaming) setStreaming(true);
+    if (working) {
+      if (!streaming) setStreaming(true);
+    } else if (runIsParked() && streaming) {
+      // Parked on a decision: the placeholder is gone above, so drop the busy
+      // composer too (the header keeps the "Waiting on you" state).
+      setStreaming(false);
+    }
   }
 
   function handleRefreshPayload(m) {
@@ -2136,6 +2180,16 @@
     liveRunStatus = "";
     liveBucket = "";
     clearHeaderStatus();
+    if (streaming) setStreaming(false);
+  }
+
+  // releaseParkedWorkingState drops only the "working" affordances of a run
+  // parked on a decision: the mid-run placeholder bubble and the busy composer.
+  // Unlike releaseWorkingState it keeps the cached run id/status/bucket and the
+  // header, because the run is still alive — the header must keep showing
+  // "Waiting on you" (#1272).
+  function releaseParkedWorkingState() {
+    removeWorkingPlaceholder();
     if (streaming) setStreaming(false);
   }
 

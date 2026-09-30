@@ -39,6 +39,22 @@ const T0 = '2026-09-30T10:00:00.000Z';
 const T1 = '2026-09-30T10:00:05.000Z';
 const T2 = '2026-09-30T10:00:30.000Z';
 
+// A minimal pending-work-dock fragment carrying one ask_user question, shaped
+// like chat_dock.templ's dockQuestion card so chat.js's delegated dock handler
+// owns the answer path in the #1272 regression test.
+const DOCK_QUESTION_HTML = `
+<div class="dock-card dock-question" data-testid="dock-question" data-dock-kind="question" data-dock-type="buttons" data-question-id="q1">
+  <div class="dock-card-main"><span class="dock-card-prompt">Proceed?</span></div>
+  <div class="dock-card-options" role="group" aria-label="Proceed?">
+    <button type="button" class="dock-question-option" role="radio" aria-checked="false" data-dock-option-value="yes">Yes</button>
+    <button type="button" class="dock-question-option" role="radio" aria-checked="false" data-dock-option-value="no">No</button>
+  </div>
+  <div class="dock-card-controls">
+    <button type="button" class="dock-question-cancel btn btn-ghost btn-xs" data-dock-action="cancel" data-question-id="q1">Cancel</button>
+    <button type="button" class="dock-question-submit btn btn-primary btn-xs" data-dock-action="answer" data-question-id="q1" disabled>Submit</button>
+  </div>
+</div>`;
+
 // Timeline items are loosely-shaped server records; only the fields chat.js
 // reads matter for the stub.
 type HistoryItem = Record<string, unknown>;
@@ -166,6 +182,7 @@ async function bootstrap(
   page: Page,
   items: HistoryItem[] = WORKING_ITEMS,
   runItems: HistoryItem[] = [],
+  dockHtml = '',
 ): Promise<string[]> {
   const errors: string[] = [];
   page.on('pageerror', (err) => errors.push(err.message));
@@ -173,7 +190,7 @@ async function bootstrap(
   await page.setContent(SKELETON);
 
   await page.evaluate(
-    ({ convId, runId, items, runItems }) => {
+    ({ convId, runId, items, runItems, dockHtml }) => {
       const w = window as unknown as StubWindow;
       w.__eventsources = [];
       w.__historyItems = items;
@@ -233,6 +250,12 @@ async function bootstrap(
           );
         }
         // /partial/chat-dock, /partial/chat-todos, /partial/chat-rail
+        // When a dockHtml fragment is provided the pending-work dock answers
+        // with it (dockAvailable=true), so chat.js's dock controls — not the
+        // inline cards — own the decision path.
+        if (u.indexOf('/partial/chat-dock') === 0) {
+          return Promise.resolve(new Response(dockHtml, { status: 200 }));
+        }
         if (u.indexOf('/partial/') === 0) {
           return Promise.resolve(new Response('', { status: 200 }));
         }
@@ -254,7 +277,7 @@ async function bootstrap(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (w as any).EventSource = FakeEventSource;
     },
-    { convId: CONV_ID, runId: RUN_ID, items, runItems },
+    { convId: CONV_ID, runId: RUN_ID, items, runItems, dockHtml },
   );
 
   await page.addScriptTag({ path: CHAT_COMPONENTS_JS });
@@ -506,6 +529,56 @@ test.describe('chat.js mid-run open (chat-components/chat-host/chat-stream/chat)
     await expect(runStatus).toBeVisible();
     await expect(runStatus).toContainText('Waiting on you');
     await expect(runStatus).not.toContainText('Working');
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
+  // #1272 regression: a run parked on a decision (`bucket:"needs_input"`,
+  // `runStatus:"working"`) must release the working placeholder bubble and the
+  // busy composer (the header already shows "Waiting on you"), and answering the
+  // dock question must proceed while the run is parked even though the refresh
+  // had set the streaming flag. Before the fix the placeholder/composer stayed
+  // busy and answerQuestion returned early, so the submit click never POSTed.
+  test('a run parked on a decision releases the working bubble + busy composer and lets the answer through', async ({ page }) => {
+    // The pending-work dock carries the parked ask_user question, so its
+    // controls drive answerQuestion.
+    const errors = await bootstrap(page, WORKING_ITEMS, [], DOCK_QUESTION_HTML);
+
+    // Mid-run open: working bubble + busy composer.
+    await expect(page.locator('#chat-messages [data-memory-working]')).toHaveCount(1);
+    await expect(page.locator('#chat-stop')).toBeVisible();
+
+    // The run parks on a decision and the push channel reports needs_input.
+    await emitSSE(page, {
+      type: 'refresh',
+      bucket: 'needs_input',
+      runId: 'r1',
+      runStatus: 'working',
+      pendingApprovals: 1,
+      pendingQuestions: 0,
+    });
+
+    // Header keeps the bucket-aware "Waiting on you" ...
+    const runStatus = page.locator('#chat-run-status');
+    await expect(runStatus).toContainText('Waiting on you');
+    await expect(runStatus).not.toContainText('Working');
+    // ... while the working placeholder and busy composer are released.
+    await expect(page.locator('#chat-messages [data-memory-working]')).toHaveCount(0);
+    await expect(page.locator('#chat-stop')).toBeHidden();
+    await expect(page.locator('#chat-send')).toBeVisible();
+    await expect(page.locator('#chat-send')).toBeEnabled();
+
+    // Answering the parked question must proceed (previously blocked by the
+    // streaming guard in answerQuestion).
+    const card = page.locator('#chat-dock [data-testid="dock-question"]');
+    await expect(card).toHaveCount(1);
+    await card.locator('.dock-question-option[data-dock-option-value="yes"]').click();
+    await expect(card.locator('.dock-question-submit')).toBeEnabled();
+    await card.locator('.dock-question-submit').click();
+
+    await expect
+      .poll(async () => (await fetchCalls(page)).some((u) => u.includes('/api/chat/questions/q1/respond')))
+      .toBe(true);
 
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });
