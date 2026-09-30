@@ -885,22 +885,6 @@
     return status === "working" || status === "submitted" || status === "cancelling";
   }
 
-  // runDurationMs derives a turn's wall-clock duration from the run's
-  // completed_at − created_at, falling back to the run_end's duration_ms.
-  // Returns null when the run has not ended (no duration is shown then).
-  function runDurationMs(ctx, endItem) {
-    var start = ctx && ctx.createdAt;
-    var end = endItem && (endItem.completed_at || "");
-    if (start && end) {
-      var d = new Date(end).getTime() - new Date(start).getTime();
-      if (isFinite(d) && d >= 0) return d;
-    }
-    if (endItem && typeof endItem.duration_ms === "number" && endItem.duration_ms > 0) {
-      return endItem.duration_ms;
-    }
-    return null;
-  }
-
   // attachTurnFooters appends one footer per completed run window, on the last
   // assistant bubble of that run (records are {el, ctx} in render order).
   function attachTurnFooters(records) {
@@ -929,7 +913,10 @@
   }
 
   // renderTimelineItems renders a raw history payload (conversation or run) —
-  // the item vocabulary, sorting, and rendering are identical for both.
+  // the item vocabulary, sorting, and rendering are shared with the side panel
+  // via MemoryChatComponents.renderTimeline; this page supplies the chat-specific
+  // flags + hooks (run markers, thinking, run-scope meta, turn footers, the
+  // pending-work dock, the mid-run placeholder) and the DOM-ownership guard.
   function renderTimelineItems(items, pendingApprovals) {
     // Guard: never render history over a live stream THIS page owns. Wiping
     // #chat-messages mid-stream would destroy the in-flight assistant bubble,
@@ -938,244 +925,83 @@
     // active run it did NOT start is busy but does not own the DOM, and must
     // keep re-rendering as steps persist.
     if (liveTurn) return;
-    // Preserve the mid-run working placeholder across the rebuild so its CSS
-    // animation stays continuous. A page opened mid-run re-renders on every
-    // persisted step (frequent refresh frames), and recreating the node each
-    // time restarts the typing animation at frame 0 — which reads as frozen.
-    // Drop every other child instead; the placeholder stays connected to
-    // #chat-messages and is NEVER moved or re-inserted — moving an animated
-    // node (even within the same parent) restarts its CSS animation in
-    // Chromium. afterTranscriptRender restores it to the end by moving the
-    // rendered rows before it. Keeping only the first also upholds the
-    // "exactly one placeholder" invariant.
-    var workingEl = workingPlaceholder();
-    var child = messages.firstChild;
-    while (child) {
-      var next = child.nextSibling;
-      if (child !== workingEl) messages.removeChild(child);
-      child = next;
-    }
-    hideEmpty();
-    var name = currentAgentName();
+    MemoryChatComponents.renderTimeline(items, timelineCtx(pendingApprovals), {
+      showRunMarkers: true,
+      showThinking: true,
+      showMeta: currentScopeIsRun(),
+      silent: false,
+    });
+  }
 
-    // The server timeline is already chronological, but be explicit about it:
-    // stable-sort by effective time, then step_number (a per-run counter, so
-    // it can't order across runs on its own), preserving array order on ties.
-    //
-    // run_end items carry the run's start time in created_at and the real end
-    // time in completed_at — the shared sortTimeline (MemoryChatHost) sorts by
-    // the latter so "Run complete" lands after the run's content instead of
-    // right after "Run started".
-    items = MemoryChatHost.sortTimeline(items);
-
-    // The run's composed system instruction (recorded as a `system` message)
-    // renders once, as a collapsed agent-prompt card above the transcript.
-    // Later system records are skipped — the instruction is stable across a
-    // conversation's runs, so a card per run would just duplicate it.
-    for (var pi = 0; pi < items.length; pi++) {
-      var pit = items[pi];
-      if (pit && pit.kind === "message" && pit.role === "system") {
-        var promptText = (pit.content && pit.content.text) || "";
-        if (promptText) {
-          if (MemoryChatComponents.agentPromptCard) {
-            MemoryChatComponents.agentPromptCard(badgeCtx, promptText);
-          }
-          break;
+  // timelineCtx builds the page-local hooks/state for one chat render (see
+  // MemoryChatComponents.renderTimeline for the contract).
+  function timelineCtx(pendingApprovals) {
+    return {
+      container: messages,
+      badgeCtx: badgeCtx,
+      getAgentName: currentAgentName,
+      // Preserve the mid-run working placeholder across the rebuild so its CSS
+      // animation stays continuous. A page opened mid-run re-renders on every
+      // persisted step (frequent refresh frames), and recreating the node each
+      // time restarts the typing animation at frame 0 — which reads as frozen.
+      // Drop every other child instead; the placeholder stays connected to
+      // #chat-messages and is NEVER moved or re-inserted here. afterTranscriptRender
+      // restores it to the end by moving the rendered rows before it. Keeping
+      // only the first also upholds the "exactly one placeholder" invariant.
+      begin: function () {
+        var workingEl = workingPlaceholder();
+        var child = messages.firstChild;
+        while (child) {
+          var next = child.nextSibling;
+          if (child !== workingEl) messages.removeChild(child);
+          child = next;
         }
-      }
-    }
+        hideEmpty();
+      },
+      stripContextPreamble: stripContextPreamble,
+      isThinkingItem: function (item, content) { return isThinkingMessage(content); },
+      addUserMessage: addUserMessage,
+      addAssistantMessage: addAssistantMessage,
+      toolChip: toolChip,
+      renderHistoryQuestion: renderHistoryQuestion,
+      renderThinkingBlock: renderThinkingBlock,
+      renderApproval: renderApproval,
+      pendingApprovals: pendingApprovals,
+      dockAvailable: function () { return dockAvailable === true; },
+      attachTurnFooters: attachTurnFooters,
+      onNewestRun: function (runId, status, ended) {
+        // Remember the newest run so the stop action can cancel it.
+        lastTimelineRun = { status: status, ended: ended };
+        if (runId) liveRunId = runId;
+      },
+      afterRender: function (newestRunStatus) {
+        afterTimelineRender(pendingApprovals, newestRunStatus);
+      },
+    };
+  }
 
-    var runStatus = ""; // status of the run being rendered (set by run_start)
-    var runError = ""; // error_message of that run, if the server attached one
-    var runEnded = false; // whether a run_end was seen for the current run
-    var runCtx = null; // model/duration window for the run being rendered
-    var turnFooters = []; // {el, ctx} — assistant bubbles, for footer attachment
-    var newestRunId = ""; // active run id, resolved from the newest lifecycle item
-    var newestRunStatus = "";
-    var newestRunEnded = false;
-    for (var i = 0; i < items.length; i++) {
-      var item = items[i];
-      if (!item || typeof item !== "object") continue;
-      // Run-transcript annotation: step number + relative time under each
-      // message/tool item. Only on a dedicated run page (currentScopeIsRun);
-      // conversation transcripts and the live stream render no meta at all.
-      var meta = currentScopeIsRun()
-        ? ("step " + (item.step_number || "") + (item.created_at ? " · " + relTime(item.created_at) : ""))
-        : "";
-      switch (item.kind) {
-        case "run_start":
-          runCtx = {
-            model: item.run_model || "",
-            createdAt: item.created_at || "",
-            status: item.run_status || "",
-            ended: false,
-            completedAt: "",
-            durationMs: null,
-          };
-          runStatus = item.run_status || "";
-          runError = item.error_message || "";
-          runEnded = false;
-          if (item.run_id) {
-            newestRunId = item.run_id;
-            newestRunStatus = runStatus;
-            newestRunEnded = false;
-          }
-          // Typed turn boundary carrying the run's model.
-          messages.appendChild(MemoryChatComponents.runMarker({
-            phase: "start",
-            status: runStatus,
-            model: runCtx.model,
-          }));
-          break;
-        case "run_end":
-          runEnded = true;
-          if (item.run_id) newestRunId = item.run_id;
-          newestRunStatus = item.run_status || runStatus;
-          newestRunEnded = true;
-          if (runCtx) {
-            runCtx.ended = true;
-            runCtx.status = item.run_status || runCtx.status;
-            runCtx.completedAt = item.completed_at || "";
-            runCtx.error = item.error_message || runError;
-            runCtx.durationMs = runDurationMs(runCtx, item);
-          }
-          // Status-distinct boundary: completed / failed (with its error) /
-          // input-required ("waiting on you").
-          messages.appendChild(MemoryChatComponents.runMarker({
-            phase: "end",
-            status: item.run_status || runStatus,
-            error: item.error_message || runError,
-          }));
-          break;
-        case "tool_call":
-          // ask_user never renders as a tool chip. A pending question renders
-          // as an interactive card; an answered one (the gateway annotates
-          // tool_output.response) renders as a static card with the chosen
-          // answer highlighted.
-          if (item.tool_name === "ask_user") {
-            var qout = item.tool_output || {};
-            if (qout.question_id) {
-              var qAnswered = qout.response !== undefined && qout.response !== null;
-              // A still-pending question lives in the dock when it is live; an
-              // answered one stays as a static historical card.
-              if (dockAvailable === true && !qAnswered) break;
-              renderHistoryQuestion(item.tool_input || {}, qout.question_id, qout.response);
-            }
-            break;
-          }
-          // Tool activity from history: same chip language as live streaming.
-          var out = item.tool_output;
-          var cls = classifyTool(item.tool_status, out);
-          toolChip(item.tool_name || "tool", cls.status, cls.error || cls.summary || "", {
-            tool: item.tool_name || "tool",
-            status: cls.status,
-            summary: cls.summary,
-            error: cls.error,
-            input: item.tool_input,
-            output: out,
-            inputHtml: item.tool_input_html,
-            outputHtml: item.tool_output_html,
-            id: item.id,
-            durationMs: item.duration_ms,
-            meta: meta,
-          });
-          break;
-        case "message":
-          var content = item.content || {};
-          var text = content.text || "";
-          var html = content.html || "";
-          if (item.role === "system") {
-            // The composed system instruction — already rendered once as the
-            // agent-prompt card above; never a chat bubble.
-            break;
-          }
-          if (item.role === "user") {
-            if (text && !isResumePrompt(text)) addUserMessage(stripContextPreamble(text), false, meta);
-          } else if (item.role === "tool") {
-            // Tool result — already shown by the preceding tool_call chip.
-            break;
-          } else if (isThinkingMessage(content)) {
-            // Planning/thinking monologue (carries function_calls): a
-            // collapsible thinking block, markdown-rendered. Applies to any
-            // agent — the role is the agent name, not a fixed "operator".
-            //
-            // Deliberate de-emphasis: for an intermediate tool step the
-            // persisted content.reasoning (the model's chain-of-thought) is NOT
-            // re-rendered here. A non-final event keeps its Thought text in
-            // content.reasoning (executor.go persistedEventText), and that
-            // segment already streamed live as a thinking event; this branch
-            // deliberately shows only the operator's pre-tool monologue
-            // (content.text / content.html) so replayed history does not
-            // re-surface the raw CoT for every intermediate step. The final
-            // reply's reasoning IS rendered, just below. See #1263 / #1289.
-            renderThinkingBlock(text, html, "reasoning");
-          } else if (isPauseNotice(text)) {
-            // Synthetic "Execution paused…" message the executor injects when a
-            // run pauses on ask_user — the question card already conveys this.
-            break;
-          } else if (text || html || content.reasoning) {
-            // assistant / diane: skip function-call-only and empty messages.
-            // The server splits the deepseek-v4 chain-of-thought into
-            // content.reasoning (rendered as a Thinking block above) and renders
-            // the reply markdown into content.html.
-            if (content.reasoning) {
-              renderThinkingBlock(content.reasoning, null, "reasoning");
-            }
-            var turnEl = addAssistantMessage(html || escapeHTML(text), name, false, meta);
-            if (turnEl && runCtx) turnFooters.push({ el: turnEl, ctx: runCtx });
-            // Grounded citations ride on the history item; render the Sources
-            // block beneath the answer (idempotent, no-op when empty).
-            if (turnEl && item.citations) MemoryChatComponents.attachSources(turnEl, item.citations);
-          }
-          break;
-      }
-    }
-
-    // A run with no run_end item (partial/older history) still has to surface
-    // its failure, so fall back to the run_start's status once the loop ends.
-    if (!runEnded && isFailedRun(runStatus)) {
-      messages.appendChild(MemoryChatComponents.runMarker({ phase: "end", status: runStatus, error: runError }));
-    }
-
-    // One footer per completed turn, on the turn's last assistant bubble.
-    attachTurnFooters(turnFooters);
-
-    // Remember the newest run so the stop action can cancel it.
-    lastTimelineRun = { status: newestRunStatus, ended: newestRunEnded };
-    if (newestRunId) liveRunId = newestRunId;
-
-    // Pending tool approvals (run paused awaiting a human decision) render as
-    // the same interactive Approve/Reject/Cancel cards as live approval
-    // events, reusing renderApproval → postDecision. When the pending-work dock
-    // is live they belong there instead, so the inline path is skipped (the
-    // fallback keeps approvals visible if the dock route is unavailable). On
-    // refresh these drop away automatically once the decision lands.
-    if (dockAvailable !== true) {
-      for (var p = 0; p < pendingApprovals.length; p++) {
-        var pa = pendingApprovals[p];
-        if (!pa || !pa.questionId) continue;
-        renderApproval({ questionId: pa.questionId, tool: pa.tool, input: pa.input });
-      }
-    }
-
-    // Header + placeholder reflect the newest run ONLY while it is still
-    // active. A stopped or absent run must release any working state carried in
-    // from an earlier scope or a stale refresh — otherwise an idle conversation
-    // stays stuck "Working…" with a phantom bubble and a busy composer.
-    //
-    // History alone cannot distinguish a run parked on a decision from one
-    // still working: its run_status can still read "working". Prefer the known
-    // refresh bucket (falling back to the pending approvals this render carries)
-    // so an empty-bucket render cannot clobber the refresh-derived "Waiting on
-    // you" header with a bare working state.
-    //
-    // A run-scope timeline carries no run_start/run_end items (runTimelineItems
-    // emits only message/tool_call), so newestRunStatus is always empty there —
-    // the refresh-derived bucket is the sole authority. Treat an active run (a
-    // "running"/"needs_input" bucket, or any run-scope page) as still working
-    // and release the stale state only for a conversation scope with no active
-    // run; otherwise a live run's header, placeholder, composer and liveRunId
-    // would all be torn down by its own refresh.
+  // The render tail: reconcile the header + working state with the newest run
+  // the render found, then finish the transcript render.
+  //
+  // Header + placeholder reflect the newest run ONLY while it is still active. A
+  // stopped or absent run must release any working state carried in from an
+  // earlier scope or a stale refresh — otherwise an idle conversation stays
+  // stuck "Working…" with a phantom bubble and a busy composer.
+  //
+  // History alone cannot distinguish a run parked on a decision from one still
+  // working: its run_status can still read "working". Prefer the known refresh
+  // bucket (falling back to the pending approvals this render carries) so an
+  // empty-bucket render cannot clobber the refresh-derived "Waiting on you"
+  // header with a bare working state.
+  //
+  // A run-scope timeline carries no run_start/run_end items (runTimelineItems
+  // emits only message/tool_call), so newestRunStatus is always empty there —
+  // the refresh-derived bucket is the sole authority. Treat an active run (a
+  // "running"/"needs_input" bucket, or any run-scope page) as still working and
+  // release the stale state only for a conversation scope with no active run;
+  // otherwise a live run's header, placeholder, composer and liveRunId would
+  // all be torn down by its own refresh.
+  function afterTimelineRender(pendingApprovals, newestRunStatus) {
     var pendingCount = pendingApprovals ? pendingApprovals.length : 0;
     var bucket = liveBucket;
     if (bucket !== "needs_input" && pendingCount > 0) bucket = "needs_input";
