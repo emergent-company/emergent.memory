@@ -73,7 +73,7 @@ func (s *Server) uiAgent(c echo.Context) error {
 		captureError(err)
 	}
 
-	convs, cerr := s.memory.ListConversations(ctx)
+	convs, cerr := s.memory.ListConversations(ctx, false)
 	if cerr != nil {
 		data.ChatsErr = cerr
 	} else {
@@ -632,7 +632,7 @@ func (s *Server) uiAgentSessions(c echo.Context) error {
 	}
 	data.Agent = agent
 
-	convs, cerr := s.memory.ListConversations(ctx)
+	convs, cerr := s.memory.ListConversations(ctx, false)
 	if cerr != nil {
 		data.ChatsErr = cerr
 	} else {

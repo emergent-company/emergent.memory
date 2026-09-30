@@ -87,6 +87,7 @@ func NewHandler(svc *Service, llmClient *vertex.Client, searchSvc *search.Servic
 // @Param        X-Project-ID header string true "Project ID"
 // @Param        limit query int false "Max results (1-100, default 50)" minimum(1) maximum(100)
 // @Param        offset query int false "Offset for pagination" minimum(0)
+// @Param        includeArchived query bool false "Include archived conversations (default false)"
 // @Success      200 {object} ListConversationsResult "List of conversations"
 // @Failure      400 {object} apperror.Error "Invalid parameters"
 // @Failure      401 {object} apperror.Error "Unauthorized"
@@ -119,8 +120,17 @@ func (h *Handler) ListConversations(c echo.Context) error {
 		offset = parsed
 	}
 
+	includeArchived := false
+	if iaStr := c.QueryParam("includeArchived"); iaStr != "" {
+		parsed, err := strconv.ParseBool(iaStr)
+		if err != nil {
+			return apperror.NewBadRequest("includeArchived must be a boolean")
+		}
+		includeArchived = parsed
+	}
+
 	// Pass user ID for filtering private conversations (user.ID is the UUID from user_profiles)
-	result, err := h.svc.ListConversations(c.Request().Context(), user.ProjectID, &user.ID, limit, offset)
+	result, err := h.svc.ListConversations(c.Request().Context(), user.ProjectID, &user.ID, limit, offset, includeArchived)
 	if err != nil {
 		return err
 	}
@@ -280,6 +290,72 @@ func (h *Handler) DeleteConversation(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// ArchiveConversation handles POST /api/chat/:id/archive
+// @Summary      Archive conversation
+// @Description  Archives a conversation (non-destructive: messages and history are preserved). Idempotent.
+// @Tags         chat
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        id path string true "Conversation ID (UUID)"
+// @Success      200 {object} map[string]string "Archive status"
+// @Failure      400 {object} apperror.Error "Invalid conversation ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Conversation not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/chat/{id}/archive [post]
+// @Security     bearerAuth
+func (h *Handler) ArchiveConversation(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	if user.ProjectID == "" {
+		return apperror.NewBadRequest("x-project-id header required")
+	}
+
+	conversationID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return apperror.NewBadRequest("invalid conversation id")
+	}
+
+	if err := h.svc.ArchiveConversation(c.Request().Context(), user.ProjectID, user.ID, conversationID); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"status": "archived"})
+}
+
+// UnarchiveConversation handles POST /api/chat/:id/unarchive
+// @Summary      Unarchive conversation
+// @Description  Restores an archived conversation to the active list. Idempotent.
+// @Tags         chat
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        id path string true "Conversation ID (UUID)"
+// @Success      200 {object} map[string]string "Unarchive status"
+// @Failure      400 {object} apperror.Error "Invalid conversation ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Conversation not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/chat/{id}/unarchive [post]
+// @Security     bearerAuth
+func (h *Handler) UnarchiveConversation(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	if user.ProjectID == "" {
+		return apperror.NewBadRequest("x-project-id header required")
+	}
+
+	conversationID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return apperror.NewBadRequest("invalid conversation id")
+	}
+
+	if err := h.svc.UnarchiveConversation(c.Request().Context(), user.ProjectID, user.ID, conversationID); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"status": "unarchived"})
 }
 
 // AddMessage handles POST /api/chat/:id/messages

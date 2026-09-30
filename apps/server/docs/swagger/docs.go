@@ -2418,6 +2418,12 @@ const docTemplate = `{
                         "description": "Offset for pagination",
                         "name": "offset",
                         "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Include archived conversations (default false)",
+                        "name": "includeArchived",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -2780,6 +2786,74 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/chat/{id}/archive": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Archives a conversation (non-destructive: messages and history are preserved). Idempotent.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chat"
+                ],
+                "summary": "Archive conversation",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "X-Project-ID",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Conversation ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Archive status",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid conversation ID",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Conversation not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/chat/{id}/messages": {
             "post": {
                 "security": [
@@ -2832,6 +2906,74 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Conversation not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/chat/{id}/unarchive": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Restores an archived conversation to the active list. Idempotent.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chat"
+                ],
+                "summary": "Unarchive conversation",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "X-Project-ID",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Conversation ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Unarchive status",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid conversation ID",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -23500,6 +23642,9 @@ const docTemplate = `{
                     "description": "Agent-backed chat: links conversation to an agent definition for tool-calling capabilities",
                     "type": "string"
                 },
+                "archivedAt": {
+                    "type": "string"
+                },
                 "canonicalId": {
                     "type": "string"
                 },
@@ -23519,6 +23664,10 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "string"
+                },
+                "isArchived": {
+                    "description": "Archive state — non-destructive hide. IsArchived is the list filter\npredicate; ArchivedAt is set on archive and cleared on unarchive.",
+                    "type": "boolean"
                 },
                 "isPrivate": {
                     "type": "boolean"
@@ -23559,6 +23708,9 @@ const docTemplate = `{
                     "description": "Agent-backed chat: links conversation to an agent definition for tool-calling capabilities",
                     "type": "string"
                 },
+                "archivedAt": {
+                    "type": "string"
+                },
                 "canonicalId": {
                     "type": "string"
                 },
@@ -23578,6 +23730,10 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "string"
+                },
+                "isArchived": {
+                    "description": "Archive state — non-destructive hide. IsArchived is the list filter\npredicate; ArchivedAt is set on archive and cleared on unarchive.",
+                    "type": "boolean"
                 },
                 "isPrivate": {
                     "type": "boolean"

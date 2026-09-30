@@ -34,7 +34,7 @@ type sessionSummary struct {
 // query param filters the merged list to one origin.
 func (s *Server) listSessions(c echo.Context) error {
 	ctx := c.Request().Context()
-	list, err := s.memory.ListConversations(ctx)
+	list, err := s.memory.ListConversations(ctx, false)
 	if err != nil {
 		captureError(err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "memory service unavailable"})
