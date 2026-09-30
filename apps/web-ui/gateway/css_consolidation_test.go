@@ -27,6 +27,7 @@ func renderPageShellWithOverlay(t *testing.T, overlayURL string, content templ.C
 	t.Helper()
 	return renderHTML(t, appShell(
 		"Agents", nil, false, nil, "", nil, "", nil, nil, nil, nil, false,
+		0,
 		nil, nil,
 		content,
 		nil,

@@ -86,6 +86,7 @@ func sidebarGroups(isOrgAdmin bool) []layout.SidebarGroup {
 			// Ungrouped top-level entries: pulled out of their groups to sit
 			// at the very top of the sidebar.
 			Items: []layout.SidebarItem{
+				{Label: "Inbox", Href: "/inbox", Icon: "lucide--inbox"},
 				{Label: "Approvals", Href: "/settings/approvals", Icon: "lucide--shield-check"},
 				{Label: "Chat", Href: "/chat", Icon: "lucide--messages-square"},
 				{Label: "Sessions", Href: "/sessions", Icon: "lucide--history"},
@@ -363,8 +364,27 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 	// result is cached per project (objectTypeUIMap) so a full page render
 	// doesn't pay a serial GetCompiledTypes HTTP GET on the critical path.
 	objectTypes := s.objectTypeUIMap(c.Request().Context())
-	render.RenderPage(w, r, appShell(title, groups, providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, user, accounts, content, objectTypes, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL))
+	// Unread notification count for the topbar bell (inbox subsystem).
+	// Session-only and best-effort: dev/API-key mode has no bearer, and any
+	// counts failure degrades to 0 so the shell still renders. Account-scope
+	// events are always counted; the active project's unread is added when a
+	// project is in context.
+	unreadNotifications := 0
+	if sc, ok := sessionContextFrom(c.Request().Context()); ok && sc.Sub != "" {
+		unreadNotifications = s.notificationUnreadTotal(c.Request().Context(), activeProjectID)
+	}
+	render.RenderPage(w, r, appShell(title, groups, providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, unreadNotifications, user, accounts, content, objectTypes, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL))
 	return nil
+}
+
+// currentProjectID returns the active project id for shell-level data
+// attributes (e.g. the inbox client's active-project scope), or "" when no
+// project is active.
+func currentProjectID(p *ProjectRef) string {
+	if p == nil {
+		return ""
+	}
+	return p.ID
 }
 
 // currentUser is the signed-in identity shown in the account menu.

@@ -11,6 +11,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
 	"github.com/emergent-company/emergent.memory/domain/mcprelay"
+	"github.com/emergent-company/emergent.memory/domain/notifications"
 	"github.com/emergent-company/emergent.memory/domain/orgs"
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
@@ -100,9 +101,10 @@ func provideAgentExecutor(
 	apiTokenSvc *apitoken.Service,
 	usageSvc *provider.UsageService,
 	eventsSvc *events.Service,
+	notificationsSvc *notifications.Service,
 	log *slog.Logger,
 ) *AgentExecutor {
-	return NewAgentExecutor(modelFactory, toolPool, repo, skillRepo, embeddingsSvc, provisioner, cfg, sessionService, providerRepo, apiTokenSvc, usageSvc, eventsSvc, log)
+	return NewAgentExecutor(modelFactory, toolPool, repo, skillRepo, embeddingsSvc, provisioner, cfg, sessionService, providerRepo, apiTokenSvc, usageSvc, eventsSvc, notificationsSvc, log)
 }
 
 // provideHandler creates a Handler with both repo and executor.

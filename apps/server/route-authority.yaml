@@ -442,6 +442,10 @@ routes:
       level: auth
       note: RequireAuth
     - method: GET
+      path: /api/events/stream/account
+      level: auth
+      note: RequireAuth
+    - method: GET
       path: /api/graph/analytics/most-accessed
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember

@@ -7,6 +7,19 @@ import (
 	"github.com/uptrace/bun"
 )
 
+// Scope classifies which inbox a notification belongs to.
+type Scope string
+
+const (
+	ScopeAccount Scope = "account"
+	ScopeProject Scope = "project"
+)
+
+// Valid reports whether the scope is a recognised value.
+func (s Scope) Valid() bool {
+	return s == ScopeAccount || s == ScopeProject
+}
+
 // Notification represents a notification in the kb.notifications table
 type Notification struct {
 	bun.BaseModel `bun:"table:kb.notifications,alias:n"`
@@ -42,6 +55,24 @@ type Notification struct {
 	ActionStatusAt      *time.Time      `bun:"action_status_at" json:"actionStatusAt,omitempty"`
 	ActionStatusBy      *string         `bun:"action_status_by,type:uuid" json:"actionStatusBy,omitempty"`
 	TaskID              *string         `bun:"task_id,type:uuid" json:"taskId,omitempty"`
+	Scope               Scope           `bun:"scope,notnull,default:'account'" json:"scope"`
+	RequiresAction      bool            `bun:"requires_action,notnull,default:false" json:"requiresAction"`
+	EventKey            *string         `bun:"event_key" json:"eventKey,omitempty"`
+}
+
+// NotificationPreference represents a per-user, per-project, per-event-key,
+// per-channel delivery preference in the kb.notification_preferences table.
+type NotificationPreference struct {
+	bun.BaseModel `bun:"table:kb.notification_preferences,alias:np"`
+
+	ID        string    `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
+	UserID    string    `bun:"user_id,notnull,type:uuid" json:"userId"`
+	ProjectID *string   `bun:"project_id,type:uuid" json:"projectId,omitempty"`
+	EventKey  string    `bun:"event_key,notnull" json:"eventKey"`
+	Channel   string    `bun:"channel,notnull,default:'in_app'" json:"channel"`
+	Enabled   bool      `bun:"enabled,notnull,default:false" json:"enabled"`
+	CreatedAt time.Time `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	UpdatedAt time.Time `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
 }
 
 // NotificationStats represents aggregated notification statistics
@@ -51,9 +82,12 @@ type NotificationStats struct {
 	Total     int64 `json:"total"`
 }
 
-// NotificationCounts represents counts by tab
+// NotificationCounts represents counts by tab. Unread is the bell badge count:
+// unread AND not cleared AND not currently snoozed (matches the other lifecycle
+// buckets' cleared/snoozed exclusion, plus read=false).
 type NotificationCounts struct {
 	All       int64 `json:"all"`
+	Unread    int64 `json:"unread"`
 	Important int64 `json:"important"`
 	Other     int64 `json:"other"`
 	Snoozed   int64 `json:"snoozed"`
@@ -73,10 +107,60 @@ const (
 
 // ListParams contains parameters for listing notifications
 type ListParams struct {
-	Tab        NotificationTab
-	Category   string
-	UnreadOnly bool
-	Search     string
+	Tab            NotificationTab
+	Category       string
+	UnreadOnly     bool
+	Search         string
+	Scope          Scope
+	ProjectID      *string
+	RequiresAction bool
+}
+
+// CountParams contains parameters for counting notifications.
+type CountParams struct {
+	Scope          Scope
+	ProjectID      *string
+	RequiresAction bool
+}
+
+// CreateInput is the producer entry point payload for creating a notification.
+type CreateInput struct {
+	UserID              string
+	ProjectID           *string
+	Scope               Scope
+	EventKey            string
+	Title               string
+	Message             string
+	Type                *string
+	Severity            string
+	Category            *string
+	Importance          string
+	SourceType          *string
+	SourceID            *string
+	RelatedResourceType *string
+	RelatedResourceID   *string
+	ActionURL           *string
+	ActionLabel         *string
+	Actions             json.RawMessage
+	RequiresAction      bool
+	GroupKey            *string
+	ExpiresAt           *time.Time
+	Details             json.RawMessage
+	TaskID              *string
+}
+
+// PreferenceEntry is the effective notification preference for a single event
+// key, materialised from the taxonomy and any stored preference row.
+type PreferenceEntry struct {
+	EventKey       string `json:"eventKey"`
+	Scope          Scope  `json:"scope"`
+	Channel        string `json:"channel"`
+	Delivery       string `json:"delivery"`
+	RequiresAction bool   `json:"requiresAction"`
+	Actionable     bool   `json:"actionable"`
+	Category       string `json:"category,omitempty"`
+	Enabled        bool   `json:"enabled"`
+	Default        bool   `json:"default"`
 }
 
 // NotificationListResponse wraps the notification list
@@ -87,4 +171,9 @@ type NotificationListResponse struct {
 // NotificationCountsResponse wraps the counts
 type NotificationCountsResponse struct {
 	Data NotificationCounts `json:"data"`
+}
+
+// PreferenceListResponse wraps the effective preference list.
+type PreferenceListResponse struct {
+	Data []PreferenceEntry `json:"data"`
 }

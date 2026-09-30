@@ -1,0 +1,361 @@
+package main
+
+import (
+	"strconv"
+
+	"github.com/emergent-company/go-daisy/components/layout"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Inbox page (web-inbox capability) ---
+
+// InboxPage renders the inbox: an Account | Project scope switch, a tab strip
+// (All / Unread / Action required / Snoozed / Cleared) with counts, the
+// notification list, and tab-aware empty states. The wrapping element carries
+// the data-scope/data-tab/data-project-id attributes the inbox JS reads to
+// subscribe to the right event stream and reconcile counts.
+templ InboxPage(d inboxView) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@inboxHeader(d)
+		@flashToasts(d.FlashMsg, d.FlashErr)
+		<div
+			data-inbox-page
+			data-scope={ d.Scope }
+			data-tab={ d.Tab }
+			data-project-id={ inboxProjectID(d) }
+		>
+			@inboxScopeSwitch(d)
+			if d.Scope == "project" && !d.ProjectSelected {
+				@inboxNoProject()
+			} else if d.LoadErr != nil {
+				@pageError("Inbox unavailable", d.LoadErr)
+			} else {
+				@inboxTabs(d)
+				if len(d.Notifications) == 0 {
+					@inboxEmpty(d)
+				} else {
+					@inboxList(d)
+				}
+			}
+		</div>
+	}
+}
+
+// inboxHeader is the page header with the scope-wide "Mark all read" action.
+templ inboxHeader(d inboxView) {
+	@pageHeader("Inbox", "Inbox", "Everything that needs you — account events and project activity in one place.") {
+		<div class="flex items-center gap-2">
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--check-check",
+				Attrs:   templ.Attributes{"data-inbox-action": "mark-all-read"},
+			}) {
+				Mark all read
+			}
+		</div>
+	}
+}
+
+// inboxScopeSwitch is the Account | Project switch. Project shows its unread
+// count when that scope is active.
+templ inboxScopeSwitch(d inboxView) {
+	<div class="mb-4 flex flex-wrap items-center gap-2" data-inbox-scope-switch>
+		@inboxScopeLink(d, "account", "Account", "lucide--user-round")
+		@inboxScopeLink(d, "project", "Project", "lucide--folder")
+	</div>
+}
+
+templ inboxScopeLink(d inboxView, scope, label, icon string) {
+	<a
+		href={ templ.SafeURL(inboxScopeHref(scope)) }
+		class={ "btn btn-sm gap-2", templ.KV("btn-primary", d.Scope == scope), templ.KV("btn-ghost", d.Scope != scope) }
+		data-inbox-scope={ scope }
+	>
+		@ui.IconSpan(icon, "size-4")
+		<span>{ label }</span>
+		if scope == "project" && d.Scope == "project" && d.scopeUnread() > 0 {
+			<span class="badge badge-xs badge-neutral">{ strconv.Itoa(d.scopeUnread()) }</span>
+		}
+	</a>
+}
+
+// inboxTabs is the tab strip with per-tab counts.
+templ inboxTabs(d inboxView) {
+	<div class="border-base-content/10 mb-4 flex flex-wrap items-center gap-1 border-b" role="tablist" data-inbox-tabs>
+		for _, t := range inboxTabDefs {
+			@inboxTab(d, t)
+		}
+	</div>
+}
+
+templ inboxTab(d inboxView, t inboxTabDef) {
+	{{ active := d.Tab == t.Key }}
+	{{ count, show := inboxTabCount(d.Counts, t.Key) }}
+	<a
+		href={ templ.SafeURL(inboxTabHref(d.Scope, t.Key)) }
+		role="tab"
+		aria-selected={ strconv.FormatBool(active) }
+		data-inbox-tab={ t.Key }
+		class={ "relative -mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm transition-colors", templ.KV("border-primary text-base-content font-medium", active), templ.KV("border-transparent text-muted hover:text-base-content", !active) }
+	>
+		@ui.IconSpan(t.Icon, "size-4")
+		<span>{ t.Label }</span>
+		if show {
+			<span class={ "badge badge-xs tabular-nums", templ.KV("badge-primary", active), templ.KV("badge-ghost", !active) }>{ strconv.Itoa(count) }</span>
+		}
+	</a>
+}
+
+// inboxList is the notification list container the client refreshes in place.
+templ inboxList(d inboxView) {
+	<div class="rounded-box border-base-content/10 bg-base-100 divide-base-content/5 overflow-hidden border divide-y" data-inbox-list>
+		for _, n := range d.Notifications {
+			@inboxRow(n)
+		}
+	</div>
+}
+
+// inboxRow is one notification: leading icon tile (with unread dot), title +
+// message + metadata, and a trailing control cluster. A plain <div> (not
+// components.ListRow) because rows host nested action buttons and only some
+// rows have a navigation target.
+templ inboxRow(n Notification) {
+	<div
+		class={ "flex items-start gap-3 px-4 py-3 transition-colors hover:bg-base-200/40", templ.KV("bg-primary/5", !n.Read) }
+		data-notification-id={ n.ID }
+		data-notification-unread={ strconv.FormatBool(!n.Read) }
+	>
+		<div class="relative mt-0.5 shrink-0">
+			<span class="border-base-content/10 bg-base-200/60 grid size-9 place-items-center rounded-selector border">
+				@ui.IconSpan(notificationIcon(n), "size-4")
+			</span>
+			if !n.Read {
+				<span class="bg-primary border-base-100 absolute -top-0.5 -right-0.5 size-2.5 rounded-full border-2" aria-hidden="true"></span>
+			}
+		</div>
+		<div class="min-w-0 grow">
+			<div class="flex flex-wrap items-center gap-2">
+				<p class={ "truncate text-sm", templ.KV("font-semibold", !n.Read), templ.KV("text-base-content/75", n.Read) }>{ n.Title }</p>
+				if !n.Read {
+					<span class="badge badge-primary badge-xs">New</span>
+				}
+				if n.RequiresAction {
+					<span class="badge badge-warning badge-xs gap-1">
+						@ui.IconSpan("lucide--hand", "size-3")
+						Action
+					</span>
+				}
+			</div>
+			if n.Message != "" {
+				<p class="text-muted mt-0.5 line-clamp-2 text-sm">{ n.Message }</p>
+			}
+			<p class="text-muted-faint mt-1 text-xs">{ notificationMeta(n) }</p>
+		</div>
+		@inboxRowControls(n)
+	</div>
+}
+
+// inboxRowControls is the per-item action cluster: resolve buttons for
+// actionable items, an open link when a target exists, and the read/snooze/
+// clear/dismiss affordances.
+templ inboxRowControls(n Notification) {
+	<div class="flex shrink-0 flex-wrap items-center justify-end gap-1">
+		if n.RequiresAction {
+			for _, a := range n.Actions {
+				@inboxResolveButton(n.ID, a)
+			}
+			if len(n.Actions) == 0 && n.ActionURL != "" {
+				@inboxOpenLink(n)
+			}
+		} else if n.ActionURL != "" {
+			@inboxOpenLink(n)
+		}
+		@inboxReadToggle(n)
+		if n.SnoozedUntil != "" {
+			@inboxIconButton("unsnooze", n.ID, "Unsnooze", "lucide--alarm-clock-off")
+		} else if n.ClearedAt == "" {
+			@inboxIconButton("snooze", n.ID, "Snooze", "lucide--alarm-clock")
+		}
+		if n.ClearedAt != "" {
+			@inboxIconButton("restore", n.ID, "Restore", "lucide--archive-restore")
+		} else {
+			@inboxIconButton("clear", n.ID, "Clear", "lucide--archive")
+		}
+		@inboxIconButton("dismiss", n.ID, "Dismiss", "lucide--x")
+	</div>
+}
+
+templ inboxResolveButton(id string, a NotificationAction) {
+	<button
+		type="button"
+		class={ "btn btn-xs", notificationActionClass(a) }
+		data-notif-action="resolve"
+		data-notif-id={ id }
+		data-notif-verb={ a.Value }
+	>{ a.Label }</button>
+}
+
+templ inboxOpenLink(n Notification) {
+	<a
+		href={ templ.SafeURL(n.ActionURL) }
+		class="btn btn-ghost btn-xs gap-1"
+		data-notification-open
+	>
+		@ui.IconSpan("lucide--arrow-up-right", "size-4")
+		<span>{ cmpOr(n.ActionLabel, "Open") }</span>
+	</a>
+}
+
+templ inboxReadToggle(n Notification) {
+	if n.Read {
+		@inboxIconButton("unread", n.ID, "Mark unread", "lucide--circle-dot")
+	} else {
+		@inboxIconButton("read", n.ID, "Mark read", "lucide--check")
+	}
+}
+
+templ inboxIconButton(action, id, label, icon string) {
+	<button
+		type="button"
+		class="btn btn-ghost btn-xs btn-square"
+		title={ label }
+		aria-label={ label }
+		data-notif-action={ action }
+		data-notif-id={ id }
+	>
+		@ui.IconSpan(icon, "size-4")
+	</button>
+}
+
+// inboxEmpty is the tab/scope-aware empty state. Project scope with nothing
+// delivered at all points at the opt-in preferences.
+templ inboxEmpty(d inboxView) {
+	if inboxProjectAllOptional(d) {
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--bell-ring",
+			Title:       "No project activity yet",
+			Description: "Project activity notifications are opt-in. Turn on the ones you want to receive — assignments, mentions, approvals, and more.",
+			Bordered:    true,
+			Class:       "py-12",
+		}) {
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/inbox/preferences",
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--sliders-horizontal",
+			}) {
+				Notification settings
+			}
+		}
+	} else if d.Scope == "project" {
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--check-check",
+			Title:       "Nothing here",
+			Description: inboxEmptyDescription(d),
+			Bordered:    true,
+			Class:       "py-12",
+		}) {
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/inbox/preferences",
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--sliders-horizontal",
+			}) {
+				Notification settings
+			}
+		}
+	} else {
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--check-check",
+			Title:       "All caught up",
+			Description: inboxEmptyDescription(d),
+			Bordered:    true,
+			Class:       "py-12",
+		})
+	}
+}
+
+// inboxNoProject is the Project-scope empty state when no project is active.
+templ inboxNoProject() {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--folder",
+		Title:       "No project selected",
+		Description: "Choose a project to see its activity inbox. Project notifications are scoped to one project at a time.",
+		Bordered:    true,
+		Class:       "py-12",
+		ActionHref:  "/",
+		ActionLabel: "Choose a project",
+		ActionIcon:  "lucide--folder-open",
+	})
+}
+
+// --- Notification preferences page (project-inbox opt-in) ---
+
+// NotificationPreferencesPage renders the opt-in controls for project events.
+templ NotificationPreferencesPage(d notificationPrefsView) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@pageHeader("Inbox", "Notification settings", "Project activity is opt-in. Account, security, and action-required events are always delivered.") {
+			<a href="/inbox?scope=project" class="btn btn-ghost btn-sm gap-2">
+				@ui.IconSpan("lucide--arrow-left", "size-4")
+				<span>Back to inbox</span>
+			</a>
+		}
+		@flashToasts(d.FlashMsg, d.FlashErr)
+		if d.LoadErr != nil {
+			@pageError("Notification settings unavailable", d.LoadErr)
+		} else if len(d.Preferences) == 0 {
+			@ui.EmptyState(ui.EmptyStateProps{
+				Icon:        "lucide--bell-off",
+				Title:       "No project events",
+				Description: "There are no configurable project notifications yet.",
+				Bordered:    true,
+				Class:       "py-12",
+			})
+		} else {
+			<form method="post" action="/inbox/preferences">
+				<div class="rounded-box border-base-content/10 bg-base-100 divide-base-content/5 overflow-hidden border divide-y">
+					for _, p := range d.Preferences {
+						@preferenceRow(p)
+					}
+				</div>
+				<div class="mt-6 flex justify-end">
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonPrimary,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--check",
+					}) {
+						Save preferences
+					}
+				</div>
+			</form>
+		}
+	}
+}
+
+templ preferenceRow(p NotificationPreference) {
+	<label class={ "flex items-start gap-3 px-4 py-3", templ.KV("cursor-pointer", !p.Required), templ.KV("opacity-80", p.Required) }>
+		<input
+			type="checkbox"
+			name={ "pref_" + p.EventKey }
+			class="toggle toggle-sm mt-0.5"
+			checked?={ p.Enabled }
+			disabled?={ p.Required }
+		/>
+		<span class="min-w-0 grow">
+			<span class="flex flex-wrap items-center gap-2">
+				<span class="text-sm font-medium">{ preferenceLabel(p) }</span>
+				if p.Required {
+					<span class="badge badge-ghost badge-xs">Always on</span>
+				}
+			</span>
+			if p.Description != "" {
+				<span class="text-muted mt-0.5 block text-xs">{ p.Description }</span>
+			}
+		</span>
+	</label>
+}

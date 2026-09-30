@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -14,10 +15,17 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/domain/email"
+	"github.com/emergent-company/emergent.memory/domain/notifications"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
+
+// notifier is the minimal notifications.Service surface the invites service
+// needs. *notifications.Service satisfies it; a fake stands in for tests.
+type notifier interface {
+	Create(context.Context, notifications.CreateInput) (*notifications.Notification, error)
+}
 
 // Service handles invitation operations
 type Service struct {
@@ -25,15 +33,22 @@ type Service struct {
 	emailSvc *email.JobsService
 	baseURL  string
 	log      *slog.Logger
+	// notificationsSvc is the central notification producer (nil-safe).
+	notificationsSvc notifier
 }
 
 // NewService creates a new invites service
-func NewService(db bun.IDB, emailSvc *email.JobsService, cfg *config.Config, log *slog.Logger) *Service {
+func NewService(db bun.IDB, emailSvc *email.JobsService, cfg *config.Config, notificationsSvc *notifications.Service, log *slog.Logger) *Service {
+	var n notifier
+	if notificationsSvc != nil {
+		n = notificationsSvc
+	}
 	return &Service{
-		db:       db,
-		emailSvc: emailSvc,
-		baseURL:  cfg.AppURL,
-		log:      log,
+		db:               db,
+		emailSvc:         emailSvc,
+		baseURL:          cfg.AppURL,
+		log:              log,
+		notificationsSvc: n,
 	}
 }
 
@@ -281,7 +296,80 @@ func (s *Service) Create(ctx context.Context, req *CreateInviteRequest) (*Invite
 		}
 	}
 
+	// Notify the invitee in-app if they already have an account. Best-effort:
+	// when the email maps to no user (or the producer is unwired), the email
+	// above remains the delivery channel.
+	s.emitInviteReceived(ctx, invite, req.ProjectName)
+
 	return invite, nil
+}
+
+// emitInviteReceived sends an actionable account-scope invite.received
+// notification to the invitee when their email already resolves to a user.
+func (s *Service) emitInviteReceived(ctx context.Context, invite *Invite, projectName string) {
+	if s.notificationsSvc == nil {
+		return
+	}
+
+	targetUserID, err := s.resolveUserIDByEmail(ctx, invite.Email)
+	if err != nil {
+		s.log.Warn("failed to resolve invitee user id for notification",
+			slog.String("inviteID", invite.ID),
+			slog.String("email", invite.Email),
+			slog.String("error", err.Error()))
+		return
+	}
+	if targetUserID == "" {
+		return // no account yet — email is the channel
+	}
+
+	if projectName == "" {
+		projectName = "a project"
+	}
+	acceptURL := fmt.Sprintf("%s/invites/accept?token=%s", s.baseURL, invite.Token)
+	acceptLabel := "Accept invite"
+	actions, _ := json.Marshal([]map[string]string{
+		{"label": "Accept", "value": "accept"},
+		{"label": "Decline", "value": "decline"},
+	})
+	category := "invites"
+
+	_, err = s.notificationsSvc.Create(ctx, notifications.CreateInput{
+		UserID:         targetUserID,
+		ProjectID:      invite.ProjectID,
+		Scope:          notifications.ScopeAccount,
+		EventKey:       "invite.received",
+		Title:          "Project invitation",
+		Message:        fmt.Sprintf("You've been invited to join %s.", projectName),
+		Severity:       "info",
+		Category:       &category,
+		RequiresAction: true,
+		ActionURL:      &acceptURL,
+		ActionLabel:    &acceptLabel,
+		Actions:        actions,
+	})
+	if err != nil {
+		s.log.Warn("failed to emit invite.received notification",
+			slog.String("inviteID", invite.ID),
+			slog.String("userID", targetUserID),
+			slog.String("error", err.Error()))
+	}
+}
+
+// resolveUserIDByEmail returns the user_id registered with the given email, or
+// empty string when no account matches.
+func (s *Service) resolveUserIDByEmail(ctx context.Context, email string) (string, error) {
+	var userID string
+	err := s.db.NewRaw(`
+		SELECT user_id FROM core.user_emails WHERE LOWER(email) = LOWER(?) LIMIT 1
+	`, email).Scan(ctx, &userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", err
+	}
+	return userID, nil
 }
 
 func roleLabelFor(role string) string {
@@ -422,7 +510,60 @@ func (s *Service) Accept(ctx context.Context, userID, token string) error {
 		return apperror.ErrDatabase.WithInternal(err)
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	s.emitMembershipGranted(ctx, userID, &invite)
+	return nil
+}
+
+// emitMembershipGranted notifies the accepting user that a membership was
+// granted: project invites yield project.member.added, org-only invites yield
+// user.access.granted. Best-effort.
+func (s *Service) emitMembershipGranted(ctx context.Context, userID string, invite *Invite) {
+	if s.notificationsSvc == nil {
+		return
+	}
+
+	var in notifications.CreateInput
+	if invite.ProjectID != nil {
+		category := "membership"
+		relatedType := "project"
+		in = notifications.CreateInput{
+			UserID:              userID,
+			ProjectID:           invite.ProjectID,
+			Scope:               notifications.ScopeAccount,
+			EventKey:            "project.member.added",
+			Title:               "Added to project",
+			Message:             "You were added to a project.",
+			Severity:            "info",
+			Category:            &category,
+			RelatedResourceType: &relatedType,
+			RelatedResourceID:   invite.ProjectID,
+		}
+	} else {
+		category := "permissions"
+		relatedType := "organization"
+		in = notifications.CreateInput{
+			UserID:              userID,
+			Scope:               notifications.ScopeAccount,
+			EventKey:            "user.access.granted",
+			Title:               "Access granted",
+			Message:             "You were granted access to an organization.",
+			Severity:            "info",
+			Category:            &category,
+			RelatedResourceType: &relatedType,
+			RelatedResourceID:   &invite.OrganizationID,
+		}
+	}
+
+	if _, err := s.notificationsSvc.Create(ctx, in); err != nil {
+		s.log.Warn("failed to emit membership-granted notification",
+			slog.String("userID", userID),
+			slog.String("inviteID", invite.ID),
+			slog.String("error", err.Error()))
+	}
 }
 
 // orgMembershipRole maps an invitation role to the kb.organization_memberships
