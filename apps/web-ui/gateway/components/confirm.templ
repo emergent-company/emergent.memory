@@ -16,3 +16,25 @@ templ ConfirmIcon(icon string) {
 		@ui.IconSpan(cmp.Or(icon, "lucide--trash-2"), "size-5")
 	</div>
 }
+
+// DeleteWarningProps tunes DeleteWarning.
+type DeleteWarningProps struct {
+	// SubjectID, when set, renders as the id attribute on the subject span so a
+	// client script can fill the name at open time (the agent delete dialog).
+	SubjectID string
+}
+
+// DeleteWarning renders the delete-confirm detail paragraph shared by the
+// destructive dialogs: "This permanently removes <subject> <detail>", with the
+// subject bolded. detail carries the rest of the sentence (already punctuated,
+// typically ending in "Irreversible."). Callers keep their own subject/detail
+// copy; only the sentence shape and markup are single-sourced here.
+templ DeleteWarning(subject, detail string, opts ...DeleteWarningProps) {
+	{{ var o DeleteWarningProps
+	if len(opts) > 0 {
+		o = opts[0]
+	} }}
+	<p class="text-muted mt-1 text-sm">
+		This permanently removes <span if o.SubjectID != "" { id={ o.SubjectID } } class="font-medium text-base-content">{ subject }</span> { detail }
+	</p>
+}

@@ -37,13 +37,14 @@ templ AgentDashboardPage(data agentDashboardData) {
 // (dashboard / settings / sandbox / sessions). It stacks horizontally on small
 // screens and becomes a sticky left rail on desktop.
 templ agentSubNav(agentID string, active string, section string) {
-	@components.SubNav("Agent sections") {
-		@components.SubNavItem("/agents/"+url.PathEscape(agentID), active == "dashboard", "lucide--layout-dashboard", "Dashboard")
-		@agentSettingsNavGroup(agentID, section)
-		@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/sandbox", active == "sandbox", "lucide--box", "Sandbox")
-		@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/sessions", active == "sessions", "lucide--messages-square", "Sessions")
-		@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/share", active == "share", "lucide--share-2", "Share")
-	}
+	{{ base := "/agents/" + url.PathEscape(agentID) }}
+	@components.SettingsRail("Agent sections", active, []components.RailItem{
+		{Key: "dashboard", Href: base, Icon: "lucide--layout-dashboard", Label: "Dashboard"},
+		{Custom: agentSettingsNavGroup(agentID, section)},
+		{Key: "sandbox", Href: base + "/sandbox", Icon: "lucide--box", Label: "Sandbox"},
+		{Key: "sessions", Href: base + "/sessions", Icon: "lucide--messages-square", Label: "Sessions"},
+		{Key: "share", Href: base + "/share", Icon: "lucide--share-2", Label: "Share"},
+	})
 }
 
 // agentSettingsNavGroup renders the Settings rail entry together with its six
