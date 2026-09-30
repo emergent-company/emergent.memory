@@ -2146,6 +2146,58 @@ func TestHistoryHTMLStripsReasoning(t *testing.T) {
 	}
 }
 
+// TestHistoryHTMLPrefersPersistedReasoning is the gateway regression test for
+// issue #1263. A message persisted after the server fix already carries the
+// chain-of-thought in content.reasoning and a clean multi-paragraph
+// content.text. The renderer must use content.reasoning rather than running the
+// legacy first-line heuristic, which would overwrite the real CoT and split the
+// reply mid-answer.
+func TestHistoryHTMLPrefersPersistedReasoning(t *testing.T) {
+	const (
+		cot    = "first CoT paragraph\n\nsecond CoT paragraph"
+		answer = "## Short answer\n\nYes, the answer is 42."
+	)
+	item := json.RawMessage(fmt.Sprintf(
+		`{"kind":"message","role":"memory","content":{"text":%q,"reasoning":%q}}`, answer, cot))
+	f := &fakeMemory{histories: map[string]*ConversationHistory{
+		"conv-4": {ConversationID: "conv-4", Items: []json.RawMessage{item}},
+	}}
+	_, e := newTestServer(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/conversations/conv-4/history", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Items []struct {
+			Content struct {
+				HTML      string `json:"html"`
+				Text      string `json:"text"`
+				Reasoning string `json:"reasoning"`
+			} `json:"content"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out.Items) != 1 {
+		t.Fatalf("items = %d, want 1: %s", len(out.Items), rec.Body.String())
+	}
+	c := out.Items[0].Content
+	if c.Reasoning != cot {
+		t.Errorf("reasoning = %q, want the persisted CoT %q (legacy heuristic must not overwrite it)", c.Reasoning, cot)
+	}
+	if c.Text != answer {
+		t.Errorf("text = %q, want %q (reply must not be re-split)", c.Text, answer)
+	}
+	if !strings.Contains(c.HTML, "Short answer") || !strings.Contains(c.HTML, "answer is 42") {
+		t.Errorf("reply html must contain the full answer: %s", c.HTML)
+	}
+	if strings.Contains(c.HTML, "CoT paragraph") {
+		t.Errorf("chain-of-thought leaked into rendered reply html: %s", c.HTML)
+	}
+}
+
 func TestHistoryFallsBackToMessages(t *testing.T) {
 	f := &fakeMemory{
 		details: map[string]*ConversationDetail{

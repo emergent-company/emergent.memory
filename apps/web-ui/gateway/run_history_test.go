@@ -412,3 +412,42 @@ func TestRunTimelineItemsCitations(t *testing.T) {
 		}
 	}
 }
+
+// TestRunTimelineCarriesReasoning is the run-history regression test for issue
+// #1263. A run message persisted after the server fix carries a clean
+// multi-paragraph content.text plus content.reasoning. The synthesized run
+// timeline must forward that reasoning so renderHistoryHTML keeps the reply
+// intact instead of running the legacy first-line heuristic and splitting the
+// answer mid-paragraph.
+func TestRunTimelineCarriesReasoning(t *testing.T) {
+	const (
+		cot    = "first CoT paragraph\n\nsecond CoT paragraph"
+		answer = "## Short answer\n\nYes, the answer is 42."
+	)
+	full := &AgentRunFull{
+		Run: &ScheduledAgentRun{ID: "run-r", AgentName: "A", Status: "completed"},
+		Messages: []*AgentRunMessage{
+			{Role: "assistant", Content: map[string]any{"text": answer, "reasoning": cot}, CreatedAt: "2026-08-26T08:00:02Z", StepNumber: 1},
+		},
+	}
+	items := runTimelineItems(full, nil)
+	if len(items) != 1 {
+		t.Fatalf("items = %d, want 1: %v", len(items), items)
+	}
+	rendered := renderHistoryHTML(items)
+	var m map[string]any
+	if err := json.Unmarshal(rendered[0], &m); err != nil {
+		t.Fatalf("decode rendered item: %v", err)
+	}
+	content, _ := m["content"].(map[string]any)
+	if content["reasoning"] != cot {
+		t.Errorf("reasoning = %v, want %q (heuristic must not overwrite it)", content["reasoning"], cot)
+	}
+	if content["text"] != answer {
+		t.Errorf("text = %v, want %q (reply must not be re-split)", content["text"], answer)
+	}
+	html, _ := content["html"].(string)
+	if !strings.Contains(html, "Short answer") || !strings.Contains(html, "answer is 42") {
+		t.Errorf("reply html missing full answer: %s", html)
+	}
+}

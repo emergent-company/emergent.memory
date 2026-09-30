@@ -14,9 +14,12 @@ import (
 // --- typed timeline items ---
 
 // MessageContent is the content object carried by message timeline items. It
-// may hold text and/or function_calls.
+// may hold text and/or function_calls, plus reasoning (the model's
+// chain-of-thought, persisted separately so it renders as a Thinking block
+// rather than the reply — issue #1263).
 type MessageContent struct {
 	Text          string             `json:"text,omitempty"`
+	Reasoning     string             `json:"reasoning,omitempty"`
 	FunctionCalls []FunctionCallItem `json:"function_calls,omitempty"`
 }
 

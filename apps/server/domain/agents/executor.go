@@ -141,6 +141,17 @@ func thinkingTexts(parts []*genai.Part) (operator, reasoning []string) {
 	return operator, reasoning
 }
 
+// persistedEventText joins an event's parts into the persisted reply text and
+// its Thought (chain-of-thought) text. Thought parts are kept out of the reply
+// and returned separately so persistEventContent can store them under
+// content["reasoning"]; the client renders that as a Thinking block instead of
+// the assistant reply. Mirrors the streaming classification in
+// finalResponseStreamEvents (issue #1263).
+func persistedEventText(parts []*genai.Part) (text, reasoning string) {
+	operator, thought := thinkingTexts(parts)
+	return strings.Join(operator, "\n"), strings.Join(thought, "\n")
+}
+
 // thinkingSegmentID derives the stable segment id for a (step, role) thinking
 // segment. Every delta of one segment shares this id so clients can group
 // incremental deltas and stop their in-progress state when the closing event
@@ -4165,18 +4176,17 @@ func (ae *AgentExecutor) persistEventContent(ctx context.Context, runID string, 
 	}
 
 	// Separate parts into text/function-calls (assistant turn) and function
-	// responses (tool turn).
+	// responses (tool turn). Thought (chain-of-thought) parts are never merged
+	// into the reply text: they are persisted separately as content["reasoning"]
+	// so clients render them as a Thinking block instead of the answer (issue
+	// #1263). This mirrors the streaming split in finalResponseStreamEvents.
 	contentMap := make(map[string]any)
-	var textParts []string
 	var functionCalls []map[string]any
 	var functionResponses []map[string]any
 
 	for _, part := range event.Content.Parts {
 		if part == nil {
 			continue
-		}
-		if part.Text != "" {
-			textParts = append(textParts, part.Text)
 		}
 		if part.FunctionCall != nil {
 			functionCalls = append(functionCalls, map[string]any{
@@ -4194,8 +4204,12 @@ func (ae *AgentExecutor) persistEventContent(ctx context.Context, runID string, 
 		}
 	}
 
-	if len(textParts) > 0 {
-		contentMap["text"] = strings.Join(textParts, "\n")
+	text, reasoning := persistedEventText(event.Content.Parts)
+	if text != "" {
+		contentMap["text"] = text
+	}
+	if reasoning != "" {
+		contentMap["reasoning"] = reasoning
 	}
 	if len(functionCalls) > 0 {
 		contentMap["function_calls"] = functionCalls

@@ -238,8 +238,14 @@ templ sessionMessageItem(aui agentUI, it TimelineItem) {
 		if it.Content != nil {
 			text = it.Content.Text
 		}
+		// Messages persisted after the #1263 fix carry the model's
+		// chain-of-thought in Content.Reasoning and a clean Content.Text.
+		// splitLeadingReasoning stays as a fallback only for legacy rows that
+		// merged CoT into the text.
 		reasoning, answer := "", text
-		if text != "" {
+		if it.Content != nil && it.Content.Reasoning != "" {
+			reasoning = it.Content.Reasoning
+		} else if text != "" {
 			reasoning, answer = splitLeadingReasoning(text)
 		} }}
 		if reasoning != "" {
