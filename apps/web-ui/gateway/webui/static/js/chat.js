@@ -749,6 +749,10 @@
     clearThinking();
     replayFrames = [];
     transcriptReady = false;
+    // Release any working state left by the scope being left: the fresh history
+    // below re-derives it, so a stale "working" never re-arms the placeholder
+    // or the busy composer for a conversation whose run is not active.
+    releaseWorkingState();
 
     var detail = null;
     try {
@@ -815,6 +819,9 @@
     clearThinking();
     replayFrames = [];
     transcriptReady = false;
+    // Release any working state left by the scope being left (see
+    // resumeConversation): the run history below re-derives it.
+    releaseWorkingState();
     conversationId = ""; // a run is not an /api/chat conversation
     activeRunId = runId;
     updateUrl();
@@ -1122,15 +1129,24 @@
       }
     }
 
-    // A newest run that is still active means this page was opened mid-flight:
-    // no live stream owns the turn, so reflect the run in the header chip (the
-    // placeholder bubble itself is planted in afterTranscriptRender, after the
-    // replay tail, so replayed/persisted chips render above it). A stopped run
-    // (completed / failed / cancelled / skipped / paused-on-input) leaves the
-    // header and placeholder untouched.
-    if (isRunWorking(newestRunStatus)) {
-      liveRunStatus = newestRunStatus;
-      renderHeaderStatus(newestRunStatus, "", 0, 0);
+    // Header + placeholder reflect the newest run ONLY while it is still
+    // active. A stopped or absent run must release any working state carried in
+    // from an earlier scope or a stale refresh — otherwise an idle conversation
+    // stays stuck "Working…" with a phantom bubble and a busy composer.
+    //
+    // History alone cannot distinguish a run parked on a decision from one
+    // still working: its run_status can still read "working". Prefer the known
+    // refresh bucket (falling back to the pending approvals this render carries)
+    // so an empty-bucket render cannot clobber the refresh-derived "Waiting on
+    // you" header with a bare working state.
+    var pendingCount = pendingApprovals ? pendingApprovals.length : 0;
+    var bucket = liveBucket;
+    if (bucket !== "needs_input" && pendingCount > 0) bucket = "needs_input";
+    if (isRunWorking(newestRunStatus) || bucket === "needs_input") {
+      if (newestRunStatus) liveRunStatus = newestRunStatus;
+      renderHeaderStatus(liveRunStatus, bucket, pendingCount, 0);
+    } else {
+      releaseWorkingState();
     }
 
     // Persisted history is on screen: (re-)apply the in-flight replay tail and
@@ -2067,6 +2083,20 @@
     el.className = "memory-run-status hidden";
     el.removeAttribute("data-state");
     el.innerHTML = "";
+  }
+
+  // releaseWorkingState drops every trace of a run that is no longer active:
+  // the cached run id/status/bucket, the header indicator, the mid-run
+  // placeholder bubble, and the busy composer. A page that does not DOM-own a
+  // live stream calls this when it (re)opens a scope and whenever a render
+  // reports no active newest run, so an idle conversation can never stay stuck
+  // "Working…" with a phantom bubble and a disabled composer.
+  function releaseWorkingState() {
+    liveRunId = "";
+    liveRunStatus = "";
+    liveBucket = "";
+    clearHeaderStatus();
+    if (streaming) setStreaming(false);
   }
 
   // --- mid-run working placeholder ----------------------------------------
