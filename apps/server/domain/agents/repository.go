@@ -1570,6 +1570,15 @@ func nilIfEmpty(s *string) *string {
 	return s
 }
 
+// strPtrIfNotEmpty returns a pointer to s, or nil when s is empty. Used for
+// nullable uuid columns populated from a non-pointer value.
+func strPtrIfNotEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
 // UpdateRunTrustedInternal persists the fail-closed trust marker on an existing
 // run row. Used by the executor entry points (ExecuteWithRun, Resume with a
 // pre-created run) to store the run's trust after the row has already been
@@ -2486,6 +2495,8 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 	var triggerMetadata map[string]any
 	var maxPendingJobs int
 	var trustedInternal bool
+	var queueOverride string
+	var priority int
 	if len(opts) > 0 {
 		parentRunID = opts[0].ParentRunID
 		rootRunID = nilIfEmpty(opts[0].RootRunID)
@@ -2493,7 +2504,11 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 		triggerMetadata = opts[0].TriggerMetadata
 		maxPendingJobs = opts[0].MaxPendingJobs
 		trustedInternal = opts[0].TrustedInternal
+		queueOverride = opts[0].Queue
+		priority = opts[0].Priority
 	}
+
+	projectID, queue, priority := r.resolveAgentRouting(ctx, agentID, queueOverride, priority)
 
 	run := &AgentRun{
 		AgentID:         agentID,
@@ -2541,6 +2556,9 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 			RunID:       run.ID,
 			Status:      JobStatusPending,
 			MaxAttempts: maxAttempts,
+			Queue:       queue,
+			Priority:    priority,
+			ProjectID:   strPtrIfNotEmpty(projectID),
 			NextRunAt:   time.Now(),
 		}
 		if _, err := tx.NewInsert().Model(job).Exec(ctx); err != nil {
@@ -2559,31 +2577,63 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 	return run, nil
 }
 
-// CreateRunJob inserts a new agent_run_jobs row for an existing run.
-func (r *Repository) CreateRunJob(ctx context.Context, runID string, maxAttempts int) error {
+// CreateRunJob inserts a new agent_run_jobs row for an existing run. When queue
+// is empty it is resolved from the run's agent binding (config override →
+// definition default → "default"); priority 0 means DefaultQueuePriority.
+func (r *Repository) CreateRunJob(ctx context.Context, runID string, maxAttempts int, queue string, priority int) error {
+	var projectID string
+	if run, err := r.FindRunByID(ctx, runID); err == nil && run != nil {
+		projectID, queue, priority = r.resolveAgentRouting(ctx, run.AgentID, queue, priority)
+	}
+	if queue == "" {
+		queue = DefaultQueueName
+	}
+	if priority == 0 {
+		priority = DefaultQueuePriority
+	}
 	job := &AgentRunJob{
 		RunID:       runID,
 		Status:      JobStatusPending,
 		MaxAttempts: maxAttempts,
+		Queue:       queue,
+		Priority:    priority,
+		ProjectID:   strPtrIfNotEmpty(projectID),
 		NextRunAt:   time.Now(),
 	}
 	_, err := r.db.NewInsert().Model(job).Exec(ctx)
 	return err
 }
 
-// ClaimNextJob atomically claims the next pending job using FOR UPDATE SKIP LOCKED,
-// transitions job→processing and run→running in a single transaction.
-// Returns nil, nil when no job is available.
+// ClaimNextJob atomically claims the next pending job from any project/queue.
+// It is the queue-agnostic entry point; the worker supervisor uses
+// ClaimNextJobInQueue.
 func (r *Repository) ClaimNextJob(ctx context.Context) (*AgentRunJob, error) {
+	return r.ClaimNextJobInQueue(ctx, "", "")
+}
+
+// ClaimNextJobInQueue atomically claims the next pending job from the given
+// project and queue (empty = any), choosing the lowest priority value first and
+// otherwise the earliest next_run_at. Both project and queue are required to
+// match so a claim never crosses a project boundary (queue names are unique per
+// project). It transitions job→processing and run→running in a single
+// transaction. Returns nil, nil when no job is available.
+func (r *Repository) ClaimNextJobInQueue(ctx context.Context, projectID, queue string) (*AgentRunJob, error) {
 	var job *AgentRunJob
 
 	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		j := new(AgentRunJob)
-		err := tx.NewSelect().
+		q := tx.NewSelect().
 			Model(j).
 			Where("arj.status = ?", JobStatusPending).
-			Where("arj.next_run_at <= now()").
-			OrderExpr("arj.next_run_at ASC").
+			Where("arj.next_run_at <= now()")
+		if projectID != "" {
+			q = q.Where("arj.project_id = ?", projectID)
+		}
+		if queue != "" {
+			q = q.Where("arj.queue = ?", queue)
+		}
+		err := q.
+			OrderExpr("arj.priority ASC, arj.next_run_at ASC").
 			Limit(1).
 			For("UPDATE SKIP LOCKED").
 			Scan(ctx)
@@ -2784,7 +2834,7 @@ func (r *Repository) RequeueOrphanedQueuedRuns(ctx context.Context) (int, error)
 	}
 
 	for _, row := range runs {
-		if err := r.CreateRunJob(ctx, row.ID, 1); err != nil {
+		if err := r.CreateRunJob(ctx, row.ID, 1, "", 0); err != nil {
 			return 0, fmt.Errorf("re-enqueue run %s: %w", row.ID, err)
 		}
 	}
