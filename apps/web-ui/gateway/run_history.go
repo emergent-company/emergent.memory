@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 )
@@ -154,6 +155,12 @@ func runTimelineItems(full *AgentRunFull, questions []AgentQuestionItem) []json.
 			continue
 		}
 		content := map[string]any{"text": text}
+		// Carry the model's chain-of-thought through so renderHistoryHTML uses
+		// it instead of the legacy first-line heuristic, which would otherwise
+		// split a clean multi-paragraph reply (issue #1263).
+		if r, ok := m.Content["reasoning"].(string); ok && strings.TrimSpace(r) != "" {
+			content["reasoning"] = r
+		}
 		entries = append(entries, timelineEntry{
 			created: keyTime(m.CreatedAt, fallbackCreated),
 			step:    m.StepNumber,

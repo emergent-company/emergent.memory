@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -258,6 +259,40 @@ func TestSessionDetailRunWithoutSpans(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("timeline missing %q:\n%s", want, body)
 		}
+	}
+}
+
+// TestSessionDetailPrefersPersistedReasoning is the /sessions/:id regression
+// test for issue #1263: when a message carries content.reasoning (persisted
+// after the fix), the page must render that reasoning in the Thinking block and
+// treat content.text as the full reply. Before the fix the page ignored
+// content.reasoning, ran splitLeadingReasoning on the clean reply and dropped
+// the real CoT entirely.
+func TestSessionDetailPrefersPersistedReasoning(t *testing.T) {
+	const (
+		cot    = "first CoT paragraph\n\nsecond CoT paragraph"
+		answer = "## Short answer\n\nYes, the answer is 42."
+	)
+	f := &fakeMemory{histories: map[string]*ConversationHistory{
+		"conv_1": {
+			ConversationID: "conv_1",
+			Items: []json.RawMessage{
+				json.RawMessage(fmt.Sprintf(`{"kind":"message","run_id":"r1","step_number":1,"role":"assistant","content":{"text":%q,"reasoning":%q}}`, answer, cot)),
+			},
+		},
+	}}
+	_, e := newSessionsEcho(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sessions/conv_1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "first CoT paragraph") {
+		t.Errorf("persisted reasoning dropped from Thinking block:\n%s", body)
+	}
+	if !strings.Contains(body, "Short answer") || !strings.Contains(body, "answer is 42") {
+		t.Errorf("reply bubble missing the full persisted answer:\n%s", body)
 	}
 }
 

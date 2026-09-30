@@ -421,10 +421,19 @@ func renderHistoryHTML(items []json.RawMessage) []json.RawMessage {
 			continue
 		}
 		// Operator planning monologues (function_calls) render as collapsible
-		// thinking blocks and are shown whole. Final answers from deepseek-v4
-		// leak their chain-of-thought as the leading line; split it out so the
-		// client can render it as a Thinking block above the markdown reply.
+		// thinking blocks and are shown whole.
+		//
+		// Messages persisted after the #1263 fix already carry the model's
+		// chain-of-thought in content.reasoning with a clean content.text, so
+		// the reply is rendered verbatim and the reasoning is left as-is.
+		//
+		// Legacy rows (persisted before the fix) merged CoT into content.text
+		// with no reasoning field; splitLeadingReasoning recovers a sane render
+		// by treating the first line as reasoning. It is kept only as this
+		// legacy fallback.
 		if calls, hasCalls := content["function_calls"].([]any); hasCalls && len(calls) > 0 {
+			content["html"] = renderCitedMarkdown(text, cites)
+		} else if reasoning, hasReasoning := content["reasoning"].(string); hasReasoning && reasoning != "" {
 			content["html"] = renderCitedMarkdown(text, cites)
 		} else if reasoning, answer := splitLeadingReasoning(text); reasoning != "" {
 			content["reasoning"] = reasoning
