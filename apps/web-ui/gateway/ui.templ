@@ -488,6 +488,11 @@ templ agentFormDialog(agents []AgentDefinitionSummary, models []Model, skills []
 			@form.FormControl("agent-prompt", "System prompt", form.LabelAbove, "Sets tone, constraints, and how the agent uses memory.", "", nil) {
 				<textarea id="agent-prompt" name="systemPrompt" rows="5" placeholder="You are Memory, the household agent. You answer concisely, with wit and precision…" class="textarea w-full resize-none"></textarea>
 			}
+			// This icon/color pair is intentionally NOT extracted into a shared
+			// AppearanceFields component: the three sites (agent create dialog
+			// here, agent settings, object type) diverge on the grid gap, the
+			// per-column wrapper divs, and the help copy, so one component would
+			// branch on its caller (web-ui-component-conventions).
 			<div class="grid gap-4 sm:grid-cols-2">
 				@form.FormControl("agent-icon", "Icon", form.LabelAbove, "Pick a supported Lucide icon. The default falls back to the bot.", "", nil) {
 					@ui.IconPicker(ui.IconPickerProps{

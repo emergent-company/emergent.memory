@@ -33,6 +33,32 @@ func TestPageTitle(t *testing.T) {
 	}
 }
 
+// TestFlashFromQuery pins the PRG flash helper contract: the first non-empty
+// query param in slice order wins, and an empty result when none are set.
+func TestFlashFromQuery(t *testing.T) {
+	e := echo.New()
+	cases := []struct {
+		name   string
+		url    string
+		params []flashParam
+		want   string
+	}{
+		{"no params set", "/x", []flashParam{{key: "created", msg: "Created."}}, ""},
+		{"first non-empty wins", "/x?created=1&updated=1", []flashParam{{key: "created", msg: "Created."}, {key: "updated", msg: "Updated."}}, "Created."},
+		{"later key when earlier empty", "/x?updated=1", []flashParam{{key: "created", msg: "Created."}, {key: "updated", msg: "Updated."}}, "Updated."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.url, nil)
+			rec := httptest.NewRecorder()
+			c := e.NewContext(req, rec)
+			if got := flashFromQuery(c, tc.params); got != tc.want {
+				t.Errorf("flashFromQuery(%q) = %q, want %q", tc.url, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestPageHistoryRestoreFullShell guards the browser back/forward fix. htmx v4
 // restores history by selecting [hx-history-elt] out of the response and
 // outerSync-swapping it into #main-content, so a history-restore request must

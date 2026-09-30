@@ -193,6 +193,26 @@ func flashError(c echo.Context) error {
 	return fmt.Errorf("%s", msg)
 }
 
+// flashParam maps one PRG query param to the flash message shown when it is set.
+type flashParam struct {
+	key string
+	msg string
+}
+
+// flashFromQuery returns the flash message for the first non-empty query param
+// among params, in slice order (which preserves the precedence of the prior
+// switch statements — only one param is set by a given PRG flow, so order only
+// matters if a malformed URL sets several). It returns "" when none are set.
+// The ?err= path is separate: flashError decodes it into FlashErr.
+func flashFromQuery(c echo.Context, params []flashParam) string {
+	for _, p := range params {
+		if c.QueryParam(p.key) != "" {
+			return p.msg
+		}
+	}
+	return ""
+}
+
 // page renders content through the go-daisy render package. Full browser
 // loads and htmx history restores (browser back/forward) get the sidebar
 // shell; inline HTMX partials (sidebar navigation, boosted links) get the bare
@@ -1071,14 +1091,11 @@ func documentStatusIntent(status string) ui.BadgeIntent {
 // failure.
 func (s *Server) uiDocuments(c echo.Context) error {
 	docs, cursor, err := s.memory.ListDocuments(c.Request().Context(), "")
-	var flashMsg string
-	if c.QueryParam("uploaded") != "" {
-		flashMsg = "Document uploaded."
-	} else if c.QueryParam("duplicate") != "" {
-		flashMsg = "Document already exists (identical content)."
-	} else if c.QueryParam("deleted") != "" {
-		flashMsg = "Document deleted."
-	}
+	flashMsg := flashFromQuery(c, []flashParam{
+		{key: "uploaded", msg: "Document uploaded."},
+		{key: "duplicate", msg: "Document already exists (identical content)."},
+		{key: "deleted", msg: "Document deleted."},
+	})
 	flashErr := flashError(c)
 	return s.page(c, pageTitle("Documents"), DocumentsPage(docs, cursor, err, flashMsg, flashErr))
 }
@@ -1098,10 +1115,9 @@ func (s *Server) uiDocument(c echo.Context) error {
 	chunks, err := s.memory.ListChunks(ctx, id)
 	captureError(err)
 	results := s.loadExtractionResults(ctx, id)
-	var flashMsg string
-	if c.QueryParam("extracted") != "" {
-		flashMsg = "Extraction triggered."
-	}
+	flashMsg := flashFromQuery(c, []flashParam{
+		{key: "extracted", msg: "Extraction triggered."},
+	})
 	flashErr := flashError(c)
 	return s.page(c, pageTitle(documentName(*doc)), DocumentDetailPage(doc, chunks, results, nil, flashMsg, flashErr))
 }
