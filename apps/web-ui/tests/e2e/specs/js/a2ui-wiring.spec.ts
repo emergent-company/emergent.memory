@@ -164,6 +164,47 @@ test.describe('A2UI action wiring (chat-components.js)', () => {
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });
 
+  test('structured props render as key/value rows, not raw JSON', async ({ page }) => {
+    const errors = await bootstrap(page);
+
+    await render(page, [
+      {
+        id: 'proposal-1',
+        component: 'proposal',
+        kind: 'deploy',
+        summary: 'PROPOSAL_SENTINEL',
+        body: { plan: 'ship it' },
+      },
+      {
+        id: 'approval-1',
+        component: 'approval',
+        tool: 'APPROVAL_TOOL_SENTINEL',
+        input: { path: '/tmp/x' },
+      },
+      {
+        id: 'result-1',
+        component: 'result',
+        rows: [{ label: 'rows', value: 'RESULT_SENTINEL' }],
+      },
+    ]);
+
+    await expect(page.locator(CARD_BODIES)).toHaveCount(3);
+
+    // proposal body renders as key/value rows (label + value).
+    await expect(card(page, 'PROPOSAL_SENTINEL').getByText('plan', { exact: true })).toBeVisible();
+    await expect(card(page, 'PROPOSAL_SENTINEL').getByText('ship it', { exact: true })).toBeVisible();
+
+    // approval input renders as key/value rows (label + value).
+    await expect(card(page, 'APPROVAL_TOOL_SENTINEL').getByText('path', { exact: true })).toBeVisible();
+    await expect(card(page, 'APPROVAL_TOOL_SENTINEL').getByText('/tmp/x', { exact: true })).toBeVisible();
+
+    // result rows array expands into key/value rows (label + value).
+    await expect(card(page, 'RESULT_SENTINEL').getByText('rows', { exact: true })).toBeVisible();
+    await expect(card(page, 'RESULT_SENTINEL').getByText('RESULT_SENTINEL', { exact: true })).toBeVisible();
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
   test('an unknown component degrades to a summary card without throwing', async ({ page }) => {
     const errors = await bootstrap(page);
 

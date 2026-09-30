@@ -24,6 +24,14 @@ The catalog SHALL provide first-class components for the structured output agent
 - **WHEN** an agent emits a `proposal` component
 - **THEN** the client SHALL render a reviewable card with the proposal `kind`, `summary`, and `body` and accept/reject actions
 
+#### Scenario: Proposal body and approval input render as key/value rows
+- **WHEN** an agent emits a `proposal` whose `body`, or an `approval` whose `input`, is a structured object
+- **THEN** the client SHALL render each field as a key/value row and SHALL NOT render the object as a single raw JSON block
+
+#### Scenario: Result rows render as key/value rows
+- **WHEN** an agent emits a `result` component with its required `rows` array
+- **THEN** the client SHALL render each `{label, value}` entry as a key/value row
+
 #### Scenario: Approval and proposal components mask credentials
 - **WHEN** an agent emits an `approval` or `proposal` component whose body contains auth headers or an API key
 - **THEN** the client SHALL NOT render those secret fields

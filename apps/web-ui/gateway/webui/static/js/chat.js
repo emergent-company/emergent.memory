@@ -133,6 +133,7 @@
       renderApproval(evt);
     },
     renderUI: function (evt) {
+      stream.noteUISurface();
       MemoryChatComponents.renderA2UISurface(evt.surfaceId, evt.messages, badgeCtx);
     },
     // Grounded citations for the live turn (emitted before `done`): mount the
