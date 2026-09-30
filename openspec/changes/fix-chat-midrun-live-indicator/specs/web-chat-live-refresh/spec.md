@@ -43,8 +43,14 @@ the working bubble single across re-renders, and SHALL release the working state
 — clearing the header indicator, removing the bubble, and re-enabling the
 composer — once the run is no longer active: on every render whose newest run is
 stopped or absent, and whenever a conversation or run is (re)opened, so a stale
-working state from a previous scope is never carried across. A page that owns a
-live stream SHALL NOT have its in-flight bubble clobbered by a history re-render.
+working state from a previous scope is never carried across. The release SHALL be
+scoped to the conversation surface: a run-scope transcript carries no
+run lifecycle items, so its newest-run status is always absent and the
+refresh-reported bucket is authoritative — a render of an active run's own
+transcript (bucket `running`, or any run scope) SHALL keep the working header,
+bubble, busy composer, and cancelable run id, and SHALL NOT tear them down. A
+page that owns a live stream SHALL NOT have its in-flight bubble clobbered by a
+history re-render.
 
 #### Scenario: Opening a session mid-run
 
@@ -60,6 +66,11 @@ live stream SHALL NOT have its in-flight bubble clobbered by a history re-render
 
 - **WHEN** a refresh reports the run is no longer active
 - **THEN** the working bubble is removed, the working indicator clears, and the composer is released (send enabled)
+
+#### Scenario: An active run-scope transcript is not released by its own refresh
+
+- **WHEN** a run-scope transcript (which carries no run lifecycle items) re-renders after a refresh reporting bucket `running`
+- **THEN** the working indicator, the working bubble, and the busy composer remain, and the run id stays set so the stop control can still cancel the run
 
 #### Scenario: Opening an idle or run-less session
 

@@ -1139,13 +1139,22 @@
     // refresh bucket (falling back to the pending approvals this render carries)
     // so an empty-bucket render cannot clobber the refresh-derived "Waiting on
     // you" header with a bare working state.
+    //
+    // A run-scope timeline carries no run_start/run_end items (runTimelineItems
+    // emits only message/tool_call), so newestRunStatus is always empty there —
+    // the refresh-derived bucket is the sole authority. Treat an active run (a
+    // "running"/"needs_input" bucket, or any run-scope page) as still working
+    // and release the stale state only for a conversation scope with no active
+    // run; otherwise a live run's header, placeholder, composer and liveRunId
+    // would all be torn down by its own refresh.
     var pendingCount = pendingApprovals ? pendingApprovals.length : 0;
     var bucket = liveBucket;
     if (bucket !== "needs_input" && pendingCount > 0) bucket = "needs_input";
-    if (isRunWorking(newestRunStatus) || bucket === "needs_input") {
+    var runActive = isRunWorking(newestRunStatus) || bucket === "running" || bucket === "needs_input";
+    if (runActive) {
       if (newestRunStatus) liveRunStatus = newestRunStatus;
       renderHeaderStatus(liveRunStatus, bucket, pendingCount, 0);
-    } else {
+    } else if (!currentScopeIsRun()) {
       releaseWorkingState();
     }
 

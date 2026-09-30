@@ -34,6 +34,7 @@ const CHAT_JS = path.resolve(
 );
 
 const CONV_ID = 'conv-1';
+const RUN_ID = 'r1';
 const T0 = '2026-09-30T10:00:00.000Z';
 const T1 = '2026-09-30T10:00:05.000Z';
 const T2 = '2026-09-30T10:00:30.000Z';
@@ -41,6 +42,24 @@ const T2 = '2026-09-30T10:00:30.000Z';
 // Timeline items are loosely-shaped server records; only the fields chat.js
 // reads matter for the stub.
 type HistoryItem = Record<string, unknown>;
+
+// A run-scope transcript: runTimelineItems emits only message/tool_call items,
+// never run_start/run_end — so its newest-run status is always absent and the
+// refresh-reported bucket is the only authority on whether the run is active.
+const RUN_ITEMS: HistoryItem[] = [
+  { kind: 'message', role: 'user', content: { text: 'do the thing' }, step_number: 1, created_at: T0 },
+  { kind: 'message', role: 'agent', content: { text: 'working on it' }, step_number: 2, created_at: T1 },
+  {
+    kind: 'tool_call',
+    id: 'c1',
+    tool_name: 'entity-query',
+    tool_status: 'completed',
+    tool_input: {},
+    tool_output: {},
+    step_number: 3,
+    created_at: T1,
+  },
+];
 
 // A mid-run open: run_start (working), one completed tool step, and a run_end
 // that still reports "working" with no completed_at.
@@ -87,6 +106,8 @@ interface FakeEventSource {
 interface StubWindow {
   __eventsources: FakeEventSource[];
   __historyItems: unknown[];
+  __runHistoryItems: unknown[];
+  __fetchCalls: string[];
   fetch: (url: unknown) => Promise<Response>;
 }
 
@@ -108,6 +129,7 @@ const SKELETON = `<!doctype html>
     <select id="chat-origin-filter" aria-label="Filter sessions by type"><option value="">All types</option></select>
     <div id="chat-rail-list">
       <div data-action="resume-session" data-id="conv-2" data-agent="" data-origin="manual">Idle session</div>
+      <div data-action="open-run" data-id="${RUN_ID}" data-agent="" data-origin="scheduled">Scheduled run</div>
     </div>
   </aside>
   <div>
@@ -140,20 +162,47 @@ const SKELETON = `<!doctype html>
 // Install the stubs and load the four shipped scripts. Returns the live
 // page-error array so the test can assert it stayed empty (a ReferenceError in
 // the resume/render path lands here, not in a console warning).
-async function bootstrap(page: Page, items: HistoryItem[] = WORKING_ITEMS): Promise<string[]> {
+async function bootstrap(
+  page: Page,
+  items: HistoryItem[] = WORKING_ITEMS,
+  runItems: HistoryItem[] = [],
+): Promise<string[]> {
   const errors: string[] = [];
   page.on('pageerror', (err) => errors.push(err.message));
 
   await page.setContent(SKELETON);
 
   await page.evaluate(
-    ({ convId, items }) => {
+    ({ convId, runId, items, runItems }) => {
       const w = window as unknown as StubWindow;
       w.__eventsources = [];
       w.__historyItems = items;
+      w.__runHistoryItems = runItems;
+      w.__fetchCalls = [];
 
       w.fetch = function (url) {
         const u = String(url);
+        w.__fetchCalls.push(u);
+        if (u.indexOf('/api/runs/' + runId + '/history') !== -1) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                conversation_id: runId,
+                session_id: 's',
+                items: w.__runHistoryItems,
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } },
+            ),
+          );
+        }
+        if (u.indexOf('/api/chat/runs/') !== -1 && u.indexOf('/cancel') !== -1) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ ok: true }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            }),
+          );
+        }
         if (u.indexOf('/api/conversations/' + convId + '/history') !== -1) {
           return Promise.resolve(
             new Response(
@@ -205,7 +254,7 @@ async function bootstrap(page: Page, items: HistoryItem[] = WORKING_ITEMS): Prom
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (w as any).EventSource = FakeEventSource;
     },
-    { convId: CONV_ID, items },
+    { convId: CONV_ID, runId: RUN_ID, items, runItems },
   );
 
   await page.addScriptTag({ path: CHAT_COMPONENTS_JS });
@@ -221,6 +270,11 @@ async function setHistory(page: Page, items: HistoryItem[]): Promise<void> {
   await page.evaluate((next) => {
     (window as unknown as StubWindow).__historyItems = next;
   }, items);
+}
+
+// Every fetch URL chat.js issued (recorded in order).
+async function fetchCalls(page: Page): Promise<string[]> {
+  return page.evaluate(() => (window as unknown as StubWindow).__fetchCalls);
 }
 
 // Emit one SSE frame on the newest captured EventSource, exactly as the gateway
@@ -342,6 +396,51 @@ test.describe('chat.js mid-run open (chat-components/chat-host/chat-stream/chat)
     await expect(runStatus).toBeVisible();
     await expect(runStatus).toContainText('Waiting on you');
     await expect(runStatus).not.toContainText('Working');
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
+  // REGRESSION guard: a run-scope transcript carries no run_start/run_end items,
+  // so its newest-run status is always absent — the refresh-reported bucket is
+  // the only authority. An active run (`bucket:"running"`, `runStatus:"working"`)
+  // must keep the working indicator, its placeholder bubble, and the busy
+  // composer across the refresh-triggered re-render, and `liveRunId` must stay
+  // set so the stop control can still cancel the run. (The working-state release
+  // is for the conversation scope only.)
+  test('an active run-scope transcript keeps the working state and stays cancelable', async ({ page }) => {
+    const errors = await bootstrap(page, WORKING_ITEMS, RUN_ITEMS);
+
+    // Open the scheduled run from the rail — it becomes the active scope, and
+    // its own events stream replaces the conversation one.
+    await page.locator('[data-action="open-run"][data-id="r1"]').click();
+    // resumeRun marks the rail row active only after its history render lands.
+    await expect(page.locator('[data-action="open-run"][data-id="r1"]')).toHaveAttribute('data-active', 'true');
+    await expect(page.locator('#chat-messages .chat')).not.toHaveCount(0);
+
+    // The run's events stream reports it still active.
+    await emitSSE(page, {
+      type: 'refresh',
+      bucket: 'running',
+      runId: 'r1',
+      runStatus: 'working',
+      pendingApprovals: 0,
+      pendingQuestions: 0,
+    });
+
+    // The refresh-triggered run-timeline re-render must NOT release the state it
+    // just reported: header, placeholder bubble and busy composer all survive.
+    const runStatus = page.locator('#chat-run-status');
+    await expect(runStatus).toBeVisible();
+    await expect(runStatus).toContainText('Working');
+    await expect(page.locator('#chat-messages [data-memory-working]')).toHaveCount(1);
+    await expect(page.locator('#chat-stop')).toBeVisible();
+    await expect(page.locator('#chat-send')).toBeHidden();
+
+    // liveRunId survived the render, so the stop control cancels the run.
+    await page.locator('#chat-stop button').click();
+    await expect
+      .poll(async () => (await fetchCalls(page)).some((u) => u.includes('/api/chat/runs/r1/cancel')))
+      .toBe(true);
 
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });
