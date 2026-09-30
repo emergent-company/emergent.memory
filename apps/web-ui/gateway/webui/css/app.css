@@ -531,8 +531,11 @@ div:has(> #_layout-topbar) {
 }
 /* A failed run is not a faint divider line — it is a full-width alert banner
    (daisyUI alert-error equivalent). The marker container stays, with its
-   data-status, but display:block lets the banner own the full width. */
-.memory-run-marker[data-status="failed"] {
+   data-status, but display:block lets the banner own the full width. Scoped to
+   the END marker: the start marker is a flex divider and must never inherit
+   this layout, even if a non-terminal phase ever carries a failed status
+   (#1300). */
+.memory-run-marker[data-phase="end"][data-status="failed"] {
   display: block;
   margin: 0.5rem 0;
 }

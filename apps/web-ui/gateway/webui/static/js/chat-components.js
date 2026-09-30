@@ -1344,10 +1344,15 @@
             newestRunStatus = runStatus;
             newestRunEnded = false;
           }
-          // Typed turn boundary carrying the run's model.
+          // Typed turn boundary carrying the run's model. The start marker is a
+          // divider, never a terminal status: run_status here is the run's FINAL
+          // status once history is serialized, so stamping it on the start
+          // marker made a failed run's "Run started" row inherit the
+          // [data-status="failed"] banner layout (display:block) — killing its
+          // flex row and collapsing it to a left-aligned unspaced line (#1300).
+          // The end marker (or the no-run_end fallback below) owns the failure.
           container.appendChild(runMarker({
             phase: "start",
-            status: runStatus,
             model: runCtx.model,
           }));
           break;
