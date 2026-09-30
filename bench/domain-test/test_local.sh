@@ -2,8 +2,9 @@
 set -euo pipefail
 
 API="http://localhost:5300"
-KEY="emt_fb6300cd4ec86e87e56ba55db9ad62edc407a681a9957f70b922a734bf37d94d"
+KEY="${MEMORY_API_TOKEN:?MEMORY_API_TOKEN must be set}"
 PROJECT_ID="54be6136-8af3-47a1-9b36-7dbea67627ce"
+DEEPSEEK_KEY="${DEEPSEEK_KEY:?DEEPSEEK_KEY must be set}"
 
 green() { echo -e "\033[32m$1\033[0m"; }
 red()   { echo -e "\033[31m$1\033[0m"; }
@@ -13,7 +14,7 @@ echo "=== Configuring provider ==="
 curl -sf -X POST "$API/api/v1/projects/$PROJECT_ID/providers/openai-compatible" \
   -H "X-API-Key: $KEY" \
   -H "Content-Type: application/json" \
-  -d '{"apiKey":"sk-bfa5b8465aad4a1e907474714936b0ff","baseUrl":"https://api.deepseek.com/v1","generativeModel":"deepseek-v4-flash"}' || true
+  -d "{\"apiKey\":\"$DEEPSEEK_KEY\",\"baseUrl\":\"https://api.deepseek.com/v1\",\"generativeModel\":\"deepseek-v4-flash\"}" || true
 
 # 2. Test provider
 echo "=== Testing provider ==="
