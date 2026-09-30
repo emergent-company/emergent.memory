@@ -9,9 +9,18 @@ import (
 // TestHTMXAssetIsVersion400 guards the self-hosted htmx asset: it must report
 // the 4.0.0 final release, never a beta. htmx.min.js is committed (unlike the
 // gitignored vendor/ and generated templ/CSS), so a stray `cp` of a beta build
-// would otherwise ship silently — the beta has the same public API but the
-// `4.0.0-beta*` attribute-restore semantics fixed in #1267 / the
-// hx-alpine-compat extension (#1275).
+// would otherwise ship silently; the two builds share a public API, so only the
+// version marker distinguishes them.
+//
+// Note: this upgrade did NOT fix the same-id attribute-restore trap (#1267).
+// The relevant upstream source (`__startCSSTransitions` and the same-id restore
+// path) is byte-identical between `4.0.0-beta6` and `4.0.0` final. #1267 is
+// fixed by the `hx-alpine-compat` extension adopted in #1275, loaded after htmx
+// and before deferred Alpine (see `ui.templ`); its e2e regression is
+// `tests/e2e/specs/js/htmx-alpine-compat.spec.ts`.
+//
+// Config note: `defaultSwapEmpty` was renamed to `allowEmptySwapAfterOOB`
+// between beta6 and final. This app uses neither.
 //
 // The minified bundle self-reports its version as `this.version="4.0.0"` (or
 // `"4.0.0-beta6"` for the old beta), so we assert the exact marker plus the
