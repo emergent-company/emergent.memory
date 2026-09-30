@@ -108,25 +108,70 @@ func TestClaimNextJobInQueue_PriorityAndIsolation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Queue q1 claim must be the priority-10 job, never the q2 job.
-	first, err := repo.ClaimNextJobInQueue(ctx, "q1")
+	first, err := repo.ClaimNextJobInQueue(ctx, projectID, "q1")
 	require.NoError(t, err)
 	require.NotNil(t, first)
 	require.Equal(t, high.ID, first.RunID)
 
-	second, err := repo.ClaimNextJobInQueue(ctx, "q1")
+	second, err := repo.ClaimNextJobInQueue(ctx, projectID, "q1")
 	require.NoError(t, err)
 	require.NotNil(t, second)
 	require.Equal(t, low.ID, second.RunID)
 
 	// Only the q2 job remains, and it is claimable from q2 only.
-	third, err := repo.ClaimNextJobInQueue(ctx, "q2")
+	third, err := repo.ClaimNextJobInQueue(ctx, projectID, "q2")
 	require.NoError(t, err)
 	require.NotNil(t, third)
 	require.Equal(t, other.ID, third.RunID)
 
-	none, err := repo.ClaimNextJobInQueue(ctx, "q1")
+	none, err := repo.ClaimNextJobInQueue(ctx, projectID, "q1")
 	require.NoError(t, err)
 	require.Nil(t, none)
+}
+
+// TestClaimNextJobInQueue_ProjectIsolation verifies a claim is scoped to a
+// project: two projects with a same-named queue never drain each other's jobs.
+func TestClaimNextJobInQueue_ProjectIsolation(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	tdb := testdb.SetupTestDBOrFail(t, context.Background(), "agents_queue_project_isolation")
+	t.Cleanup(tdb.Close)
+	ctx := context.Background()
+
+	_, projectA := insertOrgAndProject(t, tdb.DB, ctx)
+	_, projectB := insertOrgAndProject(t, tdb.DB, ctx)
+	repo := NewRepository(tdb.DB)
+	agentA := insertRuntimeAgent(t, tdb.DB, ctx, projectA, "shared-agent-a")
+	agentB := insertRuntimeAgent(t, tdb.DB, ctx, projectB, "shared-agent-b")
+
+	runA, err := repo.CreateRunQueued(ctx, agentA, 1, CreateRunQueuedOptions{Queue: "security-review"})
+	require.NoError(t, err)
+	runB, err := repo.CreateRunQueued(ctx, agentB, 1, CreateRunQueuedOptions{Queue: "security-review"})
+	require.NoError(t, err)
+
+	// Each project's worker claims only its own job, despite the shared name.
+	claimedA, err := repo.ClaimNextJobInQueue(ctx, projectA, "security-review")
+	require.NoError(t, err)
+	require.NotNil(t, claimedA)
+	require.Equal(t, runA.ID, claimedA.RunID)
+
+	claimedB, err := repo.ClaimNextJobInQueue(ctx, projectB, "security-review")
+	require.NoError(t, err)
+	require.NotNil(t, claimedB)
+	require.Equal(t, runB.ID, claimedB.RunID)
+
+	// No cross-project leakage remains.
+	noneA, err := repo.ClaimNextJobInQueue(ctx, projectA, "security-review")
+	require.NoError(t, err)
+	require.Nil(t, noneA)
+
+	// The job row carries the correct owning project.
+	var ownerA, ownerB string
+	require.NoError(t, tdb.DB.NewRaw(`SELECT project_id::text FROM kb.agent_run_jobs WHERE run_id = ?`, runA.ID).Scan(ctx, &ownerA))
+	require.NoError(t, tdb.DB.NewRaw(`SELECT project_id::text FROM kb.agent_run_jobs WHERE run_id = ?`, runB.ID).Scan(ctx, &ownerB))
+	require.Equal(t, projectA, ownerA)
+	require.Equal(t, projectB, ownerB)
 }
 
 // TestQueueCRUD_DeleteGuardedAndDepth verifies queue listing depth and the
@@ -166,7 +211,7 @@ func TestQueueCRUD_DeleteGuardedAndDepth(t *testing.T) {
 	require.ErrorIs(t, err, ErrQueueNotEmpty)
 
 	// Drain the queue then delete succeeds.
-	job, err := repo.ClaimNextJobInQueue(ctx, "review")
+	job, err := repo.ClaimNextJobInQueue(ctx, projectID, "review")
 	require.NoError(t, err)
 	require.NotNil(t, job)
 	require.NoError(t, repo.CompleteJob(ctx, job.ID, job.RunID))

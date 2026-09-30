@@ -639,7 +639,10 @@ type AgentRunJob struct {
 	// DefaultQueueName when the run's agent has no queue binding.
 	Queue string `bun:"queue,notnull,default:'default'" json:"queue"`
 	// Priority orders claims within a queue; lower is claimed first.
-	Priority    int        `bun:"priority,notnull,default:100" json:"priority"`
+	Priority int `bun:"priority,notnull,default:100" json:"priority"`
+	// ProjectID scopes the queue: queue names are unique per project, so a
+	// claim must match both project and queue.
+	ProjectID   *string    `bun:"project_id,type:uuid" json:"projectId,omitempty"`
 	NextRunAt   time.Time  `bun:"next_run_at,notnull,default:now()" json:"nextRunAt"`
 	CreatedAt   time.Time  `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
 	CompletedAt *time.Time `bun:"completed_at" json:"completedAt,omitempty"`

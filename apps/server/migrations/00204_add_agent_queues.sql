@@ -23,14 +23,26 @@ SELECT p.id, 'default', 'Default', 'Default agent work queue', 5, 100
 FROM kb.projects p
 ON CONFLICT (project_id, name) DO NOTHING;
 
--- Route/priority are persisted on the job so claiming needs no joins.
+-- Route/priority/project are persisted on the job so claiming needs no joins.
+-- project_id scopes queue identity: a queue name is unique per project, so a
+-- claim must match BOTH the project and the queue (two projects may each own a
+-- queue named e.g. "security-review").
 ALTER TABLE kb.agent_run_jobs
     ADD COLUMN IF NOT EXISTS queue TEXT NOT NULL DEFAULT 'default',
-    ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 100;
+    ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 100,
+    ADD COLUMN IF NOT EXISTS project_id UUID;
 
--- Claim index: queue-scoped, priority-ordered polls.
+-- Backfill project ownership from the run's agent for pre-existing jobs.
+UPDATE kb.agent_run_jobs arj
+SET project_id = a.project_id
+FROM kb.agent_runs r
+JOIN kb.agents a ON a.id = r.agent_id
+WHERE arj.run_id = r.id
+  AND arj.project_id IS NULL;
+
+-- Claim index: project+queue-scoped, priority-ordered polls.
 CREATE INDEX IF NOT EXISTS idx_agent_run_jobs_queue_poll
-    ON kb.agent_run_jobs (queue, status, priority, next_run_at)
+    ON kb.agent_run_jobs (project_id, queue, status, priority, next_run_at)
     WHERE status = 'pending';
 
 -- Queue binding on the agent definition (runtime Agent may override via config).
@@ -45,6 +57,7 @@ ALTER TABLE kb.agent_definitions
 ALTER TABLE kb.agent_definitions DROP COLUMN IF EXISTS default_queue;
 DROP INDEX IF EXISTS kb.idx_agent_run_jobs_queue_poll;
 ALTER TABLE kb.agent_run_jobs DROP COLUMN IF EXISTS priority;
+ALTER TABLE kb.agent_run_jobs DROP COLUMN IF EXISTS project_id;
 ALTER TABLE kb.agent_run_jobs DROP COLUMN IF EXISTS queue;
 DROP TABLE IF EXISTS kb.agent_queues;
 

@@ -194,13 +194,15 @@ func (r *Repository) queueDepths(ctx context.Context, projectID string) (map[str
 	return m, nil
 }
 
-// resolveQueueAndPriority resolves the dispatch queue and priority for an agent,
-// preferring an explicit override, then the runtime agent's config, then the
-// definition's binding, then the default queue.
-func (r *Repository) resolveQueueAndPriority(ctx context.Context, agentID, override string, priority int) (string, int) {
-	queue := override
-	if queue == "" {
-		if agent, err := r.FindByID(ctx, agentID, nil); err == nil && agent != nil {
+// resolveAgentRouting resolves the project, dispatch queue, and priority for an
+// agent, preferring an explicit override, then the runtime agent's config, then
+// the definition's binding, then the default queue. The project scopes the
+// queue so claims never cross project boundaries.
+func (r *Repository) resolveAgentRouting(ctx context.Context, agentID, override string, priority int) (projectID, queue string, prio int) {
+	queue = override
+	if agent, err := r.FindByID(ctx, agentID, nil); err == nil && agent != nil {
+		projectID = agent.ProjectID
+		if queue == "" {
 			if v, ok := agent.Config["queue"].(string); ok && v != "" {
 				queue = v
 			} else if def, _ := r.ResolveDefinitionForAgent(ctx, agent); def != nil && def.DefaultQueue != "" {
@@ -211,8 +213,9 @@ func (r *Repository) resolveQueueAndPriority(ctx context.Context, agentID, overr
 	if queue == "" {
 		queue = DefaultQueueName
 	}
-	if priority == 0 {
-		priority = DefaultQueuePriority
+	prio = priority
+	if prio == 0 {
+		prio = DefaultQueuePriority
 	}
-	return queue, priority
+	return projectID, queue, prio
 }

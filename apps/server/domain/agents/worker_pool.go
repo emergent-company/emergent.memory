@@ -29,8 +29,15 @@ type WorkerPool struct {
 	wg     sync.WaitGroup
 
 	mu      sync.Mutex
-	workers map[string]*queueWorkerSet
+	workers map[queueRef]*queueWorkerSet
 	workWG  sync.WaitGroup
+}
+
+// queueRef identifies a queue by project + name. Queue names are unique per
+// project, so workers and claims must be keyed by both to keep projects isolated.
+type queueRef struct {
+	ProjectID string
+	Name      string
 }
 
 // queueWorkerSet is the running worker set for one queue.
@@ -50,7 +57,7 @@ func NewWorkerPool(repo *Repository, executor *AgentExecutor, log *slog.Logger, 
 		globalSize:      size,
 		pollInterval:    pollInterval,
 		refreshInterval: 30 * time.Second,
-		workers:         make(map[string]*queueWorkerSet),
+		workers:         make(map[queueRef]*queueWorkerSet),
 	}
 }
 
@@ -123,7 +130,7 @@ func (p *WorkerPool) reconcile(ctx context.Context) {
 		return
 	}
 
-	desired := make(map[string]int, len(queues))
+	desired := make(map[queueRef]int, len(queues))
 	for _, q := range queues {
 		c := q.Concurrency
 		if q.Name == DefaultQueueName && p.globalSize > 0 {
@@ -132,35 +139,39 @@ func (p *WorkerPool) reconcile(ctx context.Context) {
 		if c < 1 {
 			c = 1
 		}
-		desired[q.Name] = c
+		desired[queueRef{ProjectID: q.ProjectID, Name: q.Name}] = c
 	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	// Stop queues that were removed or disabled.
-	for name, set := range p.workers {
-		if _, ok := desired[name]; !ok {
+	for ref, set := range p.workers {
+		if _, ok := desired[ref]; !ok {
 			set.cancel()
-			delete(p.workers, name)
+			delete(p.workers, ref)
 		}
 	}
 	// Start queues that are new, or resize those whose concurrency changed.
-	for name, count := range desired {
-		if set, ok := p.workers[name]; ok {
+	for ref, count := range desired {
+		if set, ok := p.workers[ref]; ok {
 			if set.count == count {
 				continue
 			}
 			set.cancel()
-			delete(p.workers, name)
+			delete(p.workers, ref)
 		}
 		qctx, qcancel := context.WithCancel(ctx)
-		p.workers[name] = &queueWorkerSet{cancel: qcancel, count: count}
+		p.workers[ref] = &queueWorkerSet{cancel: qcancel, count: count}
 		for i := 0; i < count; i++ {
 			p.workWG.Add(1)
-			go p.runQueueWorker(qctx, name, i)
+			go p.runQueueWorker(qctx, ref, i)
 		}
-		p.log.Info("started queue workers", slog.String("queue", name), slog.Int("workers", count))
+		p.log.Info("started queue workers",
+			slog.String("project_id", ref.ProjectID),
+			slog.String("queue", ref.Name),
+			slog.Int("workers", count),
+		)
 	}
 }
 
@@ -174,9 +185,9 @@ func (p *WorkerPool) stopAllWorkers() {
 }
 
 // runQueueWorker is the main loop for a single queue worker.
-func (p *WorkerPool) runQueueWorker(ctx context.Context, queue string, workerID int) {
+func (p *WorkerPool) runQueueWorker(ctx context.Context, ref queueRef, workerID int) {
 	defer p.workWG.Done()
-	log := p.log.With(slog.String("queue", queue), slog.Int("worker", workerID))
+	log := p.log.With(slog.String("project_id", ref.ProjectID), slog.String("queue", ref.Name), slog.Int("worker", workerID))
 	log.Debug("queue worker started")
 
 	for {
@@ -187,7 +198,7 @@ func (p *WorkerPool) runQueueWorker(ctx context.Context, queue string, workerID 
 		default:
 		}
 
-		job, err := p.repo.ClaimNextJobInQueue(ctx, queue)
+		job, err := p.repo.ClaimNextJobInQueue(ctx, ref.ProjectID, ref.Name)
 		if err != nil {
 			if ctx.Err() != nil {
 				return

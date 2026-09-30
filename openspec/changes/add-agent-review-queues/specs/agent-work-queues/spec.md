@@ -67,7 +67,7 @@ The system SHALL persist the resolved queue and priority on the run's dispatch j
 
 ### Requirement: Claim jobs queue-scoped and priority-ordered
 
-The system SHALL claim a pending dispatch job from a specified queue, choosing the lowest priority value first and otherwise the earliest `next_run_at`, while retaining the existing atomic job→processing and run→running transition and cancel-wins guard.
+The system SHALL claim a pending dispatch job from a specified project and queue, choosing the lowest priority value first and otherwise the earliest `next_run_at`, while retaining the existing atomic job→processing and run→running transition and cancel-wins guard. Because queue names are unique per project, a claim MUST match both project and queue.
 
 #### Scenario: Highest priority claimed first
 
@@ -78,6 +78,11 @@ The system SHALL claim a pending dispatch job from a specified queue, choosing t
 
 - **WHEN** a worker for queue A polls and queue B has pending jobs
 - **THEN** the worker never claims a queue-B job
+
+#### Scenario: Claim never crosses a project
+
+- **WHEN** two projects each own a queue with the same name and both have pending jobs
+- **THEN** a worker for one project's queue claims only that project's jobs
 
 #### Scenario: Any-queue claim preserved
 

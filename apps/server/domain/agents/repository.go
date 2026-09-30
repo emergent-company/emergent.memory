@@ -1570,6 +1570,15 @@ func nilIfEmpty(s *string) *string {
 	return s
 }
 
+// strPtrIfNotEmpty returns a pointer to s, or nil when s is empty. Used for
+// nullable uuid columns populated from a non-pointer value.
+func strPtrIfNotEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
 // UpdateRunTrustedInternal persists the fail-closed trust marker on an existing
 // run row. Used by the executor entry points (ExecuteWithRun, Resume with a
 // pre-created run) to store the run's trust after the row has already been
@@ -2499,7 +2508,7 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 		priority = opts[0].Priority
 	}
 
-	queue, priority := r.resolveQueueAndPriority(ctx, agentID, queueOverride, priority)
+	projectID, queue, priority := r.resolveAgentRouting(ctx, agentID, queueOverride, priority)
 
 	run := &AgentRun{
 		AgentID:         agentID,
@@ -2549,6 +2558,7 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 			MaxAttempts: maxAttempts,
 			Queue:       queue,
 			Priority:    priority,
+			ProjectID:   strPtrIfNotEmpty(projectID),
 			NextRunAt:   time.Now(),
 		}
 		if _, err := tx.NewInsert().Model(job).Exec(ctx); err != nil {
@@ -2571,10 +2581,9 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 // is empty it is resolved from the run's agent binding (config override →
 // definition default → "default"); priority 0 means DefaultQueuePriority.
 func (r *Repository) CreateRunJob(ctx context.Context, runID string, maxAttempts int, queue string, priority int) error {
-	if queue == "" {
-		if run, err := r.FindRunByID(ctx, runID); err == nil && run != nil {
-			queue, priority = r.resolveQueueAndPriority(ctx, run.AgentID, "", priority)
-		}
+	var projectID string
+	if run, err := r.FindRunByID(ctx, runID); err == nil && run != nil {
+		projectID, queue, priority = r.resolveAgentRouting(ctx, run.AgentID, queue, priority)
 	}
 	if queue == "" {
 		queue = DefaultQueueName
@@ -2588,24 +2597,27 @@ func (r *Repository) CreateRunJob(ctx context.Context, runID string, maxAttempts
 		MaxAttempts: maxAttempts,
 		Queue:       queue,
 		Priority:    priority,
+		ProjectID:   strPtrIfNotEmpty(projectID),
 		NextRunAt:   time.Now(),
 	}
 	_, err := r.db.NewInsert().Model(job).Exec(ctx)
 	return err
 }
 
-// ClaimNextJob atomically claims the next pending job from any queue. It is the
-// queue-agnostic entry point; the worker supervisor uses ClaimNextJobInQueue.
+// ClaimNextJob atomically claims the next pending job from any project/queue.
+// It is the queue-agnostic entry point; the worker supervisor uses
+// ClaimNextJobInQueue.
 func (r *Repository) ClaimNextJob(ctx context.Context) (*AgentRunJob, error) {
-	return r.ClaimNextJobInQueue(ctx, "")
+	return r.ClaimNextJobInQueue(ctx, "", "")
 }
 
 // ClaimNextJobInQueue atomically claims the next pending job from the given
-// queue (empty = any queue), choosing the lowest priority value first and
-// otherwise the earliest next_run_at. It transitions job→processing and
-// run→running in a single transaction.
-// Returns nil, nil when no job is available.
-func (r *Repository) ClaimNextJobInQueue(ctx context.Context, queue string) (*AgentRunJob, error) {
+// project and queue (empty = any), choosing the lowest priority value first and
+// otherwise the earliest next_run_at. Both project and queue are required to
+// match so a claim never crosses a project boundary (queue names are unique per
+// project). It transitions job→processing and run→running in a single
+// transaction. Returns nil, nil when no job is available.
+func (r *Repository) ClaimNextJobInQueue(ctx context.Context, projectID, queue string) (*AgentRunJob, error) {
 	var job *AgentRunJob
 
 	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -2614,6 +2626,9 @@ func (r *Repository) ClaimNextJobInQueue(ctx context.Context, queue string) (*Ag
 			Model(j).
 			Where("arj.status = ?", JobStatusPending).
 			Where("arj.next_run_at <= now()")
+		if projectID != "" {
+			q = q.Where("arj.project_id = ?", projectID)
+		}
 		if queue != "" {
 			q = q.Where("arj.queue = ?", queue)
 		}
