@@ -1,191 +1,235 @@
 ## Purpose
 
-Graph objects as work items: any object type can carry work; a built-in `status` and `assignee` express the workflow; agents "listening" to a type are woken when a matching object is created; the run claims the object atomically, ends through an explicit terminator, and — where the agent requires it — leaves room for human review. Failures are classified and routed rather than lost, and a Kanban board is a projection over objects, sessions, and runs.
+Graph objects as work items: any object type can carry work; a built-in `status` and `assignee` express the workflow; agents "listening" to a type are woken when a matching object is created; the run claims the object correctly against the versioned write model, ends through an explicit run-finalizing terminator, and — where the agent requires it — leaves room for human review on the main graph. Failures are classified and routed rather than lost, and a Kanban board is a projection over objects, sessions, and runs.
 
 ## ADDED Requirements
 
-### Requirement: Work items are graph objects with built-in status and assignee
+### Requirement: Work items are graph objects
 
-A work item SHALL be a graph object of a user-defined type. Its work state SHALL be the built-in object `status`; its lane SHALL be the built-in object `assignee`.
+A work item SHALL be a graph object of a user-defined type. Its work state SHALL be the object `status`; its lane SHALL be the object `assignee`.
 
-#### Scenario: Assignee and status set on creation
+#### Scenario: Status and assignee on a work item
 
-- **WHEN** an object is created with a status and an assignee
+- **WHEN** an object of a board-enabled type is created with a status and an assignee
 - **THEN** both are stored as the object's built-in fields and are queryable
 
 #### Scenario: Assignee is optional
 
-- **WHEN** a work object is created without an assignee
+- **WHEN** a board-enabled work object is created without an assignee
 - **THEN** the object is eligible to be claimed by any listening agent for its type
 
-### Requirement: Status values validated per object type
+### Requirement: Board-enabled types declare and validate their work status
 
-An object type MAY declare the set of allowed work status values, and a write that sets a status outside that set SHALL be rejected.
+An object type SHALL be able to be flagged board-enabled; a board-enabled type SHALL declare its allowed work status values, and a write outside that set SHALL be rejected.
 
 #### Scenario: Invalid status rejected
 
-- **WHEN** an object of a type that allows only `ready`, `in_progress`, `review`, `done` is written with `status = "shipped"`
+- **WHEN** a board-enabled type allowing only `ready`, `in_progress`, `review`, `done` is written with `status = "shipped"`
 - **THEN** the write is rejected and the object is unchanged
 
-#### Scenario: Unconstrained type
+#### Scenario: Non-board type unconstrained
 
-- **WHEN** an object type declares no allowed status values
-- **THEN** any status string within the field limit is accepted
+- **WHEN** an object of a type that is not board-enabled is written with any status string within the field limit
+- **THEN** the write is accepted
 
-### Requirement: Listening agents subscribe to an object type
+### Requirement: A single writer owns work status
 
-An agent SHALL subscribe to work by declaring a reaction trigger over an object type and the `created` event.
+For board-enabled types, `status` SHALL be authoritative and SHALL be changed only through the platform's work path, which creates the next version and keeps `properties["status"]` consistent. A direct agent write to `status` on a board-enabled type SHALL be rejected.
+
+#### Scenario: Agent cannot set status directly
+
+- **WHEN** an agent attempts to write `status` on a board-enabled work object through a direct graph write
+- **THEN** the write is rejected and the object is unchanged
+
+#### Scenario: Platform transition keeps both copies consistent
+
+- **WHEN** the platform transitions a board-enabled object's status
+- **THEN** the new version's `status` column and `properties["status"]` agree
+
+### Requirement: Listening agents subscribe to a type and are deduplicated
+
+An agent SHALL subscribe to work through a reaction trigger over an object type and the `created` event. Dispatch SHALL be deduplicated so a repeated `created` delivery for the same agent, object, and object version results in a single run.
 
 #### Scenario: Created object wakes a listener
 
 - **WHEN** an object of a type an agent listens to is created
 - **THEN** the agent is woken for that object
 
+#### Scenario: Duplicate delivery deduplicated
+
+- **WHEN** the same `created` event for the same agent and object version is delivered twice
+- **THEN** only one run is created, using the existing processing-log dedup key
+
 #### Scenario: Edits do not wake listeners
 
-- **WHEN** an existing work object is updated without being explicitly re-queued
-- **THEN** listening agents are not woken by that update alone
+- **WHEN** a work object is updated without an explicit re-queue
+- **THEN** listening agents are not woken by that update
 
-### Requirement: Dispatch through the work queue with idempotency
+### Requirement: Dispatch through the queue, routed by assignee
 
-Waking a listening agent SHALL enqueue a run on the agent's queue rather than executing it inline. A duplicate dispatch for the same agent, object, and version SHALL be a no-op.
+Waking a listening agent SHALL enqueue a run on the agent's queue rather than executing inline. When the object has an assignee, only the listening agent matching that assignee within the object's project SHALL be enqueued.
 
 #### Scenario: Enqueued, not inline
 
 - **WHEN** a work object is created and its listener has a configured queue
 - **THEN** a run is enqueued on that queue and is not executed within the triggering request
 
-#### Scenario: Duplicate create is deduplicated
-
-- **WHEN** the same created event is delivered twice for the same agent and object version
-- **THEN** only one run is enqueued
-
 #### Scenario: Assigned object routes to its assignee
 
-- **WHEN** a work object is created with an assignee, and several agents listen to its type
-- **THEN** only the listening agent matching the assignee is enqueued
+- **WHEN** a work object is created with an assignee and several agents listen to its type
+- **THEN** only the listening agent matching the assignee in the same project is enqueued
 
-### Requirement: Atomic claim prevents double work
+#### Scenario: Unroutable object is surfaced
 
-A claimed run SHALL transition the object from the configured ready status to the in-progress status with a compare-and-set, and SHALL do no work if the object is no longer claimable.
+- **WHEN** a board-enabled object has an assignee matching no listener, or its type has no listener
+- **THEN** the object is marked unroutable rather than left silently pending
 
-#### Scenario: Second claimant is a no-op
+### Requirement: Correct, crash-safe claim
 
-- **WHEN** two runs are dispatched for the same object and the first claims it
-- **THEN** the second claim finds the object already in progress and completes without executing the agent
+Claiming SHALL transition the object from the ready status to the in-progress status under the object's advisory lock and the versioned write model; a lost race SHALL leave the run skipped without consuming the failure budget.
 
-### Requirement: Explicit completion terminator
+#### Scenario: Claim is serialized
 
-A run SHALL end by calling a terminator: `work_complete`, which sets the done status (or the review status when the agent requires review), or `work_block`, which sets the blocked status.
+- **WHEN** two runs are dispatched for the same object
+- **THEN** only one transition to in-progress succeeds and the other run is skipped
+
+#### Scenario: Skipped claim does not burn budget
+
+- **WHEN** a run's claim finds the object already taken
+- **THEN** the run is marked skipped, the job completes, and the item's failure budget is unchanged
+
+#### Scenario: Board-enabled types require a stable key
+
+- **WHEN** a board-enabled work object is created without a key
+- **THEN** the write is rejected, because the claim requires a stable identity
+
+### Requirement: Claimed work is reclaimed when its run dies
+
+A claim whose run is missing or terminal beyond a threshold SHALL be reclaimed, and ready board-enabled objects with no live run SHALL be reconciled and enqueued.
+
+#### Scenario: Stranded in-progress is released
+
+- **WHEN** an object is in-progress but its run is missing or terminal past the threshold
+- **THEN** a reaper returns the object to the ready status (budget-aware) or to blocked
+
+#### Scenario: Missed enqueue is reconciled
+
+- **WHEN** a ready board-enabled object has no live run or job
+- **THEN** it is enqueued by the reconciler
+
+### Requirement: Explicit, run-finalizing terminator
+
+A run SHALL end by calling `work_complete` (→ the done status, or the review status when the agent requires review) or `work_block` (→ the blocked status). A terminator call SHALL end the run; subsequent steps SHALL be ignored.
 
 #### Scenario: Complete sets done
 
 - **WHEN** an agent that does not require review calls `work_complete`
-- **THEN** the object's status becomes the configured done value and the run succeeds
+- **THEN** the object's status becomes done and the run ends
 
 #### Scenario: Complete routes to review
 
 - **WHEN** an agent that requires review calls `work_complete`
-- **THEN** the object's status becomes the configured review value and the run succeeds
+- **THEN** the object's status becomes review, its `needs_review` is set, and the run ends
 
 #### Scenario: Block surfaces to a human
 
 - **WHEN** an agent calls `work_block` with a reason
-- **THEN** the object's status becomes the configured blocked value and a human-facing item is created
+- **THEN** the object's status becomes blocked and a human-facing item is created
 
-### Requirement: Missing terminator is a protocol violation
+#### Scenario: Missing terminator
 
-A run that ends without calling a terminator SHALL be treated as a protocol violation and SHALL NOT leave the object in the done status.
+- **WHEN** a run ends without a terminator
+- **THEN** it is retried while the failure budget remains and otherwise the object is blocked as a protocol violation
 
-#### Scenario: No terminator
+### Requirement: Run end maps explicitly to an item transition
 
-- **WHEN** a run exits without `work_complete` or `work_block`
-- **THEN** the run is retried up to the retry bound and, if it still fails, the object is blocked with an agent-quality failure
+Every run end state SHALL map to a defined item transition and a defined failure-budget effect.
 
-### Requirement: Per-agent review gate with explicit rework
+#### Scenario: Retryable failure re-queues
 
-When an agent requires review, completion SHALL await a human decision; approval finalizes the object, and a change request SHALL return the object for rework with structured feedback.
+- **WHEN** a run ends with a retryable error
+- **THEN** the item returns to ready and is re-enqueued with backoff, and the budget is incremented
+
+#### Scenario: Quota error does not consume the item budget
+
+- **WHEN** a run ends because of a provider quota or rate-limit error
+- **THEN** the item is unchanged and the item budget is not incremented
+
+#### Scenario: Paused run does not advance the item
+
+- **WHEN** a run pauses for human input
+- **THEN** the item stays in-progress and wait time is not counted
+
+### Requirement: Per-agent review on the main graph, with explicit rework
+
+Review SHALL use the object's existing review fields on the main graph. Approval SHALL finalize; a change request SHALL record append-only feedback and explicitly enqueue a rework run that carries all prior feedback; a revision cap SHALL escalate to a human.
 
 #### Scenario: Approval finalizes
 
 - **WHEN** a human approves an object in review
-- **THEN** the object's status becomes done
+- **THEN** the object's `reviewed_by`/`reviewed_at` are set, `needs_review` is cleared, and its status becomes done
 
-#### Scenario: Change request re-opens the work
+#### Scenario: Change request requires feedback and re-opens the work
 
-- **WHEN** a human requests changes with feedback on an object in review
-- **THEN** the object's status becomes the revision value, the feedback is recorded, and a rework run is explicitly enqueued
+- **WHEN** a human requests changes with non-empty feedback
+- **THEN** the object's status becomes revision, the feedback is appended to its feedback history, and a rework run is enqueued carrying all prior feedback
 
-#### Scenario: Revision cap
+#### Scenario: Empty feedback rejected
+
+- **WHEN** a change request is submitted with empty feedback
+- **THEN** the request is rejected
+
+#### Scenario: Revision cap escalates
 
 - **WHEN** an object has been returned for rework beyond the configured cap
-- **THEN** it is escalated to a human instead of being re-queued again
+- **THEN** it is escalated to a human and is not re-enqueued again
 
-### Requirement: Failure classification
+### Requirement: Human actions are defined and authorized
 
-Every failed run SHALL be classified as transient, agent-quality, terminal, needs-input, or capability, and the class SHALL determine the response.
+The system SHALL expose approve, request-changes, retry, reassign, and cancel actions for work items, behind the project-membership auth tier, and SHALL register the corresponding routes.
 
-#### Scenario: Transient failure retries without budget
+#### Scenario: Retry a failed item
 
-- **WHEN** a run fails with a transient (infrastructure) error
-- **THEN** it is retried with backoff and the work item's failure budget is not consumed
+- **WHEN** a human retries a blocked or failed work item
+- **THEN** the item returns to ready and is enqueued
 
-#### Scenario: Terminal failure blocks without retry
+#### Scenario: Reassign an item
 
-- **WHEN** a run fails with a terminal (configuration) error
-- **THEN** it is not retried and the object is blocked with a human notification
+- **WHEN** a human changes or clears the assignee of a work item
+- **THEN** the item is routed according to the new assignee (or to any listener)
 
-#### Scenario: Capability failure unassigns
+#### Scenario: Cancel an item
 
-- **WHEN** a run fails because the assigned agent cannot perform the work
-- **THEN** the object's assignee is cleared and its status returns to the ready value
+- **WHEN** a human cancels a work item
+- **THEN** the item is closed and any in-flight run is cancelled
 
-### Requirement: Per-item failure budget and dead-letter
+### Requirement: Failure classification and per-item budget
 
-Each work item SHALL track a failure count, and exhausting the configured budget SHALL move the item to a blocked, human-visible dead-letter state.
+A failed run SHALL be classified as retryable, deterministic, or human; only retryable and deterministic failures SHALL consume the per-item failure budget, and exhausting the budget SHALL move the item to a human-visible blocked state. Quota and rate-limit failures SHALL be handled at the agent level and SHALL NOT consume the item budget.
 
 #### Scenario: Budget exhaustion blocks
 
-- **WHEN** a work item reaches the configured failure budget
+- **WHEN** a work item reaches its configured failure budget
 - **THEN** it is blocked with the last failure recorded and a human-facing item is created
 
-#### Scenario: Human recovery
+#### Scenario: Capability failure unassigns with backoff
 
-- **WHEN** a human retries, reassigns, or cancels a dead-lettered item
-- **THEN** the item returns to the ready state, is reassigned, or is closed respectively
+- **WHEN** a run fails because the assigned agent cannot perform the work
+- **THEN** the assignee is cleared, the item returns to ready with a requeue backoff, and the attempt history is retained
 
-### Requirement: Agent circuit breaker
+### Requirement: Agent circuit breaker is extended, not duplicated
 
-An agent that fails consecutively beyond a threshold SHALL be automatically disabled for triggering and surfaced to an operator.
+The existing per-agent consecutive-failure breaker SHALL be extended with explicit thresholds, and SHALL distinguish a poison item (which blocks the item) from a broken agent (which disables the agent for triggering).
 
-#### Scenario: Breaker opens
+#### Scenario: Poison item does not disable the agent
 
-- **WHEN** an agent exceeds the consecutive-failure threshold
-- **THEN** its trigger is disabled and its unhealthy state is surfaced, and it resumes only when an operator re-enables it
+- **WHEN** the same work item repeatedly and deterministically fails
+- **THEN** the item is blocked and the agent remains enabled
 
-### Requirement: Isolated attempts merged on success
+#### Scenario: Broken agent is disabled
 
-Agent-produced objects SHALL be written on an isolated branch per attempt; the branch SHALL be merged to main only on success and discarded on failure.
-
-#### Scenario: Success merges
-
-- **WHEN** a run completes successfully
-- **THEN** its branch is merged to main
-
-#### Scenario: Failure discards
-
-- **WHEN** a run fails and is retried
-- **THEN** its attempt branch is discarded and does not affect main
-
-#### Scenario: Blocked retains
-
-- **WHEN** a run blocks
-- **THEN** its attempt branch is retained for inspection and rework
-
-#### Scenario: Operational state stays on main
-
-- **WHEN** a work item's status or assignee changes
-- **THEN** the change is visible on main regardless of any in-flight attempt branch
+- **WHEN** an agent's consecutive failures across distinct items exceed the threshold
+- **THEN** its trigger is disabled and its unhealthy state is surfaced until an operator re-enables it
 
 ### Requirement: Kanban projection
 
@@ -204,7 +248,7 @@ The board SHALL be a read projection over board-enabled object types joined to t
 #### Scenario: Dragging executes
 
 - **WHEN** a card is moved to the ready lane
-- **THEN** the object's status is updated and a run is enqueued
+- **THEN** the object's status is updated through the work path and a run is enqueued
 
 #### Scenario: Machine cannot self-complete
 
@@ -215,3 +259,17 @@ The board SHALL be a read projection over board-enabled object types joined to t
 
 - **WHEN** a session has no associated work object
 - **THEN** it does not appear on the board
+
+### Requirement: Operational objects do not pollute the knowledge pipelines
+
+A board-enabled type SHALL declare whether its objects are excluded from embeddings, extraction, and default search, and those flags SHALL be honoured by the respective pipelines.
+
+#### Scenario: Excluded from embeddings
+
+- **WHEN** an operational work object changes status
+- **THEN** no embedding job is enqueued for the new version
+
+#### Scenario: Excluded from extraction
+
+- **WHEN** an operational work object is written
+- **THEN** it is not scheduled for extraction
