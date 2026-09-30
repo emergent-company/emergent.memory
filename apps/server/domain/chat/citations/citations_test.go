@@ -37,6 +37,28 @@ func relationshipListOutput(relID, typ, srcID, dstID string) map[string]any {
 	}
 }
 
+// edge builds an entity-edges-get edge entry.
+func edge(relID, relType, ceID, ceKey, ceName, ceType string) map[string]any {
+	return map[string]any{
+		"relationship_id":   relID,
+		"relationship_type": relType,
+		"connected_entity": map[string]any{
+			"id": ceID, "key": ceKey, "name": ceName, "type": ceType,
+		},
+		"properties": map[string]any{},
+	}
+}
+
+// entityEdgesGetOutput builds an entity-edges-get-shaped tool result.
+func entityEdgesGetOutput(entityID string, outgoing, incoming []map[string]any) map[string]any {
+	return map[string]any{
+		"ok":        true,
+		"entity_id": entityID,
+		"outgoing":  outgoing,
+		"incoming":  incoming,
+	}
+}
+
 func TestCandidates_SearchHybridObjects(t *testing.T) {
 	cands := Candidates([]ToolCall{{Output: searchHybridOutput(
 		map[string]any{"id": obj1, "type": "Company", "name": "Acme Corp", "key": "acme"},
@@ -101,6 +123,41 @@ func TestCandidates_RelationshipLabelUsesObjectNames(t *testing.T) {
 	wantLabel := "Acme Corp —works_at→ " + obj2
 	if c.Label != wantLabel {
 		t.Errorf("rel label = %q, want %q", c.Label, wantLabel)
+	}
+}
+
+func TestCandidates_EntityEdgesGet(t *testing.T) {
+	out := entityEdgesGetOutput(obj1,
+		[]map[string]any{edge(rel1, "has_paragraph", obj2, "p2", "Paragraph 2", "LegalParagraph")},
+		[]map[string]any{edge(rel2, "cites", obj3, "p3", "Paragraph 3", "LegalParagraph")},
+	)
+
+	cands := Candidates([]ToolCall{{Output: out}})
+
+	// outgoing edge: src = envelope entity, dst = connected_entity
+	c, ok := cands[rel1]
+	if !ok {
+		t.Fatalf("candidate %s missing", rel1)
+	}
+	if c.Kind != "relationship" || c.Type != "has_paragraph" || c.SrcID != obj1 || c.DstID != obj2 {
+		t.Errorf("outgoing rel = %+v, want relationship/has_paragraph %s→%s", c, obj1, obj2)
+	}
+
+	// incoming edge: src = connected_entity, dst = envelope entity
+	c, ok = cands[rel2]
+	if !ok {
+		t.Fatalf("candidate %s missing", rel2)
+	}
+	if c.Kind != "relationship" || c.Type != "cites" || c.SrcID != obj3 || c.DstID != obj1 {
+		t.Errorf("incoming rel = %+v, want relationship/cites %s→%s", c, obj3, obj1)
+	}
+
+	// connected_entity maps must still become object candidates
+	if _, ok := cands[obj2]; !ok {
+		t.Errorf("connected_entity %s not collected as object candidate", obj2)
+	}
+	if _, ok := cands[obj3]; !ok {
+		t.Errorf("connected_entity %s not collected as object candidate", obj3)
 	}
 }
 
@@ -322,6 +379,60 @@ func TestNeutralizeLinks_Key(t *testing.T) {
 	// unknown uuid still demoted
 	if contains(out, "/objects/"+obj2) {
 		t.Errorf("unknown uuid link not demoted: %q", out)
+	}
+}
+
+func TestDerive_EntityEdgesRelationship(t *testing.T) {
+	cands := Candidates([]ToolCall{{Output: entityEdgesGetOutput(obj1,
+		[]map[string]any{edge(rel1, "has_paragraph", obj2, "p2", "Paragraph 2", "LegalParagraph")},
+		nil,
+	)}})
+
+	answer := "[X —has_paragraph→ Y](/objects/" + obj1 + "#relationship-" + rel1 + ")"
+	cits := Derive(answer, nil, cands)
+
+	var rel *Citation
+	for i := range cits {
+		if cits[i].Kind == "relationship" {
+			rel = &cits[i]
+		}
+	}
+	if rel == nil {
+		t.Fatalf("Derive() = %+v, want a relationship citation", cits)
+	}
+	if rel.ID != rel1 || rel.Type != "has_paragraph" {
+		t.Errorf("relationship = %+v, want id %s type has_paragraph", *rel, rel1)
+	}
+	if rel.URL != "/objects/"+obj1 {
+		t.Errorf("relationship url = %q, want %q", rel.URL, "/objects/"+obj1)
+	}
+}
+
+func TestDerive_KeyAfterID(t *testing.T) {
+	const key = "lov/2005-06-17-90"
+	cands := Candidates([]ToolCall{{Output: searchHybridOutput(
+		map[string]any{"id": obj1, "type": "Law", "name": "Lov", "key": key},
+	)}})
+
+	// canonical id first, then the same object by key
+	answer := "[Lov](/objects/" + obj1 + ") and [Lov](/objects/" + key + ")"
+	cits := Derive(answer, nil, cands)
+
+	if len(cits) != 1 {
+		t.Fatalf("Derive() = %+v, want 1 citation", cits)
+	}
+	c := cits[0]
+	if c.Kind != "object" || c.ID != obj1 {
+		t.Errorf("citation = %+v, want object id %s", c, obj1)
+	}
+	if c.Key != key {
+		t.Errorf("citation.Key = %q, want %q", c.Key, key)
+	}
+	if c.URL != "/objects/"+obj1 {
+		t.Errorf("citation.URL = %q, want %q", c.URL, "/objects/"+obj1)
+	}
+	if c.Label != "Lov" {
+		t.Errorf("citation.Label = %q, want Lov", c.Label)
 	}
 }
 
