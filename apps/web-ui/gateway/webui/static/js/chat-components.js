@@ -56,9 +56,10 @@
       return new TextEncoder().encode(str).length;
     }
     var encoded = encodeURIComponent(str);
-    // Each %XX escape is one byte; every other character counts as one.
+    // Each %XX escape stands for one byte but occupies three characters, so a
+    // byte is over-counted by 2 per escape; every other character is one byte.
     var escapes = (encoded.match(/%[0-9A-Fa-f]{2}/g) || []).length;
-    return (encoded.length - escapes * 2) + escapes;
+    return encoded.length - escapes * 2;
   }
 
   // formatBytes renders a byte count compactly: "512 B", "1.2 KB", "3.4 MB".
