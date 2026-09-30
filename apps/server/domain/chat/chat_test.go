@@ -464,6 +464,24 @@ func TestFormatSearchContext(t *testing.T) {
 	})
 }
 
+// TestAgentRunMessageTextRecoversReasoningOnlyAnswer locks the contract the
+// chat turn's reasoning-only safety net relies on: a final event that carried
+// only Thought text is persisted with its answer under content["text"] (see
+// persistedEventText), so agentRunMessageText — which reads only that key —
+// still recovers the answer for the client. A message persisted by the old
+// defective code carried only content["reasoning"] and yielded "".
+func TestAgentRunMessageTextRecoversReasoningOnlyAnswer(t *testing.T) {
+	promoted := map[string]any{"text": "covert reasoning"}
+	if got := agentRunMessageText(promoted); got != "covert reasoning" {
+		t.Errorf("agentRunMessageText(promoted) = %q, want %q", got, "covert reasoning")
+	}
+
+	oldDefective := map[string]any{"reasoning": "covert reasoning"}
+	if got := agentRunMessageText(oldDefective); got != "" {
+		t.Errorf("agentRunMessageText(reasoning-only) = %q, want empty", got)
+	}
+}
+
 // Helper function
 func strPtr(s string) *string {
 	return &s

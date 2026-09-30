@@ -2198,6 +2198,57 @@ func TestHistoryHTMLPrefersPersistedReasoning(t *testing.T) {
 	}
 }
 
+// TestHistoryHTMLRendersReasoningOnlyFinalAsReply is the gateway regression test
+// for the reasoning-only final response. Streaming promotes such an event's
+// Thought text to a text delta, and the server now persists it the same way:
+// content.text carries the answer and content.reasoning is empty. renderHistoryHTML
+// must therefore emit reply html for it. Before the server fix the persisted
+// message carried only content.reasoning with no text; renderHistoryHTML hit its
+// `text == ""` skip and emitted no html, and the client's finishTurn replaced the
+// correctly-streamed answer with an empty reply bubble.
+func TestHistoryHTMLRendersReasoningOnlyFinalAsReply(t *testing.T) {
+	const answer = "the whole answer, arrived as reasoning"
+	item := json.RawMessage(fmt.Sprintf(
+		`{"kind":"message","role":"memory","content":{"text":%q}}`, answer))
+	f := &fakeMemory{histories: map[string]*ConversationHistory{
+		"conv-cot": {ConversationID: "conv-cot", Items: []json.RawMessage{item}},
+	}}
+	_, e := newTestServer(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/conversations/conv-cot/history", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Items []struct {
+			Content struct {
+				HTML      string `json:"html"`
+				Text      string `json:"text"`
+				Reasoning string `json:"reasoning"`
+			} `json:"content"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out.Items) != 1 {
+		t.Fatalf("items = %d, want 1: %s", len(out.Items), rec.Body.String())
+	}
+	c := out.Items[0].Content
+	if c.Text != answer {
+		t.Errorf("text = %q, want %q", c.Text, answer)
+	}
+	if c.HTML == "" {
+		t.Fatalf("reasoning-only final rendered no html (empty reply bubble)")
+	}
+	if !strings.Contains(c.HTML, answer) {
+		t.Errorf("reply html missing the promoted answer: %s", c.HTML)
+	}
+	if c.Reasoning != "" {
+		t.Errorf("reasoning = %q, want empty (Thought became the reply, matching streaming)", c.Reasoning)
+	}
+}
+
 func TestHistoryFallsBackToMessages(t *testing.T) {
 	f := &fakeMemory{
 		details: map[string]*ConversationDetail{

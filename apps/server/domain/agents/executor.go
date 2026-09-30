@@ -145,11 +145,23 @@ func thinkingTexts(parts []*genai.Part) (operator, reasoning []string) {
 // its Thought (chain-of-thought) text. Thought parts are kept out of the reply
 // and returned separately so persistEventContent can store them under
 // content["reasoning"]; the client renders that as a Thinking block instead of
-// the assistant reply. Mirrors the streaming classification in
-// finalResponseStreamEvents (issue #1263).
-func persistedEventText(parts []*genai.Part) (text, reasoning string) {
+// the assistant reply.
+//
+// isFinal mirrors the streaming classification in finalResponseStreamEvents
+// (issue #1263): for a FINAL response that carries no plain (non-Thought) text
+// part, the Thought text IS the answer — e.g. a reasoner in thinking mode that
+// answers entirely in reasoning_content — so it is returned as the reply text
+// rather than as reasoning, exactly as streaming emits it as a text delta. Non-
+// final (intermediate) events keep Thought text in the reasoning bucket, since
+// the executor streams those as thinking events rather than answer tokens.
+func persistedEventText(parts []*genai.Part, isFinal bool) (text, reasoning string) {
 	operator, thought := thinkingTexts(parts)
-	return strings.Join(operator, "\n"), strings.Join(thought, "\n")
+	text = strings.Join(operator, "\n")
+	reasoning = strings.Join(thought, "\n")
+	if isFinal && text == "" && reasoning != "" {
+		return reasoning, ""
+	}
+	return text, reasoning
 }
 
 // thinkingSegmentID derives the stable segment id for a (step, role) thinking
@@ -4178,8 +4190,10 @@ func (ae *AgentExecutor) persistEventContent(ctx context.Context, runID string, 
 	// Separate parts into text/function-calls (assistant turn) and function
 	// responses (tool turn). Thought (chain-of-thought) parts are never merged
 	// into the reply text: they are persisted separately as content["reasoning"]
-	// so clients render them as a Thinking block instead of the answer (issue
-	// #1263). This mirrors the streaming split in finalResponseStreamEvents.
+	// so clients render them as a Thinking block instead of the answer, EXCEPT
+	// for a final response with no plain text at all, where the Thought IS the
+	// answer — see persistedEventText (issue #1263). This mirrors the streaming
+	// split in finalResponseStreamEvents.
 	contentMap := make(map[string]any)
 	var functionCalls []map[string]any
 	var functionResponses []map[string]any
@@ -4204,7 +4218,7 @@ func (ae *AgentExecutor) persistEventContent(ctx context.Context, runID string, 
 		}
 	}
 
-	text, reasoning := persistedEventText(event.Content.Parts)
+	text, reasoning := persistedEventText(event.Content.Parts, event.IsFinalResponse())
 	if text != "" {
 		contentMap["text"] = text
 	}
