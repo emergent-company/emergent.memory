@@ -46,12 +46,58 @@
     return Math.floor(m / 60) + "h " + (m % 60) + "m";
   }
 
-  // toolMetaLine summarises a tool call's identity/duration (id + execution
-  // duration) as a quiet mono line above its I/O, or "" when neither exists.
+  // utf8ByteLength returns the UTF-8 byte length of a string — the wire size a
+  // payload occupies, not its UTF-16 length. TextEncoder is available in every
+  // browser this app targets; the percent-encoding fallback keeps the helper
+  // honest in a non-browser engine.
+  function utf8ByteLength(s) {
+    var str = String(s == null ? "" : s);
+    if (typeof TextEncoder !== "undefined") {
+      return new TextEncoder().encode(str).length;
+    }
+    var encoded = encodeURIComponent(str);
+    // Each %XX escape is one byte; every other character counts as one.
+    var escapes = (encoded.match(/%[0-9A-Fa-f]{2}/g) || []).length;
+    return (encoded.length - escapes * 2) + escapes;
+  }
+
+  // formatBytes renders a byte count compactly: "512 B", "1.2 KB", "3.4 MB".
+  function formatBytes(n) {
+    if (typeof n !== "number" || !isFinite(n) || n < 0) return "";
+    if (n < 1024) return n + " B";
+    var kb = n / 1024;
+    if (kb < 1024) return (Math.round(kb * 10) / 10) + " KB";
+    var mb = kb / 1024;
+    if (mb < 1024) return (Math.round(mb * 10) / 10) + " MB";
+    return (Math.round((mb / 1024) * 10) / 10) + " GB";
+  }
+
+  // outputByteSize measures a tool call's OUTPUT payload client-side: the
+  // serialized form of p.output (pretty JSON when it is not a string, matching
+  // detailSection's rendering), falling back to p.outputHtml. Returns null when
+  // the payload is absent so the size label can be omitted.
+  function outputByteSize(p) {
+    if (!p) return null;
+    var raw;
+    if (p.output !== undefined && p.output !== null) {
+      raw = typeof p.output === "string" ? p.output : safeJSON(p.output);
+    } else if (p.outputHtml !== undefined && p.outputHtml !== null) {
+      raw = typeof p.outputHtml === "string" ? p.outputHtml : safeJSON(p.outputHtml);
+    } else {
+      return null;
+    }
+    return utf8ByteLength(raw);
+  }
+
+  // toolMetaLine summarises a tool call's identity, execution duration and
+  // response size as a quiet labelled mono line above its I/O, or "" when none
+  // exists. Labels ("Duration", "response") make the bare numbers readable.
   function toolMetaLine(p) {
     var parts = [];
     var dur = formatDurationMs(p && p.durationMs);
-    if (dur) parts.push(dur);
+    if (dur) parts.push("Duration " + dur);
+    var size = formatBytes(outputByteSize(p));
+    if (size) parts.push(size + " response");
     if (p && p.id) parts.push("#" + p.id);
     if (!parts.length) return "";
     return (
