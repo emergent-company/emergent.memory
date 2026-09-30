@@ -523,95 +523,40 @@
 
   /* ---------- transcript rendering (history) ---------- */
 
-  // Renders a conversation's server timeline into the log — the same item
-  // vocabulary chat.js's renderHistory uses (message / tool_call / question /
-  // run lifecycle), adapted to this panel's bubble + chip renderers. Lifecycle
-  // items anchor ordering but render nothing; operator planning monologues and
-  // synthetic pause/resume notices are skipped, mirroring what the panel's
-  // live stream shows.
+  // renderHistoryItems renders a conversation's server timeline into the log —
+  // the same item vocabulary chat.js's history render uses, now through the one
+  // shared MemoryChatComponents.renderTimeline. The panel deviates only in its
+  // flags: no run lifecycle boundaries, no thinking, no run-scope meta, and
+  // silent bubbles (it scrolls once at the end) — see the renderTimeline contract.
   function renderHistoryItems(items) {
-    // Stable-sort by effective time, then step_number (a per-run counter, so
-    // it can't order across runs on its own), preserving array order on ties.
-    // run_end items carry the run's start time in created_at and the real end
-    // time in completed_at — the shared sortTimeline (MemoryChatHost) sorts by
-    // the latter so "Run complete" lands after the run's content.
-    items = MemoryChatHost.sortTimeline(items);
-
-    // The run's composed system instruction renders once as a collapsed
-    // agent-prompt card above the transcript; later system records are skipped.
-    for (var pi = 0; pi < items.length; pi++) {
-      var pit = items[pi];
-      if (pit && pit.kind === "message" && pit.role === "system") {
-        var promptText = (pit.content && pit.content.text) || "";
-        if (promptText) {
-          if (MemoryChatComponents.agentPromptCard) {
-            MemoryChatComponents.agentPromptCard(badgeCtx, promptText);
-          }
-          break;
-        }
-      }
-    }
-
-    for (var i = 0; i < items.length; i++) {
-      var item = items[i];
-      if (!item || typeof item !== "object") continue;
-      switch (item.kind) {
-        case "run_start":
-        case "run_end":
-          break;
-        case "tool_call":
-          // ask_user renders as a question card (answered → static); anything
-          // else surfaces as a tool chip in the same language as live tools.
-          if (item.tool_name === "ask_user") {
-            var qout = item.tool_output || {};
-            if (qout.question_id) renderHistoryQuestion(item.tool_input || {}, qout.question_id, qout.response);
-            break;
-          }
-          var out = item.tool_output;
-          var cls = classifyTool(item.tool_status, out);
-          toolChip(item.tool_name || "tool", cls.status, cls.error || cls.summary || "", {
-            tool: item.tool_name || "tool",
-            status: cls.status,
-            summary: cls.summary,
-            error: cls.error,
-            input: item.tool_input,
-            output: out,
-            inputHtml: item.tool_input_html,
-            outputHtml: item.tool_output_html,
-            id: item.id,
-            durationMs: item.duration_ms,
-          });
-          break;
-        case "message":
-          var content = item.content || {};
-          var text = content.text || "";
-          var html = content.html || "";
-          if (item.role === "system") {
-            // Composed system instruction — rendered once as the agent-prompt
-            // card above; never a chat bubble.
-            break;
-          }
-          if (item.role === "user") {
-            if (text && !isResumePrompt(text)) addUserMessage(text, true);
-          } else if (item.role === "tool") {
-            // Tool result — already shown by the preceding tool_call chip.
-            break;
-          } else if (item.role === "operator" && isThinkingMessage(content)) {
-            // Planning monologue — the panel's live stream never renders
-            // thinking, so history stays consistent and skips it too.
-            break;
-          } else if (isPauseNotice(text)) {
-            // Synthetic pause notice — the question/approval card conveys it.
-            break;
-          } else if (text || html) {
-            var turnEl = addAssistantMessage(html || escapeHTML(text), currentAgentName(), true);
-            if (turnEl && item.citations) MemoryChatComponents.attachSources(turnEl, item.citations);
-          }
-          break;
-      }
-    }
-    if (!items.length && empty) empty.classList.remove("hidden");
-    scrollToBottom(true);
+    MemoryChatComponents.renderTimeline(items, {
+      container: messages,
+      badgeCtx: badgeCtx,
+      getAgentName: currentAgentName,
+      begin: function () {
+        // Clears the log for the rebuild (loadSession clears it too, just before
+        // calling in); the shared renderer owns the reset.
+        if (messages) messages.innerHTML = "";
+      },
+      isThinkingItem: function (item, content) {
+        // The panel's live stream never renders thinking, so its history stays
+        // consistent and skips operator planning monologues too.
+        return item.role === "operator" && isThinkingMessage(content);
+      },
+      addUserMessage: addUserMessage,
+      addAssistantMessage: addAssistantMessage,
+      toolChip: toolChip,
+      renderHistoryQuestion: renderHistoryQuestion,
+      afterRender: function () {
+        if (!items.length && empty) empty.classList.remove("hidden");
+        scrollToBottom(true);
+      },
+    }, {
+      showRunMarkers: false,
+      showThinking: false,
+      showMeta: false,
+      silent: true,
+    });
   }
 
   // renderHistoryQuestion / isThinkingMessage / isPauseNotice / isResumePrompt

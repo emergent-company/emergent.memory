@@ -1211,6 +1211,271 @@
     console.log("a2ui:action", evt.detail);
   });
 
+  /* ---------- shared timeline renderer ---------- */
+
+  // isFailedRun / runDurationMs are run-lifecycle helpers for the renderer below.
+  // isFailedRun mirrors chat.js's copy (still used by its header status).
+  function isFailedRun(status) {
+    return status === "failed" || status === "error";
+  }
+
+  // runDurationMs derives a turn's wall-clock duration from the run's
+  // completed_at − created_at, falling back to the run_end's duration_ms.
+  // Returns null when the run has not ended (no duration is shown then).
+  function runDurationMs(runCtx, endItem) {
+    var start = runCtx && runCtx.createdAt;
+    var end = endItem && (endItem.completed_at || "");
+    if (start && end) {
+      var d = new Date(end).getTime() - new Date(start).getTime();
+      if (isFinite(d) && d >= 0) return d;
+    }
+    if (endItem && typeof endItem.duration_ms === "number" && endItem.duration_ms > 0) {
+      return endItem.duration_ms;
+    }
+    return null;
+  }
+
+  // renderTimeline walks a raw history payload (conversation or run) and paints
+  // it into ctx.container. It is the single implementation behind the /chat
+  // page's renderTimelineItems (chat.js) and the side panel's renderHistoryItems
+  // (sidepanel.js): the item vocabulary, sorting and rendering are shared, and
+  // the per-surface deviations are carried by `flags` (with page-local callbacks
+  // in `ctx`).
+  //
+  // flags — the REAL deviations between the two call sites, no others:
+  //   showRunMarkers  chat renders run_start/run_end boundaries (and the
+  //                   failed-run fallback); the side panel skips lifecycle items.
+  //   showThinking    chat renders the planning/thinking monologue and the final
+  //                   answer's persisted reasoning; the side panel renders neither.
+  //   showMeta        chat annotates bubbles/chips with "step N · rel time" on a
+  //                   dedicated run transcript (currentScopeIsRun()); the side
+  //                   panel never does. (The issue names runTranscript AND
+  //                   showMeta; in the code both collapse to this one deviation —
+  //                   the run-scope meta annotation — so it is a single flag.)
+  //   silent          the side panel suppresses the per-bubble scrollToBottom and
+  //                   scrolls once at the end; chat scrolls on every bubble.
+  //
+  // ctx — page-local hooks and state (kept on the host page):
+  //   container                              required — the message list element
+  //   badgeCtx                               required — agentPromptCard/thinking ctx
+  //   getAgentName()                         assistant display name
+  //   begin()                                pre-render DOM reset (chat preserves
+  //                                          the working placeholder + hideEmpty)
+  //   addUserMessage(text, silent, meta)
+  //   addAssistantMessage(html, name, silent, meta) -> Element|null
+  //   toolChip(tool, status, detail, payload)
+  //   renderHistoryQuestion(input, questionId, answer)
+  //   renderThinkingBlock(text, html, kind)
+  //   isThinkingItem(item, content)          surface-specific thinking guard
+  //   stripContextPreamble(text)             optional (chat only)
+  //   pendingApprovals[], renderApproval({questionId,tool,input}), dockAvailable()   optional
+  //   attachTurnFooters(records), onNewestRun(runId,status,ended), afterRender(status,ended)  optional
+  function renderTimeline(items, ctx, flags) {
+    if (!ctx || !ctx.container) return;
+    flags = flags || {};
+    var CS = window.MemoryChatStream || {};
+    var container = ctx.container;
+    var showRunMarkers = !!flags.showRunMarkers;
+    var showThinking = !!flags.showThinking;
+    var showMeta = !!flags.showMeta;
+    var silent = !!flags.silent;
+
+    if (ctx.begin) ctx.begin();
+
+    // The server timeline is already chronological, but be explicit about it:
+    // stable-sort by effective time, then step_number (a per-run counter, so it
+    // can't order across runs on its own), preserving array order on ties.
+    // run_end items carry the run's start time in created_at and the real end
+    // time in completed_at — the shared sortTimeline sorts by the latter so "Run
+    // complete" lands after the run's content instead of right after "Run started".
+    items = MemoryChatHost.sortTimeline(items || []);
+
+    // The run's composed system instruction (recorded as a `system` message)
+    // renders once, as a collapsed agent-prompt card above the transcript.
+    // Later system records are skipped — the instruction is stable across a
+    // conversation's runs, so a card per run would just duplicate it.
+    for (var pi = 0; pi < items.length; pi++) {
+      var pit = items[pi];
+      if (pit && pit.kind === "message" && pit.role === "system") {
+        var promptText = (pit.content && pit.content.text) || "";
+        if (promptText) {
+          if (agentPromptCard) agentPromptCard(ctx.badgeCtx, promptText);
+          break;
+        }
+      }
+    }
+
+    var name = ctx.getAgentName ? ctx.getAgentName() : "";
+    var runStatus = ""; // status of the run being rendered (set by run_start)
+    var runError = ""; // error_message of that run, if the server attached one
+    var runEnded = false; // whether a run_end was seen for the current run
+    var runCtx = null; // model/duration window for the run being rendered
+    var turnFooters = []; // {el, ctx} — assistant bubbles, for footer attachment
+    var newestRunId = ""; // active run id, resolved from the newest lifecycle item
+    var newestRunStatus = "";
+    var newestRunEnded = false;
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      if (!item || typeof item !== "object") continue;
+      // Run-transcript annotation: step number + relative time under each
+      // message/tool item. Only on a dedicated run page (flags.showMeta);
+      // conversation transcripts and the live stream render no meta at all.
+      var meta = showMeta
+        ? ("step " + (item.step_number || "") + (item.created_at ? " · " + CS.relTime(item.created_at) : ""))
+        : "";
+      switch (item.kind) {
+        case "run_start":
+          // The side panel renders no lifecycle boundaries; skip the item (and
+          // its run context) exactly as before.
+          if (!showRunMarkers) break;
+          runCtx = {
+            model: item.run_model || "",
+            createdAt: item.created_at || "",
+            status: item.run_status || "",
+            ended: false,
+            completedAt: "",
+            durationMs: null,
+          };
+          runStatus = item.run_status || "";
+          runError = item.error_message || "";
+          runEnded = false;
+          if (item.run_id) {
+            newestRunId = item.run_id;
+            newestRunStatus = runStatus;
+            newestRunEnded = false;
+          }
+          // Typed turn boundary carrying the run's model.
+          container.appendChild(runMarker({
+            phase: "start",
+            status: runStatus,
+            model: runCtx.model,
+          }));
+          break;
+        case "run_end":
+          if (!showRunMarkers) break;
+          runEnded = true;
+          if (item.run_id) newestRunId = item.run_id;
+          newestRunStatus = item.run_status || runStatus;
+          newestRunEnded = true;
+          if (runCtx) {
+            runCtx.ended = true;
+            runCtx.status = item.run_status || runCtx.status;
+            runCtx.completedAt = item.completed_at || "";
+            runCtx.error = item.error_message || runError;
+            runCtx.durationMs = runDurationMs(runCtx, item);
+          }
+          // Status-distinct boundary: completed / failed (with its error) /
+          // input-required ("waiting on you").
+          container.appendChild(runMarker({
+            phase: "end",
+            status: item.run_status || runStatus,
+            error: item.error_message || runError,
+          }));
+          break;
+        case "tool_call":
+          // ask_user never renders as a tool chip. A pending question renders
+          // as an interactive card; an answered one (the gateway annotates
+          // tool_output.response) renders as a static card with the chosen
+          // answer highlighted.
+          if (item.tool_name === "ask_user") {
+            var qout = item.tool_output || {};
+            if (qout.question_id) {
+              var qAnswered = qout.response !== undefined && qout.response !== null;
+              // A still-pending question lives in the dock when it is live; an
+              // answered one stays as a static historical card.
+              if (ctx.dockAvailable && ctx.dockAvailable() && !qAnswered) break;
+              ctx.renderHistoryQuestion(item.tool_input || {}, qout.question_id, qout.response);
+            }
+            break;
+          }
+          // Tool activity from history: same chip language as live streaming.
+          var out = item.tool_output;
+          var cls = CS.classifyTool(item.tool_status, out);
+          ctx.toolChip(item.tool_name || "tool", cls.status, cls.error || cls.summary || "", {
+            tool: item.tool_name || "tool",
+            status: cls.status,
+            summary: cls.summary,
+            error: cls.error,
+            input: item.tool_input,
+            output: out,
+            inputHtml: item.tool_input_html,
+            outputHtml: item.tool_output_html,
+            id: item.id,
+            durationMs: item.duration_ms,
+            meta: meta,
+          });
+          break;
+        case "message":
+          var content = item.content || {};
+          var text = content.text || "";
+          var html = content.html || "";
+          if (item.role === "system") {
+            // The composed system instruction — already rendered once as the
+            // agent-prompt card above; never a chat bubble.
+            break;
+          }
+          if (item.role === "user") {
+            if (text && !CS.isResumePrompt(text)) {
+              var userText = ctx.stripContextPreamble ? ctx.stripContextPreamble(text) : text;
+              ctx.addUserMessage(userText, silent, meta);
+            }
+          } else if (item.role === "tool") {
+            // Tool result — already shown by the preceding tool_call chip.
+            break;
+          } else if (ctx.isThinkingItem ? ctx.isThinkingItem(item, content) : CS.isThinkingMessage(content)) {
+            // Planning/thinking monologue (carries function_calls): chat renders
+            // a collapsible thinking block; the side panel skips it entirely so
+            // its history stays consistent with a live stream that never renders
+            // thinking.
+            if (showThinking) ctx.renderThinkingBlock(text, html, "reasoning");
+          } else if (CS.isPauseNotice(text)) {
+            // Synthetic "Execution paused…" message the executor injects when a
+            // run pauses on ask_user — the question card already conveys this.
+            break;
+          } else if (text || html || (showThinking && content.reasoning)) {
+            // assistant / diane: skip function-call-only and empty messages.
+            // The server splits the chain-of-thought into content.reasoning
+            // (rendered as a Thinking block above) and renders the reply
+            // markdown into content.html.
+            if (showThinking && content.reasoning) {
+              ctx.renderThinkingBlock(content.reasoning, null, "reasoning");
+            }
+            var turnEl = ctx.addAssistantMessage(html || escapeHTML(text), name, silent, meta);
+            if (turnEl && runCtx) turnFooters.push({ el: turnEl, ctx: runCtx });
+            // Grounded citations ride on the history item; render the Sources
+            // block beneath the answer (idempotent, no-op when empty).
+            if (turnEl && item.citations) attachSources(turnEl, item.citations);
+          }
+          break;
+      }
+    }
+
+    // A run with no run_end item (partial/older history) still has to surface
+    // its failure, so fall back to the run_start's status once the loop ends.
+    if (showRunMarkers && !runEnded && isFailedRun(runStatus)) {
+      container.appendChild(runMarker({ phase: "end", status: runStatus, error: runError }));
+    }
+
+    // One footer per completed turn, on the turn's last assistant bubble.
+    if (ctx.attachTurnFooters) ctx.attachTurnFooters(turnFooters);
+    // Remember the newest run so the stop action can cancel it.
+    if (ctx.onNewestRun) ctx.onNewestRun(newestRunId, newestRunStatus, newestRunEnded);
+
+    // Pending tool approvals (a run paused awaiting a human decision) render as
+    // the same interactive Approve/Reject/Cancel cards as live approval events.
+    // When the pending-work dock is live they belong there instead.
+    var pendingApprovals = ctx.pendingApprovals || [];
+    if (ctx.renderApproval && !(ctx.dockAvailable && ctx.dockAvailable())) {
+      for (var p = 0; p < pendingApprovals.length; p++) {
+        var pa = pendingApprovals[p];
+        if (!pa || !pa.questionId) continue;
+        ctx.renderApproval({ questionId: pa.questionId, tool: pa.tool, input: pa.input });
+      }
+    }
+
+    if (ctx.afterRender) ctx.afterRender(newestRunStatus, newestRunEnded);
+  }
+
   window.MemoryChatComponents = {
     escapeHTML: escapeHTML,
     humanizeToolName: humanizeToolName,
@@ -1229,6 +1494,7 @@
     turnFooter: turnFooter,
     runMarker: runMarker,
     renderA2UISurface: renderA2UISurface,
+    renderTimeline: renderTimeline,
     humanizeTypeName: humanizeTypeName,
     sourcesFooter: sourcesFooter,
     attachSources: attachSources,
