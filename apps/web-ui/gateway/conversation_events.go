@@ -49,9 +49,15 @@ type convSub struct {
 // decided, or an ask_user question is answered elsewhere). A single global
 // poller feeds every subscription — there is no per-conversation goroutine.
 type conversationHub struct {
-	mu            sync.Mutex
-	subs          map[string]*convSub // conversationID → subscriber channels + session context
-	last          map[string]string   // conversationID → last broadcast fingerprint
+	mu   sync.Mutex
+	subs map[string]*convSub // conversationID → subscriber channels + session context
+	last map[string]string   // conversationID → last broadcast fingerprint
+	// lastFrame is the conversationID → most recent broadcast refresh frame,
+	// replayed as a new subscriber's initial refresh so a page opened mid-run
+	// (while another subscriber holds the conversation) still sees the current
+	// run state. Run-scoped keys never populate it (runs have no conversation
+	// frame to replay).
+	lastFrame     map[string][]byte
 	pollerCancel  context.CancelFunc
 	pollerRunning bool
 	srv           *Server // for conversation-state polling
@@ -65,6 +71,7 @@ func newConversationHub(srv *Server) *conversationHub {
 	return &conversationHub{
 		subs:         make(map[string]*convSub),
 		last:         make(map[string]string),
+		lastFrame:    make(map[string][]byte),
 		srv:          srv,
 		pollFailures: make(map[string]*pollFailureState),
 	}
@@ -160,6 +167,7 @@ func (h *conversationHub) unsubscribe(id string, ch chan []byte) {
 		if len(cs.chans) == 0 {
 			delete(h.subs, id)
 			delete(h.last, id)
+			delete(h.lastFrame, id)
 		}
 	}
 	if h.subscriberCountLocked() == 0 && h.pollerRunning {
@@ -205,10 +213,15 @@ func (h *conversationHub) updateFingerprint(id, fp string) bool {
 
 // broadcast sends msg to every subscriber of a conversation. Send is
 // non-blocking: a slow subscriber's channel buffer overflows and the frame is
-// dropped — the next changed fingerprint re-broadcasts.
+// dropped — the next changed fingerprint re-broadcasts. It also caches the
+// frame (conversation scope only) so a later subscriber replays the current
+// run state instead of a bare refresh on connect.
 func (h *conversationHub) broadcast(id string, msg []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if !isRunScope(id) {
+		h.lastFrame[id] = msg
+	}
 	if cs := h.subs[id]; cs != nil {
 		for ch := range cs.chans {
 			select {
@@ -217,6 +230,16 @@ func (h *conversationHub) broadcast(id string, msg []byte) {
 			}
 		}
 	}
+}
+
+// cachedFrame returns the last broadcast refresh frame for a conversation, or
+// nil if none has been broadcast yet (brand-new conversation). The returned
+// slice is shared; callers must not mutate it. Run-scoped keys never have a
+// cached frame.
+func (h *conversationHub) cachedFrame(id string) []byte {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.lastFrame[id]
 }
 
 // pollLoop is the hub's single poller: every 1500ms it gathers project-wide
@@ -603,7 +626,17 @@ func (s *Server) streamEvents(c echo.Context, key string) error {
 	ch := s.hub.subscribe(id, sc)
 	defer s.hub.unsubscribe(id, ch)
 
-	sendSSE(w, flusher, `{"type":"refresh"}`)
+	// Replay the conversation's last broadcast refresh frame (carrying
+	// bucket/runId/runStatus/pending counts) so a page opened mid-run — while
+	// an existing subscriber already holds the conversation — still sees the
+	// "agent is working" state immediately. Brand-new conversations (and
+	// run-scoped streams, which never cache a frame) fall back to a bare
+	// refresh; the poller still broadcasts on its next tick.
+	first := s.hub.cachedFrame(id)
+	if first == nil {
+		first = []byte(`{"type":"refresh"}`)
+	}
+	sendSSE(w, flusher, string(first))
 
 	// Additive in-flight replay: after the initial refresh and before any live
 	// tail, emit the active run's open thinking segments and running tool calls
