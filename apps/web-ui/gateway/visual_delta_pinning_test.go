@@ -9,10 +9,10 @@ import (
 	"golang.org/x/net/html"
 )
 
-// This file pins two rendered-output structure changes that landed during the
-// component-adoption refactor (PageHeading + ui.Disclosure). Neither change is
-// covered by an existing test, so these regression tests lock the current
-// markup so a future change cannot silently move it.
+// This file pins rendered-output structure changes that landed during refactors
+// (PageHeading + ui.Disclosure, and the #1274 capability-group policy-select
+// move). None is covered by an existing test, so these regression tests lock the
+// current markup so a future change cannot silently move it.
 
 // --- Delta 1: agent dashboard header leading icon tile ---
 
@@ -323,4 +323,62 @@ func nodeDesc(n *html.Node) string {
 		return "<" + n.Data + ">"
 	}
 	return n.Data
+}
+
+// --- Delta 3: capability-group policy select lives outside the <summary> (#1274) ---
+
+// TestAgentToolGroupPolicySelectOutsideSummary pins the #1274 restructure: a
+// capability group's approval-policy select renders in the disclosure BODY, not
+// inside the interactive <summary>, so picking a policy can never run the
+// summary's fold/unfold activation. That structural separation is what lets
+// agent-settings.js drop its capture-phase preventDefault click hack; the group
+// enable switch stays in the summary as the header's own control.
+func TestAgentToolGroupPolicySelectOutsideSummary(t *testing.T) {
+	gv := toolGroupView{
+		Group:   ToolGroup{ID: "graph-write", Label: "Graph · Write"},
+		Enabled: true,
+		Open:    true,
+		Count:   1,
+		Rows:    []agentToolRow{{Name: "entity-create", Checked: true}},
+	}
+	doc := parseDOM(t, renderHTML(t, agentToolCapabilityGroup(gv)))
+
+	summary := findElementByAttr(doc, "data-testid", "tool-group-header-graph-write")
+	if summary == nil || summary.Data != "summary" {
+		t.Fatalf("group summary not found (got %v)", nodeDesc(summary))
+	}
+
+	policy := findElementByAttr(doc, "name", "groupPolicy.graph-write")
+	if policy == nil || policy.Data != "select" {
+		t.Fatalf("group policy select not found (got %v)", nodeDesc(policy))
+	}
+	if isDescendantOf(policy, summary) {
+		t.Error("group policy select must not be a descendant of the interactive <summary>")
+	}
+
+	enable := findElementByAttr(doc, "name", "groupEnabled.graph-write")
+	if enable == nil {
+		t.Fatal("group enable switch not found")
+	}
+	if !isDescendantOf(enable, summary) {
+		t.Error("group enable switch must stay in the summary")
+	}
+}
+
+// findElementByAttr returns the first element (depth-first) carrying an
+// attribute whose key and value both match, or nil.
+func findElementByAttr(n *html.Node, key, val string) *html.Node {
+	if n.Type == html.ElementNode {
+		for _, a := range n.Attr {
+			if a.Key == key && a.Val == val {
+				return n
+			}
+		}
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if found := findElementByAttr(c, key, val); found != nil {
+			return found
+		}
+	}
+	return nil
 }
