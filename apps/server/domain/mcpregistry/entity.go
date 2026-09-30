@@ -150,10 +150,14 @@ type CreateMCPServerDTO struct {
 	SecretHeadersKeys []string `json:"secretHeadersKeys"`
 }
 
-// UpdateMCPServerDTO is the request DTO for updating an MCP server.
+// UpdateMCPServerDTO is the request DTO for updating an MCP server. Unlike
+// CreateMCPServerDTO, Type is a pointer: a nil Type leaves the transport
+// unchanged, while a non-nil Type may switch the server's transport (clearing
+// the connection fields of the transport being left behind).
 type UpdateMCPServerDTO struct {
 	Name        *string        `json:"name"`
 	Description *string        `json:"description"`
+	Type        *MCPServerType `json:"type"`
 	Enabled     *bool          `json:"enabled"`
 	Command     *string        `json:"command"`
 	Args        []string       `json:"args"`
