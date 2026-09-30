@@ -20,8 +20,8 @@ const (
 func tierMiddleware(t *testing.T) *Middleware {
 	t.Helper()
 	m := newTestMiddleware(t)
-	// No token-scope trust, so the token branch is off and app tiers are reached.
-	m.cfg.Zitadel.TrustTokenScopes = false
+	// Token-carried Memory scopes are never a grant (§8), so the resolver always
+	// reaches the application-owned tiers.
 	return m
 }
 

@@ -3,13 +3,9 @@ package auth
 import (
 	"context"
 	"errors"
-	"io"
-	"log/slog"
 	"os"
 	"testing"
 	"time"
-
-	"github.com/emergent-company/emergent.memory/internal/config"
 )
 
 // This file holds second-pass adversarial tests for PR #730 (fail-closed OIDC
@@ -23,9 +19,7 @@ func clearZitadelEnv(t *testing.T) {
 		"ZITADEL_CLIENT_JWT",
 		"ZITADEL_CLIENT_JWT_PATH",
 		"DISABLE_ZITADEL_INTROSPECTION",
-		"MEMORY_USERINFO_GRANT_ALL_SCOPES",
 		"MEMORY_OIDC_DEFAULT_SCOPES",
-		"MEMORY_OIDC_TRUST_TOKEN_SCOPES",
 	} {
 		prev, had := os.LookupEnv(k)
 		if err := os.Unsetenv(k); err != nil {
@@ -40,13 +34,12 @@ func clearZitadelEnv(t *testing.T) {
 }
 
 // Claim 3: an introspection outage (credentials configured, endpoint down)
-// must not re-enable the legacy all-grant on the userinfo fallback.
-func TestAdversarialIntrospectionOutageDoesNotReenableAllGrant(t *testing.T) {
+// must fail closed on the userinfo fallback, not grant a broad set.
+func TestAdversarialIntrospectionOutageFailsClosed(t *testing.T) {
 	clearZitadelEnv(t)
 	m := newTestMiddleware(t)
-	// Introspection IS configured (this disables the all-grant) ...
+	// Introspection IS configured ...
 	m.cfg.Zitadel.ClientJWT = "fake-client-jwt"
-	m.cfg.Zitadel.UserinfoGrantAllScopes = true // explicit operator flag still on
 	// ... but it fails at runtime, forcing the userinfo fallback.
 	m.zitadelSvc = &fakeIntrospector{
 		introErr: errors.New("zitadel introspection unreachable"),
@@ -59,45 +52,24 @@ func TestAdversarialIntrospectionOutageDoesNotReenableAllGrant(t *testing.T) {
 		t.Fatalf("validateToken: %v", err)
 	}
 	if scopesEqual(user.Scopes, GetAllScopes()) {
-		t.Fatalf("introspection outage re-enabled the all-grant: %v", user.Scopes)
+		t.Fatalf("introspection outage granted the full catalogue: %v", user.Scopes)
 	}
 	if len(user.Scopes) != 0 {
 		t.Fatalf("scopes = %v, want none (fail closed during outage)", user.Scopes)
 	}
 }
 
-// Shipped default posture: with no Zitadel credentials, the userinfo path still
-// receives the full catalogue (pre-existing pilot behaviour preserved by #730).
-// This documents that #667 is only mitigated when the operator configures
-// introspection or sets MEMORY_USERINFO_GRANT_ALL_SCOPES=false.
-func TestAdversarialShippedDefaultStillAllGrantsUserinfo(t *testing.T) {
+// A token carrying Memory scope names never mints them: the userinfo fallback
+// resolves through application entitlements → default → empty, so a non-member
+// with an empty default receives nothing regardless of what the token claims.
+func TestAdversarialTokenScopesAreNeverAGrant(t *testing.T) {
 	clearZitadelEnv(t)
-	cfg, err := config.NewConfig(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err != nil {
-		t.Fatalf("config.NewConfig: %v", err)
-	}
-	if !cfg.Zitadel.UserinfoGrantAllScopes {
-		t.Fatal("expected the shipped default MEMORY_USERINFO_GRANT_ALL_SCOPES=true")
-	}
+	m := newTestMiddleware(t)
+	m.roleLookup = func(ctx context.Context, p, u string) (string, error) { return "", nil } // non-member
 
-	m := &Middleware{
-		cfg:     cfg,
-		log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
-		userSvc: newFakeUserProfiles(),
-		zitadelSvc: &fakeIntrospector{
-			userInfo: &UserInfoResult{Sub: "default-posture", Email: "u@example.com"},
-		},
-	}
-
-	if !m.oidcAllGrantEnabled() {
-		t.Fatal("expected all-grant to be enabled under the shipped default config")
-	}
-	user, err := m.validateToken(context.Background(), "oidc-token", "")
-	if err != nil {
-		t.Fatalf("validateToken: %v", err)
-	}
-	if !scopesEqual(user.Scopes, GetAllScopes()) {
-		t.Fatalf("shipped default did not grant the exact full catalogue: got %v want %v", user.Scopes, GetAllScopes())
+	got := m.resolveOIDCScopes(context.Background(), "user-uuid", "foreign-project", []string{"data:write", "schema:write", "openid"}, nil)
+	if len(got) != 0 {
+		t.Fatalf("scopes = %v, want none (token-carried Memory scopes are not a grant)", got)
 	}
 }
 
@@ -119,30 +91,13 @@ func TestAdversarialNonMemberReceivesConfiguredDefault(t *testing.T) {
 	}
 }
 
-// Explicit Memory scopes in the token are returned verbatim with no project or
-// membership check, but ONLY while token-scope trust is explicitly enabled
-// (§7.1: opt-in, disabled by default). This is by design (issuer-granted), but a
-// token carrying Memory scopes is honoured for ANY declared project. Requires
-// issuer cooperation to be exploitable.
-func TestAdversarialExplicitScopesBypassMembership(t *testing.T) {
-	clearZitadelEnv(t)
-	m := newTestMiddleware(t)
-	m.cfg.Zitadel.TrustTokenScopes = true                                                    // opt in: the standing default is off
-	m.roleLookup = func(ctx context.Context, p, u string) (string, error) { return "", nil } // non-member
-
-	got := m.resolveOIDCScopes(context.Background(), "user-uuid", "foreign-project", []string{"data:write", "openid"}, nil)
-	if !scopesEqual(got, []string{"data:write"}) {
-		t.Fatalf("scopes = %v, want explicit data:write verbatim", got)
-	}
-}
-
-// A cached userinfo entry (auth_source=userinfo) under an introspection-
-// configured deployment must not be upgraded to the full catalogue.
-func TestAdversarialCachedUserinfoEntryNoAllGrantWhenIntrospectionConfigured(t *testing.T) {
+// A cached userinfo entry (auth_source=userinfo) must not be upgraded to a
+// broad grant: cache round-trips only raw claims, and scopes are re-resolved on
+// every request through the standard fail-closed path.
+func TestAdversarialCachedUserinfoEntryHasNoGrant(t *testing.T) {
 	clearZitadelEnv(t)
 	m := newTestMiddleware(t)
 	m.cfg.Zitadel.ClientJWT = "fake-client-jwt"
-	m.cfg.Zitadel.UserinfoGrantAllScopes = true
 	m.roleLookup = func(ctx context.Context, p, u string) (string, error) { return "", nil }
 
 	claims := claimsFromCacheData(map[string]any{
@@ -205,19 +160,5 @@ func TestAdversarialResolveScopesBindsAuthenticatedUser(t *testing.T) {
 	got := m.resolveOIDCScopes(context.Background(), otherID, projectID, []string{"openid", "profile"}, nil)
 	if len(got) != 0 {
 		t.Fatalf("wrong-user scopes = %v, want none (membership is user-id bound)", got)
-	}
-}
-
-// The vocabulary filter must reject non-Memory scopes, including the
-// never-issuable admin:all umbrella, so Zitadel OIDC noise cannot become a grant.
-func TestAdversarialVocabularyFilterRejectsForeignScopes(t *testing.T) {
-	for _, s := range []string{"openid", "profile", "email", "offline_access", "admin:all", "urn:zitadel:iam", "foo:bar", ""} {
-		if got := filterMemoryScopes([]string{s}); len(got) != 0 {
-			t.Errorf("filterMemoryScopes(%q) = %v, want none", s, got)
-		}
-	}
-	// Sanity: real Memory scopes survive.
-	if got := filterMemoryScopes([]string{"data:read", " search ", "data:read"}); !scopesEqual(got, []string{"data:read", "search"}) {
-		t.Errorf("vocabulary filter = %v, want [data:read search]", got)
 	}
 }

@@ -27,16 +27,18 @@ authorization today you use the helpers below.
 
 Authorization is a **scope** vocabulary resolved at the service boundary. There is no single enum
 type; the tiers are the role constants in `pkg/auth/scope_mapping.go:17-32` and the resolution
-order in `resolveOIDCScopes` (`pkg/auth/scope_mapping.go:218-276`).
+order in `resolveOIDCScopes` (`pkg/auth/scope_mapping.go`). A token-carried Memory scope is **never**
+a grant: §8 of `unify-scope-authority` (#1161) removed the token-trust path and the permissive
+userinfo all-grant, so the first tier any OIDC caller reaches is the app's own entitlement
+resolution (the userinfo fallback now uses the standard fail-closed path).
 
 | Tier | Grant source | Result | Code |
 |---|---|---|---|
-| 0 | token-carried Memory scope (OIDC) | verbatim, terminal **only while** `MEMORY_OIDC_TRUST_TOKEN_SCOPES` is enabled (opt-in; disabled by default) | `scope_mapping.go:220-224` |
-| 1 | `superadmin_full` | full scope catalogue, terminal | `scope_mapping.go:226-236`, `superadmin.go:21-40` |
-| 2 | `org_admin` membership | `org:read`, `org:invite:create`, `org:project:create`, `org:project:delete` — **no** `project:*`/data/schema/agent scope | `scope_mapping.go:29-32`, `:355-375` |
+| 1 | `superadmin_full` | full scope catalogue, terminal | `scope_mapping.go`, `superadmin.go:21-40` |
+| 2 | `org_admin` membership | `org:read`, `org:invite:create`, `org:project:create`, `org:project:delete` — **no** `project:*`/data/schema/agent scope | `scope_mapping.go:29-32` |
 | 3 | project membership role | viewer ⊂ user ⊂ admin (nested by construction) | `scope_mapping.go:52-57`, `:107-118` |
-| 4 | app-owned default scope set | only when the user has no membership/entitlement | `scope_mapping.go:274-275` |
-| 5 | none | fail closed | `scope_mapping.go:274-275` |
+| 4 | app-owned default scope set | only when the user has no membership/entitlement | `scope_mapping.go` |
+| 5 | none | fail closed | `scope_mapping.go` |
 
 Canonical role strings (`scope_mapping.go:17-26`):
 

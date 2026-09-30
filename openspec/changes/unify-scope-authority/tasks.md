@@ -62,10 +62,10 @@ Sequencing rule: **never remove a grant path in the same release that removes it
 
 ## 8. [BREAKING] Remove the duplicate authority (Release N+2)
 
-- [ ] 8.1 Delete the token-trust flag and the `filterMemoryScopes` grant branch. `memoryScopeVocabulary` then loses its only production consumer (API-token creation validates against `domain/apitoken.ValidApiTokenScopes`), so delete it too unless a new consumer is deliberately wired; verify no dead reference remains
-- [ ] 8.2 Delete `UserinfoGrantAllScopes`, the `authSourceUserinfo` all-grant branch in `finalizeOIDCUser`, and the `permissive_all_grant` health field
-- [ ] 8.3 Verify the userinfo fallback now uses the standard fail-closed resolution with an exact-set test; verify `openspec validate --all --strict` passes
-- [ ] 8.4 Re-scope #736 item 3 against the reduced live-Zitadel surface and update the issue
+- [x] 8.1 Delete the token-trust flag and the `filterMemoryScopes` grant branch. `memoryScopeVocabulary` then loses its only production consumer (API-token creation validates against `domain/apitoken.ValidApiTokenScopes`), so delete it too unless a new consumer is deliberately wired; verify no dead reference remains
+- [x] 8.2 Delete `UserinfoGrantAllScopes`, the `authSourceUserinfo` all-grant branch in `finalizeOIDCUser`, and the `permissive_all_grant` health field
+- [x] 8.3 Verify the userinfo fallback now uses the standard fail-closed resolution with an exact-set test; verify `openspec validate --all --strict` passes
+- [x] 8.4 Re-scope #736 item 3 against the reduced live-Zitadel surface and update the issue
 
 ## 9. Verification (every implementation PR)
 

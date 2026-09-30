@@ -145,10 +145,7 @@ func TestResolveOIDCScopes(t *testing.T) {
 		projectID  string
 		defaults   []string
 		roleLookup projectRoleLookup
-		// trust opts the case into token-scope trust; the standing default is
-		// off (§7.1), so cases that exercise the token-verbatim branch set it.
-		trust bool
-		want  []string
+		want       []string
 	}{
 		{
 			name:      "introspection with standard OIDC scopes and no grant yields no scopes",
@@ -217,20 +214,19 @@ func TestResolveOIDCScopes(t *testing.T) {
 			want:      []string{"projects:read"},
 		},
 		{
-			name:      "explicit memory scopes are used verbatim",
-			rawScopes: []string{"openid", "data:write", "search"},
-			projectID: projectID,
-			defaults:  []string{"data:read"},
-			trust:     true,
-			want:      []string{"data:write", "search"},
+			name:       "token-carried Memory scopes are ignored and the default applies",
+			rawScopes:  []string{"openid", "data:write", "search"},
+			projectID:  projectID,
+			defaults:   []string{"data:read"},
+			roleLookup: roleOK(""),
+			want:       []string{"data:read"},
 		},
 		{
-			name:       "explicit memory scopes win over a mapped viewer role",
+			name:       "token-carried Memory scopes do not override a mapped viewer role",
 			rawScopes:  []string{"data:write"},
 			projectID:  projectID,
 			roleLookup: roleOK(RoleProjectViewer),
-			trust:      true,
-			want:       []string{"data:write"},
+			want:       []string{"data:read", "schema:read", "agents:read", "projects:read"},
 		},
 		{
 			name:       "standard OIDC scopes are not an explicit grant",
@@ -248,20 +244,12 @@ func TestResolveOIDCScopes(t *testing.T) {
 			roleLookup: func(ctx context.Context, p, u string) (string, error) { return "", errors.New("db down") },
 			want:       nil,
 		},
-		{
-			name:      "duplicate explicit scopes are de-duplicated",
-			rawScopes: []string{"data:read", "data:read", "openid"},
-			projectID: projectID,
-			trust:     true,
-			want:      []string{"data:read"},
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := newTestMiddleware(t)
 			m.cfg.Zitadel.OIDCDefaultScopes = tt.defaults
-			m.cfg.Zitadel.TrustTokenScopes = tt.trust
 			m.roleLookup = tt.roleLookup
 
 			got := m.resolveOIDCScopes(context.Background(), "user-uuid", tt.projectID, tt.rawScopes, nil)
@@ -472,39 +460,6 @@ func TestRoleScopeUmbrellaExpansionIsPinned(t *testing.T) {
 	}
 }
 
-// --- all-grant gate --------------------------------------------------------
-
-func TestOIDCAllGrantEnabled(t *testing.T) {
-	tests := []struct {
-		name                 string
-		grantAll             bool
-		disableIntrospection bool
-		clientJWT            string
-		clientJWTPath        string
-		want                 bool
-	}{
-		{name: "flag on, introspection unconfigured", grantAll: true, want: true},
-		{name: "flag off, introspection unconfigured", grantAll: false, want: false},
-		{name: "flag on, client JWT configured", grantAll: true, clientJWT: "jwt", want: false},
-		{name: "flag on, client JWT path configured", grantAll: true, clientJWTPath: "/tmp/key.json", want: false},
-		{name: "flag on, introspection disabled", grantAll: true, disableIntrospection: true, clientJWT: "jwt", want: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			m := newTestMiddleware(t)
-			m.cfg.Zitadel.UserinfoGrantAllScopes = tt.grantAll
-			m.cfg.Zitadel.DisableIntrospection = tt.disableIntrospection
-			m.cfg.Zitadel.ClientJWT = tt.clientJWT
-			m.cfg.Zitadel.ClientJWTPath = tt.clientJWTPath
-
-			if got := m.oidcAllGrantEnabled(); got != tt.want {
-				t.Fatalf("oidcAllGrantEnabled() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 // --- validateToken pipeline ------------------------------------------------
 
 func TestValidateTokenIntrospectionPath(t *testing.T) {
@@ -617,65 +572,55 @@ func TestValidateTokenIntrospectionPath(t *testing.T) {
 	})
 }
 
+// TestValidateTokenUserinfoPath — §8.3: after the all-grant removal the userinfo
+// fallback uses the standard fail-closed resolution, exactly like every other
+// path. A userinfo-authenticated user with a project role receives exactly that
+// role's app-derived scopes; a user with no membership and an empty default
+// receives nothing.
 func TestValidateTokenUserinfoPath(t *testing.T) {
-	sub := "user-userinfo"
+	clearZitadelEnv(t)
+	const (
+		sub       = "user-userinfo"
+		projectID = "22222222-2222-2222-2222-222222222222"
+	)
 
-	t.Run("all-grant preserved while introspection is unconfigured", func(t *testing.T) {
+	t.Run("project viewer membership resolves to exactly the viewer set", func(t *testing.T) {
 		m := newTestMiddleware(t)
-		m.cfg.Zitadel.UserinfoGrantAllScopes = true
 		m.zitadelSvc = &fakeIntrospector{userInfo: &UserInfoResult{Sub: sub, Email: "u@example.com"}}
+		m.roleLookup = func(ctx context.Context, p, u string) (string, error) { return RoleProjectViewer, nil }
 
-		user, err := m.validateToken(context.Background(), "oidc-token", "")
+		user, err := m.validateToken(context.Background(), "oidc-token", projectID)
 		if err != nil {
 			t.Fatalf("validateToken: %v", err)
 		}
-		if !scopesEqual(user.Scopes, GetAllScopes()) {
-			t.Fatalf("scopes = %v, want full catalogue (pilot posture)", user.Scopes)
-		}
+		wantScopeSet(t, user.Scopes, []string{"data:read", "schema:read", "agents:read", "projects:read"})
 	})
 
-	t.Run("all-grant suppressed once introspection is configured", func(t *testing.T) {
+	t.Run("no membership and empty default resolves to nothing", func(t *testing.T) {
 		m := newTestMiddleware(t)
-		m.cfg.Zitadel.UserinfoGrantAllScopes = true
-		m.cfg.Zitadel.ClientJWT = "fake-client-jwt"
-		// Introspection is configured, so the fake returns a result and the
-		// userinfo path is not exercised; assert the resolved scopes instead.
-		m.zitadelSvc = &fakeIntrospector{
-			userInfo: &UserInfoResult{Sub: sub, Email: "u@example.com"},
-			introResult: &IntrospectionResult{
-				Active: true,
-				Sub:    sub,
-				Scope:  "openid profile",
-				Exp:    4102444800,
-			},
-		}
-		m.roleLookup = func(ctx context.Context, p, u string) (string, error) { return RoleProjectAdmin, nil }
+		m.zitadelSvc = &fakeIntrospector{userInfo: &UserInfoResult{Sub: sub, Email: "u@example.com"}}
+		m.roleLookup = func(ctx context.Context, p, u string) (string, error) { return "", nil }
 
-		user, err := m.validateToken(context.Background(), "oidc-token", "")
+		user, err := m.validateToken(context.Background(), "oidc-token", projectID)
 		if err != nil {
 			t.Fatalf("validateToken: %v", err)
-		}
-		if scopesEqual(user.Scopes, GetAllScopes()) {
-			t.Fatal("scopes must not be the full catalogue once introspection is configured")
 		}
 		if len(user.Scopes) != 0 {
-			t.Fatalf("scopes = %v, want none", user.Scopes)
+			t.Fatalf("scopes = %v, want none (no entitlement, empty default)", user.Scopes)
 		}
 	})
 
-	t.Run("all-grant disabled falls back to resolution", func(t *testing.T) {
+	t.Run("configured default applies when there is no membership", func(t *testing.T) {
 		m := newTestMiddleware(t)
-		m.cfg.Zitadel.UserinfoGrantAllScopes = false
 		m.cfg.Zitadel.OIDCDefaultScopes = []string{"projects:read"}
 		m.zitadelSvc = &fakeIntrospector{userInfo: &UserInfoResult{Sub: sub, Email: "u@example.com"}}
+		m.roleLookup = func(ctx context.Context, p, u string) (string, error) { return "", nil }
 
-		user, err := m.validateToken(context.Background(), "oidc-token", "")
+		user, err := m.validateToken(context.Background(), "oidc-token", projectID)
 		if err != nil {
 			t.Fatalf("validateToken: %v", err)
 		}
-		if !scopesEqual(user.Scopes, []string{"projects:read"}) {
-			t.Fatalf("scopes = %v, want configured default set", user.Scopes)
-		}
+		wantScopeSet(t, user.Scopes, []string{"projects:read"})
 	})
 }
 
