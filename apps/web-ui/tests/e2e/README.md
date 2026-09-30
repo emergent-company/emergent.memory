@@ -273,9 +273,12 @@ all nine catalog components plus an unknown one, then asserts each card's DOM
 `sources`), the unknown-component summary fallback, and that a card action emits
 the `a2ui:action` CustomEvent carrying the `surfaceId` and the
 `{componentId, response}` action — for both the proposal/approval action row
-(`a2uiActions`) and the question-option path (`a2uiQuestion`). Deterministic and
-ungated — no provider, no LLM, no env var. The gateway's verbatim `ui`
-passthrough is covered by the Go unit test `gateway/sse_markdown_test.go`.
+(`a2uiActions`) and the question-option path (`a2uiQuestion`). It also asserts a
+UI-only turn leaves no empty assistant text bubble, and that the `result`/`proposal`/
+`approval` structured props (`rows`, `body`, `input`) render as key/value rows rather
+than a single raw-JSON `<pre>`. Deterministic and ungated — no provider, no LLM, no
+env var. The gateway's verbatim `ui` passthrough is covered by the Go unit test
+`gateway/sse_markdown_test.go`.
 
 Chat (agent switch): `chat-agent-switch.spec.ts` proves the chat area's
 navigation on a fresh scratch project — start a conversation with agent A, switch
@@ -359,7 +362,8 @@ npx playwright test --config=js-dom.config.ts   # or: task e2e:js
   asserts each emits `a2ui:action` carrying `{surfaceId, action:{componentId,
   response}}`, and that no `pageerror` (e.g. a `ReferenceError` for an undefined
   identifier) is raised. It also asserts an unknown component degrades to a
-  summary card without throwing.
+  summary card without throwing, and that the `result`/`proposal`/`approval`
+  structured props render as key/value rows (not raw JSON).
 - The same CI job runs `node --check` over every
   `gateway/webui/static/js/*.js` first — a fast syntax gate.
 - The gateway-free specs are excluded from the live `chromium` project

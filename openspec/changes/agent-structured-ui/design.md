@@ -6,14 +6,14 @@ A JSON Schema catalog (`apps/server/pkg/a2ui/catalog.json`, A2UI v0.9.1 `basic` 
 
 | component | purpose | key props |
 |---|---|---|
-| `proposal` | review/accept/reject a proposed change | `kind`, `summary`, `body`, actions |
-| `approval` | gate a tool call | `tool`, `input` (mono), actions |
+| `proposal` | review/accept/reject a proposed change | `kind`, `summary`, `body` (key/value rows), actions |
+| `approval` | gate a tool call | `tool`, `input` (key/value rows), actions |
 | `question` | structured input | `prompt`, `interactionType` (text/choice/multi/bool), `options` |
 | `code` | code block / diff | `lang`, `code` |
 | `entity` | graph object preview | `type`, `properties[]`, `relationships[]` |
 | `object-form` | schema-driven data entry | `fields[]` (type/widget/enum) |
 | `todo` | checkable task list | `items[]` |
-| `result` | key/value or table | `rows[]` |
+| `result` | key/value or table | `rows[]` (rendered as key/value rows) |
 
 The catalog is additive; unknown components fall back to a summary/text render and never error.
 

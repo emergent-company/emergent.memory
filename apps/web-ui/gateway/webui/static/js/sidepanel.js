@@ -104,6 +104,7 @@
     renderQuestion: function (evt) { renderQuestion(evt); },
     renderApproval: function (evt) { renderApproval(evt); },
     renderUI: function (evt) {
+      stream.noteUISurface();
       MemoryChatComponents.renderA2UISurface(evt.surfaceId, evt.messages, badgeCtx);
     },
     // Grounded citations for the live turn: remember them for persistence and
