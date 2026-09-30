@@ -186,6 +186,13 @@ type AgentRun struct {
 	TriggerSource   *string        `bun:"trigger_source" json:"triggerSource"`
 	TriggerMetadata map[string]any `bun:"trigger_metadata,type:jsonb" json:"triggerMetadata"`
 
+	// Object-driven work linkage: the work object this run was dispatched for.
+	// SubjectObjectID stores the object's canonical_id (the physical id changes
+	// on every version).
+	SubjectObjectID   *string `bun:"subject_object_id,type:uuid" json:"subjectObjectId,omitempty"`
+	SubjectObjectType *string `bun:"subject_object_type" json:"subjectObjectType,omitempty"`
+	FailureClass      *string `bun:"failure_class" json:"failureClass,omitempty"`
+
 	// Multi-agent coordination fields
 	ParentRunID    *string `bun:"parent_run_id,type:uuid" json:"parentRunId,omitempty"`
 	StepCount      int     `bun:"step_count,notnull,default:0" json:"stepCount"`
@@ -383,6 +390,33 @@ const (
 // AgentDefinition stores agent configurations from product manifests.
 // This is separate from Agent (which tracks runtime state like last_run_at).
 // Table: kb.agent_definitions
+// AgentWorkStatusConfig maps work-item lifecycle phases to object status values.
+type AgentWorkStatusConfig struct {
+	Ready      string `json:"ready"`
+	InProgress string `json:"inProgress"`
+	Review     string `json:"review"`
+	Revision   string `json:"revision"`
+	Blocked    string `json:"blocked"`
+	Done       string `json:"done"`
+}
+
+// AgentRetryPolicy configures retry backoff for queued work runs.
+type AgentRetryPolicy struct {
+	MaxAttempts        int     `json:"maxAttempts"`
+	InitialIntervalMS  int     `json:"initialIntervalMs"`
+	BackoffCoefficient float64 `json:"backoffCoefficient"`
+	MaxIntervalMS      int     `json:"maxIntervalMs"`
+}
+
+// AgentWorkConfig is the object-driven work configuration on an agent
+// definition. A zero value means "use defaults".
+type AgentWorkConfig struct {
+	Status         AgentWorkStatusConfig `json:"status"`
+	RequiresReview bool                  `json:"requiresReview"`
+	FailureLimit   int                   `json:"failureLimit"`
+	RetryPolicy    AgentRetryPolicy      `json:"retryPolicy"`
+}
+
 type AgentDefinition struct {
 	bun.BaseModel `bun:"table:kb.agent_definitions,alias:ad"`
 
@@ -413,6 +447,9 @@ type AgentDefinition struct {
 	// runtime agent instantiated from this definition are enqueued on this
 	// queue unless the runtime agent's Config overrides it with "queue".
 	DefaultQueue string `bun:"default_queue,notnull,default:'default'" json:"defaultQueue"`
+	// WorkConfig configures object-driven work: the status phase mapping,
+	// requiresReview, failureLimit, and retryPolicy. Zero value = defaults.
+	WorkConfig AgentWorkConfig `bun:"work_config,type:jsonb,notnull,default:'{}'" json:"workConfig"`
 	// ToolPolicies maps tool name → policy. When a tool has Confirm:true,
 	// the executor pauses the run and asks the user before executing the tool.
 	ToolPolicies map[string]ToolPolicy `bun:"tool_policies,type:jsonb,default:'{}'" json:"toolPolicies,omitempty"`

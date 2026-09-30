@@ -690,6 +690,7 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 		Type:            req.Type,
 		Key:             req.Key,
 		Status:          req.Status,
+		Assignee:        req.Assignee,
 		Namespace:       req.Namespace,
 		Properties:      validatedProps,
 		Labels:          req.Labels,
@@ -785,6 +786,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 			Type:            req.Type,
 			Key:             req.Key,
 			Status:          req.Status,
+			Assignee:        req.Assignee,
 			Namespace:       req.Namespace,
 			Properties:      validatedProps,
 			Labels:          req.Labels,
@@ -818,6 +820,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 			Type:            req.Type,
 			Key:             req.Key,
 			Status:          req.Status,
+			Assignee:        req.Assignee,
 			Namespace:       existing.Namespace,
 			Properties:      validatedProps,
 			Labels:          req.Labels,
@@ -1059,11 +1062,18 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		newKey = req.Key
 	}
 
+	// Handle assignee: use req.Assignee if provided, otherwise preserve current.
+	newAssignee := current.Assignee
+	if req.Assignee != nil {
+		newAssignee = req.Assignee
+	}
+
 	actorType, actorID := actorFromContext(ctx, actorID)
 	newVersion := &GraphObject{
 		Type:       current.Type,
 		Key:        newKey,
 		Status:     newStatus,
+		Assignee:   newAssignee,
 		Properties: newProps,
 		Labels:     newLabels,
 		ActorType:  &actorType,
@@ -1092,8 +1102,16 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		}
 	}
 
+	// Check if assignee changed
+	assigneeChanged := false
+	if req.Assignee != nil {
+		if current.Assignee == nil || *current.Assignee != *req.Assignee {
+			assigneeChanged = true
+		}
+	}
+
 	// No effective change — return existing version without creating a new one
-	if newVersion.ChangeSummary == nil && !statusChanged && !labelsChanged && !keyChanged {
+	if newVersion.ChangeSummary == nil && !statusChanged && !labelsChanged && !keyChanged && !assigneeChanged {
 		if err := tx.Commit(); err != nil {
 			return nil, apperror.ErrDatabase.WithInternal(err)
 		}

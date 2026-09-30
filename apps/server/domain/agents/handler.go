@@ -1647,6 +1647,7 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 		Visibility:        visibility,
 		DispatchMode:      dispatchMode,
 		DefaultQueue:      normalizeQueueName(dto.DefaultQueue),
+		WorkConfig:        workConfigOrDefault(dto.WorkConfig),
 		ACPConfig:         dto.ACPConfig,
 		Config:            config,
 		SandboxConfig:     dto.SandboxConfig,
@@ -1755,6 +1756,9 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 	}
 	if dto.DefaultQueue != nil {
 		def.DefaultQueue = normalizeQueueName(*dto.DefaultQueue)
+	}
+	if dto.WorkConfig != nil {
+		def.WorkConfig = *dto.WorkConfig
 	}
 	if dto.ACPConfig != nil {
 		def.ACPConfig = dto.ACPConfig

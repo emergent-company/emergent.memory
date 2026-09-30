@@ -6,9 +6,9 @@
 
 ## 1. P1 — Dispatch, claim, and linkage
 
-- [ ] 1.1 Migration `00205`: add `kb.graph_objects.assignee TEXT NULL` + index; add `kb.agent_runs.subject_object_id UUID NULL`, `subject_object_type TEXT`, `failure_class TEXT NULL` + index on `subject_object_id`. Verify `task migrate:up`.
+- [x] 1.1 Migration `00205`: add `kb.graph_objects.assignee TEXT NULL` + index; add `kb.agent_runs.subject_object_id UUID NULL`, `subject_object_type TEXT`, `failure_class TEXT NULL` + index on `subject_object_id`. Verify `task migrate:up`.
 - [ ] 1.2 Add `assignee` to graph object create/update/list DTOs and filters, meaningful only for board-enabled types. Verify `go test ./domain/graph/...`.
-- [ ] 1.3 Add `workConfig` to the agent definition (status map, `requiresReview`, `failureLimit`, `retryPolicy`) with defaults; expose in definition DTOs. Verify `go test ./domain/agents/...`.
+- [x] 1.3 Add `workConfig` to the agent definition (status map, `requiresReview`, `failureLimit`, `retryPolicy`) with defaults; expose in definition DTOs. Verify `go test ./domain/agents/...`.
 - [ ] 1.4 Change `triggers.go` so a matched reaction enqueues a run instead of calling `executor.Execute` inline; dedup against `kb.agent_processing_log` (`agent_id+graph_object_id+object_version+event_type`, with `graph_object_id` = the object's `canonical_id`); take HEAD `version` at dispatch (not from the batch payload). Gate on `workConfig`/`dispatchMode`. Verify unit + DB tests.
 - [ ] 1.5 Routing: enqueue only the listener matching `assignee` within the object's project; surface unroutable objects via a **derived** predicate (board-enabled + no matching listener) — no new persisted status. Enforce `ConcurrencyStrategy: skip`. Verify tests.
 - [ ] 1.6 Claim: `AcquireObjectUpsertLock` → `FindHeadByTypeAndKey` → `CreateVersion(in_progress)` in one tx; lost race → run `skipped`, no budget burn. Require non-null `key` for board-enabled types. Verify with a two-claim concurrency test (hard gate).
