@@ -150,6 +150,10 @@ func deliveryStatusForEvent(event, severity string) (EmailDeliveryStatus, bool) 
 	switch strings.ToLower(strings.TrimSpace(event)) {
 	case "delivered":
 		return DeliveryStatusDelivered, true
+	case "opened":
+		return DeliveryStatusOpened, true
+	case "clicked":
+		return DeliveryStatusClicked, true
 	case "failed":
 		if strings.EqualFold(strings.TrimSpace(severity), "temporary") {
 			return DeliveryStatusSoftBounced, true

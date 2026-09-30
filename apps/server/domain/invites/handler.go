@@ -270,7 +270,7 @@ func (h *Handler) Decline(c echo.Context) error {
 
 	inviteID := c.Param("id")
 	if inviteID == "" {
-		return apperror.ErrBadRequest.WithMessage("invite_id is required")
+		return apperror.NewBadRequest("invite_id is required")
 	}
 
 	if err := h.svc.Decline(c.Request().Context(), user.ID, inviteID); err != nil {
@@ -297,7 +297,7 @@ func (h *Handler) Delete(c echo.Context) error {
 
 	inviteID := c.Param("id")
 	if inviteID == "" {
-		return apperror.ErrBadRequest.WithMessage("invite_id is required")
+		return apperror.NewBadRequest("invite_id is required")
 	}
 
 	// Resolve the invite server-side; a missing invite is 404.
@@ -325,4 +325,50 @@ func (h *Handler) Delete(c echo.Context) error {
 	}
 
 	return c.NoContent(http.StatusNoContent)
+}
+
+// Resend re-sends a pending invitation email
+// @Summary      Resend an invitation
+// @Description  Re-sends the invitation email for a pending invitation, extending its expiry by 7 days (requires org_admin authority over the invite's organization)
+// @Tags         invites
+// @Produce      json
+// @Param        id path string true "Invitation ID (UUID)"
+// @Success      200 {object} Invite "Resent invitation"
+// @Failure      400 {object} apperror.Error "Missing invite_id"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden"
+// @Failure      404 {object} apperror.Error "Invitation not found"
+// @Router       /api/invites/{id}/resend [post]
+// @Security     bearerAuth
+func (h *Handler) Resend(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	inviteID := c.Param("id")
+	if inviteID == "" {
+		return apperror.NewBadRequest("invite_id is required")
+	}
+
+	// Resolve the invite server-side; a missing invite is 404.
+	invite, err := h.svc.GetByID(c.Request().Context(), inviteID)
+	if err != nil {
+		return err
+	}
+
+	// Resending is an org-tier write, authorized identically to revoke: the caller
+	// must hold org_admin authority over the invite's organization (or be an active
+	// superadmin_full).
+	allowed, err := h.mayAdministerOrg(c.Request().Context(), invite.OrganizationID, user.ID)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return apperror.ErrForbidden
+	}
+
+	invite, err = h.svc.Resend(c.Request().Context(), inviteID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, invite)
 }
