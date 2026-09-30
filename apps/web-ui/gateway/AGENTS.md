@@ -88,6 +88,14 @@ strings that *are* a component's API (the tool-group disclosure bases, the confi
 Visual regression belongs in the gallery and Playwright e2e, not in unit goldens (see the capability spec
 for the exact policy).
 
+## UI patterns — page shell, htmx, Alpine
+
+Cross-cutting rendering/interactivity conventions live in
+`apps/web-ui/docs/ui-patterns.md`: page shell & `appShell`/`page()` composition, the
+PRG (`post → 303 → flashToasts`) contract, htmx-ownership rules, the interactive-widget
+inventory, the Alpine-vs-`data-*` policy, and the htmx v4 + Alpine same-`id` attribute-restore
+trap (#1267). Read it before adding a new page, widget, or mutation flow.
+
 ## Role gating
 
 - **Hide, don't disable.** A control the caller's role cannot use must not render at all — not render
