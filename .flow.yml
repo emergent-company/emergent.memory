@@ -3,7 +3,8 @@ plan_branch_name: plan/next-gen
 github_owner: emergent-company
 github_repo: emergent.memory
 
-flow_token: flt_73641b5a53c46097573d7286d2763611124b0331
+# flow_token is loaded from the FLOW_TOKEN environment variable (do not commit).
+flow_token: ${FLOW_TOKEN}
 
 provider:
   default: memory
