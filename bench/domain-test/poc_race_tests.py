@@ -14,13 +14,19 @@ Usage:
   python3 bench/domain-test/poc_race_tests.py
 """
 
-import requests, json, time, sys, uuid
+import os, requests, json, time, sys, uuid
 from pathlib import Path
 
 SERVER       = "https://memory.emergent-company.ai"
-TOKEN        = "emt_90e466b66031ef242148336a85152d30f78ba3e723fb81dc7ebed0fefc9156de"
+TOKEN        = os.environ.get("MEMORY_API_TOKEN", "")
 ORG_ID       = "256508f5-6cbf-46bb-8c29-d8f839dd4ba8"
-DEEPSEEK_KEY = "sk-bfa5b8465aad4a1e907474714936b0ff"
+DEEPSEEK_KEY = os.environ.get("DEEPSEEK_KEY", "")
+
+if not TOKEN:
+    sys.exit("MEMORY_API_TOKEN is not set - export it before running these tests")
+if not DEEPSEEK_KEY:
+    sys.exit("DEEPSEEK_KEY is not set - export it before running these tests")
+
 FIXTURES     = Path(__file__).parent / "fixtures"
 
 # ── helpers ───────────────────────────────────────────────────────────────────
