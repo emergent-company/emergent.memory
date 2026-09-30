@@ -86,30 +86,6 @@ The system SHALL grant, for an OIDC session: a **full** superadmin grant (`super
 - **WHEN** the session scopes are resolved
 - **THEN** the session does not receive the organization-administration set from the organization A membership
 
-### Requirement: Organization-scoped entitlement decisions
-
-The system SHALL authorize organization-scoped decisions with a check of: an active **full** superadmin grant (`superadmin_full`), or an `org_admin` membership. A `superadmin_readonly` grant SHALL NOT satisfy this check. The check SHALL NOT consult the project membership role. `admin:all` token minting SHALL be authorized through this check. The check SHALL preserve the existing any-organization semantics of `org_admin` eligibility (an `org_admin` in any organization qualifies), so replacing the existing bespoke query does not silently narrow cross-organization behaviour. The check SHALL be defined once and consumed by every org-scoped decision; existing bespoke membership queries SHALL become consumers of it.
-
-#### Scenario: Organization administrator is authorized to mint an admin:all token
-- **GIVEN** a user holds `org_admin` in an organization and no superadmin grant
-- **WHEN** the user requests an `admin:all` token
-- **THEN** the request is authorized
-
-#### Scenario: A project administrator alone is refused
-- **GIVEN** a user holds `project_admin` in the declared project and neither a superadmin grant nor an `org_admin` membership
-- **WHEN** the user requests an `admin:all` token
-- **THEN** the request is refused
-
-#### Scenario: A user with neither entitlement is refused
-- **GIVEN** a user holds neither a superadmin grant nor an `org_admin` membership
-- **WHEN** the user requests an `admin:all` token
-- **THEN** the request is refused
-
-#### Scenario: A read-only superadmin is refused admin:all minting
-- **GIVEN** a user holds a `superadmin_readonly` grant and no `org_admin` membership
-- **WHEN** the user requests an `admin:all` token
-- **THEN** the request is refused
-
 ### Requirement: App-owned configuration vocabulary
 
 The system SHALL name its scope-policy configuration with application-owned variable names: `MEMORY_OIDC_DEFAULT_SCOPES`, `MEMORY_USERINFO_GRANT_ALL_SCOPES`, and `MEMORY_OIDC_TRUST_TOKEN_SCOPES`. Each previously shipped `ZITADEL_*` name SHALL be accepted as a deprecated alias for one release and SHALL emit a startup warning when used. When both the canonical name and its alias are set, the canonical name SHALL win and the alias SHALL be ignored with a warning. The aliases SHALL be removed in the release following the deprecation.
@@ -267,3 +243,46 @@ The two organization-invitation decision points that already admitted an active 
 - **GIVEN** a user holds `project_admin` in the declared project and no `org_admin` membership
 - **WHEN** an organization-scoped decision is evaluated
 - **THEN** the decision is refused
+
+### Requirement: Platform-scope token minting decision
+The system SHALL authorize token minting of the platform tier — both bare `admin` and the `admin:all` umbrella — through a single decision check that requires an active **full** superadmin grant (`superadmin_full`). A `superadmin_readonly` grant SHALL NOT satisfy this check, nor SHALL an `org_admin` membership, and the check SHALL NOT consult the project membership role: org-scoped authority SHALL NOT buy platform-scoped power. Bare `admin` is folded into the same platform authority as `admin:all` (`admin:all` implies `admin` via `ScopeImplies`), so a caller who may not grant `admin:all` may not grant bare `admin` either. This supersedes the earlier decision in #812 §4.3 that admitted any-org `org_admin`. The check SHALL be defined once and consumed by every platform-scoped mint decision; existing bespoke membership queries SHALL become consumers of it.
+
+#### Scenario: A full superadmin is authorized to mint an admin:all token
+- **GIVEN** a user holds an active `superadmin_full` grant
+- **WHEN** the user requests an `admin:all` token
+- **THEN** the request is authorized
+
+#### Scenario: A full superadmin is authorized to mint a bare admin token
+- **GIVEN** a user holds an active `superadmin_full` grant
+- **WHEN** the user requests a bare `admin` token
+- **THEN** the request is authorized
+
+#### Scenario: Organization administrator is refused an admin:all token
+- **GIVEN** a user holds `org_admin` in an organization and no superadmin grant
+- **WHEN** the user requests an `admin:all` token
+- **THEN** the request is refused
+
+#### Scenario: A project administrator alone is refused
+- **GIVEN** a user holds `project_admin` in the declared project and neither a superadmin grant nor an `org_admin` membership
+- **WHEN** the user requests an `admin:all` token
+- **THEN** the request is refused
+
+#### Scenario: A user with neither entitlement is refused
+- **GIVEN** a user holds neither a superadmin grant nor an `org_admin` membership
+- **WHEN** the user requests an `admin:all` token
+- **THEN** the request is refused
+
+#### Scenario: A read-only superadmin is refused admin:all minting
+- **GIVEN** a user holds a `superadmin_readonly` grant and no `org_admin` membership
+- **WHEN** the user requests an `admin:all` token
+- **THEN** the request is refused
+
+#### Scenario: An unprivileged member is refused a bare admin token
+- **GIVEN** a user holds no superadmin grant
+- **WHEN** the user requests a bare `admin` token
+- **THEN** the request is refused
+
+#### Scenario: Ephemeral sandbox tokens never carry a platform scope
+- **GIVEN** an ephemeral sandbox token is minted on behalf of a project member (the chat sandbox or a background agent run)
+- **WHEN** the ephemeral token's scope set is produced
+- **THEN** it SHALL NOT include `admin` or `admin:all` — the sandbox runs as ordinary project members and must never obtain platform authority through the ephemeral mint
