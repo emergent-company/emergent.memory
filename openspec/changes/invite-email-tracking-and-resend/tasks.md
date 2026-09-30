@@ -34,3 +34,4 @@
 - [x] 5.3 `task lint` (server + web-ui)
 - [ ] 5.4 Manual check on the dev server: invite list shows delivery state; Resend re-sends and extends expiry
 - [x] 5.5 `openspec validate invite-email-tracking-and-resend`
+- [x] 5.6 Playwright e2e spec added (`invite-resend-ui.spec.ts`); live run against this branch's gateway on the dev members page verified the UI half (delivery badge + resend control render, confirm dialog, PRG to `/members?resent=1`). The resend API round-trip cannot pass until the server half is deployed: the gateway's `POST /api/invites/:id/resend` call returns 404 from the currently-deployed dev API, and `deploy-dev.yml` deploys the default branch only (its sole input is `target`). Re-run the spec after this PR is deployed to dev.
