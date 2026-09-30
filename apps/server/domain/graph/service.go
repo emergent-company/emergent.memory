@@ -127,6 +127,7 @@ func (s *Service) emitObjectCreated(obj *GraphObjectResponse) {
 	s.events.EmitCreated(events.EntityGraphObject, obj.CanonicalID.String(), obj.ProjectID.String(), &events.EmitOptions{
 		Version:    &obj.Version,
 		ObjectType: obj.Type,
+		Data:       workStatusData(obj),
 	})
 }
 
@@ -138,6 +139,7 @@ func (s *Service) emitObjectUpdated(obj *GraphObjectResponse) {
 	s.events.EmitUpdated(events.EntityGraphObject, obj.CanonicalID.String(), obj.ProjectID.String(), &events.EmitOptions{
 		Version:    &obj.Version,
 		ObjectType: obj.Type,
+		Data:       workStatusData(obj),
 	})
 }
 
@@ -149,6 +151,20 @@ func (s *Service) emitObjectDeleted(projectID, canonicalID, objType string) {
 	s.events.EmitDeleted(events.EntityGraphObject, canonicalID, projectID, &events.EmitOptions{
 		ObjectType: objType,
 	})
+}
+
+// workStatusData builds the event payload's data map carrying the object's
+// built-in status and assignee so reaction dispatch can route by assignee and
+// record the work status without a second graph read.
+func workStatusData(obj *GraphObjectResponse) map[string]any {
+	data := make(map[string]any, 2)
+	if obj.Status != nil {
+		data["status"] = *obj.Status
+	}
+	if obj.Assignee != nil {
+		data["assignee"] = *obj.Assignee
+	}
+	return data
 }
 
 // labelsEqual returns true if two label slices contain the same set of strings (order-independent).

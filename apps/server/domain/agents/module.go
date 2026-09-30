@@ -8,6 +8,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
 	"github.com/emergent-company/emergent.memory/domain/events"
+	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
 	"github.com/emergent-company/emergent.memory/domain/mcprelay"
@@ -49,6 +50,7 @@ var Module = fx.Module("agents",
 		provideShareService,
 		provideShareHandler,
 		provideShareRunReaper,
+		provideWorkObjectStore,
 	),
 	fx.Invoke(
 		RegisterRoutes,
@@ -64,6 +66,7 @@ var Module = fx.Module("agents",
 		registerToolPoolInvalidator,
 		registerStaleRunReaper,
 		registerShareRunReaper,
+		registerWorkObjectStore,
 	),
 )
 
@@ -345,6 +348,20 @@ func provideWorkerPool(repo *Repository, executor *AgentExecutor, cfg *config.Co
 	pool := NewWorkerPool(repo, executor, log, cfg.AgentWorkerPoolSize, cfg.AgentWorkerPollInterval)
 	pool.SetRefreshInterval(cfg.AgentWorkerQueueRefreshInterval)
 	return pool
+}
+
+// provideWorkObjectStore exposes the graph service as the agents domain's
+// narrow work-object surface, used by dispatch (HEAD version lookup) and the
+// worker pool (versioned claim transition).
+func provideWorkObjectStore(svc *graph.Service) WorkObjectStore {
+	return svc
+}
+
+// registerWorkObjectStore injects the work-object store into the trigger
+// service and the worker pool after construction.
+func registerWorkObjectStore(ts *TriggerService, pool *WorkerPool, store WorkObjectStore) {
+	ts.SetWorkObjectStore(store)
+	pool.SetWorkObjectStore(store)
 }
 
 // registerWorkerPool wires the WorkerPool into the fx lifecycle.

@@ -22,6 +22,10 @@ type WorkerPool struct {
 	globalSize   int
 	pollInterval time.Duration
 
+	// workObjects performs the versioned claim transition for object-driven
+	// runs (nil disables the claim path, e.g. in unit tests).
+	workObjects WorkObjectStore
+
 	// refreshInterval is how often the supervisor reconciles queue configuration.
 	refreshInterval time.Duration
 
@@ -31,6 +35,12 @@ type WorkerPool struct {
 	mu      sync.Mutex
 	workers map[queueRef]*queueWorkerSet
 	workWG  sync.WaitGroup
+}
+
+// SetWorkObjectStore injects the graph work-object surface used for the
+// ready→in_progress claim transition of object-driven runs.
+func (p *WorkerPool) SetWorkObjectStore(store WorkObjectStore) {
+	p.workObjects = store
 }
 
 // queueRef identifies a queue by project + name. Queue names are unique per
@@ -272,6 +282,34 @@ func (p *WorkerPool) executeJob(ctx context.Context, log *slog.Logger, job *Agen
 	// LLM usage events to the correct tenant.
 	orgID, _ := p.repo.GetOrgIDByProjectID(ctx, agent.ProjectID)
 
+	// Object-driven claim: before executing, transition the work object
+	// ready→in_progress under the versioned write model. A lost race (the object
+	// was already claimed or is no longer ready) skips the run without burning
+	// failure budget or touching the breaker.
+	if run.SubjectObjectID != nil && *run.SubjectObjectID != "" {
+		claimed, claimErr := p.claimWorkObject(ctx, run, agent, agentDef)
+		if claimErr != nil {
+			log.Warn("work object claim failed", slog.String("error", claimErr.Error()))
+			_ = p.repo.FailJob(ctx, job.ID, job.RunID, claimErr.Error(), false, time.Time{})
+			p.handleFailure(ctx, log, agent)
+			p.reenqueueParent(ctx, log, run, agent.Name, "", "failed")
+			return
+		}
+		if !claimed {
+			log.Info("work object already claimed or not ready; skipping run",
+				slog.String("run_id", run.ID),
+				slog.String("canonical_id", *run.SubjectObjectID),
+			)
+			if err := p.repo.SkipRun(ctx, run.ID, "work object already claimed or not ready"); err != nil {
+				log.Warn("failed to mark skipped run", slog.String("error", err.Error()))
+			}
+			if err := p.repo.CompleteJob(ctx, job.ID, job.RunID); err != nil {
+				log.Warn("failed to complete skipped job", slog.String("error", err.Error()))
+			}
+			return
+		}
+	}
+
 	result, execErr := p.executor.ExecuteWithRun(ctx, run, ExecuteRequest{
 		Agent:           agent,
 		AgentDefinition: agentDef,
@@ -391,6 +429,23 @@ func (p *WorkerPool) executeJob(ctx context.Context, log *slog.Logger, job *Agen
 		return
 	}
 	p.reenqueueParent(ctx, log, run, agent.Name, finalResponse, "completed")
+}
+
+// claimWorkObject performs the versioned ready→in_progress claim transition for
+// an object-driven run. It returns claimed=false when the object was already
+// claimed (a lost race) or is not in the ready status, so the caller can skip
+// the run without consuming the failure budget.
+func (p *WorkerPool) claimWorkObject(ctx context.Context, run *AgentRun, agent *Agent, agentDef *AgentDefinition) (bool, error) {
+	if p.workObjects == nil {
+		return false, fmt.Errorf("no work object store configured")
+	}
+	readyStatus := "ready"
+	inProgressStatus := "in_progress"
+	if agentDef != nil {
+		readyStatus = agentDef.WorkConfig.ReadyStatus()
+		inProgressStatus = agentDef.WorkConfig.InProgressStatus()
+	}
+	return p.workObjects.ClaimWorkObject(ctx, agent.ProjectID, *run.SubjectObjectID, readyStatus, inProgressStatus)
 }
 
 // reenqueueParent re-enqueues the parent run of this run (if any) with a

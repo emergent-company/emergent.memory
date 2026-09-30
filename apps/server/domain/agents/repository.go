@@ -394,6 +394,30 @@ func (r *Repository) FindPendingOrProcessing(ctx context.Context, agentID, objec
 	return log, nil
 }
 
+// FindProcessingLogByKey returns any processing-log entry for the dispatch
+// dedup key (agent_id, graph_object_id, object_version, event_type), regardless
+// of status. Used by enqueue-on-create to guarantee a repeated delivery of the
+// same created event produces a single run even after a prior entry completed.
+func (r *Repository) FindProcessingLogByKey(ctx context.Context, agentID, objectID string, version int, eventType ReactionEventType) (*AgentProcessingLog, error) {
+	log := new(AgentProcessingLog)
+	err := r.db.NewSelect().
+		Model(log).
+		Where("agent_id = ?", agentID).
+		Where("graph_object_id = ?", objectID).
+		Where("object_version = ?", version).
+		Where("event_type = ?", eventType).
+		Order("created_at ASC").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return log, nil
+}
+
 // MarkProcessingLogStatus updates the status of a processing log entry
 func (r *Repository) MarkProcessingLogStatus(ctx context.Context, id string, status AgentProcessingStatus, errorMsg *string, summary map[string]any) error {
 	now := time.Now()
@@ -2497,6 +2521,8 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 	var trustedInternal bool
 	var queueOverride string
 	var priority int
+	var subjectObjectID *string
+	var subjectObjectType *string
 	if len(opts) > 0 {
 		parentRunID = opts[0].ParentRunID
 		rootRunID = nilIfEmpty(opts[0].RootRunID)
@@ -2506,21 +2532,25 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 		trustedInternal = opts[0].TrustedInternal
 		queueOverride = opts[0].Queue
 		priority = opts[0].Priority
+		subjectObjectID = opts[0].SubjectObjectID
+		subjectObjectType = opts[0].SubjectObjectType
 	}
 
 	projectID, queue, priority := r.resolveAgentRouting(ctx, agentID, queueOverride, priority)
 
 	run := &AgentRun{
-		AgentID:         agentID,
-		Status:          RunStatusQueued,
-		StartedAt:       time.Now(),
-		Summary:         make(map[string]any),
-		ParentRunID:     parentRunID,
-		RootRunID:       rootRunID,
-		TriggerMessage:  triggerMessage,
-		TriggerMetadata: triggerMetadata,
-		TrustedInternal: trustedInternal,
-		Tools:           []string{},
+		AgentID:           agentID,
+		Status:            RunStatusQueued,
+		StartedAt:         time.Now(),
+		Summary:           make(map[string]any),
+		ParentRunID:       parentRunID,
+		RootRunID:         rootRunID,
+		TriggerMessage:    triggerMessage,
+		TriggerMetadata:   triggerMetadata,
+		TrustedInternal:   trustedInternal,
+		SubjectObjectID:   subjectObjectID,
+		SubjectObjectType: subjectObjectType,
+		Tools:             []string{},
 	}
 
 	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {

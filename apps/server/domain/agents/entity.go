@@ -273,6 +273,11 @@ type CreateRunQueuedOptions struct {
 	// Priority orders the dispatch job within its queue; lower is claimed
 	// first. Zero means DefaultQueuePriority.
 	Priority int
+	// SubjectObjectID links the run to the work object it was dispatched for,
+	// storing the object's canonical_id. SubjectObjectType records the object
+	// type. Set for object-driven (enqueue-on-create) dispatches.
+	SubjectObjectID   *string
+	SubjectObjectType *string
 }
 
 // AgentProcessingLog tracks which graph objects have been processed by reaction agents
@@ -415,6 +420,35 @@ type AgentWorkConfig struct {
 	RequiresReview bool                  `json:"requiresReview"`
 	FailureLimit   int                   `json:"failureLimit"`
 	RetryPolicy    AgentRetryPolicy      `json:"retryPolicy"`
+}
+
+// IsZero reports whether the work config carries no explicit configuration, i.e.
+// the definition does not opt into object-driven work (today's inline behaviour
+// is preserved). A non-zero config (or a queued dispatch mode) is what gates
+// enqueue-on-create.
+func (w AgentWorkConfig) IsZero() bool {
+	return w.Status == (AgentWorkStatusConfig{}) &&
+		!w.RequiresReview &&
+		w.FailureLimit == 0 &&
+		w.RetryPolicy == (AgentRetryPolicy{})
+}
+
+// ReadyStatus returns the configured "ready" work-status value, defaulting to
+// the built-in "ready" when unset.
+func (w AgentWorkConfig) ReadyStatus() string {
+	if w.Status.Ready != "" {
+		return w.Status.Ready
+	}
+	return "ready"
+}
+
+// InProgressStatus returns the configured "in_progress" work-status value,
+// defaulting to the built-in "in_progress" when unset.
+func (w AgentWorkConfig) InProgressStatus() string {
+	if w.Status.InProgress != "" {
+		return w.Status.InProgress
+	}
+	return "in_progress"
 }
 
 type AgentDefinition struct {
