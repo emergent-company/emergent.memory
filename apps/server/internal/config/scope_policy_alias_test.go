@@ -10,11 +10,10 @@ import (
 // scopePolicyEnvVars is every environment variable the scope-policy knobs read,
 // so tests can run independent of the ambient process environment. The
 // ZITADEL_* aliases were removed with the app-owned vocabulary migration
-// (unify-scope-authority §7.2), so they are no longer read or cleared here.
+// (unify-scope-authority §7.2), and the grant-all/trust flags were removed with
+// §8, so neither is read or cleared here.
 var scopePolicyEnvVars = []string{
 	"MEMORY_OIDC_DEFAULT_SCOPES",
-	"MEMORY_USERINFO_GRANT_ALL_SCOPES",
-	"MEMORY_OIDC_TRUST_TOKEN_SCOPES",
 }
 
 // clearScopePolicyEnv unsets every scope-policy env var for the duration of the
@@ -57,23 +56,4 @@ func TestScopePolicyDefaultScopesConfigured(t *testing.T) {
 		cfg.Zitadel.OIDCDefaultScopes[1] != want[1] {
 		t.Fatalf("OIDCDefaultScopes = %v, want %v", cfg.Zitadel.OIDCDefaultScopes, want)
 	}
-}
-
-// The app-owned name configures the grant-all knob, which still defaults true.
-func TestScopePolicyGrantAllConfigured(t *testing.T) {
-	t.Run("explicit false", func(t *testing.T) {
-		clearScopePolicyEnv(t)
-		t.Setenv("MEMORY_USERINFO_GRANT_ALL_SCOPES", "false")
-		cfg, _ := newScopePolicyConfig(t)
-		if cfg.Zitadel.UserinfoGrantAllScopes {
-			t.Fatal("explicit false must be honoured")
-		}
-	})
-	t.Run("unset defaults true", func(t *testing.T) {
-		clearScopePolicyEnv(t)
-		cfg, _ := newScopePolicyConfig(t)
-		if !cfg.Zitadel.UserinfoGrantAllScopes {
-			t.Fatal("UserinfoGrantAllScopes default should be true")
-		}
-	})
 }

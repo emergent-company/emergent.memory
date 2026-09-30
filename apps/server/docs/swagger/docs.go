@@ -7363,7 +7363,7 @@ const docTemplate = `{
                         "bearerAuth": []
                     }
                 ],
-                "description": "Returns the scope-authority posture (token-scope trust, permissive userinfo all-grant, introspection status). Authenticated only.",
+                "description": "Returns the scope-authority posture (introspection status). Authenticated only.",
                 "produces": [
                     "application/json"
                 ],

@@ -4,6 +4,17 @@
 
 ### BREAKING CHANGES
 
+**The duplicate OIDC scope authority is removed** (2026-09-30)
+
+`MEMORY_OIDC_TRUST_TOKEN_SCOPES` and `MEMORY_USERINFO_GRANT_ALL_SCOPES` are removed, along with
+the token-scope grant branch and the permissive userinfo all-or-nothing branch. An OIDC token can
+no longer mint a Memory scope under any configuration: `Zitadel` is reduced to authentication, and
+the userinfo fallback now uses the standard fail-closed resolution (application entitlements →
+app-owned default → empty). Anyone still relying on either flag must migrate to application-owned
+scopes (project memberships, `org_admin`, superadmin grants, or `MEMORY_OIDC_DEFAULT_SCOPES`)
+before upgrading — there is no opt-in that restores the previous behaviour. The authenticated
+`/api/health/scope-authority` endpoint now reports `introspection_configured` only.
+
 **Token-carried OIDC scopes are no longer honoured by default** (2026-09-29)
 
 `MEMORY_OIDC_TRUST_TOKEN_SCOPES` now defaults to `false`. Anyone who configured Memory scope

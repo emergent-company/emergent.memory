@@ -261,49 +261,23 @@ func TestDatabaseBackupCheck(t *testing.T) {
 
 func TestScopeAuthorityInfo(t *testing.T) {
 	tests := []struct {
-		name              string
-		trust             bool
-		grantAll          bool
-		introspect        bool
-		wantTrust         bool
-		wantPermissive    bool
-		wantIntrospection bool
+		name       string
+		introspect bool
+		want       bool
 	}{
-		{
-			name:  "default posture: trust on, permissive on, introspection off",
-			trust: true, grantAll: true,
-			wantTrust: true, wantPermissive: true, wantIntrospection: false,
-		},
-		{
-			name:  "trust off, introspection configured suppresses the permissive grant",
-			trust: false, grantAll: true, introspect: true,
-			wantTrust: false, wantPermissive: false, wantIntrospection: true,
-		},
-		{
-			name:  "grant flag off",
-			trust: true, grantAll: false,
-			wantTrust: true, wantPermissive: false, wantIntrospection: false,
-		},
+		{name: "introspection unconfigured", introspect: false, want: false},
+		{name: "introspection configured", introspect: true, want: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			z := config.ZitadelConfig{
-				TrustTokenScopes:       tt.trust,
-				UserinfoGrantAllScopes: tt.grantAll,
-			}
+			z := config.ZitadelConfig{}
 			if tt.introspect {
 				z.ClientJWT = "jwt"
 			}
 			h := &Handler{cfg: &config.Config{Zitadel: z}}
 			got := h.scopeAuthorityInfo()
-			if got.TokenScopesTrusted != tt.wantTrust {
-				t.Errorf("token_scopes_trusted = %v, want %v", got.TokenScopesTrusted, tt.wantTrust)
-			}
-			if got.PermissiveAllGrant != tt.wantPermissive {
-				t.Errorf("permissive_all_grant = %v, want %v", got.PermissiveAllGrant, tt.wantPermissive)
-			}
-			if got.IntrospectionConfigured != tt.wantIntrospection {
-				t.Errorf("introspection_configured = %v, want %v", got.IntrospectionConfigured, tt.wantIntrospection)
+			if got.IntrospectionConfigured != tt.want {
+				t.Errorf("introspection_configured = %v, want %v", got.IntrospectionConfigured, tt.want)
 			}
 		})
 	}
@@ -363,15 +337,15 @@ func healthTestPool(t *testing.T) *pgxpool.Pool {
 	return p
 }
 
-// TestRunChecksDoesNotLeakOIDCAllGrant pins the retroactive #808 fix: the
-// anonymous health checks map must NOT contain an oidc_all_grant entry (the
-// permissive posture must not leak publicly). The scope-authority posture is
-// served only on the authenticated /api/health/scope-authority endpoint.
-func TestRunChecksDoesNotLeakOIDCAllGrant(t *testing.T) {
+// TestRunChecksDoesNotLeakScopeAuthority pins the retroactive #808 fix: the
+// anonymous health checks map must NOT contain a scope-authority posture entry
+// (it must not leak publicly). The posture is served only on the authenticated
+// /api/health/scope-authority endpoint.
+func TestRunChecksDoesNotLeakScopeAuthority(t *testing.T) {
 	h := &Handler{
 		pool:       healthTestPool(t),
 		db:         fakeRowQuerier{row: fakeRow{scanErr: pgx.ErrNoRows}},
-		cfg:        &config.Config{Zitadel: config.ZitadelConfig{UserinfoGrantAllScopes: true}},
+		cfg:        &config.Config{},
 		storage:    &storage.Service{},
 		kreuzberg:  &kreuzberg.Client{},
 		whisper:    &whisper.Client{},
@@ -381,5 +355,8 @@ func TestRunChecksDoesNotLeakOIDCAllGrant(t *testing.T) {
 	checks := h.runChecks(context.Background())
 	if _, ok := checks["oidc_all_grant"]; ok {
 		t.Fatalf("runChecks leaked the oidc_all_grant entry on the anonymous health response: %v", checks)
+	}
+	if _, ok := checks["scope_authority"]; ok {
+		t.Fatalf("runChecks leaked the scope_authority entry on the anonymous health response: %v", checks)
 	}
 }

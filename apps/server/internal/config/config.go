@@ -200,27 +200,11 @@ type ZitadelConfig struct {
 	AdminPAT string `env:"ZITADEL_ADMIN_PAT"`
 
 	// OIDCDefaultScopes is the scope set granted to an authenticated OIDC user
-	// whose token carries no explicit Memory scope and whose project role has no
-	// defined mapping. Comma-separated. Empty (the default) grants nothing,
-	// which preserves the fail-closed behaviour of the introspection path.
+	// with no application entitlement and no project membership. Comma-separated.
+	// Empty (the default) grants nothing, which preserves the fail-closed
+	// behaviour of the introspection path.
 	// The application-owned name is MEMORY_OIDC_DEFAULT_SCOPES.
 	OIDCDefaultScopes []string `env:"MEMORY_OIDC_DEFAULT_SCOPES"`
-
-	// UserinfoGrantAllScopes preserves the legacy all-or-nothing behaviour of the
-	// OIDC userinfo fallback. When true AND introspection is not configured
-	// (no ZITADEL_CLIENT_JWT / ZITADEL_CLIENT_JWT_PATH), a userinfo-authenticated
-	// user receives GetAllScopes(). It is ignored once introspection is
-	// configured, so adding introspection credentials disables the all-grant even
-	// if this flag is left at its default.
-	// The application-owned name is MEMORY_USERINFO_GRANT_ALL_SCOPES.
-	UserinfoGrantAllScopes bool `env:"MEMORY_USERINFO_GRANT_ALL_SCOPES" envDefault:"true"`
-
-	// TrustTokenScopes governs whether Memory scope names carried on a validated
-	// OIDC token are honoured as a grant. It is opt-in: the standing default is
-	// disabled (fail closed), so a validated token cannot mint a Memory scope
-	// unless an operator explicitly sets MEMORY_OIDC_TRUST_TOKEN_SCOPES=true.
-	// When enabled, the middleware emits a per-boot warning naming the flag.
-	TrustTokenScopes bool `env:"MEMORY_OIDC_TRUST_TOKEN_SCOPES" envDefault:"false"`
 
 	// TrustRoleSuperadmin governs whether a standing Zitadel project role maps to
 	// the superadmin_full entitlement (issue #812 Q6). Default OFF; the role must
@@ -247,17 +231,6 @@ func (z *ZitadelConfig) IntrospectionConfigured() bool {
 		return false
 	}
 	return z.ClientJWT != "" || z.ClientJWTPath != ""
-}
-
-// UserinfoAllGrantActive reports whether the legacy all-or-nothing userinfo
-// grant is currently in effect: the flag is enabled AND introspection is not
-// configured. Enabling introspection disables the grant even at the default
-// flag value, so an introspection outage cannot re-enable it.
-func (z *ZitadelConfig) UserinfoAllGrantActive() bool {
-	if z == nil {
-		return false
-	}
-	return z.UserinfoGrantAllScopes && !z.IntrospectionConfigured()
 }
 
 // EmbeddingsConfig holds embedding service configuration

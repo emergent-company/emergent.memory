@@ -64,35 +64,6 @@ func withScopes(base []string, extra ...string) []string {
 	return append(out, extra...)
 }
 
-// memoryScopeVocabulary is the set of scopes the Memory platform understands.
-// Raw OIDC scopes (openid, profile, email, offline_access, ...) are not members
-// of this set and are therefore never treated as an explicit Memory grant.
-//
-// It is the union of GetAllScopes() and the fine-grained/coarse scopes accepted
-// by API token creation (domain/apitoken.ValidApiTokenScopes) that GetAllScopes
-// does not list. domain/apitoken cannot be imported here (domain packages depend
-// on pkg/auth), so the difference is mirrored explicitly — keep it in sync.
-var memoryScopeVocabulary = func() map[string]bool {
-	m := map[string]bool{}
-	for _, s := range GetAllScopes() {
-		m[s] = true
-	}
-	for _, s := range []string{
-		// Fine-grained scopes satisfying MCP tool RequiredScope.
-		"search", "journal:read", "journal:write",
-		"branches:read", "branches:write",
-		"skills:read", "skills:write",
-		"schema:migrate", "chat:use", "chat:admin", "ingest:write",
-		// Coarse scopes accepted on API tokens.
-		"schema:write", "projects:read", "projects:write",
-		// Reserved internal marker scopes (never present on OIDC tokens).
-		"mcp:agent-call", "share:agent-chat", "device:api", "webhook:trigger",
-	} {
-		m[s] = true
-	}
-	return m
-}()
-
 // projectRoleLookup resolves a user's role in a project. It returns "" when the
 // user is not a member. Overridable in tests.
 type projectRoleLookup func(ctx context.Context, projectID, userID string) (string, error)
@@ -115,23 +86,6 @@ func roleToScopes(role string) ([]string, bool) {
 	default:
 		return nil, false
 	}
-}
-
-// filterMemoryScopes returns the members of scopes that are part of the Memory
-// scope vocabulary, preserving order and de-duplicating. A non-empty result
-// means the token carries an explicit Memory grant.
-func filterMemoryScopes(scopes []string) []string {
-	out := make([]string, 0, len(scopes))
-	seen := make(map[string]bool, len(scopes))
-	for _, s := range scopes {
-		s = strings.TrimSpace(s)
-		if s == "" || seen[s] || !memoryScopeVocabulary[s] {
-			continue
-		}
-		seen[s] = true
-		out = append(out, s)
-	}
-	return out
 }
 
 // ZitadelProjectRole is a project role carried on an introspected token. Only
@@ -199,9 +153,6 @@ func extractZitadelProjectRoles(claims map[string]any) []ZitadelProjectRole {
 // terminal superadmin_full grant.
 //
 // Resolution order (app-owned, issue #812 D4):
-//  0. explicit Memory scopes carried by the token, verbatim — only while
-//     MEMORY_OIDC_TRUST_TOKEN_SCOPES is explicitly enabled (opt-in; disabled by
-//     default). Terminal when it applies;
 //  1. an active superadmin_full grant (app-side core.superadmins row, or a
 //     standing Zitadel project role) — terminal: the full catalogue;
 //  2. an org_admin membership for the request organization — the
@@ -211,19 +162,16 @@ func extractZitadelProjectRoles(claims map[string]any) []ZitadelProjectRole {
 //     project membership and no entitlement;
 //  5. empty (fail closed).
 //
+// Memory scope names carried on the token are never a grant: the token's
+// `scopes` are supplied only for cache round-tripping and are deliberately not
+// consulted (issue #1161 §8 removed the token-trust path).
+//
 // Tiers 2 and 3 govern disjoint resource families and are combined. A project
 // role lookup error or an unrecognised role yields an empty set (never the
 // default), and so does a superadmin lookup error (#736 decision B, strict).
 // `roles` are the token's Zitadel project roles, already issuer-filtered by the
 // caller (see trustedSuperadminRoles).
 func (m *Middleware) resolveOIDCScopes(ctx context.Context, userID, projectID string, rawScopes []string, roles []ZitadelProjectRole) []string {
-	// Tier 0 — token-carried Memory scopes (terminal while trusted).
-	if m.trustTokenScopes() {
-		if explicit := filterMemoryScopes(rawScopes); len(explicit) > 0 {
-			return explicit
-		}
-	}
-
 	// Tier 1 — superadmin (terminal). superadmin_readonly is NOT a scope tier.
 	if userID != "" {
 		role, err := m.resolveSuperadminRole(ctx, userID, roles)
@@ -375,16 +323,6 @@ func (m *Middleware) resolveOrgAdminScopes(ctx context.Context, projectID, userI
 	return append([]string(nil), orgAdminScopes...)
 }
 
-// trustTokenScopes reports whether Memory scope names carried on a validated
-// OIDC token are honoured as a grant. Introduced enabled (default) so Release N
-// changes no behaviour; flips to disabled in the following release.
-func (m *Middleware) trustTokenScopes() bool {
-	if m.cfg == nil {
-		return false
-	}
-	return m.cfg.Zitadel.TrustTokenScopes
-}
-
 // defaultOIDCScopes returns a copy of the configured default scope set, or nil
 // when unset.
 func (m *Middleware) defaultOIDCScopes() []string {
@@ -522,15 +460,4 @@ func (m *Middleware) dbOrgAdmin(ctx context.Context, orgID, userID string) (bool
 // lookupProjectOrg — never from a request-controlled value.
 func (m *Middleware) dbOrgMember(ctx context.Context, orgID, userID string) (bool, error) {
 	return isOrgMember(ctx, m.db, orgID, userID)
-}
-
-// oidcAllGrantEnabled reports whether the legacy all-or-nothing grant may be
-// applied. It requires the explicit flag AND introspection to be unconfigured,
-// so enabling introspection disables the all-grant and an introspection outage
-// cannot re-enable it.
-func (m *Middleware) oidcAllGrantEnabled() bool {
-	if m.cfg == nil {
-		return false
-	}
-	return m.cfg.Zitadel.UserinfoAllGrantActive()
 }
