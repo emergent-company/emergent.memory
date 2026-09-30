@@ -115,6 +115,7 @@ type CreateMCPServerRequest struct {
 type UpdateMCPServerRequest struct {
 	Name        *string        `json:"name,omitempty"`
 	Description *string        `json:"description,omitempty"`
+	Type        MCPServerType  `json:"type,omitempty"`
 	Enabled     *bool          `json:"enabled,omitempty"`
 	Command     *string        `json:"command,omitempty"`
 	Args        []string       `json:"args,omitempty"`

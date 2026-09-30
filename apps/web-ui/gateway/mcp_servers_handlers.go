@@ -140,8 +140,9 @@ func (s *Server) renderMCPEditPage(c echo.Context, data mcpServerFormData) error
 
 // uiMCPUpdate handles the edit form (POST /settings/mcp-servers/:id/update).
 // Validation failures re-render the form inline (no partial save); a transport
-// change is rejected inline (memory cannot change a server's transport after
-// registration). Success PRG-redirects to the list with ?updated=1.
+// change is now persisted (memory switches the server's transport and clears
+// the previous transport's connection fields). Success PRG-redirects to the
+// list with ?updated=1.
 func (s *Server) uiMCPUpdate(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := strings.TrimSpace(c.Param("id"))
@@ -159,10 +160,6 @@ func (s *Server) uiMCPUpdate(c echo.Context) error {
 	draft := mcpServerFormDataFromRequest(c)
 	draft.ID = id
 	fe := draft.validate()
-	if draft.Type != current.Type {
-		fe.Type = "Transport is fixed after registration — delete this server and register it again to switch from " +
-			mcpServerTransportForDisplay(current.Type) + " to " + mcpServerTransportForDisplay(draft.Type) + "."
-	}
 	if mcpServerFieldErrsNonEmpty(fe) {
 		draft.FieldErrs = fe
 		return s.renderMCPEditPage(c, draft)

@@ -258,9 +258,40 @@ func (s *Service) UpdateServer(ctx context.Context, id string, projectID string,
 	// Cannot modify builtin servers (except enable/disable)
 	if server.Type == ServerTypeBuiltin {
 		if dto.Name != nil || dto.Command != nil || dto.URL != nil || dto.Args != nil || dto.Env != nil || dto.Headers != nil ||
-			dto.SecretEnvKeys != nil || dto.SecretHeadersKeys != nil {
+			dto.SecretEnvKeys != nil || dto.SecretHeadersKeys != nil || dto.Type != nil {
 			return nil, fmt.Errorf("cannot modify builtin server configuration — only enable/disable is allowed")
 		}
+	}
+
+	// Transport change: the transport may be switched after registration. When
+	// it changes, clear the connection fields of the transport being LEFT so
+	// stale config never leaks into the new transport. Command/args/env (stdio)
+	// and url/headers (sse/http) are each overwritten by the per-field handlers
+	// below only when the DTO carries them, so the swap must nil out the other
+	// transport's fields explicitly.
+	if dto.Type != nil && *dto.Type != server.Type {
+		switch *dto.Type {
+		case ServerTypeStdio, ServerTypeSSE, ServerTypeHTTP:
+			// supported
+		default:
+			return nil, fmt.Errorf("unsupported transport type %q", *dto.Type)
+		}
+		switch *dto.Type {
+		case ServerTypeStdio:
+			// Leaving a remote transport: drop the remote connection fields
+			// (command/args/env are set from the DTO below).
+			server.URL = nil
+			server.Headers = nil
+			server.SecretHeaders = nil
+		case ServerTypeSSE, ServerTypeHTTP:
+			// Leaving stdio: drop the stdio process fields (url/headers are set
+			// from the DTO below).
+			server.Command = nil
+			server.Args = nil
+			server.Env = nil
+			server.SecretEnv = nil
+		}
+		server.Type = *dto.Type
 	}
 
 	if dto.Name != nil {
@@ -304,6 +335,20 @@ func (s *Service) UpdateServer(ctx context.Context, id string, projectID string,
 		}
 		server.Headers = headers
 		server.SecretHeaders = secretHeaders
+	}
+
+	// Transport-required validation covers both a type change and a same-type
+	// partial update (e.g. clearing the command on a stdio server). The builtin
+	// type has no case, so enable/disable-only builtin updates still pass.
+	switch server.Type {
+	case ServerTypeStdio:
+		if server.Command == nil || *server.Command == "" {
+			return nil, fmt.Errorf("command is required for stdio-type servers")
+		}
+	case ServerTypeSSE, ServerTypeHTTP:
+		if server.URL == nil || *server.URL == "" {
+			return nil, fmt.Errorf("url is required for %s-type servers", server.Type)
+		}
 	}
 
 	if err := s.repo.UpdateServer(ctx, server); err != nil {

@@ -4575,6 +4575,8 @@ definitions:
         items:
           type: string
         type: array
+      type:
+        $ref: '#/definitions/domain_mcpregistry.MCPServerType'
       url:
         type: string
     type: object
