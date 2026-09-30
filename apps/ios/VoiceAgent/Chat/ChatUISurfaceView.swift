@@ -119,16 +119,21 @@ struct A2UIComponentCard: View {
             }
         }
     }
+}
 
-    // MARK: Cards
+// MARK: - Cards
 
+extension A2UIComponentCard {
     private var proposalCard: some View {
         VStack(alignment: .leading, spacing: 2 * .grid) {
             header("Proposal", badge: component.text("kind"))
             if let summary = component.text("summary"), !summary.isEmpty {
                 label(summary)
             }
-            if let body = component.text("body"), !body.isEmpty {
+            let bodyRows = objectRows(component.value("body"))
+            if !bodyRows.isEmpty {
+                rows(bodyRows)
+            } else if let body = component.text("body"), !body.isEmpty {
                 pre(body)
             }
             actions([
@@ -141,7 +146,10 @@ struct A2UIComponentCard: View {
     private var approvalCard: some View {
         VStack(alignment: .leading, spacing: 2 * .grid) {
             header("Approval", badge: component.text("tool"))
-            if let input = component.text("input"), !input.isEmpty {
+            let inputRows = objectRows(component.value("input"))
+            if !inputRows.isEmpty {
+                rows(inputRows)
+            } else if let input = component.text("input"), !input.isEmpty {
                 pre(input)
             }
             actions([
@@ -276,11 +284,16 @@ struct A2UIComponentCard: View {
     private var resultCard: some View {
         VStack(alignment: .leading, spacing: 2 * .grid) {
             header("Result")
-            let pairs = component.extraProps
-            if pairs.isEmpty {
-                rows([("result", "—")])
+            let rowsPairs = component.rows("rows")
+            if !rowsPairs.isEmpty {
+                rows(rowsPairs)
             } else {
-                rows(pairs)
+                let pairs = component.extraProps
+                if pairs.isEmpty {
+                    rows([("result", "—")])
+                } else {
+                    rows(pairs)
+                }
             }
         }
     }
@@ -296,9 +309,11 @@ struct A2UIComponentCard: View {
             }
         }
     }
+}
 
-    // MARK: Prop helpers
+// MARK: - Prop helpers
 
+extension A2UIComponentCard {
     private func sectionLabel(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 10, weight: .semibold))

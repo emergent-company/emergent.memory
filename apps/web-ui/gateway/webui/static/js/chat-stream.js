@@ -240,6 +240,11 @@
     // turn had completed.
     var streamFailed = false;
 
+    // Set by noteUISurface when an A2UI surface is rendered this turn; lets
+    // finishStream drop an empty assistant bubble even when the stream did not
+    // abort (the surface card carries the agent's visible content instead).
+    var hadSurface = false;
+
     /* the selected agent's declared appearance, or null (bot fallback) */
     function currentAgentUI() {
       return (ctx.currentAgentUI && ctx.currentAgentUI()) || null;
@@ -299,6 +304,7 @@
     }
 
     function openAssistantBubble() {
+      hadSurface = false;
       ctx.hideEmpty();
       var b = document.createElement("div");
       b.className = "chat chat-start memory-rise";
@@ -971,7 +977,7 @@
         MemoryChatComponents.enhanceMessage(ctx.bubble);
       }
       ctx.scrollToBottom();
-      if (reason === "aborted" && ctx.bubble && !ctx.bubbleHTML) {
+      if ((reason === "aborted" || hadSurface) && ctx.bubble && !ctx.bubbleHTML) {
         var el = ctx.bubble.querySelector(".memory-md");
         if (el && !el.textContent.trim()) ctx.bubble.remove();
       }
@@ -996,6 +1002,7 @@
       }
       ctx.scrollToBottom();
       ctx.aborter = null;
+      hadSurface = false;
     }
 
     return {
@@ -1013,6 +1020,7 @@
       streamChat: streamChat,
       finishStream: finishStream,
       failStream: failStream,
+      noteUISurface: function () { hadSurface = true; },
       autoGrow: autoGrow,
     };
   }
