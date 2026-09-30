@@ -291,6 +291,32 @@ follow-up (Cmd/Ctrl+Enter) parks during a streaming turn and auto-releases in
 order when the turn ends; and the session-rail badge reflects the active run's
 bucket change without a navigation. Env-gated on `E2E_SCENARIO_LLM_API_KEY`.
 
+Chat (multi-turn context): `chat-multi-turn-context.spec.ts` plants a codeword
+in turn 1 of a fresh conversation and asks for it in turn 2, asserting the reply
+recalls it — proving the prior turn's history reaches the model on a later turn
+of the same conversation (the one thing the navigation/run-control specs do not
+assert), plus that both turns persist in `GET /api/conversations/:id/history`.
+Env-gated on `E2E_SCENARIO_LLM_API_KEY`; the recall assertion HARD-FAILS (a
+temperature-0 recall of a token just supplied is the contract under test).
+
+Chat (question resume): `chat-question-resume.spec.ts` drives a pending
+`ask_user` question in the chat dock (`#chat-dock [data-testid="dock-question"]`,
+`chat_dock.templ`) end-to-end: select an option, submit, then wait for the parked
+run's resumed continuation to render with the pinned `FINALCHOICE:<value>` marker
+and to persist in history. The resumed continuation is not streamed — memory
+resumes the run in the background and the gateway reads it back from history
+(`chat.js answerQuestion` → `refreshActiveTranscript`) — so the assertion is
+rendered transcript text. The option+submit clicks run in one synchronous
+in-page poll because the dock is re-rendered over htmx while parked. The dock
+card's own render is covered by `chat-run-control.spec.ts`. Env-gated on
+`E2E_SCENARIO_LLM_API_KEY`; skips when the model never asks or the run errors
+(deviation/environment) and HARD-FAILS when an answered card never resumed the
+run.
+
+Shared live-chat scaffolding (provider save, `createScratchAgent`, `openChat`,
+history read, cleanup) lives in `helpers/live-chat.ts`; all four chat scenarios
+use it.
+
 Scenario (approvals respond): `approvals-respond.spec.ts` drives a live
 human-in-the-loop tool approval end-to-end — scratch project → live provider →
 MCP server + synced tool → agent with `defaultToolPolicy: ask` → imperative chat
