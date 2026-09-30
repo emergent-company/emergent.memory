@@ -106,7 +106,9 @@ const SKELETON = `<!doctype html>
     <div id="chat-rail-resize" role="separator" aria-orientation="vertical" aria-label="Resize session list"></div>
     <select id="chat-agent-filter" aria-label="Filter sessions by agent"><option value="">All agents</option></select>
     <select id="chat-origin-filter" aria-label="Filter sessions by type"><option value="">All types</option></select>
-    <div id="chat-rail-list"></div>
+    <div id="chat-rail-list">
+      <div data-action="resume-session" data-id="conv-2" data-agent="" data-origin="manual">Idle session</div>
+    </div>
   </aside>
   <div>
     <div><div id="chat-run-status" class="memory-run-status hidden" role="status" aria-live="polite"></div></div>
@@ -138,7 +140,7 @@ const SKELETON = `<!doctype html>
 // Install the stubs and load the four shipped scripts. Returns the live
 // page-error array so the test can assert it stayed empty (a ReferenceError in
 // the resume/render path lands here, not in a console warning).
-async function bootstrap(page: Page): Promise<string[]> {
+async function bootstrap(page: Page, items: HistoryItem[] = WORKING_ITEMS): Promise<string[]> {
   const errors: string[] = [];
   page.on('pageerror', (err) => errors.push(err.message));
 
@@ -203,7 +205,7 @@ async function bootstrap(page: Page): Promise<string[]> {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (w as any).EventSource = FakeEventSource;
     },
-    { convId: CONV_ID, items: WORKING_ITEMS },
+    { convId: CONV_ID, items },
   );
 
   await page.addScriptTag({ path: CHAT_COMPONENTS_JS });
@@ -271,6 +273,75 @@ test.describe('chat.js mid-run open (chat-components/chat-host/chat-stream/chat)
     await expect(page.locator('#chat-send')).toBeEnabled();
     // The persisted transcript is still rendered after the re-render.
     await expect(page.locator('#chat-messages .chat')).not.toHaveCount(0);
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
+  // DEFECT 1 regression: a stale "working" state must not survive once the run
+  // is no longer active. The bare connect/poll refresh carries no runStatus, so
+  // a page that re-renders an empty (or run-less) history must release the
+  // header indicator, the placeholder bubble, and the busy composer — otherwise
+  // an idle conversation is stuck "Working…" with a phantom bubble and a stop
+  // button.
+  test('releases a stale working state when the run is absent (empty history + bare refresh)', async ({ page }) => {
+    const errors = await bootstrap(page, WORKING_ITEMS);
+    // Sanity: the mid-run open shows the working state first.
+    await expect(page.locator('#chat-messages [data-memory-working]')).toHaveCount(1);
+
+    // The run is gone from history; a bare refresh carries no run info.
+    await setHistory(page, []);
+    await emitSSE(page, { type: 'refresh' });
+
+    await expect(page.locator('#chat-messages [data-memory-working]')).toHaveCount(0);
+    await expect(page.locator('#chat-run-status')).toBeHidden();
+    await expect(page.locator('#chat-stop')).toBeHidden();
+    await expect(page.locator('#chat-send')).toBeVisible();
+    await expect(page.locator('#chat-send')).toBeEnabled();
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
+  // DEFECT 1 regression: opening a different, idle conversation must not carry
+  // the previous scope's working state across — resumeConversation must reset
+  // it before the fresh (empty) history renders.
+  test('resuming an idle conversation drops the previous scope working state', async ({ page }) => {
+    const errors = await bootstrap(page, WORKING_ITEMS);
+    await expect(page.locator('#chat-messages [data-memory-working]')).toHaveCount(1);
+
+    // Switch to conv-2, whose history is empty, via the session rail.
+    await setHistory(page, []);
+    await page.locator('[data-action="resume-session"][data-id="conv-2"]').click();
+
+    await expect(page.locator('#chat-messages [data-memory-working]')).toHaveCount(0);
+    await expect(page.locator('#chat-run-status')).toBeHidden();
+    await expect(page.locator('#chat-stop')).toBeHidden();
+    await expect(page.locator('#chat-send')).toBeVisible();
+    await expect(page.locator('#chat-send')).toBeEnabled();
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
+  // DEFECT 2 regression: a run parked on a decision reports bucket
+  // "needs_input" with runStatus still "working". The header must reflect the
+  // bucket ("Waiting on you") and the subsequent history re-render must not
+  // clobber it with an empty-bucket "Working…".
+  test('a run parked on a decision shows "Waiting on you", not "Working…"', async ({ page }) => {
+    const errors = await bootstrap(page, WORKING_ITEMS);
+    await expect(page.locator('#chat-run-status')).toContainText('Working');
+
+    await emitSSE(page, {
+      type: 'refresh',
+      bucket: 'needs_input',
+      runId: 'r1',
+      runStatus: 'working',
+      pendingApprovals: 1,
+      pendingQuestions: 0,
+    });
+
+    const runStatus = page.locator('#chat-run-status');
+    await expect(runStatus).toBeVisible();
+    await expect(runStatus).toContainText('Waiting on you');
+    await expect(runStatus).not.toContainText('Working');
 
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });
