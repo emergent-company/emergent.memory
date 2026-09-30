@@ -75,7 +75,7 @@ templ usageSummaryCards(summary *UsageSummaryResponse, payload usageChartPayload
 	if hasMonthSpend {
 		cards = append(cards, ui.StatCardProps{Label: "Current month spend", Value: formatCost(monthSpend), Icon: "lucide--calendar-clock", IconColor: "bg-accent/15 text-accent", Attrs: templ.Attributes{"data-testid": "stat-month-spend"}})
 	} }}
-	@statRow(cards, "mt-6")
+	@statRow(cards, StatRowOpts{Margin: "mt-6"})
 }
 
 // usageCharts renders the two daily charts plus the embedded JSON payload and
