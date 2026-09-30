@@ -72,6 +72,14 @@ test('capability-group approval policy and enable switch persist', async ({ page
       test.skip(true, 'capability group is missing its data-tool-group id');
     }
 
+    // The group policy select lives in the disclosure body, so make sure the
+    // group is open before reaching it (a group with no enabled members defaults
+    // to collapsed).
+    if (!(await group.evaluate((el) => (el as HTMLDetailsElement).open))) {
+      await group.locator('summary').first().click();
+      await expect(group).toHaveAttribute('open', '');
+    }
+
     // Set the group policy to "ask" — deterministic and independent of the
     // group's member tools.
     await page.getByTestId(`tool-group-policy-${groupId}`).selectOption('ask');

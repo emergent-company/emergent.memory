@@ -11,11 +11,10 @@
 
    2. Tool-approval inheritance on the Tools subpage: changing the agent default
       policy or a capability group's policy relabels every policy select's
-      `Inherit (<value>)` option to the value it actually inherits. It also
-      cancels the native <summary> activation for a policy <select> inside a
-      disclosure header, so choosing a group policy no longer folds the group
-      (spec: a summary's activation behaviour runs unless the click is
-      cancelled, and stopPropagation alone does not cancel it).
+      `Inherit (<value>)` option to the value it actually inherits. The group
+      policy select sits in the group body, outside the interactive <summary>,
+      so choosing it opens the native dropdown and never runs the summary's
+      fold/unfold activation — no click cancelling is needed or done here.
 
    Loaded on every page from ui.templ; each behaviour no-ops when its markup is
    absent. Kept dependency-free (no Alpine/htmx coupling) so the js-dom gate can
@@ -264,22 +263,6 @@
       syncToolPolicyLabels();
     }
   });
-
-  /* A <select> inside <summary> must not run the summary's activation behaviour
-     (fold/unfold) when a group policy is chosen. stopPropagation cannot cancel
-     it — only preventDefault can — so cancel it in the capture phase, before the
-     activation check. Scoped to the group policy select; the native dropdown
-     opens on the pointer gesture and is unaffected. */
-  document.addEventListener(
-    "click",
-    function (ev) {
-      var t = ev.target;
-      if (!t || !t.closest) return;
-      var sel = t.closest('select[name^="groupPolicy."]');
-      if (sel && sel.closest("summary")) ev.preventDefault();
-    },
-    true
-  );
 
   function boot() {
     syncToolPolicyLabels();

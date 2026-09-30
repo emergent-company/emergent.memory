@@ -10,9 +10,10 @@ import path from 'node:path';
 //           window (not per keystroke), unchanged values never post, and a
 //           failed save surfaces an error + retry without dropping the edit.
 //   #1274 — tool-approval inheritance: changing the default or a group policy
-//           relabels every policy select's `Inherit (<value>)` option, and a
-//           click on a group policy select inside a <summary> is cancelled so
-//           the disclosure no longer folds.
+//           relabels every policy select's `Inherit (<value>)` option; the group
+//           policy select lives in the disclosure BODY (not inside the
+//           interactive <summary>), so its click is never cancelled and the
+//           group only toggles from its own summary trigger.
 //
 // No gateway, no memory API, no Zitadel, no `.env.e2e` — runs in CI
 // (`npx playwright test --config=js-dom.config.ts`).
@@ -97,15 +98,16 @@ const TOOLS_FORM = `
   <details data-testid="tool-group" data-tool-group="search" open>
     <summary id="group-summary">
       <span>Search</span>
-      <div onclick="event.stopPropagation()">
-        <select name="groupPolicy.search" data-testid="tool-group-policy-search">
-          <option value="inherit" data-inherit-option selected>Inherit (Allow)</option>
-          <option value="allow">Allow</option>
-          <option value="ask">Ask</option>
-          <option value="deny">Deny</option>
-        </select>
-      </div>
     </summary>
+    <div>
+      <label for="group-policy-search">Approval policy</label>
+      <select id="group-policy-search" name="groupPolicy.search" data-testid="tool-group-policy-search">
+        <option value="inherit" data-inherit-option selected>Inherit (Allow)</option>
+        <option value="allow">Allow</option>
+        <option value="ask">Ask</option>
+        <option value="deny">Deny</option>
+      </select>
+    </div>
     <div>
       <select name="toolPolicy.web_search">
         <option value="" data-inherit-option selected>Inherit (Allow)</option>
@@ -208,32 +210,41 @@ test.describe('tool-approval inheritance (agent-settings.js)', () => {
     expect(await inheritText(toolOutside)).toBe('Inherit (Ask)');
   });
 
-  test('cancels the summary activation for a group policy select click', async ({ page }) => {
+  test('the group toggles from its trigger and the policy select keeps its normal click', async ({ page }) => {
     await page.setContent(`<!doctype html><html><body>${TOOLS_FORM}</body></html>`);
     await loadScript(page);
 
-    // A capture-phase preventDefault on the click stops the <summary> activation
-    // (the fold/unfold); assert the event is already default-prevented by the
-    // time a target listener runs. A select outside a summary is left alone.
-    const prevented = await page.evaluate(() => {
-      function clickAndRead(selector: string): boolean {
-        const el = document.querySelector(selector) as HTMLSelectElement;
-        let seen = false;
-        const read = (ev: Event) => {
-          seen = ev.defaultPrevented;
-        };
-        el.addEventListener('click', read);
-        el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-        el.removeEventListener('click', read);
-        return seen;
-      }
-      return {
-        group: clickAndRead('select[name="groupPolicy.search"]'),
-        plain: clickAndRead('select[name="defaultToolPolicy"]'),
-      };
-    });
+    const group = page.locator('details[data-tool-group="search"]');
+    const summary = page.locator('#group-summary');
+    const select = page.locator('select[name="groupPolicy.search"]');
 
-    expect(prevented.group).toBe(true);
-    expect(prevented.plain).toBe(false);
+    // New structure: the policy select sits in the disclosure body, never a
+    // descendant of the interactive <summary>, so its click cannot run the
+    // summary activation. Nothing cancels the click default either — the native
+    // dropdown is free to open. (The old fix cancelled the click in the capture
+    // phase; that hack is gone.)
+    const shape = await page.evaluate(() => {
+      const sel = document.querySelector('select[name="groupPolicy.search"]') as HTMLElement;
+      let prevented = false;
+      const read = (ev: Event) => {
+        prevented = ev.defaultPrevented;
+      };
+      sel.addEventListener('click', read);
+      sel.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      sel.removeEventListener('click', read);
+      return { inSummary: sel.closest('summary') !== null, clickPrevented: prevented };
+    });
+    expect(shape.inSummary).toBe(false);
+    expect(shape.clickPrevented).toBe(false);
+
+    // Clicking the select does not fold the group (no summary activation ran).
+    await select.dispatchEvent('click');
+    await expect(group).toHaveAttribute('open', '');
+
+    // The summary trigger alone is what toggles the group.
+    await summary.click();
+    await expect(group).not.toHaveAttribute('open', '');
+    await summary.click();
+    await expect(group).toHaveAttribute('open', '');
   });
 });

@@ -927,12 +927,14 @@ templ agentToolBuiltinLeading() {
 }
 
 // agentToolCapabilityGroup renders one capability group inside the Built-in
-// section: a collapsible header (label, description, member count) carrying the
-// group enable switch (groupEnabled.<id>) and policy select (groupPolicy.<id>),
-// and a body of the group's native member tools as direct rows. The nested
-// per-source sub-group is gone — external sources render as their own top-level
-// blocks. The header uses a named `group/cap` so nested details don't rotate
-// each other's chevrons.
+// section: a collapsible header (label, description, member count) carrying only
+// the group enable switch (groupEnabled.<id>), and a body of the group's
+// approval-policy row (groupPolicy.<id>) followed by its native member tools as
+// direct rows. The policy select lives in the body — never inside the
+// interactive <summary> — so choosing a policy can never run the summary's
+// activation behaviour (the fold/unfold) and needs no click cancelling. The
+// header uses a named `group/cap` so nested details don't rotate each other's
+// chevrons.
 templ agentToolCapabilityGroup(gv toolGroupView) {
 	@ui.Disclosure(ui.DisclosureProps{
 		GroupClass:   "group/cap",
@@ -941,7 +943,10 @@ templ agentToolCapabilityGroup(gv toolGroupView) {
 		Attrs:        templ.Attributes{"data-testid": "tool-group", "data-tool-group": gv.Group.ID},
 		SummaryAttrs: templ.Attributes{"data-testid": "tool-group-header-" + gv.Group.ID},
 		Open:         gv.Open,
-	}, agentToolCapabilityLeading(gv), agentToolCapabilityControls(gv)) {
+	}, agentToolCapabilityLeading(gv), agentToolCapabilityEnable(gv)) {
+		if gv.Group.ID != toolGroupOtherID {
+			@agentToolGroupPolicy(gv)
+		}
 		<div class="flex flex-col divide-y divide-base-content/10 overflow-hidden rounded-box border border-base-content/10">
 			for _, t := range gv.Rows {
 				@agentToolRowView(t, !t.NoPolicy)
@@ -965,11 +970,12 @@ templ agentToolCapabilityLeading(gv toolGroupView) {
 	</div>
 }
 
-// agentToolCapabilityControls is the capability-group summary's trailing
-// controls: the group enable switch (groupEnabled.<id> with its
-// groupWasEnabled.<id> baseline) and, for every group except the display-only
-// "other" group, the group policy select.
-templ agentToolCapabilityControls(gv toolGroupView) {
+// agentToolCapabilityEnable is the capability-group summary's trailing control:
+// the group enable switch (groupEnabled.<id>) with its groupWasEnabled.<id>
+// baseline. It is a pure toggle in the header — the group approval policy select
+// is not here (see agentToolGroupPolicy), so the header never wraps a control
+// whose click could be mistaken for the summary's own activation.
+templ agentToolCapabilityEnable(gv toolGroupView) {
 	<div class="flex shrink-0 items-center gap-2" onclick="event.stopPropagation()">
 		<input
 			type="hidden"
@@ -989,16 +995,26 @@ templ agentToolCapabilityControls(gv toolGroupView) {
 				},
 			})
 		</label>
-		if gv.Group.ID != toolGroupOtherID {
-			<select
-				name={ "groupPolicy." + gv.Group.ID }
-				class="select select-xs w-40"
-				aria-label={ gv.Group.Label + " approval policy" }
-				data-testid={ "tool-group-policy-" + gv.Group.ID }
-			>
-				@agentPolicyOptions(gv.Policy, "inherit", gv.InheritLabel)
-			</select>
-		}
+	</div>
+}
+
+// agentToolGroupPolicy is the capability-group approval-policy row rendered
+// inside the group body, above the member-tool rows: a visible label associated
+// with the tri-state policy select (groupPolicy.<id>). It lives in the
+// disclosure body — a sibling of the interactive <summary>, not a descendant —
+// so its clicks open the native dropdown and never run the summary activation.
+templ agentToolGroupPolicy(gv toolGroupView) {
+	<div class="flex items-center justify-between gap-2">
+		<label class="text-muted text-xs" for={ "tool-group-policy-" + gv.Group.ID }>Approval policy</label>
+		<select
+			id={ "tool-group-policy-" + gv.Group.ID }
+			name={ "groupPolicy." + gv.Group.ID }
+			class="select select-xs w-40"
+			aria-label={ gv.Group.Label + " approval policy" }
+			data-testid={ "tool-group-policy-" + gv.Group.ID }
+		>
+			@agentPolicyOptions(gv.Policy, "inherit", gv.InheritLabel)
+		</select>
 	</div>
 }
 
