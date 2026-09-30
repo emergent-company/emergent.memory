@@ -582,24 +582,30 @@ func TestUIMCPServersUpdatePersists(t *testing.T) {
 	}
 }
 
-func TestUIMCPServersUpdateTransportChangeRejected(t *testing.T) {
+func TestUIMCPServersUpdateTransportChangeAccepted(t *testing.T) {
 	f := newMCPTestBackend(mcpTestRegistryFixture())
 	s := &Server{cfg: Config{}, memory: f}
 	e := mcpServerTestServer(s)
 
-	// github-mcp is http; submitting it as stdio must re-render inline, unchanged
-	body := "name=github-mcp&type=stdio&command=npx+whatever&enabled=on"
+	// github-mcp is http; submitting it as stdio must now succeed and persist
+	// the transport switch (memory clears the previous transport's fields).
+	body := "name=github-mcp&type=stdio&command=npx+-y+files-mcp&enabled=on"
 	rec := mcpServerPost(e, "/settings/mcp-servers/srv-http/update", body)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("transport-change update = %d, want 200 inline re-render", rec.Code)
-	}
-	html := rec.Body.String()
-	if !strings.Contains(html, "Transport is fixed after registration") {
-		t.Error("transport-change inline error missing")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/settings/mcp-servers?updated=1" {
+		t.Fatalf("transport-change update = %d %q, want 303 /settings/mcp-servers?updated=1", rec.Code, rec.Header().Get("Location"))
 	}
 	srv := f.find("srv-http")
-	if srv == nil || srv.URL == "" || srv.Type != "http" {
-		t.Error("transport change must not partially persist")
+	if srv == nil {
+		t.Fatal("updated server missing from the backend")
+	}
+	if srv.Type != "stdio" {
+		t.Errorf("updated server type = %q, want stdio", srv.Type)
+	}
+	if srv.Command != "npx -y files-mcp" {
+		t.Errorf("updated server command = %q, want the submitted stdio command", srv.Command)
+	}
+	if srv.URL != "" {
+		t.Errorf("updated server url = %q, want empty (remote fields cleared on switch to stdio)", srv.URL)
 	}
 }
 

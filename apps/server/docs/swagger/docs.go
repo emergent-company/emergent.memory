@@ -27610,6 +27610,9 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "type": {
+                    "$ref": "#/definitions/domain_mcpregistry.MCPServerType"
+                },
                 "url": {
                     "type": "string"
                 }
