@@ -915,62 +915,52 @@
 
     async function streamChat(agent, text) {
       ctx.onStreamStart(); // chat: clearThinking; sidepanel: no-op
+      // The shared wire transport (chat-transport.js) owns fetch + the
+      // ReadableStream/TextDecoder/`data:`-frame loop and JSON-parses each
+      // frame. This engine keeps only the page-facing behaviour: the stop-guard,
+      // the message rendered per failure mode, and its own finish/fail handlers.
       streamFailed = false;
       ctx.aborter = new AbortController();
       var payload = { agentDefinitionId: agent, message: text };
       if (ctx.conversationId) payload.conversationId = ctx.conversationId;
 
-      var res;
       try {
-        res = await fetch("/api/chat", {
-          method: "POST",
+        await MemoryChatTransport.streamSSE("/api/chat", {
           headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
           body: JSON.stringify(payload),
           signal: ctx.aborter.signal,
+          // handleEvent takes the raw JSON string (it parses it itself), so
+          // re-serialize the frame the transport already parsed.
+          onFrame: function (frame) { ctx.handleEvent(JSON.stringify(frame)); },
+          // Non-ok response: prefer the gateway's JSON {error} body, else the
+          // generic status message — the same contract as the old inline reader.
+          onHTTPError: function (res) {
+            return res.json().then(
+              function (j) {
+                failStream(j && j.error ? j.error : "Gateway error " + res.status);
+              },
+              function () {
+                failStream("Gateway error " + res.status);
+              }
+            );
+          },
+          // An `error` frame already ran failStream and set the failure state.
+          // Suppress the transport's trailing onFinish("done") so a success
+          // finalization can't updateBubbleText away the error and refresh the
+          // transcript as a completed turn.
+          isStopped: function () { return streamFailed; },
+          onFinish: finishStream,
         });
       } catch (err) {
-        if (err.name === "AbortError") { finishStream("aborted"); return; }
-        failStream("Could not reach the gateway: " + err.message);
-        return;
-      }
-
-      if (!res.ok || !res.body) {
-        var msg = "Gateway error " + res.status;
-        try {
-          var j = await res.json();
-          if (j && j.error) msg = j.error;
-        } catch (e) {}
-        failStream(msg);
-        return;
-      }
-
-      var reader = res.body.getReader();
-      var decoder = new TextDecoder();
-      var buf = "";
-      try {
-        while (true) {
-          var chunk = await reader.read();
-          if (chunk.done) break;
-          buf += decoder.decode(chunk.value, { stream: true });
-          var idx;
-          while ((idx = buf.indexOf("\n")) !== -1) {
-            var line = buf.slice(0, idx).trim();
-            buf = buf.slice(idx + 1);
-            if (!line) continue;
-            if (line.indexOf("data:") === 0) ctx.handleEvent(line.slice(5).trim());
-          }
+        if (err && err.name === "AbortError") { finishStream("aborted"); return; }
+        // A drop after the response connected reads as "Stream interrupted"; a
+        // request that never connected keeps the old "Could not reach" copy.
+        if (err && err.streamInterrupted) {
+          failStream("Stream interrupted: " + err.message);
+          return;
         }
-      } catch (err) {
-        if (err.name === "AbortError") { finishStream("aborted"); return; }
-        failStream("Stream interrupted: " + err.message);
-        return;
+        failStream("Could not reach the gateway: " + err.message);
       }
-      // An `error` frame (e.g. the gateway's interrupted-stream error) already
-      // ran failStream and set the failure state. Do not follow it with the
-      // success finalization: finishStream("done") would updateBubbleText away
-      // the error and refresh the transcript as a completed turn.
-      if (streamFailed) return;
-      finishStream("done");
     }
 
     function finishStream(reason) {

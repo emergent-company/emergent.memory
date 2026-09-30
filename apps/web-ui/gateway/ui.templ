@@ -181,6 +181,7 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 		@alpine.Tag()
 		<script src={ templ.SafeURL(webui.AssetPath("/js/app.js")) }></script>
 			<script src={ templ.SafeURL(webui.AssetPath("/js/agent-settings.js")) }></script>
+			<script src={ templ.SafeURL(webui.AssetPath("/js/chat-transport.js")) }></script>
 			<script src={ templ.SafeURL(webui.AssetPath("/js/chat-components.js")) }></script>
 			<script src={ templ.SafeURL(webui.AssetPath("/js/chat-stream.js")) }></script>
 			<script src={ templ.SafeURL(webui.AssetPath("/js/chat-host.js")) }></script>

@@ -48,9 +48,15 @@
   // Terminal signalling:
   //   - stream ends cleanly           → opts.onFinish("done")  (unless opts.isStopped())
   //   - abort (AbortError)            → opts.onFinish("aborted")
-  //   - non-ok / missing body         → opts.onHTTPError(res), or a thrown
-  //                                      "Gateway error <status>" when absent
-  //   - other fetch/stream errors     → rethrown to the caller's .catch
+  //   - non-ok / missing body         → opts.onHTTPError(res) (its return value
+  //                                      is awaited), or a thrown "Gateway error
+  //                                      <status>" when absent
+  //   - other fetch/stream errors     → rethrown to the caller's .catch. An error
+  //                                      thrown while READING the response body is
+  //                                      tagged `err.streamInterrupted = true` so a
+  //                                      caller can distinguish a mid-stream drop
+  //                                      from a request that never connected
+  //                                      (chat-stream.js renders them differently).
   //
   // opts.isStopped() reproduces the callers' stop-guard (chat-stream.js's
   // streamFailed flag): when an `error` frame has already terminalised the
@@ -70,8 +76,9 @@
       .then(function (res) {
         if (!res.ok || !res.body) {
           if (opts.onHTTPError) {
-            opts.onHTTPError(res);
-            return;
+            // Await the handler's result so callers that read the error body
+            // (res.json()) finish before streamSSE's promise resolves.
+            return opts.onHTTPError(res);
           }
           throw new Error("Gateway error " + res.status);
         }
@@ -100,7 +107,14 @@
             return read();
           });
         }
-        return read();
+        // Tag errors raised while reading the body (not while fetching it) so
+        // the caller can tell a mid-stream drop from a failed connection.
+        return read().catch(function (err) {
+          if (err && err.name !== "AbortError" && typeof err === "object") {
+            err.streamInterrupted = true;
+          }
+          throw err;
+        });
       })
       .catch(function (err) {
         if (err && err.name === "AbortError") {
