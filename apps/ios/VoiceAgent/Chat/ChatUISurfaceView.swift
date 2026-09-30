@@ -119,9 +119,11 @@ struct A2UIComponentCard: View {
             }
         }
     }
+}
 
-    // MARK: Cards
+// MARK: - Cards
 
+extension A2UIComponentCard {
     private var proposalCard: some View {
         VStack(alignment: .leading, spacing: 2 * .grid) {
             header("Proposal", badge: component.text("kind"))
@@ -307,9 +309,11 @@ struct A2UIComponentCard: View {
             }
         }
     }
+}
 
-    // MARK: Prop helpers
+// MARK: - Prop helpers
 
+extension A2UIComponentCard {
     private func sectionLabel(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 10, weight: .semibold))
