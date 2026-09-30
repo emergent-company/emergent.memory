@@ -8,8 +8,8 @@ import components "github.com/emergent-company/emergent.memory/apps/web-ui/compo
 // on desktop. "Add schema" is NOT a rail item; it is an action on the Schema
 // packs list (linking to the existing /schema/add install flow).
 templ schemaSubNav(active string) {
-	@components.SubNav("Schema sections") {
-		@components.SubNavItem("/schema", active == "compiled", "lucide--git-branch", "Compiled schema")
-		@components.SubNavItem("/schema/packs", active == "packs", "lucide--library", "Schema packs")
-	}
+	@components.SettingsRail("Schema sections", active, []components.RailItem{
+		{Key: "compiled", Href: "/schema", Icon: "lucide--git-branch", Label: "Compiled schema"},
+		{Key: "packs", Href: "/schema/packs", Icon: "lucide--library", Label: "Schema packs"},
+	})
 }

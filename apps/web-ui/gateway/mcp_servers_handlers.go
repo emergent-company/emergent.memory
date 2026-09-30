@@ -28,14 +28,12 @@ import (
 // state.
 func (s *Server) uiMCPServers(c echo.Context) error {
 	ctx := c.Request().Context()
-	data := mcpServersPageData{}
-	switch {
-	case c.QueryParam("created") != "":
-		data.FlashMsg = "MCP server created."
-	case c.QueryParam("updated") != "":
-		data.FlashMsg = "MCP server updated."
-	case c.QueryParam("deleted") != "":
-		data.FlashMsg = "MCP server deleted."
+	data := mcpServersPageData{
+		FlashMsg: flashFromQuery(c, []flashParam{
+			{key: "created", msg: "MCP server created."},
+			{key: "updated", msg: "MCP server updated."},
+			{key: "deleted", msg: "MCP server deleted."},
+		}),
 	}
 	data.FlashErr = flashError(c)
 	servers, err := s.memory.ListMCPServers(ctx)

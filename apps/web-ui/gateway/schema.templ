@@ -397,6 +397,10 @@ templ schemaEditorForm(view *SchemaEditView) {
 				<h2 class="text-lg font-semibold tracking-tight">Appearance</h2>
 				<p class="text-muted mt-0.5 text-sm">Optional accent used wherever this type is shown.</p>
 			</div>
+			// This icon/color pair is intentionally NOT extracted into a shared
+			// AppearanceFields component: the three sites (agent create dialog,
+			// agent settings, this object-type form) diverge on grid gap,
+			// per-column wrapper divs, and help copy (web-ui-component-conventions).
 			<div class="grid gap-x-8 gap-y-6 sm:grid-cols-2">
 				<div class="flex min-w-0 flex-col [&>fieldset]:min-w-0 [&>fieldset]:grow [&_.label-text-alt]:whitespace-normal">
 					@form.FormControl("object-type-icon", "Icon", form.LabelAbove, "Pick a supported Lucide icon. The default falls back to the generic box.", "", nil) {
@@ -463,14 +467,7 @@ templ schemaEditorForm(view *SchemaEditView) {
 				if view.Provenance != nil {
 					<span class="text-muted hidden text-xs sm:inline">Derived from a blueprint — a confirmation follows.</span>
 				}
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeSubmit,
-					Variant: ui.ButtonPrimary,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--save",
-				}) {
-					Save changes
-				}
+				@components.SaveChangesButton()
 			</div>
 		</div>
 	</form>

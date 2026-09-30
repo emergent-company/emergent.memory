@@ -169,8 +169,17 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 			});
 		})();
 		</script>
-			@alpine.Tag()
-			<script src={ templ.SafeURL(webui.AssetPath("/js/app.js")) }></script>
+		<!-- htmx/Alpine compatibility extension. Must load AFTER htmx (it calls
+		     htmx.registerExtension) and BEFORE deferred Alpine (@alpine.Tag()
+		     emits <script defer src="/static/js/alpine.js">): the extension defers
+		     Alpine's MutationObserver for the duration of an htmx swap, so Alpine
+		     initialises swapped subtrees against the final post-settle DOM instead
+		     of the pre-restore DOM. Without it, htmx v4's same-id attribute-restore
+		     strips the inline `display:none` that x-show sets, un-hiding controls
+		     after a boosted swap (issue #1267). -->
+		<script src={ templ.SafeURL(webui.AssetPath("/js/hx-alpine-compat.js")) }></script>
+		@alpine.Tag()
+		<script src={ templ.SafeURL(webui.AssetPath("/js/app.js")) }></script>
 			<script src={ templ.SafeURL(webui.AssetPath("/js/chat-components.js")) }></script>
 			<script src={ templ.SafeURL(webui.AssetPath("/js/chat-stream.js")) }></script>
 			<script src={ templ.SafeURL(webui.AssetPath("/js/chat-host.js")) }></script>
@@ -292,9 +301,30 @@ templ agentsEmpty() {
 	}
 }
 
-// statRow lays out go-daisy StatCards in the app's 3-up grid.
-templ statRow(cards []ui.StatCardProps, margin string) {
-	<div class={ "grid grid-cols-1 gap-3 sm:grid-cols-2", margin }>
+// StatRowOpts tunes a statRow layout.
+type StatRowOpts struct {
+	// Margin is the outer spacing utility class (for example "mt-6").
+	Margin string
+	// ColsClass optionally extends the responsive column count beyond the
+	// default two columns (for example "lg:grid-cols-3"), so a short row of
+	// stats can sit on one line at desktop widths. Empty keeps the default.
+	ColsClass string
+}
+
+// statRow lays out go-daisy StatCards in the app's responsive grid: one column
+// on mobile, two from sm up, and any extra columns from ColsClass (for example
+// lg:grid-cols-3) so all cards share one line once the viewport is wide enough.
+// Class order is grid → cols → gap → sm:cols → extra → margin, mirroring
+// MetaGrid so the column/gap rhythm does not drift per page.
+templ statRow(cards []ui.StatCardProps, opts StatRowOpts) {
+	{{ class := "grid grid-cols-1 gap-3 sm:grid-cols-2"
+	if opts.ColsClass != "" {
+		class += " " + opts.ColsClass
+	}
+	if opts.Margin != "" {
+		class += " " + opts.Margin
+	} }}
+	<div class={ class }>
 		for _, c := range cards {
 			@ui.StatCard(c)
 		}
@@ -479,6 +509,11 @@ templ agentFormDialog(agents []AgentDefinitionSummary, models []Model, skills []
 			@form.FormControl("agent-prompt", "System prompt", form.LabelAbove, "Sets tone, constraints, and how the agent uses memory.", "", nil) {
 				<textarea id="agent-prompt" name="systemPrompt" rows="5" placeholder="You are Memory, the household agent. You answer concisely, with wit and precision…" class="textarea w-full resize-none"></textarea>
 			}
+			// This icon/color pair is intentionally NOT extracted into a shared
+			// AppearanceFields component: the three sites (agent create dialog
+			// here, agent settings, object type) diverge on the grid gap, the
+			// per-column wrapper divs, and the help copy, so one component would
+			// branch on its caller (web-ui-component-conventions).
 			<div class="grid gap-4 sm:grid-cols-2">
 				@form.FormControl("agent-icon", "Icon", form.LabelAbove, "Pick a supported Lucide icon. The default falls back to the bot.", "", nil) {
 					@ui.IconPicker(ui.IconPickerProps{
@@ -559,9 +594,7 @@ templ agentFormDialog(agents []AgentDefinitionSummary, models []Model, skills []
 // deleteAgentDescription is the delete-confirm detail paragraph for agents
 // (the name span is filled by app.js's openDeleteConfirm).
 templ deleteAgentDescription() {
-	<p class="text-muted mt-1 text-sm">
-		This permanently removes <span id="delete-agent-name" class="font-medium text-base-content"></span> and its definition. Irreversible.
-	</p>
+	@components.DeleteWarning("", "and its definition. Irreversible.", components.DeleteWarningProps{SubjectID: "delete-agent-name"})
 }
 
 // deleteConfirmDialog confirms agent deletion before the DELETE call.

@@ -826,6 +826,11 @@ templ ObjectDetailPage(obj *GraphObject, relTypes []CompiledType, edges []GraphR
 	}
 }
 
+// objectDetailHeader intentionally does NOT use the shared detailHeader: it
+// renders a rich chip row (type chip + status/embedding badges) ABOVE the title
+// and uses items-start alignment, neither of which detailHeader models (kicker is
+// a plain string, TitleLeading is inline-before-title, Actions sit on the right,
+// and the flex is hardcoded items-center/items-end).
 templ objectDetailHeader(obj *GraphObject, typeUIByType map[string]typeUI) {
 	{{ tui := typeUIOf(typeUIByType, obj.Type) }}
 	<div class="mb-6">
@@ -898,14 +903,7 @@ templ objectPropertiesCard(obj *GraphObject, propDefs []objectPropertyDef, label
 				}
 			}
 			@fm.FormActions("", "") {
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeSubmit,
-					Variant: ui.ButtonPrimary,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--save",
-				}) {
-					Save changes
-				}
+				@components.SaveChangesButton()
 			}
 		</form>
 	}

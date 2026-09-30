@@ -278,14 +278,7 @@ templ skillEditForm(s *Skill) {
 				<textarea id="edit-content" name="content" rows="10" required class="textarea w-full resize-y">{ s.Content }</textarea>
 			}
 			@form.FormActions("", "") {
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeSubmit,
-					Variant: ui.ButtonPrimary,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--save",
-				}) {
-					Save changes
-				}
+				@components.SaveChangesButton()
 			}
 		</form>
 	}
@@ -325,9 +318,7 @@ templ skillDeleteSection(s *Skill) {
 // skillDeleteDescription is the delete-confirm detail paragraph for skills
 // (the name span is filled server-side).
 templ skillDeleteDescription(s *Skill) {
-	<p class="text-muted mt-1 text-sm">
-		This permanently removes <span class="font-medium text-base-content">{ s.Name }</span> and its content. Agents referencing it lose the capability. Irreversible.
-	</p>
+	@components.DeleteWarning(s.Name, "and its content. Agents referencing it lose the capability. Irreversible.")
 }
 
 // skillDeleteDialog confirms deletion before the POST to /skills/:id/delete.
