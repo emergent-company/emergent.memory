@@ -7361,7 +7361,7 @@
                         "bearerAuth": []
                     }
                 ],
-                "description": "Returns the scope-authority posture (token-scope trust, permissive userinfo all-grant, introspection status). Authenticated only.",
+                "description": "Returns the scope-authority posture (introspection status). Authenticated only.",
                 "produces": [
                     "application/json"
                 ],
@@ -27607,6 +27607,9 @@
                     "items": {
                         "type": "string"
                     }
+                },
+                "type": {
+                    "$ref": "#/definitions/domain_mcpregistry.MCPServerType"
                 },
                 "url": {
                     "type": "string"
