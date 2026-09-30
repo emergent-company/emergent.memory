@@ -31,33 +31,39 @@ templ settingsField(name, label, tip, hint string, attrs templ.Attributes) {
 // mirroring agentSubNav. It stacks horizontally on small screens and becomes a
 // sticky left rail on desktop.
 templ settingsSubNav(active string, providersMissing bool) {
-	@components.SubNav("Settings sections") {
-		@components.SubNavItem("/settings", active == "general", "lucide--settings", "General")
-		@components.SubNavItem("/settings/assistant", active == "assistant", "lucide--bot", "Assistant")
-		@components.SubNavItem("/settings/members", active == "members", "lucide--users", "Members")
-		@components.SubNavItem("/settings/overrides", active == "overrides", "lucide--wrench", "Overrides")
-		{{ activeP := active == "providers" }}
-		<a
-			class={ "flex items-center gap-2.5 rounded-box px-3 py-2 text-sm whitespace-nowrap transition-colors", templ.KV("bg-base-200 font-medium text-base-content", activeP), templ.KV("text-muted-strong hover:bg-base-200/50 hover:text-base-content", !activeP) }
-			href="/settings/providers"
-			if activeP {
-				aria-current="page"
-			}
-		>
-			if activeP {
-				@ui.IconSpan("lucide--server", "size-4 shrink-0 text-primary")
-			} else {
-				@ui.IconSpan("lucide--server", "size-4 shrink-0 text-muted-faint")
-			}
-			<span>Providers</span>
-			if providersMissing && !activeP {
-				<span class="iconify lucide--alert-triangle size-3.5 shrink-0 text-warning" role="img" aria-label="No provider configured" title="No provider configured"></span>
-			}
-		</a>
-		@components.SubNavItem("/settings/voice", active == "voice", "lucide--mic", "Voice")
-		@components.SubNavItem("/settings/devices", active == "devices", "lucide--smartphone", "Devices")
-		@components.SubNavItem("/settings/mcp-nodes", active == "mcp-nodes", "lucide--radio", "MCP nodes")
-	}
+	@components.SettingsRail("Settings sections", active, []components.RailItem{
+		{Key: "general", Href: "/settings", Icon: "lucide--settings", Label: "General"},
+		{Key: "assistant", Href: "/settings/assistant", Icon: "lucide--bot", Label: "Assistant"},
+		{Key: "members", Href: "/settings/members", Icon: "lucide--users", Label: "Members"},
+		{Key: "overrides", Href: "/settings/overrides", Icon: "lucide--wrench", Label: "Overrides"},
+		{Custom: providersRailItem(active, providersMissing)},
+		{Key: "voice", Href: "/settings/voice", Icon: "lucide--mic", Label: "Voice"},
+		{Key: "devices", Href: "/settings/devices", Icon: "lucide--smartphone", Label: "Devices"},
+		{Key: "mcp-nodes", Href: "/settings/mcp-nodes", Icon: "lucide--radio", Label: "MCP nodes"},
+	})
+}
+
+// providersRailItem renders the Providers settings entry, which carries a
+// warning badge when no provider is configured (unlike a plain SubNavItem).
+templ providersRailItem(active string, providersMissing bool) {
+	{{ activeP := active == "providers" }}
+	<a
+		class={ "flex items-center gap-2.5 rounded-box px-3 py-2 text-sm whitespace-nowrap transition-colors", templ.KV("bg-base-200 font-medium text-base-content", activeP), templ.KV("text-muted-strong hover:bg-base-200/50 hover:text-base-content", !activeP) }
+		href="/settings/providers"
+		if activeP {
+			aria-current="page"
+		}
+	>
+		if activeP {
+			@ui.IconSpan("lucide--server", "size-4 shrink-0 text-primary")
+		} else {
+			@ui.IconSpan("lucide--server", "size-4 shrink-0 text-muted-faint")
+		}
+		<span>Providers</span>
+		if providersMissing && !activeP {
+			<span class="iconify lucide--alert-triangle size-3.5 shrink-0 text-warning" role="img" aria-label="No provider configured" title="No provider configured"></span>
+		}
+	</a>
 }
 
 // ProjectSettingsPage renders the General section of project settings: the
