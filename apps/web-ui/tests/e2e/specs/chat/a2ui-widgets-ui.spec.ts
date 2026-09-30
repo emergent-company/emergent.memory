@@ -159,18 +159,29 @@ test.describe('A2UI surface cards', () => {
     try {
       // 9 catalog components + 1 unknown → exactly 10 cards.
       await expect(page.locator(CARD_BODIES)).toHaveCount(10, { timeout: 15_000 });
+
+      // A UI-only turn must not leave an empty assistant text bubble — the only
+      // agent bubbles this turn are the A2UI cards, which render no `.chat-bubble`.
+      await expect(page.locator('#chat-messages .chat.chat-start .chat-bubble')).toHaveCount(0);
+
       // proposal
       const proposal = card(page, SENTINEL.proposal);
       await expect(proposal).toHaveCount(1);
       await expect(proposal.getByText('deploy')).toBeVisible();
       await expect(proposal.getByRole('button', { name: 'Accept' })).toBeVisible();
       await expect(proposal.getByRole('button', { name: 'Reject' })).toBeVisible();
+      // body renders as key/value rows (label + value), not a single JSON blob.
+      await expect(proposal.getByText('plan', { exact: true })).toBeVisible();
+      await expect(proposal.getByText('ship it', { exact: true })).toBeVisible();
 
       // approval
       const approval = card(page, SENTINEL.approval);
       await expect(approval).toHaveCount(1);
       await expect(approval.getByRole('button', { name: 'Approve' })).toBeVisible();
       await expect(approval.getByRole('button', { name: 'Deny' })).toBeVisible();
+      // input renders as key/value rows (label + value), not a single JSON blob.
+      await expect(approval.getByText('path', { exact: true })).toBeVisible();
+      await expect(approval.getByText('/tmp/x', { exact: true })).toBeVisible();
 
       // question
       const question = card(page, SENTINEL.question);
@@ -205,8 +216,14 @@ test.describe('A2UI surface cards', () => {
       await expect(todo.locator('li').nth(1).locator('input[type=checkbox]')).toBeChecked();
       await expect(todo.locator('input[type=checkbox]').first()).toBeDisabled();
 
-      // result
-      await expect(card(page, SENTINEL.result)).toHaveCount(1);
+      // result — rows array expands into key/value rows (label + value)
+      const result = card(page, SENTINEL.result);
+      await expect(result).toHaveCount(1);
+      await expect(result.getByText('rows', { exact: true })).toBeVisible();
+      await expect(result.getByText(SENTINEL.result, { exact: true })).toBeVisible();
+
+      // The old broken render stringified the rows array — must not survive.
+      await expect(page.locator('#chat-messages')).not.toContainText('[{"label"');
 
       // sources — header + one rendered source row
       const sources = card(page, SENTINEL.sources);

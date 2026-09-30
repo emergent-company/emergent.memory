@@ -121,6 +121,10 @@ The composer SHALL maintain a client-side queue that holds follow-up messages wh
 - **WHEN** the user activates "send next" on a queued row while no turn is running
 - **THEN** that message is sent immediately
 
+#### Scenario: Send next while idle does not cascade the queue
+- **WHEN** the user activates "send next" on a queued row while no turn is running and further rows remain queued
+- **THEN** only that message is sent and its row is cleared, and the remaining rows stay queued for an explicit action (the turn it starts does not auto-release them — they were parked behind a turn that has already ended)
+
 #### Scenario: Cmd/Ctrl+Enter always queues
 - **WHEN** the user presses `Cmd/Ctrl+Enter` while no turn is running
 - **THEN** the message is queued rather than sent

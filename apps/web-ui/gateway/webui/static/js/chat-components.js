@@ -969,6 +969,44 @@
     return list;
   }
 
+  // a2uiPairRows normalizes a structured prop into [[label, value, href?], ...]
+  // rows for a2uiRows. It accepts an array of objects ({label|key|name|title,
+  // value|text|body}), an array of [label, value] pairs, or a plain object
+  // (entries become [key, value]). Anything else returns null.
+  function a2uiPairRows(value) {
+    if (value === undefined || value === null) return null;
+    if (Array.isArray(value)) {
+      if (!value.length) return [];
+      var out = [];
+      for (var i = 0; i < value.length; i++) {
+        var item = value[i];
+        if (Array.isArray(item)) {
+          out.push([item[0], a2uiText(item[1])]);
+        } else if (item && typeof item === "object") {
+          var label = item.label != null ? item.label :
+            item.key != null ? item.key :
+            item.name != null ? item.name : item.title;
+          var val = item.value != null ? item.value :
+            item.text != null ? item.text : item.body;
+          out.push([label, a2uiText(val)]);
+        } else {
+          return null;
+        }
+      }
+      return out;
+    }
+    if (typeof value === "object") {
+      var rows = [];
+      for (var key in value) {
+        if (Object.prototype.hasOwnProperty.call(value, key)) {
+          rows.push([key, a2uiText(value[key])]);
+        }
+      }
+      return rows;
+    }
+    return null;
+  }
+
   function a2uiButton(surfaceId, label, action, primary) {
     var btn = document.createElement("button");
     btn.type = "button";
@@ -1007,7 +1045,12 @@
       shell.body.appendChild(a2uiLabel(comp.summary));
     }
     if (comp.body !== undefined && comp.body !== null) {
-      shell.body.appendChild(a2uiPre(comp.body));
+      var bodyPairs = a2uiPairRows(comp.body);
+      if (bodyPairs && bodyPairs.length) {
+        shell.body.appendChild(a2uiRows(bodyPairs));
+      } else {
+        shell.body.appendChild(a2uiPre(comp.body));
+      }
     }
     shell.body.appendChild(a2uiActions(surfaceId, comp, [
       ["Reject", "reject", false],
@@ -1020,7 +1063,12 @@
     var shell = a2uiShell();
     shell.body.appendChild(a2uiHeader("Approval", comp.tool || "tool"));
     if (comp.input !== undefined && comp.input !== null) {
-      shell.body.appendChild(a2uiPre(comp.input));
+      var inputPairs = a2uiPairRows(comp.input);
+      if (inputPairs && inputPairs.length) {
+        shell.body.appendChild(a2uiRows(inputPairs));
+      } else {
+        shell.body.appendChild(a2uiPre(comp.input));
+      }
     }
     shell.body.appendChild(a2uiActions(surfaceId, comp, [
       ["Deny", "deny", false],
@@ -1173,6 +1221,11 @@
   function a2uiResult(comp, surfaceId) {
     var shell = a2uiShell();
     shell.body.appendChild(a2uiHeader("Result", null));
+    var pairs = a2uiPairRows(comp.rows);
+    if (pairs && pairs.length) {
+      shell.body.appendChild(a2uiRows(pairs));
+      return shell.wrap;
+    }
     var rows = [];
     for (var key in comp) {
       if (!Object.prototype.hasOwnProperty.call(comp, key)) continue;

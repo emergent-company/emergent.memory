@@ -133,6 +133,7 @@
       renderApproval(evt);
     },
     renderUI: function (evt) {
+      stream.noteUISurface();
       MemoryChatComponents.renderA2UISurface(evt.surfaceId, evt.messages, badgeCtx);
     },
     // Grounded citations for the live turn (emitted before `done`): mount the
@@ -2241,6 +2242,12 @@
     if (idx === -1 || !item) return;
     q.items.splice(idx, 1);
     if (!streaming && !activeRunId) {
+      // The composer is idle, so this is an explicit send of exactly one row.
+      // Disarm the queue first: finishTurn's pumpQueue would otherwise treat the
+      // turn this starts as the one the remaining rows were parked behind and
+      // cascade-send them all. They were queued behind a turn that has already
+      // ended, so they stay parked for an explicit action (#1301).
+      q.armed = false;
       persistQueue();
       renderQueue();
       if (!dispatchMessage(item.text)) {

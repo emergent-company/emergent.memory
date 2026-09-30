@@ -15,3 +15,7 @@ The gateway SHALL forward A2UI surface messages to the web client as a `ui` even
 #### Scenario: ui events keep stream order
 - **WHEN** a turn emits text deltas and A2UI surfaces
 - **THEN** the `ui` events preserve the executor's emission order relative to `token` events
+
+#### Scenario: surface-only turn leaves no empty text bubble
+- **WHEN** a turn's only output is an A2UI surface and no text delta
+- **THEN** the client SHALL leave no empty assistant text bubble above the rendered surfaces
