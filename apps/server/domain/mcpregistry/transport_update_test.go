@@ -89,7 +89,9 @@ func (s *MCPRegistryTransportUpdateSuite) TestTransportChangePersists() {
 	typ, url, headers, command := s.readServer(serverID)
 	s.Require().Equal("stdio", typ, "type must be stdio after the switch")
 	s.Require().Nil(url, "url must be NULL after switching away from a remote transport")
-	s.Require().Nil(headers, "headers must be NULL after switching away from a remote transport")
+	// headers is jsonb: a cleared map round-trips as JSON null, not SQL NULL.
+	s.Require().True(headers == nil || string(headers) == "null",
+		"headers must be cleared (NULL or JSON null) after switching away from a remote transport, got %q", headers)
 	s.Require().NotNil(command, "command must be set for the stdio transport")
 	s.Require().Equal("npx -y files-mcp", *command, "command must persist the submitted value")
 }
