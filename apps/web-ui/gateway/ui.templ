@@ -301,9 +301,30 @@ templ agentsEmpty() {
 	}
 }
 
-// statRow lays out go-daisy StatCards in the app's 3-up grid.
-templ statRow(cards []ui.StatCardProps, margin string) {
-	<div class={ "grid grid-cols-1 gap-3 sm:grid-cols-2", margin }>
+// StatRowOpts tunes a statRow layout.
+type StatRowOpts struct {
+	// Margin is the outer spacing utility class (for example "mt-6").
+	Margin string
+	// ColsClass optionally extends the responsive column count beyond the
+	// default two columns (for example "lg:grid-cols-3"), so a short row of
+	// stats can sit on one line at desktop widths. Empty keeps the default.
+	ColsClass string
+}
+
+// statRow lays out go-daisy StatCards in the app's responsive grid: one column
+// on mobile, two from sm up, and any extra columns from ColsClass (for example
+// lg:grid-cols-3) so all cards share one line once the viewport is wide enough.
+// Class order is grid → cols → gap → sm:cols → extra → margin, mirroring
+// MetaGrid so the column/gap rhythm does not drift per page.
+templ statRow(cards []ui.StatCardProps, opts StatRowOpts) {
+	{{ class := "grid grid-cols-1 gap-3 sm:grid-cols-2"
+	if opts.ColsClass != "" {
+		class += " " + opts.ColsClass
+	}
+	if opts.Margin != "" {
+		class += " " + opts.Margin
+	} }}
+	<div class={ class }>
 		for _, c := range cards {
 			@ui.StatCard(c)
 		}
