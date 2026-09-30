@@ -78,6 +78,19 @@ func TestConfirmIconRendersOverride(t *testing.T) {
 	assertNotContains(t, html, "lucide--trash-2")
 }
 
+func TestDeleteWarningRendersSentence(t *testing.T) {
+	withID := renderHTML(t, DeleteWarning("", "and its definition. Irreversible.", DeleteWarningProps{SubjectID: "delete-agent-name"}))
+	assertContains(t, withID,
+		"This permanently removes",
+		`id="delete-agent-name"`,
+		"and its definition. Irreversible.",
+	)
+
+	plain := renderHTML(t, DeleteWarning("my skill", "and its content. Irreversible."))
+	assertContains(t, plain, "This permanently removes", "my skill", "and its content. Irreversible.")
+	assertNotContains(t, plain, `id="`)
+}
+
 // --- table ---
 
 func TestTableCardWrapsChildren(t *testing.T) {
@@ -248,6 +261,26 @@ func TestSubNavItemActiveAndInactive(t *testing.T) {
 	inactive := renderHTML(t, SubNavItem("/agents/a1", false, "lucide--layout-dashboard", "Dashboard"))
 	assertContains(t, inactive, `text-muted-strong`, "text-muted-faint")
 	assertNotContains(t, inactive, `aria-current="page"`)
+}
+
+func TestSettingsRailRendersItemsAndActive(t *testing.T) {
+	items := []RailItem{
+		{Key: "general", Href: "/settings", Icon: "lucide--settings", Label: "General"},
+		{Custom: templ.Raw(`<div class="custom-group">group</div>`)},
+		{Key: "voice", Href: "/settings/voice", Icon: "lucide--mic", Label: "Voice"},
+	}
+	html := renderHTML(t, SettingsRail("Settings sections", "voice", items))
+	assertContains(t, html,
+		`aria-label="Settings sections"`,
+		`href="/settings"`,
+		`href="/settings/voice" aria-current="page"`,
+		"General",
+		"Voice",
+		"custom-group",
+		"group",
+	)
+	// The inactive plain item is not marked current.
+	assertNotContains(t, html, `href="/settings" aria-current="page"`)
 }
 
 // --- badge / chip / panel ---

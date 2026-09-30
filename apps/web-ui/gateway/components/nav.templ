@@ -13,6 +13,36 @@ templ SubNav(label string) {
 	</nav>
 }
 
+// RailItem is one entry in a SettingsRail. A plain item renders as a SubNavItem,
+// active when the rail's active key matches Key. Custom, when set, renders in the
+// item's place for irregular entries a SubNavItem cannot express (a nested group,
+// or a link carrying a trailing badge); it is then responsible for its own
+// active-state markup.
+type RailItem struct {
+	Key    string
+	Href   string
+	Icon   string
+	Label  string
+	Custom templ.Component
+}
+
+// SettingsRail renders a data-driven sub-navigation rail: the SubNav wrapper plus
+// one SubNavItem per plain item, marking the entry whose Key matches active. The
+// five page-local rail builders (agent, settings, profile, schema, org settings)
+// all re-express their item lists through this component so the wrapper and
+// active-matching logic live in one place.
+templ SettingsRail(label, active string, items []RailItem) {
+	@SubNav(label) {
+		for _, it := range items {
+			if it.Custom != nil {
+				@it.Custom
+			} else {
+				@SubNavItem(it.Href, active == it.Key, it.Icon, it.Label)
+			}
+		}
+	}
+}
+
 // SubNavItem renders one sub-navigation entry, marking the active destination.
 templ SubNavItem(href string, isActive bool, icon, label string) {
 	<a
