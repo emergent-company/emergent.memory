@@ -181,7 +181,7 @@ The visibility listbox's `style="display:none"` is **not** redundant with
 ## 5. Alpine vs `data-*` vs go-daisy — policy
 
 **Current reality.** Alpine is bootstrapped once in the app shell
-(`@alpine.Tag()`, `ui.templ:172`) and then drives **two** custom widgets:
+(`@alpine.Tag()`, `ui.templ:181`) and then drives **two** custom widgets:
 
 - The visibility listbox (`agent.templ:440-517`) — Alpine `x-data`/`x-show`/`x-cloak`.
 - The org bulk-delete toolbar (`org_context.templ:289,310,330`) — Alpine `x-data`/`x-show`.
@@ -240,21 +240,33 @@ Three facts that make this a trap:
 - **(c)** use `x-if`/`<template>` so nothing exists in the DOM when hidden
   (immune to attribute restore).
 
-**Platform-level options** (not yet adopted here): the official
-`hx-alpine-compat` extension; `htmx.config.morphIgnore = ["style"]`; or
-`hx-swap="innerHTML settle:0"` to skip the settle-window restore. None are
-configured today (`ui.templ:155-159` sets only `implicitInheritance`, `noSwap`,
-`defaultTimeout`); upgrading htmx once upstream resolves the beta behaviour is
-the cleanest long-term fix (issue #1267 fix-list).
+**Adopted fix: the `hx-alpine-compat` extension (#1275).** The official
+extension is **now adopted** — vendored at
+`webui/static/js/hx-alpine-compat.js` and loaded synchronously in `ui.templ:180`
+after `htmx.min.js` (`ui.templ:147`) and before the deferred Alpine bootstrap
+(`@alpine.Tag()`, `ui.templ:181`). It covers **all htmx swaps** by deferring
+Alpine's mutations for the duration of the swap
+(`window.Alpine.deferMutations()`) and flushing them once it settles
+(`flushAndStopDeferringMutations()`), so Alpine always initialises the swapped
+subtree against the settled (post-restore) DOM. **This is what fixes #1267** —
+upgrading htmx from `4.0.0-beta6` to `4.0.0` final did **not**: the upstream
+`__startCSSTransitions` / same-id restore path is byte-identical in both builds.
+
+**Other platform-level options** (not adopted): `htmx.config.morphIgnore =
+["style"]`; or `hx-swap="innerHTML settle:0"` to skip the settle-window restore.
+The extension is preferred because it fixes the whole class rather than one
+attribute. `ui.templ:155-159` still sets only `implicitInheritance`, `noSwap`,
+and `defaultTimeout`.
 
 ---
 
 ## 7. JS widget architecture (known debt)
 
-Static scripts load in `ui.templ:173-179`:
+Static scripts load in `ui.templ:180-188`:
 
 | File | Responsibility |
 |---|---|
+| `hx-alpine-compat.js` | htmx `alpine-compat` extension (#1275): defers Alpine mutations across every htmx swap so Alpine initialises against the settled DOM — see §6 |
 | `app.js` | app-level client: `data-*` delegation, toasts, agent form/delete dialogs, autogrow/char-count, schema-editor dialogs, `MemoryApp` facade (`app.js:681-688`) |
 | `chat-components.js` | shared renderers: tool-call badges, thinking blocks, A2UI surface cards — "exactly one implementation to keep in sync" |
 | `chat-stream.js` | shared streaming engine (`createEngine`); pure helpers + stateful engine taking a host `ctx` |
