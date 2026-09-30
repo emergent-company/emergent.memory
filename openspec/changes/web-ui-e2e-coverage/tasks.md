@@ -69,9 +69,9 @@
 
 ## 6. Phase 6 — Chat & sidepanel
 
-- [ ] 6.1 `specs/sessions/chat-streaming-ui.spec.ts`: streamed turn renders incrementally and terminates; assert transcript DOM stages (env-gated for live model)
+- [x] 6.1 **Relocated to the env-gated live-LLM `chat` project** as `scenarios/chat/chat-multi-turn-context.spec.ts`: plants a codeword in turn 1 and asserts turn 2 of the same conversation recalls it (multi-round context reaching the model), plus history persistence via `GET /api/conversations/:id/history`. The incremental DOM-stage/streaming assertions live in the gateway-free `specs/js/chat-midrun-working.spec.ts` + `specs/js/timeline-render.spec.ts` (they drive the real stream handlers without a live model), so a second live streaming spec was not needed.
 - [ ] 6.2 `specs/sessions/chat-conversation-events-ui.spec.ts`: conversation rail refreshes via `GET /api/conversations/:id/events` and `/partial/chat-rail`
-- [ ] 6.3 `specs/sessions/chat-question-cards-ui.spec.ts`: ask-user question card respond (`POST /api/chat/questions/:id/respond`) and cancel, asserting on raw SSE frames where the DOM is insufficient
+- [x] 6.3 **Relocated to the env-gated live-LLM `chat` project** as `scenarios/chat/chat-question-resume.spec.ts`: a pending `ask_user` question in the chat dock (`#chat-dock [data-testid="dock-question"]` → `.dock-question-option` → `.dock-question-submit`) is answered and the parked run **resumes**, asserted on the rendered continuation + history. `POST /api/chat/questions/:id/respond` is exercised end-to-end. The dock card's own render (question vs approval, count) is covered by `chat-run-control.spec.ts`. **Cancel** (`Esc`/dismiss, the gateway's `cancel` action) remains uncovered — no deterministic seed for its path; tracked as a follow-up.
 - [ ] 6.4 `specs/shell/assistant-sidepanel-ui.spec.ts`: sidepanel opens, sends a turn via `POST /api/chat`, and renders the reply without leaving the page
 - [ ] 6.5 Phase 6 verify: `task e2e:test -- --project=chromium --project=mutations --project=scenarios`
 
