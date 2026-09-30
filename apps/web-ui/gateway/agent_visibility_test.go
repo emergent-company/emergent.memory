@@ -122,6 +122,24 @@ func TestRenderAgentGeneralVisibilityDropdown(t *testing.T) {
 	}
 }
 
+// TestRenderAgentGeneralVisibilityListboxClosedOnLoad guards the closed-state
+// markup that survives an htmx boosted swap: the listbox must be rendered with
+// an inline `display: none`, not only `x-show`/`x-cloak`. htmx v4's innerHTML
+// swap copies then restores attributes for same-id elements, stripping the
+// inline `display` Alpine's `x-show` had set on the previous DOM and leaving the
+// listbox visible after a settings save ("the dropdown opens by itself").
+func TestRenderAgentGeneralVisibilityListboxClosedOnLoad(t *testing.T) {
+	html := renderGeneralForm(t, &AgentDefinition{ID: "a1", Name: "diane"})
+	block := visibilityDropdownBlock(t, html)
+	if !strings.Contains(block, `<ul id="agent-settings-visibility-listbox"`) {
+		t.Fatalf("visibility listbox element not found in %q", block)
+	}
+	ul := block[strings.Index(block, `<ul id="agent-settings-visibility-listbox"`):]
+	if !strings.Contains(ul, `style="display: none"`) {
+		t.Error("visibility listbox must render with inline display:none so a boosted htmx swap cannot reveal it")
+	}
+}
+
 // TestRenderAgentGeneralVisibilityPreselection covers the stored value driving
 // the hidden input and the selected option, including the empty/unknown
 // graceful fallback to project.
