@@ -625,17 +625,26 @@ func TestRenderAgentSettingsPage(t *testing.T) {
 		}
 	}
 
-	// General page: name, system prompt, language, and its POST target.
+	// General page: name, system prompt, language, its POST target, and the
+	// debounced auto-save wiring (form marker + endpoint + status node).
 	general := render("general")
 	for _, want := range []string{
 		`name="name"`, `value="diane"`,
 		`name="systemPrompt"`, "be terse",
 		`name="language"`,
 		`/agents/a1/settings/general`,
+		`data-agent-autosave="general"`,
+		`data-autosave-url="/agents/a1/settings/general/autosave"`,
+		`data-testid="agent-settings-autosave-status"`,
+		`data-autosave-status`,
 	} {
 		if !strings.Contains(general, want) {
 			t.Errorf("general settings page missing %q", want)
 		}
+	}
+	// The auto-saving General form drops the shared explicit save button.
+	if strings.Contains(general, "Save changes") {
+		t.Error("general settings page must not render the explicit Save changes button")
 	}
 
 	// Model page: model picker + temperature + max tokens.
@@ -1341,6 +1350,72 @@ func TestUIAgentUpdateRoute(t *testing.T) {
 	})
 }
 
+// TestUIAgentAutosaveGeneral covers the JSON auto-save endpoint the General
+// form posts to (agent-settings.js): success returns 200 {"ok":true} and
+// persists the section in place, a validation failure returns 422 with the
+// message and persists nothing, and an unavailable agent returns 502 — all
+// without a PRG redirect.
+func TestUIAgentAutosaveGeneral(t *testing.T) {
+	newServer := func(f *fakeMemory) *echo.Echo {
+		s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+		e := echo.New()
+		e.POST("/agents/:id/settings/general/autosave", s.uiAgentAutosaveGeneral)
+		return e
+	}
+	post := func(e *echo.Echo, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/agents/a1/settings/general/autosave", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		e.ServeHTTP(rec, req)
+		return rec
+	}
+
+	t.Run("success returns ok and persists", func(t *testing.T) {
+		f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane"}}}
+		e := newServer(f)
+		rec := post(e, "name=renamed&systemPrompt=be+terse")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status %d, want 200", rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), `"ok":true`) {
+			t.Errorf("body = %s, want ok true", rec.Body.String())
+		}
+		if rec.Header().Get("Location") != "" {
+			t.Error("auto-save must not redirect")
+		}
+		if f.updatedAgent == nil || f.updatedAgent.Name != "renamed" || f.updatedAgent.SystemPrompt != "be terse" {
+			t.Errorf("auto-save mapping wrong: %+v", f.updatedAgent)
+		}
+	})
+
+	t.Run("validation error returns 422 and persists nothing", func(t *testing.T) {
+		f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane"}}}
+		e := newServer(f)
+		rec := post(e, "name=&systemPrompt=x")
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status %d, want 422", rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "name is required") {
+			t.Errorf("body = %s, want the validation error", rec.Body.String())
+		}
+		if f.updatedAgent != nil {
+			t.Errorf("a rejected auto-save must not persist: %+v", f.updatedAgent)
+		}
+	})
+
+	t.Run("missing agent returns 502", func(t *testing.T) {
+		f := &fakeMemory{}
+		e := newServer(f)
+		rec := post(e, "name=renamed")
+		if rec.Code != http.StatusBadGateway {
+			t.Fatalf("status %d, want 502", rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "not found") {
+			t.Errorf("body = %s, want the backend error", rec.Body.String())
+		}
+	})
+}
+
 // TestRenderAgentSandboxPage covers the sandbox config form: the enabled
 // toggle, provider/base-image/repo/resource fields reflecting stored state,
 // the provider availability list (enabled healthy options, disabled
@@ -1850,8 +1925,10 @@ func TestRenderAgentSettingsToolGroups(t *testing.T) {
 		`data-testid="tool-group-enabled-graph-write"`,
 		`type="checkbox" name="tool" value="entity-create" class="toggle toggle-sm shrink-0" checked`,
 		`type="checkbox" name="tool" value="entity-delete"`,
-		"Inherit (Ask)",     // graph-write's policy, shown inline on inheriting rows
-		"Inherit (Default)", // the agent default, shown on rows whose group inherits
+		"Inherit (Ask)",            // graph-write's policy, shown inline on inheriting rows
+		"Inherit (Default)",        // the agent default, shown on rows whose group inherits
+		`data-tool-default-policy`, // the default select is the inheritance recompute root
+		`data-inherit-option`,      // the Inherit option carries its inherited value
 		"Web", `name="groupPolicy.web"`,
 		`type="checkbox" name="tool" value="web_search"`,
 		`data-testid="tool-group-other"`,

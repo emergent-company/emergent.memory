@@ -289,6 +289,42 @@ func (s *Server) uiAgentUpdateGeneral(c echo.Context) error {
 	return s.applyAgentSettingsSection(c, sectionGeneral, applyAgentGeneralSection)
 }
 
+// uiAgentAutosaveGeneral handles POST /agents/:id/settings/general/autosave —
+// the JSON counterpart of uiAgentUpdateGeneral used by the General form's
+// debounced auto-save. It applies the same section applier and persists, but
+// reports success/validation failure as JSON (200 {"ok":true} /
+// 422 {"ok":false,"error":...}) instead of the PRG redirect, so the page can
+// surface the error inline without losing the user's in-progress edits. The
+// form posts its whole field set, so the applier's all-fields mapping stays
+// lossless.
+func (s *Server) uiAgentAutosaveGeneral(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := c.Param("id")
+
+	fail := func(status int, err error) error {
+		return c.JSON(status, map[string]any{"ok": false, "error": err.Error()})
+	}
+
+	def, err := s.memory.GetAgentDefinition(ctx, id)
+	if err != nil {
+		return fail(http.StatusBadGateway, err)
+	}
+	if err := c.Request().ParseForm(); err != nil {
+		return fail(http.StatusBadRequest, err)
+	}
+	deriveDelegation(def)
+	if err := applyAgentGeneralSection(def, c); err != nil {
+		return fail(http.StatusUnprocessableEntity, err)
+	}
+	if err := applyDelegation(def); err != nil {
+		return fail(http.StatusUnprocessableEntity, err)
+	}
+	if _, err := s.memory.UpdateAgentDefinition(ctx, id, def); err != nil {
+		return fail(http.StatusBadGateway, err)
+	}
+	return c.JSON(http.StatusOK, map[string]any{"ok": true})
+}
+
 // uiAgentUpdateModel handles POST /agents/:id/settings/model.
 func (s *Server) uiAgentUpdateModel(c echo.Context) error {
 	return s.applyAgentSettingsSection(c, sectionModel, applyAgentModelSection)

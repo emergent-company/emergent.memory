@@ -365,10 +365,39 @@ templ agentSettingsSave() {
 	</div>
 }
 
-// agentGeneralSettingsForm is the General subpage (PRG → POST
-// /agents/:id/settings/general): name, system prompt, language, and visibility.
+// agentAutosaveStatus is the General form's footer in place of the shared save
+// button: the client (agent-settings.js) debounces edits and posts them to
+// data-autosave-url, and this node mirrors its state (saving / saved / error)
+// with a retry affordance on failure. data-state carries the machine-readable
+// state; the label is the user-facing text.
+templ agentAutosaveStatus() {
+	<div
+		class="mt-6 flex min-h-6 items-center gap-2"
+		data-autosave-status
+		data-state="idle"
+		data-testid="agent-settings-autosave-status"
+		aria-live="polite"
+	>
+		<span class="iconify lucide--cloud-check text-muted-faint size-4" data-autosave-icon aria-hidden="true"></span>
+		<span class="text-muted-strong text-sm" data-autosave-status-label>All changes saved</span>
+		<button type="button" class="btn btn-ghost btn-xs" data-autosave-retry hidden>Retry</button>
+	</div>
+}
+
+// agentGeneralSettingsForm is the General subpage (auto-save → POST
+// /agents/:id/settings/general/autosave, with the PRG path kept as the no-JS
+// fallback): name, system prompt, language, and visibility. The form is marked
+// data-agent-autosave so agent-settings.js debounces text edits and posts the
+// whole form in place; the shared agentSettingsSave() footer is replaced by the
+// agentAutosaveStatus indicator.
 templ agentGeneralSettingsForm(data agentSettingsData) {
-	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/general") }>
+	<form
+		class="flex flex-col"
+		method="post"
+		action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/general") }
+		data-agent-autosave="general"
+		data-autosave-url={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/general/autosave") }
+	>
 		@ui.Section("General", ui.SectionProps{
 			Margin:    "mt-6",
 			BodyClass: "memory-density-comfortable",
@@ -533,7 +562,7 @@ templ agentGeneralSettingsForm(data agentSettingsData) {
 				}
 			</div>
 		}
-		@agentSettingsSave()
+		@agentAutosaveStatus()
 	</form>
 }
 
@@ -567,7 +596,7 @@ templ agentToolsSettingsForm(data agentSettingsData) {
 		}) {
 			<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
 				<span class="text-sm font-medium">Default approval</span>
-				<select name="defaultToolPolicy" class="select select-sm w-40">
+				<select name="defaultToolPolicy" data-tool-default-policy class="select select-sm w-40">
 					<option value="allow" if data.Agent.DefaultToolPolicy == "allow" { selected }>Allow</option>
 					<option value="ask" if data.Agent.DefaultToolPolicy == "ask" { selected }>Ask</option>
 					<option value="deny" if data.Agent.DefaultToolPolicy == "deny" { selected }>Deny</option>
@@ -1225,9 +1254,9 @@ templ agentToolOtherGroup(tools []string, agent *AgentDefinition) {
 // option.
 templ agentPolicyOptions(value, inheritValue, inheritLabel string) {
 	if inheritLabel != "" {
-		<option value={ inheritValue } if value == inheritValue { selected }>Inherit ({ inheritLabel })</option>
+		<option value={ inheritValue } if value == inheritValue { selected } data-inherit-option>Inherit ({ inheritLabel })</option>
 	} else {
-		<option value={ inheritValue } if value == inheritValue { selected }>Inherit</option>
+		<option value={ inheritValue } if value == inheritValue { selected } data-inherit-option>Inherit</option>
 	}
 	<option value="allow" if value == "allow" { selected }>Allow</option>
 	<option value="ask" if value == "ask" { selected }>Ask</option>
