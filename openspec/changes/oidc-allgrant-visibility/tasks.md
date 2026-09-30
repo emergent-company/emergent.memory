@@ -1,3 +1,4 @@
+<!-- openspec:archive-hold: superseded by unify-scope-authority §8 (#1261) — the permissive userinfo all-grant (ZITADEL_USERINFO_GRANT_ALL_SCOPES, health oidc_all_grant) was deliberately removed; its deltas must NOT be re-applied to the main specs. -->
 ## 1. Predicate on config
 
 - [x] 1.1 Add `IntrospectionConfigured()` and `UserinfoAllGrantActive()` to `*ZitadelConfig`; delegate the auth middleware's `introspectionConfigured`/`oidcAllGrantEnabled` to them
