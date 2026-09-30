@@ -2352,6 +2352,10 @@
     return "q" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   }
 
+  // Compact queued-message editor. Caps at 112px to match
+  // `.memory-queue-input`'s max-height:7rem — deliberately shorter than the
+  // primary composer's 160px cap (chat-stream.js autoGrow), which owns the main
+  // input.
   function autoGrowEl(el) {
     if (!el) return;
     el.style.height = "auto";

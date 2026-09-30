@@ -698,7 +698,7 @@
   // addUserMessage / addAssistantMessage / openAssistantBubble /
   // updateBubbleText live in chat-stream.js (shared with the /chat page).
 
-  /* ---------- tool chips (identical to chat.js) ---------- */
+  /* ---------- tool chips ---------- */
 
   // The badge shell + detail renderer come from chat-components.js and the
   // chip builders (toolChip / setToolStatus / handleToolEvent) from

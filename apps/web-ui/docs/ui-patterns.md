@@ -262,19 +262,20 @@ and `defaultTimeout`.
 
 ## 7. JS widget architecture (known debt)
 
-Static scripts load in `ui.templ:180-188`:
+Static scripts load in `ui.templ:180-189`:
 
 | File | Responsibility |
 |---|---|
 | `hx-alpine-compat.js` | htmx `alpine-compat` extension (#1275): defers Alpine mutations across every htmx swap so Alpine initialises against the settled DOM — see §6 |
 | `app.js` | app-level client: `data-*` delegation, toasts, agent form/delete dialogs, autogrow/char-count, schema-editor dialogs, `MemoryApp` facade (`app.js:681-688`) |
+| `chat-transport.js` | shared no-DOM chat helpers: `parseSSE`/`streamSSE` wire transport + `agentIconifyClass` normalization (loaded on the shell **and** the public share page) |
 | `chat-components.js` | shared renderers: tool-call badges, thinking blocks, A2UI surface cards — "exactly one implementation to keep in sync" |
 | `chat-stream.js` | shared streaming engine (`createEngine`); pure helpers + stateful engine taking a host `ctx` |
 | `chat-host.js` | shared host glue: composer helpers, drag-resize width, timeline sort, SSE dispatcher, gateway POST |
 | `chat.js` | `/chat` page client (SSE, persistence, session rail) |
 | `sidepanel.js` | global assistant drawer (outside `#main-content`; localStorage restore) |
 | `object-preview.js` | inline object-reference preview drawer |
-| `share-agent.js` | public share page — deliberately self-contained (no shell/htmx/engine) |
+| `share-agent.js` | public share page — deliberately self-contained (no shell/htmx/engine); loads only `chat-transport.js` |
 | `usage-charts.js` | dependency-free SVG bar charts |
 | `voice.js` | LiveKit voice-call client (wires elements rendered elsewhere) |
 

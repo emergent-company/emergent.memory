@@ -181,21 +181,14 @@
     try { return JSON.parse(s); } catch (e) { return null; }
   }
 
-  // agentIconifyClass maps a stored agent icon to an iconify class compiled
-  // into app.css. Values are normally bare Lucide kebab names ("bot"), but
-  // blueprint manifests and the API also accept prefixed ("lucide--bot",
-  // "lucide:bot") or camelCase/underscore spellings, which the server
-  // normalizes. Mirroring that normalization here avoids emitting a broken
-  // "lucide--lucide--bot" glyph and keeps the live chat avatar consistent with
-  // the server-rendered tiles.
+  // agentIconifyClass normalizes an agent icon to its compiled iconify class.
+  // Single implementation lives in chat-transport.js (the one module loaded on
+  // both this engine's shell and the self-contained public share page); this is
+  // a thin alias so existing `MemoryChatStream.agentIconifyClass` callers
+  // (chat.js's headerIconClass) are unchanged. See chat-transport.js for the
+  // normalization rules and the fallbackIcon contract.
   function agentIconifyClass(icon, fallbackIcon) {
-    var s = String(icon || "").trim();
-    if (!s) return fallbackIcon;
-    if (/^lucide--[a-z0-9-]+$/.test(s)) return s;
-    s = s.replace(/^lucide:/, "");
-    s = s.replace(/[_\s]+/g, "-").replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
-    s = s.replace(/-+/g, "-").replace(/^-+|-+$/g, "");
-    return /^[a-z0-9-]+$/.test(s) ? "lucide--" + s : fallbackIcon;
+    return MemoryChatTransport.agentIconifyClass(icon, fallbackIcon);
   }
 
   // agentAvatarHTML builds an assistant chat-image avatar. When the selected
@@ -254,6 +247,10 @@
 
     /* ---------- composer ---------- */
 
+    // Caps the primary composer at 160px (the largest input on the page).
+    // chat.js's compact queue-row editor keeps its own 112px cap (autoGrowEl)
+    // that matches `.memory-queue-input`'s max-height:7rem — the two caps differ
+    // by design, not by drift.
     function autoGrow() {
       var input = ctx.input;
       if (!input) return;

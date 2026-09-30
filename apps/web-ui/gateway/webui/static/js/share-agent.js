@@ -305,18 +305,14 @@
   }
 
   // agentIconClass maps an agent's declared icon to its compiled iconify class,
-  // falling back to the bot glyph for empty/unresolvable values and "" for raw
-  // glyphs (emoji) — matching the app's agentIconName/typeIconClass contract.
+  // falling back to the bot glyph for empty values and "" for raw glyphs
+  // (emoji) — matching the app's agentIconName/typeIconClass contract. The
+  // normalization itself is the single implementation in chat-transport.js,
+  // the one module both this self-contained share page and the app shell load.
   function agentIconClass(icon) {
     var s = (icon || "").trim();
     if (!s) return "lucide--bot";
-    if (hasNonASCII(s)) return "";
-    var name = s.replace(/^lucide--/, "").replace(/^lucide:/, "");
-    return name ? "lucide--" + name : "lucide--bot";
-  }
-
-  function hasNonASCII(s) {
-    return /[^\x00-\x7F]/.test(s);
+    return MemoryChatTransport.agentIconifyClass(s, "");
   }
 
   // applyConfig applies the sanitized public config returned by the exchange to

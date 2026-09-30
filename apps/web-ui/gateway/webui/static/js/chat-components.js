@@ -418,35 +418,14 @@
 
   /* ---------- run-control surfaces (copy, footer, typed run markers) ---------- */
 
+  // Single implementation: MemoryChatHost.copyText (chat-host.js) owns the
+  // navigator.clipboard + hidden-textarea/execCommand fallback. This module is
+  // only loaded alongside it (same shell script block on every chat surface),
+  // so there is no second fallback copy here to drift out of sync.
   function clipboardCopy(text) {
     if (window.MemoryChatHost && typeof window.MemoryChatHost.copyText === "function") {
       window.MemoryChatHost.copyText(text);
-      return;
     }
-    // Host module absent (should not happen — loaded on every chat surface):
-    // keep the same navigator.clipboard + textarea fallback inline.
-    var value = String(text);
-    function copyTextFallback() {
-      var ta = document.createElement("textarea");
-      ta.value = value;
-      document.body.appendChild(ta);
-      ta.select();
-      try { document.execCommand("copy"); } catch (e) {}
-      document.body.removeChild(ta);
-    }
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      try {
-        var p = navigator.clipboard.writeText(value);
-        if (p && typeof p.then === "function") {
-          p.then(
-            function () {},
-            function () { copyTextFallback(); }
-          );
-        }
-        return;
-      } catch (e) { /* fall through to the textarea fallback */ }
-    }
-    copyTextFallback();
   }
 
   var COPY_ICON = '<span class="iconify lucide--copy size-3.5" aria-hidden="true"></span>';

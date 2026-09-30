@@ -7,6 +7,13 @@
  *
  *   parseSSE(buf, acc)          pure frame splitter
  *   streamSSE(url, opts)        fetch + stream + parse + dispatch
+ *   agentIconifyClass(icon, fallback)
+ *                               pure agent-icon → iconify-class normalizer
+ *
+ * The icon normalizer is a pure, DOM-free helper the two chat clients
+ * (chat-stream.js on the shell, the deliberately engine-free share-agent.js on
+ * the public share page) both need, so it lives in this, the one module both
+ * surfaces already load rather than being copied into each.
  *
  * Nothing here touches the DOM or any page state — callers own their message
  * stream container and page-local callbacks. Load this BEFORE any client that
@@ -38,6 +45,25 @@
       if (line.indexOf("data:") === 0) frames.push(line.slice(5).trim());
     }
     return { frames: frames, rest: data };
+  }
+
+  // agentIconifyClass maps a stored agent icon to an iconify class compiled
+  // into app.css. Values are normally bare Lucide kebab names ("bot"), but
+  // blueprint manifests and the API also accept prefixed ("lucide--bot",
+  // "lucide:bot") or camelCase/underscore spellings, which the server
+  // normalizes. Mirroring that normalization here avoids emitting a broken
+  // "lucide--lucide--bot" glyph and keeps every client's avatar consistent with
+  // the server-rendered tiles. Empty/unresolvable input returns fallbackIcon;
+  // share-agent.js passes "" so a raw glyph (emoji) falls through to text, and
+  // chat.js/chat-stream.js pass "lucide--bot" so an absent icon is the bot.
+  function agentIconifyClass(icon, fallbackIcon) {
+    var s = String(icon || "").trim();
+    if (!s) return fallbackIcon;
+    if (/^lucide--[a-z0-9-]+$/.test(s)) return s;
+    s = s.replace(/^lucide:/, "");
+    s = s.replace(/[_\s]+/g, "-").replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+    s = s.replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+    return /^[a-z0-9-]+$/.test(s) ? "lucide--" + s : fallbackIcon;
   }
 
   // streamSSE POSTs `opts.body` to `url` and consumes the response as a
@@ -128,5 +154,6 @@
   window.MemoryChatTransport = {
     parseSSE: parseSSE,
     streamSSE: streamSSE,
+    agentIconifyClass: agentIconifyClass,
   };
 })();
