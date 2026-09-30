@@ -1098,6 +1098,16 @@
             // Planning/thinking monologue (carries function_calls): a
             // collapsible thinking block, markdown-rendered. Applies to any
             // agent — the role is the agent name, not a fixed "operator".
+            //
+            // Deliberate de-emphasis: for an intermediate tool step the
+            // persisted content.reasoning (the model's chain-of-thought) is NOT
+            // re-rendered here. A non-final event keeps its Thought text in
+            // content.reasoning (executor.go persistedEventText), and that
+            // segment already streamed live as a thinking event; this branch
+            // deliberately shows only the operator's pre-tool monologue
+            // (content.text / content.html) so replayed history does not
+            // re-surface the raw CoT for every intermediate step. The final
+            // reply's reasoning IS rendered, just below. See #1263 / #1289.
             renderThinkingBlock(text, html, "reasoning");
           } else if (isPauseNotice(text)) {
             // Synthetic "Execution paused…" message the executor injects when a
