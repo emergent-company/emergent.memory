@@ -581,7 +581,6 @@ func TestResolveOIDCScopesOrgAdminEndToEnd(t *testing.T) {
 	m.superadminLookup = nil
 	m.projectOrgLookup = nil
 	m.orgAdminLookup = nil
-	m.cfg.Zitadel.TrustTokenScopes = false
 
 	got := m.resolveOIDCScopes(ctx, adminID, projID, []string{"openid"}, nil)
 	if len(got) != 0 {
