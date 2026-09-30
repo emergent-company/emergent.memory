@@ -583,11 +583,11 @@ templ userSearchOptions(users []UserSearchResultDto) {
 // (Profile / Invitations / API tokens), mirroring settingsSubNav. It stacks
 // horizontally on small screens and becomes a sticky left rail on desktop.
 templ profileSubNav(active string) {
-	@components.SubNav("Profile sections") {
-		@components.SubNavItem("/profile", active == "profile", "lucide--user", "Profile")
-		@components.SubNavItem("/profile/invitations", active == "invitations", "lucide--mail-plus", "Invitations")
-		@components.SubNavItem("/profile/tokens", active == "tokens", "lucide--key-round", "API tokens")
-	}
+	@components.SettingsRail("Profile sections", active, []components.RailItem{
+		{Key: "profile", Href: "/profile", Icon: "lucide--user", Label: "Profile"},
+		{Key: "invitations", Href: "/profile/invitations", Icon: "lucide--mail-plus", Label: "Invitations"},
+		{Key: "tokens", Href: "/profile/tokens", Icon: "lucide--key-round", Label: "API tokens"},
+	})
 }
 
 // profilePageFrame renders the Profile area's shared chrome: the account page
@@ -838,14 +838,7 @@ templ profileEditForm(p *UserProfileDto) {
 				<input id="profile-phone" name="phoneE164" type="tel" value={ p.PhoneE164 } placeholder="+14155552671" class="input w-full"/>
 			}
 			@form.FormActions("", "") {
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeSubmit,
-					Variant: ui.ButtonPrimary,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--save",
-				}) {
-					Save changes
-				}
+				@components.SaveChangesButton()
 			}
 		</form>
 	}

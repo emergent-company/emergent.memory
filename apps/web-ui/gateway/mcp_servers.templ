@@ -428,9 +428,7 @@ templ mcpServerInspectArea(serverID string) {
 
 // mcpServerDeleteDescription is the delete-confirm detail paragraph.
 templ mcpServerDeleteDescription(srv MCPServer) {
-	<p class="text-muted mt-1 text-sm">
-		This permanently removes <span class="font-medium text-base-content">{ srv.Name }</span> and its cached tools. Agents referencing its tools stop offering them immediately. Irreversible.
-	</p>
+	@components.DeleteWarning(srv.Name, "and its cached tools. Agents referencing its tools stop offering them immediately. Irreversible.")
 }
 
 // mcpServerDeleteDialog confirms deletion before the POST to
@@ -540,14 +538,7 @@ templ mcpServerFormBody(data mcpServerFormData, editing bool) {
 					Cancel
 				}
 				if editing {
-					@ui.Button(ui.ButtonProps{
-						Type:    ui.ButtonTypeSubmit,
-						Variant: ui.ButtonPrimary,
-						Size:    ui.ButtonSM,
-						Icon:    "lucide--save",
-					}) {
-						Save changes
-					}
+					@components.SaveChangesButton()
 				} else {
 					@ui.Button(ui.ButtonProps{
 						Type:    ui.ButtonTypeSubmit,

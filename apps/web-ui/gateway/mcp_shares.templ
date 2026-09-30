@@ -297,14 +297,7 @@ templ mcpShareFormBody(data mcpShareFormData, editing bool) {
 					Cancel
 				}
 				if editing {
-					@ui.Button(ui.ButtonProps{
-						Type:    ui.ButtonTypeSubmit,
-						Variant: ui.ButtonPrimary,
-						Size:    ui.ButtonSM,
-						Icon:    "lucide--save",
-					}) {
-						Save changes
-					}
+					@components.SaveChangesButton()
 				} else {
 					@ui.Button(ui.ButtonProps{
 						Type:    ui.ButtonTypeSubmit,

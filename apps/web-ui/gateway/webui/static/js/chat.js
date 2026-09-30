@@ -935,7 +935,23 @@
     // active run it did NOT start is busy but does not own the DOM, and must
     // keep re-rendering as steps persist.
     if (liveTurn) return;
-    messages.innerHTML = "";
+    // Preserve the mid-run working placeholder across the rebuild so its CSS
+    // animation stays continuous. A page opened mid-run re-renders on every
+    // persisted step (frequent refresh frames), and recreating the node each
+    // time restarts the typing animation at frame 0 — which reads as frozen.
+    // Drop every other child instead; the placeholder stays connected to
+    // #chat-messages and is NEVER moved or re-inserted — moving an animated
+    // node (even within the same parent) restarts its CSS animation in
+    // Chromium. afterTranscriptRender restores it to the end by moving the
+    // rendered rows before it. Keeping only the first also upholds the
+    // "exactly one placeholder" invariant.
+    var workingEl = workingPlaceholder();
+    var child = messages.firstChild;
+    while (child) {
+      var next = child.nextSibling;
+      if (child !== workingEl) messages.removeChild(child);
+      child = next;
+    }
     hideEmpty();
     var name = currentAgentName();
 
@@ -2032,8 +2048,23 @@
     flushReplay();
     // Single quiet placeholder for a run already in flight on page open. Gated
     // on liveTurn (DOM ownership), never on streaming: a resumed page is busy
-    // but must still show the agent bubble.
-    if (isRunWorking(liveRunStatus) && !liveTurn) ensureWorkingPlaceholder();
+    // but must still show the agent bubble. renderTimelineItems preserved any
+    // existing node in place; re-home it to the end WITHOUT moving it — a
+    // same-parent move (appendChild) restarts a CSS animation in Chromium, so
+    // instead move every sibling rendered after it to before it. The
+    // placeholder node is never removed or re-inserted, so .memory-typing
+    // keeps animating continuously. When the run is not active no placeholder
+    // may survive the render (a run-scope timeline has no run_start/run_end, so
+    // it never reaches releaseWorkingState) — drop it here.
+    if (isRunWorking(liveRunStatus) && !liveTurn) {
+      var workingEl = ensureWorkingPlaceholder();
+      if (workingEl && workingEl.parentNode === messages) {
+        var n = workingEl.nextSibling;
+        while (n) { var nn = n.nextSibling; messages.insertBefore(n, workingEl); n = nn; }
+      }
+    } else {
+      removeWorkingPlaceholder();
+    }
     if (isRunWorking(liveRunStatus) && !streaming) setStreaming(true);
   }
 
