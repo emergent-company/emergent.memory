@@ -6,12 +6,19 @@ Provide the web console surface for the Inbox subsystem: a header bell with an u
 
 ### Requirement: Notification bell with unread indicator
 
-The console SHALL show a bell in the top navigation that links to the inbox and displays an unread indicator (a dot, or a count when greater than zero) driven by the user's unread notification counts.
+The console SHALL show a bell in the top navigation that links to the inbox and displays an unread indicator (a dot, or a count when greater than zero) driven by the unread count of the scope the bell links to — the account inbox on every page, or the project inbox while a project-scoped inbox is shown. The bell count and the inbox list for that scope SHALL be read from the same scope-filtered count, so the badge can never disagree with the list (#1342).
 
 #### Scenario: Unread notifications show an indicator
 
 - **WHEN** a signed-in user with unread notifications loads any console page
 - **THEN** the bell shows an unread dot or count
+
+#### Scenario: Bell agrees with the inbox for the active scope
+
+- **GIVEN** a user with unread account-scope and unread project-scope notifications
+- **WHEN** the account inbox is shown
+- **THEN** the bell count equals the account inbox's unread count, not the sum of both scopes
+- **AND** when the project inbox is shown, the bell count equals that project inbox's unread count
 
 #### Scenario: No unread notifications
 

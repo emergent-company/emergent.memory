@@ -367,12 +367,14 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 	objectTypes := s.objectTypeUIMap(c.Request().Context())
 	// Unread notification count for the topbar bell (inbox subsystem).
 	// Session-only and best-effort: dev/API-key mode has no bearer, and any
-	// counts failure degrades to 0 so the shell still renders. Account-scope
-	// events are always counted; the active project's unread is added when a
-	// project is in context.
+	// counts failure degrades to 0 so the shell still renders. The bell counts
+	// the SAME scope the inbox is showing (account everywhere except the
+	// project-scoped inbox), so the badge can never disagree with the list it
+	// links to — see notificationUnread / inboxBellScope.
 	unreadNotifications := 0
 	if sc, ok := sessionContextFrom(c.Request().Context()); ok && sc.Sub != "" {
-		unreadNotifications = s.notificationUnreadTotal(c.Request().Context(), activeProjectID)
+		bellScope, bellProject := s.inboxBellScope(c)
+		unreadNotifications = s.notificationUnread(c.Request().Context(), bellScope, bellProject)
 	}
 	render.RenderPage(w, r, appShell(title, groups, providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, unreadNotifications, user, accounts, content, objectTypes, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL))
 	return nil

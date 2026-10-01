@@ -1,11 +1,14 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/a-h/templ"
 	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/labstack/echo/v4"
 )
 
 // --- Inbox page render tests (task 9.x) ---
@@ -217,6 +220,74 @@ func TestAppShellRendersBell(t *testing.T) {
 	}
 	if !strings.Contains(html, `data-unread="7"`) || !strings.Contains(html, "data-notifications-badge") {
 		t.Error("shell bell must show the unread count")
+	}
+}
+
+// TestBellUnreadMatchesInboxScope is the #1342 regression: the bell badge must
+// equal the unread count of the inbox list for the active scope, never the sum
+// of the account and project scopes. With 2 account unread and 9 project unread
+// the account inbox shows 2, so its bell must read 2 (the pre-fix code summed
+// both and read 11); the project inbox shows 9, so its bell must read 9.
+func TestBellUnreadMatchesInboxScope(t *testing.T) {
+	f := &fakeMemory{notificationCountsByScope: map[string]*NotificationCounts{
+		"account|":   {Unread: 2},
+		"project|p1": {Unread: 9},
+	}}
+	s := &Server{memory: f}
+
+	if got := s.notificationUnread(t.Context(), "account", ""); got != 2 {
+		t.Errorf("account-scope bell = %d, want 2 (its inbox unread, not the 11-across-scopes sum)", got)
+	}
+	if got := s.notificationUnread(t.Context(), "project", "p1"); got != 9 {
+		t.Errorf("project-scope bell = %d, want 9 (its inbox unread)", got)
+	}
+}
+
+// TestNotificationUnreadProjectWithoutProject asserts a project-scoped inbox
+// with no resolvable project counts as zero (there is no list to agree with)
+// and does not fall back to querying every project's unread.
+func TestNotificationUnreadProjectWithoutProject(t *testing.T) {
+	f := &fakeMemory{notificationCountsByScope: map[string]*NotificationCounts{
+		"project|": {Unread: 9},
+	}}
+	s := &Server{memory: f}
+
+	if got := s.notificationUnread(t.Context(), "project", ""); got != 0 {
+		t.Errorf("project bell without a project = %d, want 0", got)
+	}
+	if f.lastCountsScope != "" {
+		t.Errorf("must not query counts for a projectless project scope; queried %q/%q", f.lastCountsScope, f.lastCountsProject)
+	}
+}
+
+// TestInboxBellScope asserts the bell follows the inbox's scope on /inbox and
+// defaults to the account inbox everywhere else, so the badge always describes
+// the inbox the bell links to.
+func TestInboxBellScope(t *testing.T) {
+	s := &Server{cfg: Config{MemoryProjectID: "p1"}, memory: &fakeMemory{}}
+	e := echo.New()
+	var scope, project string
+	capture := func(c echo.Context) error {
+		scope, project = s.inboxBellScope(c)
+		return c.NoContent(http.StatusOK)
+	}
+	e.GET("/inbox", capture)
+	e.GET("/agents", capture)
+
+	for _, tc := range []struct {
+		path, wantScope, wantProject string
+	}{
+		{"/inbox", "account", ""},
+		{"/inbox?scope=account", "account", ""},
+		{"/inbox?scope=project", "project", "p1"},
+		{"/agents?scope=project", "account", ""},
+	} {
+		scope, project = "", ""
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		e.ServeHTTP(httptest.NewRecorder(), req)
+		if scope != tc.wantScope || project != tc.wantProject {
+			t.Errorf("inboxBellScope(%s) = %q/%q, want %q/%q", tc.path, scope, project, tc.wantScope, tc.wantProject)
+		}
 	}
 }
 

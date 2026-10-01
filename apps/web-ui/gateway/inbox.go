@@ -154,20 +154,39 @@ func (s *Server) uiInbox(c echo.Context) error {
 	return s.page(c, pageTitle("Inbox"), InboxPage(view))
 }
 
-// notificationUnreadTotal returns the bell's unread count: the account-scope
-// unread plus, when a project is active, that project's unread. Best-effort —
-// any failure degrades to 0 so a counts hiccup never blocks a page render.
-func (s *Server) notificationUnreadTotal(ctx context.Context, projectID string) int {
-	total := 0
-	if c, err := s.memory.NotificationCounts(ctx, "account", ""); err == nil && c != nil {
-		total += c.Unread
+// inboxBellScope resolves the inbox scope a request is displaying, so the bell
+// can count exactly the inbox it links to. Only the inbox route carries a
+// scope; every other page defaults to the account inbox — the mandatory one the
+// bell lands on. Project scope resolves the active project and never falls back
+// to a different scope. (Regression: #1342 — the bell used to sum the account
+// and project scopes while the inbox listed only one, so a user with 9 project
+// unread and 2 account unread saw a bell of 11 over an inbox of 2.)
+func (s *Server) inboxBellScope(c echo.Context) (scope, projectID string) {
+	scope = "account"
+	if c.Path() == "/inbox" {
+		scope = notificationScope(c.QueryParam("scope"))
 	}
-	if projectID != "" {
-		if c, err := s.memory.NotificationCounts(ctx, "project", projectID); err == nil && c != nil {
-			total += c.Unread
-		}
+	if scope == "project" {
+		projectID = activeProjectIDFromContext(c.Request().Context(), s.cfg.MemoryProjectID)
 	}
-	return total
+	return scope, projectID
+}
+
+// notificationUnread returns the bell's unread count for one inbox scope: the
+// number of unread rows the inbox list for that scope will show. It is the ONLY
+// number the bell renders, so the badge can never disagree with the list it
+// links to. Best-effort — any failure degrades to 0 so a counts hiccup never
+// blocks a page render. Project scope with no resolvable project has no inbox
+// to list, so it counts as zero rather than falling back to every project.
+func (s *Server) notificationUnread(ctx context.Context, scope, projectID string) int {
+	if scope == "project" && projectID == "" {
+		return 0
+	}
+	c, err := s.memory.NotificationCounts(ctx, scope, projectID)
+	if err != nil || c == nil {
+		return 0
+	}
+	return c.Unread
 }
 
 // inboxTabHref builds a tab link preserving the active scope.
