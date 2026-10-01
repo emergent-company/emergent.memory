@@ -218,8 +218,9 @@ func computeCost(
 }
 
 // checkBudget checks whether the project's current-month spend has crossed its
-// alert threshold, and if so inserts a warning notification for each project admin.
-// It deduplicates by group_key so at most one unread alert exists per project per month.
+// alert threshold, and if so inserts a warning notification for each project
+// admin. Alerts are coalesced per (user, project, month) group_key by the
+// notifications producer, which enforces uniqueness atomically in the database.
 func (s *UsageService) checkBudget(ctx context.Context, projectID string) {
 	// 1. Fetch the project's budget config from kb.projects.
 	var budget struct {
@@ -243,26 +244,23 @@ func (s *UsageService) checkBudget(ctx context.Context, projectID string) {
 		return
 	}
 
+	// A threshold of 0 (or a non-positive budget) is not a real breach level:
+	// `spend < 0` is false even at $0 spend, which produced spurious alerts at
+	// 0% usage. Require a positive threshold, then alert only on a real breach.
 	threshold := *budget.BudgetUSD * budget.BudgetAlertThreshold
+	if budget.BudgetAlertThreshold <= 0 || threshold <= 0 {
+		return
+	}
 	if spend < threshold {
 		return
 	}
 
-	// 3. Deduplicate — skip if an unread alert already exists for this month.
-	groupKey := fmt.Sprintf("budget-alert-%s-%s", projectID, time.Now().UTC().Format("2006-01"))
-	var existing int
-	_ = s.db.NewSelect().
-		TableExpr("kb.notifications").
-		ColumnExpr("COUNT(*)").
-		Where("group_key = ?", groupKey).
-		Where("read = false").
-		Where("dismissed = false").
-		Scan(ctx, &existing)
-	if existing > 0 {
-		return
-	}
+	// Deduplication is enforced atomically at insert time by the partial unique
+	// index on (user_id, group_key) via notifications.Service.Create. The old
+	// read-then-insert COUNT here was racy (concurrent checks all saw zero
+	// rows) and cross-user (any admin's alert suppressed the others).
 
-	// 4. Look up project admin user IDs.
+	// 3. Look up project admin user IDs.
 	var adminIDs []string
 	err = s.db.NewSelect().
 		TableExpr("kb.project_memberships").
@@ -274,9 +272,9 @@ func (s *UsageService) checkBudget(ctx context.Context, projectID string) {
 		return
 	}
 
-	// 5. Insert a notification for each admin via the central producer. The
-	// group_key is passed through so Service.Create coalesces per-user
-	// (in addition to the project-level dedup read at step 3 above).
+	// 4. Insert a notification for each admin via the central producer. The
+	// group_key is passed through so Service.Create coalesces durably
+	// (ON CONFLICT DO NOTHING against ux_notifications_user_group_key_active).
 	pctUsed := (spend / *budget.BudgetUSD) * 100
 	title := "Budget alert"
 	message := fmt.Sprintf(
@@ -287,6 +285,11 @@ func (s *UsageService) checkBudget(ctx context.Context, projectID string) {
 	category := "budget"
 	severity := "warning"
 	importance := "important"
+
+	// One alert per project per calendar month. The same key is used for every
+	// admin (a user_id is part of the uniqueness key), so each admin receives
+	// exactly one alert while an active one exists.
+	groupKey := fmt.Sprintf("budget-alert-%s-%s", projectID, time.Now().UTC().Format("2006-01"))
 
 	if s.notificationsSvc == nil {
 		return

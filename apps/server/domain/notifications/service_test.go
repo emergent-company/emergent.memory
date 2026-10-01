@@ -49,10 +49,12 @@ func expectPreference(mock sqlmock.Sqlmock, enabled *bool) {
 		WillReturnRows(rows)
 }
 
-// expectGroupKeyExists mocks the group coalescing existence check.
-func expectGroupKeyExists(mock sqlmock.Sqlmock, exists bool) {
-	mock.ExpectQuery(`SELECT EXISTS[\s\S]*`).
-		WillReturnRows(sqlmock.NewRows([]string{"?column?"}).AddRow(exists))
+// expectInsertCoalesced mocks a group-key INSERT ... ON CONFLICT DO NOTHING
+// that hit an existing active row: no row is returned, so the producer treats
+// the notification as coalesced.
+func expectInsertCoalesced(mock sqlmock.Sqlmock) {
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT") + `[\s\S]*ON CONFLICT DO NOTHING[\s\S]*`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "read", "dismissed", "actions", "created_at", "updated_at", "requires_action"}))
 }
 
 func TestCreate_AccountDelivered(t *testing.T) {
@@ -145,7 +147,7 @@ func TestCreate_RequiredProject_DeliveredDespitePrefs(t *testing.T) {
 
 func TestCreate_GroupCoalescing(t *testing.T) {
 	svc, mock, _ := newTestService(t)
-	expectGroupKeyExists(mock, true)
+	expectInsertCoalesced(mock)
 
 	gk := "budget-alert-prj-2026-01"
 	n, err := svc.Create(context.Background(), CreateInput{
@@ -156,7 +158,7 @@ func TestCreate_GroupCoalescing(t *testing.T) {
 		GroupKey: &gk,
 	})
 	require.NoError(t, err)
-	require.Nil(t, n)
+	require.Nil(t, n, "an ON CONFLICT DO NOTHING that returns no row is coalesced")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
