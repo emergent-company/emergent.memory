@@ -63,7 +63,7 @@ func newAuthzServer(t *testing.T) (*testutil.TestDB, *echo.Echo) {
 	})
 
 	orgsRepo := orgs.NewRepository(db, log)
-	svc := invites.NewService(db, nil, testDB.Config, log)
+	svc := invites.NewService(db, nil, testDB.Config, nil, log)
 	h := invites.NewHandler(svc, testDB.Config, mw, orgsRepo, db)
 
 	e := echo.New()

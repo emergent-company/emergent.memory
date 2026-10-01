@@ -3951,6 +3951,37 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/events/stream/account": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Establish Server-Sent Events (SSE) connection to receive real-time account-scope notification events for the authenticated user. No projectId query parameter. Sends periodic heartbeats.",
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "events"
+                ],
+                "summary": "Subscribe to account-scope real-time events",
+                "responses": {
+                    "200": {
+                        "description": "SSE stream (events: connected, entity.created, entity.updated, entity.deleted, entity.batch, heartbeat)",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/graph/analytics/most-accessed": {
             "get": {
                 "security": [
@@ -8519,7 +8550,7 @@ const docTemplate = `{
                         "bearerAuth": []
                     }
                 ],
-                "description": "Returns filtered list of notifications for the current user with optional tab, category, unread, and search filters",
+                "description": "Returns filtered list of notifications for the current user with optional tab, category, unread, scope, project, and search filters",
                 "produces": [
                     "application/json"
                 ],
@@ -8554,6 +8585,28 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
+                        "enum": [
+                            "account",
+                            "project"
+                        ],
+                        "type": "string",
+                        "description": "Scope filter (account, project)",
+                        "name": "scope",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Project ID filter (project scope)",
+                        "name": "project_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Only action-required notifications",
+                        "name": "requires_action",
+                        "in": "query"
+                    },
+                    {
                         "type": "string",
                         "description": "Search notifications by title or message",
                         "name": "search",
@@ -8565,6 +8618,12 @@ const docTemplate = `{
                         "description": "Filtered notification list",
                         "schema": {
                             "$ref": "#/definitions/domain_notifications.NotificationListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid scope",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
@@ -8591,11 +8650,41 @@ const docTemplate = `{
                     "notifications"
                 ],
                 "summary": "Get notification counts by tab",
+                "parameters": [
+                    {
+                        "enum": [
+                            "account",
+                            "project"
+                        ],
+                        "type": "string",
+                        "description": "Scope filter (account, project)",
+                        "name": "scope",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Project ID filter (project scope)",
+                        "name": "project_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Only action-required notifications",
+                        "name": "requires_action",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "Counts by notification tab",
                         "schema": {
                             "$ref": "#/definitions/domain_notifications.NotificationCountsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid scope",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
@@ -8614,7 +8703,7 @@ const docTemplate = `{
                         "bearerAuth": []
                     }
                 ],
-                "description": "Marks all unread notifications as read for the current user and returns the count of affected notifications",
+                "description": "Marks all unread notifications as read for the current user within the given scope and returns the count of affected notifications",
                 "produces": [
                     "application/json"
                 ],
@@ -8622,6 +8711,24 @@ const docTemplate = `{
                     "notifications"
                 ],
                 "summary": "Mark all notifications as read",
+                "parameters": [
+                    {
+                        "enum": [
+                            "account",
+                            "project"
+                        ],
+                        "type": "string",
+                        "description": "Scope filter (account, project)",
+                        "name": "scope",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Project ID filter (project scope)",
+                        "name": "project_id",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "Confirmation with count of marked notifications",
@@ -8630,8 +8737,108 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "400": {
+                        "description": "Invalid scope",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/notifications/preferences": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the effective preference for every project event key, materialising defaults for keys without a stored preference",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notifications"
+                ],
+                "summary": "List notification preferences",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "project_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Effective preferences",
+                        "schema": {
+                            "$ref": "#/definitions/domain_notifications.PreferenceListResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Upserts a delivery preference for a project event key. Account keys are mandatory and not configurable.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notifications"
+                ],
+                "summary": "Set a notification preference",
+                "parameters": [
+                    {
+                        "description": "Preference to set",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_notifications.setPreferenceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Saved preference",
+                        "schema": {
+                            "$ref": "#/definitions/domain_notifications.NotificationPreference"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "422": {
+                        "description": "Unknown event key",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -8663,6 +8870,61 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/notifications/{id}/clear": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Moves a notification to the cleared tab",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notifications"
+                ],
+                "summary": "Clear notification",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Notification ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Clear confirmation",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Missing notification id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Notification not found",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -8752,6 +9014,299 @@ const docTemplate = `{
                 "responses": {
                     "200": {
                         "description": "Read confirmation",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Missing notification id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Notification not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/notifications/{id}/resolve": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Records the outcome of an actionable notification",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notifications"
+                ],
+                "summary": "Resolve notification action",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Notification ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Resolution status (e.g. accepted, declined)",
+                        "name": "status",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Resolve confirmation",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Missing notification id or status",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Notification not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/notifications/{id}/restore": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Un-clears a notification",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notifications"
+                ],
+                "summary": "Restore notification",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Notification ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Restore confirmation",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Missing notification id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Notification not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/notifications/{id}/snooze": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Snoozes a notification until a time (until= RFC3339 or duration= Go duration; defaults to 24h)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notifications"
+                ],
+                "summary": "Snooze notification",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Notification ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339 timestamp to snooze until",
+                        "name": "until",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Duration to snooze (e.g. 24h, 1h30m)",
+                        "name": "duration",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Snooze confirmation",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Missing notification id or invalid until/duration",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Notification not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/notifications/{id}/unread": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Marks a specific notification as unread for the current user",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notifications"
+                ],
+                "summary": "Mark notification as unread",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Notification ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Unread confirmation",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Missing notification id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Notification not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/notifications/{id}/unsnooze": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Clears a notification's snooze",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notifications"
+                ],
+                "summary": "Unsnooze notification",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Notification ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Unsnooze confirmation",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -28177,6 +28732,9 @@ const docTemplate = `{
                 "dismissedAt": {
                     "type": "string"
                 },
+                "eventKey": {
+                    "type": "string"
+                },
                 "expiresAt": {
                     "type": "string"
                 },
@@ -28206,6 +28764,12 @@ const docTemplate = `{
                 },
                 "relatedResourceType": {
                     "type": "string"
+                },
+                "requiresAction": {
+                    "type": "boolean"
+                },
+                "scope": {
+                    "$ref": "#/definitions/domain_notifications.Scope"
                 },
                 "severity": {
                     "type": "string"
@@ -28253,6 +28817,9 @@ const docTemplate = `{
                 },
                 "snoozed": {
                     "type": "integer"
+                },
+                "unread": {
+                    "type": "integer"
                 }
             }
         },
@@ -28275,6 +28842,35 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_notifications.NotificationPreference": {
+            "type": "object",
+            "properties": {
+                "channel": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "eventKey": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "userId": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_notifications.NotificationStats": {
             "type": "object",
             "properties": {
@@ -28286,6 +28882,77 @@ const docTemplate = `{
                 },
                 "unread": {
                     "type": "integer"
+                }
+            }
+        },
+        "domain_notifications.PreferenceEntry": {
+            "type": "object",
+            "properties": {
+                "actionable": {
+                    "type": "boolean"
+                },
+                "category": {
+                    "type": "string"
+                },
+                "channel": {
+                    "type": "string"
+                },
+                "default": {
+                    "type": "boolean"
+                },
+                "delivery": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "eventKey": {
+                    "type": "string"
+                },
+                "requiresAction": {
+                    "type": "boolean"
+                },
+                "scope": {
+                    "$ref": "#/definitions/domain_notifications.Scope"
+                }
+            }
+        },
+        "domain_notifications.PreferenceListResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_notifications.PreferenceEntry"
+                    }
+                }
+            }
+        },
+        "domain_notifications.Scope": {
+            "type": "string",
+            "enum": [
+                "account",
+                "project"
+            ],
+            "x-enum-varnames": [
+                "ScopeAccount",
+                "ScopeProject"
+            ]
+        },
+        "domain_notifications.setPreferenceRequest": {
+            "type": "object",
+            "properties": {
+                "channel": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "eventKey": {
+                    "type": "string"
+                },
+                "projectId": {
+                    "type": "string"
                 }
             }
         },

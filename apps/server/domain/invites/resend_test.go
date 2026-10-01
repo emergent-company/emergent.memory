@@ -27,7 +27,7 @@ func newResendService(t *testing.T) (*Service, *testdb.TestDB) {
 	db := testDB.GetDB()
 	log := slog.Default()
 	emailSvc := email.NewJobsService(db, log, &email.Config{})
-	svc := NewService(db, emailSvc, &config.Config{AppURL: "http://localhost:3000"}, log)
+	svc := NewService(db, emailSvc, &config.Config{AppURL: "http://localhost:3000"}, nil, log)
 	return svc, testDB
 }
 

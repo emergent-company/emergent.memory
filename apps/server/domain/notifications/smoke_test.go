@@ -24,8 +24,16 @@ func TestRegisterRoutes(t *testing.T) {
 		"GET /api/notifications/counts",
 		"GET /api/notifications",
 		"PATCH /api/notifications/:id/read",
+		"POST /api/notifications/:id/unread",
 		"DELETE /api/notifications/:id/dismiss",
+		"POST /api/notifications/:id/snooze",
+		"POST /api/notifications/:id/unsnooze",
+		"POST /api/notifications/:id/clear",
+		"POST /api/notifications/:id/restore",
+		"POST /api/notifications/:id/resolve",
 		"POST /api/notifications/mark-all-read",
+		"GET /api/notifications/preferences",
+		"PUT /api/notifications/preferences",
 	} {
 		if !got[want] {
 			t.Fatalf("route %q not registered; have %v", want, got)

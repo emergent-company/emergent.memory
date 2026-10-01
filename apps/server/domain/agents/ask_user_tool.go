@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/emergent-company/emergent.memory/domain/events"
 	"github.com/emergent-company/emergent.memory/domain/notifications"
@@ -74,6 +73,12 @@ func (s *ToolConfirmPauseState) HasPending() bool {
 	return len(s.pending) > 0
 }
 
+// notificationCreator is the minimal notifications.Service surface the ask_user
+// tool needs. *notifications.Service satisfies it; a fake stands in for tests.
+type notificationCreator interface {
+	Create(context.Context, notifications.CreateInput) (*notifications.Notification, error)
+}
+
 // AskUserToolDeps holds the dependencies needed by the ask_user tool.
 type AskUserToolDeps struct {
 	Repo       *Repository
@@ -88,6 +93,9 @@ type AskUserToolDeps struct {
 	// EventsSvc is used to emit a real-time SSE event after notification creation.
 	// nil is safe — event emission is best-effort.
 	EventsSvc *events.Service
+	// NotificationsSvc is the central notification producer used to create the
+	// agent-question notification. nil is safe — the notification is skipped.
+	NotificationsSvc notificationCreator
 }
 
 // CreateQuestionParams holds parameters for creating and emitting an AgentQuestion.
@@ -99,7 +107,9 @@ type CreateQuestionParams struct {
 	RunID     string
 	UserID    string
 	EventsSvc *events.Service
-	Question  string
+	// NotificationsSvc creates the agent-question notification (nil-safe).
+	NotificationsSvc notificationCreator
+	Question         string
 	// Proposal is the optional structured proposal envelope {kind, summary, body}
 	// attached to the question. Nil for plain-text questions.
 	Proposal        map[string]any
@@ -154,13 +164,14 @@ func CreateAndEmitQuestion(ctx context.Context, p CreateQuestionParams) (*AgentQ
 	var notifID string
 	if p.UserID != "" {
 		deps := AskUserToolDeps{
-			Repo:      p.Repo,
-			Logger:    p.Logger,
-			ProjectID: p.ProjectID,
-			AgentID:   p.AgentID,
-			RunID:     p.RunID,
-			UserID:    p.UserID,
-			EventsSvc: p.EventsSvc,
+			Repo:             p.Repo,
+			Logger:           p.Logger,
+			ProjectID:        p.ProjectID,
+			AgentID:          p.AgentID,
+			RunID:            p.RunID,
+			UserID:           p.UserID,
+			EventsSvc:        p.EventsSvc,
+			NotificationsSvc: p.NotificationsSvc,
 		}
 		notifID = createQuestionNotificationDirect(ctx, deps, q)
 	}
@@ -295,17 +306,24 @@ func BuildAskUserTool(deps AskUserToolDeps) (tool.Tool, error) {
 	)
 }
 
-// createQuestionNotificationDirect inserts a notification for the agent question.
-// Returns the notification ID, or empty string on failure.
+// createQuestionNotificationDirect creates the agent-question notification via
+// the central notifications.Service.Create path. Returns the notification ID,
+// or empty string when not created (no service, suppressed, or error).
 func createQuestionNotificationDirect(ctx context.Context, deps AskUserToolDeps, q *AgentQuestion) string {
+	if deps.NotificationsSvc == nil {
+		return ""
+	}
+
 	notifType := "agent_question"
 	sourceType := "agent_run"
 	relatedType := "agent_question"
 	importance := "important"
 
-	notif := &notifications.Notification{
-		ProjectID:           &deps.ProjectID,
+	in := notifications.CreateInput{
 		UserID:              deps.UserID,
+		ProjectID:           &deps.ProjectID,
+		Scope:               notifications.ScopeProject,
+		EventKey:            "agent.question",
 		Title:               "Agent needs your input",
 		Message:             q.Question,
 		Type:                &notifType,
@@ -315,6 +333,7 @@ func createQuestionNotificationDirect(ctx context.Context, deps AskUserToolDeps,
 		RelatedResourceType: &relatedType,
 		RelatedResourceID:   &q.ID,
 		Importance:          importance,
+		RequiresAction:      true,
 	}
 
 	// Map options to notification actions
@@ -328,17 +347,16 @@ func createQuestionNotificationDirect(ctx context.Context, deps AskUserToolDeps,
 		}
 		actionsJSON, err := json.Marshal(actions)
 		if err == nil {
-			notif.Actions = actionsJSON
+			in.Actions = actionsJSON
 		}
 	} else {
 		// Open-ended question: set actionURL for response page
 		actionURL := fmt.Sprintf("/agents/questions/%s", q.ID)
-		notif.ActionURL = &actionURL
-		notif.Actions = json.RawMessage("[]")
+		in.ActionURL = &actionURL
+		in.Actions = json.RawMessage("[]")
 	}
 
-	// Insert notification directly (cross-domain insert)
-	notifID, err := deps.Repo.CreateNotification(ctx, notif)
+	created, err := deps.NotificationsSvc.Create(ctx, in)
 	if err != nil {
 		deps.Logger.Warn("failed to create question notification",
 			slog.String("question_id", q.ID),
@@ -346,16 +364,21 @@ func createQuestionNotificationDirect(ctx context.Context, deps AskUserToolDeps,
 		)
 		return ""
 	}
+	if created == nil {
+		return ""
+	}
 
 	deps.Logger.Info("ask_user: notification created",
 		slog.String("question_id", q.ID),
-		slog.String("notification_id", notifID),
+		slog.String("notification_id", created.ID),
 	)
 
-	// NOTE: SSE event is emitted unconditionally by the caller (emitQuestionSSEEventDirect).
-	// No need to emit it here as well — that would create duplicates.
+	// NOTE: the central Create path already emits the standard notification
+	// entity event (for the inbox badge). The caller additionally emits the rich
+	// agent-question SSE payload via emitQuestionSSEEventDirect — a distinct
+	// event carrying the question details for the question UI.
 
-	return notifID
+	return created.ID
 }
 
 // emitQuestionSSEEventDirect sends a real-time SSE notification for a question.
@@ -459,20 +482,4 @@ func parseProposal(args map[string]any) map[string]any {
 	}
 
 	return m
-}
-
-// CreateNotification inserts a notification record directly into kb.notifications.
-// This is a cross-domain insert used by the agents module to create question notifications.
-func (r *Repository) CreateNotification(ctx context.Context, n *notifications.Notification) (string, error) {
-	if n.CreatedAt.IsZero() {
-		n.CreatedAt = time.Now()
-	}
-	if n.UpdatedAt.IsZero() {
-		n.UpdatedAt = time.Now()
-	}
-	_, err := r.db.NewInsert().Model(n).Exec(ctx)
-	if err != nil {
-		return "", err
-	}
-	return n.ID, nil
 }

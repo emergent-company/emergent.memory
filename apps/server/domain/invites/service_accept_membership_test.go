@@ -25,7 +25,7 @@ func newAcceptService(t *testing.T) (*Service, *testdb.TestDB, string, string, s
 	ctx := context.Background()
 	testDB := testdb.SetupTestDBOrFail(t, ctx, "invites_accept")
 	db := testDB.GetDB()
-	svc := NewService(db, nil, &config.Config{}, slog.Default())
+	svc := NewService(db, nil, &config.Config{}, nil, slog.Default())
 
 	orgID := uuid.New().String()
 	userID := uuid.New().String()

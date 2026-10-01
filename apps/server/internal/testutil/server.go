@@ -228,6 +228,7 @@ func NewTestServerWithLLM(testDB *TestDB) *TestServer {
 		apitokenSvc,
 		nil, // usage service
 		eventsSvc,
+		nil, // notifications service — not wired in testutil
 		log,
 	)
 
@@ -523,7 +524,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	useraccess.RegisterRoutes(e, useraccessHandler, authMiddleware)
 
 	// Register invites routes (nil email service in test mode — emails are no-op)
-	invitesSvc := invites.NewService(db, nil, &config.Config{}, log)
+	invitesSvc := invites.NewService(db, nil, &config.Config{}, nil, log)
 	invitesHandler := invites.NewHandler(invitesSvc, &config.Config{}, authMiddleware, orgsRepo, db)
 	invites.RegisterRoutes(e, invitesHandler, authMiddleware)
 
@@ -540,7 +541,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 
 	// Register notifications routes
 	notificationsRepo := notifications.NewRepository(db, log)
-	notificationsSvc := notifications.NewService(notificationsRepo, log)
+	notificationsSvc := notifications.NewService(notificationsRepo, eventsSvc, log)
 	notificationsHandler := notifications.NewHandler(notificationsSvc)
 	notifications.RegisterRoutes(e, notificationsHandler, authMiddleware)
 
