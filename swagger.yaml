@@ -1757,6 +1757,8 @@ definitions:
         description: 'Agent-backed chat: links conversation to an agent definition
           for tool-calling capabilities'
         type: string
+      archivedAt:
+        type: string
       canonicalId:
         type: string
       createdAt:
@@ -1771,6 +1773,11 @@ definitions:
         type: array
       id:
         type: string
+      isArchived:
+        description: |-
+          Archive state — non-destructive hide. IsArchived is the list filter
+          predicate; ArchivedAt is set on archive and cleared on unarchive.
+        type: boolean
       isPrivate:
         type: boolean
       messages:
@@ -1801,6 +1808,8 @@ definitions:
         description: 'Agent-backed chat: links conversation to an agent definition
           for tool-calling capabilities'
         type: string
+      archivedAt:
+        type: string
       canonicalId:
         type: string
       createdAt:
@@ -1815,6 +1824,11 @@ definitions:
         type: array
       id:
         type: string
+      isArchived:
+        description: |-
+          Archive state — non-destructive hide. IsArchived is the list filter
+          predicate; ArchivedAt is set on archive and cleared on unarchive.
+        type: boolean
       isPrivate:
         type: boolean
       messages:
@@ -4856,6 +4870,8 @@ definitions:
         type: boolean
       dismissedAt:
         type: string
+      eventKey:
+        type: string
       expiresAt:
         type: string
       groupKey:
@@ -4876,6 +4892,10 @@ definitions:
         type: string
       relatedResourceType:
         type: string
+      requiresAction:
+        type: boolean
+      scope:
+        $ref: '#/definitions/domain_notifications.Scope'
       severity:
         type: string
       snoozedUntil:
@@ -4907,6 +4927,8 @@ definitions:
         type: integer
       snoozed:
         type: integer
+      unread:
+        type: integer
     type: object
   domain_notifications.NotificationCountsResponse:
     properties:
@@ -4920,6 +4942,25 @@ definitions:
           $ref: '#/definitions/domain_notifications.Notification'
         type: array
     type: object
+  domain_notifications.NotificationPreference:
+    properties:
+      channel:
+        type: string
+      createdAt:
+        type: string
+      enabled:
+        type: boolean
+      eventKey:
+        type: string
+      id:
+        type: string
+      projectId:
+        type: string
+      updatedAt:
+        type: string
+      userId:
+        type: string
+    type: object
   domain_notifications.NotificationStats:
     properties:
       dismissed:
@@ -4928,6 +4969,53 @@ definitions:
         type: integer
       unread:
         type: integer
+    type: object
+  domain_notifications.PreferenceEntry:
+    properties:
+      actionable:
+        type: boolean
+      category:
+        type: string
+      channel:
+        type: string
+      default:
+        type: boolean
+      delivery:
+        type: string
+      enabled:
+        type: boolean
+      eventKey:
+        type: string
+      requiresAction:
+        type: boolean
+      scope:
+        $ref: '#/definitions/domain_notifications.Scope'
+    type: object
+  domain_notifications.PreferenceListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/domain_notifications.PreferenceEntry'
+        type: array
+    type: object
+  domain_notifications.Scope:
+    enum:
+    - account
+    - project
+    type: string
+    x-enum-varnames:
+    - ScopeAccount
+    - ScopeProject
+  domain_notifications.setPreferenceRequest:
+    properties:
+      channel:
+        type: string
+      enabled:
+        type: boolean
+      eventKey:
+        type: string
+      projectId:
+        type: string
     type: object
   domain_orgs.CreateOrgRequest:
     properties:
@@ -10047,6 +10135,51 @@ paths:
       summary: Update conversation
       tags:
       - chat
+  /api/chat/{id}/archive:
+    post:
+      description: 'Archives a conversation (non-destructive: messages and history
+        are preserved). Idempotent.'
+      parameters:
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      - description: Conversation ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Archive status
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Invalid conversation ID
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Conversation not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Archive conversation
+      tags:
+      - chat
   /api/chat/{id}/messages:
     post:
       consumes:
@@ -10097,6 +10230,50 @@ paths:
       summary: Add message to conversation
       tags:
       - chat
+  /api/chat/{id}/unarchive:
+    post:
+      description: Restores an archived conversation to the active list. Idempotent.
+      parameters:
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      - description: Conversation ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Unarchive status
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Invalid conversation ID
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Conversation not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Unarchive conversation
+      tags:
+      - chat
   /api/chat/conversations:
     get:
       description: Returns all chat conversations for the current project with pagination
@@ -10118,6 +10295,10 @@ paths:
         minimum: 0
         name: offset
         type: integer
+      - description: Include archived conversations (default false)
+        in: query
+        name: includeArchived
+        type: boolean
       produces:
       - application/json
       responses:
@@ -10848,6 +11029,28 @@ paths:
       security:
       - bearerAuth: []
       summary: Subscribe to real-time events
+      tags:
+      - events
+  /api/events/stream/account:
+    get:
+      description: Establish Server-Sent Events (SSE) connection to receive real-time
+        account-scope notification events for the authenticated user. No projectId
+        query parameter. Sends periodic heartbeats.
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: 'SSE stream (events: connected, entity.created, entity.updated,
+            entity.deleted, entity.batch, heartbeat)'
+          schema:
+            type: string
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Subscribe to account-scope real-time events
       tags:
       - events
   /api/graph/analytics/most-accessed:
@@ -13884,7 +14087,7 @@ paths:
   /api/notifications:
     get:
       description: Returns filtered list of notifications for the current user with
-        optional tab, category, unread, and search filters
+        optional tab, category, unread, scope, project, and search filters
       parameters:
       - description: Tab filter (all, important, other, snoozed, cleared)
         enum:
@@ -13904,6 +14107,21 @@ paths:
         in: query
         name: unread_only
         type: boolean
+      - description: Scope filter (account, project)
+        enum:
+        - account
+        - project
+        in: query
+        name: scope
+        type: string
+      - description: Project ID filter (project scope)
+        in: query
+        name: project_id
+        type: string
+      - description: Only action-required notifications
+        in: query
+        name: requires_action
+        type: boolean
       - description: Search notifications by title or message
         in: query
         name: search
@@ -13915,6 +14133,10 @@ paths:
           description: Filtered notification list
           schema:
             $ref: '#/definitions/domain_notifications.NotificationListResponse'
+        "400":
+          description: Invalid scope
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "401":
           description: Unauthorized
           schema:
@@ -13922,6 +14144,41 @@ paths:
       security:
       - bearerAuth: []
       summary: List notifications
+      tags:
+      - notifications
+  /api/notifications/{id}/clear:
+    post:
+      description: Moves a notification to the cleared tab
+      parameters:
+      - description: Notification ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Clear confirmation
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Missing notification id
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Notification not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Clear notification
       tags:
       - notifications
   /api/notifications/{id}/dismiss:
@@ -13996,10 +14253,214 @@ paths:
       summary: Mark notification as read
       tags:
       - notifications
+  /api/notifications/{id}/resolve:
+    post:
+      description: Records the outcome of an actionable notification
+      parameters:
+      - description: Notification ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Resolution status (e.g. accepted, declined)
+        in: query
+        name: status
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Resolve confirmation
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Missing notification id or status
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Notification not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Resolve notification action
+      tags:
+      - notifications
+  /api/notifications/{id}/restore:
+    post:
+      description: Un-clears a notification
+      parameters:
+      - description: Notification ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Restore confirmation
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Missing notification id
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Notification not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Restore notification
+      tags:
+      - notifications
+  /api/notifications/{id}/snooze:
+    post:
+      description: Snoozes a notification until a time (until= RFC3339 or duration=
+        Go duration; defaults to 24h)
+      parameters:
+      - description: Notification ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: RFC3339 timestamp to snooze until
+        in: query
+        name: until
+        type: string
+      - description: Duration to snooze (e.g. 24h, 1h30m)
+        in: query
+        name: duration
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Snooze confirmation
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Missing notification id or invalid until/duration
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Notification not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Snooze notification
+      tags:
+      - notifications
+  /api/notifications/{id}/unread:
+    post:
+      description: Marks a specific notification as unread for the current user
+      parameters:
+      - description: Notification ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Unread confirmation
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Missing notification id
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Notification not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Mark notification as unread
+      tags:
+      - notifications
+  /api/notifications/{id}/unsnooze:
+    post:
+      description: Clears a notification's snooze
+      parameters:
+      - description: Notification ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Unsnooze confirmation
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Missing notification id
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Notification not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Unsnooze notification
+      tags:
+      - notifications
   /api/notifications/counts:
     get:
       description: Returns notification counts grouped by tab (all, important, other,
         snoozed, cleared) for filtering purposes
+      parameters:
+      - description: Scope filter (account, project)
+        enum:
+        - account
+        - project
+        in: query
+        name: scope
+        type: string
+      - description: Project ID filter (project scope)
+        in: query
+        name: project_id
+        type: string
+      - description: Only action-required notifications
+        in: query
+        name: requires_action
+        type: boolean
       produces:
       - application/json
       responses:
@@ -14007,6 +14468,10 @@ paths:
           description: Counts by notification tab
           schema:
             $ref: '#/definitions/domain_notifications.NotificationCountsResponse'
+        "400":
+          description: Invalid scope
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "401":
           description: Unauthorized
           schema:
@@ -14018,8 +14483,20 @@ paths:
       - notifications
   /api/notifications/mark-all-read:
     post:
-      description: Marks all unread notifications as read for the current user and
-        returns the count of affected notifications
+      description: Marks all unread notifications as read for the current user within
+        the given scope and returns the count of affected notifications
+      parameters:
+      - description: Scope filter (account, project)
+        enum:
+        - account
+        - project
+        in: query
+        name: scope
+        type: string
+      - description: Project ID filter (project scope)
+        in: query
+        name: project_id
+        type: string
       produces:
       - application/json
       responses:
@@ -14028,6 +14505,10 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "400":
+          description: Invalid scope
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "401":
           description: Unauthorized
           schema:
@@ -14035,6 +14516,67 @@ paths:
       security:
       - bearerAuth: []
       summary: Mark all notifications as read
+      tags:
+      - notifications
+  /api/notifications/preferences:
+    get:
+      description: Returns the effective preference for every project event key, materialising
+        defaults for keys without a stored preference
+      parameters:
+      - description: Project ID
+        in: query
+        name: project_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Effective preferences
+          schema:
+            $ref: '#/definitions/domain_notifications.PreferenceListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List notification preferences
+      tags:
+      - notifications
+    put:
+      consumes:
+      - application/json
+      description: Upserts a delivery preference for a project event key. Account
+        keys are mandatory and not configurable.
+      parameters:
+      - description: Preference to set
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_notifications.setPreferenceRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Saved preference
+          schema:
+            $ref: '#/definitions/domain_notifications.NotificationPreference'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "422":
+          description: Unknown event key
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Set a notification preference
       tags:
       - notifications
   /api/notifications/stats:
