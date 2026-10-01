@@ -22,7 +22,7 @@ concrete, working lane out of the box.
 ## Applying it
 
 ```bash
-memory blueprints blueprints/task-board
+memory blueprints install blueprints/task-board
 ```
 
 Or install it from the web UI's blueprint gallery. The apply is idempotent for

@@ -340,11 +340,10 @@ func TestBuildSeedObjectRequest_Assignee(t *testing.T) {
 }
 
 // TestEnsureRuntimeAgent_ForeignOwnerNoHijack verifies a runtime agent that is
-// not ours (owned by another blueprint, or a manual agent with no ownership
-// marker and no matching definition) is never repurposed.
+// not stamped with this blueprint's ownership is never repurposed, even when it
+// happens to point at the same definition.
 func TestEnsureRuntimeAgent_ForeignOwnerNoHijack(t *testing.T) {
 	defID := uuid.NewString()
-	otherDefID := uuid.NewString()
 
 	tests := []struct {
 		name     string
@@ -368,12 +367,12 @@ func TestEnsureRuntimeAgent_ForeignOwnerNoHijack(t *testing.T) {
 			},
 		},
 		{
-			name: "bound to a different definition",
+			name: "manual agent matching definition",
 			existing: &agents.Agent{
 				ProjectID:         "proj-1",
 				Name:              "board-agent",
-				Config:            map[string]any{"sourceBlueprintId": "bp-1"},
-				AgentDefinitionID: &otherDefID,
+				Config:            map[string]any{"queue": "fast"},
+				AgentDefinitionID: &defID,
 			},
 		},
 	}

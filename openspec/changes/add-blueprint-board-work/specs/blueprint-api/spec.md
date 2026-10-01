@@ -46,6 +46,13 @@ loader and the apply path into the agent definition unchanged.
 - **THEN** the applied agent definition requires review before done, enforces
   the failure budget, and requires artifacts on completion
 
+#### Scenario: Unstamped runtime agent not adopted
+
+- **WHEN** a runtime agent with the same name as a manifest agent already
+  exists but is not stamped with this blueprint's ownership (for example, a
+  manually created agent)
+- **THEN** applying the blueprint does not adopt or mutate that runtime agent
+
 ### Requirement: Blueprint seed objects carry an assignee
 
 A blueprint seed object SHALL be able to declare an `assignee`. On apply, the

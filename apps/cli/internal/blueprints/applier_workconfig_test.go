@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	sdkagents "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/agentdefinitions"
 	sdkruntime "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/agents"
 )
 
@@ -178,15 +179,16 @@ func TestEnsureRuntimeAgent_Update(t *testing.T) {
 }
 
 // TestEnsureRuntimeAgent_ForeignAgentNoHijack verifies a pre-existing runtime
-// agent that is not ours (no source stamp, different strategy type) is left
-// untouched — no PATCH request is issued.
+// agent that is not stamped "blueprints-cli" is left untouched — no PATCH
+// request is issued — even when its strategy type happens to match the target
+// definition (the ownership stamp is the sole admission criterion).
 func TestEnsureRuntimeAgent_ForeignAgentNoHijack(t *testing.T) {
 	var patched bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/proj-1/agents":
-			_, _ = w.Write([]byte(`{"success":true,"data":[{"id":"ra-1","name":"board-agent","config":{"source":"other"},"strategyType":"llm"}]}`))
+			_, _ = w.Write([]byte(`{"success":true,"data":[{"id":"ra-1","name":"board-agent","config":{"source":"other"},"strategyType":"agent-def:def-3"}]}`))
 		case r.Method == http.MethodPatch:
 			patched = true
 			_, _ = w.Write([]byte(`{"success":true,"data":{"id":"ra-1"}}`))
@@ -214,5 +216,44 @@ func TestEnsureRuntimeAgent_NoTriggerConfigIsNoOp(t *testing.T) {
 	b := newRuntimeAgentBlueprinter("http://127.0.0.1:1") // unreachable — must not be called
 	if err := b.ensureRuntimeAgent(context.Background(), AgentFile{Name: "plain"}, "def-1"); err != nil {
 		t.Fatalf("expected no-op, got %v", err)
+	}
+}
+
+// TestBlueprintAgent_SkipPathReconcilesRuntimeAgent verifies that when the
+// definition already exists and upgrade is off, blueprintAgent still calls
+// ensureRuntimeAgent so a retry after a definition-created/runtime-failed run
+// recovers — the runtime agent gets created, but the result stays skipped.
+func TestBlueprintAgent_SkipPathReconcilesRuntimeAgent(t *testing.T) {
+	var created bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/proj-1/agents":
+			// No existing runtime agent.
+			_, _ = w.Write([]byte(`{"success":true,"data":[]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/projects/proj-1/agents":
+			created = true
+			_, _ = w.Write([]byte(`{"success":true,"data":{"id":"ra-1"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	b := newRuntimeAgentBlueprinter(srv.URL)
+	ag := AgentFile{
+		Name:           "board-agent",
+		ReactionConfig: &ReactionConfig{ObjectTypes: []string{"Task"}},
+	}
+
+	res := b.blueprintAgent(context.Background(), ag, map[string]sdkagents.AgentDefinitionSummary{
+		"board-agent": {ID: "def-1", Name: "board-agent"},
+	})
+
+	if res.Action != BlueprintsActionSkipped {
+		t.Fatalf("expected skipped result, got %v (err=%v)", res.Action, res.Error)
+	}
+	if !created {
+		t.Fatal("expected runtime agent to be created on the skip path")
 	}
 }

@@ -298,6 +298,20 @@ func (b *Blueprinter) blueprintAgent(ctx context.Context, ag AgentFile, existing
 		return b.updateAgent(ctx, ag, item.ID)
 	}
 
+	// Definition already exists and upgrade is off: still reconcile the runtime
+	// agent so a retry after a definition-created/runtime-failed run recovers.
+	// ensureRuntimeAgent is idempotent and ownership-gated, so this is safe for
+	// foreign/manual agents too.
+	if err := b.ensureRuntimeAgent(ctx, ag, item.ID); err != nil {
+		return BlueprintsResult{
+			ResourceType: "agent",
+			Name:         ag.Name,
+			SourceFile:   ag.SourceFile,
+			Action:       BlueprintsActionError,
+			Error:        fmt.Errorf("reconcile runtime agent: %w", err),
+		}
+	}
+
 	return BlueprintsResult{
 		ResourceType: "agent",
 		Name:         ag.Name,
@@ -985,11 +999,10 @@ func (b *Blueprinter) ensureRuntimeAgent(ctx context.Context, ag AgentFile, defI
 	}
 	if existing != nil {
 		// Ownership gate: only adopt the runtime agent if it is already ours —
-		// stamped "blueprints-cli", or bound to this exact definition via the
-		// "agent-def:<id>" strategy type. A pre-existing user/foreign agent that
-		// merely shares the name is never repurposed (mirrors the server guard).
-		source, _ := existing.Config["source"].(string)
-		if source != "blueprints-cli" && existing.StrategyType != "agent-def:"+defID {
+		// stamped "blueprints-cli". A pre-existing user/foreign agent that
+		// merely shares the name (or even the same definition) is never
+		// repurposed (mirrors the server guard).
+		if source, _ := existing.Config["source"].(string); source != "blueprints-cli" {
 			return nil
 		}
 

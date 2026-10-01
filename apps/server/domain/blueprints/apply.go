@@ -724,19 +724,13 @@ func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID
 	}
 	if existing != nil {
 		// Ownership gate: adopt a pre-existing runtime agent only when it is
-		// already ours. A manual or foreign-blueprint agent that merely shares
-		// the name is never repurposed — hijacking it would rebind its trigger
-		// config and later delete it on Unapply (mirroring applyAgents'
-		// definition-ownership discipline).
-		bid, _ := existing.Config["sourceBlueprintId"].(string)
-		if bid != "" && bid != blueprintID {
-			return nil // owned by another blueprint — do not hijack
-		}
-		if existing.AgentDefinitionID != nil && *existing.AgentDefinitionID != def.ID {
-			return nil // bound to a different definition — do not hijack
-		}
-		if bid == "" && (existing.AgentDefinitionID == nil || *existing.AgentDefinitionID != def.ID) {
-			return nil // manual agent: no ownership marker and no matching definition
+		// already stamped with this blueprint's ownership. A manual or
+		// foreign-blueprint agent that merely shares the name (or even points
+		// at the same definition) is never repurposed — hijacking it would
+		// rebind its trigger config and later delete it on Unapply (mirroring
+		// applyAgents' definition-ownership discipline).
+		if bid, _ := existing.Config["sourceBlueprintId"].(string); bid != blueprintID {
+			return nil
 		}
 
 		existing.TriggerType = triggerType
