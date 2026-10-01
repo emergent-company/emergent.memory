@@ -37,7 +37,7 @@ concurrency:
 jobs:
   preview:
     name: Preview environment
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.pull_request.head.repo.full_name == github.repository && vars.PREVIEW_ENABLED == 'true'
     uses: emergent-company/emergent.memory.infra/.github/workflows/preview.yml@main
     secrets: inherit
     with:
