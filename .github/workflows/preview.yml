@@ -8,6 +8,11 @@ name: Preview Environment
 # Fork PRs are excluded: they get a read-only token and no secrets, so they can
 # never provision. Every same-repository PR gets an environment automatically.
 #
+# Rollout switch: the job only runs when the repository variable
+# PREVIEW_ENABLED == 'true'. Set it once the preview host, wildcard DNS/TLS,
+# and org secrets exist. Until then the workflow is inert, so merging it does
+# not make every PR attempt (and fail) provisioning.
+#
 # A protected `preview` environment with required reviewers MAY be attached to
 # the secret-bearing job later if per-PR human approval is wanted (design D11);
 # it is intentionally not set here so provisioning is automatic.
