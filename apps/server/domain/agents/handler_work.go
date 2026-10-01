@@ -85,6 +85,88 @@ func toWorkItemDTO(it *graph.WorkItem) *WorkItemDTO {
 	}
 }
 
+// WorkItemRunDTO is a compact run summary in the work-item detail response.
+type WorkItemRunDTO struct {
+	ID           string     `json:"id"`
+	Status       string     `json:"status"`
+	StartedAt    time.Time  `json:"startedAt"`
+	CompletedAt  *time.Time `json:"completedAt"`
+	ErrorMessage *string    `json:"errorMessage,omitempty"`
+	FailureClass *string    `json:"failureClass,omitempty"`
+}
+
+// WorkItemFeedbackDTO is a feedback round in the work-item detail response.
+type WorkItemFeedbackDTO struct {
+	Round     int    `json:"round"`
+	Author    string `json:"author,omitempty"`
+	Text      string `json:"text"`
+	RunID     string `json:"runId,omitempty"`
+	CreatedAt string `json:"createdAt"`
+}
+
+// WorkItemDetailDTO is the card-drawer projection: the work item joined to its
+// feedback history and recent runs.
+type WorkItemDetailDTO struct {
+	Item     *WorkItemDTO          `json:"item"`
+	Feedback []WorkItemFeedbackDTO `json:"feedback"`
+	Runs     []WorkItemRunDTO      `json:"runs"`
+}
+
+// GetWorkItem handles GET /api/projects/:projectId/work-items/:canonicalId
+//
+// @Summary      Get a work item
+// @Description  Returns one work item joined to its latest run, its feedback history, and its recent runs
+// @Tags         agents
+// @Produce      json
+// @Param        projectId path string true "Project ID"
+// @Param        canonicalId path string true "Work item canonical ID"
+// @Success      200 {object} APIResponse[WorkItemDetailDTO] "Work item detail"
+// @Failure      404 {object} apperror.Error "Not found"
+// @Router       /api/projects/{projectId}/work-items/{canonicalId} [get]
+// @Security     bearerAuth
+func (h *Handler) GetWorkItem(c echo.Context) error {
+	projectID, canonicalID, err := h.workActionParams(c)
+	if err != nil {
+		return err
+	}
+	detail, err := h.workActions.GetWorkItemDetail(c.Request().Context(), projectID, canonicalID)
+	if err != nil {
+		return err
+	}
+	dto := &WorkItemDetailDTO{
+		Item:     toWorkItemDTO(detail.Item),
+		Feedback: make([]WorkItemFeedbackDTO, 0, len(detail.Feedback)),
+		Runs:     make([]WorkItemRunDTO, 0, len(detail.Runs)),
+	}
+	for _, fb := range detail.Feedback {
+		if fb == nil {
+			continue
+		}
+		fdto := WorkItemFeedbackDTO{Round: fb.Round, Text: fb.Text, CreatedAt: fb.CreatedAt.Format(time.RFC3339)}
+		if fb.Author != nil {
+			fdto.Author = *fb.Author
+		}
+		if fb.RunID != nil {
+			fdto.RunID = *fb.RunID
+		}
+		dto.Feedback = append(dto.Feedback, fdto)
+	}
+	for _, run := range detail.Runs {
+		if run == nil {
+			continue
+		}
+		dto.Runs = append(dto.Runs, WorkItemRunDTO{
+			ID:           run.ID,
+			Status:       string(run.Status),
+			StartedAt:    run.StartedAt,
+			CompletedAt:  run.CompletedAt,
+			ErrorMessage: run.ErrorMessage,
+			FailureClass: run.FailureClass,
+		})
+	}
+	return c.JSON(http.StatusOK, SuccessResponse(dto))
+}
+
 // ListWorkItems handles GET /api/projects/:projectId/work-items
 //
 // @Summary      List work items

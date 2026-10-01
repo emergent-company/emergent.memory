@@ -1309,6 +1309,10 @@ routes:
       path: /api/projects/:projectId/work-items
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(agents:read)
+    - method: GET
+      path: /api/projects/:projectId/work-items/:canonicalId
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(agents:read)
     - method: POST
       path: /api/projects/:projectId/work-items/:canonicalId/approve
       level: project-member

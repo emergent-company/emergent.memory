@@ -80,6 +80,25 @@ func (r *Repository) FindLiveRunsForSubject(ctx context.Context, canonicalID str
 	return runs, nil
 }
 
+// ListRunsForSubject returns the runs linked to the subject work object, newest
+// first, capped at limit. It backs the board card drawer's run history.
+func (r *Repository) ListRunsForSubject(ctx context.Context, canonicalID string, limit int) ([]*AgentRun, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	var runs []*AgentRun
+	err := r.db.NewSelect().
+		Model(&runs).
+		Where("subject_object_id = ?", canonicalID).
+		Order("created_at DESC").
+		Limit(limit).
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return runs, nil
+}
+
 // HasLiveJobForSubject reports whether any dispatch job for the subject object
 // is live (pending or processing).
 func (r *Repository) HasLiveJobForSubject(ctx context.Context, canonicalID string) (bool, error) {
