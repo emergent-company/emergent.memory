@@ -264,7 +264,7 @@ templ membersBody(data membersPageData) {
 							@memberRow(m, base, canRemoveMember(data.Members, m) && data.CanManage)
 						}
 						for _, inv := range data.Pending {
-							@memberInviteRow(inv, data.CanRevokeInvite)
+							@memberInviteRow(inv, base, data.CanRevokeInvite)
 						}
 					}
 				}
@@ -331,11 +331,13 @@ templ memberAvatar(m ProjectMemberDto) {
 
 // memberInviteRow is one still-pending invitation to the active project,
 // rendered in the members table as a not-yet-confirmed member: a muted mail
-// tile, the invited email with the subdued "Not responded" badge, the invited
-// role, when it was sent, and a revoke affordance. Revoking is an org-tier
-// write (org_admin of the invite's org — #1015), so the revoke button renders
-// only when canRevoke (the caller is org_admin of the active project's org).
-templ memberInviteRow(inv SentInviteDto, canRevoke bool) {
+// tile, the invited email with the subdued "Not responded" lifecycle badge, the
+// invite's email-delivery badge, the invited role, when it was sent, and
+// resend/revoke affordances. Both writes are org-tier (org_admin of the
+// invite's org — #1015), so the controls render only when canRevoke (the caller
+// is org_admin of the active project's org). base is the surface the row sits
+// on, carried into the resend form so its PRG redirect returns there.
+templ memberInviteRow(inv SentInviteDto, base string, canRevoke bool) {
 	@table.TableRow(inv.ID, true, nil) {
 		@table.TableCell("", nil) {
 			<div class="flex items-center gap-3">
@@ -344,12 +346,16 @@ templ memberInviteRow(inv SentInviteDto, canRevoke bool) {
 				</div>
 				<div class="min-w-0">
 					<p class="truncate text-sm font-medium">{ inv.Email }</p>
-					@ui.Badge(ui.BadgeProps{
-						Label:   "Not responded",
-						Variant: ui.BadgeGhost,
-						Size:    ui.BadgeSizeXS,
-						Dot:     true,
-					})
+					<div class="mt-1 flex flex-wrap items-center gap-1.5">
+						@ui.Badge(ui.BadgeProps{
+							Label:   "Not responded",
+							Variant: ui.BadgeGhost,
+							Size:    ui.BadgeSizeXS,
+							Dot:     true,
+						})
+						{{ label, intent := inviteDeliveryBadge(inv.DeliveryStatus) }}
+						@components.StatusBadge(label, intent, "", components.StatusBadgeOpts{Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Dot: true})
+					</div>
 				</div>
 			</div>
 		}
@@ -361,7 +367,24 @@ templ memberInviteRow(inv SentInviteDto, canRevoke bool) {
 		}
 		@table.TableCell("text-right", nil) {
 			if canRevoke {
-				<div class="flex justify-end">
+				<div class="flex justify-end gap-0.5">
+					<form
+						method="post"
+						action={ templ.URL("/invites/" + url.PathEscape(inv.ID) + "/resend") }
+						hx-boost="false"
+						onsubmit="return confirm('Resend this invitation?');"
+					>
+						<input type="hidden" name="surface" value={ base }/>
+						@ui.Button(ui.ButtonProps{
+							Type:      ui.ButtonTypeSubmit,
+							Variant:   ui.ButtonGhost,
+							Size:      ui.ButtonSM,
+							Shape:     ui.ButtonShapeSquare,
+							Icon:      "lucide--send",
+							AriaLabel: "Resend invitation to " + inv.Email,
+							Attrs:     templ.Attributes{"title": "Resend invitation"},
+						})
+					</form>
 					<form method="post" action={ templ.URL("/invites/" + url.PathEscape(inv.ID) + "/revoke") }>
 						@ui.Button(ui.ButtonProps{
 							Type:       ui.ButtonTypeSubmit,

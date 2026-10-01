@@ -473,6 +473,7 @@ func main() {
 	e.POST("/members/:userId/remove", s.uiRemoveMember)
 	e.POST("/members/:userId/role", s.uiChangeMemberRole)
 	e.POST("/invites/:id/revoke", s.uiRevokeInvite)
+	e.POST("/invites/:id/resend", s.uiResendInvite)
 	e.POST("/invites/:id/accept", s.uiAcceptInvite)
 	e.POST("/invites/:id/decline", s.uiDeclineInvite)
 	e.GET("/profile", s.uiProfile)

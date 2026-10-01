@@ -690,6 +690,10 @@ routes:
       level: auth
       note: RequireAuth
     - method: POST
+      path: /api/invites/:id/resend
+      level: auth
+      note: RequireAuth
+    - method: POST
       path: /api/invites/accept
       level: auth
       note: RequireAuth

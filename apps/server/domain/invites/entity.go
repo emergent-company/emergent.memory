@@ -39,12 +39,14 @@ type PendingInvite struct {
 
 // SentInvite represents an invite sent by a project (for project members page)
 type SentInvite struct {
-	ID        string     `json:"id"`
-	Email     string     `json:"email"`
-	Role      string     `json:"role"`
-	Status    string     `json:"status"`
-	CreatedAt time.Time  `json:"createdAt"`
-	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+	ID               string     `json:"id"`
+	Email            string     `json:"email"`
+	Role             string     `json:"role"`
+	Status           string     `json:"status"`
+	CreatedAt        time.Time  `json:"createdAt"`
+	ExpiresAt        *time.Time `json:"expiresAt,omitempty"`
+	DeliveryStatus   *string    `json:"deliveryStatus,omitempty"`
+	DeliveryStatusAt *time.Time `json:"deliveryStatusAt,omitempty"`
 }
 
 // CreateInviteRequest is the request to create a new invite

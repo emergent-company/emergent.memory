@@ -84,6 +84,14 @@ func (s *MailgunSender) Send(ctx context.Context, opts SendOptions) (*SendResult
 		message.SetHtml(opts.HTML)
 	}
 
+	// Enable per-message delivery tracking so delivery events (delivered, opened,
+	// clicked, bounced, complained) are reported back to the webhook.
+	message.SetTrackingOptions(&mailgun.TrackingOptions{
+		Tracking:       true,
+		TrackingOpens:  true,
+		TrackingClicks: "yes",
+	})
+
 	s.log.Debug("sending email",
 		slog.String("to", opts.To),
 		slog.String("subject", opts.Subject))
