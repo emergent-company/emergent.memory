@@ -53,6 +53,7 @@ var Module = fx.Module("agents",
 		provideWorkObjectStore,
 		provideWorkStatusReaper,
 		provideWorkReconciler,
+		provideWorkActionService,
 	),
 	fx.Invoke(
 		RegisterRoutes,
@@ -71,6 +72,7 @@ var Module = fx.Module("agents",
 		registerWorkObjectStore,
 		registerWorkStatusReaper,
 		registerWorkReconciler,
+		registerHandlerWorkActions,
 	),
 )
 
@@ -362,11 +364,24 @@ func provideWorkObjectStore(svc *graph.Service) WorkObjectStore {
 }
 
 // registerWorkObjectStore injects the work-object store into the trigger
-// service, the worker pool, and the executor after construction.
-func registerWorkObjectStore(ts *TriggerService, pool *WorkerPool, executor *AgentExecutor, store WorkObjectStore) {
+// service, the worker pool, the executor, and the human-action service after
+// construction.
+func registerWorkObjectStore(ts *TriggerService, pool *WorkerPool, executor *AgentExecutor, wa *WorkActionService, store WorkObjectStore) {
 	ts.SetWorkObjectStore(store)
 	pool.SetWorkObjectStore(store)
 	executor.SetWorkObjectStore(store)
+	wa.SetWorkObjectStore(store)
+}
+
+// provideWorkActionService creates the human-action service for work items.
+func provideWorkActionService(repo *Repository, log *slog.Logger) *WorkActionService {
+	return NewWorkActionService(repo, log)
+}
+
+// registerHandlerWorkActions injects the human-action service into the REST
+// handler.
+func registerHandlerWorkActions(h *Handler, svc *WorkActionService) {
+	h.WithWorkActionService(svc)
 }
 
 // registerWorkerPool wires the WorkerPool into the fx lifecycle.

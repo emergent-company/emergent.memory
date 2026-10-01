@@ -37,6 +37,7 @@ type Handler struct {
 	modelResolver modelResolverLookup // optional; nil when modelconfig not available
 	mcpTools      *MCPToolHandler     // remember-status tool handler; wired via WithMCPToolHandler
 	mcpService    *mcp.Service        // tool catalog source for the computed toolGroups; wired via WithMCPService
+	workActions   *WorkActionService  // human-action service (approve/request-changes/retry/reassign/cancel); wired via WithWorkActionService
 }
 
 // usageLookup is the internal interface for looking up project spend.
@@ -90,6 +91,12 @@ func (h *Handler) WithMCPToolHandler(mt *MCPToolHandler) {
 // agent-referenced-tools-only membership.
 func (h *Handler) WithMCPService(s *mcp.Service) {
 	h.mcpService = s
+}
+
+// WithWorkActionService attaches the human-action service to the REST Handler.
+// Called from fx Invoke (registerHandlerWorkActions).
+func (h *Handler) WithWorkActionService(s *WorkActionService) {
+	h.workActions = s
 }
 
 // getWorkspaceInfo loads sandbox details for a run, returning nil if unavailable.

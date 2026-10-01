@@ -26,10 +26,10 @@
 
 ## 3. P3 — Review, rework, and human actions
 
-- [ ] 3.1 `requiresReview` → `status=review` + `needs_review=true`; approve → `reviewed_by`/`reviewed_at` + `needs_review=false` + `status=done`. **Build the write path for these columns — they are declared and read but never written today.** Note the accepted trade-off: produced objects are visible/searchable before approval. Verify tests.
-- [ ] 3.2 Request changes → `status=revision` + append-only `feedback[] {round,author,text,runId}` (non-empty required) + rework enqueue carrying all prior feedback; revision cap → `kb.tasks` escalation. Verify tests.
-- [ ] 3.3 Human-action API: approve / request-changes / retry / reassign / cancel — handlers + DTOs + auth (project-member) + `route-authority.yaml` entries. Verify handler tests + `go run ./cmd/route-authority-guard`.
-- [ ] 3.4 Escalation surfaces through `kb.tasks` (`type=work-escalation`) with full feedback history. Verify tests.
+- [x] 3.1 `requiresReview` → `status=review` + `needs_review=true`; approve → `reviewed_by`/`reviewed_at` + `needs_review=false` + `status=done`. **Build the write path for these columns — they are declared and read but never written today.** Note the accepted trade-off: produced objects are visible/searchable before approval. Verify tests.
+- [x] 3.2 Request changes → `status=revision` + append-only `feedback[] {round,author,text,runId}` (non-empty required) + rework enqueue carrying all prior feedback; revision cap → `kb.tasks` escalation. Verify tests.
+- [x] 3.3 Human-action API: approve / request-changes / retry / reassign / cancel — handlers + DTOs + auth (project-member) + `route-authority.yaml` entries. Verify handler tests + `go run ./cmd/route-authority-guard`.
+- [x] 3.4 Escalation surfaces through `kb.tasks` (`type=work-escalation`) with full feedback history. Verify tests.
 
 ## 4. P4 — Per-type configuration
 
