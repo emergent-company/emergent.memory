@@ -2,8 +2,10 @@ package notifications
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -125,6 +127,38 @@ func TestGetStatsDismissedExcludesCleared(t *testing.T) {
 	require.Equal(t, int64(2), stats.Total)
 	require.Equal(t, int64(1), stats.Unread)
 	require.Equal(t, int64(1), stats.Dismissed)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestRestoreResetsDismissed is the row-level regression for the
+// dismiss -> restore gap: Restore must reset `dismissed = false` and
+// `dismissed_at = NULL` alongside `cleared_at = NULL`, in a single UPDATE, and
+// must not touch `read`. It uses a custom matcher because the assertion is
+// about both the presence of the reset columns and the absence of a read write.
+func TestRestoreResetsDismissed(t *testing.T) {
+	matcher := sqlmock.QueryMatcherFunc(func(_, actualSQL string) error {
+		up := strings.ToUpper(actualSQL)
+		for _, want := range []string{"CLEARED_AT = NULL", "DISMISSED = FALSE", "DISMISSED_AT = NULL"} {
+			if !strings.Contains(up, want) {
+				return fmt.Errorf("restore UPDATE missing %q: %s", want, actualSQL)
+			}
+		}
+		if strings.Contains(up, "READ = ") {
+			return fmt.Errorf("restore UPDATE must not change read: %s", actualSQL)
+		}
+		return nil
+	})
+
+	sqldb, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(matcher))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sqldb.Close() })
+
+	db := bun.NewDB(sqldb, pgdialect.New())
+	repo := NewRepository(db, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	mock.ExpectExec(".*").WillReturnResult(sqlmock.NewResult(0, 1))
+
+	require.NoError(t, repo.Restore(context.Background(), "u1", "n1"))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
