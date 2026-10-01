@@ -204,43 +204,31 @@ type errTestType struct{}
 
 func (errTestType) Error() string { return "backend unreachable" }
 
-// TestRenderAgentsPageSkillsPicker covers the skill picker in the agent
-// create/edit dialog: checkboxes per skill (name + description), the empty
-// state with a link to the Skills page, and the section sitting between Tools
-// and Delegation.
-func TestRenderAgentsPageSkillsPicker(t *testing.T) {
-	skills := []Skill{
-		{Name: "summarize-email", Description: "Condenses threads"},
-		{Name: "recall-memory"},
-	}
+// TestAgentFormDialogOmitsToolsAndSkills covers #1305: the create/edit dialog
+// must not offer tools or skills configuration (the max-w-lg modal is too
+// narrow for those pickers). Both stay configurable on the agent's settings
+// subpages, whose own tests cover them. The dialog keeps every remaining field
+// and the create flow's submit hook.
+func TestAgentFormDialogOmitsToolsAndSkills(t *testing.T) {
 	agents := []AgentDefinitionSummary{{ID: "a1", Name: "diane"}}
-	html := renderHTML(t, AgentsPage(agents, nil, skills, "", nil))
-	for _, want := range []string{
-		`name="skill"`, `value="summarize-email"`, `value="recall-memory"`,
-		"summarize-email", "Condenses threads", "recall-memory",
-		`href="/skills"`, "Skills",
+	html := renderHTML(t, AgentsPage(agents, nil, "", nil))
+
+	for _, gone := range []string{
+		`id="agent-tools"`, `name="tools"`,
+		`id="agent-skills"`, `name="skill"`, "agent-skills-empty", "No skills yet",
 	} {
-		if !strings.Contains(html, want) {
-			t.Errorf("agents page missing %q", want)
+		if strings.Contains(html, gone) {
+			t.Errorf("add-agent dialog must not render tools/skills control %q", gone)
 		}
 	}
-	// one checkbox per skill
-	if got := strings.Count(html, `name="skill" type="checkbox"`); got != 2 {
-		t.Errorf("skill checkboxes = %d, want 2", got)
-	}
-	// skills section sits after Tools and before Delegation
-	if strings.Index(html, `id="agent-tools"`) >= strings.Index(html, `name="skill"`) ||
-		strings.Index(html, `name="skill"`) >= strings.Index(html, "agent-delegation") {
-		t.Error("skills picker must render between Tools and Delegation")
-	}
-
-	// no skills → empty note with a link, no checkboxes
-	htmlEmpty := renderHTML(t, AgentsPage(agents, nil, nil, "", nil))
-	if !strings.Contains(htmlEmpty, "No skills yet") || !strings.Contains(htmlEmpty, `href="/skills"`) {
-		t.Error("empty skill state missing")
-	}
-	if strings.Contains(htmlEmpty, `name="skill" type="checkbox"`) {
-		t.Error("empty skill state must not render checkboxes")
+	for _, want := range []string{
+		`id="agent-form"`, `id="agent-name"`, `id="agent-prompt"`,
+		`id="agent-model"`, `id="agent-color"`, "agent-delegation",
+		`id="agent-form-submit"`, "Create agent",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("add-agent dialog missing %q", want)
+		}
 	}
 }
 
@@ -293,7 +281,7 @@ func TestAgentModelDisplay(t *testing.T) {
 		{ID: "a2", Name: "milo"},
 		{ID: "a3", Name: "reggie"},
 	}
-	html := renderHTML(t, AgentsPage(agents, nil, nil, "", nil))
+	html := renderHTML(t, AgentsPage(agents, nil, "", nil))
 
 	// both breakpoint wrappers present: table desktop-only, cards mobile-only.
 	for _, want := range []string{`class="hidden md:block"`, `class="md:hidden"`} {
@@ -542,9 +530,10 @@ func TestAgentModelWarnings(t *testing.T) {
 	}
 }
 
-// TestUIAgentsRouteSkills asserts uiAgents threads the fetched skills through
-// to the dialog.
-func TestUIAgentsRouteSkills(t *testing.T) {
+// TestUIAgentsRouteRendersWithoutSkills asserts uiAgents renders the list
+// without any local skill picker: tools/skills are configured on the agent
+// settings subpages, not the add-agent dialog (#1305).
+func TestUIAgentsRouteRendersWithoutSkills(t *testing.T) {
 	f := &fakeMemory{
 		agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
 		defs: map[string]*AgentDefinition{
@@ -565,10 +554,13 @@ func TestUIAgentsRouteSkills(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{`name="skill"`, "summarize-email", "Condenses threads", "recall-memory", `data-href="/agents/a1"`, `href="/chat?agent=a1"`} {
+	for _, want := range []string{`data-href="/agents/a1"`, `href="/chat?agent=a1"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("agents route missing %q", want)
 		}
+	}
+	if strings.Contains(body, `name="skill"`) {
+		t.Error("agents route must not render the dialog skill picker")
 	}
 }
 

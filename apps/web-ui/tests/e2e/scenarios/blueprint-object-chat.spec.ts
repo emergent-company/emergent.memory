@@ -149,13 +149,14 @@ test('full journey: provider → agent → blueprint → object → chat', async
     // succeeded.
     await setDefaultEmbeddingModel(page, EMBEDDING_MODEL);
 
-    // 3. AGENT (UI): explicit model in the modal's #agent-model dropdown, and
-    // the FULL tool whitelist ("*") in #agent-tools. Memory treats an agent
-    // with an EMPTY tools list as having no tool access at all (only
-    // coordination tools are injected), so without tools the agent could not
-    // look the object up — the turn ran but produced no reply. If MODEL isn't
-    // in the catalog the helper throws — that is a misconfigured
-    // E2E_SCENARIO_LLM_MODEL, so fail loudly rather than skip.
+    // 3. AGENT (UI): explicit model in the modal's #agent-model dropdown, then
+    // the FULL tool whitelist ("*") set by the helper (the add-agent modal no
+    // longer carries #agent-tools, #1305). Memory treats an agent with an EMPTY
+    // tools list as having no tool access at all (only coordination tools are
+    // injected), so without tools the agent could not look the object up — the
+    // turn ran but produced no reply. If MODEL isn't in the catalog the helper
+    // throws — that is a misconfigured E2E_SCENARIO_LLM_MODEL, so fail loudly
+    // rather than skip.
     agentId = await createAgentViaModal(page, name, MODEL, '*');
 
     // 4. BLUEPRINT (UI): install the bundled personal-memory pack into THIS
