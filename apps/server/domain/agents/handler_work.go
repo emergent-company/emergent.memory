@@ -87,12 +87,13 @@ func toWorkItemDTO(it *graph.WorkItem) *WorkItemDTO {
 
 // WorkItemRunDTO is a compact run summary in the work-item detail response.
 type WorkItemRunDTO struct {
-	ID           string     `json:"id"`
-	Status       string     `json:"status"`
-	StartedAt    time.Time  `json:"startedAt"`
-	CompletedAt  *time.Time `json:"completedAt"`
-	ErrorMessage *string    `json:"errorMessage,omitempty"`
-	FailureClass *string    `json:"failureClass,omitempty"`
+	ID           string         `json:"id"`
+	Status       string         `json:"status"`
+	StartedAt    time.Time      `json:"startedAt"`
+	CompletedAt  *time.Time     `json:"completedAt"`
+	ErrorMessage *string        `json:"errorMessage,omitempty"`
+	FailureClass *string        `json:"failureClass,omitempty"`
+	Summary      map[string]any `json:"summary,omitempty"`
 }
 
 // WorkItemFeedbackDTO is a feedback round in the work-item detail response.
@@ -162,6 +163,7 @@ func (h *Handler) GetWorkItem(c echo.Context) error {
 			CompletedAt:  run.CompletedAt,
 			ErrorMessage: run.ErrorMessage,
 			FailureClass: run.FailureClass,
+			Summary:      run.Summary,
 		})
 	}
 	return c.JSON(http.StatusOK, SuccessResponse(dto))
