@@ -18,6 +18,8 @@
 - [x] 3.3 Add `Resend` handler `POST /api/invites/:id/resend` with the same org-admin authority check as `Delete` (`apps/server/domain/invites/handler.go`, `module.go`), plus swagger annotation
 - [x] 3.4 Unit tests: resend re-enqueues a `project-invitation` job and extends expiry; resend of accepted/revoked/declined/unknown invite returns 404; non-org-admin returns 403
 - [x] 3.5 SDK: add `deliveryStatus`/`deliveryStatusAt` to `SentInvite` and a `Resend(ctx, inviteID)` method (`apps/server/pkg/sdk/invitations/client.go`)
+- [x] 3.6 Server-enforced resend idempotency guard: `Resend` is a no-op (HTTP 200, existing invitation, no enqueue) when the invitation already has an invite-scoped `kb.email_jobs` row created within `inviteResendGuardWindow` (60s), keyed per invitation (`hasRecentInviteEmailJob`, `apps/server/domain/invites/service.go`)
+- [x] 3.7 Tests: a repeat resend within the guard window does not enqueue a second job; a resend past the window does enqueue; the guard is per-invite (`apps/server/domain/invites/resend_test.go`)
 
 ## 4. Web UI (gateway)
 

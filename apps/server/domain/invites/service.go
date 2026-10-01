@@ -549,11 +549,44 @@ func (s *Service) Revoke(ctx context.Context, inviteID string) error {
 	return nil
 }
 
+// inviteResendGuardWindow is the server-enforced minimum interval between two
+// invitation emails for the same invitation. A resend for an invitation that
+// already has an invite-scoped kb.email_jobs row created within this window is
+// an idempotent no-op: it does not enqueue a second job. The window covers the
+// double-submit / client-retry cases where the earlier email is still in flight
+// or was just delivered, so repeated POSTs cannot send unbounded duplicate
+// invitation emails. It is a server guarantee; the UI's confirmation dialog is
+// not.
+const inviteResendGuardWindow = 60 * time.Second
+
+// hasRecentInviteEmailJob reports whether the invitation already has an
+// invite-scoped email job (source_type='invite', source_id=inviteID) created
+// within inviteResendGuardWindow. The lookup is served by the existing
+// idx_email_jobs_source (source_type, source_id) index.
+func (s *Service) hasRecentInviteEmailJob(ctx context.Context, inviteID string) (bool, error) {
+	var count int
+	err := s.db.NewRaw(`
+		SELECT COUNT(*) FROM kb.email_jobs
+		WHERE source_type = 'invite' AND source_id = ?
+		  AND created_at > now() - (? || ' seconds')::interval
+	`, inviteID, fmt.Sprintf("%d", int(inviteResendGuardWindow.Seconds()))).Scan(ctx, &count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 // Resend re-sends a pending invitation email: it keeps the SAME token, extends
 // expires_at to now + 7 days, and re-enqueues the project-invitation job. Only a
 // pending invite may be resent; an unknown invite or a non-pending invite is 404
 // (matching the revoke guard). Enqueue failure is non-fatal: the invitation stays
 // valid.
+//
+// Resend is server-side idempotent over a short window: if the invitation
+// already has an invite-scoped email job created within
+// inviteResendGuardWindow, the request is a no-op and the existing invitation is
+// returned. This guards against double-submits and repeated POSTs sending
+// unbounded duplicate invitation emails.
 func (s *Service) Resend(ctx context.Context, inviteID string) (*Invite, error) {
 	var invite Invite
 	err := s.db.NewSelect().
@@ -569,6 +602,18 @@ func (s *Service) Resend(ctx context.Context, inviteID string) (*Invite, error) 
 
 	if invite.Status != "pending" {
 		return nil, apperror.NewNotFound("invite", inviteID)
+	}
+
+	// Idempotency guard: an email for this invitation was already enqueued
+	// recently (in flight or just delivered). Return the existing invitation
+	// without enqueuing another job, so a repeat click is a clean no-op rather
+	// than a duplicate email or a confusing error.
+	recent, err := s.hasRecentInviteEmailJob(ctx, inviteID)
+	if err != nil {
+		return nil, apperror.NewDatabase("check recent invitation email", err)
+	}
+	if recent {
+		return &invite, nil
 	}
 
 	// Keep the same token; only extend the expiry.
