@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
 	"github.com/emergent-company/emergent.memory/domain/graph"
 )
 
@@ -47,4 +48,9 @@ type WorkObjectStore interface {
 	// objects currently in the given status (projectID empty = all projects;
 	// olderThan non-zero restricts to objects last written before olderThan).
 	ListWorkObjectsByStatus(ctx context.Context, projectID, status string, olderThan time.Time, limit int) ([]*graph.WorkObjectHead, error)
+	// GetObjectTypeWorkConfig resolves the per-type object-driven work config for
+	// a project+type (P4). Returns (nil, nil) for unknown/unconfigured types. It
+	// is the surface used to apply per-type failureLimit/retryPolicy overrides
+	// (P4.3).
+	GetObjectTypeWorkConfig(ctx context.Context, projectID, typeName string) (*agents.ObjectTypeWorkConfig, error)
 }

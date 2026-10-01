@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/scheduler"
 	"github.com/emergent-company/emergent.memory/internal/testdb"
@@ -283,6 +284,10 @@ func (f *fakeWorkObjectStore) CancelWorkObject(ctx context.Context, projectID, c
 }
 
 func (f *fakeWorkObjectStore) ListWorkObjectsByStatus(ctx context.Context, projectID, status string, olderThan time.Time, limit int) ([]*graph.WorkObjectHead, error) {
+	return nil, nil
+}
+
+func (f *fakeWorkObjectStore) GetObjectTypeWorkConfig(ctx context.Context, projectID, typeName string) (*agents.ObjectTypeWorkConfig, error) {
 	return nil, nil
 }
 

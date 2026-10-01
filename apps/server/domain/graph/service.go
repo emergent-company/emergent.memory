@@ -256,6 +256,18 @@ func (s *Service) objectTypeWorkConfig(ctx context.Context, projectID uuid.UUID,
 	return &schema.ObjectTypeWorkConfig
 }
 
+// GetObjectTypeWorkConfig exposes the per-type object-driven work config for a
+// project+type (P4). It is the graph surface the agents domain uses to apply
+// per-type failureLimit/retryPolicy overrides (P4.3). Returns (nil, nil) when
+// the type is unknown or unconfigured.
+func (s *Service) GetObjectTypeWorkConfig(ctx context.Context, projectID, typeName string) (*agents.ObjectTypeWorkConfig, error) {
+	pid, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, err
+	}
+	return s.objectTypeWorkConfig(ctx, pid, typeName), nil
+}
+
 // excludedSearchTypes returns the set of object type names flagged
 // excludeFromSearch for the project (P4.2). Operational objects are excluded
 // from default search. Empty when the schema provider is unavailable.

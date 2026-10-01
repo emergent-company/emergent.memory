@@ -130,6 +130,43 @@ func workConfigOf(def *AgentDefinition) AgentWorkConfig {
 	return def.WorkConfig
 }
 
+// effectiveWorkPolicy is the resolved per-item failure budget and retry attempt
+// budget for a work run, after applying precedence: per-type override >
+// agent-definition value > built-in default (P4.3).
+type effectiveWorkPolicy struct {
+	failureLimit int
+	maxAttempts  int
+}
+
+// resolveWorkPolicy resolves the effective failureLimit and retry maxAttempts
+// for a work run's subject type, layering per-type overrides over the agent
+// definition. When the subject type is empty or its config is unavailable, the
+// agent-definition values (or defaults) apply unchanged.
+func (p *WorkerPool) resolveWorkPolicy(ctx context.Context, projectID, subjectType string, agentDef *AgentDefinition) effectiveWorkPolicy {
+	wc := workConfigOf(agentDef)
+	pol := effectiveWorkPolicy{
+		failureLimit: wc.FailureLimitValue(),
+		maxAttempts:  1,
+	}
+	if wc.RetryPolicy.MaxAttempts > 0 {
+		pol.maxAttempts = wc.RetryPolicy.MaxAttempts
+	}
+	if p.workObjects == nil || subjectType == "" {
+		return pol
+	}
+	cfg, err := p.workObjects.GetObjectTypeWorkConfig(ctx, projectID, subjectType)
+	if err != nil || cfg == nil {
+		return pol
+	}
+	if cfg.FailureLimit > 0 {
+		pol.failureLimit = cfg.FailureLimit
+	}
+	if cfg.RetryPolicy != nil && cfg.RetryPolicy.MaxAttempts > 0 {
+		pol.maxAttempts = cfg.RetryPolicy.MaxAttempts
+	}
+	return pol
+}
+
 // finishWorkRun applies the run-end → item-transition mapping (design.md
 // "Run-end → item-transition mapping") for a subject-object run. It is the
 // single place a work run's terminal outcome is translated into an item
@@ -157,7 +194,7 @@ func (p *WorkerPool) finishWorkRun(ctx context.Context, log *slog.Logger, job *A
 			return
 		}
 		// success without a terminator → protocol violation (bounded retry, else block).
-		p.protocolViolation(ctx, log, job, agent, agentDef, canonicalID, projectID)
+		p.protocolViolation(ctx, log, job, agent, agentDef, canonicalID, projectID, subjectType)
 		return
 	}
 
@@ -226,12 +263,12 @@ func failureMessage(execErr error, result *ExecuteResult) string {
 // protocolViolation handles a run that ended success without a terminator: it
 // is a bounded retry against the item budget, otherwise the item is blocked as
 // a protocol violation.
-func (p *WorkerPool) protocolViolation(ctx context.Context, log *slog.Logger, job *AgentRunJob, agent *Agent, agentDef *AgentDefinition, canonicalID, projectID string) {
+func (p *WorkerPool) protocolViolation(ctx context.Context, log *slog.Logger, job *AgentRunJob, agent *Agent, agentDef *AgentDefinition, canonicalID, projectID, subjectType string) {
 	if err := p.repo.CompleteJob(ctx, job.ID, job.RunID); err != nil {
 		log.Warn("failed to complete job for protocol violation", slog.String("error", err.Error()))
 	}
 	p.handleFailure(ctx, log, agent)
-	p.retryOrBlock(ctx, log, agent, agentDef, canonicalID, projectID, "", "run ended without a work terminator", FailureClassProtocol)
+	p.retryOrBlock(ctx, log, agent, agentDef, canonicalID, projectID, subjectType, "run ended without a work terminator", FailureClassProtocol)
 }
 
 // retryableFailure: item → ready + re-enqueue with backoff; budget +1.
@@ -270,12 +307,14 @@ func (p *WorkerPool) capabilityUnassign(ctx context.Context, log *slog.Logger, a
 }
 
 // retryOrBlock transitions the item back to ready and re-enqueues while the
-// item budget remains; once exhausted the item is blocked (dead-letter).
+// item budget remains; once exhausted the item is blocked (dead-letter). The
+// budget is resolved with per-type overrides (P4.3): type > agent > default.
 func (p *WorkerPool) retryOrBlock(ctx context.Context, log *slog.Logger, agent *Agent, agentDef *AgentDefinition, canonicalID, projectID, subjectType, errMsg string, cls FailureClass) {
 	wc := workConfigOf(agentDef)
+	policy := p.resolveWorkPolicy(ctx, projectID, subjectType, agentDef)
 	backoffAt := time.Now().Add(itemRequeueBackoff())
 	count := p.recordFailure(ctx, log, canonicalID, projectID, agentDef, cls, &backoffAt)
-	if count > wc.FailureLimitValue() {
+	if count > policy.failureLimit {
 		p.blockWorkObject(ctx, log, canonicalID, projectID, agentDef, errMsg, cls)
 		return
 	}
@@ -340,12 +379,10 @@ func (p *WorkerPool) blockWorkObject(ctx context.Context, log *slog.Logger, cano
 
 // reenqueueWork enqueues a fresh run for the work object, optionally with a
 // requeue backoff. A lost race with the reconciler is tolerated by the claim
-// skip path.
+// skip path. The retry attempt budget honours per-type retryPolicy overrides
+// (P4.3): type > agent definition > default.
 func (p *WorkerPool) reenqueueWork(ctx context.Context, log *slog.Logger, agent *Agent, agentDef *AgentDefinition, canonicalID, projectID, subjectType string, backoffAt time.Time) {
-	maxAttempts := 1
-	if agentDef != nil && agentDef.WorkConfig.RetryPolicy.MaxAttempts > 0 {
-		maxAttempts = agentDef.WorkConfig.RetryPolicy.MaxAttempts
-	}
+	maxAttempts := p.resolveWorkPolicy(ctx, projectID, subjectType, agentDef).maxAttempts
 	var nextRunAt *time.Time
 	if backoffAt.After(time.Now()) {
 		nextRunAt = &backoffAt

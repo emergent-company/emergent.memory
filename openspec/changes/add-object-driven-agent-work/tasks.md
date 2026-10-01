@@ -33,9 +33,9 @@
 
 ## 4. P4 — Per-type configuration
 
-- [ ] 4.1 Per-type `boardEnabled` + allowed `status` values, validated on write (schemas registry — new surface). Verify tests.
-- [ ] 4.2 Per-type operational flags (`skipEmbeddings`/`skipExtraction`/`excludeFromSearch`) honoured by the respective pipelines; required for board-enabled types. Verify tests.
-- [ ] 4.3 Per-agent/per-type `failureLimit` and `retryPolicy` overrides. Verify tests.
+- [x] 4.1 Per-type `boardEnabled` + allowed `status` values, validated on write (schemas registry — new surface). Verify tests.
+- [x] 4.2 Per-type operational flags (`skipEmbeddings`/`skipExtraction`/`excludeFromSearch`) honoured by the respective pipelines; required for board-enabled types. Verify tests.
+- [x] 4.3 Per-agent/per-type `failureLimit` and `retryPolicy` overrides. Verify tests.
 
 ## 5. P5 — Kanban projection and UI
 
