@@ -38,6 +38,7 @@ func RegisterRoutesManual(e *echo.Echo, h *Handler, authMiddleware *auth.Middlew
 	events.Use(authMiddleware.RequireAuth())
 
 	events.GET("/stream", h.HandleStream)
+	events.GET("/stream/account", h.HandleUserStream)
 	events.GET("/connections/count", h.HandleConnectionsCount)
 }
 

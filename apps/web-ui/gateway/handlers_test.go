@@ -421,6 +421,23 @@ type fakeMemory struct {
 	lastMCPLabel         string
 	lastMCPKeyID         string
 	lastMCPSessionStatus string
+
+	// Inbox / notifications (see notifications_handlers.go).
+	notifications          []Notification
+	notificationListErr    error
+	notificationCounts     *NotificationCounts
+	notificationCountErr   error
+	notificationPrefs      []NotificationPreference
+	notificationPrefsErr   error
+	notificationMutations  []string // "action:id[:verb]" in call order
+	notificationMutErr     error    // failure for every mutation/preference write
+	lastListParams         NotificationListParams
+	lastCountsScope        string
+	lastCountsProject      string
+	lastPrefsProject       string
+	eventStreamBody        io.ReadCloser // returned by NotificationEventStream
+	eventStreamErr         error
+	lastEventStreamProject string
 }
 
 // projectSettingWrite records one SetProjectSetting call on the fake.

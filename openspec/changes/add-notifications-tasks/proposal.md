@@ -1,3 +1,5 @@
+> **Superseded (notifications portion).** The notifications capability defined here is superseded by `openspec/changes/add-inbox-subsystem/`, which adds account/project scopes, the event taxonomy, opt-in preferences, actionable items, and the producer API on top of the same `kb.notifications` store and UI surface. This change is retained only for the **background-task monitor** (`tasks` capability). Once `add-inbox-subsystem` lands, close or archive this change's notifications portion.
+
 ## Why
 
 The previous Memory UI had a notifications inbox (with real-time SSE) and a background-task monitor. Alfred has neither.

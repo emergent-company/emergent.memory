@@ -10,6 +10,7 @@ import (
 	"github.com/uptrace/bun"
 	"go.uber.org/fx"
 
+	"github.com/emergent-company/emergent.memory/domain/notifications"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -32,16 +33,24 @@ type UsageService struct {
 	ch     chan *LLMUsageEvent
 	log    *slog.Logger
 	doneCh chan struct{} // closed when the worker goroutine exits
+
+	// notificationsSvc is the central notification producer used for budget
+	// alerts. Injected as *notifications.Service — provider → notifications is
+	// acyclic (notifications imports events/taxonomy/apperror/logger, none of
+	// which import provider), so the leaf-package hand-off D7 warned about is
+	// unnecessary. nil is safe: budget alerts are skipped when not wired.
+	notificationsSvc *notifications.Service
 }
 
 // NewUsageService creates a UsageService and registers lifecycle hooks with fx.
-func NewUsageService(lc fx.Lifecycle, repo *Repository, db bun.IDB, log *slog.Logger) *UsageService {
+func NewUsageService(lc fx.Lifecycle, repo *Repository, db bun.IDB, notificationsSvc *notifications.Service, log *slog.Logger) *UsageService {
 	s := &UsageService{
-		repo:   repo,
-		db:     db,
-		ch:     make(chan *LLMUsageEvent, usageBufferSize),
-		log:    log.With(logger.Scope("provider.usage")),
-		doneCh: make(chan struct{}),
+		repo:             repo,
+		db:               db,
+		ch:               make(chan *LLMUsageEvent, usageBufferSize),
+		log:              log.With(logger.Scope("provider.usage")),
+		doneCh:           make(chan struct{}),
+		notificationsSvc: notificationsSvc,
 	}
 
 	lc.Append(fx.Hook{
@@ -265,7 +274,9 @@ func (s *UsageService) checkBudget(ctx context.Context, projectID string) {
 		return
 	}
 
-	// 5. Insert a notification for each admin.
+	// 5. Insert a notification for each admin via the central producer. The
+	// group_key is passed through so Service.Create coalesces per-user
+	// (in addition to the project-level dedup read at step 3 above).
 	pctUsed := (spend / *budget.BudgetUSD) * 100
 	title := "Budget alert"
 	message := fmt.Sprintf(
@@ -277,14 +288,20 @@ func (s *UsageService) checkBudget(ctx context.Context, projectID string) {
 	severity := "warning"
 	importance := "important"
 
+	if s.notificationsSvc == nil {
+		return
+	}
+
 	for _, userID := range adminIDs {
 		gk := groupKey
 		st := sourceType
 		sid := projectID
 		cat := category
-		n := &budgetNotification{
-			ProjectID:  &projectID,
+		_, err := s.notificationsSvc.Create(ctx, notifications.CreateInput{
 			UserID:     userID,
+			ProjectID:  &projectID,
+			Scope:      notifications.ScopeAccount,
+			EventKey:   "account.usage.budget_alert",
 			Title:      title,
 			Message:    message,
 			Severity:   severity,
@@ -293,9 +310,9 @@ func (s *UsageService) checkBudget(ctx context.Context, projectID string) {
 			SourceType: &st,
 			SourceID:   &sid,
 			Category:   &cat,
-		}
-		if _, err := s.db.NewInsert().Model(n).Exec(ctx); err != nil {
-			s.log.Warn("checkBudget: failed to insert notification",
+		})
+		if err != nil {
+			s.log.Warn("checkBudget: failed to create budget alert notification",
 				logger.Error(err),
 				slog.String("projectID", projectID),
 				slog.String("userID", userID),
@@ -309,24 +326,6 @@ func (s *UsageService) checkBudget(ctx context.Context, projectID string) {
 		slog.Float64("budget", *budget.BudgetUSD),
 		slog.Int("admins", len(adminIDs)),
 	)
-}
-
-// budgetNotification is a minimal struct for inserting into kb.notifications.
-// Using a local struct avoids importing the notifications package and creating
-// a circular dependency.
-type budgetNotification struct {
-	bun.BaseModel `bun:"table:kb.notifications"`
-
-	ProjectID  *string `bun:"project_id,type:uuid"`
-	UserID     string  `bun:"user_id,notnull,type:uuid"`
-	Title      string  `bun:"title,notnull"`
-	Message    string  `bun:"message,notnull"`
-	Severity   string  `bun:"severity,notnull"`
-	Importance string  `bun:"importance,notnull"`
-	GroupKey   *string `bun:"group_key"`
-	SourceType *string `bun:"source_type"`
-	SourceID   *string `bun:"source_id"`
-	Category   *string `bun:"category"`
 }
 
 // CheckBudgetExceeded returns true when the project's current-month spend has

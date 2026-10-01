@@ -26,6 +26,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/events"
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/domain/notifications"
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
 	"github.com/emergent-company/emergent.memory/domain/skills"
@@ -614,21 +615,22 @@ type toolPool interface {
 // workspace_config, the executor automatically provisions a sandboxed
 // container before the run starts and tears it down after the run completes.
 type AgentExecutor struct {
-	modelFactory   *adk.ModelFactory
-	toolPool       toolPool
-	repo           *Repository
-	skillRepo      skills.SkillRepo
-	embeddingsSvc  *embeddings.Service
-	provisioner    *sandbox.AutoProvisioner // nil if workspaces are disabled
-	wsEnabled      bool                     // cached feature flag
-	sessionService session.Service
-	modelLimits    ModelLimitsLookup // nil if provider module is not registered
-	apiTokenSvc    ephemeralTokenSvc // nil if not configured; used for ephemeral sandbox tokens
-	usageService   *provider.UsageService
-	eventsSvc      *events.Service // nil if events module not registered; used by ask_user SSE notification
-	safeguards     config.AgentSafeguardsConfig
-	toolBounds     ToolResultBounds // model-context bound for tool results (issue #1205)
-	log            *slog.Logger
+	modelFactory     *adk.ModelFactory
+	toolPool         toolPool
+	repo             *Repository
+	skillRepo        skills.SkillRepo
+	embeddingsSvc    *embeddings.Service
+	provisioner      *sandbox.AutoProvisioner // nil if workspaces are disabled
+	wsEnabled        bool                     // cached feature flag
+	sessionService   session.Service
+	modelLimits      ModelLimitsLookup // nil if provider module is not registered
+	apiTokenSvc      ephemeralTokenSvc // nil if not configured; used for ephemeral sandbox tokens
+	usageService     *provider.UsageService
+	eventsSvc        *events.Service        // nil if events module not registered; used by ask_user SSE notification
+	notificationsSvc *notifications.Service // nil-safe; central notification producer for ask_user
+	safeguards       config.AgentSafeguardsConfig
+	toolBounds       ToolResultBounds // model-context bound for tool results (issue #1205)
+	log              *slog.Logger
 
 	// runCancels tracks in-flight runs by id so an explicit cancel request can
 	// stop a run whose lifetime is detached from the request context that
@@ -795,6 +797,7 @@ func NewAgentExecutor(
 	apiTokenSvc *apitoken.Service,
 	usageService *provider.UsageService,
 	eventsSvc *events.Service,
+	notificationsSvc *notifications.Service,
 	log *slog.Logger,
 ) *AgentExecutor {
 	wsEnabled := cfg.Sandbox.IsEnabled()
@@ -802,21 +805,22 @@ func NewAgentExecutor(
 		log.Info("agent executor: workspace provisioning enabled")
 	}
 	return &AgentExecutor{
-		modelFactory:   modelFactory,
-		toolPool:       toolPool,
-		repo:           repo,
-		skillRepo:      skillRepo,
-		embeddingsSvc:  embeddingsSvc,
-		provisioner:    provisioner,
-		wsEnabled:      wsEnabled,
-		sessionService: sessionService,
-		modelLimits:    modelLimits,
-		apiTokenSvc:    apiTokenSvc,
-		usageService:   usageService,
-		eventsSvc:      eventsSvc,
-		safeguards:     cfg.AgentSafeguards,
-		toolBounds:     toolResultBoundsFromConfig(cfg.MCP),
-		log:            log.With(logger.Scope("agents.executor")),
+		modelFactory:     modelFactory,
+		toolPool:         toolPool,
+		repo:             repo,
+		skillRepo:        skillRepo,
+		embeddingsSvc:    embeddingsSvc,
+		provisioner:      provisioner,
+		wsEnabled:        wsEnabled,
+		sessionService:   sessionService,
+		modelLimits:      modelLimits,
+		apiTokenSvc:      apiTokenSvc,
+		usageService:     usageService,
+		eventsSvc:        eventsSvc,
+		notificationsSvc: notificationsSvc,
+		safeguards:       cfg.AgentSafeguards,
+		toolBounds:       toolResultBoundsFromConfig(cfg.MCP),
+		log:              log.With(logger.Scope("agents.executor")),
 	}
 }
 
@@ -2716,14 +2720,15 @@ func (ae *AgentExecutor) runPipeline(
 					msg = fmt.Sprintf("Agent wants to call tool **%s**. Do you approve?", t.Name())
 				}
 				q, qErr := CreateAndEmitQuestion(tCtx, CreateQuestionParams{
-					Repo:      ae.repo,
-					Logger:    ae.log,
-					ProjectID: req.ProjectID,
-					AgentID:   agentID,
-					RunID:     run.ID,
-					UserID:    req.UserID,
-					EventsSvc: ae.eventsSvc,
-					Question:  msg,
+					Repo:             ae.repo,
+					Logger:           ae.log,
+					ProjectID:        req.ProjectID,
+					AgentID:          agentID,
+					RunID:            run.ID,
+					UserID:           req.UserID,
+					EventsSvc:        ae.eventsSvc,
+					NotificationsSvc: ae.notificationsSvc,
+					Question:         msg,
 					Options: []AgentQuestionOption{
 						{Label: "Approve", Value: "approve"},
 						{Label: "Reject", Value: "reject"},
@@ -3993,14 +3998,15 @@ func (ae *AgentExecutor) buildAskUserTool(req ExecuteRequest, runID string, paus
 	agentID := ae.resolveAgentID(req)
 
 	deps := AskUserToolDeps{
-		Repo:       ae.repo,
-		Logger:     ae.log,
-		ProjectID:  req.ProjectID,
-		AgentID:    agentID,
-		RunID:      runID,
-		PauseState: pauseState,
-		UserID:     req.UserID,
-		EventsSvc:  ae.eventsSvc,
+		Repo:             ae.repo,
+		Logger:           ae.log,
+		ProjectID:        req.ProjectID,
+		AgentID:          agentID,
+		RunID:            runID,
+		PauseState:       pauseState,
+		UserID:           req.UserID,
+		EventsSvc:        ae.eventsSvc,
+		NotificationsSvc: ae.notificationsSvc,
 	}
 
 	return BuildAskUserTool(deps)

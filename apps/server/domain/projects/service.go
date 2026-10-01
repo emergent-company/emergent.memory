@@ -3,6 +3,7 @@ package projects
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/emergent-company/emergent.memory/domain/agents"
+	"github.com/emergent-company/emergent.memory/domain/notifications"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
@@ -54,6 +56,12 @@ type OrgMembershipReader interface {
 	IsOrgAdmin(ctx context.Context, orgID, userID string) (bool, error)
 }
 
+// notifier is the minimal notifications.Service surface the projects service
+// needs for membership/role notifications. *notifications.Service satisfies it.
+type notifier interface {
+	Create(context.Context, notifications.CreateInput) (*notifications.Notification, error)
+}
+
 // deletionRepository abstracts the persistence operations used by the project
 // deletion lifecycle (mark, inspect, cancel). *Repository satisfies it.
 // Keeping it an interface allows the lifecycle to be unit-tested without a DB.
@@ -71,6 +79,7 @@ type Service struct {
 	branchReader        BranchReader        // optional; nil is safe
 	orgMembershipReader OrgMembershipReader // optional; nil is safe
 	deletionRepo        deletionRepository  // optional; nil is safe
+	notificationsSvc    notifier            // optional; nil is safe
 	gracePeriod         time.Duration
 	log                 *slog.Logger
 }
@@ -84,13 +93,18 @@ type ServiceParams struct {
 	Log       *slog.Logger
 
 	// Optional cross-domain dependencies (nil-safe when not wired).
-	TokenRevoker        TokenRevoker        `optional:"true"`
-	BranchReader        BranchReader        `optional:"true"`
-	OrgMembershipReader OrgMembershipReader `optional:"true"`
+	TokenRevoker        TokenRevoker           `optional:"true"`
+	BranchReader        BranchReader           `optional:"true"`
+	OrgMembershipReader OrgMembershipReader    `optional:"true"`
+	NotificationsSvc    *notifications.Service `optional:"true"`
 }
 
 // NewService creates a new project service
 func NewService(p ServiceParams) *Service {
+	var n notifier
+	if p.NotificationsSvc != nil {
+		n = p.NotificationsSvc
+	}
 	return &Service{
 		repo:                p.Repo,
 		agentRepo:           p.AgentRepo,
@@ -98,6 +112,7 @@ func NewService(p ServiceParams) *Service {
 		branchReader:        p.BranchReader,
 		orgMembershipReader: p.OrgMembershipReader,
 		deletionRepo:        p.Repo,
+		notificationsSvc:    n,
 		gracePeriod:         DefaultDeletionGracePeriod,
 		log:                 p.Log.With(logger.Scope("projects.svc")),
 	}
@@ -618,6 +633,10 @@ func (s *Service) RemoveMember(ctx context.Context, projectID, userID string) er
 		slog.String("projectID", projectID),
 		slog.String("userID", userID))
 
+	s.emitAccountNotification(ctx, userID, projectID, "project.member.removed", "membership",
+		"Removed from project",
+		fmt.Sprintf("You were removed from project %s.", project.Name))
+
 	return nil
 }
 
@@ -707,7 +726,36 @@ func (s *Service) UpdateMemberRole(ctx context.Context, projectID, userID, role 
 		slog.String("userID", userID),
 		slog.String("role", role))
 
+	s.emitAccountNotification(ctx, userID, projectID, "user.role.changed", "permissions",
+		"Role changed",
+		fmt.Sprintf("Your role in project %s is now %s.", project.Name, role))
+
 	return nil
+}
+
+// emitAccountNotification sends a mandatory account-scope notification to the
+// given user via the central producer. Best-effort: a nil service or a Create
+// error is logged, never returned, so a notification failure cannot fail the
+// membership/role mutation it accompanies.
+func (s *Service) emitAccountNotification(ctx context.Context, userID, projectID, eventKey, category, title, message string) {
+	if s.notificationsSvc == nil {
+		return
+	}
+	if _, err := s.notificationsSvc.Create(ctx, notifications.CreateInput{
+		UserID:    userID,
+		ProjectID: &projectID,
+		Scope:     notifications.ScopeAccount,
+		EventKey:  eventKey,
+		Title:     title,
+		Message:   message,
+		Severity:  "info",
+		Category:  &category,
+	}); err != nil {
+		s.log.Warn("failed to emit account notification",
+			slog.String("event_key", eventKey),
+			slog.String("userID", userID),
+			slog.String("error", err.Error()))
+	}
 }
 
 // IsUserMember checks if a user is a member of a project
