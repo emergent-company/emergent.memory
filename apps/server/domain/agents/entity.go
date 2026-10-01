@@ -96,11 +96,21 @@ const (
 
 // ReactionConfig contains configuration for reaction triggers
 type ReactionConfig struct {
-	ObjectTypes          []string            `json:"objectTypes"`
-	Events               []ReactionEventType `json:"events"`
-	ConcurrencyStrategy  ConcurrencyStrategy `json:"concurrencyStrategy"`
-	IgnoreAgentTriggered bool                `json:"ignoreAgentTriggered"`
-	IgnoreSelfTriggered  bool                `json:"ignoreSelfTriggered"`
+	ObjectTypes []string            `json:"objectTypes"`
+	Events      []ReactionEventType `json:"events"`
+	// ConcurrencyStrategy controls how a new trigger is handled while a
+	// non-terminal run already exists for the same agent + target object.
+	// Empty ("") and "parallel" both mean no concurrency control; "skip" drops
+	// the new trigger instead of starting a second run.
+	ConcurrencyStrategy ConcurrencyStrategy `json:"concurrencyStrategy"`
+	// IgnoreAgentTriggered controls whether agent-originated events are ignored.
+	// nil (unset) = true = ignore, preserving the historical loop-safety default.
+	// Explicit false opts this agent in to agent-originated events.
+	IgnoreAgentTriggered *bool `json:"ignoreAgentTriggered,omitempty"`
+	// IgnoreSelfTriggered controls whether this agent's own runs may re-trigger
+	// it. nil (unset) = true = ignore. Explicit false allows self-triggering.
+	// Only consulted when IgnoreAgentTriggered is explicitly false.
+	IgnoreSelfTriggered *bool `json:"ignoreSelfTriggered,omitempty"`
 }
 
 // AgentCapabilities defines capability restrictions for agents
