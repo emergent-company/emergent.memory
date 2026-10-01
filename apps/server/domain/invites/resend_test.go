@@ -94,6 +94,110 @@ func TestResendPendingReenqueuesAndExtendsExpiry(t *testing.T) {
 	}
 }
 
+// countInviteEmailJobs returns the number of email jobs scoped to an invite.
+func countInviteEmailJobs(t *testing.T, db bun.IDB, inviteID string) int {
+	t.Helper()
+	var count int
+	if err := db.NewRaw(
+		`SELECT COUNT(*) FROM kb.email_jobs WHERE source_type = 'invite' AND source_id = ?`,
+		inviteID,
+	).Scan(context.Background(), &count); err != nil {
+		t.Fatalf("count invite email jobs: %v", err)
+	}
+	return count
+}
+
+// seedPendingInvite inserts a pending invite and returns its id.
+func seedPendingInvite(t *testing.T, db bun.IDB, orgID, projectID, email string) string {
+	t.Helper()
+	id := uuid.NewString()
+	mustExecResend(t, db, `INSERT INTO kb.invites (id, organization_id, project_id, email, role, token, status, expires_at, created_at)
+		VALUES (?, ?, ?, ?, 'project_user', ?, 'pending', NOW() + interval '1 day', NOW())`,
+		id, orgID, projectID, email, "tok-"+id)
+	return id
+}
+
+// TestResendWithinGuardWindowDoesNotEnqueueDuplicate proves the resend guard is
+// server-enforced: a second resend immediately after the first (a double-submit
+// or client retry) does not enqueue a second invite email job.
+func TestResendWithinGuardWindowDoesNotEnqueueDuplicate(t *testing.T) {
+	svc, testDB := newResendService(t)
+	defer testDB.Close()
+	ctx := context.Background()
+	db := testDB.GetDB()
+
+	orgID, projectID := seedOrgAndProject(t, db)
+	inviteID := seedPendingInvite(t, db, orgID, projectID, "invitee@example.com")
+
+	if _, err := svc.Resend(ctx, inviteID); err != nil {
+		t.Fatalf("first Resend: %v", err)
+	}
+	if got := countInviteEmailJobs(t, db, inviteID); got != 1 {
+		t.Fatalf("after first Resend job count = %d, want 1", got)
+	}
+
+	// Second resend within the guard window must be a no-op.
+	if _, err := svc.Resend(ctx, inviteID); err != nil {
+		t.Fatalf("second Resend: %v", err)
+	}
+	if got := countInviteEmailJobs(t, db, inviteID); got != 1 {
+		t.Fatalf("after second Resend within guard window job count = %d, want 1 (duplicate email enqueued)", got)
+	}
+}
+
+// TestResendAfterGuardWindowEnqueuesAgain proves the guard is a window, not a
+// permanent block: once the previous invite-scoped job is older than the guard
+// window, a resend enqueues a fresh job.
+func TestResendAfterGuardWindowEnqueuesAgain(t *testing.T) {
+	svc, testDB := newResendService(t)
+	defer testDB.Close()
+	ctx := context.Background()
+	db := testDB.GetDB()
+
+	orgID, projectID := seedOrgAndProject(t, db)
+	inviteID := seedPendingInvite(t, db, orgID, projectID, "invitee@example.com")
+
+	// A prior invite job older than the guard window.
+	mustExecResend(t, db, `INSERT INTO kb.email_jobs (template_name, to_email, subject, status, source_type, source_id, created_at)
+		VALUES ('project-invitation', 'invitee@example.com', 'Hi', 'sent', 'invite', ?, now() - interval '2 minutes')`,
+		inviteID)
+
+	if _, err := svc.Resend(ctx, inviteID); err != nil {
+		t.Fatalf("Resend past guard window: %v", err)
+	}
+	if got := countInviteEmailJobs(t, db, inviteID); got != 2 {
+		t.Fatalf("after Resend past guard window job count = %d, want 2", got)
+	}
+}
+
+// TestResendGuardIsPerInvite proves the guard is keyed per invitation: a recent
+// resend of one invite does not block resending a different invite.
+func TestResendGuardIsPerInvite(t *testing.T) {
+	svc, testDB := newResendService(t)
+	defer testDB.Close()
+	ctx := context.Background()
+	db := testDB.GetDB()
+
+	orgID, projectID := seedOrgAndProject(t, db)
+	inviteA := seedPendingInvite(t, db, orgID, projectID, "a@example.com")
+	inviteB := seedPendingInvite(t, db, orgID, projectID, "b@example.com")
+
+	if _, err := svc.Resend(ctx, inviteA); err != nil {
+		t.Fatalf("Resend A: %v", err)
+	}
+	// B is a different invite and must not be blocked by A's recent job.
+	if _, err := svc.Resend(ctx, inviteB); err != nil {
+		t.Fatalf("Resend B: %v", err)
+	}
+
+	if got := countInviteEmailJobs(t, db, inviteA); got != 1 {
+		t.Fatalf("invite A job count = %d, want 1", got)
+	}
+	if got := countInviteEmailJobs(t, db, inviteB); got != 1 {
+		t.Fatalf("invite B job count = %d, want 1 (per-invite guard blocked another invite)", got)
+	}
+}
+
 // TestResendNonPendingOrUnknownNotFound proves resending a non-pending invite or
 // an unknown id is 404 (matching the revoke guard).
 func TestResendNonPendingOrUnknownNotFound(t *testing.T) {
