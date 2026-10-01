@@ -203,9 +203,12 @@ func TestNotificationPreferencesHandlers(t *testing.T) {
 	s := &Server{memory: f}
 	e := notificationsEcho(s)
 
-	rec := doNotif(t, e, http.MethodGet, "/api/notifications/preferences", "")
+	rec := doNotif(t, e, http.MethodGet, "/api/notifications/preferences?project_id=p1", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET status = %d", rec.Code)
+	}
+	if f.lastPrefsProject != "p1" {
+		t.Errorf("GET forwarded project = %q, want p1", f.lastPrefsProject)
 	}
 	var out struct {
 		Preferences []NotificationPreference `json:"preferences"`
@@ -222,11 +225,11 @@ func TestNotificationPreferencesHandlers(t *testing.T) {
 		t.Errorf("empty key PUT = %d, want 400", rec.Code)
 	}
 
-	rec = doNotif(t, e, http.MethodPut, "/api/notifications/preferences", `{"eventKey":"comment.reply","enabled":true}`)
+	rec = doNotif(t, e, http.MethodPut, "/api/notifications/preferences", `{"projectId":"p1","eventKey":"comment.reply","enabled":true}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PUT status = %d, body=%s", rec.Code, rec.Body.String())
 	}
-	if len(f.notificationMutations) != 1 || f.notificationMutations[0] != "pref:comment.reply:in_app:true" {
+	if len(f.notificationMutations) != 1 || f.notificationMutations[0] != "pref:p1:comment.reply:in_app:true" {
 		t.Errorf("recorded = %v", f.notificationMutations)
 	}
 }

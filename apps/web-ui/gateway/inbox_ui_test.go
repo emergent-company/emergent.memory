@@ -67,6 +67,30 @@ func TestInboxPageProjectOptInEmpty(t *testing.T) {
 	}
 }
 
+func TestNotificationPreferencesPageProjectScoped(t *testing.T) {
+	d := notificationPrefsView{
+		Project:     &Project{ID: "p1", Name: "Acme"},
+		Preferences: []NotificationPreference{{EventKey: "comment.reply", Enabled: true}},
+	}
+	html := renderHTML(t, NotificationPreferencesPage(d))
+	if !strings.Contains(html, `name="project_id"`) || !strings.Contains(html, `value="p1"`) {
+		t.Error("preferences form must carry the scoped project id")
+	}
+	if !strings.Contains(html, `name="pref_comment.reply"`) {
+		t.Error("preferences form must render the event toggle")
+	}
+}
+
+func TestNotificationPreferencesPageNoProject(t *testing.T) {
+	html := renderHTML(t, NotificationPreferencesPage(notificationPrefsView{}))
+	if !strings.Contains(html, "No project selected") {
+		t.Error("preferences page with no active project must render the select-a-project empty state")
+	}
+	if strings.Contains(html, `name="project_id"`) {
+		t.Error("preferences page with no active project must not render a form")
+	}
+}
+
 func TestInboxPageProjectGenericEmpty(t *testing.T) {
 	d := inboxView{
 		Scope: "project", Tab: "cleared", Project: &Project{ID: "p1", Name: "Acme"},

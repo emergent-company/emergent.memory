@@ -3,6 +3,7 @@ package notifications
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/emergent-company/emergent.memory/domain/events"
@@ -238,6 +239,7 @@ func (s *Service) ListEffectivePreferences(ctx context.Context, userID string, p
 			Scope:          ScopeProject,
 			Channel:        defaultChannel,
 			Delivery:       string(e.Delivery),
+			Required:       e.Delivery == taxonomy.DeliveryRequired,
 			RequiresAction: e.RequiresAction,
 			Actionable:     e.Actionable,
 			Category:       e.Category,
@@ -258,6 +260,12 @@ func (s *Service) SavePreference(ctx context.Context, userID string, projectID *
 	}
 	if entry.Scope == taxonomy.ScopeAccount {
 		return nil, nil
+	}
+	// Preferences are project-scoped: delivery (Create) looks the preference up
+	// by the event's project, so a project-scope row stored without a project
+	// would never be consulted. Reject it rather than persist an inert row.
+	if projectID == nil || strings.TrimSpace(*projectID) == "" {
+		return nil, apperror.NewValidation("projectId is required for project-scope notification preferences")
 	}
 	if channel == "" {
 		channel = defaultChannel

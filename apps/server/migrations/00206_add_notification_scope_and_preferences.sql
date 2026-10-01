@@ -16,8 +16,13 @@ CREATE INDEX IF NOT EXISTS idx_notifications_user_requires_action_read
     ON kb.notifications (user_id, requires_action, read);
 
 -- Per-user, per-project, per-event-key, per-channel notification preferences.
--- project_id NULL is the account-scope default (informational; account
--- delivery is mandatory and not user-suppressible).
+-- Preferences are project-scoped: project_id is the project the preference
+-- applies to (service.SavePreference rejects a project-scope key with no
+-- project). The column stays nullable so a legacy/global row can never violate
+-- the schema, but NULLS NOT DISTINCT (PG15+) makes the uniqueness constraint
+-- cover a NULL project_id too — plain UNIQUE treats NULLs as distinct, so the
+-- app's `ON CONFLICT (user_id, project_id, event_key, channel) DO UPDATE`
+-- never fired for a NULL row and every save inserted a duplicate.
 CREATE TABLE IF NOT EXISTS kb.notification_preferences (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
     user_id uuid NOT NULL,
@@ -28,7 +33,7 @@ CREATE TABLE IF NOT EXISTS kb.notification_preferences (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT notification_preferences_pkey PRIMARY KEY (id),
-    CONSTRAINT ux_notification_preferences UNIQUE (user_id, project_id, event_key, channel),
+    CONSTRAINT ux_notification_preferences UNIQUE NULLS NOT DISTINCT (user_id, project_id, event_key, channel),
     CONSTRAINT fk_notification_preferences_user
         FOREIGN KEY (user_id) REFERENCES core.user_profiles(id),
     CONSTRAINT fk_notification_preferences_project

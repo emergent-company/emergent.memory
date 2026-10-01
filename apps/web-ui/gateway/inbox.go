@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"sort"
@@ -192,6 +193,9 @@ func (v inboxView) scopeUnread() int {
 
 // notificationPrefsView is the render state for NotificationPreferencesPage.
 type notificationPrefsView struct {
+	// Project is the active project whose preferences are being managed (nil
+	// when no project is selected).
+	Project     *Project
 	Preferences []NotificationPreference
 	LoadErr     error
 	FlashMsg    string
@@ -199,13 +203,23 @@ type notificationPrefsView struct {
 }
 
 // uiNotificationPreferences renders the project-event opt-in page reachable
-// from the Project inbox.
+// from the Project inbox. Preferences are project-scoped: the page resolves the
+// active project and reads that project's effective preferences.
 func (s *Server) uiNotificationPreferences(c echo.Context) error {
+	ctx := c.Request().Context()
 	view := notificationPrefsView{
 		FlashMsg: flashFromQuery(c, []flashParam{{key: "saved", msg: "Notification preferences saved."}}),
 		FlashErr: flashError(c),
 	}
-	prefs, err := s.memory.ListNotificationPreferences(c.Request().Context())
+	if p, err := s.memory.GetCurrentProject(ctx); err == nil && p != nil {
+		view.Project = p
+	}
+	if view.Project == nil {
+		// No active project: nothing to scope preferences to. Render the
+		// select-a-project empty state instead of an inert global toggle list.
+		return s.page(c, pageTitle("Notification settings"), NotificationPreferencesPage(view))
+	}
+	prefs, err := s.memory.ListNotificationPreferences(ctx, view.Project.ID)
 	if err != nil {
 		view.LoadErr = err
 		return s.page(c, pageTitle("Notification settings"), NotificationPreferencesPage(view))
@@ -224,6 +238,17 @@ func (s *Server) uiNotificationPreferencesSave(c echo.Context) error {
 	if err != nil {
 		return redirectWithError(c, "/inbox/preferences", err)
 	}
+	// Preferences are project-scoped. Prefer the project carried by the form;
+	// fall back to the active project so a direct POST still resolves.
+	projectID := strings.TrimSpace(form.Get("project_id"))
+	if projectID == "" {
+		if p, perr := s.memory.GetCurrentProject(ctx); perr == nil && p != nil {
+			projectID = p.ID
+		}
+	}
+	if projectID == "" {
+		return redirectWithError(c, "/inbox/preferences", errors.New("no active project selected"))
+	}
 	keys := make([]string, 0, len(form))
 	for k := range form {
 		if key, ok := strings.CutPrefix(k, "pref_"); ok {
@@ -233,7 +258,7 @@ func (s *Server) uiNotificationPreferencesSave(c echo.Context) error {
 	sort.Strings(keys)
 	for _, key := range keys {
 		enabled := form.Get("pref_"+key) != ""
-		if err := s.memory.SetNotificationPreference(ctx, key, "in_app", enabled); err != nil {
+		if err := s.memory.SetNotificationPreference(ctx, projectID, key, "in_app", enabled); err != nil {
 			return redirectWithError(c, "/inbox/preferences", err)
 		}
 	}

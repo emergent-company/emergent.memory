@@ -165,21 +165,29 @@ func (m *MemoryClient) NotificationCounts(ctx context.Context, scope, projectID 
 }
 
 // ListNotificationPreferences fetches the user's effective project-event
-// preferences.
-func (m *MemoryClient) ListNotificationPreferences(ctx context.Context) ([]NotificationPreference, error) {
+// preferences for one project.
+func (m *MemoryClient) ListNotificationPreferences(ctx context.Context, projectID string) ([]NotificationPreference, error) {
+	path := "/api/notifications/preferences"
+	if projectID != "" {
+		path += "?" + url.Values{"project_id": {projectID}}.Encode()
+	}
 	var body json.RawMessage
-	if err := m.do(ctx, http.MethodGet, "/api/notifications/preferences", nil, &body); err != nil {
+	if err := m.do(ctx, http.MethodGet, path, nil, &body); err != nil {
 		return nil, err
 	}
 	return decodeNotificationPreferences(body), nil
 }
 
-// SetNotificationPreference upserts one preference (per event key + channel).
-func (m *MemoryClient) SetNotificationPreference(ctx context.Context, eventKey, channel string, enabled bool) error {
+// SetNotificationPreference upserts one project-scoped preference (per event
+// key + channel). projectID is the project the preference applies to.
+func (m *MemoryClient) SetNotificationPreference(ctx context.Context, projectID, eventKey, channel string, enabled bool) error {
 	if channel == "" {
 		channel = "in_app"
 	}
 	body := map[string]any{"eventKey": eventKey, "channel": channel, "enabled": enabled}
+	if projectID != "" {
+		body["projectId"] = projectID
+	}
 	return m.do(ctx, http.MethodPut, "/api/notifications/preferences", body, nil)
 }
 

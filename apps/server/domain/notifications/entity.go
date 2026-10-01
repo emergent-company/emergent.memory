@@ -156,6 +156,7 @@ type PreferenceEntry struct {
 	Scope          Scope  `json:"scope"`
 	Channel        string `json:"channel"`
 	Delivery       string `json:"delivery"`
+	Required       bool   `json:"required"`
 	RequiresAction bool   `json:"requiresAction"`
 	Actionable     bool   `json:"actionable"`
 	Category       string `json:"category,omitempty"`

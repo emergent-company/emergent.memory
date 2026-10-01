@@ -55,7 +55,7 @@ Scope answers "which inbox"; the existing tabs answer "how important / lifecycle
 ### D4 — Two-tier delivery: mandatory account vs opt-in project
 
 - **Account scope is mandatory.** Membership, permissions, security, invites, announcements are always delivered; preferences do not suppress them (channel-level opt-out is a later concern).
-- **Project scope is opt-in.** Default off, except a small **required** set of action events (assigned, mention, approval request, agent question, comment reply) which are always delivered.
+- **Project scope is opt-in.** Default off, except a small **required** set of action events (task assigned, mention, approval request, agent question) which are always delivered. A comment reply is an FYI about a change, not a call to action, so it is **opt-in** (`delivery=optin`, `requires_action=false`) — the taxonomy is the source of truth here, per the rule of thumb below.
 - Rule of thumb encoded in the taxonomy: **needs the user to act → required + `requires_action`; FYI about a change → opt-in, default off.**
 
 This directly answers the requester's "avoid cluttering the inbox with unnecessary information for project events".
@@ -66,7 +66,7 @@ Add `requires_action BOOLEAN NOT NULL DEFAULT false`. Drives an "Action required
 
 ### D6 — Preferences table
 
-New `kb.notification_preferences(id, user_id, project_id NULL, event_key, channel, enabled)` with `UNIQUE(user_id, project_id, event_key, channel)`. `project_id NULL` = account-scope default (mostly informational; account delivery is mandatory). Resolution at create time: account keys ignore prefs; required project keys ignore prefs; other project keys require an enabled `in_app` row, otherwise the notification is not created.
+New `kb.notification_preferences(id, user_id, project_id NULL, event_key, channel, enabled)` with `UNIQUE NULLS NOT DISTINCT (user_id, project_id, event_key, channel)` (PG15+). Preferences are **project-scoped**: the row is keyed to the project the user is managing, and `SavePreference` rejects a project-scope key with no project, so a NULL `project_id` row is never written by the app. The column stays nullable (a global row must not violate the schema), and `NULLS NOT DISTINCT` ensures the unique constraint also covers a NULL `project_id` — plain `UNIQUE` treats NULLs as distinct, so `INSERT … ON CONFLICT … DO UPDATE` would never fire and each save would insert a duplicate. Resolution at create time: account keys ignore prefs; required project keys ignore prefs; other project keys require an enabled `in_app` row **for the event's project**, otherwise the notification is not created.
 
 - **Rejected:** a JSON blob on `kb.project_memberships` — harder to query/validate, and couples notification prefs to membership lifecycle.
 

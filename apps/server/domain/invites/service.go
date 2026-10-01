@@ -511,7 +511,7 @@ func (s *Service) Accept(ctx context.Context, userID, token string) error {
 	}
 
 	if err := tx.Commit(); err != nil {
-		return err
+		return fmt.Errorf("commit invite acceptance: %w", err)
 	}
 
 	s.emitMembershipGranted(ctx, userID, &invite)

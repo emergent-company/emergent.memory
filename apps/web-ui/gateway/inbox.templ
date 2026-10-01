@@ -307,6 +307,17 @@ templ NotificationPreferencesPage(d notificationPrefsView) {
 		@flashToasts(d.FlashMsg, d.FlashErr)
 		if d.LoadErr != nil {
 			@pageError("Notification settings unavailable", d.LoadErr)
+		} else if d.Project == nil {
+			@ui.EmptyState(ui.EmptyStateProps{
+				Icon:        "lucide--folder",
+				Title:       "No project selected",
+				Description: "Choose a project to manage its notification preferences.",
+				Bordered:    true,
+				Class:       "py-12",
+				ActionHref:  "/",
+				ActionLabel: "Choose a project",
+				ActionIcon:  "lucide--folder-open",
+			})
 		} else if len(d.Preferences) == 0 {
 			@ui.EmptyState(ui.EmptyStateProps{
 				Icon:        "lucide--bell-off",
@@ -317,6 +328,7 @@ templ NotificationPreferencesPage(d notificationPrefsView) {
 			})
 		} else {
 			<form method="post" action="/inbox/preferences">
+				<input type="hidden" name="project_id" value={ d.Project.ID }/>
 				<div class="rounded-box border-base-content/10 bg-base-100 divide-base-content/5 overflow-hidden border divide-y">
 					for _, p := range d.Preferences {
 						@preferenceRow(p)

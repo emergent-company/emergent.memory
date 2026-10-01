@@ -432,6 +432,7 @@ type fakeMemory struct {
 	lastListParams         NotificationListParams
 	lastCountsScope        string
 	lastCountsProject      string
+	lastPrefsProject       string
 	eventStreamBody        io.ReadCloser // returned by NotificationEventStream
 	eventStreamErr         error
 	lastEventStreamProject string

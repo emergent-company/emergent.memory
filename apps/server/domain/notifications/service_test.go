@@ -230,11 +230,32 @@ func TestListEffectivePreferences_MaterializesDefaults(t *testing.T) {
 
 	require.True(t, byKey["comment.reply"].Enabled)
 	require.False(t, byKey["comment.reply"].Default)
+	require.False(t, byKey["comment.reply"].Required, "comment.reply is opt-in, not required")
 	require.False(t, byKey["mention"].Enabled)
+	require.True(t, byKey["mention"].Required, "mention is a required project event")
 	// A key with no stored row is defaulted to disabled.
 	require.False(t, byKey["project.agent_config.changed"].Enabled)
 	require.True(t, byKey["project.agent_config.changed"].Default)
+	require.False(t, byKey["project.agent_config.changed"].Required)
 
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestSavePreference_ProjectScopeRequiresProject(t *testing.T) {
+	svc, mock, _ := newTestService(t)
+
+	// Project-scope key with no project: reject rather than persist an inert
+	// (project_id NULL) row that delivery would never consult.
+	pref, err := svc.SavePreference(context.Background(), "u1", nil, "comment.reply", "in_app", true)
+	require.Error(t, err)
+	require.Nil(t, pref)
+
+	// An empty (non-nil) project id is equivalent to absent.
+	pref, err = svc.SavePreference(context.Background(), "u1", strPtr("  "), "comment.reply", "in_app", true)
+	require.Error(t, err)
+	require.Nil(t, pref)
+
+	// No DB write for either rejection.
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

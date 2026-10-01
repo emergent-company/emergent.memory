@@ -239,8 +239,10 @@ type MemoryBackend interface {
 	// scope is explicit; preferences drive opt-in project-event delivery.
 	ListNotifications(ctx context.Context, p NotificationListParams) ([]Notification, error)
 	NotificationCounts(ctx context.Context, scope, projectID string) (*NotificationCounts, error)
-	ListNotificationPreferences(ctx context.Context) ([]NotificationPreference, error)
-	SetNotificationPreference(ctx context.Context, eventKey, channel string, enabled bool) error
+	// Preferences are project-scoped: the project id selects which project's
+	// preferences are read/written.
+	ListNotificationPreferences(ctx context.Context, projectID string) ([]NotificationPreference, error)
+	SetNotificationPreference(ctx context.Context, projectID, eventKey, channel string, enabled bool) error
 	MarkNotificationRead(ctx context.Context, id string) error
 	MarkNotificationUnread(ctx context.Context, id string) error
 	DismissNotification(ctx context.Context, id string) error

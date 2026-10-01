@@ -31,19 +31,20 @@ func (f *fakeMemory) NotificationCounts(_ context.Context, scope, projectID stri
 	return &NotificationCounts{}, nil
 }
 
-func (f *fakeMemory) ListNotificationPreferences(_ context.Context) ([]NotificationPreference, error) {
+func (f *fakeMemory) ListNotificationPreferences(_ context.Context, projectID string) ([]NotificationPreference, error) {
+	f.lastPrefsProject = projectID
 	if f.notificationPrefsErr != nil {
 		return nil, f.notificationPrefsErr
 	}
 	return f.notificationPrefs, nil
 }
 
-func (f *fakeMemory) SetNotificationPreference(_ context.Context, eventKey, channel string, enabled bool) error {
+func (f *fakeMemory) SetNotificationPreference(_ context.Context, projectID, eventKey, channel string, enabled bool) error {
 	if f.notificationMutErr != nil {
 		return f.notificationMutErr
 	}
 	f.notificationMutations = append(f.notificationMutations,
-		"pref:"+eventKey+":"+channel+":"+strconv.FormatBool(enabled))
+		"pref:"+projectID+":"+eventKey+":"+channel+":"+strconv.FormatBool(enabled))
 	return nil
 }
 

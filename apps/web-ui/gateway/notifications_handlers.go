@@ -69,7 +69,7 @@ func (s *Server) notificationCounts(c echo.Context) error {
 
 // listNotificationPreferences proxies GET /api/notifications/preferences.
 func (s *Server) listNotificationPreferences(c echo.Context) error {
-	prefs, err := s.memory.ListNotificationPreferences(c.Request().Context())
+	prefs, err := s.memory.ListNotificationPreferences(c.Request().Context(), c.QueryParam("project_id"))
 	if err != nil {
 		return s.notificationUpstreamError(c, err)
 	}
@@ -82,9 +82,10 @@ func (s *Server) listNotificationPreferences(c echo.Context) error {
 // setNotificationPreference proxies PUT /api/notifications/preferences.
 func (s *Server) setNotificationPreference(c echo.Context) error {
 	var in struct {
-		EventKey string `json:"eventKey"`
-		Channel  string `json:"channel"`
-		Enabled  bool   `json:"enabled"`
+		ProjectID string `json:"projectId"`
+		EventKey  string `json:"eventKey"`
+		Channel   string `json:"channel"`
+		Enabled   bool   `json:"enabled"`
 	}
 	if err := c.Bind(&in); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
@@ -95,7 +96,7 @@ func (s *Server) setNotificationPreference(c echo.Context) error {
 	if in.Channel == "" {
 		in.Channel = "in_app"
 	}
-	if err := s.memory.SetNotificationPreference(c.Request().Context(), in.EventKey, in.Channel, in.Enabled); err != nil {
+	if err := s.memory.SetNotificationPreference(c.Request().Context(), in.ProjectID, in.EventKey, in.Channel, in.Enabled); err != nil {
 		return s.notificationUpstreamError(c, err)
 	}
 	return c.JSON(http.StatusOK, map[string]any{"ok": true})

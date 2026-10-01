@@ -145,9 +145,9 @@ func TestNotificationCountsBareObject(t *testing.T) {
 }
 
 func TestListNotificationPreferences(t *testing.T) {
-	var gotPath, gotMethod string
+	var gotPath, gotMethod, gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath, gotMethod = r.URL.Path, r.Method
+		gotPath, gotMethod, gotQuery = r.URL.Path, r.Method, r.URL.RawQuery
 		_, _ = io.WriteString(w, `{"data":[
 			{"eventKey":"task.assigned","label":"Task assigned","required":true,"enabled":true},
 			{"eventKey":"comment.reply","label":"Comment reply","required":false,"enabled":false}
@@ -156,12 +156,15 @@ func TestListNotificationPreferences(t *testing.T) {
 	defer srv.Close()
 
 	m := NewMemoryClient(srv.URL, "static")
-	prefs, err := m.ListNotificationPreferences(notifSessCtx())
+	prefs, err := m.ListNotificationPreferences(notifSessCtx(), "p1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if gotMethod != http.MethodGet || gotPath != "/api/notifications/preferences" {
 		t.Errorf("request = %s %s", gotMethod, gotPath)
+	}
+	if gotQuery != "project_id=p1" {
+		t.Errorf("query = %q, want project_id=p1", gotQuery)
 	}
 	if len(prefs) != 2 || prefs[0].EventKey != "task.assigned" || !prefs[0].Required || prefs[1].Enabled {
 		t.Fatalf("prefs = %+v", prefs)
@@ -179,7 +182,7 @@ func TestSetNotificationPreference(t *testing.T) {
 	defer srv.Close()
 
 	m := NewMemoryClient(srv.URL, "static")
-	if err := m.SetNotificationPreference(notifSessCtx(), "comment.reply", "", true); err != nil {
+	if err := m.SetNotificationPreference(notifSessCtx(), "p1", "comment.reply", "", true); err != nil {
 		t.Fatal(err)
 	}
 	if gotMethod != http.MethodPut || gotPath != "/api/notifications/preferences" {
@@ -189,7 +192,7 @@ func TestSetNotificationPreference(t *testing.T) {
 	if err := json.Unmarshal([]byte(gotBody), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body["eventKey"] != "comment.reply" || body["channel"] != "in_app" || body["enabled"] != true {
+	if body["projectId"] != "p1" || body["eventKey"] != "comment.reply" || body["channel"] != "in_app" || body["enabled"] != true {
 		t.Errorf("body = %s", gotBody)
 	}
 }
