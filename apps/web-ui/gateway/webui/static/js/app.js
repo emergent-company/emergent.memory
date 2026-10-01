@@ -683,6 +683,13 @@
   document.addEventListener("dragstart", function (ev) {
     var card = ev.target.closest("[data-board-card]");
     if (!card) return;
+    // Only blocked cards are draggable: the Ready lane's drop fires the
+    // server-gated blocked->ready "retry" transition. Cancelling the drag for
+    // any other status avoids a 409 error banner on an unsupported move.
+    if (card.getAttribute("data-board-status") !== "blocked") {
+      ev.preventDefault();
+      return;
+    }
     var id = card.getAttribute("data-canonical-id");
     if (ev.dataTransfer) {
       ev.dataTransfer.setData("text/plain", id || "");

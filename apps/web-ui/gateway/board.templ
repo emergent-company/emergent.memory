@@ -139,8 +139,9 @@ templ boardCard(it WorkItem) {
 		draggable="true"
 		data-board-card=""
 		data-canonical-id={ it.CanonicalID }
+		data-board-status={ it.Status }
 		hx-get={ boardItemPath(it.CanonicalID) }
-		hx-trigger="click, keydown[key=='Enter' or key==' ']"
+		hx-trigger="click, keydown[key=='Enter' || key==' ']"
 		hx-target="#board-drawer"
 		hx-swap="innerHTML"
 		role="button"
