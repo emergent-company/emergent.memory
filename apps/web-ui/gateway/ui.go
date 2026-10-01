@@ -434,8 +434,6 @@ func (s *Server) uiAgents(c echo.Context) error {
 	var (
 		agents          []AgentDefinitionSummary
 		agentsErr       error
-		skills          []Skill
-		skillsErr       error
 		providers       []ProjectProviderConfig
 		providersErr    error
 		defaultModel    string
@@ -443,7 +441,6 @@ func (s *Server) uiAgents(c echo.Context) error {
 	)
 	var g errgroup.Group
 	g.Go(func() error { agents, agentsErr = s.memory.ListAgentDefinitions(ctx); return nil })
-	g.Go(func() error { skills, skillsErr = s.memory.ListSkills(ctx); return nil })
 	g.Go(func() error { providers, providersErr = s.memory.ListProjectProviders(ctx); return nil })
 	g.Go(func() error {
 		mc, err := s.memory.GetProjectModelConfig(ctx)
@@ -458,9 +455,8 @@ func (s *Server) uiAgents(c echo.Context) error {
 	})
 	_ = g.Wait()
 	if agentsErr != nil {
-		return s.page(c, pageTitle("Agents"), AgentsPage(nil, nil, nil, "", agentsErr))
+		return s.page(c, pageTitle("Agents"), AgentsPage(nil, nil, "", agentsErr))
 	}
-	captureError(skillsErr)
 	captureError(providersErr)
 	captureError(defaultModelErr)
 
@@ -474,7 +470,7 @@ func (s *Server) uiAgents(c echo.Context) error {
 	// Per-agent model info rides on the list response now (memory reports
 	// effectiveModel per summary), so there is no per-agent GET round-trip
 	// here — the agents page renders the card grid straight from the list.
-	return s.page(c, pageTitle("Agents"), AgentsPage(agents, models, skills, defaultModel, nil))
+	return s.page(c, pageTitle("Agents"), AgentsPage(agents, models, defaultModel, nil))
 }
 
 // chatRailData loads the session-rail data (agents, agent appearance map, past
