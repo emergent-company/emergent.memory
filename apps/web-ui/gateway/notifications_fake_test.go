@@ -25,6 +25,9 @@ func (f *fakeMemory) NotificationCounts(_ context.Context, scope, projectID stri
 	if f.notificationCountErr != nil {
 		return nil, f.notificationCountErr
 	}
+	if c, ok := f.notificationCountsByScope[scope+"|"+projectID]; ok {
+		return c, nil
+	}
 	if f.notificationCounts != nil {
 		return f.notificationCounts, nil
 	}
