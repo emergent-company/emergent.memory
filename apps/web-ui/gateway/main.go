@@ -214,6 +214,24 @@ func main() {
 	api.GET("/user/profile", s.getProfile)
 	api.PUT("/user/profile", s.updateProfile)
 
+	// Inbox / notifications (inbox subsystem; see notifications_handlers.go).
+	// Session-scoped JSON proxies the inbox page + its JS call; the SSE stream
+	// forwards the signed-in user's notification events.
+	api.GET("/notifications", s.listNotifications)
+	api.GET("/notifications/counts", s.notificationCounts)
+	api.GET("/notifications/preferences", s.listNotificationPreferences)
+	api.PUT("/notifications/preferences", s.setNotificationPreference)
+	api.GET("/notifications/stream", s.notificationStream)
+	api.POST("/notifications/mark-all-read", s.markAllNotificationsRead)
+	api.PATCH("/notifications/:id/read", s.markNotificationRead)
+	api.POST("/notifications/:id/unread", s.markNotificationUnread)
+	api.DELETE("/notifications/:id/dismiss", s.dismissNotification)
+	api.POST("/notifications/:id/snooze", s.snoozeNotification)
+	api.POST("/notifications/:id/unsnooze", s.unsnoozeNotification)
+	api.POST("/notifications/:id/clear", s.clearNotification)
+	api.POST("/notifications/:id/restore", s.restoreNotification)
+	api.POST("/notifications/:id/resolve", s.resolveNotification)
+
 	// Web UI — same binary, same echo server. go-daisy assets under /static/*,
 	// app-specific assets under /assets/*.
 	e.GET("/static/*", echo.WrapHandler(cacheStatic(staticfs.Handler("/static/"))))
@@ -482,6 +500,11 @@ func main() {
 	e.GET("/sessions/:id", s.uiSession)
 	e.GET("/share-sessions/:id", s.uiShareSessionTranscript)
 	e.GET("/usage", s.uiUsage)
+
+	// Inbox page + project-event notification preferences (inbox subsystem).
+	e.GET("/inbox", s.uiInbox)
+	e.GET("/inbox/preferences", s.uiNotificationPreferences)
+	e.POST("/inbox/preferences", s.uiNotificationPreferencesSave)
 
 	srv := &http.Server{
 		Addr:              "0.0.0.0:" + cfg.Port,

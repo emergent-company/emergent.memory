@@ -2,6 +2,8 @@ package notifications
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -25,6 +27,51 @@ func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 	}
 }
 
+// applyScopeFilter adds scope / project / requires_action predicates to a
+// select query. Empty scope and nil project leave the query unchanged so the
+// existing unscoped call sites keep their semantics.
+func applyScopeFilter(q *bun.SelectQuery, scope Scope, projectID *string, requiresAction bool) *bun.SelectQuery {
+	if scope != "" {
+		q = q.Where("scope = ?", scope)
+	}
+	if projectID != nil {
+		q = q.Where("project_id = ?", *projectID)
+	}
+	if requiresAction {
+		q = q.Where("requires_action = true")
+	}
+	return q
+}
+
+// Create inserts a notification and returns the populated row (including the
+// database-generated id and timestamps).
+func (r *Repository) Create(ctx context.Context, n *Notification) (*Notification, error) {
+	if _, err := r.db.NewInsert().Model(n).Returning("*").Exec(ctx); err != nil {
+		r.log.Error("failed to create notification", logger.Error(err))
+		return nil, apperror.NewDatabase("Database operation failed", err)
+	}
+	return n, nil
+}
+
+// GroupKeyExists reports whether an unread, non-dismissed, uncleared
+// notification with the given group_key already exists for the user. This is
+// the coalescing check that keeps a repeated event from stacking duplicates.
+func (r *Repository) GroupKeyExists(ctx context.Context, userID, groupKey string) (bool, error) {
+	exists, err := r.db.NewSelect().
+		Model((*Notification)(nil)).
+		Where("user_id = ?", userID).
+		Where("group_key = ?", groupKey).
+		Where("read = false").
+		Where("dismissed = false").
+		Where("cleared_at IS NULL").
+		Exists(ctx)
+	if err != nil {
+		r.log.Error("failed to check notification group key", logger.Error(err))
+		return false, apperror.NewDatabase("Database operation failed", err)
+	}
+	return exists, nil
+}
+
 // GetStats returns notification statistics for a user
 func (r *Repository) GetStats(ctx context.Context, userID string) (*NotificationStats, error) {
 	stats := &NotificationStats{}
@@ -37,7 +84,7 @@ func (r *Repository) GetStats(ctx context.Context, userID string) (*Notification
 		Count(ctx)
 	if err != nil {
 		r.log.Error("failed to count total notifications", logger.Error(err))
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 	stats.Total = int64(total)
 
@@ -50,7 +97,7 @@ func (r *Repository) GetStats(ctx context.Context, userID string) (*Notification
 		Count(ctx)
 	if err != nil {
 		r.log.Error("failed to count unread notifications", logger.Error(err))
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 	stats.Unread = int64(unread)
 
@@ -62,81 +109,92 @@ func (r *Repository) GetStats(ctx context.Context, userID string) (*Notification
 		Count(ctx)
 	if err != nil {
 		r.log.Error("failed to count dismissed notifications", logger.Error(err))
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 	stats.Dismissed = int64(dismissed)
 
 	return stats, nil
 }
 
-// GetCounts returns notification counts by tab for a user
-func (r *Repository) GetCounts(ctx context.Context, userID string) (*NotificationCounts, error) {
+// countBase builds a scoped count query against kb.notifications.
+func (r *Repository) countBase(userID string, params CountParams) *bun.SelectQuery {
+	q := r.db.NewSelect().
+		Model((*Notification)(nil)).
+		Where("user_id = ?", userID)
+	return applyScopeFilter(q, params.Scope, params.ProjectID, params.RequiresAction)
+}
+
+// GetCounts returns notification counts by tab for a user, honouring the scope
+// / project / requires_action filters.
+func (r *Repository) GetCounts(ctx context.Context, userID string, params CountParams) (*NotificationCounts, error) {
 	counts := &NotificationCounts{}
 	now := time.Now()
 
 	// Count all (not cleared, not snoozed)
-	all, err := r.db.NewSelect().
-		Model((*Notification)(nil)).
-		Where("user_id = ?", userID).
+	all, err := r.countBase(userID, params).
 		Where("cleared_at IS NULL").
 		Where("(snoozed_until IS NULL OR snoozed_until <= ?)", now).
 		Count(ctx)
 	if err != nil {
 		r.log.Error("failed to count all notifications", logger.Error(err))
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 	counts.All = int64(all)
 
+	// Count unread (not cleared, not snoozed, read=false) — the bell badge.
+	unread, err := r.countBase(userID, params).
+		Where("cleared_at IS NULL").
+		Where("(snoozed_until IS NULL OR snoozed_until <= ?)", now).
+		Where("read = false").
+		Count(ctx)
+	if err != nil {
+		r.log.Error("failed to count unread notifications", logger.Error(err))
+		return nil, apperror.NewDatabase("Database operation failed", err)
+	}
+	counts.Unread = int64(unread)
+
 	// Count important (not cleared, not snoozed, importance = 'important')
-	important, err := r.db.NewSelect().
-		Model((*Notification)(nil)).
-		Where("user_id = ?", userID).
+	important, err := r.countBase(userID, params).
 		Where("cleared_at IS NULL").
 		Where("(snoozed_until IS NULL OR snoozed_until <= ?)", now).
 		Where("importance = ?", "important").
 		Count(ctx)
 	if err != nil {
 		r.log.Error("failed to count important notifications", logger.Error(err))
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 	counts.Important = int64(important)
 
 	// Count other (not cleared, not snoozed, importance = 'other')
-	other, err := r.db.NewSelect().
-		Model((*Notification)(nil)).
-		Where("user_id = ?", userID).
+	other, err := r.countBase(userID, params).
 		Where("cleared_at IS NULL").
 		Where("(snoozed_until IS NULL OR snoozed_until <= ?)", now).
 		Where("importance = ?", "other").
 		Count(ctx)
 	if err != nil {
 		r.log.Error("failed to count other notifications", logger.Error(err))
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 	counts.Other = int64(other)
 
 	// Count snoozed (not cleared, snoozed_until > now)
-	snoozed, err := r.db.NewSelect().
-		Model((*Notification)(nil)).
-		Where("user_id = ?", userID).
+	snoozed, err := r.countBase(userID, params).
 		Where("cleared_at IS NULL").
 		Where("snoozed_until > ?", now).
 		Count(ctx)
 	if err != nil {
 		r.log.Error("failed to count snoozed notifications", logger.Error(err))
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 	counts.Snoozed = int64(snoozed)
 
 	// Count cleared
-	cleared, err := r.db.NewSelect().
-		Model((*Notification)(nil)).
-		Where("user_id = ?", userID).
+	cleared, err := r.countBase(userID, params).
 		Where("cleared_at IS NOT NULL").
 		Count(ctx)
 	if err != nil {
 		r.log.Error("failed to count cleared notifications", logger.Error(err))
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 	counts.Cleared = int64(cleared)
 
@@ -151,6 +209,8 @@ func (r *Repository) List(ctx context.Context, userID string, params ListParams)
 	q := r.db.NewSelect().
 		Model(&notifications).
 		Where("user_id = ?", userID)
+
+	q = applyScopeFilter(q, params.Scope, params.ProjectID, params.RequiresAction)
 
 	// Apply tab filter
 	switch params.Tab {
@@ -196,7 +256,7 @@ func (r *Repository) List(ctx context.Context, userID string, params ListParams)
 
 	if err := q.Scan(ctx); err != nil {
 		r.log.Error("failed to list notifications", logger.Error(err))
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 
 	return notifications, nil
@@ -217,12 +277,36 @@ func (r *Repository) MarkRead(ctx context.Context, userID, notificationID string
 
 	if err != nil {
 		r.log.Error("failed to mark notification as read", logger.Error(err))
-		return apperror.ErrDatabase.WithInternal(err)
+		return apperror.NewDatabase("Database operation failed", err)
 	}
 
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
-		return apperror.ErrNotFound.WithMessage("Notification not found")
+		return apperror.NewNotFound("notification", notificationID)
+	}
+
+	return nil
+}
+
+// MarkUnread marks a notification as unread
+func (r *Repository) MarkUnread(ctx context.Context, userID, notificationID string) error {
+	result, err := r.db.NewUpdate().
+		Model((*Notification)(nil)).
+		Set("read = ?", false).
+		Set("read_at = NULL").
+		Set("updated_at = ?", time.Now()).
+		Where("id = ?", notificationID).
+		Where("user_id = ?", userID).
+		Exec(ctx)
+
+	if err != nil {
+		r.log.Error("failed to mark notification as unread", logger.Error(err))
+		return apperror.NewDatabase("Database operation failed", err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return apperror.NewNotFound("notification", notificationID)
 	}
 
 	return nil
@@ -244,36 +328,237 @@ func (r *Repository) Dismiss(ctx context.Context, userID, notificationID string)
 
 	if err != nil {
 		r.log.Error("failed to dismiss notification", logger.Error(err))
-		return apperror.ErrDatabase.WithInternal(err)
+		return apperror.NewDatabase("Database operation failed", err)
 	}
 
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
-		return apperror.ErrNotFound.WithMessage("Notification not found")
+		return apperror.NewNotFound("notification", notificationID)
 	}
 
 	return nil
 }
 
-// MarkAllRead marks all notifications as read for a user
-func (r *Repository) MarkAllRead(ctx context.Context, userID string) (int64, error) {
+// Snooze sets a notification's snoozed_until timestamp.
+func (r *Repository) Snooze(ctx context.Context, userID, notificationID string, until time.Time) error {
+	result, err := r.db.NewUpdate().
+		Model((*Notification)(nil)).
+		Set("snoozed_until = ?", until).
+		Set("updated_at = ?", time.Now()).
+		Where("id = ?", notificationID).
+		Where("user_id = ?", userID).
+		Exec(ctx)
+
+	if err != nil {
+		r.log.Error("failed to snooze notification", logger.Error(err))
+		return apperror.NewDatabase("Database operation failed", err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return apperror.NewNotFound("notification", notificationID)
+	}
+
+	return nil
+}
+
+// Unsnooze clears a notification's snoozed_until timestamp.
+func (r *Repository) Unsnooze(ctx context.Context, userID, notificationID string) error {
+	result, err := r.db.NewUpdate().
+		Model((*Notification)(nil)).
+		Set("snoozed_until = NULL").
+		Set("updated_at = ?", time.Now()).
+		Where("id = ?", notificationID).
+		Where("user_id = ?", userID).
+		Exec(ctx)
+
+	if err != nil {
+		r.log.Error("failed to unsnooze notification", logger.Error(err))
+		return apperror.NewDatabase("Database operation failed", err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return apperror.NewNotFound("notification", notificationID)
+	}
+
+	return nil
+}
+
+// Clear moves a notification to the cleared tab.
+func (r *Repository) Clear(ctx context.Context, userID, notificationID string) error {
+	result, err := r.db.NewUpdate().
+		Model((*Notification)(nil)).
+		Set("cleared_at = ?", time.Now()).
+		Set("updated_at = ?", time.Now()).
+		Where("id = ?", notificationID).
+		Where("user_id = ?", userID).
+		Exec(ctx)
+
+	if err != nil {
+		r.log.Error("failed to clear notification", logger.Error(err))
+		return apperror.NewDatabase("Database operation failed", err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return apperror.NewNotFound("notification", notificationID)
+	}
+
+	return nil
+}
+
+// Restore un-clears a notification.
+func (r *Repository) Restore(ctx context.Context, userID, notificationID string) error {
+	result, err := r.db.NewUpdate().
+		Model((*Notification)(nil)).
+		Set("cleared_at = NULL").
+		Set("updated_at = ?", time.Now()).
+		Where("id = ?", notificationID).
+		Where("user_id = ?", userID).
+		Exec(ctx)
+
+	if err != nil {
+		r.log.Error("failed to restore notification", logger.Error(err))
+		return apperror.NewDatabase("Database operation failed", err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return apperror.NewNotFound("notification", notificationID)
+	}
+
+	return nil
+}
+
+// ResolveAction records the outcome of an actionable notification.
+func (r *Repository) ResolveAction(ctx context.Context, userID, notificationID, status string) error {
 	now := time.Now()
 
 	result, err := r.db.NewUpdate().
+		Model((*Notification)(nil)).
+		Set("action_status = ?", status).
+		Set("action_status_at = ?", now).
+		Set("action_status_by = ?", userID).
+		Set("updated_at = ?", now).
+		Where("id = ?", notificationID).
+		Where("user_id = ?", userID).
+		Exec(ctx)
+
+	if err != nil {
+		r.log.Error("failed to resolve notification action", logger.Error(err))
+		return apperror.NewDatabase("Database operation failed", err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return apperror.NewNotFound("notification", notificationID)
+	}
+
+	return nil
+}
+
+// MarkAllRead marks all notifications as read for a user within the given
+// scope (and optional project).
+func (r *Repository) MarkAllRead(ctx context.Context, userID string, scope Scope, projectID *string) (int64, error) {
+	now := time.Now()
+
+	q := r.db.NewUpdate().
 		Model((*Notification)(nil)).
 		Set("read = ?", true).
 		Set("read_at = ?", now).
 		Set("updated_at = ?", now).
 		Where("user_id = ?", userID).
 		Where("read = ?", false).
-		Where("cleared_at IS NULL").
-		Exec(ctx)
+		Where("cleared_at IS NULL")
 
+	if scope != "" {
+		q = q.Where("scope = ?", scope)
+	}
+	if projectID != nil {
+		q = q.Where("project_id = ?", *projectID)
+	}
+
+	result, err := q.Exec(ctx)
 	if err != nil {
 		r.log.Error("failed to mark all notifications as read", logger.Error(err))
-		return 0, apperror.ErrDatabase.WithInternal(err)
+		return 0, apperror.NewDatabase("Database operation failed", err)
 	}
 
 	count, _ := result.RowsAffected()
 	return count, nil
+}
+
+// GetPreferences returns the stored notification preferences for a user,
+// optionally scoped to a project (nil projectID returns account-scope rows).
+func (r *Repository) GetPreferences(ctx context.Context, userID string, projectID *string) ([]NotificationPreference, error) {
+	prefs := []NotificationPreference{}
+
+	q := r.db.NewSelect().
+		Model(&prefs).
+		Where("user_id = ?", userID)
+
+	if projectID == nil {
+		q = q.Where("project_id IS NULL")
+	} else {
+		q = q.Where("project_id = ?", *projectID)
+	}
+
+	if err := q.Scan(ctx); err != nil {
+		r.log.Error("failed to list notification preferences", logger.Error(err))
+		return nil, apperror.NewDatabase("Database operation failed", err)
+	}
+
+	return prefs, nil
+}
+
+// GetPreference returns a single stored preference row, or nil when none
+// exists for the (user, project, event key, channel) tuple.
+func (r *Repository) GetPreference(ctx context.Context, userID string, projectID *string, eventKey, channel string) (*NotificationPreference, error) {
+	p := &NotificationPreference{}
+
+	q := r.db.NewSelect().
+		Model(p).
+		Where("user_id = ?", userID).
+		Where("event_key = ?", eventKey).
+		Where("channel = ?", channel)
+	if projectID == nil {
+		q = q.Where("project_id IS NULL")
+	} else {
+		q = q.Where("project_id = ?", *projectID)
+	}
+
+	if err := q.Scan(ctx); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		r.log.Error("failed to get notification preference", logger.Error(err))
+		return nil, apperror.NewDatabase("Database operation failed", err)
+	}
+
+	return p, nil
+}
+
+// UpsertPreference inserts or updates a preference row keyed by the
+// (user_id, project_id, event_key, channel) unique constraint.
+func (r *Repository) UpsertPreference(ctx context.Context, p *NotificationPreference) (*NotificationPreference, error) {
+	now := time.Now()
+	if p.CreatedAt.IsZero() {
+		p.CreatedAt = now
+	}
+	p.UpdatedAt = now
+
+	_, err := r.db.NewInsert().
+		Model(p).
+		On("CONFLICT (user_id, project_id, event_key, channel) DO UPDATE").
+		Set("enabled = EXCLUDED.enabled").
+		Set("updated_at = EXCLUDED.updated_at").
+		Returning("*").
+		Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to upsert notification preference", logger.Error(err))
+		return nil, apperror.NewDatabase("Database operation failed", err)
+	}
+
+	return p, nil
 }

@@ -113,6 +113,7 @@ var models = []any{
 
 	// domain/notifications
 	(*notifications.Notification)(nil),
+	(*notifications.NotificationPreference)(nil),
 
 	// domain/invites
 	(*invites.Invite)(nil),

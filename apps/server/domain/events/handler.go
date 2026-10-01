@@ -259,6 +259,117 @@ func (h *Handler) HandleStream(c echo.Context) error {
 	return nil
 }
 
+// HandleUserStream handles GET /api/events/stream/account - SSE connection endpoint
+// @Summary      Subscribe to account-scope real-time events
+// @Description  Establish Server-Sent Events (SSE) connection to receive real-time account-scope notification events for the authenticated user. No projectId query parameter. Sends periodic heartbeats.
+// @Tags         events
+// @Produce      text/event-stream
+// @Success      200 {string} string "SSE stream (events: connected, entity.created, entity.updated, entity.deleted, entity.batch, heartbeat)"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/events/stream/account [get]
+// @Security     bearerAuth
+func (h *Handler) HandleUserStream(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	// Generate connection ID
+	connectionID := h.generateConnectionID()
+
+	// Set up SSE headers
+	w := c.Response().Writer
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		return apperror.ErrInternal.WithMessage("streaming not supported")
+	}
+
+	// Create connection — account-scope stream has no project binding.
+	conn := &SSEConnection{
+		ConnectionID:  connectionID,
+		UserID:        user.ID,
+		ProjectID:     "",
+		Writer:        w,
+		Flusher:       flusher,
+		Done:          make(chan struct{}),
+		LastHeartbeat: time.Now(),
+	}
+
+	// Store connection
+	h.connMu.Lock()
+	h.connections[connectionID] = conn
+	h.connMu.Unlock()
+
+	defer h.removeConnection(connectionID)
+
+	h.log.Info("SSE account-stream connection established",
+		slog.String("connection_id", connectionID),
+		slog.String("user_id", user.ID),
+	)
+
+	// Send connected event
+	connectedEvent := ConnectedEvent{
+		ConnectionID: connectionID,
+	}
+	if err := h.sendEvent(conn, "connected", connectedEvent); err != nil {
+		h.log.Error("failed to send connected event", logger.Error(err))
+		return nil
+	}
+
+	// Subscribe to all events, then fail-closed filter to the caller's own
+	// account-scope notifications only.
+	unsubscribe := h.svc.Subscribe("*", func(event EntityEvent) {
+		select {
+		case <-conn.Done:
+			return
+		default:
+			// Fail-closed: drop anything that is not the caller's own
+			// account-scope notification before building a payload.
+			if event.Entity != EntityNotification {
+				return
+			}
+			if uid, _ := event.Data["userId"].(string); uid != user.ID {
+				return
+			}
+			if sc, _ := event.Data["scope"].(string); sc != "account" {
+				return
+			}
+
+			payload := SSEEventPayload{
+				Entity:    event.Entity,
+				ID:        event.ID,
+				IDs:       event.IDs,
+				Data:      event.Data,
+				Timestamp: event.Timestamp,
+			}
+			if err := h.sendEvent(conn, string(event.Type), payload); err != nil {
+				h.log.Warn("failed to send event to connection",
+					slog.String("connection_id", connectionID),
+					logger.Error(err),
+				)
+			}
+		}
+	})
+	defer unsubscribe()
+
+	// Wait for client disconnect
+	ctx := c.Request().Context()
+	select {
+	case <-ctx.Done():
+		h.log.Info("SSE account-stream connection closed (client disconnected)",
+			slog.String("connection_id", connectionID),
+		)
+	case <-conn.Done:
+		h.log.Info("SSE account-stream connection closed (server closed)",
+			slog.String("connection_id", connectionID),
+		)
+	}
+
+	return nil
+}
+
 // HandleConnectionsCount handles GET /api/events/connections/count
 // @Summary      Get active SSE connection count
 // @Description  Returns the current number of active SSE connections to the events stream (for monitoring purposes)

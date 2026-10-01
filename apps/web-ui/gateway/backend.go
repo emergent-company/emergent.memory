@@ -237,6 +237,26 @@ type MemoryBackend interface {
 	// Owner share-session management (project-scoped via the session context).
 	ListShareSessionsByProject(ctx context.Context) ([]ShareOwnerSession, error)
 	GetShareSessionTranscript(ctx context.Context, id string) ([]ShareMessage, error)
+	// Inbox / notifications (see memory_notifications.go). Account vs project
+	// scope is explicit; preferences drive opt-in project-event delivery.
+	ListNotifications(ctx context.Context, p NotificationListParams) ([]Notification, error)
+	NotificationCounts(ctx context.Context, scope, projectID string) (*NotificationCounts, error)
+	// Preferences are project-scoped: the project id selects which project's
+	// preferences are read/written.
+	ListNotificationPreferences(ctx context.Context, projectID string) ([]NotificationPreference, error)
+	SetNotificationPreference(ctx context.Context, projectID, eventKey, channel string, enabled bool) error
+	MarkNotificationRead(ctx context.Context, id string) error
+	MarkNotificationUnread(ctx context.Context, id string) error
+	DismissNotification(ctx context.Context, id string) error
+	SnoozeNotification(ctx context.Context, id, until string) error
+	UnsnoozeNotification(ctx context.Context, id string) error
+	ClearNotification(ctx context.Context, id string) error
+	RestoreNotification(ctx context.Context, id string) error
+	ResolveNotification(ctx context.Context, id, action string) error
+	MarkAllNotificationsRead(ctx context.Context, scope, projectID string) error
+	// NotificationEventStream opens the session's real-time notification stream
+	// (account when projectID is empty, else that project's).
+	NotificationEventStream(ctx context.Context, projectID string) (io.ReadCloser, error)
 }
 
 // compile-time assertion that MemoryClient satisfies the interface.

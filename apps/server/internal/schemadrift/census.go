@@ -58,7 +58,6 @@ var censusRoots = []string{"domain", "pkg", "internal"}
 var censusExclusions = map[string]string{
 	modulePath + "/pkg/auth.introspectionCacheEntry":    "unexported model pkg/auth.introspectionCacheEntry; cannot be referenced cross-package",
 	modulePath + "/domain/extraction.embeddingCacheRow": "unexported model domain/extraction.embeddingCacheRow; cannot be referenced cross-package",
-	modulePath + "/domain/provider.budgetNotification":  "unexported model domain/provider.budgetNotification; shares kb.notifications with notifications.Notification",
 }
 
 // census returns every bun model struct in the source tree as a slice (one
