@@ -263,12 +263,17 @@ func (s *Service) Create(ctx context.Context, req CreateProjectRequest, userID s
 		return nil, apperror.New(400, "duplicate", "Project with this name exists in org")
 	}
 
-	// Create the project — default monthly budget of $10 USD
+	// Create the project — default monthly budget of $10 USD with the schema's
+	// default 80% alert threshold. The threshold must be set explicitly: the
+	// bun insert writes every field, so the zero Go value would otherwise
+	// override the column's DEFAULT 0.80 and persist as 0 (issue #1343).
 	defaultBudget := 10.0
+	defaultAlertThreshold := 0.80
 	project := &Project{
-		OrganizationID: req.OrgID,
-		Name:           name,
-		BudgetUSD:      &defaultBudget,
+		OrganizationID:       req.OrgID,
+		Name:                 name,
+		BudgetUSD:            &defaultBudget,
+		BudgetAlertThreshold: defaultAlertThreshold,
 	}
 	if err := s.repo.Create(ctx, tx.Tx, project); err != nil {
 		return nil, err

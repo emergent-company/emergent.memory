@@ -53,23 +53,33 @@ func (r *Repository) Create(ctx context.Context, n *Notification) (*Notification
 	return n, nil
 }
 
-// GroupKeyExists reports whether an unread, non-dismissed, uncleared
-// notification with the given group_key already exists for the user. This is
-// the coalescing check that keeps a repeated event from stacking duplicates.
-func (r *Repository) GroupKeyExists(ctx context.Context, userID, groupKey string) (bool, error) {
-	exists, err := r.db.NewSelect().
-		Model((*Notification)(nil)).
-		Where("user_id = ?", userID).
-		Where("group_key = ?", groupKey).
-		Where("read = false").
-		Where("dismissed = false").
-		Where("cleared_at IS NULL").
-		Exists(ctx)
+// CreateCoalescing inserts n unless an active notification already exists for
+// the same (user_id, group_key). It relies on the partial unique index
+// ux_notifications_user_group_key_active (WHERE group_key IS NOT NULL AND
+// cleared_at IS NULL) and INSERT ... ON CONFLICT DO NOTHING, so concurrent
+// producers cannot both win the way a read-then-insert check allowed.
+//
+// Returns (nil, nil) when the insert was suppressed by an existing row.
+func (r *Repository) CreateCoalescing(ctx context.Context, n *Notification) (*Notification, error) {
+	res, err := r.db.NewInsert().
+		Model(n).
+		On("CONFLICT DO NOTHING").
+		Returning("*").
+		Exec(ctx)
 	if err != nil {
-		r.log.Error("failed to check notification group key", logger.Error(err))
-		return false, apperror.NewDatabase("Database operation failed", err)
+		r.log.Error("failed to create coalesced notification", logger.Error(err))
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
-	return exists, nil
+	affected, err := res.RowsAffected()
+	if err != nil {
+		r.log.Error("failed to read coalesced insert result", logger.Error(err))
+		return nil, apperror.NewDatabase("Database operation failed", err)
+	}
+	if affected == 0 {
+		// An active row already exists for this (user_id, group_key).
+		return nil, nil
+	}
+	return n, nil
 }
 
 // GetStats returns notification statistics for a user
