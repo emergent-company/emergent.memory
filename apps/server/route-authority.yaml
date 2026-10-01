@@ -241,6 +241,10 @@ routes:
       path: /api/blueprints/applied
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireProjectID
+    - method: POST
+      path: /api/blueprints/import
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: GET
       path: /api/blueprints/name/:name/versions
       level: project-member

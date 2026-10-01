@@ -24,6 +24,7 @@ templ BlueprintsPage(applied []AppliedBlueprint, upgrades []AvailableSchemaItem,
 		if loadErr != nil {
 			@pageError("Failed to load blueprints", loadErr)
 		} else {
+			@importSection()
 			@installedSection(applied, upgradeByName(upgrades))
 			@draftsSection(drafts)
 			@upgradesSection(upgrades)
@@ -56,6 +57,40 @@ templ blueprintsHeader(count int, ok bool) {
 		}) {
 			Save as blueprint
 		}
+	}
+}
+
+// importSection is the gallery's "Import from GitHub" surface: a repository URL
+// plus optional ref and token. Submitting posts to /blueprints/import, which
+// creates, publishes, and applies the blueprint. The token is only for private
+// repositories.
+templ importSection() {
+	@cardList("Import from GitHub", cardListProps{Margin: "mb-8"}) {
+		<div class="px-4 py-4">
+			<p class="text-muted mb-4 text-sm">Paste a GitHub repository URL to install the blueprint it contains. Add a ref for a branch or tag, and a token for a private repository.</p>
+			<form method="post" action="/blueprints/import" class="flex flex-col gap-4">
+				@form.FormControl("blueprint-import-url", "Repository URL", form.LabelAbove, "", "", nil) {
+					<input id="blueprint-import-url" name="url" type="url" required placeholder="https://github.com/org/repo" autocomplete="off" class="input w-full" data-testid="blueprint-import-url"/>
+				}
+				@form.FormControl("blueprint-import-ref", "Ref", form.LabelAbove, "Optional. Branch, tag, or commit to install.", "", nil) {
+					<input id="blueprint-import-ref" name="ref" type="text" placeholder="main or v1.2.3" autocomplete="off" class="input w-full font-mono" data-testid="blueprint-import-ref"/>
+				}
+				@form.FormControl("blueprint-import-token", "Access token", form.LabelAbove, "Optional. Needed only for a private repository.", "", nil) {
+					<input id="blueprint-import-token" name="token" type="password" autocomplete="off" class="input w-full" data-testid="blueprint-import-token"/>
+				}
+				@form.FormActions("", "") {
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonPrimary,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--download",
+						Attrs:   templ.Attributes{"data-testid": "blueprint-import-submit"},
+					}) {
+						Import
+					}
+				}
+			</form>
+		</div>
 	}
 }
 

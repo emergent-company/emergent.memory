@@ -2,6 +2,7 @@ package blueprints
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 
@@ -65,6 +66,49 @@ func (h *Handler) CreateBlueprint(c echo.Context) error {
 		return err
 	}
 
+	return c.JSON(http.StatusCreated, bp)
+}
+
+// ImportBlueprint handles POST /api/blueprints/import
+// @Summary      Import blueprint from a GitHub URL
+// @Description  Fetches a blueprint from https://github.com/<org>/<repo>[#ref], extracts and validates its manifest, and creates + publishes a blueprint in the caller's scope. The optional token is used only for private-repo fetch and is never stored or returned.
+// @Tags         blueprints
+// @Accept       json
+// @Produce      json
+// @Param        request body ImportGitHubRequest true "GitHub source"
+// @Success      201 {object} Blueprint "Created blueprint"
+// @Failure      400 {object} apperror.Error "Invalid URL or manifest"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden"
+// @Failure      413 {object} apperror.Error "Archive too large"
+// @Failure      502 {object} apperror.Error "Fetch failed"
+// @Router       /api/blueprints/import [post]
+// @Security     bearerAuth
+func (h *Handler) ImportBlueprint(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	var req ImportGitHubRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+	if strings.TrimSpace(req.URL) == "" {
+		return apperror.NewBadRequest("url is required")
+	}
+
+	// Same scoping/authority as create: a project context produces a
+	// project-private blueprint; a global (no project) import is a write to the
+	// platform-global catalogue and requires superadmin_full.
+	projectID := user.ProjectID
+	if projectID == "" {
+		if err := h.svc.AuthorizeGlobalBlueprintWrite(c.Request().Context()); err != nil {
+			return err
+		}
+	}
+
+	bp, err := h.svc.ImportFromGitHub(c.Request().Context(), projectID, &req)
+	if err != nil {
+		return err
+	}
 	return c.JSON(http.StatusCreated, bp)
 }
 
