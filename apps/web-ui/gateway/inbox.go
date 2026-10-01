@@ -86,6 +86,21 @@ type inboxView struct {
 	FlashErr error
 }
 
+// inboxProjectFilter returns the project filter for an inbox scope. Only the
+// Project scope narrows to a project; the Account scope is global (its events
+// may individually link to a project, but the account inbox is not scoped to
+// the active one). Narrowing account scope to the active project was the #1342
+// defect: a user with 11 account-scope unread spread across 7 projects saw only
+// the 2 belonging to the active project in the inbox, while the bell (which
+// counted all account unread) read 11. The account filter also keeps
+// ListNotifications and NotificationCounts on the same population.
+func inboxProjectFilter(scope string, project *Project) string {
+	if scope != "project" || project == nil {
+		return ""
+	}
+	return project.ID
+}
+
 // inboxListParams maps the inbox tab onto memory's list filters.
 func inboxListParams(scope, projectID, tab string) NotificationListParams {
 	p := NotificationListParams{Scope: scope, ProjectID: projectID}
@@ -131,10 +146,7 @@ func (s *Server) uiInbox(c echo.Context) error {
 		view.ProjectSelected = true
 	}
 
-	projectID := ""
-	if view.Project != nil {
-		projectID = view.Project.ID
-	}
+	projectID := inboxProjectFilter(scope, view.Project)
 	items, err := s.memory.ListNotifications(ctx, inboxListParams(scope, projectID, tab))
 	if err != nil {
 		view.LoadErr = err

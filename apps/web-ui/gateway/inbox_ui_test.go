@@ -223,6 +223,87 @@ func TestAppShellRendersBell(t *testing.T) {
 	}
 }
 
+// TestInboxProjectFilter is the #1342 root-cause regression: the Account inbox
+// is global and must not be narrowed to the active project. The defect passed
+// the active project id for every scope, so a user with 11 account unread
+// spread across 7 projects saw only the 2 belonging to the active project,
+// while the bell (all account unread) read 11.
+func TestInboxProjectFilter(t *testing.T) {
+	p := &Project{ID: "active-project"}
+	for _, tc := range []struct {
+		name  string
+		scope string
+		proj  *Project
+		want  string
+	}{
+		{"account is global", "account", p, ""},
+		{"account with no project", "account", nil, ""},
+		{"project narrows", "project", p, "active-project"},
+		{"project with no project", "project", nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := inboxProjectFilter(tc.scope, tc.proj); got != tc.want {
+				t.Errorf("inboxProjectFilter(%q, %v) = %q, want %q", tc.scope, tc.proj, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestUIInboxScopeProjectFilter drives the real inbox handler and asserts the
+// account scope forwards NO project filter to the list or counts, while the
+// project scope forwards the active project. This is the end-to-end guard for
+// the #1342 defect (the account inbox must show account notifications from
+// every project, not just the active one) and for the bell agreeing with the
+// account list.
+func TestUIInboxScopeProjectFilter(t *testing.T) {
+	f := &fakeMemory{
+		project:            &Project{ID: "active-project", Name: "Active"},
+		notificationCounts: &NotificationCounts{Unread: 11},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			ctx := withSessionContext(c.Request().Context(), &sessionContext{Token: "tok", Sub: "sub-a", ProjectID: "active-project"})
+			c.SetRequest(c.Request().WithContext(ctx))
+			return next(c)
+		}
+	})
+	e.GET("/inbox", s.uiInbox)
+
+	serve := func(path string) string {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s: status = %d, body=%s", path, rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+
+	// Account scope: global — no project filter, on the list, the counts, or the
+	// bell (which must not be narrowed to the active project).
+	body := serve("/inbox?scope=account")
+	if f.lastListParams.Scope != "account" || f.lastListParams.ProjectID != "" {
+		t.Errorf("account list forwarded scope/project = %q/%q, want account/''", f.lastListParams.Scope, f.lastListParams.ProjectID)
+	}
+	if f.lastCountsScope != "account" || f.lastCountsProject != "" {
+		t.Errorf("account counts forwarded scope/project = %q/%q, want account/''", f.lastCountsScope, f.lastCountsProject)
+	}
+	if !strings.Contains(body, `data-unread="11"`) {
+		t.Error("account bell must count all account unread (11), not the active project's slice")
+	}
+
+	// Project scope: narrowed to the active project.
+	serve("/inbox?scope=project")
+	if f.lastListParams.Scope != "project" || f.lastListParams.ProjectID != "active-project" {
+		t.Errorf("project list forwarded scope/project = %q/%q, want project/active-project", f.lastListParams.Scope, f.lastListParams.ProjectID)
+	}
+	if f.lastCountsScope != "project" || f.lastCountsProject != "active-project" {
+		t.Errorf("project counts forwarded scope/project = %q/%q, want project/active-project", f.lastCountsScope, f.lastCountsProject)
+	}
+}
+
 // TestBellUnreadMatchesInboxScope is the #1342 regression: the bell badge must
 // equal the unread count of the inbox list for the active scope, never the sum
 // of the account and project scopes. With 2 account unread and 9 project unread

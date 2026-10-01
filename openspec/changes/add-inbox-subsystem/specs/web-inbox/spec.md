@@ -38,6 +38,7 @@ The inbox SHALL present two scopes — Account and Project — and SHALL list th
 
 - **WHEN** the user selects the Account scope
 - **THEN** the inbox lists account-scope notifications (global events such as being added to a project or permission changes)
+- **AND** the account inbox is global: it SHALL NOT be narrowed to the active project, even though individual account events may link to a project (#1342)
 
 #### Scenario: Project scope
 
