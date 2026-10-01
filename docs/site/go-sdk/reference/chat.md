@@ -55,8 +55,9 @@ type ConversationWithMessages struct {
 
 ```go
 type ListConversationsOptions struct {
-    Limit  int
-    Offset int
+    Limit           int
+    Offset          int
+    IncludeArchived bool // include archived conversations (excluded by default)
 }
 ```
 
