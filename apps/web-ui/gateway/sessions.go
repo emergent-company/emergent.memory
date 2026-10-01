@@ -16,7 +16,7 @@ import (
 // state.
 func (s *Server) uiSessions(c echo.Context) error {
 	ctx := c.Request().Context()
-	convs, err := s.memory.ListConversations(ctx)
+	convs, err := s.memory.ListConversations(ctx, false)
 	if err != nil {
 		return s.page(c, pageTitle("Sessions"), SessionsPage(nil, nil, err))
 	}

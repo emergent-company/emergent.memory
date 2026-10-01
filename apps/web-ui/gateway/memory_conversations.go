@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 )
 
 // --- conversations ---
@@ -16,6 +17,14 @@ type Conversation struct {
 	CanonicalID       string `json:"canonicalId"`
 	CreatedAt         string `json:"createdAt"`
 	UpdatedAt         string `json:"updatedAt"`
+
+	// IsArchived is the conversation's archive state; archived conversations
+	// are hidden from the default list. ArchivedAt is when it was archived
+	// (empty for an active conversation). Both are absent from a memory
+	// response that predates the archive feature, so a conversation is treated
+	// as active by default.
+	IsArchived bool   `json:"isArchived"`
+	ArchivedAt string `json:"archivedAt,omitempty"`
 
 	// Run-control state the gateway derives for the session rail badge (not
 	// present on memory's list response — populated by chatRailData). json:"-"
@@ -30,12 +39,41 @@ type ConversationList struct {
 	Total         int            `json:"total"`
 }
 
-func (m *MemoryClient) ListConversations(ctx context.Context) (*ConversationList, error) {
+// ListConversations returns the caller's conversations, most recently updated
+// first. Archived conversations are excluded unless includeArchived is set —
+// the list surfaces (rail, Sessions page, agent "recent chats") use the default
+// so archive hides a session, while statistics opt in so archiving never
+// rewrites historical counts (design D6).
+func (m *MemoryClient) ListConversations(ctx context.Context, includeArchived bool) (*ConversationList, error) {
+	path := "/api/chat/conversations"
+	if includeArchived {
+		path += "?includeArchived=true"
+	}
 	var out ConversationList
-	if err := m.do(ctx, http.MethodGet, "/api/chat/conversations", nil, &out); err != nil {
+	if err := m.do(ctx, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
+}
+
+// ArchiveConversation archives one conversation (a reversible hide). It is
+// idempotent on memory's side and succeeds for any conversation the caller can
+// access; a foreign or unknown id surfaces as not-found.
+func (m *MemoryClient) ArchiveConversation(ctx context.Context, id string) error {
+	return m.do(ctx, http.MethodPost, "/api/chat/"+url.PathEscape(id)+"/archive", nil, nil)
+}
+
+// UnarchiveConversation clears a conversation's archive state, making it
+// visible in the default list again. Symmetric with ArchiveConversation.
+func (m *MemoryClient) UnarchiveConversation(ctx context.Context, id string) error {
+	return m.do(ctx, http.MethodPost, "/api/chat/"+url.PathEscape(id)+"/unarchive", nil, nil)
+}
+
+// DeleteConversation permanently deletes one conversation (its messages cascade
+// on memory's side). Irreversible; a foreign or unknown id surfaces as
+// not-found.
+func (m *MemoryClient) DeleteConversation(ctx context.Context, id string) error {
+	return m.do(ctx, http.MethodDelete, "/api/chat/"+url.PathEscape(id), nil, nil)
 }
 
 // CreateObjectConversation creates (or returns the existing) refinement

@@ -682,6 +682,7 @@ func orgMemberUIServer(s *Server) *echo.Echo {
 	e.POST("/members/:userId/remove", s.uiRemoveMember)
 	e.POST("/members/:userId/role", s.uiChangeMemberRole)
 	e.POST("/invites/:id/revoke", s.uiRevokeInvite)
+	e.POST("/invites/:id/resend", s.uiResendInvite)
 	e.POST("/invites/:id/accept", s.uiAcceptInvite)
 	e.POST("/invites/:id/decline", s.uiDeclineInvite)
 	e.GET("/profile", s.uiProfile)
@@ -865,6 +866,94 @@ func TestUIMembersRoutes(t *testing.T) {
 	rec = postForm(t, e, "/invites/inv-1/revoke", "")
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/members?revoked=1" || f.canceledInvite != "inv-1" {
 		t.Errorf("revoke = %d %q (canceled %q)", rec.Code, rec.Header().Get("Location"), f.canceledInvite)
+	}
+}
+
+// TestUIMembersInviteDeliveryBadges asserts each pending invite row renders its
+// email-delivery badge (neutral "Sent" when memory reports none) and the resend
+// control; accepted invites are still absent from the people view.
+func TestUIMembersInviteDeliveryBadges(t *testing.T) {
+	f := &fakeMemory{
+		projects: []ProjectRef{{ID: "p1", Name: "Home", OrgID: "o1"}},
+		sentInvites: []SentInviteDto{
+			{ID: "inv-sent", Email: "sent@example.com", Role: "project_user", Status: "pending", CreatedAt: "2026-08-20T09:00:00Z"},
+			{ID: "inv-delivered", Email: "delivered@example.com", Role: "project_user", Status: "pending", CreatedAt: "2026-08-20T09:00:00Z", DeliveryStatus: strPtr("delivered")},
+			{ID: "inv-opened", Email: "opened@example.com", Role: "project_user", Status: "pending", CreatedAt: "2026-08-20T09:00:00Z", DeliveryStatus: strPtr("opened")},
+			{ID: "inv-bounced", Email: "bounced@example.com", Role: "project_user", Status: "pending", CreatedAt: "2026-08-20T09:00:00Z", DeliveryStatus: strPtr("bounced")},
+			{ID: "inv-accepted", Email: "accepted@example.com", Role: "project_user", Status: "accepted", CreatedAt: "2026-08-18T09:00:00Z"},
+		},
+		orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin", Projects: []ProjectAccessDto{{ID: "p1", Name: "Home", OrgID: "o1", Role: "project_admin"}}}},
+	}
+	s := &Server{cfg: Config{MemoryProjectID: "p1"}, memory: f}
+	e := orgMemberUIServer(s)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/members", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /members = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Not responded",
+		"Sent", "Delivered", "Opened", "Bounced",
+		`action="/invites/inv-sent/resend"`,
+		`action="/invites/inv-delivered/resend"`,
+		`aria-label="Resend invitation to sent@example.com"`,
+		`title="Resend invitation"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET /members missing %q", want)
+		}
+	}
+	// non-pending invites are not part of the people view — neither the email
+	// nor a resend control for them renders.
+	if strings.Contains(body, "accepted@example.com") || strings.Contains(body, `action="/invites/inv-accepted/resend"`) {
+		t.Error("non-pending invites must not render on the members view")
+	}
+}
+
+// TestUIResendInviteRoute asserts POST /invites/:id/resend forwards to
+// ResendInvite and redirects back to the surface the form came from (carried in
+// the hidden "surface" field), and that a caller without org-admin rights is
+// rejected before memory is asked.
+func TestUIResendInviteRoute(t *testing.T) {
+	newServer := func(role string) (*echo.Echo, *fakeMemory) {
+		f := &fakeMemory{
+			projects:        []ProjectRef{{ID: "p1", Name: "Home", OrgID: "o1"}},
+			orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: role, Projects: []ProjectAccessDto{{ID: "p1", Name: "Home", OrgID: "o1", Role: "project_admin"}}}},
+		}
+		s := &Server{cfg: Config{MemoryProjectID: "p1"}, memory: f}
+		return orgMemberUIServer(s), f
+	}
+
+	// legacy surface → redirect back to /members
+	e, f := newServer("org_admin")
+	rec := postForm(t, e, "/invites/inv-1/resend", url.Values{"surface": {"/members"}}.Encode())
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/members?resent=1" {
+		t.Fatalf("legacy resend = %d %q, want 303 /members?resent=1", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.resentInvite != "inv-1" {
+		t.Errorf("ResendInvite not forwarded: %q", f.resentInvite)
+	}
+
+	// settings surface → redirect back to /settings/members
+	e2, f2 := newServer("org_admin")
+	rec = postForm(t, e2, "/invites/inv-2/resend", url.Values{"surface": {"/settings/members"}}.Encode())
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/settings/members?resent=1" {
+		t.Fatalf("settings resend = %d %q, want 303 /settings/members?resent=1", rec.Code, rec.Header().Get("Location"))
+	}
+	if f2.resentInvite != "inv-2" {
+		t.Errorf("ResendInvite not forwarded: %q", f2.resentInvite)
+	}
+
+	// a caller who may not administer the org is rejected before memory is asked
+	e3, f3 := newServer("org_member")
+	rec = postForm(t, e3, "/invites/inv-3/resend", url.Values{"surface": {"/members"}}.Encode())
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "err=") {
+		t.Fatalf("non-admin resend = %d %q, want error redirect", rec.Code, rec.Header().Get("Location"))
+	}
+	if f3.resentInvite != "" {
+		t.Errorf("non-admin must not reach memory, resent %q", f3.resentInvite)
 	}
 }
 

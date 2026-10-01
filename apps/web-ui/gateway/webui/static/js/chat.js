@@ -38,8 +38,11 @@
   var input = null, sendBtn = null, stopBtn = null, agentSelect = null;
   var agentFilterSelect = null;
   var originFilterSelect = null;
+  var includeArchivedEl = null;
   var filterAgent = "";   // session rail agent filter ("" = all agents)
   var filterOrigin = "";  // session rail origin filter ("" = all types)
+  var filterIncludeArchived = false; // rail "Include archived" filter (server-side query)
+  var deleteSessionId = "";          // session pending the delete confirmation
   var aborter = null;
   var eventSource = null;   // SSE live-update channel for the active conversation/run
   var eventSourceId = "";   // scope key the current eventSource is subscribed to ("conv:<id>" / "run:<id>")
@@ -274,6 +277,7 @@
     agentSelect = document.getElementById("chat-agent");
     agentFilterSelect = document.getElementById("chat-agent-filter");
     originFilterSelect = document.getElementById("chat-origin-filter");
+    includeArchivedEl = document.getElementById("chat-include-archived");
 
     // Dedicated read-only run-transcript page: no composer, no session rail,
     // no agent picker. Render the run's history through the exact shared
@@ -362,6 +366,16 @@
       });
     }
 
+    // session rail "Include archived" filter: archived rows are excluded by the
+    // server by default, so toggling this re-fetches the rail with the
+    // includeArchived param rather than filtering the DOM.
+    if (includeArchivedEl) {
+      includeArchivedEl.addEventListener("change", function () {
+        filterIncludeArchived = !!includeArchivedEl.checked;
+        refreshSessionRail();
+      });
+    }
+
     // Run-control surfaces. The mount points are created at runtime when
     // chat.templ does not already provide them, so this lane ships without
     // depending on the markup lane: #chat-dock + #chat-queue inside the
@@ -404,7 +418,26 @@
       } else if (t.getAttribute("data-action") === "toggle-chat-rail") {
         var rail = document.getElementById("chat-rail");
         if (rail) rail.classList.toggle("hidden");
+      } else if (t.getAttribute("data-action") === "session-menu") {
+        // The row action menu opens via the go-daisy popover runtime; handling
+        // the attribute here just stops the click from bubbling to the row's
+        // resume-session action.
+      } else if (t.getAttribute("data-action") === "archive-session") {
+        archiveSession(t.getAttribute("data-id"));
+      } else if (t.getAttribute("data-action") === "unarchive-session") {
+        unarchiveSession(t.getAttribute("data-id"));
+      } else if (t.getAttribute("data-action") === "delete-session") {
+        openDeleteSessionConfirm(t.getAttribute("data-id"), t.getAttribute("data-title"));
+      } else if (t.getAttribute("data-action") === "close-delete-session") {
+        closeDeleteSessionDialog();
       }
+    });
+
+    // The confirm button lives in the delete dialog (inside #chat-root), so a
+    // root-scoped listener survives the fresh bind on each swap without
+    // stacking document-level handlers.
+    root.addEventListener("click", function (ev) {
+      if (ev.target && ev.target.id === "chat-delete-confirm-go") confirmDeleteSession();
     });
 
     // tool badges expand inline via their own toggle button; the legacy side
@@ -660,7 +693,7 @@
     var railList = document.getElementById("chat-rail-list");
     if (!railList) return;
     try {
-      var res = await fetch("/partial/chat-rail?c=" + encodeURIComponent(conversationId || ""));
+      var res = await fetch("/partial/chat-rail?c=" + encodeURIComponent(conversationId || "") + "&includeArchived=" + (filterIncludeArchived ? "true" : "false"));
       if (!res.ok) throw new Error("HTTP " + res.status);
       railList.innerHTML = await res.text();
       applyAgentFilter();
@@ -669,6 +702,78 @@
       reportError(err, "session rail refresh failed");
       // keep the stale list; the next refresh retries
     }
+  }
+
+  /* ---------- session lifecycle actions (archive / unarchive / delete) ---------- */
+
+  // POSTs one lifecycle route and refreshes the rail. Archiving the open
+  // conversation is intentionally non-destructive: the workspace is left
+  // untouched, only the rail row disappears under the default (exclude)
+  // filter. A missing id is a no-op (defensive — the menu always carries one).
+  function runSessionAction(id, route, verb) {
+    if (!id) return Promise.resolve();
+    return fetch("/api/conversations/" + encodeURIComponent(id) + route, { method: "POST" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        notify("success", "Session " + verb);
+        return refreshSessionRail();
+      })
+      .catch(function (err) {
+        reportError(err, "session " + verb + " failed");
+        notify("error", "Could not " + verb + " session: " + err.message);
+      });
+  }
+
+  function archiveSession(id) { return runSessionAction(id, "/archive", "archived"); }
+  function unarchiveSession(id) { return runSessionAction(id, "/unarchive", "unarchived"); }
+
+  // openDeleteSessionConfirm fills the shared confirm dialog and opens it. No
+  // request is sent here — DELETE only fires from confirmDeleteSession, so
+  // dismissing the dialog (Cancel, Escape, backdrop) deletes nothing.
+  function openDeleteSessionConfirm(id, title) {
+    if (!id) return;
+    var d = document.getElementById("chat-delete-confirm-modal");
+    if (!d) return;
+    deleteSessionId = id;
+    var name = document.getElementById("chat-delete-confirm-name");
+    if (name) name.textContent = title || "this session";
+    d.showModal();
+  }
+
+  function closeDeleteSessionDialog() {
+    var d = document.getElementById("chat-delete-confirm-modal");
+    if (d) d.close();
+    deleteSessionId = "";
+  }
+
+  function confirmDeleteSession() {
+    if (!deleteSessionId) return;
+    var id = deleteSessionId;
+    var btn = document.getElementById("chat-delete-confirm-go");
+    if (btn) { btn.classList.add("loading"); btn.disabled = true; }
+    fetch("/api/conversations/" + encodeURIComponent(id), { method: "DELETE" })
+      .then(function (r) {
+        if (r.status !== 204) {
+          return r.json().catch(function () { return null; }).then(function (j) {
+            var e = new Error((j && (j.error || j.message)) || "HTTP " + r.status);
+            e.status = r.status;
+            throw e;
+          });
+        }
+      })
+      .then(function () {
+        closeDeleteSessionDialog();
+        notify("success", "Session deleted");
+        // Deleting the open conversation must leave the workspace usable, not
+        // render a deleted transcript: reset to the ready/new-session state.
+        if (id === conversationId) resetConversation();
+        return refreshSessionRail();
+      })
+      .catch(function (err) {
+        if (btn) { btn.classList.remove("loading"); btn.disabled = false; }
+        reportError(err, "session delete failed");
+        notify("error", "Could not delete session: " + err.message);
+      });
   }
 
   /* ---------- history transcript (issue: full transcript) ---------- */

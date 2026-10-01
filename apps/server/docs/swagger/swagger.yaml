@@ -1021,14 +1021,28 @@ definitions:
   domain_agents.ReactionConfig:
     properties:
       concurrencyStrategy:
-        $ref: '#/definitions/domain_agents.ConcurrencyStrategy'
+        allOf:
+        - $ref: '#/definitions/domain_agents.ConcurrencyStrategy'
+        description: |-
+          ConcurrencyStrategy controls how a new trigger is handled while a
+          non-terminal run already exists for the same agent + target object.
+          Empty ("") and "parallel" both mean no concurrency control; "skip" drops
+          the new trigger instead of starting a second run.
       events:
         items:
           $ref: '#/definitions/domain_agents.ReactionEventType'
         type: array
       ignoreAgentTriggered:
+        description: |-
+          IgnoreAgentTriggered controls whether agent-originated events are ignored.
+          nil (unset) = true = ignore, preserving the historical loop-safety default.
+          Explicit false opts this agent in to agent-originated events.
         type: boolean
       ignoreSelfTriggered:
+        description: |-
+          IgnoreSelfTriggered controls whether this agent's own runs may re-trigger
+          it. nil (unset) = true = ignore. Explicit false allows self-triggering.
+          Only consulted when IgnoreAgentTriggered is explicitly false.
         type: boolean
       objectTypes:
         items:
@@ -1743,6 +1757,8 @@ definitions:
         description: 'Agent-backed chat: links conversation to an agent definition
           for tool-calling capabilities'
         type: string
+      archivedAt:
+        type: string
       canonicalId:
         type: string
       createdAt:
@@ -1757,6 +1773,11 @@ definitions:
         type: array
       id:
         type: string
+      isArchived:
+        description: |-
+          Archive state — non-destructive hide. IsArchived is the list filter
+          predicate; ArchivedAt is set on archive and cleared on unarchive.
+        type: boolean
       isPrivate:
         type: boolean
       messages:
@@ -1787,6 +1808,8 @@ definitions:
         description: 'Agent-backed chat: links conversation to an agent definition
           for tool-calling capabilities'
         type: string
+      archivedAt:
+        type: string
       canonicalId:
         type: string
       createdAt:
@@ -1801,6 +1824,11 @@ definitions:
         type: array
       id:
         type: string
+      isArchived:
+        description: |-
+          Archive state — non-destructive hide. IsArchived is the list filter
+          predicate; ArchivedAt is set on archive and cleared on unarchive.
+        type: boolean
       isPrivate:
         type: boolean
       messages:
@@ -10033,6 +10061,51 @@ paths:
       summary: Update conversation
       tags:
       - chat
+  /api/chat/{id}/archive:
+    post:
+      description: 'Archives a conversation (non-destructive: messages and history
+        are preserved). Idempotent.'
+      parameters:
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      - description: Conversation ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Archive status
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Invalid conversation ID
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Conversation not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Archive conversation
+      tags:
+      - chat
   /api/chat/{id}/messages:
     post:
       consumes:
@@ -10083,6 +10156,50 @@ paths:
       summary: Add message to conversation
       tags:
       - chat
+  /api/chat/{id}/unarchive:
+    post:
+      description: Restores an archived conversation to the active list. Idempotent.
+      parameters:
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      - description: Conversation ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Unarchive status
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Invalid conversation ID
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Conversation not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Unarchive conversation
+      tags:
+      - chat
   /api/chat/conversations:
     get:
       description: Returns all chat conversations for the current project with pagination
@@ -10104,6 +10221,10 @@ paths:
         minimum: 0
         name: offset
         type: integer
+      - description: Include archived conversations (default false)
+        in: query
+        name: includeArchived
+        type: boolean
       produces:
       - application/json
       responses:
@@ -13184,8 +13305,8 @@ paths:
       - graph
   /api/health/scope-authority:
     get:
-      description: Returns the scope-authority posture (introspection status).
-        Authenticated only.
+      description: Returns the scope-authority posture (introspection status). Authenticated
+        only.
       produces:
       - application/json
       responses:

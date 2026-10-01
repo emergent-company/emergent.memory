@@ -14,6 +14,12 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
+// activeRunChecker reports whether a non-terminal agent run already exists for
+// the given agent and reaction target object. Implemented by *Repository.
+type activeRunChecker interface {
+	HasActiveRunForAgentObject(ctx context.Context, agentID, objectID, objectType string) (bool, error)
+}
+
 // TriggerService manages trigger registration for agents.
 // Scheduling config lives on Agent (runtime entity), not AgentDefinition (config).
 // It registers cron schedules in the scheduler and provides hooks for event-driven triggers.
@@ -28,6 +34,12 @@ type TriggerService struct {
 	// dispatch and to perform the claim transition. Nil in unit tests that only
 	// exercise trigger registration and the legacy inline path.
 	workObjects WorkObjectStore
+
+	// activeRuns backs ConcurrencyStrategy=skip. nil fails open (no checker wired,
+	// e.g. unit tests).
+	activeRuns activeRunChecker
+	// dispatch executes a matched reaction trigger. Overridable in tests.
+	dispatch func(ctx context.Context, agent *Agent, projectID, objectType, objectID string) error
 
 	// mu protects eventListeners
 	mu             sync.RWMutex
@@ -57,6 +69,12 @@ func NewTriggerService(
 		log:            log.With(logger.Scope("agents.triggers")),
 		eventListeners: make(map[string][]*Agent),
 	}
+	if repo != nil {
+		ts.activeRuns = repo
+	}
+	ts.dispatch = func(ctx context.Context, agent *Agent, projectID, objectType, objectID string) error {
+		return ts.executeTriggeredAgent(ctx, agent.ID, projectID, objectType, objectID)
+	}
 
 	// Subscribe to all events
 	if ts.events != nil {
@@ -66,13 +84,13 @@ func NewTriggerService(
 	return ts
 }
 
-// onEntityEvent handles incoming events from the global event bus
+// onEntityEvent handles incoming events from the global event bus.
+//
+// The historical global "drop all agent-originated events" gate has moved into
+// per-agent matching (see shouldTriggerAgentForActor), so each ReactionConfig's
+// IgnoreAgentTriggered/IgnoreSelfTriggered flags are honoured. The originating
+// actor is carried down so an agent that opts in can be told apart from another.
 func (ts *TriggerService) onEntityEvent(evt events.EntityEvent) {
-	// Ignore events caused by agents to prevent infinite loops (Task 5.3)
-	if evt.Actor != nil && evt.Actor.ActorType == events.ActorAgent {
-		return
-	}
-
 	// Map entity event type to reaction event type
 	var reactionType ReactionEventType
 	switch evt.Type {
@@ -104,7 +122,7 @@ func (ts *TriggerService) onEntityEvent(evt events.EntityEvent) {
 			input["data"] = evt.Data
 		}
 
-		ts.HandleEvent(context.Background(), objType, reactionType, evt.ProjectID, input)
+		ts.handleEvent(context.Background(), objType, reactionType, evt.ProjectID, input, evt.Actor)
 	}
 
 	// For batch entity events
@@ -116,7 +134,7 @@ func (ts *TriggerService) onEntityEvent(evt events.EntityEvent) {
 			if evt.Data != nil {
 				input["data"] = evt.Data
 			}
-			ts.HandleEvent(context.Background(), objType, reactionType, evt.ProjectID, input)
+			ts.handleEvent(context.Background(), objType, reactionType, evt.ProjectID, input, evt.Actor)
 		}
 	}
 }
@@ -215,7 +233,7 @@ func (ts *TriggerService) registerCronTrigger(agent *Agent) error {
 	// zero seconds field so the scheduler parses it.
 	schedule := "0 " + agent.CronSchedule
 	err := ts.scheduler.AddCronTask(taskName, schedule, func(ctx context.Context) error {
-		return ts.executeTriggeredAgent(ctx, agentID, projectID)
+		return ts.executeTriggeredAgent(ctx, agentID, projectID, "", "")
 	})
 	if err != nil {
 		return fmt.Errorf("invalid cron expression %q: %w", agent.CronSchedule, err)
@@ -322,6 +340,12 @@ func (ts *TriggerService) RemoveAgentTrigger(agentID string) {
 // eventType is the type of event (e.g., "created", "updated", "deleted").
 // The input map provides context about the event (e.g., object ID, project ID).
 func (ts *TriggerService) HandleEvent(ctx context.Context, objectType string, eventType ReactionEventType, projectID string, input map[string]any) {
+	ts.handleEvent(ctx, objectType, eventType, projectID, input, nil)
+}
+
+// handleEvent is the actor-aware dispatch path shared by HandleEvent (actor nil:
+// external/manual callers) and onEntityEvent (the originating event actor).
+func (ts *TriggerService) handleEvent(ctx context.Context, objectType string, eventType ReactionEventType, projectID string, input map[string]any, actor *events.ActorContext) {
 	ts.mu.RLock()
 	// Collect agents matching either the specific object type or the wildcard
 	specificKey := eventKey(objectType, eventType)
@@ -336,6 +360,8 @@ func (ts *TriggerService) HandleEvent(ctx context.Context, objectType string, ev
 		return
 	}
 
+	objectID, _ := input["id"].(string)
+
 	// Deduplicate (an agent could match both specific and wildcard)
 	seen := make(map[string]bool)
 	for _, agent := range matchedAgents {
@@ -349,15 +375,33 @@ func (ts *TriggerService) HandleEvent(ctx context.Context, objectType string, ev
 			continue
 		}
 
+		// Per-agent agent-origin gate, replacing the old global drop.
+		if !shouldTriggerAgentForActor(agent, actor) {
+			ts.log.Info("skipping agent-originated event for agent",
+				slog.String("object_type", objectType),
+				slog.String("event", string(eventType)),
+				slog.String("agent", agent.Name),
+				slog.String("agent_id", agent.ID),
+				slog.String("actor_type", string(actor.ActorType)),
+				slog.String("actor_id", actor.ActorID),
+			)
+			continue
+		}
+
+		if ts.skipForConcurrency(ctx, agent, objectType, objectID) {
+			continue
+		}
+
+		matched := agent
 		go func() {
-			ts.dispatchMatchedAgent(ctx, agent, objectType, eventType, projectID, input)
+			ts.dispatchMatchedAgent(ctx, matched, objectType, eventType, projectID, input)
 		}()
 	}
 }
 
 // dispatchMatchedAgent routes a matched reaction agent to either the
 // object-driven enqueue path (definition has a work config or queued dispatch
-// mode) or the legacy inline execution path.
+// mode) or the inline execution path.
 func (ts *TriggerService) dispatchMatchedAgent(ctx context.Context, agent *Agent, objectType string, eventType ReactionEventType, projectID string, input map[string]any) {
 	agentDef, err := ts.repo.ResolveDefinitionForAgent(ctx, agent)
 	if err != nil {
@@ -371,6 +415,7 @@ func (ts *TriggerService) dispatchMatchedAgent(ctx context.Context, agent *Agent
 		return
 	}
 
+	objectID, _ := input["id"].(string)
 	ts.log.Info("executing event-triggered agent",
 		slog.String("object_type", objectType),
 		slog.String("event", string(eventType)),
@@ -378,7 +423,7 @@ func (ts *TriggerService) dispatchMatchedAgent(ctx context.Context, agent *Agent
 		slog.String("agent_id", agent.ID),
 		slog.String("project_id", projectID),
 	)
-	if err := ts.executeTriggeredAgent(ctx, agent.ID, projectID); err != nil {
+	if err := ts.dispatch(ctx, agent, projectID, objectType, objectID); err != nil {
 		ts.log.Error("event-triggered agent execution failed",
 			slog.String("object_type", objectType),
 			slog.String("event", string(eventType)),
@@ -415,7 +460,7 @@ func (ts *TriggerService) enqueueWorkRun(ctx context.Context, agent *Agent, agen
 	}
 
 	// Assignee routing: an assigned object wakes only the listener whose name
-	// matches the assignee (project scoping was already applied by HandleEvent).
+	// matches the assignee (project scoping was already applied by handleEvent).
 	if data, ok := input["data"].(map[string]any); ok {
 		if assignee, ok := data["assignee"].(string); ok && assignee != "" && agent.Name != assignee {
 			return // not the assigned lane
@@ -533,9 +578,93 @@ func intFromInput(v any) (int, bool) {
 	}
 }
 
+// shouldTriggerAgentForActor applies the per-agent agent-origin gate.
+//
+// A nil actor or a non-agent actor (user/system) always triggers — this is the
+// common path and the pre-existing HTTP behaviour. For an agent-originated event:
+//
+//   - IgnoreAgentTriggered: nil (unset) or true → skip. Only an explicit false
+//     opts the agent in to agent-originated events.
+//   - When the originating agent is THIS agent, IgnoreSelfTriggered is also
+//     consulted: nil (unset) or true → skip, only explicit false allows it.
+//
+// Both flags defaulting to nil therefore reproduce exactly the historical
+// "all agent-originated events are ignored" behaviour.
+func shouldTriggerAgentForActor(agent *Agent, actor *events.ActorContext) bool {
+	if actor == nil || actor.ActorType != events.ActorAgent {
+		return true
+	}
+
+	rc := agent.ReactionConfig
+	// nil config cannot opt in; unset or true means ignore.
+	if rc == nil || rc.IgnoreAgentTriggered == nil || *rc.IgnoreAgentTriggered {
+		return false
+	}
+
+	if isSelfTrigger(agent, actor) {
+		return rc.IgnoreSelfTriggered != nil && !*rc.IgnoreSelfTriggered
+	}
+	return true
+}
+
+// isSelfTrigger reports whether the originating agent is this candidate agent.
+//
+// The canonical actor id for actor_type='agent' is the agent DEFINITION id
+// (kb.agent_definitions.id), stamped at the run boundary — not the runtime
+// kb.agents id. Agents without a linked definition are never attributed as an
+// agent actor, so they cannot be a "self" trigger.
+func isSelfTrigger(agent *Agent, actor *events.ActorContext) bool {
+	if agent == nil || actor == nil || actor.ActorID == "" || agent.AgentDefinitionID == nil {
+		return false
+	}
+	return *agent.AgentDefinitionID == actor.ActorID
+}
+
+// skipForConcurrency enforces ConcurrencyStrategy=skip. The "same object" key is
+// (agent id, subject object id, subject object type): the object identity is
+// recorded on each reaction run's trigger_metadata at dispatch time, and an
+// active (non-terminal) run with the same key means the new trigger is dropped.
+//
+// Empty and "parallel" strategies never consult the checker. A missing object id
+// or unavailable checker fails open (proceed) so a transient lookup problem
+// cannot silently swallow triggers.
+func (ts *TriggerService) skipForConcurrency(ctx context.Context, agent *Agent, objectType, objectID string) bool {
+	rc := agent.ReactionConfig
+	if rc == nil || rc.ConcurrencyStrategy != ConcurrencySkip {
+		return false
+	}
+	if objectID == "" || ts.activeRuns == nil {
+		return false
+	}
+
+	active, err := ts.activeRuns.HasActiveRunForAgentObject(ctx, agent.ID, objectID, objectType)
+	if err != nil {
+		ts.log.Warn("could not check active runs for concurrency skip, proceeding",
+			slog.String("agent_id", agent.ID),
+			slog.String("object_id", objectID),
+			slog.String("object_type", objectType),
+			slog.String("error", err.Error()),
+		)
+		return false
+	}
+	if active {
+		ts.log.Warn("skipping trigger: active run already exists for agent + object",
+			slog.String("agent_id", agent.ID),
+			slog.String("object_id", objectID),
+			slog.String("object_type", objectType),
+		)
+	}
+	return active
+}
+
 // executeTriggeredAgent looks up the agent and its corresponding AgentDefinition,
 // then executes it via the AgentExecutor.
-func (ts *TriggerService) executeTriggeredAgent(ctx context.Context, agentID string, projectID string) error {
+//
+// objectType/objectID are the reaction target object, recorded on the run's
+// trigger_metadata as subjectObjectType/subjectObjectId so that
+// ConcurrencyStrategy=skip can find in-flight runs for the same agent + object.
+// Cron triggers pass empty values.
+func (ts *TriggerService) executeTriggeredAgent(ctx context.Context, agentID string, projectID string, objectType string, objectID string) error {
 	// Check pending job queue depth before executing.
 	// This prevents cron triggers from flooding the queue when the agent is backed up.
 	maxPendingJobs := ts.executor.safeguards.MaxPendingJobs
@@ -587,6 +716,16 @@ func (ts *TriggerService) executeTriggeredAgent(ctx context.Context, agentID str
 	// LLM usage events to the correct tenant.
 	orgID, _ := ts.repo.GetOrgIDByProjectID(ctx, projectID)
 
+	// Reaction dispatches record the target object on the run so
+	// ConcurrencyStrategy=skip can key on (agent, subjectObjectId, subjectObjectType).
+	var triggerMetadata map[string]any
+	if objectID != "" {
+		triggerMetadata = map[string]any{
+			"subjectObjectId":   objectID,
+			"subjectObjectType": objectType,
+		}
+	}
+
 	// Execute the agent
 	result, err := ts.executor.Execute(ctx, ExecuteRequest{
 		Agent:           agent,
@@ -595,6 +734,7 @@ func (ts *TriggerService) executeTriggeredAgent(ctx context.Context, agentID str
 		OrgID:           orgID,
 		UserMessage:     userMessage,
 		MaxSteps:        maxSteps,
+		TriggerMetadata: triggerMetadata,
 		TrustedInternal: true, // scheduled runs are a trusted surface (full internal coordination)
 	})
 	if result != nil && result.Cleanup != nil {

@@ -38,6 +38,9 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// DELETE /api/invites/:id - revoke/cancel an invitation
 	g.DELETE("/:id", h.Delete)
 
+	// POST /api/invites/:id/resend - resend a pending invitation
+	g.POST("/:id/resend", h.Resend)
+
 	// Project-specific invite routes. The project is the :projectId path param,
 	// so the shared pair applies in canonical order (issue #926).
 	projects := e.Group("/api/projects", authMiddleware.RequireAuth())

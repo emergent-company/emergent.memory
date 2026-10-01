@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 // --- blueprint/schema client methods ---
@@ -768,7 +769,7 @@ func TestListInvites(t *testing.T) {
 		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `[
-			{"id":"i1","email":"a@example.com","role":"project_admin","status":"pending","createdAt":"2024-01-01T00:00:00Z"},
+			{"id":"i1","email":"a@example.com","role":"project_admin","status":"pending","createdAt":"2024-01-01T00:00:00Z","deliveryStatus":"delivered","deliveryStatusAt":"2024-01-01T00:05:00Z"},
 			{"id":"i2","email":"b@example.com","role":"project_user","status":"accepted","createdAt":"2024-01-02T00:00:00Z"}
 		]`)
 	}))
@@ -783,6 +784,16 @@ func TestListInvites(t *testing.T) {
 	}
 	if len(invites) != 2 || invites[0].ID != "i1" || invites[0].Email != "a@example.com" || invites[0].Role != "project_admin" || invites[0].Status != "pending" {
 		t.Errorf("invites = %+v", invites)
+	}
+	// delivery tracking decodes onto the DTO; absent fields stay nil
+	if invites[0].DeliveryStatus == nil || *invites[0].DeliveryStatus != "delivered" {
+		t.Errorf("invites[0].DeliveryStatus = %v, want delivered", invites[0].DeliveryStatus)
+	}
+	if invites[0].DeliveryStatusAt == nil || !invites[0].DeliveryStatusAt.Equal(time.Date(2024, 1, 1, 0, 5, 0, 0, time.UTC)) {
+		t.Errorf("invites[0].DeliveryStatusAt = %v, want 2024-01-01T00:05:00Z", invites[0].DeliveryStatusAt)
+	}
+	if invites[1].DeliveryStatus != nil || invites[1].DeliveryStatusAt != nil {
+		t.Errorf("absent delivery fields should stay nil: %+v", invites[1])
 	}
 }
 
@@ -903,6 +914,24 @@ func TestCancelInvite(t *testing.T) {
 	}
 	if gotPath != "/api/invites/i1" || gotMethod != http.MethodDelete {
 		t.Errorf("request = %s %s, want DELETE /api/invites/i1", gotMethod, gotPath)
+	}
+}
+
+// TestResendInvite exercises POST /api/invites/{id}/resend with no body.
+func TestResendInvite(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	m := NewMemoryClient(srv.URL, "proj")
+	if err := m.ResendInvite(context.Background(), "i1"); err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/invites/i1/resend" || gotMethod != http.MethodPost {
+		t.Errorf("request = %s %s, want POST /api/invites/i1/resend", gotMethod, gotPath)
 	}
 }
 
