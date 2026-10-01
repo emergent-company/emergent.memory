@@ -31,6 +31,11 @@ const (
 // definition's workConfig does not set failureLimit.
 const defaultWorkFailureLimit = 3
 
+// defaultWorkRevisionLimit is the rework (revision) cap applied when the agent
+// definition's workConfig does not set revisionLimit: after this many
+// request-changes rounds the item escalates to a human instead of re-enqueuing.
+const defaultWorkRevisionLimit = 3
+
 // QuotaError is a typed provider quota/rate-limit error. It is the minimal
 // net-new structured typing that lets the worker pool route quota failures to
 // the agent-level breaker instead of consuming the item budget. The executor's

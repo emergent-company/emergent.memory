@@ -433,7 +433,10 @@ type AgentWorkConfig struct {
 	Status         AgentWorkStatusConfig `json:"status"`
 	RequiresReview bool                  `json:"requiresReview"`
 	FailureLimit   int                   `json:"failureLimit"`
-	RetryPolicy    AgentRetryPolicy      `json:"retryPolicy"`
+	// RevisionLimit caps the number of rework (request-changes) rounds before
+	// the item is escalated to a human instead of re-enqueued. Zero = default.
+	RevisionLimit int              `json:"revisionLimit"`
+	RetryPolicy   AgentRetryPolicy `json:"retryPolicy"`
 }
 
 // IsZero reports whether the work config carries no explicit configuration, i.e.
@@ -444,6 +447,7 @@ func (w AgentWorkConfig) IsZero() bool {
 	return w.Status == (AgentWorkStatusConfig{}) &&
 		!w.RequiresReview &&
 		w.FailureLimit == 0 &&
+		w.RevisionLimit == 0 &&
 		w.RetryPolicy == (AgentRetryPolicy{})
 }
 
@@ -508,6 +512,15 @@ func (w AgentWorkConfig) FailureLimitValue() int {
 		return w.FailureLimit
 	}
 	return defaultWorkFailureLimit
+}
+
+// RevisionLimitValue returns the configured rework (revision) cap, defaulting
+// to the built-in default (3) when unset.
+func (w AgentWorkConfig) RevisionLimitValue() int {
+	if w.RevisionLimit > 0 {
+		return w.RevisionLimit
+	}
+	return defaultWorkRevisionLimit
 }
 
 type AgentDefinition struct {

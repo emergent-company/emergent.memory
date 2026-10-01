@@ -34,6 +34,15 @@ type WorkObjectStore interface {
 	BlockWorkObject(ctx context.Context, projectID, canonicalID, inProgressStatus, blockedStatus string) (bool, error)
 	// UnassignWorkObject clears the assignee and returns the object to ready.
 	UnassignWorkObject(ctx context.Context, projectID, canonicalID, inProgressStatus, readyStatus string) (bool, error)
+	// ApproveWorkObject finalizes a review: review→done, sets reviewed_by/at,
+	// clears needs_review.
+	ApproveWorkObject(ctx context.Context, projectID, canonicalID, reviewStatus, doneStatus, reviewerID string) (bool, error)
+	// RequestChangesWorkObject sends a review back for rework: review→revision.
+	RequestChangesWorkObject(ctx context.Context, projectID, canonicalID, reviewStatus, revisionStatus string) (bool, error)
+	// ReassignWorkObject sets/clears the assignee without a status move.
+	ReassignWorkObject(ctx context.Context, projectID, canonicalID string, assignee *string) (bool, error)
+	// CancelWorkObject closes a work item: any→blocked.
+	CancelWorkObject(ctx context.Context, projectID, canonicalID, blockedStatus string) (bool, error)
 	// ListWorkObjectsByStatus returns the HEAD projections of board-enabled work
 	// objects currently in the given status (projectID empty = all projects;
 	// olderThan non-zero restricts to objects last written before olderThan).

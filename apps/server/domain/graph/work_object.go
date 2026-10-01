@@ -54,14 +54,27 @@ type WorkObjectTransition struct {
 	// value skips the assert (caller owns the check).
 	FromStatus string
 	// ToStatus is the new status written to both the status column and
-	// properties["status"].
+	// properties["status"]. When KeepStatus is true it is ignored and the HEAD's
+	// current status is preserved (used by the reassign path, which changes the
+	// assignee without a status move).
 	ToStatus string
+	// KeepStatus, when true, preserves the HEAD's current status as the new
+	// version's status instead of ToStatus.
+	KeepStatus bool
 	// SetNeedsReview, when non-nil, sets the needs_review column on the new
-	// version (used by work_complete with requiresReview).
+	// version (used by work_complete with requiresReview, and cleared by approve
+	// and request-changes).
 	SetNeedsReview *bool
 	// ClearAssignee, when true, nulls the assignee on the new version (used by
 	// the capability-failure unassign path).
 	ClearAssignee bool
+	// SetAssignee, when non-nil, sets the assignee on the new version; an empty
+	// string clears it. Takes precedence over ClearAssignee.
+	SetAssignee *string
+	// SetReviewedBy, when non-nil, sets reviewed_by on the new version (approve).
+	SetReviewedBy *uuid.UUID
+	// SetReviewedAt, when non-nil, sets reviewed_at on the new version (approve).
+	SetReviewedAt *time.Time
 }
 
 // GetHeadObject returns the HEAD version of a work object identified by its
@@ -148,6 +161,58 @@ func (s *Service) UnassignWorkObject(ctx context.Context, projectID, canonicalID
 	})
 }
 
+// ApproveWorkObject finalizes a review: it transitions review→done, sets
+// reviewed_by/reviewed_at (reviewerID, now), and clears needs_review. The
+// review-status assert guarantees a non-review item cannot be approved. This is
+// the write path for the previously dormant reviewed_by/reviewed_at columns.
+func (s *Service) ApproveWorkObject(ctx context.Context, projectID, canonicalID, reviewStatus, doneStatus, reviewerID string) (bool, error) {
+	reviewedBy, err := uuid.Parse(reviewerID)
+	if err != nil {
+		return false, err
+	}
+	now := time.Now()
+	nr := false
+	return s.transitionWorkObject(ctx, projectID, canonicalID, WorkObjectTransition{
+		FromStatus:     reviewStatus,
+		ToStatus:       doneStatus,
+		SetNeedsReview: &nr,
+		SetReviewedBy:  &reviewedBy,
+		SetReviewedAt:  &now,
+	})
+}
+
+// RequestChangesWorkObject sends a review back for rework: it transitions
+// review→revision and clears needs_review (the item is no longer awaiting
+// review; the next work_complete re-sets it). Feedback recording and the rework
+// enqueue are the agents domain's responsibility (they need the run/queue
+// surface).
+func (s *Service) RequestChangesWorkObject(ctx context.Context, projectID, canonicalID, reviewStatus, revisionStatus string) (bool, error) {
+	nr := false
+	return s.transitionWorkObject(ctx, projectID, canonicalID, WorkObjectTransition{
+		FromStatus:     reviewStatus,
+		ToStatus:       revisionStatus,
+		SetNeedsReview: &nr,
+	})
+}
+
+// ReassignWorkObject sets or clears the assignee on a work object without a
+// status move (the HEAD's current status is preserved). assignee empty clears.
+func (s *Service) ReassignWorkObject(ctx context.Context, projectID, canonicalID string, assignee *string) (bool, error) {
+	return s.transitionWorkObject(ctx, projectID, canonicalID, WorkObjectTransition{
+		KeepStatus:  true,
+		SetAssignee: assignee,
+	})
+}
+
+// CancelWorkObject closes a work item by transitioning it (from any status) to
+// the blocked status. Cancelling the in-flight run is the agents domain's
+// responsibility.
+func (s *Service) CancelWorkObject(ctx context.Context, projectID, canonicalID, blockedStatus string) (bool, error) {
+	return s.transitionWorkObject(ctx, projectID, canonicalID, WorkObjectTransition{
+		ToStatus: blockedStatus,
+	})
+}
+
 // transitionWorkObject is the shared single-status writer. Board-enabled types
 // never mutate status in place: every transition creates the next version under
 // the per-object advisory lock and writes both the status column and
@@ -217,17 +282,35 @@ func (s *Service) transitionWorkObject(ctx context.Context, projectID, canonical
 	if t.ClearAssignee {
 		assignee = nil
 	}
+	if t.SetAssignee != nil {
+		if *t.SetAssignee == "" {
+			assignee = nil
+		} else {
+			v := *t.SetAssignee
+			assignee = &v
+		}
+	}
+	toStatus := t.ToStatus
+	if t.KeepStatus && lockedHead.Status != nil {
+		toStatus = *lockedHead.Status
+	}
 	newVersion := &GraphObject{
 		Type:       lockedHead.Type,
 		Key:        lockedHead.Key,
-		Status:     &t.ToStatus,
+		Status:     &toStatus,
 		Assignee:   assignee,
-		Properties: withStatusProperty(lockedHead.Properties, t.ToStatus),
+		Properties: withStatusProperty(lockedHead.Properties, toStatus),
 		Labels:     lockedHead.Labels,
 		ActorType:  &actorType,
 	}
 	if t.SetNeedsReview != nil {
 		newVersion.NeedsReview = t.SetNeedsReview
+	}
+	if t.SetReviewedBy != nil {
+		newVersion.ReviewedBy = t.SetReviewedBy
+	}
+	if t.SetReviewedAt != nil {
+		newVersion.ReviewedAt = t.SetReviewedAt
 	}
 	if err := s.repo.CreateVersion(ctx, tx.Tx, lockedHead, newVersion); err != nil {
 		return false, err

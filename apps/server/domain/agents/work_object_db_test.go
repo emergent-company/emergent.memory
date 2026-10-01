@@ -266,6 +266,22 @@ func (f *fakeWorkObjectStore) UnassignWorkObject(ctx context.Context, projectID,
 	return true, nil
 }
 
+func (f *fakeWorkObjectStore) ApproveWorkObject(ctx context.Context, projectID, canonicalID, reviewStatus, doneStatus, reviewerID string) (bool, error) {
+	return true, nil
+}
+
+func (f *fakeWorkObjectStore) RequestChangesWorkObject(ctx context.Context, projectID, canonicalID, reviewStatus, revisionStatus string) (bool, error) {
+	return true, nil
+}
+
+func (f *fakeWorkObjectStore) ReassignWorkObject(ctx context.Context, projectID, canonicalID string, assignee *string) (bool, error) {
+	return true, nil
+}
+
+func (f *fakeWorkObjectStore) CancelWorkObject(ctx context.Context, projectID, canonicalID, blockedStatus string) (bool, error) {
+	return true, nil
+}
+
 func (f *fakeWorkObjectStore) ListWorkObjectsByStatus(ctx context.Context, projectID, status string, olderThan time.Time, limit int) ([]*graph.WorkObjectHead, error) {
 	return nil, nil
 }

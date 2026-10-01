@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 	"sync"
 	"time"
@@ -41,6 +42,42 @@ func (r *Repository) HasLiveRunForSubject(ctx context.Context, canonicalID strin
 		return false, err
 	}
 	return count > 0, nil
+}
+
+// FindLatestRunForSubject returns the most recent run (by created_at) linked to
+// the subject work object, or nil when none exists. It is used by the human
+// actions to resolve which agent (and therefore which work config) owns a work
+// item.
+func (r *Repository) FindLatestRunForSubject(ctx context.Context, canonicalID string) (*AgentRun, error) {
+	run := new(AgentRun)
+	err := r.db.NewSelect().
+		Model(run).
+		Where("subject_object_id = ?", canonicalID).
+		Order("created_at DESC").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return run, nil
+}
+
+// FindLiveRunsForSubject returns the live (queued/running/paused) runs linked to
+// the subject work object, used by cancel to stop the in-flight run(s).
+func (r *Repository) FindLiveRunsForSubject(ctx context.Context, canonicalID string) ([]*AgentRun, error) {
+	var runs []*AgentRun
+	err := r.db.NewSelect().
+		Model(&runs).
+		Where("subject_object_id = ?", canonicalID).
+		Where("status IN (?)", bun.In(workLiveRunStatuses)).
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return runs, nil
 }
 
 // HasLiveJobForSubject reports whether any dispatch job for the subject object
