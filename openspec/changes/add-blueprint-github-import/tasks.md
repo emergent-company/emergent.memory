@@ -8,8 +8,8 @@
 ## 2. SSRF / allowlist guard
 
 - [ ] 2.1 Add a URL acceptance parser: accept only `https://github.com/<org>/<repo>` with optional `#<ref>` and/or `/tree/<ref>`; reject every other host and all non-https schemes. Verify: unit tests assert the accepted shapes parse and other hosts / non-https schemes are rejected.
-- [ ] 2.2 Add a fetch allowlist guard: only `https://codeload.github.com/...` is fetched; the final URL and every redirect hop's host must be allowlisted; redirects to a non-allowlisted host are refused. Verify: unit tests assert a non-allowlisted final URL and a redirect hop to a non-allowlisted host are both refused.
-- [ ] 2.3 Add host-resolution guards: reject IP-literal hosts, localhost, and private/link-local/loopback/CGNAT/metadata ranges before any connection. Verify: unit tests cover each rejected address class.
+- [ ] 2.2 Add a fetch allowlist guard: only `https://codeload.github.com/...` is fetched from a fixed origin; the final URL and every redirect hop must be https and on the exact allowlisted host; redirects to a non-allowlisted host or non-https scheme are refused. Verify: unit tests assert a non-allowlisted final URL and a redirect hop to a non-allowlisted host or non-https scheme are all refused.
+- [ ] 2.3 Add defence-in-depth host guards: reject IP-literal hosts, localhost, and internal host suffixes before any connection, on top of the exact `github.com`/`codeload.github.com` allowlist. Private/link-local/loopback/CGNAT/metadata ranges are unreachable by construction (no address-range check is performed). Verify: unit tests cover each rejected host class and the exact-host match.
 
 ## 3. Endpoint, authz, and error mapping
 
@@ -26,7 +26,7 @@
 
 ## 5. Tests for every guard case
 
-- [ ] 5.1 Unit tests for: allowlisted URL accepted; non-github host rejected; non-https rejected; redirect to non-allowlisted host rejected; oversize archive rejected; traversal/symlink archive rejected; valid manifest creates a published blueprint in the caller's project; private token not leaked; unauthenticated rejected; insufficient role rejected. Verify: all scenarios have a corresponding test.
+- [ ] 5.1 Unit tests for: allowlisted URL accepted; non-github host rejected; non-https rejected; redirect to a non-allowlisted host or non-https scheme rejected; oversize archive rejected; traversal/symlink archive rejected; valid manifest creates a published blueprint in the caller's project; private token not leaked; unauthenticated rejected; insufficient role rejected. Verify: all scenarios have a corresponding test.
 
 ## 6. Verification
 

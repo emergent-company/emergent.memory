@@ -174,6 +174,42 @@ func TestFetch_RejectsRedirectToNonAllowlistedHost(t *testing.T) {
 	requireAppError(t, err, http.StatusBadGateway)
 }
 
+// TestClient_RedirectPolicy exercises the redirect allowlist directly: every
+// hop must be https AND on the exact allowlisted codeload host.
+func TestClient_RedirectPolicy(t *testing.T) {
+	t.Parallel()
+
+	f := newGitHubFetcher()
+
+	mkReq := func(raw string) *http.Request {
+		return httptest.NewRequest(http.MethodGet, raw, nil)
+	}
+
+	cases := []struct {
+		name    string
+		rawURL  string
+		via     int
+		wantErr bool
+	}{
+		{"same https codeload host allowed", "https://" + codeloadHost + "/org/repo/tar.gz/HEAD", 1, false},
+		{"different host refused", "https://evil.example.com/org/repo/tar.gz/HEAD", 1, true},
+		{"same host over http refused", "http://" + codeloadHost + "/org/repo/tar.gz/HEAD", 1, true},
+		{"too many redirects refused", "https://" + codeloadHost + "/org/repo/tar.gz/HEAD", 10, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			via := make([]*http.Request, tc.via)
+			err := f.client.CheckRedirect(mkReq(tc.rawURL), via)
+			if tc.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestFetch_SizeCapExceeded(t *testing.T) {
 	t.Parallel()
 

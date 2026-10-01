@@ -97,9 +97,13 @@ func (f *GitHubFetcher) newClient() *http.Client {
 		Timeout: githubFetchTimeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			// Do not blindly follow redirects: every hop must stay on the
-			// allowlisted codeload host. A redirect elsewhere is refused.
+			// allowlisted codeload host over https. A redirect elsewhere is
+			// refused.
 			if len(via) >= 10 {
 				return errors.New("stopped after 10 redirects")
+			}
+			if !strings.EqualFold(req.URL.Scheme, "https") {
+				return fmt.Errorf("refusing redirect to non-https scheme %q", req.URL.Scheme)
 			}
 			if !strings.EqualFold(req.URL.Host, f.codeloadHost) {
 				return fmt.Errorf("refusing redirect to non-allowlisted host %q", req.URL.Host)

@@ -12,10 +12,17 @@ The endpoint is `POST /api/blueprints/import` with body `{url, ref?, token?}`.
 Only `https://github.com/<org>/<repo>` URLs are accepted, with an optional
 `#<ref>` fragment and/or `/tree/<ref>` suffix; every other host and all
 non-https schemes are rejected. The archive is fetched only from
-`https://codeload.github.com/...`; the final URL and every redirect hop's host
-must be allowlisted (a redirect to a non-allowlisted host is refused), and
-IP-literal hosts, localhost, and private/link-local/loopback/CGNAT/metadata
-ranges are rejected. The archive download is capped at 50 MiB and the request
+`https://codeload.github.com/...` (a fixed origin built from the validated
+org/repo/ref segments); the final URL and every redirect hop must be https and
+on the exact allowlisted host (a redirect to a non-allowlisted host or to a
+non-https scheme is refused). The caller-supplied URL must match the exact host
+`github.com` (no port is accepted), so no arbitrary host is ever resolved;
+additionally, as defence in depth, IP-literal hosts, localhost, and internal
+host suffixes are rejected. Private/link-local/loopback/CGNAT/metadata address
+ranges are therefore never reachable — not via an address-range check, but
+because only the two exact public GitHub hosts (`github.com` for parsing and
+`codeload.github.com` for the fetch) are ever dialed. The archive download is
+capped at 50 MiB and the request
 is bounded by a timeout. Extraction rejects path traversal (`../`), absolute
 paths, and symlinks/hardlinks escaping the archive root, and caps the file
 count at 20000 and total extracted bytes at 200 MiB. The optional `token` is
@@ -45,10 +52,11 @@ invalid URL/manifest, 413 for an oversize archive, 502 for a fetch failure, and
   `git+ssh://github.com/org/repo`)
 - **THEN** the API returns HTTP 400 and performs no fetch
 
-#### Scenario: Redirect to non-allowlisted host rejected
+#### Scenario: Redirect to non-allowlisted host or non-https refused
 
 - **WHEN** the allowlisted fetch endpoint responds with a redirect whose target
-  host is not allowlisted (not `codeload.github.com`)
+  host is not allowlisted (not `codeload.github.com`), or whose scheme is not
+  `https`
 - **THEN** the API refuses the redirect, performs no further fetch, and maps the
   failure to HTTP 502
 

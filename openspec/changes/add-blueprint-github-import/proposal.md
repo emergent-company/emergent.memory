@@ -13,10 +13,13 @@ Refs #1324.
   manifest, and creates and publishes a blueprint through the existing
   create/publish service path.
 - Enforce strict URL acceptance and fetch safety: only `https://github.com/…`
-  repository URLs are accepted; the archive is fetched only from the
-  `codeload.github.com` allowlist; every redirect hop must stay on the
-  allowlist; IP-literal hosts, localhost, and private/link-local/loopback/
-  CGNAT/metadata ranges are rejected; archive download is capped at 50 MiB with
+  repository URLs are accepted (exact host, no port); the archive is fetched only
+  from the fixed `codeload.github.com` allowlist; every redirect hop must be
+  https and stay on that exact allowlist. No address-range check is used: only
+  the two exact public GitHub hosts are ever dialed, so private/link-local/
+  loopback/CGNAT/metadata ranges are unreachable by construction, and
+  IP-literal/localhost/internal hosts are additionally rejected as defence in
+  depth. Archive download is capped at 50 MiB with
   a bounded timeout; extraction rejects path traversal, absolute paths, and
   symlinks/hardlinks escaping the archive root, with file-count and total-byte
   caps.
