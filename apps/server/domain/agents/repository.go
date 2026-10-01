@@ -363,6 +363,21 @@ func (r *Repository) GetRecentRuns(ctx context.Context, agentID string, limit in
 	return runs, nil
 }
 
+// HasActiveRunForAgentObject reports whether a non-terminal run already exists
+// for the given agent and reaction target object. The "same object" key is
+// (agent_id, trigger_metadata->>'subjectObjectId', trigger_metadata->>'subjectObjectType');
+// reaction dispatches stamp that metadata at run creation (see
+// TriggerService.executeTriggeredAgent). Used by ConcurrencyStrategy=skip.
+func (r *Repository) HasActiveRunForAgentObject(ctx context.Context, agentID, objectID, objectType string) (bool, error) {
+	return r.db.NewSelect().
+		TableExpr("kb.agent_runs AS ar").
+		Where("ar.agent_id = ?", agentID).
+		Where("ar.status IN (?)", bun.In(nonTerminalRunStatuses())).
+		Where("ar.trigger_metadata->>'subjectObjectId' = ?", objectID).
+		Where("ar.trigger_metadata->>'subjectObjectType' = ?", objectType).
+		Exists(ctx)
+}
+
 // --- Agent Processing Log ---
 
 // CreateProcessingLog creates a new processing log entry
