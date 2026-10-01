@@ -78,6 +78,21 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	queuesWrite.DELETE("/:name", h.DeleteQueue)
 	queuesWrite.POST("/:name/enqueue", h.EnqueueWorkItem)
 
+	// --- Project-scoped work-item human actions ---
+	// Approve / request-changes / retry / reassign / cancel for object-driven
+	// work items (graph objects). Project-member tier, mirroring /agent-queues.
+	workItems := e.Group("/api/projects/:projectId/work-items")
+	workItems.Use(authMiddleware.RequireAuth())
+	workItems.Use(authMiddleware.RequireProjectTokenScope())
+	workItems.Use(authMiddleware.RequireProjectMember())
+	workItems.Use(authMiddleware.RequireAPITokenScopes("agents:write"))
+
+	workItems.POST("/:canonicalId/approve", h.ApproveWorkItem)
+	workItems.POST("/:canonicalId/request-changes", h.RequestChangesWorkItem)
+	workItems.POST("/:canonicalId/retry", h.RetryWorkItem)
+	workItems.POST("/:canonicalId/reassign", h.ReassignWorkItem)
+	workItems.POST("/:canonicalId/cancel", h.CancelWorkItem)
+
 	// --- Agent Definition Overrides (per-project config overrides) ---
 	defsRead.GET("/overrides", h.ListAgentOverrides)
 	defsRead.GET("/overrides/:agentName", h.GetAgentOverride)

@@ -127,6 +127,7 @@ func (s *Service) emitObjectCreated(obj *GraphObjectResponse) {
 	s.events.EmitCreated(events.EntityGraphObject, obj.CanonicalID.String(), obj.ProjectID.String(), &events.EmitOptions{
 		Version:    &obj.Version,
 		ObjectType: obj.Type,
+		Data:       workStatusData(obj),
 	})
 }
 
@@ -138,6 +139,7 @@ func (s *Service) emitObjectUpdated(obj *GraphObjectResponse) {
 	s.events.EmitUpdated(events.EntityGraphObject, obj.CanonicalID.String(), obj.ProjectID.String(), &events.EmitOptions{
 		Version:    &obj.Version,
 		ObjectType: obj.Type,
+		Data:       workStatusData(obj),
 	})
 }
 
@@ -149,6 +151,20 @@ func (s *Service) emitObjectDeleted(projectID, canonicalID, objType string) {
 	s.events.EmitDeleted(events.EntityGraphObject, canonicalID, projectID, &events.EmitOptions{
 		ObjectType: objType,
 	})
+}
+
+// workStatusData builds the event payload's data map carrying the object's
+// built-in status and assignee so reaction dispatch can route by assignee and
+// record the work status without a second graph read.
+func workStatusData(obj *GraphObjectResponse) map[string]any {
+	data := make(map[string]any, 2)
+	if obj.Status != nil {
+		data["status"] = *obj.Status
+	}
+	if obj.Assignee != nil {
+		data["assignee"] = *obj.Assignee
+	}
+	return data
 }
 
 // labelsEqual returns true if two label slices contain the same set of strings (order-independent).
@@ -222,6 +238,56 @@ func (s *Service) resolveSchemaVersion(ctx context.Context, projectID uuid.UUID,
 	return ""
 }
 
+// objectTypeWorkConfig resolves the per-type object-driven work config for a
+// project+type (P4), or nil when the schema provider is unavailable or the type
+// is unknown. Unknown types are unconfigured (never board-enabled).
+func (s *Service) objectTypeWorkConfig(ctx context.Context, projectID uuid.UUID, objType string) *agents.ObjectTypeWorkConfig {
+	if s.schemaProvider == nil {
+		return nil
+	}
+	schemas, err := s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+	if err != nil || schemas == nil {
+		return nil
+	}
+	schema, ok := schemas.ObjectSchemas[objType]
+	if !ok {
+		return nil
+	}
+	return &schema.ObjectTypeWorkConfig
+}
+
+// GetObjectTypeWorkConfig exposes the per-type object-driven work config for a
+// project+type (P4). It is the graph surface the agents domain uses to apply
+// per-type failureLimit/retryPolicy overrides (P4.3). Returns (nil, nil) when
+// the type is unknown or unconfigured.
+func (s *Service) GetObjectTypeWorkConfig(ctx context.Context, projectID, typeName string) (*agents.ObjectTypeWorkConfig, error) {
+	pid, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, err
+	}
+	return s.objectTypeWorkConfig(ctx, pid, typeName), nil
+}
+
+// excludedSearchTypes returns the set of object type names flagged
+// excludeFromSearch for the project (P4.2). Operational objects are excluded
+// from default search. Empty when the schema provider is unavailable.
+func (s *Service) excludedSearchTypes(ctx context.Context, projectID uuid.UUID) map[string]bool {
+	out := make(map[string]bool)
+	if s.schemaProvider == nil {
+		return out
+	}
+	schemas, err := s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+	if err != nil || schemas == nil {
+		return out
+	}
+	for name, os := range schemas.ObjectSchemas {
+		if os.ExcludeFromSearch {
+			out[name] = true
+		}
+	}
+	return out
+}
+
 // nameFromProps extracts the "name" property from a properties map, or returns an empty string.
 func nameFromProps(props map[string]any) string {
 	if props == nil {
@@ -250,6 +316,17 @@ func (s *Service) enqueueEmbedding(ctx context.Context, objectID string) {
 			slog.String("object_id", objectID),
 			slog.String("error", err.Error()))
 	}
+}
+
+// enqueueEmbeddingForType enqueues an embedding job for a graph object unless
+// the object's type carries the per-type skipEmbeddings flag (P4.2). Board-
+// enabled / operational objects churn versions on every status transition and
+// must not enqueue embeddings.
+func (s *Service) enqueueEmbeddingForType(ctx context.Context, projectID uuid.UUID, objType, objectID string) {
+	if cfg := s.objectTypeWorkConfig(ctx, projectID, objType); cfg != nil && cfg.SkipEmbeddings {
+		return
+	}
+	s.enqueueEmbedding(ctx, objectID)
 }
 
 // enqueueRelationshipEmbedding enqueues a graph relationship for async embedding generation.
@@ -679,6 +756,14 @@ func (s *Service) ValidateObject(ctx context.Context, projectID uuid.UUID, req *
 func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGraphObjectRequest, actorID *uuid.UUID) (*GraphObjectResponse, error) {
 	actorType, actorID := actorFromContext(ctx, actorID)
 
+	workCfg := s.objectTypeWorkConfig(ctx, projectID, req.Type)
+	if err := rejectAgentWorkStatusWrite(actorType, isBoardEnabledConfig(workCfg), writesStatus(req.Status, req.Properties)); err != nil {
+		return nil, err
+	}
+	if err := validateTypeStatus(workCfg, req.Status, req.Properties); err != nil {
+		return nil, err
+	}
+
 	validatedProps, err := s.validateObjectProperties(ctx, projectID, req.Type, req.Properties)
 	if err != nil {
 		return nil, err
@@ -690,6 +775,7 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 		Type:            req.Type,
 		Key:             req.Key,
 		Status:          req.Status,
+		Assignee:        req.Assignee,
 		Namespace:       req.Namespace,
 		Properties:      validatedProps,
 		Labels:          req.Labels,
@@ -712,7 +798,7 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 		return nil, err
 	}
 
-	s.enqueueEmbedding(ctx, obj.ID.String())
+	s.enqueueEmbeddingForType(ctx, projectID, obj.Type, obj.ID.String())
 
 	if obj.Key != nil {
 		objType := obj.Type
@@ -777,6 +863,14 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 
 	actorType, actorID := actorFromContext(ctx, actorID)
 
+	workCfg := s.objectTypeWorkConfig(ctx, projectID, req.Type)
+	if err := rejectAgentWorkStatusWrite(actorType, isBoardEnabledConfig(workCfg), writesStatus(req.Status, req.Properties)); err != nil {
+		return nil, false, err
+	}
+	if err := validateTypeStatus(workCfg, req.Status, req.Properties); err != nil {
+		return nil, false, err
+	}
+
 	if existing == nil {
 		// Create new object
 		obj := &GraphObject{
@@ -785,6 +879,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 			Type:            req.Type,
 			Key:             req.Key,
 			Status:          req.Status,
+			Assignee:        req.Assignee,
 			Namespace:       req.Namespace,
 			Properties:      validatedProps,
 			Labels:          req.Labels,
@@ -804,7 +899,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 			return nil, false, apperror.ErrDatabase.WithInternal(err)
 		}
 
-		s.enqueueEmbedding(ctx, obj.ID.String())
+		s.enqueueEmbeddingForType(ctx, projectID, obj.Type, obj.ID.String())
 
 		resp := obj.ToResponse()
 		s.emitObjectCreated(resp)
@@ -818,6 +913,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 			Type:            req.Type,
 			Key:             req.Key,
 			Status:          req.Status,
+			Assignee:        req.Assignee,
 			Namespace:       existing.Namespace,
 			Properties:      validatedProps,
 			Labels:          req.Labels,
@@ -839,7 +935,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 			return nil, false, apperror.ErrDatabase.WithInternal(err)
 		}
 
-		s.enqueueEmbedding(ctx, newVersion.ID.String())
+		s.enqueueEmbeddingForType(ctx, projectID, newVersion.Type, newVersion.ID.String())
 
 		resp := newVersion.ToResponse()
 		s.emitObjectUpdated(resp)
@@ -887,7 +983,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 		}
 		// Re-enqueue for embedding if not yet embedded (e.g. after an API key recovery).
 		if existing.EmbeddingUpdatedAt == nil {
-			s.enqueueEmbedding(ctx, existing.ID.String())
+			s.enqueueEmbeddingForType(ctx, projectID, existing.Type, existing.ID.String())
 		}
 		return existing.ToResponse(), false, nil
 	}
@@ -917,7 +1013,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 		return nil, false, apperror.ErrDatabase.WithInternal(err)
 	}
 
-	s.enqueueEmbedding(ctx, newVersion.ID.String())
+	s.enqueueEmbeddingForType(ctx, projectID, newVersion.Type, newVersion.ID.String())
 
 	s.emitObjectUpdated(newVersion.ToResponse())
 
@@ -1059,11 +1155,25 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		newKey = req.Key
 	}
 
+	// Handle assignee: use req.Assignee if provided, otherwise preserve current.
+	newAssignee := current.Assignee
+	if req.Assignee != nil {
+		newAssignee = req.Assignee
+	}
+
 	actorType, actorID := actorFromContext(ctx, actorID)
+	workCfg := s.objectTypeWorkConfig(ctx, projectID, current.Type)
+	if err := rejectAgentWorkStatusWrite(actorType, isBoardEnabledConfig(workCfg), writesStatus(req.Status, req.Properties)); err != nil {
+		return nil, err
+	}
+	if err := validateTypeStatus(workCfg, req.Status, req.Properties); err != nil {
+		return nil, err
+	}
 	newVersion := &GraphObject{
 		Type:       current.Type,
 		Key:        newKey,
 		Status:     newStatus,
+		Assignee:   newAssignee,
 		Properties: newProps,
 		Labels:     newLabels,
 		ActorType:  &actorType,
@@ -1092,8 +1202,16 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		}
 	}
 
+	// Check if assignee changed
+	assigneeChanged := false
+	if req.Assignee != nil {
+		if current.Assignee == nil || *current.Assignee != *req.Assignee {
+			assigneeChanged = true
+		}
+	}
+
 	// No effective change — return existing version without creating a new one
-	if newVersion.ChangeSummary == nil && !statusChanged && !labelsChanged && !keyChanged {
+	if newVersion.ChangeSummary == nil && !statusChanged && !labelsChanged && !keyChanged && !assigneeChanged {
 		if err := tx.Commit(); err != nil {
 			return nil, apperror.ErrDatabase.WithInternal(err)
 		}
@@ -1108,7 +1226,7 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
-	s.enqueueEmbedding(ctx, newVersion.ID.String())
+	s.enqueueEmbeddingForType(ctx, projectID, newVersion.Type, newVersion.ID.String())
 
 	if newVersion.Key != nil {
 		objType := newVersion.Type
@@ -1304,7 +1422,7 @@ func (s *Service) Restore(ctx context.Context, projectID, id uuid.UUID, actorID 
 	s.emitObjectUpdated(restored.ToResponse())
 
 	// Enqueue embedding — the restored version has a new physical row with NULL embedding_v2.
-	s.enqueueEmbedding(ctx, restored.ID.String())
+	s.enqueueEmbeddingForType(ctx, projectID, restored.Type, restored.ID.String())
 
 	return restored.ToResponse(), nil
 }
@@ -2317,6 +2435,18 @@ func (s *Service) FTSSearch(ctx context.Context, projectID uuid.UUID, req *FTSSe
 		return nil, err
 	}
 
+	// Exclude operational object types from default search (P4.2).
+	if excluded := s.excludedSearchTypes(ctx, projectID); len(excluded) > 0 {
+		filtered := results[:0]
+		for _, r := range results {
+			if excluded[r.Object.Type] {
+				continue
+			}
+			filtered = append(filtered, r)
+		}
+		results = filtered
+	}
+
 	// Truncate the "limit+1" extra row exactly as before, so page 1's documents
 	// are unchanged. The Relax/Disjoin fallback is deliberately first-page-only
 	// (see Repository.FTSSearchWithFallback), so when it produced the result set
@@ -2378,6 +2508,18 @@ func (s *Service) VectorSearch(ctx context.Context, projectID uuid.UUID, req *Ve
 	results, err := s.repo.VectorSearch(ctx, params)
 	if err != nil {
 		return nil, err
+	}
+
+	// Exclude operational object types from default search (P4.2).
+	if excluded := s.excludedSearchTypes(ctx, projectID); len(excluded) > 0 {
+		filtered := results[:0]
+		for _, r := range results {
+			if excluded[r.Object.Type] {
+				continue
+			}
+			filtered = append(filtered, r)
+		}
+		results = filtered
 	}
 
 	hasMore := len(results) > limit
@@ -2687,6 +2829,18 @@ func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *Hy
 		return slices.Compare(fusedResults[i].id[:], fusedResults[j].id[:]) < 0
 	})
 
+	// Exclude operational object types from default search (P4.2).
+	if excluded := s.excludedSearchTypes(ctx, projectID); len(excluded) > 0 {
+		filtered := fusedResults[:0]
+		for _, fr := range fusedResults {
+			if fr.object != nil && excluded[fr.object.Type] {
+				continue
+			}
+			filtered = append(filtered, fr)
+		}
+		fusedResults = filtered
+	}
+
 	// Apply offset and limit
 	offset := req.Offset
 	if offset > len(fusedResults) {
@@ -2790,6 +2944,28 @@ func (s *Service) BulkUpdateStatus(ctx context.Context, projectID uuid.UUID, req
 			Failed:  len(req.IDs),
 			Results: results,
 		}, nil
+	}
+
+	// Reject agent-originated bulk status writes on board-enabled objects: work
+	// status is owned by the single-status writer only. Also validate the target
+	// status against each board-enabled type's declared allowed set (P4.1).
+	types, err := s.repo.listDistinctTypesByIDs(ctx, projectID, validIDs)
+	if err != nil {
+		return nil, err
+	}
+	anyBoardEnabled := false
+	for _, t := range types {
+		cfg := s.objectTypeWorkConfig(ctx, projectID, t)
+		if !isBoardEnabledConfig(cfg) {
+			continue
+		}
+		anyBoardEnabled = true
+		if err := validateTypeStatus(cfg, &req.Status, nil); err != nil {
+			return nil, err
+		}
+	}
+	if actorType == ActorAgent && anyBoardEnabled {
+		return nil, workStatusWriteForbidden()
 	}
 
 	// Perform bulk update
@@ -5025,7 +5201,7 @@ func (s *Service) MoveObject(ctx context.Context, projectID, objectID uuid.UUID,
 	}
 
 	// Re-queue embedding for the moved object
-	s.enqueueEmbedding(ctx, current.ID.String())
+	s.enqueueEmbeddingForType(ctx, projectID, current.Type, current.ID.String())
 	for _, rel := range rels {
 		s.enqueueRelationshipEmbedding(ctx, rel.ID.String())
 	}
@@ -5184,6 +5360,20 @@ func (s *Service) BulkAction(ctx context.Context, projectID uuid.UUID, req *Bulk
 	}
 
 	actorType, actorID := actorFromContext(ctx, actorID)
+
+	// Reject agent-originated status-setting bulk actions. work status is owned
+	// by the single-status writer; a bulk update_status or a merge/replace that
+	// smuggles properties["status"] would diverge the two status copies.
+	if actorType == ActorAgent {
+		if req.Action == BulkActionUpdateStatus {
+			return nil, workStatusWriteForbidden()
+		}
+		if (req.Action == BulkActionMergeProperties || req.Action == BulkActionReplaceProperties) && req.Properties != nil {
+			if _, ok := req.Properties["status"]; ok {
+				return nil, workStatusWriteForbidden()
+			}
+		}
+	}
 
 	matched, affected, err := s.repo.BulkActionByFilter(ctx, BulkActionParams{
 		ProjectID:  projectID,

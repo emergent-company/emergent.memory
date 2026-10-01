@@ -63,6 +63,14 @@ type Config struct {
 	// reconciles the named queue configuration (kb.agent_queues).
 	AgentWorkerQueueRefreshInterval time.Duration `env:"AGENT_WORKER_QUEUE_REFRESH_INTERVAL" envDefault:"30s"`
 
+	// Object-driven work maintenance. The reaper returns stranded in-progress
+	// work objects to ready/blocked; the reconciler enqueues ready objects with
+	// no live run/job. The reaper threshold matches the stale-run reaper's
+	// threshold so the two never race.
+	WorkStatusReaperInterval  time.Duration `env:"WORK_STATUS_REAPER_INTERVAL" envDefault:"5m"`
+	WorkStatusReaperThreshold time.Duration `env:"WORK_STATUS_REAPER_THRESHOLD" envDefault:"30m"`
+	WorkReconcilerInterval    time.Duration `env:"WORK_RECONCILER_INTERVAL" envDefault:"1m"`
+
 	// Agent safeguards configuration
 	AgentSafeguards AgentSafeguardsConfig
 

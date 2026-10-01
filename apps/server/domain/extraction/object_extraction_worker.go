@@ -701,6 +701,15 @@ func (w *ObjectExtractionWorker) loadSchemas(ctx context.Context, job *ObjectExt
 		}
 	}
 
+	// Per-type operational flag (P4.2): board-enabled / operational types marked
+	// skipExtraction are never produced by the extraction pipeline. Explicit
+	// inline schemas (converted above) carry no flag, so they are not skipped.
+	for name, schema := range schemas.ObjectSchemas {
+		if schema.SkipExtraction {
+			delete(schemas.ObjectSchemas, name)
+		}
+	}
+
 	return schemas, nil
 }
 

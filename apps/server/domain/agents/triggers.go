@@ -30,6 +30,11 @@ type TriggerService struct {
 	events    *events.Service
 	log       *slog.Logger
 
+	// workObjects is the graph surface used to resolve the HEAD version at
+	// dispatch and to perform the claim transition. Nil in unit tests that only
+	// exercise trigger registration and the legacy inline path.
+	workObjects WorkObjectStore
+
 	// activeRuns backs ConcurrencyStrategy=skip. nil fails open (no checker wired,
 	// e.g. unit tests).
 	activeRuns activeRunChecker
@@ -39,6 +44,13 @@ type TriggerService struct {
 	// mu protects eventListeners
 	mu             sync.RWMutex
 	eventListeners map[string][]*Agent // eventKey -> agents
+}
+
+// SetWorkObjectStore injects the graph work-object surface after construction.
+// It is optional: without it, object-driven dispatch falls back to the legacy
+// inline path (or skips when a HEAD lookup is required).
+func (ts *TriggerService) SetWorkObjectStore(store WorkObjectStore) {
+	ts.workObjects = store
 }
 
 // NewTriggerService creates a new TriggerService.
@@ -327,9 +339,6 @@ func (ts *TriggerService) RemoveAgentTrigger(agentID string) {
 // objectType is the type of object the event pertains to (e.g., "document").
 // eventType is the type of event (e.g., "created", "updated", "deleted").
 // The input map provides context about the event (e.g., object ID, project ID).
-//
-// A nil originating actor means "not agent-originated" (the HTTP/manual entry
-// point), which preserves the pre-existing external behaviour.
 func (ts *TriggerService) HandleEvent(ctx context.Context, objectType string, eventType ReactionEventType, projectID string, input map[string]any) {
 	ts.handleEvent(ctx, objectType, eventType, projectID, input, nil)
 }
@@ -385,23 +394,191 @@ func (ts *TriggerService) handleEvent(ctx context.Context, objectType string, ev
 
 		matched := agent
 		go func() {
-			ts.log.Info("executing event-triggered agent",
-				slog.String("object_type", objectType),
-				slog.String("event", string(eventType)),
-				slog.String("agent", matched.Name),
-				slog.String("agent_id", matched.ID),
-				slog.String("project_id", projectID),
-			)
-			if err := ts.dispatch(ctx, matched, projectID, objectType, objectID); err != nil {
-				ts.log.Error("event-triggered agent execution failed",
-					slog.String("object_type", objectType),
-					slog.String("event", string(eventType)),
-					slog.String("agent", matched.Name),
-					slog.String("agent_id", matched.ID),
-					slog.String("error", err.Error()),
-				)
-			}
+			ts.dispatchMatchedAgent(ctx, matched, objectType, eventType, projectID, input)
 		}()
+	}
+}
+
+// dispatchMatchedAgent routes a matched reaction agent to either the
+// object-driven enqueue path (definition has a work config or queued dispatch
+// mode) or the inline execution path.
+func (ts *TriggerService) dispatchMatchedAgent(ctx context.Context, agent *Agent, objectType string, eventType ReactionEventType, projectID string, input map[string]any) {
+	var agentDef *AgentDefinition
+	if ts.repo != nil {
+		var err error
+		agentDef, err = ts.repo.ResolveDefinitionForAgent(ctx, agent)
+		if err != nil {
+			ts.log.Warn("failed to resolve definition for matched agent",
+				slog.String("agent_id", agent.ID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+	if ts.shouldEnqueueWork(agentDef) {
+		ts.enqueueWorkRun(ctx, agent, agentDef, objectType, eventType, projectID, input)
+		return
+	}
+
+	objectID, _ := input["id"].(string)
+	ts.log.Info("executing event-triggered agent",
+		slog.String("object_type", objectType),
+		slog.String("event", string(eventType)),
+		slog.String("agent", agent.Name),
+		slog.String("agent_id", agent.ID),
+		slog.String("project_id", projectID),
+	)
+	if err := ts.dispatch(ctx, agent, projectID, objectType, objectID); err != nil {
+		ts.log.Error("event-triggered agent execution failed",
+			slog.String("object_type", objectType),
+			slog.String("event", string(eventType)),
+			slog.String("agent", agent.Name),
+			slog.String("agent_id", agent.ID),
+			slog.String("error", err.Error()),
+		)
+	}
+}
+
+// shouldEnqueueWork reports whether a reaction dispatch for the given definition
+// must enqueue a run (object-driven work) rather than execute inline. A
+// definition without a work config keeps today's inline behaviour.
+func (ts *TriggerService) shouldEnqueueWork(def *AgentDefinition) bool {
+	if def == nil {
+		return false
+	}
+	return def.DispatchMode == DispatchModeQueued || !def.WorkConfig.IsZero()
+}
+
+// enqueueWorkRun performs the object-driven dispatch: assignee routing, dispatch
+// dedup against kb.agent_processing_log, and enqueue of a run linked to the work
+// object via subject_object_id / subject_object_type.
+func (ts *TriggerService) enqueueWorkRun(ctx context.Context, agent *Agent, agentDef *AgentDefinition, objectType string, eventType ReactionEventType, projectID string, input map[string]any) {
+	// For graph objects the event ID is already the object's canonical_id
+	// (graph/service.go emitObjectCreated passes obj.CanonicalID).
+	canonicalID, _ := input["id"].(string)
+	if canonicalID == "" {
+		ts.log.Warn("cannot enqueue work run: missing object id",
+			slog.String("agent_id", agent.ID),
+			slog.String("object_type", objectType),
+		)
+		return
+	}
+
+	// Assignee routing: an assigned object wakes only the listener whose name
+	// matches the assignee (project scoping was already applied by handleEvent).
+	if data, ok := input["data"].(map[string]any); ok {
+		if assignee, ok := data["assignee"].(string); ok && assignee != "" && agent.Name != assignee {
+			return // not the assigned lane
+		}
+	}
+
+	// Resolve the object version at dispatch. The single-event path carries it in
+	// the payload; the batch path omits it, so fall back to the HEAD version.
+	version, hasVersion := intFromInput(input["version"])
+	if !hasVersion {
+		if ts.workObjects == nil {
+			ts.log.Warn("cannot resolve work object version: no work object store",
+				slog.String("agent_id", agent.ID),
+				slog.String("canonical_id", canonicalID),
+			)
+			return
+		}
+		head, err := ts.workObjects.GetHeadObject(ctx, projectID, canonicalID)
+		if err != nil {
+			ts.log.Warn("failed to resolve work object version",
+				slog.String("agent_id", agent.ID),
+				slog.String("canonical_id", canonicalID),
+				slog.String("error", err.Error()),
+			)
+			return
+		}
+		if head == nil {
+			return // object gone
+		}
+		version = head.Version
+	}
+
+	// Dedup against the processing log on (agent_id, graph_object_id,
+	// object_version, event_type) so a repeated created delivery yields a single
+	// run. ConcurrencyStrategy "skip" is enforced unconditionally for work
+	// dispatch: an already-recorded dispatch is never duplicated.
+	existing, err := ts.repo.FindProcessingLogByKey(ctx, agent.ID, canonicalID, version, eventType)
+	if err != nil {
+		ts.log.Warn("failed to check processing log for dedup",
+			slog.String("agent_id", agent.ID),
+			slog.String("canonical_id", canonicalID),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+	if existing != nil {
+		return // already dispatched
+	}
+
+	// Record the dispatch before enqueuing so a concurrent redelivery dedups.
+	logEntry := &AgentProcessingLog{
+		AgentID:       agent.ID,
+		GraphObjectID: canonicalID,
+		ObjectVersion: version,
+		EventType:     eventType,
+		Status:        ProcessingStatusPending,
+	}
+	if err := ts.repo.CreateProcessingLog(ctx, logEntry); err != nil {
+		ts.log.Warn("failed to record processing log entry",
+			slog.String("agent_id", agent.ID),
+			slog.String("canonical_id", canonicalID),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+
+	maxAttempts := 1
+	if agentDef != nil && agentDef.WorkConfig.RetryPolicy.MaxAttempts > 0 {
+		maxAttempts = agentDef.WorkConfig.RetryPolicy.MaxAttempts
+	}
+	maxPendingJobs := 0
+	if ts.executor != nil {
+		maxPendingJobs = ts.executor.safeguards.MaxPendingJobs
+	}
+
+	run, err := ts.repo.CreateRunQueued(ctx, agent.ID, maxAttempts, CreateRunQueuedOptions{
+		SubjectObjectID:   &canonicalID,
+		SubjectObjectType: &objectType,
+		TrustedInternal:   true,
+		MaxPendingJobs:    maxPendingJobs,
+	})
+	if err != nil {
+		ts.log.Warn("failed to enqueue work run",
+			slog.String("agent_id", agent.ID),
+			slog.String("canonical_id", canonicalID),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+
+	ts.log.Info("enqueued object-driven work run",
+		slog.String("object_type", objectType),
+		slog.String("event", string(eventType)),
+		slog.String("agent", agent.Name),
+		slog.String("agent_id", agent.ID),
+		slog.String("project_id", projectID),
+		slog.String("canonical_id", canonicalID),
+		slog.Int("object_version", version),
+		slog.String("run_id", run.ID),
+	)
+}
+
+// intFromInput extracts an int from an event input value that may be a plain
+// int (in-process events) or a float64 (JSON-decoded events).
+func intFromInput(v any) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	case float64:
+		return int(n), true
+	default:
+		return 0, false
 	}
 }
 

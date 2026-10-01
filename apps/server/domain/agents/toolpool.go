@@ -27,6 +27,13 @@ const (
 	ToolNameAskUser             = "ask_user"
 )
 
+// Run-finalizing work terminator tool names (object-driven work). These are
+// only injected for runs dispatched against a subject work object.
+const (
+	ToolNameWorkComplete = "work_complete"
+	ToolNameWorkBlock    = "work_block"
+)
+
 // ACP tool names that require explicit opt-in at all agent depths.
 const (
 	ToolNameACPListAgents        = "agent-list"

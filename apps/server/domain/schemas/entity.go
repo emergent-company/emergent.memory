@@ -246,6 +246,13 @@ type ObjectTypeSchema struct {
 	SchemaName    string          `json:"schemaName,omitempty"`
 	SchemaVersion string          `json:"schemaVersion,omitempty"`
 	Shadowed      bool            `json:"shadowed,omitempty"`
+	// Object-driven work configuration (P4): board-enabled flag, allowed work
+	// status values, and operational pipeline skip-flags.
+	BoardEnabled      bool     `json:"boardEnabled,omitempty"`
+	AllowedStatuses   []string `json:"allowedStatuses,omitempty"`
+	SkipEmbeddings    bool     `json:"skipEmbeddings,omitempty"`
+	SkipExtraction    bool     `json:"skipExtraction,omitempty"`
+	ExcludeFromSearch bool     `json:"excludeFromSearch,omitempty"`
 }
 
 // RelationshipTypeSchema represents a relationship type definition

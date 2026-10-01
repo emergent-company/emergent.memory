@@ -1305,6 +1305,26 @@ routes:
       path: /api/projects/:projectId/webhook-trigger-tokens
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: POST
+      path: /api/projects/:projectId/work-items/:canonicalId/approve
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(agents:write)
+    - method: POST
+      path: /api/projects/:projectId/work-items/:canonicalId/cancel
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(agents:write)
+    - method: POST
+      path: /api/projects/:projectId/work-items/:canonicalId/reassign
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(agents:write)
+    - method: POST
+      path: /api/projects/:projectId/work-items/:canonicalId/request-changes
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(agents:write)
+    - method: POST
+      path: /api/projects/:projectId/work-items/:canonicalId/retry
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(agents:write)
     - method: GET
       path: /api/projects/current
       level: auth
