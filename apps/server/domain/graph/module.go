@@ -201,7 +201,7 @@ func (p *schemaProviderAdapter) GetProjectSchemas(ctx context.Context, projectID
 				}
 			}
 
-			schema.ObjectTypeWorkConfig.ApplyConfig(schemaMap)
+			schema.ApplyConfig(schemaMap)
 
 			objectSchemas[typeName] = schema
 		}

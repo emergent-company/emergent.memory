@@ -559,7 +559,7 @@ func parseObjectTypeSchemas(raw json.RawMessage) map[string]agents.ObjectSchema 
 			schema.ExtractionGuidelines = guidelines
 		}
 
-		schema.ObjectTypeWorkConfig.ApplyConfig(schemaMap)
+		schema.ApplyConfig(schemaMap)
 
 		schemas[typeName] = schema
 	}
