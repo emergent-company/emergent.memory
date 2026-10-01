@@ -1021,14 +1021,28 @@ definitions:
   domain_agents.ReactionConfig:
     properties:
       concurrencyStrategy:
-        $ref: '#/definitions/domain_agents.ConcurrencyStrategy'
+        allOf:
+        - $ref: '#/definitions/domain_agents.ConcurrencyStrategy'
+        description: |-
+          ConcurrencyStrategy controls how a new trigger is handled while a
+          non-terminal run already exists for the same agent + target object.
+          Empty ("") and "parallel" both mean no concurrency control; "skip" drops
+          the new trigger instead of starting a second run.
       events:
         items:
           $ref: '#/definitions/domain_agents.ReactionEventType'
         type: array
       ignoreAgentTriggered:
+        description: |-
+          IgnoreAgentTriggered controls whether agent-originated events are ignored.
+          nil (unset) = true = ignore, preserving the historical loop-safety default.
+          Explicit false opts this agent in to agent-originated events.
         type: boolean
       ignoreSelfTriggered:
+        description: |-
+          IgnoreSelfTriggered controls whether this agent's own runs may re-trigger
+          it. nil (unset) = true = ignore. Explicit false allows self-triggering.
+          Only consulted when IgnoreAgentTriggered is explicitly false.
         type: boolean
       objectTypes:
         items:
@@ -13184,8 +13198,8 @@ paths:
       - graph
   /api/health/scope-authority:
     get:
-      description: Returns the scope-authority posture (introspection status).
-        Authenticated only.
+      description: Returns the scope-authority posture (introspection status). Authenticated
+        only.
       produces:
       - application/json
       responses:
