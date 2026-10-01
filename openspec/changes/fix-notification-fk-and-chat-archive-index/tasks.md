@@ -7,16 +7,16 @@
 
 ## 2. Chat archive list index (#1316)
 
-- [ ] 2.1 Add `apps/server/migrations/00211_chat_conversations_archived_list_index.sql` creating the partial index `kb.idx_chat_conversations_project_active_updated ON kb.chat_conversations (project_id, updated_at DESC) WHERE is_archived = false`, with a reversible Down.
-- [ ] 2.2 Verify the index matches the `ListConversations` default query shape (project_id equality, `is_archived = false`, `ORDER BY updated_at DESC`) and does not duplicate an existing index.
+- [x] 2.1 Add `apps/server/migrations/00211_chat_conversations_archived_list_index.sql` creating the partial index `kb.idx_chat_conversations_project_active_updated ON kb.chat_conversations (project_id, updated_at DESC) WHERE is_archived = false`, with a reversible Down.
+- [x] 2.2 Verify the index matches the `ListConversations` default query shape (project_id equality, `is_archived = false`, `ORDER BY updated_at DESC`) and does not duplicate an existing index.
 
 ## 3. Spec
 
-- [ ] 3.1 Add the `kb-schema-integrity` delta requirements documenting both schema guarantees.
+- [x] 3.1 Add the `kb-schema-integrity` delta requirements documenting both schema guarantees.
 - [x] 3.2 Verify `openspec validate fix-notification-fk-and-chat-archive-index --strict` passes.
 
 ## 4. Verification
 
-- [ ] 4.1 Run `go build ./...` in `apps/server`.
-- [ ] 4.2 Run `go test -count=1 ./domain/notifications/... ./domain/chat/...` (DB-backed cases require Postgres; record skips if unavailable).
-- [ ] 4.3 If Postgres is available, apply both migrations (`task migrate:up`), confirm `EXPLAIN` on the default list query uses the partial index, and confirm `task migrate:status`; note anything unverified.
+- [x] 4.1 Run `go build ./...` in `apps/server` (exit 0).
+- [x] 4.2 Run `go test -count=1 ./domain/notifications/... ./domain/chat/...` (all packages ok; DB-backed cases skip without a configured Postgres).
+- [x] 4.3 Applied both migrations against a throwaway `pgvector/pgvector:pg17` container: `migrate -c up` reached version 211; `EXPLAIN` showed `Index Scan`/`Index Only Scan using idx_chat_conversations_project_active_updated` with no Sort; `migrate -c down` twice restored the pre-fix double-FK state, and a second `up` re-applied both; `migrate -c verify` reported no invalid indexes. See PR notes for anything not covered (production data volume).
