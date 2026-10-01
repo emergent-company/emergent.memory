@@ -102,6 +102,32 @@ func TestGetCountsUnread(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestGetStatsDismissedExcludesCleared asserts GetStats draws all three of its
+// counters from the same row population: `cleared_at IS NULL`. A dismissed row
+// that was also cleared (Dismiss sets both dismissed=true and cleared_at) must
+// not be counted as dismissed, matching total/unread. Regression for the
+// dismissed predicate missing the cleared_at filter its siblings have (#1314).
+func TestGetStatsDismissedExcludesCleared(t *testing.T) {
+	repo, mock := newRepoMock(t)
+
+	// Three ordered counts: total, unread, dismissed. Every one must exclude
+	// cleared rows; before the fix the dismissed query carried no cleared_at
+	// predicate and the third expectation below would fail to match.
+	mock.ExpectQuery(`SELECT[\s\S]*cleared_at IS NULL[\s\S]*`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2)) // total
+	mock.ExpectQuery(`SELECT[\s\S]*read = false[\s\S]*`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1)) // unread
+	mock.ExpectQuery(`SELECT[\s\S]*cleared_at IS NULL[\s\S]*dismissed = true[\s\S]*`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1)) // dismissed
+
+	stats, err := repo.GetStats(context.Background(), "u1")
+	require.NoError(t, err)
+	require.Equal(t, int64(2), stats.Total)
+	require.Equal(t, int64(1), stats.Unread)
+	require.Equal(t, int64(1), stats.Dismissed)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestMarkAllRead_AccountScope(t *testing.T) {
 	repo, mock := newRepoMock(t)
 
