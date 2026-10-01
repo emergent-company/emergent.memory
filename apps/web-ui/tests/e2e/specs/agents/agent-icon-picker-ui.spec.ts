@@ -9,6 +9,11 @@ import { createAgentViaModal } from '../../helpers/agents';
 // real DOM state (hidden input value, labels, ARIA, the rendered list/detail
 // markup), so a regression in the picker wiring or the icon+color rendering
 // fails here instead of only in a browser.
+//
+// The General settings form auto-saves (it has no Save button), so the picker
+// interactions must reach the server through the debounced auto-save — a colour
+// chosen from a preset swatch sets the text field programmatically and must
+// still persist (the "colour assigned but not saved" report).
 
 const ROOT = '[data-gd-icon-picker]';
 const HIDDEN = '#agent-settings-icon';
@@ -18,7 +23,6 @@ const SEARCH = '#agent-settings-icon-search';
 const LABEL = '#agent-settings-icon-label';
 const RESET = '[data-gd-icon-reset]';
 const COLOR = '#agent-settings-color';
-const COLOR_ROOT = '[data-gd-color-picker]';
 
 function option(page: Page, value: string) {
   return page.locator(`${PANEL} [data-gd-icon-option][data-gd-icon-value="${value}"]`);
@@ -46,9 +50,19 @@ async function openSettings(page: Page, id: string): Promise<void> {
   await expect(page.locator(HIDDEN)).toHaveCount(1);
 }
 
-async function save(page: Page, id: string): Promise<void> {
-  await page.getByRole('button', { name: 'Save changes' }).click();
-  await page.waitForURL(new RegExp(`/agents/${id}/settings\\?updated=1$`));
+// The General settings form auto-saves (no Save button); poll the API until the
+// debounced POST has persisted the expected appearance.
+async function expectAppearance(page: Page, id: string, want: Record<string, string>): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const resp = await page.request.get(`/api/agents/${id}`);
+        if (resp.status() !== 200) return null;
+        return ((await resp.json()).uiConfig ?? {}) as Record<string, string>;
+      },
+      { timeout: 15_000 },
+    )
+    .toEqual(want);
 }
 
 test('creates an agent, picks an icon and colour, and renders them on list + detail', async ({ page }) => {
@@ -72,15 +86,15 @@ test('creates an agent, picks an icon and colour, and renders them on list + det
     // affordance carries the agent default class.
     await expect(page.locator(ROOT)).toHaveAttribute('data-gd-icon-picker-default-class', 'lucide--bot');
 
-    // --- pick a real icon + colour and save ---
+    // --- pick a real icon + colour (auto-saves) ---
     await pick(page, 'database');
     await expect(page.locator(HIDDEN)).toHaveValue('database');
     await expect(page.locator(LABEL)).toHaveText('Database');
-    await expect(page.locator(COLOR_ROOT)).toHaveCount(1);
     await page.locator(COLOR).fill(color);
-    await save(page, id);
+    await expectAppearance(page, id, { icon: 'database', color });
 
     // --- settings page round-trips the choice ---
+    await page.goto(`/agents/${id}/settings`);
     await expect(page.locator(HIDDEN)).toHaveValue('database');
     await expect(page.locator(LABEL)).toHaveText('Database');
     await expect(page.locator(COLOR)).toHaveValue(color);
@@ -99,6 +113,34 @@ test('creates an agent, picks an icon and colour, and renders them on list + det
     const detailTile = page.locator('#main-content div[style*="color:#2563EB"]').first();
     await expect(detailTile).toBeVisible();
     await expect(detailTile.locator('.iconify.lucide--database')).toHaveCount(1);
+  } finally {
+    if (id) await page.request.delete(`/api/agents/${id}`).catch(() => {});
+  }
+});
+
+test('picking a colour preset on the settings form auto-saves and persists it', async ({ page }) => {
+  test.setTimeout(120_000);
+  const name = `E2E Appearance Preset ${Date.now()}`;
+  const presetColor = '#10B981';
+  let id = '';
+
+  try {
+    id = await createAgentViaModal(page, name);
+    await openSettings(page, id);
+
+    // A preset swatch sets the colour text field programmatically (no native
+    // input/change); the auto-save wiring must still persist it.
+    const preset = page
+      .locator(`form[data-agent-autosave] [data-gd-color-preset][data-gd-color-value="${presetColor}"]`)
+      .first();
+    await expect(preset).toBeVisible();
+    await preset.click();
+    await expect(page.locator(COLOR)).toHaveValue(presetColor);
+    await expectAppearance(page, id, { color: presetColor });
+
+    // Survives a full reload.
+    await page.goto(`/agents/${id}/settings`);
+    await expect(page.locator(COLOR)).toHaveValue(presetColor);
   } finally {
     if (id) await page.request.delete(`/api/agents/${id}`).catch(() => {});
   }

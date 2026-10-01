@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	"github.com/emergent-company/emergent.memory/apps/web-ui/webui"
+	"github.com/emergent-company/go-daisy/components/form"
 	"github.com/emergent-company/go-daisy/components/layout"
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
@@ -104,6 +105,16 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 					<option value="scheduled">Scheduled</option>
 					<option value="shared">Shared</option>
 				</select>
+				<label class="flex cursor-pointer items-center gap-2 px-1 text-sm text-muted-strong select-none">
+					<input
+						id="chat-include-archived"
+						data-testid="chat-include-archived"
+						type="checkbox"
+						class="checkbox checkbox-sm"
+						aria-label="Include archived"
+					/>
+					<span>Include archived</span>
+				</label>
 			</div>
 			<div id="chat-rail-list" data-testid="session-list" class="min-h-0 grow overflow-y-auto p-2">
 				@chatRailList(convs, appearances, schedRuns, shared, convID)
@@ -122,13 +133,15 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 						ExtraClass: "md:hidden",
 						Attrs:      templ.Attributes{"data-action": "toggle-chat-rail"},
 					})
-					{{ activeAgent, hasActiveAgent := activeChatAgent(agents, convs, preselect, convID)
+					{{
+						activeAgent, hasActiveAgent := activeChatAgent(agents, convs, preselect, convID)
 						headerTitle := "Chat with Memory"
 						headerDesc := ""
 						if hasActiveAgent {
 							headerTitle = activeAgent.Name
 							headerDesc = activeAgent.Description
-						} }}
+						}
+					}}
 					<div id="chat-header-icon" class="shrink-0">
 						if hasActiveAgent {
 							@agentIconTile(agentIcon(activeAgent.UIConfig), agentColor(activeAgent.UIConfig))
@@ -183,7 +196,8 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 							<!-- Session todo card. Pre-rendered when the active
 							     conversation's ACP session has todos; chat.js
 							     refreshes it in place from /partial/chat-todos. -->
-							<div id="chat-todos" class={ templ.KV("hidden", len(runControl.Todos) == 0) }>@TodoCard(runControl.Todos)</div>
+							<div id="chat-todos" class={ templ.KV("hidden", len(runControl.Todos) == 0) }>@TodoCard(runControl.Todos)
+</div>
 							<div id="chat-messages" class="flex flex-col gap-3"></div>
 						</div>
 					}
@@ -199,7 +213,8 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 				     the dock route fails is the transcript's inline approval
 				     path, not a second copy in the dock). -->
 				<div id="chat-dock" aria-live="polite" class="hidden"></div>
-				<noscript>@DockPanel(convID, runControl.Approvals, runControl.Questions)</noscript>
+				<noscript>@DockPanel(convID, runControl.Approvals, runControl.Questions)
+</noscript>
 				<!-- Composer queue lane; chat.js renders queued rows here and
 				     toggles the hidden class. -->
 				<div id="chat-queue" class="memory-queue hidden" aria-live="polite"></div>
@@ -383,7 +398,45 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 		     re-executing them in-fragment races the swap and leaves the
 		     composer unbound. chat.js re-inits on htmx:after:swap against the
 		     fresh root. -->
+		@chatDeleteConfirmDialog()
+		@ui.PopoverScript()
 	</div>
+}
+
+// chatDeleteConfirmDialog is the rail's Delete confirmation: one dialog for the
+// whole workspace (not one per row). chat.js opens it with the target session's
+// id + title and only issues DELETE /api/conversations/:id from the confirm
+// button — the method="dialog" backdrop/Cancel path closes it with no request.
+templ chatDeleteConfirmDialog() {
+	@ui.ConfirmDialog(ui.ConfirmDialogProps{ID: "chat-delete-confirm-modal", Noun: "session"}, chatDeleteConfirmDescription()) {
+		@form.FormActions("", "") {
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Attrs:   templ.Attributes{"data-action": "close-delete-session"},
+			}) {
+				Cancel
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonError,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--trash-2",
+				Attrs:   templ.Attributes{"id": "chat-delete-confirm-go", "data-testid": "chat-delete-confirm-go"},
+			}) {
+				Delete
+			}
+		}
+	}
+}
+
+// chatDeleteConfirmDescription is the delete-confirm detail paragraph. The
+// session name span is filled by chat.js (textContent — never innerHTML).
+templ chatDeleteConfirmDescription() {
+	<p class="text-muted mt-1 text-sm">
+		This permanently deletes <span id="chat-delete-confirm-name" class="font-medium text-base-content">this session</span> and its messages. It cannot be undone.
+	</p>
 }
 
 // chatRailList renders the session rail's list portion: the two empty states
@@ -415,6 +468,8 @@ templ chatRailList(convs *ConversationList, appearances map[string]agentAppearan
 // glyph leads the row (ap carries its declared icon/color, or the neutral bot).
 // The run-state badge sits ABOVE the title inside the grow column, so the
 // title takes the full row width instead of competing with the badge inline.
+// An archived row (shown only when the rail's "Include archived" filter is on)
+// carries data-archived plus an "Archived" marker and is visually muted.
 templ sessionRailItem(c Conversation, ap agentAppearance, active bool) {
 	{{
 		attrs := templ.Attributes{
@@ -430,15 +485,77 @@ templ sessionRailItem(c Conversation, ap agentAppearance, active bool) {
 		if active {
 			attrs["data-active"] = "true"
 		}
+		if c.IsArchived {
+			attrs["data-archived"] = "true"
+		}
 	}}
-	<li class="list-row" { attrs... }>
+	<li class={ "list-row", templ.KV("opacity-60", c.IsArchived) } { attrs... }>
 		@agentInlineGlyph(ap.Icon, ap.Color)
 		<div class="list-col-grow">
-			@railStatusBadge(c.Bucket, c.PendingApprovals, c.PendingQuestions)
+			<div class="flex flex-wrap items-center gap-1.5">
+				@railStatusBadge(c.Bucket, c.PendingApprovals, c.PendingQuestions)
+				if c.IsArchived {
+					<span class="badge badge-ghost badge-xs gap-1 font-normal" data-testid="session-archived-marker">
+						@ui.IconSpan("lucide--archive", "size-3")
+						Archived
+					</span>
+				}
+			</div>
 			<div class="font-medium text-sm">{ c.Title }</div>
 			<div class="text-xs text-muted">{ railSubtitle(ap.Name, c.UpdatedAt) }</div>
 		</div>
-		@ui.IconSpan("lucide--chevron-right", "size-4 text-muted-subtle")
+		<div class="flex items-center gap-1">
+			@ui.IconSpan("lucide--chevron-right", "size-4 text-muted-subtle")
+			<!-- Row action menu. Uses the shared go-daisy popover (native
+			     popover top-layer, position:fixed) rather than a CSS dropdown:
+			     the rail list scrolls, and an absolutely-positioned dropdown
+			     would be clipped by that overflow for lower rows. role=menu +
+			     menuitem keep the standard menu semantics. -->
+			@ui.Popover(ui.PopoverRootProps{Attrs: templ.Attributes{"data-testid": "session-actions"}}) {
+				@ui.PopoverTrigger(ui.PopoverTriggerProps{
+					Class: "btn btn-ghost btn-xs btn-square",
+					Attrs: templ.Attributes{
+						"data-action":   "session-menu",
+						"aria-haspopup": "menu",
+						"aria-expanded": "false",
+						"aria-label":    "Actions for " + c.Title,
+					},
+				}) {
+					@ui.IconSpan("lucide--ellipsis-vertical", "size-4")
+				}
+				@ui.PopoverContent(ui.PopoverContentProps{
+					Placement: ui.PopoverBottomEnd,
+					Offset:    4,
+					Exclusive: true,
+					Class:     "w-36",
+					Attrs:     templ.Attributes{"role": "menu", "data-testid": "session-actions-menu"},
+				}) {
+					<ul class="menu menu-sm p-1">
+						if c.IsArchived {
+							<li role="none">
+								<button type="button" role="menuitem" data-action="unarchive-session" data-id={ c.ID } data-testid="session-unarchive" class="flex w-full items-center gap-2 text-left">
+									@ui.IconSpan("lucide--archive-restore", "size-4")
+									<span>Unarchive</span>
+								</button>
+							</li>
+						} else {
+							<li role="none">
+								<button type="button" role="menuitem" data-action="archive-session" data-id={ c.ID } data-testid="session-archive" class="flex w-full items-center gap-2 text-left">
+									@ui.IconSpan("lucide--archive", "size-4")
+									<span>Archive</span>
+								</button>
+							</li>
+						}
+						<li role="none">
+							<button type="button" role="menuitem" data-action="delete-session" data-id={ c.ID } data-title={ c.Title } data-testid="session-delete" class="flex w-full items-center gap-2 text-left text-error">
+								@ui.IconSpan("lucide--trash-2", "size-4")
+								<span>Delete</span>
+							</button>
+						</li>
+					</ul>
+				}
+			}
+		</div>
 	</li>
 }
 

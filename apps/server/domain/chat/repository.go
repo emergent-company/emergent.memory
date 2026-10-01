@@ -48,6 +48,13 @@ func (r *Repository) ListConversations(ctx context.Context, params ListConversat
 		query = query.Where("(owner_user_id = ? OR is_private = false)", *params.OwnerUserID)
 	}
 
+	// Default-exclude archived conversations unless the caller explicitly opts
+	// in. This is applied before the total count so Total reflects the filtered
+	// set, not the unfiltered table.
+	if !params.IncludeArchived {
+		query = query.Where("is_archived = false")
+	}
+
 	// Get total count using same filters
 	total, err := query.Count(ctx)
 	if err != nil {
@@ -194,6 +201,35 @@ func (r *Repository) Delete(ctx context.Context, projectID, ownerUserID string, 
 	if err != nil {
 		r.log.Error("failed to delete conversation", logger.Error(err))
 		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	return rowsAffected > 0, nil
+}
+
+// SetArchived sets or clears the archive state of a conversation, scoped to the
+// caller (owner or non-private) within the caller's project. It returns whether
+// a row matched so the service can map a no-match to not-found. Setting a state
+// that is already in effect is a no-op that still reports a match (idempotent).
+func (r *Repository) SetArchived(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID, archived bool) (bool, error) {
+	q := r.db.NewUpdate().
+		Model((*Conversation)(nil)).
+		Where("id = ?", conversationID).
+		Where("project_id = ?", projectID).
+		Where("(owner_user_id = ? OR is_private = false)", ownerUserID)
+
+	if archived {
+		q = q.Set("is_archived = ?", true).
+			Set("archived_at = NOW()")
+	} else {
+		q = q.Set("is_archived = ?", false).
+			Set("archived_at = NULL")
+	}
+
+	result, err := q.Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to set conversation archived", logger.Error(err))
+		return false, apperror.NewDatabase("set conversation archived", err)
 	}
 
 	rowsAffected, _ := result.RowsAffected()

@@ -45,12 +45,14 @@ type Invite struct {
 
 // SentInvite represents a summary of a sent invitation (for project admin listing)
 type SentInvite struct {
-	ID        string     `json:"id"`
-	Email     string     `json:"email"`
-	Role      string     `json:"role"`
-	Status    string     `json:"status"`
-	CreatedAt time.Time  `json:"createdAt"`
-	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+	ID               string     `json:"id"`
+	Email            string     `json:"email"`
+	Role             string     `json:"role"`
+	Status           string     `json:"status"`
+	CreatedAt        time.Time  `json:"createdAt"`
+	ExpiresAt        *time.Time `json:"expiresAt,omitempty"`
+	DeliveryStatus   *string    `json:"deliveryStatus,omitempty"`
+	DeliveryStatusAt *time.Time `json:"deliveryStatusAt,omitempty"`
 }
 
 // PendingInvite represents an invitation received by the current user
@@ -164,6 +166,37 @@ func (c *Client) Revoke(ctx context.Context, inviteID string) error {
 
 	_, _ = io.Copy(io.Discard, resp.Body)
 	return nil
+}
+
+// Resend re-sends a pending invitation email by ID and returns the updated
+// invitation.
+func (c *Client) Resend(ctx context.Context, inviteID string) (*Invite, error) {
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		c.base+"/api/invites/"+url.PathEscape(inviteID)+"/resend", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.auth.Authenticate(req); err != nil {
+		return nil, fmt.Errorf("authentication failed: %w", err)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var invite Invite
+	if err := json.NewDecoder(resp.Body).Decode(&invite); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &invite, nil
 }
 
 // ListPending returns all pending invitations for the current user.

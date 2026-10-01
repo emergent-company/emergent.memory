@@ -142,6 +142,18 @@ func membersIsSettings(base string) bool {
 	return base == "/settings/members"
 }
 
+// membersSurfaceForBase resolves a members-surface base path back to its
+// descriptor. Handler forms carry the base path they were rendered on in a
+// hidden "surface" field so one shared route (e.g. POST /invites/:id/resend,
+// submitted from both surfaces) can redirect back where the user started.
+// Unknown/empty bases fall back to the legacy top-level surface.
+func membersSurfaceForBase(base string) membersSurface {
+	if membersIsSettings(base) {
+		return membersSettingsSurface
+	}
+	return membersLegacySurface
+}
+
 // memberDetailCrumbs builds the breadcrumb trail for a member detail page:
 // "Members / <leaf>…" on the legacy surface, "Settings / Members / <leaf>…"
 // on the settings surface.
@@ -208,6 +220,8 @@ func (s *Server) uiMembersFor(surf membersSurface, c echo.Context) error {
 		data.FlashMsg = "Role changed."
 	case c.QueryParam("revoked") != "":
 		data.FlashMsg = "Invite revoked."
+	case c.QueryParam("resent") != "":
+		data.FlashMsg = "Invitation resent."
 	case c.QueryParam("ok") != "":
 		data.FlashMsg = "Member removed."
 	}
@@ -508,6 +522,29 @@ func (s *Server) uiRevokeInvite(c echo.Context) error {
 	return c.Redirect(http.StatusSeeOther, "/members?revoked=1")
 }
 
+// uiResendInvite handles one resend form (POST /invites/:id/resend), submitted
+// from both members surfaces. The form carries its surface's base path in a
+// hidden "surface" field so the PRG redirect returns to that page (?resent=1).
+// Resending is an org-tier write — the same org_admin gate the revoke control
+// renders behind — so a caller who may not administer the org is rejected here
+// before memory is asked (memory enforces the same rule server-side).
+func (s *Server) uiResendInvite(c echo.Context) error {
+	ctx := c.Request().Context()
+	surf := membersSurfaceForBase(strings.TrimSpace(c.FormValue("surface")))
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		return redirectWithError(c, surf.base, fmt.Errorf("invite id is required"))
+	}
+	pr, ok := s.activeProjectRef(ctx)
+	if !ok || !s.orgAdminForCaller(c, pr.OrgID) {
+		return redirectWithError(c, surf.base, fmt.Errorf("you do not have permission to resend this invitation"))
+	}
+	if err := s.memory.ResendInvite(ctx, id); err != nil {
+		return redirectWithError(c, surf.base, err)
+	}
+	return c.Redirect(http.StatusSeeOther, surf.base+"?resent=1")
+}
+
 // uiAcceptInvite handles one accept form (POST /invites/:id/accept) on the
 // invitations page (/profile/invitations): it accepts a pending invite via its
 // token (the form carries the token, not the id — accepting is token-bound).
@@ -684,6 +721,39 @@ func roleLabel(role string) string {
 		return "project viewer"
 	default:
 		return role
+	}
+}
+
+// inviteDeliveryBadge maps an invite's email-delivery status to the compact
+// badge shown next to its "Not responded" lifecycle badge. A nil or unknown
+// status is the neutral "Sent" state: memory has no delivery event yet.
+// "Opened" is shown but never treated as a human read (privacy proxies prefetch
+// mail); "Delivered" and "Clicked" are the meaningful positive signals. Every
+// delivery badge renders soft + XS + dot for a quiet, consistent read beside
+// the lifecycle badge.
+func inviteDeliveryBadge(status *string) (string, ui.BadgeIntent) {
+	if status == nil {
+		return "Sent", ui.BadgeGhost
+	}
+	switch *status {
+	case "delivered":
+		return "Delivered", ui.BadgeSuccess
+	case "opened":
+		return "Opened", ui.BadgeSuccess
+	case "clicked":
+		return "Clicked", ui.BadgeSuccess
+	case "bounced", "soft_bounced":
+		return "Bounced", ui.BadgeError
+	case "failed":
+		return "Undelivered", ui.BadgeError
+	case "complained":
+		return "Complained", ui.BadgeWarning
+	case "unsubscribed":
+		return "Unsubscribed", ui.BadgeGhost
+	default:
+		// "pending" (event pipeline acknowledged, no delivery event yet) and any
+		// unknown value read as the neutral sent state.
+		return "Sent", ui.BadgeGhost
 	}
 }
 

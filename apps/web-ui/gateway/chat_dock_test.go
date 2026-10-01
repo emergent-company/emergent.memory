@@ -656,7 +656,7 @@ func TestChatRailDataCarriesBucket(t *testing.T) {
 		approvals: []ToolApprovalItem{{ConversationID: "c2", Decision: "pending", QuestionID: "a1"}},
 	}
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
-	_, _, convs, _, _, err := s.chatRailData(t.Context())
+	_, _, convs, _, _, err := s.chatRailData(t.Context(), false)
 	if err != nil {
 		t.Fatalf("chatRailData: %v", err)
 	}
