@@ -99,6 +99,15 @@ type createBlueprintRequest struct {
 	Manifest    json.RawMessage `json:"manifest"`
 }
 
+// importBlueprintRequest is the body for POST /api/blueprints/import. Token is
+// an optional private-repo credential: it is sent only to the memory backend
+// and is never logged.
+type importBlueprintRequest struct {
+	URL   string `json:"url"`
+	Ref   string `json:"ref,omitempty"`
+	Token string `json:"token,omitempty"`
+}
+
 // --- MemoryClient blueprint methods ---
 
 // ListBlueprintVersions returns all versions of a blueprint name
@@ -127,6 +136,18 @@ func (m *MemoryClient) ListBlueprints(ctx context.Context) ([]BlueprintRecord, e
 func (m *MemoryClient) CreateBlueprint(ctx context.Context, req *createBlueprintRequest) (*BlueprintRecord, error) {
 	var out BlueprintRecord
 	if err := m.do(ctx, http.MethodPost, "/api/blueprints", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ImportBlueprint imports a blueprint from a GitHub repository URL
+// (POST /api/blueprints/import) and returns the created (published) record.
+// The optional token is a private-repo credential; it is never logged.
+func (m *MemoryClient) ImportBlueprint(ctx context.Context, url, ref, token string) (*BlueprintRecord, error) {
+	req := importBlueprintRequest{URL: url, Ref: ref, Token: token}
+	var out BlueprintRecord
+	if err := m.doH(ctx, http.MethodPost, "/api/blueprints/import", req, m.documentHeaders(ctx), &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

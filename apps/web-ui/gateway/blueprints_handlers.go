@@ -221,6 +221,29 @@ func (s *Server) uiInstallBlueprintById(c echo.Context) error {
 	return c.Redirect(http.StatusSeeOther, "/blueprints?installed=1")
 }
 
+// uiImportGitHubBlueprint imports a blueprint from a GitHub repository URL
+// (memory creates and publishes it), then applies it to the project, and
+// redirects back to the list (PRG). The optional token is a private-repo
+// credential: it is forwarded only to memory and is never placed in the
+// redirect target or flash.
+func (s *Server) uiImportGitHubBlueprint(c echo.Context) error {
+	repoURL := c.FormValue("url")
+	ref := c.FormValue("ref")
+	token := c.FormValue("token")
+	if repoURL == "" {
+		return c.Redirect(http.StatusSeeOther, "/blueprints?err=1")
+	}
+	ctx := c.Request().Context()
+	rec, err := s.memory.ImportBlueprint(ctx, repoURL, ref, token)
+	if err != nil {
+		return redirectWithError(c, "/blueprints", err)
+	}
+	if _, err := s.memory.ApplyBlueprint(ctx, rec.ID); err != nil {
+		return redirectWithError(c, "/blueprints", err)
+	}
+	return c.Redirect(http.StatusSeeOther, "/blueprints?installed=1")
+}
+
 // uiEnableBlueprint seeds a bundled blueprint (global, published, not applied)
 // and redirects back to the list (PRG).
 func (s *Server) uiEnableBlueprint(c echo.Context) error {

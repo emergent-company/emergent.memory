@@ -43,6 +43,10 @@ type Service struct {
 	// (project_id IS NULL); nil when the superadmin module is absent.
 	superadmin *superadmin.Repository
 
+	// fetcher downloads + safely extracts GitHub repository archives for
+	// ImportFromGitHub. Injectable so tests can stub the network and limits.
+	fetcher *GitHubFetcher
+
 	log *slog.Logger
 }
 
@@ -76,6 +80,7 @@ func NewService(p ServiceParams) *Service {
 		graphSvc:    p.GraphSvc,
 		agentRepo:   p.AgentRepo,
 		superadmin:  p.Superadmin,
+		fetcher:     newGitHubFetcher(),
 		log:         p.Log.With(logger.Scope("blueprints.svc")),
 	}
 }

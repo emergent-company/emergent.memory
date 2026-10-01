@@ -116,6 +116,7 @@ type MemoryBackend interface {
 	ListBlueprintVersions(ctx context.Context, name string) ([]BlueprintRecord, error)
 	ListBlueprints(ctx context.Context) ([]BlueprintRecord, error)
 	CreateBlueprint(ctx context.Context, req *createBlueprintRequest) (*BlueprintRecord, error)
+	ImportBlueprint(ctx context.Context, url, ref, token string) (*BlueprintRecord, error)
 	GetBlueprint(ctx context.Context, id string) (*BlueprintRecord, error)
 	PublishBlueprint(ctx context.Context, id string) error
 	ApplyBlueprint(ctx context.Context, id string) (*BlueprintApplyResult, error)
