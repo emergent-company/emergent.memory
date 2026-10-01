@@ -1305,6 +1305,10 @@ routes:
       path: /api/projects/:projectId/webhook-trigger-tokens
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: GET
+      path: /api/projects/:projectId/work-items
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(agents:read)
     - method: POST
       path: /api/projects/:projectId/work-items/:canonicalId/approve
       level: project-member

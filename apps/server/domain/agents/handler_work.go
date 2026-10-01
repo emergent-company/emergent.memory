@@ -2,6 +2,8 @@ package agents
 
 import (
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/labstack/echo/v4"
 
@@ -39,6 +41,85 @@ type RequestChangesWorkItemDTO struct {
 // clears the lane (any listener may claim).
 type ReassignWorkItemDTO struct {
 	Assignee string `json:"assignee"`
+}
+
+// WorkItemDTO is the board-card projection returned by the list endpoint: the
+// work object's HEAD joined to its latest run's execution status, plus the
+// derived unroutable flag.
+type WorkItemDTO struct {
+	ProjectID             string `json:"projectId"`
+	CanonicalID           string `json:"canonicalId"`
+	Type                  string `json:"type"`
+	Key                   string `json:"key"`
+	Status                string `json:"status"`
+	Assignee              string `json:"assignee"`
+	Version               int    `json:"version"`
+	NeedsReview           bool   `json:"needsReview"`
+	UpdatedAt             string `json:"updatedAt"`
+	LatestRunStatus       string `json:"latestRunStatus,omitempty"`
+	LatestRunFailureClass string `json:"latestRunFailureClass,omitempty"`
+	LatestRunID           string `json:"latestRunId,omitempty"`
+	RunCount              int    `json:"runCount"`
+	Unroutable            bool   `json:"unroutable"`
+}
+
+func toWorkItemDTO(it *graph.WorkItem) *WorkItemDTO {
+	if it == nil {
+		return nil
+	}
+	return &WorkItemDTO{
+		ProjectID:             it.ProjectID,
+		CanonicalID:           it.CanonicalID,
+		Type:                  it.Type,
+		Key:                   it.Key,
+		Status:                it.Status,
+		Assignee:              it.Assignee,
+		Version:               it.Version,
+		NeedsReview:           it.NeedsReview,
+		UpdatedAt:             it.UpdatedAt.Format(time.RFC3339),
+		LatestRunStatus:       it.LatestRunStatus,
+		LatestRunFailureClass: it.LatestRunFailureClass,
+		LatestRunID:           it.LatestRunID,
+		RunCount:              it.RunCount,
+		Unroutable:            it.Unroutable,
+	}
+}
+
+// ListWorkItems handles GET /api/projects/:projectId/work-items
+//
+// @Summary      List work items
+// @Description  Returns the Kanban projection of board-enabled work items (object HEAD joined to latest run), filterable by status and type
+// @Tags         agents
+// @Produce      json
+// @Param        projectId path string true "Project ID"
+// @Param        status query string false "Filter by work status"
+// @Param        type query string false "Filter by object type"
+// @Param        limit query int false "Max items (default 200, max 1000)"
+// @Success      200 {object} APIResponse[[]WorkItemDTO] "Work items"
+// @Router       /api/projects/{projectId}/work-items [get]
+// @Security     bearerAuth
+func (h *Handler) ListWorkItems(c echo.Context) error {
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+	status := c.QueryParam("status")
+	typeName := c.QueryParam("type")
+	limit := 200
+	if v := c.QueryParam("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = min(n, 1000)
+		}
+	}
+	items, err := h.workActions.ListWorkItems(c.Request().Context(), projectID, status, typeName, limit)
+	if err != nil {
+		return err
+	}
+	out := make([]*WorkItemDTO, 0, len(items))
+	for _, it := range items {
+		out = append(out, toWorkItemDTO(it))
+	}
+	return c.JSON(http.StatusOK, SuccessResponse(out))
 }
 
 func toWorkItemHeadDTO(h *graph.WorkObjectHead) *WorkItemHeadDTO {

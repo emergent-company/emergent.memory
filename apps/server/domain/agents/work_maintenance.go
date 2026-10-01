@@ -135,6 +135,73 @@ func (r *Repository) FindReactionAgentsForType(ctx context.Context, projectID, o
 	return out, nil
 }
 
+// workListenerIndex is the project's routable-work footprint: for each object
+// type (and "*" for wildcard listeners), the set of enabled work-agent names
+// subscribed to the created event. It backs the board's derived unroutable
+// predicate without per-item queries.
+type workListenerIndex struct {
+	typeListeners map[string]map[string]bool
+}
+
+// buildWorkListenerIndex loads every enabled reaction agent in the project that
+// is an object-driven work listener (queued dispatch or a work config) and
+// indexes its name by the object types it subscribes to.
+func (r *Repository) buildWorkListenerIndex(ctx context.Context, projectID string) (*workListenerIndex, error) {
+	agents, err := r.FindEnabledByTriggerType(ctx, TriggerTypeReaction)
+	if err != nil {
+		return nil, err
+	}
+	idx := &workListenerIndex{typeListeners: map[string]map[string]bool{}}
+	add := func(objType, name string) {
+		if idx.typeListeners[objType] == nil {
+			idx.typeListeners[objType] = map[string]bool{}
+		}
+		idx.typeListeners[objType][name] = true
+	}
+	for _, a := range agents {
+		if a == nil || a.ProjectID != projectID || a.ReactionConfig == nil {
+			continue
+		}
+		if !reactionSubscribesToCreated(a.ReactionConfig) {
+			continue
+		}
+		def, err := r.ResolveDefinitionForAgent(ctx, a)
+		if err != nil || def == nil {
+			continue
+		}
+		if def.DispatchMode != DispatchModeQueued && def.WorkConfig.IsZero() {
+			continue // legacy inline agent: not object-driven work
+		}
+		if len(a.ReactionConfig.ObjectTypes) == 0 {
+			add("*", a.Name)
+		}
+		for _, t := range a.ReactionConfig.ObjectTypes {
+			add(t, a.Name)
+		}
+	}
+	return idx, nil
+}
+
+// isRoutable reports whether a work object with the given type and assignee has
+// a listening agent. assignee empty means any listener; non-empty means a
+// listener matching that name.
+func (idx *workListenerIndex) isRoutable(objType, assignee string) bool {
+	if idx == nil {
+		return false
+	}
+	names := map[string]bool{}
+	for n := range idx.typeListeners[objType] {
+		names[n] = true
+	}
+	for n := range idx.typeListeners["*"] {
+		names[n] = true
+	}
+	if len(names) == 0 {
+		return false
+	}
+	return assignee == "" || names[assignee]
+}
+
 // reactionMatchesType reports whether a reaction config listens for objectType
 // (specific or wildcard).
 func reactionMatchesType(rc *ReactionConfig, objectType string) bool {

@@ -85,13 +85,20 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	workItems.Use(authMiddleware.RequireAuth())
 	workItems.Use(authMiddleware.RequireProjectTokenScope())
 	workItems.Use(authMiddleware.RequireProjectMember())
-	workItems.Use(authMiddleware.RequireAPITokenScopes("agents:write"))
 
-	workItems.POST("/:canonicalId/approve", h.ApproveWorkItem)
-	workItems.POST("/:canonicalId/request-changes", h.RequestChangesWorkItem)
-	workItems.POST("/:canonicalId/retry", h.RetryWorkItem)
-	workItems.POST("/:canonicalId/reassign", h.ReassignWorkItem)
-	workItems.POST("/:canonicalId/cancel", h.CancelWorkItem)
+	// The board read projection (list) requires agents:read; the human actions
+	// below require agents:write.
+	workItemsRead := workItems.Group("")
+	workItemsRead.Use(authMiddleware.RequireAPITokenScopes("agents:read"))
+	workItemsRead.GET("", h.ListWorkItems)
+
+	workItemsWrite := workItems.Group("")
+	workItemsWrite.Use(authMiddleware.RequireAPITokenScopes("agents:write"))
+	workItemsWrite.POST("/:canonicalId/approve", h.ApproveWorkItem)
+	workItemsWrite.POST("/:canonicalId/request-changes", h.RequestChangesWorkItem)
+	workItemsWrite.POST("/:canonicalId/retry", h.RetryWorkItem)
+	workItemsWrite.POST("/:canonicalId/reassign", h.ReassignWorkItem)
+	workItemsWrite.POST("/:canonicalId/cancel", h.CancelWorkItem)
 
 	// --- Agent Definition Overrides (per-project config overrides) ---
 	defsRead.GET("/overrides", h.ListAgentOverrides)

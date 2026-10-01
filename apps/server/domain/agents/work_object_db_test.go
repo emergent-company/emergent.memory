@@ -287,6 +287,10 @@ func (f *fakeWorkObjectStore) ListWorkObjectsByStatus(ctx context.Context, proje
 	return nil, nil
 }
 
+func (f *fakeWorkObjectStore) ListWorkItems(ctx context.Context, projectID, status, typeName string, limit int) ([]*graph.WorkItem, error) {
+	return nil, nil
+}
+
 func (f *fakeWorkObjectStore) GetObjectTypeWorkConfig(ctx context.Context, projectID, typeName string) (*agents.ObjectTypeWorkConfig, error) {
 	return nil, nil
 }

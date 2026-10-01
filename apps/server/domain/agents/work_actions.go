@@ -265,6 +265,28 @@ func (s *WorkActionService) Cancel(ctx context.Context, projectID, canonicalID s
 	return res, nil
 }
 
+// ListWorkItems returns the board projection of work items (objects joined to
+// their latest run), with the derived unroutable flag overlaid from the
+// project's listener footprint. status empty = all statuses; typeName empty =
+// all board-enabled types.
+func (s *WorkActionService) ListWorkItems(ctx context.Context, projectID, status, typeName string, limit int) ([]*graph.WorkItem, error) {
+	if s.workObjects == nil {
+		return nil, fmt.Errorf("work object store not wired")
+	}
+	items, err := s.workObjects.ListWorkItems(ctx, projectID, status, typeName, limit)
+	if err != nil {
+		return nil, err
+	}
+	idx, err := s.repo.buildWorkListenerIndex(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	for _, it := range items {
+		it.Unroutable = !idx.isRoutable(it.Type, it.Assignee)
+	}
+	return items, nil
+}
+
 // enqueueWorkRun enqueues a fresh run for the subject work object, optionally
 // carrying the full rework feedback history in the trigger metadata.
 func (s *WorkActionService) enqueueWorkRun(ctx context.Context, head *graph.WorkObjectHead, agent *Agent, agentDef *AgentDefinition, feedback []map[string]any) (string, error) {

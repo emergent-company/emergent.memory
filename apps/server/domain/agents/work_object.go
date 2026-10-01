@@ -48,6 +48,10 @@ type WorkObjectStore interface {
 	// objects currently in the given status (projectID empty = all projects;
 	// olderThan non-zero restricts to objects last written before olderThan).
 	ListWorkObjectsByStatus(ctx context.Context, projectID, status string, olderThan time.Time, limit int) ([]*graph.WorkObjectHead, error)
+	// ListWorkItems returns the Kanban projection of board-enabled work objects
+	// joined to their latest run (status empty = all statuses; typeName empty =
+	// all board-enabled types).
+	ListWorkItems(ctx context.Context, projectID, status, typeName string, limit int) ([]*graph.WorkItem, error)
 	// GetObjectTypeWorkConfig resolves the per-type object-driven work config for
 	// a project+type (P4). Returns (nil, nil) for unknown/unconfigured types. It
 	// is the surface used to apply per-type failureLimit/retryPolicy overrides

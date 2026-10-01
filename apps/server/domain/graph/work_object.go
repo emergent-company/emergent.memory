@@ -45,6 +45,31 @@ func workObjectHead(obj *GraphObject) *WorkObjectHead {
 	return head
 }
 
+// WorkItem is the Kanban projection of a board-enabled work object joined to
+// its latest run (the execution badge). It carries the HEAD's work state
+// (status, assignee, key, type) plus the latest run's execution status and
+// failure class, the total run count, the review flag, and the derived
+// unroutable flag (set by the agents domain — a board-enabled object whose type
+// or assignee matches no listening agent).
+type WorkItem struct {
+	ProjectID   string
+	CanonicalID string
+	Type        string
+	Key         string
+	Status      string
+	Assignee    string
+	Version     int
+	UpdatedAt   time.Time
+	NeedsReview bool
+
+	LatestRunStatus       string
+	LatestRunFailureClass string
+	LatestRunID           string
+	RunCount              int
+
+	Unroutable bool
+}
+
 // WorkObjectTransition describes a single status transition applied through the
 // platform's single-work-status write path. It always carries a from/to status;
 // the optional fields express review and unassign side effects.
@@ -374,4 +399,71 @@ func (s *Service) ListWorkObjectsByStatus(ctx context.Context, projectID, status
 		heads[i] = workObjectHead(o)
 	}
 	return heads, nil
+}
+
+// ListWorkItems returns the board projection of board-enabled work objects:
+// the HEAD joined to its latest run (execution status, failure class, run
+// count) via subject_object_id = canonical_id. status empty returns every
+// status; typeName empty returns every board-enabled type. Items are ordered by
+// updated_at ascending. The Unroutable flag is left false here — it is a
+// derived, agents-domain predicate the caller overlays.
+func (s *Service) ListWorkItems(ctx context.Context, projectID, status, typeName string, limit int) ([]*WorkItem, error) {
+	var pid *uuid.UUID
+	if projectID != "" {
+		p, err := uuid.Parse(projectID)
+		if err != nil {
+			return nil, err
+		}
+		pid = &p
+	}
+	boardRefs, err := s.repo.listBoardEnabledTypeRefs(ctx, pid)
+	if err != nil {
+		return nil, err
+	}
+	objs, err := s.repo.listBoardWorkObjects(ctx, boardRefs, status, typeName, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	canonicalIDs := make([]uuid.UUID, 0, len(objs))
+	for _, o := range objs {
+		canonicalIDs = append(canonicalIDs, o.CanonicalID)
+	}
+	runs, err := s.repo.listLatestRunsForSubjects(ctx, canonicalIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]*WorkItem, 0, len(objs))
+	for _, o := range objs {
+		item := &WorkItem{
+			ProjectID:   o.ProjectID.String(),
+			CanonicalID: o.CanonicalID.String(),
+			Type:        o.Type,
+			Version:     o.Version,
+			UpdatedAt:   o.UpdatedAt,
+		}
+		if o.Key != nil {
+			item.Key = *o.Key
+		}
+		if o.Status != nil {
+			item.Status = *o.Status
+		}
+		if o.Assignee != nil {
+			item.Assignee = *o.Assignee
+		}
+		if o.NeedsReview != nil {
+			item.NeedsReview = *o.NeedsReview
+		}
+		if run := runs[o.CanonicalID]; run != nil {
+			item.LatestRunStatus = run.Status
+			item.LatestRunID = run.RunID
+			item.RunCount = run.RunCount
+			if run.FailureClass != nil {
+				item.LatestRunFailureClass = *run.FailureClass
+			}
+		}
+		items = append(items, item)
+	}
+	return items, nil
 }
