@@ -67,6 +67,16 @@ func BuildWorkCompleteTool(deps WorkToolDeps) (tool.Tool, error) {
 				)
 				return map[string]any{"error": "work_complete: " + err.Error()}, nil
 			}
+			if !transitioned {
+				// A failed compare-and-transition (e.g. a concurrent cancel/block)
+				// means the object was never completed. Do not finalize the run: it
+				// must surface as an error so the run is retried/blocked, not
+				// cleared as a successful terminator.
+				deps.Logger.Warn("work_complete: transition skipped (object not in progress)",
+					slog.String("canonical_id", deps.CanonicalID),
+				)
+				return map[string]any{"error": "work_complete: object is not in the in-progress status (concurrent cancel/block or already transitioned)"}, nil
+			}
 
 			targetStatus := doneStatus
 			if wc.RequiresReview {
@@ -79,9 +89,6 @@ func BuildWorkCompleteTool(deps WorkToolDeps) (tool.Tool, error) {
 				"summary":         summary,
 				"artifacts":       artifacts,
 				"requires_review": wc.RequiresReview,
-			}
-			if !transitioned {
-				result["note"] = "object was not in the in-progress status; transition skipped"
 			}
 
 			// Run-finalizing: record the terminator so the executor stops the run
@@ -131,6 +138,15 @@ func BuildWorkBlockTool(deps WorkToolDeps) (tool.Tool, error) {
 				)
 				return map[string]any{"error": "work_block: " + err.Error()}, nil
 			}
+			if !transitioned {
+				// The block transition failed (concurrent cancel/complete): do not
+				// create the human task and do not finalize the run. The run must
+				// surface as an error so it is retried/blocked by the failure policy.
+				deps.Logger.Warn("work_block: transition skipped (object not in progress)",
+					slog.String("canonical_id", deps.CanonicalID),
+				)
+				return map[string]any{"error": "work_block: object is not in the in-progress status (concurrent cancel/complete or already transitioned)"}, nil
+			}
 
 			// Human-facing task (kb.tasks) — best-effort; a failure to create the
 			// task does not undo the block.
@@ -169,9 +185,6 @@ func BuildWorkBlockTool(deps WorkToolDeps) (tool.Tool, error) {
 				"work_status": blockedStatus,
 				"reason":      reason,
 				"task_id":     taskID,
-			}
-			if !transitioned {
-				result["note"] = "object was not in the in-progress status; transition skipped"
 			}
 
 			deps.Terminator.Finalize(WorkTerminatorBlock, map[string]any{

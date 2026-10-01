@@ -131,7 +131,7 @@ func TestWorkActionsRequestChanges(t *testing.T) {
 
 	canonicalID := createWorkObject(t, ctx, gSvc, projectID, "k-3", "review", "researcher")
 
-	res, err := newWorkActions(repo, gSvc).RequestChanges(ctx, projectID, canonicalID, "reviewer-1", "please fix the summary", nil)
+	res, err := newWorkActions(repo, gSvc).RequestChanges(ctx, projectID, canonicalID, "reviewer-1", "please fix the summary")
 	require.NoError(t, err)
 	require.Equal(t, "revision", res.Head.Status)
 	require.Equal(t, 1, res.Round)
@@ -159,7 +159,7 @@ func TestWorkActionsRequestChanges_EmptyFeedbackRejected(t *testing.T) {
 
 	canonicalID := createWorkObject(t, ctx, gSvc, projectID, "k-4", "review", "researcher")
 
-	_, err := newWorkActions(repo, gSvc).RequestChanges(ctx, projectID, canonicalID, "reviewer-1", "", nil)
+	_, err := newWorkActions(repo, gSvc).RequestChanges(ctx, projectID, canonicalID, "reviewer-1", "")
 	require.Error(t, err)
 	require.Equal(t, "review", workHeadStatus(t, ctx, gSvc, projectID, canonicalID))
 	require.Equal(t, 0, countWorkFeedback(t, ctx, repo, projectID, canonicalID))
@@ -174,7 +174,7 @@ func TestWorkActionsRequestChanges_RevisionCapEscalates(t *testing.T) {
 
 	canonicalID := createWorkObject(t, ctx, gSvc, projectID, "k-5", "review", "researcher")
 
-	res, err := newWorkActions(repo, gSvc).RequestChanges(ctx, projectID, canonicalID, "reviewer-1", "still wrong", nil)
+	res, err := newWorkActions(repo, gSvc).RequestChanges(ctx, projectID, canonicalID, "reviewer-1", "still wrong")
 	require.NoError(t, err)
 	require.Equal(t, "revision", res.Head.Status)
 	require.Equal(t, 1, res.Round)

@@ -102,8 +102,9 @@ func (s *WorkActionService) Approve(ctx context.Context, projectID, canonicalID,
 // RequestChanges sends a review back for rework: review→revision, records an
 // append-only feedback round (non-empty required), and enqueues a rework run
 // carrying all prior feedback. Once the revision cap is reached it escalates to
-// a human (kb.tasks) and does NOT re-enqueue.
-func (s *WorkActionService) RequestChanges(ctx context.Context, projectID, canonicalID, author, text string, runID *string) (*WorkActionResult, error) {
+// a human (kb.tasks) and does NOT re-enqueue. The rework run's id is persisted
+// on the feedback round it produced (rather than trusting a caller-supplied id).
+func (s *WorkActionService) RequestChanges(ctx context.Context, projectID, canonicalID, author, text string) (*WorkActionResult, error) {
 	head, agent, def, err := s.resolveWorkContext(ctx, projectID, canonicalID)
 	if err != nil {
 		return nil, err
@@ -120,15 +121,24 @@ func (s *WorkActionService) RequestChanges(ctx context.Context, projectID, canon
 		return nil, apperror.New(http.StatusConflict, "conflict", "work item is not in the review status")
 	}
 
-	round, err := s.repo.AppendWorkFeedback(ctx, projectID, canonicalID, author, text, runID)
+	round, err := s.repo.FeedbackRoundCount(ctx, projectID, canonicalID)
 	if err != nil {
-		return nil, apperror.NewInternal("failed to record work feedback", err)
+		return nil, apperror.NewInternal("failed to resolve feedback round", err)
 	}
+	round++
+
 	feedback, err := s.repo.ListWorkFeedback(ctx, projectID, canonicalID)
 	if err != nil {
 		return nil, apperror.NewInternal("failed to load work feedback", err)
 	}
 	feedbackList := feedbackToMaps(feedback)
+	// Include the current round in the feedback history carried to the rework run
+	// and escalation task (the rework run must know why it is re-running).
+	currentFeedback := map[string]any{"round": round, "text": text}
+	if author != "" {
+		currentFeedback["author"] = author
+	}
+	feedbackList = append(feedbackList, currentFeedback)
 
 	res := &WorkActionResult{Round: round}
 	res.Head, err = s.workObjects.GetHeadObject(ctx, projectID, canonicalID)
@@ -136,22 +146,32 @@ func (s *WorkActionService) RequestChanges(ctx context.Context, projectID, canon
 		return nil, err
 	}
 
-	if round >= wc.RevisionLimitValue() {
+	escalate := func() {
+		if _, err := s.repo.AppendWorkFeedback(ctx, projectID, canonicalID, author, text, nil); err != nil {
+			s.log.Warn("failed to record escalated feedback", slog.String("canonical_id", canonicalID), slog.String("error", err.Error()))
+		}
 		s.escalateRevisionCap(ctx, projectID, canonicalID, feedbackList)
 		res.Escalated = true
-		return res, nil
 	}
 
+	if round >= wc.RevisionLimitValue() {
+		escalate()
+		return res, nil
+	}
 	if agent == nil {
 		s.log.Warn("request-changes: no agent resolved to rework the item; escalating",
 			slog.String("canonical_id", canonicalID))
-		s.escalateRevisionCap(ctx, projectID, canonicalID, feedbackList)
-		res.Escalated = true
+		escalate()
 		return res, nil
 	}
+
 	runIDEnqueued, err := s.enqueueWorkRun(ctx, head, agent, def, feedbackList)
 	if err != nil {
 		return nil, apperror.NewInternal("failed to enqueue rework run", err)
+	}
+	// Persist the feedback round with the id of the rework run it produced.
+	if _, err := s.repo.AppendWorkFeedback(ctx, projectID, canonicalID, author, text, &runIDEnqueued); err != nil {
+		return nil, apperror.NewInternal("failed to record work feedback", err)
 	}
 	res.RunID = runIDEnqueued
 	return res, nil

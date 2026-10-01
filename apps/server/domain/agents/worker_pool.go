@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/emergent-company/emergent.memory/domain/graph"
 )
 
 // WorkerPool executes queued agent runs using per-queue worker sets. A
@@ -449,12 +451,34 @@ func (p *WorkerPool) claimWorkObject(ctx context.Context, run *AgentRun, agent *
 		return false, fmt.Errorf("no work object store configured")
 	}
 	readyStatus := "ready"
+	revisionStatus := "revision"
 	inProgressStatus := "in_progress"
 	if agentDef != nil {
 		readyStatus = agentDef.WorkConfig.ReadyStatus()
+		revisionStatus = agentDef.WorkConfig.RevisionStatus()
 		inProgressStatus = agentDef.WorkConfig.InProgressStatus()
 	}
+	// A rework run (request-changes) claims from the revision status, not ready:
+	// RequestChangesWorkObject moved the object to revision, and the claim would
+	// otherwise be skipped, stranding the item in revision forever.
+	if isReworkRun(run) {
+		return p.workObjects.TransitionWorkObject(ctx, agent.ProjectID, *run.SubjectObjectID, graph.WorkObjectTransition{
+			FromStatus: revisionStatus,
+			ToStatus:   inProgressStatus,
+		})
+	}
 	return p.workObjects.ClaimWorkObject(ctx, agent.ProjectID, *run.SubjectObjectID, readyStatus, inProgressStatus)
+}
+
+// isReworkRun reports whether a subject-object run is a rework run enqueued by a
+// request-changes action. Rework runs carry the full feedback history in their
+// trigger metadata under the "work_feedback" key.
+func isReworkRun(run *AgentRun) bool {
+	if run == nil || run.TriggerMetadata == nil {
+		return false
+	}
+	_, ok := run.TriggerMetadata["work_feedback"]
+	return ok
 }
 
 // reenqueueParent re-enqueues the parent run of this run (if any) with a
