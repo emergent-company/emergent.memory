@@ -28,6 +28,14 @@ type AgentRepo interface {
 	UpdateDefinition(ctx context.Context, def *agents.AgentDefinition) error
 	CreateDefinition(ctx context.Context, def *agents.AgentDefinition) error
 	DeleteDefinition(ctx context.Context, id string) error
+
+	// Runtime kb.agents methods (thin wrappers over the concrete
+	// *agents.Repository). Used by apply to create-or-update the reaction agent
+	// bound to a definition, and by Unapply to delete blueprint-owned agents.
+	FindAgentByName(ctx context.Context, projectID, name string) (*agents.Agent, error)
+	CreateAgent(ctx context.Context, agent *agents.Agent) error
+	UpdateAgent(ctx context.Context, agent *agents.Agent) error
+	DeleteAgentsBySourceBlueprint(ctx context.Context, blueprintID string) (int, error)
 }
 
 // Service handles business logic for blueprints
@@ -422,6 +430,15 @@ func (s *Service) Unapply(ctx context.Context, blueprintID, projectID string) (*
 				return nil, err
 			}
 			result.Agents.Removed++
+		}
+
+		// Runtime agents: delete any kb.agents rows this blueprint created,
+		// matched on the ownership stamp in their config JSONB. Counted under
+		// Agents.Removed (they are the runtime half of the definition).
+		if n, err := s.agentRepo.DeleteAgentsBySourceBlueprint(ctx, blueprintID); err != nil {
+			return nil, err
+		} else {
+			result.Agents.Removed += n
 		}
 	} else if len(manifest.Agents) > 0 {
 		result.Agents.Skipped = len(manifest.Agents)

@@ -191,6 +191,7 @@ type CreateObjectRequest struct {
 	Type       string         `json:"type"`
 	Key        *string        `json:"key,omitempty"`
 	Status     *string        `json:"status,omitempty"`
+	Assignee   *string        `json:"assignee,omitempty"`
 	Properties map[string]any `json:"properties,omitempty"`
 	Labels     []string       `json:"labels,omitempty"`
 	BranchID   *string        `json:"branch_id,omitempty"`

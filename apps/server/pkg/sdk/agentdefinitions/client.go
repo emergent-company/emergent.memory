@@ -140,6 +140,11 @@ type CreateAgentDefinitionRequest struct {
 	Config         map[string]any        `json:"config,omitempty"`
 	ToolPolicies   map[string]ToolPolicy `json:"toolPolicies,omitempty"`
 	UIConfig       json.RawMessage       `json:"uiConfig,omitempty"`
+	// WorkConfig is the object-driven work configuration (status mapping,
+	// requiresReview, failure/revision limits, retry policy, work contract).
+	// Kept as raw JSON so it round-trips the server's agents.AgentWorkConfig
+	// losslessly without mirroring the full nested type hierarchy.
+	WorkConfig json.RawMessage `json:"workConfig,omitempty"`
 }
 
 // UpdateAgentDefinitionRequest is the request body for updating an agent definition.
@@ -161,6 +166,9 @@ type UpdateAgentDefinitionRequest struct {
 	Config         map[string]any        `json:"config,omitempty"`
 	ToolPolicies   map[string]ToolPolicy `json:"toolPolicies,omitempty"`
 	UIConfig       json.RawMessage       `json:"uiConfig,omitempty"`
+	// WorkConfig is the object-driven work configuration (see the create request
+	// for details). Raw JSON for lossless round-trip.
+	WorkConfig json.RawMessage `json:"workConfig,omitempty"`
 }
 
 // --- Internal helpers ---
