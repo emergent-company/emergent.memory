@@ -27,6 +27,13 @@ func TestAgentWorkConfigIsZero(t *testing.T) {
 	require.False(t, (AgentWorkConfig{
 		RetryPolicy: AgentRetryPolicy{MaxAttempts: 3},
 	}).IsZero())
+	require.False(t, (AgentWorkConfig{
+		WorkContract: AgentWorkContract{RequireArtifacts: true},
+	}).IsZero())
+	require.False(t, (AgentWorkConfig{
+		WorkContract: AgentWorkContract{RequiredDeliverableTypes: []string{"ResearchReport"}},
+	}).IsZero())
+	require.True(t, (AgentWorkContract{}).IsZero())
 }
 
 func TestAgentWorkConfigStatusDefaults(t *testing.T) {
@@ -245,6 +252,10 @@ type fakeWorkObjectStore struct {
 
 func (f *fakeWorkObjectStore) GetHeadObject(ctx context.Context, projectID, canonicalID string) (*graph.WorkObjectHead, error) {
 	return &graph.WorkObjectHead{CanonicalID: canonicalID, Type: "ResearchRequest", Version: 1}, nil
+}
+
+func (f *fakeWorkObjectStore) FindHeadByTypeAndKey(ctx context.Context, projectID, objType, key string) (*graph.WorkObjectHead, error) {
+	return nil, nil
 }
 
 func (f *fakeWorkObjectStore) ClaimWorkObject(ctx context.Context, projectID, canonicalID, readyStatus, inProgressStatus string) (bool, error) {

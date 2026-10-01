@@ -127,6 +127,24 @@ func (s *Service) GetHeadObject(ctx context.Context, projectID, canonicalID stri
 	return workObjectHead(obj), nil
 }
 
+// FindHeadByTypeAndKey returns the HEAD version of an object identified by
+// (project, type, key) on the main graph, or (nil, nil) when not found. It
+// resolves a declared work-contract deliverable to an existing object (P6).
+func (s *Service) FindHeadByTypeAndKey(ctx context.Context, projectID, objType, key string) (*WorkObjectHead, error) {
+	pid, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := s.repo.FindHeadByTypeAndKey(ctx, s.repo.DB(), pid, nil, objType, key)
+	if err != nil {
+		return nil, err
+	}
+	if obj == nil {
+		return nil, nil
+	}
+	return workObjectHead(obj), nil
+}
+
 // ClaimWorkObject atomically transitions a work object from readyStatus to
 // inProgressStatus under the versioned write model: it acquires the object's
 // advisory upsert lock in a transaction, re-reads the HEAD, asserts the status

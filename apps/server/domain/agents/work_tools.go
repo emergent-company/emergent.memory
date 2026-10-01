@@ -26,83 +26,200 @@ type WorkToolDeps struct {
 
 // BuildWorkCompleteTool creates the work_complete terminator. It transitions
 // the subject object to done (or review+needs_review when requiresReview) and
-// records the run-finalizing signal.
+// records the run-finalizing signal. When the agent's work contract declares
+// required deliverables, those must be produced and declared before the item
+// can be completed.
 func BuildWorkCompleteTool(deps WorkToolDeps) (tool.Tool, error) {
 	return functiontool.New(
 		functiontool.Config{
 			Name:        ToolNameWorkComplete,
-			Description: "Mark the current work item complete and end the run. Call this exactly once when the work is finished. Provide a summary of what was accomplished and (optionally) the list of produced object keys/artifacts. After this call the run ends — do not call any further tools. If your agent requires review, the item moves to review instead of done.",
+			Description: "Mark the current work item complete and end the run. Call this exactly once when the work is finished. Provide a summary of what was accomplished, the list of produced object keys/artifacts, and/or structured deliverables (an array of {type, key} entries naming the objects you produced). After this call the run ends — do not call any further tools. If your agent requires review, the item moves to review instead of done. If your agent declares a work contract, the required deliverables must be produced and declared before the item can be completed.",
 		},
 		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
-			summary, _ := args["summary"].(string)
-			var artifacts []string
-			if raw, ok := args["artifacts"]; ok {
-				switch v := raw.(type) {
-				case []any:
-					for _, item := range v {
-						if s, ok := item.(string); ok {
-							artifacts = append(artifacts, s)
-						}
-					}
-				case []string:
-					artifacts = append(artifacts, v...)
-				}
-			}
-
-			wc := deps.WorkConfig
-			doneStatus := wc.DoneStatus()
-			reviewStatus := wc.ReviewStatus()
-			inProgressStatus := wc.InProgressStatus()
-
-			if deps.Store == nil || deps.CanonicalID == "" {
-				return map[string]any{"error": "work_complete: no subject work object to complete"}, nil
-			}
-
-			transitioned, err := deps.Store.CompleteWorkObject(
-				ctx, deps.ProjectID, deps.CanonicalID, inProgressStatus, doneStatus, reviewStatus, wc.RequiresReview)
-			if err != nil {
-				deps.Logger.Error("work_complete: transition failed",
-					slog.String("canonical_id", deps.CanonicalID),
-					slog.String("error", err.Error()),
-				)
-				return map[string]any{"error": "work_complete: " + err.Error()}, nil
-			}
-			if !transitioned {
-				// A failed compare-and-transition (e.g. a concurrent cancel/block)
-				// means the object was never completed. Do not finalize the run: it
-				// must surface as an error so the run is retried/blocked, not
-				// cleared as a successful terminator.
-				deps.Logger.Warn("work_complete: transition skipped (object not in progress)",
-					slog.String("canonical_id", deps.CanonicalID),
-				)
-				return map[string]any{"error": "work_complete: object is not in the in-progress status (concurrent cancel/block or already transitioned)"}, nil
-			}
-
-			targetStatus := doneStatus
-			if wc.RequiresReview {
-				targetStatus = reviewStatus
-			}
-
-			result := map[string]any{
-				"status":          "completed",
-				"work_status":     targetStatus,
-				"summary":         summary,
-				"artifacts":       artifacts,
-				"requires_review": wc.RequiresReview,
-			}
-
-			// Run-finalizing: record the terminator so the executor stops the run
-			// and reports the outcome; any later steps are ignored.
-			deps.Terminator.Finalize(WorkTerminatorComplete, map[string]any{
-				"work_terminator": WorkTerminatorComplete,
-				"work_status":     targetStatus,
-				"summary":         summary,
-				"artifacts":       artifacts,
-			})
-
-			return result, nil
+			return completeWork(ctx, deps, args)
 		},
 	)
+}
+
+// workDeliverable is a declared deliverable on a work_complete call: an object
+// type plus its key.
+type workDeliverable struct {
+	Type string `json:"type"`
+	Key  string `json:"key"`
+}
+
+// completeWork is the work_complete handler body, extracted for testability. It
+// validates the work contract (when non-empty), then transitions the subject
+// object and records the run-finalizing signal. A rejected contract returns an
+// error tool result (nil Go error) so the agent may continue in the same run —
+// no failure budget is consumed.
+func completeWork(ctx context.Context, deps WorkToolDeps, args map[string]any) (map[string]any, error) {
+	summary, _ := args["summary"].(string)
+	artifacts := parseStringList(args["artifacts"])
+	deliverables := parseDeliverables(args["deliverables"])
+
+	wc := deps.WorkConfig
+	doneStatus := wc.DoneStatus()
+	reviewStatus := wc.ReviewStatus()
+	inProgressStatus := wc.InProgressStatus()
+
+	if deps.Store == nil || deps.CanonicalID == "" {
+		return map[string]any{"error": "work_complete: no subject work object to complete"}, nil
+	}
+
+	// Work-contract validation (P6): an agent that declares required
+	// deliverables must have produced them. A rejected completion returns an
+	// error tool result and does NOT finalize the run (no terminator recorded,
+	// item unchanged), so the agent may continue in the same run.
+	if msg := validateWorkContract(ctx, deps.Store, deps.ProjectID, wc.WorkContract, summary, artifacts, deliverables); msg != "" {
+		deps.Logger.Warn("work_complete: work contract not satisfied",
+			slog.String("canonical_id", deps.CanonicalID),
+			slog.String("reason", msg),
+		)
+		return map[string]any{"error": msg}, nil
+	}
+
+	transitioned, err := deps.Store.CompleteWorkObject(
+		ctx, deps.ProjectID, deps.CanonicalID, inProgressStatus, doneStatus, reviewStatus, wc.RequiresReview)
+	if err != nil {
+		deps.Logger.Error("work_complete: transition failed",
+			slog.String("canonical_id", deps.CanonicalID),
+			slog.String("error", err.Error()),
+		)
+		return map[string]any{"error": "work_complete: " + err.Error()}, nil
+	}
+	if !transitioned {
+		// A failed compare-and-transition (e.g. a concurrent cancel/block)
+		// means the object was never completed. Do not finalize the run: it
+		// must surface as an error so the run is retried/blocked, not
+		// cleared as a successful terminator.
+		deps.Logger.Warn("work_complete: transition skipped (object not in progress)",
+			slog.String("canonical_id", deps.CanonicalID),
+		)
+		return map[string]any{"error": "work_complete: object is not in the in-progress status (concurrent cancel/block or already transitioned)"}, nil
+	}
+
+	targetStatus := doneStatus
+	if wc.RequiresReview {
+		targetStatus = reviewStatus
+	}
+
+	result := map[string]any{
+		"status":          "completed",
+		"work_status":     targetStatus,
+		"summary":         summary,
+		"artifacts":       artifacts,
+		"deliverables":    deliverablesForOutput(deliverables),
+		"requires_review": wc.RequiresReview,
+	}
+
+	// Run-finalizing: record the terminator so the executor stops the run
+	// and reports the outcome; any later steps are ignored.
+	deps.Terminator.Finalize(WorkTerminatorComplete, map[string]any{
+		"work_terminator": WorkTerminatorComplete,
+		"work_status":     targetStatus,
+		"summary":         summary,
+		"artifacts":       artifacts,
+		"deliverables":    deliverablesForOutput(deliverables),
+	})
+
+	return result, nil
+}
+
+// parseStringList decodes a []string argument ([]any or []string) into a string
+// slice.
+func parseStringList(raw any) []string {
+	var out []string
+	switch v := raw.(type) {
+	case []any:
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+	case []string:
+		out = append(out, v...)
+	}
+	return out
+}
+
+// parseDeliverables decodes the deliverables argument ([] of {type, key}) into
+// a slice of workDeliverable, dropping malformed entries.
+func parseDeliverables(raw any) []workDeliverable {
+	var out []workDeliverable
+	items, ok := raw.([]any)
+	if !ok {
+		return out
+	}
+	for _, item := range items {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		d := workDeliverable{}
+		d.Type, _ = m["type"].(string)
+		d.Key, _ = m["key"].(string)
+		if d.Type != "" && d.Key != "" {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// deliverablesForOutput converts declared deliverables to the JSON-friendly
+// output shape.
+func deliverablesForOutput(ds []workDeliverable) []map[string]string {
+	out := make([]map[string]string, 0, len(ds))
+	for _, d := range ds {
+		out = append(out, map[string]string{"type": d.Type, "key": d.Key})
+	}
+	return out
+}
+
+// validateWorkContract checks a work_complete call against the resolved work
+// contract and returns an error message (empty = satisfied). It never consumes
+// the per-item failure budget: a rejected completion returns an error tool
+// result and the run continues.
+func validateWorkContract(ctx context.Context, store WorkObjectStore, projectID string, contract AgentWorkContract, summary string, artifacts []string, deliverables []workDeliverable) string {
+	if contract.IsZero() {
+		return ""
+	}
+	if contract.RequireArtifacts && summary == "" && len(artifacts) == 0 {
+		return "work_complete: work contract requires artifacts or a summary; provide produced artifacts or a summary before completing"
+	}
+	if len(contract.RequiredDeliverableTypes) == 0 {
+		return ""
+	}
+
+	declared := make(map[string][]string)
+	for _, d := range deliverables {
+		declared[d.Type] = append(declared[d.Type], d.Key)
+	}
+
+	for _, dt := range contract.RequiredDeliverableTypes {
+		keys := declared[dt]
+		if len(keys) == 0 {
+			return fmt.Sprintf("work_complete: work contract requires a deliverable of type %q, but none was declared", dt)
+		}
+		found := false
+		for _, key := range keys {
+			if key == "" {
+				continue
+			}
+			head, err := store.FindHeadByTypeAndKey(ctx, projectID, dt, key)
+			if err != nil {
+				return fmt.Sprintf("work_complete: could not verify deliverable of type %q: %v", dt, err)
+			}
+			if head != nil {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Sprintf("work_complete: work contract requires a deliverable of type %q that resolves to an existing object", dt)
+		}
+	}
+	return ""
 }
 
 // BuildWorkBlockTool creates the work_block terminator. It transitions the
