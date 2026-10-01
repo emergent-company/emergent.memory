@@ -5,12 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/pgutils"
 )
 
 // Repository handles database operations for notifications
@@ -420,11 +422,34 @@ func (r *Repository) Clear(ctx context.Context, userID, notificationID string) e
 	return nil
 }
 
+// ErrActiveNotificationConflict is returned by Restore when re-activating a
+// group-keyed notification would collide with another notification that is
+// already active for the same (user_id, group_key). Restoring in that situation
+// is refused rather than silently superseding the newer alert: the later row is
+// at least as fresh as the one being restored, so clearing it would discard the
+// current alert to surface a stale duplicate. Callers can map this to a 409 and
+// tell the user "a newer notification for this key is already active".
+var ErrActiveNotificationConflict = apperror.New(
+	http.StatusConflict,
+	"notification_active_conflict",
+	"a newer notification for this key is already active",
+)
+
 // Restore un-clears and un-dismisses a notification, returning it to the inbox.
 // It resets both the dismissed flag and dismissed_at alongside cleared_at in a
 // single statement so a dismissed-then-restored row is neither cleared nor
 // dismissed. `read` is deliberately left untouched: a restored notification
 // keeps whatever read/unread state it had before being dismissed.
+//
+// Setting cleared_at = NULL re-activates the row, which is governed by the
+// partial unique index ux_notifications_user_group_key_active (WHERE group_key
+// IS NOT NULL AND cleared_at IS NULL). If a newer active notification already
+// owns this (user_id, group_key) — e.g. dismiss an old budget alert, let the
+// producer emit the next one, then restore the old one — the UPDATE violates
+// that index. We translate the violation into the typed
+// ErrActiveNotificationConflict instead of surfacing a 500. The UPDATE is a
+// single atomic statement, so a rejected restore leaves the row untouched:
+// there is no half-updated state to roll back.
 func (r *Repository) Restore(ctx context.Context, userID, notificationID string) error {
 	result, err := r.db.NewUpdate().
 		Model((*Notification)(nil)).
@@ -437,6 +462,12 @@ func (r *Repository) Restore(ctx context.Context, userID, notificationID string)
 		Exec(ctx)
 
 	if err != nil {
+		// The only unique constraint this UPDATE can violate is the active
+		// (user_id, group_key) partial index: the target's primary key is not
+		// modified, and no other uniqueness covers the row being re-activated.
+		if pgutils.IsUniqueViolation(err) {
+			return ErrActiveNotificationConflict
+		}
 		r.log.Error("failed to restore notification", logger.Error(err))
 		return apperror.NewDatabase("Database operation failed", err)
 	}
