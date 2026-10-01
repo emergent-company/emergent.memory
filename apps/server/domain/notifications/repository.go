@@ -410,11 +410,17 @@ func (r *Repository) Clear(ctx context.Context, userID, notificationID string) e
 	return nil
 }
 
-// Restore un-clears a notification.
+// Restore un-clears and un-dismisses a notification, returning it to the inbox.
+// It resets both the dismissed flag and dismissed_at alongside cleared_at in a
+// single statement so a dismissed-then-restored row is neither cleared nor
+// dismissed. `read` is deliberately left untouched: a restored notification
+// keeps whatever read/unread state it had before being dismissed.
 func (r *Repository) Restore(ctx context.Context, userID, notificationID string) error {
 	result, err := r.db.NewUpdate().
 		Model((*Notification)(nil)).
 		Set("cleared_at = NULL").
+		Set("dismissed = ?", false).
+		Set("dismissed_at = NULL").
 		Set("updated_at = ?", time.Now()).
 		Where("id = ?", notificationID).
 		Where("user_id = ?", userID).
