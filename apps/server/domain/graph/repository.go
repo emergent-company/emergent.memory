@@ -642,7 +642,7 @@ func (r *Repository) Count(ctx context.Context, params ListParams) (int, error) 
 // fail the scan with "does not have column embedding_v2".
 var graphObjectDetailColumns = []string{
 	"id", "project_id", "branch_id", "canonical_id", "supersedes_id", "version",
-	"merged_to_canonical_id", "type", "key", "status", "namespace",
+	"merged_to_canonical_id", "type", "key", "status", "assignee", "namespace",
 	"properties", "labels", "change_summary", "content_hash",
 	"created_at", "updated_at", "deleted_at", "delete_reason", "last_accessed_at",
 	"fts", "embedding_updated_at",
@@ -1171,6 +1171,236 @@ func (r *Repository) FindHeadByTypeAndKeyNS(ctx context.Context, db bun.IDB, pro
 	}
 
 	return &obj, nil
+}
+
+// listWorkObjectsByStatus returns the HEAD rows of board-enabled work objects
+// currently in the given status, on the main graph, ordered by updated_at
+// ascending. refs is the set of per-project board-enabled (project_id, type)
+// pairs (resolved from active project schema assignments), so a type enabled in
+// one project never makes another project's objects work items. olderThan
+// non-zero restricts to objects last written before olderThan.
+func (r *Repository) listWorkObjectsByStatus(ctx context.Context, refs []boardEnabledTypeRef, status string, olderThan time.Time, limit int) ([]*GraphObject, error) {
+	if len(refs) == 0 {
+		return []*GraphObject{}, nil
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	cols := make([]string, 0, len(graphObjectDetailColumns))
+	for _, c := range graphObjectDetailColumns {
+		cols = append(cols, "go."+c)
+	}
+	values := make([]string, 0, len(refs))
+	args := make([]any, 0, len(refs)*2+3)
+	for _, ref := range refs {
+		values = append(values, "(?::uuid, ?)")
+		args = append(args, ref.ProjectID.String(), ref.Type)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT %s
+		FROM kb.graph_objects go
+		JOIN (VALUES %s) AS bt(project_id, type)
+		  ON go.project_id = bt.project_id AND go.type = bt.type
+		WHERE go.branch_id IS NULL
+		  AND go.supersedes_id IS NULL
+		  AND go.deleted_at IS NULL
+		  AND go.status = ?`,
+		strings.Join(cols, ", "), strings.Join(values, ", "))
+	args = append(args, status)
+	if !olderThan.IsZero() {
+		query += "\n\t\t  AND go.updated_at < ?"
+		args = append(args, olderThan)
+	}
+	query += "\n\t\tORDER BY go.updated_at ASC\n\t\tLIMIT ?"
+	args = append(args, limit)
+
+	objs := make([]*GraphObject, 0)
+	if err := r.db.NewRaw(query, args...).Scan(ctx, &objs); err != nil {
+		return nil, fmt.Errorf("list work objects by status: %w", err)
+	}
+	return objs, nil
+}
+
+// boardEnabledTypeRef is a (project_id, type) pair whose type is board-enabled
+// via an active, non-removed project schema assignment.
+type boardEnabledTypeRef struct {
+	ProjectID uuid.UUID
+	Type      string
+}
+
+// listBoardEnabledTypeRefs returns the (project_id, type) pairs that are
+// board-enabled. Board enablement is per-project: it is resolved from the active,
+// non-removed kb.project_schemas assignments, so a type enabled in one project
+// does not make every project's objects of that type work items (the multi-tenant
+// leak). projectID nil = all projects; non-nil restricts to one project.
+func (r *Repository) listBoardEnabledTypeRefs(ctx context.Context, projectID *uuid.UUID) ([]boardEnabledTypeRef, error) {
+	type row struct {
+		ProjectID         uuid.UUID       `bun:"project_id"`
+		ObjectTypeSchemas json.RawMessage `bun:"object_type_schemas"`
+	}
+	query := `
+		SELECT ps.project_id, gs.object_type_schemas
+		FROM kb.project_schemas ps
+		JOIN kb.graph_schemas gs ON gs.id = ps.schema_id
+		WHERE ps.active = true
+		  AND ps.removed_at IS NULL
+		  AND gs.object_type_schemas IS NOT NULL`
+	args := make([]any, 0, 1)
+	if projectID != nil {
+		query += ` AND ps.project_id = ?`
+		args = append(args, *projectID)
+	}
+	var rows []row
+	if err := r.db.NewRaw(query, args...).Scan(ctx, &rows); err != nil {
+		return nil, fmt.Errorf("list board-enabled type refs: %w", err)
+	}
+	seen := make(map[string]bool)
+	var out []boardEnabledTypeRef
+	for _, r := range rows {
+		for _, name := range boardEnabledTypeNamesFromRaw(r.ObjectTypeSchemas) {
+			key := r.ProjectID.String() + "\x00" + name
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, boardEnabledTypeRef{ProjectID: r.ProjectID, Type: name})
+		}
+	}
+	return out, nil
+}
+
+// boardEnabledTypeNamesFromRaw extracts the names of object types flagged
+// boardEnabled from an object_type_schemas JSONB value, supporting both the
+// array and map storage formats.
+func boardEnabledTypeNamesFromRaw(raw json.RawMessage) []string {
+	var arr []struct {
+		Name         string `json:"name"`
+		BoardEnabled bool   `json:"boardEnabled"`
+	}
+	if err := json.Unmarshal(raw, &arr); err == nil && len(arr) > 0 {
+		var out []string
+		for _, e := range arr {
+			if e.Name != "" && e.BoardEnabled {
+				out = append(out, e.Name)
+			}
+		}
+		return out
+	}
+	var m map[string]struct {
+		BoardEnabled bool `json:"boardEnabled"`
+	}
+	if err := json.Unmarshal(raw, &m); err == nil {
+		var out []string
+		for name, e := range m {
+			if e.BoardEnabled {
+				out = append(out, name)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// listBoardWorkObjects returns the HEAD rows of board-enabled work objects on
+// the main graph, optionally filtered by status and/or type, ordered by
+// updated_at ascending. refs is the set of per-project board-enabled
+// (project_id, type) pairs. status empty means all statuses; typeName empty
+// means all board-enabled types.
+func (r *Repository) listBoardWorkObjects(ctx context.Context, refs []boardEnabledTypeRef, status, typeName string, limit int) ([]*GraphObject, error) {
+	if len(refs) == 0 {
+		return []*GraphObject{}, nil
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	cols := make([]string, 0, len(graphObjectDetailColumns))
+	for _, c := range graphObjectDetailColumns {
+		cols = append(cols, "go."+c)
+	}
+	values := make([]string, 0, len(refs))
+	args := make([]any, 0, len(refs)*2+3)
+	for _, ref := range refs {
+		values = append(values, "(?::uuid, ?)")
+		args = append(args, ref.ProjectID.String(), ref.Type)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT %s
+		FROM kb.graph_objects go
+		JOIN (VALUES %s) AS bt(project_id, type)
+		  ON go.project_id = bt.project_id AND go.type = bt.type
+		WHERE go.branch_id IS NULL
+		  AND go.supersedes_id IS NULL
+		  AND go.deleted_at IS NULL`,
+		strings.Join(cols, ", "), strings.Join(values, ", "))
+	if status != "" {
+		query += "\n\t\t  AND go.status = ?"
+		args = append(args, status)
+	}
+	if typeName != "" {
+		query += "\n\t\t  AND go.type = ?"
+		args = append(args, typeName)
+	}
+	query += "\n\t\tORDER BY go.updated_at ASC\n\t\tLIMIT ?"
+	args = append(args, limit)
+
+	objs := make([]*GraphObject, 0)
+	if err := r.db.NewRaw(query, args...).Scan(ctx, &objs); err != nil {
+		return nil, fmt.Errorf("list board work objects: %w", err)
+	}
+	return objs, nil
+}
+
+// workItemRunProjection is the latest-run join for a work item (the execution
+// badge source): the most recent kb.agent_runs row whose subject_object_id is
+// the object's canonical_id, plus the total run count for that subject.
+type workItemRunProjection struct {
+	CanonicalID  uuid.UUID  `bun:"canonical_id"`
+	RunID        string     `bun:"run_id"`
+	Status       string     `bun:"status"`
+	FailureClass *string    `bun:"failure_class"`
+	CompletedAt  *time.Time `bun:"completed_at"`
+	RunCount     int        `bun:"run_count"`
+}
+
+// listLatestRunsForSubjects returns, keyed by subject canonical id, the latest
+// run's projection plus the total run count. Subjects with no runs are absent
+// from the map (the board renders them without an execution badge).
+func (r *Repository) listLatestRunsForSubjects(ctx context.Context, canonicalIDs []uuid.UUID) (map[uuid.UUID]*workItemRunProjection, error) {
+	out := make(map[uuid.UUID]*workItemRunProjection)
+	if len(canonicalIDs) == 0 {
+		return out, nil
+	}
+	rows := make([]*workItemRunProjection, 0)
+	err := r.db.NewRaw(`
+		SELECT DISTINCT ON (subject_object_id)
+			subject_object_id AS canonical_id,
+			id AS run_id,
+			status,
+			failure_class,
+			completed_at,
+			COUNT(*) OVER (PARTITION BY subject_object_id) AS run_count
+		FROM kb.agent_runs
+		WHERE subject_object_id IN (?)
+		ORDER BY subject_object_id, created_at DESC`,
+		bun.In(canonicalIDs),
+	).Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("list latest runs for subjects: %w", err)
+	}
+	for _, row := range rows {
+		out[row.CanonicalID] = row
+	}
+	return out, nil
 }
 
 // AcquireObjectUpsertLock acquires an advisory lock for an object upsert by (project_id, type, key).
@@ -2262,6 +2492,41 @@ func (r *Repository) GetDistinctTags(ctx context.Context, projectID uuid.UUID, p
 		return []string{}, nil
 	}
 	return tags, nil
+}
+
+// objectHeadRef identifies a HEAD object by its canonical id, physical id, and
+// type. Used to route board-enabled bulk status updates through the versioned
+// transition path while mapping results back to the request order.
+type objectHeadRef struct {
+	ID          uuid.UUID
+	CanonicalID uuid.UUID
+	Type        string
+}
+
+// listHeadObjectRefsByIDs returns the HEAD (id, canonical_id, type) for each
+// object matched by id or canonical_id in the project.
+func (r *Repository) listHeadObjectRefsByIDs(ctx context.Context, projectID uuid.UUID, ids []uuid.UUID) ([]objectHeadRef, error) {
+	type row struct {
+		ID          uuid.UUID `bun:"id"`
+		CanonicalID uuid.UUID `bun:"canonical_id"`
+		Type        string    `bun:"type"`
+	}
+	var rows []row
+	err := r.db.NewSelect().
+		Model((*GraphObject)(nil)).
+		Column("id", "canonical_id", "type").
+		Where("project_id = ?", projectID).
+		Where("(id IN (?) OR canonical_id IN (?))", bun.In(ids), bun.In(ids)).
+		Where("supersedes_id IS NULL").
+		Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("list head object refs by ids: %w", err)
+	}
+	refs := make([]objectHeadRef, 0, len(rows))
+	for _, r := range rows {
+		refs = append(refs, objectHeadRef(r))
+	}
+	return refs, nil
 }
 
 // BulkUpdateStatus updates the status of multiple objects.

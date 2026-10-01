@@ -20,6 +20,15 @@ func normalizeQueueName(name string) string {
 	return name
 }
 
+// workConfigOrDefault dereferences an optional work config, returning the zero
+// value (which callers treat as "use defaults") when nil.
+func workConfigOrDefault(c *AgentWorkConfig) AgentWorkConfig {
+	if c == nil {
+		return AgentWorkConfig{}
+	}
+	return *c
+}
+
 // AgentQueueDTO is the response representation of a named work queue.
 type AgentQueueDTO struct {
 	Name        string    `json:"name"`

@@ -12,6 +12,7 @@ type CreateGraphObjectRequest struct {
 	Type       string         `json:"type" validate:"required,max=64"`
 	Key        *string        `json:"key,omitempty" validate:"omitempty,max=128"`
 	Status     *string        `json:"status,omitempty" validate:"omitempty,max=64"`
+	Assignee   *string        `json:"assignee,omitempty" validate:"omitempty,max=255"`
 	Properties map[string]any `json:"properties,omitempty"`
 	Labels     []string       `json:"labels,omitempty" validate:"omitempty,max=32,dive,max=64"`
 	BranchID   *uuid.UUID     `json:"branch_id,omitempty"`
@@ -31,6 +32,7 @@ type PatchGraphObjectRequest struct {
 	Labels        []string       `json:"labels,omitempty"`
 	ReplaceLabels bool           `json:"replaceLabels,omitempty"`
 	Status        *string        `json:"status,omitempty"`
+	Assignee      *string        `json:"assignee,omitempty"`
 	BranchID      *uuid.UUID     `json:"branch_id,omitempty"`
 }
 
@@ -49,6 +51,7 @@ type GraphObjectResponse struct {
 	Type          string         `json:"type"`
 	Key           *string        `json:"key,omitempty"`
 	Status        *string        `json:"status,omitempty"`
+	Assignee      *string        `json:"assignee,omitempty"`
 	Namespace     *string        `json:"namespace,omitempty"`
 	Properties    map[string]any `json:"properties"`
 	Labels        []string       `json:"labels"`
@@ -113,6 +116,7 @@ func (o *GraphObject) ToResponse() *GraphObjectResponse {
 		Type:               o.Type,
 		Key:                o.Key,
 		Status:             o.Status,
+		Assignee:           o.Assignee,
 		Namespace:          o.Namespace,
 		Properties:         o.Properties,
 		Labels:             o.Labels,

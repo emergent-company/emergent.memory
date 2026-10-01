@@ -196,6 +196,13 @@ type AgentRun struct {
 	TriggerSource   *string        `bun:"trigger_source" json:"triggerSource"`
 	TriggerMetadata map[string]any `bun:"trigger_metadata,type:jsonb" json:"triggerMetadata"`
 
+	// Object-driven work linkage: the work object this run was dispatched for.
+	// SubjectObjectID stores the object's canonical_id (the physical id changes
+	// on every version).
+	SubjectObjectID   *string `bun:"subject_object_id,type:uuid" json:"subjectObjectId,omitempty"`
+	SubjectObjectType *string `bun:"subject_object_type" json:"subjectObjectType,omitempty"`
+	FailureClass      *string `bun:"failure_class" json:"failureClass,omitempty"`
+
 	// Multi-agent coordination fields
 	ParentRunID    *string `bun:"parent_run_id,type:uuid" json:"parentRunId,omitempty"`
 	StepCount      int     `bun:"step_count,notnull,default:0" json:"stepCount"`
@@ -276,6 +283,15 @@ type CreateRunQueuedOptions struct {
 	// Priority orders the dispatch job within its queue; lower is claimed
 	// first. Zero means DefaultQueuePriority.
 	Priority int
+	// SubjectObjectID links the run to the work object it was dispatched for,
+	// storing the object's canonical_id. SubjectObjectType records the object
+	// type. Set for object-driven (enqueue-on-create) dispatches.
+	SubjectObjectID   *string
+	SubjectObjectType *string
+	// NextRunAt overrides the job's next_run_at (requeue backoff). When set, the
+	// job is inserted with this value so a re-enqueued item waits before its next
+	// attempt. Zero means "run immediately".
+	NextRunAt *time.Time
 }
 
 // AgentProcessingLog tracks which graph objects have been processed by reaction agents
@@ -393,6 +409,146 @@ const (
 // AgentDefinition stores agent configurations from product manifests.
 // This is separate from Agent (which tracks runtime state like last_run_at).
 // Table: kb.agent_definitions
+// AgentWorkStatusConfig maps work-item lifecycle phases to object status values.
+type AgentWorkStatusConfig struct {
+	Ready      string `json:"ready"`
+	InProgress string `json:"inProgress"`
+	Review     string `json:"review"`
+	Revision   string `json:"revision"`
+	Blocked    string `json:"blocked"`
+	Done       string `json:"done"`
+}
+
+// AgentRetryPolicy configures retry backoff for queued work runs.
+type AgentRetryPolicy struct {
+	MaxAttempts        int     `json:"maxAttempts"`
+	InitialIntervalMS  int     `json:"initialIntervalMs"`
+	BackoffCoefficient float64 `json:"backoffCoefficient"`
+	MaxIntervalMS      int     `json:"maxIntervalMs"`
+}
+
+// AgentWorkContract declares the deliverables an agent commits to producing
+// before it may complete a work item (P6). A zero value (both fields empty)
+// means "no validation": work_complete behaves exactly as before.
+type AgentWorkContract struct {
+	// RequireArtifacts requires work_complete to carry a non-empty summary or
+	// artifacts before the item may be completed.
+	RequireArtifacts bool `json:"requireArtifacts"`
+	// RequiredDeliverableTypes lists object types that must be among the
+	// declared deliverables, each resolving to an existing object, before the
+	// item may be completed. Empty means no required deliverable types.
+	RequiredDeliverableTypes []string `json:"requiredDeliverableTypes,omitempty"`
+}
+
+// IsZero reports whether the contract carries no validation requirements.
+func (c AgentWorkContract) IsZero() bool {
+	return !c.RequireArtifacts && len(c.RequiredDeliverableTypes) == 0
+}
+
+// AgentWorkConfig is the object-driven work configuration on an agent
+// definition. A zero value means "use defaults".
+type AgentWorkConfig struct {
+	Status         AgentWorkStatusConfig `json:"status"`
+	RequiresReview bool                  `json:"requiresReview"`
+	FailureLimit   int                   `json:"failureLimit"`
+	// RevisionLimit caps the number of rework (request-changes) rounds before
+	// the item is escalated to a human instead of re-enqueued. Zero = default.
+	RevisionLimit int `json:"revisionLimit"`
+	// RetryPolicy configures retry backoff for queued work runs.
+	RetryPolicy AgentRetryPolicy `json:"retryPolicy"`
+	// WorkContract declares the deliverables the agent must produce before it
+	// may complete a work item (P6). Zero value = no validation. It is
+	// agent-only (no per-type override): the required deliverable types describe
+	// what the *agent* produces, whereas the per-type config describes how items
+	// of a type are processed (see design.md "Work contract").
+	WorkContract AgentWorkContract `json:"workContract"`
+}
+
+// IsZero reports whether the work config carries no explicit configuration, i.e.
+// the definition does not opt into object-driven work (today's inline behaviour
+// is preserved). A non-zero config (or a queued dispatch mode) is what gates
+// enqueue-on-create.
+func (w AgentWorkConfig) IsZero() bool {
+	return w.Status == (AgentWorkStatusConfig{}) &&
+		!w.RequiresReview &&
+		w.FailureLimit == 0 &&
+		w.RevisionLimit == 0 &&
+		w.RetryPolicy == (AgentRetryPolicy{}) &&
+		w.WorkContract.IsZero()
+}
+
+// ReadyStatus returns the configured "ready" work-status value, defaulting to
+// the built-in "ready" when unset.
+func (w AgentWorkConfig) ReadyStatus() string {
+	if w.Status.Ready != "" {
+		return w.Status.Ready
+	}
+	return "ready"
+}
+
+// InProgressStatus returns the configured "in_progress" work-status value,
+// defaulting to the built-in "in_progress" when unset.
+func (w AgentWorkConfig) InProgressStatus() string {
+	if w.Status.InProgress != "" {
+		return w.Status.InProgress
+	}
+	return "in_progress"
+}
+
+// ReviewStatus returns the configured "review" work-status value, defaulting to
+// the built-in "review" when unset.
+func (w AgentWorkConfig) ReviewStatus() string {
+	if w.Status.Review != "" {
+		return w.Status.Review
+	}
+	return "review"
+}
+
+// RevisionStatus returns the configured "revision" work-status value, defaulting
+// to the built-in "revision" when unset.
+func (w AgentWorkConfig) RevisionStatus() string {
+	if w.Status.Revision != "" {
+		return w.Status.Revision
+	}
+	return "revision"
+}
+
+// BlockedStatus returns the configured "blocked" work-status value, defaulting
+// to the built-in "blocked" when unset.
+func (w AgentWorkConfig) BlockedStatus() string {
+	if w.Status.Blocked != "" {
+		return w.Status.Blocked
+	}
+	return "blocked"
+}
+
+// DoneStatus returns the configured "done" work-status value, defaulting to the
+// built-in "done" when unset.
+func (w AgentWorkConfig) DoneStatus() string {
+	if w.Status.Done != "" {
+		return w.Status.Done
+	}
+	return "done"
+}
+
+// FailureLimitValue returns the configured per-item failure budget, defaulting
+// to the built-in default (3) when unset.
+func (w AgentWorkConfig) FailureLimitValue() int {
+	if w.FailureLimit > 0 {
+		return w.FailureLimit
+	}
+	return defaultWorkFailureLimit
+}
+
+// RevisionLimitValue returns the configured rework (revision) cap, defaulting
+// to the built-in default (3) when unset.
+func (w AgentWorkConfig) RevisionLimitValue() int {
+	if w.RevisionLimit > 0 {
+		return w.RevisionLimit
+	}
+	return defaultWorkRevisionLimit
+}
+
 type AgentDefinition struct {
 	bun.BaseModel `bun:"table:kb.agent_definitions,alias:ad"`
 
@@ -423,6 +579,9 @@ type AgentDefinition struct {
 	// runtime agent instantiated from this definition are enqueued on this
 	// queue unless the runtime agent's Config overrides it with "queue".
 	DefaultQueue string `bun:"default_queue,notnull,default:'default'" json:"defaultQueue"`
+	// WorkConfig configures object-driven work: the status phase mapping,
+	// requiresReview, failureLimit, and retryPolicy. Zero value = defaults.
+	WorkConfig AgentWorkConfig `bun:"work_config,type:jsonb,notnull,default:'{}'" json:"workConfig"`
 	// ToolPolicies maps tool name → policy. When a tool has Confirm:true,
 	// the executor pauses the run and asks the user before executing the tool.
 	ToolPolicies map[string]ToolPolicy `bun:"tool_policies,type:jsonb,default:'{}'" json:"toolPolicies,omitempty"`

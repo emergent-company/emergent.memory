@@ -409,6 +409,30 @@ func (r *Repository) FindPendingOrProcessing(ctx context.Context, agentID, objec
 	return log, nil
 }
 
+// FindProcessingLogByKey returns any processing-log entry for the dispatch
+// dedup key (agent_id, graph_object_id, object_version, event_type), regardless
+// of status. Used by enqueue-on-create to guarantee a repeated delivery of the
+// same created event produces a single run even after a prior entry completed.
+func (r *Repository) FindProcessingLogByKey(ctx context.Context, agentID, objectID string, version int, eventType ReactionEventType) (*AgentProcessingLog, error) {
+	log := new(AgentProcessingLog)
+	err := r.db.NewSelect().
+		Model(log).
+		Where("agent_id = ?", agentID).
+		Where("graph_object_id = ?", objectID).
+		Where("object_version = ?", version).
+		Where("event_type = ?", eventType).
+		Order("created_at ASC").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return log, nil
+}
+
 // MarkProcessingLogStatus updates the status of a processing log entry
 func (r *Repository) MarkProcessingLogStatus(ctx context.Context, id string, status AgentProcessingStatus, errorMsg *string, summary map[string]any) error {
 	now := time.Now()
@@ -2504,82 +2528,16 @@ func (r *Repository) FindADKSessionByIDForProject(ctx context.Context, sessionID
 // CreateRunQueued creates an agent_runs row with status=queued and an
 // agent_run_jobs row in the same transaction. Returns the new run.
 func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAttempts int, opts ...CreateRunQueuedOptions) (*AgentRun, error) {
-	var parentRunID *string
-	var rootRunID *string
-	var triggerMessage *string
-	var triggerMetadata map[string]any
-	var maxPendingJobs int
-	var trustedInternal bool
-	var queueOverride string
-	var priority int
+	var o CreateRunQueuedOptions
 	if len(opts) > 0 {
-		parentRunID = opts[0].ParentRunID
-		rootRunID = nilIfEmpty(opts[0].RootRunID)
-		triggerMessage = opts[0].TriggerMessage
-		triggerMetadata = opts[0].TriggerMetadata
-		maxPendingJobs = opts[0].MaxPendingJobs
-		trustedInternal = opts[0].TrustedInternal
-		queueOverride = opts[0].Queue
-		priority = opts[0].Priority
+		o = opts[0]
 	}
-
-	projectID, queue, priority := r.resolveAgentRouting(ctx, agentID, queueOverride, priority)
-
-	run := &AgentRun{
-		AgentID:         agentID,
-		Status:          RunStatusQueued,
-		StartedAt:       time.Now(),
-		Summary:         make(map[string]any),
-		ParentRunID:     parentRunID,
-		RootRunID:       rootRunID,
-		TriggerMessage:  triggerMessage,
-		TriggerMetadata: triggerMetadata,
-		TrustedInternal: trustedInternal,
-		Tools:           []string{},
-	}
-
+	projectID, queue, priority := r.resolveAgentRouting(ctx, agentID, o.Queue, o.Priority)
+	var run *AgentRun
 	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		// Queue depth check inside the transaction so the count and insert are
-		// atomic. This prevents the TOCTOU race where multiple concurrent workers
-		// each see count < max and all insert new jobs simultaneously, causing
-		// exponential queue growth. Only enforced when MaxPendingJobs > 0.
-		if maxPendingJobs > 0 {
-			var count int
-			err := tx.QueryRowContext(ctx, `
-				SELECT COUNT(*)
-				FROM kb.agent_run_jobs arj
-				JOIN kb.agent_runs ar ON ar.id = arj.run_id
-				WHERE ar.agent_id = $1
-				  AND arj.status IN ('pending', 'processing')
-			`, agentID).Scan(&count)
-			if err != nil {
-				// Fail-open on count error so a DB hiccup doesn't halt agents.
-				// Callers log the error; we proceed with the insert.
-			} else if count >= maxPendingJobs {
-				return &QueueFullError{
-					AgentID:        agentID,
-					PendingJobs:    count,
-					MaxPendingJobs: maxPendingJobs,
-				}
-			}
-		}
-
-		if _, err := tx.NewInsert().Model(run).Returning("*").Exec(ctx); err != nil {
-			return fmt.Errorf("insert agent_runs: %w", err)
-		}
-		job := &AgentRunJob{
-			RunID:       run.ID,
-			Status:      JobStatusPending,
-			MaxAttempts: maxAttempts,
-			Queue:       queue,
-			Priority:    priority,
-			ProjectID:   strPtrIfNotEmpty(projectID),
-			NextRunAt:   time.Now(),
-		}
-		if _, err := tx.NewInsert().Model(job).Exec(ctx); err != nil {
-			return fmt.Errorf("insert agent_run_jobs: %w", err)
-		}
-		return nil
+		var err error
+		run, err = r.enqueueWorkRunInTx(ctx, tx, agentID, maxAttempts, o, projectID, queue, priority)
+		return err
 	})
 	if err != nil {
 		// Unwrap QueueFullError from the transaction wrapper so callers can type-assert it.
@@ -2590,6 +2548,133 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 		return nil, err
 	}
 	return run, nil
+}
+
+// enqueueWorkRunInTx builds and inserts a queued run and its dispatch job inside
+// tx, applying the queue-depth guard. It is the shared body of CreateRunQueued
+// and the deduped object-driven dispatch enqueue.
+func (r *Repository) enqueueWorkRunInTx(ctx context.Context, tx bun.Tx, agentID string, maxAttempts int, o CreateRunQueuedOptions, projectID, queue string, priority int) (*AgentRun, error) {
+	run := &AgentRun{
+		AgentID:           agentID,
+		Status:            RunStatusQueued,
+		StartedAt:         time.Now(),
+		Summary:           make(map[string]any),
+		ParentRunID:       o.ParentRunID,
+		RootRunID:         nilIfEmpty(o.RootRunID),
+		TriggerMessage:    o.TriggerMessage,
+		TriggerMetadata:   o.TriggerMetadata,
+		TrustedInternal:   o.TrustedInternal,
+		SubjectObjectID:   o.SubjectObjectID,
+		SubjectObjectType: o.SubjectObjectType,
+		Tools:             []string{},
+	}
+
+	// Queue depth check inside the transaction so the count and insert are
+	// atomic. This prevents the TOCTOU race where multiple concurrent workers
+	// each see count < max and all insert new jobs simultaneously, causing
+	// exponential queue growth. Only enforced when MaxPendingJobs > 0.
+	if o.MaxPendingJobs > 0 {
+		var count int
+		err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM kb.agent_run_jobs arj
+			JOIN kb.agent_runs ar ON ar.id = arj.run_id
+			WHERE ar.agent_id = $1
+			  AND arj.status IN ('pending', 'processing')
+		`, agentID).Scan(&count)
+		if err != nil {
+			// Fail-open on count error so a DB hiccup doesn't halt agents.
+			// Callers log the error; we proceed with the insert.
+		} else if count >= o.MaxPendingJobs {
+			return nil, &QueueFullError{
+				AgentID:        agentID,
+				PendingJobs:    count,
+				MaxPendingJobs: o.MaxPendingJobs,
+			}
+		}
+	}
+
+	if _, err := tx.NewInsert().Model(run).Returning("*").Exec(ctx); err != nil {
+		return nil, fmt.Errorf("insert agent_runs: %w", err)
+	}
+	job := &AgentRunJob{
+		RunID:       run.ID,
+		Status:      JobStatusPending,
+		MaxAttempts: maxAttempts,
+		Queue:       queue,
+		Priority:    priority,
+		ProjectID:   strPtrIfNotEmpty(projectID),
+		NextRunAt:   time.Now(),
+	}
+	if o.NextRunAt != nil && o.NextRunAt.After(time.Now()) {
+		job.NextRunAt = *o.NextRunAt
+	}
+	if _, err := tx.NewInsert().Model(job).Exec(ctx); err != nil {
+		return nil, fmt.Errorf("insert agent_run_jobs: %w", err)
+	}
+	return run, nil
+}
+
+// EnqueueWorkRunDeduped atomically claims the dispatch dedup slot in
+// kb.agent_processing_log and enqueues a queued run for the work object in a
+// single transaction. The advisory lock serializes concurrent deliveries of the
+// same dispatch key, so only one wins the claim; and because the log row and the
+// run commit together, a failed enqueue leaves no orphaned log row to permanently
+// suppress redelivery. It returns claimed=false when the key is already taken.
+func (r *Repository) EnqueueWorkRunDeduped(ctx context.Context, logEntry *AgentProcessingLog, agentID string, maxAttempts int, opts CreateRunQueuedOptions) (*AgentRun, bool, error) {
+	projectID, queue, priority := r.resolveAgentRouting(ctx, agentID, opts.Queue, opts.Priority)
+	var run *AgentRun
+	claimed := false
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		lockKey := fmt.Sprintf("apl-dispatch|%s|%s|%d|%s",
+			logEntry.AgentID, logEntry.GraphObjectID, logEntry.ObjectVersion, logEntry.EventType)
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?)::bigint)", lockKey); err != nil {
+			return fmt.Errorf("acquire dispatch dedup lock: %w", err)
+		}
+		existing, err := r.findProcessingLogByKeyInTx(ctx, tx, logEntry.AgentID, logEntry.GraphObjectID, logEntry.ObjectVersion, logEntry.EventType)
+		if err != nil {
+			return err
+		}
+		if existing != nil {
+			return nil // already dispatched
+		}
+		if _, err := tx.NewInsert().Model(logEntry).Exec(ctx); err != nil {
+			return fmt.Errorf("insert processing log: %w", err)
+		}
+		claimed = true
+		run, err = r.enqueueWorkRunInTx(ctx, tx, agentID, maxAttempts, opts, projectID, queue, priority)
+		return err
+	})
+	if err != nil {
+		var qfe *QueueFullError
+		if errors.As(err, &qfe) {
+			return nil, claimed, qfe
+		}
+		return nil, claimed, err
+	}
+	return run, claimed, nil
+}
+
+// findProcessingLogByKeyInTx returns any processing-log entry matching the
+// dispatch dedup key within tx (nil when none), mirroring FindProcessingLogByKey.
+func (r *Repository) findProcessingLogByKeyInTx(ctx context.Context, tx bun.Tx, agentID, objectID string, version int, eventType ReactionEventType) (*AgentProcessingLog, error) {
+	log := new(AgentProcessingLog)
+	err := tx.NewSelect().
+		Model(log).
+		Where("agent_id = ?", agentID).
+		Where("graph_object_id = ?", objectID).
+		Where("object_version = ?", version).
+		Where("event_type = ?", eventType).
+		Order("created_at ASC").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return log, nil
 }
 
 // CreateRunJob inserts a new agent_run_jobs row for an existing run. When queue

@@ -98,6 +98,12 @@ type ObjectSchema struct {
 	// Version is the schema pack's version string (e.g. "1.0.0"). Populated by
 	// the schema provider so object creation can stamp graph_objects.schema_version.
 	Version string `json:"version,omitempty"`
+	// ObjectTypeWorkConfig is the per-type object-driven work configuration (P4):
+	// boardEnabled, allowed statuses, operational skip-flags, and the per-type
+	// failureLimit/retryPolicy overrides. Zero value = unconfigured. Embedded so
+	// the flat fields (boardEnabled, skipEmbeddings, ...) promote onto the
+	// ObjectSchema itself.
+	ObjectTypeWorkConfig
 }
 
 // PropertyDef defines a property in a schema.

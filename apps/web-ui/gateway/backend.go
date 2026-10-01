@@ -98,6 +98,14 @@ type MemoryBackend interface {
 	ListGraphRelationships(ctx context.Context, branchID string) ([]GraphRelationship, error)
 	GetObjectEdges(ctx context.Context, objectID string) ([]GraphRelationship, error)
 	GetSimilarObjects(ctx context.Context, objectID string, limit int) ([]SimilarObject, error)
+	// Work items (object-driven work / Kanban board).
+	ListWorkItems(ctx context.Context, status, typeName string, limit int) ([]WorkItem, error)
+	GetWorkItem(ctx context.Context, canonicalID string) (*WorkItemDetail, error)
+	ApproveWorkItem(ctx context.Context, canonicalID string) (*WorkItemAction, error)
+	RequestChangesWorkItem(ctx context.Context, canonicalID, feedback string) (*WorkItemAction, error)
+	RetryWorkItem(ctx context.Context, canonicalID string) (*WorkItemAction, error)
+	ReassignWorkItem(ctx context.Context, canonicalID, assignee string) (*WorkItemAction, error)
+	CancelWorkItem(ctx context.Context, canonicalID string) (*WorkItemAction, error)
 	UpdateObject(ctx context.Context, id string, req *UpdateObjectRequest) (*GraphObject, error)
 	CreateObject(ctx context.Context, req *CreateObjectRequest) (*GraphObject, error)
 	CreateRelationship(ctx context.Context, req *CreateRelationshipRequest) error

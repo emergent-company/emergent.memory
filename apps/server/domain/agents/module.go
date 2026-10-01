@@ -8,6 +8,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
 	"github.com/emergent-company/emergent.memory/domain/events"
+	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
 	"github.com/emergent-company/emergent.memory/domain/mcprelay"
@@ -50,6 +51,10 @@ var Module = fx.Module("agents",
 		provideShareService,
 		provideShareHandler,
 		provideShareRunReaper,
+		provideWorkObjectStore,
+		provideWorkStatusReaper,
+		provideWorkReconciler,
+		provideWorkActionService,
 	),
 	fx.Invoke(
 		RegisterRoutes,
@@ -65,6 +70,10 @@ var Module = fx.Module("agents",
 		registerToolPoolInvalidator,
 		registerStaleRunReaper,
 		registerShareRunReaper,
+		registerWorkObjectStore,
+		registerWorkStatusReaper,
+		registerWorkReconciler,
+		registerHandlerWorkActions,
 	),
 )
 
@@ -349,6 +358,34 @@ func provideWorkerPool(repo *Repository, executor *AgentExecutor, cfg *config.Co
 	return pool
 }
 
+// provideWorkObjectStore exposes the graph service as the agents domain's
+// narrow work-object surface, used by dispatch (HEAD version lookup) and the
+// worker pool (versioned claim transition).
+func provideWorkObjectStore(svc *graph.Service) WorkObjectStore {
+	return svc
+}
+
+// registerWorkObjectStore injects the work-object store into the trigger
+// service, the worker pool, the executor, and the human-action service after
+// construction.
+func registerWorkObjectStore(ts *TriggerService, pool *WorkerPool, executor *AgentExecutor, wa *WorkActionService, store WorkObjectStore) {
+	ts.SetWorkObjectStore(store)
+	pool.SetWorkObjectStore(store)
+	executor.SetWorkObjectStore(store)
+	wa.SetWorkObjectStore(store)
+}
+
+// provideWorkActionService creates the human-action service for work items.
+func provideWorkActionService(repo *Repository, log *slog.Logger) *WorkActionService {
+	return NewWorkActionService(repo, log)
+}
+
+// registerHandlerWorkActions injects the human-action service into the REST
+// handler.
+func registerHandlerWorkActions(h *Handler, svc *WorkActionService) {
+	h.WithWorkActionService(svc)
+}
+
 // registerWorkerPool wires the WorkerPool into the fx lifecycle.
 func registerWorkerPool(lc fx.Lifecycle, pool *WorkerPool) {
 	lc.Append(fx.Hook{
@@ -366,6 +403,42 @@ func registerWorkerPool(lc fx.Lifecycle, pool *WorkerPool) {
 
 func provideStaleRunReaper(repo *Repository, log *slog.Logger) *StaleRunReaper {
 	return NewStaleRunReaper(repo, log)
+}
+
+func provideWorkStatusReaper(repo *Repository, log *slog.Logger, cfg *config.Config) *WorkStatusReaper {
+	return NewWorkStatusReaper(repo, log, cfg.WorkStatusReaperInterval, cfg.WorkStatusReaperThreshold)
+}
+
+func provideWorkReconciler(repo *Repository, log *slog.Logger, cfg *config.Config) *WorkReconciler {
+	return NewWorkReconciler(repo, log, cfg.WorkReconcilerInterval)
+}
+
+func registerWorkStatusReaper(lc fx.Lifecycle, reaper *WorkStatusReaper, store WorkObjectStore) {
+	reaper.SetWorkObjectStore(store)
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			reaper.Start(ctx)
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			reaper.Stop()
+			return nil
+		},
+	})
+}
+
+func registerWorkReconciler(lc fx.Lifecycle, rc *WorkReconciler, store WorkObjectStore) {
+	rc.SetWorkObjectStore(store)
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			rc.Start(ctx)
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			rc.Stop()
+			return nil
+		},
+	})
 }
 
 func registerStaleRunReaper(lc fx.Lifecycle, reaper *StaleRunReaper) {

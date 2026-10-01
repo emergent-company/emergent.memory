@@ -26,9 +26,12 @@ type GraphObject struct {
 	// from pending.
 	MergedToCanonicalID *uuid.UUID `bun:"merged_to_canonical_id,type:uuid" json:"merged_to_canonical_id,omitempty"`
 
-	Type      string  `bun:"type,notnull" json:"type"`
-	Key       *string `bun:"key" json:"key,omitempty"`
-	Status    *string `bun:"status" json:"status,omitempty"`
+	Type   string  `bun:"type,notnull" json:"type"`
+	Key    *string `bun:"key" json:"key,omitempty"`
+	Status *string `bun:"status" json:"status,omitempty"`
+	// Assignee is the work lane for board-enabled types (the agent identity
+	// expected to claim the object). NULL = any listening agent.
+	Assignee  *string `bun:"assignee" json:"assignee,omitempty"`
 	Namespace *string `bun:"namespace" json:"namespace,omitempty"`
 
 	Properties    map[string]any `bun:"properties,type:jsonb,notnull,default:'{}'" json:"properties"`
