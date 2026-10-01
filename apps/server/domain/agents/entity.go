@@ -96,11 +96,21 @@ const (
 
 // ReactionConfig contains configuration for reaction triggers
 type ReactionConfig struct {
-	ObjectTypes          []string            `json:"objectTypes"`
-	Events               []ReactionEventType `json:"events"`
-	ConcurrencyStrategy  ConcurrencyStrategy `json:"concurrencyStrategy"`
-	IgnoreAgentTriggered bool                `json:"ignoreAgentTriggered"`
-	IgnoreSelfTriggered  bool                `json:"ignoreSelfTriggered"`
+	ObjectTypes []string            `json:"objectTypes"`
+	Events      []ReactionEventType `json:"events"`
+	// ConcurrencyStrategy controls how a new trigger is handled while a
+	// non-terminal run already exists for the same agent + target object.
+	// Empty ("") and "parallel" both mean no concurrency control; "skip" drops
+	// the new trigger instead of starting a second run.
+	ConcurrencyStrategy ConcurrencyStrategy `json:"concurrencyStrategy"`
+	// IgnoreAgentTriggered controls whether agent-originated events are ignored.
+	// nil (unset) = true = ignore, preserving the historical loop-safety default.
+	// Explicit false opts this agent in to agent-originated events.
+	IgnoreAgentTriggered *bool `json:"ignoreAgentTriggered,omitempty"`
+	// IgnoreSelfTriggered controls whether this agent's own runs may re-trigger
+	// it. nil (unset) = true = ignore. Explicit false allows self-triggering.
+	// Only consulted when IgnoreAgentTriggered is explicitly false.
+	IgnoreSelfTriggered *bool `json:"ignoreSelfTriggered,omitempty"`
 }
 
 // AgentCapabilities defines capability restrictions for agents
@@ -260,6 +270,12 @@ type CreateRunQueuedOptions struct {
 	// transport that enqueued it (e.g. trigger_agent) rather than being upgraded.
 	// false (zero value) = external-facing/untrusted.
 	TrustedInternal bool
+	// Queue overrides the run's dispatch queue. Empty means resolve from the
+	// agent's binding (config override → definition default → "default").
+	Queue string
+	// Priority orders the dispatch job within its queue; lower is claimed
+	// first. Zero means DefaultQueuePriority.
+	Priority int
 }
 
 // AgentProcessingLog tracks which graph objects have been processed by reaction agents
@@ -403,6 +419,10 @@ type AgentDefinition struct {
 	UIConfig         json.RawMessage   `bun:"ui_config,type:jsonb,default:'{}'" json:"uiConfig,omitempty"`
 	SandboxConfig    map[string]any    `bun:"sandbox_config,type:jsonb" json:"sandboxConfig,omitempty"`
 	DispatchMode     AgentDispatchMode `bun:"dispatch_mode,notnull,default:'sync'" json:"dispatchMode"`
+	// DefaultQueue binds this definition to a named work queue. Runs of a
+	// runtime agent instantiated from this definition are enqueued on this
+	// queue unless the runtime agent's Config overrides it with "queue".
+	DefaultQueue string `bun:"default_queue,notnull,default:'default'" json:"defaultQueue"`
 	// ToolPolicies maps tool name → policy. When a tool has Confirm:true,
 	// the executor pauses the run and asks the user before executing the tool.
 	ToolPolicies map[string]ToolPolicy `bun:"tool_policies,type:jsonb,default:'{}'" json:"toolPolicies,omitempty"`
@@ -625,12 +645,48 @@ type AgentRunJob struct {
 	Status       AgentJobStatus `bun:"status,notnull,default:'pending'" json:"status"`
 	AttemptCount int            `bun:"attempt_count,notnull,default:0" json:"attemptCount"`
 	MaxAttempts  int            `bun:"max_attempts,notnull,default:1" json:"maxAttempts"`
-	NextRunAt    time.Time      `bun:"next_run_at,notnull,default:now()" json:"nextRunAt"`
-	CreatedAt    time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
-	CompletedAt  *time.Time     `bun:"completed_at" json:"completedAt,omitempty"`
+	// Queue is the named work queue this job is claimed from. Defaults to
+	// DefaultQueueName when the run's agent has no queue binding.
+	Queue string `bun:"queue,notnull,default:'default'" json:"queue"`
+	// Priority orders claims within a queue; lower is claimed first.
+	Priority int `bun:"priority,notnull,default:100" json:"priority"`
+	// ProjectID scopes the queue: queue names are unique per project, so a
+	// claim must match both project and queue.
+	ProjectID   *string    `bun:"project_id,type:uuid" json:"projectId,omitempty"`
+	NextRunAt   time.Time  `bun:"next_run_at,notnull,default:now()" json:"nextRunAt"`
+	CreatedAt   time.Time  `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
+	CompletedAt *time.Time `bun:"completed_at" json:"completedAt,omitempty"`
 
 	// Relations
 	Run *AgentRun `bun:"rel:belongs-to,join:run_id=id" json:"-"`
+}
+
+// DefaultQueueName is the queue every run falls back to when its agent has no
+// queue binding.
+const DefaultQueueName = "default"
+
+// DefaultQueuePriority is the priority assigned to a job when none is set.
+const DefaultQueuePriority = 100
+
+// AgentQueue is a named, project-scoped agent work queue. Jobs are routed to a
+// queue based on the triggering agent's binding; workers claim per queue.
+// Table: kb.agent_queues
+type AgentQueue struct {
+	bun.BaseModel `bun:"table:kb.agent_queues,alias:aq"`
+
+	ProjectID   string    `bun:"project_id,pk,type:uuid" json:"projectId"`
+	Name        string    `bun:"name,pk" json:"name"`
+	DisplayName string    `bun:"display_name,notnull,default:''" json:"displayName"`
+	Description string    `bun:"description,notnull,default:''" json:"description"`
+	Concurrency int       `bun:"concurrency,notnull,default:1" json:"concurrency"`
+	Priority    int       `bun:"priority,notnull,default:100" json:"priority"`
+	Enabled     bool      `bun:"enabled,notnull,default:true" json:"enabled"`
+	CreatedAt   time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
+	UpdatedAt   time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
+
+	// Depth is populated by listing queries; not persisted.
+	Pending    int `bun:"-" json:"pending"`
+	Processing int `bun:"-" json:"processing"`
 }
 
 // Session represents a thin session grouping for runs.

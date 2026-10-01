@@ -58,6 +58,26 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	defsWrite.DELETE("/:id", h.DeleteDefinition)
 	defsWrite.PUT("/:id/sandbox-config", h.UpdateSandboxConfig)
 
+	// --- Project-scoped agent work queues ---
+	// Named, priority-aware work queues on top of kb.agent_run_jobs. Agents bind
+	// to a queue (agent definition defaultQueue / runtime config "queue"); the
+	// worker supervisor maintains per-queue worker sets.
+	queues := e.Group("/api/projects/:projectId/agent-queues")
+	queues.Use(authMiddleware.RequireAuth())
+	queues.Use(authMiddleware.RequireProjectTokenScope())
+	queues.Use(authMiddleware.RequireProjectMember())
+
+	queuesRead := queues.Group("")
+	queuesRead.Use(authMiddleware.RequireAPITokenScopes("agents:read"))
+	queuesRead.GET("", h.ListQueues)
+
+	queuesWrite := queues.Group("")
+	queuesWrite.Use(authMiddleware.RequireAPITokenScopes("agents:write"))
+	queuesWrite.POST("", h.CreateQueue)
+	queuesWrite.PATCH("/:name", h.UpdateQueue)
+	queuesWrite.DELETE("/:name", h.DeleteQueue)
+	queuesWrite.POST("/:name/enqueue", h.EnqueueWorkItem)
+
 	// --- Agent Definition Overrides (per-project config overrides) ---
 	defsRead.GET("/overrides", h.ListAgentOverrides)
 	defsRead.GET("/overrides/:agentName", h.GetAgentOverride)

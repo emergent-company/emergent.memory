@@ -1,9 +1,16 @@
-import { test, expect, type Page } from '@playwright/test';
-import { readBootstrap, createProject } from '../../helpers/bootstrap';
+import { test, expect } from '@playwright/test';
+import { createProject } from '../../helpers/bootstrap';
 import { expectAppPage } from '../../helpers/page';
-import { addProvider } from '../../helpers/providers';
 import { createAgentViaModal } from '../../helpers/agents';
 import { sendChatMessage } from '../../helpers/chat';
+import {
+  AGENT_MODEL,
+  API_KEY,
+  SKIP_NO_KEY,
+  cleanup,
+  requireBootstrap,
+  saveScenarioProvider,
+} from '../../helpers/live-chat';
 
 // Chat agent-switch navigation scenario: on a FRESH scratch project, start a
 // conversation with agent A, switch to agent B via "New chat", then navigate
@@ -15,51 +22,15 @@ import { sendChatMessage } from '../../helpers/chat';
 // need a short reply; the assertion is about navigation state (which agent is
 // selected, which transcript is loaded), not reply content.
 //
-// Env vars (all reused — see tests/e2e/.env.e2e.example, no new keys):
-//   E2E_SCENARIO_LLM_PROVIDER/API_KEY/BASE_URL/MODEL  live provider for the
-//       scratch project (each chat turn calls a real model; skip when key unset)
-const PROVIDER = process.env.E2E_SCENARIO_LLM_PROVIDER || 'openai';
-const API_KEY = process.env.E2E_SCENARIO_LLM_API_KEY || '';
-const BASE_URL = process.env.E2E_SCENARIO_LLM_BASE_URL || 'http://litellm:4000/v1';
-const MODEL = process.env.E2E_SCENARIO_LLM_MODEL || 'openai/deepseek-v4-flash';
-// base_url is rendered only for the OpenAI-compatible provider, so pass it only
-// then (mirrors the other live scenarios). AGENT_MODEL prefixes an unprefixed
-// MODEL env with the configured provider, so a non-OpenAI run can supply a
-// bare model name instead of a hard-coded `openai/` catalog value.
-const PROVIDER_BASE_URL = PROVIDER === 'openai' ? BASE_URL : undefined;
-const AGENT_MODEL = MODEL.includes('/') ? MODEL : `${PROVIDER}/${MODEL}`;
-
-function requireBootstrap() {
-  const bootstrap = readBootstrap();
-  expect(bootstrap, 'setup project must run first').toBeTruthy();
-  return bootstrap!;
-}
-
-// All steps best-effort: idempotent across repeated runs, skips, and failures.
-async function cleanup(page: Page, agentIds: string[], projectId: string): Promise<void> {
-  const bootstrap = readBootstrap();
-  for (const id of agentIds) await page.request.delete(`/api/agents/${id}`).catch(() => {});
-  if (bootstrap?.projectId) {
-    await page.request.post(`/api/projects/${bootstrap.projectId}/activate`).catch(() => {});
-  }
-  if (projectId && bootstrap?.orgId) {
-    await page.request
-      .post(`/projects/delete?projectId=${projectId}&orgId=${bootstrap.orgId}`)
-      .catch(() => {});
-  }
-}
+// Shared scaffolding (provider save, openChat, cleanup) lives in
+// helpers/live-chat.ts.
 
 test.describe('Chat agent-switch navigation scenario', () => {
   test('switch agents and resume the first conversation from the session rail', async ({ page }) => {
     // Provider save plus two live chat turns — give the journey headroom.
     test.setTimeout(300_000);
 
-    test.skip(
-      !API_KEY,
-      'E2E_SCENARIO_LLM_API_KEY is not set — the provider save is live-validated ' +
-        'and each chat turn calls a real model. Set it in tests/e2e/.env.e2e to run ' +
-        'this scenario (defaults target the dev litellm: openai @ http://litellm:4000/v1).',
-    );
+    test.skip(!API_KEY, SKIP_NO_KEY);
 
     const bootstrap = requireBootstrap();
     // Project and agents share one unique name, so failures are easy to spot in
@@ -78,20 +49,7 @@ test.describe('Chat agent-switch navigation scenario', () => {
       // must know the provider; the key must be usable against the base URL). A
       // rejection is an environment problem, not a product regression — skip
       // with the backend's copy so a dev-memory hiccup never reddens the suite.
-      const saved = await addProvider(page, PROVIDER, API_KEY, PROVIDER_BASE_URL);
-      if (saved !== 'saved') {
-        let detail = "couldn't save provider";
-        const modal = page.locator('#provider-save-error-modal');
-        if (await modal.isVisible().catch(() => false)) {
-          const reason = await modal.locator('p').last().textContent().catch(() => null);
-          if (reason?.trim()) detail = reason.trim();
-        }
-        test.skip(
-          true,
-          `provider save rejected by memory backend (catalog unsynced or invalid key): ${detail}`,
-        );
-        return;
-      }
+      if (!(await saveScenarioProvider(page))) return;
 
       // 3. AGENTS (UI): two agents in the scratch project. Both carry the same
       // explicit model; each will own one conversation in the rail.
@@ -153,7 +111,7 @@ test.describe('Chat agent-switch navigation scenario', () => {
       await expect(page.locator('#chat-messages')).toContainText('Hello from A.');
       await expect(page.locator('#chat-messages')).not.toContainText('Hello from B.');
     } finally {
-      await cleanup(page, agentIds, projectId);
+      await cleanup(page, { agentIds, projectId });
     }
   });
 });

@@ -91,8 +91,8 @@ type ReactionConfig struct {
     ObjectTypes          []string
     Events               []string
     ConcurrencyStrategy  string
-    IgnoreAgentTriggered bool
-    IgnoreSelfTriggered  bool
+    IgnoreAgentTriggered *bool
+    IgnoreSelfTriggered  *bool
 }
 ```
 

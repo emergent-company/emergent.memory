@@ -218,6 +218,7 @@ var models = []any{
 	(*agents.AgentQuestion)(nil),
 	(*agents.AgentToolApproval)(nil),
 	(*agents.AgentRunJob)(nil),
+	(*agents.AgentQueue)(nil),
 	(*agents.Session)(nil),
 	(*agents.RunEvent)(nil),
 	(*agents.AgentShareLink)(nil),
