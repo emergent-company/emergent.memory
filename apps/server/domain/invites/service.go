@@ -151,14 +151,24 @@ func (s *Service) ListPendingForUser(ctx context.Context, userID string) ([]Pend
 	return result, nil
 }
 
-// ListByProject returns invites sent for a specific project
+// ListByProject returns invites sent for a specific project, with each invite's
+// delivery state resolved from its most recent invite-scoped kb.email_jobs row in
+// the same query (no per-row round trip).
 func (s *Service) ListByProject(ctx context.Context, projectID string) ([]SentInvite, error) {
 	var invites []SentInvite
 	err := s.db.NewRaw(`
-		SELECT id, email, role, status, created_at, expires_at
-		FROM kb.invites
-		WHERE project_id = ?
-		ORDER BY created_at DESC
+		SELECT i.id, i.email, i.role, i.status, i.created_at, i.expires_at,
+		       ej.delivery_status, ej.delivery_status_at
+		FROM kb.invites i
+		LEFT JOIN LATERAL (
+			SELECT delivery_status, delivery_status_at
+			FROM kb.email_jobs
+			WHERE source_type = 'invite' AND source_id = i.id
+			ORDER BY created_at DESC
+			LIMIT 1
+		) ej ON true
+		WHERE i.project_id = ?
+		ORDER BY i.created_at DESC
 	`, projectID).Scan(ctx, &invites)
 	if err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
@@ -246,42 +256,49 @@ func (s *Service) Create(ctx context.Context, req *CreateInviteRequest) (*Invite
 	}
 
 	// Enqueue invitation email (non-fatal: invitation is still valid even if email fails to queue)
-	if s.emailSvc != nil {
-		roleLabel := roleLabelFor(req.Role)
-		acceptURL := fmt.Sprintf("%s/invites/accept?token=%s", s.baseURL, token)
-		projectName := req.ProjectName
-		if projectName == "" {
-			projectName = "the project"
-		}
-		inviterName := req.InviterName
-		if inviterName == "" {
-			inviterName = "A team member"
-		}
-		toName := req.Email
-		_, emailErr := s.emailSvc.Enqueue(ctx, email.EnqueueOptions{
-			TemplateName: "project-invitation",
-			ToEmail:      req.Email,
-			ToName:       &toName,
-			Subject:      fmt.Sprintf("You've been invited to join %s on emergent.memory", projectName),
-			TemplateData: map[string]interface{}{
-				"inviterName": inviterName,
-				"projectName": projectName,
-				"roleLabel":   roleLabel,
-				"acceptUrl":   acceptURL,
-				"plainText":   email.ProjectInvitationPlainText(inviterName, projectName, roleLabel, acceptURL),
-			},
-			SourceType: stringPtr("invite"),
-			SourceID:   &invite.ID,
-		})
-		if emailErr != nil {
-			s.log.Warn("failed to enqueue project invitation email",
-				slog.String("inviteID", invite.ID),
-				slog.String("email", req.Email),
-				slog.String("error", emailErr.Error()))
-		}
-	}
+	_ = s.enqueueInviteEmail(ctx, invite, req.ProjectName, req.InviterName)
 
 	return invite, nil
+}
+
+// enqueueInviteEmail enqueues the project-invitation email for the given invite.
+// It returns any enqueue error but treats it as non-fatal: the caller continues
+// and the invitation remains valid.
+func (s *Service) enqueueInviteEmail(ctx context.Context, invite *Invite, projectName, inviterName string) error {
+	if s.emailSvc == nil {
+		return nil
+	}
+	roleLabel := roleLabelFor(invite.Role)
+	acceptURL := fmt.Sprintf("%s/invites/accept?token=%s", s.baseURL, invite.Token)
+	if projectName == "" {
+		projectName = "the project"
+	}
+	if inviterName == "" {
+		inviterName = "A team member"
+	}
+	toName := invite.Email
+	_, emailErr := s.emailSvc.Enqueue(ctx, email.EnqueueOptions{
+		TemplateName: "project-invitation",
+		ToEmail:      invite.Email,
+		ToName:       &toName,
+		Subject:      fmt.Sprintf("You've been invited to join %s on emergent.memory", projectName),
+		TemplateData: map[string]interface{}{
+			"inviterName": inviterName,
+			"projectName": projectName,
+			"roleLabel":   roleLabel,
+			"acceptUrl":   acceptURL,
+			"plainText":   email.ProjectInvitationPlainText(inviterName, projectName, roleLabel, acceptURL),
+		},
+		SourceType: stringPtr("invite"),
+		SourceID:   &invite.ID,
+	})
+	if emailErr != nil {
+		s.log.Warn("failed to enqueue project invitation email",
+			slog.String("inviteID", invite.ID),
+			slog.String("email", invite.Email),
+			slog.String("error", emailErr.Error()))
+	}
+	return emailErr
 }
 
 func roleLabelFor(role string) string {
@@ -301,6 +318,10 @@ func roleLabelFor(role string) string {
 
 func stringPtr(s string) *string {
 	return &s
+}
+
+func timePtr(t time.Time) *time.Time {
+	return &t
 }
 
 // Accept accepts an invitation by token
@@ -526,6 +547,105 @@ func (s *Service) Revoke(ctx context.Context, inviteID string) error {
 	}
 
 	return nil
+}
+
+// inviteResendGuardWindow is the server-enforced minimum interval between two
+// invitation emails for the same invitation. A resend for an invitation that
+// already has an invite-scoped kb.email_jobs row created within this window is
+// an idempotent no-op: it does not enqueue a second job. The window covers the
+// double-submit / client-retry cases where the earlier email is still in flight
+// or was just delivered, so repeated POSTs cannot send unbounded duplicate
+// invitation emails. It is a server guarantee; the UI's confirmation dialog is
+// not.
+const inviteResendGuardWindow = 60 * time.Second
+
+// hasRecentInviteEmailJob reports whether the invitation already has an
+// invite-scoped email job (source_type='invite', source_id=inviteID) created
+// within inviteResendGuardWindow. The lookup is served by the existing
+// idx_email_jobs_source (source_type, source_id) index.
+func (s *Service) hasRecentInviteEmailJob(ctx context.Context, inviteID string) (bool, error) {
+	var count int
+	err := s.db.NewRaw(`
+		SELECT COUNT(*) FROM kb.email_jobs
+		WHERE source_type = 'invite' AND source_id = ?
+		  AND created_at > now() - (? || ' seconds')::interval
+	`, inviteID, fmt.Sprintf("%d", int(inviteResendGuardWindow.Seconds()))).Scan(ctx, &count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// Resend re-sends a pending invitation email: it keeps the SAME token, extends
+// expires_at to now + 7 days, and re-enqueues the project-invitation job. Only a
+// pending invite may be resent; an unknown invite or a non-pending invite is 404
+// (matching the revoke guard). Enqueue failure is non-fatal: the invitation stays
+// valid.
+//
+// Resend is server-side idempotent over a short window: if the invitation
+// already has an invite-scoped email job created within
+// inviteResendGuardWindow, the request is a no-op and the existing invitation is
+// returned. This guards against double-submits and repeated POSTs sending
+// unbounded duplicate invitation emails.
+func (s *Service) Resend(ctx context.Context, inviteID string) (*Invite, error) {
+	var invite Invite
+	err := s.db.NewSelect().
+		Model(&invite).
+		Where("id = ?", inviteID).
+		Scan(ctx)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, apperror.NewNotFound("invite", inviteID)
+		}
+		return nil, apperror.NewDatabase("resend invitation", err)
+	}
+
+	if invite.Status != "pending" {
+		return nil, apperror.NewNotFound("invite", inviteID)
+	}
+
+	// Idempotency guard: an email for this invitation was already enqueued
+	// recently (in flight or just delivered). Return the existing invitation
+	// without enqueuing another job, so a repeat click is a clean no-op rather
+	// than a duplicate email or a confusing error.
+	recent, err := s.hasRecentInviteEmailJob(ctx, inviteID)
+	if err != nil {
+		return nil, apperror.NewDatabase("check recent invitation email", err)
+	}
+	if recent {
+		return &invite, nil
+	}
+
+	// Keep the same token; only extend the expiry.
+	now := time.Now()
+	invite.ExpiresAt = timePtr(now.Add(7 * 24 * time.Hour))
+	if _, err := s.db.NewRaw(
+		`UPDATE kb.invites SET expires_at = ? WHERE id = ?`,
+		invite.ExpiresAt, invite.ID,
+	).Exec(ctx); err != nil {
+		return nil, apperror.NewDatabase("extend invitation expiry", err)
+	}
+
+	// Derive the project name for the email the same way Create does when the
+	// caller supplied one: look it up from kb.projects, fall back to "the project".
+	projectName := "the project"
+	if invite.ProjectID != nil {
+		var name string
+		if e := s.db.NewSelect().
+			TableExpr("kb.projects").
+			Column("name").
+			Where("id = ?", *invite.ProjectID).
+			Limit(1).
+			Scan(ctx, &name); e == nil && name != "" {
+			projectName = name
+		}
+	}
+
+	// The inviter name is not stored on the invite; pass "" so the helper's
+	// existing "A team member" fallback applies.
+	_ = s.enqueueInviteEmail(ctx, &invite, projectName, "")
+
+	return &invite, nil
 }
 
 // ProjectOrg resolves the owning organization of a project server-side

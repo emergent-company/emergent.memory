@@ -191,6 +191,7 @@ type MemoryBackend interface {
 	ListPendingInvites(ctx context.Context) ([]PendingInviteDto, error)
 	DeclineInvite(ctx context.Context, inviteID string) error
 	CancelInvite(ctx context.Context, inviteID string) error
+	ResendInvite(ctx context.Context, inviteID string) error
 	SearchUsers(ctx context.Context, email string) ([]UserSearchResultDto, error)
 	GetProfile(ctx context.Context) (*UserProfileDto, error)
 	UpdateProfile(ctx context.Context, in UpdateUserProfileDto) (*UserProfileDto, error)
