@@ -278,3 +278,32 @@ A board-enabled type SHALL declare whether its objects are excluded from embeddi
 
 - **WHEN** an operational work object is written
 - **THEN** it is not scheduled for extraction
+
+### Requirement: Work contract validates required deliverables before completion
+
+An agent MAY declare a work contract on its work config. When the contract is non-empty, `work_complete` SHALL validate it before transitioning the item to done: `requireArtifacts` SHALL require a non-empty summary or artifacts, and each type in `requiredDeliverableTypes` SHALL be satisfied by at least one declared deliverable of that type that resolves to an existing object in the project. A rejected completion SHALL return an error tool result and SHALL NOT finalize the run or change the item, so the agent may continue in the same run; it SHALL NOT consume the per-item failure budget. An empty or unset contract SHALL leave `work_complete` behaviour unchanged.
+
+#### Scenario: Contract satisfied completes the item
+
+- **WHEN** an agent whose contract requires a deliverable of a type declares such a deliverable that resolves to an existing object and calls `work_complete`
+- **THEN** the item is completed and the run ends
+
+#### Scenario: Missing required deliverable rejects completion
+
+- **WHEN** an agent whose contract requires a deliverable of a type calls `work_complete` without declaring a deliverable of that type
+- **THEN** completion is rejected with an error tool result, the run is not finalized, and the item is unchanged
+
+#### Scenario: Declared deliverable that does not exist rejects completion
+
+- **WHEN** an agent declares a required deliverable whose type and key do not resolve to an existing object
+- **THEN** completion is rejected, the run is not finalized, and the item is unchanged
+
+#### Scenario: Required artifacts absent rejects completion
+
+- **WHEN** an agent whose contract sets `requireArtifacts` calls `work_complete` with neither artifacts nor a summary
+- **THEN** completion is rejected, the run is not finalized, and the item is unchanged
+
+#### Scenario: Empty contract leaves behaviour unchanged
+
+- **WHEN** an agent has no work contract (or an empty one) and calls `work_complete`
+- **THEN** the item is completed exactly as if no contract were configured

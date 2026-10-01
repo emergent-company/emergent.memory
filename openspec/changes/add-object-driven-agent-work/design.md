@@ -27,7 +27,7 @@ The gap is not mechanics but **policy and object semantics**: who owns a work it
 
 ## Non-goals
 
-A work-item table; a workflow/DAG engine; a new agent runtime; **per-attempt branch isolation** (deferred — see Alternatives); contract validation.
+A work-item table; a workflow/DAG engine; a new agent runtime; **per-attempt branch isolation** (deferred — see Alternatives).
 
 ## Data model
 
@@ -65,6 +65,24 @@ workConfig:
 
 Defaults apply when `workConfig` is absent; a definition without it keeps today's behaviour.
 
+### Work contract (P6)
+
+An agent may declare a **work contract** on `workConfig` — the deliverables it commits to producing before it may complete a work item:
+
+```yaml
+workConfig:
+  workContract:
+    requireArtifacts: true
+    requiredDeliverableTypes: [ResearchReport]
+```
+
+- `requireArtifacts: true` — `work_complete` must carry a non-empty summary or artifacts.
+- `requiredDeliverableTypes: [...]` — each listed object type must be satisfied by at least one declared deliverable (`{type, key}`) that resolves to an existing object in the project (`FindHeadByTypeAndKey`).
+
+The contract is **agent-only** (no per-type override): the required deliverable types describe what the *agent* produces, whereas the per-type `ObjectTypeWorkConfig` describes how items of a type are processed (board-enabled, status set, pipeline skip-flags, failure budget/retry) — none of which relate to the agent's output. A non-empty contract is part of `AgentWorkConfig.IsZero()`, so declaring a contract also opts the agent into object-driven dispatch. An empty/unset contract leaves `work_complete` unchanged.
+
+Validation runs **before** the transition and returns an **error tool result** (no terminator recorded, item unchanged) so the agent can continue in the same run — it does **not** consume the per-item failure budget and is not a run failure.
+
 ### Object-type configuration (schemas registry — new surface)
 
 Per object type (net-new on `ObjectTypeSchema`): `boardEnabled`, the allowed `status` values (validated on write), and operational flags (`skipEmbeddings`, `skipExtraction`, `excludeFromSearch`). These flags are **required** for board-enabled types, because every status transition creates a new version and would otherwise enqueue embeddings/FTS/extraction.
@@ -86,7 +104,7 @@ Per object type (net-new on `ObjectTypeSchema`): `boardEnabled`, the allowed `st
 
 Terminators are **run-finalizing**: the platform ends the run when one is called; any later steps are ignored.
 
-- `work_complete(summary, artifacts)` → `status` = `done`, or `review` + `needs_review=true` when `requiresReview`.
+- `work_complete(summary, artifacts, deliverables)` → `status` = `done`, or `review` + `needs_review=true` when `requiresReview`. When the agent's work contract is non-empty, the declared deliverables are validated first (see "Work contract (P6)").
 - `work_block(reason, kind)` → `status` = `blocked`; a `kb.tasks` row + notification for the human.
 
 ### Run-end → item-transition mapping (exhaustive)
