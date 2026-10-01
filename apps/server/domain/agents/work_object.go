@@ -16,6 +16,10 @@ type WorkObjectStore interface {
 	// GetHeadObject returns the HEAD version of the object identified by its
 	// canonical ID (project-scoped). Returns (nil, nil) when not found.
 	GetHeadObject(ctx context.Context, projectID, canonicalID string) (*graph.WorkObjectHead, error)
+	// FindHeadByTypeAndKey returns the HEAD version of an object identified by
+	// (project, type, key), or (nil, nil) when not found. It resolves a declared
+	// work-contract deliverable to an existing object (P6).
+	FindHeadByTypeAndKey(ctx context.Context, projectID, objType, key string) (*graph.WorkObjectHead, error)
 	// ClaimWorkObject atomically transitions a work object from readyStatus to
 	// inProgressStatus under the object's advisory upsert lock, creating a new
 	// version. It returns claimed=false (and a nil error) when the object's

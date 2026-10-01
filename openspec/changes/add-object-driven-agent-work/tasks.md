@@ -47,7 +47,7 @@
 
 ## 6. P6 — Contract validation (deferred)
 
-- [ ] 6.1 Optional work contract: validate required deliverables before `work_complete` allows done.
+- [x] 6.1 Optional work contract: validate required deliverables before `work_complete` allows done.
 
 ## 7. Verify (per phase)
 

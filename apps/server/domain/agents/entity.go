@@ -427,6 +427,24 @@ type AgentRetryPolicy struct {
 	MaxIntervalMS      int     `json:"maxIntervalMs"`
 }
 
+// AgentWorkContract declares the deliverables an agent commits to producing
+// before it may complete a work item (P6). A zero value (both fields empty)
+// means "no validation": work_complete behaves exactly as before.
+type AgentWorkContract struct {
+	// RequireArtifacts requires work_complete to carry a non-empty summary or
+	// artifacts before the item may be completed.
+	RequireArtifacts bool `json:"requireArtifacts"`
+	// RequiredDeliverableTypes lists object types that must be among the
+	// declared deliverables, each resolving to an existing object, before the
+	// item may be completed. Empty means no required deliverable types.
+	RequiredDeliverableTypes []string `json:"requiredDeliverableTypes,omitempty"`
+}
+
+// IsZero reports whether the contract carries no validation requirements.
+func (c AgentWorkContract) IsZero() bool {
+	return !c.RequireArtifacts && len(c.RequiredDeliverableTypes) == 0
+}
+
 // AgentWorkConfig is the object-driven work configuration on an agent
 // definition. A zero value means "use defaults".
 type AgentWorkConfig struct {
@@ -435,8 +453,15 @@ type AgentWorkConfig struct {
 	FailureLimit   int                   `json:"failureLimit"`
 	// RevisionLimit caps the number of rework (request-changes) rounds before
 	// the item is escalated to a human instead of re-enqueued. Zero = default.
-	RevisionLimit int              `json:"revisionLimit"`
-	RetryPolicy   AgentRetryPolicy `json:"retryPolicy"`
+	RevisionLimit int `json:"revisionLimit"`
+	// RetryPolicy configures retry backoff for queued work runs.
+	RetryPolicy AgentRetryPolicy `json:"retryPolicy"`
+	// WorkContract declares the deliverables the agent must produce before it
+	// may complete a work item (P6). Zero value = no validation. It is
+	// agent-only (no per-type override): the required deliverable types describe
+	// what the *agent* produces, whereas the per-type config describes how items
+	// of a type are processed (see design.md "Work contract").
+	WorkContract AgentWorkContract `json:"workContract"`
 }
 
 // IsZero reports whether the work config carries no explicit configuration, i.e.
@@ -448,7 +473,8 @@ func (w AgentWorkConfig) IsZero() bool {
 		!w.RequiresReview &&
 		w.FailureLimit == 0 &&
 		w.RevisionLimit == 0 &&
-		w.RetryPolicy == (AgentRetryPolicy{})
+		w.RetryPolicy == (AgentRetryPolicy{}) &&
+		w.WorkContract.IsZero()
 }
 
 // ReadyStatus returns the configured "ready" work-status value, defaulting to
