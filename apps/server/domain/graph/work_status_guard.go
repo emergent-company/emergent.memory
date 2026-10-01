@@ -2,21 +2,43 @@ package graph
 
 import (
 	"net/http"
+	"slices"
 
+	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
-// isBoardEnabledType reports whether an object (or an incoming write) is
-// board-enabled under the P2 minimal signal: a non-null assignee. This is the
-// pragmatic, self-contained mechanism available before the per-type
-// `boardEnabled` schema flag lands (P4); see ListWorkObjectsByStatus and
-// design.md "Object-type configuration". The full per-type flag will replace
-// this heuristic.
-func isBoardEnabledType(head *GraphObject, incomingAssignee *string) bool {
-	if incomingAssignee != nil && *incomingAssignee != "" {
-		return true
+// isBoardEnabledConfig reports whether a type's per-type work config marks the
+// type board-enabled. Replaces the P2 `assignee IS NOT NULL` proxy with the real
+// per-type `boardEnabled` flag (P4). A nil config (unknown/unconfigured type) is
+// never board-enabled.
+func isBoardEnabledConfig(cfg *agents.ObjectTypeWorkConfig) bool {
+	return cfg != nil && cfg.BoardEnabled
+}
+
+// validateTypeStatus enforces the per-type allowed work-status values on a
+// write (P4.1). For a board-enabled type with a declared allowed set, a write
+// that sets a status (via the built-in status field or properties["status"])
+// outside that set is rejected. Unconfigured or unconstrained types accept any
+// status.
+func validateTypeStatus(cfg *agents.ObjectTypeWorkConfig, status *string, props map[string]any) error {
+	if !isBoardEnabledConfig(cfg) || len(cfg.AllowedStatuses) == 0 {
+		return nil
 	}
-	return head != nil && head.Assignee != nil && *head.Assignee != ""
+	effective := ""
+	if status != nil {
+		effective = *status
+	}
+	if st, ok := props["status"].(string); ok && st != "" {
+		effective = st
+	}
+	if effective == "" {
+		return nil // no status being set
+	}
+	if slices.Contains(cfg.AllowedStatuses, effective) {
+		return nil
+	}
+	return workStatusNotAllowed(effective)
 }
 
 // writesStatus reports whether a write entry point attempts to set work status,
@@ -56,4 +78,10 @@ func rejectAgentWorkStatusWrite(actorType string, boardEnabled, setsStatus bool)
 // writes, used by every write entry point so the message cannot drift.
 func workStatusWriteForbidden() error {
 	return apperror.New(http.StatusForbidden, "work_status_owned_by_platform", "agents cannot set work status directly; use work_complete or work_block")
+}
+
+// workStatusNotAllowed is the rejection error for a status value outside a
+// board-enabled type's declared allowed set (P4.1).
+func workStatusNotAllowed(status string) error {
+	return apperror.New(http.StatusBadRequest, "work_status_not_allowed", "status is not in the type's allowed work-status set: "+status)
 }

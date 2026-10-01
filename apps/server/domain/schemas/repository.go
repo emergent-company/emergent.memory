@@ -518,24 +518,34 @@ func parseObjectTypeSchemas(data json.RawMessage, packID, packName, packVersion 
 	result := make([]ObjectTypeSchema, 0, len(typeMap))
 	for typeName, raw := range typeMap {
 		var def struct {
-			Label       string          `json:"label"`
-			Description string          `json:"description"`
-			Properties  json.RawMessage `json:"properties"`
-			UI          json.RawMessage `json:"ui"`
+			Label             string          `json:"label"`
+			Description       string          `json:"description"`
+			Properties        json.RawMessage `json:"properties"`
+			UI                json.RawMessage `json:"ui"`
+			BoardEnabled      bool            `json:"boardEnabled"`
+			AllowedStatuses   []string        `json:"allowedStatuses"`
+			SkipEmbeddings    bool            `json:"skipEmbeddings"`
+			SkipExtraction    bool            `json:"skipExtraction"`
+			ExcludeFromSearch bool            `json:"excludeFromSearch"`
 		}
 		_ = json.Unmarshal(raw, &def)
 		if isNullJSON(def.UI) {
 			def.UI = nil
 		}
 		result = append(result, ObjectTypeSchema{
-			Name:          typeName,
-			Label:         def.Label,
-			Description:   def.Description,
-			Properties:    def.Properties,
-			UI:            def.UI,
-			SchemaID:      packID,
-			SchemaName:    packName,
-			SchemaVersion: packVersion,
+			Name:              typeName,
+			Label:             def.Label,
+			Description:       def.Description,
+			Properties:        def.Properties,
+			UI:                def.UI,
+			SchemaID:          packID,
+			SchemaName:        packName,
+			SchemaVersion:     packVersion,
+			BoardEnabled:      def.BoardEnabled,
+			AllowedStatuses:   def.AllowedStatuses,
+			SkipEmbeddings:    def.SkipEmbeddings,
+			SkipExtraction:    def.SkipExtraction,
+			ExcludeFromSearch: def.ExcludeFromSearch,
 		})
 	}
 	return result

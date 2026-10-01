@@ -238,6 +238,24 @@ func (s *Service) resolveSchemaVersion(ctx context.Context, projectID uuid.UUID,
 	return ""
 }
 
+// objectTypeWorkConfig resolves the per-type object-driven work config for a
+// project+type (P4), or nil when the schema provider is unavailable or the type
+// is unknown. Unknown types are unconfigured (never board-enabled).
+func (s *Service) objectTypeWorkConfig(ctx context.Context, projectID uuid.UUID, objType string) *agents.ObjectTypeWorkConfig {
+	if s.schemaProvider == nil {
+		return nil
+	}
+	schemas, err := s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+	if err != nil || schemas == nil {
+		return nil
+	}
+	schema, ok := schemas.ObjectSchemas[objType]
+	if !ok {
+		return nil
+	}
+	return &schema.ObjectTypeWorkConfig
+}
+
 // nameFromProps extracts the "name" property from a properties map, or returns an empty string.
 func nameFromProps(props map[string]any) string {
 	if props == nil {
@@ -695,7 +713,11 @@ func (s *Service) ValidateObject(ctx context.Context, projectID uuid.UUID, req *
 func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGraphObjectRequest, actorID *uuid.UUID) (*GraphObjectResponse, error) {
 	actorType, actorID := actorFromContext(ctx, actorID)
 
-	if err := rejectAgentWorkStatusWrite(actorType, isBoardEnabledType(nil, req.Assignee), writesStatus(req.Status, req.Properties)); err != nil {
+	workCfg := s.objectTypeWorkConfig(ctx, projectID, req.Type)
+	if err := rejectAgentWorkStatusWrite(actorType, isBoardEnabledConfig(workCfg), writesStatus(req.Status, req.Properties)); err != nil {
+		return nil, err
+	}
+	if err := validateTypeStatus(workCfg, req.Status, req.Properties); err != nil {
 		return nil, err
 	}
 
@@ -798,7 +820,11 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 
 	actorType, actorID := actorFromContext(ctx, actorID)
 
-	if err := rejectAgentWorkStatusWrite(actorType, isBoardEnabledType(existing, req.Assignee), writesStatus(req.Status, req.Properties)); err != nil {
+	workCfg := s.objectTypeWorkConfig(ctx, projectID, req.Type)
+	if err := rejectAgentWorkStatusWrite(actorType, isBoardEnabledConfig(workCfg), writesStatus(req.Status, req.Properties)); err != nil {
+		return nil, false, err
+	}
+	if err := validateTypeStatus(workCfg, req.Status, req.Properties); err != nil {
 		return nil, false, err
 	}
 
@@ -1093,7 +1119,11 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 	}
 
 	actorType, actorID := actorFromContext(ctx, actorID)
-	if err := rejectAgentWorkStatusWrite(actorType, isBoardEnabledType(current, req.Assignee), writesStatus(req.Status, req.Properties)); err != nil {
+	workCfg := s.objectTypeWorkConfig(ctx, projectID, current.Type)
+	if err := rejectAgentWorkStatusWrite(actorType, isBoardEnabledConfig(workCfg), writesStatus(req.Status, req.Properties)); err != nil {
+		return nil, err
+	}
+	if err := validateTypeStatus(workCfg, req.Status, req.Properties); err != nil {
 		return nil, err
 	}
 	newVersion := &GraphObject{
@@ -2838,15 +2868,25 @@ func (s *Service) BulkUpdateStatus(ctx context.Context, projectID uuid.UUID, req
 	}
 
 	// Reject agent-originated bulk status writes on board-enabled objects: work
-	// status is owned by the single-status writer only.
-	if actorType == ActorAgent {
-		board, err := s.repo.anyBoardEnabledByIDs(ctx, projectID, validIDs)
-		if err != nil {
+	// status is owned by the single-status writer only. Also validate the target
+	// status against each board-enabled type's declared allowed set (P4.1).
+	types, err := s.repo.listDistinctTypesByIDs(ctx, projectID, validIDs)
+	if err != nil {
+		return nil, err
+	}
+	anyBoardEnabled := false
+	for _, t := range types {
+		cfg := s.objectTypeWorkConfig(ctx, projectID, t)
+		if !isBoardEnabledConfig(cfg) {
+			continue
+		}
+		anyBoardEnabled = true
+		if err := validateTypeStatus(cfg, &req.Status, nil); err != nil {
 			return nil, err
 		}
-		if board {
-			return nil, workStatusWriteForbidden()
-		}
+	}
+	if actorType == ActorAgent && anyBoardEnabled {
+		return nil, workStatusWriteForbidden()
 	}
 
 	// Perform bulk update

@@ -2298,20 +2298,23 @@ func (r *Repository) GetDistinctTags(ctx context.Context, projectID uuid.UUID, p
 	return tags, nil
 }
 
-// anyBoardEnabledByIDs reports whether any HEAD object matched by id or
-// canonical_id carries a non-null assignee (the P2 board-enabled signal).
-func (r *Repository) anyBoardEnabledByIDs(ctx context.Context, projectID uuid.UUID, ids []uuid.UUID) (bool, error) {
-	count, err := r.db.NewSelect().
+// listDistinctTypesByIDs returns the distinct HEAD types of the objects matched
+// by id or canonical_id in the given project. Used by BulkUpdateStatus to apply
+// per-type work-status validation (P4.1).
+func (r *Repository) listDistinctTypesByIDs(ctx context.Context, projectID uuid.UUID, ids []uuid.UUID) ([]string, error) {
+	var types []string
+	err := r.db.NewSelect().
 		Model((*GraphObject)(nil)).
+		Column("type").
 		Where("project_id = ?", projectID).
 		Where("(id IN (?) OR canonical_id IN (?))", bun.In(ids), bun.In(ids)).
 		Where("supersedes_id IS NULL").
-		Where("assignee IS NOT NULL").
-		Count(ctx)
+		Group("type").
+		Scan(ctx, &types)
 	if err != nil {
-		return false, fmt.Errorf("any board-enabled by ids: %w", err)
+		return nil, fmt.Errorf("list distinct types by ids: %w", err)
 	}
-	return count > 0, nil
+	return types, nil
 }
 
 // BulkUpdateStatus updates the status of multiple objects.

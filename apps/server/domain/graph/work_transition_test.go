@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/testdb"
@@ -42,7 +43,12 @@ func setupWorkTransitionTest(t *testing.T) (context.Context, *graph.Service, uui
 	cfg := &config.Config{}
 	cfg.Graph.MaxListLimit = 100_000
 	repo := graph.NewRepository(db, log, cfg)
-	svc := graph.NewService(repo, log, nil, nil, nil, nil, nil, graph.NoopEventSink{}, nil, nil)
+	// ResearchRequest is board-enabled (no allowed-status set → status values
+	// unconstrained) so the single-status-writer guard applies via the real P4
+	// per-type flag rather than the removed assignee heuristic.
+	svc := graph.NewService(repo, log, &fakeSchemaProvider{objectSchemas: map[string]agents.ObjectSchema{
+		"ResearchRequest": {ObjectTypeWorkConfig: agents.ObjectTypeWorkConfig{BoardEnabled: true}},
+	}}, nil, nil, nil, nil, graph.NoopEventSink{}, nil, nil)
 	return ctx, svc, uuid.MustParse(projectID), db
 }
 
