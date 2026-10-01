@@ -88,8 +88,10 @@ func TestCreate_AcceptsStatusInAllowedSet(t *testing.T) {
 	})
 
 	ready := "ready"
+	key := "bt-1"
 	obj, err := svc.Create(ctx, projectID, &graph.CreateGraphObjectRequest{
 		Type:   "BoardTask",
+		Key:    &key,
 		Status: &ready,
 	}, nil)
 	require.NoError(t, err)
@@ -117,8 +119,10 @@ func TestPatch_RejectsStatusOutsideAllowedSet(t *testing.T) {
 	})
 
 	ready := "ready"
+	key := "bt-2"
 	obj, err := svc.Create(ctx, projectID, &graph.CreateGraphObjectRequest{
 		Type:   "BoardTask",
+		Key:    &key,
 		Status: &ready,
 	}, nil)
 	require.NoError(t, err)
@@ -185,8 +189,10 @@ func TestCreate_SkipEmbeddingsSuppressesEnqueue(t *testing.T) {
 	})
 
 	ready := "ready"
+	key := "bt-3"
 	_, err := svc.Create(ctx, projectID, &graph.CreateGraphObjectRequest{
 		Type:   "BoardTask",
+		Key:    &key,
 		Status: &ready,
 	}, nil)
 	require.NoError(t, err)

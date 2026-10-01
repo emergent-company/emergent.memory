@@ -1175,12 +1175,12 @@ func (r *Repository) FindHeadByTypeAndKeyNS(ctx context.Context, db bun.IDB, pro
 
 // listWorkObjectsByStatus returns the HEAD rows of board-enabled work objects
 // currently in the given status, on the main graph, ordered by updated_at
-// ascending. boardEnabledTypes is the set of per-type board-enabled type names
-// (resolved from the schema packs via listBoardEnabledTypeNames), replacing the
-// P2 `assignee IS NOT NULL` proxy. projectID nil = all projects; olderThan
+// ascending. refs is the set of per-project board-enabled (project_id, type)
+// pairs (resolved from active project schema assignments), so a type enabled in
+// one project never makes another project's objects work items. olderThan
 // non-zero restricts to objects last written before olderThan.
-func (r *Repository) listWorkObjectsByStatus(ctx context.Context, projectID *uuid.UUID, boardEnabledTypes []string, status string, olderThan time.Time, limit int) ([]*GraphObject, error) {
-	if len(boardEnabledTypes) == 0 {
+func (r *Repository) listWorkObjectsByStatus(ctx context.Context, refs []boardEnabledTypeRef, status string, olderThan time.Time, limit int) ([]*GraphObject, error) {
+	if len(refs) == 0 {
 		return []*GraphObject{}, nil
 	}
 	if limit <= 0 {
@@ -1189,46 +1189,86 @@ func (r *Repository) listWorkObjectsByStatus(ctx context.Context, projectID *uui
 	if limit > 1000 {
 		limit = 1000
 	}
-	objs := make([]*GraphObject, 0)
-	q := r.db.NewSelect().
-		Model(&objs).
-		Column(graphObjectDetailColumns...).
-		Where("branch_id IS NULL").
-		Where("supersedes_id IS NULL").
-		Where("deleted_at IS NULL").
-		Where("type IN (?)", bun.In(boardEnabledTypes)).
-		Where("status = ?", status)
-	if projectID != nil {
-		q = q.Where("project_id = ?", *projectID)
+
+	cols := make([]string, 0, len(graphObjectDetailColumns))
+	for _, c := range graphObjectDetailColumns {
+		cols = append(cols, "go."+c)
 	}
+	values := make([]string, 0, len(refs))
+	args := make([]any, 0, len(refs)*2+3)
+	for _, ref := range refs {
+		values = append(values, "(?::uuid, ?)")
+		args = append(args, ref.ProjectID.String(), ref.Type)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT %s
+		FROM kb.graph_objects go
+		JOIN (VALUES %s) AS bt(project_id, type)
+		  ON go.project_id = bt.project_id AND go.type = bt.type
+		WHERE go.branch_id IS NULL
+		  AND go.supersedes_id IS NULL
+		  AND go.deleted_at IS NULL
+		  AND go.status = ?`,
+		strings.Join(cols, ", "), strings.Join(values, ", "))
+	args = append(args, status)
 	if !olderThan.IsZero() {
-		q = q.Where("updated_at < ?", olderThan)
+		query += "\n\t\t  AND go.updated_at < ?"
+		args = append(args, olderThan)
 	}
-	q = q.Order("updated_at ASC").Limit(limit)
-	if err := q.Scan(ctx); err != nil {
+	query += "\n\t\tORDER BY go.updated_at ASC\n\t\tLIMIT ?"
+	args = append(args, limit)
+
+	objs := make([]*GraphObject, 0)
+	if err := r.db.NewRaw(query, args...).Scan(ctx, &objs); err != nil {
 		return nil, fmt.Errorf("list work objects by status: %w", err)
 	}
 	return objs, nil
 }
 
-// listBoardEnabledTypeNames returns the union of object type names declared
-// boardEnabled across all schema packs. Board-enabled is a pack-level (global)
-// property of the type definition, so this set is project-independent.
-func (r *Repository) listBoardEnabledTypeNames(ctx context.Context) ([]string, error) {
-	var raws []json.RawMessage
-	if err := r.db.NewRaw(
-		`SELECT object_type_schemas FROM kb.graph_schemas WHERE object_type_schemas IS NOT NULL`,
-	).Scan(ctx, &raws); err != nil {
-		return nil, fmt.Errorf("list board-enabled type names: %w", err)
+// boardEnabledTypeRef is a (project_id, type) pair whose type is board-enabled
+// via an active, non-removed project schema assignment.
+type boardEnabledTypeRef struct {
+	ProjectID uuid.UUID
+	Type      string
+}
+
+// listBoardEnabledTypeRefs returns the (project_id, type) pairs that are
+// board-enabled. Board enablement is per-project: it is resolved from the active,
+// non-removed kb.project_schemas assignments, so a type enabled in one project
+// does not make every project's objects of that type work items (the multi-tenant
+// leak). projectID nil = all projects; non-nil restricts to one project.
+func (r *Repository) listBoardEnabledTypeRefs(ctx context.Context, projectID *uuid.UUID) ([]boardEnabledTypeRef, error) {
+	type row struct {
+		ProjectID         uuid.UUID       `bun:"project_id"`
+		ObjectTypeSchemas json.RawMessage `bun:"object_type_schemas"`
+	}
+	query := `
+		SELECT ps.project_id, gs.object_type_schemas
+		FROM kb.project_schemas ps
+		JOIN kb.graph_schemas gs ON gs.id = ps.schema_id
+		WHERE ps.active = true
+		  AND ps.removed_at IS NULL
+		  AND gs.object_type_schemas IS NOT NULL`
+	args := make([]any, 0, 1)
+	if projectID != nil {
+		query += ` AND ps.project_id = ?`
+		args = append(args, *projectID)
+	}
+	var rows []row
+	if err := r.db.NewRaw(query, args...).Scan(ctx, &rows); err != nil {
+		return nil, fmt.Errorf("list board-enabled type refs: %w", err)
 	}
 	seen := make(map[string]bool)
-	var out []string
-	for _, raw := range raws {
-		for _, name := range boardEnabledTypeNamesFromRaw(raw) {
-			if !seen[name] {
-				seen[name] = true
-				out = append(out, name)
+	var out []boardEnabledTypeRef
+	for _, r := range rows {
+		for _, name := range boardEnabledTypeNamesFromRaw(r.ObjectTypeSchemas) {
+			key := r.ProjectID.String() + "\x00" + name
+			if seen[key] {
+				continue
 			}
+			seen[key] = true
+			out = append(out, boardEnabledTypeRef{ProjectID: r.ProjectID, Type: name})
 		}
 	}
 	return out, nil
@@ -2357,23 +2397,39 @@ func (r *Repository) GetDistinctTags(ctx context.Context, projectID uuid.UUID, p
 	return tags, nil
 }
 
-// listDistinctTypesByIDs returns the distinct HEAD types of the objects matched
-// by id or canonical_id in the given project. Used by BulkUpdateStatus to apply
-// per-type work-status validation (P4.1).
-func (r *Repository) listDistinctTypesByIDs(ctx context.Context, projectID uuid.UUID, ids []uuid.UUID) ([]string, error) {
-	var types []string
+// objectHeadRef identifies a HEAD object by its canonical id, physical id, and
+// type. Used to route board-enabled bulk status updates through the versioned
+// transition path while mapping results back to the request order.
+type objectHeadRef struct {
+	ID          uuid.UUID
+	CanonicalID uuid.UUID
+	Type        string
+}
+
+// listHeadObjectRefsByIDs returns the HEAD (id, canonical_id, type) for each
+// object matched by id or canonical_id in the project.
+func (r *Repository) listHeadObjectRefsByIDs(ctx context.Context, projectID uuid.UUID, ids []uuid.UUID) ([]objectHeadRef, error) {
+	type row struct {
+		ID          uuid.UUID `bun:"id"`
+		CanonicalID uuid.UUID `bun:"canonical_id"`
+		Type        string    `bun:"type"`
+	}
+	var rows []row
 	err := r.db.NewSelect().
 		Model((*GraphObject)(nil)).
-		Column("type").
+		Column("id", "canonical_id", "type").
 		Where("project_id = ?", projectID).
 		Where("(id IN (?) OR canonical_id IN (?))", bun.In(ids), bun.In(ids)).
 		Where("supersedes_id IS NULL").
-		Group("type").
-		Scan(ctx, &types)
+		Scan(ctx, &rows)
 	if err != nil {
-		return nil, fmt.Errorf("list distinct types by ids: %w", err)
+		return nil, fmt.Errorf("list head object refs by ids: %w", err)
 	}
-	return types, nil
+	refs := make([]objectHeadRef, 0, len(rows))
+	for _, r := range rows {
+		refs = append(refs, objectHeadRef{ID: r.ID, CanonicalID: r.CanonicalID, Type: r.Type})
+	}
+	return refs, nil
 }
 
 // BulkUpdateStatus updates the status of multiple objects.
