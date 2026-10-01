@@ -419,9 +419,11 @@
         var rail = document.getElementById("chat-rail");
         if (rail) rail.classList.toggle("hidden");
       } else if (t.getAttribute("data-action") === "session-menu") {
-        // The row action menu opens via the go-daisy popover runtime; handling
-        // the attribute here just stops the click from bubbling to the row's
-        // resume-session action.
+        // The row action menu opens via the go-daisy popover runtime. The
+        // delegated closest("[data-action]") above resolves to the innermost
+        // action, so a click on the menu button is seen as "session-menu" and
+        // deliberately does nothing here; the enclosing row's resume-session
+        // action never fires. No stopPropagation is involved.
       } else if (t.getAttribute("data-action") === "archive-session") {
         archiveSession(t.getAttribute("data-id"));
       } else if (t.getAttribute("data-action") === "unarchive-session") {
@@ -710,7 +712,10 @@
   // conversation is intentionally non-destructive: the workspace is left
   // untouched, only the rail row disappears under the default (exclude)
   // filter. A missing id is a no-op (defensive — the menu always carries one).
-  function runSessionAction(id, route, verb) {
+  // `verb` is the past participle for the success toast ("Session archived");
+  // `action` is the present-tense verb for the failure paths, so the error
+  // reads "Could not archive session" rather than "Could not archived session".
+  function runSessionAction(id, route, verb, action) {
     if (!id) return Promise.resolve();
     return fetch("/api/conversations/" + encodeURIComponent(id) + route, { method: "POST" })
       .then(function (r) {
@@ -719,13 +724,13 @@
         return refreshSessionRail();
       })
       .catch(function (err) {
-        reportError(err, "session " + verb + " failed");
-        notify("error", "Could not " + verb + " session: " + err.message);
+        reportError(err, "session " + action + " failed");
+        notify("error", "Could not " + action + " session: " + err.message);
       });
   }
 
-  function archiveSession(id) { return runSessionAction(id, "/archive", "archived"); }
-  function unarchiveSession(id) { return runSessionAction(id, "/unarchive", "unarchived"); }
+  function archiveSession(id) { return runSessionAction(id, "/archive", "archived", "archive"); }
+  function unarchiveSession(id) { return runSessionAction(id, "/unarchive", "unarchived", "unarchive"); }
 
   // openDeleteSessionConfirm fills the shared confirm dialog and opens it. No
   // request is sent here — DELETE only fires from confirmDeleteSession, so
