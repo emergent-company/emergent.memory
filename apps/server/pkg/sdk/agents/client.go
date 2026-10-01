@@ -70,11 +70,17 @@ type Agent struct {
 
 // ReactionConfig contains configuration for reaction triggers.
 type ReactionConfig struct {
-	ObjectTypes          []string `json:"objectTypes"`
-	Events               []string `json:"events"`
-	ConcurrencyStrategy  string   `json:"concurrencyStrategy"`
-	IgnoreAgentTriggered bool     `json:"ignoreAgentTriggered"`
-	IgnoreSelfTriggered  bool     `json:"ignoreSelfTriggered"`
+	ObjectTypes []string `json:"objectTypes"`
+	Events      []string `json:"events"`
+	// ConcurrencyStrategy: "" and "parallel" behave the same (no concurrency
+	// control); "skip" drops a trigger while a non-terminal run exists for the
+	// same agent + target object.
+	ConcurrencyStrategy string `json:"concurrencyStrategy"`
+	// IgnoreAgentTriggered/IgnoreSelfTriggered are pointers so an unset value is
+	// distinguishable from an explicit false. Unset means the safe default:
+	// agent-originated events are ignored.
+	IgnoreAgentTriggered *bool `json:"ignoreAgentTriggered,omitempty"`
+	IgnoreSelfTriggered  *bool `json:"ignoreSelfTriggered,omitempty"`
 }
 
 // AgentCapabilities defines capability restrictions for agents.
