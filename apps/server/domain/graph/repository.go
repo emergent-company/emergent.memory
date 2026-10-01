@@ -1174,11 +1174,15 @@ func (r *Repository) FindHeadByTypeAndKeyNS(ctx context.Context, db bun.IDB, pro
 }
 
 // listWorkObjectsByStatus returns the HEAD rows of board-enabled work objects
-// (assignee IS NOT NULL) currently in the given status, on the main graph,
-// ordered by updated_at ascending. projectID nil = all projects; olderThan
-// non-zero restricts to objects last written before olderThan. See
-// ListWorkObjectsByStatus for the board-enabled signal rationale.
-func (r *Repository) listWorkObjectsByStatus(ctx context.Context, projectID *uuid.UUID, status string, olderThan time.Time, limit int) ([]*GraphObject, error) {
+// currently in the given status, on the main graph, ordered by updated_at
+// ascending. boardEnabledTypes is the set of per-type board-enabled type names
+// (resolved from the schema packs via listBoardEnabledTypeNames), replacing the
+// P2 `assignee IS NOT NULL` proxy. projectID nil = all projects; olderThan
+// non-zero restricts to objects last written before olderThan.
+func (r *Repository) listWorkObjectsByStatus(ctx context.Context, projectID *uuid.UUID, boardEnabledTypes []string, status string, olderThan time.Time, limit int) ([]*GraphObject, error) {
+	if len(boardEnabledTypes) == 0 {
+		return []*GraphObject{}, nil
+	}
 	if limit <= 0 {
 		limit = 100
 	}
@@ -1192,7 +1196,7 @@ func (r *Repository) listWorkObjectsByStatus(ctx context.Context, projectID *uui
 		Where("branch_id IS NULL").
 		Where("supersedes_id IS NULL").
 		Where("deleted_at IS NULL").
-		Where("assignee IS NOT NULL").
+		Where("type IN (?)", bun.In(boardEnabledTypes)).
 		Where("status = ?", status)
 	if projectID != nil {
 		q = q.Where("project_id = ?", *projectID)
@@ -1205,6 +1209,61 @@ func (r *Repository) listWorkObjectsByStatus(ctx context.Context, projectID *uui
 		return nil, fmt.Errorf("list work objects by status: %w", err)
 	}
 	return objs, nil
+}
+
+// listBoardEnabledTypeNames returns the union of object type names declared
+// boardEnabled across all schema packs. Board-enabled is a pack-level (global)
+// property of the type definition, so this set is project-independent.
+func (r *Repository) listBoardEnabledTypeNames(ctx context.Context) ([]string, error) {
+	var raws []json.RawMessage
+	if err := r.db.NewRaw(
+		`SELECT object_type_schemas FROM kb.graph_schemas WHERE object_type_schemas IS NOT NULL`,
+	).Scan(ctx, &raws); err != nil {
+		return nil, fmt.Errorf("list board-enabled type names: %w", err)
+	}
+	seen := make(map[string]bool)
+	var out []string
+	for _, raw := range raws {
+		for _, name := range boardEnabledTypeNamesFromRaw(raw) {
+			if !seen[name] {
+				seen[name] = true
+				out = append(out, name)
+			}
+		}
+	}
+	return out, nil
+}
+
+// boardEnabledTypeNamesFromRaw extracts the names of object types flagged
+// boardEnabled from an object_type_schemas JSONB value, supporting both the
+// array and map storage formats.
+func boardEnabledTypeNamesFromRaw(raw json.RawMessage) []string {
+	var arr []struct {
+		Name         string `json:"name"`
+		BoardEnabled bool   `json:"boardEnabled"`
+	}
+	if err := json.Unmarshal(raw, &arr); err == nil && len(arr) > 0 {
+		var out []string
+		for _, e := range arr {
+			if e.Name != "" && e.BoardEnabled {
+				out = append(out, e.Name)
+			}
+		}
+		return out
+	}
+	var m map[string]struct {
+		BoardEnabled bool `json:"boardEnabled"`
+	}
+	if err := json.Unmarshal(raw, &m); err == nil {
+		var out []string
+		for name, e := range m {
+			if e.BoardEnabled {
+				out = append(out, name)
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 // AcquireObjectUpsertLock acquires an advisory lock for an object upsert by (project_id, type, key).

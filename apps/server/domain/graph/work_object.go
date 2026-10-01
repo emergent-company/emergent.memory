@@ -338,11 +338,9 @@ func withStatusProperty(props map[string]any, status string) map[string]any {
 // means all projects; olderThan non-zero restricts to objects whose HEAD was
 // last written before olderThan.
 //
-// Board-enabled detection (P2 minimal mechanism): an object whose `assignee` is
-// non-null is treated as board-enabled. This is the pragmatic, self-contained
-// signal available before the per-type `boardEnabled` schema flag lands (P4);
-// null-assignee "any-listener" work objects are not yet distinguishable as
-// board-enabled without that flag. See design.md "Object-type configuration".
+// Board-enabled detection (P4): an object is board-enabled when its type carries
+// the per-type `boardEnabled` schema flag, resolved from the schema packs. This
+// replaces the P2 `assignee IS NOT NULL` proxy.
 func (s *Service) ListWorkObjectsByStatus(ctx context.Context, projectID, status string, olderThan time.Time, limit int) ([]*WorkObjectHead, error) {
 	var pid *uuid.UUID
 	if projectID != "" {
@@ -352,7 +350,11 @@ func (s *Service) ListWorkObjectsByStatus(ctx context.Context, projectID, status
 		}
 		pid = &p
 	}
-	objs, err := s.repo.listWorkObjectsByStatus(ctx, pid, status, olderThan, limit)
+	boardTypes, err := s.repo.listBoardEnabledTypeNames(ctx)
+	if err != nil {
+		return nil, err
+	}
+	objs, err := s.repo.listWorkObjectsByStatus(ctx, pid, boardTypes, status, olderThan, limit)
 	if err != nil {
 		return nil, err
 	}
