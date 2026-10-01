@@ -22459,7 +22459,12 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "concurrencyStrategy": {
-                    "$ref": "#/definitions/domain_agents.ConcurrencyStrategy"
+                    "description": "ConcurrencyStrategy controls how a new trigger is handled while a\nnon-terminal run already exists for the same agent + target object.\nEmpty (\"\") and \"parallel\" both mean no concurrency control; \"skip\" drops\nthe new trigger instead of starting a second run.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_agents.ConcurrencyStrategy"
+                        }
+                    ]
                 },
                 "events": {
                     "type": "array",
@@ -22468,9 +22473,11 @@ const docTemplate = `{
                     }
                 },
                 "ignoreAgentTriggered": {
+                    "description": "IgnoreAgentTriggered controls whether agent-originated events are ignored.\nnil (unset) = true = ignore, preserving the historical loop-safety default.\nExplicit false opts this agent in to agent-originated events.",
                     "type": "boolean"
                 },
                 "ignoreSelfTriggered": {
+                    "description": "IgnoreSelfTriggered controls whether this agent's own runs may re-trigger\nit. nil (unset) = true = ignore. Explicit false allows self-triggering.\nOnly consulted when IgnoreAgentTriggered is explicitly false.",
                     "type": "boolean"
                 },
                 "objectTypes": {
