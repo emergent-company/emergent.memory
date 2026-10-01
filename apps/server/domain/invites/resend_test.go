@@ -252,6 +252,63 @@ func TestResendConcurrentEnqueuesExactlyOne(t *testing.T) {
 	}
 }
 
+// TestResendEnqueueFailureIsNonFatalAndPersistsExpiry proves the documented
+// enqueue-failure contract survives the atomic-guard rewrite: when the
+// invite-email INSERT fails inside Resend's transaction, the request still
+// SUCCEEDS and the expires_at extension is still persisted.
+//
+// The failure is forced at the database with a BEFORE INSERT trigger that always
+// raises on kb.email_jobs, which is exactly the reviewer's method: without a
+// savepoint around the enqueue, the raised error aborts the surrounding
+// transaction, the subsequent COMMIT fails ("commit unexpectedly resulted in
+// rollback"), and the expires_at extension rolls back with it.
+func TestResendEnqueueFailureIsNonFatalAndPersistsExpiry(t *testing.T) {
+	svc, testDB := newResendService(t)
+	defer testDB.Close()
+	ctx := context.Background()
+	db := testDB.GetDB()
+
+	orgID, projectID := seedOrgAndProject(t, db)
+	inviteID := seedPendingInvite(t, db, orgID, projectID, "invitee@example.com")
+
+	// Force every INSERT into kb.email_jobs to fail at the database, simulating
+	// a DB-side enqueue failure (constraint, trigger, write outage, ...).
+	mustExecResend(t, db, `CREATE OR REPLACE FUNCTION resend_fail_email_job_insert() RETURNS trigger
+		LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced email job insert failure (test)'; END; $$`)
+	mustExecResend(t, db, `CREATE TRIGGER resend_fail_email_job_insert
+		BEFORE INSERT ON kb.email_jobs FOR EACH ROW EXECUTE FUNCTION resend_fail_email_job_insert()`)
+
+	resendCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	invite, err := svc.Resend(resendCtx, inviteID)
+	if err != nil {
+		t.Fatalf("Resend must remain non-fatal when the enqueue fails, got error: %v", err)
+	}
+
+	// The returned invite reflects the expiry extension.
+	if invite.ExpiresAt == nil || invite.ExpiresAt.Before(time.Now().Add(6*24*time.Hour)) {
+		t.Fatalf("returned expires_at = %v, want ~now+7d", invite.ExpiresAt)
+	}
+
+	// ...and the extension is PERSISTED, not rolled back together with the
+	// failed enqueue.
+	var persisted time.Time
+	if err := db.NewRaw(`SELECT expires_at FROM kb.invites WHERE id = ?`, inviteID).Scan(ctx, &persisted); err != nil {
+		t.Fatalf("read persisted expires_at: %v", err)
+	}
+	lower := time.Now().Add(6*24*time.Hour + 23*time.Hour)
+	upper := time.Now().Add(7*24*time.Hour + time.Hour)
+	if persisted.Before(lower) || persisted.After(upper) {
+		t.Fatalf("persisted expires_at = %v, want ~now+7d (extension was rolled back)", persisted)
+	}
+
+	// The failed enqueue left no job behind.
+	if got := countInviteEmailJobs(t, db, inviteID); got != 0 {
+		t.Fatalf("job count after failed enqueue = %d, want 0", got)
+	}
+}
+
 // TestResendNonPendingOrUnknownNotFound proves resending a non-pending invite or
 // an unknown id is 404 (matching the revoke guard).
 func TestResendNonPendingOrUnknownNotFound(t *testing.T) {

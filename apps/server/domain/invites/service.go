@@ -747,6 +747,10 @@ func resendGuardLockKey(inviteID string) string {
 // exactly one of them observes "no recent job" and enqueues; the other observes
 // the committed job and is a clean no-op. Different invites hash to different
 // keys and never contend.
+//
+// The enqueue runs under a savepoint, so an enqueue failure rolls back only the
+// insert: the outer transaction stays usable, the expires_at extension still
+// commits, and the request still succeeds (the invitation stays valid).
 func (s *Service) Resend(ctx context.Context, inviteID string) (*Invite, error) {
 	var invite Invite
 	err := s.db.NewSelect().
@@ -818,7 +822,18 @@ func (s *Service) Resend(ctx context.Context, inviteID string) (*Invite, error) 
 
 		// Enqueue on the same transaction so the job commits atomically with the
 		// lock's release; the next waiter then sees it and stays a no-op.
-		_ = s.enqueueInviteEmail(ctx, tx, &invite, projectName, "")
+		//
+		// Enqueue failure is non-fatal (see the doc comment above), so the insert
+		// runs inside a SAVEPOINT — bun's nested transaction — rather than bare.
+		// A failed INSERT aborts the savepoint; bun rolls back TO that savepoint,
+		// which returns the outer transaction to a usable state so the COMMIT
+		// below succeeds and the expires_at extension is persisted. Swallowing
+		// the error without the savepoint would leave the Postgres transaction
+		// aborted and make COMMIT fail, rolling the extension back with it.
+		// enqueueInviteEmail logs the failure at warn level.
+		_ = tx.RunInTx(ctx, nil, func(ctx context.Context, sp bun.Tx) error {
+			return s.enqueueInviteEmail(ctx, sp, &invite, projectName, "")
+		})
 		return nil
 	})
 	if err != nil {
