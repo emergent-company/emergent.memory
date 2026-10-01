@@ -137,13 +137,13 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Notification, er
 		return nil, err
 	}
 
-	s.emitCreated(created)
+	s.emitCreated(ctx, created)
 
 	return created, nil
 }
 
 // emitCreated publishes a real-time notification entity event.
-func (s *Service) emitCreated(n *Notification) {
+func (s *Service) emitCreated(ctx context.Context, n *Notification) {
 	if s.events == nil {
 		return
 	}
@@ -155,7 +155,7 @@ func (s *Service) emitCreated(n *Notification) {
 	if n.EventKey != nil {
 		eventKey = *n.EventKey
 	}
-	s.events.EmitCreated(events.EntityNotification, n.ID, projectID, &events.EmitOptions{
+	s.events.EmitCreated(ctx, events.EntityNotification, n.ID, projectID, &events.EmitOptions{
 		Data: map[string]any{
 			"userId":   n.UserID,
 			"scope":    string(n.Scope),
