@@ -677,6 +677,38 @@
   document.addEventListener("DOMContentLoaded", function () { openAutoOpenDialogs(document); });
   document.addEventListener("htmx:after:swap", function (ev) { openAutoOpenDialogs(ev.target); });
 
+  /* Kanban board drag = execute. Dropping a card onto the Ready lane fires the
+     retry (execute) action via htmx; the response re-renders #board and clears
+     the drawer. Delegated on document so it survives htmx swaps. */
+  document.addEventListener("dragstart", function (ev) {
+    var card = ev.target.closest("[data-board-card]");
+    if (!card) return;
+    var id = card.getAttribute("data-canonical-id");
+    if (ev.dataTransfer) {
+      ev.dataTransfer.setData("text/plain", id || "");
+      ev.dataTransfer.effectAllowed = "move";
+    }
+  });
+  document.addEventListener("dragover", function (ev) {
+    var col = ev.target.closest("[data-board-column]");
+    if (!col || col.getAttribute("data-board-column") !== "ready") return;
+    ev.preventDefault();
+    if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
+  });
+  document.addEventListener("drop", function (ev) {
+    var col = ev.target.closest("[data-board-column]");
+    if (!col || col.getAttribute("data-board-column") !== "ready") return;
+    ev.preventDefault();
+    var id = ev.dataTransfer ? ev.dataTransfer.getData("text/plain") : "";
+    if (!id) return;
+    if (window.htmx) {
+      htmx.ajax("POST", "/board/items/" + encodeURIComponent(id) + "/retry", {
+        target: "#board",
+        swap: "outerHTML"
+      });
+    }
+  });
+
   /* expose for templ script blocks */
   window.MemoryApp = {
     openAgentForm: openAgentForm,

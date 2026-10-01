@@ -500,6 +500,15 @@ func main() {
 	e.GET("/sessions/:id", s.uiSession)
 	e.GET("/share-sessions/:id", s.uiShareSessionTranscript)
 	e.GET("/usage", s.uiUsage)
+	// Kanban board (object-driven work): columns + card drawer + human actions.
+	e.GET("/board", s.uiBoard)
+	e.GET("/board/partial", s.uiBoardPartial)
+	e.GET("/board/items/:canonicalId", s.uiBoardItem)
+	e.POST("/board/items/:canonicalId/approve", s.uiBoardApprove)
+	e.POST("/board/items/:canonicalId/request-changes", s.uiBoardRequestChanges)
+	e.POST("/board/items/:canonicalId/retry", s.uiBoardRetry)
+	e.POST("/board/items/:canonicalId/reassign", s.uiBoardReassign)
+	e.POST("/board/items/:canonicalId/cancel", s.uiBoardCancel)
 
 	// Inbox page + project-event notification preferences (inbox subsystem).
 	e.GET("/inbox", s.uiInbox)

@@ -90,6 +90,7 @@ func sidebarGroups(isOrgAdmin bool) []layout.SidebarGroup {
 				{Label: "Approvals", Href: "/settings/approvals", Icon: "lucide--shield-check"},
 				{Label: "Chat", Href: "/chat", Icon: "lucide--messages-square"},
 				{Label: "Sessions", Href: "/sessions", Icon: "lucide--history"},
+				{Label: "Board", Href: "/board", Icon: "lucide--kanban-square"},
 				{Label: "Usage", Href: "/usage", Icon: "lucide--chart-column"},
 			},
 		},

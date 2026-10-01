@@ -1,0 +1,344 @@
+package main
+
+import (
+	"strconv"
+
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	"github.com/emergent-company/go-daisy/components/layout"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Kanban board (object-driven work) ---
+
+// BoardPage renders the Kanban board: a header, the circuit-breaker health
+// readout (when any reaction agent is unhealthy), and the status columns.
+templ BoardPage(items []WorkItem, agents []ScheduledAgent, loadErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@boardHeader(len(items), loadErr == nil)
+		if loadErr != nil {
+			@pageError("Board unavailable", loadErr)
+		} else {
+			@boardHealth(agents)
+			@BoardColumns(items, "")
+		}
+		<div id="board-drawer" data-testid="board-drawer"></div>
+	}
+}
+
+// BoardRefresh renders the board columns plus an out-of-band swap that clears
+// the drawer (closing any open dialog). This is the response for the htmx
+// action and partial routes.
+templ BoardRefresh(items []WorkItem, errMsg string) {
+	@BoardColumns(items, errMsg)
+	<div id="board-drawer" hx-swap-oob="true" data-testid="board-drawer"></div>
+}
+
+templ boardHeader(count int, ok bool) {
+	@pageHeader("Control plane", "Board", "Work items across object status lanes — drag a card to the Ready lane to execute it, or open a card to review and act on it.") {
+		if ok {
+			@countBadgeLabel(countLabel(count, "item", "items"), "lucide--kanban-square")
+		}
+	}
+}
+
+// boardHealth renders the agent circuit-breaker readout: a warning listing
+// disabled or repeatedly-failing reaction agents. Renders nothing when healthy.
+templ boardHealth(agents []ScheduledAgent) {
+	{{ broken := boardUnhealthyAgents(agents) }}
+	if len(broken) > 0 {
+		<div class="mb-6" data-testid="board-agent-health">
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertWarning,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--heart-pulse",
+				Message: "Some work agents are unhealthy and may not pick up new items.",
+			})
+			<div class="mt-2 flex flex-wrap gap-2">
+				for _, a := range broken {
+					{{ label := a.Name
+					if !a.Enabled {
+						label = a.Name + " · disabled"
+					} else {
+						label = a.Name + " · " + strconv.Itoa(a.ConsecutiveFailures) + " failure" + plural(a.ConsecutiveFailures)
+					} }}
+					@ui.Badge(ui.BadgeProps{Label: label, Variant: ui.BadgeError, Size: ui.BadgeSizeXS, Dot: true})
+				}
+			</div>
+		</div>
+	}
+}
+
+// BoardColumns renders the status lanes. It is the htmx swap region (#board) that
+// actions and drag re-render. errMsg, when set, renders an error banner above
+// the lanes.
+templ BoardColumns(items []WorkItem, errMsg string) {
+	<div id="board" data-testid="board">
+		if errMsg != "" {
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertError,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--circle-x",
+				Message: errMsg,
+				Attrs:   templ.Attributes{"class": "mb-4"},
+			})
+		}
+		{{ cols := buildBoardColumns(items) }}
+		if len(items) == 0 {
+			@ui.EmptyState(ui.EmptyStateProps{
+				Icon:        "lucide--kanban-square",
+				Title:       "No work items",
+				Description: "Objects of a board-enabled type will appear here, grouped by their work status.",
+				Bordered:    true,
+				Class:       "py-12",
+			})
+		} else {
+			<div class="flex items-stretch gap-4 overflow-x-auto pb-4">
+				for _, col := range cols {
+					@boardLaneView(col)
+				}
+			</div>
+		}
+	</div>
+}
+
+// boardLane renders one status lane: a header (status badge + count) and the
+// stack of cards. The Ready lane is a drop target (drag = execute).
+templ boardLaneView(col boardLane) {
+	<section
+		class="flex min-w-64 shrink-0 flex-col rounded-box border border-base-content/10 bg-base-200/30"
+		data-board-column={ col.Status }
+		aria-label={ boardStatusLabel(col.Status) }
+	>
+		<header class="flex items-center gap-2 border-base-content/10 border-b px-3 py-2.5">
+			@components.StatusBadge(boardStatusLabel(col.Status), boardStatusIntent(col.Status), "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
+			<span class="ml-auto font-mono text-[11px] text-muted-faint">{ strconv.Itoa(len(col.Items)) }</span>
+		</header>
+		<div class="flex min-h-12 grow flex-col gap-2 p-2">
+			for _, it := range col.Items {
+				@boardCard(it)
+			}
+			if len(col.Items) == 0 {
+				<div class="grid place-items-center rounded-field border border-dashed border-base-content/10 py-6 text-[11px] text-muted-faint">Empty</div>
+			}
+		</div>
+	</section>
+}
+
+// boardCard renders one work-item card: type, key, assignee, and the latest-run
+// execution badge. Blocked/failed cards get an error accent; unroutable cards a
+// warning accent. The card is both clickable (opens the drawer) and draggable.
+templ boardCard(it WorkItem) {
+	{{ accent := "border-base-content/10"
+	if it.Status == "blocked" || it.LatestRunStatus == "error" {
+		accent = "border-error/40"
+	} else if it.Unroutable {
+		accent = "border-warning/40"
+	} }}
+	<div
+		class={ "cursor-pointer rounded-field border bg-base-100 p-3 shadow-sm transition-colors hover:border-base-content/25", accent }
+		draggable="true"
+		data-board-card=""
+		data-canonical-id={ it.CanonicalID }
+		hx-get={ boardItemPath(it.CanonicalID) }
+		hx-target="#board-drawer"
+		hx-swap="innerHTML"
+		role="button"
+		tabindex="0"
+		data-testid={ "board-card-" + it.CanonicalID }
+	>
+		<div class="flex items-center gap-1.5">
+			<span class="font-mono text-[10px] font-medium tracking-wide text-muted uppercase">{ it.Type }</span>
+			if it.Unroutable {
+				<span class="iconify lucide--route-off text-warning size-3" aria-label="Unroutable" title="No listening agent"></span>
+			}
+			if it.Status == "blocked" {
+				<span class="iconify lucide--circle-x text-error size-3" aria-label="Blocked"></span>
+			}
+		</div>
+		<p class="mt-1 min-w-0 truncate text-sm font-medium">{ it.Key }</p>
+		<div class="mt-2 flex flex-wrap items-center gap-1.5">
+			if it.Assignee != "" {
+				@ui.Badge(ui.BadgeProps{Label: it.Assignee, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--user"})
+			}
+			if it.RunCount > 0 {
+				@components.StatusBadge(it.LatestRunStatus, boardRunIntent(it.LatestRunStatus), "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
+			}
+		</div>
+	</div>
+}
+
+// BoardDrawer renders the card detail as a native dialog: the item identity,
+// its latest run, feedback history, recent runs, and the human actions.
+templ BoardDrawer(detail *WorkItemDetail) {
+	{{ item := detail.Item }}
+	@ui.Dialog(ui.DialogProps{
+		ID:       "board-item-dialog",
+		BoxClass: "max-w-lg",
+		Attrs:    templ.Attributes{"data-dialog-autoopen": "true", "data-testid": "board-item-dialog"},
+	}) {
+		<div class="flex items-center justify-between gap-2">
+			<div class="flex min-w-0 items-center gap-2">
+				@components.StatusBadge(item.Status, boardStatusIntent(item.Status), "", components.StatusBadgeOpts{Size: ui.BadgeSizeSM, Dot: true})
+				<span class="font-mono text-[11px] text-muted uppercase">{ item.Type }</span>
+			</div>
+			@ui.Button(ui.ButtonProps{
+				Type:      ui.ButtonTypeButton,
+				Variant:   ui.ButtonGhost,
+				Size:      ui.ButtonSM,
+				Shape:     ui.ButtonShapeCircle,
+				Icon:      "lucide--x",
+				AriaLabel: "Close",
+				Attrs:     templ.Attributes{"data-dialog-close": "true"},
+			})
+		</div>
+
+		<h3 class="mt-3 text-lg font-semibold tracking-tight">{ item.Key }</h3>
+		<div class="mt-2 flex flex-wrap items-center gap-1.5">
+			@ui.Badge(ui.BadgeProps{Label: "v" + strconv.Itoa(item.Version), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+			if item.Assignee != "" {
+				@ui.Badge(ui.BadgeProps{Label: item.Assignee, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--user"})
+			}
+			if item.RunCount > 0 {
+				@components.StatusBadge("last run "+item.LatestRunStatus, boardRunIntent(item.LatestRunStatus), "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
+			}
+			if item.Unroutable {
+				@ui.Badge(ui.BadgeProps{Label: "unroutable", Variant: ui.BadgeWarning, Size: ui.BadgeSizeXS})
+			}
+			if item.NeedsReview {
+				@ui.Badge(ui.BadgeProps{Label: "needs review", Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS})
+			}
+		</div>
+
+		@boardDrawerActions(item)
+
+		if len(detail.Feedback) > 0 {
+			<div class="mt-5">
+				<span class="text-[10px] font-semibold tracking-wider text-muted-faint uppercase">Feedback</span>
+				<div class="mt-2 space-y-2">
+					for _, fb := range detail.Feedback {
+						<div class="rounded-box border border-base-content/10 bg-base-200/30 p-2.5">
+							<div class="flex items-center gap-1.5 text-[10px] font-medium text-muted">
+								<span>round { strconv.Itoa(fb.Round) }</span>
+								if fb.Author != "" {
+									<span>· { fb.Author }</span>
+								}
+							</div>
+							<p class="mt-1 text-sm break-words">{ fb.Text }</p>
+						</div>
+					}
+				</div>
+			</div>
+		}
+
+		if len(detail.Runs) > 0 {
+			<div class="mt-5">
+				<span class="text-[10px] font-semibold tracking-wider text-muted-faint uppercase">Runs</span>
+				<div class="mt-2 space-y-1.5">
+					for _, run := range detail.Runs {
+						<div class="flex items-center gap-2 rounded-box border border-base-content/10 px-2.5 py-1.5">
+							@components.StatusBadge(run.Status, boardRunIntent(run.Status), "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
+							if run.ErrorMessage != nil && *run.ErrorMessage != "" {
+								<span class="min-w-0 truncate text-xs text-error">{ *run.ErrorMessage }</span>
+							}
+							<span class="ml-auto font-mono text-[10px] text-muted-faint">#{ shortID(run.ID) }</span>
+						</div>
+					}
+				</div>
+			</div>
+		}
+	}
+}
+
+// boardDrawerActions renders the human actions for an item, gated by its status
+// (hide, don't disable). Every action posts to the gateway action route and
+// swaps the board columns; the drawer is cleared out-of-band.
+templ boardDrawerActions(item *WorkItem) {
+	<div class="mt-4 flex flex-wrap gap-2">
+		if item.Status == "review" {
+			@boardActionButton("Approve", "lucide--check", ui.ButtonSuccess, boardActionPath(item.CanonicalID, "approve"))
+			@boardRequestChangesForm(item.CanonicalID)
+		}
+		if item.Status == "blocked" {
+			@boardActionButton("Retry", "lucide--rotate-cw", ui.ButtonPrimary, boardActionPath(item.CanonicalID, "retry"))
+		}
+		if item.Status != "done" {
+			@boardReassignForm(item.CanonicalID, item.Assignee)
+			@boardActionButton("Cancel", "lucide--ban", ui.ButtonGhost, boardActionPath(item.CanonicalID, "cancel"))
+		}
+	</div>
+}
+
+// boardActionButton is an htmx POST button for a bodyless action.
+templ boardActionButton(label, icon string, variant ui.ButtonVariant, action string) {
+	@ui.Button(ui.ButtonProps{
+		Type:    ui.ButtonTypeButton,
+		Variant: variant,
+		Size:    ui.ButtonSM,
+		Icon:    icon,
+		Attrs: templ.Attributes{
+			"hx-post":   action,
+			"hx-target": "#board",
+			"hx-swap":   "outerHTML",
+		},
+	}) {
+		{ label }
+	}
+}
+
+// boardRequestChangesForm posts request-changes with required feedback.
+templ boardRequestChangesForm(canonicalID string) {
+	<form
+		hx-post={ boardActionPath(canonicalID, "request-changes") }
+		hx-target="#board"
+		hx-swap="outerHTML"
+		class="mt-2 flex w-full flex-col gap-2"
+	>
+		<textarea name="feedback" required placeholder="What needs to change?" class="textarea textarea-bordered w-full" rows="2"></textarea>
+		<div class="flex justify-end">
+			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonAccent, Size: ui.ButtonSM}) {
+				Request changes
+			}
+		</div>
+	</form>
+}
+
+// boardReassignForm posts reassign with an optional assignee.
+templ boardReassignForm(canonicalID, current string) {
+	<form
+		hx-post={ boardActionPath(canonicalID, "reassign") }
+		hx-target="#board"
+		hx-swap="outerHTML"
+		class="flex items-center gap-2"
+	>
+		<input type="text" name="assignee" value={ current } placeholder="Assignee (empty clears)" class="input input-bordered input-sm w-40" />
+		@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonOutline, Size: ui.ButtonSM}) {
+			Reassign
+		}
+	</form>
+}
+
+// BoardDrawerError renders a drawer that failed to load (e.g. a deleted item).
+templ BoardDrawerError(err error) {
+	@ui.Dialog(ui.DialogProps{
+		ID:       "board-item-dialog",
+		BoxClass: "max-w-sm",
+		Attrs:    templ.Attributes{"data-dialog-autoopen": "true", "data-testid": "board-item-dialog"},
+	}) {
+		@ui.Alert(ui.AlertProps{
+			Type:    ui.AlertError,
+			Style:   ui.AlertStyleOutline,
+			Icon:    "lucide--circle-x",
+			Message: err.Error(),
+		})
+		<div class="mt-3 flex justify-end">
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Attrs:   templ.Attributes{"data-dialog-close": "true"},
+			}) {
+				Close
+			}
+		</div>
+	}
+}

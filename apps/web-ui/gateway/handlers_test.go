@@ -137,6 +137,17 @@ type fakeMemory struct {
 	ftsQuery            string                     // last query passed to SearchObjectsFTS
 	ftsTypeFilter       string                     // last type filter passed to SearchObjectsFTS
 
+	// Work items (object-driven work / Kanban board).
+	workItems         []WorkItem      // returned by ListWorkItems
+	workItemsErr      error           // ListWorkItems failure
+	workItemDetail    *WorkItemDetail // returned by GetWorkItem
+	workItemDetailErr error           // GetWorkItem failure
+	workAction        *WorkItemAction // returned by action methods
+	workActionErr     error           // action failure
+	lastWorkItemID    string          // last canonicalId passed to an action
+	lastReassignTo    string          // last assignee passed to ReassignWorkItem
+	lastFeedback      string          // last feedback passed to RequestChangesWorkItem
+
 	// objects browser: cursor pagination + count + search.
 	pageObjects        []GraphObject        // returned by ListGraphObjectsPage
 	nextPageCursor     string               // returned by ListGraphObjectsPage
@@ -1112,6 +1123,47 @@ func (f *fakeMemory) CreateObject(ctx context.Context, req *CreateObjectRequest)
 func (f *fakeMemory) CreateRelationship(ctx context.Context, req *CreateRelationshipRequest) error {
 	f.lastCreateRelReq = req
 	return f.createRelErr
+}
+
+func (f *fakeMemory) ListWorkItems(ctx context.Context, status, typeName string, limit int) ([]WorkItem, error) {
+	if f.workItemsErr != nil {
+		return nil, f.workItemsErr
+	}
+	return f.workItems, nil
+}
+
+func (f *fakeMemory) GetWorkItem(ctx context.Context, canonicalID string) (*WorkItemDetail, error) {
+	if f.workItemDetailErr != nil {
+		return nil, f.workItemDetailErr
+	}
+	return f.workItemDetail, nil
+}
+
+func (f *fakeMemory) ApproveWorkItem(ctx context.Context, canonicalID string) (*WorkItemAction, error) {
+	f.lastWorkItemID = canonicalID
+	return f.workAction, f.workActionErr
+}
+
+func (f *fakeMemory) RequestChangesWorkItem(ctx context.Context, canonicalID, feedback string) (*WorkItemAction, error) {
+	f.lastWorkItemID = canonicalID
+	f.lastFeedback = feedback
+	return f.workAction, f.workActionErr
+}
+
+func (f *fakeMemory) RetryWorkItem(ctx context.Context, canonicalID string) (*WorkItemAction, error) {
+	f.lastWorkItemID = canonicalID
+	return f.workAction, f.workActionErr
+}
+
+func (f *fakeMemory) ReassignWorkItem(ctx context.Context, canonicalID, assignee string) (*WorkItemAction, error) {
+	f.lastWorkItemID = canonicalID
+	f.lastReassignTo = assignee
+	return f.workAction, f.workActionErr
+}
+
+func (f *fakeMemory) CancelWorkItem(ctx context.Context, canonicalID string) (*WorkItemAction, error) {
+	f.lastWorkItemID = canonicalID
+	return f.workAction, f.workActionErr
 }
 
 func (f *fakeMemory) SearchObjectsFTS(ctx context.Context, query, typeFilter string) ([]GraphObject, error) {
