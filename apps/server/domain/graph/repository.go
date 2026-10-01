@@ -1306,6 +1306,103 @@ func boardEnabledTypeNamesFromRaw(raw json.RawMessage) []string {
 	return nil
 }
 
+// listBoardWorkObjects returns the HEAD rows of board-enabled work objects on
+// the main graph, optionally filtered by status and/or type, ordered by
+// updated_at ascending. refs is the set of per-project board-enabled
+// (project_id, type) pairs. status empty means all statuses; typeName empty
+// means all board-enabled types.
+func (r *Repository) listBoardWorkObjects(ctx context.Context, refs []boardEnabledTypeRef, status, typeName string, limit int) ([]*GraphObject, error) {
+	if len(refs) == 0 {
+		return []*GraphObject{}, nil
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	cols := make([]string, 0, len(graphObjectDetailColumns))
+	for _, c := range graphObjectDetailColumns {
+		cols = append(cols, "go."+c)
+	}
+	values := make([]string, 0, len(refs))
+	args := make([]any, 0, len(refs)*2+3)
+	for _, ref := range refs {
+		values = append(values, "(?::uuid, ?)")
+		args = append(args, ref.ProjectID.String(), ref.Type)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT %s
+		FROM kb.graph_objects go
+		JOIN (VALUES %s) AS bt(project_id, type)
+		  ON go.project_id = bt.project_id AND go.type = bt.type
+		WHERE go.branch_id IS NULL
+		  AND go.supersedes_id IS NULL
+		  AND go.deleted_at IS NULL`,
+		strings.Join(cols, ", "), strings.Join(values, ", "))
+	if status != "" {
+		query += "\n\t\t  AND go.status = ?"
+		args = append(args, status)
+	}
+	if typeName != "" {
+		query += "\n\t\t  AND go.type = ?"
+		args = append(args, typeName)
+	}
+	query += "\n\t\tORDER BY go.updated_at ASC\n\t\tLIMIT ?"
+	args = append(args, limit)
+
+	objs := make([]*GraphObject, 0)
+	if err := r.db.NewRaw(query, args...).Scan(ctx, &objs); err != nil {
+		return nil, fmt.Errorf("list board work objects: %w", err)
+	}
+	return objs, nil
+}
+
+// workItemRunProjection is the latest-run join for a work item (the execution
+// badge source): the most recent kb.agent_runs row whose subject_object_id is
+// the object's canonical_id, plus the total run count for that subject.
+type workItemRunProjection struct {
+	CanonicalID  uuid.UUID  `bun:"canonical_id"`
+	RunID        string     `bun:"run_id"`
+	Status       string     `bun:"status"`
+	FailureClass *string    `bun:"failure_class"`
+	CompletedAt  *time.Time `bun:"completed_at"`
+	RunCount     int        `bun:"run_count"`
+}
+
+// listLatestRunsForSubjects returns, keyed by subject canonical id, the latest
+// run's projection plus the total run count. Subjects with no runs are absent
+// from the map (the board renders them without an execution badge).
+func (r *Repository) listLatestRunsForSubjects(ctx context.Context, canonicalIDs []uuid.UUID) (map[uuid.UUID]*workItemRunProjection, error) {
+	out := make(map[uuid.UUID]*workItemRunProjection)
+	if len(canonicalIDs) == 0 {
+		return out, nil
+	}
+	rows := make([]*workItemRunProjection, 0)
+	err := r.db.NewRaw(`
+		SELECT DISTINCT ON (subject_object_id)
+			subject_object_id AS canonical_id,
+			id AS run_id,
+			status,
+			failure_class,
+			completed_at,
+			COUNT(*) OVER (PARTITION BY subject_object_id) AS run_count
+		FROM kb.agent_runs
+		WHERE subject_object_id IN (?)
+		ORDER BY subject_object_id, created_at DESC`,
+		bun.In(canonicalIDs),
+	).Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("list latest runs for subjects: %w", err)
+	}
+	for _, row := range rows {
+		out[row.CanonicalID] = row
+	}
+	return out, nil
+}
+
 // AcquireObjectUpsertLock acquires an advisory lock for an object upsert by (project_id, type, key).
 // The lock is released when the transaction commits or rolls back.
 func (r *Repository) AcquireObjectUpsertLock(ctx context.Context, tx bun.Tx, projectID uuid.UUID, objType string, key string) error {

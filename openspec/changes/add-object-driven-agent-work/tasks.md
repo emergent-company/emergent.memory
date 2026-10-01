@@ -39,11 +39,11 @@
 
 ## 5. P5 — Kanban projection and UI
 
-- [ ] 5.1 Read projection: board-enabled objects (status, assignee) left-joined to runs on `subject_object_id`; expose an API (+ `route-authority.yaml`). Verify query tests.
-- [ ] 5.2 Gateway board view: columns by status, execution badge, drag = transition/enqueue, live updates. Verify build + lint.
-- [ ] 5.3 Card drawer: object, sessions/runs, artifacts, feedback; actions Approve / Request changes / Retry / Reassign / Cancel. Verify browser test.
-- [ ] 5.4 Failed/Blocked surfaces + agent-health (breaker) readout. Verify.
-- [ ] 5.5 Exclude sessions with no associated object from the board. Verify.
+- [x] 5.1 Read projection: board-enabled objects (status, assignee) left-joined to runs on `subject_object_id`; expose an API (+ `route-authority.yaml`). Verify query tests.
+- [x] 5.2 Gateway board view: columns by status, execution badge, drag = transition/enqueue, live updates. Verify build + lint.
+- [x] 5.3 Card drawer: object, sessions/runs, artifacts, feedback; actions Approve / Request changes / Retry / Reassign / Cancel. Verify browser test.
+- [x] 5.4 Failed/Blocked surfaces + agent-health (breaker) readout. Verify.
+- [x] 5.5 Exclude sessions with no associated object from the board. Verify.
 
 ## 6. P6 — Contract validation (deferred)
 

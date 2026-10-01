@@ -265,6 +265,76 @@ func (s *WorkActionService) Cancel(ctx context.Context, projectID, canonicalID s
 	return res, nil
 }
 
+// ListWorkItems returns the board projection of work items (objects joined to
+// their latest run), with the derived unroutable flag overlaid from the
+// project's listener footprint. status empty = all statuses; typeName empty =
+// all board-enabled types.
+func (s *WorkActionService) ListWorkItems(ctx context.Context, projectID, status, typeName string, limit int) ([]*graph.WorkItem, error) {
+	if s.workObjects == nil {
+		return nil, fmt.Errorf("work object store not wired")
+	}
+	items, err := s.workObjects.ListWorkItems(ctx, projectID, status, typeName, limit)
+	if err != nil {
+		return nil, err
+	}
+	idx, err := s.repo.buildWorkListenerIndex(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	for _, it := range items {
+		it.Unroutable = !idx.isRoutable(it.Type, it.Assignee)
+	}
+	return items, nil
+}
+
+// WorkItemDetail is the board card drawer projection: the work item joined to
+// its latest run, its full feedback history, and its recent runs.
+type WorkItemDetail struct {
+	Item     *graph.WorkItem
+	Feedback []*WorkItemFeedback
+	Runs     []*AgentRun
+}
+
+// GetWorkItemDetail returns one work item joined to its latest run, its
+// feedback history, and its recent runs, for the card drawer.
+func (s *WorkActionService) GetWorkItemDetail(ctx context.Context, projectID, canonicalID string) (*WorkItemDetail, error) {
+	if s.workObjects == nil {
+		return nil, fmt.Errorf("work object store not wired")
+	}
+	items, err := s.workObjects.ListWorkItems(ctx, projectID, "", "", 1000)
+	if err != nil {
+		return nil, err
+	}
+	var item *graph.WorkItem
+	for _, it := range items {
+		if it.CanonicalID == canonicalID {
+			item = it
+			break
+		}
+	}
+	if item == nil {
+		return nil, apperror.NewNotFound("WorkItem", canonicalID)
+	}
+	idx, err := s.repo.buildWorkListenerIndex(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	item.Unroutable = !idx.isRoutable(item.Type, item.Assignee)
+
+	detail := &WorkItemDetail{Item: item}
+	if feedback, err := s.repo.ListWorkFeedback(ctx, projectID, canonicalID); err != nil {
+		return nil, err
+	} else {
+		detail.Feedback = feedback
+	}
+	if runs, err := s.repo.ListRunsForSubject(ctx, canonicalID, 20); err != nil {
+		return nil, err
+	} else {
+		detail.Runs = runs
+	}
+	return detail, nil
+}
+
 // enqueueWorkRun enqueues a fresh run for the subject work object, optionally
 // carrying the full rework feedback history in the trigger metadata.
 func (s *WorkActionService) enqueueWorkRun(ctx context.Context, head *graph.WorkObjectHead, agent *Agent, agentDef *AgentDefinition, feedback []map[string]any) (string, error) {
