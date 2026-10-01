@@ -209,6 +209,8 @@ func parseGitHubURL(rawURL, refOverride string) (org, repo, ref string, err erro
 	}
 
 	path := strings.Trim(u.Path, "/")
+	// modelref:allow — this splits a GitHub URL path into org/repo/ref
+	// segments, not a model reference, so modelref.Parse does not apply.
 	parts := strings.Split(path, "/")
 	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
 		return "", "", "", apperror.NewBadRequest("invalid GitHub URL: expected https://github.com/<org>/<repo>[#ref]")
