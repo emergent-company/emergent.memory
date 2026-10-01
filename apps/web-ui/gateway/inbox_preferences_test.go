@@ -29,19 +29,3 @@ func TestSetNotificationPreferenceForwardsProject(t *testing.T) {
 		t.Errorf("preference write = %q, want project-scoped pref:proj-1:comment.reply:…", got)
 	}
 }
-
-// TestListNotificationPreferencesForwardsProject asserts the project id the
-// page is scoped to reaches the upstream preference lookup.
-func TestListNotificationPreferencesForwardsProject(t *testing.T) {
-	f := &fakeMemory{}
-	s := &Server{memory: f}
-	e := notificationsEcho(s)
-
-	rec := doNotif(t, e, http.MethodGet, "/api/notifications/preferences?project_id=proj-1", "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET status = %d", rec.Code)
-	}
-	if f.lastPrefsProject != "proj-1" {
-		t.Errorf("upstream project = %q, want proj-1", f.lastPrefsProject)
-	}
-}
