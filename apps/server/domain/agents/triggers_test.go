@@ -7,11 +7,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/emergent-company/emergent.memory/domain/events"
 	"github.com/emergent-company/emergent.memory/domain/scheduler"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // newTestTriggerService creates a TriggerService without event bus subscription.
@@ -340,7 +342,7 @@ func TestOnEntityEvent_LoopPrevention_AgentActor(t *testing.T) {
 	ts.registerEventTrigger(agent)
 
 	// Emit event with ActorAgent — loop prevention should block it
-	eventSvc.EmitCreated(events.EntityDocument, "doc-1", "p1", &events.EmitOptions{
+	eventSvc.EmitCreated(context.Background(), events.EntityDocument, "doc-1", "p1", &events.EmitOptions{
 		Actor: &events.ActorContext{ActorType: events.ActorAgent, ActorID: "agent-x"},
 	})
 
@@ -362,7 +364,7 @@ func TestOnEntityEvent_LoopPrevention_UserActor_NoMatchingAgent(t *testing.T) {
 	// Emit event from a user actor for a DIFFERENT project ("p2").
 	// onEntityEvent won't block it (not an agent actor), but HandleEvent
 	// won't find a matching agent for "p2", so no goroutine is launched.
-	eventSvc.EmitCreated(events.EntityDocument, "doc-1", "p2", &events.EmitOptions{
+	eventSvc.EmitCreated(context.Background(), events.EntityDocument, "doc-1", "p2", &events.EmitOptions{
 		Actor: &events.ActorContext{ActorType: events.ActorUser, ActorID: "user-1"},
 	})
 
@@ -377,7 +379,7 @@ func TestOnEntityEvent_NilActorAllowed(t *testing.T) {
 	_ = ts
 
 	// Emit event with nil Actor (should not panic on nil check)
-	eventSvc.EmitCreated(events.EntityDocument, "doc-1", "p1", nil)
+	eventSvc.EmitCreated(context.Background(), events.EntityDocument, "doc-1", "p1", nil)
 
 	time.Sleep(100 * time.Millisecond)
 }
@@ -394,7 +396,7 @@ func TestOnEntityEvent_BatchEventIgnored(t *testing.T) {
 
 	// Emit a BATCH event — the switch in onEntityEvent has no case for EventTypeBatch,
 	// so it returns early from the default branch. No HandleEvent call.
-	eventSvc.EmitBatch(events.EntityDocument, []string{"doc-1", "doc-2"}, "p1", nil)
+	eventSvc.EmitBatch(context.Background(), events.EntityDocument, []string{"doc-1", "doc-2"}, "p1", nil)
 
 	time.Sleep(100 * time.Millisecond)
 	// If loop prevention for batch events is broken, HandleEvent would be called
@@ -446,7 +448,7 @@ func TestOnEntityEvent_ObjectTypeOverride(t *testing.T) {
 	// The agent IS registered for Person:created and project matches p1,
 	// so HandleEvent WILL try to launch a goroutine — but since we have
 	// nil repo it would panic. Instead, emit to a different project.
-	eventSvc.EmitCreated(events.EntityGraphObject, "obj-1", "p2", &events.EmitOptions{
+	eventSvc.EmitCreated(context.Background(), events.EntityGraphObject, "obj-1", "p2", &events.EmitOptions{
 		ObjectType: "Person",
 	})
 
@@ -462,7 +464,7 @@ func TestOnEntityEvent_SystemActorAllowed(t *testing.T) {
 	_ = ts
 
 	// System actor should NOT be blocked by loop prevention
-	eventSvc.EmitUpdated(events.EntityDocument, "doc-1", "p1", &events.EmitOptions{
+	eventSvc.EmitUpdated(context.Background(), events.EntityDocument, "doc-1", "p1", &events.EmitOptions{
 		Actor: &events.ActorContext{ActorType: events.ActorSystem},
 	})
 
@@ -644,4 +646,48 @@ func TestRegisterAndRemoveConcurrent(t *testing.T) {
 
 	// After all goroutines complete, the map may or may not be empty
 	// (race between register/remove of same IDs), but it should not have panicked.
+}
+
+// ---------- context actor → reaction gate (end-to-end-ish) ----------
+
+// TestOnEntityEvent_ContextActorStampedActivatesGate proves the choke point: an
+// emit performed under an agent actor stamps EntityEvent.Actor, and the reaction
+// gate then skips matched agents by default; a user actor still dispatches.
+func TestOnEntityEvent_ContextActorStampedActivatesGate(t *testing.T) {
+	ts, eventSvc := newTestTriggerServiceWithEvents()
+
+	dispatched := make(chan string, 4)
+	ts.dispatch = func(ctx context.Context, agent *Agent, projectID, objectType, objectID string) error {
+		dispatched <- agent.ID
+		return nil
+	}
+
+	agent := makeTestAgent("a1", "gate-test", "p1", &ReactionConfig{
+		ObjectTypes: []string{"document"},
+		Events:      []ReactionEventType{EventTypeCreated},
+	})
+	ts.registerEventTrigger(agent)
+
+	// 1) Agent-originated event: default ignoreAgentTriggered → no dispatch.
+	agentDefID := uuid.New()
+	agentCtx := auth.WithActor(context.Background(), string(events.ActorAgent), &agentDefID)
+	eventSvc.EmitCreated(agentCtx, events.EntityDocument, "doc-agent", "p1", nil)
+
+	select {
+	case id := <-dispatched:
+		t.Fatalf("agent-originated event dispatched to %s despite default ignore", id)
+	case <-time.After(250 * time.Millisecond):
+	}
+
+	// 2) User-originated event: still dispatches.
+	userID := uuid.New()
+	userCtx := auth.WithActor(context.Background(), string(events.ActorUser), &userID)
+	eventSvc.EmitCreated(userCtx, events.EntityDocument, "doc-user", "p1", nil)
+
+	select {
+	case id := <-dispatched:
+		assert.Equal(t, "a1", id)
+	case <-time.After(2 * time.Second):
+		t.Fatal("user-originated event did not dispatch")
+	}
 }

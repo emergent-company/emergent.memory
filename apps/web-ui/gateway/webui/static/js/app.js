@@ -159,6 +159,13 @@
      (the write is a full PUT). */
   var agentDialogDescription = "";
 
+  /* Tools and skills are configured on the agent's settings subpages, not in
+     this dialog (#1305), but the save is a full PUT: carry the stored lists so
+     editing name/prompt here never clears settings made elsewhere. A create
+     starts from the server defaults (empty whitelists). */
+  var agentDialogTools = [];
+  var agentDialogSkills = [];
+
   /* open with an agent id, or "" for create */
   function openAgentForm(id) {
     var d = formDialog();
@@ -166,15 +173,16 @@
     var form = el("agent-form");
     form.reset();
     agentDialogDescription = "";
+    agentDialogTools = [];
+    agentDialogSkills = [];
     resetDelegationTargets();
-    resetSkills();
     setIconPickerValue("agent-icon", "");
     setColorPickerValue("agent-color", "");
     el("agent-id").value = id || "";
     el("agent-form-title").textContent = id ? "Edit agent" : "New agent";
     el("agent-form-subtitle").textContent = id
-      ? "Adjust the persona, brain, or tools — Memory applies it live."
-      : "Define a persona, a brain, and its tools.";
+      ? "Adjust the persona or brain — Memory applies it live."
+      : "Define a persona and a brain.";
     el("agent-form-submit").textContent = id ? "Save changes" : "Create agent";
     setFormBusy(false);
 
@@ -195,9 +203,9 @@
           setModelValue((a.model && a.model.name) || "");
           el("agent-temperature").value = a.model && a.model.temperature != null ? a.model.temperature : "";
           el("agent-max-tokens").value = a.model && a.model.maxTokens ? a.model.maxTokens : "";
-          el("agent-tools").value = Array.isArray(a.tools) ? a.tools.join(", ") : "";
+          agentDialogTools = Array.isArray(a.tools) ? a.tools.slice() : [];
+          agentDialogSkills = Array.isArray(a.skills) ? a.skills.slice() : [];
           hydrateDelegation(a);
-          hydrateSkills(a);
         })
         .catch(function (err) {
           if (isTransientError(err)) {
@@ -276,26 +284,6 @@
     syncDelegationUI();
   }
 
-  /* clear the skill picker for a fresh open: uncheck every skill so an
-     earlier edit's selections don't leak into create. */
-  function resetSkills() {
-    var cbs = document.querySelectorAll('input[name="skill"]');
-    for (var i = 0; i < cbs.length; i++) cbs[i].checked = false;
-    var emptyNote = el("agent-skills-empty");
-    if (emptyNote) emptyNote.classList.toggle("hidden", cbs.length > 0);
-  }
-
-  /* hydrate the skill checkboxes from the agent def (a.skills = names) */
-  function hydrateSkills(a) {
-    var skills = Array.isArray(a.skills) ? a.skills : [];
-    var cbs = document.querySelectorAll('input[name="skill"]');
-    for (var i = 0; i < cbs.length; i++) {
-      cbs[i].checked = skills.indexOf(cbs[i].value) !== -1;
-    }
-    var emptyNote = el("agent-skills-empty");
-    if (emptyNote) emptyNote.classList.toggle("hidden", cbs.length > 0);
-  }
-
   /* when the toggle is off, dim + disable the target picker so its values
      are clearly ignored; submit only reads it while the toggle is on. */
   function syncDelegationUI() {
@@ -321,7 +309,7 @@
       name: name,
       description: agentDialogDescription,
       systemPrompt: el("agent-prompt").value,
-      tools: splitList(el("agent-tools").value),
+      tools: agentDialogTools.slice(),
     };
     // Appearance: always send the uiConfig blob (an empty {} clears any prior
     // appearance), carrying only the values that are set.
@@ -330,12 +318,9 @@
     body.uiConfig = {};
     if (iconValue) body.uiConfig.icon = iconValue;
     if (colorValue) body.uiConfig.color = colorValue;
-    // Always send skills (even an empty array) so clearing a skill on edit
-    // actually reaches memory instead of being omitted.
-    var skillCbs = document.querySelectorAll('input[name="skill"]:checked');
-    var skills = [];
-    for (var i = 0; i < skillCbs.length; i++) skills.push(skillCbs[i].value);
-    body.skills = skills;
+    // Carry the stored skills back so this dialog's save never clears a
+    // selection made on the agent's Skills settings subpage (full PUT).
+    body.skills = agentDialogSkills.slice();
     if (modelName) {
       body.model = {
         name: modelName,
@@ -429,14 +414,6 @@
         }
         toast("error", "Delete failed: " + ((err && err.message) || String(err)));
       });
-  }
-
-  /* ---------- shared helpers ---------- */
-  function splitList(s) {
-    return (s || "")
-      .split(/[\n,]+/)
-      .map(function (x) { return x.trim(); })
-      .filter(Boolean);
   }
 
   /* ---------- wire up (delegated, idempotent) ---------- */

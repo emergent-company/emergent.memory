@@ -311,7 +311,7 @@ func TestEmitQuestionSSEEventDirect_IncludesProposal(t *testing.T) {
 		},
 	}
 
-	emitQuestionSSEEventDirect(svc, "p-1", q)
+	emitQuestionSSEEventDirect(context.Background(), svc, "p-1", q)
 
 	select {
 	case e := <-ch:
@@ -331,7 +331,7 @@ func TestEmitQuestionSSEEventDirect_OmitsProposalWhenAbsent(t *testing.T) {
 
 	q := &AgentQuestion{ID: "q-1", RunID: "r-1"}
 
-	emitQuestionSSEEventDirect(svc, "p-1", q)
+	emitQuestionSSEEventDirect(context.Background(), svc, "p-1", q)
 
 	select {
 	case e := <-ch:

@@ -353,6 +353,7 @@ func (h *Handler) Clear(c echo.Context) error {
 // @Failure      400 {object} apperror.Error "Missing notification id"
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      404 {object} apperror.Error "Notification not found"
+// @Failure      409 {object} apperror.Error "A newer notification for the same group key is already active"
 // @Router       /api/notifications/{id}/restore [post]
 // @Security     bearerAuth
 func (h *Handler) Restore(c echo.Context) error {

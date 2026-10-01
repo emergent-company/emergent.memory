@@ -101,7 +101,7 @@ func TestHandleUserStream_AccountScopeFiltering(t *testing.T) {
 	rec, _ := startAccountStream(t, svc, userID)
 
 	emit := func(entity EntityType, id, projectID string, data map[string]any) {
-		svc.EmitCreated(entity, id, projectID, &EmitOptions{Data: data})
+		svc.EmitCreated(context.Background(), entity, id, projectID, &EmitOptions{Data: data})
 	}
 
 	// (c) caller's own account-scope notification -> forwarded.

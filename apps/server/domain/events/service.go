@@ -1,10 +1,12 @@
 package events
 
 import (
+	"context"
 	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -98,8 +100,40 @@ func (s *Service) Emit(event EntityEvent) {
 	}
 }
 
+// resolveActor returns the actor to stamp on an emitted event. An explicit
+// opts.Actor is authoritative; when it is nil the actor stamped on ctx via
+// auth.WithActor is used, and nil is returned when neither is present.
+//
+// This is the single choke point that connects auth.WithActor (stamped at the
+// agent run / MCP endpoint / extraction boundaries) to EntityEvent.Actor, which
+// the reaction trigger gate reads (see agent-reaction-triggers).
+func resolveActor(ctx context.Context, opts *EmitOptions) *ActorContext {
+	if opts != nil && opts.Actor != nil {
+		return opts.Actor
+	}
+	return actorFromContext(ctx)
+}
+
+// actorFromContext reads the actor stamped on ctx by auth.WithActor. It returns
+// nil when no actor is present — including the "clear" form, which shadows a
+// parent context's actor.
+func actorFromContext(ctx context.Context) *ActorContext {
+	if ctx == nil {
+		return nil
+	}
+	actorType, actorID, ok := auth.ActorFromContext(ctx)
+	if !ok {
+		return nil
+	}
+	actor := &ActorContext{ActorType: ActorType(actorType)}
+	if actorID != nil {
+		actor.ActorID = actorID.String()
+	}
+	return actor
+}
+
 // EmitCreated emits an entity.created event
-func (s *Service) EmitCreated(entity EntityType, id string, projectID string, opts *EmitOptions) {
+func (s *Service) EmitCreated(ctx context.Context, entity EntityType, id string, projectID string, opts *EmitOptions) {
 	event := EntityEvent{
 		Type:      EventTypeCreated,
 		Entity:    entity,
@@ -110,16 +144,16 @@ func (s *Service) EmitCreated(entity EntityType, id string, projectID string, op
 
 	if opts != nil {
 		event.Data = opts.Data
-		event.Actor = opts.Actor
 		event.Version = opts.Version
 		event.ObjectType = opts.ObjectType
 	}
+	event.Actor = resolveActor(ctx, opts)
 
 	s.Emit(event)
 }
 
 // EmitUpdated emits an entity.updated event
-func (s *Service) EmitUpdated(entity EntityType, id string, projectID string, opts *EmitOptions) {
+func (s *Service) EmitUpdated(ctx context.Context, entity EntityType, id string, projectID string, opts *EmitOptions) {
 	event := EntityEvent{
 		Type:      EventTypeUpdated,
 		Entity:    entity,
@@ -130,16 +164,16 @@ func (s *Service) EmitUpdated(entity EntityType, id string, projectID string, op
 
 	if opts != nil {
 		event.Data = opts.Data
-		event.Actor = opts.Actor
 		event.Version = opts.Version
 		event.ObjectType = opts.ObjectType
 	}
+	event.Actor = resolveActor(ctx, opts)
 
 	s.Emit(event)
 }
 
 // EmitDeleted emits an entity.deleted event
-func (s *Service) EmitDeleted(entity EntityType, id string, projectID string, opts *EmitOptions) {
+func (s *Service) EmitDeleted(ctx context.Context, entity EntityType, id string, projectID string, opts *EmitOptions) {
 	event := EntityEvent{
 		Type:      EventTypeDeleted,
 		Entity:    entity,
@@ -149,16 +183,16 @@ func (s *Service) EmitDeleted(entity EntityType, id string, projectID string, op
 	}
 
 	if opts != nil {
-		event.Actor = opts.Actor
 		event.Version = opts.Version
 		event.ObjectType = opts.ObjectType
 	}
+	event.Actor = resolveActor(ctx, opts)
 
 	s.Emit(event)
 }
 
 // EmitBatch emits an entity.batch event for multiple entities
-func (s *Service) EmitBatch(entity EntityType, ids []string, projectID string, data map[string]any) {
+func (s *Service) EmitBatch(ctx context.Context, entity EntityType, ids []string, projectID string, data map[string]any) {
 	event := EntityEvent{
 		Type:      EventTypeBatch,
 		Entity:    entity,
@@ -166,6 +200,7 @@ func (s *Service) EmitBatch(entity EntityType, ids []string, projectID string, d
 		IDs:       ids,
 		ProjectID: projectID,
 		Data:      data,
+		Actor:     actorFromContext(ctx),
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}
 

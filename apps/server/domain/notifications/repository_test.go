@@ -2,11 +2,14 @@ package notifications
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
@@ -99,6 +102,82 @@ func TestGetCountsUnread(t *testing.T) {
 	require.Equal(t, int64(8), counts.Other)
 	require.Equal(t, int64(2), counts.Snoozed)
 	require.Equal(t, int64(3), counts.Cleared)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestGetStatsDismissedExcludesCleared asserts GetStats draws all three of its
+// counters from the same row population: `cleared_at IS NULL`. A dismissed row
+// that was also cleared (Dismiss sets both dismissed=true and cleared_at) must
+// not be counted as dismissed, matching total/unread. Regression for the
+// dismissed predicate missing the cleared_at filter its siblings have (#1314).
+func TestGetStatsDismissedExcludesCleared(t *testing.T) {
+	repo, mock := newRepoMock(t)
+
+	// Three ordered counts: total, unread, dismissed. Every one must exclude
+	// cleared rows; before the fix the dismissed query carried no cleared_at
+	// predicate and the third expectation below would fail to match.
+	mock.ExpectQuery(`SELECT[\s\S]*cleared_at IS NULL[\s\S]*`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2)) // total
+	mock.ExpectQuery(`SELECT[\s\S]*read = false[\s\S]*`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1)) // unread
+	mock.ExpectQuery(`SELECT[\s\S]*cleared_at IS NULL[\s\S]*dismissed = true[\s\S]*`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1)) // dismissed
+
+	stats, err := repo.GetStats(context.Background(), "u1")
+	require.NoError(t, err)
+	require.Equal(t, int64(2), stats.Total)
+	require.Equal(t, int64(1), stats.Unread)
+	require.Equal(t, int64(1), stats.Dismissed)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestRestoreResetsDismissed is the row-level regression for the
+// dismiss -> restore gap: Restore must reset `dismissed = false` and
+// `dismissed_at = NULL` alongside `cleared_at = NULL`, in a single UPDATE, and
+// must not touch `read`. It uses a custom matcher because the assertion is
+// about both the presence of the reset columns and the absence of a read write.
+func TestRestoreResetsDismissed(t *testing.T) {
+	matcher := sqlmock.QueryMatcherFunc(func(_, actualSQL string) error {
+		up := strings.ToUpper(actualSQL)
+		for _, want := range []string{"CLEARED_AT = NULL", "DISMISSED = FALSE", "DISMISSED_AT = NULL"} {
+			if !strings.Contains(up, want) {
+				return fmt.Errorf("restore UPDATE missing %q: %s", want, actualSQL)
+			}
+		}
+		if strings.Contains(up, "READ = ") {
+			return fmt.Errorf("restore UPDATE must not change read: %s", actualSQL)
+		}
+		return nil
+	})
+
+	sqldb, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(matcher))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sqldb.Close() })
+
+	db := bun.NewDB(sqldb, pgdialect.New())
+	repo := NewRepository(db, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	mock.ExpectExec(".*").WillReturnResult(sqlmock.NewResult(0, 1))
+
+	require.NoError(t, repo.Restore(context.Background(), "u1", "n1"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestRestoreActiveGroupKeyConflict asserts that a unique violation from the
+// active (user_id, group_key) partial index is translated into the typed
+// ErrActiveNotificationConflict rather than leaking as a 500 database error.
+// This is the unit-level half of the #1345/#1347 interaction fix.
+func TestRestoreActiveGroupKeyConflict(t *testing.T) {
+	repo, mock := newRepoMock(t)
+
+	mock.ExpectExec(`UPDATE[\s\S]*"kb"\."notifications"[\s\S]*`).
+		WillReturnError(&pgconn.PgError{
+			Code:           "23505",
+			ConstraintName: "ux_notifications_user_group_key_active",
+		})
+
+	err := repo.Restore(context.Background(), "u1", "n1")
+	require.ErrorIs(t, err, ErrActiveNotificationConflict)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

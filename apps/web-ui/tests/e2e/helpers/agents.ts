@@ -9,12 +9,15 @@ import { Page, expect } from '@playwright/test';
  * a pinned default model). The `model`
  * argument must be the prefixed `provider/model` string (e.g.
  * `openai/deepseek-v4-flash`) — that is the value the modal's options carry
- * and the string submitted/stored by the agent create flow. When `tools` is
- * given (comma-separated names, or "*" for the full whitelist), fills the
- * modal's #agent-tools field — an agent with an EMPTY tools list is treated
- * by memory as having no tool access at all (only coordination tools are
- * injected), so chat-about-object turns need real tools. Submits and reads
+ * and the string submitted/stored by the agent create flow. Submits and reads
  * the id back from the reloaded agents card's data-href.
+ *
+ * The add-agent modal no longer configures tools or skills (#1305) — those live
+ * on the agent's settings subpages — so when `tools` is given (comma-separated
+ * names, or "*" for the full whitelist) the helper sets it with a follow-up
+ * update after the agent exists. An agent with an EMPTY tools list is treated by
+ * memory as having no tool access at all (only coordination tools are
+ * injected), so chat-about-object turns need real tools.
  */
 export async function createAgentViaModal(page: Page, name: string, model?: string, tools?: string): Promise<string> {
   await page.goto('/agents');
@@ -22,10 +25,6 @@ export async function createAgentViaModal(page: Page, name: string, model?: stri
   await page.getByRole('button', { name: 'New agent' }).first().click();
   await expect(page.locator('#agent-name')).toBeVisible();
   await page.locator('#agent-name').fill(name);
-
-  if (tools !== undefined) {
-    await page.locator('#agent-tools').fill(tools);
-  }
 
   if (model !== undefined) {
     const modelSelect = page.locator('#agent-model');
@@ -63,5 +62,32 @@ export async function createAgentViaModal(page: Page, name: string, model?: stri
   if (!id) {
     throw new Error(`createAgentViaModal: could not parse an agent id from href "${href}"`);
   }
+
+  if (tools !== undefined) {
+    await setAgentTools(page, id, tools);
+  }
   return id;
+}
+
+/**
+ * Set an agent's tools whitelist through the update API, used by
+ * createAgentViaModal when a test needs tools the modal no longer offers
+ * (#1305). "*" is memory's full-whitelist wildcard. Round-trips the full
+ * definition because the gateway write is a full PUT.
+ */
+async function setAgentTools(page: Page, id: string, tools: string): Promise<void> {
+  const encoded = encodeURIComponent(id);
+  const current = await page.request.get(`/api/agents/${encoded}`);
+  if (!current.ok()) {
+    throw new Error(`setAgentTools: GET /api/agents/${id} = ${current.status()}`);
+  }
+  const def = await current.json();
+  def.tools = tools
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean);
+  const res = await page.request.put(`/api/agents/${encoded}`, { data: def });
+  if (!res.ok()) {
+    throw new Error(`setAgentTools: PUT /api/agents/${id} = ${res.status()}`);
+  }
 }
