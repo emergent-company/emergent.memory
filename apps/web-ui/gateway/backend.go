@@ -39,7 +39,10 @@ type MemoryBackend interface {
 	ListToolApprovals(ctx context.Context) ([]ToolApprovalItem, error)
 	CancelAgentRun(ctx context.Context, agentID, runID string) (bool, error)
 	ListSessionTodos(ctx context.Context, sessionID string) ([]SessionTodo, error)
-	ListConversations(ctx context.Context) (*ConversationList, error)
+	ListConversations(ctx context.Context, includeArchived bool) (*ConversationList, error)
+	ArchiveConversation(ctx context.Context, id string) error
+	UnarchiveConversation(ctx context.Context, id string) error
+	DeleteConversation(ctx context.Context, id string) error
 	CreateObjectConversation(ctx context.Context, canonicalID, title, message string) (string, error)
 	GetConversation(ctx context.Context, id string) (*ConversationDetail, error)
 	GetConversationHistory(ctx context.Context, id string) (*ConversationHistory, error)

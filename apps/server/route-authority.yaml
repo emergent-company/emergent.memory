@@ -248,7 +248,7 @@ routes:
     - method: DELETE
       path: /api/chat/:id
       level: project-member
-      note: RequireAuth, RequireProjectID, RequireAPITokenScopes(chat:use), RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(chat:admin)
+      note: RequireAuth, RequireProjectID, RequireAPITokenScopes(chat:use), RequireProjectTokenScope, RequireProjectMember
     - method: GET
       path: /api/chat/:id
       level: project-member
@@ -257,12 +257,20 @@ routes:
       path: /api/chat/:id
       level: project-member
       note: RequireAuth, RequireProjectID, RequireAPITokenScopes(chat:use), RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(chat:admin)
+    - method: POST
+      path: /api/chat/:id/archive
+      level: project-member
+      note: RequireAuth, RequireProjectID, RequireAPITokenScopes(chat:use), RequireProjectTokenScope, RequireProjectMember
     - method: GET
       path: /api/chat/:id/history
       level: project-member
       note: RequireAuth, RequireProjectID, RequireAPITokenScopes(chat:use), RequireProjectTokenScope, RequireProjectMember
     - method: POST
       path: /api/chat/:id/messages
+      level: project-member
+      note: RequireAuth, RequireProjectID, RequireAPITokenScopes(chat:use), RequireProjectTokenScope, RequireProjectMember
+    - method: POST
+      path: /api/chat/:id/unarchive
       level: project-member
       note: RequireAuth, RequireProjectID, RequireAPITokenScopes(chat:use), RequireProjectTokenScope, RequireProjectMember
     - method: GET

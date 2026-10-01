@@ -176,6 +176,32 @@ func TestSessionsListRoute(t *testing.T) {
 	}
 }
 
+// TestSessionsListExcludesArchived pins the list-surface default (design D6):
+// the Sessions trace page requests the default list, so archived conversations
+// are not shown there.
+func TestSessionsListExcludesArchived(t *testing.T) {
+	f := &fakeMemory{convs: []Conversation{
+		{ID: "c_active", Title: "Active session", CreatedAt: "2026-08-26T10:00:00Z"},
+		{ID: "c_arch", Title: "Archived session", IsArchived: true, CreatedAt: "2026-08-25T10:00:00Z"},
+	}}
+	_, e := newSessionsEcho(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sessions", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if f.convIncludeArchived {
+		t.Error("sessions list must not request includeArchived")
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Active session") {
+		t.Error("active session missing from the list")
+	}
+	if strings.Contains(body, "Archived session") {
+		t.Error("archived session must be excluded from the sessions list")
+	}
+}
+
 func TestSessionsListRouteError(t *testing.T) {
 	f := &fakeMemory{convErr: fmt.Errorf("memory 503: service down")}
 	_, e := newSessionsEcho(f)

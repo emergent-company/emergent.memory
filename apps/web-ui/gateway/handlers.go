@@ -324,12 +324,40 @@ func (s *Server) cancelAgentRun(c echo.Context) error {
 }
 
 func (s *Server) listConversations(c echo.Context) error {
-	out, err := s.memory.ListConversations(c.Request().Context())
+	out, err := s.memory.ListConversations(c.Request().Context(), false)
 	if err != nil {
 		captureError(err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "memory service unavailable"})
 	}
 	return c.JSON(http.StatusOK, out)
+}
+
+// archiveConversation handles POST /api/conversations/:id/archive — the rail's
+// per-row Archive action. Idempotent; a foreign/unknown id is 404.
+func (s *Server) archiveConversation(c echo.Context) error {
+	if err := s.memory.ArchiveConversation(c.Request().Context(), c.Param("id")); err != nil {
+		return agentMemoryError(c, err)
+	}
+	return c.JSON(http.StatusOK, map[string]bool{"ok": true})
+}
+
+// unarchiveConversation handles POST /api/conversations/:id/unarchive — the
+// rail's per-row Unarchive action. Symmetric with archiveConversation.
+func (s *Server) unarchiveConversation(c echo.Context) error {
+	if err := s.memory.UnarchiveConversation(c.Request().Context(), c.Param("id")); err != nil {
+		return agentMemoryError(c, err)
+	}
+	return c.JSON(http.StatusOK, map[string]bool{"ok": true})
+}
+
+// deleteConversation handles DELETE /api/conversations/:id — the rail's
+// per-row Delete action, reached only after the client shows its confirmation
+// dialog. Permanent; a foreign/unknown id is 404.
+func (s *Server) deleteConversation(c echo.Context) error {
+	if err := s.memory.DeleteConversation(c.Request().Context(), c.Param("id")); err != nil {
+		return agentMemoryError(c, err)
+	}
+	return c.NoContent(http.StatusNoContent)
 }
 
 // --- scheduled agents (runtime agents proxied to memory) ---
