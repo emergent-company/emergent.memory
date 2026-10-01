@@ -49,6 +49,15 @@ type EnqueueOptions struct {
 // Uses PostgreSQL now() for next_retry_at to ensure clock consistency
 // with the dequeue() query.
 func (s *JobsService) Enqueue(ctx context.Context, opts EnqueueOptions) (*EmailJob, error) {
+	return s.EnqueueTx(ctx, s.db, opts)
+}
+
+// EnqueueTx is Enqueue against an explicit executor — most importantly a
+// bun.Tx. Callers that must keep the insert inside a transaction they already
+// hold (e.g. a per-source advisory lock that serialises the guard check with
+// the insert) pass that transaction so the row commits atomically with the
+// lock's release.
+func (s *JobsService) EnqueueTx(ctx context.Context, db bun.IDB, opts EnqueueOptions) (*EmailJob, error) {
 	maxAttempts := s.cfg.MaxRetries
 	if opts.MaxAttempts != nil {
 		maxAttempts = *opts.MaxAttempts
@@ -69,7 +78,7 @@ func (s *JobsService) Enqueue(ctx context.Context, opts EnqueueOptions) (*EmailJ
 
 	// Use raw SQL for now() to ensure clock consistency
 	// Bun's NewRaw uses ? placeholders
-	err = s.db.NewRaw(`INSERT INTO kb.email_jobs (
+	err = db.NewRaw(`INSERT INTO kb.email_jobs (
 		template_name, to_email, to_name, subject, template_data,
 		status, attempts, max_attempts, source_type, source_id, next_retry_at
 	) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, now())
