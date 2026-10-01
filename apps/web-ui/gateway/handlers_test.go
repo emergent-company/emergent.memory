@@ -197,6 +197,10 @@ type fakeMemory struct {
 	unappliedBlueprint  []string                // ids passed to UnapplyBlueprint
 	unapplyBlueprintRes *BlueprintUnapplyResult // returned by UnapplyBlueprint
 
+	importBlueprintReq *importBlueprintRequest // last request passed to ImportBlueprint
+	importBlueprintRes *BlueprintRecord        // returned by ImportBlueprint, when set
+	importBlueprintErr error                   // ImportBlueprint failure
+
 	schemas []SchemaInfo
 	schema  *BlueprintSchema
 
@@ -1269,6 +1273,19 @@ func (f *fakeMemory) GetBlueprint(ctx context.Context, id string) (*BlueprintRec
 		return f.blueprint, nil
 	}
 	return nil, fmt.Errorf("memory 404 not_found: blueprint not found")
+}
+
+func (f *fakeMemory) ImportBlueprint(ctx context.Context, url, ref, token string) (*BlueprintRecord, error) {
+	if f.importBlueprintErr != nil {
+		return nil, f.importBlueprintErr
+	}
+	f.importBlueprintReq = &importBlueprintRequest{URL: url, Ref: ref, Token: token}
+	if f.importBlueprintRes != nil {
+		return f.importBlueprintRes, nil
+	}
+	rec := &BlueprintRecord{ID: "bp-imported", Status: "published"}
+	f.blueprint = rec
+	return rec, nil
 }
 
 func (f *fakeMemory) PublishBlueprint(ctx context.Context, id string) error {
