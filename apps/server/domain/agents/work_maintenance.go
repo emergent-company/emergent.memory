@@ -98,8 +98,12 @@ func (r *Repository) HasLiveJobForSubject(ctx context.Context, canonicalID strin
 }
 
 // FindReactionAgentsForType returns the enabled reaction agents in projectID
-// whose trigger lists objectType (or a wildcard), filtered to those matching
-// assignee when assignee is non-empty.
+// whose trigger lists objectType (or a wildcard) and is subscribed to the
+// `created` event, filtered to those matching assignee when assignee is
+// non-empty, and restricted to object-work agents (a definition with a work
+// config or queued dispatch). Legacy inline agents and `updated`/`deleted`-only
+// listeners are never woken by the reconciler — mirroring the object-driven
+// dispatch gate.
 func (r *Repository) FindReactionAgentsForType(ctx context.Context, projectID, objectType, assignee string) ([]*Agent, error) {
 	agents, err := r.FindEnabledByTriggerType(ctx, TriggerTypeReaction)
 	if err != nil {
@@ -115,6 +119,16 @@ func (r *Repository) FindReactionAgentsForType(ctx context.Context, projectID, o
 		}
 		if !reactionMatchesType(a.ReactionConfig, objectType) {
 			continue
+		}
+		if !reactionSubscribesToCreated(a.ReactionConfig) {
+			continue
+		}
+		def, err := r.ResolveDefinitionForAgent(ctx, a)
+		if err != nil || def == nil {
+			continue
+		}
+		if def.DispatchMode != DispatchModeQueued && def.WorkConfig.IsZero() {
+			continue // legacy inline agent: not object-driven work
 		}
 		out = append(out, a)
 	}
@@ -133,6 +147,59 @@ func reactionMatchesType(rc *ReactionConfig, objectType string) bool {
 		}
 	}
 	return false
+}
+
+// reactionSubscribesToCreated reports whether a reaction config is subscribed to
+// the `created` event (the only event that wakes an object-driven work run).
+func reactionSubscribesToCreated(rc *ReactionConfig) bool {
+	for _, e := range rc.Events {
+		if e == EventTypeCreated {
+			return true
+		}
+	}
+	return false
+}
+
+// listWorkAgentStatuses returns the distinct ready and in-progress status values
+// configured by object-work reaction agents (definitions with a work config or
+// queued dispatch), always including the built-in defaults. The reaper and
+// reconciler use these to scan for work objects under custom status mappings.
+func (r *Repository) listWorkAgentStatuses(ctx context.Context) (ready, inProgress []string, err error) {
+	type row struct {
+		Ready      string `bun:"ready"`
+		InProgress string `bun:"in_progress"`
+	}
+	var rows []row
+	err = r.db.NewRaw(`
+		SELECT DISTINCT
+			COALESCE(NULLIF(ad.work_config->'status'->>'ready',''), 'ready')        AS ready,
+			COALESCE(NULLIF(ad.work_config->'status'->>'inProgress',''), 'in_progress') AS in_progress
+		FROM kb.agents a
+		JOIN kb.agent_definitions ad ON ad.id = a.agent_definition_id
+		WHERE a.enabled = true
+		  AND a.trigger_type = 'reaction'
+		  AND (ad.dispatch_mode = 'queued' OR (ad.work_config IS NOT NULL AND ad.work_config <> '{}'::jsonb))
+	`).Scan(ctx, &rows)
+	if err != nil {
+		return nil, nil, err
+	}
+	readySet := map[string]bool{"ready": true}
+	inProgressSet := map[string]bool{"in_progress": true}
+	for _, r := range rows {
+		if r.Ready != "" {
+			readySet[r.Ready] = true
+		}
+		if r.InProgress != "" {
+			inProgressSet[r.InProgress] = true
+		}
+	}
+	for s := range readySet {
+		ready = append(ready, s)
+	}
+	for s := range inProgressSet {
+		inProgress = append(inProgress, s)
+	}
+	return ready, inProgress, nil
 }
 
 // workMaintenance is the shared base for the periodic work-status reaper and
@@ -232,34 +299,45 @@ func (r *WorkStatusReaper) reap(ctx context.Context) {
 		return
 	}
 	cutoff := time.Now().Add(-r.threshold)
-	heads, err := r.workObjects.ListWorkObjectsByStatus(ctx, "", "in_progress", cutoff, 500)
+	_, inProgressStatuses, err := r.repo.listWorkAgentStatuses(ctx)
 	if err != nil {
-		r.log.Warn("failed to list in-progress work objects", slog.String("error", err.Error()))
+		r.log.Warn("failed to resolve in-progress statuses", slog.String("error", err.Error()))
 		return
 	}
-	for _, h := range heads {
-		live, err := r.repo.HasLiveRunForSubject(ctx, h.CanonicalID)
+	for _, status := range inProgressStatuses {
+		heads, err := r.workObjects.ListWorkObjectsByStatus(ctx, "", status, cutoff, 500)
 		if err != nil {
-			r.log.Warn("failed to check live run", slog.String("canonical_id", h.CanonicalID), slog.String("error", err.Error()))
+			r.log.Warn("failed to list in-progress work objects", slog.String("status", status), slog.String("error", err.Error()))
 			continue
 		}
-		if live {
-			continue // still owned by a queued/running/paused run
+		for _, h := range heads {
+			live, err := r.repo.HasLiveRunForSubject(ctx, h.CanonicalID)
+			if err != nil {
+				r.log.Warn("failed to check live run", slog.String("canonical_id", h.CanonicalID), slog.String("error", err.Error()))
+				continue
+			}
+			if live {
+				continue // still owned by a queued/running/paused run
+			}
+			r.release(ctx, h)
 		}
-		r.release(ctx, h)
 	}
 }
 
 // release returns a stranded in-progress object to ready, or blocks it when its
-// failure budget is exhausted (a crash consumes budget).
+// failure budget is exhausted (a crash consumes budget). The owning listener's
+// effective work policy (type > agent > default) supplies the statuses and the
+// failure limit so custom status mappings are honoured.
 func (r *WorkStatusReaper) release(ctx context.Context, h *graph.WorkObjectHead) {
+	_, def := resolveOwningAgentForHead(ctx, r.repo, h)
+	pol := resolveWorkObjectPolicy(ctx, r.workObjects, def, h.ProjectID, h.Type)
 	count, err := r.repo.IncrementWorkItemFailure(ctx, h.ProjectID, h.CanonicalID, string(FailureClassDeterministic), nil)
 	if err != nil {
 		r.log.Warn("failed to record reaper failure", slog.String("canonical_id", h.CanonicalID), slog.String("error", err.Error()))
 		return
 	}
-	if count > defaultWorkFailureLimit {
-		if ok, err := r.workObjects.BlockWorkObject(ctx, h.ProjectID, h.CanonicalID, "in_progress", "blocked"); err != nil {
+	if count > pol.failureLimit {
+		if ok, err := r.workObjects.BlockWorkObject(ctx, h.ProjectID, h.CanonicalID, pol.inProgress, pol.blocked); err != nil {
 			r.log.Warn("failed to block stranded work object", slog.String("canonical_id", h.CanonicalID), slog.String("error", err.Error()))
 		} else if ok {
 			r.log.Warn("blocked stranded work object (budget exhausted)", slog.String("canonical_id", h.CanonicalID))
@@ -267,8 +345,8 @@ func (r *WorkStatusReaper) release(ctx context.Context, h *graph.WorkObjectHead)
 		return
 	}
 	if ok, err := r.workObjects.TransitionWorkObject(ctx, h.ProjectID, h.CanonicalID, graph.WorkObjectTransition{
-		FromStatus: "in_progress",
-		ToStatus:   "ready",
+		FromStatus: pol.inProgress,
+		ToStatus:   pol.ready,
 	}); err != nil {
 		r.log.Warn("failed to release stranded work object", slog.String("canonical_id", h.CanonicalID), slog.String("error", err.Error()))
 	} else if ok {
@@ -312,34 +390,42 @@ func (rc *WorkReconciler) Start(ctx context.Context) {
 func (rc *WorkReconciler) Stop() { rc.stop() }
 
 // reconcile finds ready board-enabled objects with no live run/job and enqueues
-// the listening agent.
+// the listening agent. It scans each object-work agent's configured ready status
+// (not only the literal "ready") so custom status mappings are honoured.
 func (rc *WorkReconciler) reconcile(ctx context.Context) {
 	if rc.workObjects == nil {
 		return
 	}
-	heads, err := rc.workObjects.ListWorkObjectsByStatus(ctx, "", "ready", time.Time{}, 500)
+	readyStatuses, _, err := rc.repo.listWorkAgentStatuses(ctx)
 	if err != nil {
-		rc.log.Warn("failed to list ready work objects", slog.String("error", err.Error()))
+		rc.log.Warn("failed to resolve ready statuses", slog.String("error", err.Error()))
 		return
 	}
-	for _, h := range heads {
-		liveRun, err := rc.repo.HasLiveRunForSubject(ctx, h.CanonicalID)
+	for _, status := range readyStatuses {
+		heads, err := rc.workObjects.ListWorkObjectsByStatus(ctx, "", status, time.Time{}, 500)
 		if err != nil {
-			rc.log.Warn("failed to check live run", slog.String("canonical_id", h.CanonicalID), slog.String("error", err.Error()))
+			rc.log.Warn("failed to list ready work objects", slog.String("status", status), slog.String("error", err.Error()))
 			continue
 		}
-		if liveRun {
-			continue
+		for _, h := range heads {
+			liveRun, err := rc.repo.HasLiveRunForSubject(ctx, h.CanonicalID)
+			if err != nil {
+				rc.log.Warn("failed to check live run", slog.String("canonical_id", h.CanonicalID), slog.String("error", err.Error()))
+				continue
+			}
+			if liveRun {
+				continue
+			}
+			liveJob, err := rc.repo.HasLiveJobForSubject(ctx, h.CanonicalID)
+			if err != nil {
+				rc.log.Warn("failed to check live job", slog.String("canonical_id", h.CanonicalID), slog.String("error", err.Error()))
+				continue
+			}
+			if liveJob {
+				continue // pending/processing job already covers it
+			}
+			rc.enqueue(ctx, h)
 		}
-		liveJob, err := rc.repo.HasLiveJobForSubject(ctx, h.CanonicalID)
-		if err != nil {
-			rc.log.Warn("failed to check live job", slog.String("canonical_id", h.CanonicalID), slog.String("error", err.Error()))
-			continue
-		}
-		if liveJob {
-			continue // pending/processing job already covers it
-		}
-		rc.enqueue(ctx, h)
 	}
 }
 
@@ -368,4 +454,51 @@ func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead) 
 		}
 		rc.log.Info("reconciled work object enqueued", slog.String("canonical_id", h.CanonicalID), slog.String("agent", agent.Name))
 	}
+}
+
+// resolveOwningAgentForHead resolves the agent (and its definition) that owns a
+// work object's HEAD: the agent of the latest subject run, falling back to the
+// assignee. Returns nil when neither resolves.
+func resolveOwningAgentForHead(ctx context.Context, repo *Repository, h *graph.WorkObjectHead) (*Agent, *AgentDefinition) {
+	var agent *Agent
+	if run, err := repo.FindLatestRunForSubject(ctx, h.CanonicalID); err == nil && run != nil {
+		agent, _ = repo.FindByID(ctx, run.AgentID, &h.ProjectID)
+	}
+	if agent == nil && h.Assignee != "" {
+		agent, _ = repo.FindByName(ctx, h.ProjectID, h.Assignee)
+	}
+	if agent == nil {
+		return nil, nil
+	}
+	def, _ := repo.ResolveDefinitionForAgent(ctx, agent)
+	return agent, def
+}
+
+// workObjectPolicy is the resolved status mapping and failure budget for a work
+// object, layering per-type failure-limit overrides over the owning agent's work
+// config (type > agent > default).
+type workObjectPolicy struct {
+	ready        string
+	inProgress   string
+	blocked      string
+	failureLimit int
+}
+
+// resolveWorkObjectPolicy resolves the effective statuses and failure budget for
+// a work object from its owning agent's definition, with per-type overrides
+// (type > agent > default).
+func resolveWorkObjectPolicy(ctx context.Context, workObjects WorkObjectStore, agentDef *AgentDefinition, projectID, subjectType string) workObjectPolicy {
+	wc := workConfigOf(agentDef)
+	pol := workObjectPolicy{
+		ready:        wc.ReadyStatus(),
+		inProgress:   wc.InProgressStatus(),
+		blocked:      wc.BlockedStatus(),
+		failureLimit: wc.FailureLimitValue(),
+	}
+	if workObjects != nil && subjectType != "" {
+		if cfg, err := workObjects.GetObjectTypeWorkConfig(ctx, projectID, subjectType); err == nil && cfg != nil && cfg.FailureLimit > 0 {
+			pol.failureLimit = cfg.FailureLimit
+		}
+	}
+	return pol
 }

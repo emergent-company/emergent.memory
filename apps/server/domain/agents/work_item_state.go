@@ -46,43 +46,33 @@ func (r *Repository) GetWorkItemState(ctx context.Context, projectID, canonicalI
 // the last failure class, returning the new count. It optionally sets a requeue
 // backoff (used by capability failures and timeouts so a re-enqueued item waits
 // before the next attempt).
+//
+// The increment is a single atomic INSERT ... ON CONFLICT ... DO UPDATE so
+// concurrent failures across replicas cannot double-increment (the read-then-
+// insert/update race).
 func (r *Repository) IncrementWorkItemFailure(ctx context.Context, projectID, canonicalID, failureClass string, requeueBackoffAt *time.Time) (int, error) {
 	now := time.Now()
-	existing, err := r.GetWorkItemState(ctx, projectID, canonicalID)
+	var backoffArg any
+	if requeueBackoffAt != nil {
+		backoffArg = *requeueBackoffAt
+	}
+	var count int
+	err := r.db.NewRaw(`
+		INSERT INTO kb.work_item_state (project_id, canonical_id, failure_count, last_failure_class, requeue_backoff_at, updated_at)
+		VALUES (?::uuid, ?::uuid, 1, ?, ?, ?)
+		ON CONFLICT (project_id, canonical_id)
+		DO UPDATE SET
+			failure_count = kb.work_item_state.failure_count + 1,
+			last_failure_class = EXCLUDED.last_failure_class,
+			requeue_backoff_at = COALESCE(EXCLUDED.requeue_backoff_at, kb.work_item_state.requeue_backoff_at),
+			updated_at = EXCLUDED.updated_at
+		RETURNING failure_count`,
+		projectID, canonicalID, failureClass, backoffArg, now,
+	).Scan(ctx, &count)
 	if err != nil {
 		return 0, err
 	}
-	if existing == nil {
-		state := &WorkItemState{
-			ProjectID:        projectID,
-			CanonicalID:      canonicalID,
-			FailureCount:     1,
-			LastFailureClass: failureClass,
-			UpdatedAt:        now,
-		}
-		if requeueBackoffAt != nil {
-			state.RequeueBackoffAt = *requeueBackoffAt
-		}
-		if _, err := r.db.NewInsert().Model(state).Exec(ctx); err != nil {
-			return 0, err
-		}
-		return 1, nil
-	}
-
-	q := r.db.NewUpdate().
-		Model((*WorkItemState)(nil)).
-		Set("failure_count = failure_count + 1").
-		Set("last_failure_class = ?", failureClass).
-		Set("updated_at = ?", now).
-		Where("project_id = ?", projectID).
-		Where("canonical_id = ?", canonicalID)
-	if requeueBackoffAt != nil {
-		q = q.Set("requeue_backoff_at = ?", *requeueBackoffAt)
-	}
-	if _, err := q.Exec(ctx); err != nil {
-		return 0, err
-	}
-	return existing.FailureCount + 1, nil
+	return count, nil
 }
 
 // ClearWorkItemState removes the failure ledger for a work item (a successful

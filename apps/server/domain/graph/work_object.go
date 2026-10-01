@@ -297,11 +297,22 @@ func (s *Service) transitionWorkObject(ctx context.Context, projectID, canonical
 	newVersion := &GraphObject{
 		Type:       lockedHead.Type,
 		Key:        lockedHead.Key,
+		Namespace:  lockedHead.Namespace,
 		Status:     &toStatus,
 		Assignee:   assignee,
 		Properties: withStatusProperty(lockedHead.Properties, toStatus),
 		Labels:     lockedHead.Labels,
 		ActorType:  &actorType,
+		// Preserve versioned metadata from the locked HEAD so a status transition
+		// never silently drops provenance, extraction confidence, review fields,
+		// schema version, the merge ledger, or the migration archive.
+		ExtractionConfidence: lockedHead.ExtractionConfidence,
+		NeedsReview:          lockedHead.NeedsReview,
+		ReviewedBy:           lockedHead.ReviewedBy,
+		ReviewedAt:           lockedHead.ReviewedAt,
+		SchemaVersion:        lockedHead.SchemaVersion,
+		MigrationArchive:     lockedHead.MigrationArchive,
+		MergedToCanonicalID:  lockedHead.MergedToCanonicalID,
 	}
 	if t.SetNeedsReview != nil {
 		newVersion.NeedsReview = t.SetNeedsReview
@@ -350,11 +361,11 @@ func (s *Service) ListWorkObjectsByStatus(ctx context.Context, projectID, status
 		}
 		pid = &p
 	}
-	boardTypes, err := s.repo.listBoardEnabledTypeNames(ctx)
+	boardRefs, err := s.repo.listBoardEnabledTypeRefs(ctx, pid)
 	if err != nil {
 		return nil, err
 	}
-	objs, err := s.repo.listWorkObjectsByStatus(ctx, pid, boardTypes, status, olderThan, limit)
+	objs, err := s.repo.listWorkObjectsByStatus(ctx, boardRefs, status, olderThan, limit)
 	if err != nil {
 		return nil, err
 	}

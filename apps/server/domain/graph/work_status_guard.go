@@ -85,3 +85,10 @@ func workStatusWriteForbidden() error {
 func workStatusNotAllowed(status string) error {
 	return apperror.New(http.StatusBadRequest, "work_status_not_allowed", "status is not in the type's allowed work-status set: "+status)
 }
+
+// workStatusKeyRequired is the rejection error for a board-enabled object
+// created without a key. The claim lock keys on (project, type, key), so a
+// keyless board-enabled object could be dispatched but never claimed.
+func workStatusKeyRequired() error {
+	return apperror.New(http.StatusBadRequest, "work_status_key_required", "board-enabled work objects require a non-empty key")
+}

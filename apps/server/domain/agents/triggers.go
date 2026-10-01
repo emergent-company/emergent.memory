@@ -497,40 +497,11 @@ func (ts *TriggerService) enqueueWorkRun(ctx context.Context, agent *Agent, agen
 		version = head.Version
 	}
 
-	// Dedup against the processing log on (agent_id, graph_object_id,
-	// object_version, event_type) so a repeated created delivery yields a single
-	// run. ConcurrencyStrategy "skip" is enforced unconditionally for work
-	// dispatch: an already-recorded dispatch is never duplicated.
-	existing, err := ts.repo.FindProcessingLogByKey(ctx, agent.ID, canonicalID, version, eventType)
-	if err != nil {
-		ts.log.Warn("failed to check processing log for dedup",
-			slog.String("agent_id", agent.ID),
-			slog.String("canonical_id", canonicalID),
-			slog.String("error", err.Error()),
-		)
-		return
-	}
-	if existing != nil {
-		return // already dispatched
-	}
-
-	// Record the dispatch before enqueuing so a concurrent redelivery dedups.
-	logEntry := &AgentProcessingLog{
-		AgentID:       agent.ID,
-		GraphObjectID: canonicalID,
-		ObjectVersion: version,
-		EventType:     eventType,
-		Status:        ProcessingStatusPending,
-	}
-	if err := ts.repo.CreateProcessingLog(ctx, logEntry); err != nil {
-		ts.log.Warn("failed to record processing log entry",
-			slog.String("agent_id", agent.ID),
-			slog.String("canonical_id", canonicalID),
-			slog.String("error", err.Error()),
-		)
-		return
-	}
-
+	// Dedup + enqueue atomically on (agent_id, graph_object_id, object_version,
+	// event_type): the processing-log dispatch slot is claimed and the queued run
+	// enqueued in a single transaction, so a repeated created delivery yields a
+	// single run and a failed enqueue leaves no orphaned log row to suppress
+	// redelivery.
 	maxAttempts := 1
 	if agentDef != nil && agentDef.WorkConfig.RetryPolicy.MaxAttempts > 0 {
 		maxAttempts = agentDef.WorkConfig.RetryPolicy.MaxAttempts
@@ -540,7 +511,14 @@ func (ts *TriggerService) enqueueWorkRun(ctx context.Context, agent *Agent, agen
 		maxPendingJobs = ts.executor.safeguards.MaxPendingJobs
 	}
 
-	run, err := ts.repo.CreateRunQueued(ctx, agent.ID, maxAttempts, CreateRunQueuedOptions{
+	logEntry := &AgentProcessingLog{
+		AgentID:       agent.ID,
+		GraphObjectID: canonicalID,
+		ObjectVersion: version,
+		EventType:     eventType,
+		Status:        ProcessingStatusPending,
+	}
+	run, claimed, err := ts.repo.EnqueueWorkRunDeduped(ctx, logEntry, agent.ID, maxAttempts, CreateRunQueuedOptions{
 		SubjectObjectID:   &canonicalID,
 		SubjectObjectType: &objectType,
 		TrustedInternal:   true,
@@ -553,6 +531,9 @@ func (ts *TriggerService) enqueueWorkRun(ctx context.Context, agent *Agent, agen
 			slog.String("error", err.Error()),
 		)
 		return
+	}
+	if !claimed {
+		return // already dispatched
 	}
 
 	ts.log.Info("enqueued object-driven work run",

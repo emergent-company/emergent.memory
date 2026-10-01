@@ -239,21 +239,27 @@ func (s *Service) resolveSchemaVersion(ctx context.Context, projectID uuid.UUID,
 }
 
 // objectTypeWorkConfig resolves the per-type object-driven work config for a
-// project+type (P4), or nil when the schema provider is unavailable or the type
-// is unknown. Unknown types are unconfigured (never board-enabled).
-func (s *Service) objectTypeWorkConfig(ctx context.Context, projectID uuid.UUID, objType string) *agents.ObjectTypeWorkConfig {
+// project+type (P4), or (nil, nil) when the schema provider is absent or the
+// type is unknown. Unknown types are unconfigured (never board-enabled). A
+// schema-provider error is returned to the caller so mutation paths can fail
+// closed rather than silently treating a board-enabled type as unconfigured
+// during an outage.
+func (s *Service) objectTypeWorkConfig(ctx context.Context, projectID uuid.UUID, objType string) (*agents.ObjectTypeWorkConfig, error) {
 	if s.schemaProvider == nil {
-		return nil
+		return nil, nil
 	}
 	schemas, err := s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
-	if err != nil || schemas == nil {
-		return nil
+	if err != nil {
+		return nil, err
+	}
+	if schemas == nil {
+		return nil, nil
 	}
 	schema, ok := schemas.ObjectSchemas[objType]
 	if !ok {
-		return nil
+		return nil, nil
 	}
-	return &schema.ObjectTypeWorkConfig
+	return &schema.ObjectTypeWorkConfig, nil
 }
 
 // GetObjectTypeWorkConfig exposes the per-type object-driven work config for a
@@ -265,7 +271,7 @@ func (s *Service) GetObjectTypeWorkConfig(ctx context.Context, projectID, typeNa
 	if err != nil {
 		return nil, err
 	}
-	return s.objectTypeWorkConfig(ctx, pid, typeName), nil
+	return s.objectTypeWorkConfig(ctx, pid, typeName)
 }
 
 // excludedSearchTypes returns the set of object type names flagged
@@ -323,7 +329,16 @@ func (s *Service) enqueueEmbedding(ctx context.Context, objectID string) {
 // enabled / operational objects churn versions on every status transition and
 // must not enqueue embeddings.
 func (s *Service) enqueueEmbeddingForType(ctx context.Context, projectID uuid.UUID, objType, objectID string) {
-	if cfg := s.objectTypeWorkConfig(ctx, projectID, objType); cfg != nil && cfg.SkipEmbeddings {
+	cfg, err := s.objectTypeWorkConfig(ctx, projectID, objType)
+	if err != nil {
+		// Embedding enqueue is best-effort and must never block CRUD; a transient
+		// schema-provider error fails open (enqueue) rather than silently
+		// suppressing the job.
+		s.log.Warn("failed to resolve work config for embedding enqueue",
+			slog.String("project_id", projectID.String()),
+			slog.String("type", objType),
+			slog.String("error", err.Error()))
+	} else if cfg != nil && cfg.SkipEmbeddings {
 		return
 	}
 	s.enqueueEmbedding(ctx, objectID)
@@ -756,12 +771,18 @@ func (s *Service) ValidateObject(ctx context.Context, projectID uuid.UUID, req *
 func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGraphObjectRequest, actorID *uuid.UUID) (*GraphObjectResponse, error) {
 	actorType, actorID := actorFromContext(ctx, actorID)
 
-	workCfg := s.objectTypeWorkConfig(ctx, projectID, req.Type)
+	workCfg, err := s.objectTypeWorkConfig(ctx, projectID, req.Type)
+	if err != nil {
+		return nil, apperror.ErrInternal.WithMessage("failed to load schemas")
+	}
 	if err := rejectAgentWorkStatusWrite(actorType, isBoardEnabledConfig(workCfg), writesStatus(req.Status, req.Properties)); err != nil {
 		return nil, err
 	}
 	if err := validateTypeStatus(workCfg, req.Status, req.Properties); err != nil {
 		return nil, err
+	}
+	if isBoardEnabledConfig(workCfg) && (req.Key == nil || *req.Key == "") {
+		return nil, workStatusKeyRequired()
 	}
 
 	validatedProps, err := s.validateObjectProperties(ctx, projectID, req.Type, req.Properties)
@@ -863,7 +884,10 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 
 	actorType, actorID := actorFromContext(ctx, actorID)
 
-	workCfg := s.objectTypeWorkConfig(ctx, projectID, req.Type)
+	workCfg, err := s.objectTypeWorkConfig(ctx, projectID, req.Type)
+	if err != nil {
+		return nil, false, apperror.ErrInternal.WithMessage("failed to load schemas")
+	}
 	if err := rejectAgentWorkStatusWrite(actorType, isBoardEnabledConfig(workCfg), writesStatus(req.Status, req.Properties)); err != nil {
 		return nil, false, err
 	}
@@ -968,7 +992,19 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 		newLabels = req.Labels
 	}
 
-	if diff == nil && !statusChanged && !labelsChanged {
+	// Check if assignee changed: req.Assignee applies, otherwise the current lane
+	// is preserved (mirrors Patch). An unrelated upsert must not clear the lane,
+	// and an assignee-only upsert must be detected and applied.
+	newAssignee := existing.Assignee
+	assigneeChanged := false
+	if req.Assignee != nil {
+		if existing.Assignee == nil || *existing.Assignee != *req.Assignee {
+			assigneeChanged = true
+			newAssignee = req.Assignee
+		}
+	}
+
+	if diff == nil && !statusChanged && !labelsChanged && !assigneeChanged {
 		// No change - return existing (no-op)
 		if existing.ExtractionJobID == nil && req.ExtractionJobID != nil {
 			if _, err := tx.NewUpdate().Model((*GraphObject)(nil)).
@@ -988,11 +1024,12 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 		return existing.ToResponse(), false, nil
 	}
 
-	// Properties, status, or labels differ - create new version
+	// Properties, status, labels, or assignee differ - create new version
 	newVersion := &GraphObject{
 		Type:            existing.Type,
 		Key:             existing.Key,
 		Status:          newStatus,
+		Assignee:        newAssignee,
 		Namespace:       existing.Namespace,
 		Properties:      newProps,
 		Labels:          newLabels,
@@ -1162,7 +1199,10 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 	}
 
 	actorType, actorID := actorFromContext(ctx, actorID)
-	workCfg := s.objectTypeWorkConfig(ctx, projectID, current.Type)
+	workCfg, err := s.objectTypeWorkConfig(ctx, projectID, current.Type)
+	if err != nil {
+		return nil, apperror.ErrInternal.WithMessage("failed to load schemas")
+	}
 	if err := rejectAgentWorkStatusWrite(actorType, isBoardEnabledConfig(workCfg), writesStatus(req.Status, req.Properties)); err != nil {
 		return nil, err
 	}
@@ -2918,8 +2958,10 @@ func (s *Service) BulkUpdateStatus(ctx context.Context, projectID uuid.UUID, req
 
 	results := make([]BulkUpdateStatusResult, len(req.IDs))
 
-	// Parse UUIDs and track valid ones
+	// Parse UUIDs and track the request index of each valid id so per-object
+	// results (especially board-enabled versioned transitions) map back correctly.
 	validIDs := make([]uuid.UUID, 0, len(req.IDs))
+	indexByID := make(map[uuid.UUID]int, len(req.IDs))
 	for i, idStr := range req.IDs {
 		id, err := uuid.Parse(idStr)
 		if err != nil {
@@ -2931,6 +2973,7 @@ func (s *Service) BulkUpdateStatus(ctx context.Context, projectID uuid.UUID, req
 			}
 		} else {
 			validIDs = append(validIDs, id)
+			indexByID[id] = i
 			results[i] = BulkUpdateStatusResult{
 				ID:      idStr,
 				Success: true,
@@ -2948,35 +2991,80 @@ func (s *Service) BulkUpdateStatus(ctx context.Context, projectID uuid.UUID, req
 
 	// Reject agent-originated bulk status writes on board-enabled objects: work
 	// status is owned by the single-status writer only. Also validate the target
-	// status against each board-enabled type's declared allowed set (P4.1).
-	types, err := s.repo.listDistinctTypesByIDs(ctx, projectID, validIDs)
+	// status against each board-enabled type's declared allowed set (P4.1), and
+	// route board-enabled objects through the versioned transition path so the
+	// status column and properties["status"] never diverge.
+	refs, err := s.repo.listHeadObjectRefsByIDs(ctx, projectID, validIDs)
 	if err != nil {
 		return nil, err
 	}
+	refIndex := func(r objectHeadRef) int {
+		if i, ok := indexByID[r.ID]; ok {
+			return i
+		}
+		if i, ok := indexByID[r.CanonicalID]; ok {
+			return i
+		}
+		return -1
+	}
+	boardObjects := make([]objectHeadRef, 0, len(refs))
+	nonBoardIDs := make([]uuid.UUID, 0, len(refs))
 	anyBoardEnabled := false
-	for _, t := range types {
-		cfg := s.objectTypeWorkConfig(ctx, projectID, t)
+	for _, r := range refs {
+		cfg, err := s.objectTypeWorkConfig(ctx, projectID, r.Type)
+		if err != nil {
+			return nil, apperror.ErrInternal.WithMessage("failed to load schemas")
+		}
 		if !isBoardEnabledConfig(cfg) {
+			nonBoardIDs = append(nonBoardIDs, r.CanonicalID)
 			continue
 		}
 		anyBoardEnabled = true
 		if err := validateTypeStatus(cfg, &req.Status, nil); err != nil {
 			return nil, err
 		}
+		boardObjects = append(boardObjects, r)
 	}
 	if actorType == ActorAgent && anyBoardEnabled {
 		return nil, workStatusWriteForbidden()
 	}
 
-	// Perform bulk update
-	updated, err := s.repo.BulkUpdateStatus(ctx, projectID, validIDs, req.Status, actorType, actorID)
-	if err != nil {
-		return nil, err
+	// Non-board objects use the in-place bulk update (they have no single-status
+	// writer invariant). Board-enabled objects transition through the versioned
+	// single-status path so status and properties["status"] stay consistent.
+	successCount := 0
+	if len(nonBoardIDs) > 0 {
+		updated, err := s.repo.BulkUpdateStatus(ctx, projectID, nonBoardIDs, req.Status, actorType, actorID)
+		if err != nil {
+			return nil, err
+		}
+		successCount += updated
+	}
+	for _, r := range boardObjects {
+		idx := refIndex(r)
+		transitioned, err := s.TransitionWorkObject(ctx, projectID.String(), r.CanonicalID.String(), WorkObjectTransition{
+			ToStatus: req.Status,
+		})
+		if err != nil {
+			if idx >= 0 {
+				errMsg := err.Error()
+				results[idx].Success = false
+				results[idx].Error = &errMsg
+			}
+			continue
+		}
+		if !transitioned {
+			if idx >= 0 {
+				errMsg := "object not found or missing key"
+				results[idx].Success = false
+				results[idx].Error = &errMsg
+			}
+			continue
+		}
+		successCount++
 	}
 
-	// Calculate success/failed counts
-	successCount := updated
-	failedCount := len(req.IDs) - updated
+	failedCount := len(req.IDs) - successCount
 
 	return &BulkUpdateStatusResponse{
 		Success: successCount,

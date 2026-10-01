@@ -33,8 +33,6 @@ type WorkItemActionDTO struct {
 type RequestChangesWorkItemDTO struct {
 	// Feedback is required (non-empty) review feedback recorded as a new round.
 	Feedback string `json:"feedback"`
-	// RunID optionally links the feedback to the rework run it produced.
-	RunID *string `json:"runId,omitempty"`
 }
 
 // ReassignWorkItemDTO is the request body for reassign. An empty assignee
@@ -119,7 +117,7 @@ func (h *Handler) RequestChangesWorkItem(c echo.Context) error {
 	if err := c.Bind(&dto); err != nil {
 		return apperror.NewBadRequest("invalid request body")
 	}
-	res, err := h.workActions.RequestChanges(c.Request().Context(), projectID, canonicalID, user.ID, dto.Feedback, dto.RunID)
+	res, err := h.workActions.RequestChanges(c.Request().Context(), projectID, canonicalID, user.ID, dto.Feedback)
 	if err != nil {
 		return err
 	}
