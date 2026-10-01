@@ -358,7 +358,7 @@ func TestZitadelConfig_GetIssuer(t *testing.T) {
 	}
 }
 
-func TestKreuzbergConfig_Timeout(t *testing.T) {
+func TestXbergConfig_Timeout(t *testing.T) {
 	tests := []struct {
 		name      string
 		timeoutMs int
@@ -372,7 +372,7 @@ func TestKreuzbergConfig_Timeout(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := KreuzbergConfig{TimeoutMs: tt.timeoutMs}
+			cfg := XbergConfig{TimeoutMs: tt.timeoutMs}
 			got := cfg.Timeout()
 			if got != tt.want {
 				t.Errorf("Timeout() = %v, want %v", got, tt.want)
@@ -381,7 +381,7 @@ func TestKreuzbergConfig_Timeout(t *testing.T) {
 	}
 }
 
-func TestKreuzbergConfig_WorkerInterval(t *testing.T) {
+func TestXbergConfig_WorkerInterval(t *testing.T) {
 	tests := []struct {
 		name             string
 		workerIntervalMs int
@@ -395,7 +395,7 @@ func TestKreuzbergConfig_WorkerInterval(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := KreuzbergConfig{WorkerIntervalMs: tt.workerIntervalMs}
+			cfg := XbergConfig{WorkerIntervalMs: tt.workerIntervalMs}
 			got := cfg.WorkerInterval()
 			if got != tt.want {
 				t.Errorf("WorkerInterval() = %v, want %v", got, tt.want)

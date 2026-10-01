@@ -78,7 +78,7 @@ apps/server/
 ├── pkg/
 │   ├── adk/              # Google ADK-Go integration
 │   ├── auth/             # Zitadel middleware
-│   ├── kreuzberg/        # Document parsing client
+│   ├── xberg/            # Document parsing client
 │   ├── mailgun/          # Email delivery
 │   └── vertex/           # Vertex AI embeddings
 └── tests/

@@ -181,14 +181,14 @@ STANDALONE_USER_EMAIL=admin@localhost
 STANDALONE_ORG_NAME=My Organization
 STANDALONE_PROJECT_NAME=Default Project
 
-KREUZBERG_PORT=18000
+XBERG_PORT=18000
 SERVER_PORT=%d
 
 GOOGLE_API_KEY=%s
 OPENAI_API_KEY=%s
 OPENAI_MODEL=%s
 EMBEDDING_DIMENSION=768
-KREUZBERG_LOG_LEVEL=info
+XBERG_LOG_LEVEL=info
 
 LLM_ENCRYPTION_KEY=%s
 `, postgresPassword, objectStoreSecret, apiKey, i.config.ServerPort, i.config.GoogleAPIKey, i.config.OpenAIBaseURL, i.config.LLMModel, llmEncryptionKey)

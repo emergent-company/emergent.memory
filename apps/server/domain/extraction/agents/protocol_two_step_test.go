@@ -17,7 +17,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
-	"github.com/emergent-company/emergent.memory/pkg/kreuzberg"
+	"github.com/emergent-company/emergent.memory/pkg/xberg"
 )
 
 type TwoStepEntity struct {
@@ -368,34 +368,34 @@ func extractTextFromPDFTwoStep(ctx context.Context, t *testing.T, pdfPath string
 		return "", fmt.Errorf("failed to read PDF: %w", err)
 	}
 
-	kreuzbergURL := os.Getenv("KREUZBERG_URL")
-	if kreuzbergURL == "" {
-		kreuzbergURL = "http://localhost:8787"
+	xbergURL := os.Getenv("XBERG_URL")
+	if xbergURL == "" {
+		xbergURL = "http://localhost:8787"
 	}
 
 	cfg := &config.Config{
-		Kreuzberg: config.KreuzbergConfig{
+		Xberg: config.XbergConfig{
 			Enabled:    true,
-			ServiceURL: kreuzbergURL,
+			ServiceURL: xbergURL,
 			TimeoutMs:  60000,
 		},
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	client := kreuzberg.NewClient(cfg, logger)
+	client := xberg.NewClient(cfg, logger)
 
 	if !client.IsEnabled() {
-		t.Log("Kreuzberg not enabled, using fallback document text")
+		t.Log("Xberg not enabled, using fallback document text")
 		return getFallbackProtocolText(), nil
 	}
 
 	result, err := client.ExtractText(ctx, pdfData, filepath.Base(pdfPath), "application/pdf", nil)
 	if err != nil {
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "unavailable") {
-			t.Log("Kreuzberg service not available, using fallback document text")
+			t.Log("Xberg service not available, using fallback document text")
 			return getFallbackProtocolText(), nil
 		}
-		return "", fmt.Errorf("Kreuzberg extraction failed: %w", err)
+		return "", fmt.Errorf("Xberg extraction failed: %w", err)
 	}
 
 	return result.Content, nil

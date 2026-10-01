@@ -184,7 +184,7 @@ services:
 
       # Disable optional features that need external services
       ENABLE_AGENT_WORKSPACES: "false"
-      KREUZBERG_ENABLED: "false"
+      XBERG_ENABLED: "false"
       WHISPER_ENABLED: "false"
 
       # Email — SMTP transport into Mailpit by default so e2e captures real

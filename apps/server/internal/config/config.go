@@ -41,8 +41,8 @@ type Config struct {
 	// Email configuration
 	Email EmailConfig
 
-	// Kreuzberg document parsing configuration
-	Kreuzberg KreuzbergConfig
+	// Xberg document parsing configuration
+	Xberg XbergConfig
 
 	// Whisper audio transcription configuration
 	Whisper WhisperConfig
@@ -401,16 +401,16 @@ func (e *EmailConfig) IsConfigured() bool {
 	return e.MailgunDomain != "" && e.MailgunAPIKey != ""
 }
 
-// KreuzbergConfig holds Kreuzberg document parsing service configuration
-type KreuzbergConfig struct {
-	// Enabled determines if Kreuzberg parsing is enabled
-	Enabled bool `env:"KREUZBERG_ENABLED" envDefault:"true"`
-	// ServiceURL is the Kreuzberg service URL
-	ServiceURL string `env:"KREUZBERG_SERVICE_URL" envDefault:"http://localhost:8000"`
+// XbergConfig holds Xberg document parsing service configuration
+type XbergConfig struct {
+	// Enabled determines if Xberg parsing is enabled
+	Enabled bool `env:"XBERG_ENABLED" envDefault:"true"`
+	// ServiceURL is the Xberg service URL
+	ServiceURL string `env:"XBERG_SERVICE_URL" envDefault:"http://localhost:8000"`
 	// Timeout is the request timeout in milliseconds (default: 300000 = 5 minutes)
-	TimeoutMs int `env:"KREUZBERG_SERVICE_TIMEOUT" envDefault:"300000"`
+	TimeoutMs int `env:"XBERG_SERVICE_TIMEOUT" envDefault:"300000"`
 	// MaxFileSizeMB is the maximum file size for document parsing
-	MaxFileSizeMB int `env:"KREUZBERG_MAX_FILE_SIZE_MB" envDefault:"100"`
+	MaxFileSizeMB int `env:"XBERG_MAX_FILE_SIZE_MB" envDefault:"100"`
 	// WorkerIntervalMs is the polling interval in milliseconds (default: 5000)
 	WorkerIntervalMs int `env:"DOCUMENT_PARSING_WORKER_INTERVAL_MS" envDefault:"5000"`
 	// WorkerBatchSize is the number of jobs to process per poll (default: 5)
@@ -418,12 +418,12 @@ type KreuzbergConfig struct {
 }
 
 // Timeout returns the request timeout as a Duration
-func (k *KreuzbergConfig) Timeout() time.Duration {
+func (k *XbergConfig) Timeout() time.Duration {
 	return time.Duration(k.TimeoutMs) * time.Millisecond
 }
 
 // WorkerInterval returns the worker interval as a Duration
-func (k *KreuzbergConfig) WorkerInterval() time.Duration {
+func (k *XbergConfig) WorkerInterval() time.Duration {
 	return time.Duration(k.WorkerIntervalMs) * time.Millisecond
 }
 

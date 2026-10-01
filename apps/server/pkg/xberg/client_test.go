@@ -1,4 +1,4 @@
-package kreuzberg
+package xberg
 
 import (
 	"testing"
@@ -153,14 +153,14 @@ func TestGetHumanFriendlyMessage(t *testing.T) {
 	}
 }
 
-func TestShouldUseKreuzberg(t *testing.T) {
+func TestShouldUseXberg(t *testing.T) {
 	tests := []struct {
 		name     string
 		mimeType string
 		filename string
 		expected bool
 	}{
-		// Plain text MIME types - should NOT use Kreuzberg
+		// Plain text MIME types - should NOT use Xberg
 		{
 			name:     "plain text mime type",
 			mimeType: "text/plain",
@@ -198,7 +198,7 @@ func TestShouldUseKreuzberg(t *testing.T) {
 			expected: false,
 		},
 
-		// Plain text extensions (no mime type) - should NOT use Kreuzberg
+		// Plain text extensions (no mime type) - should NOT use Xberg
 		{
 			name:     "txt extension only",
 			mimeType: "",
@@ -260,7 +260,7 @@ func TestShouldUseKreuzberg(t *testing.T) {
 			expected: false,
 		},
 
-		// Non-plain text types - SHOULD use Kreuzberg
+		// Non-plain text types - SHOULD use Xberg
 		{
 			name:     "PDF file",
 			mimeType: "application/pdf",
@@ -309,9 +309,9 @@ func TestShouldUseKreuzberg(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ShouldUseKreuzberg(tt.mimeType, tt.filename)
+			result := ShouldUseXberg(tt.mimeType, tt.filename)
 			if result != tt.expected {
-				t.Errorf("ShouldUseKreuzberg(%q, %q) = %v, want %v",
+				t.Errorf("ShouldUseXberg(%q, %q) = %v, want %v",
 					tt.mimeType, tt.filename, result, tt.expected)
 			}
 		})
@@ -405,7 +405,7 @@ func TestIsEmailFile(t *testing.T) {
 	}
 }
 
-func TestIsKreuzbergSupported(t *testing.T) {
+func TestIsXbergSupported(t *testing.T) {
 	tests := []struct {
 		name     string
 		mimeType string
@@ -493,9 +493,9 @@ func TestIsKreuzbergSupported(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := IsKreuzbergSupported(tt.mimeType)
+			result := IsXbergSupported(tt.mimeType)
 			if result != tt.expected {
-				t.Errorf("IsKreuzbergSupported(%q) = %v, want %v",
+				t.Errorf("IsXbergSupported(%q) = %v, want %v",
 					tt.mimeType, result, tt.expected)
 			}
 		})
