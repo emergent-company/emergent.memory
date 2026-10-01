@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
@@ -159,6 +160,24 @@ func TestRestoreResetsDismissed(t *testing.T) {
 	mock.ExpectExec(".*").WillReturnResult(sqlmock.NewResult(0, 1))
 
 	require.NoError(t, repo.Restore(context.Background(), "u1", "n1"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestRestoreActiveGroupKeyConflict asserts that a unique violation from the
+// active (user_id, group_key) partial index is translated into the typed
+// ErrActiveNotificationConflict rather than leaking as a 500 database error.
+// This is the unit-level half of the #1345/#1347 interaction fix.
+func TestRestoreActiveGroupKeyConflict(t *testing.T) {
+	repo, mock := newRepoMock(t)
+
+	mock.ExpectExec(`UPDATE[\s\S]*"kb"\."notifications"[\s\S]*`).
+		WillReturnError(&pgconn.PgError{
+			Code:           "23505",
+			ConstraintName: "ux_notifications_user_group_key_active",
+		})
+
+	err := repo.Restore(context.Background(), "u1", "n1")
+	require.ErrorIs(t, err, ErrActiveNotificationConflict)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
