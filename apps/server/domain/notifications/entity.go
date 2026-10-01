@@ -75,7 +75,20 @@ type NotificationPreference struct {
 	UpdatedAt time.Time `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
 }
 
-// NotificationStats represents aggregated notification statistics
+// NotificationStats represents aggregated notification statistics.
+//
+// All three counters share the base population `cleared_at IS NULL`, so
+// `Dismissed <= Total` always holds.
+//
+// `Dismissed` is effectively dead for API-produced data: Repository.Dismiss
+// sets `dismissed = true` AND `cleared_at = now()` in the same update, so a
+// dismissed row is always cleared and is therefore excluded from this counter
+// (and from Total/Unread) by construction. The counter is retained for schema
+// and API compatibility; removing or repurposing it — together with the
+// `dismissed`/`dismissed_at` columns — is a follow-up. Note that
+// Repository.Restore un-clears a row without resetting `dismissed`, so a
+// dismissed-then-restored row can re-enter the counters and be counted here;
+// that lifecycle gap is tracked as a separate follow-up.
 type NotificationStats struct {
 	Unread    int64 `json:"unread"`
 	Dismissed int64 `json:"dismissed"`
