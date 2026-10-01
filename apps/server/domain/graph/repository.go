@@ -2427,7 +2427,7 @@ func (r *Repository) listHeadObjectRefsByIDs(ctx context.Context, projectID uuid
 	}
 	refs := make([]objectHeadRef, 0, len(rows))
 	for _, r := range rows {
-		refs = append(refs, objectHeadRef{ID: r.ID, CanonicalID: r.CanonicalID, Type: r.Type})
+		refs = append(refs, objectHeadRef(r))
 	}
 	return refs, nil
 }
