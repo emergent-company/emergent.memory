@@ -271,7 +271,7 @@ func (s *Service) Create(ctx context.Context, req *CreateInviteRequest) (*Invite
 	}
 
 	// Enqueue invitation email (non-fatal: invitation is still valid even if email fails to queue)
-	_ = s.enqueueInviteEmail(ctx, invite, req.ProjectName, req.InviterName)
+	_ = s.enqueueInviteEmail(ctx, s.db, invite, req.ProjectName, req.InviterName)
 
 	// Notify the invitee in-app if they already have an account. Best-effort:
 	// when the email maps to no user (or the producer is unwired), the email
@@ -352,7 +352,7 @@ func (s *Service) resolveUserIDByEmail(ctx context.Context, email string) (strin
 // enqueueInviteEmail enqueues the project-invitation email for the given invite.
 // It returns any enqueue error but treats it as non-fatal: the caller continues
 // and the invitation remains valid.
-func (s *Service) enqueueInviteEmail(ctx context.Context, invite *Invite, projectName, inviterName string) error {
+func (s *Service) enqueueInviteEmail(ctx context.Context, db bun.IDB, invite *Invite, projectName, inviterName string) error {
 	if s.emailSvc == nil {
 		return nil
 	}
@@ -365,7 +365,7 @@ func (s *Service) enqueueInviteEmail(ctx context.Context, invite *Invite, projec
 		inviterName = "A team member"
 	}
 	toName := invite.Email
-	_, emailErr := s.emailSvc.Enqueue(ctx, email.EnqueueOptions{
+	_, emailErr := s.emailSvc.EnqueueTx(ctx, db, email.EnqueueOptions{
 		TemplateName: "project-invitation",
 		ToEmail:      invite.Email,
 		ToName:       &toName,
@@ -703,10 +703,12 @@ const inviteResendGuardWindow = 60 * time.Second
 // hasRecentInviteEmailJob reports whether the invitation already has an
 // invite-scoped email job (source_type='invite', source_id=inviteID) created
 // within inviteResendGuardWindow. The lookup is served by the existing
-// idx_email_jobs_source (source_type, source_id) index.
-func (s *Service) hasRecentInviteEmailJob(ctx context.Context, inviteID string) (bool, error) {
+// idx_email_jobs_source (source_type, source_id) index. It runs against the
+// executor the caller supplies so a resend can evaluate it inside the same
+// transaction that holds the per-invite advisory lock.
+func (s *Service) hasRecentInviteEmailJob(ctx context.Context, db bun.IDB, inviteID string) (bool, error) {
 	var count int
-	err := s.db.NewRaw(`
+	err := db.NewRaw(`
 		SELECT COUNT(*) FROM kb.email_jobs
 		WHERE source_type = 'invite' AND source_id = ?
 		  AND created_at > now() - (? || ' seconds')::interval
@@ -715,6 +717,16 @@ func (s *Service) hasRecentInviteEmailJob(ctx context.Context, inviteID string) 
 		return false, err
 	}
 	return count > 0, nil
+}
+
+// resendGuardLockKey returns the pg_advisory_xact_lock key for an invitation.
+// The invite id is hashed with hashtextextended (stable for the lifetime of a
+// database) under a namespace prefix so invite keys cannot collide with other
+// advisory-lock users. A hash collision between two invites merely serialises
+// those two resends momentarily; it never merges their jobs, because every
+// query in the critical section is still scoped by the concrete invite id.
+func resendGuardLockKey(inviteID string) string {
+	return "invite_resend:" + inviteID
 }
 
 // Resend re-sends a pending invitation email: it keeps the SAME token, extends
@@ -728,6 +740,13 @@ func (s *Service) hasRecentInviteEmailJob(ctx context.Context, inviteID string) 
 // inviteResendGuardWindow, the request is a no-op and the existing invitation is
 // returned. This guards against double-submits and repeated POSTs sending
 // unbounded duplicate invitation emails.
+//
+// The guard is an invariant, not best-effort: the check and the insert run in
+// one transaction that first takes a per-invite pg_advisory_xact_lock. Two
+// truly-concurrent resends for the same invite are therefore serialised, so
+// exactly one of them observes "no recent job" and enqueues; the other observes
+// the committed job and is a clean no-op. Different invites hash to different
+// keys and never contend.
 func (s *Service) Resend(ctx context.Context, inviteID string) (*Invite, error) {
 	var invite Invite
 	err := s.db.NewSelect().
@@ -745,46 +764,66 @@ func (s *Service) Resend(ctx context.Context, inviteID string) (*Invite, error) 
 		return nil, apperror.NewNotFound("invite", inviteID)
 	}
 
-	// Idempotency guard: an email for this invitation was already enqueued
-	// recently (in flight or just delivered). Return the existing invitation
-	// without enqueuing another job, so a repeat click is a clean no-op rather
-	// than a duplicate email or a confusing error.
-	recent, err := s.hasRecentInviteEmailJob(ctx, inviteID)
-	if err != nil {
-		return nil, apperror.NewDatabase("check recent invitation email", err)
-	}
-	if recent {
-		return &invite, nil
-	}
-
-	// Keep the same token; only extend the expiry.
-	now := time.Now()
-	invite.ExpiresAt = timePtr(now.Add(7 * 24 * time.Hour))
-	if _, err := s.db.NewRaw(
-		`UPDATE kb.invites SET expires_at = ? WHERE id = ?`,
-		invite.ExpiresAt, invite.ID,
-	).Exec(ctx); err != nil {
-		return nil, apperror.NewDatabase("extend invitation expiry", err)
-	}
-
 	// Derive the project name for the email the same way Create does when the
 	// caller supplied one: look it up from kb.projects, fall back to "the project".
+	// Done inside the transaction and only on the enqueue path, so a no-op
+	// resend costs no extra query.
 	projectName := "the project"
-	if invite.ProjectID != nil {
-		var name string
-		if e := s.db.NewSelect().
-			TableExpr("kb.projects").
-			Column("name").
-			Where("id = ?", *invite.ProjectID).
-			Limit(1).
-			Scan(ctx, &name); e == nil && name != "" {
-			projectName = name
-		}
-	}
 
 	// The inviter name is not stored on the invite; pass "" so the helper's
 	// existing "A team member" fallback applies.
-	_ = s.enqueueInviteEmail(ctx, &invite, projectName, "")
+	now := time.Now()
+	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// Serialise concurrent resends for this invite. pg_advisory_xact_lock is
+		// transaction-scoped: it is released automatically on commit/rollback,
+		// so it cannot leak or deadlock a connection pool.
+		if _, err := tx.NewRaw(
+			`SELECT pg_advisory_xact_lock(hashtextextended(?, 0))`,
+			resendGuardLockKey(inviteID),
+		).Exec(ctx); err != nil {
+			return apperror.NewDatabase("acquire resend guard lock", err)
+		}
+
+		// Idempotency guard, evaluated under the lock: an email for this
+		// invitation was already enqueued recently (in flight or just
+		// delivered). The request is a clean no-op rather than a duplicate email.
+		recent, err := s.hasRecentInviteEmailJob(ctx, tx, inviteID)
+		if err != nil {
+			return apperror.NewDatabase("check recent invitation email", err)
+		}
+		if recent {
+			return nil
+		}
+
+		if invite.ProjectID != nil {
+			var name string
+			if e := tx.NewSelect().
+				TableExpr("kb.projects").
+				Column("name").
+				Where("id = ?", *invite.ProjectID).
+				Limit(1).
+				Scan(ctx, &name); e == nil && name != "" {
+				projectName = name
+			}
+		}
+
+		// Keep the same token; only extend the expiry.
+		invite.ExpiresAt = timePtr(now.Add(7 * 24 * time.Hour))
+		if _, err := tx.NewRaw(
+			`UPDATE kb.invites SET expires_at = ? WHERE id = ?`,
+			invite.ExpiresAt, invite.ID,
+		).Exec(ctx); err != nil {
+			return apperror.NewDatabase("extend invitation expiry", err)
+		}
+
+		// Enqueue on the same transaction so the job commits atomically with the
+		// lock's release; the next waiter then sees it and stays a no-op.
+		_ = s.enqueueInviteEmail(ctx, tx, &invite, projectName, "")
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	return &invite, nil
 }

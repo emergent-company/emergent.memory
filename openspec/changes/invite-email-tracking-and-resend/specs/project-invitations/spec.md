@@ -28,7 +28,7 @@ The system SHALL provide a `POST /api/invites/:id/resend` endpoint (authenticati
 
 The system SHALL require the caller to be an `org_admin` of the invitation's organization (or an active `superadmin_full`) before resending — resending is an org-tier write, matching revocation. A caller who is not an `org_admin` SHALL receive HTTP 403. An unknown invitation, or an invitation that is not pending, SHALL return HTTP 404 and SHALL NOT enqueue an email. A failure to enqueue the email SHALL NOT fail the request (the invitation remains valid), matching creation.
 
-Resend SHALL be server-side idempotent over a fixed guard window: if the invitation already has an invite-scoped email job (`source_type='invite'`, `source_id` equal to the invitation id) created within the guard window, the request SHALL be a no-op — it SHALL NOT enqueue another email job, SHALL return HTTP 200 with the existing invitation, and SHALL NOT error. The guard window SHALL be a single named constant, `inviteResendGuardWindow` (60 seconds). The guard SHALL be keyed per invitation: a recent resend of one invitation SHALL NOT block resending a different invitation. This server-enforced guard SHALL be the guarantee against duplicate invitation emails; a client-side confirmation dialog SHALL NOT be relied upon.
+Resend SHALL be server-side idempotent over a fixed guard window: if the invitation already has an invite-scoped email job (`source_type='invite'`, `source_id` equal to the invitation id) created within the guard window, the request SHALL be a no-op — it SHALL NOT enqueue another email job, SHALL return HTTP 200 with the existing invitation, and SHALL NOT error. The guard window SHALL be a single named constant, `inviteResendGuardWindow` (60 seconds). The guard SHALL be keyed per invitation: a recent resend of one invitation SHALL NOT block resending a different invitation. This server-enforced guard SHALL be the guarantee against duplicate invitation emails; a client-side confirmation dialog SHALL NOT be relied upon. The guard SHALL be atomic under concurrency: concurrent resends for the same invitation SHALL be serialised so that exactly one email job is enqueued regardless of interleaving (not merely a best-effort check-then-act).
 
 #### Scenario: Pending invitation resent
 - **WHEN** an `org_admin` of the invitation's organization resends a pending invitation
@@ -45,6 +45,10 @@ Resend SHALL be server-side idempotent over a fixed guard window: if the invitat
 #### Scenario: Guard is keyed per invitation
 - **WHEN** an `org_admin` resends invitation A and then immediately resends a different invitation B
 - **THEN** invitation B's resend is not blocked by invitation A's recent job, and an email job is enqueued for B
+
+#### Scenario: Concurrent resends enqueue exactly one job
+- **WHEN** multiple resends for the same pending invitation race concurrently
+- **THEN** exactly one `project-invitation` email job is enqueued for that invitation, and every request returns success
 
 #### Scenario: Non-admin cannot resend
 - **WHEN** a plain member of the invitation's organization attempts to resend a pending invitation

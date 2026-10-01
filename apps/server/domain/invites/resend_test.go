@@ -2,12 +2,15 @@ package invites
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/emergent-company/emergent.memory/domain/email"
 	"github.com/emergent-company/emergent.memory/internal/config"
@@ -195,6 +198,57 @@ func TestResendGuardIsPerInvite(t *testing.T) {
 	}
 	if got := countInviteEmailJobs(t, db, inviteB); got != 1 {
 		t.Fatalf("invite B job count = %d, want 1 (per-invite guard blocked another invite)", got)
+	}
+}
+
+// TestResendConcurrentEnqueuesExactlyOne is the atomicity proof for the resend
+// guard: N truly-concurrent Resend calls for the SAME invite must enqueue
+// EXACTLY ONE email job. All goroutines are held on a barrier and released
+// together, so they genuinely race the guard rather than running serially (the
+// pre-fix check-then-act implementation fails this — see the PR body).
+//
+// Several rounds are run over fresh invites so a single lucky interleaving
+// cannot mask a broken guard.
+func TestResendConcurrentEnqueuesExactlyOne(t *testing.T) {
+	svc, testDB := newResendService(t)
+	defer testDB.Close()
+	ctx := context.Background()
+	db := testDB.GetDB()
+
+	orgID, projectID := seedOrgAndProject(t, db)
+
+	const (
+		rounds     = 4
+		concurrent = 16
+	)
+
+	for round := 0; round < rounds; round++ {
+		inviteID := seedPendingInvite(t, db, orgID, projectID, fmt.Sprintf("race-%d@example.com", round))
+
+		start := make(chan struct{})
+		var ready sync.WaitGroup
+		ready.Add(concurrent)
+
+		eg, egCtx := errgroup.WithContext(ctx)
+		for i := 0; i < concurrent; i++ {
+			eg.Go(func() error {
+				ready.Done()
+				<-start // barrier: every goroutine races from the same instant
+				_, err := svc.Resend(egCtx, inviteID)
+				return err
+			})
+		}
+
+		ready.Wait()
+		close(start)
+		if err := eg.Wait(); err != nil {
+			t.Fatalf("round %d: concurrent Resend: %v", round, err)
+		}
+
+		if got := countInviteEmailJobs(t, db, inviteID); got != 1 {
+			t.Fatalf("round %d: %d concurrent resends produced %d invite email job(s), want exactly 1",
+				round, concurrent, got)
+		}
 	}
 }
 
