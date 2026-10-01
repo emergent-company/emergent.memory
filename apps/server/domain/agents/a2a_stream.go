@@ -296,7 +296,7 @@ func a2aStreamPayload(sr StreamResponse) map[string]any {
 // SubscribeTask receives live status transitions and translated deltas for
 // streamed tasks. payload (when non-nil) carries the translated StreamResponse
 // under the "stream" key; lifecycle-only events pass nil.
-func (h *A2AHandler) emitA2ABus(projectID, runID, eventType string, payload map[string]any) {
+func (h *A2AHandler) emitA2ABus(ctx context.Context, projectID, runID, eventType string, payload map[string]any) {
 	if h.eventsSvc == nil || projectID == "" {
 		return
 	}
@@ -304,7 +304,7 @@ func (h *A2AHandler) emitA2ABus(projectID, runID, eventType string, payload map[
 	for k, v := range payload {
 		data[k] = v
 	}
-	h.eventsSvc.EmitCreated(events.EntityAgentRun, runID, projectID, &events.EmitOptions{Data: data})
+	h.eventsSvc.EmitCreated(ctx, events.EntityAgentRun, runID, projectID, &events.EmitOptions{Data: data})
 }
 
 // a2aInitialTask builds the SUBMITTED snapshot emitted as the first event of a
@@ -529,7 +529,7 @@ func (h *A2AHandler) streamRun(
 	}
 	lifecycle := func(eventType string) {
 		h.persistA2AEvent(bgCtx, taskID, eventType, nil)
-		h.emitA2ABus(projectID, taskID, eventType, nil)
+		h.emitA2ABus(ctx, projectID, taskID, eventType, nil)
 	}
 
 	// Initial task (SUBMITTED) on the new-task path only.
@@ -554,7 +554,7 @@ func (h *A2AHandler) streamRun(
 		if et, ok := a2aDeltaEventType(ev); ok {
 			for _, sr := range resps {
 				h.persistA2AEvent(bgCtx, taskID, et, a2aStreamPayload(sr))
-				h.emitA2ABus(projectID, taskID, et, a2aStreamPayload(sr))
+				h.emitA2ABus(ctx, projectID, taskID, et, a2aStreamPayload(sr))
 			}
 			if len(resps) == 0 {
 				// Thinking folds into final-message metadata and has no wire
@@ -598,7 +598,7 @@ func (h *A2AHandler) streamTerminal(
 	}
 	lifecycle := func(eventType string) {
 		h.persistA2AEvent(ctx, taskID, eventType, nil)
-		h.emitA2ABus(projectID, taskID, eventType, nil)
+		h.emitA2ABus(ctx, projectID, taskID, eventType, nil)
 	}
 
 	if execErr != nil {
