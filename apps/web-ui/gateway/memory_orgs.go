@@ -316,6 +316,13 @@ type SentInviteDto struct {
 	Status    string `json:"status"` // pending | accepted | declined | revoked | expired
 	CreatedAt string `json:"createdAt"`
 	ExpiresAt string `json:"expiresAt,omitempty"`
+	// DeliveryStatus is the email-delivery event for the invite, when memory
+	// tracks one: pending | delivered | opened | clicked | bounced |
+	// soft_bounced | complained | unsubscribed | failed. Absent/null means no
+	// event has arrived yet (the neutral "Sent" state).
+	DeliveryStatus *string `json:"deliveryStatus,omitempty"`
+	// DeliveryStatusAt is when the latest delivery event happened (RFC3339).
+	DeliveryStatusAt *time.Time `json:"deliveryStatusAt,omitempty"`
 }
 
 // ListInvites lists invitations sent for the active project
@@ -380,6 +387,15 @@ func (m *MemoryClient) DeclineInvite(ctx context.Context, inviteID string) error
 func (m *MemoryClient) CancelInvite(ctx context.Context, inviteID string) error {
 	path := "/api/invites/" + url.PathEscape(inviteID)
 	return m.do(ctx, http.MethodDelete, path, nil, nil)
+}
+
+// ResendInvite re-sends a still-pending invite's email (POST
+// /api/invites/{id}/resend; no request body). Memory answers 403 when the
+// caller may not administer the org and 404 when the invite is unknown or no
+// longer pending; both surface as errors.
+func (m *MemoryClient) ResendInvite(ctx context.Context, inviteID string) error {
+	path := "/api/invites/" + url.PathEscape(inviteID) + "/resend"
+	return m.do(ctx, http.MethodPost, path, nil, nil)
 }
 
 // UserSearchResultDto is one match in a user search (GET /api/users/search?email=).

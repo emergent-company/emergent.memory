@@ -162,11 +162,21 @@
     });
 
     /* Custom controls that commit without dispatching a native change: the
-       go-daisy icon picker (option/reset clicks) and the Alpine visibility
-       listbox (option clicks / Enter / Space). */
+       go-daisy icon picker (option/reset clicks), the go-daisy colour picker's
+       preset swatches + clear button (they set the text field value
+       programmatically, so no `input`/`change` ever fires), and the Alpine
+       visibility listbox (option clicks / Enter / Space). Without this the
+       Appearance colour never auto-saves — the settings page has no Save
+       button, so the picked colour would be silently lost. */
     form.addEventListener("click", function (ev) {
       var t = ev.target;
-      if (t && t.closest && t.closest("[data-gd-icon-option], [data-gd-icon-reset], [role=option]")) {
+      if (
+        t &&
+        t.closest &&
+        t.closest(
+          "[data-gd-icon-option], [data-gd-icon-reset], [data-gd-color-preset], [data-gd-color-clear], [role=option]"
+        )
+      ) {
         schedule(0);
       }
     });

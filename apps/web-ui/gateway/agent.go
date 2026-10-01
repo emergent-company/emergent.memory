@@ -73,7 +73,7 @@ func (s *Server) uiAgent(c echo.Context) error {
 		captureError(err)
 	}
 
-	convs, cerr := s.memory.ListConversations(ctx)
+	convs, cerr := s.memory.ListConversations(ctx, false)
 	if cerr != nil {
 		data.ChatsErr = cerr
 	} else {
@@ -361,7 +361,19 @@ func applyAgentGeneralSection(def *AgentDefinition, c echo.Context) error {
 	def.Name = name
 	def.Description = strings.TrimSpace(c.FormValue("description"))
 	def.SystemPrompt = c.FormValue("systemPrompt")
-	def.UIConfig = agentUIConfig(c.FormValue("icon"), c.FormValue("color"))
+	// Appearance is lossless: only rewrite uiConfig when the request actually
+	// carries the picker fields. The rendered General form always submits both
+	// `icon` and `color` (an explicit empty value clears the appearance), but a
+	// partial body — a section-scoped save or an auto-save that omits the
+	// Appearance block — must preserve the stored appearance rather than wipe
+	// it by defaulting both values to "".
+	params, err := c.FormParams()
+	if err != nil {
+		return fmt.Errorf("invalid form: %w", err)
+	}
+	if params.Has("icon") || params.Has("color") {
+		def.UIConfig = agentUIConfig(params.Get("icon"), params.Get("color"))
+	}
 	lang := strings.TrimSpace(c.FormValue("language"))
 	if def.Config == nil {
 		def.Config = map[string]any{}
@@ -632,7 +644,7 @@ func (s *Server) uiAgentSessions(c echo.Context) error {
 	}
 	data.Agent = agent
 
-	convs, cerr := s.memory.ListConversations(ctx)
+	convs, cerr := s.memory.ListConversations(ctx, false)
 	if cerr != nil {
 		data.ChatsErr = cerr
 	} else {

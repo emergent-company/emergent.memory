@@ -54,10 +54,18 @@ type modelTestCall struct {
 
 // fakeMemory is an in-memory MemoryBackend for tests.
 type fakeMemory struct {
-	agents  []AgentDefinitionSummary
-	defs    map[string]*AgentDefinition // full definitions keyed by id
-	convs   []Conversation
-	servers []MCPServer
+	agents []AgentDefinitionSummary
+	defs   map[string]*AgentDefinition // full definitions keyed by id
+	convs  []Conversation
+	// session lifecycle (chat-conversation-lifecycle).
+	convIncludeArchived bool     // last includeArchived flag received by ListConversations
+	archivedConvs       []string // conversation ids passed to ArchiveConversation, in order
+	unarchivedConvs     []string // conversation ids passed to UnarchiveConversation, in order
+	deletedConvs        []string // conversation ids passed to DeleteConversation, in order
+	archiveConvErr      error    // ArchiveConversation failure
+	unarchiveConvErr    error    // UnarchiveConversation failure
+	deleteConvErr       error    // DeleteConversation failure
+	servers             []MCPServer
 
 	// owner share-session surface (ListShareSessionsByProject /
 	// GetShareSessionTranscript).
@@ -358,6 +366,8 @@ type fakeMemory struct {
 	declinedInvite    string                // last invite id passed to DeclineInvite
 	declineInviteErr  error                 // failure for DeclineInvite
 	canceledInvite    string                // last invite id passed to CancelInvite
+	resentInvite      string                // last invite id passed to ResendInvite
+	resendInviteErr   error                 // failure for ResendInvite
 	searchUsers       []UserSearchResultDto // returned by SearchUsers
 	searchErr         error                 // failure for SearchUsers
 	lastSearchTerm    string                // last email passed to SearchUsers
@@ -660,11 +670,45 @@ func (f *fakeMemory) ListAgentQuestions(ctx context.Context) ([]AgentQuestionIte
 	return nil, nil
 }
 
-func (f *fakeMemory) ListConversations(ctx context.Context) (*ConversationList, error) {
+func (f *fakeMemory) ListConversations(ctx context.Context, includeArchived bool) (*ConversationList, error) {
+	f.convIncludeArchived = includeArchived
 	if f.convErr != nil {
 		return nil, f.convErr
 	}
-	return &ConversationList{Conversations: f.convs, Total: len(f.convs)}, nil
+	// Mirror memory's default-exclude contract so rail render tests can assert
+	// archived rows are hidden unless the include-archived option is set.
+	out := make([]Conversation, 0, len(f.convs))
+	for _, c := range f.convs {
+		if c.IsArchived && !includeArchived {
+			continue
+		}
+		out = append(out, c)
+	}
+	return &ConversationList{Conversations: out, Total: len(out)}, nil
+}
+
+func (f *fakeMemory) ArchiveConversation(ctx context.Context, id string) error {
+	if f.archiveConvErr != nil {
+		return f.archiveConvErr
+	}
+	f.archivedConvs = append(f.archivedConvs, id)
+	return nil
+}
+
+func (f *fakeMemory) UnarchiveConversation(ctx context.Context, id string) error {
+	if f.unarchiveConvErr != nil {
+		return f.unarchiveConvErr
+	}
+	f.unarchivedConvs = append(f.unarchivedConvs, id)
+	return nil
+}
+
+func (f *fakeMemory) DeleteConversation(ctx context.Context, id string) error {
+	if f.deleteConvErr != nil {
+		return f.deleteConvErr
+	}
+	f.deletedConvs = append(f.deletedConvs, id)
+	return nil
 }
 
 func (f *fakeMemory) CreateObjectConversation(ctx context.Context, canonicalID, title, message string) (string, error) {
@@ -2761,6 +2805,14 @@ func (f *fakeMemory) DeclineInvite(ctx context.Context, inviteID string) error {
 
 func (f *fakeMemory) CancelInvite(ctx context.Context, inviteID string) error {
 	f.canceledInvite = inviteID
+	return nil
+}
+
+func (f *fakeMemory) ResendInvite(ctx context.Context, inviteID string) error {
+	if f.resendInviteErr != nil {
+		return f.resendInviteErr
+	}
+	f.resentInvite = inviteID
 	return nil
 }
 

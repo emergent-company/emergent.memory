@@ -1388,6 +1388,52 @@ func TestUIAgentAutosaveGeneral(t *testing.T) {
 		}
 	})
 
+	// A partial auto-save body that omits the Appearance pickers must not wipe
+	// the stored uiConfig — the General form has no Save button, so a colour
+	// picked with a preset (which never dispatches input/change) has to survive
+	// any save that does not carry the appearance fields.
+	t.Run("partial body preserves the stored appearance", func(t *testing.T) {
+		stored := json.RawMessage(`{"icon":"database","color":"#16A34A"}`)
+		f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane", UIConfig: stored}}}
+		e := newServer(f)
+		rec := post(e, "name=renamed")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status %d, want 200", rec.Code)
+		}
+		if f.updatedAgent == nil {
+			t.Fatal("nothing persisted")
+		}
+		var got map[string]string
+		if err := json.Unmarshal(f.updatedAgent.UIConfig, &got); err != nil {
+			t.Fatalf("unmarshal uiConfig %s: %v", f.updatedAgent.UIConfig, err)
+		}
+		if got["icon"] != "database" || got["color"] != "#16A34A" {
+			t.Errorf("appearance not preserved: %s", f.updatedAgent.UIConfig)
+		}
+	})
+
+	// An explicit empty value (both picker keys present) still clears the
+	// appearance, so the Clear affordance keeps working.
+	t.Run("explicit empty appearance clears it", func(t *testing.T) {
+		stored := json.RawMessage(`{"icon":"database","color":"#16A34A"}`)
+		f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane", UIConfig: stored}}}
+		e := newServer(f)
+		rec := post(e, "name=diane&icon=&color=")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status %d, want 200", rec.Code)
+		}
+		if f.updatedAgent == nil {
+			t.Fatal("nothing persisted")
+		}
+		var got map[string]string
+		if err := json.Unmarshal(f.updatedAgent.UIConfig, &got); err != nil {
+			t.Fatalf("unmarshal uiConfig %s: %v", f.updatedAgent.UIConfig, err)
+		}
+		if len(got) != 0 {
+			t.Errorf("appearance not cleared: %s", f.updatedAgent.UIConfig)
+		}
+	})
+
 	t.Run("validation error returns 422 and persists nothing", func(t *testing.T) {
 		f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane"}}}
 		e := newServer(f)
