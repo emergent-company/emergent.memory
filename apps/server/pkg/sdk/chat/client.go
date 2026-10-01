@@ -70,6 +70,10 @@ type ConversationWithMessages struct {
 type ListConversationsOptions struct {
 	Limit  int
 	Offset int
+	// IncludeArchived includes archived conversations in the result.
+	// Archived conversations are excluded by default; set this to true to
+	// opt in to the server's includeArchived=true behaviour.
+	IncludeArchived bool
 }
 
 // ListConversationsResponse is the response from listing conversations.
@@ -238,7 +242,11 @@ func (c *Client) patchJSON(ctx context.Context, reqURL string, reqBody any, resu
 // =============================================================================
 
 // ListConversations retrieves conversations for the current project.
-// Server: GET /api/chat/conversations?limit=&offset=
+// Server: GET /api/chat/conversations?limit=&offset=&includeArchived=
+//
+// Archived conversations are excluded by default; set opts.IncludeArchived to
+// true to include them. The includeArchived query parameter is only sent when
+// requested, preserving the server's default behaviour.
 func (c *Client) ListConversations(ctx context.Context, opts *ListConversationsOptions) (*ListConversationsResponse, error) {
 	req, err := c.prepareRequest(ctx, "GET", c.base+"/api/chat/conversations", nil)
 	if err != nil {
@@ -252,6 +260,9 @@ func (c *Client) ListConversations(ctx context.Context, opts *ListConversationsO
 		}
 		if opts.Offset > 0 {
 			q.Set("offset", fmt.Sprintf("%d", opts.Offset))
+		}
+		if opts.IncludeArchived {
+			q.Set("includeArchived", "true")
 		}
 		req.URL.RawQuery = q.Encode()
 	}
