@@ -98,19 +98,16 @@
       });
   }
 
-  // reconcile re-reads the unread counts (account + active project) and updates
-  // the bell. Called on load, scope switch, reconnect, and every event.
+  // reconcile re-reads the unread count for the inbox scope currently on
+  // screen and paints it on the bell. It runs on load, scope switch, reconnect,
+  // and every event. The count comes from the SAME scope-filtered counts call
+  // the inbox list uses, so the badge can never disagree with the list it links
+  // to: account everywhere except a project-scoped inbox. (Regression: #1342 —
+  // summing account + project unread showed 11 over an account inbox of 2.)
   function reconcile() {
-    var pid = activeProjectId();
-    var calls = [fetchUnread("account", "")];
-    if (pid) calls.push(fetchUnread("project", pid));
-    Promise.all(calls).then(function (ns) {
-      setBell(
-        ns.reduce(function (a, b) {
-          return a + b;
-        }, 0)
-      );
-    });
+    var scope = pageScope();
+    var pid = scope === "project" ? pageProjectId() || activeProjectId() : "";
+    fetchUnread(scope, pid).then(setBell);
   }
 
   // refreshList re-renders the inbox partial through htmx (server-rendered).
