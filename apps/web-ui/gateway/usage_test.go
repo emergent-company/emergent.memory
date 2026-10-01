@@ -179,6 +179,22 @@ func TestUsageRoute(t *testing.T) {
 	}
 }
 
+// TestUsageRequestsIncludeArchived pins design D6: the sessions-per-day series
+// counts every conversation, so archiving must not rewrite historical counts —
+// the usage page requests the archived-inclusive list while list surfaces do not.
+func TestUsageRequestsIncludeArchived(t *testing.T) {
+	f := &fakeMemory{usageSummary: sampleUsageSummary(), usageSeries: sampleUsageSeries()}
+	_, e := newUsageEcho(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/usage", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if !f.convIncludeArchived {
+		t.Error("usage session series must request includeArchived=true")
+	}
+}
+
 func TestUsageRouteRangeSelector(t *testing.T) {
 	f := &fakeMemory{usageSummary: sampleUsageSummary(), usageSeries: sampleUsageSeries()}
 	_, e := newUsageEcho(f)

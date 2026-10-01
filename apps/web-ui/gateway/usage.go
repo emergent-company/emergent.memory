@@ -147,7 +147,7 @@ func (s *Server) uiUsage(c echo.Context) error {
 		series, seriesErr = s.memory.GetProjectUsageTimeSeries(ctx, "day", since, until)
 		return nil
 	})
-	g.Go(func() error { convs, convsErr = s.memory.ListConversations(ctx); return nil })
+	g.Go(func() error { convs, convsErr = s.memory.ListConversations(ctx, true); return nil })
 	g.Go(func() error { monthSum, monthErr = s.memory.GetProjectUsageSummary(ctx, monthStart, now); return nil })
 	_ = g.Wait()
 

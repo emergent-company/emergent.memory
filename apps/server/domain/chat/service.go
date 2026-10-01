@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,13 +26,16 @@ func NewService(repo *Repository, log *slog.Logger) *Service {
 	}
 }
 
-// ListConversations returns a paginated list of conversations for a project
-func (s *Service) ListConversations(ctx context.Context, projectID string, ownerUserID *string, limit, offset int) (*ListConversationsResult, error) {
+// ListConversations returns a paginated list of conversations for a project.
+// Archived conversations are excluded by default; pass includeArchived to
+// include them.
+func (s *Service) ListConversations(ctx context.Context, projectID string, ownerUserID *string, limit, offset int, includeArchived bool) (*ListConversationsResult, error) {
 	return s.repo.ListConversations(ctx, ListConversationsParams{
-		ProjectID:   projectID,
-		OwnerUserID: ownerUserID,
-		Limit:       limit,
-		Offset:      offset,
+		ProjectID:       projectID,
+		OwnerUserID:     ownerUserID,
+		Limit:           limit,
+		Offset:          offset,
+		IncludeArchived: includeArchived,
 	})
 }
 
@@ -159,6 +163,32 @@ func (s *Service) DeleteConversation(ctx context.Context, projectID, ownerUserID
 	}
 	if !deleted {
 		return apperror.ErrNotFound.WithMessage("Conversation not found")
+	}
+	return nil
+}
+
+// ArchiveConversation marks a conversation as archived. Idempotent: archiving an
+// already-archived conversation still succeeds.
+func (s *Service) ArchiveConversation(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID) error {
+	matched, err := s.repo.SetArchived(ctx, projectID, ownerUserID, conversationID, true)
+	if err != nil {
+		return err
+	}
+	if !matched {
+		return apperror.New(http.StatusNotFound, "not_found", "Conversation not found")
+	}
+	return nil
+}
+
+// UnarchiveConversation clears a conversation's archive state. Idempotent:
+// unarchiving a conversation that is not archived still succeeds.
+func (s *Service) UnarchiveConversation(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID) error {
+	matched, err := s.repo.SetArchived(ctx, projectID, ownerUserID, conversationID, false)
+	if err != nil {
+		return err
+	}
+	if !matched {
+		return apperror.New(http.StatusNotFound, "not_found", "Conversation not found")
 	}
 	return nil
 }

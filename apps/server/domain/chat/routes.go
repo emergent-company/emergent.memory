@@ -32,11 +32,19 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g.POST("/conversations", h.CreateConversation)
 	g.GET("/:id", h.GetConversation)
 
+	// Delete is an ordinary member action (owner-or-shared predicate, chat:use),
+	// not admin-gated — moved out of the adminGroup so any member who can read a
+	// conversation can permanently delete it (D8).
+	g.DELETE("/:id", h.DeleteConversation)
+
+	// Lifecycle: archive / unarchive are idempotent member actions (chat:use).
+	g.POST("/:id/archive", h.ArchiveConversation)
+	g.POST("/:id/unarchive", h.UnarchiveConversation)
+
 	// Admin operations - require chat:admin scope
 	adminGroup := g.Group("")
 	adminGroup.Use(authMiddleware.RequireAPITokenScopes("chat:admin"))
 	adminGroup.PATCH("/:id", h.UpdateConversation)
-	adminGroup.DELETE("/:id", h.DeleteConversation)
 
 	// Message operations
 	g.POST("/:id/messages", h.AddMessage)

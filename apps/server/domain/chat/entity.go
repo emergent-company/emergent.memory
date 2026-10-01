@@ -33,6 +33,11 @@ type Conversation struct {
 	// Created on first agent-backed stream; reused on subsequent turns.
 	SessionID *uuid.UUID `bun:"session_id,type:uuid" json:"sessionId,omitempty"`
 
+	// Archive state — non-destructive hide. IsArchived is the list filter
+	// predicate; ArchivedAt is set on archive and cleared on unarchive.
+	IsArchived bool       `bun:"is_archived,notnull,default:false" json:"isArchived"`
+	ArchivedAt *time.Time `bun:"archived_at" json:"archivedAt,omitempty"`
+
 	// Timestamps
 	CreatedAt time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
 	UpdatedAt time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
@@ -68,10 +73,11 @@ const (
 
 // ListConversationsParams contains parameters for listing conversations
 type ListConversationsParams struct {
-	ProjectID   string
-	OwnerUserID *string
-	Limit       int
-	Offset      int
+	ProjectID       string
+	OwnerUserID     *string
+	Limit           int
+	Offset          int
+	IncludeArchived bool
 }
 
 // ListConversationsResult contains the result of listing conversations
