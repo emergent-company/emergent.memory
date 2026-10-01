@@ -2,13 +2,15 @@ package agents
 
 import (
 	"context"
+	"time"
 
 	"github.com/emergent-company/emergent.memory/domain/graph"
 )
 
 // WorkObjectStore is the minimal graph surface the agents domain needs to
-// dispatch to, and correctly claim, work objects under the versioned write
-// model. It is implemented by the graph service and injected via fx.
+// dispatch to, and correctly claim and transition, work objects under the
+// versioned write model. It is implemented by the graph service and injected
+// via fx.
 type WorkObjectStore interface {
 	// GetHeadObject returns the HEAD version of the object identified by its
 	// canonical ID (project-scoped). Returns (nil, nil) when not found.
@@ -20,4 +22,20 @@ type WorkObjectStore interface {
 	// object is not found — the caller must then skip the run without consuming
 	// any failure budget.
 	ClaimWorkObject(ctx context.Context, projectID, canonicalID, readyStatus, inProgressStatus string) (claimed bool, err error)
+	// TransitionWorkObject is the single-work-status write path (advisory lock +
+	// CreateVersion, status and properties["status"] kept consistent). It returns
+	// transitioned=false when the object is missing, has no key, or is not in the
+	// from status.
+	TransitionWorkObject(ctx context.Context, projectID, canonicalID string, t graph.WorkObjectTransition) (bool, error)
+	// CompleteWorkObject finalizes a work object: → doneStatus, or → reviewStatus
+	// with needs_review=true when requiresReview.
+	CompleteWorkObject(ctx context.Context, projectID, canonicalID, inProgressStatus, doneStatus, reviewStatus string, requiresReview bool) (bool, error)
+	// BlockWorkObject transitions a work object to the blocked status.
+	BlockWorkObject(ctx context.Context, projectID, canonicalID, inProgressStatus, blockedStatus string) (bool, error)
+	// UnassignWorkObject clears the assignee and returns the object to ready.
+	UnassignWorkObject(ctx context.Context, projectID, canonicalID, inProgressStatus, readyStatus string) (bool, error)
+	// ListWorkObjectsByStatus returns the HEAD projections of board-enabled work
+	// objects currently in the given status (projectID empty = all projects;
+	// olderThan non-zero restricts to objects last written before olderThan).
+	ListWorkObjectsByStatus(ctx context.Context, projectID, status string, olderThan time.Time, limit int) ([]*graph.WorkObjectHead, error)
 }

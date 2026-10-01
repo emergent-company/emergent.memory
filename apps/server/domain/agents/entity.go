@@ -288,6 +288,10 @@ type CreateRunQueuedOptions struct {
 	// type. Set for object-driven (enqueue-on-create) dispatches.
 	SubjectObjectID   *string
 	SubjectObjectType *string
+	// NextRunAt overrides the job's next_run_at (requeue backoff). When set, the
+	// job is inserted with this value so a re-enqueued item waits before its next
+	// attempt. Zero means "run immediately".
+	NextRunAt *time.Time
 }
 
 // AgentProcessingLog tracks which graph objects have been processed by reaction agents
@@ -459,6 +463,51 @@ func (w AgentWorkConfig) InProgressStatus() string {
 		return w.Status.InProgress
 	}
 	return "in_progress"
+}
+
+// ReviewStatus returns the configured "review" work-status value, defaulting to
+// the built-in "review" when unset.
+func (w AgentWorkConfig) ReviewStatus() string {
+	if w.Status.Review != "" {
+		return w.Status.Review
+	}
+	return "review"
+}
+
+// RevisionStatus returns the configured "revision" work-status value, defaulting
+// to the built-in "revision" when unset.
+func (w AgentWorkConfig) RevisionStatus() string {
+	if w.Status.Revision != "" {
+		return w.Status.Revision
+	}
+	return "revision"
+}
+
+// BlockedStatus returns the configured "blocked" work-status value, defaulting
+// to the built-in "blocked" when unset.
+func (w AgentWorkConfig) BlockedStatus() string {
+	if w.Status.Blocked != "" {
+		return w.Status.Blocked
+	}
+	return "blocked"
+}
+
+// DoneStatus returns the configured "done" work-status value, defaulting to the
+// built-in "done" when unset.
+func (w AgentWorkConfig) DoneStatus() string {
+	if w.Status.Done != "" {
+		return w.Status.Done
+	}
+	return "done"
+}
+
+// FailureLimitValue returns the configured per-item failure budget, defaulting
+// to the built-in default (3) when unset.
+func (w AgentWorkConfig) FailureLimitValue() int {
+	if w.FailureLimit > 0 {
+		return w.FailureLimit
+	}
+	return defaultWorkFailureLimit
 }
 
 type AgentDefinition struct {

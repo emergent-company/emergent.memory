@@ -2538,6 +2538,7 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 	var priority int
 	var subjectObjectID *string
 	var subjectObjectType *string
+	var nextRunAt *time.Time
 	if len(opts) > 0 {
 		parentRunID = opts[0].ParentRunID
 		rootRunID = nilIfEmpty(opts[0].RootRunID)
@@ -2549,6 +2550,7 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 		priority = opts[0].Priority
 		subjectObjectID = opts[0].SubjectObjectID
 		subjectObjectType = opts[0].SubjectObjectType
+		nextRunAt = opts[0].NextRunAt
 	}
 
 	projectID, queue, priority := r.resolveAgentRouting(ctx, agentID, queueOverride, priority)
@@ -2605,6 +2607,9 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 			Priority:    priority,
 			ProjectID:   strPtrIfNotEmpty(projectID),
 			NextRunAt:   time.Now(),
+		}
+		if nextRunAt != nil && nextRunAt.After(time.Now()) {
+			job.NextRunAt = *nextRunAt
 		}
 		if _, err := tx.NewInsert().Model(job).Exec(ctx); err != nil {
 			return fmt.Errorf("insert agent_run_jobs: %w", err)

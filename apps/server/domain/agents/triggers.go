@@ -403,12 +403,16 @@ func (ts *TriggerService) handleEvent(ctx context.Context, objectType string, ev
 // object-driven enqueue path (definition has a work config or queued dispatch
 // mode) or the inline execution path.
 func (ts *TriggerService) dispatchMatchedAgent(ctx context.Context, agent *Agent, objectType string, eventType ReactionEventType, projectID string, input map[string]any) {
-	agentDef, err := ts.repo.ResolveDefinitionForAgent(ctx, agent)
-	if err != nil {
-		ts.log.Warn("failed to resolve definition for matched agent",
-			slog.String("agent_id", agent.ID),
-			slog.String("error", err.Error()),
-		)
+	var agentDef *AgentDefinition
+	if ts.repo != nil {
+		var err error
+		agentDef, err = ts.repo.ResolveDefinitionForAgent(ctx, agent)
+		if err != nil {
+			ts.log.Warn("failed to resolve definition for matched agent",
+				slog.String("agent_id", agent.ID),
+				slog.String("error", err.Error()),
+			)
+		}
 	}
 	if ts.shouldEnqueueWork(agentDef) {
 		ts.enqueueWorkRun(ctx, agent, agentDef, objectType, eventType, projectID, input)

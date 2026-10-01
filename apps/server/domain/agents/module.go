@@ -51,6 +51,8 @@ var Module = fx.Module("agents",
 		provideShareHandler,
 		provideShareRunReaper,
 		provideWorkObjectStore,
+		provideWorkStatusReaper,
+		provideWorkReconciler,
 	),
 	fx.Invoke(
 		RegisterRoutes,
@@ -67,6 +69,8 @@ var Module = fx.Module("agents",
 		registerStaleRunReaper,
 		registerShareRunReaper,
 		registerWorkObjectStore,
+		registerWorkStatusReaper,
+		registerWorkReconciler,
 	),
 )
 
@@ -358,10 +362,11 @@ func provideWorkObjectStore(svc *graph.Service) WorkObjectStore {
 }
 
 // registerWorkObjectStore injects the work-object store into the trigger
-// service and the worker pool after construction.
-func registerWorkObjectStore(ts *TriggerService, pool *WorkerPool, store WorkObjectStore) {
+// service, the worker pool, and the executor after construction.
+func registerWorkObjectStore(ts *TriggerService, pool *WorkerPool, executor *AgentExecutor, store WorkObjectStore) {
 	ts.SetWorkObjectStore(store)
 	pool.SetWorkObjectStore(store)
+	executor.SetWorkObjectStore(store)
 }
 
 // registerWorkerPool wires the WorkerPool into the fx lifecycle.
@@ -381,6 +386,42 @@ func registerWorkerPool(lc fx.Lifecycle, pool *WorkerPool) {
 
 func provideStaleRunReaper(repo *Repository, log *slog.Logger) *StaleRunReaper {
 	return NewStaleRunReaper(repo, log)
+}
+
+func provideWorkStatusReaper(repo *Repository, log *slog.Logger, cfg *config.Config) *WorkStatusReaper {
+	return NewWorkStatusReaper(repo, log, cfg.WorkStatusReaperInterval, cfg.WorkStatusReaperThreshold)
+}
+
+func provideWorkReconciler(repo *Repository, log *slog.Logger, cfg *config.Config) *WorkReconciler {
+	return NewWorkReconciler(repo, log, cfg.WorkReconcilerInterval)
+}
+
+func registerWorkStatusReaper(lc fx.Lifecycle, reaper *WorkStatusReaper, store WorkObjectStore) {
+	reaper.SetWorkObjectStore(store)
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			reaper.Start(ctx)
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			reaper.Stop()
+			return nil
+		},
+	})
+}
+
+func registerWorkReconciler(lc fx.Lifecycle, rc *WorkReconciler, store WorkObjectStore) {
+	rc.SetWorkObjectStore(store)
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			rc.Start(ctx)
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			rc.Stop()
+			return nil
+		},
+	})
 }
 
 func registerStaleRunReaper(lc fx.Lifecycle, reaper *StaleRunReaper) {

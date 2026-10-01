@@ -225,6 +225,7 @@ var models = []any{
 	(*agents.AgentShareSession)(nil),
 	(*agents.AgentShareEndUser)(nil),
 	(*agents.AgentShareUsage)(nil),
+	(*agents.WorkItemState)(nil),
 
 	// domain/branches
 	(*branches.Branch)(nil),

@@ -16,13 +16,13 @@
 
 ## 2. P2 — Lifecycle, mapping, and claim liveness
 
-- [ ] 2.1 Run-finalizing tools `work_complete` (→ done | review) and `work_block` (→ blocked + `kb.tasks`); platform ends the run on the terminator call. Verify tool tests.
-- [ ] 2.2 Implement the exhaustive run-end → item-transition → budget-impact mapping (design table); add a test per row.
-- [ ] 2.3 Single-work-status write path: advisory lock + `CreateVersion` + consistent `properties["status"]`; **reject** direct agent work-status writes (both the `status` field and `properties["status"]`) at every entry point — `Create`, `CreateOrUpdate`, `Patch`, `BulkUpdateStatus`, bulk actions. Verify tests.
-- [ ] 2.4 Work-status reaper: `in-progress` objects with no **live** run past threshold → `ready` (budget-aware) or `blocked`. Model on `StaleRunReaper`; define liveness explicitly (live = `queued`/`running`/**`paused`**), **exclude `paused` runs**, and coordinate with `MarkStaleRunsAsError`'s `last_step_at` threshold so the two reapers never race. Verify tests.
-- [ ] 2.5 Reconciler: enqueue `ready` board-enabled objects with no live run and no live job (live job = `pending`/`processing`), tolerating the window between a job completing as `skipped` and the item transition committing. Verify tests.
-- [ ] 2.6 Failure classification (retryable / deterministic / human); add the net-new provider→executor **quota/429 error typing** required for the "quota is agent-level" rule; per-item budget; unassign→ready with requeue backoff and attempt history retained. Verify DB tests.
-- [ ] 2.7 Extend the existing breaker (`ConsecutiveFailures`/auto-disable) with thresholds; poison-item vs broken-agent distinction. Verify tests.
+- [x] 2.1 Run-finalizing tools `work_complete` (→ done | review) and `work_block` (→ blocked + `kb.tasks`); platform ends the run on the terminator call. Verify tool tests.
+- [x] 2.2 Implement the exhaustive run-end → item-transition → budget-impact mapping (design table); add a test per row.
+- [x] 2.3 Single-work-status write path: advisory lock + `CreateVersion` + consistent `properties["status"]`; **reject** direct agent work-status writes (both the `status` field and `properties["status"]`) at every entry point — `Create`, `CreateOrUpdate`, `Patch`, `BulkUpdateStatus`, bulk actions. Verify tests.
+- [x] 2.4 Work-status reaper: `in-progress` objects with no **live** run past threshold → `ready` (budget-aware) or `blocked`. Model on `StaleRunReaper`; define liveness explicitly (live = `queued`/`running`/**`paused`**), **exclude `paused` runs**, and coordinate with `MarkStaleRunsAsError`'s `last_step_at` threshold so the two reapers never race. Verify tests.
+- [x] 2.5 Reconciler: enqueue `ready` board-enabled objects with no live run and no live job (live job = `pending`/`processing`), tolerating the window between a job completing as `skipped` and the item transition committing. Verify tests.
+- [x] 2.6 Failure classification (retryable / deterministic / human); add the net-new provider→executor **quota/429 error typing** required for the "quota is agent-level" rule; per-item budget; unassign→ready with requeue backoff and attempt history retained. Verify DB tests.
+- [x] 2.7 Extend the existing breaker (`ConsecutiveFailures`/auto-disable) with thresholds; poison-item vs broken-agent distinction. Verify tests.
 
 ## 3. P3 — Review, rework, and human actions
 

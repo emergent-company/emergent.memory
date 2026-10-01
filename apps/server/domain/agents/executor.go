@@ -635,6 +635,17 @@ type AgentExecutor struct {
 	// started it (see issue #1149). Value type so a zero-value executor (as
 	// built by tests) is safe; the map is lazily initialised.
 	runCancels runCancelRegistry
+
+	// workObjects is the graph work-object surface used to build the
+	// run-finalizing work_complete / work_block terminator tools for
+	// object-driven runs. Nil disables those tools (e.g. in unit tests).
+	workObjects WorkObjectStore
+}
+
+// SetWorkObjectStore injects the graph work-object surface used by the
+// run-finalizing terminator tools.
+func (ae *AgentExecutor) SetWorkObjectStore(store WorkObjectStore) {
+	ae.workObjects = store
 }
 
 // userCancelReason is the terminal reason recorded when a run is stopped by an
@@ -2286,6 +2297,10 @@ func (ae *AgentExecutor) runPipeline(
 	if askPauseState == nil {
 		askPauseState = &AskPauseState{}
 	}
+	// Work terminator state: set by work_complete / work_block, read by
+	// beforeModelCb (stop the loop) and the final-status detection (report the
+	// outcome). Declared before the work tools are built so both share it.
+	terminatorState := &WorkTerminatorState{}
 	askUserTool, askErr := ae.buildAskUserTool(req, run.ID, askPauseState)
 	if askErr != nil {
 		ae.log.Warn("failed to build ask_user tool, continuing without it",
@@ -2308,6 +2323,20 @@ func (ae *AgentExecutor) runPipeline(
 		resolvedTools = append(resolvedTools, skillTool)
 		ae.log.Info("skill tool added to agent pipeline",
 			slog.String("run_id", run.ID),
+		)
+	}
+
+	// Add the run-finalizing work terminator tools for object-driven runs.
+	if workTools, workErr := ae.buildWorkTools(req, run, terminatorState); workErr != nil {
+		ae.log.Warn("failed to build work tools, continuing without them",
+			slog.String("run_id", run.ID),
+			slog.String("error", workErr.Error()),
+		)
+	} else if len(workTools) > 0 {
+		resolvedTools = append(resolvedTools, workTools...)
+		ae.log.Info("work terminator tools added to agent pipeline",
+			slog.String("run_id", run.ID),
+			slog.Int("count", len(workTools)),
 		)
 	}
 
@@ -2500,6 +2529,24 @@ func (ae *AgentExecutor) runPipeline(
 		// Heartbeat: bump last_step_at so the stale-run reaper keys off recent
 		// activity rather than started_at, keeping long-running-but-active runs alive.
 		_ = ae.repo.TouchRun(dbCtx, run.ID)
+
+		// A run-finalizing terminator (work_complete / work_block) ends the run:
+		// persist the run as complete with the terminator summary and stop the
+		// model loop so no further steps run.
+		if terminatorState.ShouldFinalize() {
+			termSummary := terminatorState.Summary()
+			if termSummary == nil {
+				termSummary = map[string]any{"work_terminator": terminatorState.Kind()}
+			}
+			_ = ae.repo.CompleteRunWithSteps(dbCtx, run.ID, termSummary, currentStep, int(time.Since(startTime).Milliseconds()))
+			ae.log.Info("work terminator finalized run",
+				slog.String("run_id", run.ID),
+				slog.String("terminator", terminatorState.Kind()),
+			)
+			return &model.LLMResponse{
+				Content: genai.NewContentFromText("Work finalized. The run is complete.", genai.RoleModel),
+			}, nil
+		}
 
 		// Check step limit
 		if tracker.exceeded() {
@@ -3601,6 +3648,18 @@ func (ae *AgentExecutor) runPipeline(
 	// Build summary from the last event
 	summary := ae.buildSummary(lastEvent, lastTextEvent, steps)
 
+	// Carry the work terminator marker (if any) into the returned summary so the
+	// worker pool can distinguish "success with a terminator" from a protocol
+	// violation (success without one).
+	if terminatorState.ShouldFinalize() {
+		summary["work_terminator"] = terminatorState.Kind()
+		if ts := terminatorState.Summary(); ts != nil {
+			for k, v := range ts {
+				summary[k] = v
+			}
+		}
+	}
+
 	// Include cache hit visibility — non-zero means Gemini implicit cache fired.
 	if totalCachedTokens > 0 {
 		summary["cached_tokens"] = totalCachedTokens
@@ -3861,6 +3920,55 @@ func (ae *AgentExecutor) buildCoordinationTools(req ExecuteRequest, runID string
 	tools = append(tools, spawnTool)
 
 	return tools, &deps, nil
+}
+
+// buildWorkTools creates the run-finalizing work_complete / work_block
+// terminators for an object-driven run. It returns nil when the run has no
+// subject object, the work-object store is unset, or the definition does not
+// list the terminator in its tools whitelist.
+func (ae *AgentExecutor) buildWorkTools(req ExecuteRequest, run *AgentRun, terminator *WorkTerminatorState) ([]tool.Tool, error) {
+	if ae.workObjects == nil || run.SubjectObjectID == nil || *run.SubjectObjectID == "" {
+		return nil, nil
+	}
+	if req.AgentDefinition == nil {
+		return nil, nil
+	}
+
+	hasTool := func(name string) bool {
+		for _, t := range req.AgentDefinition.Tools {
+			if t == name {
+				return true
+			}
+		}
+		return false
+	}
+
+	deps := WorkToolDeps{
+		Store:       ae.workObjects,
+		Repo:        ae.repo,
+		Logger:      ae.log,
+		ProjectID:   req.ProjectID,
+		CanonicalID: *run.SubjectObjectID,
+		WorkConfig:  req.AgentDefinition.WorkConfig,
+		Terminator:  terminator,
+	}
+
+	var tools []tool.Tool
+	if hasTool(ToolNameWorkComplete) {
+		if t, err := BuildWorkCompleteTool(deps); err != nil {
+			return nil, fmt.Errorf("failed to build work_complete: %w", err)
+		} else {
+			tools = append(tools, t)
+		}
+	}
+	if hasTool(ToolNameWorkBlock) {
+		if t, err := BuildWorkBlockTool(deps); err != nil {
+			return nil, fmt.Errorf("failed to build work_block: %w", err)
+		} else {
+			tools = append(tools, t)
+		}
+	}
+	return tools, nil
 }
 
 // buildAskUserTool creates the ask_user tool if the agent definition opts in.

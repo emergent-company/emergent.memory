@@ -695,6 +695,10 @@ func (s *Service) ValidateObject(ctx context.Context, projectID uuid.UUID, req *
 func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGraphObjectRequest, actorID *uuid.UUID) (*GraphObjectResponse, error) {
 	actorType, actorID := actorFromContext(ctx, actorID)
 
+	if err := rejectAgentWorkStatusWrite(actorType, isBoardEnabledType(nil, req.Assignee), writesStatus(req.Status, req.Properties)); err != nil {
+		return nil, err
+	}
+
 	validatedProps, err := s.validateObjectProperties(ctx, projectID, req.Type, req.Properties)
 	if err != nil {
 		return nil, err
@@ -793,6 +797,10 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 	}
 
 	actorType, actorID := actorFromContext(ctx, actorID)
+
+	if err := rejectAgentWorkStatusWrite(actorType, isBoardEnabledType(existing, req.Assignee), writesStatus(req.Status, req.Properties)); err != nil {
+		return nil, false, err
+	}
 
 	if existing == nil {
 		// Create new object
@@ -1085,6 +1093,9 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 	}
 
 	actorType, actorID := actorFromContext(ctx, actorID)
+	if err := rejectAgentWorkStatusWrite(actorType, isBoardEnabledType(current, req.Assignee), writesStatus(req.Status, req.Properties)); err != nil {
+		return nil, err
+	}
 	newVersion := &GraphObject{
 		Type:       current.Type,
 		Key:        newKey,
@@ -2824,6 +2835,18 @@ func (s *Service) BulkUpdateStatus(ctx context.Context, projectID uuid.UUID, req
 			Failed:  len(req.IDs),
 			Results: results,
 		}, nil
+	}
+
+	// Reject agent-originated bulk status writes on board-enabled objects: work
+	// status is owned by the single-status writer only.
+	if actorType == ActorAgent {
+		board, err := s.repo.anyBoardEnabledByIDs(ctx, projectID, validIDs)
+		if err != nil {
+			return nil, err
+		}
+		if board {
+			return nil, workStatusWriteForbidden()
+		}
 	}
 
 	// Perform bulk update
@@ -5218,6 +5241,20 @@ func (s *Service) BulkAction(ctx context.Context, projectID uuid.UUID, req *Bulk
 	}
 
 	actorType, actorID := actorFromContext(ctx, actorID)
+
+	// Reject agent-originated status-setting bulk actions. work status is owned
+	// by the single-status writer; a bulk update_status or a merge/replace that
+	// smuggles properties["status"] would diverge the two status copies.
+	if actorType == ActorAgent {
+		if req.Action == BulkActionUpdateStatus {
+			return nil, workStatusWriteForbidden()
+		}
+		if (req.Action == BulkActionMergeProperties || req.Action == BulkActionReplaceProperties) && req.Properties != nil {
+			if _, ok := req.Properties["status"]; ok {
+				return nil, workStatusWriteForbidden()
+			}
+		}
+	}
 
 	matched, affected, err := s.repo.BulkActionByFilter(ctx, BulkActionParams{
 		ProjectID:  projectID,

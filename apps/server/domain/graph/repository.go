@@ -642,7 +642,7 @@ func (r *Repository) Count(ctx context.Context, params ListParams) (int, error) 
 // fail the scan with "does not have column embedding_v2".
 var graphObjectDetailColumns = []string{
 	"id", "project_id", "branch_id", "canonical_id", "supersedes_id", "version",
-	"merged_to_canonical_id", "type", "key", "status", "namespace",
+	"merged_to_canonical_id", "type", "key", "status", "assignee", "namespace",
 	"properties", "labels", "change_summary", "content_hash",
 	"created_at", "updated_at", "deleted_at", "delete_reason", "last_accessed_at",
 	"fts", "embedding_updated_at",
@@ -1171,6 +1171,40 @@ func (r *Repository) FindHeadByTypeAndKeyNS(ctx context.Context, db bun.IDB, pro
 	}
 
 	return &obj, nil
+}
+
+// listWorkObjectsByStatus returns the HEAD rows of board-enabled work objects
+// (assignee IS NOT NULL) currently in the given status, on the main graph,
+// ordered by updated_at ascending. projectID nil = all projects; olderThan
+// non-zero restricts to objects last written before olderThan. See
+// ListWorkObjectsByStatus for the board-enabled signal rationale.
+func (r *Repository) listWorkObjectsByStatus(ctx context.Context, projectID *uuid.UUID, status string, olderThan time.Time, limit int) ([]*GraphObject, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	objs := make([]*GraphObject, 0)
+	q := r.db.NewSelect().
+		Model(&objs).
+		Column(graphObjectDetailColumns...).
+		Where("branch_id IS NULL").
+		Where("supersedes_id IS NULL").
+		Where("deleted_at IS NULL").
+		Where("assignee IS NOT NULL").
+		Where("status = ?", status)
+	if projectID != nil {
+		q = q.Where("project_id = ?", *projectID)
+	}
+	if !olderThan.IsZero() {
+		q = q.Where("updated_at < ?", olderThan)
+	}
+	q = q.Order("updated_at ASC").Limit(limit)
+	if err := q.Scan(ctx); err != nil {
+		return nil, fmt.Errorf("list work objects by status: %w", err)
+	}
+	return objs, nil
 }
 
 // AcquireObjectUpsertLock acquires an advisory lock for an object upsert by (project_id, type, key).
@@ -2262,6 +2296,22 @@ func (r *Repository) GetDistinctTags(ctx context.Context, projectID uuid.UUID, p
 		return []string{}, nil
 	}
 	return tags, nil
+}
+
+// anyBoardEnabledByIDs reports whether any HEAD object matched by id or
+// canonical_id carries a non-null assignee (the P2 board-enabled signal).
+func (r *Repository) anyBoardEnabledByIDs(ctx context.Context, projectID uuid.UUID, ids []uuid.UUID) (bool, error) {
+	count, err := r.db.NewSelect().
+		Model((*GraphObject)(nil)).
+		Where("project_id = ?", projectID).
+		Where("(id IN (?) OR canonical_id IN (?))", bun.In(ids), bun.In(ids)).
+		Where("supersedes_id IS NULL").
+		Where("assignee IS NOT NULL").
+		Count(ctx)
+	if err != nil {
+		return false, fmt.Errorf("any board-enabled by ids: %w", err)
+	}
+	return count > 0, nil
 }
 
 // BulkUpdateStatus updates the status of multiple objects.

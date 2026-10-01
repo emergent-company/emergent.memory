@@ -325,6 +325,15 @@ func (p *WorkerPool) executeJob(ctx context.Context, log *slog.Logger, job *Agen
 	if result != nil && result.Cleanup != nil {
 		defer result.Cleanup()
 	}
+
+	// Object-driven runs map their terminal outcome to an item transition and a
+	// failure-budget effect (design.md "Run-end → item-transition mapping"),
+	// which replaces the generic job/run completion below.
+	if run.SubjectObjectID != nil && *run.SubjectObjectID != "" {
+		p.finishWorkRun(ctx, log, job, run, agent, agentDef, result, execErr)
+		return
+	}
+
 	if execErr != nil {
 		log.Warn("queued agent run failed", slog.String("error", execErr.Error()))
 		requeue := job.AttemptCount < job.MaxAttempts

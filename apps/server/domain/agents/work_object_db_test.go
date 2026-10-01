@@ -250,6 +250,26 @@ func (f *fakeWorkObjectStore) ClaimWorkObject(ctx context.Context, projectID, ca
 	return f.claimed, f.err
 }
 
+func (f *fakeWorkObjectStore) TransitionWorkObject(ctx context.Context, projectID, canonicalID string, t graph.WorkObjectTransition) (bool, error) {
+	return true, nil
+}
+
+func (f *fakeWorkObjectStore) CompleteWorkObject(ctx context.Context, projectID, canonicalID, inProgressStatus, doneStatus, reviewStatus string, requiresReview bool) (bool, error) {
+	return true, nil
+}
+
+func (f *fakeWorkObjectStore) BlockWorkObject(ctx context.Context, projectID, canonicalID, inProgressStatus, blockedStatus string) (bool, error) {
+	return true, nil
+}
+
+func (f *fakeWorkObjectStore) UnassignWorkObject(ctx context.Context, projectID, canonicalID, inProgressStatus, readyStatus string) (bool, error) {
+	return true, nil
+}
+
+func (f *fakeWorkObjectStore) ListWorkObjectsByStatus(ctx context.Context, projectID, status string, olderThan time.Time, limit int) ([]*graph.WorkObjectHead, error) {
+	return nil, nil
+}
+
 // TestWorkerPoolClaim_LostRaceSkipsRun verifies that a worker whose claim finds
 // the work object already taken marks the run skipped and completes the job —
 // without executing the agent or touching the failure breaker.
