@@ -125,6 +125,12 @@ func main() {
 	api.GET("/conversations/:id/history", s.getConversationHistory)
 	api.GET("/conversations/:id/dump", s.getConversationDump)
 	api.GET("/conversations/:id/events", s.conversationEvents)
+	// Session lifecycle (chat-conversation-lifecycle): the rail's per-row
+	// Archive / Unarchive / Delete actions. Delete is permanent and is the only
+	// irreversible one; the client confirms before calling it.
+	api.POST("/conversations/:id/archive", s.archiveConversation)
+	api.POST("/conversations/:id/unarchive", s.unarchiveConversation)
+	api.DELETE("/conversations/:id", s.deleteConversation)
 	api.GET("/runs/:runId/history", s.getRunHistory)
 	api.GET("/runs/:runId/events", s.runEvents)
 	api.GET("/mcp-servers", s.listMCPServers)

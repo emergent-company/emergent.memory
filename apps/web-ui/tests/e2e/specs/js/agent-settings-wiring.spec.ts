@@ -88,6 +88,48 @@ const AUTOSAVE_FORM = `
   </div>
 </form>`;
 
+// The Appearance card of the General form: a go-daisy ColorPicker (text field
+// + preset swatches + clear) inside the auto-saving form. The shipped picker
+// sets the text field value programmatically on a preset/clear click — no
+// `input`/`change` — so the auto-save wiring has to listen for those clicks too
+// or a picked colour is silently lost (the General form has no Save button).
+const APPEARANCE_FORM = `
+<form method="post" action="/agents/a1/settings/general"
+      data-agent-autosave="general"
+      data-autosave-url="/agents/a1/settings/general/autosave">
+  <input id="agent-settings-name" name="name" type="text" value="Diane">
+  <div data-gd-color-picker>
+    <input type="color" data-gd-color-swatch value="#4f46e5">
+    <input id="agent-settings-color" name="color" type="text" data-gd-color-text value="">
+    <button type="button" data-gd-color-preset data-gd-color-value="#10B981"></button>
+    <button type="button" data-gd-color-clear></button>
+  </div>
+  <div data-autosave-status data-state="idle" data-testid="agent-settings-autosave-status">
+    <span class="iconify lucide--cloud-check" data-autosave-icon></span>
+    <span data-autosave-status-label>All changes saved</span>
+    <button type="button" data-autosave-retry hidden>Retry</button>
+  </div>
+</form>`;
+
+// Register the go-daisy ColorPicker's preset/clear behaviour (set the text
+// field value without dispatching input/change) so the spec reproduces the
+// real interaction rather than a native input event.
+async function installColorPickerMimic(page: Page) {
+  await page.evaluate(() => {
+    document.addEventListener('click', (ev) => {
+      const target = ev.target as HTMLElement;
+      const text = document.querySelector('[data-gd-color-text]') as HTMLInputElement | null;
+      if (!text) return;
+      const preset = target.closest('[data-gd-color-preset]');
+      if (preset) {
+        text.value = preset.getAttribute('data-gd-color-value') || '';
+        return;
+      }
+      if (target.closest('[data-gd-color-clear]')) text.value = '';
+    });
+  });
+}
+
 const TOOLS_FORM = `
 <form method="post" action="/agents/a1/settings/tools">
   <select name="defaultToolPolicy" data-tool-default-policy>
@@ -176,6 +218,29 @@ test.describe('agent settings auto-save (agent-settings.js)', () => {
     await expect(status.locator('[data-autosave-status-label]')).toHaveText('name is required');
     await expect(page.locator('[data-autosave-retry]')).toBeVisible();
     await expect(name).toHaveValue('');
+  });
+
+  test('a colour preset / clear click schedules an auto-save of the picker value', async ({ page }) => {
+    await page.setContent(`<!doctype html><html><body>${APPEARANCE_FORM}</body></html>`);
+    await installFetch(page);
+    await installColorPickerMimic(page);
+    await loadScript(page);
+
+    const color = page.locator('#agent-settings-color');
+
+    // Picking a preset sets the text field programmatically (no input/change)
+    // and must still schedule the debounced save.
+    await page.locator('[data-gd-color-preset]').click();
+    await expect(color).toHaveValue('#10B981');
+    await expect.poll(async () => (await fetches(page)).length, { timeout: 3000 }).toBe(1);
+    expect((await fetches(page))[0].body).toContain('color=%2310B981');
+
+    // Clearing likewise commits the emptied value.
+    await page.locator('[data-gd-color-clear]').click();
+    await expect(color).toHaveValue('');
+    await expect.poll(async () => (await fetches(page)).length, { timeout: 3000 }).toBe(2);
+    expect((await fetches(page))[1].body).toContain('color=');
+    expect((await fetches(page))[1].body).not.toContain('color=%2310B981');
   });
 });
 

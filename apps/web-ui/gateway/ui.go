@@ -479,7 +479,10 @@ func (s *Server) uiAgents(c echo.Context) error {
 // /partial/chat-rail refresh endpoint. Each conversation row also carries its
 // derived run bucket and pending-work counts (best-effort: a failed history
 // fetch leaves the row at the "done" bucket with zero counts).
-func (s *Server) chatRailData(ctx context.Context) (agents []AgentDefinitionSummary, appearances map[string]agentAppearance, convs *ConversationList, schedRuns []scheduledRunRow, shared []sharedSessionRow, err error) {
+// includeArchived is forwarded to the conversation list so the rail's
+// "Include archived" filter can reveal hidden sessions on refresh; the default
+// (false) matches the list surfaces' exclude-archived contract (design D6).
+func (s *Server) chatRailData(ctx context.Context, includeArchived bool) (agents []AgentDefinitionSummary, appearances map[string]agentAppearance, convs *ConversationList, schedRuns []scheduledRunRow, shared []sharedSessionRow, err error) {
 	agents, err = s.memory.ListAgentDefinitions(ctx)
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
@@ -488,7 +491,7 @@ func (s *Server) chatRailData(ctx context.Context) (agents []AgentDefinitionSumm
 	for _, a := range agents {
 		appearances[a.ID] = agentAppearance{Name: a.Name, Icon: agentIcon(a.UIConfig), Color: agentColor(a.UIConfig)}
 	}
-	convs, cerr := s.memory.ListConversations(ctx)
+	convs, cerr := s.memory.ListConversations(ctx, includeArchived)
 	if cerr != nil {
 		convs = &ConversationList{}
 	}
@@ -615,7 +618,7 @@ func (s *Server) chatRunControlFor(ctx context.Context, convID string) chatRunCo
 // ?prompt=<msg> pre-fills (and auto-sends) a first message.
 func (s *Server) uiChat(c echo.Context) error {
 	ctx := c.Request().Context()
-	agents, appearances, convs, schedRuns, shared, err := s.chatRailData(ctx)
+	agents, appearances, convs, schedRuns, shared, err := s.chatRailData(ctx, false)
 	if err != nil {
 		return s.page(c, pageTitle("Chat"), ChatPage(nil, nil, nil, nil, nil, "", "", "", err, true, nil))
 	}
@@ -626,9 +629,11 @@ func (s *Server) uiChat(c echo.Context) error {
 
 // uiChatRail returns the session-rail list HTML as a fragment, so chat.js can
 // refresh the rail after a new conversation appears without rebuilding the
-// row markup client-side.
+// row markup client-side. ?includeArchived=true reveals archived sessions for
+// the rail's "Include archived" filter; absent/false keeps the default exclude.
 func (s *Server) uiChatRail(c echo.Context) error {
-	_, appearances, convs, schedRuns, shared, err := s.chatRailData(c.Request().Context())
+	includeArchived := c.QueryParam("includeArchived") == "true"
+	_, appearances, convs, schedRuns, shared, err := s.chatRailData(c.Request().Context(), includeArchived)
 	if err != nil {
 		convs = &ConversationList{}
 		appearances = map[string]agentAppearance{}
