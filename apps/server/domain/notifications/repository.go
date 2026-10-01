@@ -101,10 +101,12 @@ func (r *Repository) GetStats(ctx context.Context, userID string) (*Notification
 	}
 	stats.Unread = int64(unread)
 
-	// Count dismissed
+	// Count dismissed (uncleared only, so all three GetStats counters share the
+	// same base population: Dismiss and Clear both set cleared_at).
 	dismissed, err := r.db.NewSelect().
 		Model((*Notification)(nil)).
 		Where("user_id = ?", userID).
+		Where("cleared_at IS NULL").
 		Where("dismissed = true").
 		Count(ctx)
 	if err != nil {
