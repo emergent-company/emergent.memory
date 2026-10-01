@@ -111,3 +111,49 @@ func TestObjectTypeDefRoundTripPreservesBehaviouralFields(t *testing.T) {
 	rt := back.Packs[0].RelationshipTypes[0]
 	assert.Equal(t, "links a note to its target", rt.Properties["description"], "relationship properties must round-trip")
 }
+
+// TestObjectTypeDefMarshalsBoardFields verifies the object-driven work fields
+// (boardEnabled/allowedStatuses/skipEmbeddings) survive the manifest → pack
+// object_type_schemas round-trip that applyPacks performs (json.Marshal of the
+// ObjectTypes slice). The schema registry's parseObjectTypeSchemas reads these
+// exact keys, so a missing/renamed tag would silently drop the board config.
+func TestObjectTypeDefMarshalsBoardFields(t *testing.T) {
+	m := BlueprintManifest{
+		Packs: []PackManifest{{
+			Name:    "board",
+			Version: "1.0.0",
+			ObjectTypes: []ObjectTypeDef{{
+				Name:            "Task",
+				Label:           "Task",
+				Properties:      map[string]any{"title": map[string]any{"type": "string"}},
+				BoardEnabled:    true,
+				AllowedStatuses: []string{"todo", "doing", "done"},
+				SkipEmbeddings:  true,
+			}},
+		}},
+	}
+
+	raw, err := json.Marshal(m.Packs[0].ObjectTypes)
+	require.NoError(t, err)
+	s := string(raw)
+
+	assert.Contains(t, s, `"boardEnabled":true`, "boardEnabled must marshal into the pack JSON")
+	assert.Contains(t, s, `"allowedStatuses":["todo","doing","done"]`, "allowedStatuses must marshal")
+	assert.Contains(t, s, `"skipEmbeddings":true`, "skipEmbeddings must marshal")
+	// Zero-valued omitempty fields must stay absent (not emitted as false).
+	assert.NotContains(t, s, "skipExtraction")
+	assert.NotContains(t, s, "excludeFromSearch")
+
+	// The registry parse reads the same keys.
+	var entries []json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &entries))
+	var parsed struct {
+		BoardEnabled    bool     `json:"boardEnabled"`
+		AllowedStatuses []string `json:"allowedStatuses"`
+		SkipEmbeddings  bool     `json:"skipEmbeddings"`
+	}
+	require.NoError(t, json.Unmarshal(entries[0], &parsed))
+	assert.True(t, parsed.BoardEnabled)
+	assert.Equal(t, []string{"todo", "doing", "done"}, parsed.AllowedStatuses)
+	assert.True(t, parsed.SkipEmbeddings)
+}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/skills"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
 // newApplyService wires the blueprints repository plus the real skills and
@@ -119,11 +120,11 @@ func TestApplyAgentManifestToExisting_BannedTools(t *testing.T) {
 	def := &agents.AgentDefinition{BannedTools: []string{"user-set"}}
 
 	// Omitted -> preserve user's value.
-	applyAgentManifestToExisting(def, &AgentManifest{Name: "x"})
+	require.NoError(t, applyAgentManifestToExisting(def, &AgentManifest{Name: "x"}))
 	assert.Equal(t, []string{"user-set"}, def.BannedTools)
 
 	// Provided -> overwrite from manifest.
-	applyAgentManifestToExisting(def, &AgentManifest{Name: "x", BannedTools: []string{"blueprint-set"}})
+	require.NoError(t, applyAgentManifestToExisting(def, &AgentManifest{Name: "x", BannedTools: []string{"blueprint-set"}}))
 	assert.Equal(t, []string{"blueprint-set"}, def.BannedTools)
 }
 
@@ -132,30 +133,288 @@ func TestApplyAgentManifestToExisting_BannedTools(t *testing.T) {
 // UIConfig JSONB blob, and an absent/empty block leaves ui_config untouched.
 func TestAgentUI_ManifestToUIConfig(t *testing.T) {
 	// Create path: full icon+color block lands in UIConfig.
-	def := buildAgentDefinition(&AgentManifest{
+	def, err := buildAgentDefinition(&AgentManifest{
 		Name: "x",
 		UI:   &AgentUIManifest{Icon: "bot", Color: "#FF00AA"},
 	}, "proj-1")
+	require.NoError(t, err)
 	require.NotNil(t, def.UIConfig)
 	assert.JSONEq(t, `{"icon":"bot","color":"#FF00AA"}`, string(def.UIConfig))
 
 	// Icon-only block omits the empty color key.
-	def = buildAgentDefinition(&AgentManifest{
+	def, err = buildAgentDefinition(&AgentManifest{
 		Name: "x",
 		UI:   &AgentUIManifest{Icon: "bot"},
 	}, "proj-1")
+	require.NoError(t, err)
 	assert.JSONEq(t, `{"icon":"bot"}`, string(def.UIConfig))
 
 	// Empty block -> no UIConfig (DB default '{}').
-	def = buildAgentDefinition(&AgentManifest{Name: "x", UI: &AgentUIManifest{}}, "proj-1")
+	def, err = buildAgentDefinition(&AgentManifest{Name: "x", UI: &AgentUIManifest{}}, "proj-1")
+	require.NoError(t, err)
 	assert.Nil(t, def.UIConfig)
 
 	// Update path: provided block overwrites; omitted block preserves.
 	existing := &agents.AgentDefinition{UIConfig: json.RawMessage(`{"icon":"old"}`)}
-	applyAgentManifestToExisting(existing, &AgentManifest{Name: "x", UI: &AgentUIManifest{Icon: "new", Color: "#000000"}})
+	require.NoError(t, applyAgentManifestToExisting(existing, &AgentManifest{Name: "x", UI: &AgentUIManifest{Icon: "new", Color: "#000000"}}))
 	assert.JSONEq(t, `{"icon":"new","color":"#000000"}`, string(existing.UIConfig))
 
 	existing = &agents.AgentDefinition{UIConfig: json.RawMessage(`{"icon":"keep"}`)}
-	applyAgentManifestToExisting(existing, &AgentManifest{Name: "x"})
+	require.NoError(t, applyAgentManifestToExisting(existing, &AgentManifest{Name: "x"}))
 	assert.JSONEq(t, `{"icon":"keep"}`, string(existing.UIConfig))
+}
+
+// fakeAgentRepo is an in-memory AgentRepo for unit-testing applyAgents and
+// Unapply without a database. It records the runtime agents it created/updated
+// and stubs definition CRUD.
+type fakeAgentRepo struct {
+	defsByName   map[string]*agents.AgentDefinition
+	agentsByName map[string]*agents.Agent
+
+	createdAgents []*agents.Agent
+	updatedAgents []*agents.Agent
+}
+
+func newFakeAgentRepo() *fakeAgentRepo {
+	return &fakeAgentRepo{
+		defsByName:   map[string]*agents.AgentDefinition{},
+		agentsByName: map[string]*agents.Agent{},
+	}
+}
+
+func (f *fakeAgentRepo) FindDefinitionByName(ctx context.Context, projectID, name string) (*agents.AgentDefinition, error) {
+	return f.defsByName[name], nil
+}
+func (f *fakeAgentRepo) CreateDefinition(ctx context.Context, def *agents.AgentDefinition) error {
+	if def.ID == "" {
+		def.ID = uuid.NewString()
+	}
+	f.defsByName[def.Name] = def
+	return nil
+}
+func (f *fakeAgentRepo) UpdateDefinition(ctx context.Context, def *agents.AgentDefinition) error {
+	f.defsByName[def.Name] = def
+	return nil
+}
+func (f *fakeAgentRepo) DeleteDefinition(ctx context.Context, id string) error {
+	for n, d := range f.defsByName {
+		if d.ID == id {
+			delete(f.defsByName, n)
+		}
+	}
+	return nil
+}
+func (f *fakeAgentRepo) FindAgentByName(ctx context.Context, projectID, name string) (*agents.Agent, error) {
+	return f.agentsByName[name], nil
+}
+func (f *fakeAgentRepo) CreateAgent(ctx context.Context, a *agents.Agent) error {
+	f.agentsByName[a.Name] = a
+	f.createdAgents = append(f.createdAgents, a)
+	return nil
+}
+func (f *fakeAgentRepo) UpdateAgent(ctx context.Context, a *agents.Agent) error {
+	f.agentsByName[a.Name] = a
+	f.updatedAgents = append(f.updatedAgents, a)
+	return nil
+}
+func (f *fakeAgentRepo) DeleteAgentsBySourceBlueprint(ctx context.Context, blueprintID string) (int, error) {
+	n := 0
+	for name, a := range f.agentsByName {
+		if v, ok := a.Config["sourceBlueprintId"]; ok && v == blueprintID {
+			delete(f.agentsByName, name)
+			n++
+		}
+	}
+	return n, nil
+}
+
+// TestApplyAgents_CreatesRuntimeAgentWithWorkConfig verifies a manifest that
+// declares object-driven work maps its workConfig onto the definition and
+// creates a runtime kb.agents row bound to it, stamped with blueprint ownership.
+func TestApplyAgents_CreatesRuntimeAgentWithWorkConfig(t *testing.T) {
+	fake := newFakeAgentRepo()
+	svc := &Service{agentRepo: fake, log: testLogger()}
+	ctx := context.Background()
+
+	am := AgentManifest{
+		Name: "board-agent",
+		WorkConfig: map[string]any{
+			"status":         map[string]any{"ready": "todo", "inProgress": "doing", "done": "done"},
+			"requiresReview": true,
+		},
+		TriggerType: "reaction",
+		ReactionConfig: &agents.ReactionConfig{
+			ObjectTypes: []string{"Task"},
+			Events:      []agents.ReactionEventType{agents.EventTypeCreated},
+		},
+	}
+
+	counts, err := svc.applyAgents(ctx, "proj-1", "bp-1", "bp", []AgentManifest{am})
+	require.NoError(t, err)
+	assert.Equal(t, 1, counts.Created)
+
+	def := fake.defsByName["board-agent"]
+	require.NotNil(t, def, "definition must be created")
+	assert.Equal(t, "todo", def.WorkConfig.Status.Ready)
+	assert.Equal(t, "doing", def.WorkConfig.Status.InProgress)
+	assert.Equal(t, "done", def.WorkConfig.Status.Done)
+	assert.True(t, def.WorkConfig.RequiresReview)
+
+	rt := fake.agentsByName["board-agent"]
+	require.NotNil(t, rt, "runtime agent must be created")
+	assert.Equal(t, "proj-1", rt.ProjectID)
+	assert.Equal(t, "board-agent", rt.Name)
+	assert.Equal(t, agents.TriggerTypeReaction, rt.TriggerType)
+	assert.Equal(t, "agent-def:"+def.ID, rt.StrategyType)
+	assert.True(t, rt.Enabled)
+	assert.NotEmpty(t, rt.CronSchedule, "cron_schedule is NOT NULL")
+	require.NotNil(t, rt.ReactionConfig)
+	assert.Equal(t, []string{"Task"}, rt.ReactionConfig.ObjectTypes)
+	require.NotNil(t, rt.AgentDefinitionID)
+	assert.Equal(t, def.ID, *rt.AgentDefinitionID)
+	assert.Equal(t, "bp-1", rt.Config["sourceBlueprintId"], "ownership stamp must be merged into config")
+}
+
+// TestApplyAgents_UpdatesExistingRuntimeAgent verifies the update path applies
+// workConfig and re-points an existing runtime agent instead of duplicating it.
+func TestApplyAgents_UpdatesExistingRuntimeAgent(t *testing.T) {
+	fake := newFakeAgentRepo()
+	ctx := context.Background()
+
+	existing := &agents.AgentDefinition{Name: "board-agent", ProjectID: "proj-1"}
+	existing.ID = uuid.NewString()
+	fake.defsByName["board-agent"] = existing
+	fake.agentsByName["board-agent"] = &agents.Agent{
+		ProjectID:         "proj-1",
+		Name:              "board-agent",
+		Config:            map[string]any{"queue": "fast", "sourceBlueprintId": "bp-1"},
+		AgentDefinitionID: &existing.ID,
+	}
+
+	svc := &Service{agentRepo: fake, log: testLogger()}
+	am := AgentManifest{
+		Name:       "board-agent",
+		WorkConfig: map[string]any{"requiresReview": true},
+		ReactionConfig: &agents.ReactionConfig{
+			ObjectTypes: []string{"Task"},
+			Events:      []agents.ReactionEventType{agents.EventTypeUpdated},
+		},
+	}
+
+	counts, err := svc.applyAgents(ctx, "proj-1", "bp-1", "bp", []AgentManifest{am})
+	require.NoError(t, err)
+	assert.Equal(t, 1, counts.Updated)
+
+	def := fake.defsByName["board-agent"]
+	assert.True(t, def.WorkConfig.RequiresReview, "update path must apply workConfig")
+
+	rt := fake.agentsByName["board-agent"]
+	require.NotNil(t, rt)
+	assert.Equal(t, "fast", rt.Config["queue"], "existing config must be preserved")
+	assert.Equal(t, "bp-1", rt.Config["sourceBlueprintId"])
+	assert.Len(t, fake.updatedAgents, 1, "existing runtime agent updated, not duplicated")
+	assert.Len(t, fake.createdAgents, 0)
+}
+
+// TestApplyWorkConfig_MalformedInput verifies a malformed workConfig map returns
+// a BadRequest error naming the agent (not a 500).
+func TestApplyWorkConfig_MalformedInput(t *testing.T) {
+	def := &agents.AgentDefinition{}
+	err := applyWorkConfig(def, &AgentManifest{
+		Name:       "broken",
+		WorkConfig: map[string]any{"status": "not-an-object"},
+	})
+	assertAppErrorCode(t, err, apperror.ErrBadRequest.Code)
+	assert.Contains(t, err.Error(), "broken")
+}
+
+// TestBuildSeedObjectRequest_Assignee verifies the seed object request forwards
+// a non-empty assignee and leaves it nil when absent.
+func TestBuildSeedObjectRequest_Assignee(t *testing.T) {
+	req := buildSeedObjectRequest(SeedObjectRecord{Type: "Task", Key: "k1", Assignee: "agent-x"})
+	require.NotNil(t, req.Assignee)
+	assert.Equal(t, "agent-x", *req.Assignee)
+
+	req = buildSeedObjectRequest(SeedObjectRecord{Type: "Task", Key: "k1"})
+	assert.Nil(t, req.Assignee)
+}
+
+// TestEnsureRuntimeAgent_ForeignOwnerNoHijack verifies a runtime agent that is
+// not stamped with this blueprint's ownership is never repurposed, even when it
+// happens to point at the same definition.
+func TestEnsureRuntimeAgent_ForeignOwnerNoHijack(t *testing.T) {
+	defID := uuid.NewString()
+
+	tests := []struct {
+		name     string
+		existing *agents.Agent
+	}{
+		{
+			name: "foreign blueprint owner",
+			existing: &agents.Agent{
+				ProjectID:         "proj-1",
+				Name:              "board-agent",
+				Config:            map[string]any{"sourceBlueprintId": "other-bp"},
+				AgentDefinitionID: &defID,
+			},
+		},
+		{
+			name: "manual agent no ownership",
+			existing: &agents.Agent{
+				ProjectID: "proj-1",
+				Name:      "board-agent",
+				Config:    map[string]any{"queue": "fast"},
+			},
+		},
+		{
+			name: "manual agent matching definition",
+			existing: &agents.Agent{
+				ProjectID:         "proj-1",
+				Name:              "board-agent",
+				Config:            map[string]any{"queue": "fast"},
+				AgentDefinitionID: &defID,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := newFakeAgentRepo()
+			fake.agentsByName["board-agent"] = tt.existing
+			svc := &Service{agentRepo: fake, log: testLogger()}
+
+			def := &agents.AgentDefinition{ID: defID, Name: "board-agent", ProjectID: "proj-1"}
+			am := AgentManifest{
+				Name:           "board-agent",
+				TriggerType:    "reaction",
+				ReactionConfig: &agents.ReactionConfig{ObjectTypes: []string{"Task"}},
+			}
+
+			require.NoError(t, svc.ensureRuntimeAgent(context.Background(), "proj-1", "bp-1", def, &am))
+			assert.Len(t, fake.updatedAgents, 0, "must not mutate a non-owned runtime agent")
+			assert.Len(t, fake.createdAgents, 0)
+		})
+	}
+}
+
+// TestEnsureRuntimeAgent_OwnBlueprintUpdates verifies a runtime agent owned by
+// this blueprint is updated in place (preserving existing config keys).
+func TestEnsureRuntimeAgent_OwnBlueprintUpdates(t *testing.T) {
+	defID := uuid.NewString()
+	fake := newFakeAgentRepo()
+	fake.agentsByName["board-agent"] = &agents.Agent{
+		ProjectID: "proj-1",
+		Name:      "board-agent",
+		Config:    map[string]any{"sourceBlueprintId": "bp-1", "queue": "fast"},
+	}
+	svc := &Service{agentRepo: fake, log: testLogger()}
+
+	def := &agents.AgentDefinition{ID: defID, Name: "board-agent", ProjectID: "proj-1"}
+	am := AgentManifest{Name: "board-agent", TriggerType: "reaction", ReactionConfig: &agents.ReactionConfig{ObjectTypes: []string{"Task"}}}
+
+	require.NoError(t, svc.ensureRuntimeAgent(context.Background(), "proj-1", "bp-1", def, &am))
+	require.Len(t, fake.updatedAgents, 1, "owned agent must be updated")
+	assert.Equal(t, "fast", fake.updatedAgents[0].Config["queue"], "existing config preserved")
+	assert.Equal(t, "bp-1", fake.updatedAgents[0].Config["sourceBlueprintId"])
+	assert.Equal(t, agents.TriggerTypeReaction, fake.updatedAgents[0].TriggerType)
 }

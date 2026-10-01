@@ -578,6 +578,42 @@ func (r *Repository) FindByName(ctx context.Context, projectID, name string) (*A
 	return agent, nil
 }
 
+// FindAgentByName is a thin, self-documenting alias for FindByName. It exists so
+// the blueprints.AgentRepo interface can refer to runtime-agent lookups by a
+// name that does not collide with definition lookups (FindDefinitionByName).
+func (r *Repository) FindAgentByName(ctx context.Context, projectID, name string) (*Agent, error) {
+	return r.FindByName(ctx, projectID, name)
+}
+
+// CreateAgent is a thin, self-documenting alias for Create. It exists so the
+// blueprints.AgentRepo interface can refer to runtime-agent creation by a name
+// that does not collide with definition creation (CreateDefinition).
+func (r *Repository) CreateAgent(ctx context.Context, agent *Agent) error {
+	return r.Create(ctx, agent)
+}
+
+// UpdateAgent is a thin, self-documenting alias for Update. It exists so the
+// blueprints.AgentRepo interface can refer to runtime-agent updates by a name
+// that does not collide with definition updates (UpdateDefinition).
+func (r *Repository) UpdateAgent(ctx context.Context, agent *Agent) error {
+	return r.Update(ctx, agent)
+}
+
+// DeleteAgentsBySourceBlueprint deletes runtime agents created by a blueprint,
+// matched on the ownership stamp stored in their config JSONB
+// (config->>'sourceBlueprintId'). Returns the number of rows deleted.
+func (r *Repository) DeleteAgentsBySourceBlueprint(ctx context.Context, blueprintID string) (int, error) {
+	res, err := r.db.NewDelete().
+		Model((*Agent)(nil)).
+		Where("config->>'sourceBlueprintId' = ?", blueprintID).
+		Exec(ctx)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 // --- Agent Definitions ---
 
 // FindAllDefinitions returns all agent definitions for a project.

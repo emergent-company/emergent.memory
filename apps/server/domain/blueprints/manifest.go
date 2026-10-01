@@ -3,6 +3,7 @@ package blueprints
 import (
 	"encoding/json"
 
+	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/schemas"
 )
 
@@ -56,6 +57,14 @@ type ObjectTypeDef struct {
 	Embedding     map[string]any `json:"embedding,omitempty"`
 	Extraction    map[string]any `json:"extraction,omitempty"`
 	UI            map[string]any `json:"ui,omitempty"`
+	// Object-driven work configuration (Kanban board). These mirror the fields
+	// on schemas.ObjectTypeSchema (apps/server/domain/schemas/entity.go) and are
+	// carried through the pack's object_type_schemas JSON to the schema registry.
+	BoardEnabled      bool     `json:"boardEnabled,omitempty"`
+	AllowedStatuses   []string `json:"allowedStatuses,omitempty"`
+	SkipEmbeddings    bool     `json:"skipEmbeddings,omitempty"`
+	SkipExtraction    bool     `json:"skipExtraction,omitempty"`
+	ExcludeFromSearch bool     `json:"excludeFromSearch,omitempty"`
 }
 
 // UnmarshalJSON decodes the canonical `scopeKey` and its `scope_key` alias and
@@ -108,6 +117,15 @@ type AgentManifest struct {
 	WorkspaceConfig map[string]any             `json:"workspaceConfig,omitempty"`
 	ToolPolicies    map[string]AgentToolPolicy `json:"toolPolicies,omitempty"`
 	UI              *AgentUIManifest           `json:"ui,omitempty"`
+	// WorkConfig is the object-driven work configuration, unmarshalled into the
+	// definition's agents.AgentWorkConfig at apply time.
+	WorkConfig map[string]any `json:"workConfig,omitempty"`
+	// TriggerType/ReactionConfig/CronSchedule configure the runtime kb.agents
+	// row that picks object-driven work up. Any of these being set causes apply
+	// to create-or-update the runtime agent bound to this definition.
+	TriggerType    string                 `json:"triggerType,omitempty"`
+	ReactionConfig *agents.ReactionConfig `json:"reactionConfig,omitempty"`
+	CronSchedule   string                 `json:"cronSchedule,omitempty"`
 }
 
 // AgentUIManifest describes an agent's inline appearance block, mirroring the
@@ -153,6 +171,9 @@ type SeedObjectRecord struct {
 	Status     string         `json:"status"`
 	Properties map[string]any `json:"properties"`
 	Labels     []string       `json:"labels,omitempty"`
+	// Assignee is the work lane for board-enabled types (the agent identity that
+	// owns the item). Forwarded to graph.CreateGraphObjectRequest when non-empty.
+	Assignee string `json:"assignee,omitempty"`
 }
 
 // SeedRelationshipRecord is a seed graph relationship whose endpoints are

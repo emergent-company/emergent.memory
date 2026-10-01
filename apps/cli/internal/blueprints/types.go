@@ -65,6 +65,14 @@ type ObjectTypeDef struct {
 	// Precedence: the canonical `scopeKey` wins when both are present, matching
 	// the inner-property alias handling.
 	ScopeKeySnake map[string]any `json:"scope_key,omitempty" yaml:"scope_key,omitempty"`
+
+	// Object-driven work configuration (Kanban board). Mirrors the server's
+	// ObjectTypeDef so memory blueprints round-trips the board-enabled fields.
+	BoardEnabled      bool     `json:"boardEnabled,omitempty"      yaml:"boardEnabled,omitempty"`
+	AllowedStatuses   []string `json:"allowedStatuses,omitempty"   yaml:"allowedStatuses,omitempty"`
+	SkipEmbeddings    bool     `json:"skipEmbeddings,omitempty"    yaml:"skipEmbeddings,omitempty"`
+	SkipExtraction    bool     `json:"skipExtraction,omitempty"    yaml:"skipExtraction,omitempty"`
+	ExcludeFromSearch bool     `json:"excludeFromSearch,omitempty" yaml:"excludeFromSearch,omitempty"`
 }
 
 // normalizeScopeKey folds the top-level snake_case alias into the canonical
@@ -161,9 +169,27 @@ type AgentFile struct {
 	Config          map[string]any             `json:"config"          yaml:"config"`
 	WorkspaceConfig map[string]any             `json:"workspaceConfig" yaml:"workspaceConfig"`
 	ToolPolicies    map[string]AgentToolPolicy `json:"toolPolicies"    yaml:"toolPolicies"`
+	// WorkConfig is the object-driven work configuration, sent through to the
+	// server's definition workConfig.
+	WorkConfig map[string]any `json:"workConfig,omitempty" yaml:"workConfig,omitempty"`
+	// TriggerType/ReactionConfig/CronSchedule configure the runtime agent that
+	// picks object-driven work up.
+	TriggerType    string          `json:"triggerType,omitempty"    yaml:"triggerType,omitempty"`
+	ReactionConfig *ReactionConfig `json:"reactionConfig,omitempty" yaml:"reactionConfig,omitempty"`
+	CronSchedule   string          `json:"cronSchedule,omitempty"   yaml:"cronSchedule,omitempty"`
 
 	// SourceFile is the path from which this agent was loaded (not serialised).
 	SourceFile string `json:"-" yaml:"-"`
+}
+
+// ReactionConfig mirrors the server's reaction trigger configuration for a
+// runtime agent, so memory blueprints round-trips the block losslessly.
+type ReactionConfig struct {
+	ObjectTypes          []string `json:"objectTypes"                   yaml:"objectTypes"`
+	Events               []string `json:"events"                        yaml:"events"`
+	ConcurrencyStrategy  string   `json:"concurrencyStrategy,omitempty" yaml:"concurrencyStrategy,omitempty"`
+	IgnoreAgentTriggered *bool    `json:"ignoreAgentTriggered,omitempty" yaml:"ignoreAgentTriggered,omitempty"`
+	IgnoreSelfTriggered  *bool    `json:"ignoreSelfTriggered,omitempty" yaml:"ignoreSelfTriggered,omitempty"`
 }
 
 // AgentToolPolicy controls how a specific tool is invoked by an agent.
@@ -193,6 +219,9 @@ type SeedObjectRecord struct {
 	Status     string         `json:"status,omitempty"`
 	Properties map[string]any `json:"properties,omitempty"`
 	Labels     []string       `json:"labels,omitempty"`
+	// Assignee is the work lane for board-enabled types (the agent identity that
+	// owns the item). Round-tripped on dump/seed.
+	Assignee string `json:"assignee,omitempty"`
 
 	// SourceFile is populated by the loader (not serialised).
 	SourceFile string `json:"-"`

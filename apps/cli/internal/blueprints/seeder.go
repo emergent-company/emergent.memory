@@ -174,6 +174,9 @@ func (s *Seeder) applyObjectBatch(ctx context.Context, batch []SeedObjectRecord,
 			if rec.Status != "" {
 				req.Status = &rec.Status
 			}
+			if rec.Assignee != "" {
+				req.Assignee = &rec.Assignee
+			}
 			items[i] = req
 		}
 
@@ -214,6 +217,9 @@ func (s *Seeder) applyObjectBatch(ctx context.Context, batch []SeedObjectRecord,
 		}
 		if rec.Status != "" {
 			req.Status = &rec.Status
+		}
+		if rec.Assignee != "" {
+			req.Assignee = &rec.Assignee
 		}
 		obj, err := s.graph.UpsertObject(ctx, req)
 		if err != nil {

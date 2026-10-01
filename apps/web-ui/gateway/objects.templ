@@ -296,7 +296,9 @@ templ objectsFilters(data objectsPageData) {
 			</select>
 		}
 		if data.Query == "" {
-			@objectsProvenanceFilter(data)
+			if data.ActorType != "" {
+				@objectsProvenanceFilter(data)
+			}
 			if !scoped {
 				@objectsActorFilter(data)
 			}

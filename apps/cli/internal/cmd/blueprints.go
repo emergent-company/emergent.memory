@@ -91,6 +91,7 @@ func runBlueprintsInstall(cmd *cobra.Command, args []string) error {
 		projectID,
 		c.SDK.Schemas,
 		c.SDK.AgentDefinitions,
+		c.SDK.Agents,
 		c.SDK.Skills,
 		blueprintsDryRunFlag,
 		blueprintsUpgradeFlag,

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	sdkagents "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/agentdefinitions"
+	sdkruntime "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/agents"
 	sdkprojects "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/projects"
 	sdkschemas "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/schemas"
 	sdkskills "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/skills"
@@ -16,14 +17,15 @@ import (
 
 // Blueprinter orchestrates creating or updating packs, agent definitions, and skills.
 type Blueprinter struct {
-	projects  *sdkprojects.Client
-	projectID string
-	packs     *sdkschemas.Client
-	agents    *sdkagents.Client
-	skills    *sdkskills.Client
-	dryRun    bool
-	upgrade   bool
-	out       io.Writer
+	projects      *sdkprojects.Client
+	projectID     string
+	packs         *sdkschemas.Client
+	agents        *sdkagents.Client
+	runtimeAgents *sdkruntime.Client
+	skills        *sdkskills.Client
+	dryRun        bool
+	upgrade       bool
+	out           io.Writer
 
 	// packsByName is populated at the start of Run so printResult can show type counts.
 	packsByName map[string]PackFile
@@ -36,6 +38,7 @@ func NewBlueprintsApplier(
 	projectID string,
 	packs *sdkschemas.Client,
 	agents *sdkagents.Client,
+	runtimeAgents *sdkruntime.Client,
 	skills *sdkskills.Client,
 	dryRun bool,
 	upgrade bool,
@@ -45,14 +48,15 @@ func NewBlueprintsApplier(
 		out = os.Stdout
 	}
 	return &Blueprinter{
-		projects:  projects,
-		projectID: projectID,
-		packs:     packs,
-		agents:    agents,
-		skills:    skills,
-		dryRun:    dryRun,
-		upgrade:   upgrade,
-		out:       out,
+		projects:      projects,
+		projectID:     projectID,
+		packs:         packs,
+		agents:        agents,
+		runtimeAgents: runtimeAgents,
+		skills:        skills,
+		dryRun:        dryRun,
+		upgrade:       upgrade,
+		out:           out,
 	}
 }
 
@@ -294,6 +298,20 @@ func (b *Blueprinter) blueprintAgent(ctx context.Context, ag AgentFile, existing
 		return b.updateAgent(ctx, ag, item.ID)
 	}
 
+	// Definition already exists and upgrade is off: still reconcile the runtime
+	// agent so a retry after a definition-created/runtime-failed run recovers.
+	// ensureRuntimeAgent is idempotent and ownership-gated, so this is safe for
+	// foreign/manual agents too.
+	if err := b.ensureRuntimeAgent(ctx, ag, item.ID); err != nil {
+		return BlueprintsResult{
+			ResourceType: "agent",
+			Name:         ag.Name,
+			SourceFile:   ag.SourceFile,
+			Action:       BlueprintsActionError,
+			Error:        fmt.Errorf("reconcile runtime agent: %w", err),
+		}
+	}
+
 	return BlueprintsResult{
 		ResourceType: "agent",
 		Name:         ag.Name,
@@ -304,9 +322,14 @@ func (b *Blueprinter) blueprintAgent(ctx context.Context, ag AgentFile, existing
 
 func (b *Blueprinter) createAgent(ctx context.Context, ag AgentFile) BlueprintsResult {
 	req := agentFileToCreateRequest(ag)
-	if _, err := b.agents.Create(ctx, req); err != nil {
+	resp, err := b.agents.Create(ctx, req)
+	if err != nil {
 		return BlueprintsResult{ResourceType: "agent", Name: ag.Name, SourceFile: ag.SourceFile,
 			Action: BlueprintsActionError, Error: fmt.Errorf("create agent: %w", err)}
+	}
+	if err := b.ensureRuntimeAgent(ctx, ag, resp.Data.ID); err != nil {
+		return BlueprintsResult{ResourceType: "agent", Name: ag.Name, SourceFile: ag.SourceFile,
+			Action: BlueprintsActionError, Error: fmt.Errorf("create runtime agent: %w", err)}
 	}
 	return BlueprintsResult{ResourceType: "agent", Name: ag.Name, SourceFile: ag.SourceFile, Action: BlueprintsActionCreated}
 }
@@ -316,6 +339,10 @@ func (b *Blueprinter) updateAgent(ctx context.Context, ag AgentFile, agentID str
 	if _, err := b.agents.Update(ctx, agentID, req); err != nil {
 		return BlueprintsResult{ResourceType: "agent", Name: ag.Name, SourceFile: ag.SourceFile,
 			Action: BlueprintsActionError, Error: fmt.Errorf("update agent: %w", err)}
+	}
+	if err := b.ensureRuntimeAgent(ctx, ag, agentID); err != nil {
+		return BlueprintsResult{ResourceType: "agent", Name: ag.Name, SourceFile: ag.SourceFile,
+			Action: BlueprintsActionError, Error: fmt.Errorf("update runtime agent: %w", err)}
 	}
 	return BlueprintsResult{ResourceType: "agent", Name: ag.Name, SourceFile: ag.SourceFile, Action: BlueprintsActionUpdated}
 }
@@ -431,6 +458,10 @@ func (b *Blueprinter) dryRunAgents(agents []AgentFile) []BlueprintsResult {
 			action = "create or update"
 		}
 		fmt.Fprintf(b.out, "[dry-run] would %s agent %q (%s)\n", action, ag.Name, ag.SourceFile)
+		if ag.TriggerType != "" || ag.ReactionConfig != nil || ag.CronSchedule != "" {
+			_, _ = fmt.Fprintf(b.out, "[dry-run]   would ensure runtime reaction agent %q (triggerType=%q)\n",
+				ag.Name, ag.TriggerType)
+		}
 		results = append(results, BlueprintsResult{
 			ResourceType: "agent",
 			Name:         ag.Name,
@@ -857,6 +888,9 @@ func agentFileToCreateRequest(ag AgentFile) *sdkagents.CreateAgentDefinitionRequ
 			EnableThinking: ag.Model.EnableThinking,
 		}
 	}
+	if ag.WorkConfig != nil {
+		req.WorkConfig = mustMarshalRaw(ag.WorkConfig)
+	}
 	return req
 }
 
@@ -899,5 +933,116 @@ func agentFileToUpdateRequest(ag AgentFile) *sdkagents.UpdateAgentDefinitionRequ
 			EnableThinking: ag.Model.EnableThinking,
 		}
 	}
+	if ag.WorkConfig != nil {
+		req.WorkConfig = mustMarshalRaw(ag.WorkConfig)
+	}
 	return req
+}
+
+// mustMarshalRaw marshals v to json.RawMessage. A map[string]any of scalars and
+// nested maps can never fail to marshal; this helper keeps call sites clean.
+func mustMarshalRaw(v any) json.RawMessage {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		// Unreachable for the manifest-driven values we pass (maps of scalars).
+		return nil
+	}
+	return raw
+}
+
+// cliReactionConfigToSDK converts the CLI's ReactionConfig into the runtime
+// agent SDK's ReactionConfig (same JSON shape, different package).
+func cliReactionConfigToSDK(rc *ReactionConfig) *sdkruntime.ReactionConfig {
+	if rc == nil {
+		return nil
+	}
+	return &sdkruntime.ReactionConfig{
+		ObjectTypes:          rc.ObjectTypes,
+		Events:               rc.Events,
+		ConcurrencyStrategy:  rc.ConcurrencyStrategy,
+		IgnoreAgentTriggered: rc.IgnoreAgentTriggered,
+		IgnoreSelfTriggered:  rc.IgnoreSelfTriggered,
+	}
+}
+
+// ensureRuntimeAgent creates-or-updates the runtime kb.agents row bound to the
+// just-materialized definition when the agent manifest configures trigger
+// behaviour (TriggerType, ReactionConfig, or CronSchedule). This mirrors the
+// server apply path: a runtime agent with StrategyType "agent-def:<id>" is what
+// actually picks object-driven work up; the definition alone does not.
+//
+// The CLI has no blueprint row id, so ownership is stamped as
+// {"source": "blueprints-cli"} rather than a sourceBlueprintId UUID.
+func (b *Blueprinter) ensureRuntimeAgent(ctx context.Context, ag AgentFile, defID string) error {
+	if ag.TriggerType == "" && ag.ReactionConfig == nil && ag.CronSchedule == "" {
+		return nil
+	}
+
+	triggerType := ag.TriggerType
+	if triggerType == "" {
+		if ag.ReactionConfig != nil {
+			triggerType = "reaction"
+		} else {
+			triggerType = "schedule"
+		}
+	}
+	cron := ag.CronSchedule
+	if cron == "" {
+		cron = "0 0 * * *"
+	}
+	enabled := true
+
+	// Look up an existing runtime agent by name (create-or-update idempotency).
+	existing, err := b.findRuntimeAgentByName(ctx, ag.Name)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		// Ownership gate: only adopt the runtime agent if it is already ours —
+		// stamped "blueprints-cli". A pre-existing user/foreign agent that
+		// merely shares the name (or even the same definition) is never
+		// repurposed (mirrors the server guard).
+		if source, _ := existing.Config["source"].(string); source != "blueprints-cli" {
+			return nil
+		}
+
+		_, err := b.runtimeAgents.Update(ctx, existing.ID, &sdkruntime.UpdateAgentRequest{
+			TriggerType:       &triggerType,
+			ReactionConfig:    cliReactionConfigToSDK(ag.ReactionConfig),
+			CronSchedule:      &cron,
+			Enabled:           &enabled,
+			AgentDefinitionID: &defID,
+			// Config intentionally omitted: the server's PATCH replaces Config
+			// wholesale, so sending it would wipe any existing keys.
+		})
+		return err
+	}
+
+	_, err = b.runtimeAgents.Create(ctx, &sdkruntime.CreateAgentRequest{
+		ProjectID:         b.projectID,
+		Name:              ag.Name,
+		StrategyType:      "agent-def:" + defID,
+		CronSchedule:      cron,
+		Enabled:           &enabled,
+		TriggerType:       triggerType,
+		ReactionConfig:    cliReactionConfigToSDK(ag.ReactionConfig),
+		AgentDefinitionID: &defID,
+		Config:            map[string]any{"source": "blueprints-cli"},
+	})
+	return err
+}
+
+// findRuntimeAgentByName returns the runtime agent with the given name, or nil
+// if none exists.
+func (b *Blueprinter) findRuntimeAgentByName(ctx context.Context, name string) (*sdkruntime.Agent, error) {
+	list, err := b.runtimeAgents.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list runtime agents: %w", err)
+	}
+	for i := range list.Data {
+		if list.Data[i].Name == name {
+			return &list.Data[i], nil
+		}
+	}
+	return nil, nil
 }

@@ -242,6 +242,8 @@ type UpdateAgentRequest struct {
 	Capabilities   *AgentCapabilities `json:"capabilities,omitempty"`
 	Config         map[string]any     `json:"config,omitempty"`
 	Description    *string            `json:"description,omitempty"`
+	// AgentDefinitionID re-binds the runtime agent to a definition on update.
+	AgentDefinitionID *string `json:"agentDefinitionId,omitempty"`
 }
 
 // BatchTriggerRequest is the request body for batch triggering an agent.

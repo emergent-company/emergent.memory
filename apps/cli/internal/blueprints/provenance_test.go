@@ -97,7 +97,7 @@ func newTestSkillsClient(t *testing.T, serverURL string) *sdkskills.Client {
 
 func TestBlueprintSkillCreate_SetsProvenanceMetadata(t *testing.T) {
 	srv, s := newBlueprintSkillTestServer(t)
-	b := NewBlueprintsApplier(nil, "", nil, nil, newTestSkillsClient(t, srv.URL), false, false, &bytes.Buffer{})
+	b := NewBlueprintsApplier(nil, "", nil, nil, nil, newTestSkillsClient(t, srv.URL), false, false, &bytes.Buffer{})
 
 	sk := SkillFile{
 		Name:        "deploy",
@@ -122,7 +122,7 @@ func TestBlueprintSkillCreate_SetsProvenanceMetadata(t *testing.T) {
 
 func TestBlueprintSkillCreate_NoVersionLicense_OnlySource(t *testing.T) {
 	srv, s := newBlueprintSkillTestServer(t)
-	b := NewBlueprintsApplier(nil, "", nil, nil, newTestSkillsClient(t, srv.URL), false, false, &bytes.Buffer{})
+	b := NewBlueprintsApplier(nil, "", nil, nil, nil, newTestSkillsClient(t, srv.URL), false, false, &bytes.Buffer{})
 
 	sk := SkillFile{Name: "research", Description: "d", Content: "c", SourceFile: "skills/research/SKILL.md"}
 	r := b.blueprintSkill(context.Background(), sk, nil)
@@ -134,7 +134,7 @@ func TestBlueprintSkillCreate_NoVersionLicense_OnlySource(t *testing.T) {
 
 func TestBlueprintSkill_MatchingNameSkipsWithoutDuplicate(t *testing.T) {
 	srv, s := newBlueprintSkillTestServer(t)
-	b := NewBlueprintsApplier(nil, "", nil, nil, newTestSkillsClient(t, srv.URL), false, false, &bytes.Buffer{})
+	b := NewBlueprintsApplier(nil, "", nil, nil, nil, newTestSkillsClient(t, srv.URL), false, false, &bytes.Buffer{})
 
 	sk := SkillFile{Name: "deploy", Description: "d", Content: "c", Version: "1.0", SourceFile: "skills/deploy/SKILL.md"}
 
@@ -152,7 +152,7 @@ func TestBlueprintSkill_MatchingNameSkipsWithoutDuplicate(t *testing.T) {
 
 func TestBlueprintSkillUpdate_SendsProvenance(t *testing.T) {
 	srv, s := newBlueprintSkillTestServer(t)
-	b := NewBlueprintsApplier(nil, "", nil, nil, newTestSkillsClient(t, srv.URL), false, true /* upgrade */, &bytes.Buffer{})
+	b := NewBlueprintsApplier(nil, "", nil, nil, nil, newTestSkillsClient(t, srv.URL), false, true /* upgrade */, &bytes.Buffer{})
 
 	sk := SkillFile{
 		Name:        "deploy",
