@@ -546,11 +546,19 @@
   /* ---------- schema editor + derive dialogs (delegated) ---------- */
   /* Native <dialog> open/close driven by data attributes, so the markup needs
      no inline handlers and the behaviour survives HTMX swaps (the listeners
-     live on document). */
+     live on document). A dialog can be opened from inside a menu (a go-daisy
+     popover or a CSS dropdown), so close any open popover and drop focus
+     first: otherwise the menu lingers behind the modal, and native focus
+     restoration on close would return focus into it and reopen it. */
   document.addEventListener("click", function (ev) {
     var opener = ev.target.closest("[data-dialog-open]");
     if (opener) {
       ev.preventDefault();
+      if (window.goDaisy && window.goDaisy.popover && typeof window.goDaisy.popover.closeAll === "function") {
+        window.goDaisy.popover.closeAll();
+      }
+      var active = document.activeElement;
+      if (active && typeof active.blur === "function") active.blur();
       var dlg = document.getElementById(opener.getAttribute("data-dialog-open"));
       if (!dlg) return;
       if (typeof dlg.showModal === "function") dlg.showModal();

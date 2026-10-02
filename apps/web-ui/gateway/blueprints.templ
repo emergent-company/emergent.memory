@@ -24,7 +24,6 @@ templ BlueprintsPage(applied []AppliedBlueprint, upgrades []AvailableSchemaItem,
 		if loadErr != nil {
 			@pageError("Failed to load blueprints", loadErr)
 		} else {
-			@importSection()
 			@installedSection(applied, upgradeByName(upgrades))
 			@draftsSection(drafts)
 			@upgradesSection(upgrades)
@@ -32,6 +31,8 @@ templ BlueprintsPage(applied []AppliedBlueprint, upgrades []AvailableSchemaItem,
 		}
 	}
 	@deriveBlueprintDialog()
+	@importDialog()
+	@ui.PopoverScript()
 }
 
 templ blueprintsHeader(count int, ok bool) {
@@ -40,57 +41,109 @@ templ blueprintsHeader(count int, ok bool) {
 			@countBadgeLabel(countLabel(count, "blueprint", "blueprints"), "lucide--library")
 		}
 		@ui.Button(ui.ButtonProps{
-			Type:    ui.ButtonTypeLink,
-			Href:    "/blueprints/migrations",
-			Variant: ui.ButtonOutline,
-			Size:    ui.ButtonSM,
-			Icon:    "lucide--git-branch",
-		}) {
-			Migrations
-		}
-		@ui.Button(ui.ButtonProps{
 			Type:    ui.ButtonTypeButton,
 			Variant: ui.ButtonPrimary,
 			Size:    ui.ButtonSM,
-			Icon:    "lucide--save",
-			Attrs:   templ.Attributes{"data-dialog-open": "derive-blueprint-modal"},
+			Icon:    "lucide--download",
+			Attrs: templ.Attributes{
+				"data-dialog-open": "blueprint-import-modal",
+				"data-testid":      "blueprint-import-open",
+			},
 		}) {
-			Save as blueprint
+			Import
+		}
+		@blueprintActionsMenu()
+	}
+}
+
+// blueprintActionsMenu is the header overflow menu: the page's secondary
+// actions (Migrations, Save as blueprint) collapse into a kebab so the header
+// carries one primary action (Import) plus an options control. It reuses
+// go-daisy's Popover — the same component the project row-action menus use —
+// which owns positioning, click-away, Escape, exclusivity, and the truthful
+// aria-expanded state.
+templ blueprintActionsMenu() {
+	@ui.Popover(ui.PopoverRootProps{}) {
+		@ui.PopoverTrigger(ui.PopoverTriggerProps{
+			Class: "btn btn-ghost btn-sm btn-square",
+			Attrs: templ.Attributes{
+				"aria-haspopup": "menu",
+				"aria-label":    "Blueprint actions",
+				"data-testid":   "blueprints-actions-menu",
+			},
+		}) {
+			@ui.IconSpan("lucide--ellipsis-vertical", "size-5")
+		}
+		@ui.PopoverContent(ui.PopoverContentProps{
+			Placement: ui.PopoverBottomEnd,
+			Offset:    4,
+			Exclusive: true,
+			Class:     "w-48",
+			Attrs:     templ.Attributes{"role": "menu"},
+		}) {
+			<ul class="menu menu-sm p-1">
+				<li>
+					<a href="/blueprints/migrations" class="flex items-center gap-2" data-testid="blueprints-migrations-link">
+						@ui.IconSpan("lucide--git-branch", "size-4")
+						<span>Migrations</span>
+					</a>
+				</li>
+				<li>
+					<button type="button" class="flex items-center gap-2" data-dialog-open="derive-blueprint-modal" data-testid="blueprints-save-as-link">
+						@ui.IconSpan("lucide--save", "size-4")
+						<span>Save as blueprint</span>
+					</button>
+				</li>
+			</ul>
 		}
 	}
 }
 
-// importSection is the gallery's "Import from GitHub" surface: a repository URL
-// plus optional ref and token. Submitting posts to /blueprints/import, which
-// creates, publishes, and applies the blueprint. The token is only for private
-// repositories.
-templ importSection() {
-	@cardList("Import from GitHub", cardListProps{Margin: "mb-8"}) {
-		<div class="px-4 py-4">
-			<p class="text-muted mb-4 text-sm">Paste a GitHub repository URL to install the blueprint it contains. Add a ref for a branch or tag, and a token for a private repository.</p>
-			<form method="post" action="/blueprints/import" class="flex flex-col gap-4">
-				@form.FormControl("blueprint-import-url", "Repository URL", form.LabelAbove, "", "", nil) {
-					<input id="blueprint-import-url" name="url" type="url" required placeholder="https://github.com/org/repo" autocomplete="off" class="input w-full" data-testid="blueprint-import-url"/>
-				}
-				@form.FormControl("blueprint-import-ref", "Ref", form.LabelAbove, "Optional. Branch, tag, or commit to install.", "", nil) {
-					<input id="blueprint-import-ref" name="ref" type="text" placeholder="main or v1.2.3" autocomplete="off" class="input w-full font-mono" data-testid="blueprint-import-ref"/>
-				}
-				@form.FormControl("blueprint-import-token", "Access token", form.LabelAbove, "Optional. Needed only for a private repository.", "", nil) {
-					<input id="blueprint-import-token" name="token" type="password" autocomplete="off" class="input w-full" data-testid="blueprint-import-token"/>
-				}
-				@form.FormActions("", "") {
-					@ui.Button(ui.ButtonProps{
-						Type:    ui.ButtonTypeSubmit,
-						Variant: ui.ButtonPrimary,
-						Size:    ui.ButtonSM,
-						Icon:    "lucide--download",
-						Attrs:   templ.Attributes{"data-testid": "blueprint-import-submit"},
-					}) {
-						Import
-					}
-				}
-			</form>
+// importDialog is the gallery's "Import from GitHub" modal, opened from the
+// header's Import button: a repository URL plus optional ref and token.
+// Submitting posts to /blueprints/import, which creates, publishes, and applies
+// the blueprint. The token is only for private repositories. It was previously
+// an inline card in the page body; the fields, ids, action, and test hooks are
+// unchanged.
+templ importDialog() {
+	@ui.Dialog(ui.DialogProps{ID: "blueprint-import-modal", BoxClass: "max-w-md", Attrs: templ.Attributes{"aria-labelledby": "blueprint-import-title"}}) {
+		<div class="mb-5 flex items-start justify-between gap-4">
+			<div>
+				<h3 id="blueprint-import-title" class="text-lg font-semibold">Import from GitHub</h3>
+				<p class="text-muted mt-0.5 text-sm">Paste a GitHub repository URL to install the blueprint it contains. Add a ref for a branch or tag, and a token for a private repository.</p>
+			</div>
+			@ui.Button(ui.ButtonProps{
+				Type:      ui.ButtonTypeButton,
+				Variant:   ui.ButtonGhost,
+				Size:      ui.ButtonSM,
+				Shape:     ui.ButtonShapeCircle,
+				Icon:      "lucide--x",
+				AriaLabel: "Close",
+				Attrs:     templ.Attributes{"data-dialog-close": "blueprint-import-modal"},
+			})
 		</div>
+		<form method="post" action="/blueprints/import" class="flex flex-col gap-4">
+			@form.FormControl("blueprint-import-url", "Repository URL", form.LabelAbove, "", "", nil) {
+				<input id="blueprint-import-url" name="url" type="url" required placeholder="https://github.com/org/repo" autocomplete="off" class="input w-full" data-testid="blueprint-import-url"/>
+			}
+			@form.FormControl("blueprint-import-ref", "Ref", form.LabelAbove, "Optional. Branch, tag, or commit to install.", "", nil) {
+				<input id="blueprint-import-ref" name="ref" type="text" placeholder="main or v1.2.3" autocomplete="off" class="input w-full font-mono" data-testid="blueprint-import-ref"/>
+			}
+			@form.FormControl("blueprint-import-token", "Access token", form.LabelAbove, "Optional. Needed only for a private repository.", "", nil) {
+				<input id="blueprint-import-token" name="token" type="password" autocomplete="off" class="input w-full" data-testid="blueprint-import-token"/>
+			}
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--download",
+					Attrs:   templ.Attributes{"data-testid": "blueprint-import-submit"},
+				}) {
+					Import
+				}
+			}
+		</form>
 	}
 }
 
