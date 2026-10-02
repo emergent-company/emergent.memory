@@ -169,41 +169,7 @@ func (p *schemaProviderAdapter) GetProjectSchemas(ctx context.Context, projectID
 				continue
 			}
 
-			schema := agents.ObjectSchema{Name: typeName, Version: pack.Version}
-
-			if desc, ok := schemaMap["description"].(string); ok {
-				schema.Description = desc
-			}
-
-			if props, ok := schemaMap["properties"].(map[string]any); ok {
-				schema.Properties = make(map[string]agents.PropertyDef)
-				for propName, propRaw := range props {
-					propMap, ok := propRaw.(map[string]any)
-					if !ok {
-						continue
-					}
-					propDef := agents.PropertyDef{}
-					if t, ok := propMap["type"].(string); ok {
-						propDef.Type = t
-					}
-					if d, ok := propMap["description"].(string); ok {
-						propDef.Description = d
-					}
-					schema.Properties[propName] = propDef
-				}
-			}
-
-			if req, ok := schemaMap["required"].([]any); ok {
-				for _, r := range req {
-					if s, ok := r.(string); ok {
-						schema.Required = append(schema.Required, s)
-					}
-				}
-			}
-
-			schema.ApplyConfig(schemaMap)
-
-			objectSchemas[typeName] = schema
+			objectSchemas[typeName] = objectSchemaFromMap(typeName, pack.Version, schemaMap)
 		}
 
 		for typeName, schema := range parseRelationshipTypeSchemasToMap(pack.RelationshipTypeSchemas) {
@@ -461,6 +427,50 @@ func labelToTypeKey(label string) string {
 		key = strings.ReplaceAll(key, "__", "_")
 	}
 	return key
+}
+
+// objectSchemaFromMap converts a single decoded object-type definition (the
+// per-type JSON object from object_type_schemas, after array/map normalisation)
+// into the agents.ObjectSchema the graph service consumes. Work configuration
+// (boardEnabled/allowedStatuses and the operational skip flags) is applied via
+// ApplyConfig, so the graph path enforces the same per-type work config as the
+// schemas/compiled-types path.
+func objectSchemaFromMap(typeName, version string, schemaMap map[string]any) agents.ObjectSchema {
+	schema := agents.ObjectSchema{Name: typeName, Version: version}
+
+	if desc, ok := schemaMap["description"].(string); ok {
+		schema.Description = desc
+	}
+
+	if props, ok := schemaMap["properties"].(map[string]any); ok {
+		schema.Properties = make(map[string]agents.PropertyDef)
+		for propName, propRaw := range props {
+			propMap, ok := propRaw.(map[string]any)
+			if !ok {
+				continue
+			}
+			propDef := agents.PropertyDef{}
+			if t, ok := propMap["type"].(string); ok {
+				propDef.Type = t
+			}
+			if d, ok := propMap["description"].(string); ok {
+				propDef.Description = d
+			}
+			schema.Properties[propName] = propDef
+		}
+	}
+
+	if req, ok := schemaMap["required"].([]any); ok {
+		for _, r := range req {
+			if s, ok := r.(string); ok {
+				schema.Required = append(schema.Required, s)
+			}
+		}
+	}
+
+	schema.ApplyConfig(schemaMap)
+
+	return schema
 }
 
 // parseObjectTypeSchemasToMap normalises the two storage formats used for
