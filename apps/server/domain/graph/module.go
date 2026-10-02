@@ -15,6 +15,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/branches"
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
+	"github.com/emergent-company/emergent.memory/pkg/schemanorm"
 )
 
 // Module provides graph domain dependencies.
@@ -480,54 +481,15 @@ func objectSchemaFromMap(typeName, version string, schemaMap map[string]any) age
 //   - Map format  (blueprint seeds / epf-engine v3): {TypeName: {label, description, properties, ...}, ...}
 //
 // Returns a map of typeName → raw JSON definition, or nil on empty/invalid input.
+//
+// The parsing lives in pkg/schemanorm so the graph runtime path and the
+// schemas/compiled-types path (domain/schemas) cannot drift: a previous copy in
+// this file reconstructed array entries with only properties/label/description
+// and dropped the object-driven work configuration, making runtime work-status
+// enforcement inert. domain/schemas imports domain/graph, so the shared helper
+// cannot live in either domain without an import cycle.
 func parseObjectTypeSchemasToMap(data json.RawMessage) map[string]json.RawMessage {
-	if len(data) == 0 {
-		return nil
-	}
-
-	// Try array format first.
-	var arr []struct {
-		Name        string          `json:"name"`
-		Label       string          `json:"label"`
-		Description string          `json:"description"`
-		Properties  json.RawMessage `json:"properties"`
-	}
-	if err := json.Unmarshal(data, &arr); err == nil && len(arr) > 0 {
-		result := make(map[string]json.RawMessage, len(arr))
-		for _, item := range arr {
-			if item.Name == "" {
-				continue
-			}
-			schema := map[string]json.RawMessage{}
-			if len(item.Properties) > 0 {
-				schema["properties"] = item.Properties
-			}
-			if item.Label != "" {
-				lb, _ := json.Marshal(item.Label)
-				schema["label"] = lb
-			}
-			if item.Description != "" {
-				desc, _ := json.Marshal(item.Description)
-				schema["description"] = desc
-			}
-			schemaBytes, err := json.Marshal(schema)
-			if err != nil {
-				continue
-			}
-			result[item.Name] = schemaBytes
-		}
-		if len(result) > 0 {
-			return result
-		}
-	}
-
-	// Fall back to map format.
-	var objMap map[string]json.RawMessage
-	if err := json.Unmarshal(data, &objMap); err == nil && len(objMap) > 0 {
-		return objMap
-	}
-
-	return nil
+	return schemanorm.ObjectTypeSchemasToMap(data)
 }
 
 // parseRelationshipTypeSchemasToMap normalises the two JSONB storage formats for
