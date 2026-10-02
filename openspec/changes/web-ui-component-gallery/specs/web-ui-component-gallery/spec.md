@@ -58,7 +58,7 @@ For every catalog entry the gallery SHALL show the components it uses, the call 
 
 ### Requirement: Components render in isolated previews with sample data
 
-The gallery SHALL render each catalog entry against sample data in an isolated preview that does not share the page's DOM. Interactive components SHALL be previewable without their overlays escaping the preview, and component ids SHALL NOT collide across previews.
+The gallery SHALL render each catalog entry against sample data in an isolated, render-only preview that does not share the page's DOM. The preview document SHALL load no client scripts, so a preview cannot mutate the backend and no overlay can escape it; component ids SHALL NOT collide across previews. Scripted/interactive previews are out of scope for this change.
 
 #### Scenario: Preview renders with fixture data
 
@@ -70,10 +70,10 @@ The gallery SHALL render each catalog entry against sample data in an isolated p
 - **WHEN** a component has no curated fixture
 - **THEN** it is previewed through an authored default render closure passing zero values, and is marked as needing a fixture when that render is empty (no non-whitespace text and no element) or panics on a nil slot; a panic SHALL NOT crash the gallery or the preview
 
-#### Scenario: Interactive previews are isolated
+#### Scenario: Previews are render-only
 
-- **WHEN** a component that opens a dialog, dropdown, or overlay is previewed
-- **THEN** the overlay is confined to the preview area and does not cover the gallery page
+- **WHEN** any component is previewed
+- **THEN** the preview document loads no client scripts, so its markup renders statically and no overlay can open or escape the preview
 
 #### Scenario: Preview cannot mutate the backend
 
