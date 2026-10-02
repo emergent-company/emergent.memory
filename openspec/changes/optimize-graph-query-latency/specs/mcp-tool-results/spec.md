@@ -23,17 +23,3 @@ The `entity-type-list` MCP tool SHALL NOT compute relationship type counts unles
 
 - **WHEN** the relationship-type aggregation runs
 - **THEN** its SQL filters `gr.supersedes_id IS NULL`, `src.project_id`, and `dst.project_id`, and its arguments are ordered to match the SQL placeholders
-
-### Requirement: search-hybrid relationship candidates are opt-in
-
-The `search-hybrid` MCP tool SHALL NOT include relationship (triple) candidates in its fused results unless the caller passes `include_relationships: true`. By default the tool runs faster, returning only entity/text candidates.
-
-#### Scenario: Default search omits relationship candidates
-
-- **WHEN** a client calls `search-hybrid` without `include_relationships`
-- **THEN** the result contains entity/text candidates only, and the relationship-vector search leg is skipped
-
-#### Scenario: Opt-in search includes relationship candidates
-
-- **WHEN** a client calls `search-hybrid` with `include_relationships: true`
-- **THEN** the result may include relationship (triple) candidates

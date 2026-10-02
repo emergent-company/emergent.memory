@@ -966,7 +966,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					},
 					"limit": {
 						Type:        "number",
-						Description: "Maximum number of results (default: 20, max: 100)",
+						Description: fmt.Sprintf("Maximum number of results (default: 20, max: 100). When field_strategy=\"full\" the effective limit is capped to %d to bound the returned properties payload.", s.effectiveEntityQueryFullMaxLimit()),
 						Minimum:     intPtr(1),
 						Maximum:     intPtr(100),
 						Default:     20,
@@ -1000,10 +1000,6 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 						Type:        "string",
 						Description: "Controls property depth. minimal=no properties/name, compact=name only (default), full=all properties.",
 						Enum:        []string{"minimal", "compact", "full"},
-					},
-					"include_relationships": {
-						Type:        "boolean",
-						Description: "Include relationship (triple) candidates in the fused search results. Default false for speed; set true only when the question involves relationships between entities.",
 					},
 				},
 				Required: []string{"query"},

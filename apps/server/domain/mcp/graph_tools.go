@@ -113,9 +113,12 @@ func parseMinScoreArg(args map[string]any) (*float32, error) {
 
 // buildHybridUnifiedRequest assembles the unified-search request from the
 // search-hybrid args. Isolated as a pure function so the arg→request mapping
-// (including the include_relationships plumbing) can be unit-tested without a
-// database.
-func buildHybridUnifiedRequest(args map[string]any, query string, limit int, types, labels []string, minScore *float32, namespaceFilter string, includeRelationships bool) *search.UnifiedSearchRequest {
+// can be unit-tested without a database.
+func buildHybridUnifiedRequest(args map[string]any, query string, limit int, types, labels []string, minScore *float32, namespaceFilter string) *search.UnifiedSearchRequest {
+	// Relationship (triple) candidates are never surfaced to MCP consumers:
+	// mapUnifiedToSearchResponse only maps graph/text items, so running the
+	// relationship-vector leg is pure waste. Force-skip it unconditionally.
+	includeRelationships := false
 	req := &search.UnifiedSearchRequest{
 		Query:                query,
 		Limit:                limit,
@@ -175,9 +178,6 @@ func (s *Service) executeHybridSearch(ctx context.Context, projectID string, arg
 		limit = 100
 	}
 
-	// Relationship (triple) candidates are opt-in: default false for speed.
-	includeRelationships, _ := args["include_relationships"].(bool)
-
 	// Bound the returned properties payload under the full field strategy, the
 	// same way entity-query does, so a full-properties search cannot pull a huge
 	// payload in one page. Only lower, never raise, the caller's limit.
@@ -225,7 +225,7 @@ func (s *Service) executeHybridSearch(ctx context.Context, projectID string, arg
 	}
 
 	if s.searchSvc != nil {
-		unifiedReq := buildHybridUnifiedRequest(args, query, limit, types, labels, minScore, namespaceFilter, includeRelationships)
+		unifiedReq := buildHybridUnifiedRequest(args, query, limit, types, labels, minScore, namespaceFilter)
 
 		res, err := s.searchSvc.Search(ctx, projectUUID, unifiedReq, nil)
 		if err != nil {

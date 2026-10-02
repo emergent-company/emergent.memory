@@ -318,6 +318,15 @@ func (s *Service) defaultFusionStrategy(strat UnifiedSearchFusionStrategy) Unifi
 // lexical-only, matching the existing error path.
 const queryEmbedTimeout = 20 * time.Second
 
+// embedQueryBounded embeds the query with the shared provider timeout, so a
+// slow or hung provider cannot stall the caller. Callers must ensure
+// s.embeddings is non-nil.
+func (s *Service) embedQueryBounded(ctx context.Context, query string) ([]float32, error) {
+	embedCtx, cancel := context.WithTimeout(ctx, queryEmbedTimeout)
+	defer cancel()
+	return s.embeddings.EmbedQuery(embedCtx, query)
+}
+
 // embedQuery generates a single embedding for all search goroutines
 func (s *Service) embedQuery(ctx context.Context, query string) []float32 {
 	if s.embeddings == nil {
@@ -325,9 +334,7 @@ func (s *Service) embedQuery(ctx context.Context, query string) []float32 {
 	}
 	// Bound the provider call independently of the caller's context so a stuck
 	// embedding service degrades the search to lexical-only rather than hanging it.
-	embedCtx, cancel := context.WithTimeout(ctx, queryEmbedTimeout)
-	defer cancel()
-	vec, err := s.embeddings.EmbedQuery(embedCtx, query)
+	vec, err := s.embedQueryBounded(ctx, query)
 	if err != nil {
 		s.log.Warn("failed to generate query embedding, falling back to lexical-only search", logger.Error(err))
 		return nil
@@ -482,7 +489,7 @@ func (s *Service) executeGraphSearch(ctx context.Context, projectID uuid.UUID, r
 	// Use pre-computed vector if available, otherwise embed independently (standalone call path)
 	vector := queryVector
 	if len(vector) == 0 && s.embeddings != nil {
-		vec, err := s.embeddings.EmbedQuery(ctx, req.Query)
+		vec, err := s.embedQueryBounded(ctx, req.Query)
 		if err != nil {
 			s.log.Warn("failed to generate query embedding for graph search", logger.Error(err))
 			// Continue with lexical-only search
@@ -553,7 +560,7 @@ func (s *Service) executeTextSearch(ctx context.Context, projectID uuid.UUID, re
 	// Use pre-computed vector if available, otherwise embed independently (standalone call path)
 	vector := queryVector
 	if len(vector) == 0 && s.embeddings != nil {
-		vec, err := s.embeddings.EmbedQuery(ctx, req.Query)
+		vec, err := s.embedQueryBounded(ctx, req.Query)
 		if err != nil {
 			s.log.Warn("failed to generate query embedding for text search", logger.Error(err))
 			// Continue with lexical-only search
@@ -604,7 +611,7 @@ func (s *Service) executeRelationshipSearch(ctx context.Context, projectID uuid.
 	// Use pre-computed vector if available, otherwise embed independently (standalone call path)
 	vector := queryVector
 	if len(vector) == 0 && s.embeddings != nil {
-		vec, err := s.embeddings.EmbedQuery(ctx, req.Query)
+		vec, err := s.embedQueryBounded(ctx, req.Query)
 		if err != nil {
 			s.log.Warn("failed to generate query embedding for relationship search", logger.Error(err))
 			return nil, nil, nil

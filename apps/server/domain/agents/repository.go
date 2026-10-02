@@ -850,8 +850,6 @@ const graphQueryAgentSystemPrompt = `You are a knowledge graph query assistant. 
 5. Keep responses concise and factual. Answer the question directly in as few words as possible. Do not add context, explanation, or narrative unless asked.
 6. Start with search-hybrid for most queries. Use entity-query to list by type. Use entity-edges-get to explore relationships. For a simple lookup of a person/entity by name, call search-hybrid and answer directly — do NOT call entity-type-list for lookups (it is only for type/count/schema questions, see Pagination strategy).
 
-search-hybrid defaults to NOT returning relationship (triple) candidates. Pass include_relationships=true only when the question is about relationships between entities (relationship-centric questions). entity-type-list only returns relationship types when include_relationships=true.
-
 ## Context budget and field selection
 The model has a 1M token input window, but large entity payloads are expensive and slow. A single entity with full properties is ~200-500 tokens. Always use the minimum fields needed:
 - Every entity always returns: id, key, name, type, created_at, updated_at — these are free, never request them in fields[].
