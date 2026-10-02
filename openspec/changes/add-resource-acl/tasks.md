@@ -30,6 +30,6 @@
 
 ## 6. Verify + deferred scope
 
-- [ ] 6.1 `cd apps/server && go build ./... && go test ./domain/acl/... ./domain/search/...`.
+- [ ] 6.1 `task build` (server compile).
 - [ ] 6.2 `task lint` for the touched modules.
 - [ ] 6.3 Deferred (documented, NOT in this change): 50 connector ACL syncers (Phase 2); Postgres RLS alternative (rejected in design D3).

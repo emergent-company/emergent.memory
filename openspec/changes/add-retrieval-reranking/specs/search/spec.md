@@ -13,8 +13,3 @@ The search pipeline SHALL support an optional post-fusion rerank stage that runs
 
 - **WHEN** a reranker is configured
 - **THEN** the top-N fused candidates SHALL be re-scored by the reranker and re-ordered by their rerank scores, and results beyond top-N SHALL retain their fused order
-
-#### Scenario: Rerank applies only to the configured request scope
-
-- **WHEN** reranking is configured for a specific request scope or surface
-- **THEN** only searches in that scope SHALL be reranked; other surfaces SHALL return the fused order unchanged

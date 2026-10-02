@@ -9,8 +9,8 @@
 
 ## 2. Config + validation (TDD)
 
-- [ ] 2.1 Add `RerankModel` + `RerankTopN` config to `domain/search` (env `RERANK_MODEL`/`RERANK_TOP_N` and/or modelconfig-driven), default empty → off.
-- [ ] 2.2 (TDD) Config validation unit test: empty model → off; unknown model → validation error; `RerankTopN <= 0` or above ceiling → validation error; valid config passes.
+- [ ] 2.1 Add `RerankModel` + `RerankTopN` config to `domain/search`, resolved from `domain/modelconfig` (canonical source) with env `RERANK_MODEL`/`RERANK_TOP_N` as bootstrap fallback only; default empty → off.
+- [ ] 2.2 (TDD) Config validation unit test: empty model → off; unknown model → validation error; `RerankTopN <= 0` or `> 100` → validation error; valid config passes.
 
 ## 3. Stage placement in `Search` (TDD)
 
@@ -26,6 +26,6 @@
 
 ## 5. Verify
 
-- [ ] 5.1 `cd apps/server && go build ./... && go test ./pkg/rerank/... ./domain/search/...`.
+- [ ] 5.1 `task build` (server compile).
 - [ ] 5.2 `task lint` for the touched modules.
 - [ ] 5.3 Deferred (documented): evaluation of rerank quality against the `answer-feedback` signal once both land.

@@ -58,11 +58,22 @@ service holds a `Reranker` (nil when unconfigured) and calls it only when non-ni
 
 ### D3 — Cost/latency bound: top-N only
 
-The reranker receives at most `RerankTopN` (default ≈ 50, validated to a sane ceiling)
+The reranker receives at most `RerankTopN` (default ≈ 50, and **SHALL NOT exceed 100**)
 fused candidates, truncated after the min-score filter. Candidates beyond top-N are not
 re-scored; their relative order is preserved and they are appended after the reranked
 block. This bounds provider cost to a constant per search regardless of candidate-set
-size, which is what makes rerank viable in production.
+size, which is what makes rerank viable in production. Validation rejects `RerankTopN
+<= 0` or `> 100` at startup.
+
+### D3b — One canonical config source
+
+`RerankModel` and `RerankTopN` SHALL be resolved from **one** canonical source:
+`domain/modelconfig` (model config). Environment variables (`RERANK_MODEL`,
+`RERANK_TOP_N`) exist only as a bootstrap fallback to seed/synthesize a modelconfig entry
+when none is present. Field/flag casing SHALL be `RerankModel` / `RerankTopN` everywhere
+(no mixed `rerankModel` / `rerank_model` drift). There is **no per-request scope** for
+reranking: configuration applies to the whole search surface; the stage either runs (when
+configured) or is skipped (when not).
 
 ### D4 — Fallback is lexical/no-op
 
@@ -84,9 +95,9 @@ guarantee of `retrieval-trace-persistence` intact for reranked searches.
   top-N bound (D3) + a hard timeout + fallback (D4). Default OFF means no regression for
   operators who don't opt in.
 - **Cost blow-up under load.** Unbounded reranking would multiply token spend. Mitigation:
-  constant top-N per search; documented ceiling on `RerankTopN`.
+  constant top-N per search; `RerankTopN` ceiling of 100.
 - **Quality of LLM-as-reranker parsing.** LLM ranked-list output can be malformed.
   Mitigation: strict parser + fallback to fused order on parse failure (D4).
-- **Config drift.** Two config surfaces (`domain/search` env vs `modelconfig`). Mitigation:
-  resolve through `modelconfig` where it exists, fall back to env; a single validation
-  path (spec requirement).
+- **Config drift.** One canonical config source (`domain/modelconfig`), env as bootstrap
+  fallback only (D3b); a single validation path rejects invalid model / out-of-range
+  top-N.

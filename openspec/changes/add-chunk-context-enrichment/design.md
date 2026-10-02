@@ -10,7 +10,7 @@ cheap variant at O(documents) cost.
 
 **Goals**
 
-- A document title + one-line summary prefix on the embedding input.
+- A document filename (or `source_url`) + one-line summary prefix on the embedding input.
 - Summary computed once per document, cached on the document.
 - Re-embed a document's chunks when the summary changes.
 - Zero change to the stored retrieval text.
@@ -25,11 +25,13 @@ cheap variant at O(documents) cost.
 
 ### D1 — Cheap variant: prefix, not rewrite
 
-The embedded input becomes `title + "\n" + summary + "\n" + chunk.Text`. This is a
-deterministic string concatenation — no per-chunk LLM pass. It gives the embedding model
-document-level grounding at effectively zero marginal cost beyond the one summary call per
-document. Full contextual RAG (rewrite each chunk) is rejected: it multiplies token spend
-by the chunk count and requires re-embedding semantics that are out of scope here.
+The embedded input becomes `filename_or_source_url + "\n" + summary + "\n" + chunk.Text`,
+where `filename_or_source_url` is the document's `filename` and, when that is empty, its
+`source_url`. This is a deterministic string concatenation — no per-chunk LLM pass. It
+gives the embedding model document-level grounding at effectively zero marginal cost
+beyond the one summary call per document. Full contextual RAG (rewrite each chunk) is
+rejected: it multiplies token spend by the chunk count and requires re-embedding
+semantics that are out of scope here.
 
 ### D2 — Summary stored on the document, computed once
 
@@ -46,13 +48,15 @@ re-embedding has a stable trigger (summary value change).
 retrieval-payload contract and the exact-packet-reproducibility of
 `retrieval-trace-persistence`. The trace/retrieval continues to return raw `chunk.Text`.
 
-### D4 — Re-embed via the existing sweep/job path
+### D4 — Re-embed via `kb.chunk_embedding_jobs`
 
 A summary change is detected at summary-recompute time (document edit or a backfill job);
-when the new summary differs, the document's chunks are enqueued for re-embedding through
-the existing embedding job/sweep path (`embedding-sweep-ceilings`). No new queue. This
-keeps re-embed admission and budget behaviour consistent with the existing sweep rather
-than inventing a parallel path.
+when the new summary differs, the document's chunks are enqueued into
+`kb.chunk_embedding_jobs` (or routed through the document re-embed handler). The sweep
+worker (`extraction/embedding_sweep_worker.go`) only backfills objects + relationships
+into `kb.graph_embedding_jobs` and does **not** touch chunks, so it is not the re-embed
+path here. No new queue is introduced; chunk re-embed rides the existing chunk embedding
+job lifecycle and its dequeue admission.
 
 ## Risks / Trade-offs
 
@@ -62,7 +66,7 @@ than inventing a parallel path.
   text (graceful fallback requirement) — no embedding blockage.
 - **Re-embed storms.** A document edit that changes the summary enqueues all its chunks.
   Mitigation: only enqueue when the summary value actually differs (not on every edit), and
-  ride the existing sweep's admission controls.
+  ride the existing `kb.chunk_embedding_jobs` dequeue admission.
 - **Determinism.** The prefix must be deterministic so re-embedding the same chunk with the
   same summary yields a stable vector; the summary is cached (not recomputed per chunk), so
   the prefix is stable across a document's chunks.

@@ -38,6 +38,11 @@ extraction → graph. This change is that framework, deliberately framework-firs
 
 ### Modified Capabilities
 
+<!-- None: this change consumes existing pipelines but writes no delta against an
+existing capability spec. -->
+
+### Related / Consumed Capabilities
+
 - `document-extraction` (consumed): ingested source documents flow through the existing
   extraction pipeline unchanged.
 - `mcp-connector` (consumed): the MCP relay acts as the source transport bus.
@@ -45,8 +50,8 @@ extraction → graph. This change is that framework, deliberately framework-firs
 ## Impact
 
 - **DB** (`apps/server/migrations/`): `kb.sources` (reintroduced as a durable model, not
-  the removed `kb.data_source_integrations`) + `kb.source_sync_jobs` (or reuse the
-  existing scheduler/job-ledger) with sync state/cursor.
+  the removed `kb.data_source_integrations`) + `kb.source_sync_jobs` with sync
+  state/cursor.
 - **Server** (`apps/server/domain/`): new `sources` domain (CRUD + auth config + sync
   orchestration); reuse `domain/discoveryjobs` (schema auto-discovery), `domain/mcpregistry`
   + `domain/mcprelay` (transport), and the existing ingestion pipeline

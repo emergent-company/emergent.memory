@@ -31,9 +31,14 @@ that is **off by default** and bounds its cost/latency to the top-N fused candid
 
 ### Modified Capabilities
 
-- `search`: the fused-result pipeline gains an optional rerank stage before assembly.
+- `search`: the fused-result pipeline gains an optional rerank stage before assembly
+  (delta in `specs/search/spec.md`).
+
+### Related / Consumed Capabilities
+
 - `retrieval-trace-persistence`: the trace records rerank metadata (model, top-N, scores,
-  fallback flag).
+  fallback flag). This is described only in the `retrieval-reranking` delta; no delta is
+  written for `retrieval-trace-persistence`.
 
 ## Impact
 

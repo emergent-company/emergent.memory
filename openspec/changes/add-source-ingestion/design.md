@@ -60,12 +60,15 @@ transport, and keeps documents clean (source attribution via a single nullable
 `source_id`, added separately). The proposal documents this difference so the framework
 does not silently reintroduce the removed coupling.
 
-### D5 — Sync job lifecycle reuses scheduler/job-ledger
+### D5 — Sync job lifecycle: scheduler triggers, `kb.source_sync_jobs` owns state
 
-The job lifecycle is implemented as a scheduler-backed job (or a dedicated
-`kb.source_sync_jobs` table) with a state machine `queued → running → failed|cancelled|success`.
-Cancellation sets a flag checked by the worker between batches. Reuse `domain/scheduler`
-and the existing job-ledger reporting (`job-ledger-reporting`) rather than a new queue.
+`domain/scheduler` is a `robfig/cron` periodic-task runner (no job ledger), so it does
+**not** hold sync state. Its role is to *trigger* syncs (periodic cron) or an on-demand
+request triggers a sync directly. The sync **state machine** lives in the dedicated
+`kb.source_sync_jobs` table (mirroring `kb.chunk_embedding_jobs`): rows transition
+`queued → running → failed|cancelled|success`, cancellation sets a flag checked by the
+worker between batches, and the per-job error is stored on the row. No job-ledger reuse —
+there is none to reuse.
 
 ## Risks / Trade-offs
 

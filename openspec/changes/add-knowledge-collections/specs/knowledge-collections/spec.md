@@ -59,12 +59,12 @@ A user SHALL be able to add and remove items from a collection. Removal SHALL de
 
 ### Requirement: Membership is project-scoped
 
-Collection items SHALL only reference objects belonging to the same project as the collection. The membership and item read paths SHALL enforce project scope.
+Collection items SHALL only reference objects belonging to the same project as the collection. Cross-project membership SHALL be rejected at **write time**: adding an item whose object belongs to a different project SHALL fail. (This is distinct from search filtering, where naming a cross-project collection id simply returns no results at read time.)
 
-#### Scenario: Cross-project item rejected
+#### Scenario: Cross-project item rejected at write
 
 - **WHEN** a caller attempts to add an item from a different project to a collection
-- **THEN** the operation is rejected
+- **THEN** the operation is rejected (write-time), and no membership row is created
 
 ### Requirement: Canonical id items resolve to the graph head
 

@@ -51,9 +51,21 @@ collection ids and project. Because the three legs have different tables
 (`kb.documents` for text, graph object tables + `kb.graph_relationships` for
 graph/relationship), the predicate is translated per leg but shares one resolver
 function (`resolveCollectionItemIDs(ctx, projectID, collectionIDs)`) that returns the
-allowed `document_id`s / `canonical_id`s / source refs. Membership is resolved once per
-request, then applied as a filter — never as a post-hoc in-memory filter on the full
-candidate set (that would break candidate caps and scores).
+allowed `document_id`s / head-resolved `canonical_id`s / source refs. Membership is
+resolved once per request, then applied as a filter — never as a post-hoc in-memory
+filter on the full candidate set (that would break candidate caps and scores).
+
+**Relationship leg rule** (item types are `{document, canonical, source}` with no
+relationship type): the relationship leg is restricted to relationships whose `src` OR
+`dst` head-resolved canonical id is in the collection's canonical set. A relationship
+matches a collection when either endpoint belongs to it.
+
+**Enforcement split (write vs read).** Cross-project item membership is rejected at
+**write time** (the `domain/collections` service refuses to add an item whose object
+belongs to a different project). Cross-project *search* filtering is a **read** concern:
+a search that names a collection id from another project simply resolves to an empty
+allowed-id set and returns nothing — it is not a write-time error. These are two distinct
+surfaces and do not diverge: write rejects, read filters.
 
 ### D4 — Canonical head resolution
 

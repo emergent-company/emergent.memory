@@ -2,12 +2,17 @@
 
 ### Requirement: Unified search filters by collection
 
-The unified search SHALL accept an optional list of collection ids on the request. When collection ids are present, each leg (graph, text/chunk, relationship) SHALL be restricted to items that belong to **every** listed collection (AND semantics) within the project.
+The unified search SHALL accept an optional list of collection ids on the request. When collection ids are present, each leg (graph, text/chunk, relationship) SHALL be restricted to items that belong to **every** listed collection (AND semantics) within the project. The relationship leg has no direct collection item type; it SHALL be restricted to relationships whose `src` OR `dst` head-resolved canonical id is in the collection's canonical set.
 
 #### Scenario: Collection filter narrows all legs
 
 - **WHEN** a unified search runs with one or more collection ids
 - **THEN** graph, text/chunk, and relationship legs SHALL each return only items that are members of all specified collections
+
+#### Scenario: Relationship leg uses canonical membership
+
+- **WHEN** a unified search runs with a collection that contains graph objects by canonical id
+- **THEN** the relationship leg SHALL return only relationships whose `src` OR `dst` head-resolved canonical id is among the collection's canonical set
 
 #### Scenario: No collections behaves as today
 
@@ -17,7 +22,7 @@ The unified search SHALL accept an optional list of collection ids on the reques
 #### Scenario: Collection from another project yields nothing
 
 - **WHEN** a search requests collection ids that belong to a different project
-- **THEN** the request SHALL return no results for those collections rather than leaking cross-project items
+- **THEN** the request SHALL return no results for those collections rather than leaking cross-project items (read-filter, not a write rejection)
 
 ### Requirement: Multiple collections are AND-combined
 

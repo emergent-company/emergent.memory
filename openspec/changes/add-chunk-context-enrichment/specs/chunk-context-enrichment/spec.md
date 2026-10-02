@@ -14,28 +14,28 @@ The document summary used for chunk embedding context SHALL be computed once per
 - **WHEN** a document's summary is computed
 - **THEN** it is stored on the document (`kb.documents`), not duplicated onto each chunk
 
-### Requirement: Embedding input is title + summary + chunk text
+### Requirement: Embedding input is filename/source_url + summary + chunk text
 
-At embed time, the text passed to the embedding model SHALL be the document title plus the cached one-line document summary plus the chunk text. The raw chunk text alone SHALL no longer be the embedded input when a summary is available.
+At embed time, the text passed to the embedding model SHALL be the document filename (falling back to `source_url` when the filename is empty) plus the cached one-line document summary plus the chunk text. The raw chunk text alone SHALL no longer be the embedded input when a summary is available.
 
 #### Scenario: Embedding input includes context
 
 - **WHEN** a chunk is embedded and its document has a cached summary
-- **THEN** the embedding input SHALL contain the document title, the summary, and the chunk text
+- **THEN** the embedding input SHALL contain the document filename/source_url, the summary, and the chunk text
 
 #### Scenario: Applied deterministically to all chunks
 
 - **WHEN** two chunks of the same document are embedded
-- **THEN** each SHALL receive the same title and summary prefix, followed by its own chunk text
+- **THEN** each SHALL receive the same filename/source_url and summary prefix, followed by its own chunk text
 
 ### Requirement: Graceful fallback when summary is missing
 
-When a document has no cached summary (not yet computed, computation failed, or the document has no title), embedding SHALL fall back to the raw chunk text and SHALL NOT fail the chunk's embedding.
+When a document has no cached summary (not yet computed, computation failed, or the document has no filename and no source_url), embedding SHALL fall back to the raw chunk text and SHALL NOT fail the chunk's embedding.
 
 #### Scenario: Missing summary falls back to raw text
 
 - **WHEN** a chunk is embedded and its document has no summary
-- **THEN** the chunk is embedded using its raw text (possibly with the title if available), and embedding does not fail
+- **THEN** the chunk is embedded using its raw text (possibly with the filename/source_url if available), and embedding does not fail
 
 #### Scenario: Summary computation failure does not block embedding
 
@@ -44,7 +44,7 @@ When a document has no cached summary (not yet computed, computation failed, or 
 
 ### Requirement: Re-embed on summary change
 
-When a document's cached summary changes, its chunks SHALL be re-embedded using the new summary, via the existing embedding sweep/job path.
+When a document's cached summary changes, its chunks SHALL be re-embedded using the new summary, via the chunk embedding job path (`kb.chunk_embedding_jobs` or the document re-embed handler).
 
 #### Scenario: Summary change triggers re-embed
 

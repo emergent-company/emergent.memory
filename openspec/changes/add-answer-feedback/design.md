@@ -36,37 +36,58 @@ query log would duplicate data and drift from what actually ran. Instead the exi
 whitespace-collapsed). The read path is a new `ListByProject`/`ListByUser` on
 `TraceStore`, filtering on the existing `project_id` and new `user_id`.
 
+`SearchContext` (`domain/search/dto.go`) currently carries only `{OrgID, ProjectID,
+Scopes}` — no user. This change adds `UserID uuid.UUID` to `SearchContext` and populates
+it in `domain/search/handler.go` (`Search` already holds `user := auth.MustGetUser(c)`,
+so `UserID` is set from that user). The service then reads `searchCtx.UserID` to stamp
+the trace. Traces written by unauthenticated/internal paths leave `UserID` as zero/NULL.
+
 ### D2 — Feedback row is keyed to (message_id, user_id)
 
 `kb.answer_feedback`:
 
 ```
-id          UUID PK
-project_id  UUID NOT NULL
-message_id  UUID NOT NULL          -- FK kb.chat_messages
-trace_id    UUID                   -- FK kb.retrieval_traces (nullable)
-user_id     UUID NOT NULL          -- submitting user
-thumbs      SMALLINT               -- 1 = up, -1 = down
-comment     TEXT
-created_at  TIMESTAMPTZ NOT NULL
-updated_at  TIMESTAMPTZ NOT NULL
+id                  UUID PK
+project_id          UUID NOT NULL
+message_id          UUID NOT NULL          -- FK kb.chat_messages (id)
+retrieval_trace_id  UUID                   -- FK kb.retrieval_traces (id) (nullable)
+user_id             UUID NOT NULL          -- submitting user
+thumbs              SMALLINT               -- 1 = up, -1 = down
+comment             TEXT
+created_at          TIMESTAMPTZ NOT NULL
+updated_at          TIMESTAMPTZ NOT NULL
 UNIQUE (message_id, user_id)
 ```
+
+Note the FK is pinned to the trace row's **primary key** `id`, not the `trace_id`
+column — `RetrievalTrace` (`trace_store.go:22-24`) has both a PK `id` and a separate
+`trace_id` column, so the feedback column is named `retrieval_trace_id` and references
+`kb.retrieval_traces(id)`. The feedback row's own `created_at` is independent of the
+trace's bounded retention/TTL, so a thumbs-down remains queryable even after its trace
+row expires.
 
 The unique constraint makes submit idempotent: an upsert on `(message_id, user_id)`.
 Clearing a vote deletes the row. This mirrors Onyx's one-vote-per-user-per-message
 semantics and keeps aggregation a `COUNT ... GROUP BY` over a small table rather than a
 delta/revision reconstruction.
 
-### D3 — Aggregation by model/config needs the answer's provenance
+### D3 — Aggregation by model/config uses real provenance
 
-A thumbs-down is only useful for eval if we know *which model and config* produced the
-answer. The chat message already has model provenance (or can be resolved via the run
-that produced it); the retrieval trace has the embedding/config used. Aggregation
-queries join `answer_feedback` → `chat_messages` (model) and → `retrieval_traces`
-(embedding config). If chat-message model provenance is incomplete, the aggregation
-reports `NULL` model rather than failing — the requirement is queryable-by-model/config,
-not guaranteed-non-null for legacy rows.
+`domain/chat/entity.go` `Message` carries only `{ID, ConversationID, Role, Content,
+Citations, CreatedAt, ContextSummary, RetrievalContext}` — there is **no** model, run, or
+trace provenance on the chat message. So model/config aggregation cannot join
+`answer_feedback → chat_messages (model)`. Real provenance is:
+
+- **model** comes from `kb.llm_usage_events` (which already records model/provider and
+  run linkage) or, when available, the agent run that produced the answer;
+- **embedding/config** context comes from joining `answer_feedback →
+  kb.retrieval_traces` (via `retrieval_trace_id`).
+
+Aggregation therefore joins `answer_feedback` → `retrieval_traces` for the embedding
+config, and → `llm_usage_events` (or the agent run) for the model. Where provenance is
+missing (legacy rows, no trace, no usage event), the aggregation reports `NULL` for that
+dimension rather than failing — the requirement is queryable-by-model/config, not
+guaranteed-non-null for legacy rows.
 
 ### D4 — New small domain, not a monitoring extension
 

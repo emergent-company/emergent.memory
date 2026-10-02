@@ -45,15 +45,19 @@ retrieve for this query" half of the signal.
 
 - `retrieval-trace-persistence`: the persisted trace gains user attribution and a stable
   query key, and a search-query history read path.
+
+### Related / Consumed Capabilities
+
 - `usage-dashboard`: (conceptual) the dashboard gains a quality/feedback aggregation
-  surface in a follow-on lane.
+  surface in a follow-on lane. No delta written here.
 
 ## Impact
 
 - **DB** (`apps/server/migrations/`): new migration creating `kb.answer_feedback`
-  (unique on `(message_id, user_id)` for idempotent submit; FKs to `kb.chat_messages`
-  and `kb.retrieval_traces`; indexes on `(project_id, created_at)` and
-  `(model, config)` for aggregation).
+  (unique on `(message_id, user_id)` for idempotent submit; FKs to `kb.chat_messages(id)`
+  and `kb.retrieval_traces(id)`; indexes on `(project_id, created_at)` and
+  `(user_id, created_at)`). Model/config breakdown is computed by join (see design D3),
+  not by an index on `answer_feedback`.
 - **Server** (`apps/server/domain/`): new `answerfeedback` domain
   (`store.go`/`service.go`/`handler.go`/`module.go`) or an extension of
   `domain/monitoring`; `domain/search/trace_store.go` gains `user_id`/`query_key`

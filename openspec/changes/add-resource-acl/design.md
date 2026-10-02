@@ -28,15 +28,24 @@ observed behaviour for existing users.
 
 ### D1 — Data model: ACL entries + groups
 
+**No group primitive exists today.** A grep of `apps/server/migrations/` for
+`groups`/`teams`/`group_members` is empty; the only principal concepts are
+`kb.project_memberships`, `kb.organization_memberships`, and `core.superadmins`. So
+`kb.groups` and `kb.group_members` are **new** tables in this change.
+
+Define the `principal_type` enum **once** (both tables share it):
+
 ```
+principal_type ∈ {user, group}    -- the single enum, defined once
+
 kb.acl_entries (
   id, resource_type {document|canonical|source}, resource_id uuid,
-  principal_type {user|group}, principal_id uuid,
+  principal_type, principal_id uuid,       -- principal_type = the shared enum
   permission text (read), created_at, updated_at,
   UNIQUE (resource_type, resource_id, principal_type, principal_id)
 )
 kb.groups ( id, project_id, name )
-kb.group_members ( group_id, principal_type, principal_id )   -- may nest groups
+kb.group_members ( group_id, principal_type, principal_id )   -- principal_type = the shared enum; may nest groups
 ```
 
 Group resolution is recursive via a `WITH RECURSIVE` CTE over `group_members`

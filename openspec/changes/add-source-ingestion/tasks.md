@@ -31,7 +31,7 @@
 
 ## 6. Verify + deferred scope
 
-- [ ] 6.1 `cd apps/server && go build ./... && go test ./domain/sources/...`.
+- [ ] 6.1 `task build` (server compile).
 - [ ] 6.2 `task lint` for the touched modules.
 - [ ] 6.3 Deferred (documented, NOT implemented): the 1-2 highest-value first-class connectors; per-source ACL integration (`add-resource-acl`).
 - [ ] 6.4 Cross-check: no overlap with `add-data-sources` (gateway connect/sync surface) or `add-integrations` (GitHub App + general UX) — this change touches server framework only.

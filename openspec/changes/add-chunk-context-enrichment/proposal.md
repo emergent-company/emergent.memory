@@ -8,18 +8,18 @@ to different documents.
 
 Onyx's answer is "contextual RAG" — rewrite each chunk with document context before
 embedding. That is very expensive (one LLM pass per chunk). This change does the **cheap
-variant**: prepend the document title plus a *cached one-line document summary* to the
-embedded input, compute the summary **once per document** (not per chunk), and store it
-**on the document** (not per chunk). The stored chunk text — the retrieval payload — is
-unchanged; only the embedding input changes.
+variant**: prepend the document filename (falling back to `source_url`) plus a *cached
+one-line document summary* to the embedded input, compute the summary **once per
+document** (not per chunk), and store it **on the document** (not per chunk). The stored
+chunk text — the retrieval payload — is unchanged; only the embedding input changes.
 
 ## What Changes
 
-- At embed time, prepend the document title and a cached one-line document summary to the
-  text passed to the embedding model.
+- At embed time, prepend the document filename (or `source_url` when filename is empty)
+  and a cached one-line document summary to the text passed to the embedding model.
 - Store the summary on the document (`kb.documents`), computed once per document via a
   single LLM call (cached), reused by all that document's chunks.
-- Re-embed (sweep) a document's chunks when its summary changes.
+- Re-embed a document's chunks (via `kb.chunk_embedding_jobs`) when its summary changes.
 - Stored `chunk.Text` (the retrieval result payload) is unchanged — only the embedded
   input differs.
 
@@ -27,26 +27,29 @@ unchanged; only the embedding input changes.
 
 ### New Capabilities
 
-- `chunk-context-enrichment`: a cheap document-context prefix (title + one-line summary)
-  applied to the embedding input only, computed once per document and cached on the
-  document, with re-embedding on summary change and no change to stored retrieval text.
+- `chunk-context-enrichment`: a cheap document-context prefix (filename/source_url +
+  one-line summary) applied to the embedding input only, computed once per document and
+  cached on the document, with re-embedding on summary change and no change to stored
+  retrieval text.
 
-### Modified Capabilities
+### Related / Consumed Capabilities
 
-- `embedding-sweep-ceilings` (related): the sweep gains a trigger — re-embed a document's
-  chunks when its cached summary changes. (No delta written here; noted for the sweep
-  change to own the admission mechanics.)
+- None — enrichment is self-contained. It consumes the existing `kb.chunk_embedding_jobs`
+  re-embed path but modifies no existing capability spec (no delta).
 
 ## Impact
 
 - **Server** (`apps/server/domain/extraction/chunk_embedding_worker.go`): build the
-  embedding input from `chunk.Text` + document title + summary instead of raw `chunk.Text`.
+  embedding input from `chunk.Text` + document filename/source_url + summary instead of
+  raw `chunk.Text`.
 - **DB** (`apps/server/migrations/`): add a nullable `summary` (text) column to
-  `kb.documents`.
+  `kb.documents` (plus any needed index). No `title` column exists; the existing
+  `filename` (fallback `source_url`) is reused.
 - **Summary computation** (`apps/server/domain/documents` or a small helper): compute the
   one-line summary once per document and cache it; re-compute when the document changes.
 - **Re-embed trigger** (`apps/server/domain/extraction`): when a document's summary
-  changes, enqueue its chunks for re-embedding via the existing sweep/job path.
+  changes, enqueue its chunks into `kb.chunk_embedding_jobs` (or route through the
+  document re-embed handler).
 - **No change** to stored `kb.chunks.text` or any retrieval result payload.
 
 ## Dependency

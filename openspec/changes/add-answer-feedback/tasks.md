@@ -1,12 +1,12 @@
 ## 1. Migration — `kb.answer_feedback`
 
-- [ ] 1.1 New migration `apps/server/migrations/<n>_create_answer_feedback.sql`: create `kb.answer_feedback` per design D2 (id, project_id, message_id, trace_id, user_id, thumbs, comment, created_at, updated_at, `UNIQUE (message_id, user_id)`), FKs to `kb.chat_messages` and `kb.retrieval_traces`, indexes on `(project_id, created_at)` and `(user_id, created_at)`.
-- [ ] 1.2 (TDD) Migration round-trip test in the migration test suite: up then down drops the table cleanly; the unique index is present.
+- [ ] 1.1 New migration `apps/server/migrations/<n>_create_answer_feedback.sql`: create `kb.answer_feedback` per design D2 (id, project_id, message_id, retrieval_trace_id, user_id, thumbs, comment, created_at, updated_at, `UNIQUE (message_id, user_id)`), FKs to `kb.chat_messages(id)` and `kb.retrieval_traces(id)` (NOT `trace_id`), indexes on `(project_id, created_at)` and `(user_id, created_at)`.
+- [ ] 1.2 (TDD) Migration round-trip test in the migration test suite: up then down drops the table cleanly; the unique index is present; the `retrieval_trace_id` FK targets `kb.retrieval_traces.id`.
 
 ## 2. Trace extension — user + query key
 
 - [ ] 2.1 Add `user_id` (nullable) and `query_key` (nullable, string) columns to the `RetrievalTrace` Bun model in `domain/search/trace_store.go`, plus a new migration adding the columns and a `(project_id, created_at DESC)` and `(user_id, created_at DESC)` index.
-- [ ] 2.2 In `domain/search/service.go`, populate `user_id` from the authenticated `SearchContext` and compute `query_key` (deterministic lowercase + whitespace-collapse) before `persistTraceAsync`.
+- [ ] 2.2 Add `UserID uuid.UUID` to `SearchContext` (`domain/search/dto.go`) and populate it in `domain/search/handler.go` from `auth.MustGetUser(c)`; in `domain/search/service.go`, read `searchCtx.UserID` to stamp the trace and compute `query_key` (deterministic lowercase + whitespace-collapse) before `persistTraceAsync`.
 - [ ] 2.3 (TDD) Unit test: `RetrievalTrace` insert persists `user_id` and `query_key`; same query twice yields identical `query_key`; unauthenticated search persists `user_id = NULL`.
 - [ ] 2.4 Add `TraceStore.ListByProject(ctx, projectID, opts)` and `ListByUser` read methods returning reverse-chronological traces.
 - [ ] 2.5 (TDD) Unit test: `ListByProject` returns only that project's traces newest-first; `ListByUser` filters to the user; empty result returns `[]` not nil.
@@ -25,6 +25,5 @@
 
 ## 5. Verify + follow-on lane note
 
-- [ ] 5.1 `cd apps/server && go build ./... && go test ./domain/answerfeedback/... ./domain/search/...`.
-- [ ] 5.2 `task lint` for the touched modules.
-- [ ] 5.3 Deferred (documented in proposal, not implemented): gateway thumbs widget on chat responses and a feedback-aggregation view on the usage dashboard.
+- [ ] 5.1 `task build` (server compile); `task lint` for the touched modules.
+- [ ] 5.2 Deferred (documented in proposal, not implemented): gateway thumbs widget on chat responses and a feedback-aggregation view on the usage dashboard.

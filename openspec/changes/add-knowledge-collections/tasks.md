@@ -19,7 +19,7 @@
 ## 4. Search filtering across three legs
 
 - [ ] 4.1 Add `CollectionIDs []uuid.UUID` to `UnifiedSearchRequest` in `domain/search/dto.go`.
-- [ ] 4.2 In `domain/search/repository.go`, apply the collection filter to the text/chunk leg (`kb.documents`), the graph leg (graph object tables), and the relationship leg (`kb.graph_relationships`), each via the resolver's allowed id set.
+- [ ] 4.2 In `domain/search/repository.go`, apply the collection filter to the text/chunk leg (`kb.documents`), the graph leg (graph object tables), and the relationship leg (`kb.graph_relationships`), each via the resolver's allowed id set. The relationship leg SHALL be restricted to relationships whose `src` OR `dst` head-resolved canonical id is in the collection's canonical set.
 - [ ] 4.3 (TDD) Unit test: a search with a collection returns only members on each leg; multiple collections AND-combine; a cross-project collection returns nothing; an empty collection returns nothing.
 - [ ] 4.4 (TDD) Unit test: no collection ids → behaviour identical to today (project-id filter only).
 
@@ -31,6 +31,6 @@
 
 ## 6. Verify
 
-- [ ] 6.1 `cd apps/server && go build ./... && go test ./domain/collections/... ./domain/search/...`.
+- [ ] 6.1 `task build` (server compile).
 - [ ] 6.2 `task lint` for the touched modules.
 - [ ] 6.3 Deferred (documented): gateway collection picker reuse across agent settings and search surfaces.
