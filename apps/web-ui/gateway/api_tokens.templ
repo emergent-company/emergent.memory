@@ -451,12 +451,13 @@ templ apiTokenEditBody(actionBase string, t APIToken, cfg apiTokenScopePickerCon
 }
 
 // apiTokenScopePickerContent renders the grouped scope checkboxes by AREA
-// (Schemas, Data, …) from scopePickerGroupsFor(cfg). admin:all is intentionally
-// not offered — only org admins can hold it, and the 403 is surfaced if Memory
-// rejects it. project:admin is offered only for project tokens held by a
-// project/org admin (see apiTokenScopePickerConfig). selected carries the
-// currently granted scopes (edit form); nil/empty means nothing is pre-checked
-// (create form).
+// (Schemas, Data, …) from scopePickerGroupsFor(cfg). Both admin and admin:all
+// are platform-tier scopes requiring superadmin_full and are intentionally
+// never offered; project/org admins administer a project via project:admin,
+// offered only for project tokens held by a project_admin or the owning
+// org_admin (see apiTokenScopePickerConfig). selected carries the currently
+// granted scopes (edit form); nil/empty means nothing is pre-checked (create
+// form).
 templ apiTokenScopePickerContent(selected []string, cfg apiTokenScopePickerConfig) {
 	<div class="flex flex-col gap-4">
 		@ui.Eyebrow("Scopes", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
