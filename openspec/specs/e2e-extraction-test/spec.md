@@ -1,7 +1,7 @@
 # e2e-extraction-test Specification
 
 ## Purpose
-Defines end-to-end coverage for document extraction and conversion, driving extraction job management through the CLI and exercising the Kreuzberg converter.
+Defines end-to-end coverage for document extraction and conversion, driving extraction job management through the CLI and exercising the xberg extractor.
 
 ## Requirements
 
@@ -22,7 +22,7 @@ The `TestCLIInstalled_DocumentExtractionWithSchema` test SHALL use `memory extra
 
 ---
 
-### Requirement: Document conversion e2e test exercises Kreuzberg
+### Requirement: Document conversion e2e test exercises xberg
 A new test `TestCLIInstalled_DocumentConversion` SHALL upload a PDF fixture, poll until `conversionStatus` is `"completed"`, and assert the document has non-empty content.
 
 #### Scenario: PDF upload returns conversion pending or completed status
@@ -35,4 +35,4 @@ A new test `TestCLIInstalled_DocumentConversion` SHALL upload a PDF fixture, pol
 
 #### Scenario: Completed document has non-empty content
 - **WHEN** `conversionStatus` is `"completed"`
-- **THEN** the document JSON includes a non-empty `content` or `chunks` field confirming Kreuzberg extracted text
+- **THEN** the document JSON includes a non-empty `content` or `chunks` field confirming xberg extracted text
