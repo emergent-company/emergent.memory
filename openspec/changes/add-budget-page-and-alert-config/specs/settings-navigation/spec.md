@@ -2,12 +2,12 @@
 
 ### Requirement: Show the settings sub-navigation
 
-The Settings area SHALL show a vertical sub-navigation rail listing its sections: General, Assistant, Overrides, Providers, Voice, Budget, and Devices.
+The Settings area SHALL show a vertical sub-navigation rail listing its sections: General, Assistant, Overrides, Providers, Voice, Devices, and Budget.
 
 #### Scenario: Sub-navigation present
 
 - **WHEN** a Settings page loads
-- **THEN** the sub-navigation shows General, Assistant, Overrides, Providers, Voice, Budget, and Devices links
+- **THEN** the sub-navigation shows General, Assistant, Overrides, Providers, Voice, Devices, and Budget links
 
 #### Scenario: Active section highlighted
 
@@ -43,12 +43,12 @@ Each sub-navigation link SHALL open its own Settings sub-page.
 - **WHEN** the user selects the Voice link
 - **THEN** the Voice settings page opens, showing the voice configuration
 
-#### Scenario: Open Budget
-
-- **WHEN** the user selects the Budget link
-- **THEN** the Budget settings page opens at `/settings/budget`, showing the monthly budget cap and the budget alert threshold
-
 #### Scenario: Open Devices
 
 - **WHEN** the user selects the Devices link
 - **THEN** the Devices settings page opens, showing the iOS setup and devices panels
+
+#### Scenario: Open Budget
+
+- **WHEN** the user selects the Budget link
+- **THEN** the Budget settings page opens at `/settings/budget`, showing the monthly budget cap and the budget alert threshold

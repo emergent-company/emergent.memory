@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -1000,12 +1001,16 @@ func budgetInputValue(b *float64) string {
 }
 
 // thresholdPercentInputValue renders the budget alert threshold fraction as a
-// percentage string (0.8 -> "80"), defaulting to 80 when unset.
+// percentage string (0.8 -> "80"), defaulting to 80 when unset. The threshold
+// is a whole percentage, but most fractions (e.g. 0.55) have no exact binary
+// representation, so `fraction*100` alone leaks float noise ("55.00000000000001").
+// Round to the nearest integer before formatting so the rendered value is exact
+// and a valid HTML5 step value.
 func thresholdPercentInputValue(t *float64) string {
 	if t == nil {
 		return "80"
 	}
-	return strconv.FormatFloat(*t*100, 'f', -1, 64)
+	return strconv.FormatFloat(math.Round(*t*100), 'f', -1, 64)
 }
 
 // rememberAgentIsDefault reports whether the remember agent resolves to the

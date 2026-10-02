@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -213,6 +214,32 @@ func TestRenderBudgetSettingsPage(t *testing.T) {
 	absent := renderHTML(t, BudgetSettingsPage(budgetSettingsPageData{Project: &Project{ID: "p1", Name: "Home"}}))
 	if !strings.Contains(absent, "Budget not set.") {
 		t.Error("budget settings page should render 'Budget not set.' when no budget is set")
+	}
+
+	// regression: a stored fraction that has no exact binary representation
+	// (0.55) must render the integer percentage, not "55.00000000000001".
+	noisy := renderHTML(t, BudgetSettingsPage(budgetSettingsPageData{
+		Project: &Project{ID: "p1", Name: "Home", BudgetAlertThreshold: floatPtr(0.55)},
+	}))
+	if !strings.Contains(noisy, `value="55"`) {
+		t.Errorf("0.55 threshold must render value=\"55\" (float noise leaked: %v)", strings.Contains(noisy, "55.00000000000001"))
+	}
+}
+
+// TestThresholdPercentInputValueExact guards the fraction -> percent rendering
+// against binary-float noise. The naive FormatFloat provided by the first
+// implementation produced "55.00000000000001" for a stored 0.55 — user-visible
+// and an invalid HTML5 step value. Every whole percentage 1..100 must
+// round-trip through `pct/100 -> thresholdPercentInputValue` exactly.
+func TestThresholdPercentInputValueExact(t *testing.T) {
+	for pct := 1; pct <= 100; pct++ {
+		frac := float64(pct) / 100
+		if got, want := thresholdPercentInputValue(&frac), strconv.Itoa(pct); got != want {
+			t.Errorf("thresholdPercentInputValue(%d/100) = %q, want %q", pct, got, want)
+		}
+	}
+	if got := thresholdPercentInputValue(nil); got != "80" {
+		t.Errorf("thresholdPercentInputValue(nil) = %q, want %q", got, "80")
 	}
 }
 
