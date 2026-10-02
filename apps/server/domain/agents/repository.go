@@ -2484,6 +2484,27 @@ func (r *Repository) ListToolApprovals(ctx context.Context, projectID string, de
 	return approvals, nil
 }
 
+// ConversationIDForRun resolves the chat conversation a run belongs to via
+// kb.agent_runs.session_id -> kb.chat_conversations.session_id. It returns ""
+// when the run has no session or no conversation is linked (scheduled/background
+// runs), or on any lookup error, so callers can fall back to a
+// conversation-less target instead of failing notification creation.
+func (r *Repository) ConversationIDForRun(ctx context.Context, runID string) string {
+	if runID == "" {
+		return ""
+	}
+	var conversationID string
+	err := r.db.NewRaw(`
+		SELECT cc.id
+		FROM kb.agent_runs ar
+		JOIN kb.chat_conversations cc ON cc.session_id = ar.session_id
+		WHERE ar.id = ?`, runID).Scan(ctx, &conversationID)
+	if err != nil {
+		return ""
+	}
+	return conversationID
+}
+
 // ListQuestionsByRunID returns all questions for a run, ordered by creation time.
 func (r *Repository) ListQuestionsByRunID(ctx context.Context, runID string) ([]*AgentQuestion, error) {
 	var questions []*AgentQuestion

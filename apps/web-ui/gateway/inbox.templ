@@ -119,8 +119,10 @@ templ inboxList(d inboxView) {
 
 // inboxRow is one notification: leading icon tile (with unread dot), title +
 // message + metadata, and a trailing control cluster. A plain <div> (not
-// components.ListRow) because rows host nested action buttons and only some
-// rows have a navigation target.
+// components.ListRow) because rows host nested action buttons. When the
+// notification carries a navigation target its title/message block is an
+// anchor (`data-notification-open`) so clicking the item deep-links to the
+// pending question/approval and marks it read (issue #1362).
 templ inboxRow(n Notification) {
 	<div
 		class={ "flex items-start gap-3 px-4 py-3 transition-colors hover:bg-base-200/40", templ.KV("bg-primary/5", !n.Read) }
@@ -136,20 +138,17 @@ templ inboxRow(n Notification) {
 			}
 		</div>
 		<div class="min-w-0 grow">
-			<div class="flex flex-wrap items-center gap-2">
-				<p class={ "truncate text-sm", templ.KV("font-semibold", !n.Read), templ.KV("text-base-content/75", n.Read) }>{ n.Title }</p>
-				if !n.Read {
-					<span class="badge badge-primary badge-xs">New</span>
-				}
-				if n.RequiresAction {
-					<span class="badge badge-warning badge-xs gap-1">
-						@ui.IconSpan("lucide--hand", "size-3")
-						Action
-					</span>
-				}
-			</div>
-			if n.Message != "" {
-				<p class="text-muted mt-0.5 line-clamp-2 text-sm">{ n.Message }</p>
+			if n.ActionURL != "" {
+				<a
+					href={ templ.SafeURL(n.ActionURL) }
+					class="block min-w-0"
+					data-notification-open
+					data-notif-id={ n.ID }
+				>
+					@inboxRowBody(n)
+				</a>
+			} else {
+				@inboxRowBody(n)
 			}
 			<p class="text-muted-faint mt-1 text-xs">{ notificationMeta(n) }</p>
 		</div>
@@ -157,20 +156,36 @@ templ inboxRow(n Notification) {
 	</div>
 }
 
+// inboxRowBody is the navigable part of a notification row: title, state
+// badges, and message. Extracted so the same markup renders as plain content
+// or inside the open anchor.
+templ inboxRowBody(n Notification) {
+	<div class="flex flex-wrap items-center gap-2">
+		<p class={ "truncate text-sm", templ.KV("font-semibold", !n.Read), templ.KV("text-base-content/75", n.Read) }>{ n.Title }</p>
+		if !n.Read {
+			<span class="badge badge-primary badge-xs">New</span>
+		}
+		if n.RequiresAction {
+			<span class="badge badge-warning badge-xs gap-1">
+				@ui.IconSpan("lucide--hand", "size-3")
+				Action
+			</span>
+		}
+	</div>
+	if n.Message != "" {
+		<p class="text-muted mt-0.5 line-clamp-2 text-sm">{ n.Message }</p>
+	}
+}
+
 // inboxRowControls is the per-item action cluster: resolve buttons for
-// actionable items, an open link when a target exists, and the read/snooze/
-// clear/dismiss affordances.
+// actionable items and the read/snooze/clear/dismiss affordances. Navigation
+// targets are owned by the row body anchor, not a duplicate control here.
 templ inboxRowControls(n Notification) {
 	<div class="flex shrink-0 flex-wrap items-center justify-end gap-1">
 		if n.RequiresAction {
 			for _, a := range n.Actions {
 				@inboxResolveButton(n.ID, a)
 			}
-			if len(n.Actions) == 0 && n.ActionURL != "" {
-				@inboxOpenLink(n)
-			}
-		} else if n.ActionURL != "" {
-			@inboxOpenLink(n)
 		}
 		@inboxReadToggle(n)
 		if n.SnoozedUntil != "" {
@@ -195,17 +210,6 @@ templ inboxResolveButton(id string, a NotificationAction) {
 		data-notif-id={ id }
 		data-notif-verb={ a.Value }
 	>{ a.Label }</button>
-}
-
-templ inboxOpenLink(n Notification) {
-	<a
-		href={ templ.SafeURL(n.ActionURL) }
-		class="btn btn-ghost btn-xs gap-1"
-		data-notification-open
-	>
-		@ui.IconSpan("lucide--arrow-up-right", "size-4")
-		<span>{ cmpOr(n.ActionLabel, "Open") }</span>
-	</a>
 }
 
 templ inboxReadToggle(n Notification) {
