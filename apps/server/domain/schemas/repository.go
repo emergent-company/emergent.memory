@@ -16,6 +16,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/schemanorm"
 )
 
 // Repository handles database operations for schemas
@@ -559,68 +560,7 @@ func parseObjectTypeSchemas(data json.RawMessage, packID, packName, packVersion 
 //
 //   - Map format (blueprint seeds): {typeName: {label, description, properties, ...}, ...}
 func parseObjectTypeSchemasToMap(data json.RawMessage) map[string]json.RawMessage {
-	if len(data) == 0 {
-		return nil
-	}
-
-	// Try array format first (natural user file format).
-	var arr []struct {
-		Name          string          `json:"name"`
-		Label         string          `json:"label"`
-		Description   string          `json:"description"`
-		Properties    json.RawMessage `json:"properties"`
-		UI            json.RawMessage `json:"ui"`
-		ScopeKey      json.RawMessage `json:"scopeKey"`
-		ScopeKeySnake json.RawMessage `json:"scope_key"`
-	}
-	if err := json.Unmarshal(data, &arr); err == nil && len(arr) > 0 {
-		result := make(map[string]json.RawMessage, len(arr))
-		for _, item := range arr {
-			if item.Name == "" {
-				continue
-			}
-			// Reconstruct a JSON Schema-style object for this type so that
-			// mergeSchemas and the registry can work with it uniformly.
-			schema := map[string]json.RawMessage{}
-			if len(item.Properties) > 0 {
-				schema["properties"] = item.Properties
-			}
-			if len(item.UI) > 0 && !isNullJSON(item.UI) {
-				schema["ui"] = item.UI
-			}
-			// Carry the optional scope-key declaration through to the registry
-			// JSON schema so entity-query can enforce it (issue #1148).
-			if len(item.ScopeKey) > 0 && !isNullJSON(item.ScopeKey) {
-				schema["scopeKey"] = item.ScopeKey
-			} else if len(item.ScopeKeySnake) > 0 && !isNullJSON(item.ScopeKeySnake) {
-				schema["scope_key"] = item.ScopeKeySnake
-			}
-			if item.Label != "" {
-				lb, _ := json.Marshal(item.Label)
-				schema["label"] = lb
-			}
-			if item.Description != "" {
-				desc, _ := json.Marshal(item.Description)
-				schema["description"] = desc
-			}
-			schemaBytes, err := json.Marshal(schema)
-			if err != nil {
-				continue
-			}
-			result[item.Name] = schemaBytes
-		}
-		if len(result) > 0 {
-			return result
-		}
-	}
-
-	// Fall back to map format (blueprint seeds).
-	var objMap map[string]json.RawMessage
-	if err := json.Unmarshal(data, &objMap); err == nil && len(objMap) > 0 {
-		return objMap
-	}
-
-	return nil
+	return schemanorm.ObjectTypeSchemasToMap(data)
 }
 
 // parseRelationshipTypeSchemas parses relationship_type_schemas JSON which may

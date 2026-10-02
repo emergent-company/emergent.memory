@@ -20,11 +20,26 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/tracing"
 )
 
+// graphSearcher is the subset of graph.Service used by unified search. It is an
+// interface so the latency/embedding-bound tests can substitute a fake without a
+// database; *graph.Service satisfies it in production.
+type graphSearcher interface {
+	HybridSearch(ctx context.Context, projectID uuid.UUID, req *graph.HybridSearchRequest, opts *graph.HybridSearchOptions) (*graph.SearchResponse, error)
+	GetEdgesBatch(ctx context.Context, projectID uuid.UUID, canonicalIDs []uuid.UUID, params graph.GetEdgesParams) (map[uuid.UUID]*graph.GetObjectEdgesResponse, error)
+	UpdateAccessTimestamps(ctx context.Context, objectIDs []uuid.UUID) error
+}
+
+// queryEmbedder is the embedding client used by unified search, narrowed to the
+// one method it needs so tests can inject a stub. *embeddings.Service satisfies it.
+type queryEmbedder interface {
+	EmbedQuery(ctx context.Context, query string) ([]float32, error)
+}
+
 // Service handles unified search combining graph and text results
 type Service struct {
 	repo         *Repository
-	graphService *graph.Service
-	embeddings   *embeddings.Service
+	graphService graphSearcher
+	embeddings   queryEmbedder
 	traceStore   *TraceStore
 	log          *slog.Logger
 	defaultLimit int
@@ -49,10 +64,9 @@ func NewService(
 			defaultLimit = n
 		}
 	}
-	return &Service{
+	svc := &Service{
 		repo:         repo,
 		graphService: graphService,
-		embeddings:   embeddingsSvc,
 		traceStore:   traceStore,
 		log:          log.With(logger.Scope("search.svc")),
 		defaultLimit: defaultLimit,
@@ -62,6 +76,12 @@ func NewService(
 		textWeight:   envFloatDefault("SEARCH_TEXT_WEIGHT", 0.75),
 		relWeight:    envFloatDefault("SEARCH_RELATIONSHIP_WEIGHT", 0),
 	}
+	// Keep a typed-nil out of the interface field so `s.embeddings != nil`
+	// remains a truthful "embedding is available" check.
+	if embeddingsSvc != nil {
+		svc.embeddings = embeddingsSvc
+	}
+	return svc
 }
 
 // envIntDefault reads an integer env var, returning def on empty/parse error.
@@ -313,12 +333,29 @@ func (s *Service) defaultFusionStrategy(strat UnifiedSearchFusionStrategy) Unifi
 	return strat
 }
 
+// queryEmbedTimeout bounds the embedding provider call so a slow or hung
+// provider cannot stall the entire search. On timeout the search falls back to
+// lexical-only, matching the existing error path. It is a var (default 20s) so
+// the embedding-bound tests can shrink it, keeping them fast and deterministic.
+var queryEmbedTimeout = 20 * time.Second
+
+// embedQueryBounded embeds the query with the shared provider timeout, so a
+// slow or hung provider cannot stall the caller. Callers must ensure
+// s.embeddings is non-nil.
+func (s *Service) embedQueryBounded(ctx context.Context, query string) ([]float32, error) {
+	embedCtx, cancel := context.WithTimeout(ctx, queryEmbedTimeout)
+	defer cancel()
+	return s.embeddings.EmbedQuery(embedCtx, query)
+}
+
 // embedQuery generates a single embedding for all search goroutines
 func (s *Service) embedQuery(ctx context.Context, query string) []float32 {
 	if s.embeddings == nil {
 		return nil
 	}
-	vec, err := s.embeddings.EmbedQuery(ctx, query)
+	// Bound the provider call independently of the caller's context so a stuck
+	// embedding service degrades the search to lexical-only rather than hanging it.
+	vec, err := s.embedQueryBounded(ctx, query)
 	if err != nil {
 		s.log.Warn("failed to generate query embedding, falling back to lexical-only search", logger.Error(err))
 		return nil
@@ -356,7 +393,7 @@ func (s *Service) runParallelSearches(ctx context.Context, projectID uuid.UUID, 
 
 	// Relationship search
 	go func() {
-		if resultTypes == ResultTypeText || resultTypes == ResultTypeGraph {
+		if shouldSkipRelationshipLeg(resultTypes, req) {
 			relCh <- relationshipOutcome{results: nil, elapsed: 0}
 			return
 		}
@@ -366,6 +403,18 @@ func (s *Service) runParallelSearches(ctx context.Context, projectID uuid.UUID, 
 	}()
 
 	return <-graphCh, <-textCh, <-relCh
+}
+
+// shouldSkipRelationshipLeg reports whether the relationship-vector search leg
+// must be skipped: the requested result types exclude relationships, or the
+// request explicitly disabled them (IncludeRelationships=false). A nil
+// IncludeRelationships preserves existing behaviour (the leg runs when the
+// result types allow it).
+func shouldSkipRelationshipLeg(resultTypes UnifiedSearchResultType, req *UnifiedSearchRequest) bool {
+	if resultTypes == ResultTypeText || resultTypes == ResultTypeGraph {
+		return true
+	}
+	return req.IncludeRelationships != nil && !*req.IncludeRelationships
 }
 
 // fuse combines results using the specified strategy, returning fused slice and elapsed time
@@ -446,6 +495,16 @@ func hybridSearchRequestFromUnified(req *UnifiedSearchRequest, vector []float32)
 		RecencyHalfLife: req.RecencyHalfLife,
 		AccessBoost:     req.AccessBoost,
 	}
+	// When no query vector is available, the unified search has already run its
+	// bounded shared embed and the graph leg's bounded re-embed. Suppress graph
+	// hybrid search's own auto-embed so it cannot issue a further, unbounded
+	// provider call; the request stays lexical full-text. Weights are left at
+	// their defaults so lexical-only scoring is byte-for-byte unchanged. When a
+	// vector IS available it is passed through untouched and auto-embed is
+	// irrelevant (a supplied vector is always used).
+	if len(vector) == 0 {
+		hybridReq.DisableAutoEmbed = true
+	}
 	if req.BranchID != nil {
 		branchUUID, err := uuid.Parse(*req.BranchID)
 		if err == nil {
@@ -461,7 +520,7 @@ func (s *Service) executeGraphSearch(ctx context.Context, projectID uuid.UUID, r
 	// Use pre-computed vector if available, otherwise embed independently (standalone call path)
 	vector := queryVector
 	if len(vector) == 0 && s.embeddings != nil {
-		vec, err := s.embeddings.EmbedQuery(ctx, req.Query)
+		vec, err := s.embedQueryBounded(ctx, req.Query)
 		if err != nil {
 			s.log.Warn("failed to generate query embedding for graph search", logger.Error(err))
 			// Continue with lexical-only search
@@ -532,7 +591,7 @@ func (s *Service) executeTextSearch(ctx context.Context, projectID uuid.UUID, re
 	// Use pre-computed vector if available, otherwise embed independently (standalone call path)
 	vector := queryVector
 	if len(vector) == 0 && s.embeddings != nil {
-		vec, err := s.embeddings.EmbedQuery(ctx, req.Query)
+		vec, err := s.embedQueryBounded(ctx, req.Query)
 		if err != nil {
 			s.log.Warn("failed to generate query embedding for text search", logger.Error(err))
 			// Continue with lexical-only search
@@ -583,7 +642,7 @@ func (s *Service) executeRelationshipSearch(ctx context.Context, projectID uuid.
 	// Use pre-computed vector if available, otherwise embed independently (standalone call path)
 	vector := queryVector
 	if len(vector) == 0 && s.embeddings != nil {
-		vec, err := s.embeddings.EmbedQuery(ctx, req.Query)
+		vec, err := s.embedQueryBounded(ctx, req.Query)
 		if err != nil {
 			s.log.Warn("failed to generate query embedding for relationship search", logger.Error(err))
 			return nil, nil, nil

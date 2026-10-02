@@ -108,3 +108,32 @@ func TestParseMinScoreArg(t *testing.T) {
 		})
 	}
 }
+
+// =============================================================================
+// include_relationships plumbing
+// =============================================================================
+
+func TestToolDefinitions_IncludeRelationshipsSchema(t *testing.T) {
+	svc := &Service{}
+	tools := svc.GetToolDefinitions()
+
+	t.Run("entity-type-list exposes include_relationships", func(t *testing.T) {
+		tool := toolDefByName(t, tools, "entity-type-list")
+		prop, ok := tool.InputSchema.Properties["include_relationships"]
+		require.True(t, ok, "entity-type-list must expose include_relationships")
+		assert.Equal(t, "boolean", prop.Type)
+		assert.NotEmpty(t, prop.Description)
+	})
+
+	t.Run("search-hybrid does not expose include_relationships", func(t *testing.T) {
+		tool := toolDefByName(t, tools, "search-hybrid")
+		_, ok := tool.InputSchema.Properties["include_relationships"]
+		assert.False(t, ok, "search-hybrid must not expose include_relationships (the relationship leg is always skipped for MCP)")
+	})
+}
+
+func TestBuildHybridUnifiedRequest_IncludeRelationships(t *testing.T) {
+	req := buildHybridUnifiedRequest(map[string]any{}, "q", 20, nil, nil, nil, "")
+	require.NotNil(t, req.IncludeRelationships)
+	assert.False(t, *req.IncludeRelationships, "MCP search-hybrid must always skip the relationship leg")
+}
