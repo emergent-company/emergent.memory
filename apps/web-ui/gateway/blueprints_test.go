@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	ui "github.com/emergent-company/go-daisy/components/ui"
 	"github.com/labstack/echo/v4"
 )
 
@@ -1223,6 +1224,27 @@ func TestRenderBlueprintDetailVersionsAndDiff(t *testing.T) {
 	for _, gone := range []string{"Changes", `name="compare"`, "Viewing"} {
 		if strings.Contains(plainHTML, gone) {
 			t.Errorf("bundled detail must not render %q", gone)
+		}
+	}
+}
+
+// propertyTypeIntent is the schema property-type colour scheme: each registry
+// type maps to its own badge tone, and anything the registry does not declare
+// falls back to neutral so a future type still renders a readable badge.
+func TestPropertyTypeIntent(t *testing.T) {
+	cases := map[string]ui.BadgeIntent{
+		"string":  ui.BadgeInfo,
+		"number":  ui.BadgeSuccess,
+		"boolean": ui.BadgeWarning,
+		"date":    ui.BadgeAccent,
+		"array":   ui.BadgeSecondary,
+		"object":  ui.BadgePrimary,
+		"":        ui.BadgeNeutral,
+		"future":  ui.BadgeNeutral,
+	}
+	for in, want := range cases {
+		if got := propertyTypeIntent(in); got != want {
+			t.Errorf("propertyTypeIntent(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

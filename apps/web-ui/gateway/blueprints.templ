@@ -816,6 +816,36 @@ templ objectTypeNameLink(display string, href string) {
 	}
 }
 
+// propertyTypeIntent maps a schema property type to a badge tone so the type
+// column is scannable at a glance. The vocabulary is the schema registry's
+// fixed set (see propertyTypeOptions). Unknown values fall back to neutral,
+// which also covers future registry additions without a template edit.
+func propertyTypeIntent(t string) ui.BadgeIntent {
+	switch t {
+	case "string":
+		return ui.BadgeInfo
+	case "number":
+		return ui.BadgeSuccess
+	case "boolean":
+		return ui.BadgeWarning
+	case "date":
+		return ui.BadgeAccent
+	case "array":
+		return ui.BadgeSecondary
+	case "object":
+		return ui.BadgePrimary
+	default:
+		return ui.BadgeNeutral
+	}
+}
+
+// propertyTypeBadge renders one schema property type as a soft, colour-coded
+// badge. Colour is never the only signal: the type text stays in the label, and
+// the soft style keeps contrast in both light and dark themes.
+templ propertyTypeBadge(t string) {
+	@ui.Badge(ui.BadgeProps{Label: t, Variant: propertyTypeIntent(t), Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
+}
+
 // objectTypeProperties lists an object type's property definitions: stacked
 // rows on mobile, a four-column table from md up. showLabel renders the inner
 // "Properties" title — true when the box has no outer section heading (blueprint
@@ -832,7 +862,7 @@ templ objectTypeProperties(properties []PropertyDetail, showLabel bool) {
 				<div class="flex flex-wrap items-center gap-2">
 					<span class="font-mono text-xs text-muted-bright">{ p.Name }</span>
 					if p.Type != "" {
-						@ui.Badge(ui.BadgeProps{Label: p.Type, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS})
+						@propertyTypeBadge(p.Type)
 					}
 					if p.Required {
 						@ui.Badge(ui.BadgeProps{Label: "required", Variant: ui.BadgeError, Size: ui.BadgeSizeXS})
@@ -859,7 +889,7 @@ templ objectTypeProperties(properties []PropertyDetail, showLabel bool) {
 							<td class="font-mono text-xs text-muted-bright">{ p.Name }</td>
 							<td>
 								if p.Type != "" {
-									@ui.Badge(ui.BadgeProps{Label: p.Type, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS})
+									@propertyTypeBadge(p.Type)
 								}
 							</td>
 							<td>
