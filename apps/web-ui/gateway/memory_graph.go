@@ -139,7 +139,9 @@ func (m *MemoryClient) ListGraphObjects(ctx context.Context, branchID, typeFilte
 // Provenance mirror the server's actor_type / actor_id / provenance query
 // params on GET /api/graph/objects/search: the provenance filter always keys on
 // the (actor_type, actor_id) pair, and the server rejects actor_id without
-// actor_type, so ActorID is only sent alongside a non-empty ActorType.
+// actor_type, so ActorID is only sent alongside a non-empty ActorType. For the
+// same reason Provenance (created|updated) is only sent with a non-empty
+// ActorType; the no-op default "any" is never forwarded.
 type ObjectListParams struct {
 	BranchID   string
 	TypeFilter string
@@ -175,7 +177,12 @@ func (m *MemoryClient) ListGraphObjectsPage(ctx context.Context, p ObjectListPar
 			q.Set("actor_id", p.ActorID)
 		}
 	}
-	if p.Provenance != "" {
+	// Provenance only narrows alongside an actor pair, so it mirrors
+	// objectsPartialURL: forward it only with a non-empty actor_type and never
+	// as the no-op default "any". The server rejects a bare narrowing mode, and
+	// "any" narrows nothing, so sending either is meaningless (and a 400 for the
+	// former).
+	if p.ActorType != "" && p.Provenance != "" && p.Provenance != defaultObjectProvenance {
 		q.Set("provenance", p.Provenance)
 	}
 	var out struct {

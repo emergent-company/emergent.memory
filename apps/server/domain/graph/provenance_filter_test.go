@@ -103,7 +103,9 @@ func TestProvenanceFilterRendersSQL(t *testing.T) {
 
 // TestParseActorProvenance covers the handler-level parsing and validation:
 // valid values populate ListParams; invalid provenance / actor_id, and the
-// actor_id-without-actor_type pair rule, are rejected with a 400.
+// actor_id-without-actor_type pair rule, are rejected with a 400. The no-op
+// "any" provenance is accepted without an actor and leaves the filter unset,
+// while the narrowing modes still require actor_type.
 func TestParseActorProvenance(t *testing.T) {
 	newCtx := func(query string) (echo.Context, *ListParams) {
 		e := echo.New()
@@ -145,11 +147,27 @@ func TestParseActorProvenance(t *testing.T) {
 		require.Contains(t, err.Error(), "invalid actor_type")
 	})
 
-	t.Run("provenance without actor_type rejected", func(t *testing.T) {
+	t.Run("narrowing provenance without actor_type rejected", func(t *testing.T) {
 		c, p := newCtx("/?provenance=created")
 		err := parseActorProvenance(c, p)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "provenance requires actor_type")
+	})
+
+	t.Run("no-op any provenance without actor_type accepted", func(t *testing.T) {
+		c, p := newCtx("/?provenance=any")
+		require.NoError(t, parseActorProvenance(c, p))
+		require.Nil(t, p.ActorType)
+		require.Nil(t, p.ActorID)
+		// "any" narrows nothing, so it must not populate the filter.
+		require.Empty(t, p.Provenance)
+	})
+
+	t.Run("no-op any provenance with actor_type leaves filter unset", func(t *testing.T) {
+		c, p := newCtx("/?actor_type=agent&provenance=any")
+		require.NoError(t, parseActorProvenance(c, p))
+		require.NotNil(t, p.ActorType)
+		require.Empty(t, p.Provenance)
 	})
 
 	t.Run("invalid provenance rejected", func(t *testing.T) {

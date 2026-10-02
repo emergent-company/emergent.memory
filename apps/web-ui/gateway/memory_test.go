@@ -1541,6 +1541,64 @@ func TestListGraphObjectsPageOmitsActorIDWithoutType(t *testing.T) {
 	}
 }
 
+// TestListGraphObjectsPageOmitsNoopProvenance pins the /objects 400 regression:
+// the objects page always computes Provenance (effectiveObjectProvenance returns
+// "any" when no actor filter is active), but a provenance value must never be
+// forwarded without an actor pair — the server rejects provenance without
+// actor_type, and the no-op "any" narrows nothing. The exact failing dev request
+// shape is include_total=false&limit=25&provenance=any; after the fix the emitted
+// query carries neither provenance nor actor_type.
+func TestListGraphObjectsPageOmitsNoopProvenance(t *testing.T) {
+	tests := []struct {
+		name      string
+		params    ObjectListParams
+		wantActor bool
+	}{
+		{
+			name:   "dev shape: no actor, no-op any provenance",
+			params: ObjectListParams{Limit: 25, Provenance: "any"},
+		},
+		{
+			name:   "narrowing provenance without actor is dropped",
+			params: ObjectListParams{Limit: 25, Provenance: "created"},
+		},
+		{
+			name:      "any provenance with an actor omits only provenance",
+			params:    ObjectListParams{Limit: 25, ActorType: "agent", ActorID: "a1b2c3d4-0000-0000-0000-000000000001", Provenance: "any"},
+			wantActor: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotQuery url.Values
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotQuery = r.URL.Query()
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"items":[],"next_cursor":""}`)
+			}))
+			defer srv.Close()
+
+			m := NewMemoryClient(srv.URL, "proj")
+			if _, _, err := m.ListGraphObjectsPage(context.Background(), tt.params); err != nil {
+				t.Fatal(err)
+			}
+			if gotQuery.Has("provenance") {
+				t.Errorf("provenance = %q, want omitted", gotQuery.Get("provenance"))
+			}
+			if tt.wantActor {
+				if gotQuery.Get("actor_type") != "agent" || gotQuery.Get("actor_id") != "a1b2c3d4-0000-0000-0000-000000000001" {
+					t.Errorf("actor pair = %v, want agent + id", gotQuery)
+				}
+			} else if gotQuery.Has("actor_type") {
+				t.Errorf("actor_type = %q, want omitted", gotQuery.Get("actor_type"))
+			}
+			if gotQuery.Get("include_total") != "false" || gotQuery.Get("limit") != "25" {
+				t.Errorf("query = %v", gotQuery)
+			}
+		})
+	}
+}
+
 // TestCountObjects exercises GET /api/graph/objects/count with an optional
 // branch_id query param.
 func TestCountObjects(t *testing.T) {
