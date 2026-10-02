@@ -14,8 +14,10 @@ import (
 )
 
 // TestRenderBlueprintsPageImportForm asserts the gallery renders the GitHub
-// import surface — form action, the three fields, and the submit hook — while
-// the existing install form action is still present.
+// import surface as a modal — the dialog shell, the header trigger, the form
+// action, the three fields, and the submit hook — while the existing install
+// form action is still present. The import fields keep their original ids,
+// names, and test hooks even though the form moved out of the page body.
 func TestRenderBlueprintsPageImportForm(t *testing.T) {
 	applied := []AppliedBlueprint{{BlueprintID: "bp1", Name: "personal-memory", Version: "1.0.0"}}
 	available := []AvailableSchemaItem{{ID: "code-memory", Name: "code-memory", Version: "1.7.0", Source: "bundled"}}
@@ -23,6 +25,11 @@ func TestRenderBlueprintsPageImportForm(t *testing.T) {
 
 	for _, want := range []string{
 		"Import from GitHub",
+		// The import surface is a modal, opened from a header action.
+		`id="blueprint-import-modal"`,
+		`data-dialog-open="blueprint-import-modal"`,
+		`data-dialog-close="blueprint-import-modal"`,
+		`data-testid="blueprint-import-open"`,
 		`action="/blueprints/import"`,
 		`name="url"`,
 		`name="ref"`,
@@ -33,6 +40,12 @@ func TestRenderBlueprintsPageImportForm(t *testing.T) {
 		`data-testid="blueprint-import-ref"`,
 		`data-testid="blueprint-import-token"`,
 		`data-testid="blueprint-import-submit"`,
+		// The secondary page actions collapse into the options menu.
+		`data-testid="blueprints-actions-menu"`,
+		`data-testid="blueprints-migrations-link"`,
+		`data-testid="blueprints-save-as-link"`,
+		"Migrations",
+		"Save as blueprint",
 		// The pre-existing install path must survive unchanged.
 		`action="/blueprints/install"`,
 		`name="name"`,
