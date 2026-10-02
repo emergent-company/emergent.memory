@@ -9,7 +9,7 @@
 
 - [x] 2.1 Extend `ProviderDefinition` with `Protocol`, `Auth`, `AuthByProtocol`, `DefaultBaseURLs`, `ModelTypes`, `URLPatterns`, `ExtraFields`, `CredentialLabel`, `CatalogStrategy`, `Compat`, `Order`, `Icon`; add `Protocol`/`AuthStyle`/`ExtraField`/`CredentialLabel` types. Verify `go build ./...`.
 - [x] 2.2 Add `domain/provider/builtin.go` registering all target vendors as data (28 entries: openai, azure-openai, anthropic, deepseek, google, google-vertex, aliyun, zhipu, volcengine, hunyuan, siliconflow, minimax, moonshot, mimo, modelscope, qianfan, qiniu, longcat, lkeap, nvidia, novita, openrouter, requesty, litellm, generic, gpustack, jina, weknoracloud). Verify `go build ./...`.
-- [ ] 2.3 Add embedded SVG brand icons under `domain/provider/assets/` and set `Definition.Icon`. **Deferred** — `Icon []byte` is wired through the registry and definitions API but left nil; brand-icon assets are a follow-up (see issue).
+- [x] 2.3 Add embedded SVG brand icons under `domain/provider/assets/` and set `Definition.Icon`. 27 WeKnora MIT-licensed SVGs embedded via `//go:embed`; every builtin definition carries a non-empty icon; exposed as `iconDataUri` from the definitions API.
 - [x] 2.4 Unit-test registry completeness (every expected ID present, IDs unique, every entry has a protocol/auth). Verify `go test ./domain/provider/ -run Registry -count=1`.
 
 ## 3. Protocol adapters (`pkg/adk`)
@@ -32,7 +32,7 @@
 ## 5. UI + CLI
 
 - [x] 5.1 `apps/web-ui/gateway/settings_providers.go`: replace `providerWhitelist` with registry lookup; expose definitions via the server API. Verify `go build ./...` from `gateway/`.
-- [x] 5.2 `project_settings.templ`: render registry vendors with names/descriptions and a read-only extra-fields panel. Verify `templ generate` + `go build ./...`.
+- [x] 5.2 `project_settings.templ`: render registry vendors with names/descriptions, brand icons, and a read-only extra-fields panel. Verify `templ generate` + `go build ./...`.
 - [x] 5.3 Unit-test the settings provider list is registry-driven and extra fields render. Verify `go test ./... -run Provider -count=1` from `gateway/`.
 - [x] 5.4 `apps/cli/internal/cmd/provider.go`: `provider definitions` lists vendors from the registry. Verify `go build ./...` from `apps/cli/`.
 
