@@ -219,6 +219,70 @@ func TestFetch_SizeCapExceeded(t *testing.T) {
 	requireAppError(t, err, http.StatusRequestEntityTooLarge)
 }
 
+// TestFetch_FileCountCap verifies the extracted-entry-count cap (20000 in
+// production) is enforced at the boundary: exactly maxFiles regular files are
+// extracted, maxFiles+1 is rejected as too large (413).
+func TestFetch_FileCountCap(t *testing.T) {
+	t.Parallel()
+
+	archive := buildTarGz(t, []tarEntry{
+		{name: "repo-HEAD/packs/pack.yaml", body: "name: cap\nversion: 1.0.0\nobjectTypes:\n  - name: Thing\n"},
+		{name: "repo-HEAD/a.txt", body: "a"},
+		{name: "repo-HEAD/b.txt", body: "b"},
+	})
+
+	t.Run("at cap accepted", func(t *testing.T) {
+		t.Parallel()
+		ts := servingTarball(t, archive)
+		f := testGitHubFetcher(t, ts.URL, 1<<20, 1<<20, 3)
+		root, cleanup, err := f.Fetch(context.Background(), "org", "repo", "HEAD", "")
+		require.NoError(t, err)
+		t.Cleanup(cleanup)
+		require.NotEmpty(t, root)
+	})
+
+	t.Run("over cap rejected", func(t *testing.T) {
+		t.Parallel()
+		ts := servingTarball(t, archive)
+		f := testGitHubFetcher(t, ts.URL, 1<<20, 1<<20, 2)
+		_, _, err := f.Fetch(context.Background(), "org", "repo", "HEAD", "")
+		requireAppError(t, err, http.StatusRequestEntityTooLarge)
+	})
+}
+
+// TestFetch_ExtractedBytesCap verifies the total extracted-bytes cap (200 MiB
+// in production) is enforced at the boundary: exactly maxExtractBytes of regular
+// file content is extracted, one byte more is rejected as too large (413).
+func TestFetch_ExtractedBytesCap(t *testing.T) {
+	t.Parallel()
+
+	// Two 4-byte files = 8 extracted content bytes; directory headers carry no
+	// content and must not count toward the byte cap.
+	archive := buildTarGz(t, []tarEntry{
+		{name: "repo-HEAD/", typ: tar.TypeDir},
+		{name: "repo-HEAD/a.txt", body: "aaaa"},
+		{name: "repo-HEAD/b.txt", body: "bbbb"},
+	})
+
+	t.Run("at cap accepted", func(t *testing.T) {
+		t.Parallel()
+		ts := servingTarball(t, archive)
+		f := testGitHubFetcher(t, ts.URL, 1<<20, 8, 100)
+		root, cleanup, err := f.Fetch(context.Background(), "org", "repo", "HEAD", "")
+		require.NoError(t, err)
+		t.Cleanup(cleanup)
+		require.NotEmpty(t, root)
+	})
+
+	t.Run("over cap rejected", func(t *testing.T) {
+		t.Parallel()
+		ts := servingTarball(t, archive)
+		f := testGitHubFetcher(t, ts.URL, 1<<20, 7, 100)
+		_, _, err := f.Fetch(context.Background(), "org", "repo", "HEAD", "")
+		requireAppError(t, err, http.StatusRequestEntityTooLarge)
+	})
+}
+
 func TestFetch_RejectsUnsafeArchiveEntries(t *testing.T) {
 	t.Parallel()
 
@@ -376,6 +440,46 @@ func TestService_ImportFromGitHub_CreatesPublishedBlueprint(t *testing.T) {
 	assert.Equal(t, bp.ID, got.ID)
 }
 
+// TestService_ImportFromGitHub_ProjectScoped is the positive project-scope path
+// (spec: "valid manifest creates a published blueprint in the caller's
+// project"): a valid archive imported for a project produces a published
+// blueprint owned by that project, visible to it and invisible to any other.
+func TestService_ImportFromGitHub_ProjectScoped(t *testing.T) {
+	db := connectTestDB(t)
+	svc := newServiceFromBun(t, db)
+	ctx := context.Background()
+
+	proj := uuid.NewString()
+	other := uuid.NewString()
+
+	archive := buildTarGz(t, []tarEntry{
+		{name: "repo-HEAD/packs/pack.yaml", body: "name: " + uniqueName("proj-import") + "\nversion: 2.0.0\ndescription: Project import\nauthor: importer\nobjectTypes:\n  - name: Thing\n    label: Thing\n"},
+	})
+	ts := servingTarball(t, archive)
+	svc.fetcher = testGitHubFetcher(t, ts.URL, 1<<20, 1<<20, 100)
+
+	bp, err := svc.ImportFromGitHub(ctx, proj, &ImportGitHubRequest{URL: "https://github.com/org/repo"})
+	require.NoError(t, err)
+	require.NotNil(t, bp.ProjectID, "import must be scoped to the caller's project")
+	assert.Equal(t, proj, *bp.ProjectID)
+	assert.Equal(t, "project", bp.Scope())
+	assert.Equal(t, StatusPublished, bp.Status)
+
+	// Visible to the owning project, invisible to any other.
+	got, err := svc.GetBlueprint(ctx, proj, bp.ID)
+	require.NoError(t, err)
+	assert.Equal(t, bp.ID, got.ID)
+	_, err = svc.GetBlueprint(ctx, other, bp.ID)
+	assertAppErrorCode(t, err, apperror.ErrNotFound.Code)
+
+	// The persisted row carries the project scope, not just the returned struct.
+	stored, err := svc.repo.GetByID(ctx, proj, bp.ID)
+	require.NoError(t, err)
+	require.NotNil(t, stored.ProjectID, "persisted row must carry project_id")
+	assert.Equal(t, proj, *stored.ProjectID)
+	assert.Equal(t, StatusPublished, stored.Status)
+}
+
 func TestService_ImportFromGitHub_InvalidURL(t *testing.T) {
 	db := connectTestDB(t)
 	svc := newServiceFromBun(t, db)
@@ -426,6 +530,41 @@ func TestHandler_ImportBlueprint_GlobalRequiresSuperadmin(t *testing.T) {
 
 	c, _ := newAuthzCtx(t, http.MethodPost, "/api/blueprints/import", body, &auth.AuthUser{ID: uuid.NewString()})
 	assertForbidden(t, h.ImportBlueprint(c))
+}
+
+// TestHandler_ImportBlueprint_ProjectScoped is the positive project-scoping
+// handler path (task 3.1): an authenticated caller with a project context
+// imports a valid archive, receives 201, and the created blueprint is published
+// and owned by the caller's project.
+func TestHandler_ImportBlueprint_ProjectScoped(t *testing.T) {
+	h, _ := newAuthzHandler(t)
+	ctx := context.Background()
+	proj := uuid.NewString()
+
+	archive := buildTarGz(t, []tarEntry{
+		{name: "repo-HEAD/packs/pack.yaml", body: "name: " + uniqueName("handler-proj-import") + "\nversion: 1.0.0\nobjectTypes:\n  - name: Thing\n"},
+	})
+	ts := servingTarball(t, archive)
+	h.svc.fetcher = testGitHubFetcher(t, ts.URL, 1<<20, 1<<20, 100)
+
+	body, err := json.Marshal(ImportGitHubRequest{URL: "https://github.com/org/repo"})
+	require.NoError(t, err)
+
+	c, rec := newAuthzCtx(t, http.MethodPost, "/api/blueprints/import", body,
+		&auth.AuthUser{ID: uuid.NewString(), ProjectID: proj})
+	require.NoError(t, h.ImportBlueprint(c))
+	require.Equal(t, http.StatusCreated, rec.Code, "body: %s", rec.Body.String())
+
+	var bp Blueprint
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &bp))
+	require.NotNil(t, bp.ProjectID, "handler import must be scoped to the caller's project")
+	assert.Equal(t, proj, *bp.ProjectID)
+	assert.Equal(t, StatusPublished, bp.Status)
+
+	stored, err := h.svc.repo.GetByID(ctx, proj, bp.ID)
+	require.NoError(t, err)
+	require.NotNil(t, stored.ProjectID)
+	assert.Equal(t, proj, *stored.ProjectID)
 }
 
 // TestRoute_ImportBlueprint_Unauthenticated401 exercises the real route

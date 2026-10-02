@@ -60,7 +60,6 @@ The UI SHALL allow a user to view the object and relationship types a pack contr
 - **WHEN** a user opens type inspection for an installed pack
 - **THEN** the UI lists the pack's object and relationship types with their labels and descriptions
 
-
 ### Requirement: Create a blueprint from the current schema
 
 The UI SHALL let a user create a blueprint draft from the project's current object types, either as a new blueprint or as a new version of an existing blueprint, and show the resulting draft in the drafts list.
@@ -165,3 +164,31 @@ The gallery and blueprint detail views SHALL identify blueprint-derived object t
 
 - **WHEN** a user follows the owning-blueprint reference shown for a derived type
 - **THEN** the browser navigates to that blueprint's detail view
+
+### Requirement: Import a blueprint from a GitHub URL in the gallery
+
+The gallery install surface SHALL gain a GitHub URL import form with a URL
+field, an optional ref field, and an optional token field. Submitting the form
+posts to the import flow; on success the imported blueprint is installed
+(applied) and the UI shows success, and on failure the UI shows the error. The
+existing registry-pack and bundled-pack install paths and their
+ids/`data-testid`/htmx hooks SHALL be preserved.
+
+#### Scenario: Successful GitHub URL import
+
+- **WHEN** a user submits a valid GitHub repository URL (with optional ref and
+  token) in the gallery import form
+- **THEN** the blueprint is imported, installed (applied), and the UI shows
+  success
+
+#### Scenario: Import error shown
+
+- **WHEN** the import fails (invalid URL, oversize archive, fetch failure, or
+  authorization failure)
+- **THEN** the UI shows the mapped error and installs nothing
+
+#### Scenario: Existing install paths unchanged
+
+- **WHEN** a user installs from the registry or a bundled pack as before
+- **THEN** those install actions behave exactly as they did before this change,
+  with their existing ids, `data-testid`, and htmx hooks intact
