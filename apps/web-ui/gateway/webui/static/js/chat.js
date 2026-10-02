@@ -1047,6 +1047,10 @@
   // timelineCtx builds the page-local hooks/state for one chat render (see
   // MemoryChatComponents.renderTimeline for the contract).
   function timelineCtx(pendingApprovals) {
+    // The viewport is captured before this render empties #chat-messages and
+    // restored once the rebuild finishes (see captureScroll/restoreScroll). Held
+    // per-render so it can never leak into a different scope's render.
+    var scrollSnapshot = null;
     return {
       container: messages,
       badgeCtx: badgeCtx,
@@ -1060,6 +1064,11 @@
       // restores it to the end by moving the rendered rows before it. Keeping
       // only the first also upholds the "exactly one placeholder" invariant.
       begin: function () {
+        // Capture BEFORE the wipe: emptying the container clamps its scrollTop
+        // to 0, and the per-bubble auto-scroll cannot recover a long transcript
+        // (it only fires when already within 90px of the bottom). Restoring in
+        // afterRender keeps the user where they were (#1369).
+        scrollSnapshot = captureScroll();
         var workingEl = workingPlaceholder();
         var child = messages.firstChild;
         while (child) {
@@ -1087,6 +1096,11 @@
       },
       afterRender: function (newestRunStatus) {
         afterTimelineRender(pendingApprovals, newestRunStatus);
+        // Restore the viewport captured in begin() now that every row is back in
+        // the DOM (including the replay tail and working placeholder planted by
+        // afterTimelineRender) — otherwise a refresh-driven rebuild leaves the
+        // user at the top of the transcript (#1369).
+        restoreScroll(scrollSnapshot);
       },
     };
   }
@@ -1638,6 +1652,30 @@
   function isAtBottom() {
     if (!log) return true;
     return log.scrollHeight - log.scrollTop - log.clientHeight < 90;
+  }
+
+  // captureScroll records the transcript viewport before a full re-render.
+  // renderTimelineItems empties #chat-messages, which clamps the scroll
+  // container's scrollTop to 0; the per-bubble auto-scroll only re-pins when it
+  // is already within 90px of the bottom, so a long rebuilt transcript is left
+  // at the very top. Capturing "was the user at the bottom, and where exactly"
+  // lets restoreScroll put the viewport back after the rebuild (#1369).
+  function captureScroll() {
+    if (!log) return null;
+    return { bottom: isAtBottom(), top: log.scrollTop };
+  }
+
+  // restoreScroll applies a captureScroll snapshot: stay pinned to the bottom
+  // (new content keeps auto-scrolling) when the user was already there, else
+  // hold the exact reading offset so a refresh never yanks a reader out of
+  // position.
+  function restoreScroll(snapshot) {
+    if (!log || !snapshot) return;
+    if (snapshot.bottom) {
+      scrollToBottom(true);
+      return;
+    }
+    log.scrollTop = snapshot.top;
   }
 
   // withAnchoredScroll keeps the transcript pinned to the composer across a
