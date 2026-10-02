@@ -816,24 +816,43 @@ templ objectTypeNameLink(display string, href string) {
 	}
 }
 
+// The three property types below have no distinct semantic tone in the app's
+// single (dark) theme without aliasing another type, so they get page-local
+// badge tones. The class names are rendered by ui.Badge and their --badge-color
+// is set from theme tokens in webui/css/app.css ("Schema property-type badges")
+// — the palette never hardcodes a colour. See TestPropertyTypeToneHuesSeparated
+// for the measured hue separation this guards.
+const (
+	propertyTypeBadgeBoolean ui.BadgeIntent = "memory-prop-type-badge--boolean"
+	propertyTypeBadgeArray   ui.BadgeIntent = "memory-prop-type-badge--array"
+	propertyTypeBadgeObject  ui.BadgeIntent = "memory-prop-type-badge--object"
+)
+
 // propertyTypeIntent maps a schema property type to a badge tone so the type
-// column is scannable at a glance. The vocabulary is the schema registry's
-// fixed set (see propertyTypeOptions). Unknown values fall back to neutral,
-// which also covers future registry additions without a template edit.
+// column is scannable at a glance. The vocabulary is the set the schema
+// registry accepts and interprets, NOT the schema editor's select options
+// (propertyTypeOptions): string, number, integer, boolean, date, array, object.
+// See docs/public/guides/schema-creation.md, docs/graph/PROPERTY_TYPES.md and
+// the coercion switches in apps/server/domain/graph/validation.go. `integer` is
+// a distinct registry type (builtin_seeder.go, blueprint YAMLs) and
+// deliberately shares number's tone. `null`, `ref`/`object_ref`, `json`, `uuid`
+// and `datetime` are not accepted types, so they are not mapped. Anything else
+// (empty, or a type a future registry adds) falls back to the neutral tone
+// deliberately, so it still renders a readable badge.
 func propertyTypeIntent(t string) ui.BadgeIntent {
 	switch t {
 	case "string":
 		return ui.BadgeInfo
-	case "number":
+	case "number", "integer":
 		return ui.BadgeSuccess
 	case "boolean":
-		return ui.BadgeWarning
+		return propertyTypeBadgeBoolean
 	case "date":
-		return ui.BadgeAccent
+		return ui.BadgeWarning
 	case "array":
-		return ui.BadgeSecondary
+		return propertyTypeBadgeArray
 	case "object":
-		return ui.BadgePrimary
+		return propertyTypeBadgeObject
 	default:
 		return ui.BadgeNeutral
 	}
@@ -841,7 +860,7 @@ func propertyTypeIntent(t string) ui.BadgeIntent {
 
 // propertyTypeBadge renders one schema property type as a soft, colour-coded
 // badge. Colour is never the only signal: the type text stays in the label, and
-// the soft style keeps contrast in both light and dark themes.
+// the soft style keeps the label contrast adequate in the dark theme.
 templ propertyTypeBadge(t string) {
 	@ui.Badge(ui.BadgeProps{Label: t, Variant: propertyTypeIntent(t), Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
 }
