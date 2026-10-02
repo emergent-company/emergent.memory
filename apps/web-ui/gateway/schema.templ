@@ -112,7 +112,7 @@ templ compiledTypesTable(title string, types []CompiledType, endpoints bool, lin
 					<p class="text-muted mt-1 font-mono text-[11px]">{ compiledTypeSchemaLabel(t) }</p>
 				</div>
 			} else {
-				@objectTypeRow(t.Name, t.Label, t.Description, compiledProperties(t.Properties), linkPrefix+url.PathEscape(t.Name), compiledTypeSchemaLabel(t), compiledTypeIcon(t), compiledTypeColor(t))
+				@objectTypeRow(t.Name, t.Label, t.Description, compiledProperties(t.Properties), linkPrefix+url.PathEscape(t.Name), compiledTypeSchemaLabel(t), compiledTypeIcon(t), compiledTypeColor(t), t.BoardEnabled, t.AllowedStatuses)
 				if p := provenance[t.Name]; p != nil {
 					<div class="flex flex-wrap items-center gap-2 px-4 pb-3">
 						@provenanceBadge(ui.BadgeSizeXS)
@@ -208,6 +208,7 @@ templ SchemaObjectTypePage(view *SchemaObjectTypeView, loadErr error) {
 				if view.Detail.Description != "" {
 					<p class="text-muted mt-1 text-xs">{ view.Detail.Description }</p>
 				}
+				@objectTypeWorkStatuses(view.Detail.BoardEnabled, view.Detail.AllowedStatuses)
 				@schemaObjectTypeOrigin(view)
 				@schemaObjectTypeProperties(view.Detail)
 				@schemaObjectTypeHistory(view.History, view.HistoryErr)
