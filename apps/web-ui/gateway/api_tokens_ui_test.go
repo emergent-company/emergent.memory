@@ -314,7 +314,7 @@ func TestRenderAPITokenCreatePage(t *testing.T) {
 		"Create token", `href="/settings/tokens"`, "Cancel",
 		// picker scopes grouped by area
 		`name="scopes"`, `value="data:read"`, `value="schema:write"`, `value="chat:use"`,
-		`value="admin"`, "Schemas", "Data", "Graph", "Agents", "Admin",
+		"Schemas", "Data", "Graph", "Agents",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("create page missing %q", want)
@@ -413,23 +413,26 @@ func TestRenderAccountTokenEditPage(t *testing.T) {
 }
 
 // TestRenderScopePickerOmitsAdminAll asserts the picker offers every area group
-// and the admin scope but never admin:all (server-gated).
+// except Admin and never offers the platform admin scopes (admin, admin:all).
 func TestRenderScopePickerOmitsAdminAll(t *testing.T) {
-	html := renderHTML(t, apiTokenScopePickerContent([]string{"data:read", "admin"}, apiTokenScopePickerConfig{}))
+	html := renderHTML(t, apiTokenScopePickerContent([]string{"data:read"}, apiTokenScopePickerConfig{}))
 	for _, want := range []string{
 		"Schemas", "Data", "Documents", "Graph", "Branches",
-		"Agents", "Projects", "Journal", "Skills", "Admin",
+		"Agents", "Projects", "Journal", "Skills",
 		`name="scopes"`, `value="schema:read"`, `value="schema:write"`,
 		`value="data:read"`, `value="data:write"`, `value="agents:read"`,
 		`value="chat:use"`, `value="graph:read"`, `value="schema:migrate"`,
-		`value="search"`, `value="documents:read"`, `value="admin"`,
+		`value="search"`, `value="documents:read"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("scope picker missing %q", want)
 		}
 	}
-	if strings.Contains(html, `value="admin:all"`) {
-		t.Error("admin:all must never be offered in the scope picker")
+	if strings.Contains(html, `value="admin"`) || strings.Contains(html, `value="admin:all"`) {
+		t.Error("admin and admin:all must never be offered in the scope picker")
+	}
+	if strings.Contains(html, ">Admin<") {
+		t.Error("the Admin area group must not render")
 	}
 	if strings.Contains(html, "Coarse-grained") || strings.Contains(html, "Fine-grained") {
 		t.Error("the picker must no longer bucket scopes as coarse/fine-grained")
@@ -441,11 +444,17 @@ func TestRenderScopePickerOmitsAdminAll(t *testing.T) {
 }
 
 // TestScopePickerGroupsCoverTaxonomy asserts the area picker groups follow the
-// canonical order and offer every token scope exactly once except admin:all
-// (server-gated).
+// canonical order (excluding the Admin area) and offer every token scope
+// exactly once except the platform admin scopes (admin, admin:all) and the
+// gated project:admin.
 func TestScopePickerGroupsCoverTaxonomy(t *testing.T) {
-	if len(scopePickerGroups) != len(apiTokenAreas) {
-		t.Fatalf("picker groups = %d, want %d (one per area)", len(scopePickerGroups), len(apiTokenAreas))
+	if len(scopePickerGroups) != len(apiTokenAreas)-1 {
+		t.Fatalf("picker groups = %d, want %d (one per non-admin area)", len(scopePickerGroups), len(apiTokenAreas)-1)
+	}
+	for _, g := range scopePickerGroups {
+		if g.Label == apiTokenAreaAdmin {
+			t.Fatalf("picker must not offer the Admin area (platform admin scopes are not selectable)")
+		}
 	}
 	seen := map[string]int{}
 	for i, g := range scopePickerGroups {
@@ -463,7 +472,7 @@ func TestScopePickerGroupsCoverTaxonomy(t *testing.T) {
 		}
 	}
 	for _, scope := range apiTokenScopes {
-		if scope == "admin:all" || scope == "project:admin" {
+		if scope == "admin" || scope == "admin:all" || scope == "project:admin" {
 			continue
 		}
 		if seen[scope] != 1 {
@@ -479,7 +488,8 @@ func TestScopePickerGroupsCoverTaxonomy(t *testing.T) {
 
 // TestScopePickerProjectAdminGating asserts project:admin is offered only for
 // project tokens held by an admin caller (project_admin or owning org_admin),
-// never for account tokens or non-admin project callers.
+// never for account tokens or non-admin project callers — and that the platform
+// admin scopes (admin, admin:all) are never offered for any surface or caller.
 func TestScopePickerProjectAdminGating(t *testing.T) {
 	offered := func(cfg apiTokenScopePickerConfig) bool {
 		html := renderHTML(t, apiTokenScopePickerContent(nil, cfg))
@@ -496,6 +506,18 @@ func TestScopePickerProjectAdminGating(t *testing.T) {
 	}
 	if offered(apiTokenScopePickerConfig{Account: true, CanManage: true}) {
 		t.Error("account tokens must never offer project:admin even for an admin caller")
+	}
+	// platform admin scopes are never offered, for any surface or caller
+	for _, cfg := range []apiTokenScopePickerConfig{
+		{},
+		{CanManage: true},
+		{Account: true},
+		{Account: true, CanManage: true},
+	} {
+		html := renderHTML(t, apiTokenScopePickerContent(nil, cfg))
+		if strings.Contains(html, `value="admin"`) || strings.Contains(html, `value="admin:all"`) {
+			t.Errorf("picker must never offer platform admin scopes, cfg=%+v", cfg)
+		}
 	}
 	// the offered option sits in the Projects bucket
 	groups := scopePickerGroupsFor(apiTokenScopePickerConfig{CanManage: true})
