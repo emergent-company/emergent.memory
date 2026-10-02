@@ -1,7 +1,7 @@
 # search Specification
 
 ## Purpose
-State the default search fusion semantics shipped by #1002 so the effective behaviour — especially the relationship leg's exclusion from weighted fusion when its weight is unset — is discoverable from the specs, and so an operator can restore the pre-#1002 behaviour without a code change (Refs #1002, #996).
+State the default search fusion semantics shipped by #1002 so the effective behaviour — especially the relationship leg's exclusion from weighted fusion when its weight is unset — is discoverable from the specs, and so an operator can restore the pre-#1002 behaviour without a code change (Refs #1002, #996). Also state the query-embedding bound and its lexical-only fallback, so a slow or hung embedding provider cannot silently stall or hard-fail unified search (Refs #1392).
 
 ## Requirements
 
@@ -63,6 +63,37 @@ The `rrf`, `interleave`, `graph_first`, and `text_first` strategies SHALL behave
 
 - **WHEN** a search runs with `interleave`, `graph_first`, or `text_first`
 - **THEN** relationship candidates SHALL surface directly and MUST NOT be scored via `relationshipWeight`
+
+### Requirement: Query embedding is bounded and degrades to lexical-only
+
+Unified search SHALL bound each query-embedding call it issues with `queryEmbedTimeout = 20s`. The bound covers exactly two sequential stages: the shared pre-computed query embedding, and — when the shared embedding yields no vector — one bounded re-embed per enabled leg (graph, text, and relationship), which run in parallel. A slow provider can therefore add a second bounded wait, so the search's own embedding stages settle after roughly at most 2×`queryEmbedTimeout`, not a single 20-second stage. To keep that bound exact, when a leg is left without a query vector it SHALL proceed without one AND SHALL NOT delegate a further embedding attempt: the text leg SHALL serve lexical (full-text) results only; the graph leg SHALL call graph hybrid search with no query vector and an explicit no-auto-embed signal (`DisableAutoEmbed`) so graph hybrid search yields lexical full-text results without issuing its own provider call; and the vector-dependent relationship leg SHALL produce no candidates. No leg may wait indefinitely on the provider, and the search SHALL NOT fail solely because an embedding call failed or exceeded the bound. A transient shared-embedding failure that succeeds on a leg's re-embed yields that leg's hybrid (lexical + vector) results, not lexical-only. This is the same fallback the search already applied on embedding error (the timeout path and the error path are indistinguishable to the caller).
+
+#### Scenario: Slow provider adds a second bounded wait, not a single stage
+
+- **WHEN** the shared query-embedding call does not return within `queryEmbedTimeout` (20 seconds)
+- **THEN** unified search SHALL stop waiting on that call at the bound and issue one bounded re-embed per enabled leg (graph, text, and relationship), running in parallel
+- **AND** the search's embedding stages SHALL settle after roughly at most 2×`queryEmbedTimeout`
+- **AND** the search SHALL NOT fail solely because an embedding call failed or exceeded the bound
+
+#### Scenario: Per-leg re-embed recovers hybrid results after a transient shared failure
+
+- **WHEN** the shared query-embedding call fails or exceeds the bound
+- **AND** a leg's bounded re-embed then succeeds
+- **THEN** that leg SHALL serve hybrid (lexical + vector) results — not lexical-only — and the vector-dependent relationship leg SHALL return candidates
+
+#### Scenario: A failed per-leg re-embed degrades only that leg
+
+- **WHEN** both the shared embedding and a leg's re-embed yield no query vector
+- **THEN** the text leg SHALL serve lexical (full-text) results only, exactly as the pre-existing embedding-error fallback did
+- **AND** the graph leg SHALL remain available via graph hybrid search with no query vector and `DisableAutoEmbed` set, yielding lexical (full-text) results without issuing a third embedding call
+- **AND** the vector-dependent relationship leg SHALL produce no candidates
+
+#### Scenario: The graph leg never adds a third, unbounded embedding attempt
+
+- **WHEN** the shared embedding and the graph leg's bounded re-embed both yield no query vector
+- **THEN** the graph leg's graph hybrid search call SHALL carry `DisableAutoEmbed` (no vector supplied)
+- **AND** graph hybrid search SHALL NOT auto-embed the query, so the unified search issues exactly two bounded embedding attempts
+- **AND** the search's embedding stages SHALL settle within roughly 2×`queryEmbedTimeout`, never on the embedding client's own HTTP timeout or the caller's deadline
 
 ### Requirement: Unified search can skip the relationship leg
 
