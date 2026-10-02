@@ -17,7 +17,7 @@ func TestGetCurrentProject(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath, gotMethod, gotAuth = r.URL.Path, r.Method, r.Header.Get("Authorization")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"p1","name":"Home","orgId":"o1","project_info":"family","chat_prompt_template":"hi","auto_extract_objects":true,"auto_merge_extraction_branches":false,"budget_usd":25.5}`)
+		_, _ = io.WriteString(w, `{"id":"p1","name":"Home","orgId":"o1","project_info":"family","chat_prompt_template":"hi","auto_extract_objects":true,"auto_merge_extraction_branches":false,"budget_usd":25.5,"budget_alert_threshold":0.8}`)
 	}))
 	defer srv.Close()
 
@@ -46,6 +46,9 @@ func TestGetCurrentProject(t *testing.T) {
 	}
 	if p.BudgetUSD == nil || *p.BudgetUSD != 25.5 {
 		t.Errorf("budget_usd = %v, want 25.5", p.BudgetUSD)
+	}
+	if p.BudgetAlertThreshold == nil || *p.BudgetAlertThreshold != 0.8 {
+		t.Errorf("budget_alert_threshold = %v, want 0.8", p.BudgetAlertThreshold)
 	}
 }
 
@@ -119,7 +122,8 @@ func TestUpdateProject(t *testing.T) {
 	name := "Renamed"
 	info := "notes"
 	off := false
-	upd := &ProjectUpdate{Name: name, ProjectInfo: &info, AutoExtractObjects: &off}
+	threshold := 0.5
+	upd := &ProjectUpdate{Name: name, ProjectInfo: &info, AutoExtractObjects: &off, BudgetAlertThreshold: &threshold}
 	p, err := m.UpdateProject(context.Background(), "p1", upd)
 	if err != nil {
 		t.Fatal(err)
@@ -132,6 +136,9 @@ func TestUpdateProject(t *testing.T) {
 	}
 	if gotBody["auto_extract_objects"] != false {
 		t.Errorf("auto_extract_objects = %v, want false (explicit)", gotBody["auto_extract_objects"])
+	}
+	if gotBody["budget_alert_threshold"] != 0.5 {
+		t.Errorf("budget_alert_threshold = %v, want 0.5", gotBody["budget_alert_threshold"])
 	}
 	if _, ok := gotBody["budget_usd"]; ok {
 		t.Errorf("unset pointer must be omitted, body = %v", gotBody)

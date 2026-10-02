@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +18,6 @@ func TestRenderProjectSettingsPage(t *testing.T) {
 			ChatPromptTemplate:          "be helpful",
 			AutoExtractObjects:          boolPtr(true),
 			AutoMergeExtractionBranches: boolPtr(false),
-			BudgetUSD:                   floatPtr(25.5),
 		},
 		RememberAgent:  "memory",
 		DedupThreshold: "0.8",
@@ -28,7 +28,6 @@ func TestRenderProjectSettingsPage(t *testing.T) {
 		`name="name"`, `value="Home"`, `name="project_info"`, "family",
 		`name="chat_prompt_template"`, "be helpful",
 		`name="auto_extract_objects"`, `name="auto_merge_extraction_branches"`,
-		`name="budget_usd"`, `value="25.5"`,
 		`hx-post="/settings/project/name"`,
 		`name="remember_agent"`, `value="memory"`,
 		`name="dedup_threshold"`, `value="0.8"`,
@@ -53,7 +52,7 @@ func TestRenderProjectSettingsPage(t *testing.T) {
 	}
 }
 
-// TestRenderSettingsSubNav covers the Settings sub-navigation rail: all six
+// TestRenderSettingsSubNav covers the Settings sub-navigation rail: all
 // section links render and exactly one (the active section) is highlighted.
 func TestRenderSettingsSubNav(t *testing.T) {
 	html := renderHTML(t, settingsSubNav("voice", false))
@@ -64,6 +63,7 @@ func TestRenderSettingsSubNav(t *testing.T) {
 		`href="/settings/providers"`, "Providers",
 		`href="/settings/voice"`, "Voice",
 		`href="/settings/devices"`, "Devices",
+		`href="/settings/budget"`, "Budget",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("settings sub-nav missing %q", want)
@@ -188,15 +188,72 @@ func TestRenderDevicesSettingsPage(t *testing.T) {
 	}
 }
 
+// TestRenderBudgetSettingsPage covers the Budget sub-page: header, sub-nav,
+// both inline auto-save fields (budget USD + alert threshold as a percentage),
+// and the budget tooltip/hint.
+func TestRenderBudgetSettingsPage(t *testing.T) {
+	data := budgetSettingsPageData{
+		Project: &Project{ID: "p1", Name: "Home", BudgetUSD: floatPtr(25.5), BudgetAlertThreshold: floatPtr(0.8)},
+	}
+	html := renderHTML(t, BudgetSettingsPage(data))
+	for _, want := range []string{
+		"Budget",
+		`name="budget_usd"`, `value="25.5"`,
+		`name="budget_alert_threshold"`, `value="80"`,
+		`hx-post="/settings/project/budget_alert_threshold"`,
+		`href="/settings/budget"`,
+		`data-tip="Monthly LLM spend cap. Once exceeded, agent runs are rejected (402 budget exceeded) until the cycle resets. Empty means no cap."`,
+		"Monthly budget cap, if any.",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("budget settings page missing %q", want)
+		}
+	}
+
+	// unset budget renders the "not set" note
+	absent := renderHTML(t, BudgetSettingsPage(budgetSettingsPageData{Project: &Project{ID: "p1", Name: "Home"}}))
+	if !strings.Contains(absent, "Budget not set.") {
+		t.Error("budget settings page should render 'Budget not set.' when no budget is set")
+	}
+
+	// regression: a stored fraction that has no exact binary representation
+	// (0.55) must render the integer percentage, not "55.00000000000001".
+	noisy := renderHTML(t, BudgetSettingsPage(budgetSettingsPageData{
+		Project: &Project{ID: "p1", Name: "Home", BudgetAlertThreshold: floatPtr(0.55)},
+	}))
+	if !strings.Contains(noisy, `value="55"`) {
+		t.Errorf("0.55 threshold must render value=\"55\" (float noise leaked: %v)", strings.Contains(noisy, "55.00000000000001"))
+	}
+}
+
+// TestThresholdPercentInputValueExact guards the fraction -> percent rendering
+// against binary-float noise. The naive FormatFloat provided by the first
+// implementation produced "55.00000000000001" for a stored 0.55 — user-visible
+// and an invalid HTML5 step value. Every whole percentage 1..100 must
+// round-trip through `pct/100 -> thresholdPercentInputValue` exactly.
+func TestThresholdPercentInputValueExact(t *testing.T) {
+	for pct := 1; pct <= 100; pct++ {
+		frac := float64(pct) / 100
+		if got, want := thresholdPercentInputValue(&frac), strconv.Itoa(pct); got != want {
+			t.Errorf("thresholdPercentInputValue(%d/100) = %q, want %q", pct, got, want)
+		}
+	}
+	if got := thresholdPercentInputValue(nil); got != "80" {
+		t.Errorf("thresholdPercentInputValue(nil) = %q, want %q", got, "80")
+	}
+}
+
 // TestRenderProjectSettingsPageAbsent covers the "not set" empty states when
 // optional fields and settings are absent.
 func TestRenderProjectSettingsPageAbsent(t *testing.T) {
 	data := projectSettingsData{Project: &Project{ID: "p1", Name: "Home"}}
 	html := renderHTML(t, ProjectSettingsPage(data))
-	for _, want := range []string{"Budget not set.", "not set"} {
-		if !strings.Contains(html, want) {
-			t.Errorf("absent page missing %q", want)
-		}
+	if !strings.Contains(html, "Object edits run on the default agent until you pick one.") {
+		t.Error("absent page missing the editor-agent default note")
+	}
+	// budget moved to its own sub-page
+	if strings.Contains(html, `name="budget_usd"`) {
+		t.Error("General page must not render the budget field (moved to /settings/budget)")
 	}
 }
 
@@ -464,7 +521,6 @@ func TestRenderSettingsFieldTooltips(t *testing.T) {
 		`data-tip="Prepended to every chat prompt in this project. Re-primes the model for all conversations — a wrong template degrades every response, not just one."`,
 		`data-tip="When on, newly uploaded documents run LLM extraction automatically. Keeps the graph current but spends tokens on every upload; when off you trigger extraction manually."`,
 		`data-tip="When on, extraction staging branches merge into the main graph automatically once extraction completes. Saves a manual merge but skips the review step — bad extractions reach the main graph unchecked."`,
-		`data-tip="Monthly LLM spend cap. Once exceeded, agent runs are rejected (402 budget exceeded) until the cycle resets. Empty means no cap."`,
 		`data-tip="The agent whose prompt, model, and tools run the remember pipeline that turns conversations into memories. A wrong choice yields low-quality or mis-structured memories."`,
 		`data-tip="Cosine-similarity cutoff (0.0–1.0) for near-duplicate detection when creating entities. Higher merges more aggressively (fewer duplicates, risk of combining distinct similar items); lower keeps more near-duplicates."`,
 	} {
@@ -476,7 +532,6 @@ func TestRenderSettingsFieldTooltips(t *testing.T) {
 	for _, want := range []string{
 		"Required.",
 		"Free-form context about this project.",
-		"Monthly budget cap, if any.",
 		"The agent definition that powers the remember pipeline. Empty clears it.",
 	} {
 		if !strings.Contains(html, want) {

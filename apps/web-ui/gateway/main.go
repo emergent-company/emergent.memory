@@ -383,6 +383,7 @@ func main() {
 	e.GET("/settings/providers/:provider/edit", s.uiProjectProviderEdit)
 	e.GET("/settings/voice", s.uiProjectVoiceSettings)
 	e.GET("/settings/devices", s.uiProjectDeviceSettings)
+	e.GET("/settings/budget", s.uiProjectBudgetSettings)
 	e.GET("/settings/approvals", s.uiApprovals)
 	e.GET("/settings/mcp-nodes", s.uiMCPNodes)
 	e.POST("/settings/mcp-nodes/remove", s.uiMCPNodesRemove)

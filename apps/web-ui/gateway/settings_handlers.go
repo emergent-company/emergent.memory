@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -217,6 +218,16 @@ type devicesSettingsPageData struct {
 	FlashErr   error
 }
 
+// budgetSettingsPageData is the payload for BudgetSettingsPage: the project's
+// spend cap and alert threshold plus PRG flash feedback.
+type budgetSettingsPageData struct {
+	settingsNavCommon
+	Project  *Project
+	LoadErr  error
+	FlashMsg string
+	FlashErr error
+}
+
 // uiProjectSettings renders the project settings page. ?updated=1 / ?err=1
 // surface PRG feedback from the save flows, mirroring uiAgentSettings.
 func (s *Server) uiProjectSettings(c echo.Context) error {
@@ -374,6 +385,28 @@ func (s *Server) uiProjectDeviceSettings(c echo.Context) error {
 	return s.page(c, pageTitle("Devices"), DevicesSettingsPage(data))
 }
 
+// uiProjectBudgetSettings renders the Budget settings page. ?updated=1 / ?err=1
+// surface PRG feedback from the budget save flow.
+func (s *Server) uiProjectBudgetSettings(c echo.Context) error {
+	ctx := c.Request().Context()
+	data := budgetSettingsPageData{}
+	if c.QueryParam("updated") != "" {
+		data.FlashMsg = "Budget settings saved."
+	}
+	data.FlashErr = flashError(c)
+	data.ProvidersMissing = s.projectHasNoProviders(ctx)
+	project, err := s.memory.GetCurrentProject(ctx)
+	if err != nil {
+		data.LoadErr = err
+		return s.page(c, pageTitle("Budget"), BudgetSettingsPage(data))
+	}
+	if project == nil {
+		return c.Redirect(http.StatusSeeOther, "/orgs")
+	}
+	data.Project = project
+	return s.page(c, pageTitle("Budget"), BudgetSettingsPage(data))
+}
+
 // uiProjectSettingsProjectField handles one inline per-field project-record
 // save (HTMX → POST /settings/project/:field). Each field PATCHes only itself
 // via UpdateProject; the project name is required, and budget must be a
@@ -421,6 +454,17 @@ func (s *Server) uiProjectSettingsProjectField(c echo.Context) error {
 			return toastTrigger(c, "error", "budget must be a non-negative number")
 		}
 		upd.BudgetUSD = &b
+	case "budget_alert_threshold":
+		v := strings.TrimSpace(c.FormValue("budget_alert_threshold"))
+		if v == "" {
+			return toastTrigger(c, "error", "alert threshold is required (1-100%)")
+		}
+		pct, perr := strconv.ParseFloat(v, 64)
+		if perr != nil || pct <= 0 || pct > 100 {
+			return toastTrigger(c, "error", "alert threshold must be greater than 0 and at most 100")
+		}
+		frac := pct / 100
+		upd.BudgetAlertThreshold = &frac
 	default:
 		return toastTrigger(c, "error", fmt.Sprintf("Unknown project field %q.", c.Param("field")))
 	}
@@ -954,6 +998,19 @@ func budgetInputValue(b *float64) string {
 		return ""
 	}
 	return strconv.FormatFloat(*b, 'f', -1, 64)
+}
+
+// thresholdPercentInputValue renders the budget alert threshold fraction as a
+// percentage string (0.8 -> "80"), defaulting to 80 when unset. The threshold
+// is a whole percentage, but most fractions (e.g. 0.55) have no exact binary
+// representation, so `fraction*100` alone leaks float noise ("55.00000000000001").
+// Round to the nearest integer before formatting so the rendered value is exact
+// and a valid HTML5 step value.
+func thresholdPercentInputValue(t *float64) string {
+	if t == nil {
+		return "80"
+	}
+	return strconv.FormatFloat(math.Round(*t*100), 'f', -1, 64)
 }
 
 // rememberAgentIsDefault reports whether the remember agent resolves to the

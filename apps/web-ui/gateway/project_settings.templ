@@ -27,9 +27,9 @@ templ settingsField(name, label, tip, hint string, attrs templ.Attributes) {
 }
 
 // settingsSubNav is the vertical sub-navigation rail for the Settings area
-// (General / Assistant / Overrides / Providers / Voice / Devices / MCP nodes),
-// mirroring agentSubNav. It stacks horizontally on small screens and becomes a
-// sticky left rail on desktop.
+// (General / Assistant / Overrides / Providers / Voice / Devices / Budget /
+// MCP nodes), mirroring agentSubNav. It stacks horizontally on small screens
+// and becomes a sticky left rail on desktop.
 templ settingsSubNav(active string, providersMissing bool) {
 	@components.SettingsRail("Settings sections", active, []components.RailItem{
 		{Key: "general", Href: "/settings", Icon: "lucide--settings", Label: "General"},
@@ -39,6 +39,7 @@ templ settingsSubNav(active string, providersMissing bool) {
 		{Custom: providersRailItem(active, providersMissing)},
 		{Key: "voice", Href: "/settings/voice", Icon: "lucide--mic", Label: "Voice"},
 		{Key: "devices", Href: "/settings/devices", Icon: "lucide--smartphone", Label: "Devices"},
+		{Key: "budget", Href: "/settings/budget", Icon: "lucide--wallet", Label: "Budget"},
 		{Key: "mcp-nodes", Href: "/settings/mcp-nodes", Icon: "lucide--radio", Label: "MCP nodes"},
 	})
 }
@@ -160,6 +161,43 @@ templ DevicesSettingsPage(data devicesSettingsPageData) {
 	}
 }
 
+// BudgetSettingsPage renders the Budget section: the monthly spend cap and
+// the alert threshold. flashMsg/flashErr surface PRG feedback from the save
+// flow.
+templ BudgetSettingsPage(data budgetSettingsPageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Budget")), "", "Budget", "Monthly LLM spend cap and when budget alerts are sent.", detailHeaderOpts{Margin: "mb-6"}) {
+			@countBadgeLabel("budget", "lucide--wallet")
+		}
+		@flashToasts(data.FlashMsg, data.FlashErr)
+		if data.LoadErr != nil {
+			@pageError("Budget settings unavailable", data.LoadErr)
+		} else {
+			@layout.Rail(settingsSubNav("budget", data.ProvidersMissing), nil) {
+				@budgetPanel(data.Project)
+			}
+		}
+	}
+}
+
+// budgetPanel edits the project's monthly spend cap and alert threshold. Both
+// are inline auto-save fields (no whole-form Save button).
+templ budgetPanel(p *Project) {
+	@ui.Section("Budget & alerts", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-comfortable"}) {
+		<div class="flex flex-col gap-4">
+			@settingsField("budget-usd", "Budget (USD)", "Monthly LLM spend cap. Once exceeded, agent runs are rejected (402 budget exceeded) until the cycle resets. Empty means no cap.", "Monthly budget cap, if any.", nil) {
+				<input id="budget-usd" name="budget_usd" type="number" step="0.01" min="0" value={ budgetInputValue(p.BudgetUSD) } placeholder="e.g. 25.00" class="input w-full" hx-post="/settings/project/budget_usd" hx-trigger="change delay:400ms" hx-include="this" hx-swap="none"/>
+			}
+			if p.BudgetUSD == nil {
+				<p class="text-muted-faint -mt-2 text-xs">Budget not set.</p>
+			}
+			@settingsField("budget-alert-threshold", "Alert threshold (%)", "Send a budget alert once this share of the monthly budget has been spent. Enter a whole percentage greater than 0 and at most 100. Alerts are sent at most once per project per month.", "Percentage of the monthly budget at which to alert.", nil) {
+				<input id="budget-alert-threshold" name="budget_alert_threshold" type="number" step="1" min="1" max="100" value={ thresholdPercentInputValue(p.BudgetAlertThreshold) } placeholder="80" class="input w-full" hx-post="/settings/project/budget_alert_threshold" hx-trigger="change delay:400ms" hx-include="this" hx-swap="none"/>
+			}
+		</div>
+	}
+}
+
 templ projectSettingsHeader(ok bool) {
 	@pageHeader("Project", "Project Settings", "Project-level Memory configuration — the project record and the remember pipeline.") {
 		if ok {
@@ -169,8 +207,8 @@ templ projectSettingsHeader(ok bool) {
 }
 
 // projectInfoPanel edits the project record itself: name, project info, chat
-// prompt template, extraction toggles, and budget. The name is required; the
-// free-text fields are always submitted so clearing them clears the value.
+// prompt template, and extraction toggles. The name is required; the free-text
+// fields are always submitted so clearing them clears the value.
 templ projectInfoPanel(p *Project) {
 	@ui.Section("Project info", ui.SectionProps{
 		Margin:    "mb-6",
@@ -190,12 +228,6 @@ templ projectInfoPanel(p *Project) {
 @components.ToggleField("auto_extract_objects", "Auto-extract objects from new documents", "When on, newly uploaded documents run LLM extraction automatically. Keeps the graph current but spends tokens on every upload; when off you trigger extraction manually.", p.AutoExtractObjects != nil && *p.AutoExtractObjects, templ.Attributes{"hx-post": "/settings/project/auto_extract_objects", "hx-trigger": "change", "hx-include": "this", "hx-swap": "none"})
 @components.ToggleField("auto_merge_extraction_branches", "Auto-merge extraction branches", "When on, extraction staging branches merge into the main graph automatically once extraction completes. Saves a manual merge but skips the review step — bad extractions reach the main graph unchecked.", p.AutoMergeExtractionBranches != nil && *p.AutoMergeExtractionBranches, templ.Attributes{"hx-post": "/settings/project/auto_merge_extraction_branches", "hx-trigger": "change", "hx-include": "this", "hx-swap": "none"})
 			</div>
-			@settingsField("budget-usd", "Budget (USD)", "Monthly LLM spend cap. Once exceeded, agent runs are rejected (402 budget exceeded) until the cycle resets. Empty means no cap.", "Monthly budget cap, if any.", nil) {
-				<input id="budget-usd" name="budget_usd" type="number" step="0.01" min="0" value={ budgetInputValue(p.BudgetUSD) } placeholder="e.g. 25.00" class="input w-full" hx-post="/settings/project/budget_usd" hx-trigger="change delay:400ms" hx-include="this" hx-swap="none"/>
-			}
-			if p.BudgetUSD == nil {
-				<p class="text-muted-faint -mt-2 text-xs">Budget not set.</p>
-			}
 		</div>
 	}
 }

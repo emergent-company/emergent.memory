@@ -112,15 +112,16 @@ type ProjectStats struct {
 
 // ProjectDTO is the response DTO for project endpoints
 type ProjectDTO struct {
-	ID                 string         `json:"id"`
-	Name               string         `json:"name"`
-	OrgID              string         `json:"orgId"`
-	ProjectInfo        *string        `json:"project_info,omitempty"`
-	ChatPromptTemplate *string        `json:"chat_prompt_template,omitempty"`
-	AutoExtractObjects *bool          `json:"auto_extract_objects,omitempty"`
-	AutoExtractConfig  map[string]any `json:"auto_extract_config,omitempty"`
-	BudgetUSD          *float64       `json:"budget_usd,omitempty"`
-	Stats              *ProjectStats  `json:"stats,omitempty"`
+	ID                   string         `json:"id"`
+	Name                 string         `json:"name"`
+	OrgID                string         `json:"orgId"`
+	ProjectInfo          *string        `json:"project_info,omitempty"`
+	ChatPromptTemplate   *string        `json:"chat_prompt_template,omitempty"`
+	AutoExtractObjects   *bool          `json:"auto_extract_objects,omitempty"`
+	AutoExtractConfig    map[string]any `json:"auto_extract_config,omitempty"`
+	BudgetUSD            *float64       `json:"budget_usd,omitempty"`
+	BudgetAlertThreshold *float64       `json:"budget_alert_threshold,omitempty"`
+	Stats                *ProjectStats  `json:"stats,omitempty"`
 	// AutoMergeExtractionBranches is emitted only when true.
 	AutoMergeExtractionBranches *bool `json:"auto_merge_extraction_branches,omitempty"`
 	// MainBranchID is the UUID of the project's root branch (parent_branch_id IS NULL).
@@ -180,13 +181,14 @@ type UpdateProjectRequest struct {
 // Note: Stats are not populated here, they must be set separately after querying
 func (p *Project) ToDTO() ProjectDTO {
 	dto := ProjectDTO{
-		ID:                 p.ID,
-		Name:               p.Name,
-		OrgID:              p.OrganizationID,
-		ProjectInfo:        p.ProjectInfo,
-		ChatPromptTemplate: p.ChatPromptTemplate,
-		BudgetUSD:          p.BudgetUSD,
-		Stats:              p.Stats,
+		ID:                   p.ID,
+		Name:                 p.Name,
+		OrgID:                p.OrganizationID,
+		ProjectInfo:          p.ProjectInfo,
+		ChatPromptTemplate:   p.ChatPromptTemplate,
+		BudgetUSD:            p.BudgetUSD,
+		BudgetAlertThreshold: &p.BudgetAlertThreshold,
+		Stats:                p.Stats,
 	}
 
 	// Only include boolean fields if they are true
