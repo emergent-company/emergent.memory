@@ -253,6 +253,30 @@ relationships omitted.
 - **THEN** it returns the explicit timeout error
 - **AND** it does not return `ok:true` with entities missing their relationships
 
+### Requirement: search-hybrid bounds the full-strategy result set
+
+The `search-hybrid` MCP tool SHALL cap the effective `limit` to the configured full-strategy maximum when `field_strategy="full"` is requested, using the same cap as `entity-query` (default `25`, configured via `MCP_ENTITY_QUERY_FULL_MAX_LIMIT`). The clamp SHALL only lower, never raise, the caller's `limit`. Because `search-hybrid` accepts no `offset` input, the cap is a hard ceiling on how many entities a single `full` call can return. The `limit` input-schema description SHALL state the effective full-strategy cap, so the advertised `max: 100` does not contradict the runtime clamp.
+
+#### Scenario: Full-strategy limit is capped
+
+- **WHEN** a client calls `search-hybrid` with `field_strategy: "full"` and a `limit` above the configured cap
+- **THEN** the effective limit is the cap and at most that many results are returned
+
+#### Scenario: Cap only lowers the caller's limit
+
+- **WHEN** a client calls `search-hybrid` with `field_strategy: "full"` and a `limit` below the cap
+- **THEN** the caller's limit is used unchanged
+
+#### Scenario: Full-strategy cap is stated in the input schema
+
+- **WHEN** a client reads the `search-hybrid` `limit` input schema
+- **THEN** its description names the effective full-strategy cap
+
+#### Scenario: Cap is a hard ceiling because there is no offset
+
+- **WHEN** a client calls `search-hybrid` with `field_strategy: "full"` and needs more rows than the cap
+- **THEN** the tool's input schema exposes no `offset`, so the cap cannot be bypassed by paging
+
 ### Requirement: entity-query supports key-prefix identity scoping
 
 `entity-query` SHALL accept an optional `key_prefix` input that restricts results

@@ -1,7 +1,7 @@
 # search Specification
 
 ## Purpose
-State the default search fusion semantics shipped by #1002 so the effective behaviour — especially the relationship leg's exclusion from weighted fusion when its weight is unset — is discoverable from the specs, and so an operator can restore the pre-#1002 behaviour without a code change (Refs #1002, #996).
+State the default search fusion semantics shipped by #1002 so the effective behaviour — especially the relationship leg's exclusion from weighted fusion when its weight is unset — is discoverable from the specs, and so an operator can restore the pre-#1002 behaviour without a code change (Refs #1002, #996). Also state the query-embedding bound and its lexical-only fallback, so a slow or hung embedding provider cannot silently stall or hard-fail unified search (Refs #1392).
 
 ## Requirements
 
@@ -63,3 +63,19 @@ The `rrf`, `interleave`, `graph_first`, and `text_first` strategies SHALL behave
 
 - **WHEN** a search runs with `interleave`, `graph_first`, or `text_first`
 - **THEN** relationship candidates SHALL surface directly and MUST NOT be scored via `relationshipWeight`
+
+### Requirement: Query embedding is bounded and degrades to lexical-only
+
+Unified search SHALL bound each query-embedding provider call with `queryEmbedTimeout = 20s`, covering both the shared pre-computed query embedding and the per-leg re-embeds used when the shared embedding is unavailable. When a provider call fails or exceeds the bound, the caller SHALL proceed with no query vector for that leg: the text leg SHALL serve lexical (full-text) results only and the vector-dependent relationship leg SHALL produce no candidates, rather than waiting on the provider or failing the search. This is the same lexical-only fallback the search already applied on embedding error (the timeout path and the error path are indistinguishable to the caller).
+
+#### Scenario: Slow embedding provider does not stall the search
+
+- **WHEN** the embedding provider does not return within `queryEmbedTimeout` (20 seconds)
+- **THEN** the search SHALL stop waiting for that embedding call and complete with lexical-only text results
+- **AND** the search SHALL NOT block on the provider or fail solely because the embedding call exceeded the bound
+
+#### Scenario: Timeout fallback matches the pre-existing error path
+
+- **WHEN** a query-embedding call exceeds the bound or otherwise errors
+- **THEN** the affected leg SHALL be treated as having no query vector, exactly as the pre-existing embedding-error fallback did
+- **AND** the text leg SHALL return lexical results and the relationship leg SHALL return no candidates
