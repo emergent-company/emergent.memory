@@ -141,3 +141,49 @@ func TestTransfer_RejectsInvalidIDs(t *testing.T) {
 	assert.Equal(t, 400, appErr.HTTPStatus)
 	assert.Equal(t, "invalid-uuid", appErr.Code)
 }
+
+// =============================================================================
+// Budget alert threshold validation
+// =============================================================================
+
+func TestValidateBudgetAlertThreshold(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      float64
+		wantErr bool
+	}{
+		{name: "zero", in: 0, wantErr: true},
+		{name: "negative", in: -0.2, wantErr: true},
+		{name: "above one", in: 1.5, wantErr: true},
+		{name: "half", in: 0.5, wantErr: false},
+		{name: "exactly one", in: 1.0, wantErr: false},
+		{name: "small fraction", in: 0.01, wantErr: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateBudgetAlertThreshold(tt.in)
+			if tt.wantErr {
+				require.Error(t, err)
+				appErr, ok := err.(*apperror.Error)
+				require.True(t, ok)
+				assert.Equal(t, 400, appErr.HTTPStatus)
+				assert.Equal(t, "validation-failed", appErr.Code)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestToDTOIncludesBudgetAlertThreshold(t *testing.T) {
+	p := &Project{
+		ID:                   "p1",
+		OrganizationID:       "o1",
+		Name:                 "n",
+		BudgetAlertThreshold: 0.35,
+	}
+	dto := p.ToDTO()
+	require.NotNil(t, dto.BudgetAlertThreshold)
+	assert.Equal(t, 0.35, *dto.BudgetAlertThreshold)
+}

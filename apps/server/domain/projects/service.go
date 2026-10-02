@@ -387,6 +387,9 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateProjectReques
 	}
 
 	if req.BudgetAlertThreshold != nil {
+		if err := validateBudgetAlertThreshold(*req.BudgetAlertThreshold); err != nil {
+			return nil, err
+		}
 		project.BudgetAlertThreshold = *req.BudgetAlertThreshold
 		hasUpdates = true
 	}
@@ -910,4 +913,17 @@ func (s *Service) AuthorizeOrgAdmin(ctx context.Context, orgID, userID string) e
 // Helper to validate UUID format
 func isValidUUID(id string) bool {
 	return uuidRegex.MatchString(id)
+}
+
+// validateBudgetAlertThreshold rejects thresholds that are not fractions in
+// (0, 1]. A threshold of 0 means "alert at $0 spend" (the #1347 regression);
+// >1 would only alert after the spend cap is already breached, and the
+// NUMERIC(3,2) column cannot store >9.99 anyway.
+func validateBudgetAlertThreshold(threshold float64) error {
+	if threshold <= 0 || threshold > 1 {
+		return apperror.New(400, "validation-failed", "budget alert threshold must be greater than 0 and at most 1 (1-100%)").WithDetails(map[string]any{
+			"budget_alert_threshold": []string{"must be greater than 0 and at most 1"},
+		})
+	}
+	return nil
 }
