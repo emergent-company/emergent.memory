@@ -18,8 +18,8 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/storage"
 	"github.com/emergent-company/emergent.memory/internal/version"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
-	"github.com/emergent-company/emergent.memory/pkg/kreuzberg"
 	"github.com/emergent-company/emergent.memory/pkg/whisper"
+	"github.com/emergent-company/emergent.memory/pkg/xberg"
 )
 
 // Handler handles health check requests
@@ -28,7 +28,7 @@ type Handler struct {
 	db         rowQuerier
 	cfg        *config.Config
 	storage    *storage.Service
-	kreuzberg  *kreuzberg.Client
+	xberg      *xberg.Client
 	whisper    *whisper.Client
 	embeddings *embeddings.Service
 	startAt    time.Time
@@ -45,7 +45,7 @@ func NewHandler(
 	pool *pgxpool.Pool,
 	cfg *config.Config,
 	storageSvc *storage.Service,
-	kreuzbergClient *kreuzberg.Client,
+	xbergClient *xberg.Client,
 	whisperClient *whisper.Client,
 	embeddingsSvc *embeddings.Service,
 ) *Handler {
@@ -54,7 +54,7 @@ func NewHandler(
 		db:         pool,
 		cfg:        cfg,
 		storage:    storageSvc,
-		kreuzberg:  kreuzbergClient,
+		xberg:      xbergClient,
 		whisper:    whisperClient,
 		embeddings: embeddingsSvc,
 		startAt:    time.Now(),
@@ -200,7 +200,7 @@ func (h *Handler) Health(c echo.Context) error {
 // or the HTTP code, whatever its own status is.
 var (
 	criticalComponents = []string{"database", "storage", "auth"}
-	optionalComponents = []string{"kreuzberg", "whisper", "embeddings", "database_backup"}
+	optionalComponents = []string{"xberg", "whisper", "embeddings", "database_backup"}
 )
 
 // overallHealth derives the overall status and HTTP status code from the
@@ -305,15 +305,15 @@ func (h *Handler) runChecks(ctx context.Context) map[string]Check {
 		}
 	}()
 
-	// Kreuzberg (document extraction)
+	// Xberg (document extraction)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if !h.kreuzberg.IsEnabled() {
-			emit("kreuzberg", Check{Status: "healthy", Message: "disabled"})
+		if !h.xberg.IsEnabled() {
+			emit("xberg", Check{Status: "healthy", Message: "disabled"})
 			return
 		}
-		healthResp, _ := h.kreuzberg.HealthCheck(ctx)
+		healthResp, _ := h.xberg.HealthCheck(ctx)
 		if healthResp == nil || healthResp.Status != "healthy" {
 			msg := "unreachable"
 			if healthResp != nil {
@@ -321,9 +321,9 @@ func (h *Handler) runChecks(ctx context.Context) map[string]Check {
 					msg = errDetail.(string)
 				}
 			}
-			emit("kreuzberg", Check{Status: "unhealthy", Message: msg})
+			emit("xberg", Check{Status: "unhealthy", Message: msg})
 		} else {
-			emit("kreuzberg", Check{Status: "healthy"})
+			emit("xberg", Check{Status: "healthy"})
 		}
 	}()
 

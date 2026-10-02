@@ -15,7 +15,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
-	"github.com/emergent-company/emergent.memory/pkg/kreuzberg"
+	"github.com/emergent-company/emergent.memory/pkg/xberg"
 )
 
 // ProtocolGroundTruth represents the ground truth data from doc-processing-suite.
@@ -353,7 +353,7 @@ func loadGroundTruth(path string) (*ProtocolGroundTruth, error) {
 // TestProtocolExtractionE2E tests extraction against doc-processing-suite ground truth.
 // This test requires:
 // - VERTEX_PROJECT_ID environment variable
-// - Kreuzberg service running
+// - Xberg service running
 // - PDF files from doc-processing-suite in expected location
 func TestProtocolExtractionE2E(t *testing.T) {
 	projectID := os.Getenv("VERTEX_PROJECT_ID")
@@ -384,7 +384,7 @@ func TestProtocolExtractionE2E(t *testing.T) {
 	t.Logf("  Attendees: %d", len(groundTruth.InputData.Attendees))
 	t.Logf("  Resolutions: %d", len(groundTruth.InputData.Resolutions))
 
-	// Extract text from PDF using Kreuzberg
+	// Extract text from PDF using Xberg
 	documentText, err := extractTextFromPDF(ctx, t, pdfPath)
 	require.NoError(t, err, "Failed to extract text from PDF")
 	t.Logf("Extracted %d characters from PDF", len(documentText))
@@ -510,7 +510,7 @@ func TestProtocolExtractionE2E(t *testing.T) {
 	assert.True(t, foundChairman, "Should find chairman: %s", groundTruth.InputData.Chairman.Name)
 }
 
-// extractTextFromPDF extracts text from a PDF using Kreuzberg.
+// extractTextFromPDF extracts text from a PDF using Xberg.
 func extractTextFromPDF(ctx context.Context, t *testing.T, pdfPath string) (string, error) {
 	// Read PDF file
 	pdfData, err := os.ReadFile(pdfPath)
@@ -518,27 +518,27 @@ func extractTextFromPDF(ctx context.Context, t *testing.T, pdfPath string) (stri
 		return "", fmt.Errorf("failed to read PDF: %w", err)
 	}
 
-	// Check if Kreuzberg is available
-	kreuzbergURL := os.Getenv("KREUZBERG_URL")
-	if kreuzbergURL == "" {
-		kreuzbergURL = "http://localhost:8787"
+	// Check if Xberg is available
+	xbergURL := os.Getenv("XBERG_URL")
+	if xbergURL == "" {
+		xbergURL = "http://localhost:8787"
 	}
 
-	// Create a minimal config for Kreuzberg client
+	// Create a minimal config for Xberg client
 	cfg := &config.Config{
-		Kreuzberg: config.KreuzbergConfig{
+		Xberg: config.XbergConfig{
 			Enabled:    true,
-			ServiceURL: kreuzbergURL,
+			ServiceURL: xbergURL,
 			TimeoutMs:  60000, // 60 seconds in milliseconds
 		},
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	client := kreuzberg.NewClient(cfg, logger)
+	client := xberg.NewClient(cfg, logger)
 
 	if !client.IsEnabled() {
-		// Fallback: return a message indicating Kreuzberg is not available
-		t.Log("Kreuzberg not enabled, using fallback document text")
+		// Fallback: return a message indicating Xberg is not available
+		t.Log("Xberg not enabled, using fallback document text")
 		return getFallbackProtocolText(), nil
 	}
 
@@ -547,17 +547,17 @@ func extractTextFromPDF(ctx context.Context, t *testing.T, pdfPath string) (stri
 	if err != nil {
 		// Check if it's a connection error
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "unavailable") {
-			t.Log("Kreuzberg service not available, using fallback document text")
+			t.Log("Xberg service not available, using fallback document text")
 			return getFallbackProtocolText(), nil
 		}
-		return "", fmt.Errorf("Kreuzberg extraction failed: %w", err)
+		return "", fmt.Errorf("Xberg extraction failed: %w", err)
 	}
 
 	return result.Content, nil
 }
 
 // getFallbackProtocolText returns synthetic protocol text matching ground truth structure.
-// This is used when Kreuzberg is not available for testing.
+// This is used when Xberg is not available for testing.
 func getFallbackProtocolText() string {
 	return `MEETING PROTOCOL
 Extraordinary General Meeting

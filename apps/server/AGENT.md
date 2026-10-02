@@ -142,7 +142,7 @@ apps/server/
 │   ├── embeddings/       # Vertex AI embeddings
 │   ├── encryption/
 │   ├── httputil/
-│   ├── kreuzberg/        # Document parsing client
+│   ├── xberg/            # Document parsing client
 │   ├── llm/
 │   ├── logger/           # Structured logging
 │   ├── mathutil/

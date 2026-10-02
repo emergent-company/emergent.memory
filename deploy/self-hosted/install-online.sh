@@ -446,12 +446,12 @@ STANDALONE_USER_EMAIL=admin@localhost
 STANDALONE_ORG_NAME=My Organization
 STANDALONE_PROJECT_NAME=Default Project
 
-KREUZBERG_PORT=18000
+XBERG_PORT=18000
 SERVER_PORT=${SERVER_PORT}
 
 GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
 EMBEDDING_DIMENSION=768
-KREUZBERG_LOG_LEVEL=info
+XBERG_LOG_LEVEL=info
 
 LLM_ENCRYPTION_KEY=${LLM_ENCRYPTION_KEY}
 EOF
@@ -483,15 +483,15 @@ services:
     networks:
       - memory
 
-  kreuzberg:
-    # Pinned: Kreuzberg v4 LTS (GHCR). Keep in sync with KreuzbergImage in apps/cli/internal/installer/templates.go.
-    image: ghcr.io/kreuzberg-dev/kreuzberg-full:4.10.3
-    container_name: memory-kreuzberg
+  xberg:
+    # Pinned: xberg v1 (GHCR). Keep in sync with XbergImage in apps/cli/internal/installer/templates.go.
+    image: ghcr.io/xberg-io/xberg:1.3.0
+    container_name: memory-xberg
     restart: unless-stopped
     ports:
-      - '\${KREUZBERG_PORT:-8000}:8000'
+      - '\${XBERG_PORT:-8000}:8000'
     environment:
-      - LOG_LEVEL=\${KREUZBERG_LOG_LEVEL:-info}
+      - RUST_LOG=\${XBERG_LOG_LEVEL:-info}
     healthcheck:
       test: ['CMD', 'curl', '-f', 'http://localhost:8000/health']
       interval: 30s
@@ -568,8 +568,8 @@ services:
       POSTGRES_DB: \${POSTGRES_DB:-emergent}
       PORT: 3002
       GO_ENV: production
-      KREUZBERG_SERVICE_URL: http://kreuzberg:8000
-      KREUZBERG_ENABLED: 'true'
+      XBERG_SERVICE_URL: http://xberg:8000
+      XBERG_ENABLED: 'true'
       STORAGE_PROVIDER: seaweedfs
       STORAGE_ENDPOINT: http://seaweedfs:8333
       STORAGE_ACCESS_KEY: \${OBJECT_STORE_ACCESS_KEY:-emergent}
@@ -585,7 +585,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      kreuzberg:
+      xberg:
         condition: service_healthy
       seaweedfs:
         condition: service_healthy

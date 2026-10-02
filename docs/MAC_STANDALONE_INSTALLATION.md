@@ -47,7 +47,7 @@ This guide helps you test the **Standalone Version** of Emergent using your loca
    STANDALONE_PROJECT_NAME=Default Project
 
    # Services Ports
-   KREUZBERG_PORT=18000
+   XBERG_PORT=18000
    SERVER_PORT=13002
 
    # AI Configuration (New Key)
@@ -55,7 +55,7 @@ This guide helps you test the **Standalone Version** of Emergent using your loca
    EMBEDDING_DIMENSION=768
 
    # Logging
-   KREUZBERG_LOG_LEVEL=info
+   XBERG_LOG_LEVEL=info
    ```
 
    **Save and exit** (`Ctrl+X`, `Y`, `Enter`).
@@ -93,7 +93,7 @@ docker compose -f docker-compose.local.yml --env-file .env.local up -d
 - **Server + CLI**: Port 13002 (mapped to internal 3002)
 - **Postgres**: Port 15432
 - **SeaweedFS S3**: Port 19000
-- **Kreuzberg**: Port 18000
+- **xberg**: Port 18000
 
 ## Step 4: Verify Installation
 
@@ -166,7 +166,7 @@ docker compose -f docker-compose.local.yml down -v
 | --------- | ---------- | ------------- |
 | Server         | **13002**  | 3002          |
 | Postgres       | **15432**  | 5432          |
-| Kreuzberg      | **18000**  | 8000          |
+| xberg      | **18000**  | 8000          |
 | SeaweedFS S3   | **19000**  | 8333          |
 
 These non-standard ports prevent conflicts with any other development environment you might be running.

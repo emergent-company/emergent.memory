@@ -16,8 +16,8 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
-	"github.com/emergent-company/emergent.memory/pkg/kreuzberg"
 	"github.com/emergent-company/emergent.memory/pkg/whisper"
+	"github.com/emergent-company/emergent.memory/pkg/xberg"
 )
 
 const (
@@ -44,7 +44,7 @@ func newDiagnosticsEcho(t *testing.T, testDB *testutil.TestDB) *testutil.HTTPCli
 		testDB.Pool,
 		testDB.Config,
 		&storage.Service{},
-		&kreuzberg.Client{},
+		&xberg.Client{},
 		&whisper.Client{},
 		&embeddings.Service{},
 	)
