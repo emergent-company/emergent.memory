@@ -434,7 +434,9 @@ func (s *Service) Unapply(ctx context.Context, blueprintID, projectID string) (*
 
 		// Runtime agents: delete any kb.agents rows this blueprint created,
 		// matched on the ownership stamp in their config JSONB. Counted under
-		// Agents.Removed (they are the runtime half of the definition).
+		// Agents.Removed (they are the runtime half of the definition). The
+		// repository tears down each deleted agent's in-memory trigger
+		// registrations as part of the delete, so they stop firing here too.
 		if n, err := s.agentRepo.DeleteAgentsBySourceBlueprint(ctx, blueprintID); err != nil {
 			return nil, err
 		} else {

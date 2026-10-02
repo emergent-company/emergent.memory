@@ -481,6 +481,8 @@ func (h *MCPToolHandler) ExecuteDeleteAgent(ctx context.Context, projectID strin
 		return errResult(fmt.Sprintf("agent not found: %s", id))
 	}
 
+	// Repository.Delete also removes the agent's in-memory trigger
+	// registrations, keeping the MCP delete path in lockstep with the row.
 	if err := h.repo.Delete(ctx, id); err != nil {
 		return errResult("failed to delete agent: " + err.Error())
 	}
