@@ -4,7 +4,7 @@ The web-ui "Ask the graph" query (dev) takes 55–68s. Tracing showed the intern
 
 ## What Changes
 
-- Make the `entity-type-list` relationship-type aggregation opt-in behind `include_relationships` (default false), and fix the relationship SQL so it is project-scoped and can use the partial index `idx_graph_relationships_head_main`.
+- Make the `entity-type-list` relationship-type aggregation opt-in behind `include_relationships` (default false). This is the actual latency fix: the aggregation is skipped entirely on the default path. The relationship SQL is additionally made project-scoped and head-only (`gr.supersedes_id IS NULL`, `src/dst.project_id`) for correctness; note that on the dev dataset the planner still chooses a parallel sequential scan for this three-way grouping join, so the SQL change is not what removes the cost.
 - Make the MCP `search-hybrid` path always skip the relationship-vector search leg (set `includeRelationships: false`), since `mapUnifiedToSearchResponse` only maps graph/text items and the leg's candidates are never surfaced to MCP clients.
 - Add an `IncludeRelationships` field to unified search so callers can skip the relationship leg; bound the query-embedding provider calls (shared and per-leg) with a timeout so a slow/hung provider cannot stall the search.
 - Update the graph-query-agent system prompt to stop calling `entity-type-list` for simple lookups and to use `include_relationships` only for relationship-type questions.
