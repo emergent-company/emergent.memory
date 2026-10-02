@@ -572,6 +572,16 @@ func parseObjectTypeSchemasToMap(data json.RawMessage) map[string]json.RawMessag
 		UI            json.RawMessage `json:"ui"`
 		ScopeKey      json.RawMessage `json:"scopeKey"`
 		ScopeKeySnake json.RawMessage `json:"scope_key"`
+		// Object-driven work configuration (P4). These must survive the
+		// array→map normalisation so the compiled-types path returns the same
+		// board/skip config the runtime extraction normalisation
+		// (extraction.normalizeSchemaToMap) already preserves. Dropping them
+		// here made the gateway silently fall back to canonical board lanes.
+		BoardEnabled      json.RawMessage `json:"boardEnabled"`
+		AllowedStatuses   json.RawMessage `json:"allowedStatuses"`
+		SkipEmbeddings    json.RawMessage `json:"skipEmbeddings"`
+		SkipExtraction    json.RawMessage `json:"skipExtraction"`
+		ExcludeFromSearch json.RawMessage `json:"excludeFromSearch"`
 	}
 	if err := json.Unmarshal(data, &arr); err == nil && len(arr) > 0 {
 		result := make(map[string]json.RawMessage, len(arr))
@@ -594,6 +604,20 @@ func parseObjectTypeSchemasToMap(data json.RawMessage) map[string]json.RawMessag
 				schema["scopeKey"] = item.ScopeKey
 			} else if len(item.ScopeKeySnake) > 0 && !isNullJSON(item.ScopeKeySnake) {
 				schema["scope_key"] = item.ScopeKeySnake
+			}
+			// Carry the object-driven work configuration through unchanged so the
+			// compiled-types path and the registry see the same fields the array
+			// entry declared (parity with the extraction runtime normalisation).
+			for key, raw := range map[string]json.RawMessage{
+				"boardEnabled":      item.BoardEnabled,
+				"allowedStatuses":   item.AllowedStatuses,
+				"skipEmbeddings":    item.SkipEmbeddings,
+				"skipExtraction":    item.SkipExtraction,
+				"excludeFromSearch": item.ExcludeFromSearch,
+			} {
+				if len(raw) > 0 && !isNullJSON(raw) {
+					schema[key] = raw
+				}
 			}
 			if item.Label != "" {
 				lb, _ := json.Marshal(item.Label)
