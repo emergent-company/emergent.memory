@@ -89,8 +89,9 @@ The inbox SHALL render action controls for actionable notifications and SHALL re
 
 #### Scenario: Jump to an actionable target
 
-- **WHEN** the inbox shows an actionable notification with a target (such as an approval request)
-- **THEN** the item offers a control that navigates to the target
+- **WHEN** the inbox shows a notification with a target (such as an agent question or approval request)
+- **THEN** the item's title/message is a link that navigates to the target — the chat conversation holding the pending question/approval, or the approvals page when the run has no conversation (#1362)
+- **AND** clicking the item marks it read before navigating
 
 ### Requirement: Project inbox opt-in
 
