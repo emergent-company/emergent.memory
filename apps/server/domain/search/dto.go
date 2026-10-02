@@ -63,6 +63,10 @@ type UnifiedSearchRequest struct {
 	RecencyHalfLife     *float32                          `json:"recencyHalfLife,omitempty"`
 	AccessBoost         *float32                          `json:"accessBoost,omitempty"`
 	MinScore            *float32                          `json:"minScore,omitempty"` // drop results scoring below this fused score (0-1)
+	// IncludeRelationships controls the relationship-vector search leg.
+	// nil preserves existing behaviour (leg runs when ResultTypes allows);
+	// false skips it for faster entity/text-only searches.
+	IncludeRelationships *bool `json:"includeRelationships,omitempty"`
 }
 
 // =============================================================================
