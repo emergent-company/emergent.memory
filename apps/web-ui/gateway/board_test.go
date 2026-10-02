@@ -152,6 +152,23 @@ func TestBoardStatusesFromCompiled(t *testing.T) {
 	}
 }
 
+// TestBoardStatusesFromCompiledSkipsShadowed pins that a shadowed (losing)
+// duplicate board type cannot leak stale lane statuses: only the effective
+// winner's allowed statuses are returned.
+func TestBoardStatusesFromCompiledSkipsShadowed(t *testing.T) {
+	compiled := &CompiledSchemaTypes{
+		ObjectTypes: []CompiledType{
+			{Name: "Task", BoardEnabled: true, AllowedStatuses: []string{"backlog", "shipped"}, Shadowed: true},
+			{Name: "Task", BoardEnabled: true, AllowedStatuses: []string{"todo", "doing"}},
+		},
+	}
+	got := boardStatusesFromCompiled(compiled)
+	want := []string{"todo", "doing"}
+	if !slices.Equal(got, want) {
+		t.Errorf("boardStatusesFromCompiled = %v, want %v (shadowed statuses must not leak)", got, want)
+	}
+}
+
 func TestBoardAgentHealthReadout(t *testing.T) {
 	f := &fakeMemory{
 		workItems: []WorkItem{{CanonicalID: "w1", Type: "BoardTask", Key: "k", Status: "ready"}},

@@ -78,15 +78,17 @@ type boardLane struct {
 
 // boardStatusesFromCompiled derives the board lane order from the compiled
 // schema's board-enabled object types, in declaration order, de-duplicated
-// first-seen. Non-board types and empty entries are skipped. Returns nil when
-// no board-enabled type declares any statuses.
+// first-seen. Shadowed (losing) duplicates are skipped — same as every other
+// compiled-type consumer (visibleCompiledTypes) — so an overridden board type
+// cannot leak stale lane statuses. Non-board types and empty entries are
+// skipped. Returns nil when no board-enabled type declares any statuses.
 func boardStatusesFromCompiled(compiled *CompiledSchemaTypes) []string {
 	if compiled == nil {
 		return nil
 	}
 	var out []string
 	seen := make(map[string]struct{})
-	for _, t := range compiled.ObjectTypes {
+	for _, t := range visibleCompiledTypes(compiled.ObjectTypes) {
 		if !t.BoardEnabled {
 			continue
 		}
