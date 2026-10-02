@@ -12,14 +12,14 @@ import (
 
 // BoardPage renders the Kanban board: a header, the circuit-breaker health
 // readout (when any reaction agent is unhealthy), and the status columns.
-templ BoardPage(items []WorkItem, agents []ScheduledAgent, loadErr error) {
+templ BoardPage(items []WorkItem, agents []ScheduledAgent, statuses []string, loadErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@boardHeader(len(items), loadErr == nil)
 		if loadErr != nil {
 			@pageError("Board unavailable", loadErr)
 		} else {
 			@boardHealth(agents)
-			@BoardColumns(items, "")
+			@BoardColumns(items, statuses, "")
 		}
 		<div id="board-drawer" data-testid="board-drawer"></div>
 	}
@@ -28,8 +28,8 @@ templ BoardPage(items []WorkItem, agents []ScheduledAgent, loadErr error) {
 // BoardRefresh renders the board columns plus an out-of-band swap that clears
 // the drawer (closing any open dialog). This is the response for the htmx
 // action and partial routes.
-templ BoardRefresh(items []WorkItem, errMsg string) {
-	@BoardColumns(items, errMsg)
+templ BoardRefresh(items []WorkItem, statuses []string, errMsg string) {
+	@BoardColumns(items, statuses, errMsg)
 	<div id="board-drawer" hx-swap-oob="true" data-testid="board-drawer"></div>
 }
 
@@ -71,7 +71,7 @@ templ boardHealth(agents []ScheduledAgent) {
 // BoardColumns renders the status lanes. It is the htmx swap region (#board) that
 // actions and drag re-render. errMsg, when set, renders an error banner above
 // the lanes.
-templ BoardColumns(items []WorkItem, errMsg string) {
+templ BoardColumns(items []WorkItem, statuses []string, errMsg string) {
 	<div id="board" data-testid="board">
 		if errMsg != "" {
 			@ui.Alert(ui.AlertProps{
@@ -82,7 +82,7 @@ templ BoardColumns(items []WorkItem, errMsg string) {
 				Attrs:   templ.Attributes{"class": "mb-4"},
 			})
 		}
-		{{ cols := buildBoardColumns(items) }}
+		{{ cols := buildBoardColumns(items, statuses) }}
 		if len(items) == 0 {
 			@ui.EmptyState(ui.EmptyStateProps{
 				Icon:        "lucide--kanban-square",

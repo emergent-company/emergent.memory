@@ -748,6 +748,12 @@ type ObjectTypeDetail struct {
 	Label       string
 	Description string
 	Properties  []PropertyDetail
+
+	// BoardEnabled reports whether this type is board-enabled, and
+	// AllowedStatuses lists the work statuses it allows (declaration order).
+	// Both come from the schema definition; zero values mean "not a board type".
+	BoardEnabled    bool
+	AllowedStatuses []string
 }
 
 // PropertyDetail is one property of an object type.
@@ -946,10 +952,12 @@ func objectTypesFromMaps(types []map[string]any) []ObjectTypeDetail {
 	out := make([]ObjectTypeDetail, 0, len(types))
 	for _, t := range types {
 		out = append(out, ObjectTypeDetail{
-			Name:        strAny(t["name"]),
-			Label:       strAny(t["label"]),
-			Description: strAny(t["description"]),
-			Properties:  propertiesFromMap(t["properties"]),
+			Name:            strAny(t["name"]),
+			Label:           strAny(t["label"]),
+			Description:     strAny(t["description"]),
+			Properties:      propertiesFromMap(t["properties"]),
+			BoardEnabled:    boolAny(t["boardEnabled"]),
+			AllowedStatuses: strSlice(t["allowedStatuses"]),
 		})
 	}
 	return out
