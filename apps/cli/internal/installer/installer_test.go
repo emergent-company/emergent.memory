@@ -205,9 +205,9 @@ func TestWriteDockerCompose(t *testing.T) {
 		"memory-db",
 		"memory-seaweedfs",
 		"memory-storage-init",
-		"memory-kreuzberg",
+		"memory-xberg",
 		"pgvector/pgvector:pg17",
-		"ghcr.io/kreuzberg-dev/kreuzberg-full:4.10.3",
+		"ghcr.io/xberg-io/xberg:1.3.0",
 		ObjectStoreImage,
 		StorageInitEntrypoint,
 	}

@@ -53,7 +53,7 @@ memory|compose|server|server
 memory|compose|web-ui|web-ui
 memory|compose|postgres|postgres
 memory|compose|minio|minio
-memory|compose|kreuzberg|kreuzberg
+memory|compose|xberg|xberg
 voice|compose|livekit|livekit
 voice|compose|redis|redis
 voice|journald|alfred|alfred.service

@@ -42,7 +42,7 @@ Make the package public via GitHub UI (one-time action).
 For the minimal installer to work, make these public:
 
 - ✅ `emergent-server-with-cli` (main server + CLI)
-- ✅ `emergent-kreuzberg` (vector DB)
+- ✅ `emergent-xberg` (document extraction)
 - ✅ `emergent-minio` (object storage)
 
 ## Alternative: Using GitHub Token in Workflow

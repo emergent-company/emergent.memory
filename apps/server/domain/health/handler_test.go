@@ -16,8 +16,8 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/storage"
 	"github.com/emergent-company/emergent.memory/internal/version"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
-	"github.com/emergent-company/emergent.memory/pkg/kreuzberg"
 	"github.com/emergent-company/emergent.memory/pkg/whisper"
+	"github.com/emergent-company/emergent.memory/pkg/xberg"
 )
 
 func TestBuildInfo(t *testing.T) {
@@ -293,7 +293,7 @@ func TestOverallHealthIgnoresInformationalEntries(t *testing.T) {
 			"database":        {Status: "healthy"},
 			"storage":         {Status: "healthy"},
 			"auth":            {Status: "healthy"},
-			"kreuzberg":       {Status: "healthy"},
+			"xberg":           {Status: "healthy"},
 			"whisper":         {Status: "healthy"},
 			"embeddings":      {Status: "healthy"},
 			"database_backup": {Status: "healthy"},
@@ -347,7 +347,7 @@ func TestRunChecksDoesNotLeakScopeAuthority(t *testing.T) {
 		db:         fakeRowQuerier{row: fakeRow{scanErr: pgx.ErrNoRows}},
 		cfg:        &config.Config{},
 		storage:    &storage.Service{},
-		kreuzberg:  &kreuzberg.Client{},
+		xberg:      &xberg.Client{},
 		whisper:    &whisper.Client{},
 		embeddings: &embeddings.Service{},
 	}

@@ -1,9 +1,9 @@
-// Package kreuzberg provides an HTTP client for the Kreuzberg document extraction service.
+// Package xberg provides an HTTP client for the Xberg document extraction service.
 //
-// Kreuzberg is a document parsing service that extracts text, tables, and images
+// Xberg is a document parsing service that extracts text, tables, and images
 // from various document formats (PDF, DOCX, images with OCR, etc.).
-// See: https://kreuzberg.dev
-package kreuzberg
+// See: https://docs.xberg.io
+package xberg
 
 import (
 	"bytes"
@@ -24,12 +24,12 @@ import (
 	"go.uber.org/fx"
 )
 
-// Module provides the Kreuzberg client as an fx module
-var Module = fx.Module("kreuzberg",
+// Module provides the Xberg client as an fx module
+var Module = fx.Module("xberg",
 	fx.Provide(NewClient),
 )
 
-// Client is an HTTP client for the Kreuzberg document extraction service
+// Client is an HTTP client for the Xberg document extraction service
 type Client struct {
 	httpClient *http.Client
 	baseURL    string
@@ -38,25 +38,25 @@ type Client struct {
 	log        *slog.Logger
 }
 
-// NewClient creates a new Kreuzberg client
+// NewClient creates a new Xberg client
 func NewClient(cfg *config.Config, log *slog.Logger) *Client {
 	return &Client{
 		httpClient: &http.Client{
-			Timeout: cfg.Kreuzberg.Timeout(),
+			Timeout: cfg.Xberg.Timeout(),
 		},
-		baseURL: cfg.Kreuzberg.ServiceURL,
-		timeout: cfg.Kreuzberg.Timeout(),
-		enabled: cfg.Kreuzberg.Enabled,
-		log:     log.With(logger.Scope("kreuzberg")),
+		baseURL: cfg.Xberg.ServiceURL,
+		timeout: cfg.Xberg.Timeout(),
+		enabled: cfg.Xberg.Enabled,
+		log:     log.With(logger.Scope("xberg")),
 	}
 }
 
-// IsEnabled returns true if Kreuzberg service is enabled
+// IsEnabled returns true if Xberg service is enabled
 func (c *Client) IsEnabled() bool {
 	return c.enabled
 }
 
-// ExtractResult is the response from Kreuzberg document extraction
+// ExtractResult is the response from Xberg document extraction
 type ExtractResult struct {
 	// Content is the extracted text content from the document
 	Content string `json:"content"`
@@ -82,7 +82,7 @@ type ExtractMetadata struct {
 }
 
 // ExtractedTable represents a table extracted from a document.
-// Kreuzberg 4.x returns tables with cells, markdown rendering, and page number.
+// Xberg 4.x returns tables with cells, markdown rendering, and page number.
 type ExtractedTable struct {
 	Cells      [][]string `json:"cells"`
 	Markdown   string     `json:"markdown"`
@@ -96,13 +96,13 @@ type ExtractedImage struct {
 	MimeType string `json:"mime_type"` // e.g., 'image/png', 'image/jpeg'
 }
 
-// OCRConfig contains OCR-specific configuration for Kreuzberg
+// OCRConfig contains OCR-specific configuration for Xberg
 type OCRConfig struct {
-	Backend  string `json:"backend,omitempty"`  // "tesseract", "easyocr", "paddleocr"
+	Backend  string `json:"backend,omitempty"`  // "tesseract", "paddleocr", "sceptre", "vlm"
 	Language string `json:"language,omitempty"` // "eng", "deu", "eng+deu"
 }
 
-// ExtractConfig is the JSON configuration sent to Kreuzberg's /extract endpoint
+// ExtractConfig is the JSON configuration sent to Xberg's /extract endpoint
 type ExtractConfig struct {
 	OCR      *OCRConfig `json:"ocr,omitempty"`
 	ForceOCR bool       `json:"force_ocr,omitempty"`
@@ -118,20 +118,20 @@ type ExtractOptions struct {
 	ExtractImages bool
 	// OCRLanguage is the language hint for OCR (e.g., "eng", "deu")
 	OCRLanguage string
-	// OCRBackend specifies the OCR backend to use (e.g., "tesseract", "easyocr")
+	// OCRBackend specifies the OCR backend to use (e.g., "tesseract", "paddleocr", "sceptre", "vlm")
 	OCRBackend string
 	// ForceOCR forces OCR on all pages, even if text layer exists
 	ForceOCR bool
 }
 
-// HealthResponse is the health check response from Kreuzberg
+// HealthResponse is the health check response from Xberg
 type HealthResponse struct {
 	Status  string                 `json:"status"` // "healthy" or "unhealthy"
 	Version string                 `json:"version,omitempty"`
 	Details map[string]interface{} `json:"details,omitempty"`
 }
 
-// Error represents a Kreuzberg service error
+// Error represents a Xberg service error
 type Error struct {
 	// Message is the human-friendly error message
 	Message string
@@ -179,7 +179,7 @@ func getHumanFriendlyMessage(technical string, detail string) string {
 func (c *Client) ExtractText(ctx context.Context, content []byte, filename, mimeType string, opts *ExtractOptions) (*ExtractResult, error) {
 	if !c.enabled {
 		return nil, &Error{
-			Message:    "Kreuzberg document parsing is not enabled",
+			Message:    "Xberg document parsing is not enabled",
 			StatusCode: http.StatusServiceUnavailable,
 		}
 	}
@@ -205,7 +205,7 @@ func (c *Client) ExtractText(ctx context.Context, content []byte, filename, mime
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
 
-	// Kreuzberg v4+ expects the field name to be 'files' (plural) and
+	// Xberg v4+ expects the field name to be 'files' (plural) and
 	// requires the correct Content-Type for each file part (not octet-stream).
 	h := make(textproto.MIMEHeader)
 	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="files"; filename="%s"`, filename))
@@ -265,12 +265,12 @@ func (c *Client) ExtractText(ctx context.Context, content []byte, filename, mime
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return nil, &Error{
-				Message:    fmt.Sprintf("Kreuzberg request timed out for %s", filename),
+				Message:    fmt.Sprintf("Xberg request timed out for %s", filename),
 				StatusCode: http.StatusRequestTimeout,
 			}
 		}
 		return nil, &Error{
-			Message:    fmt.Sprintf("Kreuzberg service unavailable at %s", c.baseURL),
+			Message:    fmt.Sprintf("Xberg service unavailable at %s", c.baseURL),
 			Detail:     err.Error(),
 			StatusCode: http.StatusServiceUnavailable,
 		}
@@ -288,15 +288,46 @@ func (c *Client) ExtractText(ctx context.Context, content []byte, filename, mime
 		return nil, c.handleErrorResponse(resp.StatusCode, body, filename)
 	}
 
-	// Kreuzberg v4+ returns an array of results (one per file submitted)
-	var results []ExtractResult
-	if err := json.Unmarshal(body, &results); err != nil {
+	// Xberg returns an envelope: {"results":[...],"errors":[...],"summary":{...}}.
+	var envelope struct {
+		Results []ExtractResult `json:"results"`
+		Errors  []struct {
+			Message string `json:"message"`
+			Error   string `json:"error"`
+			File    string `json:"file"`
+		} `json:"errors"`
+		Summary json.RawMessage `json:"summary"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
-	if len(results) == 0 {
-		return nil, fmt.Errorf("kreuzberg returned empty results for %s", filename)
+	if len(envelope.Results) == 0 {
+		if len(envelope.Errors) > 0 {
+			technical := envelope.Errors[0].Error
+			if technical == "" {
+				technical = envelope.Errors[0].Message
+			}
+			msgs := make([]string, 0, len(envelope.Errors))
+			for _, e := range envelope.Errors {
+				m := e.Message
+				if m == "" {
+					m = e.Error
+				}
+				if e.File != "" {
+					m = fmt.Sprintf("%s: %s", e.File, m)
+				}
+				msgs = append(msgs, m)
+			}
+			detail := strings.Join(msgs, "; ")
+			return nil, &Error{
+				Message:    getHumanFriendlyMessage(technical, detail),
+				Detail:     detail,
+				StatusCode: resp.StatusCode,
+			}
+		}
+		return nil, fmt.Errorf("xberg returned empty results for %s", filename)
 	}
-	result := results[0]
+	result := envelope.Results[0]
 
 	duration := time.Since(startTime)
 
@@ -337,10 +368,10 @@ func (c *Client) handleErrorResponse(statusCode int, body []byte, filename strin
 	}
 
 	if message == "" {
-		message = fmt.Sprintf("Kreuzberg error for %s", filename)
+		message = fmt.Sprintf("Xberg error for %s", filename)
 	}
 
-	c.log.Warn("kreuzberg error",
+	c.log.Warn("xberg error",
 		slog.String("filename", filename),
 		slog.Int("status_code", statusCode),
 		slog.String("message", message),
@@ -354,7 +385,7 @@ func (c *Client) handleErrorResponse(statusCode int, body []byte, filename strin
 	}
 }
 
-// HealthCheck checks the health status of the Kreuzberg service
+// HealthCheck checks the health status of the Xberg service
 func (c *Client) HealthCheck(ctx context.Context) (*HealthResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -366,7 +397,7 @@ func (c *Client) HealthCheck(ctx context.Context) (*HealthResponse, error) {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		c.log.Warn("kreuzberg health check failed", slog.Any("error", err))
+		c.log.Warn("xberg health check failed", slog.Any("error", err))
 		return &HealthResponse{
 			Status: "unhealthy",
 			Details: map[string]interface{}{
@@ -389,8 +420,8 @@ func (c *Client) HealthCheck(ctx context.Context) (*HealthResponse, error) {
 	return &health, nil
 }
 
-// MIME types supported by Kreuzberg for extraction
-var KreuzbergSupportedMIMETypes = map[string]bool{
+// MIME types supported by Xberg for extraction
+var XbergSupportedMIMETypes = map[string]bool{
 	// Documents
 	"application/pdf":    true,
 	"application/msword": true,
@@ -441,7 +472,7 @@ var KreuzbergSupportedMIMETypes = map[string]bool{
 	"application/x-7z-compressed": true,
 }
 
-// MIME types for plain text that bypass Kreuzberg
+// MIME types for plain text that bypass Xberg
 var PlainTextMIMETypes = map[string]bool{
 	"text/plain":                true,
 	"text/markdown":             true,
@@ -455,7 +486,7 @@ var PlainTextMIMETypes = map[string]bool{
 	"application/toml":          true,
 }
 
-// Plain text file extensions that bypass Kreuzberg
+// Plain text file extensions that bypass Xberg
 var PlainTextExtensions = map[string]bool{
 	".txt":      true,
 	".md":       true,
@@ -481,8 +512,8 @@ var EmailExtensions = map[string]bool{
 	".msg": true,
 }
 
-// ShouldUseKreuzberg determines if a file should be processed by Kreuzberg
-func ShouldUseKreuzberg(mimeType, filename string) bool {
+// ShouldUseXberg determines if a file should be processed by Xberg
+func ShouldUseXberg(mimeType, filename string) bool {
 	// Check MIME type first
 	if mimeType != "" && PlainTextMIMETypes[mimeType] {
 		return false
@@ -496,7 +527,7 @@ func ShouldUseKreuzberg(mimeType, filename string) bool {
 		}
 	}
 
-	// Default to using Kreuzberg for unknown types
+	// Default to using Xberg for unknown types
 	return true
 }
 
@@ -518,7 +549,7 @@ func IsEmailFile(mimeType, filename string) bool {
 	return false
 }
 
-// IsKreuzbergSupported checks if a MIME type is supported by Kreuzberg
-func IsKreuzbergSupported(mimeType string) bool {
-	return KreuzbergSupportedMIMETypes[mimeType]
+// IsXbergSupported checks if a MIME type is supported by Xberg
+func IsXbergSupported(mimeType string) bool {
+	return XbergSupportedMIMETypes[mimeType]
 }

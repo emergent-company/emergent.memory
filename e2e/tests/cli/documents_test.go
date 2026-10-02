@@ -422,12 +422,12 @@ func TestCLIInstalled_DocumentExtractionWithSchema(t *testing.T) {
 }
 
 // TestCLIInstalled_DocumentConversion verifies that uploading a PDF document
-// triggers Kreuzberg conversion and produces a non-empty content field after
+// triggers xberg conversion and produces a non-empty content field after
 // the conversion completes.
 func TestCLIInstalled_DocumentConversion(t *testing.T) {
 	rl := newRunLog(t)
 	t.Cleanup(rl.Close)
-	rl.Describe("Verify PDF document conversion via Kreuzberg",
+	rl.Describe("Verify PDF document conversion via xberg",
 		"Create project and upload a PDF fixture",
 		"Poll document until conversionStatus=\"completed\" (3-min timeout)",
 		"Assert document has non-empty content field after conversion",
@@ -469,7 +469,7 @@ func TestCLIInstalled_DocumentConversion(t *testing.T) {
 	rl.Printf("uploaded document ID: %s", docID)
 
 	// ── Poll for conversion completion ─────────────────────────────────────────
-	rl.Section("Poll for Kreuzberg conversion completion")
+	rl.Section("Poll for xberg conversion completion")
 	deadline := time.Now().Add(3 * time.Minute)
 	var lastGetOut string
 	converted := false

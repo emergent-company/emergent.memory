@@ -21,12 +21,12 @@ const (
 	// Must match docker/workspace-base.Dockerfile, which the publish workflow builds.
 	WorkspaceBaseImage = "memory-workspace:latest"
 
-	// KreuzbergImage is the pinned image for the Kreuzberg document extraction service.
-	// Bumping this constant is the single source of truth for the Kreuzberg version.
+	// XbergImage is the pinned image for the xberg document extraction service.
+	// Bumping this constant is the single source of truth for the xberg version.
 	// The static copies in deploy/self-hosted/*.yml and install-online.sh MUST be bumped
 	// together with this constant; the CLI tests assert the rendered template and the
 	// cli.yml CI workflow greps the static copies, so drift fails CI.
-	KreuzbergImage = "ghcr.io/kreuzberg-dev/kreuzberg-full:4.10.3"
+	XbergImage = "ghcr.io/xberg-io/xberg:1.3.0"
 
 	// ObjectStoreImage is the pinned SeaweedFS S3-compatible object store.
 	//
@@ -113,15 +113,15 @@ func GetDockerComposeTemplateWithVersion(version string) string {
     networks:
       - memory
 
-  kreuzberg:
-    # Pinned: Kreuzberg v4 LTS (GHCR). Do not revert to the old floating :latest tag (frozen at 4.0.7).
-    image: ` + KreuzbergImage + `
-    container_name: memory-kreuzberg
+  xberg:
+    # Pinned: xberg v1 (GHCR). :1.3.0 and :latest are the Full OCR/models variant (no -full suffix).
+    image: ` + XbergImage + `
+    container_name: memory-xberg
     restart: unless-stopped
     ports:
-      - '${KREUZBERG_PORT:-8000}:8000'
+      - '${XBERG_PORT:-8000}:8000'
     environment:
-      - LOG_LEVEL=${KREUZBERG_LOG_LEVEL:-info}
+      - RUST_LOG=${XBERG_LOG_LEVEL:-info}
     healthcheck:
       test: ['CMD', 'curl', '-f', 'http://localhost:8000/health']
       interval: 30s
@@ -242,8 +242,8 @@ func GetDockerComposeTemplateWithVersion(version string) string {
       POSTGRES_DB: ${POSTGRES_DB:-emergent}
       PORT: 3002
       GO_ENV: production
-      KREUZBERG_SERVICE_URL: http://kreuzberg:8000
-      KREUZBERG_ENABLED: 'true'
+      XBERG_SERVICE_URL: http://xberg:8000
+      XBERG_ENABLED: 'true'
       WHISPER_ENABLED: ${WHISPER_ENABLED:-false}
       WHISPER_SERVICE_URL: http://whisper-server:9000
       WHISPER_MODEL: ${WHISPER_MODEL:-base}
@@ -269,7 +269,7 @@ func GetDockerComposeTemplateWithVersion(version string) string {
     depends_on:
       db:
         condition: service_healthy
-      kreuzberg:
+      xberg:
         condition: service_healthy
       seaweedfs:
         condition: service_healthy

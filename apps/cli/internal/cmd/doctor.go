@@ -695,7 +695,7 @@ func checkServerConnectivity(serverURL string) []checkResult {
 	}
 
 	// Report individual component checks
-	componentOrder := []string{"database", "storage", "auth", "kreuzberg", "whisper", "embeddings"}
+	componentOrder := []string{"database", "storage", "auth", "xberg", "whisper", "embeddings"}
 	for _, name := range componentOrder {
 		chk, ok := healthResp.Checks[name]
 		if !ok {
@@ -1654,7 +1654,7 @@ func printSystemInfo(installDir string, isStandalone bool) {
 
 	if isStandalone {
 		fmt.Println("\nContainer Versions:")
-		containers := []string{"memory-server", "memory-db", "memory-seaweedfs", "memory-kreuzberg"}
+		containers := []string{"memory-server", "memory-db", "memory-seaweedfs", "memory-xberg"}
 		for _, name := range containers {
 			version := getContainerVersion(name)
 			if version == "" {
