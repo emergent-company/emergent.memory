@@ -48,6 +48,12 @@ type Config struct {
 	// requires Zitadel config; "dev" is an explicit opt-in, unauthenticated
 	// local-dev escape hatch.
 	AuthMode string
+	// ComponentGallery enables the dev-gated /dev/components gallery. Explicit
+	// and default-off in every mode: `task dev` runs in AUTH_MODE=session (like
+	// the public dev deployment), so an auth-mode-based default would be off
+	// exactly where a developer needs it. The dev environment and the e2e/dev
+	// harness set MEMORY_COMPONENT_GALLERY=on explicitly.
+	ComponentGallery bool
 	// SessionSecret is the HMAC signing key for the session cookie. Empty =
 	// sessions cannot be issued (dev mode without sign-in).
 	SessionSecret string
@@ -165,6 +171,7 @@ func LoadConfig() Config {
 		ZitadelClientID:     os.Getenv("ZITADEL_CLIENT_ID"),
 		ZitadelRedirectURI:  os.Getenv("ZITADEL_REDIRECT_URI"),
 		AuthMode:            envOr("AUTH_MODE", "session"),
+		ComponentGallery:    envBoolOr("MEMORY_COMPONENT_GALLERY", false),
 		SessionSecret:       os.Getenv("SESSION_SECRET"),
 		SessionMaxAge:       durationOr("SESSION_MAX_AGE", 30*24*time.Hour),
 		ShareCookieSecret:   os.Getenv("SHARE_COOKIE_SECRET"),
