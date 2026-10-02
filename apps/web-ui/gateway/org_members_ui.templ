@@ -386,6 +386,7 @@ templ memberInviteRow(inv SentInviteDto, base string, canRevoke bool) {
 						})
 					</form>
 					<form method="post" action={ templ.URL("/invites/" + url.PathEscape(inv.ID) + "/revoke") }>
+						<input type="hidden" name="surface" value={ base }/>
 						@ui.Button(ui.ButtonProps{
 							Type:       ui.ButtonTypeSubmit,
 							Variant:    ui.ButtonGhost,

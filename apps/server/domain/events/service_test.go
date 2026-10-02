@@ -1,6 +1,7 @@
 package events
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"sync"
@@ -8,8 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 func newTestLogger() *slog.Logger {
@@ -216,7 +220,7 @@ func TestEmitCreated(t *testing.T) {
 		wg.Done()
 	})
 
-	svc.EmitCreated(EntityDocument, entityID, projectID, nil)
+	svc.EmitCreated(context.Background(), EntityDocument, entityID, projectID, nil)
 
 	wg.Wait()
 
@@ -251,7 +255,7 @@ func TestEmitCreated_WithOptions(t *testing.T) {
 		ObjectType: "Person",
 	}
 
-	svc.EmitCreated(EntityGraphObject, entityID, projectID, opts)
+	svc.EmitCreated(context.Background(), EntityGraphObject, entityID, projectID, opts)
 
 	wg.Wait()
 
@@ -281,7 +285,7 @@ func TestEmitUpdated(t *testing.T) {
 		wg.Done()
 	})
 
-	svc.EmitUpdated(EntityDocument, entityID, projectID, nil)
+	svc.EmitUpdated(context.Background(), EntityDocument, entityID, projectID, nil)
 
 	wg.Wait()
 
@@ -311,7 +315,7 @@ func TestEmitUpdated_WithOptions(t *testing.T) {
 		Actor: &ActorContext{ActorType: ActorAgent, ActorID: "agent-1"},
 	}
 
-	svc.EmitUpdated(EntityChunk, entityID, projectID, opts)
+	svc.EmitUpdated(context.Background(), EntityChunk, entityID, projectID, opts)
 
 	wg.Wait()
 
@@ -336,7 +340,7 @@ func TestEmitDeleted(t *testing.T) {
 		wg.Done()
 	})
 
-	svc.EmitDeleted(EntityDocument, entityID, projectID, nil)
+	svc.EmitDeleted(context.Background(), EntityDocument, entityID, projectID, nil)
 
 	wg.Wait()
 
@@ -370,7 +374,7 @@ func TestEmitDeleted_WithOptions(t *testing.T) {
 		ObjectType: "Company",
 	}
 
-	svc.EmitDeleted(EntityGraphObject, entityID, projectID, opts)
+	svc.EmitDeleted(context.Background(), EntityGraphObject, entityID, projectID, opts)
 
 	wg.Wait()
 
@@ -398,7 +402,7 @@ func TestEmitBatch(t *testing.T) {
 	})
 
 	data := map[string]any{"action": "bulk_delete"}
-	svc.EmitBatch(EntityDocument, ids, projectID, data)
+	svc.EmitBatch(context.Background(), EntityDocument, ids, projectID, data)
 
 	wg.Wait()
 
@@ -481,3 +485,93 @@ func TestConcurrentEmit(t *testing.T) {
 	wg.Wait()
 	assert.Equal(t, int32(numEvents), atomic.LoadInt32(&counter))
 }
+
+// emitAndCapture subscribes to projectID, runs emit, and returns the delivered
+// event (or fails on timeout). Emit delivers asynchronously.
+func emitAndCapture(t *testing.T, svc *Service, projectID string, emit func()) EntityEvent {
+	t.Helper()
+	ch := make(chan EntityEvent, 1)
+	svc.Subscribe(projectID, func(e EntityEvent) { ch <- e })
+	emit()
+	select {
+	case e := <-ch:
+		return e
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for emitted event")
+		return EntityEvent{}
+	}
+}
+
+func TestEmit_ActorStampedFromContext(t *testing.T) {
+	svc := NewService(newTestLogger())
+
+	t.Run("agent", func(t *testing.T) {
+		agentDefID := uuid.New()
+		ctx := auth.WithActor(context.Background(), string(ActorAgent), &agentDefID)
+		evt := emitAndCapture(t, svc, "p1", func() {
+			svc.EmitCreated(ctx, EntityGraphObject, "obj-1", "p1", nil)
+		})
+		require.NotNil(t, evt.Actor)
+		assert.Equal(t, ActorAgent, evt.Actor.ActorType)
+		assert.Equal(t, agentDefID.String(), evt.Actor.ActorID)
+	})
+
+	t.Run("user", func(t *testing.T) {
+		userID := uuid.New()
+		ctx := auth.WithActor(context.Background(), string(ActorUser), &userID)
+		evt := emitAndCapture(t, svc, "p2", func() {
+			svc.EmitUpdated(ctx, EntityDocument, "doc-1", "p2", nil)
+		})
+		require.NotNil(t, evt.Actor)
+		assert.Equal(t, ActorUser, evt.Actor.ActorType)
+		assert.Equal(t, userID.String(), evt.Actor.ActorID)
+	})
+
+	t.Run("system", func(t *testing.T) {
+		ctx := auth.WithActor(context.Background(), string(ActorSystem), nil)
+		evt := emitAndCapture(t, svc, "p3", func() {
+			svc.EmitDeleted(ctx, EntityGraphObject, "obj-2", "p3", nil)
+		})
+		require.NotNil(t, evt.Actor)
+		assert.Equal(t, ActorSystem, evt.Actor.ActorType)
+		assert.Empty(t, evt.Actor.ActorID)
+	})
+}
+
+func TestEmit_ActorNilWhenNoContextActorAndNoOption(t *testing.T) {
+	svc := NewService(newTestLogger())
+	evt := emitAndCapture(t, svc, "p1", func() {
+		svc.EmitCreated(context.Background(), EntityDocument, "doc-1", "p1", nil)
+	})
+	assert.Nil(t, evt.Actor)
+}
+
+func TestEmit_ExplicitActorWinsOverContextActor(t *testing.T) {
+	svc := NewService(newTestLogger())
+	ctxActorID := uuid.New()
+	ctx := auth.WithActor(context.Background(), string(ActorAgent), &ctxActorID)
+	explicit := &ActorContext{ActorType: ActorSystem, ActorID: "system-explicit"}
+
+	evt := emitAndCapture(t, svc, "p1", func() {
+		svc.EmitCreated(ctx, EntityDocument, "doc-1", "p1", &EmitOptions{Actor: explicit})
+	})
+
+	require.NotNil(t, evt.Actor)
+	assert.Equal(t, ActorSystem, evt.Actor.ActorType)
+	assert.Equal(t, "system-explicit", evt.Actor.ActorID)
+}
+
+func TestEmit_ClearedActorShadowStaysNil(t *testing.T) {
+	svc := NewService(newTestLogger())
+	// WithActor("", nil) is the documented "clear" form: it must shadow a parent
+	// actor, so the event actor stays nil.
+	ctx := auth.WithActor(context.Background(), string(ActorAgent), ptrUUID(uuid.New()))
+	ctx = auth.WithActor(ctx, "", nil)
+
+	evt := emitAndCapture(t, svc, "p1", func() {
+		svc.EmitCreated(ctx, EntityDocument, "doc-1", "p1", nil)
+	})
+	assert.Nil(t, evt.Actor)
+}
+
+func ptrUUID(id uuid.UUID) *uuid.UUID { return &id }

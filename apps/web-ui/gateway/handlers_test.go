@@ -438,21 +438,25 @@ type fakeMemory struct {
 	lastMCPSessionStatus string
 
 	// Inbox / notifications (see notifications_handlers.go).
-	notifications          []Notification
-	notificationListErr    error
-	notificationCounts     *NotificationCounts
-	notificationCountErr   error
-	notificationPrefs      []NotificationPreference
-	notificationPrefsErr   error
-	notificationMutations  []string // "action:id[:verb]" in call order
-	notificationMutErr     error    // failure for every mutation/preference write
-	lastListParams         NotificationListParams
-	lastCountsScope        string
-	lastCountsProject      string
-	lastPrefsProject       string
-	eventStreamBody        io.ReadCloser // returned by NotificationEventStream
-	eventStreamErr         error
-	lastEventStreamProject string
+	notifications       []Notification
+	notificationListErr error
+	notificationCounts  *NotificationCounts
+	// notificationCountsByScope overrides notificationCounts per "scope|project"
+	// key, so a test can give the account and project inboxes distinct counts
+	// (the #1342 scope-mismatch regression).
+	notificationCountsByScope map[string]*NotificationCounts
+	notificationCountErr      error
+	notificationPrefs         []NotificationPreference
+	notificationPrefsErr      error
+	notificationMutations     []string // "action:id[:verb]" in call order
+	notificationMutErr        error    // failure for every mutation/preference write
+	lastListParams            NotificationListParams
+	lastCountsScope           string
+	lastCountsProject         string
+	lastPrefsProject          string
+	eventStreamBody           io.ReadCloser // returned by NotificationEventStream
+	eventStreamErr            error
+	lastEventStreamProject    string
 }
 
 // projectSettingWrite records one SetProjectSetting call on the fake.

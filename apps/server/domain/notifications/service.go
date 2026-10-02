@@ -82,22 +82,6 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Notification, er
 		return nil, nil
 	}
 
-	// Group coalescing: a repeated event that already has an unread row for
-	// the same group key does not stack another row.
-	if in.GroupKey != nil && *in.GroupKey != "" {
-		exists, err := s.repo.GroupKeyExists(ctx, in.UserID, *in.GroupKey)
-		if err != nil {
-			return nil, err
-		}
-		if exists {
-			s.log.Debug("notification coalesced by group key",
-				slog.String("event_key", in.EventKey),
-				slog.String("group_key", *in.GroupKey),
-			)
-			return nil, nil
-		}
-	}
-
 	severity := in.Severity
 	if severity == "" {
 		severity = "info"
@@ -132,18 +116,34 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Notification, er
 		EventKey:            &in.EventKey,
 	}
 
-	created, err := s.repo.Create(ctx, n)
+	// Group coalescing: when a group key is set, the insert is made atomic by
+	// the partial unique index and ON CONFLICT DO NOTHING, so a repeated event
+	// cannot stack duplicate rows even under concurrent producers.
+	var created *Notification
+	var err error
+	if in.GroupKey != nil && *in.GroupKey != "" {
+		created, err = s.repo.CreateCoalescing(ctx, n)
+	} else {
+		created, err = s.repo.Create(ctx, n)
+	}
 	if err != nil {
 		return nil, err
 	}
+	if created == nil {
+		s.log.Debug("notification coalesced by group key",
+			slog.String("event_key", in.EventKey),
+			slog.String("group_key", *in.GroupKey),
+		)
+		return nil, nil
+	}
 
-	s.emitCreated(created)
+	s.emitCreated(ctx, created)
 
 	return created, nil
 }
 
 // emitCreated publishes a real-time notification entity event.
-func (s *Service) emitCreated(n *Notification) {
+func (s *Service) emitCreated(ctx context.Context, n *Notification) {
 	if s.events == nil {
 		return
 	}
@@ -155,7 +155,7 @@ func (s *Service) emitCreated(n *Notification) {
 	if n.EventKey != nil {
 		eventKey = *n.EventKey
 	}
-	s.events.EmitCreated(events.EntityNotification, n.ID, projectID, &events.EmitOptions{
+	s.events.EmitCreated(ctx, events.EntityNotification, n.ID, projectID, &events.EmitOptions{
 		Data: map[string]any{
 			"userId":   n.UserID,
 			"scope":    string(n.Scope),

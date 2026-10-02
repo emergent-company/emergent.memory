@@ -8,6 +8,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/apps/cli/internal/blueprints"
 	sdkagents "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/agentdefinitions"
+	sdkruntime "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/agents"
 	sdkprojects "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/projects"
 	sdkschemas "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/schemas"
 	sdkskills "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/skills"
@@ -52,7 +53,7 @@ func TestBlueprintsApplier_DryRun(t *testing.T) {
 
 	var buf bytes.Buffer
 	// nil SDK clients — dry-run must not call them
-	a := blueprints.NewBlueprintsApplier(nil, "", nil, nil, nil, true /* dryRun */, false /* upgrade */, &buf)
+	a := blueprints.NewBlueprintsApplier(nil, "", nil, nil, nil, nil, true /* dryRun */, false /* upgrade */, &buf)
 
 	results, err := a.Run(context.Background(), nil, packs, agents, nil)
 	if err != nil {
@@ -86,7 +87,7 @@ func TestBlueprintsApplier_DryRunWithUpgrade(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	a := blueprints.NewBlueprintsApplier(nil, "", nil, nil, nil, true, true, &buf)
+	a := blueprints.NewBlueprintsApplier(nil, "", nil, nil, nil, nil, true, true, &buf)
 	results, err := a.Run(context.Background(), nil, packs, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -108,7 +109,7 @@ func TestBlueprintsApplier_DryRunWithProjectInfo(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	a := blueprints.NewBlueprintsApplier(nil, "test-project-id", nil, nil, nil, true, false, &buf)
+	a := blueprints.NewBlueprintsApplier(nil, "test-project-id", nil, nil, nil, nil, true, false, &buf)
 	results, err := a.Run(context.Background(), pf, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -136,9 +137,10 @@ func TestBlueprintsApplier_AcceptsSDKClientTypes(t *testing.T) {
 	var pr *sdkprojects.Client
 	var sc *sdkschemas.Client
 	var ag *sdkagents.Client
+	var ra *sdkruntime.Client
 	var sk *sdkskills.Client
 
-	a := blueprints.NewBlueprintsApplier(pr, "proj-id", sc, ag, sk, true, false, nil)
+	a := blueprints.NewBlueprintsApplier(pr, "proj-id", sc, ag, ra, sk, true, false, nil)
 	if a == nil {
 		t.Fatal("expected non-nil blueprinter")
 	}

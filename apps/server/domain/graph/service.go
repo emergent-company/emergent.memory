@@ -120,11 +120,11 @@ func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvide
 }
 
 // emitObjectCreated emits a graph_object entity.created event (no-op if events not wired).
-func (s *Service) emitObjectCreated(obj *GraphObjectResponse) {
+func (s *Service) emitObjectCreated(ctx context.Context, obj *GraphObjectResponse) {
 	if s.events == nil {
 		return
 	}
-	s.events.EmitCreated(events.EntityGraphObject, obj.CanonicalID.String(), obj.ProjectID.String(), &events.EmitOptions{
+	s.events.EmitCreated(ctx, events.EntityGraphObject, obj.CanonicalID.String(), obj.ProjectID.String(), &events.EmitOptions{
 		Version:    &obj.Version,
 		ObjectType: obj.Type,
 		Data:       workStatusData(obj),
@@ -132,11 +132,11 @@ func (s *Service) emitObjectCreated(obj *GraphObjectResponse) {
 }
 
 // emitObjectUpdated emits a graph_object entity.updated event (no-op if events not wired).
-func (s *Service) emitObjectUpdated(obj *GraphObjectResponse) {
+func (s *Service) emitObjectUpdated(ctx context.Context, obj *GraphObjectResponse) {
 	if s.events == nil {
 		return
 	}
-	s.events.EmitUpdated(events.EntityGraphObject, obj.CanonicalID.String(), obj.ProjectID.String(), &events.EmitOptions{
+	s.events.EmitUpdated(ctx, events.EntityGraphObject, obj.CanonicalID.String(), obj.ProjectID.String(), &events.EmitOptions{
 		Version:    &obj.Version,
 		ObjectType: obj.Type,
 		Data:       workStatusData(obj),
@@ -144,11 +144,11 @@ func (s *Service) emitObjectUpdated(obj *GraphObjectResponse) {
 }
 
 // emitObjectDeleted emits a graph_object entity.deleted event (no-op if events not wired).
-func (s *Service) emitObjectDeleted(projectID, canonicalID, objType string) {
+func (s *Service) emitObjectDeleted(ctx context.Context, projectID, canonicalID, objType string) {
 	if s.events == nil {
 		return
 	}
-	s.events.EmitDeleted(events.EntityGraphObject, canonicalID, projectID, &events.EmitOptions{
+	s.events.EmitDeleted(ctx, events.EntityGraphObject, canonicalID, projectID, &events.EmitOptions{
 		ObjectType: objType,
 	})
 }
@@ -841,7 +841,7 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 	}
 
 	resp := obj.ToResponse()
-	s.emitObjectCreated(resp)
+	s.emitObjectCreated(ctx, resp)
 	return resp, nil
 }
 
@@ -926,7 +926,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 		s.enqueueEmbeddingForType(ctx, projectID, obj.Type, obj.ID.String())
 
 		resp := obj.ToResponse()
-		s.emitObjectCreated(resp)
+		s.emitObjectCreated(ctx, resp)
 		return resp, true, nil
 	}
 
@@ -962,7 +962,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 		s.enqueueEmbeddingForType(ctx, projectID, newVersion.Type, newVersion.ID.String())
 
 		resp := newVersion.ToResponse()
-		s.emitObjectUpdated(resp)
+		s.emitObjectUpdated(ctx, resp)
 		return resp, false, nil
 	}
 
@@ -1052,7 +1052,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 
 	s.enqueueEmbeddingForType(ctx, projectID, newVersion.Type, newVersion.ID.String())
 
-	s.emitObjectUpdated(newVersion.ToResponse())
+	s.emitObjectUpdated(ctx, newVersion.ToResponse())
 
 	return newVersion.ToResponse(), false, nil
 }
@@ -1294,7 +1294,7 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		})
 	}
 
-	s.emitObjectUpdated(newVersion.ToResponse())
+	s.emitObjectUpdated(ctx, newVersion.ToResponse())
 
 	return newVersion.ToResponse(), nil
 }
@@ -1392,7 +1392,7 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *
 		})
 	}
 
-	s.emitObjectDeleted(current.ProjectID.String(), current.CanonicalID.String(), current.Type)
+	s.emitObjectDeleted(ctx, current.ProjectID.String(), current.CanonicalID.String(), current.Type)
 
 	return nil
 }
@@ -1459,7 +1459,7 @@ func (s *Service) Restore(ctx context.Context, projectID, id uuid.UUID, actorID 
 		})
 	}
 
-	s.emitObjectUpdated(restored.ToResponse())
+	s.emitObjectUpdated(ctx, restored.ToResponse())
 
 	// Enqueue embedding — the restored version has a new physical row with NULL embedding_v2.
 	s.enqueueEmbeddingForType(ctx, projectID, restored.Type, restored.ID.String())

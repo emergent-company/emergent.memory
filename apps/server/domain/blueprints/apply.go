@@ -278,16 +278,27 @@ func (s *Service) applyAgents(ctx context.Context, projectID, blueprintID, bpNam
 				// agent (Unapply matches on SourceBlueprintID).
 				existing.SourceBlueprintID = &blueprintID
 			}
-			applyAgentManifestToExisting(existing, &am)
+			if err := applyAgentManifestToExisting(existing, &am); err != nil {
+				return counts, err
+			}
 			if err := s.agentRepo.UpdateDefinition(ctx, existing); err != nil {
 				return counts, apperror.ErrDatabase.WithInternal(err)
 			}
+			if err := s.ensureRuntimeAgent(ctx, projectID, blueprintID, existing, &am); err != nil {
+				return counts, err
+			}
 			counts.Updated++
 		} else {
-			def := buildAgentDefinition(&am, projectID)
+			def, err := buildAgentDefinition(&am, projectID)
+			if err != nil {
+				return counts, err
+			}
 			def.SourceBlueprintID = &blueprintID
 			if err := s.agentRepo.CreateDefinition(ctx, def); err != nil {
 				return counts, apperror.ErrDatabase.WithInternal(err)
+			}
+			if err := s.ensureRuntimeAgent(ctx, projectID, blueprintID, def, &am); err != nil {
+				return counts, err
 			}
 			counts.Created++
 		}
@@ -355,6 +366,24 @@ func (s *Service) applySkills(ctx context.Context, skillManifests []SkillManifes
 	return counts, nil
 }
 
+// buildSeedObjectRequest constructs the CreateGraphObjectRequest for a seed
+// object record. Status and Assignee are forwarded when non-empty.
+func buildSeedObjectRequest(o SeedObjectRecord) graph.CreateGraphObjectRequest {
+	item := graph.CreateGraphObjectRequest{
+		Type:       o.Type,
+		Key:        &o.Key,
+		Properties: o.Properties,
+		Labels:     o.Labels,
+	}
+	if o.Status != "" {
+		item.Status = &o.Status
+	}
+	if o.Assignee != "" {
+		item.Assignee = &o.Assignee
+	}
+	return item
+}
+
 // applySeed materializes seed graph objects and relationships. Both are
 // best-effort: per-item failures and unresolvable relationship endpoints are
 // counted as skipped rather than failing the apply. Objects use key-based
@@ -375,15 +404,7 @@ func (s *Service) applySeed(ctx context.Context, projectID uuid.UUID, actorID *u
 			counts.Skipped++
 			continue
 		}
-		item := graph.CreateGraphObjectRequest{
-			Type:       o.Type,
-			Key:        &o.Key,
-			Properties: o.Properties,
-			Labels:     o.Labels,
-		}
-		if o.Status != "" {
-			item.Status = &o.Status
-		}
+		item := buildSeedObjectRequest(o)
 
 		_, created, err := s.graphSvc.CreateOrUpdate(ctx, projectID, &item, actorID)
 		if err != nil {
@@ -484,7 +505,7 @@ func (s *Service) applySeedRelationships(ctx context.Context, projectID uuid.UUI
 // agents.AgentDefinition for the CREATE path. Empty model Name means provider
 // default. Flow type, visibility, and dispatch mode fall back to the domain
 // defaults when omitted in the manifest. Enabled defaults to true.
-func buildAgentDefinition(m *AgentManifest, projectID string) *agents.AgentDefinition {
+func buildAgentDefinition(m *AgentManifest, projectID string) (*agents.AgentDefinition, error) {
 	flowType := agents.AgentFlowType(m.FlowType)
 	if flowType == "" {
 		flowType = agents.FlowTypeSingle
@@ -558,7 +579,10 @@ func buildAgentDefinition(m *AgentManifest, projectID string) *agents.AgentDefin
 	if ui := agentUIConfig(m.UI); ui != nil {
 		def.UIConfig = ui
 	}
-	return def
+	if err := applyWorkConfig(def, m); err != nil {
+		return nil, err
+	}
+	return def, nil
 }
 
 // applyAgentManifestToExisting overwrites ONLY the manifest-driven fields on an
@@ -572,7 +596,7 @@ func buildAgentDefinition(m *AgentManifest, projectID string) *agents.AgentDefin
 // when the manifest provides a non-empty list (preserve-when-omitted), so a
 // user's manual banned-tool edits survive a re-apply that omits the field.
 // Enabled is never set here.
-func applyAgentManifestToExisting(def *agents.AgentDefinition, m *AgentManifest) {
+func applyAgentManifestToExisting(def *agents.AgentDefinition, m *AgentManifest) error {
 	if m.Description != "" {
 		def.Description = &m.Description
 	}
@@ -641,6 +665,99 @@ func applyAgentManifestToExisting(def *agents.AgentDefinition, m *AgentManifest)
 	if ui := agentUIConfig(m.UI); ui != nil {
 		def.UIConfig = ui
 	}
+	if err := applyWorkConfig(def, m); err != nil {
+		return err
+	}
+	return nil
+}
+
+// applyWorkConfig unmarshals the manifest's raw workConfig map into the
+// definition's typed agents.AgentWorkConfig. A nil/absent map is a no-op
+// (preserve current value on update); a malformed map returns a BadRequest
+// error naming the agent.
+func applyWorkConfig(def *agents.AgentDefinition, m *AgentManifest) error {
+	if m.WorkConfig == nil {
+		return nil
+	}
+	raw, err := json.Marshal(m.WorkConfig)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid workConfig for agent " + m.Name)
+	}
+	if err := json.Unmarshal(raw, &def.WorkConfig); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid workConfig for agent " + m.Name + ": " + err.Error())
+	}
+	return nil
+}
+
+// ensureRuntimeAgent creates-or-updates the runtime kb.agents row bound to the
+// just-materialized definition when the manifest configures trigger behaviour
+// (TriggerType, ReactionConfig, or CronSchedule). The runtime agent is what
+// actually picks object-driven work up; the definition only describes it.
+//
+// The runtime agent uses the "agent-def:<defID>" strategy type (the pattern
+// used elsewhere for runtime agents bound to a definition), stamps blueprint
+// ownership into its config map, and defaults an empty trigger type to
+// "reaction" (when a reaction config is present) or "schedule", and an empty
+// cron schedule to the daily "0 0 * * *" default (the column is NOT NULL).
+func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID string, def *agents.AgentDefinition, m *AgentManifest) error {
+	if m.TriggerType == "" && m.ReactionConfig == nil && m.CronSchedule == "" {
+		return nil
+	}
+
+	triggerType := agents.AgentTriggerType(m.TriggerType)
+	if triggerType == "" {
+		if m.ReactionConfig != nil {
+			triggerType = agents.TriggerTypeReaction
+		} else {
+			triggerType = agents.TriggerTypeSchedule
+		}
+	}
+	cron := m.CronSchedule
+	if cron == "" {
+		cron = "0 0 * * *"
+	}
+	defID := def.ID
+
+	existing, err := s.agentRepo.FindAgentByName(ctx, projectID, def.Name)
+	if err != nil {
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	if existing != nil {
+		// Ownership gate: adopt a pre-existing runtime agent only when it is
+		// already stamped with this blueprint's ownership. A manual or
+		// foreign-blueprint agent that merely shares the name (or even points
+		// at the same definition) is never repurposed — hijacking it would
+		// rebind its trigger config and later delete it on Unapply (mirroring
+		// applyAgents' definition-ownership discipline).
+		if bid, _ := existing.Config["sourceBlueprintId"].(string); bid != blueprintID {
+			return nil
+		}
+
+		existing.TriggerType = triggerType
+		existing.ReactionConfig = m.ReactionConfig
+		existing.CronSchedule = cron
+		existing.Enabled = true
+		existing.StrategyType = "agent-def:" + def.ID
+		existing.AgentDefinitionID = &defID
+		if existing.Config == nil {
+			existing.Config = map[string]any{}
+		}
+		existing.Config["sourceBlueprintId"] = blueprintID
+		return s.agentRepo.UpdateAgent(ctx, existing)
+	}
+
+	agent := &agents.Agent{
+		ProjectID:         projectID,
+		Name:              def.Name,
+		StrategyType:      "agent-def:" + def.ID,
+		CronSchedule:      cron,
+		Enabled:           true,
+		TriggerType:       triggerType,
+		ReactionConfig:    m.ReactionConfig,
+		AgentDefinitionID: &defID,
+		Config:            map[string]any{"sourceBlueprintId": blueprintID},
+	}
+	return s.agentRepo.CreateAgent(ctx, agent)
 }
 
 // agentUIConfig marshals an AgentUIManifest into the opaque ui_config JSONB

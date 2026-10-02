@@ -1,0 +1,33 @@
+name: task-board
+version: "1.0.0"
+description: >
+  A minimal board-enabled Task schema for object-driven work on the Kanban
+  board. The Task type carries a built-in status/assignee workflow and is
+  excluded from embeddings, extraction, and default search.
+
+objectTypes:
+  - name: Task
+    label: Task
+    description: A single unit of work tracked on the Kanban board.
+    boardEnabled: true
+    allowedStatuses: [ready, in_progress, review, revision, blocked, done]
+    skipEmbeddings: true
+    skipExtraction: true
+    excludeFromSearch: true
+    properties:
+      title:
+        type: string
+        description: Required short summary of the task
+      description:
+        type: string
+        description: Longer description of what needs to be done
+      priority:
+        type: integer
+        description: Lower numbers are higher priority
+
+relationshipTypes:
+  - name: blocks
+    label: Blocks
+    description: One Task blocks another from starting until the blocker is resolved.
+    sourceType: Task
+    targetType: Task

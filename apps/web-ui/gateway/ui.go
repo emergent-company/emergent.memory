@@ -367,12 +367,14 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 	objectTypes := s.objectTypeUIMap(c.Request().Context())
 	// Unread notification count for the topbar bell (inbox subsystem).
 	// Session-only and best-effort: dev/API-key mode has no bearer, and any
-	// counts failure degrades to 0 so the shell still renders. Account-scope
-	// events are always counted; the active project's unread is added when a
-	// project is in context.
+	// counts failure degrades to 0 so the shell still renders. The bell counts
+	// the SAME scope the inbox is showing (account everywhere except the
+	// project-scoped inbox), so the badge can never disagree with the list it
+	// links to — see notificationUnread / inboxBellScope.
 	unreadNotifications := 0
 	if sc, ok := sessionContextFrom(c.Request().Context()); ok && sc.Sub != "" {
-		unreadNotifications = s.notificationUnreadTotal(c.Request().Context(), activeProjectID)
+		bellScope, bellProject := s.inboxBellScope(c)
+		unreadNotifications = s.notificationUnread(c.Request().Context(), bellScope, bellProject)
 	}
 	render.RenderPage(w, r, appShell(title, groups, providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, unreadNotifications, user, accounts, content, objectTypes, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL))
 	return nil
@@ -432,8 +434,6 @@ func (s *Server) uiAgents(c echo.Context) error {
 	var (
 		agents          []AgentDefinitionSummary
 		agentsErr       error
-		skills          []Skill
-		skillsErr       error
 		providers       []ProjectProviderConfig
 		providersErr    error
 		defaultModel    string
@@ -441,7 +441,6 @@ func (s *Server) uiAgents(c echo.Context) error {
 	)
 	var g errgroup.Group
 	g.Go(func() error { agents, agentsErr = s.memory.ListAgentDefinitions(ctx); return nil })
-	g.Go(func() error { skills, skillsErr = s.memory.ListSkills(ctx); return nil })
 	g.Go(func() error { providers, providersErr = s.memory.ListProjectProviders(ctx); return nil })
 	g.Go(func() error {
 		mc, err := s.memory.GetProjectModelConfig(ctx)
@@ -456,9 +455,8 @@ func (s *Server) uiAgents(c echo.Context) error {
 	})
 	_ = g.Wait()
 	if agentsErr != nil {
-		return s.page(c, pageTitle("Agents"), AgentsPage(nil, nil, nil, "", agentsErr))
+		return s.page(c, pageTitle("Agents"), AgentsPage(nil, nil, "", agentsErr))
 	}
-	captureError(skillsErr)
 	captureError(providersErr)
 	captureError(defaultModelErr)
 
@@ -472,7 +470,7 @@ func (s *Server) uiAgents(c echo.Context) error {
 	// Per-agent model info rides on the list response now (memory reports
 	// effectiveModel per summary), so there is no per-agent GET round-trip
 	// here — the agents page renders the card grid straight from the list.
-	return s.page(c, pageTitle("Agents"), AgentsPage(agents, models, skills, defaultModel, nil))
+	return s.page(c, pageTitle("Agents"), AgentsPage(agents, models, defaultModel, nil))
 }
 
 // chatRailData loads the session-rail data (agents, agent appearance map, past

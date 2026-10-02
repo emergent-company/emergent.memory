@@ -186,7 +186,7 @@ func CreateAndEmitQuestion(ctx context.Context, p CreateQuestionParams) (*AgentQ
 	}
 
 	// Always emit SSE event
-	emitQuestionSSEEventDirect(p.EventsSvc, p.ProjectID, q)
+	emitQuestionSSEEventDirect(ctx, p.EventsSvc, p.ProjectID, q)
 
 	return q, nil
 }
@@ -382,7 +382,7 @@ func createQuestionNotificationDirect(ctx context.Context, deps AskUserToolDeps,
 }
 
 // emitQuestionSSEEventDirect sends a real-time SSE notification for a question.
-func emitQuestionSSEEventDirect(eventsSvc *events.Service, projectID string, q *AgentQuestion) {
+func emitQuestionSSEEventDirect(ctx context.Context, eventsSvc *events.Service, projectID string, q *AgentQuestion) {
 	if eventsSvc == nil {
 		return
 	}
@@ -401,6 +401,7 @@ func emitQuestionSSEEventDirect(eventsSvc *events.Service, projectID string, q *
 		data["proposal"] = q.Proposal
 	}
 	eventsSvc.EmitCreated(
+		ctx,
 		events.EntityNotification,
 		q.ID,
 		projectID,

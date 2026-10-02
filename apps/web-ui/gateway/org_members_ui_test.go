@@ -957,6 +957,74 @@ func TestUIResendInviteRoute(t *testing.T) {
 	}
 }
 
+// TestUIRevokeInviteRoute asserts POST /invites/:id/revoke returns the caller to
+// the members surface the form came from (carried in the hidden "surface"
+// field): legacy → /members?revoked=1, settings → /settings/members?revoked=1.
+// It also asserts the open-redirect guard — an unknown, absolute, or
+// protocol-relative "surface" value falls back to the legacy page instead of
+// steering the redirect off-site — and that the settings surface renders the
+// hidden field on its revoke form.
+func TestUIRevokeInviteRoute(t *testing.T) {
+	newServer := func() (*echo.Echo, *Server, *fakeMemory) {
+		f := &fakeMemory{
+			projects:        []ProjectRef{{ID: "p1", Name: "Home", OrgID: "o1"}},
+			sentInvites:     []SentInviteDto{{ID: "inv-1", Email: "lin@example.com", Role: "project_user", Status: "pending", CreatedAt: "2026-08-20T09:00:00Z"}},
+			orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin", Projects: []ProjectAccessDto{{ID: "p1", Name: "Home", OrgID: "o1", Role: "project_admin"}}}},
+		}
+		s := &Server{cfg: Config{MemoryProjectID: "p1"}, memory: f}
+		return orgMemberUIServer(s), s, f
+	}
+
+	cases := []struct {
+		name    string
+		surface string
+		want    string
+	}{
+		{"legacy surface", "/members", "/members?revoked=1"},
+		{"settings surface", "/settings/members", "/settings/members?revoked=1"},
+		{"missing surface falls back", "", "/members?revoked=1"},
+		{"unknown surface falls back", "/evil", "/members?revoked=1"},
+		{"absolute URL cannot redirect off-site", "https://evil.example/steal", "/members?revoked=1"},
+		{"protocol-relative URL cannot redirect off-site", "//evil.example/steal", "/members?revoked=1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e, _, f := newServer()
+			body := ""
+			if tc.surface != "" {
+				body = url.Values{"surface": {tc.surface}}.Encode()
+			}
+			rec := postForm(t, e, "/invites/inv-1/revoke", body)
+			if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != tc.want {
+				t.Fatalf("revoke = %d %q, want 303 %q", rec.Code, rec.Header().Get("Location"), tc.want)
+			}
+			if f.canceledInvite != "inv-1" {
+				t.Errorf("CancelInvite not forwarded: %q", f.canceledInvite)
+			}
+		})
+	}
+
+	// The settings surface must carry its base in the revoke form so the PRG
+	// redirect returns there (the same contract the resend form already has).
+	e, s, _ := newServer()
+	e.GET("/settings/members", s.uiSettingsMembers)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/members", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /settings/members = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`action="/invites/inv-1/revoke"`,
+		`action="/invites/inv-1/resend"`,
+		`name="surface" value="/settings/members"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET /settings/members missing %q", want)
+		}
+	}
+}
+
 // TestUIChangeMemberRole exercises the details-page role change. Memory
 // persists the role in place via PATCH, so a change updates the member's role
 // without removing or re-inviting them. It also covers the failure paths:

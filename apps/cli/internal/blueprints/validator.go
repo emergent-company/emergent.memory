@@ -237,9 +237,9 @@ func (r *ValidationReport) validatePacks(packs []PackFile) {
 
 var validFlowTypes = map[string]bool{
 	"":           true, // optional
-	"reactive":   true,
-	"workflow":   true,
+	"single":     true,
 	"sequential": true,
+	"loop":       true,
 }
 
 var validVisibilities = map[string]bool{
@@ -250,10 +250,9 @@ var validVisibilities = map[string]bool{
 }
 
 var validDispatchModes = map[string]bool{
-	"":            true, // optional
-	"auto":        true,
-	"manual":      true,
-	"round_robin": true,
+	"":       true, // optional
+	"sync":   true,
+	"queued": true,
 }
 
 func (r *ValidationReport) validateAgents(agents []AgentFile) {
@@ -273,7 +272,7 @@ func (r *ValidationReport) validateAgents(agents []AgentFile) {
 
 		if a.FlowType != "" && !validFlowTypes[a.FlowType] {
 			r.add(ValidationError, "agent", a.Name, a.SourceFile, "flowType",
-				fmt.Sprintf("invalid flowType %q (valid: reactive, workflow, sequential)", a.FlowType))
+				fmt.Sprintf("invalid flowType %q (valid: single, sequential, loop)", a.FlowType))
 		}
 
 		if a.Visibility != "" && !validVisibilities[a.Visibility] {
@@ -283,7 +282,7 @@ func (r *ValidationReport) validateAgents(agents []AgentFile) {
 
 		if a.DispatchMode != "" && !validDispatchModes[a.DispatchMode] {
 			r.add(ValidationError, "agent", a.Name, a.SourceFile, "dispatchMode",
-				fmt.Sprintf("invalid dispatchMode %q (valid: auto, manual, round_robin)", a.DispatchMode))
+				fmt.Sprintf("invalid dispatchMode %q (valid: sync, queued)", a.DispatchMode))
 		}
 
 		if a.Model != nil && a.Model.Name == "" {

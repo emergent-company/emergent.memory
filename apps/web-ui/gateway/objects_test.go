@@ -252,6 +252,45 @@ func TestUIObjectsProvenanceParams(t *testing.T) {
 	}
 }
 
+// TestEffectiveObjectProvenance pins the defense-in-depth helper contract: an
+// empty actor type clears any provenance mode to "any" (the server rejects
+// provenance without actor_type), while a complete actor pair keeps the
+// normalized mode.
+func TestEffectiveObjectProvenance(t *testing.T) {
+	if got := effectiveObjectProvenance("created", ""); got != defaultObjectProvenance {
+		t.Errorf("effectiveObjectProvenance(created, \"\") = %q, want %q", got, defaultObjectProvenance)
+	}
+	if got := effectiveObjectProvenance("created", "agent"); got != "created" {
+		t.Errorf("effectiveObjectProvenance(created, agent) = %q, want created", got)
+	}
+}
+
+// TestUIObjectsBareProvenanceCleared pins the fix: a `provenance` param with no
+// actor pair is cleared to "any" before it reaches ListGraphObjectsPage (the
+// server 400s on provenance without actor_type), and the rendered control is
+// omitted so the filter bar cannot build the broken URL.
+func TestUIObjectsBareProvenanceCleared(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/objects", s.uiObjects)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?provenance=created", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if f.lastPageProvenance != defaultObjectProvenance {
+		t.Errorf("bare provenance forwarded = %q, want %q", f.lastPageProvenance, defaultObjectProvenance)
+	}
+	if f.lastPageActorType != "" || f.lastPageActorID != "" {
+		t.Errorf("bare provenance set actor pair = %q/%q, want empty", f.lastPageActorType, f.lastPageActorID)
+	}
+	if strings.Contains(rec.Body.String(), `name="provenance"`) {
+		t.Error("provenance control must be hidden when no actor is selected")
+	}
+}
+
 // TestUIObjectsPartialCarriesProvenance pins that the "Load more" partial
 // forwards the actor-provenance filter to ListGraphObjectsPage, so appended
 // pages stay scoped.

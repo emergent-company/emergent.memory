@@ -112,6 +112,18 @@ func normalizeObjectProvenance(provenance string) string {
 	}
 }
 
+// effectiveObjectProvenance is the defense-in-depth form of
+// normalizeObjectProvenance: a provenance mode only narrows results alongside a
+// complete actor pair, and the server 400s on `provenance` without
+// `actor_type`, so an empty actor type clears the mode to "any" rather than
+// forwarding a bare provenance.
+func effectiveObjectProvenance(provenance, actorType string) string {
+	if actorType == "" {
+		return defaultObjectProvenance
+	}
+	return normalizeObjectProvenance(provenance)
+}
+
 // objectActorTypes lists the actor types the server's provenance filter accepts,
 // in display order.
 var objectActorTypes = []string{"user", "agent", "system"}
@@ -204,7 +216,7 @@ func (s *Server) uiObjects(c echo.Context) error {
 		BranchID:   branchID,
 		ActorType:  actorType,
 		ActorID:    actorID,
-		Provenance: normalizeObjectProvenance(c.QueryParam("provenance")),
+		Provenance: effectiveObjectProvenance(c.QueryParam("provenance"), actorType),
 	}
 	s.loadObjectFilterOptions(ctx, &data)
 
@@ -297,7 +309,7 @@ func (s *Server) uiObjectsPartial(c echo.Context) error {
 	mode := c.QueryParam("mode")
 	cursor := c.QueryParam("cursor")
 	actorType, actorID := objectActorFilter(c)
-	provenance := normalizeObjectProvenance(c.QueryParam("provenance"))
+	provenance := effectiveObjectProvenance(c.QueryParam("provenance"), actorType)
 
 	// Search mode has no cursor pagination (it renders the top 25 only).
 	if query != "" {

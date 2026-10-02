@@ -509,17 +509,23 @@ func (s *Server) uiMemberInviteCreateFor(surf membersSurface, c echo.Context) er
 	return c.Redirect(http.StatusSeeOther, surf.base+"?ok=1")
 }
 
-// uiRevokeInvite handles one revoke form (POST /invites/:id/revoke) on the
-// members page: it cancels a still-pending sent invite.
+// uiRevokeInvite handles one revoke form (POST /invites/:id/revoke), submitted
+// from both members surfaces. The form carries its surface's base path in a
+// hidden "surface" field so the PRG redirect returns to that page (?revoked=1).
+// The base is resolved through the members-surface whitelist, so the redirect
+// target is always one of the two known base paths — an unknown, empty, or
+// absolute "surface" value falls back to the legacy /members and can never
+// steer the redirect off-site (no open redirect).
 func (s *Server) uiRevokeInvite(c echo.Context) error {
+	surf := membersSurfaceForBase(strings.TrimSpace(c.FormValue("surface")))
 	id := strings.TrimSpace(c.Param("id"))
 	if id == "" {
-		return redirectWithError(c, "/members", fmt.Errorf("invite id is required"))
+		return redirectWithError(c, surf.base, fmt.Errorf("invite id is required"))
 	}
 	if err := s.memory.CancelInvite(c.Request().Context(), id); err != nil {
-		return redirectWithError(c, "/members", err)
+		return redirectWithError(c, surf.base, err)
 	}
-	return c.Redirect(http.StatusSeeOther, "/members?revoked=1")
+	return c.Redirect(http.StatusSeeOther, surf.base+"?revoked=1")
 }
 
 // uiResendInvite handles one resend form (POST /invites/:id/resend), submitted
