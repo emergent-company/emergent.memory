@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	ui "github.com/emergent-company/go-daisy/components/ui"
 	"github.com/labstack/echo/v4"
 )
 
@@ -1272,5 +1273,58 @@ func TestRenderBlueprintDetailVersionsAndDiff(t *testing.T) {
 		if strings.Contains(plainHTML, gone) {
 			t.Errorf("bundled detail must not render %q", gone)
 		}
+	}
+}
+
+// propertyTypeIntent is the schema property-type colour scheme: every registry
+// type maps to its own badge tone (integer sharing number's numeric tone), and
+// anything the registry does not declare falls back to neutral so a future type
+// still renders a readable badge.
+func TestPropertyTypeIntent(t *testing.T) {
+	cases := map[string]ui.BadgeIntent{
+		"string":  ui.BadgeInfo,
+		"number":  ui.BadgeSuccess,
+		"integer": ui.BadgeSuccess,
+		"boolean": propertyTypeBadgeBoolean,
+		"date":    ui.BadgeWarning,
+		"array":   propertyTypeBadgeArray,
+		"object":  propertyTypeBadgeObject,
+		"":        ui.BadgeNeutral,
+		"future":  ui.BadgeNeutral,
+	}
+	for in, want := range cases {
+		if got := propertyTypeIntent(in); got != want {
+			t.Errorf("propertyTypeIntent(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestPropertyTypeToneHuesSeparated guards the scannability of the type colour
+// scheme: no two type tones may sit too close in hue in the shipped dark theme.
+// The values are the measured oklch hue angles of the tones propertyTypeIntent
+// returns — the semantic tones resolve through webui/css/app.css, and the three
+// page-local tones are the color-mix expressions defined there. Keeping the
+// table next to the mapping makes a remap that re-aliases tones fail loudly.
+func TestPropertyTypeToneHuesSeparated(t *testing.T) {
+	hues := []float64{
+		240, // string  — --color-info
+		152, // number/integer — --color-success
+		40,  // boolean — local: error 75% + warning
+		82,  // date    — --color-warning
+		196, // array   — local: info + success
+		313, // object  — local: error + info
+	}
+	slices.Sort(hues)
+	const minSeparation = 40.0
+	minSep := 360.0
+	for i, h := range hues {
+		gap := hues[(i+1)%len(hues)] - h
+		if gap < 0 {
+			gap += 360
+		}
+		minSep = min(minSep, gap)
+	}
+	if minSep < minSeparation {
+		t.Fatalf("minimum type-tone hue separation %.1f° is below the %.0f° floor (hues %v)", minSep, minSeparation, hues)
 	}
 }

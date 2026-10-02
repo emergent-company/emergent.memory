@@ -1,9 +1,4 @@
-# settings-navigation Specification
-
-## Purpose
-A vertical sub-navigation rail that organizes the Settings area into focused pages so users can find and edit project configuration without scrolling one long page.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Show the settings sub-navigation
 
@@ -57,17 +52,3 @@ Each sub-navigation link SHALL open its own Settings sub-page.
 
 - **WHEN** the user selects the Budget link
 - **THEN** the Budget settings page opens at `/settings/budget`, showing the monthly budget cap and the budget alert threshold
-
-### Requirement: Keep section save behavior intact
-
-Each settings sub-page SHALL preserve its existing save and error behavior; moving a section to its own page SHALL NOT change how its settings are saved or how errors are reported.
-
-#### Scenario: Save on a sub-page
-
-- **WHEN** the user saves a valid change on any settings sub-page
-- **THEN** the change persists and the page shows a success message, as before the split
-
-#### Scenario: Error on a sub-page
-
-- **WHEN** a backend request for a settings sub-page fails
-- **THEN** that sub-page shows a clear error state without breaking the sub-navigation
