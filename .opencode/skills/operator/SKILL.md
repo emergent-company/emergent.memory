@@ -379,7 +379,39 @@ after it died — do not assume memory of the intervening events.
 
 ---
 
-## 8. Process-improvement feedback loop
+## 8. Review policy — three sequential reviewers per implementation
+
+Every implementation gets **three independent reviewers, run strictly one by one**
+(reviewer 2 starts only after reviewer 1 finishes; reviewer 3 only after reviewer 2).
+They review the **branch in its worktree before the PR is pushed**, not the PR
+description. Independent implementations may run their reviewer chains concurrently;
+the reviewers *within* one implementation are strictly sequential, so each works from
+the current branch instead of racing.
+
+- **Reviewer 1 — correctness, tests, and scope:** the diff is what it claims, tests are
+  non-vacuous and bite (reproduce red/green where cheap), nothing unrelated changed.
+- **Reviewer 2 — adversarial:** edge cases, error paths, security/data-integrity,
+  regressions, and the claims the first pass would take on trust. Must re-derive
+  independently rather than read reviewer 1's notes.
+- **Reviewer 3 — holistic:** integration with the surrounding system, and confirmation
+  that reviewer 1 and 2's findings were genuinely resolved. **Reviewer 3 is the merge
+  authority.**
+
+All three green ⇒ push the branch and open the PR.
+
+**Then Copilot and CI are additional independent gates on the pushed PR.** Copilot
+cannot see unpushed work, so it is deliberately a **fourth, external** reviewer rather
+than one of the three. If Copilot raises a blocking comment or CI is red, fix and
+re-run the affected reviewer(s); merge only once Copilot's review is clean and CI is
+green.
+
+Rationale: three passes catch what one misses, and sequencing means each reviewer works
+from the current branch rather than racing; Copilot is slotted after the push because it
+can only review a pushed PR.
+
+---
+
+## 9. Process-improvement feedback loop
 
 The operator is not only a dispatcher — it is the **observer of its own process**.
 After lanes finish, reflect on how the work went and feed friction back so the
