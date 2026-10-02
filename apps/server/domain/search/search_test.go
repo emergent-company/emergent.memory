@@ -1226,3 +1226,52 @@ func TestBuildRelationshipSearchQuery(t *testing.T) {
 	assert.Equal(t, "team-a", args2[4])
 	assert.Equal(t, 50, args2[6])
 }
+
+func TestShouldSkipRelationshipLeg(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	tests := []struct {
+		name        string
+		resultTypes UnifiedSearchResultType
+		req         *UnifiedSearchRequest
+		want        bool
+	}{
+		{
+			name:        "text-only result type skips",
+			resultTypes: ResultTypeText,
+			req:         &UnifiedSearchRequest{},
+			want:        true,
+		},
+		{
+			name:        "graph-only result type skips",
+			resultTypes: ResultTypeGraph,
+			req:         &UnifiedSearchRequest{},
+			want:        true,
+		},
+		{
+			name:        "explicit false skips",
+			resultTypes: ResultTypeBoth,
+			req:         &UnifiedSearchRequest{IncludeRelationships: &falseVal},
+			want:        true,
+		},
+		{
+			name:        "explicit true runs",
+			resultTypes: ResultTypeBoth,
+			req:         &UnifiedSearchRequest{IncludeRelationships: &trueVal},
+			want:        false,
+		},
+		{
+			name:        "nil preserves existing behaviour (runs for both)",
+			resultTypes: ResultTypeBoth,
+			req:         &UnifiedSearchRequest{},
+			want:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, shouldSkipRelationshipLeg(tt.resultTypes, tt.req))
+		})
+	}
+}
