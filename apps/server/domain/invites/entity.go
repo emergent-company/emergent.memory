@@ -49,6 +49,33 @@ type SentInvite struct {
 	DeliveryStatusAt *time.Time `json:"deliveryStatusAt,omitempty"`
 }
 
+// ResendOutcome reports what a resend request actually did, so a caller (and the
+// UI) can tell a real re-send from the idempotent within-window no-op instead of
+// assuming every HTTP 200 sent an email (issue #1327).
+type ResendOutcome string
+
+const (
+	// ResendOutcomeSent means a fresh project-invitation job was enqueued.
+	ResendOutcomeSent ResendOutcome = "sent"
+	// ResendOutcomeNoOp means the guard suppressed the request: a recent
+	// invite-scoped job is still in flight or already succeeded, so no email
+	// was enqueued.
+	ResendOutcomeNoOp ResendOutcome = "noop"
+	// ResendOutcomeEnqueueFailed means a send was attempted but the enqueue
+	// failed; the request still succeeds (the invitation remains valid) but no
+	// email was queued.
+	ResendOutcomeEnqueueFailed ResendOutcome = "enqueue_failed"
+)
+
+// ResendResponse is the body of POST /api/invites/:id/resend. It carries the
+// (possibly unchanged) invitation plus the outcome of the request. The Invite
+// fields are embedded so existing consumers that read the invitation keep
+// working; `outcome` is the added truthful signal.
+type ResendResponse struct {
+	Invite
+	Outcome ResendOutcome `json:"outcome"`
+}
+
 // CreateInviteRequest is the request to create a new invite
 type CreateInviteRequest struct {
 	OrgID       string `json:"orgId"`

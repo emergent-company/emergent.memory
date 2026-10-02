@@ -329,11 +329,11 @@ func (h *Handler) Delete(c echo.Context) error {
 
 // Resend re-sends a pending invitation email
 // @Summary      Resend an invitation
-// @Description  Re-sends the invitation email for a pending invitation, extending its expiry by 7 days (requires org_admin authority over the invite's organization)
+// @Description  Re-sends the invitation email for a pending invitation, extending its expiry by 7 days (requires org_admin authority over the invite's organization). The response carries an `outcome` field: "sent" when a fresh email was enqueued, "noop" when a recently sent/in-flight email suppressed the resend, "enqueue_failed" when the attempt failed to queue.
 // @Tags         invites
 // @Produce      json
 // @Param        id path string true "Invitation ID (UUID)"
-// @Success      200 {object} Invite "Resent invitation"
+// @Success      200 {object} ResendResponse "Resend outcome and the (possibly unchanged) invitation"
 // @Failure      400 {object} apperror.Error "Missing invite_id"
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      403 {object} apperror.Error "Forbidden"
@@ -365,10 +365,10 @@ func (h *Handler) Resend(c echo.Context) error {
 		return apperror.ErrForbidden
 	}
 
-	invite, err = h.svc.Resend(c.Request().Context(), inviteID)
+	invite, outcome, err := h.svc.Resend(c.Request().Context(), inviteID)
 	if err != nil {
 		return err
 	}
 
-	return c.JSON(http.StatusOK, invite)
+	return c.JSON(http.StatusOK, ResendResponse{Invite: *invite, Outcome: outcome})
 }

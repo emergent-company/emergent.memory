@@ -6,9 +6,12 @@ import { readBootstrap } from '../../helpers/bootstrap';
 // to its "Not responded" lifecycle badge, an email-delivery badge (default
 // "Sent" before any Mailgun event) plus a Resend submit control beside Revoke.
 // The resend POST is guarded by a native confirm() and PRG-redirects back to the
-// same surface with ?resent=1 and a success flash. Invitation creation reuses
-// the same single-test-identity flow as invite-revoke-ui.spec.ts, so the whole
-// lifecycle is coverable without a second Zitadel user.
+// same surface carrying the server's outcome (?resent=<outcome>) and matching
+// flash. A resend of a just-created invite is an idempotent no-op (the creation
+// email is still in flight within the 60s guard window), so the UI must say so
+// rather than claim a send it did not perform (issue #1327). Invitation creation
+// reuses the same single-test-identity flow as invite-revoke-ui.spec.ts, so the
+// whole lifecycle is coverable without a second Zitadel user.
 
 interface InviteRef {
   id: string;
@@ -78,7 +81,8 @@ test.describe('Invite resend', () => {
       await expect(resendButton).toBeVisible();
 
       // Resend: accept the native confirm() guard, then POST /invites/:id/resend
-      // → PRG back to the same surface with ?resent=1 and a success flash.
+      // → PRG back to the same surface carrying the outcome (?resent=noop here:
+      // the creation email is still inside the 60s guard window).
       page.on('dialog', (d) => d.accept());
       const resendResp = page.waitForResponse(
         (r) => /\/invites\/[^/]+\/resend$/.test(r.url()) && r.request().method() === 'POST',
@@ -86,15 +90,22 @@ test.describe('Invite resend', () => {
       );
       await resendButton.click();
       await resendResp;
-      await page.waitForURL(/\/members\?resent=1/, { timeout: 20_000 });
+      await page.waitForURL(/\/members\?resent=noop/, { timeout: 20_000 });
       await page.waitForLoadState('domcontentloaded');
 
-      // Success flash surfaces (auto-dismisses after ~4s, so poll immediately).
+      // Truthful no-op flash surfaces (auto-dismisses after ~4s, so poll
+      // immediately): the UI must NOT say the invitation was resent.
       await expect
-        .poll(async () => (await page.locator('body').innerText()).includes('Invitation resent.'), {
-          timeout: 8000,
-          intervals: [100, 200, 200, 500],
-        })
+        .poll(
+          async () =>
+            (await page.locator('body').innerText()).includes(
+              'Already sent moments ago — try again in a few seconds.',
+            ),
+          {
+            timeout: 8000,
+            intervals: [100, 200, 200, 500],
+          },
+        )
         .toBeTruthy();
 
       // Resulting state: the invite is STILL present and STILL pending — a
