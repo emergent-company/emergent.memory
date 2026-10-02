@@ -5008,22 +5008,33 @@ func (s *Service) readRelationshipsResource(ctx context.Context, projectID strin
 	}
 
 	var relationships []struct {
-		Type     string `bun:"relationship_type"`
+		Type     string `bun:"type"`
 		FromType string `bun:"from_type"`
 		ToType   string `bun:"to_type"`
 		Count    int    `bun:"count"`
 	}
 
-	err = s.db.NewSelect().
-		Table("kb.graph_relationships", "r").
-		Column("r.relationship_type").
-		Column("r.from_type").
-		Column("r.to_type").
-		ColumnExpr("COUNT(*) as count").
-		Where("r.project_id = ?", projectUUID).
-		Where("r.deleted_at IS NULL").
-		Group("r.relationship_type", "r.from_type", "r.to_type").
-		Scan(ctx, &relationships)
+	// kb.graph_relationships has no relationship_type/from_type/to_type columns:
+	// the relationship kind is `type` and the endpoint object types must be
+	// derived by joining kb.graph_objects on src_id/dst_id (mirroring the
+	// relationship-types aggregation in executeListEntityTypes). Project scoping
+	// and the soft-delete filters are preserved from the previous query.
+	err = s.db.NewRaw(`
+		SELECT
+			r.type,
+			src.type AS from_type,
+			dst.type AS to_type,
+			COUNT(*)::int AS count
+		FROM kb.graph_relationships r
+		JOIN kb.graph_objects src ON r.src_id = src.id
+		JOIN kb.graph_objects dst ON r.dst_id = dst.id
+		WHERE r.project_id = ?
+			AND r.deleted_at IS NULL
+			AND src.deleted_at IS NULL
+			AND dst.deleted_at IS NULL
+		GROUP BY r.type, src.type, dst.type
+		ORDER BY r.type, count DESC
+	`, projectUUID).Scan(ctx, &relationships)
 
 	if err != nil {
 		return nil, fmt.Errorf("query relationships: %w", err)
