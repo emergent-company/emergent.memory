@@ -44,10 +44,11 @@ that is **off by default** and bounds its cost/latency to the top-N fused candid
 
 - **Server** (`apps/server/`): new `pkg/rerank` (interface + LLM adapter + Cohere/cross-
   encoder adapter); `domain/search/service.go` (stage placement + config read);
-  `domain/search/dto.go` (config fields); `domain/search/trace_store.go` (rerank
-  metadata); `domain/modelconfig` + `domain/provider` (reuse).
-- **Config** (`domain/search/service.go` env/config): `RERANK_MODEL`, `RERANK_TOP_N`,
-  and/or modelconfig-driven `RerankModel`.
+  `domain/search/trace_store.go` (rerank metadata); `domain/modelconfig` + `domain/provider`
+  (reuse). Config lives in `domain/modelconfig` (`ProjectModelConfig.rerank_model`), not
+  on the search request DTO (no per-request scope).
+- **Config** (`domain/modelconfig`): `rerank_model` + `RerankTopN`, resolved per-project
+  via the existing modelconfig resolution chain using `projectID`.
 - **Tracing**: rerank latency and model recorded on the search span and trace.
 
 ## Dependency
@@ -55,3 +56,9 @@ that is **off by default** and bounds its cost/latency to the top-N fused candid
 Benefits from `add-answer-feedback` for evaluation (rerank quality can only be measured
 against an answer-quality signal), but is not blocked by it — reranking ships with
 deterministic unit tests against a canned/fake reranker.
+
+> **Sequencing note:** this change adds a `rerank_metadata` jsonb column to
+> `RetrievalTrace` / `kb.retrieval_traces`, which `add-answer-feedback` also touches (it
+> adds `user_id` and a list path). Each change keeps its own delta; `add-answer-feedback`
+> owns the `retrieval-trace-persistence` MODIFIED delta and this change does **not** add a
+> second one there.

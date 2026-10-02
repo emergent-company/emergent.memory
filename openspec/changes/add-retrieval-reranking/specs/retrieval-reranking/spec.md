@@ -16,7 +16,7 @@ Reranking SHALL be off by default. It SHALL only activate when a rerank model is
 
 ### Requirement: Config validation rejects invalid rerank settings
 
-The rerank configuration SHALL be validated at server startup (and/or at request time): an unknown rerank provider/model, or an out-of-range `RerankTopN` (`<= 0` or `> 100`), SHALL be rejected with a clear error rather than silently failing or unboundedly reranking.
+The rerank configuration SHALL be validated at server startup: an unknown rerank provider/model, or an out-of-range `RerankTopN` (`<= 0` or `> 100`), SHALL be rejected with a clear error rather than silently failing or unboundedly reranking.
 
 #### Scenario: Unknown model rejected
 
@@ -30,7 +30,7 @@ The rerank configuration SHALL be validated at server startup (and/or at request
 
 ### Requirement: Rerank is bounded to the top-N fused candidates
 
-The reranker SHALL only re-score the top-N fused candidates (N configurable, default approximately 50, and SHALL NOT exceed 100), never the full candidate set, to bound cost and latency. When the fused result set is smaller than top-N, the entire set SHALL be reranked.
+The reranker SHALL only re-score the top-N fused candidates (N configurable, default exactly 50, and SHALL NOT exceed 100), never the full candidate set, to bound cost and latency. When the fused result set is smaller than top-N, the entire set SHALL be reranked.
 
 #### Scenario: Only top-N candidates are sent
 

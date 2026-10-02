@@ -13,9 +13,11 @@ the server **framework** underneath.
 
 - A durable, project-scoped source model with auth (credential reference) and sync state.
 - Incremental sync with a persisted cursor; idempotent re-sync.
-- A sync job lifecycle (queued/running/failed/cancelled) with structured errors.
-- Ingest through the existing docs → chunks → extraction → graph pipeline.
-- MCP relay as the preferred transport (no vendor SDKs in the server).
+- A sync job lifecycle (`pending/processing/completed/failed/cancelled`) with structured
+  errors.
+- Ingest through the existing documents → chunking → extraction → graph pipeline.
+- MCP registry's `ProxyManager` as the preferred outbound transport (no vendor SDKs in
+  the server).
 
 **Non-Goals**
 
@@ -34,13 +36,20 @@ would block on auth, pagination, and vendor quirks. This change builds the frame
 source that has an MCP server is consumable immediately, with zero server code. First-class
 connectors are limited to the 1-2 targets whose MCP story is weak (documented future work).
 
-### D2 — MCP relay is the connector bus
+### D2 — MCP registry `ProxyManager` is the outbound connector bus
 
-`domain/mcpregistry` registers MCP servers/tools; `domain/mcprelay` relays invocations;
-`connector.linux/internal/mcphost` already hosts MCP servers on the OS side. A source's
-`config` therefore specifies an MCP server + tool (or a generic `type` mapping to a relay
-route), and the sync worker invokes it through the relay. This keeps credentials in the
-relay/provider layer and keeps the server free of vendor SDKs.
+`domain/mcprelay` is the **inbound** WebSocket star relay for NAT'd local connectors: it
+requires a registered live `(projectID, instanceID)` session to route a call and **cannot
+reach SaaS**. So the relay is not the SaaS ingestion transport.
+
+The correct outbound client is `domain/mcpregistry`'s `ProxyManager`
+(`proxy.go:85-154`): `CallToolOnServer`/`CallTool` over stdio/sse/http, plus
+`DiscoverTools`. It is the component that actually invokes an MCP server's tools. A
+source's `config` therefore specifies an MCP **server + tool** registered in
+`mcpregistry`; the sync worker invokes it through `ProxyManager`. `domain/mcprelay` is
+used only for OS-level local-node connectors (`connector.linux/internal/mcphost` hosts
+local tools **to** Memory — it does not pull SaaS content). This keeps credentials in the
+provider/registry layer and keeps the server free of vendor SDKs.
 
 ### D3 — Cursor-based incremental sync
 
@@ -60,15 +69,25 @@ transport, and keeps documents clean (source attribution via a single nullable
 `source_id`, added separately). The proposal documents this difference so the framework
 does not silently reintroduce the removed coupling.
 
-### D5 — Sync job lifecycle: scheduler triggers, `kb.source_sync_jobs` owns state
+**Closer prior art is `kb.external_sources`** (`00001_baseline.sql:798-819`), which is
+still live: it already models `project_id`, `provider_type`, `external_id`, `original_url`,
+`normalized_url`, `sync_policy`, `last_etag` (a cursor), `last_synced_at`, `status`, and
+`error_*`. `kb.sources` generalizes that shape (arbitrary transport/config + richer cursor
+jsonb + a dedicated sync-job table) rather than resurrecting `data_source_integrations`.
 
-`domain/scheduler` is a `robfig/cron` periodic-task runner (no job ledger), so it does
-**not** hold sync state. Its role is to *trigger* syncs (periodic cron) or an on-demand
-request triggers a sync directly. The sync **state machine** lives in the dedicated
-`kb.source_sync_jobs` table (mirroring `kb.chunk_embedding_jobs`): rows transition
-`queued → running → failed|cancelled|success`, cancellation sets a flag checked by the
-worker between batches, and the per-job error is stored on the row. No job-ledger reuse —
-there is none to reuse.
+### D5 — Sync job lifecycle: scheduler triggers, `kb.source_sync_jobs` owns state, `internal/jobs` runs it
+
+`domain/scheduler` is a `robfig/cron` periodic-task runner — it only *triggers* syncs
+(cron) or an on-demand request triggers a sync directly. The sync **state machine** lives
+in the dedicated `kb.source_sync_jobs` table (status
+`pending/processing/completed/failed/cancelled` + `dead_letter` for poison items, richer
+cursor/error jsonb, `project_id` + `created_at` for RLS and per-project listing).
+
+The worker **reuses `apps/server/internal/jobs`**, the generic table-agnostic PG queue
+(`NewQueue(tableName, entityIDColumn)`, atomic `Dequeue` with `FOR UPDATE SKIP LOCKED`,
+`MarkCompleted`/`MarkFailed`, `RecoverStaleJobs`, `GetStats`) already used by chunk/graph
+embedding. `kb.source_sync_jobs` supplies the source-specific columns (cursor, error
+jsonb) on top of the shared queue mechanics; no new queue is written.
 
 ## Risks / Trade-offs
 

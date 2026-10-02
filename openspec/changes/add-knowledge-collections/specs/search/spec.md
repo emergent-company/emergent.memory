@@ -2,7 +2,7 @@
 
 ### Requirement: Unified search filters by collection
 
-The unified search SHALL accept an optional list of collection ids on the request. When collection ids are present, each leg (graph, text/chunk, relationship) SHALL be restricted to items that belong to **every** listed collection (AND semantics) within the project. The relationship leg has no direct collection item type; it SHALL be restricted to relationships whose `src` OR `dst` head-resolved canonical id is in the collection's canonical set.
+The unified search SHALL accept an optional list of collection ids on the request. When collection ids are present, each leg (graph, text/chunk, relationship) SHALL be restricted to items that belong to **every** listed collection (AND semantics) within the project. The relationship leg SHALL be restricted to relationships whose `src_id` OR `dst_id` is in the collection's canonical set (canonical-to-canonical, since `src_id`/`dst_id` store `canonical_id`). Head resolution SHALL apply to the graph-object leg only.
 
 #### Scenario: Collection filter narrows all legs
 
@@ -12,7 +12,7 @@ The unified search SHALL accept an optional list of collection ids on the reques
 #### Scenario: Relationship leg uses canonical membership
 
 - **WHEN** a unified search runs with a collection that contains graph objects by canonical id
-- **THEN** the relationship leg SHALL return only relationships whose `src` OR `dst` head-resolved canonical id is among the collection's canonical set
+- **THEN** the relationship leg SHALL return only relationships whose `src_id` OR `dst_id` is in the collection's canonical set (canonical-to-canonical)
 
 #### Scenario: No collections behaves as today
 

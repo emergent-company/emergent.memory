@@ -18,3 +18,8 @@ Every search leg (graph, text/chunk, relationship) SHALL filter by project id **
 
 - **WHEN** a caller is a project member and no explicit ACL entry denies them
 - **THEN** they SHALL see their project's resources as today (backfill preserves current behaviour)
+
+#### Scenario: ACL applies with or without a collection filter
+
+- **WHEN** a search runs with or without a collection filter
+- **THEN** the per-resource authorization filter SHALL apply in both cases; a collection filter narrows membership but does not bypass the ACL

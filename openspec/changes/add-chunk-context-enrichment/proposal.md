@@ -16,10 +16,13 @@ chunk text — the retrieval payload — is unchanged; only the embedding input 
 ## What Changes
 
 - At embed time, prepend the document filename (or `source_url` when filename is empty)
-  and a cached one-line document summary to the text passed to the embedding model.
-- Store the summary on the document (`kb.documents`), computed once per document via a
-  single LLM call (cached), reused by all that document's chunks.
-- Re-embed a document's chunks (via `kb.chunk_embedding_jobs`) when its summary changes.
+  and a cached one-line document summary to the text passed to the embedding model, each
+  omitted when absent (raw `chunk.Text` when both absent).
+- Store the summary on the document (`kb.documents`), computed once per document on
+  ingest (a single LLM call, cached), recomputed when document content changes (and/or via
+  a backfill job).
+- Re-embed a document's chunks (via `ChunkEmbeddingJobsService.EnqueueBatch`) when its
+  summary changes, including an absent→present transition.
 - Stored `chunk.Text` (the retrieval result payload) is unchanged — only the embedded
   input differs.
 
@@ -43,13 +46,14 @@ chunk text — the retrieval payload — is unchanged; only the embedding input 
   embedding input from `chunk.Text` + document filename/source_url + summary instead of
   raw `chunk.Text`.
 - **DB** (`apps/server/migrations/`): add a nullable `summary` (text) column to
-  `kb.documents` (plus any needed index). No `title` column exists; the existing
-  `filename` (fallback `source_url`) is reused.
+  `kb.documents`. No `title` column exists; the existing `filename` (fallback `source_url`)
+  is reused.
 - **Summary computation** (`apps/server/domain/documents` or a small helper): compute the
-  one-line summary once per document and cache it; re-compute when the document changes.
+  one-line summary once per document on ingest and cache it; recompute on content change
+  and via a backfill job.
 - **Re-embed trigger** (`apps/server/domain/extraction`): when a document's summary
-  changes, enqueue its chunks into `kb.chunk_embedding_jobs` (or route through the
-  document re-embed handler).
+  changes (including absent→present), enqueue its chunks via
+  `ChunkEmbeddingJobsService.EnqueueBatch`.
 - **No change** to stored `kb.chunks.text` or any retrieval result payload.
 
 ## Dependency

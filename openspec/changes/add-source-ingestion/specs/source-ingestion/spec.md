@@ -40,12 +40,12 @@ A source sync SHALL be incremental: it SHALL persist a sync state/cursor (e.g. l
 
 ### Requirement: Sync job lifecycle
 
-A sync SHALL be a job with a lifecycle of at least `queued`, `running`, `failed`, and `cancelled`, each transition SHALL be recorded, and a cancelled sync SHALL stop consuming source items.
+A sync SHALL be a job with a lifecycle of `pending`, `processing`, `completed`, `failed`, and `cancelled` (plus `dead_letter` for poison items), each transition SHALL be recorded, and a cancelled sync SHALL stop consuming source items.
 
 #### Scenario: Job transitions through lifecycle
 
 - **WHEN** a sync is triggered
-- **THEN** it SHALL enter `queued`, then `running`, then `failed` or a terminal success state, with each transition recorded
+- **THEN** it SHALL enter `pending`, then `processing`, then `completed`, `failed`, or `cancelled`, with each transition recorded
 
 #### Scenario: Cancel stops a running sync
 
@@ -77,7 +77,7 @@ A sync failure SHALL record a structured error (message, item/context, timestamp
 
 ### Requirement: Ingested content lands in documents, chunks, and graph
 
-Content ingested from a source SHALL flow through the existing pipeline into `kb.documents`, chunks, and the graph (extraction), with each piece attributable to its source.
+Content ingested from a source SHALL flow through the existing pipeline — `domain/documents` (create/update document) → chunking (`kb.chunks`) → `domain/extraction` → `domain/graph` — with each piece attributable to its source.
 
 #### Scenario: Source content becomes documents and chunks
 
@@ -89,14 +89,19 @@ Content ingested from a source SHALL flow through the existing pipeline into `kb
 - **WHEN** extraction runs over ingested content
 - **THEN** the resulting graph objects SHALL be attributable to the source that produced them
 
-### Requirement: MCP relay is the connector bus
+### Requirement: MCP registry ProxyManager is the connector bus
 
-The preferred transport for a source SHALL be an MCP server/tool registered via `domain/mcpregistry` and relayed through `domain/mcprelay`, so that consuming a SaaS source SHALL NOT require a vendor SDK hard-coded into the server.
+The preferred transport for a source SHALL be an MCP server/tool registered via `domain/mcpregistry` and invoked through its `ProxyManager` (`CallToolOnServer`/`CallTool`), so that consuming a SaaS source SHALL NOT require a vendor SDK hard-coded into the server. `domain/mcprelay` (the inbound WebSocket star relay for NAT'd local connectors) SHALL be used only for OS-level local-node connectors, not SaaS ingestion.
 
 #### Scenario: Source configured via MCP
 
 - **WHEN** a source declares an MCP server/tool as its transport
-- **THEN** ingestion SHALL be performed by invoking that MCP tool through the relay, not by a bespoke server-side vendor client
+- **THEN** ingestion SHALL be performed by invoking that tool through `domain/mcpregistry`'s `ProxyManager`, not by a bespoke server-side vendor client
+
+#### Scenario: Relay is not the SaaS path
+
+- **WHEN** a source targets a SaaS provider
+- **THEN** it SHALL be reached through `mcpregistry`'s `ProxyManager`, and SHALL NOT depend on `mcprelay` (which requires a live local `(projectID, instanceID)` session)
 
 ### Requirement: Schema auto-discovery on new sources
 

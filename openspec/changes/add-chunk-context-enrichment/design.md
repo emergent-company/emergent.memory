@@ -11,8 +11,9 @@ cheap variant at O(documents) cost.
 **Goals**
 
 - A document filename (or `source_url`) + one-line summary prefix on the embedding input.
-- Summary computed once per document, cached on the document.
-- Re-embed a document's chunks when the summary changes.
+- Summary computed once per document (on ingest), cached on the document, recomputed when
+  document content changes.
+- Re-embed a document's chunks when the summary changes (including absent→present).
 - Zero change to the stored retrieval text.
 
 **Non-Goals**
@@ -25,21 +26,30 @@ cheap variant at O(documents) cost.
 
 ### D1 — Cheap variant: prefix, not rewrite
 
-The embedded input becomes `filename_or_source_url + "\n" + summary + "\n" + chunk.Text`,
-where `filename_or_source_url` is the document's `filename` and, when that is empty, its
-`source_url`. This is a deterministic string concatenation — no per-chunk LLM pass. It
-gives the embedding model document-level grounding at effectively zero marginal cost
-beyond the one summary call per document. Full contextual RAG (rewrite each chunk) is
-rejected: it multiplies token spend by the chunk count and requires re-embedding
-semantics that are out of scope here.
+The embedded input is built by concatenation with **optional** parts, so the empty case
+collapses to raw text:
 
-### D2 — Summary stored on the document, computed once
+```
+embedInput = filename_or_source_url (if present) + "\n" + summary (if present) + "\n" + chunk.Text
+```
+
+where `filename_or_source_url` is the document's `filename`, falling back to `source_url`
+when filename is empty, and omitted entirely when both are empty; and `summary` is the
+cached summary, omitted when absent. When both the filename/source_url and the summary are
+absent, `embedInput = chunk.Text`. This is deterministic — no per-chunk LLM pass. It gives
+the embedding model document-level grounding at effectively zero marginal cost beyond the
+one summary call per document. Full contextual RAG (rewrite each chunk) is rejected: it
+multiplies token spend by the chunk count and requires re-embedding semantics out of scope.
+
+### D2 — Summary stored on the document, computed on ingest, recomputed on change
 
 `kb.documents` gains a nullable `summary` column. A single LLM call produces the one-line
-summary, cached on the document and reused by all its chunks. This is the key cost
-decision: O(1) summary per document vs O(chunks) for per-chunk context. The summary is
-stored on the document so it is shared, versioned, and independently re-computable, and so
-re-embedding has a stable trigger (summary value change).
+summary, cached on the document and reused by all its chunks. The summary is computed on
+document **ingest** and **recomputed when the document content changes** (and/or via a
+backfill job for pre-existing documents). This is the key cost decision: O(1) summary per
+document vs O(chunks) for per-chunk context. The summary is stored on the document so it is
+shared, versioned, and independently re-computable, and so re-embedding has a stable
+trigger (summary value change).
 
 ### D3 — Embedding input vs stored text are separate
 
@@ -48,15 +58,19 @@ re-embedding has a stable trigger (summary value change).
 retrieval-payload contract and the exact-packet-reproducibility of
 `retrieval-trace-persistence`. The trace/retrieval continues to return raw `chunk.Text`.
 
-### D4 — Re-embed via `kb.chunk_embedding_jobs`
+### D4 — Re-embed via `ChunkEmbeddingJobsService.EnqueueBatch`
 
 A summary change is detected at summary-recompute time (document edit or a backfill job);
-when the new summary differs, the document's chunks are enqueued into
-`kb.chunk_embedding_jobs` (or routed through the document re-embed handler). The sweep
-worker (`extraction/embedding_sweep_worker.go`) only backfills objects + relationships
-into `kb.graph_embedding_jobs` and does **not** touch chunks, so it is not the re-embed
-path here. No new queue is introduced; chunk re-embed rides the existing chunk embedding
-job lifecycle and its dequeue admission.
+when the new summary differs from the cached value (including a transition from absent to
+present), the document's chunks are enqueued via
+`ChunkEmbeddingJobsService.EnqueueBatch(chunkIDs, priority)`
+(`extraction/chunk_embedding_jobs.go:149`). If a by-document enqueue is not already
+available, add an `EnqueueByDocument(documentID, priority)` method that resolves the
+document's chunk ids and calls `EnqueueBatch`. The sweep worker
+(`extraction/embedding_sweep_worker.go`) only backfills objects + relationships into
+`kb.graph_embedding_jobs` and does **not** touch chunks, so it is not the re-embed path.
+No new queue is introduced; chunk re-embed rides the existing chunk embedding job lifecycle
+and its dequeue admission.
 
 ## Risks / Trade-offs
 

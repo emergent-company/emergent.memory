@@ -1,8 +1,8 @@
 ## 1. Migration — `kb.sources` + sync jobs (TDD)
 
-- [ ] 1.1 New migration `apps/server/migrations/<n>_create_sources.sql`: `kb.sources` (id, project_id, type, config jsonb, auth_ref, sync_state jsonb, created_at, updated_at) + `kb.source_sync_jobs` (id, source_id, status, cursor_before/after, error jsonb, started_at, finished_at).
+- [ ] 1.1 New migration `apps/server/migrations/<n>_create_sources.sql`: `kb.sources` (id, project_id, type, config jsonb, auth_ref, sync_state jsonb, created_at, updated_at) + `kb.source_sync_jobs` (id, project_id, source_id, status, cursor_before/after, error jsonb, created_at, started_at, finished_at), with RLS scoping to `project_id` (matching prior job tables).
 - [ ] 1.2 (TDD) Migration test: up/down round-trips; sync_state jsonb shape round-trips; FK cascade from source to jobs.
-- [ ] 1.3 Document in the migration comment how this differs from the removed `kb.data_source_integrations` (sync state on source, not documents; MCP transport).
+- [ ] 1.3 Document in the migration comment how this differs from the removed `kb.data_source_integrations` (sync state on source, not documents; MCP transport) and that `kb.external_sources` is the closer prior art.
 
 ## 2. Sources domain — CRUD + auth (TDD)
 
@@ -12,7 +12,7 @@
 
 ## 3. Sync lifecycle + cursor (TDD)
 
-- [ ] 3.1 Sync worker: `queued → running → failed|cancelled|success` state machine with cancellation flag checked between batches; structured error recorded on failure.
+- [ ] 3.1 Sync worker over `apps/server/internal/jobs` (`NewQueue("kb.source_sync_jobs", ...)`, atomic `Dequeue`, `MarkCompleted`/`MarkFailed`, `RecoverStaleJobs`): state machine `pending → processing → completed|failed|cancelled` (+`dead_letter`), cancellation flag checked between batches, structured error recorded on failure.
 - [ ] 3.2 (TDD) Unit test: lifecycle transitions recorded; cancel sets `cancelled` and stops fetching; failure records structured error; partial failure leaves cursor at last-success and ingested items intact.
 - [ ] 3.3 (TDD) Idempotency test: re-syncing identical external ids produces no duplicate documents/chunks/graph objects (updates in place).
 
@@ -24,8 +24,8 @@
 
 ## 5. MCP transport + discovery (TDD)
 
-- [ ] 5.1 Wire source transport through `domain/mcprelay` using `domain/mcpregistry` tool lookup; no vendor SDK in the server.
-- [ ] 5.2 (TDD) Unit test with a fake MCP tool: a source configured via MCP fetches items through the relay.
+- [ ] 5.1 Wire source transport through `domain/mcpregistry`'s `ProxyManager` (`CallToolOnServer`/`CallTool`) using `mcpregistry` server/tool lookup; no vendor SDK in the server. (`mcprelay` is the OS-connector/local-node transport only, NOT SaaS.)
+- [ ] 5.2 (TDD) Unit test with a fake MCP tool: a source configured via MCP fetches items through `ProxyManager`.
 - [ ] 5.3 Delegate new-source schema auto-discovery to `domain/discoveryjobs`.
 - [ ] 5.4 (TDD) Unit test: creating a source schedules a discovery job through `discoveryjobs`.
 

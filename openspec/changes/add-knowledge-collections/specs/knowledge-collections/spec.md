@@ -24,9 +24,9 @@ A user SHALL be able to create a named collection within a project, update its n
 - **WHEN** two projects each create a collection with the same name
 - **THEN** both collections coexist independently within their own projects
 
-### Requirement: Collection items may reference documents, graph objects, or sources
+### Requirement: Collection items reference documents or graph objects
 
-A collection item SHALL reference exactly one of: a `document_id`, a graph `canonical_id`, or a source reference. An item SHALL NOT require a document to exist. The collection SHALL be an addressable subgraph filter over these heterogeneous references.
+A collection item SHALL reference exactly one of: a `document_id` or a graph `canonical_id`. A `source` item type SHALL NOT exist in v1. The collection SHALL be an addressable subgraph filter over these references.
 
 #### Scenario: Add a document item
 
@@ -38,11 +38,6 @@ A collection item SHALL reference exactly one of: a `document_id`, a graph `cano
 - **WHEN** a user adds a graph object by canonical id to a collection
 - **THEN** a collection item of type `canonical` referencing that canonical id is created
 
-#### Scenario: Add a source item
-
-- **WHEN** a user adds a source reference to a collection
-- **THEN** a collection item of type `source` referencing that source is created
-
 #### Scenario: Duplicate membership is idempotent
 
 - **WHEN** the same item is added to a collection twice
@@ -50,7 +45,7 @@ A collection item SHALL reference exactly one of: a `document_id`, a graph `cano
 
 ### Requirement: Items are added to and removed from collections
 
-A user SHALL be able to add and remove items from a collection. Removal SHALL delete the membership row without deleting the underlying document, graph object, or source.
+A user SHALL be able to add and remove items from a collection. Removal SHALL delete the membership row without deleting the underlying document or graph object.
 
 #### Scenario: Remove an item
 
@@ -68,21 +63,40 @@ Collection items SHALL only reference objects belonging to the same project as t
 
 ### Requirement: Canonical id items resolve to the graph head
 
-When a collection item references a graph `canonical_id`, a search or retrieval filtered by that collection SHALL resolve the canonical id to its current head (per `graph-head-resolution`) so that the collection tracks the live object, not a stale snapshot.
+When a collection item references a graph `canonical_id`, a search or retrieval filtered by that collection SHALL resolve the canonical id to its current head (per `graph-head-resolution`) so the collection tracks the live object. Head resolution SHALL follow the current head of the stored `canonical_id` but SHALL NOT follow a merge/rename into a **new** `canonical_id`.
 
 #### Scenario: Canonical item resolves to head
 
 - **WHEN** a collection contains a canonical id whose head has advanced
 - **THEN** search/retrieval filtered by that collection SHALL match the current head object
 
-### Requirement: Empty collection yields no results
+#### Scenario: Merge to a new canonical id is not followed
 
-A collection with no members SHALL contribute no results to a search, and a search filtered to an empty collection SHALL return no results.
+- **WHEN** a stored canonical id is merged into a fresh canonical id
+- **THEN** the collection SHALL NOT automatically gain membership of the new canonical id
+
+### Requirement: Relationship membership is endpoint-based
+
+A relationship SHALL belong to a collection when either of its endpoints (`src_id` OR `dst_id`) is in the collection's canonical set. This applies to search/retrieval filtered by a collection.
+
+#### Scenario: Relationship matches by either endpoint
+
+- **WHEN** a collection contains a canonical id that is the `src_id` or `dst_id` of a relationship
+- **THEN** the relationship SHALL be returned by search/retrieval filtered by that collection
+
+### Requirement: Empty or dangling collections yield no results
+
+A collection with no members SHALL contribute no results to a search, and a search filtered to an empty collection SHALL return no results. A collection whose items all resolve to soft-deleted or dangling objects SHALL behave the same as an empty collection (no results, not an error).
 
 #### Scenario: Empty collection search is empty
 
 - **WHEN** a search is filtered to a collection that has no members
 - **THEN** the search returns no results
+
+#### Scenario: All-dangling collection behaves as empty
+
+- **WHEN** every item in a collection resolves to a soft-deleted or dangling object
+- **THEN** the collection contributes no results and no error is raised
 
 ### Requirement: Collections are reused across search and agent scoping
 

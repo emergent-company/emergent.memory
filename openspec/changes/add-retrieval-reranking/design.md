@@ -56,24 +56,33 @@ ranked list) and `cohereReranker` (Cohere `rerank` / cross-encoder API). Both re
 their model/credentials through `domain/modelconfig` + `domain/provider`. The search
 service holds a `Reranker` (nil when unconfigured) and calls it only when non-nil.
 
+`Candidate.Text` is derived per result type at the stage boundary:
+
+- **graph** → a serialization of the object's `Key` and `Fields` (the same surface the
+  caller sees);
+- **text** → `Snippet`;
+- **relationship** → `TripletText` (the relationship's subject/predicate/object rendering).
+
 ### D3 — Cost/latency bound: top-N only
 
-The reranker receives at most `RerankTopN` (default ≈ 50, and **SHALL NOT exceed 100**)
-fused candidates, truncated after the min-score filter. Candidates beyond top-N are not
-re-scored; their relative order is preserved and they are appended after the reranked
-block. This bounds provider cost to a constant per search regardless of candidate-set
-size, which is what makes rerank viable in production. Validation rejects `RerankTopN
-<= 0` or `> 100` at startup.
+The reranker receives at most `RerankTopN` (default **exactly 50**, and **SHALL NOT
+exceed 100**) fused candidates, truncated after the min-score filter. Candidates beyond
+top-N are not re-scored; their relative order is preserved and they are appended after
+the reranked block. This bounds provider cost to a constant per search regardless of
+candidate-set size, which is what makes rerank viable in production. Validation rejects
+`RerankTopN <= 0` or `> 100` at startup.
 
-### D3b — One canonical config source
+### D3b — One canonical config source, resolved per project
 
 `RerankModel` and `RerankTopN` SHALL be resolved from **one** canonical source:
-`domain/modelconfig` (model config). Environment variables (`RERANK_MODEL`,
-`RERANK_TOP_N`) exist only as a bootstrap fallback to seed/synthesize a modelconfig entry
-when none is present. Field/flag casing SHALL be `RerankModel` / `RerankTopN` everywhere
-(no mixed `rerankModel` / `rerank_model` drift). There is **no per-request scope** for
-reranking: configuration applies to the whole search surface; the stage either runs (when
-configured) or is skipped (when not).
+`domain/modelconfig` (`ProjectModelConfig.rerank_model`), resolved **per project** via
+the existing modelconfig resolution chain using the request's `projectID` — exactly like
+generative/embedding model selection, not a single global setting. Environment variables
+(`RERANK_MODEL`, `RERANK_TOP_N`) exist only as a bootstrap fallback to seed a modelconfig
+entry when none is present. Field/flag casing SHALL be `RerankModel` / `RerankTopN`
+everywhere. There is **no per-request scope** field: whether the stage runs is determined
+by the resolved per-project config, and the stage either runs (when a model resolves) or
+is skipped (when it does not).
 
 ### D4 — Fallback is lexical/no-op
 

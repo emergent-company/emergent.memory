@@ -2,7 +2,7 @@
 
 ### Requirement: ACL entries model per-resource permissions
 
-An ACL entry SHALL identify a resource by `(resource_type, resource_id)`, a principal by `(principal_type, principal_id)`, and a `permission` (at minimum `read`). Resource types SHALL include document, graph object (canonical id), and source. Principal types SHALL include user and group.
+An ACL entry SHALL identify a resource by `(resource_type, resource_id)` where `resource_type ∈ {document, object}`, a principal by `(principal_type, principal_id)` where `principal_type ∈ {user, group}`, and a `permission ∈ {read, deny}` enforced by a `CHECK (permission IN ('read','deny'))` constraint.
 
 #### Scenario: Grant read on a resource
 
@@ -12,15 +12,15 @@ An ACL entry SHALL identify a resource by `(resource_type, resource_id)`, a prin
 #### Scenario: Entry types are constrained
 
 - **WHEN** an ACL entry is written
-- **THEN** its `resource_type` and `principal_type` SHALL be from the supported sets, and `permission` SHALL be a supported value (at minimum `read`)
+- **THEN** its `resource_type` and `principal_type` SHALL be from the supported sets, and `permission` SHALL be `read` or `deny` (any other value rejected by the CHECK constraint)
 
 ### Requirement: Deny-by-default outside project membership
 
-A principal who is not a member of the resource's project SHALL have no access to the resource unless an explicit ACL entry grants it. Within a project, a member SHALL have `read` on the project's resources unless an explicit ACL entry revokes it.
+A principal who is not a member of the resource's project SHALL have no access to the resource unless an explicit ACL entry grants it. Project membership SHALL be resolved through `kb.organization_memberships` (the project-read gate). Within a project, a member SHALL have `read` on the project's resources unless an explicit ACL entry revokes it.
 
 #### Scenario: Non-member denied by default
 
-- **WHEN** a principal is not a member of a project and no ACL entry grants access
+- **WHEN** a principal is not a member of a project (no `kb.organization_memberships` row) and no ACL entry grants access
 - **THEN** the principal SHALL be denied access to the project's resources
 
 #### Scenario: Member read by default
@@ -28,13 +28,13 @@ A principal who is not a member of the resource's project SHALL have no access t
 - **WHEN** a project member has no explicit ACL entry on a resource
 - **THEN** they SHALL be authorized to read it (default project-member read)
 
-### Requirement: ACL grants and revokes
+### Requirement: ACL grants, denies, and revokes
 
-A principal SHALL be grantable and revocable for a resource. A revoke (or an explicit deny) SHALL override the default project-member read. Grants and revokes SHALL be idempotent and auditable.
+A principal SHALL be grantable (`read`), explicitly deniable (`deny`), and revocable for a resource. A `deny` entry SHALL override the default project-member read. Applying the same grant, deny, or revoke twice SHALL be idempotent (no duplicate entry, no effective-permission change). Each entry SHALL carry `created_at`/`updated_at` timestamps.
 
-#### Scenario: Revoke overrides default
+#### Scenario: Deny overrides default
 
-- **WHEN** an explicit deny (or revoke) entry exists for a principal on a resource
+- **WHEN** a `deny` entry exists for a principal on a resource
 - **THEN** the principal SHALL be denied that resource even though they are a project member
 
 #### Scenario: Grant and revoke are idempotent
@@ -62,8 +62,22 @@ Authorization SHALL be enforced at every search and graph hybrid search entry po
 
 #### Scenario: All legs share one enforcement point
 
-- **WHEN** graph, text, and relationship legs run
+- **WHEN** text, relationship, and graph-object legs run
 - **THEN** each SHALL apply the same `authorizeResources()` helper, so there is no divergent authorization logic
+
+#### Scenario: Unauthorized object never returned
+
+- **WHEN** a resource is denied to a caller
+- **THEN** it SHALL NOT appear in any leg's results
+
+### Requirement: Relationship visibility follows endpoint readability
+
+A relationship SHALL be visible to a caller only when **both** of its endpoint objects are readable to that caller; a relationship whose `src` OR `dst` object is unreadable SHALL be hidden.
+
+#### Scenario: Relationship to an unreadable object is hidden
+
+- **WHEN** one endpoint object of a relationship is denied to a caller
+- **THEN** the relationship SHALL NOT be returned to that caller
 
 ### Requirement: Admin bypass policy
 
@@ -76,12 +90,17 @@ An explicit admin (superadmin / org admin) SHALL have a documented, controlled b
 
 ### Requirement: Backfill preserves existing access
 
-The migration that introduces ACL SHALL backfill entries such that every existing project member SHALL have `read` on their project's existing resources, preserving current behaviour with no observed change for existing users.
+The migration that introduces ACL SHALL backfill entries such that every existing project member SHALL have `read` on their project's existing resources, preserving current behaviour with no observed change for existing users. The backfill SHALL be keyed on `kb.organization_memberships` projected onto each org's projects, and SHALL cover an org member who has **no** `kb.project_memberships` row.
 
 #### Scenario: Existing members unaffected by migration
 
 - **WHEN** the ACL migration runs against existing data
 - **THEN** existing project members SHALL retain read access to their project's resources exactly as before the migration
+
+#### Scenario: Org member without a project_memberships row keeps access
+
+- **WHEN** a user is an org member with no `kb.project_memberships` row
+- **THEN** the backfill SHALL still grant them `read` on the org's projects' resources (keyed on `kb.organization_memberships`)
 
 ### Requirement: PermissionSource contract for future syncers
 
@@ -92,11 +111,16 @@ The system SHALL define a `PermissionSource` interface contract that a future co
 - **WHEN** this change lands
 - **THEN** a `PermissionSource` interface contract SHALL exist and be documented, and no connector ACL syncer SHALL be implemented
 
-### Requirement: Postgres RLS is not used
+### Requirement: ACL is additional to the existing RLS layer
 
-The per-resource authorization SHALL be implemented in the application layer, not via Postgres Row-Level Security. RLS SHALL NOT be the enforcement mechanism for resource ACL.
+Postgres RLS already scopes rows to the project (`kb.graph_objects`, `kb.graph_relationships`, `kb.chunks`, etc.). The per-resource `authorizeResources()` predicate SHALL be **additional** to that layer, not a replacement, and the new ACL tables (`kb.acl_entries`, `kb.groups`, `kb.group_members`) SHALL themselves carry project-scoped RLS policies consistent with the existing layer.
 
-#### Scenario: No RLS dependency
+#### Scenario: Finer filter is additive
 
-- **WHEN** resource ACL is enforced
-- **THEN** enforcement is application-side (via `authorizeResources()`), and the database is not relied upon for row-level ACL
+- **WHEN** a search runs
+- **THEN** the existing project-scoping RLS SHALL still apply, and `authorizeResources()` SHALL add the per-resource read/deny filter on top
+
+#### Scenario: ACL tables are project-isolated
+
+- **WHEN** ACL rows are read or written
+- **THEN** they SHALL be constrained by project-scoped RLS policies on `kb.acl_entries`, `kb.groups`, and `kb.group_members`

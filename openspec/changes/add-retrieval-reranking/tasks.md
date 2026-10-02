@@ -9,12 +9,12 @@
 
 ## 2. Config + validation (TDD)
 
-- [ ] 2.1 Add `RerankModel` + `RerankTopN` config to `domain/search`, resolved from `domain/modelconfig` (canonical source) with env `RERANK_MODEL`/`RERANK_TOP_N` as bootstrap fallback only; default empty → off.
-- [ ] 2.2 (TDD) Config validation unit test: empty model → off; unknown model → validation error; `RerankTopN <= 0` or `> 100` → validation error; valid config passes.
+- [ ] 2.1 New Goose migration adding `rerank_model` to `ProjectModelConfig` (`domain/modelconfig`), plus the resolution-chain entry that resolves `rerank_model` per project using `projectID` (like generative/embedding model selection); env `RERANK_MODEL`/`RERANK_TOP_N` as bootstrap fallback only; default empty → off.
+- [ ] 2.2 (TDD) Config validation unit test: empty model → off; unknown model → validation error; `RerankTopN <= 0` or `> 100` → validation error; valid config passes; per-project resolution returns a project's model, not a global one.
 
 ## 3. Stage placement in `Search` (TDD)
 
-- [ ] 3.1 In `domain/search/service.go` `Search`, insert the rerank call after `filterBelowMinScore` and before `countTypes`/assembly; skip when the reranker is nil.
+- [ ] 3.1 In `domain/search/service.go` `Search`, insert the rerank call after `filterBelowMinScore` and before `countTypes`/assembly; skip when the reranker is nil. Build each `Candidate.Text` per result type (graph → Key/Fields serialization, text → Snippet, relationship → TripletText).
 - [ ] 3.2 (TDD) Unit test: nil reranker → fused order unchanged (byte-for-byte today's order); configured reranker re-orders only the top-N block and appends the rest in original order; fewer-than-N candidates reranks all.
 
 ## 4. Fallback + trace metadata (TDD)

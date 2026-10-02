@@ -18,14 +18,18 @@ retrieve for this query" half of the signal.
 ## What Changes
 
 - Add `kb.answer_feedback`: one row per (chat message/response) feedback action,
-  carrying the chat message id, the retrieval/query trace id it refers to, a thumbs
-  up/down, an optional free-text comment, the submitting user, and the project.
-- Extend the **existing** persisted `RetrievalTrace` with a user id and a stable
-  query key rather than building a parallel query-log store; expose a read path for
+  carrying the chat message id, the agent `run_id` (nullable, for model attribution),
+  the retrieval trace id (nullable), a thumbs up/down (`SMALLINT CHECK (thumbs IN
+  (-1,1))`), an optional free-text comment, the submitting user, and the project.
+- Add nullable `kb.chat_messages.retrieval_trace_id`, populated from the search response
+  `TraceID` (`domain/search/service.go:177-180`) at chat time, so feedback can link back
+  to the retrieval without a separate store.
+- Extend the **existing** persisted `RetrievalTrace` with a user id (no query-key
+  column) rather than building a parallel query-log store; expose a read path for
   search-query history (`TraceStore` already has `GetByTraceID` — add a
   list-by-project/user path).
 - Add API endpoints to submit feedback (idempotent per message+user) and to
-  list/aggregate feedback counts (by time, by model, by embedding/model config).
+  list/aggregate feedback counts (by time, by model, by search-fusion config).
 - Reuse `kb.chat_messages` / `domain/chat` for message identity — do **not** build a
   new feedback subsystem. (Work-item rework feedback already exists separately at
   `migrations/00209_work_item_feedback.sql` and is untouched.)
@@ -39,12 +43,13 @@ retrieve for this query" half of the signal.
 
 - `answer-feedback`: capture, persist, and aggregate per-answer quality signal (thumbs
   up/down + optional comment) keyed to the chat message, the retrieval trace, the user,
-  and the project, and make it queryable for retrieval-quality evaluation.
+  and the project, and make it queryable by model and by search-fusion config for
+  retrieval-quality evaluation.
 
 ### Modified Capabilities
 
-- `retrieval-trace-persistence`: the persisted trace gains user attribution and a stable
-  query key, and a search-query history read path.
+- `retrieval-trace-persistence`: the persisted trace gains user attribution and a
+  search-query history read path.
 
 ### Related / Consumed Capabilities
 
@@ -54,14 +59,14 @@ retrieve for this query" half of the signal.
 ## Impact
 
 - **DB** (`apps/server/migrations/`): new migration creating `kb.answer_feedback`
-  (unique on `(message_id, user_id)` for idempotent submit; FKs to `kb.chat_messages(id)`
-  and `kb.retrieval_traces(id)`; indexes on `(project_id, created_at)` and
-  `(user_id, created_at)`). Model/config breakdown is computed by join (see design D3),
-  not by an index on `answer_feedback`.
+  (unique on `(message_id, user_id)` for idempotent submit; FKs to `kb.chat_messages(id)`,
+  `kb.agent_runs(id)`, `kb.retrieval_traces(id)`, `core.user_profiles(id)`; `CHECK
+  (thumbs IN (-1,1))`; indexes on `(project_id, created_at)` and `(user_id, created_at)`).
+  Also a nullable `retrieval_trace_id` column on `kb.chat_messages`.
 - **Server** (`apps/server/domain/`): new `answerfeedback` domain
   (`store.go`/`service.go`/`handler.go`/`module.go`) or an extension of
-  `domain/monitoring`; `domain/search/trace_store.go` gains `user_id`/`query_key`
-  columns and a list query.
+  `domain/monitoring`; `domain/search/trace_store.go` gains a `user_id` column and a list
+  query; `domain/chat` gains `retrieval_trace_id`.
 - **Gateway** (`apps/web-ui/gateway/`): `usage.templ` + `usage.go` feedback aggregation
   (follow-on lane, documented only).
 - **No reuse of `kb.work_item_feedback`** — that table is append-only rework rounds for
