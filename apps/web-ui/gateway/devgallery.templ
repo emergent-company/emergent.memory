@@ -1,0 +1,110 @@
+package main
+
+import "github.com/emergent-company/emergent.memory/apps/web-ui/webui"
+
+// ComponentGalleryPage lists the catalog grouped by layer, with a preview and a
+// dependency panel per entry. Previews are lazy-loaded isolated iframes; the
+// iframe sandbox omits allow-forms and allow-same-origin so a preview cannot
+// mutate the backend or read the session cookie.
+templ ComponentGalleryPage(entries []GalleryEntry) {
+	<div data-testid="component-gallery" class="space-y-10">
+		<div>
+			<h1 class="text-xl font-semibold">Component gallery</h1>
+			<p class="text-muted mt-1 text-sm">Reusable gateway templ components grouped by layer, with isolated fixture previews.</p>
+		</div>
+		for _, layer := range galleryLayerOrder() {
+			@galleryLayerSection(entries, layer)
+		}
+	</div>
+}
+
+templ galleryLayerSection(entries []GalleryEntry, layer GalleryLayer) {
+	<section data-testid={ "layer-" + string(layer) }>
+		<h2 class="mb-3 text-base font-semibold">{ layerLabel(layer) }</h2>
+		<div class="grid grid-cols-1 gap-4">
+			for _, entry := range entriesInLayer(entries, layer) {
+				@galleryEntryCard(entry)
+			}
+		</div>
+	</section>
+}
+
+templ galleryEntryCard(entry GalleryEntry) {
+	<article class="rounded-box border border-base-content/10 bg-base-100 p-4" data-testid={ "gallery-entry-" + entry.Slug }>
+		<div class="flex items-center gap-2">
+			<h3 class="text-sm font-semibold">{ entry.Name }</h3>
+			<span class="badge badge-sm badge-ghost">{ string(entry.Layer) }</span>
+			if entry.NeedsFixture() {
+				<span class="badge badge-sm badge-warning" data-testid="needs-fixture">needs fixture</span>
+			}
+		</div>
+		<p class="text-muted mt-1 text-xs">{ entry.Description }</p>
+		<div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+			<span class="text-muted-faint">{ entry.SourceFile }</span>
+			if entry.PropsType != "" {
+				<span class="text-muted-faint">props: { entry.PropsType }</span>
+			}
+		</div>
+
+		<div class="mt-3">
+			<iframe
+				src={ "/dev/components/preview/" + entry.Slug }
+				sandbox=""
+				loading="lazy"
+				title={ entry.Name + " preview" }
+				data-testid={ "component-preview-" + entry.Slug }
+				class="w-full rounded-box border border-base-content/10 bg-base-200/30"
+				height="220"
+			></iframe>
+		</div>
+
+		<div class="mt-3 space-y-2 text-xs">
+			if len(entry.Uses) > 0 {
+				<div>
+					<span class="font-medium text-base-content">Uses: </span>
+					<span class="text-muted">{ joinText(entry.Uses) }</span>
+				</div>
+			}
+			if len(entry.UsedBy) > 0 {
+				<div>
+					<span class="font-medium text-base-content">Used by: </span>
+					<span class="text-muted">{ joinText(entry.UsedBy) }</span>
+				</div>
+			}
+			@externalDepsList(entry)
+		</div>
+	</article>
+}
+
+templ externalDepsList(entry GalleryEntry) {
+	{{ deps := entry.ExternalDeps() }}
+	if len(deps) > 0 {
+		<div>
+			<span class="font-medium text-base-content">External: </span>
+			<span class="text-muted">{ joinText(deps) }</span>
+		</div>
+	}
+}
+
+// componentPreviewDoc renders one component's isolated preview as a standalone
+// document. It reproduces only the shell assets the previewed component needs —
+// the safest default is CSS only, so no scripts are loaded here. The iframe
+// hosting it carries `sandbox` without allow-forms or allow-same-origin.
+templ componentPreviewDoc(entry GalleryEntry, variant string) {
+	<!DOCTYPE html>
+	<html lang="en" data-theme="dark" class="group/html">
+		<head>
+			<meta charset="UTF-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+			<meta name="color-scheme" content="dark"/>
+			<meta name="robots" content="noindex,nofollow"/>
+			<title>{ entry.Name } — component preview</title>
+			<link rel="stylesheet" href={ webui.AssetPath("/css/app.css") }/>
+		</head>
+		<body class="bg-base-100 text-base-content p-6">
+			<div class="rounded-box border border-base-content/10 bg-base-100 p-6" data-testid="preview-canvas">
+				@entry.renderFor(variant)
+			</div>
+		</body>
+	</html>
+}
