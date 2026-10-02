@@ -2,6 +2,7 @@ package graph
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 )
 
@@ -61,6 +62,71 @@ func TestParseObjectTypeSchemasToMap(t *testing.T) {
 			t.Error("expected nil for invalid JSON")
 		}
 	})
+}
+
+// TestGraphPathArraySchemaPreservesBoardWorkConfig pins the graph-path contract
+// for the array storage format used by the flagship task-board blueprint:
+// parseObjectTypeSchemasToMap → objectSchemaFromMap must carry
+// boardEnabled/allowedStatuses (and the operational skip flags) through to
+// agents.ObjectSchema, otherwise runtime work-status enforcement
+// (validateTypeStatus / rejectAgentWorkStatusWrite) is silently inert.
+func TestGraphPathArraySchemaPreservesBoardWorkConfig(t *testing.T) {
+	// Verbatim array shape of blueprints/task-board/schemas/task-board.yaml.
+	data := json.RawMessage(`[
+		{
+			"name":"Task",
+			"label":"Task",
+			"description":"A single unit of work tracked on the Kanban board.",
+			"boardEnabled":true,
+			"allowedStatuses":["ready","in_progress","review","revision","blocked","done"],
+			"skipEmbeddings":true,
+			"skipExtraction":true,
+			"excludeFromSearch":true,
+			"properties":{"title":{"type":"string"}}
+		}
+	]`)
+
+	raws := parseObjectTypeSchemasToMap(data)
+	raw, ok := raws["Task"]
+	if !ok {
+		t.Fatal("expected Task type from array-form schema")
+	}
+	var schemaMap map[string]any
+	if err := json.Unmarshal(raw, &schemaMap); err != nil {
+		t.Fatalf("unmarshal Task schema: %v", err)
+	}
+	task := objectSchemaFromMap("Task", "1.0.0", schemaMap)
+
+	if !task.BoardEnabled {
+		t.Error("graph path dropped boardEnabled from array-form schema; runtime status enforcement is inert")
+	}
+	want := []string{"ready", "in_progress", "review", "revision", "blocked", "done"}
+	if !slices.Equal(task.AllowedStatuses, want) {
+		t.Errorf("graph path AllowedStatuses = %v, want %v", task.AllowedStatuses, want)
+	}
+	if !task.SkipEmbeddings || !task.SkipExtraction || !task.ExcludeFromSearch {
+		t.Errorf("graph path dropped skip flags: skipEmbeddings=%v skipExtraction=%v excludeFromSearch=%v",
+			task.SkipEmbeddings, task.SkipExtraction, task.ExcludeFromSearch)
+	}
+
+	// End-to-end runtime enforcement: a status outside the declared set is
+	// rejected, one inside is accepted.
+	invalid := "shipped"
+	if err := validateTypeStatus(&task.ObjectTypeWorkConfig, &invalid, nil); err == nil {
+		t.Errorf("validateTypeStatus accepted out-of-set status %q; enforcement is inert", invalid)
+	}
+	valid := "ready"
+	if err := validateTypeStatus(&task.ObjectTypeWorkConfig, &valid, nil); err != nil {
+		t.Errorf("validateTypeStatus rejected allowed status %q: %v", valid, err)
+	}
+	// Marking the type board-enabled must be visible to the guard.
+	if !isBoardEnabledConfig(&task.ObjectTypeWorkConfig) {
+		t.Error("isBoardEnabledConfig = false for array-form board-enabled type")
+	}
+	// A direct agent write that sets work status is rejected on a board-enabled type.
+	if err := rejectAgentWorkStatusWrite(ActorAgent, isBoardEnabledConfig(&task.ObjectTypeWorkConfig), writesStatus(&valid, nil)); err == nil {
+		t.Error("rejectAgentWorkStatusWrite allowed an agent status write on a board-enabled type")
+	}
 }
 
 // TestParseRelationshipTypeSchemasToMap verifies that parseRelationshipTypeSchemasToMap
