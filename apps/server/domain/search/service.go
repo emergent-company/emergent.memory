@@ -313,12 +313,28 @@ func (s *Service) defaultFusionStrategy(strat UnifiedSearchFusionStrategy) Unifi
 	return strat
 }
 
+// queryEmbedTimeout bounds the embedding provider call so a slow or hung
+// provider cannot stall the entire search. On timeout the search falls back to
+// lexical-only, matching the existing error path.
+const queryEmbedTimeout = 20 * time.Second
+
+// embedQueryBounded embeds the query with the shared provider timeout, so a
+// slow or hung provider cannot stall the caller. Callers must ensure
+// s.embeddings is non-nil.
+func (s *Service) embedQueryBounded(ctx context.Context, query string) ([]float32, error) {
+	embedCtx, cancel := context.WithTimeout(ctx, queryEmbedTimeout)
+	defer cancel()
+	return s.embeddings.EmbedQuery(embedCtx, query)
+}
+
 // embedQuery generates a single embedding for all search goroutines
 func (s *Service) embedQuery(ctx context.Context, query string) []float32 {
 	if s.embeddings == nil {
 		return nil
 	}
-	vec, err := s.embeddings.EmbedQuery(ctx, query)
+	// Bound the provider call independently of the caller's context so a stuck
+	// embedding service degrades the search to lexical-only rather than hanging it.
+	vec, err := s.embedQueryBounded(ctx, query)
 	if err != nil {
 		s.log.Warn("failed to generate query embedding, falling back to lexical-only search", logger.Error(err))
 		return nil
@@ -356,7 +372,7 @@ func (s *Service) runParallelSearches(ctx context.Context, projectID uuid.UUID, 
 
 	// Relationship search
 	go func() {
-		if resultTypes == ResultTypeText || resultTypes == ResultTypeGraph {
+		if shouldSkipRelationshipLeg(resultTypes, req) {
 			relCh <- relationshipOutcome{results: nil, elapsed: 0}
 			return
 		}
@@ -366,6 +382,18 @@ func (s *Service) runParallelSearches(ctx context.Context, projectID uuid.UUID, 
 	}()
 
 	return <-graphCh, <-textCh, <-relCh
+}
+
+// shouldSkipRelationshipLeg reports whether the relationship-vector search leg
+// must be skipped: the requested result types exclude relationships, or the
+// request explicitly disabled them (IncludeRelationships=false). A nil
+// IncludeRelationships preserves existing behaviour (the leg runs when the
+// result types allow it).
+func shouldSkipRelationshipLeg(resultTypes UnifiedSearchResultType, req *UnifiedSearchRequest) bool {
+	if resultTypes == ResultTypeText || resultTypes == ResultTypeGraph {
+		return true
+	}
+	return req.IncludeRelationships != nil && !*req.IncludeRelationships
 }
 
 // fuse combines results using the specified strategy, returning fused slice and elapsed time
@@ -461,7 +489,7 @@ func (s *Service) executeGraphSearch(ctx context.Context, projectID uuid.UUID, r
 	// Use pre-computed vector if available, otherwise embed independently (standalone call path)
 	vector := queryVector
 	if len(vector) == 0 && s.embeddings != nil {
-		vec, err := s.embeddings.EmbedQuery(ctx, req.Query)
+		vec, err := s.embedQueryBounded(ctx, req.Query)
 		if err != nil {
 			s.log.Warn("failed to generate query embedding for graph search", logger.Error(err))
 			// Continue with lexical-only search
@@ -532,7 +560,7 @@ func (s *Service) executeTextSearch(ctx context.Context, projectID uuid.UUID, re
 	// Use pre-computed vector if available, otherwise embed independently (standalone call path)
 	vector := queryVector
 	if len(vector) == 0 && s.embeddings != nil {
-		vec, err := s.embeddings.EmbedQuery(ctx, req.Query)
+		vec, err := s.embedQueryBounded(ctx, req.Query)
 		if err != nil {
 			s.log.Warn("failed to generate query embedding for text search", logger.Error(err))
 			// Continue with lexical-only search
@@ -583,7 +611,7 @@ func (s *Service) executeRelationshipSearch(ctx context.Context, projectID uuid.
 	// Use pre-computed vector if available, otherwise embed independently (standalone call path)
 	vector := queryVector
 	if len(vector) == 0 && s.embeddings != nil {
-		vec, err := s.embeddings.EmbedQuery(ctx, req.Query)
+		vec, err := s.embedQueryBounded(ctx, req.Query)
 		if err != nil {
 			s.log.Warn("failed to generate query embedding for relationship search", logger.Error(err))
 			return nil, nil, nil
