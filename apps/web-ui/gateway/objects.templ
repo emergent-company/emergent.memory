@@ -183,11 +183,11 @@ templ objectsSearchForm(data objectsPageData) {
 	{{ mode := normalizeObjectsSearchMode(data.Mode) }}
 	<form id="objects-search-form" class="mb-4" method="get" action="/objects">
 		<div class="flex flex-col gap-2 sm:flex-row sm:items-center">
-			<label class="input input-bordered flex w-full items-center gap-2 sm:max-w-md">
+			<label class="input input-bordered flex w-full min-w-0 flex-1 items-center gap-2">
 				@ui.IconSpan("lucide--search", "size-4 shrink-0 text-muted")
 				<input type="search" name="q" value={ data.Query } placeholder="Search objects…" class="grow" autocomplete="off" aria-label="Search objects"/>
 			</label>
-			<div class="join">
+			<div class="join shrink-0">
 				@ui.Button(ui.ButtonProps{
 					Type:       ui.ButtonTypeSubmit,
 					Variant:    ui.ButtonPrimary,
@@ -329,27 +329,38 @@ templ objectsProvenanceFilter(data objectsPageData) {
 	</div>
 }
 
-// objectsActorFilter narrows the browse list to one actor's provenance: an actor
-// type select (Any actor / User / Agent / System) and the actor's UUID. The pair
-// is submitted explicitly (the Apply button or Enter), not per keystroke, and the
-// filter only applies when both parts are present.
+// objectsActorFilter narrows the browse list to one actor's provenance. A single
+// select lists real actors — the project's members grouped under "Users" and its
+// agent definitions under "Agents" — so the user picks an identity instead of
+// pasting a UUID. Each option's value encodes the whole (actor_type, actor_id)
+// pair as "<type>:<id>", so the two can never be submitted out of sync (the
+// server rejects actor_id without actor_type). An active pair that is not in the
+// loaded lists (a former member, or a filter passed by URL) still renders as a
+// selected option so the control reflects the active filter.
 templ objectsActorFilter(data objectsPageData) {
-	<select name="actor_type" class="select select-bordered select-sm" aria-label="Actor type">
-		<option value="" selected?={ data.ActorType == "" }>Any actor</option>
-		for _, t := range objectActorTypes {
-			<option value={ t } selected?={ t == data.ActorType }>{ actorTypeLabel(t) }</option>
+	{{ selected := actorKey(data.ActorType, data.ActorID) }}
+	<select name="actor" class="select select-bordered select-sm max-w-md" aria-label="Actor">
+		<option value="" selected?={ selected == "" }>Any actor</option>
+		{{ users := actorOptionsByType(data.ActorOptions, "user") }}
+		if len(users) > 0 {
+			<optgroup label="Users">
+				for _, o := range users {
+					<option value={ actorKey(o.Type, o.ID) } selected?={ selected == actorKey(o.Type, o.ID) }>{ o.Label }</option>
+				}
+			</optgroup>
+		}
+		{{ agents := actorOptionsByType(data.ActorOptions, "agent") }}
+		if len(agents) > 0 {
+			<optgroup label="Agents">
+				for _, o := range agents {
+					<option value={ actorKey(o.Type, o.ID) } selected?={ selected == actorKey(o.Type, o.ID) }>{ o.Label }</option>
+				}
+			</optgroup>
+		}
+		if selected != "" && !actorOptionPresent(data.ActorOptions, data.ActorType, data.ActorID) {
+			<option value={ selected } selected>{ actorTypeLabel(data.ActorType) + " · " + shortActorID(data.ActorID) }</option>
 		}
 	</select>
-	<input
-		type="text"
-		name="actor_id"
-		value={ data.ActorID }
-		placeholder="Actor id (UUID)"
-		class="input input-bordered input-sm w-64 font-mono"
-		autocomplete="off"
-		spellcheck="false"
-		aria-label="Actor id"
-	/>
 }
 
 // objectsKnowledge renders the "Ask the graph" RAG Q&A box as a distinct card:
