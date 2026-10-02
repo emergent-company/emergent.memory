@@ -1,9 +1,32 @@
 ---
 name: design-taste-frontend
-description: Anti-slop frontend skill for landing pages, portfolios, and redesigns. The agent reads the brief, infers the right design direction, and ships interfaces that do not look templated. Real design systems when applicable, audit-first on redesigns, strict pre-flight check.
+description: "Anti-slop frontend skill for landing pages, portfolios, and redesigns. The agent reads the brief, infers the right design direction, and ships interfaces that do not look templated. Real design systems when applicable, audit-first on redesigns, strict pre-flight check. Scope: React/Next/Tailwind-style projects only — not applicable to Go templ + HTMX + daisyUI UIs."
+metadata:
+  author: Leonxlnx
+  version: "2.0.0"
+  source: https://github.com/Leonxlnx/taste-skill
 ---
 
 # tasteskill: Anti-Slop Frontend Skill
+
+> ## ⚠️ Scope — read before applying
+>
+> This skill targets **React / Next.js + RSC + Tailwind** projects, where it assumes
+> `npm`/`yarn`/`npx`, JSX components, and utility-class styling.
+>
+> - **Applicable to:** React/Next/Tailwind marketing sites, landing pages, portfolios,
+>   and redesigns built on that stack.
+> - **NOT applicable to this repository's UI.** This repo's web UI is **Go templ + HTMX +
+>   daisyUI** (`apps/web-ui/`). Do **not** apply this skill's React/Next/Tailwind, npm, or
+>   JSX-specific rules there. For that UI, follow the repo's own guidance:
+>   `apps/web-ui/gateway/AGENTS.md` and
+>   `openspec/specs/web-ui-component-conventions/spec.md`.
+> - When invoked against this repo's Go-templ/HTMX/daisyUI surfaces, decline the
+>   React-specific parts and defer to the repo guidance above.
+>
+> The generic design-critique ideas below (brief inference, dials, anti-default
+> discipline) are stack-agnostic, but every concrete implementation, package, and code
+> snippet assumes React/Next/Tailwind.
 
 > Landing pages, portfolios, and redesigns. Not dashboards, not data tables, not multi-step product UI.
 > Every rule below is **contextual**. None of it fires automatically. First read the brief, then pull only what fits.
@@ -378,9 +401,14 @@ export function StickyStack({ cards }: { cards: React.ReactNode[] }) {
   const reduce = useReducedMotion();
 
   useEffect(() => {
-    if (reduce || !ref.current) return;
+    const root = ref.current;
+    if (reduce || !root) return;
     const ctx = gsap.context(() => {
-      const cardEls = gsap.utils.toArray<HTMLElement>(".stack-card");
+      // Scope the selector to this instance's root so multiple stacks on one page
+      // do not capture each other's cards.
+      const cardEls = gsap.utils.toArray<HTMLElement>(
+        root.querySelectorAll(".stack-card"),
+      );
       cardEls.forEach((card, i) => {
         if (i === cardEls.length - 1) return;
         ScrollTrigger.create({
@@ -839,8 +867,11 @@ The Reference Vocabulary (Section 10) names patterns. The Block Library implemen
 **Status:** schema defined here. Blocks will be added iteratively. Do not freelance new blocks without following this schema.
 
 ### 12.A File Location
+Blocks are not yet shipped with this skill. When implemented, they live under a
+`blocks/` directory **relative to this skill's own directory**
+(e.g. `.agents/skills/design-taste-frontend/blocks/`):
 ```
-skills/taste-skill/blocks/
+blocks/
   hero/
     asymmetric-split.md
     editorial-manifesto.md
