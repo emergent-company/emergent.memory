@@ -71,6 +71,10 @@ func NewTriggerService(
 	}
 	if repo != nil {
 		ts.activeRuns = repo
+		// Tie trigger teardown to the row delete: any repository Delete /
+		// DeleteAgentsBySourceBlueprint tears down the matching in-memory
+		// registrations in the same step, so callers cannot forget to do it.
+		repo.AddAgentDeletionListener(ts.removeAgentTriggers)
 	}
 	ts.dispatch = func(ctx context.Context, agent *Agent, projectID, objectType, objectID string) error {
 		return ts.executeTriggeredAgent(ctx, agent.ID, projectID, objectType, objectID)
@@ -332,6 +336,15 @@ func (ts *TriggerService) RemoveAgentTrigger(agentID string) {
 		} else {
 			ts.eventListeners[key] = filtered
 		}
+	}
+}
+
+// removeAgentTriggers removes registrations for a batch of deleted agent ids.
+// It is registered as a repository deletion listener so a single delete that
+// removes many runtime agents (e.g. blueprint Unapply) tears all of them down.
+func (ts *TriggerService) removeAgentTriggers(agentIDs []string) {
+	for _, id := range agentIDs {
+		ts.RemoveAgentTrigger(id)
 	}
 }
 

@@ -24,11 +24,47 @@ import (
 // Repository handles database operations for agents
 type Repository struct {
 	db bun.IDB
+
+	// agentDeletionListeners are invoked, inside the same delete call, with the
+	// ids of runtime agents whose rows were just removed. This is how in-memory
+	// trigger registrations are torn down as part of the delete rather than as
+	// a separate step each caller could forget (or which could race the delete).
+	// Registered once at construction by TriggerService; nil-safe.
+	agentDeletionMu        sync.RWMutex
+	agentDeletionListeners []func(agentIDs []string)
 }
 
 // NewRepository creates a new agents repository
 func NewRepository(db bun.IDB) *Repository {
 	return &Repository{db: db}
+}
+
+// AddAgentDeletionListener registers a callback invoked with the ids of runtime
+// agents deleted through this repository. It exists so callers cannot delete an
+// agent row without the in-memory trigger registrations being torn down in the
+// same logical step. Safe to leave unset (no-op).
+func (r *Repository) AddAgentDeletionListener(fn func(agentIDs []string)) {
+	if fn == nil {
+		return
+	}
+	r.agentDeletionMu.Lock()
+	defer r.agentDeletionMu.Unlock()
+	r.agentDeletionListeners = append(r.agentDeletionListeners, fn)
+}
+
+// notifyAgentsDeleted fans the deleted ids out to every registered listener.
+// Called after a successful row delete so a failed delete never drops live
+// registrations.
+func (r *Repository) notifyAgentsDeleted(agentIDs []string) {
+	if len(agentIDs) == 0 {
+		return
+	}
+	r.agentDeletionMu.RLock()
+	listeners := r.agentDeletionListeners
+	r.agentDeletionMu.RUnlock()
+	for _, fn := range listeners {
+		fn(agentIDs)
+	}
 }
 
 // nonTerminalRunStatuses lists the run statuses from which a terminal
@@ -170,7 +206,15 @@ func (r *Repository) Delete(ctx context.Context, id string) error {
 		Model((*Agent)(nil)).
 		Where("id = ?", id).
 		Exec(ctx)
-	return err
+	if err != nil {
+		return err
+	}
+	// Unregister in-memory triggers only after the row is actually gone, so a
+	// failed delete cannot silently disable a still-existing agent. The window
+	// is bounded by the in-flight delete; any dispatch in it re-loads the agent
+	// and no-ops.
+	r.notifyAgentsDeleted([]string{id})
+	return nil
 }
 
 // UpdateLastRun updates the last run status of an agent
@@ -602,15 +646,34 @@ func (r *Repository) UpdateAgent(ctx context.Context, agent *Agent) error {
 // DeleteAgentsBySourceBlueprint deletes runtime agents created by a blueprint,
 // matched on the ownership stamp stored in their config JSONB
 // (config->>'sourceBlueprintId'). Returns the number of rows deleted.
+//
+// The matching ids are resolved first and the delete is scoped to them, so every
+// row removed here is reported to the deletion listeners and its in-memory
+// trigger registrations are torn down in the same step. A concurrent insert that
+// appears after the id snapshot is left alone (its own create path registers its
+// trigger).
 func (r *Repository) DeleteAgentsBySourceBlueprint(ctx context.Context, blueprintID string) (int, error) {
+	var ids []string
+	if err := r.db.NewSelect().
+		Model((*Agent)(nil)).
+		Column("id").
+		Where("config->>'sourceBlueprintId' = ?", blueprintID).
+		Scan(ctx, &ids); err != nil {
+		return 0, err
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+
 	res, err := r.db.NewDelete().
 		Model((*Agent)(nil)).
-		Where("config->>'sourceBlueprintId' = ?", blueprintID).
+		Where("id IN (?)", bun.In(ids)).
 		Exec(ctx)
 	if err != nil {
 		return 0, err
 	}
 	n, _ := res.RowsAffected()
+	r.notifyAgentsDeleted(ids)
 	return int(n), nil
 }
 

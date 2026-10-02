@@ -626,6 +626,9 @@ func (h *Handler) DeleteAgent(c echo.Context) error {
 		return apperror.NewNotFound("Agent", id)
 	}
 
+	// Repository.Delete also tears down the agent's in-memory trigger
+	// registrations (see Repository.AddAgentDeletionListener), so the row and
+	// its scheduler/event listeners go away in one step.
 	if err := h.repo.Delete(c.Request().Context(), id); err != nil {
 		return apperror.NewInternal("failed to delete agent", err)
 	}

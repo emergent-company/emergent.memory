@@ -55,3 +55,22 @@ The per-agent agent-origin gate SHALL apply only to agent-originated events. Eve
 
 - **WHEN** a user-originated event matches an agent whose `ignoreAgentTriggered` is unset
 - **THEN** the agent is triggered
+
+### Requirement: Deleting a runtime agent removes its trigger registrations
+
+Deleting a runtime agent SHALL remove that agent's in-memory trigger registrations — its cron schedule in the scheduler and its reaction event listeners — in the same logical step as the row delete, so no deleted agent id keeps dispatching. This SHALL hold for every delete path: the API agent-delete endpoint, the agent MCP delete tool, and a blueprint Unapply that deletes blueprint-owned runtime agents. When one delete removes many agents, every deleted agent id SHALL be unregistered. A failed row delete SHALL NOT remove the registrations.
+
+#### Scenario: API delete unregisters
+
+- **WHEN** a runtime agent with a registered cron and/or reaction trigger is deleted through the API
+- **THEN** its scheduler task and event listener entries are removed
+
+#### Scenario: Blueprint Unapply unregisters every deleted runtime agent
+
+- **WHEN** a blueprint Unapply deletes multiple blueprint-owned runtime agents
+- **THEN** each deleted agent id's trigger registrations are removed
+
+#### Scenario: Failed delete leaves registrations intact
+
+- **WHEN** the row delete fails
+- **THEN** the agent's trigger registrations remain
