@@ -68,9 +68,12 @@ func TestResendPendingReenqueuesAndExtendsExpiry(t *testing.T) {
 		VALUES (?, ?, ?, 'invitee@example.com', 'project_user', ?, 'pending', NOW() + interval '1 day', NOW())`,
 		inviteID, orgID, projectID, token)
 
-	invite, err := svc.Resend(ctx, inviteID)
+	invite, outcome, err := svc.Resend(ctx, inviteID)
 	if err != nil {
 		t.Fatalf("Resend: %v", err)
+	}
+	if outcome != ResendOutcomeSent {
+		t.Fatalf("Resend outcome = %q, want %q", outcome, ResendOutcomeSent)
 	}
 
 	if invite.Token != token {
@@ -122,7 +125,8 @@ func seedPendingInvite(t *testing.T, db bun.IDB, orgID, projectID, email string)
 
 // TestResendWithinGuardWindowDoesNotEnqueueDuplicate proves the resend guard is
 // server-enforced: a second resend immediately after the first (a double-submit
-// or client retry) does not enqueue a second invite email job.
+// or client retry) does not enqueue a second invite email job — and reports the
+// no-op outcome so the caller/UI can tell it apart from a real send (issue #1327).
 func TestResendWithinGuardWindowDoesNotEnqueueDuplicate(t *testing.T) {
 	svc, testDB := newResendService(t)
 	defer testDB.Close()
@@ -132,19 +136,135 @@ func TestResendWithinGuardWindowDoesNotEnqueueDuplicate(t *testing.T) {
 	orgID, projectID := seedOrgAndProject(t, db)
 	inviteID := seedPendingInvite(t, db, orgID, projectID, "invitee@example.com")
 
-	if _, err := svc.Resend(ctx, inviteID); err != nil {
+	_, outcome, err := svc.Resend(ctx, inviteID)
+	if err != nil {
 		t.Fatalf("first Resend: %v", err)
+	}
+	if outcome != ResendOutcomeSent {
+		t.Fatalf("first Resend outcome = %q, want %q", outcome, ResendOutcomeSent)
 	}
 	if got := countInviteEmailJobs(t, db, inviteID); got != 1 {
 		t.Fatalf("after first Resend job count = %d, want 1", got)
 	}
 
-	// Second resend within the guard window must be a no-op.
-	if _, err := svc.Resend(ctx, inviteID); err != nil {
+	// Second resend within the guard window must be a no-op that says so.
+	_, outcome, err = svc.Resend(ctx, inviteID)
+	if err != nil {
 		t.Fatalf("second Resend: %v", err)
+	}
+	if outcome != ResendOutcomeNoOp {
+		t.Fatalf("second Resend outcome = %q, want %q (caller cannot tell no-op from a real send)", outcome, ResendOutcomeNoOp)
 	}
 	if got := countInviteEmailJobs(t, db, inviteID); got != 1 {
 		t.Fatalf("after second Resend within guard window job count = %d, want 1 (duplicate email enqueued)", got)
+	}
+}
+
+// TestResendAllowsResendWhenRecentJobFailedWithinWindow is the bounce-recovery
+// proof for issue #1327: when the most recent invite-scoped job is a terminal
+// failure (job failed/dead_letter, or a bounce/complaint/failed delivery
+// status), a resend INSIDE the 60s guard window must still enqueue a fresh job
+// and report ResendOutcomeSent. The window must not lock an admin out of
+// recovering a bounced invitation.
+func TestResendAllowsResendWhenRecentJobFailedWithinWindow(t *testing.T) {
+	failures := []struct {
+		name           string
+		status         string
+		deliveryStatus any
+	}{
+		{name: "delivery bounced", status: "sent", deliveryStatus: "bounced"},
+		{name: "delivery soft_bounced", status: "sent", deliveryStatus: "soft_bounced"},
+		{name: "delivery complained", status: "sent", deliveryStatus: "complained"},
+		{name: "delivery failed", status: "sent", deliveryStatus: "failed"},
+		{name: "job dead_letter", status: "dead_letter", deliveryStatus: nil},
+		{name: "job failed", status: "failed", deliveryStatus: nil},
+	}
+
+	for _, tc := range failures {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, testDB := newResendService(t)
+			defer testDB.Close()
+			ctx := context.Background()
+			db := testDB.GetDB()
+
+			orgID, projectID := seedOrgAndProject(t, db)
+			inviteID := seedPendingInvite(t, db, orgID, projectID, "invitee@example.com")
+
+			// A recent (inside the 60s window) job that already failed.
+			if tc.deliveryStatus != nil {
+				mustExecResend(t, db, `INSERT INTO kb.email_jobs (template_name, to_email, subject, status, source_type, source_id, delivery_status, delivery_status_at, created_at)
+					VALUES ('project-invitation', 'invitee@example.com', 'Hi', ?, 'invite', ?, ?, now(), now())`,
+					tc.status, inviteID, tc.deliveryStatus)
+			} else {
+				mustExecResend(t, db, `INSERT INTO kb.email_jobs (template_name, to_email, subject, status, source_type, source_id, created_at)
+					VALUES ('project-invitation', 'invitee@example.com', 'Hi', ?, 'invite', ?, now())`,
+					tc.status, inviteID)
+			}
+
+			_, outcome, err := svc.Resend(ctx, inviteID)
+			if err != nil {
+				t.Fatalf("Resend after %s: %v", tc.name, err)
+			}
+			if outcome != ResendOutcomeSent {
+				t.Fatalf("Resend after %s outcome = %q, want %q", tc.name, outcome, ResendOutcomeSent)
+			}
+			if got := countInviteEmailJobs(t, db, inviteID); got != 2 {
+				t.Fatalf("Resend after %s job count = %d, want 2 (bounce recovery was blocked)", tc.name, got)
+			}
+		})
+	}
+}
+
+// TestResendStillBlocksWhenRecentJobLiveWithinWindow proves the guard window
+// still prevents accidental duplicate sends for the success case: a recent job
+// that is pending/processing, or sent with no failure delivery status (or a
+// delivered/opened/clicked one), must suppress the resend and report
+// ResendOutcomeNoOp.
+func TestResendStillBlocksWhenRecentJobLiveWithinWindow(t *testing.T) {
+	live := []struct {
+		name           string
+		status         string
+		deliveryStatus any
+	}{
+		{name: "pending", status: "pending", deliveryStatus: nil},
+		{name: "processing", status: "processing", deliveryStatus: nil},
+		{name: "sent no event", status: "sent", deliveryStatus: nil},
+		{name: "delivered", status: "sent", deliveryStatus: "delivered"},
+		{name: "opened", status: "sent", deliveryStatus: "opened"},
+		{name: "clicked", status: "sent", deliveryStatus: "clicked"},
+	}
+
+	for _, tc := range live {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, testDB := newResendService(t)
+			defer testDB.Close()
+			ctx := context.Background()
+			db := testDB.GetDB()
+
+			orgID, projectID := seedOrgAndProject(t, db)
+			inviteID := seedPendingInvite(t, db, orgID, projectID, "invitee@example.com")
+
+			if tc.deliveryStatus != nil {
+				mustExecResend(t, db, `INSERT INTO kb.email_jobs (template_name, to_email, subject, status, source_type, source_id, delivery_status, delivery_status_at, created_at)
+					VALUES ('project-invitation', 'invitee@example.com', 'Hi', ?, 'invite', ?, ?, now(), now())`,
+					tc.status, inviteID, tc.deliveryStatus)
+			} else {
+				mustExecResend(t, db, `INSERT INTO kb.email_jobs (template_name, to_email, subject, status, source_type, source_id, created_at)
+					VALUES ('project-invitation', 'invitee@example.com', 'Hi', ?, 'invite', ?, now())`,
+					tc.status, inviteID)
+			}
+
+			_, outcome, err := svc.Resend(ctx, inviteID)
+			if err != nil {
+				t.Fatalf("Resend with live %s job: %v", tc.name, err)
+			}
+			if outcome != ResendOutcomeNoOp {
+				t.Fatalf("Resend with live %s job outcome = %q, want %q", tc.name, outcome, ResendOutcomeNoOp)
+			}
+			if got := countInviteEmailJobs(t, db, inviteID); got != 1 {
+				t.Fatalf("Resend with live %s job count = %d, want 1 (duplicate enqueued)", tc.name, got)
+			}
+		})
 	}
 }
 
@@ -165,8 +285,10 @@ func TestResendAfterGuardWindowEnqueuesAgain(t *testing.T) {
 		VALUES ('project-invitation', 'invitee@example.com', 'Hi', 'sent', 'invite', ?, now() - interval '2 minutes')`,
 		inviteID)
 
-	if _, err := svc.Resend(ctx, inviteID); err != nil {
+	if _, outcome, err := svc.Resend(ctx, inviteID); err != nil {
 		t.Fatalf("Resend past guard window: %v", err)
+	} else if outcome != ResendOutcomeSent {
+		t.Fatalf("Resend past guard window outcome = %q, want %q", outcome, ResendOutcomeSent)
 	}
 	if got := countInviteEmailJobs(t, db, inviteID); got != 2 {
 		t.Fatalf("after Resend past guard window job count = %d, want 2", got)
@@ -185,12 +307,16 @@ func TestResendGuardIsPerInvite(t *testing.T) {
 	inviteA := seedPendingInvite(t, db, orgID, projectID, "a@example.com")
 	inviteB := seedPendingInvite(t, db, orgID, projectID, "b@example.com")
 
-	if _, err := svc.Resend(ctx, inviteA); err != nil {
+	if _, outcome, err := svc.Resend(ctx, inviteA); err != nil {
 		t.Fatalf("Resend A: %v", err)
+	} else if outcome != ResendOutcomeSent {
+		t.Fatalf("Resend A outcome = %q, want %q", outcome, ResendOutcomeSent)
 	}
 	// B is a different invite and must not be blocked by A's recent job.
-	if _, err := svc.Resend(ctx, inviteB); err != nil {
+	if _, outcome, err := svc.Resend(ctx, inviteB); err != nil {
 		t.Fatalf("Resend B: %v", err)
+	} else if outcome != ResendOutcomeSent {
+		t.Fatalf("Resend B outcome = %q, want %q", outcome, ResendOutcomeSent)
 	}
 
 	if got := countInviteEmailJobs(t, db, inviteA); got != 1 {
@@ -229,12 +355,18 @@ func TestResendConcurrentEnqueuesExactlyOne(t *testing.T) {
 		var ready sync.WaitGroup
 		ready.Add(concurrent)
 
+		// outcomes records what each racing caller was told, so the test also
+		// proves the truthfulness contract under concurrency: exactly one caller
+		// is told "sent" and every other is told "noop" (#1327).
+		outcomes := make([]ResendOutcome, concurrent)
+
 		eg, egCtx := errgroup.WithContext(ctx)
 		for i := 0; i < concurrent; i++ {
 			eg.Go(func() error {
 				ready.Done()
 				<-start // barrier: every goroutine races from the same instant
-				_, err := svc.Resend(egCtx, inviteID)
+				_, outcome, err := svc.Resend(egCtx, inviteID)
+				outcomes[i] = outcome
 				return err
 			})
 		}
@@ -248,6 +380,19 @@ func TestResendConcurrentEnqueuesExactlyOne(t *testing.T) {
 		if got := countInviteEmailJobs(t, db, inviteID); got != 1 {
 			t.Fatalf("round %d: %d concurrent resends produced %d invite email job(s), want exactly 1",
 				round, concurrent, got)
+		}
+
+		sent, noop := 0, 0
+		for _, outcome := range outcomes {
+			switch outcome {
+			case ResendOutcomeSent:
+				sent++
+			case ResendOutcomeNoOp:
+				noop++
+			}
+		}
+		if sent != 1 || noop != concurrent-1 {
+			t.Fatalf("round %d: outcomes sent=%d noop=%d, want sent=1 noop=%d", round, sent, noop, concurrent-1)
 		}
 	}
 }
@@ -281,9 +426,12 @@ func TestResendEnqueueFailureIsNonFatalAndPersistsExpiry(t *testing.T) {
 	resendCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	invite, err := svc.Resend(resendCtx, inviteID)
+	invite, outcome, err := svc.Resend(resendCtx, inviteID)
 	if err != nil {
 		t.Fatalf("Resend must remain non-fatal when the enqueue fails, got error: %v", err)
+	}
+	if outcome != ResendOutcomeEnqueueFailed {
+		t.Fatalf("Resend outcome with failed enqueue = %q, want %q (caller would wrongly believe an email went out)", outcome, ResendOutcomeEnqueueFailed)
 	}
 
 	// The returned invite reflects the expiry extension.
@@ -333,7 +481,7 @@ func TestResendNonPendingOrUnknownNotFound(t *testing.T) {
 	seed(declined, "declined")
 
 	for _, id := range []string{accepted, revoked, declined, uuid.NewString()} {
-		_, err := svc.Resend(ctx, id)
+		_, _, err := svc.Resend(ctx, id)
 		status, _ := apperror.ToHTTPError(err)
 		if status != 404 {
 			t.Fatalf("Resend(%s) status = %d, want 404 (err=%v)", id, status, err)

@@ -22,11 +22,19 @@ The Web UI sent-invitations list SHALL display, for each sent invitation, an ema
 
 ### Requirement: Resend action on pending invitations
 
-For every pending sent invitation, the Web UI SHALL offer a resend action that submits `POST /invites/:id/resend`. The action SHALL be gated the same way as revoke (visible only to a caller who may administer the organization). On success the UI SHALL return the caller to the members surface they came from and reflect that a resend occurred; the invitation SHALL remain listed as pending. Resend SHALL NOT be offered for invitations that are not pending.
+For every pending sent invitation, the Web UI SHALL offer a resend action that submits `POST /invites/:id/resend`. The action SHALL be gated the same way as revoke (visible only to a caller who may administer the organization). On completion the UI SHALL return the caller to the members surface they came from, carrying the resend outcome and reflecting it truthfully: when the server reports a real send the UI SHALL confirm the resend; when the server reports the within-window no-op the UI SHALL say the email was already sent moments ago rather than claim a new send; on an enqueue failure it SHALL report that the email could not be queued. The invitation SHALL remain listed as pending. Resend SHALL NOT be offered for invitations that are not pending.
 
 #### Scenario: Resend submits and returns to the same surface
 - **WHEN** an org admin activates resend on a pending invitation from the project members page
 - **THEN** the browser submits `POST /invites/:id/resend` and is returned to the members surface it came from
+
+#### Scenario: Truthful feedback for a real send
+- **WHEN** the server reports the resend outcome as `sent`
+- **THEN** the UI confirms the invitation was resent
+
+#### Scenario: Truthful feedback for the within-window no-op
+- **WHEN** the server reports the resend outcome as `noop` (a recent email is still in flight or delivered)
+- **THEN** the UI says the invitation was already sent moments ago and does NOT claim a new email was sent
 
 #### Scenario: Resend is not offered for non-pending invitations
 - **WHEN** an invitation is accepted, declined, or revoked
