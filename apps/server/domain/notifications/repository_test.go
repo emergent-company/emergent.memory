@@ -206,6 +206,38 @@ func TestMarkAllRead_ProjectScope(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestInboxScopeIsolation is the #1363 guard. The account inbox binds
+// scope='account' and NO project predicate, so a project-scope row can never
+// surface there; the project inbox binds BOTH scope='project' and project_id,
+// so one project's rows can never leak into another's. (The agent-question
+// notification reported in the account inbox was a stale pre-#1312 row
+// backfilled to the default account scope — not a cross-project leak; the
+// classification backfill corrects it.)
+func TestInboxScopeIsolation(t *testing.T) {
+	t.Run("account binds account scope only", func(t *testing.T) {
+		repo, mock := newRepoMock(t)
+		mock.ExpectQuery(`SELECT[\s\S]*scope = 'account'[\s\S]*`).
+			WillReturnRows(sqlmock.NewRows([]string{"id"}))
+
+		_, err := repo.List(context.Background(), "u1", ListParams{Scope: ScopeAccount, Tab: TabAll})
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("project binds scope and project id", func(t *testing.T) {
+		repo, mock := newRepoMock(t)
+		mock.ExpectQuery(`SELECT[\s\S]*scope = 'project'[\s\S]*project_id = 'proj-a'[\s\S]*`).
+			WillReturnRows(sqlmock.NewRows([]string{"id"}))
+
+		pid := "proj-a"
+		_, err := repo.List(context.Background(), "u1", ListParams{
+			Scope: ScopeProject, ProjectID: &pid, Tab: TabAll,
+		})
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
 func TestUpsertPreference_UniqueConflict(t *testing.T) {
 	repo, mock := newRepoMock(t)
 

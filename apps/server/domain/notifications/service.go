@@ -63,6 +63,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Notification, er
 		scope = Scope(entry.Scope)
 	}
 
+	// Classification is taxonomy-authoritative (issue #1364).
+	requiresAction := resolveRequiresAction(in.RequiresAction, entry)
+
 	// Resolve delivery. Only opt-in project events consult preferences.
 	prefEnabled := false
 	if entry.Delivery == taxonomy.DeliveryOptIn {
@@ -112,7 +115,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Notification, er
 		Details:             in.Details,
 		TaskID:              in.TaskID,
 		Scope:               scope,
-		RequiresAction:      in.RequiresAction,
+		RequiresAction:      requiresAction,
 		EventKey:            &in.EventKey,
 	}
 
@@ -140,6 +143,15 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Notification, er
 	s.emitCreated(ctx, created)
 
 	return created, nil
+}
+
+// resolveRequiresAction decides whether a created notification needs the user
+// to act. The taxonomy is authoritative for the event type, so an action-required
+// type can never be emitted as an FYI item by a producer that forgot the flag
+// (issue #1364). OR-ing rather than overriding keeps a producer that legitimately
+// marks a not-yet-registered actionable event from silently losing that flag.
+func resolveRequiresAction(producer bool, entry taxonomy.Entry) bool {
+	return producer || entry.RequiresAction
 }
 
 // emitCreated publishes a real-time notification entity event.

@@ -136,6 +136,39 @@ func TestInboxPageActionableRow(t *testing.T) {
 	}
 }
 
+// TestInboxPageActionableRowDeepLink is the #1362 regression: an agent question
+// that needs input must be clickable through to where it can be answered and
+// must carry the notification id so the client marks it read on click.
+func TestInboxPageActionableRowDeepLink(t *testing.T) {
+	n := Notification{
+		ID: "n-input", Scope: "project", Title: "Agent needs your input", Message: "Which fruit?",
+		RequiresAction: true, Read: false,
+		ActionURL: "/chat?c=conv-1", ActionLabel: "Review",
+		CreatedAt: "2026-09-30T21:19:00Z",
+	}
+	html := renderHTML(t, InboxPage(inboxView{
+		Scope: "project", Tab: "action", Project: &Project{ID: "p1"}, ProjectSelected: true,
+		Notifications: []Notification{n},
+	}))
+	for _, want := range []string{
+		`data-notification-open`,
+		`href="/chat?c=conv-1"`,
+		`data-notif-id="n-input"`,
+		"Agent needs your input",
+		"Which fruit?",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("actionable deep-linked row missing %q", want)
+		}
+	}
+	if strings.Count(html, "data-notification-open") != 1 {
+		t.Errorf("row must expose exactly one open target, got %d", strings.Count(html, "data-notification-open"))
+	}
+	if !strings.Contains(html, `data-notif-action="read"`) {
+		t.Error("row must keep the explicit mark-read control")
+	}
+}
+
 func TestInboxPageNonActionableOpenLink(t *testing.T) {
 	n := Notification{
 		ID: "n2", Scope: "account", Title: "Role changed", Read: true,

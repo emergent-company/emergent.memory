@@ -54,6 +54,25 @@ func TestCreateQuestionNotification_UsesCentralProducer(t *testing.T) {
 	require.Equal(t, "important", in.Importance)
 	require.NotNil(t, in.RelatedResourceID)
 	require.Equal(t, "q-1", *in.RelatedResourceID)
+
+	// #1362: the notification always carries a deep link so clicking it reaches
+	// where the question/approval can be answered. With no repo the run's
+	// conversation cannot be resolved, so it falls back to the approvals page.
+	require.NotNil(t, in.ActionURL)
+	require.Equal(t, approvalPagePath, *in.ActionURL)
+	require.NotNil(t, in.ActionLabel)
+	require.Equal(t, "Review", *in.ActionLabel)
+	// Options still map to inline actions in addition to the deep link.
+	require.JSONEq(t, `[{"label":"Yes","value":"yes"}]`, string(in.Actions))
+}
+
+// TestQuestionNotificationActionURL pins the #1362 target selection: a run with
+// a resolvable conversation links to that conversation, while an unresolved run
+// (nil repo, empty run id) degrades to the approvals page rather than a dead
+// link.
+func TestQuestionNotificationActionURL(t *testing.T) {
+	require.Equal(t, approvalPagePath, questionNotificationActionURL(t.Context(), nil, "run-1"))
+	require.Equal(t, approvalPagePath, questionNotificationActionURL(t.Context(), nil, ""))
 }
 
 func TestCreateQuestionNotification_NilServiceSkips(t *testing.T) {
