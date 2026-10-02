@@ -66,11 +66,15 @@ jobs:
       - name: Dispatch preview event to infra
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          ACTION: ${{ github.event.action }}
         run: |
           gh api repos/emergent-company/emergent.memory.infra/dispatches \
             --method POST \
             -f event_type=pr-preview \
-            -f "client_payload[repo]=${{ github.repository }}" \
-            -f "client_payload[pr_number]=${{ github.event.pull_request.number }}" \
-            -f "client_payload[head_sha]=${{ github.event.pull_request.head.sha }}" \
-            -f "client_payload[action]=${{ github.event.action }}"
+            -f "client_payload[repo]=$REPO" \
+            -f "client_payload[pr_number]=$PR_NUMBER" \
+            -f "client_payload[head_sha]=$HEAD_SHA" \
+            -f "client_payload[action]=$ACTION"
