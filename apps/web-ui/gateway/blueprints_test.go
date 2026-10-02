@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -901,6 +902,53 @@ func TestObjectTypesFromRaw(t *testing.T) {
 	}
 	if objectTypesFromRaw(json.RawMessage(`{"person":{"label":"Person"}}`)) == nil {
 		t.Error("map-form fallback should parse")
+	}
+}
+
+// TestObjectTypesFromMapsBoardFields pins the parser mapping for the board
+// work-status config (present and absent).
+func TestObjectTypesFromMapsBoardFields(t *testing.T) {
+	types := objectTypesFromMaps([]map[string]any{
+		{"name": "Task", "boardEnabled": true, "allowedStatuses": []any{"ready", "done"}},
+		{"name": "Note"},
+	})
+	if len(types) != 2 {
+		t.Fatalf("types = %+v", types)
+	}
+	if !types[0].BoardEnabled {
+		t.Error("Task should be board-enabled")
+	}
+	if got := types[0].AllowedStatuses; !slices.Equal(got, []string{"ready", "done"}) {
+		t.Errorf("Task allowed statuses = %v, want [ready done]", got)
+	}
+	if types[1].BoardEnabled || len(types[1].AllowedStatuses) != 0 {
+		t.Errorf("Note should carry no board data, got %+v", types[1])
+	}
+}
+
+// TestBlueprintDetailBoardWorkStatuses pins the rendered contract for a
+// board-enabled object type row: the work-status region and one data-status
+// hook per allowed status, omitted entirely for a non-board type.
+func TestBlueprintDetailBoardWorkStatuses(t *testing.T) {
+	board := &BlueprintDetail{
+		ObjectTypes: []ObjectTypeDetail{
+			{Name: "Task", Label: "Task", BoardEnabled: true, AllowedStatuses: []string{"ready", "done"}},
+		},
+	}
+	html := renderHTML(t, BlueprintDetailPage(board, nil))
+	for _, want := range []string{
+		`data-testid="object-type-work"`,
+		`data-status="ready"`,
+		`data-status="done"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("board object type missing %q", want)
+		}
+	}
+
+	plain := &BlueprintDetail{ObjectTypes: []ObjectTypeDetail{{Name: "Note", Label: "Note"}}}
+	if got := renderHTML(t, BlueprintDetailPage(plain, nil)); strings.Contains(got, `data-testid="object-type-work"`) {
+		t.Error("non-board object type should not render a work-status summary")
 	}
 }
 

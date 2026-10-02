@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/url"
 	"sort"
 	"strings"
@@ -75,17 +76,50 @@ type boardLane struct {
 	Items  []WorkItem
 }
 
-// buildBoardColumns groups items into columns by status in the canonical order,
+// boardStatusesFromCompiled derives the board lane order from the compiled
+// schema's board-enabled object types, in declaration order, de-duplicated
+// first-seen. Non-board types and empty entries are skipped. Returns nil when
+// no board-enabled type declares any statuses.
+func boardStatusesFromCompiled(compiled *CompiledSchemaTypes) []string {
+	if compiled == nil {
+		return nil
+	}
+	var out []string
+	seen := make(map[string]struct{})
+	for _, t := range compiled.ObjectTypes {
+		if !t.BoardEnabled {
+			continue
+		}
+		for _, s := range t.AllowedStatuses {
+			if s == "" {
+				continue
+			}
+			if _, ok := seen[s]; ok {
+				continue
+			}
+			seen[s] = struct{}{}
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// buildBoardColumns groups items into columns by status in the schema-declared
+// order (falling back to the canonical order when schemaStatuses is empty),
 // appending any custom statuses (sorted) after the known ones. Canonical lanes
 // render even when empty so the board's drag targets are stable.
-func buildBoardColumns(items []WorkItem) []boardLane {
+func buildBoardColumns(items []WorkItem, schemaStatuses []string) []boardLane {
 	byStatus := make(map[string][]WorkItem)
 	for _, it := range items {
 		byStatus[it.Status] = append(byStatus[it.Status], it)
 	}
+	base := schemaStatuses
+	if len(base) == 0 {
+		base = boardStatusOrder
+	}
 	seen := make(map[string]bool)
-	cols := make([]boardLane, 0, len(boardStatusOrder)+len(byStatus))
-	for _, s := range boardStatusOrder {
+	cols := make([]boardLane, 0, len(base)+len(byStatus))
+	for _, s := range base {
 		seen[s] = true
 		cols = append(cols, boardLane{Status: s, Items: byStatus[s]})
 	}
@@ -114,20 +148,31 @@ func boardUnhealthyAgents(agents []ScheduledAgent) []ScheduledAgent {
 	return out
 }
 
+// boardStatuses best-effort derives the board lane order from the compiled
+// schema. A fetch failure is captured and falls back to nil (canonical order).
+func (s *Server) boardStatuses(ctx context.Context) []string {
+	compiled, err := s.memory.GetCompiledTypes(ctx)
+	if err != nil {
+		captureError(err)
+		return nil
+	}
+	return boardStatusesFromCompiled(compiled)
+}
+
 // uiBoard renders the Kanban board page. A failed fetch renders the whole-page
 // error state.
 func (s *Server) uiBoard(c echo.Context) error {
 	ctx := c.Request().Context()
 	items, err := s.memory.ListWorkItems(ctx, "", "", 200)
 	if err != nil {
-		return s.page(c, pageTitle("Board"), BoardPage(nil, nil, err))
+		return s.page(c, pageTitle("Board"), BoardPage(nil, nil, nil, err))
 	}
 	agents, aerr := s.memory.ListScheduledAgents(ctx)
 	if aerr != nil {
 		captureError(aerr)
 		agents = nil
 	}
-	return s.page(c, pageTitle("Board"), BoardPage(items, agents, nil))
+	return s.page(c, pageTitle("Board"), BoardPage(items, agents, s.boardStatuses(ctx), nil))
 }
 
 // uiBoardPartial renders just the board columns (the htmx swap region), used by
@@ -147,7 +192,7 @@ func (s *Server) renderBoardColumns(c echo.Context, actionErr error) error {
 	} else if err != nil {
 		errMsg = err.Error()
 	}
-	render.RenderPartial(c.Response().Writer, c.Request(), BoardRefresh(items, errMsg))
+	render.RenderPartial(c.Response().Writer, c.Request(), BoardRefresh(items, s.boardStatuses(ctx), errMsg))
 	return nil
 }
 

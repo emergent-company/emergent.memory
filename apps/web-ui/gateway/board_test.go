@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -79,6 +80,75 @@ func TestBoardPageLoadError(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "Board unavailable") {
 		t.Errorf("error state missing:\n%s", rec.Body.String())
+	}
+}
+
+func TestBoardPageSchemaDerivedLanes(t *testing.T) {
+	f := &fakeMemory{
+		compiled: &CompiledSchemaTypes{
+			ObjectTypes: []CompiledType{
+				{Name: "Task", BoardEnabled: true, AllowedStatuses: []string{"todo", "doing"}},
+			},
+		},
+		workItems: []WorkItem{
+			{CanonicalID: "w1", Type: "Task", Key: "k", Status: "parked"},
+		},
+	}
+	_, e := newBoardEcho(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/board", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-board-column="todo"`,
+		`data-board-column="doing"`,
+		`data-board-column="parked"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("board missing %q", want)
+		}
+	}
+	if strings.Contains(body, `data-board-column="done"`) {
+		t.Error("canonical status not declared in schema must be absent")
+	}
+}
+
+func TestBoardPageFallbackLanes(t *testing.T) {
+	f := &fakeMemory{
+		compiled:  &CompiledSchemaTypes{},
+		workItems: []WorkItem{{CanonicalID: "w1", Type: "Task", Key: "k", Status: "ready"}},
+	}
+	_, e := newBoardEcho(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/board", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `data-board-column="done"`) {
+		t.Error("fallback must render the canonical done lane")
+	}
+}
+
+func TestBoardStatusesFromCompiled(t *testing.T) {
+	compiled := &CompiledSchemaTypes{
+		ObjectTypes: []CompiledType{
+			{Name: "NonBoard", BoardEnabled: false, AllowedStatuses: []string{"x"}},
+			{Name: "Task", BoardEnabled: true, AllowedStatuses: []string{"todo", "doing", "todo", "", "done"}},
+			{Name: "Other", BoardEnabled: true, AllowedStatuses: []string{"doing", "blocked"}},
+		},
+	}
+	got := boardStatusesFromCompiled(compiled)
+	want := []string{"todo", "doing", "done", "blocked"}
+	if !slices.Equal(got, want) {
+		t.Errorf("boardStatusesFromCompiled = %v, want %v", got, want)
+	}
+	if boardStatusesFromCompiled(nil) != nil {
+		t.Error("nil compiled must return nil")
+	}
+	if boardStatusesFromCompiled(&CompiledSchemaTypes{}) != nil {
+		t.Error("empty compiled must return nil")
 	}
 }
 
