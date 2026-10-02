@@ -38,9 +38,16 @@ templ RunPage(data runPageData) {
 					     the bottom of the log) while layout.Container supplies the
 					     shared page width + padding. -->
 					<div class="flex min-h-full flex-col justify-end">
-						@layout.Container(layout.ContainerLG, nil) {
-							<div id="chat-messages" class="flex flex-col gap-3"></div>
-						}
+						<!-- Full-width guard (#1383): the flex wrapper makes
+						     layout.Container a flex item whose mx-auto (auto
+						     cross-axis margins) suppresses flex stretch, so a short
+						     run transcript collapsed to its content width. w-full
+						     pins the column to the pane width at any length. -->
+						<div class="w-full">
+							@layout.Container(layout.ContainerLG, nil) {
+								<div id="chat-messages" class="flex flex-col gap-3"></div>
+							}
+						</div>
 					</div>
 				</div>
 				<div id="chat-empty" class="hidden"></div>
