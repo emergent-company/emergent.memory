@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"encoding/base64"
 	"net/http"
 	"time"
 
@@ -39,10 +40,13 @@ type ProviderDefinitionResponse struct {
 	CredentialLabel *CredentialLabel     `json:"credentialLabel,omitempty"`
 	Order           int                  `json:"order"`
 	Names           map[string]string    `json:"names,omitempty"`
+	// IconDataURI is the vendor brand mark as a base64 data URI; the raw SVG
+	// bytes are never serialized.
+	IconDataURI string `json:"iconDataUri,omitempty"`
 }
 
 func toProviderDefinitionResponse(def *ProviderDefinition) ProviderDefinitionResponse {
-	return ProviderDefinitionResponse{
+	resp := ProviderDefinitionResponse{
 		Type:            def.Type,
 		DisplayName:     def.DisplayName,
 		Description:     def.Description,
@@ -55,6 +59,10 @@ func toProviderDefinitionResponse(def *ProviderDefinition) ProviderDefinitionRes
 		Order:           def.Order,
 		Names:           def.Names,
 	}
+	if len(def.Icon) > 0 {
+		resp.IconDataURI = "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString(def.Icon)
+	}
+	return resp
 }
 
 // --- Project Provider Config Endpoints ---

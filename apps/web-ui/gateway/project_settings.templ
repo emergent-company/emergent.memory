@@ -909,7 +909,7 @@ templ providerManagementPanel(d providerPanelData) {
 		if len(d.Providers) > 0 {
 			<div class="flex flex-col gap-2">
 				for _, p := range d.Providers {
-					@providerConfigRow(p)
+					@providerConfigRow(p, vendorIconURI(d.Vendors, p.Provider))
 				}
 			</div>
 		} else {
@@ -921,11 +921,15 @@ templ providerManagementPanel(d providerPanelData) {
 // providerConfigRow shows one configured provider instance with edit/test/
 // remove actions pushed to the right. The instance slug is the primary label
 // and the dialect is shown alongside it, so two instances of one dialect are
-// distinguishable; every action targets the instance by slug.
-templ providerConfigRow(p ProjectProviderConfig) {
+// distinguishable; every action targets the instance by slug. iconURI is the
+// dialect's brand mark ("" when the registry carries none).
+templ providerConfigRow(p ProjectProviderConfig, iconURI string) {
 	{{ slug := providerInstanceSlug(p) }}
 	<div class="rounded-box border border-base-content/10 bg-base-200/30 p-3" data-testid={ "provider-instance-" + slug }>
 		<div class="flex flex-wrap items-center gap-3">
+			if iconURI != "" {
+				<img src={ iconURI } alt="" aria-hidden="true" class="size-5 shrink-0"/>
+			}
 			<span class="font-mono text-sm font-medium">{ slug }</span>
 			<span class="text-muted text-xs">{ p.Provider }</span>
 			if p.BaseURL != "" {
@@ -968,9 +972,10 @@ templ providerConfigRow(p ProjectProviderConfig) {
 // (credentials are never returned by the API, so stay blank).
 //
 // vendors is the server vendor registry, ordered by Order ascending; the add
-// form builds its vendor <select> from it (value=type, label=displayName) and
-// shows the selected vendor's description as the field hint. The selected
-// vendor's extraFields are rendered read-only beneath the credential fields —
+// form builds its vendor <select> from it (value=type, label=displayName),
+// shows the selected vendor's description as the field hint, and previews the
+// selected vendor's brand icon beside the select. The selected vendor's
+// extraFields are rendered read-only beneath the credential fields —
 // server-side configuration this form does not submit.
 //
 // Save is gated on a live connection test, but only for openai: the submit
@@ -994,13 +999,17 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 		<h3 class="text-sm font-semibold">{ providerFormTitle(p) }</h3>
 		if p == nil {
 			{{ sel := providerSelectedType(vendors, draftProvider) }}
+			{{ iconURI := vendorIconURI(vendors, sel) }}
 			<label class="form-control w-full">
 				<div class="label"><span class="label-text">Provider</span></div>
-				<select id="provider-type" name="provider" class="select w-full">
-					for _, v := range vendors {
-						<option value={ v.Type } if v.Type == sel { selected } data-description={ v.Description }>{ v.DisplayName }</option>
-					}
-				</select>
+				<div class="flex items-center gap-2">
+					<img id="provider-icon" alt="" aria-hidden="true" class="size-6 shrink-0" if iconURI != "" { src={ iconURI } } if iconURI == "" { style="display:none" }/>
+					<select id="provider-type" name="provider" class="select w-full">
+						for _, v := range vendors {
+							<option value={ v.Type } if v.Type == sel { selected } data-description={ v.Description } data-icon-uri={ v.IconDataURI }>{ v.DisplayName }</option>
+						}
+					</select>
+				</div>
 				if len(vendors) > 0 {
 					<p id="provider-description" class="text-muted-faint mt-1 text-xs">{ providerDescription(vendors, sel) }</p>
 				}
@@ -1023,10 +1032,16 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 				<p class="text-muted-faint mt-1 text-xs">Leave blank to use the provider name. Give it a name to keep a second endpoint of the same provider.</p>
 			</label>
 		} else {
+			{{ iconURI := vendorIconURI(vendors, p.Provider) }}
 			<input type="hidden" name="provider" value={ p.Provider }/>
 			<input type="hidden" name="slug" value={ providerInstanceSlug(*p) }/>
 			<p class="text-sm text-muted-strong">Name: <span class="font-mono font-semibold">{ providerInstanceSlug(*p) }</span></p>
-			<p class="text-sm text-muted-strong">Provider: <span class="font-mono font-semibold">{ p.Provider }</span></p>
+			<p class="flex items-center gap-2 text-sm text-muted-strong">
+				if iconURI != "" {
+					<img src={ iconURI } alt="" aria-hidden="true" class="size-6 shrink-0"/>
+				}
+				<span>Provider: <span class="font-mono font-semibold">{ p.Provider }</span></span>
+			</p>
 		}
 		@form.PasswordField(form.PasswordFieldProps{
 			Name:        "api_key",
@@ -1200,6 +1215,7 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 				var keyInput = form.querySelector('[name="api_key"]');
 				var urlStatus = document.getElementById('base-url-status');
 				var descEl = document.getElementById('provider-description');
+				var iconEl = document.getElementById('provider-icon');
 				var extraBlocks = form.querySelectorAll('[data-provider-extra]');
 
 				/* Advisory reachability check under the base_url field: fires
@@ -1299,9 +1315,21 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 					   follow the selected vendor. Both are render-only and are
 					   never submitted with the form. */
 					var prov = currentProvider();
-					if (descEl && sel) {
+					if (sel) {
 						var opt = sel.options[sel.selectedIndex];
-						descEl.textContent = opt ? (opt.getAttribute('data-description') || '') : '';
+						if (descEl) {
+							descEl.textContent = opt ? (opt.getAttribute('data-description') || '') : '';
+						}
+						if (iconEl) {
+							var uri = opt ? (opt.getAttribute('data-icon-uri') || '') : '';
+							if (uri) {
+								iconEl.setAttribute('src', uri);
+								iconEl.style.display = '';
+							} else {
+								iconEl.removeAttribute('src');
+								iconEl.style.display = 'none';
+							}
+						}
 					}
 					for (var i = 0; i < extraBlocks.length; i++) {
 						extraBlocks[i].style.display = extraBlocks[i].getAttribute('data-provider-extra') === prov ? '' : 'none';

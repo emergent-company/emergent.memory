@@ -85,13 +85,15 @@ func findProviderInstance(providers []ProjectProviderConfig, slugOrDialect strin
 }
 
 // providerPanelData is the payload of the Providers panel: grouped rate rows,
-// the raw provider configs (for management), the project's default models, the
-// global model catalog, each configured provider's per-provider model catalog
-// (keyed by the configured provider name — the prefix default-model options
-// must carry), plus a best-effort fetch error.
+// the raw provider configs (for management), the vendor registry (for per-row
+// brand icons), the project's default models, the global model catalog, each
+// configured provider's per-provider model catalog (keyed by the configured
+// provider name — the prefix default-model options must carry), plus a
+// best-effort fetch error.
 type providerPanelData struct {
 	Groups         []providerRateGroup
 	Providers      []ProjectProviderConfig
+	Vendors        []ProviderDefinition
 	ModelConfig    *ProjectModelConfig
 	Models         []Model
 	ProviderModels map[string][]ProviderSupportedModel
@@ -254,6 +256,9 @@ func (s *Server) loadProviderPanel(ctx context.Context) providerPanelData {
 	}
 	d.ProviderModels = modelsByProvider
 	d.Groups = groupProviderRows(mergeProviderRates(providers, modelsByProvider, pricing, overrides))
+	// Best-effort: drives the per-row brand icons only; a registry fetch
+	// failure leaves the rows icon-less rather than failing the panel.
+	d.Vendors = s.providerVendorDefinitions(ctx)
 	return d
 }
 
@@ -519,6 +524,18 @@ func providerDescription(vendors []ProviderDefinition, providerType string) stri
 	for _, v := range vendors {
 		if v.Type == providerType {
 			return v.Description
+		}
+	}
+	return ""
+}
+
+// vendorIconURI returns a vendor's brand mark data URI for a provider type, or
+// "" when the type is unknown or the registry carries no icon. A data URI is
+// safe to assign straight to an <img src>.
+func vendorIconURI(vendors []ProviderDefinition, providerType string) string {
+	for _, v := range vendors {
+		if v.Type == providerType {
+			return v.IconDataURI
 		}
 	}
 	return ""

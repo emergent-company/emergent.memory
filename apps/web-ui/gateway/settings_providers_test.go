@@ -633,6 +633,76 @@ func TestProviderExtraFieldsRenderedReadOnly(t *testing.T) {
 	}
 }
 
+const testVendorIcon = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4="
+
+// TestRenderProviderConfigPageVendorIcon asserts the add form server-renders
+// the selected vendor's brand icon beside the select (so it shows before any
+// JS), carries every vendor's icon on its option for the on-change sync, and
+// emits no src (hence no broken image) when the selected vendor has none.
+func TestRenderProviderConfigPageVendorIcon(t *testing.T) {
+	vendors := []ProviderDefinition{
+		{Type: "anthropic", DisplayName: "Anthropic", Order: 1, IconDataURI: testVendorIcon},
+		{Type: "openai", DisplayName: "OpenAI", Order: 2},
+	}
+	html := renderHTML(t, providerConfigPage(providerConfigPageData{DraftProvider: "anthropic", Vendors: vendors}))
+	if !strings.Contains(html, `id="provider-icon"`) {
+		t.Errorf("add form missing the vendor icon preview, got:\n%s", html)
+	}
+	if !strings.Contains(html, `src="`+testVendorIcon+`"`) {
+		t.Errorf("add form should server-render the selected vendor's icon, got:\n%s", html)
+	}
+	for _, opt := range []string{`value="anthropic"`, `value="openai"`} {
+		i := strings.Index(html, opt)
+		if i < 0 {
+			t.Fatalf("option %s missing", opt)
+		}
+		end := strings.Index(html[i:], ">")
+		if end < 0 || !strings.Contains(html[i:i+end], "data-icon-uri=") {
+			t.Errorf("option %s must carry data-icon-uri, got:\n%s", opt, html[i:i+end])
+		}
+	}
+
+	// Selected vendor with no icon: the img must render hidden and src-less.
+	noIcon := renderHTML(t, providerConfigPage(providerConfigPageData{DraftProvider: "openai", Vendors: vendors}))
+	i := strings.Index(noIcon, `id="provider-icon"`)
+	if i < 0 {
+		t.Fatalf("add form missing the vendor icon preview, got:\n%s", noIcon)
+	}
+	// src is only emitted for the icon-bearing option; openai's data-icon-uri
+	// attr is empty, so the img has no src attribute.
+	imgEnd := strings.Index(noIcon[i:], ">")
+	if imgEnd < 0 {
+		t.Fatalf("icon img unterminated, got:\n%s", noIcon)
+	}
+	if tag := noIcon[i : i+imgEnd+1]; strings.Contains(tag, ` src="`+testVendorIcon) || !strings.Contains(tag, `style="display:none"`) {
+		t.Errorf("icon must be hidden and src-less when the vendor has none, got %q", tag)
+	}
+}
+
+// TestRenderProviderConfigPageEditVendorIcon asserts the edit form (no select)
+// renders the carried provider's icon from the registry definitions.
+func TestRenderProviderConfigPageEditVendorIcon(t *testing.T) {
+	vendors := []ProviderDefinition{{Type: "openai", DisplayName: "OpenAI", IconDataURI: testVendorIcon}}
+	data := providerConfigPageData{Provider: &ProjectProviderConfig{Provider: "openai"}, Vendors: vendors}
+	html := renderHTML(t, providerConfigPage(data))
+	if !strings.Contains(html, `src="`+testVendorIcon+`"`) {
+		t.Errorf("edit form should render the provider's icon, got:\n%s", html)
+	}
+}
+
+// TestProviderPanelVendorIcons asserts the configured-providers panel resolves
+// each row's brand icon from the vendor registry.
+func TestProviderPanelVendorIcons(t *testing.T) {
+	d := providerPanelData{
+		Providers: []ProjectProviderConfig{{ID: "pc1", ProjectID: "proj", Provider: "openai"}},
+		Vendors:   []ProviderDefinition{{Type: "openai", DisplayName: "OpenAI", IconDataURI: testVendorIcon}},
+	}
+	html := renderHTML(t, providersPanel(d))
+	if !strings.Contains(html, `src="`+testVendorIcon+`"`) {
+		t.Errorf("panel row should render the vendor icon, got:\n%s", html)
+	}
+}
+
 // TestRenderProviderConfigPageEditKeepsModelControls asserts the edit form
 // (Provider != nil) keeps the model-seeding surface: the fallback container,
 // both model selects, the Test-connection button — and that openai edits gate

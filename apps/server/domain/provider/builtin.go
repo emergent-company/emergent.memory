@@ -19,7 +19,7 @@ func Builtins() []*ProviderDefinition {
 		}
 	}
 
-	return []*ProviderDefinition{
+	defs := []*ProviderDefinition{
 		// --- Generic OpenAI-compatible (no fixed endpoint) ---
 		{
 			Type:             ProviderGeneric,
@@ -431,6 +431,13 @@ func Builtins() []*ProviderDefinition {
 			CredentialFields: keyFields(),
 		},
 	}
+
+	for _, d := range defs {
+		if d.Icon == nil {
+			d.Icon = iconForVendor(d.Type)
+		}
+	}
+	return defs
 }
 
 // builtinByType indexes the built-in vendor definitions by vendor ID, built once

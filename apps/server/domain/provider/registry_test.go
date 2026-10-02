@@ -122,6 +122,17 @@ func TestRegistrySupportedTypes(t *testing.T) {
 	}
 }
 
+// TestRegistryBuiltinsHaveIcons asserts every built-in vendor definition
+// carries a non-empty brand icon, so the definitions API can always emit an
+// icon data URI.
+func TestRegistryBuiltinsHaveIcons(t *testing.T) {
+	for _, d := range Builtins() {
+		if len(d.Icon) == 0 {
+			t.Errorf("provider %q has no icon", d.Type)
+		}
+	}
+}
+
 func TestProviderTypeConstants(t *testing.T) {
 	if ProviderGoogleAI != "google" {
 		t.Errorf("expected ProviderGoogleAI to be 'google', got %q", ProviderGoogleAI)

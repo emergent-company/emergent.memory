@@ -49,7 +49,7 @@ func TestListProviderDefinitions(t *testing.T) {
 		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `[
-			{"type":"anthropic","displayName":"Anthropic","description":"Anthropic Claude via the native Messages API","protocol":"anthropic-messages","auth":"x-api-key","modelTypes":["generative"],"order":32},
+			{"type":"anthropic","displayName":"Anthropic","description":"Anthropic Claude via the native Messages API","protocol":"anthropic-messages","auth":"x-api-key","modelTypes":["generative"],"order":32,"iconDataUri":"data:image/svg+xml;base64,PHN2Zz48L3N2Zz4="},
 			{"type":"openrouter","displayName":"OpenRouter","description":"OpenRouter via its OpenAI-compatible endpoint","protocol":"openai-chat","auth":"bearer","modelTypes":["generative","embedding"],"extraFields":[{"key":"api_version","label":"API version","type":"string","required":false,"placeholder":"2024-10-21"}],"order":40}
 		]`)
 	}))
@@ -68,6 +68,9 @@ func TestListProviderDefinitions(t *testing.T) {
 	}
 	if got[0].Type != "anthropic" || got[0].Protocol != "anthropic-messages" || got[0].Auth != "x-api-key" || got[0].Order != 32 {
 		t.Errorf("definitions[0] = %+v", got[0])
+	}
+	if got[0].IconDataURI != "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=" {
+		t.Errorf("definitions[0].IconDataURI = %q", got[0].IconDataURI)
 	}
 	if len(got[1].ExtraFields) != 1 || got[1].ExtraFields[0].Key != "api_version" {
 		t.Errorf("definitions[1].ExtraFields = %+v", got[1].ExtraFields)

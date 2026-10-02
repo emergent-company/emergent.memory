@@ -160,6 +160,8 @@ type ProviderDefinition struct {
 	ModelTypes  []string     `json:"modelTypes,omitempty"`
 	ExtraFields []ExtraField `json:"extraFields,omitempty"`
 	Order       int          `json:"order"`
+	// IconDataURI is the vendor brand mark as a base64 data URI.
+	IconDataURI string `json:"iconDataUri,omitempty"`
 }
 
 // ExtraField is one vendor-specific configuration input (e.g. Azure
