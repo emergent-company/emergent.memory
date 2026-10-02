@@ -68,6 +68,22 @@ func Leafy() templ.Component {
 	})
 }
 
+// Private renders an unexported same-package helper — no uses edge (a private
+// helper is not a catalog entry).
+func Private() templ.Component {
+	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		privateHelper().Render(ctx, w)
+		return nil
+	})
+}
+
+// privateHelper is an unexported templ component, rendered only by Private.
+func privateHelper() templ.Component {
+	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		return nil
+	})
+}
+
 // partialWithTitle is a hand-written factory (templ.Component return via a
 // templ.ComponentFunc literal); its only render is the dynamic param.
 func partialWithTitle(title string, content templ.Component) templ.Component {
@@ -228,6 +244,14 @@ func TestGenerateGraphEdges(t *testing.T) {
 	// leaf-ify: unresolved same-package callee becomes a package leaf.
 	if !contains(g.uses["Leafy"], "main") {
 		t.Errorf("graphUses[Leafy] = %v, want package leaf %q", g.uses["Leafy"], "main")
+	}
+
+	// private same-package callee is not a catalog entry -> no uses edge.
+	if _, ok := g.uses["Private"]; ok {
+		t.Errorf("graphUses[Private] = %v, want no uses (private helper is not a catalog entry)", g.uses["Private"])
+	}
+	if _, ok := g.usedBy["privateHelper"]; ok {
+		t.Errorf("graphUsedBy has a key %q for a private helper", "privateHelper")
 	}
 
 	// dynamic component-typed params are skipped (no dangling edges).

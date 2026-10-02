@@ -58,6 +58,44 @@ func TestComponentGalleryRegistry(t *testing.T) {
 	}
 }
 
+// --- 1.x / R3: every uses target resolves to a catalog entry ---
+
+func TestComponentGalleryUsesResolveToCatalog(t *testing.T) {
+	entries := componentGallery()
+	catalog := map[string]bool{}
+	for _, e := range entries {
+		catalog[e.ID] = true
+	}
+	for _, e := range entries {
+		for _, u := range e.Uses {
+			if !catalog[u] {
+				t.Errorf("%s: Uses target %q is not a catalog entry", e.ID, u)
+			}
+		}
+	}
+}
+
+// --- on-demand daisy entry shape ---
+
+func TestDaisyEntry(t *testing.T) {
+	e := daisyEntry("FormControl")
+	if e.PropsType == "" {
+		t.Error("daisyEntry must set a non-empty PropsType")
+	}
+	if e.Layer != LayerDaisy || e.Category != "go-daisy" {
+		t.Errorf("daisyEntry layer/category = %q/%q, want L0/go-daisy", e.Layer, e.Category)
+	}
+	if e.Slug != "form-control" {
+		t.Errorf("daisyEntry slug = %q, want %q", e.Slug, "form-control")
+	}
+	if e.Render == nil {
+		t.Error("daisyEntry must set a Render closure")
+	}
+	if !e.NeedsFixture() {
+		t.Error("daisyEntry with an empty render should be flagged needs fixture")
+	}
+}
+
 // --- 1.3 fixtures are inert and referenced ---
 
 func TestFixturesInert(t *testing.T) {
@@ -149,6 +187,18 @@ func TestWalkGraphToleratesCycles(t *testing.T) {
 	}
 }
 
+// galleryTransitiveUses is the rendering-side consumer of walkGraph: it counts
+// the transitive uses closure shown in the dependency summary.
+func TestGalleryTransitiveUses(t *testing.T) {
+	entry, ok := galleryEntryBySlug("panel-card")
+	if !ok {
+		t.Fatal("panel-card entry not found")
+	}
+	if n := galleryTransitiveUses(entry); n < 2 {
+		t.Errorf("galleryTransitiveUses(panel-card) = %d, want >= 2", n)
+	}
+}
+
 // --- 2.5 staleness check ---
 
 func TestGraphStaleCheck(t *testing.T) {
@@ -179,6 +229,26 @@ func TestClientWiringMarkers(t *testing.T) {
 	for _, want := range []string{"htmx (hx-*)", "data-dialog-autoopen", "data-copy-target"} {
 		if !containsStr(got, want) {
 			t.Errorf("scanClientWiring(secret.templ) = %v, missing %q", got, want)
+		}
+	}
+	for _, unwanted := range []string{"data-testid", "data-theme", "data-controller"} {
+		if containsStr(got, unwanted) {
+			t.Errorf("scanClientWiring(secret.templ) = %v, must not include non-wiring %q", got, unwanted)
+		}
+	}
+}
+
+func TestClientWiringMarkersSkipsNonWiring(t *testing.T) {
+	src := `<div metadata-foo="1" data-testid="x" data-theme="dark" data-tip="tip" data-copy-target="#a" data-dialog-autoopen="true"></div>`
+	got := clientWiringMarkers(src)
+	for _, unwanted := range []string{"metadata-foo", "data-testid", "data-theme", "data-tip"} {
+		if containsStr(got, unwanted) {
+			t.Errorf("clientWiringMarkers = %v, must not include %q", got, unwanted)
+		}
+	}
+	for _, want := range []string{"data-copy-target", "data-dialog-autoopen"} {
+		if !containsStr(got, want) {
+			t.Errorf("clientWiringMarkers = %v, missing %q", got, want)
 		}
 	}
 }

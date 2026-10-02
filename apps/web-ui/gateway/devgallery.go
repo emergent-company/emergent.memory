@@ -64,7 +64,10 @@ func componentGallery() []GalleryEntry {
 		result = append(result, e)
 	}
 	// Add go-daisy L0 entries on demand for every referenced go-daisy component
-	// that is not already cataloged.
+	// that is not already cataloged. A single pass is sufficient: go-daisy
+	// components are only ever *referenced* by the gateway (they are not gateway
+	// definitions), so graphDaisyComponents is never keyed by a daisy id and an
+	// added daisy entry contributes no further daisy entries.
 	for i := range result {
 		for _, id := range graphDaisyComponents[result[i].ID] {
 			if seen[id] {
@@ -74,14 +77,32 @@ func componentGallery() []GalleryEntry {
 			result = append(result, daisyEntry(id))
 		}
 	}
+	// The set of ids a uses edge may resolve to.
+	catalog := make(map[string]bool, len(result))
+	for _, e := range result {
+		catalog[e.ID] = true
+	}
 	// Resolve uses/used-by from the generated graph, folding in the manual
-	// escape hatch for dynamic renders the static walk cannot see.
+	// escape hatch for dynamic renders the static walk cannot see. Uses edges
+	// are filtered to catalog ids so a same-package helper, page, or package
+	// leaf the generator recorded never surfaces as a dangling target (spec R3).
 	for i := range result {
 		e := &result[i]
-		e.Uses = sortedUnique(append(graphUses[e.ID], e.AdditionalUses...))
+		e.Uses = filterToCatalog(sortedUnique(append(graphUses[e.ID], e.AdditionalUses...)), catalog)
 		e.UsedBy = sortedUnique(graphUsedBy[e.ID])
 	}
 	return result
+}
+
+// filterToCatalog drops uses targets that are not catalog entries.
+func filterToCatalog(uses []string, catalog map[string]bool) []string {
+	out := make([]string, 0, len(uses))
+	for _, u := range uses {
+		if catalog[u] {
+			out = append(out, u)
+		}
+	}
+	return out
 }
 
 // daisyEntry builds the on-demand L0 entry for a go-daisy component that the
@@ -96,7 +117,7 @@ func daisyEntry(id string) GalleryEntry {
 		Category:    "go-daisy",
 		Subcategory: "primitive",
 		SourceFile:  "<go-daisy>",
-		PropsType:   "",
+		PropsType:   "—", // no props type is known without reading go-daisy source
 		Description: "go-daisy primitive rendered by the app",
 		Render:      emptyRender(),
 	}
@@ -293,12 +314,29 @@ func joinText(ss []string) string {
 var (
 	alpineAttrRE = regexp.MustCompile(`\sx-[a-zA-Z0-9:_-]+\s*=`)
 	htmxAttrRE   = regexp.MustCompile(`\shx-[a-zA-Z0-9-]+\s*=`)
-	dataAttrRE   = regexp.MustCompile(`data-[a-zA-Z0-9-]+`)
+	// dataAttrRE matches a data-* marker at an attribute boundary: either the
+	// attribute form `data-foo="…"` or the Go map-key form `"data-foo": "…"`.
+	// The \b word boundary rejects `metadata-`-style substrings.
+	dataAttrRE = regexp.MustCompile(`\b(data-[a-zA-Z0-9-]+)(?:\s*=|"\s*:)`)
 )
 
+// nonWiringDataAttrs are data-* markers that are not client wiring: the test
+// anchor, the daisyUI theme/tooltip helpers, and Stimulus's data-controller
+// (reported separately). They are skipped so they never surface as external deps.
+var nonWiringDataAttrs = map[string]bool{
+	"data-testid":     true,
+	"data-theme":      true,
+	"data-tip":        true,
+	"data-controller": true,
+}
+
 // scanClientWiring reads a component's source file and reports the client-wiring
-// markers in its body. Best-effort: a missing source file (binary-only deploy)
-// yields no markers rather than an error.
+// markers in its body. Best-effort and file-granular: the whole source file is
+// scanned, so co-located components in one file share a single wiring list.
+// SourceFile is read relative to the process working directory, so it resolves
+// only when the gateway runs from the source tree (task dev); a binary running
+// with a different CWD (run-e2e.sh, Docker) finds no file and this returns nil.
+// That is acceptable — the gallery is a dev tool — and keeps zero new deps.
 func scanClientWiring(sourceFile string) []string {
 	if sourceFile == "" || strings.HasPrefix(sourceFile, "<") {
 		return nil
@@ -312,7 +350,7 @@ func scanClientWiring(sourceFile string) []string {
 
 // clientWiringMarkers classifies the client-wiring markers in a source body:
 // Alpine x-* attributes, Stimulus data-controller, htmx hx-* attributes, and
-// the distinct custom data-* markers (excluding the daisyUI tooltip helper).
+// the distinct custom data-* markers, skipping the non-wiring data-* attributes.
 func clientWiringMarkers(src string) []string {
 	var out []string
 	if alpineAttrRE.MatchString(src) {
@@ -324,11 +362,12 @@ func clientWiringMarkers(src string) []string {
 	if htmxAttrRE.MatchString(src) {
 		out = append(out, "htmx (hx-*)")
 	}
-	for _, m := range dataAttrRE.FindAllString(src, -1) {
-		if m == "data-controller" || m == "data-tip" {
+	for _, m := range dataAttrRE.FindAllStringSubmatch(src, -1) {
+		name := m[1]
+		if nonWiringDataAttrs[name] {
 			continue
 		}
-		out = append(out, m)
+		out = append(out, name)
 	}
 	return sortedUnique(out)
 }

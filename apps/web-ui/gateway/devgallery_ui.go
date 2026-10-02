@@ -53,6 +53,14 @@ func galleryDependencyCount(entry GalleryEntry) int {
 	return len(entry.Uses) + len(entry.UsedBy) + len(entry.ExternalDeps())
 }
 
+// galleryTransitiveUses returns the number of distinct components reachable
+// through the entry's uses edges (the transitive closure, including the entry
+// itself). It walks the raw graph with a visited set so render cycles terminate
+// without topological sorting; it is the only consumer of walkGraph.
+func galleryTransitiveUses(entry GalleryEntry) int {
+	return len(walkGraph([]string{entry.ID}, graphUses))
+}
+
 // galleryLayerBlurb is the short layer description used by the index.
 func galleryLayerBlurb(layer GalleryLayer) string {
 	switch layer {

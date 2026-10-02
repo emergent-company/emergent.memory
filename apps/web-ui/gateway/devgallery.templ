@@ -147,6 +147,9 @@ templ galleryEntryCard(entry GalleryEntry) {
 				<span class="iconify lucide--git-branch size-3.5 shrink-0" aria-hidden="true"></span>
 				<span class="font-medium">Dependencies</span>
 				<span class="badge badge-ghost badge-xs tabular-nums">{ strconv.Itoa(galleryDependencyCount(entry)) }</span>
+				if len(entry.Uses) > 0 {
+					<span class="badge badge-ghost badge-xs tabular-nums" title="Distinct components reachable through uses edges">reach { strconv.Itoa(galleryTransitiveUses(entry)) }</span>
+				}
 				<span class="iconify lucide--chevron-down ml-auto size-4 shrink-0 transition-transform group-open/deps:rotate-180" aria-hidden="true"></span>
 			</summary>
 			<div class="space-y-2.5 px-4 pb-4 text-xs">

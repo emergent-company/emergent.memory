@@ -266,6 +266,14 @@ func (g *graph) resolveRender(caller *componentDef, receiver ast.Expr, defs map[
 			// same-package unqualified call: Func(...).Render(...)
 			name := fun.Name
 			if _, ok := defs[name]; ok {
+				// Only exported callees are catalog candidates: a private helper
+				// (metaRowValue, secretRevealEndpoint, flashToast, …) is not a
+				// catalog entry, so it must not emit a uses edge (spec R3: a uses
+				// edge points at a catalog entry). Its used-by entry would be
+				// dead data too, so skip it entirely.
+				if !ast.IsExported(name) {
+					return
+				}
 				g.add(caller.name, "uses", name)
 				g.add(name, "usedBy", caller.name)
 			} else {

@@ -23,15 +23,17 @@ test('renders the component gallery with an isolated preview', async ({ page }) 
   // One preview iframe per listed slug, tagged component-preview-<slug>.
   const previews = page.locator('iframe[data-testid^="component-preview-"]');
   await expect(previews.first()).toBeAttached();
-  expect(await previews.count()).toBeGreaterThan(0);
+  expect(await previews.count()).toBeGreaterThanOrEqual(2);
 
   // Scroll the first preview into view so the lazy iframe loads, then assert it
-  // renders non-empty isolated content inside its sandboxed frame: the preview
-  // canvas is present and the frame body is non-empty (an element or text).
+  // renders isolated content inside its sandboxed frame: the preview canvas is
+  // present and non-empty (a child element or non-whitespace text), not merely a
+  // non-empty body.
   await previews.first().scrollIntoViewIfNeeded();
   const frame = page
     .frameLocator('iframe[data-testid^="component-preview-"]')
     .first();
-  await expect(frame.getByTestId('preview-canvas')).toBeVisible();
-  await expect(frame.locator('body')).not.toBeEmpty();
+  const canvas = frame.getByTestId('preview-canvas');
+  await expect(canvas).toBeVisible();
+  await expect(canvas).not.toBeEmpty();
 });
