@@ -1,6 +1,6 @@
 ## 1. Catalog registry
 
-- [ ] 1.1 Add `devgallery.go` with the catalog types (`GalleryEntry` including `Render func() templ.Component`, `GalleryLayer`, `GalleryDependency`) and an explicit `componentGallery()` seed covering the `components` package plus the in-scope `package main` composites (reused across ≥2 page features or encapsulating an invariant), each with name, layer, source file, props type, description, and a render closure; verify `go build ./...` compiles
+- [ ] 1.1 Add `devgallery.go` with the catalog types (`GalleryEntry` including `Render func() templ.Component` and the `AdditionalUses []string` escape hatch for dynamic renders, `GalleryLayer`, `GalleryDependency`) and an explicit `componentGallery()` seed covering the `components` package plus the in-scope `package main` composites (reused across ≥2 page features or encapsulating an invariant), each with name, layer, source file, props type, description, and a render closure; verify `go build ./...` compiles
 - [ ] 1.2 Add registry unit tests (`devgallery_test.go`): slugs are unique, every entry has a layer, source file, props type, and description, known components (e.g. `PanelCard`, `StatusBadge`, `MetaGrid`) are present, and single-page exported helpers (e.g. `BoardColumns`) are absent; verify `go test ./...`
 - [ ] 1.3 Add curated fixtures in `devgallery_fixtures.go` for the `components` package and the frequently used go-daisy primitives; verify each fixture is referenced by a registry entry via a unit test
 - [ ] 1.4 Add authored default render closures (zero values) wrapped in `recover()`, plus a "needs fixture" flag for entries whose default render is empty or panics; verify with unit tests for both a deliberately empty component and a nil-slot-panic component (e.g. `ListRow` with a nil leading component)
@@ -30,7 +30,7 @@
 - [ ] 5.1 Add the `MEMORY_COMPONENT_GALLERY` config flag (explicit, default off in every mode; no `AuthMode`-based default because `task dev` is session mode) in `config.go`; verify with config unit tests for set and unset
 - [ ] 5.2 Register `/dev/components` and `/dev/components/preview/:slug` in `main.go`, returning 404 when the flag is off; verify with `httptest` for both flag states
 - [ ] 5.3 Render no sidebar navigation entry for the gallery; verify the rendered shell contains no gallery nav link
-- [ ] 5.4 Enable the flag in the dev environment (`apps/web-ui/.env.example` + local `.env`) and the e2e/dev harness (`tests/e2e/run-e2e.sh`); verify `task dev` serves `/dev/components` and `run-e2e.sh` exports it
+- [ ] 5.4 Enable the flag in the dev environment (`apps/web-ui/.env.example` + local `.env`), forward it through `apps/web-ui/docker-compose.yml` (its `environment:` block lists vars explicitly), and set it in the e2e/dev harness (`tests/e2e/run-e2e.sh`); verify `task dev` and `docker compose up` both serve `/dev/components` and `run-e2e.sh` exports it
 
 ## 6. Verification
 
