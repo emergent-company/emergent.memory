@@ -191,8 +191,9 @@ func apiTokenAreaBadges(scopes []string) []apiTokenAreaBadge {
 	return out
 }
 
-// scopePickerGroups orders the area buckets (excluding admin:all) for the
-// create and edit-scope forms. Checkbox values stay the raw scope strings.
+// scopePickerGroups orders the area buckets for the create and edit-scope
+// forms, excluding both platform-tier admin scopes (admin, admin:all).
+// Checkbox values stay the raw scope strings.
 var scopePickerGroups = []apiTokenScopeGroup{
 	{
 		Label: apiTokenAreaSchemas, Hint: "Schema definitions and migrations.",
@@ -251,12 +252,6 @@ var scopePickerGroups = []apiTokenScopeGroup{
 			{"skills:read", "Read skills"}, {"skills:write", "Write skills"},
 		},
 	},
-	{
-		Label: apiTokenAreaAdmin, Hint: "Administrative powers.",
-		Options: []apiTokenScopeOption{
-			{"admin", "Administer project"},
-		},
-	},
 }
 
 // apiTokenScopePickerConfig controls which scopes the scope picker offers.
@@ -284,9 +279,9 @@ func (s *Server) apiTokenPickerConfig(c echo.Context, account bool) apiTokenScop
 
 // scopePickerGroupsFor returns the area buckets for a surface, adding
 // project:admin to the Projects bucket only when the surface offers it (project
-// token + admin caller). The static scopePickerGroups stays admin:all-free and
-// project:admin-free so the default (non-admin / account) picker never offers
-// the gated scopes.
+// token + admin caller). Platform admin scopes (admin, admin:all) are never
+// offered; only project:admin is gated, so the default (non-admin / account)
+// picker never offers the gated scope.
 func scopePickerGroupsFor(cfg apiTokenScopePickerConfig) []apiTokenScopeGroup {
 	if cfg.Account || !cfg.CanManage {
 		return scopePickerGroups
@@ -297,7 +292,7 @@ func scopePickerGroupsFor(cfg apiTokenScopePickerConfig) []apiTokenScopeGroup {
 		if g.Label == apiTokenAreaProjects {
 			opts := make([]apiTokenScopeOption, 0, len(g.Options)+1)
 			opts = append(opts, g.Options...)
-			opts = append(opts, apiTokenScopeOption{Value: "project:admin", Label: "Manage project membership"})
+			opts = append(opts, apiTokenScopeOption{Value: "project:admin", Label: "Administer this project (every project scope)"})
 			out[i].Options = opts
 		}
 	}
