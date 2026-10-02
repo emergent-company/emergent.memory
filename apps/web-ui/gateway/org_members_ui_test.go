@@ -914,8 +914,9 @@ func TestUIMembersInviteDeliveryBadges(t *testing.T) {
 
 // TestUIResendInviteRoute asserts POST /invites/:id/resend forwards to
 // ResendInvite and redirects back to the surface the form came from (carried in
-// the hidden "surface" field), and that a caller without org-admin rights is
-// rejected before memory is asked.
+// the hidden "surface" field), carrying the server's outcome in the ?resent=
+// value, and that a caller without org-admin rights is rejected before memory is
+// asked.
 func TestUIResendInviteRoute(t *testing.T) {
 	newServer := func(role string) (*echo.Echo, *fakeMemory) {
 		f := &fakeMemory{
@@ -926,11 +927,11 @@ func TestUIResendInviteRoute(t *testing.T) {
 		return orgMemberUIServer(s), f
 	}
 
-	// legacy surface → redirect back to /members
+	// legacy surface → redirect back to /members, outcome "sent" carried through
 	e, f := newServer("org_admin")
 	rec := postForm(t, e, "/invites/inv-1/resend", url.Values{"surface": {"/members"}}.Encode())
-	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/members?resent=1" {
-		t.Fatalf("legacy resend = %d %q, want 303 /members?resent=1", rec.Code, rec.Header().Get("Location"))
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/members?resent=sent" {
+		t.Fatalf("legacy resend = %d %q, want 303 /members?resent=sent", rec.Code, rec.Header().Get("Location"))
 	}
 	if f.resentInvite != "inv-1" {
 		t.Errorf("ResendInvite not forwarded: %q", f.resentInvite)
@@ -939,8 +940,8 @@ func TestUIResendInviteRoute(t *testing.T) {
 	// settings surface → redirect back to /settings/members
 	e2, f2 := newServer("org_admin")
 	rec = postForm(t, e2, "/invites/inv-2/resend", url.Values{"surface": {"/settings/members"}}.Encode())
-	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/settings/members?resent=1" {
-		t.Fatalf("settings resend = %d %q, want 303 /settings/members?resent=1", rec.Code, rec.Header().Get("Location"))
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/settings/members?resent=sent" {
+		t.Fatalf("settings resend = %d %q, want 303 /settings/members?resent=sent", rec.Code, rec.Header().Get("Location"))
 	}
 	if f2.resentInvite != "inv-2" {
 		t.Errorf("ResendInvite not forwarded: %q", f2.resentInvite)
@@ -954,6 +955,68 @@ func TestUIResendInviteRoute(t *testing.T) {
 	}
 	if f3.resentInvite != "" {
 		t.Errorf("non-admin must not reach memory, resent %q", f3.resentInvite)
+	}
+}
+
+// TestUIResendInviteOutcomeFeedback proves the members page tells the truth about
+// what a resend actually did (issue #1327): the PRG redirect carries the server's
+// outcome and the rendered flash distinguishes a real send from the within-window
+// no-op and from a failed enqueue.
+func TestUIResendInviteOutcomeFeedback(t *testing.T) {
+	newServer := func(outcome InviteResendOutcome) (*echo.Echo, *fakeMemory) {
+		f := &fakeMemory{
+			projects:        []ProjectRef{{ID: "p1", Name: "Home", OrgID: "o1"}},
+			orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin", Projects: []ProjectAccessDto{{ID: "p1", Name: "Home", OrgID: "o1", Role: "project_admin"}}}},
+			resendOutcome:   outcome,
+		}
+		s := &Server{cfg: Config{MemoryProjectID: "p1"}, memory: f}
+		return orgMemberUIServer(s), f
+	}
+
+	cases := []struct {
+		outcome      InviteResendOutcome
+		wantLocation string
+		wantFlash    string
+	}{
+		{InviteResendSent, "/members?resent=sent", "Invitation resent."},
+		{InviteResendNoOp, "/members?resent=noop", "Already sent moments ago — try again in a few seconds."},
+		{InviteResendEnqueueFailed, "/members?resent=enqueue_failed", "Couldn't queue the invitation email — please try again."},
+	}
+
+	for _, tc := range cases {
+		t.Run(string(tc.outcome), func(t *testing.T) {
+			e, _ := newServer(tc.outcome)
+			rec := postForm(t, e, "/invites/inv-1/resend", url.Values{"surface": {"/members"}}.Encode())
+			if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != tc.wantLocation {
+				t.Fatalf("resend %s = %d %q, want 303 %q", tc.outcome, rec.Code, rec.Header().Get("Location"), tc.wantLocation)
+			}
+
+			page := httptest.NewRecorder()
+			e.ServeHTTP(page, httptest.NewRequest(http.MethodGet, tc.wantLocation, nil))
+			if page.Code != http.StatusOK {
+				t.Fatalf("GET %s = %d, want 200", tc.wantLocation, page.Code)
+			}
+			if !strings.Contains(page.Body.String(), tc.wantFlash) {
+				t.Errorf("GET %s flash missing %q", tc.wantLocation, tc.wantFlash)
+			}
+		})
+	}
+}
+
+// TestResendFlashMapping pins the outcome→copy mapping, including the safe
+// no-flash behaviour for an unrecognised value (never a misleading success).
+func TestResendFlashMapping(t *testing.T) {
+	if got := resendFlash("noop"); got != "Already sent moments ago — try again in a few seconds." {
+		t.Errorf("resendFlash(noop) = %q", got)
+	}
+	if got := resendFlash("sent"); got != "Invitation resent." {
+		t.Errorf("resendFlash(sent) = %q", got)
+	}
+	if got := resendFlash("enqueue_failed"); got == "" {
+		t.Error("resendFlash(enqueue_failed) must report the failure, got empty")
+	}
+	if got := resendFlash("bogus"); got != "" {
+		t.Errorf("resendFlash(bogus) = %q, want empty (no misleading success)", got)
 	}
 }
 

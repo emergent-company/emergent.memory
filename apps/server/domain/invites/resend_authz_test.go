@@ -1,6 +1,7 @@
 package invites_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -36,6 +37,21 @@ func TestInviteResendAuthorityMatrix(t *testing.T) {
 			rec := do(e, http.MethodPost, tc.path, tc.token)
 			if rec.Code != tc.want {
 				t.Errorf("POST %s (token=%q) = %d, want %d: %s", tc.path, tc.token, rec.Code, tc.want, rec.Body.String())
+			}
+			if tc.want == http.StatusOK {
+				// The success body must carry the invitation AND the truthful
+				// outcome field, so a caller can tell a real send from a no-op
+				// (issue #1327).
+				var body struct {
+					ID      string `json:"id"`
+					Outcome string `json:"outcome"`
+				}
+				if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+					t.Fatalf("decode resend response: %v: %s", err, rec.Body.String())
+				}
+				if body.ID == "" || body.Outcome == "" {
+					t.Errorf("resend response missing id/outcome: %s", rec.Body.String())
+				}
 			}
 		})
 	}

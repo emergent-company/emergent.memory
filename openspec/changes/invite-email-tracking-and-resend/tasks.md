@@ -38,3 +38,12 @@
 - [ ] 5.4 Manual check on the dev server: invite list shows delivery state; Resend re-sends and extends expiry
 - [x] 5.5 `openspec validate invite-email-tracking-and-resend`
 - [x] 5.6 Playwright e2e spec added (`invite-resend-ui.spec.ts`); live run against this branch's gateway on the dev members page verified the UI half (delivery badge + resend control render, confirm dialog, PRG to `/members?resent=1`). The resend API round-trip cannot pass until the server half is deployed: the gateway's `POST /api/invites/:id/resend` call returns 404 from the currently-deployed dev API, and `deploy-dev.yml` deploys the default branch only (its sole input is `target`). Re-run the spec after this PR is deployed to dev.
+
+## 6. Truthful resend feedback (issue #1327)
+
+- [x] 6.1 `Service.Resend` returns a `ResendOutcome` (`sent`/`noop`/`enqueue_failed`); the guard only blocks a recent LIVE invite job — a terminal `failed`/`dead_letter` job or a `bounced`/`soft_bounced`/`complained`/`failed` delivery status does not block, so a bounced invite can be resent inside the window (`apps/server/domain/invites/service.go`)
+- [x] 6.2 `ResendResponse` exposes the outcome on `POST /api/invites/:id/resend` (`apps/server/domain/invites/entity.go`, `handler.go`)
+- [x] 6.3 Server tests: within-window no-op reports `noop`; pending/processing/sent/delivered/opened/clicked still block; bounced/soft_bounced/complained/failed delivery and failed/dead_letter jobs allow a within-window resend; concurrent resends report exactly one `sent`; enqueue failure reports `enqueue_failed` (`apps/server/domain/invites/resend_test.go`)
+- [x] 6.4 Gateway: `ResendInvite` returns the outcome; `uiResendInvite` carries it in `?resent=<outcome>`; the members flash distinguishes `sent` ("Invitation resent."), `noop` ("Already sent moments ago — try again in a few seconds.") and `enqueue_failed` ("Couldn't queue the invitation email — please try again.") (`apps/web-ui/gateway/memory_orgs.go`, `backend.go`, `org_members_ui.go`)
+- [x] 6.5 Gateway tests: outcome decoding, route redirect + truthful flash per outcome, no misleading flash for an unknown value (`apps/web-ui/gateway/*_test.go`)
+- [x] 6.6 Spec: `project-invitations` resend requirement now distinguishes live vs terminal-failure jobs and mandates the `outcome` field; `web-invite-delivery` mandates truthful no-op feedback

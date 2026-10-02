@@ -383,6 +383,7 @@ type fakeMemory struct {
 	canceledInvite    string                // last invite id passed to CancelInvite
 	resentInvite      string                // last invite id passed to ResendInvite
 	resendInviteErr   error                 // failure for ResendInvite
+	resendOutcome     InviteResendOutcome   // outcome returned by ResendInvite (default "sent")
 	searchUsers       []UserSearchResultDto // returned by SearchUsers
 	searchErr         error                 // failure for SearchUsers
 	lastSearchTerm    string                // last email passed to SearchUsers
@@ -2898,12 +2899,15 @@ func (f *fakeMemory) CancelInvite(ctx context.Context, inviteID string) error {
 	return nil
 }
 
-func (f *fakeMemory) ResendInvite(ctx context.Context, inviteID string) error {
+func (f *fakeMemory) ResendInvite(ctx context.Context, inviteID string) (InviteResendOutcome, error) {
 	if f.resendInviteErr != nil {
-		return f.resendInviteErr
+		return "", f.resendInviteErr
 	}
 	f.resentInvite = inviteID
-	return nil
+	if f.resendOutcome == "" {
+		return InviteResendSent, nil
+	}
+	return f.resendOutcome, nil
 }
 
 func (f *fakeMemory) SearchUsers(ctx context.Context, email string) ([]UserSearchResultDto, error) {

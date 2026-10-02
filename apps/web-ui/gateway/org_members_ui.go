@@ -221,7 +221,7 @@ func (s *Server) uiMembersFor(surf membersSurface, c echo.Context) error {
 	case c.QueryParam("revoked") != "":
 		data.FlashMsg = "Invite revoked."
 	case c.QueryParam("resent") != "":
-		data.FlashMsg = "Invitation resent."
+		data.FlashMsg = resendFlash(c.QueryParam("resent"))
 	case c.QueryParam("ok") != "":
 		data.FlashMsg = "Member removed."
 	}
@@ -528,6 +528,25 @@ func (s *Server) uiRevokeInvite(c echo.Context) error {
 	return c.Redirect(http.StatusSeeOther, surf.base+"?revoked=1")
 }
 
+// resendFlash maps POST /invites/:id/resend's outcome — carried through the PRG
+// redirect as the ?resent= query value — to truthful user-facing copy. A real
+// send keeps the original "Invitation resent."; the idempotent within-window
+// no-op says so rather than implying an email went out (issue #1327); a failed
+// enqueue is reported as not queued. An unrecognised value yields no flash
+// rather than a misleading success.
+func resendFlash(outcome string) string {
+	switch InviteResendOutcome(outcome) {
+	case InviteResendSent:
+		return "Invitation resent."
+	case InviteResendNoOp:
+		return "Already sent moments ago — try again in a few seconds."
+	case InviteResendEnqueueFailed:
+		return "Couldn't queue the invitation email — please try again."
+	default:
+		return ""
+	}
+}
+
 // uiResendInvite handles one resend form (POST /invites/:id/resend), submitted
 // from both members surfaces. The form carries its surface's base path in a
 // hidden "surface" field so the PRG redirect returns to that page (?resent=1).
@@ -545,10 +564,14 @@ func (s *Server) uiResendInvite(c echo.Context) error {
 	if !ok || !s.orgAdminForCaller(c, pr.OrgID) {
 		return redirectWithError(c, surf.base, fmt.Errorf("you do not have permission to resend this invitation"))
 	}
-	if err := s.memory.ResendInvite(ctx, id); err != nil {
+	outcome, err := s.memory.ResendInvite(ctx, id)
+	if err != nil {
 		return redirectWithError(c, surf.base, err)
 	}
-	return c.Redirect(http.StatusSeeOther, surf.base+"?resent=1")
+	// Carry the server's outcome (sent/noop/enqueue_failed) through the redirect
+	// so the members page can show feedback that matches what actually happened,
+	// rather than a blanket success (issue #1327).
+	return c.Redirect(http.StatusSeeOther, surf.base+"?resent="+url.QueryEscape(string(outcome)))
 }
 
 // uiAcceptInvite handles one accept form (POST /invites/:id/accept) on the

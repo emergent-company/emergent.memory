@@ -917,21 +917,39 @@ func TestCancelInvite(t *testing.T) {
 	}
 }
 
-// TestResendInvite exercises POST /api/invites/{id}/resend with no body.
+// TestResendInvite exercises POST /api/invites/{id}/resend with no body and
+// decodes the server's outcome so the caller can distinguish a real send from
+// the idempotent within-window no-op and a failed enqueue (issue #1327).
 func TestResendInvite(t *testing.T) {
-	var gotPath, gotMethod string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		gotMethod = r.Method
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "proj")
-	if err := m.ResendInvite(context.Background(), "i1"); err != nil {
-		t.Fatal(err)
-	}
-	if gotPath != "/api/invites/i1/resend" || gotMethod != http.MethodPost {
-		t.Errorf("request = %s %s, want POST /api/invites/i1/resend", gotMethod, gotPath)
+	for _, tc := range []struct {
+		name    string
+		outcome InviteResendOutcome
+	}{
+		{name: "sent", outcome: InviteResendSent},
+		{name: "noop", outcome: InviteResendNoOp},
+		{name: "enqueue_failed", outcome: InviteResendEnqueueFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotPath, gotMethod string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.Path
+				gotMethod = r.Method
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"id":"i1","outcome":"`+string(tc.outcome)+`"}`)
+			}))
+			defer srv.Close()
+			m := NewMemoryClient(srv.URL, "proj")
+			outcome, err := m.ResendInvite(context.Background(), "i1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if outcome != tc.outcome {
+				t.Errorf("outcome = %q, want %q", outcome, tc.outcome)
+			}
+			if gotPath != "/api/invites/i1/resend" || gotMethod != http.MethodPost {
+				t.Errorf("request = %s %s, want POST /api/invites/i1/resend", gotMethod, gotPath)
+			}
+		})
 	}
 }
 

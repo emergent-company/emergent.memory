@@ -389,13 +389,33 @@ func (m *MemoryClient) CancelInvite(ctx context.Context, inviteID string) error 
 	return m.do(ctx, http.MethodDelete, path, nil, nil)
 }
 
+// InviteResendOutcome mirrors the server's resend outcome so the UI can tell a
+// real re-send ("sent") from the idempotent within-window no-op ("noop") and
+// from a failed enqueue, instead of treating every success as a delivery
+// (issue #1327).
+type InviteResendOutcome string
+
+const (
+	InviteResendSent          InviteResendOutcome = "sent"
+	InviteResendNoOp          InviteResendOutcome = "noop"
+	InviteResendEnqueueFailed InviteResendOutcome = "enqueue_failed"
+)
+
 // ResendInvite re-sends a still-pending invite's email (POST
-// /api/invites/{id}/resend; no request body). Memory answers 403 when the
-// caller may not administer the org and 404 when the invite is unknown or no
-// longer pending; both surface as errors.
-func (m *MemoryClient) ResendInvite(ctx context.Context, inviteID string) error {
+// /api/invites/{id}/resend; no request body) and returns the server's outcome:
+// "sent" when a fresh email was enqueued, "noop" when a recent email suppressed
+// the resend, "enqueue_failed" when the attempt could not be queued. Memory
+// answers 403 when the caller may not administer the org and 404 when the invite
+// is unknown or no longer pending; both surface as errors.
+func (m *MemoryClient) ResendInvite(ctx context.Context, inviteID string) (InviteResendOutcome, error) {
 	path := "/api/invites/" + url.PathEscape(inviteID) + "/resend"
-	return m.do(ctx, http.MethodPost, path, nil, nil)
+	var out struct {
+		Outcome InviteResendOutcome `json:"outcome"`
+	}
+	if err := m.do(ctx, http.MethodPost, path, nil, &out); err != nil {
+		return "", err
+	}
+	return out.Outcome, nil
 }
 
 // UserSearchResultDto is one match in a user search (GET /api/users/search?email=).

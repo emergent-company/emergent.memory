@@ -692,26 +692,43 @@ func (s *Service) Revoke(ctx context.Context, inviteID string) error {
 
 // inviteResendGuardWindow is the server-enforced minimum interval between two
 // invitation emails for the same invitation. A resend for an invitation that
-// already has an invite-scoped kb.email_jobs row created within this window is
-// an idempotent no-op: it does not enqueue a second job. The window covers the
-// double-submit / client-retry cases where the earlier email is still in flight
-// or was just delivered, so repeated POSTs cannot send unbounded duplicate
-// invitation emails. It is a server guarantee; the UI's confirmation dialog is
-// not.
+// already has a LIVE invite-scoped kb.email_jobs row created within this window
+// (in flight or already succeeded) is an idempotent no-op: it does not enqueue a
+// second job. A row already in a terminal failure state does not block — bounce
+// recovery is wanted (issue #1327). The window covers the double-submit /
+// client-retry cases where the earlier email is still in flight or was just
+// delivered, so repeated POSTs cannot send unbounded duplicate invitation
+// emails. It is a server guarantee; the UI's confirmation dialog is not.
 const inviteResendGuardWindow = 60 * time.Second
 
-// hasRecentInviteEmailJob reports whether the invitation already has an
-// invite-scoped email job (source_type='invite', source_id=inviteID) created
-// within inviteResendGuardWindow. The lookup is served by the existing
-// idx_email_jobs_source (source_type, source_id) index. It runs against the
-// executor the caller supplies so a resend can evaluate it inside the same
-// transaction that holds the per-invite advisory lock.
-func (s *Service) hasRecentInviteEmailJob(ctx context.Context, db bun.IDB, inviteID string) (bool, error) {
+// hasRecentBlockingInviteEmailJob reports whether the invitation already has a
+// "live" invite-scoped email job (source_type='invite', source_id=inviteID)
+// created within inviteResendGuardWindow — one that is still in flight or
+// already succeeded. Such a job means a resend now would duplicate an email, so
+// the request must no-op.
+//
+// A recent job in a terminal FAILURE state does NOT block: the job itself failed
+// (status failed/dead_letter), or Mailgun reported the mail bounced, soft-bounced,
+// complained about, or failed. That is exactly the bounced-invite case where an
+// admin wants to resend (issue #1327), and the guard window exists to stop
+// accidental duplicates for the success case, not to lock out error recovery.
+// Once the job reaches or exceeds the window it stops blocking regardless.
+//
+// The lookup is served by the existing idx_email_jobs_source (source_type,
+// source_id) index. It runs against the executor the caller supplies so a
+// resend can evaluate it inside the same transaction that holds the per-invite
+// advisory lock.
+func (s *Service) hasRecentBlockingInviteEmailJob(ctx context.Context, db bun.IDB, inviteID string) (bool, error) {
 	var count int
 	err := db.NewRaw(`
 		SELECT COUNT(*) FROM kb.email_jobs
 		WHERE source_type = 'invite' AND source_id = ?
 		  AND created_at > now() - (? || ' seconds')::interval
+		  AND status NOT IN ('failed', 'dead_letter')
+		  AND (
+		    delivery_status IS NULL
+		    OR delivery_status NOT IN ('bounced', 'soft_bounced', 'complained', 'failed')
+		  )
 	`, inviteID, fmt.Sprintf("%d", int(inviteResendGuardWindow.Seconds()))).Scan(ctx, &count)
 	if err != nil {
 		return false, err
@@ -736,22 +753,34 @@ func resendGuardLockKey(inviteID string) string {
 // valid.
 //
 // Resend is server-side idempotent over a short window: if the invitation
-// already has an invite-scoped email job created within
-// inviteResendGuardWindow, the request is a no-op and the existing invitation is
-// returned. This guards against double-submits and repeated POSTs sending
-// unbounded duplicate invitation emails.
+// already has a "live" invite-scoped email job created within
+// inviteResendGuardWindow (in flight or already succeeded), the request is a
+// no-op and the existing invitation is returned. A job in a terminal failure
+// state (failed/dead_letter, or bounce/complaint/failed delivery status) does
+// NOT suppress the resend — an admin recovering from a bounce can resend
+// immediately within the window, which is why the guard distinguishes the two
+// cases (issue #1327). This guards against double-submits and repeated POSTs
+// sending unbounded duplicate invitation emails while still allowing error
+// recovery.
+//
+// The caller can tell what actually happened from the returned ResendOutcome:
+// ResendOutcomeSent when a job was enqueued, ResendOutcomeNoOp when the guard
+// suppressed it, ResendOutcomeEnqueueFailed when the send was attempted but the
+// enqueue failed. This replaces the old false-success where every HTTP 200
+// implied an email had gone out.
 //
 // The guard is an invariant, not best-effort: the check and the insert run in
 // one transaction that first takes a per-invite pg_advisory_xact_lock. Two
 // truly-concurrent resends for the same invite are therefore serialised, so
-// exactly one of them observes "no recent job" and enqueues; the other observes
-// the committed job and is a clean no-op. Different invites hash to different
-// keys and never contend.
+// exactly one of them observes "no blocking job" and enqueues; the other
+// observes the committed job and is a clean no-op. Different invites hash to
+// different keys and never contend.
 //
 // The enqueue runs under a savepoint, so an enqueue failure rolls back only the
 // insert: the outer transaction stays usable, the expires_at extension still
-// commits, and the request still succeeds (the invitation stays valid).
-func (s *Service) Resend(ctx context.Context, inviteID string) (*Invite, error) {
+// commits, and the request still succeeds (the invitation stays valid) with
+// outcome ResendOutcomeEnqueueFailed.
+func (s *Service) Resend(ctx context.Context, inviteID string) (*Invite, ResendOutcome, error) {
 	var invite Invite
 	err := s.db.NewSelect().
 		Model(&invite).
@@ -759,13 +788,13 @@ func (s *Service) Resend(ctx context.Context, inviteID string) (*Invite, error) 
 		Scan(ctx)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, apperror.NewNotFound("invite", inviteID)
+			return nil, "", apperror.NewNotFound("invite", inviteID)
 		}
-		return nil, apperror.NewDatabase("resend invitation", err)
+		return nil, "", apperror.NewDatabase("resend invitation", err)
 	}
 
 	if invite.Status != "pending" {
-		return nil, apperror.NewNotFound("invite", inviteID)
+		return nil, "", apperror.NewNotFound("invite", inviteID)
 	}
 
 	// Derive the project name for the email the same way Create does when the
@@ -777,6 +806,10 @@ func (s *Service) Resend(ctx context.Context, inviteID string) (*Invite, error) 
 	// The inviter name is not stored on the invite; pass "" so the helper's
 	// existing "A team member" fallback applies.
 	now := time.Now()
+	// Default outcome. The transaction either leaves it as the no-op (guard
+	// suppressed the resend) or overwrites it with sent/enqueue_failed on the
+	// enqueue path.
+	outcome := ResendOutcomeNoOp
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		// Serialise concurrent resends for this invite. pg_advisory_xact_lock is
 		// transaction-scoped: it is released automatically on commit/rollback,
@@ -788,14 +821,15 @@ func (s *Service) Resend(ctx context.Context, inviteID string) (*Invite, error) 
 			return apperror.NewDatabase("acquire resend guard lock", err)
 		}
 
-		// Idempotency guard, evaluated under the lock: an email for this
-		// invitation was already enqueued recently (in flight or just
-		// delivered). The request is a clean no-op rather than a duplicate email.
-		recent, err := s.hasRecentInviteEmailJob(ctx, tx, inviteID)
+		// Idempotency guard, evaluated under the lock: a LIVE email for this
+		// invitation was already enqueued recently (in flight or just delivered).
+		// The request is a clean no-op rather than a duplicate email. A recent
+		// job that already FAILED does not block — a bounce resend is wanted.
+		blocking, err := s.hasRecentBlockingInviteEmailJob(ctx, tx, inviteID)
 		if err != nil {
 			return apperror.NewDatabase("check recent invitation email", err)
 		}
-		if recent {
+		if blocking {
 			return nil
 		}
 
@@ -831,16 +865,21 @@ func (s *Service) Resend(ctx context.Context, inviteID string) (*Invite, error) 
 		// the error without the savepoint would leave the Postgres transaction
 		// aborted and make COMMIT fail, rolling the extension back with it.
 		// enqueueInviteEmail logs the failure at warn level.
-		_ = tx.RunInTx(ctx, nil, func(ctx context.Context, sp bun.Tx) error {
+		enqueueErr := tx.RunInTx(ctx, nil, func(ctx context.Context, sp bun.Tx) error {
 			return s.enqueueInviteEmail(ctx, sp, &invite, projectName, "")
 		})
+		if enqueueErr != nil {
+			outcome = ResendOutcomeEnqueueFailed
+		} else {
+			outcome = ResendOutcomeSent
+		}
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
-	return &invite, nil
+	return &invite, outcome, nil
 }
 
 // ProjectOrg resolves the owning organization of a project server-side
