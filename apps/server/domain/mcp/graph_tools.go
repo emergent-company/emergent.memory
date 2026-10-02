@@ -111,6 +111,42 @@ func parseMinScoreArg(args map[string]any) (*float32, error) {
 	return &v, nil
 }
 
+// buildHybridUnifiedRequest assembles the unified-search request from the
+// search-hybrid args. Isolated as a pure function so the arg→request mapping
+// (including the include_relationships plumbing) can be unit-tested without a
+// database.
+func buildHybridUnifiedRequest(args map[string]any, query string, limit int, types, labels []string, minScore *float32, namespaceFilter string, includeRelationships bool) *search.UnifiedSearchRequest {
+	req := &search.UnifiedSearchRequest{
+		Query:                query,
+		Limit:                limit,
+		Types:                types,
+		Labels:               labels,
+		MinScore:             minScore,
+		IncludeRelationships: &includeRelationships,
+	}
+
+	// Pass namespace to unified search for DB-level filtering.
+	// "all" means no filter; specific value filters graph objects by namespace field.
+	if namespaceFilter != "" && namespaceFilter != "all" {
+		req.Namespace = &namespaceFilter
+	}
+
+	if rb, ok := args["recency_boost"].(float64); ok && rb > 0 {
+		v := float32(rb)
+		req.RecencyBoost = &v
+	}
+	if rhl, ok := args["recency_half_life"].(float64); ok && rhl > 0 {
+		v := float32(rhl)
+		req.RecencyHalfLife = &v
+	}
+	if ab, ok := args["access_boost"].(float64); ok && ab > 0 {
+		v := float32(ab)
+		req.AccessBoost = &v
+	}
+
+	return req
+}
+
 // executeHybridSearch performs hybrid search (FTS + vector + graph context + relationship embeddings)
 func (s *Service) executeHybridSearch(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
@@ -137,6 +173,18 @@ func (s *Service) executeHybridSearch(ctx context.Context, projectID string, arg
 	}
 	if limit > 100 {
 		limit = 100
+	}
+
+	// Relationship (triple) candidates are opt-in: default false for speed.
+	includeRelationships, _ := args["include_relationships"].(bool)
+
+	// Bound the returned properties payload under the full field strategy, the
+	// same way entity-query does, so a full-properties search cannot pull a huge
+	// payload in one page. Only lower, never raise, the caller's limit.
+	if opts.FieldStrategy == "full" {
+		if max := s.effectiveEntityQueryFullMaxLimit(); limit > max {
+			limit = max
+		}
 	}
 
 	// Optional fused-score cutoff (0-1). nil = no cutoff, weak matches returned ranked.
@@ -177,32 +225,7 @@ func (s *Service) executeHybridSearch(ctx context.Context, projectID string, arg
 	}
 
 	if s.searchSvc != nil {
-		unifiedReq := &search.UnifiedSearchRequest{
-			Query:    query,
-			Limit:    limit,
-			Types:    types,
-			Labels:   labels,
-			MinScore: minScore,
-		}
-
-		// Pass namespace to unified search for DB-level filtering.
-		// "all" means no filter; specific value filters graph objects by namespace field.
-		if namespaceFilter != "" && namespaceFilter != "all" {
-			unifiedReq.Namespace = &namespaceFilter
-		}
-
-		if rb, ok := args["recency_boost"].(float64); ok && rb > 0 {
-			v := float32(rb)
-			unifiedReq.RecencyBoost = &v
-		}
-		if rhl, ok := args["recency_half_life"].(float64); ok && rhl > 0 {
-			v := float32(rhl)
-			unifiedReq.RecencyHalfLife = &v
-		}
-		if ab, ok := args["access_boost"].(float64); ok && ab > 0 {
-			v := float32(ab)
-			unifiedReq.AccessBoost = &v
-		}
+		unifiedReq := buildHybridUnifiedRequest(args, query, limit, types, labels, minScore, namespaceFilter, includeRelationships)
 
 		res, err := s.searchSvc.Search(ctx, projectUUID, unifiedReq, nil)
 		if err != nil {

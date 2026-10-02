@@ -313,12 +313,21 @@ func (s *Service) defaultFusionStrategy(strat UnifiedSearchFusionStrategy) Unifi
 	return strat
 }
 
+// queryEmbedTimeout bounds the embedding provider call so a slow or hung
+// provider cannot stall the entire search. On timeout the search falls back to
+// lexical-only, matching the existing error path.
+const queryEmbedTimeout = 20 * time.Second
+
 // embedQuery generates a single embedding for all search goroutines
 func (s *Service) embedQuery(ctx context.Context, query string) []float32 {
 	if s.embeddings == nil {
 		return nil
 	}
-	vec, err := s.embeddings.EmbedQuery(ctx, query)
+	// Bound the provider call independently of the caller's context so a stuck
+	// embedding service degrades the search to lexical-only rather than hanging it.
+	embedCtx, cancel := context.WithTimeout(ctx, queryEmbedTimeout)
+	defer cancel()
+	vec, err := s.embeddings.EmbedQuery(embedCtx, query)
 	if err != nil {
 		s.log.Warn("failed to generate query embedding, falling back to lexical-only search", logger.Error(err))
 		return nil
@@ -356,7 +365,7 @@ func (s *Service) runParallelSearches(ctx context.Context, projectID uuid.UUID, 
 
 	// Relationship search
 	go func() {
-		if resultTypes == ResultTypeText || resultTypes == ResultTypeGraph {
+		if shouldSkipRelationshipLeg(resultTypes, req) {
 			relCh <- relationshipOutcome{results: nil, elapsed: 0}
 			return
 		}
@@ -366,6 +375,18 @@ func (s *Service) runParallelSearches(ctx context.Context, projectID uuid.UUID, 
 	}()
 
 	return <-graphCh, <-textCh, <-relCh
+}
+
+// shouldSkipRelationshipLeg reports whether the relationship-vector search leg
+// must be skipped: the requested result types exclude relationships, or the
+// request explicitly disabled them (IncludeRelationships=false). A nil
+// IncludeRelationships preserves existing behaviour (the leg runs when the
+// result types allow it).
+func shouldSkipRelationshipLeg(resultTypes UnifiedSearchResultType, req *UnifiedSearchRequest) bool {
+	if resultTypes == ResultTypeText || resultTypes == ResultTypeGraph {
+		return true
+	}
+	return req.IncludeRelationships != nil && !*req.IncludeRelationships
 }
 
 // fuse combines results using the specified strategy, returning fused slice and elapsed time

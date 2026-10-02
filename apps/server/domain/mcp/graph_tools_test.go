@@ -108,3 +108,36 @@ func TestParseMinScoreArg(t *testing.T) {
 		})
 	}
 }
+
+// =============================================================================
+// include_relationships plumbing
+// =============================================================================
+
+func TestToolDefinitions_IncludeRelationshipsSchema(t *testing.T) {
+	svc := &Service{}
+	tools := svc.GetToolDefinitions()
+
+	for _, name := range []string{"search-hybrid", "entity-type-list"} {
+		t.Run(name, func(t *testing.T) {
+			tool := toolDefByName(t, tools, name)
+			prop, ok := tool.InputSchema.Properties["include_relationships"]
+			require.True(t, ok, "tool %q must expose include_relationships", name)
+			assert.Equal(t, "boolean", prop.Type)
+			assert.NotEmpty(t, prop.Description)
+		})
+	}
+}
+
+func TestBuildHybridUnifiedRequest_IncludeRelationships(t *testing.T) {
+	t.Run("true plumbed explicitly", func(t *testing.T) {
+		req := buildHybridUnifiedRequest(map[string]any{}, "q", 20, nil, nil, nil, "", true)
+		require.NotNil(t, req.IncludeRelationships)
+		assert.True(t, *req.IncludeRelationships)
+	})
+
+	t.Run("false plumbed explicitly", func(t *testing.T) {
+		req := buildHybridUnifiedRequest(map[string]any{}, "q", 20, nil, nil, nil, "", false)
+		require.NotNil(t, req.IncludeRelationships)
+		assert.False(t, *req.IncludeRelationships, "false must be explicit so the relationship leg is skipped")
+	})
+}

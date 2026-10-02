@@ -349,7 +349,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		{
 			Name:         "entity-type-list",
 			OutputSchema: objectOutputSchema(),
-			Description:  "List all available entity types in the knowledge graph with instance counts and relationship types. Pass branch to see counts for a specific branch (e.g. \"plan/main\"); omit for main branch. By default only returns types with no namespace set. Pass namespace to filter by a specific namespace, or namespace=\"all\" to see all types regardless of namespace.",
+			Description:  "List all available entity types in the knowledge graph with instance counts. Pass branch to see counts for a specific branch (e.g. \"plan/main\"); omit for main branch. By default only returns types with no namespace set. Pass namespace to filter by a specific namespace, or namespace=\"all\" to see all types regardless of namespace. Relationship types (type, from_type, to_type, count) are only returned when include_relationships=true; omit it for faster, cheaper calls.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -360,6 +360,10 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					"namespace": {
 						Type:        "string",
 						Description: "Namespace filter. Omit to see only types with no namespace. Pass a specific namespace (e.g. \"system\") to see only that namespace. Pass \"all\" to see all types regardless of namespace.",
+					},
+					"include_relationships": {
+						Type:        "boolean",
+						Description: "When true, also compute relationship type counts (type, from_type, to_type, count) for the project. Default false. This aggregation is expensive on large graphs and is only needed for questions about relationship types.",
 					},
 				},
 				Required: []string{},
@@ -996,6 +1000,10 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 						Type:        "string",
 						Description: "Controls property depth. minimal=no properties/name, compact=name only (default), full=all properties.",
 						Enum:        []string{"minimal", "compact", "full"},
+					},
+					"include_relationships": {
+						Type:        "boolean",
+						Description: "Include relationship (triple) candidates in the fused search results. Default false for speed; set true only when the question involves relationships between entities.",
 					},
 				},
 				Required: []string{"query"},
@@ -2577,6 +2585,7 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 	}
 
 	namespaceFilter, _ := args["namespace"].(string)
+	includeRelationships, _ := args["include_relationships"].(bool)
 
 	// Query type registry with counts
 	type typeRow struct {
@@ -2662,19 +2671,24 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 			}
 		}
 
-		relBranchClause := "AND gr.branch_id IS NULL"
-		srcBranchClause := "AND src.branch_id IS NULL"
-		dstBranchClause := "AND dst.branch_id IS NULL"
-		relBranchArgs := []any{projectUUID}
-		if branchID != nil {
-			relBranchClause = "AND gr.branch_id = ?"
-			srcBranchClause = "AND src.branch_id = ?"
-			dstBranchClause = "AND dst.branch_id = ?"
-			relBranchArgs = append(relBranchArgs, *branchID, *branchID, *branchID)
-		}
+		// Relationship type counts are opt-in (include_relationships=true): the
+		// aggregation is expensive on large graphs and only needed for questions
+		// about relationship types. When disabled, relTypes stays nil so the
+		// result carries an empty relationships list.
+		if includeRelationships {
+			relBranchClause := "AND gr.branch_id IS NULL"
+			srcBranchClause := "AND src.branch_id IS NULL"
+			dstBranchClause := "AND dst.branch_id IS NULL"
+			relBranchArgs := []any{projectUUID, projectUUID, projectUUID}
+			if branchID != nil {
+				relBranchClause = "AND gr.branch_id = ?"
+				srcBranchClause = "AND src.branch_id = ?"
+				dstBranchClause = "AND dst.branch_id = ?"
+				relBranchArgs = []any{projectUUID, *branchID, projectUUID, *branchID, projectUUID, *branchID}
+			}
 
-		// Query relationship types with from/to type info
-		err = tx.NewRaw(`
+			// Query relationship types with from/to type info
+			err = tx.NewRaw(`
 			SELECT 
 				gr.type,
 				src.type as from_type,
@@ -2684,16 +2698,23 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 			JOIN kb.graph_objects src ON gr.src_id = src.id
 			JOIN kb.graph_objects dst ON gr.dst_id = dst.id
 			WHERE gr.deleted_at IS NULL 
+				AND gr.supersedes_id IS NULL
 				AND gr.project_id = ?
 				`+relBranchClause+`
 				AND src.deleted_at IS NULL
+				AND src.project_id = ?
 				`+srcBranchClause+`
 				AND dst.deleted_at IS NULL
+				AND dst.project_id = ?
 				`+dstBranchClause+`
 			GROUP BY gr.type, src.type, dst.type
 			ORDER BY gr.type, count DESC
 		`, relBranchArgs...).Scan(ctx, &relTypes)
-		return err
+			if err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 
 	if err != nil {
@@ -4980,7 +5001,7 @@ func (s *Service) ReadResource(ctx context.Context, projectID, uri string) (*Res
 }
 
 func (s *Service) readEntityTypesResource(ctx context.Context, projectID string) (*ResourceReadResult, error) {
-	result, err := s.executeListEntityTypes(ctx, projectID, map[string]any{})
+	result, err := s.executeListEntityTypes(ctx, projectID, map[string]any{"include_relationships": true})
 	if err != nil {
 		return nil, err
 	}
