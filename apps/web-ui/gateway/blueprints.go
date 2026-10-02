@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"embed"
@@ -38,6 +39,9 @@ type BundledBlueprint struct {
 	RelationshipTypeSchemas []map[string]any
 	Migrations              *SchemaMigrationHints
 	Agents                  []BundledAgent
+	Skills                  []BundledSkill
+	SeedObjects             []BundledSeedObject
+	SeedRelationships       []BundledSeedRelationship
 	HasSchema               bool // true when a schema pack file was parsed
 }
 
@@ -55,6 +59,19 @@ type BundledAgent struct {
 	FlowType     string          `yaml:"flowType"`
 	Visibility   string          `yaml:"visibility"`
 	UI           *BundledAgentUI `json:"ui,omitempty" yaml:"ui,omitempty"`
+	// WorkConfig is the object-driven work configuration, carried through to
+	// the server's definition workConfig at apply time.
+	WorkConfig map[string]any `yaml:"workConfig"`
+	// TriggerType/ReactionConfig/CronSchedule configure the runtime agent that
+	// picks object-driven work up.
+	TriggerType    string                 `yaml:"triggerType"`
+	ReactionConfig *BundledReactionConfig `yaml:"reactionConfig"`
+	CronSchedule   string                 `yaml:"cronSchedule"`
+	// DispatchMode/DefaultQueue/MaxSteps are the runtime scheduling knobs a
+	// board worker declares (queued dispatch, a named queue, a step budget).
+	DispatchMode string `yaml:"dispatchMode"`
+	DefaultQueue string `yaml:"defaultQueue"`
+	MaxSteps     *int   `yaml:"maxSteps"`
 }
 
 // BundledAgentUI is an agent's inline appearance block (icon + color) as
@@ -66,6 +83,52 @@ type BundledAgent struct {
 type BundledAgentUI struct {
 	Icon  string `json:"icon,omitempty" yaml:"icon,omitempty"`
 	Color string `json:"color,omitempty" yaml:"color,omitempty"`
+}
+
+// BundledReactionConfig is a board worker's reaction trigger block. It mirrors
+// the server's agents.ReactionConfig (events as strings) and, with its json
+// tags, doubles as the `reactionConfig` member of the manifest form the
+// gateway POSTs, so the block round-trips agents/*.yaml → manifest → applied
+// blueprint detail.
+type BundledReactionConfig struct {
+	ObjectTypes          []string `json:"objectTypes" yaml:"objectTypes"`
+	Events               []string `json:"events" yaml:"events"`
+	ConcurrencyStrategy  string   `json:"concurrencyStrategy,omitempty" yaml:"concurrencyStrategy,omitempty"`
+	IgnoreAgentTriggered *bool    `json:"ignoreAgentTriggered,omitempty" yaml:"ignoreAgentTriggered,omitempty"`
+	IgnoreSelfTriggered  *bool    `json:"ignoreSelfTriggered,omitempty" yaml:"ignoreSelfTriggered,omitempty"`
+}
+
+// BundledSkill is one skill carried by a bundled blueprint (skills/*/SKILL.md).
+// It mirrors the server's SkillManifest: name/description come from the YAML
+// frontmatter and Content is the Markdown body.
+type BundledSkill struct {
+	Name        string         `yaml:"name"`
+	Description string         `yaml:"description"`
+	Content     string         `yaml:"-"`
+	Metadata    map[string]any `yaml:"metadata"`
+}
+
+// BundledSeedObject is one keyed seed graph object (seed/objects/*.jsonl). It
+// mirrors the server's SeedObjectRecord so a board-enabled seed object keeps
+// its assignee through the manifest.
+type BundledSeedObject struct {
+	Type       string         `json:"type"`
+	Key        string         `json:"key,omitempty"`
+	Status     string         `json:"status,omitempty"`
+	Properties map[string]any `json:"properties,omitempty"`
+	Labels     []string       `json:"labels,omitempty"`
+	Assignee   string         `json:"assignee,omitempty"`
+}
+
+// BundledSeedRelationship is one keyed seed relationship
+// (seed/relationships/*.jsonl). It mirrors the server's SeedRelationshipRecord.
+type BundledSeedRelationship struct {
+	Type       string         `json:"type"`
+	SrcKey     string         `json:"srcKey,omitempty"`
+	DstKey     string         `json:"dstKey,omitempty"`
+	SrcType    string         `json:"srcType,omitempty"`
+	DstType    string         `json:"dstType,omitempty"`
+	Properties map[string]any `json:"properties,omitempty"`
 }
 
 // bundledPackFile is the union shape of a pack/schema YAML file. Both the
@@ -214,6 +277,12 @@ func loadBundledFromFS(fsys fs.FS, dir string) (*BundledBlueprint, error) {
 	agents, _ := bundledAgentsFromFS(fsys, path.Join(dir, "agents"))
 	bp.Agents = agents
 
+	// 4. skills (skills/*/SKILL.md) and seed (seed/objects/*.jsonl +
+	// seed/relationships/*.jsonl) — optional, absent directories are not an
+	// error.
+	bp.Skills = bundledSkillsFromFS(fsys, path.Join(dir, "skills"))
+	bp.SeedObjects, bp.SeedRelationships = bundledSeedFromFS(fsys, path.Join(dir, "seed"))
+
 	if bp.Name == "" {
 		return nil, fmt.Errorf("no parseable pack yaml in %s", dir)
 	}
@@ -248,6 +317,140 @@ func bundledAgentsFromFS(fsys fs.FS, dir string) ([]BundledAgent, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+// bundledSkillsFromFS reads skills from a skills/ directory. Each subdirectory
+// must contain a SKILL.md file with YAML frontmatter (name, description)
+// followed by Markdown content, following the agentskills.io convention. An
+// absent directory, or a subdirectory without a parseable SKILL.md, is skipped
+// without error.
+func bundledSkillsFromFS(fsys fs.FS, dir string) []BundledSkill {
+	entries, err := fs.ReadDir(fsys, dir)
+	if err != nil {
+		return nil
+	}
+	var out []BundledSkill
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		b, err := fs.ReadFile(fsys, path.Join(dir, e.Name(), "SKILL.md"))
+		if err != nil {
+			continue
+		}
+		skill, ok := parseSkillMD(b)
+		if !ok || skill.Name == "" {
+			continue
+		}
+		out = append(out, *skill)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// parseSkillMD splits a SKILL.md file into YAML frontmatter and Markdown body.
+// The file must start with a "---" delimiter, carry YAML, and close with "---".
+func parseSkillMD(data []byte) (*BundledSkill, bool) {
+	const delim = "---"
+	trimmed := bytes.TrimSpace(data)
+	if !bytes.HasPrefix(trimmed, []byte(delim)) {
+		return nil, false
+	}
+	rest := bytes.TrimLeft(trimmed[len(delim):], "\r\n")
+	closeIdx := bytes.Index(rest, []byte("\n"+delim))
+	if closeIdx < 0 {
+		return nil, false
+	}
+	var skill BundledSkill
+	if yaml.Unmarshal(rest[:closeIdx], &skill) != nil {
+		return nil, false
+	}
+	skill.Content = string(bytes.TrimLeft(rest[closeIdx+1+len(delim):], "\r\n"))
+	return &skill, true
+}
+
+// bundledSeedFromFS reads seed objects and relationships from a seed/ directory
+// (seed/objects/*.jsonl, seed/relationships/*.jsonl). An absent directory or
+// absent subdirectories yield empty slices, not errors. Records are ordered by
+// filename then line, so split files arrive in order.
+func bundledSeedFromFS(fsys fs.FS, dir string) ([]BundledSeedObject, []BundledSeedRelationship) {
+	objects := bundledSeedObjectsFromFS(fsys, path.Join(dir, "objects"))
+	rels := bundledSeedRelationshipsFromFS(fsys, path.Join(dir, "relationships"))
+	return objects, rels
+}
+
+// bundledSeedObjectsFromFS reads seed objects from a seed/objects/ directory.
+func bundledSeedObjectsFromFS(fsys fs.FS, dir string) []BundledSeedObject {
+	entries, err := fs.ReadDir(fsys, dir)
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() && path.Ext(e.Name()) == ".jsonl" {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	var out []BundledSeedObject
+	for _, name := range names {
+		b, err := fs.ReadFile(fsys, path.Join(dir, name))
+		if err != nil {
+			continue
+		}
+		for _, line := range splitJSONLLines(b) {
+			var o BundledSeedObject
+			if json.Unmarshal(line, &o) != nil || o.Type == "" {
+				continue
+			}
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// bundledSeedRelationshipsFromFS reads seed relationships from a
+// seed/relationships/ directory.
+func bundledSeedRelationshipsFromFS(fsys fs.FS, dir string) []BundledSeedRelationship {
+	entries, err := fs.ReadDir(fsys, dir)
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() && path.Ext(e.Name()) == ".jsonl" {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	var out []BundledSeedRelationship
+	for _, name := range names {
+		b, err := fs.ReadFile(fsys, path.Join(dir, name))
+		if err != nil {
+			continue
+		}
+		for _, line := range splitJSONLLines(b) {
+			var r BundledSeedRelationship
+			if json.Unmarshal(line, &r) != nil || r.Type == "" {
+				continue
+			}
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// splitJSONLLines splits a JSONL payload into its non-empty lines, trimming
+// carriage returns.
+func splitJSONLLines(data []byte) [][]byte {
+	var lines [][]byte
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		line = bytes.TrimRight(line, "\r")
+		if len(line) > 0 {
+			lines = append(lines, line)
+		}
+	}
+	return lines
 }
 
 // bundledBlueprints resolves the bundled packs from the configured source: the
@@ -699,17 +902,24 @@ func bundledAgentsFromManifest(agents []blueprintAgent) []BundledAgent {
 			model = a.Model.Name
 		}
 		out = append(out, BundledAgent{
-			Name:         a.Name,
-			Description:  a.Description,
-			SystemPrompt: a.SystemPrompt,
-			Model:        model,
-			Tools:        a.Tools,
-			BannedTools:  a.BannedTools,
-			Skills:       a.Skills,
-			FlowType:     a.FlowType,
-			Visibility:   a.Visibility,
-			Config:       a.Config,
-			UI:           a.UI,
+			Name:           a.Name,
+			Description:    a.Description,
+			SystemPrompt:   a.SystemPrompt,
+			Model:          model,
+			Tools:          a.Tools,
+			BannedTools:    a.BannedTools,
+			Skills:         a.Skills,
+			FlowType:       a.FlowType,
+			Visibility:     a.Visibility,
+			Config:         a.Config,
+			UI:             a.UI,
+			WorkConfig:     a.WorkConfig,
+			TriggerType:    a.TriggerType,
+			ReactionConfig: a.ReactionConfig,
+			CronSchedule:   a.CronSchedule,
+			DispatchMode:   a.DispatchMode,
+			DefaultQueue:   a.DefaultQueue,
+			MaxSteps:       a.MaxSteps,
 		})
 	}
 	return out

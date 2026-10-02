@@ -11,11 +11,14 @@ import (
 // behavioural keys (labels, embedding, extraction, ui, and relationship-level
 // properties) survive the round-trip instead of being dropped by a typed
 // struct. Migrations reuses SchemaMigrationHints (snake_case JSON, matching
-// memory's schemas domain). Skills and seed are intentionally omitted — the
-// bundled packs carry neither today.
+// memory's schemas domain). Skills and seed mirror the server's SkillManifest
+// and SeedManifest so a bundled pack's workflow skill and keyed seed objects
+// install out of the box.
 type blueprintManifest struct {
 	Packs  []blueprintPack  `json:"packs,omitempty"`
 	Agents []blueprintAgent `json:"agents,omitempty"`
+	Skills []blueprintSkill `json:"skills,omitempty"`
+	Seed   *blueprintSeed   `json:"seed,omitempty"`
 }
 
 // blueprintPack is the manifest form of a schema pack. It mirrors memory's
@@ -48,10 +51,58 @@ type blueprintAgent struct {
 	Visibility   string          `json:"visibility,omitempty"`
 	Config       map[string]any  `json:"config,omitempty"`
 	UI           *BundledAgentUI `json:"ui,omitempty"`
+	// WorkConfig is the object-driven work configuration, matching the server's
+	// AgentManifest so a board worker's work contract is not dropped.
+	WorkConfig map[string]any `json:"workConfig,omitempty"`
+	// TriggerType/ReactionConfig/CronSchedule configure the runtime agent that
+	// picks object-driven work up.
+	TriggerType    string                 `json:"triggerType,omitempty"`
+	ReactionConfig *BundledReactionConfig `json:"reactionConfig,omitempty"`
+	CronSchedule   string                 `json:"cronSchedule,omitempty"`
+	// DispatchMode/DefaultQueue/MaxSteps are the runtime scheduling knobs a
+	// board worker declares.
+	DispatchMode string `json:"dispatchMode,omitempty"`
+	DefaultQueue string `json:"defaultQueue,omitempty"`
+	MaxSteps     *int   `json:"maxSteps,omitempty"`
 }
 
 type blueprintModel struct {
 	Name string `json:"name"`
+}
+
+// blueprintSkill mirrors the server's SkillManifest.
+type blueprintSkill struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Content     string         `json:"content"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
+}
+
+// blueprintSeed mirrors the server's SeedManifest.
+type blueprintSeed struct {
+	Objects       []blueprintSeedObject       `json:"objects,omitempty"`
+	Relationships []blueprintSeedRelationship `json:"relationships,omitempty"`
+}
+
+// blueprintSeedObject mirrors the server's SeedObjectRecord (a keyed object
+// with an optional assignee for board-enabled types).
+type blueprintSeedObject struct {
+	Type       string         `json:"type"`
+	Key        string         `json:"key,omitempty"`
+	Status     string         `json:"status,omitempty"`
+	Properties map[string]any `json:"properties,omitempty"`
+	Labels     []string       `json:"labels,omitempty"`
+	Assignee   string         `json:"assignee,omitempty"`
+}
+
+// blueprintSeedRelationship mirrors the server's SeedRelationshipRecord.
+type blueprintSeedRelationship struct {
+	Type       string         `json:"type"`
+	SrcKey     string         `json:"srcKey,omitempty"`
+	DstKey     string         `json:"dstKey,omitempty"`
+	SrcType    string         `json:"srcType,omitempty"`
+	DstType    string         `json:"dstType,omitempty"`
+	Properties map[string]any `json:"properties,omitempty"`
 }
 
 // nonEmptyAgentUI drops an appearance block that declares neither icon nor
@@ -69,6 +120,8 @@ func nonEmptyAgentUI(ui *BundledAgentUI) *BundledAgentUI {
 // schema-carrying pack contributes one pack entry (with its raw object and
 // relationship type maps so behavioural fields are preserved); agents are
 // always included. A pure-agent blueprint (no schema) contributes no pack.
+// Skills and seed are included when present so a bundled pack's workflow skill
+// and keyed seed objects install alongside its schema and agents.
 func buildBlueprintManifest(bp *BundledBlueprint) (json.RawMessage, error) {
 	m := blueprintManifest{}
 	if bp.HasSchema {
@@ -84,21 +137,46 @@ func buildBlueprintManifest(bp *BundledBlueprint) (json.RawMessage, error) {
 	}
 	for _, a := range bp.Agents {
 		am := blueprintAgent{
-			Name:         a.Name,
-			Description:  a.Description,
-			SystemPrompt: a.SystemPrompt,
-			Tools:        a.Tools,
-			BannedTools:  a.BannedTools,
-			Skills:       a.Skills,
-			FlowType:     a.FlowType,
-			Visibility:   a.Visibility,
-			Config:       a.Config,
-			UI:           nonEmptyAgentUI(a.UI),
+			Name:           a.Name,
+			Description:    a.Description,
+			SystemPrompt:   a.SystemPrompt,
+			Tools:          a.Tools,
+			BannedTools:    a.BannedTools,
+			Skills:         a.Skills,
+			FlowType:       a.FlowType,
+			Visibility:     a.Visibility,
+			Config:         a.Config,
+			UI:             nonEmptyAgentUI(a.UI),
+			WorkConfig:     a.WorkConfig,
+			TriggerType:    a.TriggerType,
+			ReactionConfig: a.ReactionConfig,
+			CronSchedule:   a.CronSchedule,
+			DispatchMode:   a.DispatchMode,
+			DefaultQueue:   a.DefaultQueue,
+			MaxSteps:       a.MaxSteps,
 		}
 		if a.Model != "" {
 			am.Model = &blueprintModel{Name: a.Model}
 		}
 		m.Agents = append(m.Agents, am)
+	}
+	if len(bp.Skills) > 0 {
+		m.Skills = make([]blueprintSkill, 0, len(bp.Skills))
+		for _, s := range bp.Skills {
+			m.Skills = append(m.Skills, blueprintSkill(s))
+		}
+	}
+	if len(bp.SeedObjects) > 0 || len(bp.SeedRelationships) > 0 {
+		m.Seed = &blueprintSeed{
+			Objects:       make([]blueprintSeedObject, 0, len(bp.SeedObjects)),
+			Relationships: make([]blueprintSeedRelationship, 0, len(bp.SeedRelationships)),
+		}
+		for _, o := range bp.SeedObjects {
+			m.Seed.Objects = append(m.Seed.Objects, blueprintSeedObject(o))
+		}
+		for _, r := range bp.SeedRelationships {
+			m.Seed.Relationships = append(m.Seed.Relationships, blueprintSeedRelationship(r))
+		}
 	}
 	return json.Marshal(m)
 }

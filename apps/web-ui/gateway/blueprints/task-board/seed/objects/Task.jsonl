@@ -1,0 +1,1 @@
+{"type":"Task","key":"example-task","status":"ready","assignee":"task-worker","properties":{"title":"Example task","description":"An example work item the task-worker agent picks up and completes.","priority":1}}
