@@ -443,3 +443,23 @@ returned and all other scoping/filter/`ids` semantics SHALL be unchanged.
 - **THEN** the derived upper bound is valid UTF-8 and the query does not fail
   with SQLSTATE 22021
 - **AND** the returned set equals the `starts_with(key, prefix)` set exactly
+
+### Requirement: entity-type-list relationship types are opt-in
+
+The `entity-type-list` MCP tool SHALL NOT compute relationship type counts unless the caller passes `include_relationships: true`. By default (`include_relationships` omitted or false) the tool SHALL return entity types with instance counts and an empty `relationships` list, and SHALL NOT run the relationship-type aggregation query. When `include_relationships: true`, the tool SHALL additionally return relationship types as `(type, from_type, to_type, count)` rows, computed by a project-scoped, head-only query that filters `gr.supersedes_id IS NULL`, `src.project_id`, and `dst.project_id` (so superseded/legacy cross-project rows are not counted). The performance win comes from skipping this aggregation on the default path, not from index selection.
+
+#### Scenario: Default call omits relationship types
+
+- **WHEN** a client calls `entity-type-list` without `include_relationships`
+- **THEN** the result contains entity types with counts and an empty `relationships` list
+- **AND** the relationship-type aggregation query is not executed
+
+#### Scenario: Opt-in call returns relationship types
+
+- **WHEN** a client calls `entity-type-list` with `include_relationships: true`
+- **THEN** the result contains relationship types as `(type, from_type, to_type, count)` rows
+
+#### Scenario: Relationship query is project-scoped and head-only
+
+- **WHEN** the relationship-type aggregation runs
+- **THEN** its SQL filters `gr.supersedes_id IS NULL`, `src.project_id`, and `dst.project_id`, and its arguments are ordered to match the SQL placeholders
