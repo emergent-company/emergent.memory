@@ -147,7 +147,7 @@ func (s *Service) applyPacks(ctx context.Context, projectID, blueprintID, userID
 			if err != nil {
 				return counts, apperror.ErrBadRequest.WithMessage("invalid objectTypes in pack " + p.Name)
 			}
-			relationshipTypes, err := json.Marshal(p.RelationshipTypes)
+			relationshipTypes, err := json.Marshal(expandRelationshipTypes(p.RelationshipTypes))
 			if err != nil {
 				return counts, apperror.ErrBadRequest.WithMessage("invalid relationshipTypes in pack " + p.Name)
 			}
@@ -198,7 +198,7 @@ func (s *Service) updateExistingPack(ctx context.Context, projectID string, pack
 	if err != nil {
 		return apperror.ErrBadRequest.WithMessage("invalid objectTypes in pack " + p.Name)
 	}
-	relationshipTypes, err := json.Marshal(p.RelationshipTypes)
+	relationshipTypes, err := json.Marshal(expandRelationshipTypes(p.RelationshipTypes))
 	if err != nil {
 		return apperror.ErrBadRequest.WithMessage("invalid relationshipTypes in pack " + p.Name)
 	}
@@ -209,6 +209,57 @@ func (s *Service) updateExistingPack(ctx context.Context, projectID string, pack
 		Migrations:              p.Migrations,
 	})
 	return err
+}
+
+// expandRelationshipTypes flattens plural sourceTypes/targetTypes declarations
+// into singular SourceType/TargetType entries for the schemas service, whose
+// relationship contract is singular-only (see
+// schemas.Service.validateSchemaDefinitions). The stored blueprint manifest may
+// keep the plural fields (round-trip), but the payload sent to the schemas
+// service must be singular-only.
+//
+//   - A def with plural source and/or target types yields the cross-product of
+//     GetSourceTypes() × GetTargetTypes() as singular entries, preserving
+//     Name/Label/Description/Properties.
+//   - A def with only singular fields passes through unchanged (one entry).
+//   - A def with neither source nor target yields one empty entry (matching the
+//     pre-expansion behaviour) so the schemas validator still reports a precise
+//     missing-field error rather than silently dropping the relationship.
+func expandRelationshipTypes(defs []RelationshipTypeDef) []RelationshipTypeDef {
+	out := make([]RelationshipTypeDef, 0, len(defs))
+	for _, d := range defs {
+		srcs := d.GetSourceTypes()
+		tgts := d.GetTargetTypes()
+
+		// Only expand when both sides resolve to at least one type; otherwise
+		// pass the singular fields through unchanged so malformed defs keep the
+		// existing validation surface.
+		if len(srcs) == 0 || len(tgts) == 0 {
+			out = append(out, RelationshipTypeDef{
+				Name:        d.Name,
+				Label:       d.Label,
+				Description: d.Description,
+				SourceType:  d.SourceType,
+				TargetType:  d.TargetType,
+				Properties:  d.Properties,
+			})
+			continue
+		}
+
+		for _, src := range srcs {
+			for _, tgt := range tgts {
+				out = append(out, RelationshipTypeDef{
+					Name:        d.Name,
+					Label:       d.Label,
+					Description: d.Description,
+					SourceType:  src,
+					TargetType:  tgt,
+					Properties:  d.Properties,
+				})
+			}
+		}
+	}
+	return out
 }
 
 // applyAgents creates or updates agent definitions by name within the project.
