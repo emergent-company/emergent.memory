@@ -157,6 +157,7 @@ tools/niezatapialni-scraper/niezatapialni-scraper
 # Large data files
 *.jsonl
 !blueprints/**/seed/**/*.jsonl
+!apps/web-ui/gateway/blueprints/**/seed/**/*.jsonl
 .claude/settings.local.json
 
 # Test data and e2e suites

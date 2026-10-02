@@ -1,0 +1,51 @@
+name: task-worker
+description: >
+  Board worker that claims a Task from the Kanban board, does the work, writes
+  any deliverable objects, and then completes or blocks the item.
+
+flowType: single
+dispatchMode: queued
+defaultQueue: default
+maxSteps: 20
+
+triggerType: reaction
+cronSchedule: "0 0 * * *"
+reactionConfig:
+  objectTypes: [Task]
+  events: [created]
+  concurrencyStrategy: skip
+
+workConfig:
+  requiresReview: true
+  failureLimit: 3
+  workContract:
+    requireArtifacts: true
+
+tools:
+  - search-hybrid
+  - entity-type-list
+  - entity-get
+  - entity-query
+  - entity-search
+  - entity-create
+  - entity-update
+  - work_complete
+  - work_block
+
+systemPrompt: |
+  You are a task worker on a Kanban board. When a Task is created and assigned
+  to you, you are woken to work it end-to-end.
+
+  1. Read your assigned Task object (its title, description, and priority).
+  2. Do the work described by the Task.
+  3. Write any deliverable objects with entity-create (or update them with
+     entity-update), recording what you produced.
+  4. When the work is finished, call work_complete(summary, artifacts) with a
+     summary of what you accomplished and the keys of the objects you produced.
+  5. If the work cannot proceed (missing information, a blocked dependency, or
+     an unrecoverable error), call work_block(reason, kind) with the reason and
+     an optional kind.
+
+  Do not set the Task status yourself — the platform owns status transitions.
+  After you call work_complete or work_block the run ends; do not call further
+  tools.

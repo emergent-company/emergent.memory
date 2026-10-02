@@ -83,6 +83,111 @@ func TestListEmbeddedBlueprints(t *testing.T) {
 	if !names["operator"] {
 		t.Fatalf("missing embedded operator pack, got: %+v", out)
 	}
+	if !names["task-board"] {
+		t.Fatalf("missing embedded task-board pack, got: %+v", out)
+	}
+}
+
+// TestTaskBoardBlueprintLoads verifies the embedded task-board blueprint loads
+// its board-enabled Task type, its reaction-triggered task-worker agent with
+// work/reaction config, its workflow skill, and its keyed seed object.
+func TestTaskBoardBlueprintLoads(t *testing.T) {
+	bp, err := loadBundledFromFS(bundledFS, "blueprints/task-board")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bp.Name != "task-board" {
+		t.Fatalf("name = %q, want task-board", bp.Name)
+	}
+	if !bp.HasSchema {
+		t.Fatal("task-board must carry a schema")
+	}
+
+	// Board-enabled Task type with operational flags survive as raw map keys.
+	if len(bp.ObjectTypeSchemas) != 1 {
+		t.Fatalf("object types = %d, want 1", len(bp.ObjectTypeSchemas))
+	}
+	task := bp.ObjectTypeSchemas[0]
+	if strAny(task["name"]) != "Task" {
+		t.Errorf("object type name = %#v", task["name"])
+	}
+	if task["boardEnabled"] != true {
+		t.Errorf("boardEnabled dropped: %#v", task)
+	}
+	if _, ok := task["allowedStatuses"]; !ok {
+		t.Errorf("allowedStatuses dropped: %#v", task)
+	}
+	if task["skipEmbeddings"] != true || task["skipExtraction"] != true || task["excludeFromSearch"] != true {
+		t.Errorf("operational flags dropped: %#v", task)
+	}
+
+	// Reaction-triggered worker carries its work/reaction config.
+	if len(bp.Agents) != 1 {
+		t.Fatalf("agents = %d, want 1", len(bp.Agents))
+	}
+	a := bp.Agents[0]
+	if a.Name != "task-worker" {
+		t.Errorf("agent name = %q", a.Name)
+	}
+	if a.TriggerType != "reaction" || a.DispatchMode != "queued" || a.DefaultQueue != "default" {
+		t.Errorf("task-worker scheduling = triggerType %q dispatchMode %q defaultQueue %q", a.TriggerType, a.DispatchMode, a.DefaultQueue)
+	}
+	if a.MaxSteps == nil || *a.MaxSteps != 20 {
+		t.Errorf("task-worker maxSteps = %#v", a.MaxSteps)
+	}
+	if a.ReactionConfig == nil || len(a.ReactionConfig.ObjectTypes) != 1 || a.ReactionConfig.ObjectTypes[0] != "Task" {
+		t.Errorf("task-worker reactionConfig = %#v", a.ReactionConfig)
+	}
+	if a.WorkConfig == nil || a.WorkConfig["requiresReview"] != true || a.WorkConfig["failureLimit"] != 3 {
+		t.Errorf("task-worker workConfig = %#v", a.WorkConfig)
+	}
+
+	// Workflow skill + keyed seed object are carried.
+	if len(bp.Skills) != 1 || bp.Skills[0].Name != "task-workflow" {
+		t.Errorf("skills = %+v, want task-workflow", bp.Skills)
+	}
+	if bp.Skills[0].Content == "" {
+		t.Error("skill content empty")
+	}
+	if len(bp.SeedObjects) != 1 {
+		t.Fatalf("seed objects = %+v, want 1", bp.SeedObjects)
+	}
+	seed := bp.SeedObjects[0]
+	if seed.Type != "Task" || seed.Key != "example-task" || seed.Assignee != "task-worker" {
+		t.Errorf("seed object = %+v", seed)
+	}
+}
+
+// TestTaskBoardManifestInstalls verifies the embedded task-board blueprint's
+// built manifest carries the worker's work/reaction config, skill, and seed —
+// so installing through POST /api/blueprints drops nothing.
+func TestTaskBoardManifestInstalls(t *testing.T) {
+	bp, err := loadBundledFromFS(bundledFS, "blueprints/task-board")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := buildBlueprintManifest(bp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	agents := m["agents"].([]any)
+	if len(agents) != 1 {
+		t.Fatalf("agents = %#v, want 1", agents)
+	}
+	ag := agents[0].(map[string]any)
+	if ag["workConfig"] == nil || ag["reactionConfig"] == nil {
+		t.Errorf("worker work/reaction config dropped: %#v", ag)
+	}
+	if m["skills"] == nil {
+		t.Errorf("skills dropped: %#v", m)
+	}
+	if m["seed"] == nil {
+		t.Errorf("seed dropped: %#v", m)
+	}
 }
 
 // TestOperatorBlueprintDefinesOperatorAgent loads the embedded operator
