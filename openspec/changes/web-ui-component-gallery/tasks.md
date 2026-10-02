@@ -40,5 +40,5 @@
 - [ ] 6.1 Run `templ generate ./...`, `go generate ./...`, `go build ./...`, and `go test ./...` from `apps/web-ui/gateway`; all succeed
 - [ ] 6.2 Run `task lint` from `apps/web-ui/gateway`; clean
 - [ ] 6.3 Run `task dev` and load `/dev/components` in the browser; verify the catalog renders, previews load, and an interactive component's overlay stays inside its preview
-- [ ] 6.4 Add a Playwright e2e spec asserting the page loads and each listed slug's preview renders non-empty; run it under the dev harness with `MEMORY_COMPONENT_GALLERY=on` (`run-e2e.sh`, `AUTH_MODE=dev`); if it must run in the session-mode project against an external gateway, that gateway's deployment sets the flag; verify it passes
+- [x] 6.4 Add a Playwright e2e spec asserting the page loads and each listed slug's preview renders non-empty; run it under the dev harness with `MEMORY_COMPONENT_GALLERY=on` (`run-e2e.sh`, `AUTH_MODE=dev`); if it must run in the session-mode project against an external gateway, that gateway's deployment sets the flag; verify it passes
 - [ ] 6.5 Run `openspec validate web-ui-component-gallery --strict`; clean
