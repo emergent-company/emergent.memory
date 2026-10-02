@@ -163,6 +163,7 @@ type MemoryBackend interface {
 	GetProjectUsageSummary(ctx context.Context, since, until time.Time) (*UsageSummaryResponse, error)
 	GetProjectUsageTimeSeries(ctx context.Context, granularity string, since, until time.Time) (*UsageTimeSeriesResponse, error)
 	ListProjectProviders(ctx context.Context) ([]ProjectProviderConfig, error)
+	ListProviderDefinitions(ctx context.Context) ([]ProviderDefinition, error)
 	ListProviderModels(ctx context.Context, provider string) ([]ProviderSupportedModel, error)
 	ListPricing(ctx context.Context) ([]ProviderPricing, error)
 	ListProjectPricingOverrides(ctx context.Context) ([]ProjectCustomPricing, error)

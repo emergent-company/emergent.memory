@@ -12,14 +12,49 @@ import (
 
 // Handler handles HTTP requests for the provider domain.
 type Handler struct {
-	creds   *CredentialService
-	catalog *ModelCatalogService
-	repo    *Repository
+	creds    *CredentialService
+	catalog  *ModelCatalogService
+	repo     *Repository
+	registry *Registry
 }
 
 // NewHandler creates a new provider handler.
-func NewHandler(creds *CredentialService, catalog *ModelCatalogService, repo *Repository) *Handler {
-	return &Handler{creds: creds, catalog: catalog, repo: repo}
+func NewHandler(creds *CredentialService, catalog *ModelCatalogService, repo *Repository, registry *Registry) *Handler {
+	return &Handler{creds: creds, catalog: catalog, repo: repo, registry: registry}
+}
+
+// ProviderDefinitionResponse is the read-only, API-facing projection of a
+// vendor registry definition. It exposes the vendor's wire protocol, auth
+// style, model types, default endpoints, extra config fields, and localized
+// names, and never serializes the raw Icon bytes.
+type ProviderDefinitionResponse struct {
+	Type            ProviderType         `json:"type"`
+	DisplayName     string               `json:"displayName"`
+	Description     string               `json:"description"`
+	Protocol        Protocol             `json:"protocol"`
+	Auth            AuthStyle            `json:"auth"`
+	ModelTypes      []ModelType          `json:"modelTypes,omitempty"`
+	DefaultBaseURLs map[ModelType]string `json:"defaultBaseUrls,omitempty"`
+	ExtraFields     []ExtraField         `json:"extraFields,omitempty"`
+	CredentialLabel *CredentialLabel     `json:"credentialLabel,omitempty"`
+	Order           int                  `json:"order"`
+	Names           map[string]string    `json:"names,omitempty"`
+}
+
+func toProviderDefinitionResponse(def *ProviderDefinition) ProviderDefinitionResponse {
+	return ProviderDefinitionResponse{
+		Type:            def.Type,
+		DisplayName:     def.DisplayName,
+		Description:     def.Description,
+		Protocol:        def.Protocol,
+		Auth:            def.Auth,
+		ModelTypes:      def.ModelTypes,
+		DefaultBaseURLs: def.DefaultBaseURLs,
+		ExtraFields:     def.ExtraFields,
+		CredentialLabel: def.CredentialLabel,
+		Order:           def.Order,
+		Names:           def.Names,
+	}
 }
 
 // --- Project Provider Config Endpoints ---
@@ -191,6 +226,25 @@ func (h *Handler) ListPricing(c echo.Context) error {
 		return err
 	}
 	return c.JSON(http.StatusOK, rows)
+}
+
+// ListProviderDefinitions returns the set of supported LLM vendor definitions
+// from the registry, in display order. Read-only: the registry is the single
+// source of truth for the selectable vendors and their wire/auth/config
+// metadata.
+// @Summary List supported provider (vendor) definitions
+// @Tags providers
+// @Produce json
+// @Success 200 {array} ProviderDefinitionResponse
+// @Failure 401 {object} apperror.Error
+// @Router /provider-definitions [get]
+func (h *Handler) ListProviderDefinitions(c echo.Context) error {
+	defs := h.registry.List()
+	resp := make([]ProviderDefinitionResponse, 0, len(defs))
+	for _, d := range defs {
+		resp = append(resp, toProviderDefinitionResponse(d))
+	}
+	return c.JSON(http.StatusOK, resp)
 }
 
 // --- Usage & Cost Summary ---

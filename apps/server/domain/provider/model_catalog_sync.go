@@ -65,7 +65,9 @@ func NewModelCatalogSyncService(repo *Repository, credsvc *CredentialService, ca
 }
 
 // Sync re-resolves every configured OpenAI-compatible provider credential and
-// refreshes its model catalog.
+// refreshes its model catalog. It iterates over every vendor whose definition
+// uses CatalogOpenAIModels (openai, azure-openai, LiteLLM, and the other
+// OpenAI-compatible vendors), not just ProviderOpenAI.
 //
 // The catalog table is keyed globally by (provider, model_name) with no
 // per-config (project/base_url) dimension, so the pass cannot resolve-and-prune
@@ -82,9 +84,16 @@ func NewModelCatalogSyncService(repo *Repository, credsvc *CredentialService, ca
 // never leave the catalog empty: fallback or skipped configs simply suppress the
 // prune, so previously synced rows are kept (stale-but-complete over empty).
 func (s *ModelCatalogSyncService) Sync(ctx context.Context) error {
-	configs, err := s.repo.ListProjectProviderConfigsByProvider(ctx, ProviderOpenAI)
-	if err != nil {
-		return fmt.Errorf("model catalog resync: list openai provider configs: %w", err)
+	var configs []ProjectProviderConfig
+	for _, d := range Builtins() {
+		if d.CatalogStrategy != CatalogOpenAIModels {
+			continue
+		}
+		cfgs, err := s.repo.ListProjectProviderConfigsByProvider(ctx, d.Type)
+		if err != nil {
+			return fmt.Errorf("model catalog resync: list %s provider configs: %w", d.Type, err)
+		}
+		configs = append(configs, cfgs...)
 	}
 	if len(configs) == 0 {
 		return nil
@@ -112,7 +121,7 @@ func (s *ModelCatalogSyncService) Sync(ctx context.Context) error {
 		}
 
 		syncCtx, cancel := context.WithTimeout(ctx, modelCatalogSyncTimeout)
-		models, pruneOK, resolveErr := s.catalog.ResolveModels(syncCtx, ProviderOpenAI, cred)
+		models, pruneOK, resolveErr := s.catalog.ResolveModels(syncCtx, cfg.Provider, cred)
 		cancel()
 		if resolveErr != nil {
 			allFetchedOK = false
@@ -144,13 +153,20 @@ func (s *ModelCatalogSyncService) Sync(ctx context.Context) error {
 
 	// Single prune against the full union, only when every config resolved a
 	// complete live catalog. Any fallback or skipped config means the union may
-	// be missing rows, so stale rows are kept rather than deleted.
+	// be missing rows, so stale rows are kept rather than deleted. The union may
+	// span several OpenAI-compatible vendors, so prune each provider separately.
 	if allFetchedOK {
-		if err := s.repo.DeleteSupportedModelsNotIn(ctx, ProviderOpenAI, modelNames(union)); err != nil {
-			// Non-fatal: stale rows are cosmetic, don't fail the whole sync.
-			s.log.Warn("model catalog resync: failed to delete stale models",
-				logger.Error(err),
-			)
+		namesByProvider := make(map[ProviderType][]string)
+		for _, m := range union {
+			namesByProvider[m.Provider] = append(namesByProvider[m.Provider], m.ModelName)
+		}
+		for p, names := range namesByProvider {
+			if err := s.repo.DeleteSupportedModelsNotIn(ctx, p, names); err != nil {
+				// Non-fatal: stale rows are cosmetic, don't fail the whole sync.
+				s.log.Warn("model catalog resync: failed to delete stale models",
+					logger.Error(err),
+				)
+			}
 		}
 	}
 

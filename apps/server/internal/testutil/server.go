@@ -624,7 +624,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	providerRegistry := provider.NewRegistry()
 	providerCatalogSvc := provider.NewModelCatalogService(providerRepo, log)
 	providerCredSvc := provider.NewCredentialService(providerRepo, providerRegistry, providerCatalogSvc, testDB.Config, log)
-	providerHandler := provider.NewHandler(providerCredSvc, providerCatalogSvc, providerRepo)
+	providerHandler := provider.NewHandler(providerCredSvc, providerCatalogSvc, providerRepo, providerRegistry)
 	provider.RegisterRoutes(e, providerHandler, authMiddleware)
 
 	// Register discovery jobs routes (nil modelFactory — LLM-dependent tests skip in-process)

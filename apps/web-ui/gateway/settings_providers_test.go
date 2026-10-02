@@ -536,12 +536,100 @@ func TestRenderProviderConfigPageAddIsCredentialsOnly(t *testing.T) {
 // disabled attribute — memory validates credentials on save and the form stays
 // retryable after a failed-save re-render.
 func TestRenderProviderConfigPageAddOpenAISaveEnabled(t *testing.T) {
-	html := renderHTML(t, providerConfigPage(providerConfigPageData{DraftProvider: "openai"}))
+	vendors := []ProviderDefinition{
+		{Type: "google", DisplayName: "Google AI", Order: 1},
+		{Type: "google-vertex", DisplayName: "Vertex AI", Order: 2},
+		{Type: "openai", DisplayName: "OpenAI", Order: 3},
+		{Type: "deepseek", DisplayName: "DeepSeek", Order: 4},
+	}
+	html := renderHTML(t, providerConfigPage(providerConfigPageData{DraftProvider: "openai", Vendors: vendors}))
 	if !strings.Contains(html, `value="openai" selected`) {
 		t.Errorf("add form should preselect openai from DraftProvider, got:\n%s", html)
 	}
 	if tag := providerSaveButtonTag(t, html); strings.Contains(tag, "disabled") {
 		t.Errorf("add form save button must not be disabled, got %q", tag)
+	}
+}
+
+// TestRenderProviderConfigPageVendorOptionsFromRegistry asserts the add form's
+// vendor <select> is built from the page's registry definitions: the option
+// value is the vendor type, the label is its display name, and the description
+// is carried as the field-hint data (never a hardcoded whitelist).
+func TestRenderProviderConfigPageVendorOptionsFromRegistry(t *testing.T) {
+	vendors := []ProviderDefinition{
+		{Type: "anthropic", DisplayName: "Anthropic", Description: "Anthropic Claude models.", Order: 1},
+		{Type: "openai", DisplayName: "OpenAI", Description: "OpenAI chat models.", Order: 2},
+	}
+	html := renderHTML(t, providerConfigPage(providerConfigPageData{Vendors: vendors}))
+	for _, want := range []string{
+		`value="anthropic"`,
+		`>Anthropic<`,
+		`data-description="Anthropic Claude models."`,
+		`id="provider-description"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("registry-driven vendor select missing %q, got:\n%s", want, html)
+		}
+	}
+	ai := strings.Index(html, `value="anthropic"`)
+	oi := strings.Index(html, `value="openai"`)
+	if ai < 0 || oi < 0 || ai > oi {
+		t.Errorf("vendor options must render in registry order (anthropic before openai), got:\n%s", html)
+	}
+}
+
+// TestProviderSortedDefinitionsByOrder asserts the registry is ordered by the
+// definition Order field ascending and preserves relative order on ties.
+func TestProviderSortedDefinitionsByOrder(t *testing.T) {
+	in := []ProviderDefinition{
+		{Type: "third", Order: 30},
+		{Type: "first", Order: 10},
+		{Type: "tie-a", Order: 20},
+		{Type: "tie-b", Order: 20},
+		{Type: "second", Order: 10},
+	}
+	got := sortedProviderDefinitions(in)
+	want := []string{"first", "second", "tie-a", "tie-b", "third"}
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i].Type != want[i] {
+			t.Errorf("got[%d] = %q, want %q", i, got[i].Type, want[i])
+		}
+	}
+	// The input slice must not be reordered in place.
+	if in[0].Type != "third" {
+		t.Errorf("sortedProviderDefinitions mutated its input: %+v", in)
+	}
+}
+
+// TestProviderExtraFieldsRenderedReadOnly asserts a vendor's registry extra
+// fields render as read-only metadata (key + label + required/optional) and
+// are toggled per selected vendor — no inputs, so nothing is half-wired.
+func TestProviderExtraFieldsRenderedReadOnly(t *testing.T) {
+	vendors := []ProviderDefinition{
+		{Type: "azure-openai", DisplayName: "Azure OpenAI", Order: 1, ExtraFields: []ExtraField{
+			{Key: "api-version", Label: "API version", Required: true},
+			{Key: "deployment", Label: "Deployment", Required: false},
+		}},
+		{Type: "openai", DisplayName: "OpenAI", Order: 2},
+	}
+	html := renderHTML(t, providerConfigPage(providerConfigPageData{Vendors: vendors}))
+	for _, want := range []string{
+		`data-provider-extra="azure-openai"`,
+		"not editable here",
+		"API version",
+		`api-version`,
+		"Required",
+		"Optional",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("extra-field metadata missing %q, got:\n%s", want, html)
+		}
+	}
+	if strings.Contains(html, `name="api-version"`) {
+		t.Errorf("extra fields must be read-only, no input named api-version, got:\n%s", html)
 	}
 }
 
@@ -816,6 +904,28 @@ func TestUIProviderConfigUnknownProvider(t *testing.T) {
 	}
 	if f.lastProviderConfig != "" {
 		t.Error("unknown provider must not upsert")
+	}
+}
+
+// TestUIProviderConfigRegistryVendorAccepted verifies the provider-config form
+// accepts a registry vendor (anthropic) that is not in the legacy hardcoded
+// whitelist — the whitelist is now derived from the server's vendor registry.
+func TestUIProviderConfigRegistryVendorAccepted(t *testing.T) {
+	f := &fakeMemory{
+		providerDefinitions: []ProviderDefinition{
+			{Type: "anthropic", DisplayName: "Anthropic", Protocol: "anthropic-messages", Auth: "x-api-key"},
+		},
+	}
+	_, e := newProvidersSettingsEcho(f)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/settings/providers/config", strings.NewReader("provider=anthropic&api_key=sk-ant"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/settings/providers?updated=1" {
+		t.Fatalf("registry vendor save should redirect, got %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.lastProviderConfig != "anthropic" {
+		t.Errorf("provider = %q, want anthropic", f.lastProviderConfig)
 	}
 }
 

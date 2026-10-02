@@ -40,6 +40,19 @@ type ResolvedCredential struct {
 	// BaseURL is the HTTP endpoint for OpenAI-protocol providers (openai, deepseek)
 	BaseURL string
 
+	// Protocol is the wire protocol the vendor speaks ("openai-chat",
+	// "google-genai", "anthropic-messages"). Populated from the registry
+	// definition at resolution time.
+	Protocol Protocol
+
+	// Auth is the credential-injection style (bearer, api-key, x-api-key,
+	// x-goog-api-key, none, signed). Populated from the registry definition.
+	Auth AuthStyle
+
+	// Extra carries vendor-specific configuration keyed by field name
+	// (e.g. Azure "api_version").
+	Extra map[string]string
+
 	// Selected models (may come from org selection, project override, or env config)
 	EmbeddingModel  string
 	GenerativeModel string
@@ -157,7 +170,32 @@ func (s *CredentialService) decryptProjectConfig(cfg *ProjectProviderConfig) (*R
 		}
 		resolved.APIKey = string(plaintext)
 	}
+	s.applyDefinition(resolved)
 	return resolved, nil
+}
+
+// applyDefinition populates Protocol/Auth from the registry definition and
+// fills a default BaseURL (generative first, then embedding) when none was
+// configured. It is nil-safe: an unknown provider or an absent registry leaves
+// the credential with only the fields populated by the legacy per-provider
+// switch.
+func (s *CredentialService) applyDefinition(resolved *ResolvedCredential) {
+	if resolved == nil {
+		return
+	}
+	def := definitionFor(resolved.Provider)
+	if def == nil {
+		return
+	}
+	resolved.Protocol = def.Protocol
+	resolved.Auth = def.Auth
+	if resolved.BaseURL == "" {
+		if u := def.DefaultBaseURLs[ModelTypeGenerative]; u != "" {
+			resolved.BaseURL = u
+		} else if u := def.DefaultBaseURLs[ModelTypeEmbedding]; u != "" {
+			resolved.BaseURL = u
+		}
+	}
 }
 
 // EncryptCredential encrypts a plaintext credential for storage.
@@ -672,14 +710,24 @@ const maxProviderSlugLen = 63
 
 var providerSlugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
-// isDialectName reports whether s names a supported provider dialect.
+// isDialectName reports whether s names a supported provider dialect (or an
+// accepted alias). The set is built once from the embedded vendor registry.
 func isDialectName(s string) bool {
-	switch ProviderDialect(s) {
-	case ProviderGoogleAI, ProviderVertexAI, ProviderOpenAI, ProviderDeepSeek:
-		return true
-	default:
-		return false
+	return dialectNames[s]
+}
+
+// dialectNames is the set of recognized provider dialect IDs plus accepted
+// aliases, built from Builtins() at package init.
+var dialectNames = buildDialectNames()
+
+func buildDialectNames() map[string]bool {
+	names := make(map[string]bool, len(Builtins())+1)
+	for _, d := range Builtins() {
+		names[string(d.Type)] = true
 	}
+	// "gemini" is an accepted alias for the "google" dialect.
+	names["gemini"] = true
+	return names
 }
 
 // validateProviderSlug validates a user-supplied instance slug. A slug must not
@@ -722,14 +770,19 @@ func resolveSlug(requested string, dialect ProviderDialect) (ProviderSlug, error
 // needsStoredCredential reports whether the request is missing credential
 // fields that must be filled from the previously stored config.
 func (s *CredentialService) needsStoredCredential(provider ProviderType, req UpsertProviderConfigRequest) bool {
-	switch provider {
-	case ProviderGoogleAI, ProviderOpenAI, ProviderDeepSeek:
-		return req.APIKey == ""
-	case ProviderVertexAI:
+	if provider == ProviderVertexAI {
 		return req.ServiceAccountJSON == "" || req.GCPProject == "" || req.Location == ""
-	default:
+	}
+	def := definitionFor(provider)
+	if def == nil {
 		return false
 	}
+	if def.Auth == AuthNone {
+		return false
+	}
+	// bearer, api-key, x-api-key, x-goog-api-key, and signed (non-vertex)
+	// vendors all use a single API-key credential.
+	return req.APIKey == ""
 }
 
 // reuseStoredCredential fills credential fields omitted by the caller from the
@@ -744,11 +797,11 @@ func (s *CredentialService) reuseStoredCredential(provider ProviderType, existin
 	}
 
 	needsPlaintext := false
-	switch provider {
-	case ProviderGoogleAI, ProviderOpenAI, ProviderDeepSeek:
-		needsPlaintext = req.APIKey == ""
-	case ProviderVertexAI:
+	isVertex := provider == ProviderVertexAI
+	if isVertex {
 		needsPlaintext = req.ServiceAccountJSON == ""
+	} else if def := definitionFor(provider); def != nil && def.Auth != AuthNone {
+		needsPlaintext = req.APIKey == ""
 	}
 
 	if needsPlaintext {
@@ -756,16 +809,15 @@ func (s *CredentialService) reuseStoredCredential(provider ProviderType, existin
 		if err != nil {
 			return fmt.Errorf("failed to decrypt existing credential: %w", err)
 		}
-		switch provider {
-		case ProviderGoogleAI, ProviderOpenAI, ProviderDeepSeek:
-			req.APIKey = string(plaintext)
-		case ProviderVertexAI:
+		if isVertex {
 			req.ServiceAccountJSON = string(plaintext)
+		} else {
+			req.APIKey = string(plaintext)
 		}
 	}
 
 	// Vertex GCPProject/Location are stored as plaintext columns — reuse when omitted.
-	if provider == ProviderVertexAI {
+	if isVertex {
 		if req.GCPProject == "" {
 			req.GCPProject = existing.GCPProject
 		}
@@ -794,13 +846,7 @@ func (s *CredentialService) reuseStoredModels(existing *ProjectProviderConfig, r
 
 // extractPlaintext returns the credential bytes to encrypt from the request.
 func (s *CredentialService) extractPlaintext(provider ProviderType, req UpsertProviderConfigRequest) ([]byte, error) {
-	switch provider {
-	case ProviderGoogleAI:
-		if req.APIKey == "" {
-			return nil, apperror.NewBadRequest("apiKey is required for google")
-		}
-		return []byte(req.APIKey), nil
-	case ProviderVertexAI:
+	if provider == ProviderVertexAI {
 		if req.ServiceAccountJSON == "" {
 			return nil, apperror.NewBadRequest("serviceAccountJson is required for google-vertex")
 		}
@@ -811,20 +857,19 @@ func (s *CredentialService) extractPlaintext(provider ProviderType, req UpsertPr
 			return nil, apperror.NewBadRequest("location is required for google-vertex")
 		}
 		return []byte(req.ServiceAccountJSON), nil
-	case ProviderOpenAI:
-		if req.APIKey == "" {
-			return nil, apperror.NewBadRequest("apiKey is required for openai")
-		}
-		// BaseURL is optional; defaults to https://api.openai.com/v1
-		return []byte(req.APIKey), nil
-	case ProviderDeepSeek:
-		if req.APIKey == "" {
-			return nil, apperror.NewBadRequest("apiKey is required for deepseek")
-		}
-		return []byte(req.APIKey), nil
-	default:
+	}
+
+	def := definitionFor(provider)
+	if def == nil {
 		return nil, apperror.NewBadRequest(fmt.Sprintf("unsupported provider: %s", provider))
 	}
+	if def.Auth == AuthNone {
+		return nil, nil // no credential required
+	}
+	if req.APIKey == "" {
+		return nil, apperror.NewBadRequest(fmt.Sprintf("apiKey is required for %s", provider))
+	}
+	return []byte(req.APIKey), nil
 }
 
 // buildTempResolvedCred constructs a plaintext ResolvedCredential for testing/syncing.
@@ -854,6 +899,7 @@ func (s *CredentialService) buildTempResolvedCred(provider ProviderType, req Ups
 		}
 		cred.APIKey = req.APIKey
 	}
+	s.applyDefinition(cred)
 	return cred
 }
 

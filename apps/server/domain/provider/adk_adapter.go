@@ -69,6 +69,9 @@ func toADKCredential(c *ResolvedCredential) *adk.ResolvedCredential {
 		BaseURL:            c.BaseURL,
 		Provider:           string(c.Provider),
 		Slug:               string(c.Slug),
+		Protocol:           string(c.Protocol),
+		Auth:               string(c.Auth),
+		Extra:              c.Extra,
 	}
 }
 

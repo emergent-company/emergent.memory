@@ -146,6 +146,51 @@ func (m *MemoryClient) ListProjectProviders(ctx context.Context) ([]ProjectProvi
 	return out, nil
 }
 
+// ProviderDefinition mirrors memory's provider-definitions endpoint: one
+// supported LLM vendor's registry metadata. It decodes the subset of fields the
+// gateway needs to validate and render vendor selection (icon bytes are never
+// returned by the backend). Type is the stable vendor id (e.g. "anthropic",
+// "openrouter").
+type ProviderDefinition struct {
+	Type        string       `json:"type"`
+	DisplayName string       `json:"displayName"`
+	Description string       `json:"description"`
+	Protocol    string       `json:"protocol"`
+	Auth        string       `json:"auth"`
+	ModelTypes  []string     `json:"modelTypes,omitempty"`
+	ExtraFields []ExtraField `json:"extraFields,omitempty"`
+	Order       int          `json:"order"`
+}
+
+// ExtraField is one vendor-specific configuration input (e.g. Azure
+// api-version) declared on a provider definition.
+type ExtraField struct {
+	Key         string             `json:"key"`
+	Label       string             `json:"label"`
+	Type        string             `json:"type"`
+	Required    bool               `json:"required"`
+	Secret      bool               `json:"secret"`
+	Default     string             `json:"default,omitempty"`
+	Placeholder string             `json:"placeholder,omitempty"`
+	Options     []ExtraFieldOption `json:"options,omitempty"`
+}
+
+// ExtraFieldOption is one choice of a select extra field.
+type ExtraFieldOption struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
+// ListProviderDefinitions lists the supported LLM vendor definitions (GET
+// /api/v1/provider-definitions). Bare JSON array.
+func (m *MemoryClient) ListProviderDefinitions(ctx context.Context) ([]ProviderDefinition, error) {
+	var out []ProviderDefinition
+	if err := m.do(ctx, http.MethodGet, "/api/v1/provider-definitions", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ListProviderModels lists the cached model catalog for one provider (GET
 // /api/v1/providers/{provider}/models). Bare JSON array.
 func (m *MemoryClient) ListProviderModels(ctx context.Context, provider string) ([]ProviderSupportedModel, error) {

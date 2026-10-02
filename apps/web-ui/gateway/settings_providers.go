@@ -19,11 +19,6 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// providerWhitelist is the set of provider types the provider-config form may
-// persist. Anything else is rejected up front — never forwarded to the memory
-// backend.
-var providerWhitelist = map[string]bool{"google": true, "google-vertex": true, "openai": true, "deepseek": true}
-
 // --- Providers settings panel (project provider configs + model rates) ---
 
 // providerRateRow is one merged (provider instance, model) rate row shown in
@@ -436,7 +431,7 @@ func (s *Server) uiProjectProviderConfig(c echo.Context) error {
 		GenerativeModel:    strings.TrimSpace(c.FormValue("generative_model")),
 		EmbeddingModel:     strings.TrimSpace(c.FormValue("embedding_model")),
 	}
-	if !providerWhitelist[provider] {
+	if !s.providerIsKnown(ctx, provider) {
 		return s.renderProviderConfigError(c, provider, in, fmt.Errorf("unsupported provider %q", provider))
 	}
 	if in.BaseURL != "" {
@@ -464,6 +459,71 @@ func providerConfigSaveError(_ ProviderConfigInput, err error) error {
 	return fmt.Errorf("could not save provider: %w", err)
 }
 
+// providerIsKnown reports whether the given provider type is present in the
+// server's vendor registry. The registry is the single source of truth for the
+// selectable vendors, so the provider-config form no longer keeps a hardcoded
+// whitelist. A fetch failure rejects the request — the gateway must never
+// persist a vendor it cannot confirm the backend supports.
+func (s *Server) providerIsKnown(ctx context.Context, provider string) bool {
+	defs, err := s.memory.ListProviderDefinitions(ctx)
+	if err != nil {
+		return false
+	}
+	for _, d := range defs {
+		if d.Type == provider {
+			return true
+		}
+	}
+	return false
+}
+
+// providerVendorDefinitions returns the server's vendor registry ordered by each
+// definition's Order field ascending, for the add/edit form's vendor picker.
+// Best-effort: a fetch failure is reported and yields an empty slice, so the
+// form renders no vendor options rather than a stale hardcoded list.
+func (s *Server) providerVendorDefinitions(ctx context.Context) []ProviderDefinition {
+	defs, err := s.memory.ListProviderDefinitions(ctx)
+	if err != nil {
+		captureError(err)
+		return nil
+	}
+	return sortedProviderDefinitions(defs)
+}
+
+// sortedProviderDefinitions copies defs and orders them by Order ascending,
+// preserving the registry's relative order for equal Order values.
+func sortedProviderDefinitions(defs []ProviderDefinition) []ProviderDefinition {
+	out := slices.Clone(defs)
+	slices.SortStableFunc(out, func(a, b ProviderDefinition) int {
+		return cmp.Compare(a.Order, b.Order)
+	})
+	return out
+}
+
+// providerSelectedType returns the vendor type the add form preselects: the
+// submitted draft's provider when re-rendering a failed save, otherwise the
+// first vendor in registry order (which the browser would select anyway).
+func providerSelectedType(vendors []ProviderDefinition, draftProvider string) string {
+	if draftProvider != "" {
+		return draftProvider
+	}
+	if len(vendors) > 0 {
+		return vendors[0].Type
+	}
+	return ""
+}
+
+// providerDescription returns the registry description for a vendor type, or ""
+// when the type is unknown.
+func providerDescription(vendors []ProviderDefinition, providerType string) string {
+	for _, v := range vendors {
+		if v.Type == providerType {
+			return v.Description
+		}
+	}
+	return ""
+}
+
 // renderProviderConfigError re-renders the add/edit provider form with the
 // submitted draft values and the error, so the user can correct input in place
 // instead of losing the form. An existing provider re-renders in edit mode
@@ -475,6 +535,7 @@ func (s *Server) renderProviderConfigError(c echo.Context, provider string, in P
 		DraftProvider: provider,
 		FlashErr:      err,
 	}
+	data.Vendors = s.providerVendorDefinitions(ctx)
 	data.GenerativeModels, data.EmbeddingModels = s.providerModelOptions(ctx)
 	if providers, lerr := s.memory.ListProjectProviders(ctx); lerr == nil {
 		// A submitted slug identifies an existing instance to re-render in edit

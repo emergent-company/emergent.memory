@@ -967,6 +967,12 @@ templ providerConfigRow(p ProjectProviderConfig) {
 // on error. Without a draft, only the non-secret fields prefill from p
 // (credentials are never returned by the API, so stay blank).
 //
+// vendors is the server vendor registry, ordered by Order ascending; the add
+// form builds its vendor <select> from it (value=type, label=displayName) and
+// shows the selected vendor's description as the field hint. The selected
+// vendor's extraFields are rendered read-only beneath the credential fields —
+// server-side configuration this form does not submit.
+//
 // Save is gated on a live connection test, but only for openai: the submit
 // button starts disabled, "Test connection" probes the typed base_url + api_key
 // via HTMX (POST /settings/providers/test) and the resulting success toast
@@ -975,7 +981,7 @@ templ providerConfigRow(p ProjectProviderConfig) {
 // test button only exist for openai (the official-API providers — google,
 // deepseek, google-vertex — don't use a probe-able base URL, so Save is always
 // enabled for them and the backend validates credentials on save).
-templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, draftProvider string, genModels, embModels []Model) {
+templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, draftProvider string, vendors []ProviderDefinition, genModels, embModels []Model) {
 	<form
 		id="provider-form"
 		method="post"
@@ -987,14 +993,17 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 	>
 		<h3 class="text-sm font-semibold">{ providerFormTitle(p) }</h3>
 		if p == nil {
+			{{ sel := providerSelectedType(vendors, draftProvider) }}
 			<label class="form-control w-full">
 				<div class="label"><span class="label-text">Provider</span></div>
 				<select id="provider-type" name="provider" class="select w-full">
-					<option value="google" if draftProvider == "google" { selected }>google</option>
-					<option value="google-vertex" if draftProvider == "google-vertex" { selected }>google-vertex</option>
-					<option value="openai" if draftProvider == "openai" { selected }>openai</option>
-					<option value="deepseek" if draftProvider == "deepseek" { selected }>deepseek</option>
+					for _, v := range vendors {
+						<option value={ v.Type } if v.Type == sel { selected } data-description={ v.Description }>{ v.DisplayName }</option>
+					}
 				</select>
+				if len(vendors) > 0 {
+					<p id="provider-description" class="text-muted-faint mt-1 text-xs">{ providerDescription(vendors, sel) }</p>
+				}
 			</label>
 			// Optional instance name. Leaving it blank saves the provider's
 			// default instance; a name adds a second endpoint of the same
@@ -1094,6 +1103,26 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 				/>
 			</label>
 		</div>
+		for _, v := range vendors {
+			if len(v.ExtraFields) > 0 {
+				<div class="rounded-box border border-base-content/10 bg-base-200/30 p-3" data-provider-extra={ v.Type } style="display:none">
+					<p class="text-muted text-xs">Additional configuration for { v.DisplayName } is set server-side — not editable here.</p>
+					<ul class="mt-1 flex flex-col gap-0.5">
+						for _, f := range v.ExtraFields {
+							<li class="text-sm">
+								<span class="font-medium">{ f.Label }</span>
+								<span class="text-muted-faint font-mono text-xs">{ f.Key }</span>
+								if f.Required {
+									<span class="text-muted-faint text-xs">· Required</span>
+								} else {
+									<span class="text-muted-faint text-xs">· Optional</span>
+								}
+							</li>
+						}
+					</ul>
+				</div>
+			}
+		}
 		<div class="flex flex-wrap items-center justify-end gap-2">
 			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/settings/providers", Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Cancel }
 			if p != nil {
@@ -1170,6 +1199,8 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 				var urlInput = form.querySelector('[name="base_url"]');
 				var keyInput = form.querySelector('[name="api_key"]');
 				var urlStatus = document.getElementById('base-url-status');
+				var descEl = document.getElementById('provider-description');
+				var extraBlocks = form.querySelectorAll('[data-provider-extra]');
 
 				/* Advisory reachability check under the base_url field: fires
 				   ~600ms after typing stops, posts base_url + api_key to
@@ -1264,6 +1295,17 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 					if (vertexFields) vertexFields.style.display = v ? 'flex' : 'none';
 					if (vertexHint) vertexHint.style.display = v ? 'flex' : 'none';
 					if (officialHint) officialHint.style.display = isOfficial() ? 'flex' : 'none';
+					/* Vendor description and read-only extra-field metadata
+					   follow the selected vendor. Both are render-only and are
+					   never submitted with the form. */
+					var prov = currentProvider();
+					if (descEl && sel) {
+						var opt = sel.options[sel.selectedIndex];
+						descEl.textContent = opt ? (opt.getAttribute('data-description') || '') : '';
+					}
+					for (var i = 0; i < extraBlocks.length; i++) {
+						extraBlocks[i].style.display = extraBlocks[i].getAttribute('data-provider-extra') === prov ? '' : 'none';
+					}
 					var tested = form.getAttribute('data-tested') === '1';
 					if (testedHint) testedHint.style.display = (openai && tested) ? 'flex' : 'none';
 					if (saveBtn && isEdit) saveBtn.disabled = openai && !tested;
@@ -1359,7 +1401,7 @@ templ providerConfigPage(data providerConfigPageData) {
 				Margin:    "mb-6",
 				BodyClass: "memory-density-comfortable",
 			}) {
-				@providerConfigForm(data.Provider, data.Draft, data.DraftProvider, data.GenerativeModels, data.EmbeddingModels)
+				@providerConfigForm(data.Provider, data.Draft, data.DraftProvider, data.Vendors, data.GenerativeModels, data.EmbeddingModels)
 			}
 			if data.FlashErr != nil {
 				@providerConfigSaveErrorModal(data.FlashErr)

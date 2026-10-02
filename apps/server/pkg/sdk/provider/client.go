@@ -458,6 +458,23 @@ func (c *Client) ListPricing(ctx context.Context) ([]ProviderPricing, error) {
 	return result, err
 }
 
+// ProviderDefinition mirrors the server's provider-definition registry entry:
+// one supported LLM vendor (id + display name), ordered by the registry's
+// display order.
+type ProviderDefinition struct {
+	Type        string `json:"type"`
+	DisplayName string `json:"displayName"`
+	Order       int    `json:"order"`
+}
+
+// ListProviderDefinitions lists every supported LLM vendor definition from the
+// server registry (GET /api/v1/provider-definitions).
+func (c *Client) ListProviderDefinitions(ctx context.Context) ([]ProviderDefinition, error) {
+	var result []ProviderDefinition
+	err := c.doJSON(ctx, "GET", "/api/v1/provider-definitions", nil, &result)
+	return result, err
+}
+
 // --- Internal helpers ---
 
 func (c *Client) doJSON(ctx context.Context, method, path string, bodyIn, bodyOut any) error {

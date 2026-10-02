@@ -7,24 +7,33 @@ import (
 func TestNewRegistry(t *testing.T) {
 	r := NewRegistry()
 
-	if len(r.providers) != 4 {
-		t.Fatalf("expected 4 providers, got %d", len(r.providers))
+	if len(r.providers) != 28 {
+		t.Fatalf("expected 28 providers, got %d", len(r.providers))
 	}
 
-	if !r.IsSupported(ProviderGoogleAI) {
-		t.Error("expected google to be supported")
+	legacy := []ProviderType{ProviderGoogleAI, ProviderVertexAI, ProviderOpenAI, ProviderDeepSeek}
+	for _, pt := range legacy {
+		if !r.IsSupported(pt) {
+			t.Errorf("expected %q to be supported", pt)
+		}
 	}
-	if !r.IsSupported(ProviderVertexAI) {
-		t.Error("expected google-vertex to be supported")
+
+	for _, d := range r.List() {
+		if d.Protocol == "" {
+			t.Errorf("provider %q has empty protocol", d.Type)
+		}
+		if !validAuthStyle(d.Auth) {
+			t.Errorf("provider %q has invalid auth style %q", d.Type, d.Auth)
+		}
 	}
-	if !r.IsSupported(ProviderOpenAI) {
-		t.Error("expected openai to be supported")
-	}
-	if !r.IsSupported(ProviderDeepSeek) {
-		t.Error("expected deepseek to be supported")
-	}
-	if !r.IsSupported(ProviderOpenAI) {
-		t.Error("expected openai to be supported (ProviderOpenAI)")
+}
+
+func validAuthStyle(a AuthStyle) bool {
+	switch a {
+	case AuthBearer, AuthAPIKeyHeader, AuthXAPIKey, AuthGoogleAPIKey, AuthNone, AuthSigned:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -83,8 +92,8 @@ func TestRegistryList(t *testing.T) {
 	r := NewRegistry()
 
 	defs := r.List()
-	if len(defs) != 4 {
-		t.Fatalf("expected 4 definitions, got %d", len(defs))
+	if len(defs) != 28 {
+		t.Fatalf("expected 28 definitions, got %d", len(defs))
 	}
 
 	types := make(map[ProviderType]bool)
@@ -100,8 +109,8 @@ func TestRegistrySupportedTypes(t *testing.T) {
 	r := NewRegistry()
 
 	types := r.SupportedTypes()
-	if len(types) != 4 {
-		t.Fatalf("expected 4 types, got %d", len(types))
+	if len(types) != 28 {
+		t.Fatalf("expected 28 types, got %d", len(types))
 	}
 
 	typeSet := make(map[ProviderType]bool)
