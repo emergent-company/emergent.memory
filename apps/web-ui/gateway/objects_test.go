@@ -1249,6 +1249,27 @@ func firstSubmitTag(html string) string {
 	return rest
 }
 
+// TestRenderObjectsSearchFormLayout pins the /objects search row's layout
+// contract (#1377): the search field occupies the remaining row width and the
+// submit group sits at the far right of the content area. The grow utility on
+// the input wrapper is the mechanism for that, so it is the one class this test
+// asserts — the resolved narrow the field previously carried must be gone.
+func TestRenderObjectsSearchFormLayout(t *testing.T) {
+	form := objectSearchFormHTML(t, renderHTML(t, ObjectsPage(objectsPageData{})))
+	if !strings.Contains(form, `name="q"`) {
+		t.Fatal("search form missing query input")
+	}
+	if !strings.Contains(form, "flex-1") {
+		t.Error("search input wrapper must grow to fill the row (flex-1)")
+	}
+	if strings.Contains(form, "sm:max-w-md") {
+		t.Error("search input wrapper must not cap its width; the field fills the row (#1377)")
+	}
+	if qi, si := strings.Index(form, `name="q"`), strings.Index(form, `<button type="submit"`); qi < 0 || si < 0 || qi > si {
+		t.Errorf("search field must precede the submit group: input@%d submit@%d", qi, si)
+	}
+}
+
 // TestUIObjectsKnowledge exercises POST /objects/knowledge: a question renders
 // the answer partial, a backend error renders the error state, and an empty
 // question redirects back to the browser.
