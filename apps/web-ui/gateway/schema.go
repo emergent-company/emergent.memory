@@ -134,10 +134,12 @@ func (s *Server) uiSchemaObjectType(c echo.Context) error {
 	}
 	view := &SchemaObjectTypeView{
 		Detail: &ObjectTypeDetail{
-			Name:        found.Name,
-			Label:       found.Label,
-			Description: found.Description,
-			Properties:  compiledProperties(found.Properties),
+			Name:            found.Name,
+			Label:           found.Label,
+			Description:     found.Description,
+			Properties:      compiledProperties(found.Properties),
+			BoardEnabled:    found.BoardEnabled,
+			AllowedStatuses: found.AllowedStatuses,
 		},
 		Icon:          compiledTypeIcon(*found),
 		Color:         compiledTypeColor(*found),
@@ -423,10 +425,12 @@ func (s *Server) uiSchemaObjectTypeEdit(c echo.Context) error {
 	}
 	view := &SchemaEditView{
 		Detail: &ObjectTypeDetail{
-			Name:        found.Name,
-			Label:       found.Label,
-			Description: found.Description,
-			Properties:  compiledProperties(found.Properties),
+			Name:            found.Name,
+			Label:           found.Label,
+			Description:     found.Description,
+			Properties:      compiledProperties(found.Properties),
+			BoardEnabled:    found.BoardEnabled,
+			AllowedStatuses: found.AllowedStatuses,
 		},
 		Icon:       compiledTypeIcon(*found),
 		Color:      compiledTypeColor(*found),

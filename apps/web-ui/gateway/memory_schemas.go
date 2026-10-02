@@ -26,17 +26,19 @@ type AvailableSchemaItem struct {
 // CompiledType is one object or relationship type in the merged compiled view
 // (GET /api/schemas/projects/:pid/compiled-types).
 type CompiledType struct {
-	Name          string          `json:"name"`
-	Label         string          `json:"label"`
-	Description   string          `json:"description"`
-	Properties    json.RawMessage `json:"properties,omitempty"`
-	UI            json.RawMessage `json:"ui,omitempty"` // optional type-level ui block ({"icon":...,"color":...})
-	SourceType    string          `json:"sourceType,omitempty"`
-	TargetType    string          `json:"targetType,omitempty"`
-	SchemaID      string          `json:"schemaId,omitempty"`
-	SchemaName    string          `json:"schemaName,omitempty"`
-	SchemaVersion string          `json:"schemaVersion,omitempty"`
-	Shadowed      bool            `json:"shadowed,omitempty"`
+	Name            string          `json:"name"`
+	Label           string          `json:"label"`
+	Description     string          `json:"description"`
+	Properties      json.RawMessage `json:"properties,omitempty"`
+	UI              json.RawMessage `json:"ui,omitempty"` // optional type-level ui block ({"icon":...,"color":...})
+	SourceType      string          `json:"sourceType,omitempty"`
+	TargetType      string          `json:"targetType,omitempty"`
+	SchemaID        string          `json:"schemaId,omitempty"`
+	SchemaName      string          `json:"schemaName,omitempty"`
+	SchemaVersion   string          `json:"schemaVersion,omitempty"`
+	Shadowed        bool            `json:"shadowed,omitempty"`
+	BoardEnabled    bool            `json:"boardEnabled,omitempty"`
+	AllowedStatuses []string        `json:"allowedStatuses,omitempty"`
 }
 
 // CompiledSchemaTypes is the merged object + relationship types across active
@@ -49,15 +51,17 @@ type CompiledSchemaTypes struct {
 func (m *MemoryClient) GetCompiledTypes(ctx context.Context) (*CompiledSchemaTypes, error) {
 	var wire struct {
 		ObjectTypes []struct {
-			Name          string          `json:"name"`
-			Label         string          `json:"label"`
-			Description   string          `json:"description"`
-			Properties    json.RawMessage `json:"properties"`
-			UI            json.RawMessage `json:"ui"`
-			SchemaID      string          `json:"schemaId"`
-			SchemaName    string          `json:"schemaName"`
-			SchemaVersion string          `json:"schemaVersion"`
-			Shadowed      bool            `json:"shadowed"`
+			Name            string          `json:"name"`
+			Label           string          `json:"label"`
+			Description     string          `json:"description"`
+			Properties      json.RawMessage `json:"properties"`
+			UI              json.RawMessage `json:"ui"`
+			SchemaID        string          `json:"schemaId"`
+			SchemaName      string          `json:"schemaName"`
+			SchemaVersion   string          `json:"schemaVersion"`
+			Shadowed        bool            `json:"shadowed"`
+			BoardEnabled    bool            `json:"boardEnabled"`
+			AllowedStatuses []string        `json:"allowedStatuses"`
 		} `json:"objectTypes"`
 		RelationshipTypes []struct {
 			Name          string `json:"name"`
@@ -80,15 +84,17 @@ func (m *MemoryClient) GetCompiledTypes(ctx context.Context) (*CompiledSchemaTyp
 	}
 	for _, w := range wire.ObjectTypes {
 		out.ObjectTypes = append(out.ObjectTypes, CompiledType{
-			Name:          w.Name,
-			Label:         w.Label,
-			Description:   w.Description,
-			Properties:    w.Properties,
-			UI:            w.UI,
-			SchemaID:      w.SchemaID,
-			SchemaName:    w.SchemaName,
-			SchemaVersion: w.SchemaVersion,
-			Shadowed:      w.Shadowed,
+			Name:            w.Name,
+			Label:           w.Label,
+			Description:     w.Description,
+			Properties:      w.Properties,
+			UI:              w.UI,
+			SchemaID:        w.SchemaID,
+			SchemaName:      w.SchemaName,
+			SchemaVersion:   w.SchemaVersion,
+			Shadowed:        w.Shadowed,
+			BoardEnabled:    w.BoardEnabled,
+			AllowedStatuses: w.AllowedStatuses,
 		})
 	}
 	for _, w := range wire.RelationshipTypes {

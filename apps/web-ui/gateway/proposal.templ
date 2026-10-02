@@ -62,7 +62,7 @@ templ proposalBlueprintSection(c *ProposalCard) {
 		</div>
 		<div class="max-h-64 divide-y divide-base-content/10 overflow-y-auto overscroll-contain">
 			for _, ot := range c.ObjectTypes {
-				@objectTypeRow(ot.Name, ot.Label, ot.Description, ot.Properties, "", "", "", "")
+				@objectTypeRow(ot.Name, ot.Label, ot.Description, ot.Properties, "", "", "", "", false, nil)
 			}
 		</div>
 	}
