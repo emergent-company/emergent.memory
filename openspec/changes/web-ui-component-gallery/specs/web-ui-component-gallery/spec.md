@@ -39,12 +39,12 @@ For every catalog entry the gallery SHALL show its name, layer, source file, pro
 
 ### Requirement: Each component reports its dependencies
 
-For every catalog entry the gallery SHALL show the components it uses, the components that use it, and its external dependencies. A `uses` edge SHALL point at a catalog entry, including go-daisy components, which the gallery adds as L0 entries on demand. External dependencies SHALL be reported at package granularity and SHALL list the go-daisy packages rendered plus any client wiring the component emits (Alpine, Stimulus, htmx, or `data-*` markers).
+For every catalog entry the gallery SHALL show the components it uses, the call sites that render it, and its external dependencies. A `uses` edge SHALL point at a catalog entry, including go-daisy components, which the gallery adds as L0 entries on demand. Used-by SHALL include call sites in files that are not catalog entries — in particular pages — because a shared component's only callers are pages. External dependencies SHALL be reported at package granularity and SHALL list the go-daisy packages rendered plus any client wiring the component emits (Alpine, Stimulus, htmx, or `data-*` markers).
 
 #### Scenario: Uses and used-by are shown
 
 - **WHEN** a component is selected
-- **THEN** the gallery lists the components it renders and the call sites that render it
+- **THEN** the gallery lists the components it renders and the call sites that render it, including pages that are not catalog entries
 
 #### Scenario: External dependencies are shown
 
@@ -68,7 +68,7 @@ The gallery SHALL render each catalog entry against sample data in an isolated p
 #### Scenario: Missing fixture falls back and is flagged
 
 - **WHEN** a component has no curated fixture
-- **THEN** it is previewed with zero-value props and is marked as needing a fixture when it renders empty (no non-whitespace text and no element)
+- **THEN** it is previewed through an authored default render closure passing zero values, and is marked as needing a fixture when that render is empty (no non-whitespace text and no element) or panics on a nil slot; a panic SHALL NOT crash the gallery or the preview
 
 #### Scenario: Interactive previews are isolated
 
