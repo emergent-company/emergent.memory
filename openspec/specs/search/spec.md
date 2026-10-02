@@ -66,16 +66,24 @@ The `rrf`, `interleave`, `graph_first`, and `text_first` strategies SHALL behave
 
 ### Requirement: Query embedding is bounded and degrades to lexical-only
 
-Unified search SHALL bound each query-embedding provider call with `queryEmbedTimeout = 20s`, covering both the shared pre-computed query embedding and the per-leg re-embeds used when the shared embedding is unavailable. When a provider call fails or exceeds the bound, the caller SHALL proceed with no query vector for that leg: the text leg SHALL serve lexical (full-text) results only and the vector-dependent relationship leg SHALL produce no candidates, rather than waiting on the provider or failing the search. This is the same lexical-only fallback the search already applied on embedding error (the timeout path and the error path are indistinguishable to the caller).
+Unified search SHALL bound each query-embedding call it issues with `queryEmbedTimeout = 20s`. The bound covers two sequential stages: the shared pre-computed query embedding, and — when the shared embedding yields no vector — one bounded re-embed per enabled leg (graph, text, and relationship), which run in parallel. A slow provider can therefore add a second bounded wait, so the search's own embedding stages settle after roughly at most 2×`queryEmbedTimeout`, not a single 20-second stage. When a leg is left without a query vector, it SHALL proceed without one: the text leg SHALL serve lexical (full-text) results only, the graph leg SHALL remain available by delegating to graph hybrid search with no query vector (yielding lexical full-text results when no vector can be produced), and the vector-dependent relationship leg SHALL produce no candidates — rather than waiting indefinitely on the provider or failing the search solely because an embedding call failed or exceeded the bound. A transient shared-embedding failure that succeeds on a leg's re-embed yields that leg's hybrid (lexical + vector) results, not lexical-only. This is the same fallback the search already applied on embedding error (the timeout path and the error path are indistinguishable to the caller).
 
-#### Scenario: Slow embedding provider does not stall the search
+#### Scenario: Slow provider adds a second bounded wait, not a single stage
 
-- **WHEN** the embedding provider does not return within `queryEmbedTimeout` (20 seconds)
-- **THEN** the search SHALL stop waiting for that embedding call and complete with lexical-only text results
-- **AND** the search SHALL NOT block on the provider or fail solely because the embedding call exceeded the bound
+- **WHEN** the shared query-embedding call does not return within `queryEmbedTimeout` (20 seconds)
+- **THEN** unified search SHALL stop waiting on that call at the bound and issue one bounded re-embed per enabled leg (graph, text, and relationship), running in parallel
+- **AND** the search's embedding stages SHALL settle after roughly at most 2×`queryEmbedTimeout`
+- **AND** the search SHALL NOT fail solely because an embedding call failed or exceeded the bound
 
-#### Scenario: Timeout fallback matches the pre-existing error path
+#### Scenario: Per-leg re-embed recovers hybrid results after a transient shared failure
 
-- **WHEN** a query-embedding call exceeds the bound or otherwise errors
-- **THEN** the affected leg SHALL be treated as having no query vector, exactly as the pre-existing embedding-error fallback did
-- **AND** the text leg SHALL return lexical results and the relationship leg SHALL return no candidates
+- **WHEN** the shared query-embedding call fails or exceeds the bound
+- **AND** a leg's bounded re-embed then succeeds
+- **THEN** that leg SHALL serve hybrid (lexical + vector) results — not lexical-only — and the vector-dependent relationship leg SHALL return candidates
+
+#### Scenario: A failed per-leg re-embed degrades only that leg
+
+- **WHEN** both the shared embedding and a leg's re-embed yield no query vector
+- **THEN** the text leg SHALL serve lexical (full-text) results only, exactly as the pre-existing embedding-error fallback did
+- **AND** the graph leg SHALL remain available via graph hybrid search with no query vector, yielding lexical (full-text) results when no vector can be produced
+- **AND** the vector-dependent relationship leg SHALL produce no candidates
