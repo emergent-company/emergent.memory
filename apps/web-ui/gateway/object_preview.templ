@@ -12,6 +12,12 @@ import (
 // close button and the "open full object page" action the caller asks for; the
 // object's own icon/type/label identity is rendered by the swapped partial.
 //
+// It reuses the assistant panel's drawer pattern (#1389): a drag-to-resize
+// grip on the left edge, a double-width header toggle, and a modal-window
+// promotion that moves the SAME aside into #object-preview-modal-box — no
+// forked markup. object-preview.js owns the width state (persisted) and the
+// modal move.
+//
 // The empty <div id="object-preview-actions-slot"> at the foot of the partial
 // is the extension point for future surfaces (comments, actions) — it renders
 // nothing today.
@@ -28,6 +34,21 @@ templ objectPreviewDrawer() {
 			aria-hidden="true"
 			inert
 		>
+			<!-- Drag-to-resize grip on the left edge (desktop only). Width is
+			     driven by object-preview.js (single source of truth, persisted);
+			     keyboard operable (Left/Right arrows) as well as draggable. -->
+			<div
+				id="object-preview-resize"
+				class="hidden md:block"
+				role="separator"
+				aria-orientation="vertical"
+				aria-label="Resize object preview"
+				title="Drag to resize"
+				tabindex="0"
+				aria-valuemin="320"
+				aria-valuemax="1120"
+				aria-valuenow="512"
+			></div>
 			<div class="border-base-content/10 flex items-center justify-between gap-2 border-b px-3 py-2.5">
 				<div class="flex min-w-0 items-center gap-2">
 					@ui.IconSpan("lucide--scan-eye", "size-4 text-primary")
@@ -47,6 +68,30 @@ templ objectPreviewDrawer() {
 						AriaLabel: "Open full object page",
 						Attrs:     templ.Attributes{"id": "object-preview-edit", "data-testid": "object-preview-edit", "title": "Open full object page"},
 					})
+					<!-- Double-width toggle (drawer only; hidden below md where the
+					     drawer is already full-width). -->
+					@ui.Button(ui.ButtonProps{
+						Type:       ui.ButtonTypeButton,
+						Variant:    ui.ButtonGhost,
+						Size:       ui.ButtonSM,
+						Shape:      ui.ButtonShapeCircle,
+						Icon:       "lucide--maximize-2",
+						AriaLabel:  "Toggle double width",
+						ExtraClass: "object-preview-drawer-only hidden md:inline-flex",
+						Attrs:      templ.Attributes{"id": "object-preview-width-toggle", "data-action": "object-preview-toggle-width", "aria-pressed": "false"},
+					})
+					<!-- Promote the drawer to a centered modal window (same DOM,
+					     same loaded preview — object-preview.js moves the aside). -->
+					@ui.Button(ui.ButtonProps{
+						Type:       ui.ButtonTypeButton,
+						Variant:    ui.ButtonGhost,
+						Size:       ui.ButtonSM,
+						Shape:      ui.ButtonShapeCircle,
+						Icon:       "lucide--scan",
+						AriaLabel:  "Open object preview in a modal window",
+						ExtraClass: "object-preview-drawer-only",
+						Attrs:      templ.Attributes{"id": "object-preview-open-modal", "data-action": "object-preview-open-modal"},
+					})
 					@ui.Button(ui.ButtonProps{
 						Type:      ui.ButtonTypeButton,
 						Variant:   ui.ButtonGhost,
@@ -62,6 +107,12 @@ templ objectPreviewDrawer() {
 			     partial in here and renders a spinner / error state around it. -->
 			<div id="object-preview-body" class="min-h-0 grow overflow-y-auto" aria-live="polite"></div>
 		</aside>
+		<!-- Modal window mode: object-preview.js moves #object-preview-panel into
+		     #object-preview-modal-box (same DOM). Closing via X / Escape /
+		     backdrop returns it to the drawer. -->
+		@ui.Dialog(ui.DialogProps{ID: "object-preview-modal", BoxID: "object-preview-modal-box"}) {
+			<!-- #object-preview-panel is appended here by object-preview.js -->
+		}
 	</div>
 }
 
