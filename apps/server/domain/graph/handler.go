@@ -104,7 +104,9 @@ func skipTotalFromQuery(v string) bool {
 // parseActorProvenance parses actor_type, actor_id, and provenance query params
 // into the ListParams actor filter (issue #1193). Returns a 400 error on invalid
 // input. The (actor_type, actor_id) pair rule is enforced here: actor_id without
-// actor_type is rejected.
+// actor_type is rejected. Provenance semantics: the narrowing modes
+// (created/updated) require actor_type; the no-op value "any" is accepted
+// without an actor and leaves the filter unset (it narrows nothing).
 func parseActorProvenance(c echo.Context, params *ListParams) error {
 	if actorType := c.QueryParam("actor_type"); actorType != "" {
 		if !validActorType(actorType) {
@@ -123,11 +125,18 @@ func parseActorProvenance(c echo.Context, params *ListParams) error {
 		return apperror.NewBadRequest("actor_id requires actor_type")
 	}
 	if provenance := c.QueryParam("provenance"); provenance != "" {
-		if params.ActorType == nil {
-			return apperror.NewBadRequest("provenance requires actor_type")
-		}
 		if !validProvenance(provenance) {
 			return apperror.NewBadRequest("invalid provenance: must be one of 'created', 'updated', 'any'")
+		}
+		// "any" is the no-op / default mode: it narrows nothing, so it is
+		// accepted without actor_type and leaves params.Provenance unset (an
+		// empty provenance already behaves like "any" in the query builder).
+		// Only the narrowing modes (created/updated) require an actor.
+		if provenance == ProvenanceAny {
+			return nil
+		}
+		if params.ActorType == nil {
+			return apperror.NewBadRequest("provenance requires actor_type")
 		}
 		params.Provenance = provenance
 	}

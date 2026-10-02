@@ -59,7 +59,7 @@ Object and relationship API responses SHALL expose the recorded actor fields so 
 
 ### Requirement: Object provenance filter with created/updated/any modes
 
-Object listing SHALL support filtering by provenance. The filter SHALL accept a `(actor_type, actor_id)` pair and a mode of `created`, `updated`, or `any`. "Created by actor X" SHALL match objects whose earliest SURVIVING version row was authored by X (the root row, `version=1` in the normal case), scoped to the SAME project and branch as the outer query. On a named branch, `version=1` is the branch's fork-time copy, so "created by" there reflects the version author at fork time and may differ from the object's original creator on `main`. "Updated by actor X" SHALL match objects whose HEAD row (`supersedes_id IS NULL`) was authored by X. `any` SHALL match objects where X is either the creator or the latest updater. The API SHALL validate `actor_type` against the known set (`user`, `agent`, `system`) and SHALL reject `provenance` without `actor_type`.
+Object listing SHALL support filtering by provenance. The filter SHALL accept a `(actor_type, actor_id)` pair and a mode of `created`, `updated`, or `any`. "Created by actor X" SHALL match objects whose earliest SURVIVING version row was authored by X (the root row, `version=1` in the normal case), scoped to the SAME project and branch as the outer query. On a named branch, `version=1` is the branch's fork-time copy, so "created by" there reflects the version author at fork time and may differ from the object's original creator on `main`. "Updated by actor X" SHALL match objects whose HEAD row (`supersedes_id IS NULL`) was authored by X. `any` SHALL match objects where X is either the creator or the latest updater. The API SHALL validate `actor_type` against the known set (`user`, `agent`, `system`). The narrowing modes `created` and `updated` SHALL be rejected without `actor_type`; the no-op value `any` SHALL be accepted without `actor_type` and SHALL apply no provenance narrowing.
 
 #### Scenario: Filter by creator
 
@@ -91,10 +91,15 @@ Object listing SHALL support filtering by provenance. The filter SHALL accept a 
 - **WHEN** an object list query supplies an `actor_type` outside `user`/`agent`/`system`
 - **THEN** the API rejects it with a 400
 
-#### Scenario: Provenance without actor_type rejected
+#### Scenario: Narrowing provenance without actor_type rejected
 
-- **WHEN** an object list query supplies `provenance` without `actor_type`
+- **WHEN** an object list query supplies `provenance=created` or `provenance=updated` without `actor_type`
 - **THEN** the API rejects it with a 400
+
+#### Scenario: No-op any provenance accepted without actor_type
+
+- **WHEN** an object list query supplies `provenance=any` without `actor_type`
+- **THEN** the API accepts it and applies no provenance narrowing (equivalent to omitting `provenance`)
 
 ### Requirement: Agent identity propagation through nested and delegated runs
 
