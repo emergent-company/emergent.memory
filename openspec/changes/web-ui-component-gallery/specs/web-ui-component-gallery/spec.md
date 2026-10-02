@@ -6,12 +6,17 @@ A dev-gated component gallery for the gateway: it catalogs the reusable templ co
 
 ### Requirement: Gallery catalogs reusable templ components
 
-The gallery SHALL list the gateway's reusable templ components: those in the shared `components` package, shared composites written in `package main`, and the go-daisy components referenced by them. It SHALL exclude page-level templates and page-private helpers, and it SHALL group entries by component layer and category.
+The gallery SHALL list the gateway's reusable templ components: those in the shared `components` package, reusable composites written in `package main`, and the go-daisy components those entries render. A `package main` composite SHALL be in scope only when it is reused across two or more page features or encapsulates an invariant, and the in-scope set SHALL be an explicit registry seed rather than inferred from a naming or visibility convention. Page-level templates and page-private helpers SHALL be excluded. Entries SHALL be grouped by component layer and category.
 
 #### Scenario: Shared components are listed
 
 - **WHEN** the gallery page is opened
-- **THEN** every reusable component in the `components` package and every shared `package main` composite appears in the listing
+- **THEN** every reusable component in the `components` package and every in-scope `package main` composite appears in the listing
+
+#### Scenario: Single-use exported helper is excluded
+
+- **WHEN** an exported `package main` templ func is used by only one page feature
+- **THEN** it is treated as page-private and does not appear as a catalog entry
 
 #### Scenario: Used go-daisy components are listed
 
@@ -34,7 +39,7 @@ For every catalog entry the gallery SHALL show its name, layer, source file, pro
 
 ### Requirement: Each component reports its dependencies
 
-For every catalog entry the gallery SHALL show the components it uses, the components that use it, and its external dependencies. External dependencies SHALL include the go-daisy packages it renders and any client wiring it emits (Alpine, Stimulus, htmx, or `data-*` markers).
+For every catalog entry the gallery SHALL show the components it uses, the components that use it, and its external dependencies. A `uses` edge SHALL point at a catalog entry, including go-daisy components, which the gallery adds as L0 entries on demand. External dependencies SHALL be reported at package granularity and SHALL list the go-daisy packages rendered plus any client wiring the component emits (Alpine, Stimulus, htmx, or `data-*` markers).
 
 #### Scenario: Uses and used-by are shown
 
@@ -43,13 +48,13 @@ For every catalog entry the gallery SHALL show the components it uses, the compo
 
 #### Scenario: External dependencies are shown
 
-- **WHEN** a component renders a go-daisy primitive or emits client wiring such as `x-data`, `data-controller`, or `hx-*`
+- **WHEN** a component renders a go-daisy package or emits client wiring such as `x-data`, `data-controller`, or `hx-*`
 - **THEN** those external dependencies are listed for that component
 
 #### Scenario: Dependency targets resolve within the catalog
 
-- **WHEN** the catalog reports that component A uses component B
-- **THEN** B is itself a catalog entry listed by the gallery
+- **WHEN** the catalog reports that a gateway component uses another component
+- **THEN** the target is itself a catalog entry — a gateway entry, or a go-daisy L0 entry added on demand
 
 ### Requirement: Components render in isolated previews with sample data
 
@@ -63,7 +68,7 @@ The gallery SHALL render each catalog entry against sample data in an isolated p
 #### Scenario: Missing fixture falls back and is flagged
 
 - **WHEN** a component has no curated fixture
-- **THEN** it is previewed with zero-value props and is marked as needing a fixture when it renders empty
+- **THEN** it is previewed with zero-value props and is marked as needing a fixture when it renders empty (no non-whitespace text and no element)
 
 #### Scenario: Interactive previews are isolated
 
@@ -72,11 +77,11 @@ The gallery SHALL render each catalog entry against sample data in an isolated p
 
 ### Requirement: Gallery is dev-gated
 
-The gallery SHALL only be served when it is explicitly enabled by configuration. When it is disabled, its routes SHALL respond as not found and the gallery SHALL NOT be linked from the main navigation.
+The gallery SHALL only be served when it is explicitly enabled by configuration. When it is disabled, its routes SHALL respond as not found after authentication (an unauthenticated request is redirected to sign-in first, as for any protected route) and the gallery SHALL NOT be linked from the main navigation.
 
 #### Scenario: Disabled gallery is not served
 
-- **WHEN** the gallery is disabled and a request is made to a gallery route
+- **WHEN** the gallery is disabled and an authenticated request is made to a gallery route
 - **THEN** the response is 404 and no gallery content is rendered
 
 #### Scenario: Enabled gallery is served
