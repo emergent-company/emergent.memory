@@ -6,7 +6,7 @@ A dev-gated component gallery for the gateway: it catalogs the reusable templ co
 
 ### Requirement: Gallery catalogs reusable templ components
 
-The gallery SHALL list the gateway's reusable templ components: those in the shared `components` package, reusable composites written in `package main`, and the go-daisy components those entries render. A `package main` composite SHALL be in scope only when it is reused across two or more page features or encapsulates an invariant, and the in-scope set SHALL be an explicit registry seed rather than inferred from a naming or visibility convention. Page-level templates and page-private helpers SHALL be excluded. Entries SHALL be grouped by component layer and category.
+The gallery SHALL list the gateway's reusable templ components: those in the shared `components` package, reusable composites written in `package main`, and the go-daisy components those entries render. A `package main` composite SHALL be in scope only when it is reused across two or more page features or encapsulates an invariant, and the in-scope set SHALL be an explicit registry seed rather than inferred from a naming or visibility convention. "Reused across two or more page features" SHALL mean the generated used-by edges reach two or more distinct page components; page-local (L3) helpers SHALL be excluded by layer regardless of call count. Page-level templates and page-private helpers SHALL be excluded. Entries SHALL be grouped by component layer and category.
 
 #### Scenario: Shared components are listed
 
@@ -75,6 +75,11 @@ The gallery SHALL render each catalog entry against sample data in an isolated p
 - **WHEN** a component that opens a dialog, dropdown, or overlay is previewed
 - **THEN** the overlay is confined to the preview area and does not cover the gallery page
 
+#### Scenario: Preview cannot mutate the backend
+
+- **WHEN** a previewed component contains a form or an htmx post control
+- **THEN** the preview's sandbox prevents the session cookie from authorising a mutation and any submission fails harmlessly
+
 ### Requirement: Gallery is dev-gated
 
 The gallery SHALL only be served when it is explicitly enabled by configuration. When it is disabled, its routes SHALL respond as not found after authentication (an unauthenticated request is redirected to sign-in first, as for any protected route) and the gallery SHALL NOT be linked from the main navigation.
@@ -93,6 +98,11 @@ The gallery SHALL only be served when it is explicitly enabled by configuration.
 
 - **WHEN** the gallery is disabled
 - **THEN** no gallery entry appears in the sidebar navigation
+
+#### Scenario: Dev routes are not project-scoped
+
+- **WHEN** the gallery is enabled and the session has no active project
+- **THEN** the gallery is served without redirecting to project selection
 
 ### Requirement: Dependency graph is generated and consistent
 
