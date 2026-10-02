@@ -91,22 +91,30 @@ func TestRenderObjectsPage(t *testing.T) {
 }
 
 // TestRenderObjectsProvenanceFilter covers the actor provenance controls on the
-// generic browser: a "Created by / Updated by / Any" mode toggle, an actor-type
-// select, and the actor-id field once an actor type is chosen. Copy is plain
-// object wording — never a memory concept.
+// generic browser: a "Created by / Updated by / Any" mode toggle and a single
+// actor select listing real project members (Users) and agent definitions
+// (Agents), whose option value encodes the whole (actor_type, actor_id) pair.
+// Copy is plain object wording — never a memory concept.
 func TestRenderObjectsProvenanceFilter(t *testing.T) {
 	html := renderHTML(t, ObjectsPage(objectsPageData{
 		Objects:    []GraphObject{{ID: "o1", Type: "note", Key: "agent-note"}},
 		Provenance: "created",
 		ActorType:  "agent",
 		ActorID:    "11111111-1111-1111-1111-111111111111",
+		ActorOptions: []objectActorOption{
+			{Type: "user", ID: "u1", Label: "Sam Lee"},
+			{Type: "agent", ID: "11111111-1111-1111-1111-111111111111", Label: "diane"},
+		},
 	}))
 	for _, want := range []string{
 		`name="provenance"`, `value="any"`, `value="created"`, `value="updated"`,
 		"Any", "Created by", "Updated by",
 		`aria-label="Provenance"`,
-		`name="actor_type"`, `aria-label="Actor type"`, "Any actor", "Agent",
-		`name="actor_id"`, `aria-label="Actor id"`, `value="11111111-1111-1111-1111-111111111111"`,
+		`name="actor"`, `aria-label="Actor"`, "Any actor",
+		`<optgroup label="Users">`, `<optgroup label="Agents">`,
+		"Sam Lee", "diane",
+		`value="user:u1"`,
+		`value="agent:11111111-1111-1111-1111-111111111111" selected`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("provenance filter missing %q", want)
@@ -119,20 +127,38 @@ func TestRenderObjectsProvenanceFilter(t *testing.T) {
 	if got := strings.Count(html, `name="provenance" value="created" checked`); got != 1 {
 		t.Errorf("active provenance mode not checked: %d", got)
 	}
-	// user/system options are offered by the actor-type select.
-	for _, want := range []string{">User<", ">System<"} {
-		if !strings.Contains(html, want) {
-			t.Errorf("actor type select missing %q", want)
-		}
+	// The free-text actor-id input is gone: actors are chosen from the dropdown.
+	if strings.Contains(html, `aria-label="Actor id"`) {
+		t.Error("actor id text input should be replaced by the actor dropdown")
 	}
 
-	// The actor-id field is always available so the pair can be filled in before
-	// submitting; without an actor type it stays empty and applies nothing.
+	// The actor select is always available; without a selection it stays on
+	// "Any actor" and applies nothing.
 	noActor := renderHTML(t, ObjectsPage(objectsPageData{
 		Objects: []GraphObject{{ID: "o1", Type: "note"}},
 	}))
-	if !strings.Contains(noActor, `aria-label="Actor id"`) {
-		t.Error("actor id field should always render beside the actor type select")
+	if !strings.Contains(noActor, `aria-label="Actor"`) {
+		t.Error("actor select should always render in the browse filter")
+	}
+	if !strings.Contains(noActor, `value="" selected`) {
+		t.Error("empty actor select should select the Any actor option")
+	}
+}
+
+// TestRenderObjectsActorFilterFallbackOption pins that an active actor pair
+// which is not among the loaded options (a former member, or one passed by URL)
+// still renders as a selected option, so the control reflects the active filter
+// instead of silently resetting to "Any actor".
+func TestRenderObjectsActorFilterFallbackOption(t *testing.T) {
+	html := renderHTML(t, ObjectsPage(objectsPageData{
+		Objects:   []GraphObject{{ID: "o1", Type: "note"}},
+		ActorType: "user",
+		ActorID:   "deadbeef-0000-0000-0000-000000000000",
+	}))
+	for _, want := range []string{`value="user:deadbeef-0000-0000-0000-000000000000" selected`, "User"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("fallback actor option missing %q", want)
+		}
 	}
 }
 
@@ -145,7 +171,7 @@ func TestRenderObjectsProvenanceFilterHiddenInSearch(t *testing.T) {
 		Query: "sam",
 		Mode:  "unified",
 	}))
-	for _, bad := range []string{`name="provenance"`, `aria-label="Provenance"`, `aria-label="Actor type"`} {
+	for _, bad := range []string{`name="provenance"`, `aria-label="Provenance"`, `name="actor"`, `aria-label="Actor"`} {
 		if strings.Contains(html, bad) {
 			t.Errorf("search mode must not render provenance control %q", bad)
 		}
@@ -179,7 +205,7 @@ func TestRenderAgentScopedObjectsPage(t *testing.T) {
 		}
 	}
 	// No editable actor controls: the pair is fixed to the agent.
-	for _, bad := range []string{`aria-label="Actor type"`, `aria-label="Actor id"`} {
+	for _, bad := range []string{`aria-label="Actor"`, `name="actor"`} {
 		if strings.Contains(html, bad) {
 			t.Errorf("agent-scoped view must not render editable actor control %q", bad)
 		}
@@ -249,6 +275,45 @@ func TestUIObjectsProvenanceParams(t *testing.T) {
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?actor_type=agent", nil))
 	if f.lastPageActorType != "" || f.lastPageActorID != "" {
 		t.Errorf("actor_type without actor_id must be dropped, got %q/%q", f.lastPageActorType, f.lastPageActorID)
+	}
+}
+
+// TestUIObjectsCombinedActorParam pins the actor dropdown's submission contract:
+// the single select submits the pair as `actor=<type>:<id>`, which parses back to
+// the (actor_type, actor_id) pair, while malformed or incomplete combined values
+// are dropped exactly like an incomplete explicit pair.
+func TestUIObjectsCombinedActorParam(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/objects", s.uiObjects)
+
+	t.Run("user pair", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?actor=user:u-1&provenance=updated", nil))
+		if f.lastPageActorType != "user" || f.lastPageActorID != "u-1" || f.lastPageProvenance != "updated" {
+			t.Errorf("parsed pair = %q/%q/%q, want user/u-1/updated", f.lastPageActorType, f.lastPageActorID, f.lastPageProvenance)
+		}
+	})
+	t.Run("agent pair", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?actor=agent:a-1", nil))
+		if f.lastPageActorType != "agent" || f.lastPageActorID != "a-1" {
+			t.Errorf("parsed pair = %q/%q, want agent/a-1", f.lastPageActorType, f.lastPageActorID)
+		}
+	})
+	for name, query := range map[string]string{
+		"missing separator": "actor=bogus",
+		"empty id":          "actor=agent:",
+		"unknown type":      "actor=robot:x",
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?"+query, nil))
+			if f.lastPageActorType != "" || f.lastPageActorID != "" {
+				t.Errorf("%s must drop the pair, got %q/%q", query, f.lastPageActorType, f.lastPageActorID)
+			}
+		})
 	}
 }
 
@@ -1247,6 +1312,27 @@ func firstSubmitTag(html string) string {
 		return rest[:j]
 	}
 	return rest
+}
+
+// TestRenderObjectsSearchFormLayout pins the /objects search row's layout
+// contract (#1377): the search field occupies the remaining row width and the
+// submit group sits at the far right of the content area. The grow utility on
+// the input wrapper is the mechanism for that, so it is the one class this test
+// asserts — the resolved narrow the field previously carried must be gone.
+func TestRenderObjectsSearchFormLayout(t *testing.T) {
+	form := objectSearchFormHTML(t, renderHTML(t, ObjectsPage(objectsPageData{})))
+	if !strings.Contains(form, `name="q"`) {
+		t.Fatal("search form missing query input")
+	}
+	if !strings.Contains(form, "flex-1") {
+		t.Error("search input wrapper must grow to fill the row (flex-1)")
+	}
+	if strings.Contains(form, "sm:max-w-md") {
+		t.Error("search input wrapper must not cap its width; the field fills the row (#1377)")
+	}
+	if qi, si := strings.Index(form, `name="q"`), strings.Index(form, `<button type="submit"`); qi < 0 || si < 0 || qi > si {
+		t.Errorf("search field must precede the submit group: input@%d submit@%d", qi, si)
+	}
 }
 
 // TestUIObjectsKnowledge exercises POST /objects/knowledge: a question renders

@@ -133,6 +133,59 @@ func TestObjectPreviewDrawerContract(t *testing.T) {
 	}
 }
 
+// TestObjectPreviewResizeAndModalContract pins the assistant-panel pattern
+// (#1389) ported onto the object preview: the resizable separator, the
+// double-width toggle, the modal-open action, and the modal box the aside is
+// moved into. These ids/markers are what object-preview.js wires against.
+func TestObjectPreviewResizeAndModalContract(t *testing.T) {
+	html := renderHTML(t, objectPreviewDrawer())
+	for _, want := range []string{
+		`id="object-preview-resize"`,
+		`role="separator"`,
+		`aria-orientation="vertical"`,
+		`aria-label="Resize object preview"`,
+		`tabindex="0"`,
+		`id="object-preview-width-toggle"`,
+		`data-action="object-preview-toggle-width"`,
+		`aria-pressed="false"`,
+		`id="object-preview-open-modal"`,
+		`data-action="object-preview-open-modal"`,
+		`id="object-preview-modal"`,
+		`id="object-preview-modal-box"`,
+		`object-preview-drawer-only`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("resize/modal contract missing %q\n%s", want, html)
+		}
+	}
+}
+
+// TestObjectPreviewClientWiring pins the client half of #1389: the shared
+// resize grip is reused (no parallel implementation), the modal move uses the
+// object-preview-in-modal marker, and the separator is keyboard operable.
+func TestObjectPreviewClientWiring(t *testing.T) {
+	src, err := os.ReadFile("webui/static/js/object-preview.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(src)
+	for _, want := range []string{
+		`MemoryChatHost.createResizeGrip`,
+		`memory.objectpreview.width.v1`,
+		`"object-preview-resize"`,
+		`"object-preview-width-toggle"`,
+		`"object-preview-open-modal"`,
+		`"object-preview-modal"`,
+		`object-preview-in-modal`,
+		`ArrowLeft`,
+		`ArrowRight`,
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("object-preview.js missing %q", want)
+		}
+	}
+}
+
 func TestObjectPreviewNotFound(t *testing.T) {
 	html := renderHTML(t, objectPreviewNotFound())
 	if !strings.Contains(html, "Object unavailable") {

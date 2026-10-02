@@ -22,6 +22,7 @@ type Project struct {
 	AutoExtractObjects          *bool          `json:"auto_extract_objects,omitempty"`
 	AutoExtractConfig           map[string]any `json:"auto_extract_config,omitempty"`
 	BudgetUSD                   *float64       `json:"budget_usd,omitempty"`
+	BudgetAlertThreshold        *float64       `json:"budget_alert_threshold,omitempty"`
 	Stats                       map[string]any `json:"stats,omitempty"`
 	AutoMergeExtractionBranches *bool          `json:"auto_merge_extraction_branches,omitempty"`
 	MainBranchID                string         `json:"main_branch_id,omitempty"`

@@ -181,7 +181,7 @@ templ queueStatsSection(title string, s EmbeddingQueueStats) {
 			{Label: "Failed", Value: strconv.FormatInt(s.Failed, 10), Icon: "lucide--x", IconColor: "bg-error/10 text-error"},
 			{Label: "Stale failed", Value: strconv.FormatInt(s.StaleFailed, 10), Icon: "lucide--history", IconColor: "bg-base-200/60 text-base-content"},
 			{Label: "Dead letter", Value: strconv.FormatInt(s.DeadLetter, 10), Icon: "lucide--mail-warning", IconColor: "bg-warning/10 text-warning"},
-		}, StatRowOpts{})
+		}, StatRowOpts{ColsClass: "lg:grid-cols-3"})
 	}
 }
 

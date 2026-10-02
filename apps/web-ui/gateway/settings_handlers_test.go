@@ -45,6 +45,7 @@ func TestUIProjectSettingsRoute(t *testing.T) {
 		`hx-post="/settings/remember/agent"`, `hx-post="/settings/remember/dedup"`,
 		`hx-post="/settings/editor"`, `name="editor_agent"`,
 		`href="/settings/assistant"`, `href="/settings/overrides"`, `href="/settings/providers"`,
+		`href="/settings/budget"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("settings route missing %q", want)
@@ -70,10 +71,12 @@ func TestUIProjectSettingsRouteAbsent(t *testing.T) {
 		t.Fatalf("status %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"Budget not set.", "not set"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("absent settings route missing %q", want)
-		}
+	if !strings.Contains(body, "Object edits run on the default agent until you pick one.") {
+		t.Error("absent settings route missing the editor-agent default note")
+	}
+	// budget moved to its own sub-page
+	if strings.Contains(body, `name="budget_usd"`) {
+		t.Error("General route must not render the budget field (moved to /settings/budget)")
 	}
 }
 
@@ -171,9 +174,35 @@ func TestUIProjectDeviceSettingsRoute(t *testing.T) {
 		"Devices", "iOS setup", "No devices registered yet.",
 		`href="/settings"`, `href="/settings/assistant"`, `href="/settings/overrides"`,
 		`href="/settings/providers"`, `href="/settings/voice"`, `href="/settings/devices"`,
+		`href="/settings/budget"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("devices route missing %q", want)
+		}
+	}
+}
+
+// TestUIProjectBudgetSettingsRoute exercises GET /settings/budget: the Budget
+// sub-page renders its sub-nav and both inline auto-save fields.
+func TestUIProjectBudgetSettingsRoute(t *testing.T) {
+	f := &fakeMemory{project: &Project{ID: "p1", Name: "Home", BudgetUSD: floatPtr(25.5), BudgetAlertThreshold: floatPtr(0.8)}}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.GET("/settings/budget", s.uiProjectBudgetSettings)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/budget", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Budget",
+		`name="budget_alert_threshold"`, `name="budget_usd"`,
+		`href="/settings/budget"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("budget route missing %q", want)
 		}
 	}
 }
@@ -368,6 +397,48 @@ func TestUIProjectSettingsProjectFieldError(t *testing.T) {
 	}
 	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, "backend unreachable") {
 		t.Errorf("write failure should trigger an error toast, got %q", hdr)
+	}
+}
+
+// TestUIProjectSettingsProjectFieldBudgetThreshold covers the budget alert
+// threshold inline save: a whole percentage in (0,100] is converted to a
+// fraction; empty, zero, negative, and over-100 values are rejected before any
+// write.
+func TestUIProjectSettingsProjectFieldBudgetThreshold(t *testing.T) {
+	f := &fakeMemory{project: &Project{ID: "p1", Name: "Home"}}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/project/:field", s.uiProjectSettingsProjectField)
+
+	rec := voicePost(e, "/settings/project/budget_alert_threshold", "budget_alert_threshold=80")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, `"kind":"success"`) {
+		t.Errorf("valid threshold should trigger a success toast, got %q", hdr)
+	}
+	if f.updatedProject == nil || f.updatedProject.BudgetAlertThreshold == nil || *f.updatedProject.BudgetAlertThreshold != 0.8 {
+		t.Errorf("budget_alert_threshold = %v, want 0.8", f.updatedProject)
+	}
+
+	for _, in := range []string{"0", "-5", "150", ""} {
+		t.Run("invalid "+in, func(t *testing.T) {
+			f := &fakeMemory{project: &Project{ID: "p1", Name: "Home"}}
+			s := &Server{cfg: Config{}, memory: f}
+			e := echo.New()
+			e.POST("/settings/project/:field", s.uiProjectSettingsProjectField)
+
+			rec := voicePost(e, "/settings/project/budget_alert_threshold", "budget_alert_threshold="+in)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status %d, want 200", rec.Code)
+			}
+			if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, `"kind":"error"`) {
+				t.Errorf("invalid threshold %q should trigger an error toast, got %q", in, hdr)
+			}
+			if f.updatedProject != nil {
+				t.Errorf("UpdateProject must not be called for invalid threshold %q", in)
+			}
+		})
 	}
 }
 

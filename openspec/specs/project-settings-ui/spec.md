@@ -2,7 +2,9 @@
 
 ## Purpose
 A gateway web UI page where a user can view and edit project-level Memory configuration: the project record, per-agent definition overrides, the remember pipeline config, and the entity-create dedup threshold.
+
 ## Requirements
+
 ### Requirement: Navigate to project settings
 
 The gateway sidebar SHALL include a Project Settings entry in the Settings group that opens the project settings page.
@@ -14,21 +16,21 @@ The gateway sidebar SHALL include a Project Settings entry in the Settings group
 
 ### Requirement: Show the project info
 
-The project settings page SHALL display the project record, including the project name, project info, chat prompt template, auto-extract objects, auto-merge extraction branches, and budget.
+The project settings page SHALL display the project record, including the project name, project info, chat prompt template, auto-extract objects, and auto-merge extraction branches. The monthly budget is not shown here; it lives on the Budget settings page.
 
 #### Scenario: Project info present
 
 - **WHEN** the project settings page loads
-- **THEN** the project name, project info, chat prompt template, auto-extract objects, auto-merge extraction branches, and budget are shown
+- **THEN** the project name, project info, chat prompt template, auto-extract objects, and auto-merge extraction branches are shown
 
 #### Scenario: Optional fields absent
 
-- **WHEN** an optional field (project info, chat prompt template, or budget) is not set
+- **WHEN** an optional field (project info or chat prompt template) is not set
 - **THEN** that field is shown as a clear "not set" state
 
 ### Requirement: Edit the project info
 
-The project settings page SHALL allow the user to update the project name, project info, chat prompt template, auto-extract objects, auto-merge extraction branches, and budget.
+The project settings page SHALL allow the user to update the project name, project info, chat prompt template, auto-extract objects, and auto-merge extraction branches. The monthly budget is edited on the Budget settings page.
 
 #### Scenario: Save project changes
 

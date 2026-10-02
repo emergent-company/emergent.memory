@@ -56,7 +56,7 @@ templ ChatPage(agents []AgentDefinitionSummary, convs *ConversationList, appeara
 // the active conversation's server-rendered dock cards and session todos.
 templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, appearances map[string]agentAppearance, schedRuns []scheduledRunRow, shared []sharedSessionRow, preselect string, convID string, prompt string, voiceEnabled bool, modelWarnings map[string]string, runControl chatRunControl) {
 	<div id="chat-root" data-conv={ convID } data-prompt={ prompt } class="flex h-full flex-col md:flex-row">
-		<aside id="chat-rail" class="bg-base-100 border-base-content/5 relative hidden w-full shrink-0 flex-col border-r md:flex md:w-72">
+		<aside id="chat-rail" aria-label="Sessions" class="bg-base-100 border-base-content/5 relative hidden w-full shrink-0 flex-col border-r md:flex md:w-72">
 			<!-- Drag-to-resize grip on the right edge (desktop only; below md the
 			     rail is a full-width overlay). Width is driven by chat.js
 			     (single source of truth, persisted to localStorage). -->
@@ -68,31 +68,34 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 				aria-label="Resize session list"
 				title="Drag to resize"
 			></div>
-			<div class="border-base-content/5 flex items-center justify-between gap-2 border-b px-4 py-3">
-				<span class="text-muted text-xs font-semibold tracking-[0.14em] uppercase">Sessions</span>
-				@ui.Button(ui.ButtonProps{
-					Type:       ui.ButtonTypeButton,
-					Variant:    ui.ButtonGhost,
-					Size:       ui.ButtonSM,
-					Shape:      ui.ButtonShapeCircle,
-					Icon:       "lucide--x",
-					AriaLabel:  "Close session list",
-					ExtraClass: "md:hidden",
-					Attrs:      templ.Attributes{"data-action": "toggle-chat-rail"},
-				})
-			</div>
+			<!-- No "Sessions" title bar: the aside's aria-label carries the name,
+			     and the list starts right below the controls. On mobile the rail
+			     is a full-width overlay, so its close control rides beside
+			     "New chat" (the chat header is covered while the overlay is up). -->
 			<div class="space-y-2 p-3 pb-1">
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeLink,
-					Href:    "/chat",
-					Variant: ui.ButtonPrimary,
-					Size:    ui.ButtonSM,
-					Block:   true,
-					Icon:    "lucide--plus",
-					Attrs:   templ.Attributes{"data-testid": "new-chat"},
-				}) {
-					New chat
-				}
+				<div class="flex items-center gap-2">
+					@ui.Button(ui.ButtonProps{
+						Type:       ui.ButtonTypeLink,
+						Href:       "/chat",
+						Variant:    ui.ButtonPrimary,
+						Size:       ui.ButtonSM,
+						Icon:       "lucide--plus",
+						ExtraClass: "min-w-0 flex-1",
+						Attrs:      templ.Attributes{"data-testid": "new-chat"},
+					}) {
+						New chat
+					}
+					@ui.Button(ui.ButtonProps{
+						Type:       ui.ButtonTypeButton,
+						Variant:    ui.ButtonGhost,
+						Size:       ui.ButtonSM,
+						Shape:      ui.ButtonShapeCircle,
+						Icon:       "lucide--x",
+						AriaLabel:  "Close session list",
+						ExtraClass: "md:hidden",
+						Attrs:      templ.Attributes{"data-action": "toggle-chat-rail"},
+					})
+				</div>
 				<select id="chat-agent-filter" class="select select-sm select-bordered w-full" aria-label="Filter sessions by agent">
 					<option value="">All agents</option>
 					for _, a := range agents {
@@ -121,8 +124,8 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 			</div>
 		</aside>
 		<div class="flex min-w-0 grow flex-col">
-			<div class="border-base-content/5 flex flex-wrap items-center justify-between gap-3 border-b bg-base-100 px-4 py-3 lg:px-6">
-				<div class="flex min-w-0 items-center gap-3" data-testid="chat-agent-header">
+			<div class="border-base-content/5 flex flex-wrap items-center justify-between gap-3 border-b bg-base-100 px-4 py-2 lg:px-6">
+				<div class="flex min-w-0 flex-1 items-center gap-3" data-testid="chat-agent-header">
 					@ui.Button(ui.ButtonProps{
 						Type:       ui.ButtonTypeButton,
 						Variant:    ui.ButtonGhost,
