@@ -193,7 +193,33 @@
     return q;
   }
 
+  // openNotification navigates a row to its deep link (the pending
+  // question/approval) and marks it read on the way out. The read PATCH is
+  // sent with keepalive so it survives the navigation; navigation is not
+  // blocked on it. Already-read rows navigate straight through.
+  function openNotification(el) {
+    var href = el.getAttribute("href");
+    if (!href) return;
+    var id = el.getAttribute("data-notif-id");
+    var row = el.closest("[data-notification-id]");
+    var unread = row && row.getAttribute("data-notification-unread") === "true";
+    if (id && unread) {
+      fetch("/api/notifications/" + encodeURIComponent(id) + "/read", {
+        method: "PATCH",
+        credentials: "same-origin",
+        keepalive: true,
+      }).catch(function () {});
+    }
+    window.location.assign(href);
+  }
+
   function onClick(ev) {
+    var openEl = ev.target.closest("[data-notification-open]");
+    if (openEl) {
+      ev.preventDefault();
+      openNotification(openEl);
+      return;
+    }
     var el = ev.target.closest("[data-notif-action], [data-inbox-action]");
     if (!el) return;
     ev.preventDefault();

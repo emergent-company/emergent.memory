@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"sync"
 	"sync/atomic"
 
@@ -319,6 +320,14 @@ func createQuestionNotificationDirect(ctx context.Context, deps AskUserToolDeps,
 	relatedType := "agent_question"
 	importance := "important"
 
+	// Every agent-question notification deep-links to where the pending question
+	// or tool approval can actually be answered (issue #1362): the chat
+	// conversation the run belongs to, whose dock renders the question/approval
+	// controls, falling back to the approvals page for runs without a
+	// conversation (scheduled/background runs).
+	actionURL := questionNotificationActionURL(ctx, deps.Repo, deps.RunID)
+	actionLabel := "Review"
+
 	in := notifications.CreateInput{
 		UserID:              deps.UserID,
 		ProjectID:           &deps.ProjectID,
@@ -334,9 +343,13 @@ func createQuestionNotificationDirect(ctx context.Context, deps AskUserToolDeps,
 		RelatedResourceID:   &q.ID,
 		Importance:          importance,
 		RequiresAction:      true,
+		ActionURL:           &actionURL,
+		ActionLabel:         &actionLabel,
 	}
 
-	// Map options to notification actions
+	// Map options to notification actions. The inline actions resolve the
+	// notification from the inbox; the action URL above remains the deep link
+	// for verifying/approving in the conversation.
 	if len(q.Options) > 0 {
 		actions := make([]map[string]string, 0, len(q.Options))
 		for _, opt := range q.Options {
@@ -350,9 +363,6 @@ func createQuestionNotificationDirect(ctx context.Context, deps AskUserToolDeps,
 			in.Actions = actionsJSON
 		}
 	} else {
-		// Open-ended question: set actionURL for response page
-		actionURL := fmt.Sprintf("/agents/questions/%s", q.ID)
-		in.ActionURL = &actionURL
 		in.Actions = json.RawMessage("[]")
 	}
 
@@ -379,6 +389,24 @@ func createQuestionNotificationDirect(ctx context.Context, deps AskUserToolDeps,
 	// event carrying the question details for the question UI.
 
 	return created.ID
+}
+
+// approvalPagePath is the console's tool-approval surface, used as the
+// deep-link fallback for a run that has no chat conversation to open.
+const approvalPagePath = "/settings/approvals"
+
+// questionNotificationActionURL resolves where an agent-question notification
+// should navigate when clicked. When the run belongs to a chat conversation, the
+// link opens that conversation (`/chat?c=…`), whose dock renders the pending
+// question/approval controls; otherwise it points at the approvals page. A nil
+// repo or an unresolvable run degrades to the fallback rather than a dead link.
+func questionNotificationActionURL(ctx context.Context, repo *Repository, runID string) string {
+	if repo != nil && runID != "" {
+		if convID := repo.ConversationIDForRun(ctx, runID); convID != "" {
+			return "/chat?c=" + url.QueryEscape(convID)
+		}
+	}
+	return approvalPagePath
 }
 
 // emitQuestionSSEEventDirect sends a real-time SSE notification for a question.
