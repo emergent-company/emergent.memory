@@ -1241,6 +1241,37 @@ div:has(> #_layout-topbar) {
   color: var(--color-neutral-content);
 }
 
+/* Schema property-type badges (blueprint/schema browsers).
+ * The type column colour-codes each registry property type so it is scannable
+ * at a glance. Three types have no distinct semantic tone in the dark theme —
+ * boolean/array/object would otherwise alias warning, info|secondary and
+ * primary|warning — so they get page-local tones here. Every value is derived
+ * from theme tokens with color-mix; no raw colours. The label always carries
+ * the type text, so colour is never the only signal.
+ *
+ * Measured hues (oklch) and soft-badge text contrast in this theme; the minimum
+ * pair separation is 42deg (boolean 40 -> date 82):
+ *   string  --color-info                             240deg  oklch(0.690 0.1150 240)  5.8:1
+ *   number  --color-success                          152deg  oklch(0.710 0.1500 152)  6.6:1
+ *   integer --color-success (shares the numeric tone) 152deg  same                  6.6:1
+ *   boolean error 75% + warning                       40deg  oklch(0.675 0.1890  40)  5.0:1
+ *   date    --color-warning                           82deg  oklch(0.810 0.1550  82)  8.4:1
+ *   array   info + success                           196deg  oklch(0.700 0.1325 196)  6.4:1
+ *   object  error + info                             313deg  oklch(0.660 0.1575 313)  4.8:1
+ *   unknown --color-neutral-content (soft-neutral)    grey   oklch(0.900 0.0100 265) 11.2:1
+ *
+ * Unlayered so the custom property beats daisyUI's layered badge rules, matching
+ * the soft-neutral override above. */
+.memory-prop-type-badge--boolean {
+  --badge-color: color-mix(in oklch, var(--color-error) 75%, var(--color-warning));
+}
+.memory-prop-type-badge--array {
+  --badge-color: color-mix(in oklch, var(--color-info), var(--color-success));
+}
+.memory-prop-type-badge--object {
+  --badge-color: color-mix(in oklch, var(--color-error), var(--color-info));
+}
+
 /* Badge dots: go-daisy renders Dot as <span class="status status-<intent>
    status-xs"> but the daisyUI `status` module used to be excluded, leaving an
    empty zero-size span. With the module restored the dot has geometry; this
