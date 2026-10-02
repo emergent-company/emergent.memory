@@ -68,8 +68,8 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 	"github.com/emergent-company/emergent.memory/pkg/encryption"
-	"github.com/emergent-company/emergent.memory/pkg/kreuzberg"
 	"github.com/emergent-company/emergent.memory/pkg/whisper"
+	"github.com/emergent-company/emergent.memory/pkg/xberg"
 )
 
 // TestServer wraps an Echo instance for testing
@@ -334,12 +334,12 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	// Create shared services used by multiple route registrations
 	storageCfg := storage.NewConfig()
 	storageSvc, _ := storage.NewService(storageCfg, log)
-	kreuzbergClient := kreuzberg.NewClient(testDB.Config, log)
+	xbergClient := xberg.NewClient(testDB.Config, log)
 	whisperClient := whisper.NewClient(testDB.Config, log)
 	embeddingsSvc := embeddings.NewNoopService(log)
 
 	// Register health routes (public)
-	healthHandler := health.NewHandler(testDB.Pool, testDB.Config, storageSvc, kreuzbergClient, whisperClient, embeddingsSvc)
+	healthHandler := health.NewHandler(testDB.Pool, testDB.Config, storageSvc, xbergClient, whisperClient, embeddingsSvc)
 	e.GET("/health", healthHandler.Health)
 	e.GET("/healthz", healthHandler.Healthz)
 	e.GET("/ready", healthHandler.Ready)

@@ -55,7 +55,7 @@ Environment files are loaded with later files overriding earlier ones:
 | `STORAGE_ENDPOINT`        | MinIO/S3 endpoint URL                             | `localhost:9000`|
 | `STORAGE_ACCESS_KEY`      | Storage access key                                | `minio`         |
 | `STORAGE_SECRET_KEY`      | Storage secret (**use `.env.local`**)             | —               |
-| `KREUZBERG_SERVICE_URL`   | Document parsing service URL                      | `localhost:8000`|
+| `XBERG_SERVICE_URL`       | Document parsing service URL                      | `localhost:8000`|
 | `WHISPER_SERVICE_URL`     | Audio transcription service URL                   | `localhost:9876`|
 | `GCP_PROJECT_ID`          | GCP project ID (Vertex AI)                        | —               |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OpenTelemetry endpoint (opt-in)              | unset           |

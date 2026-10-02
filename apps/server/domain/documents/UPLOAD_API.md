@@ -170,7 +170,7 @@ After a successful upload, a `DocumentParsingJob` is queued:
 1. **Worker downloads** the file from S3 (max 500 MB)
 2. **Routes by MIME type:**
    - Audio → Whisper transcription
-   - Binary (PDF, Office) → Kreuzberg document parser
+   - Binary (PDF, Office) → xberg document parser
    - Plain text / Markdown / HTML / CSV / JSON → direct
 3. **Chunks** extracted text and creates `kb.chunks` records
 4. **Updates** `kb.documents.conversion_status`: `pending` → `completed` | `failed`

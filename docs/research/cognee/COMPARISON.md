@@ -46,7 +46,7 @@ Both Cognee and Emergent are knowledge management systems that transform documen
 - **Database Strategy**: Single PostgreSQL with schema separation (`kb.*`, `core.*`)
 - **Concurrency**: Go routines with context cancellation
 - **Dependency Injection**: Uber fx (explicit wiring)
-- **Data Flow**: Document Upload → Parsing (Kreuzberg) → Chunking → Embedding → Graph Extraction → Search
+- **Data Flow**: Document Upload → Parsing (xberg) → Chunking → Embedding → Graph Extraction → Search
 
 ### 1.2 Module Organization
 
@@ -90,7 +90,7 @@ server-go/
 └── pkg/              # Public packages
     ├── adk/          # Google ADK-Go agents
     ├── embeddings/   # Vertex AI embeddings
-    └── kreuzberg/    # Document parsing client
+    └── xberg/    # Document parsing client
 ```
 
 ---
@@ -699,7 +699,7 @@ func TestGraphSuite(t *testing.T) {
 
 - **Docker**: Multi-stage build (Go 1.24 → Alpine)
 - **Binary Size**: ~36MB (optimized with `-ldflags="-s -w"`)
-- **Dependencies**: PostgreSQL, MinIO, Zitadel, Kreuzberg
+- **Dependencies**: PostgreSQL, MinIO, Zitadel, xberg
 - **Configuration**: `.env` file + environment variables
 - **Orchestration**: `workspace:*` npm scripts (PID-based process manager)
 

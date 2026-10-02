@@ -154,7 +154,7 @@ INSTALL_DIR=/opt/emergent SERVER_PORT=8080 GOOGLE_API_KEY=your-key curl -fsSL ht
 | emergent-server    | API + CLI             | 3002         |
 | emergent-db        | PostgreSQL + pgvector | 15432        |
 | emergent-seaweedfs | S3-compatible storage | 19000        |
-| emergent-kreuzberg | Document extraction   | 18000        |
+| emergent-xberg | Document extraction   | 18000        |
 
 ### Files and Directories
 

@@ -1,7 +1,7 @@
 // Package cli_test — documents_multifile_test.go
 //
 // End-to-end tests that upload multiple file types (PDF, Markdown, plain text)
-// to evaluate the quality and efficiency of the Kreuzberg conversion and
+// to evaluate the quality and efficiency of the xberg conversion and
 // extraction pipeline.  Three test suites:
 //
 //   - TestCLIInstalled_DocumentConversionMultiFileTypes: verifies that each
@@ -35,7 +35,7 @@ import (
 
 // TestCLIInstalled_DocumentConversionMultiFileTypes uploads five fixture files
 // of different types (two PDFs, Markdown, small plain text, large plain text)
-// and verifies that Kreuzberg conversion produces non-empty content containing
+// and verifies that xberg conversion produces non-empty content containing
 // known strings from each fixture.
 //
 // Fixture files:
@@ -56,7 +56,7 @@ import (
 func TestCLIInstalled_DocumentConversionMultiFileTypes(t *testing.T) {
 	rl := newRunLog(t)
 	t.Cleanup(rl.Close)
-	rl.Describe("Verify Kreuzberg conversion across PDF, Markdown, and plain-text files",
+	rl.Describe("Verify xberg conversion across PDF, Markdown, and plain-text files",
 		"Create project and upload all five fixture files",
 		"Poll all documents concurrently until conversionStatus=completed or not_required",
 		"Assert each document has non-empty content containing known fixture strings",
@@ -109,7 +109,7 @@ func TestCLIInstalled_DocumentConversionMultiFileTypes(t *testing.T) {
 			name:        "PDF (full report ~900 KB)",
 			path:        filepath.Join(testdataDir, "meridian-full-report.pdf"),
 			pollTimeout: 10 * time.Minute,
-			// These terms appear only in the tables[] response from Kreuzberg, not in
+			// These terms appear only in the tables[] response from xberg, not in
 			// the content field. They validate that table markdown is appended to content.
 			knownTerms: []string{"ADR-2024-001", "ClearWater", "IronBridge", "ArborTech", "HarbourLane"},
 			minChunks:  500, // ~608 KB after table append → expect hundreds of chunks
@@ -780,10 +780,10 @@ func TestCLIInstalled_DocumentLargeFileExtraction(t *testing.T) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // TestCLIInstalled_DocumentLargePDFExtraction runs a full end-to-end extraction
-// pipeline on the large PDF fixture (~900 KB, 1,361 chunks after Kreuzberg
+// pipeline on the large PDF fixture (~900 KB, 1,361 chunks after xberg
 // conversion + table markdown append).  It validates the complete path:
 //
-//	PDF upload → Kreuzberg conversion → table-appended content → chunking
+//	PDF upload → xberg conversion → table-appended content → chunking
 //	→ extraction job → Person + Decision graph objects
 //
 // The fixture (meridian-full-report.pdf) contains 16 named partners and 15 ADR
@@ -794,8 +794,8 @@ func TestCLIInstalled_DocumentLargePDFExtraction(t *testing.T) {
 	rl := newRunLog(t)
 	t.Cleanup(rl.Close)
 	rl.Describe("Large PDF (~900 KB) end-to-end extraction with Person+Decision schema",
-		"Upload meridian-full-report.pdf — triggers Kreuzberg PDF conversion",
-		"Wait for conversion (Kreuzberg) and chunking (1361 chunks expected)",
+		"Upload meridian-full-report.pdf — triggers xberg PDF conversion",
+		"Wait for conversion (xberg) and chunking (1361 chunks expected)",
 		"Trigger extraction job against Person+Decision schema",
 		"Wait for extraction to complete (up to 20 min for 1361 chunks)",
 		"Assert >=8 Person objects including partners named only in table content",
@@ -859,8 +859,8 @@ func TestCLIInstalled_DocumentLargePDFExtraction(t *testing.T) {
 	}
 	rl.Printf("docID=%s (upload=%s)", docID, time.Since(uploadStart).Round(time.Millisecond))
 
-	// ── Wait for Kreuzberg conversion + chunking ───────────────────────────────
-	// The PDF must be converted by Kreuzberg (extracts text + appends table markdown),
+	// ── Wait for xberg conversion + chunking ───────────────────────────────
+	// The PDF must be converted by xberg (extracts text + appends table markdown),
 	// then chunked into ~1361 chunks before extraction can start.
 	rl.Section("Wait for PDF conversion and chunking")
 	convStart := time.Now()
@@ -971,7 +971,7 @@ func TestCLIInstalled_DocumentLargePDFExtraction(t *testing.T) {
 	}
 
 	// Verify that partners who appear only in table content were extracted.
-	// These names are NOT in the 10 KB Kreuzberg content field — they come from
+	// These names are NOT in the 10 KB xberg content field — they come from
 	// the appended table markdown, proving the table fix reaches extraction.
 	tableOnlyPartners := []string{"Kweku Mensah", "Diana Ostrowski", "Alejandro Torres"}
 	for _, name := range tableOnlyPartners {

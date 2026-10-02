@@ -17,7 +17,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
-	"github.com/emergent-company/emergent.memory/pkg/kreuzberg"
+	"github.com/emergent-company/emergent.memory/pkg/xberg"
 )
 
 // SchemaVariant represents the different ways to provide schema to Gemini
@@ -615,20 +615,20 @@ func TestSchemaVariantComparison(t *testing.T) {
 	require.NoError(t, err, "Failed to load ground truth")
 
 	// Extract text from PDF
-	kreuzbergURL := os.Getenv("KREUZBERG_URL")
-	if kreuzbergURL == "" {
-		kreuzbergURL = "http://localhost:8000"
+	xbergURL := os.Getenv("XBERG_URL")
+	if xbergURL == "" {
+		xbergURL = "http://localhost:8000"
 	}
 
 	cfg := &config.Config{
-		Kreuzberg: config.KreuzbergConfig{
+		Xberg: config.XbergConfig{
 			Enabled:    true,
-			ServiceURL: kreuzbergURL,
+			ServiceURL: xbergURL,
 			TimeoutMs:  60000,
 		},
 	}
 	kLogger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	client := kreuzberg.NewClient(cfg, kLogger)
+	client := xberg.NewClient(cfg, kLogger)
 
 	pdfBytes, err := os.ReadFile(pdfPath)
 	require.NoError(t, err, "Failed to read PDF")

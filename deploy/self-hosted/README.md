@@ -35,7 +35,7 @@ cat ~/.emergent/config.yaml
 - **Go Backend** - API server (port 3002)
 - **Emergent CLI** - Local management tool
 - **PostgreSQL** - Database with pgvector extension
-- **Kreuzberg** - Document extraction service (56+ file formats)
+- **xberg** - Document extraction service (56+ file formats)
 - **SeaweedFS** - S3-compatible object storage (single node: master + volume + filer + S3)
 
 ### CLI Access
@@ -114,7 +114,7 @@ EMERGENT_VERSION=v1.0.0 curl -fsSL ... | bash
 | Emergent API    | 3002  | Main API server + CLI  |
 | PostgreSQL      | 15432 | Database with pgvector |
 | SeaweedFS S3    | 19000 | S3-compatible storage  |
-| Kreuzberg       | 18000 | Document extraction    |
+| xberg       | 18000 | Document extraction    |
 
 ### Files Created
 
@@ -276,8 +276,8 @@ cat ~/emergent-standalone/deploy/self-hosted/credentials.txt
 │       │         │         │             │
 │       ▼         ▼         ▼             │
 │  ┌────────┐ ┌──────┐ ┌─────────┐      │
-│  │ Postgres│ │Kreuz-│ │SeaweedFS│      │
-│  │+pgvector│ │ berg │ │   S3    │      │
+│  │ Postgres│ │xberg │ │SeaweedFS│      │
+│  │+pgvector│ │      │ │   S3    │      │
 │  └────────┘ └──────┘ └─────────┘      │
 └─────────────────────────────────────────┘
 ```
@@ -300,11 +300,11 @@ cat ~/emergent-standalone/deploy/self-hosted/credentials.txt
 
 The server image runs a scheduled `pg_dump` backup (see `scheduler.database_backup`). Its `pg_dump` client major is set by the `PG_CLIENT_MAJOR` build argument (default `17`) and must match the major of the `pgvector/pgvector:pg17` database image. The override must name a client major available in the server image's base distribution (`alpine:3.21` ships 15, 16, and 17); requesting a newer major requires bumping the base image first. If the two majors drift apart, `pg_dump` refuses to dump a newer server and the scheduled backup fails with a version-mismatch error. The `/health` endpoint reports a `database_backup` check: a failing backup makes the overall status `degraded`. Failed backup rows are visible at `GET /api/superadmin/database-backups`.
 
-### Kreuzberg
+### xberg
 
 - **Port**: 8000 (internal only)
 - **Formats**: PDF, DOCX, PPTX, XLSX, images (OCR), HTML, Markdown
-- **Health**: `http://kreuzberg:8000/health`
+- **Health**: `http://xberg:8000/health`
 
 ### SeaweedFS
 
@@ -340,7 +340,7 @@ The server image runs a scheduled `pg_dump` backup (see `scheduler.database_back
 | `STANDALONE_ORG_NAME`     | `Default Organization` | Default org name                   |
 | `STANDALONE_PROJECT_NAME` | `Default Project`      | Default project name               |
 | `EMBEDDING_DIMENSION`     | `768`                  | Embedding vector size              |
-| `KREUZBERG_LOG_LEVEL`     | `info`                 | Kreuzberg logging                  |
+| `XBERG_LOG_LEVEL`     | `info`                 | xberg logging                  |
 | `OBJECT_STORE_ACCESS_KEY` | `emergent`             | Object store access key            |
 | `OBJECT_STORE_API_PORT`   | `9000`                 | Host port for the S3 API           |
 | `STORAGE_REGION`          | `us-east-1`            | Region used to sign S3 requests    |
@@ -438,17 +438,17 @@ docker compose exec db psql -U emergent -d emergent -c "SELECT 1"
 docker compose logs db
 ```
 
-### Kreuzberg Extraction Failing
+### xberg Extraction Failing
 
 ```bash
-# Check Kreuzberg health
+# Check xberg health
 curl http://localhost:8000/health
 
 # View logs
-docker compose logs kreuzberg
+docker compose logs xberg
 
 # Check memory (needs 512MB minimum)
-docker stats emergent-kreuzberg
+docker stats emergent-xberg
 ```
 
 ### Object Store Access Issues
@@ -485,7 +485,7 @@ docker compose run --rm storage-init
 - No ports exposed to public internet
 - All access via Tailscale encrypted network
 - Object store API published only on the configured host port
-- Internal services (DB, Kreuzberg) not exposed
+- Internal services (DB, xberg) not exposed
 
 ## Upgrading
 
@@ -517,5 +517,5 @@ For issues specific to:
 
 - **Tailscale**: https://tailscale.com/contact/support
 - **Emergent**: GitHub issues or documentation
-- **Kreuzberg (v4 LTS)**: https://kreuzberg.dev
+- **xberg (v1)**: https://docs.xberg.io
 - **SeaweedFS**: https://github.com/seaweedfs/seaweedfs

@@ -17,24 +17,24 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/projects"
 	"github.com/emergent-company/emergent.memory/internal/storage"
-	"github.com/emergent-company/emergent.memory/pkg/kreuzberg"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/syshealth"
 	"github.com/emergent-company/emergent.memory/pkg/tracing"
 	"github.com/emergent-company/emergent.memory/pkg/whisper"
+	"github.com/emergent-company/emergent.memory/pkg/xberg"
 )
 
 // DocumentParsingWorker processes document parsing jobs.
 // It polls for pending jobs, downloads documents from storage,
 // routes them to the appropriate extraction service (Whisper for audio,
-// Kreuzberg for binary documents), and stores the results.
+// Xberg for binary documents), and stores the results.
 type DocumentParsingWorker struct {
 	log             *slog.Logger
 	jobsService     *DocumentParsingJobsService
 	documentsRepo   *documents.Repository
 	projectsRepo    *projects.Repository
 	chunkingService *chunking.Service
-	kreuzbergClient *kreuzberg.Client
+	xbergClient     *xberg.Client
 	whisperClient   *whisper.Client
 	storageService  *storage.Service
 	scaler          *syshealth.ConcurrencyScaler
@@ -69,7 +69,7 @@ func NewDocumentParsingWorker(
 	documentsRepo *documents.Repository,
 	projectsRepo *projects.Repository,
 	chunkingService *chunking.Service,
-	kreuzbergClient *kreuzberg.Client,
+	xbergClient *xberg.Client,
 	whisperClient *whisper.Client,
 	storageService *storage.Service,
 	cfg *DocumentParsingWorkerConfig,
@@ -98,7 +98,7 @@ func NewDocumentParsingWorker(
 		documentsRepo:     documentsRepo,
 		projectsRepo:      projectsRepo,
 		chunkingService:   chunkingService,
-		kreuzbergClient:   kreuzbergClient,
+		xbergClient:       xbergClient,
 		whisperClient:     whisperClient,
 		storageService:    storageService,
 		interval:          interval,
@@ -260,9 +260,9 @@ func (w *DocumentParsingWorker) processJob(ctx context.Context, job *DocumentPar
 	}
 
 	// Check processing path
-	isEmail := kreuzberg.IsEmailFile(mimeType, filename)
+	isEmail := xberg.IsEmailFile(mimeType, filename)
 	isAudio := !isEmail && isAudioFile(mimeType, filename)
-	useKreuzberg := !isEmail && !isAudio && kreuzberg.ShouldUseKreuzberg(mimeType, filename)
+	useXberg := !isEmail && !isAudio && xberg.ShouldUseXberg(mimeType, filename)
 
 	var parsedContent string
 	var extractionMethod string
@@ -300,10 +300,10 @@ func (w *DocumentParsingWorker) processJob(ctx context.Context, job *DocumentPar
 		}
 		parsedContent, err = w.extractWithWhisper(ctx, storageKey, filename, mimeType, initialPrompt, fileSizeBytes)
 		extractionMethod = "whisper"
-	} else if useKreuzberg {
-		// Binary document - use Kreuzberg for extraction
-		parsedContent, err = w.extractWithKreuzberg(ctx, storageKey, filename, mimeType)
-		extractionMethod = "kreuzberg"
+	} else if useXberg {
+		// Binary document - use Xberg for extraction
+		parsedContent, err = w.extractWithXberg(ctx, storageKey, filename, mimeType)
+		extractionMethod = "xberg"
 	} else {
 		// Plain text - read directly from storage
 		parsedContent, err = w.extractPlainText(ctx, storageKey)
@@ -372,28 +372,28 @@ func (w *DocumentParsingWorker) processJob(ctx context.Context, job *DocumentPar
 	)
 }
 
-// extractWithKreuzberg downloads a file and sends it to Kreuzberg for extraction
-func (w *DocumentParsingWorker) extractWithKreuzberg(ctx context.Context, storageKey, filename, mimeType string) (string, error) {
+// extractWithXberg downloads a file and sends it to Xberg for extraction
+func (w *DocumentParsingWorker) extractWithXberg(ctx context.Context, storageKey, filename, mimeType string) (string, error) {
 	content, err := w.downloadFile(ctx, storageKey)
 	if err != nil {
 		return "", fmt.Errorf("download file: %w", err)
 	}
 
-	// Enable OCR with auto-detection: Kreuzberg will analyze text quality
+	// Enable OCR with auto-detection: Xberg will analyze text quality
 	// and automatically fallback to OCR if any page has poor/no text.
 	// This is optimal for mixed PDFs (some pages scanned, some digital).
-	opts := &kreuzberg.ExtractOptions{
+	opts := &xberg.ExtractOptions{
 		OCRBackend:  "tesseract",
 		OCRLanguage: "eng",
-		ForceOCR:    false, // Let Kreuzberg auto-detect when OCR is needed
+		ForceOCR:    false, // Let Xberg auto-detect when OCR is needed
 	}
-	result, err := w.kreuzbergClient.ExtractText(ctx, content, filename, mimeType, opts)
+	result, err := w.xbergClient.ExtractText(ctx, content, filename, mimeType, opts)
 	if err != nil {
-		return "", fmt.Errorf("kreuzberg extraction: %w", err)
+		return "", fmt.Errorf("xberg extraction: %w", err)
 	}
 
 	// Append extracted tables as markdown so structured data is not lost.
-	// Kreuzberg returns tables separately from the content field; without this,
+	// Xberg returns tables separately from the content field; without this,
 	// table-heavy PDFs (e.g. financial reports) lose almost all their content.
 	if len(result.Tables) > 0 {
 		var sb strings.Builder

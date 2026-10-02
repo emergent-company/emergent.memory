@@ -67,7 +67,7 @@ jobs:
       # whose value is byte-for-byte <pin>. Comparing the whole value (instead of
       # grepping for the pin as a substring) rejects near-misses: a version
       # prefix, an extra suffix tag, or a digest appended to the tag.
-      - name: Verify Kreuzberg image pin is in sync
+      - name: Verify xberg image pin is in sync
         working-directory: apps/cli
         run: |
           pin_matches() {
@@ -80,21 +80,21 @@ jobs:
               END { exit !found }
             ' "$2"
           }
-          PIN=$(grep -oP 'KreuzbergImage\s*=\s*"\K[^"]+' internal/installer/templates.go)
+          PIN=$(grep -oP 'XbergImage\s*=\s*"\K[^"]+' internal/installer/templates.go)
           if [ -z "${PIN}" ]; then
-            echo "ERROR: could not read KreuzbergImage from internal/installer/templates.go"
+            echo "ERROR: could not read XbergImage from internal/installer/templates.go"
             exit 1
           fi
-          echo "KreuzbergImage pin: ${PIN}"
+          echo "XbergImage pin: ${PIN}"
           for f in ../../deploy/self-hosted/docker-compose.yml \
                    ../../deploy/self-hosted/docker-compose.local.yml \
                    ../../deploy/self-hosted/install-online.sh; do
             if ! pin_matches "${PIN}" "${f}"; then
-              echo "ERROR: ${f} does not pin image: ${PIN}; bump it together with KreuzbergImage"
+              echo "ERROR: ${f} does not pin image: ${PIN}; bump it together with XbergImage"
               exit 1
             fi
           done
-          echo "OK: all self-hosted static copies match KreuzbergImage"
+          echo "OK: all self-hosted static copies match XbergImage"
 
       - name: Verify object-store image pin is in sync
         working-directory: apps/cli

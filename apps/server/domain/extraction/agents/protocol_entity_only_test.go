@@ -17,7 +17,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
-	"github.com/emergent-company/emergent.memory/pkg/kreuzberg"
+	"github.com/emergent-company/emergent.memory/pkg/xberg"
 )
 
 // EntityOnlyExtractionOutput represents the expected flat JSON output.
@@ -328,7 +328,7 @@ func TestProtocolEntityOnlyE2E(t *testing.T) {
 	t.Logf("  Attendees: %d", len(groundTruth.InputData.Attendees))
 	t.Logf("  Resolutions: %d", len(groundTruth.InputData.Resolutions))
 
-	// Extract text from PDF using Kreuzberg
+	// Extract text from PDF using Xberg
 	documentText, err := extractTextFromPDFEntityOnly(ctx, t, pdfPath)
 	require.NoError(t, err, "Failed to extract text from PDF")
 	t.Logf("Extracted %d characters from PDF", len(documentText))
@@ -443,7 +443,7 @@ func TestProtocolEntityOnlyE2E(t *testing.T) {
 	assert.True(t, metrics.FieldResults["meetingType"].Match, "Meeting type should match")
 }
 
-// extractTextFromPDFEntityOnly extracts text from a PDF using Kreuzberg.
+// extractTextFromPDFEntityOnly extracts text from a PDF using Xberg.
 func extractTextFromPDFEntityOnly(ctx context.Context, t *testing.T, pdfPath string) (string, error) {
 	// Read PDF file
 	pdfData, err := os.ReadFile(pdfPath)
@@ -451,26 +451,26 @@ func extractTextFromPDFEntityOnly(ctx context.Context, t *testing.T, pdfPath str
 		return "", fmt.Errorf("failed to read PDF: %w", err)
 	}
 
-	// Check if Kreuzberg is available
-	kreuzbergURL := os.Getenv("KREUZBERG_URL")
-	if kreuzbergURL == "" {
-		kreuzbergURL = "http://localhost:8787"
+	// Check if Xberg is available
+	xbergURL := os.Getenv("XBERG_URL")
+	if xbergURL == "" {
+		xbergURL = "http://localhost:8787"
 	}
 
-	// Create a minimal config for Kreuzberg client
+	// Create a minimal config for Xberg client
 	cfg := &config.Config{
-		Kreuzberg: config.KreuzbergConfig{
+		Xberg: config.XbergConfig{
 			Enabled:    true,
-			ServiceURL: kreuzbergURL,
+			ServiceURL: xbergURL,
 			TimeoutMs:  60000,
 		},
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	client := kreuzberg.NewClient(cfg, logger)
+	client := xberg.NewClient(cfg, logger)
 
 	if !client.IsEnabled() {
-		t.Log("Kreuzberg not enabled, using fallback document text")
+		t.Log("Xberg not enabled, using fallback document text")
 		return getFallbackProtocolText(), nil
 	}
 
@@ -478,10 +478,10 @@ func extractTextFromPDFEntityOnly(ctx context.Context, t *testing.T, pdfPath str
 	result, err := client.ExtractText(ctx, pdfData, filepath.Base(pdfPath), "application/pdf", nil)
 	if err != nil {
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "unavailable") {
-			t.Log("Kreuzberg service not available, using fallback document text")
+			t.Log("Xberg service not available, using fallback document text")
 			return getFallbackProtocolText(), nil
 		}
-		return "", fmt.Errorf("Kreuzberg extraction failed: %w", err)
+		return "", fmt.Errorf("Xberg extraction failed: %w", err)
 	}
 
 	return result.Content, nil
