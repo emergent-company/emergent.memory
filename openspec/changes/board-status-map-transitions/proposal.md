@@ -39,10 +39,13 @@ because the literal names never match the item statuses. Follow-up to
   derivation + `#board` data attribute), `board.templ` (mapped action gating),
   `object_preview.go` (mapped preview actions), `webui/static/js/app.js`
   (map-driven drag transitions).
+- **Server** (`apps/server/domain/agents/dto.go`): expose `workConfig` on the
+  agent-definitions list summary DTO. The gateway reads the mapping from the
+  existing list response, which previously omitted `workConfig`, so the field
+  must be carried there for the mapping to reach the board.
 - **Tests**: gateway unit tests for the derivation + custom-mapped drawer
-  actions; hermetic js-dom specs for the custom-mapped drag wiring.
-- **No server / memory-service change**: the mapping is read from the existing
-  agent-definitions list response (`workConfig.status`).
+  actions; server DTO test for the summary `workConfig`; hermetic js-dom specs
+  for the custom-mapped drag wiring.
 - **Known limitation**: the mapping is project-wide (a union of the agents'
   declared phases). Per-object-type mappings are out of scope; a phase declared
   inconsistently by two agents falls back to the built-in status.

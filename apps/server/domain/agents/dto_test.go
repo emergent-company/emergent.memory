@@ -52,6 +52,26 @@ func TestAgentDefinitionDTOUIConfigRoundTrip(t *testing.T) {
 	require.NotContains(t, string(bare), "uiConfig")
 }
 
+// TestAgentDefinitionToSummaryDTOIncludesWorkConfig locks the work-path status
+// map onto the list summary: the gateway's board derives its drag/drawer actions
+// from the agent definitions list, so workConfig.status must survive
+// ToSummaryDTO. A zero config is omitted so unconfigured definitions stay lean.
+func TestAgentDefinitionToSummaryDTOIncludesWorkConfig(t *testing.T) {
+	d := &AgentDefinition{
+		ID:         "ad-1",
+		WorkConfig: AgentWorkConfig{Status: AgentWorkStatusConfig{Ready: "todo", InProgress: "doing"}},
+	}
+
+	s := d.ToSummaryDTO()
+	require.NotNil(t, s.WorkConfig)
+	require.Equal(t, "todo", s.WorkConfig.Status.Ready)
+	require.Equal(t, "doing", s.WorkConfig.Status.InProgress)
+
+	bare, err := json.Marshal((&AgentDefinition{ID: "ad-2"}).ToSummaryDTO())
+	require.NoError(t, err)
+	require.NotContains(t, string(bare), "workConfig")
+}
+
 // TestAgentToDTOIncludesAgentDefinitionID ensures the response DTO exposes the
 // linked agent definition so clients can read back a scheduled agent's
 // definition after create/update. The field was previously absent from

@@ -3,6 +3,7 @@
 - [x] 1.1 Model the agent `workConfig.status` on the gateway definitions summary (`memory.go`)
 - [x] 1.2 Derive a project-wide `boardStatusMap` from the agent definitions, defaulting to the built-in statuses and keeping a phase's default on ambiguous declarations (`board.go`)
 - [x] 1.3 Emit the map on `#board[data-board-status-map]` and thread it through the board render
+- [x] 1.4 Expose `workConfig` on the agent-definitions list summary DTO (`apps/server/domain/agents/dto.go`) so the gateway can read the mapping — the list response previously omitted it
 
 ## 2. Use it for every board action
 
