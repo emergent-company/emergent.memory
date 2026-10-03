@@ -52,6 +52,16 @@ func (r *Repository) AddAgentDeletionListener(fn func(agentIDs []string)) {
 	r.agentDeletionListeners = append(r.agentDeletionListeners, fn)
 }
 
+// NotifyAgentsDeleted fans the given ids out to every registered deletion
+// listener, exactly as an in-repository delete would. It exists for delete
+// paths that remove agent rows outside this repository (notably the backup
+// restorer's generic table wipe): callers must only pass ids whose rows are
+// actually gone, after the surrounding transaction has committed, so a
+// rolled-back delete never strands a live agent without its registrations.
+func (r *Repository) NotifyAgentsDeleted(agentIDs []string) {
+	r.notifyAgentsDeleted(agentIDs)
+}
+
 // notifyAgentsDeleted fans the deleted ids out to every registered listener.
 // Called after a successful row delete so a failed delete never drops live
 // registrations.
@@ -643,20 +653,26 @@ func (r *Repository) UpdateAgent(ctx context.Context, agent *Agent) error {
 	return r.Update(ctx, agent)
 }
 
-// DeleteAgentsBySourceBlueprint deletes runtime agents created by a blueprint,
-// matched on the ownership stamp stored in their config JSONB
-// (config->>'sourceBlueprintId'). Returns the number of rows deleted.
+// DeleteAgentsBySourceBlueprint deletes the runtime agents a blueprint created
+// in a single project, matched on the project and on the ownership stamp stored
+// in their config JSONB (config->>'sourceBlueprintId'). Returns the number of
+// rows deleted.
+//
+// The project scope is not optional: a blueprint source id can be applied in
+// several projects at once, so a delete driven from one project's Unapply must
+// only ever remove that project's agents.
 //
 // The matching ids are resolved first and the delete is scoped to them, so every
 // row removed here is reported to the deletion listeners and its in-memory
 // trigger registrations are torn down in the same step. A concurrent insert that
 // appears after the id snapshot is left alone (its own create path registers its
 // trigger).
-func (r *Repository) DeleteAgentsBySourceBlueprint(ctx context.Context, blueprintID string) (int, error) {
+func (r *Repository) DeleteAgentsBySourceBlueprint(ctx context.Context, projectID, blueprintID string) (int, error) {
 	var ids []string
 	if err := r.db.NewSelect().
 		Model((*Agent)(nil)).
 		Column("id").
+		Where("project_id = ?", projectID).
 		Where("config->>'sourceBlueprintId' = ?", blueprintID).
 		Scan(ctx, &ids); err != nil {
 		return 0, err
