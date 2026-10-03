@@ -17,7 +17,18 @@ extraction → graph. This change is that framework, deliberately framework-firs
 
 - Add `kb.sources (type, config, auth, sync_state)` and a generic ingestion path feeding
   the **existing** pipeline: `domain/documents` → chunking → `domain/extraction` →
-  `domain/graph`.
+  `domain/graph`. Document attribution is restored as a **new** `kb.documents.source_id`
+  (nullable FK, `ON DELETE SET NULL`) + `external_item_id` with a partial unique index
+  `UNIQUE (source_id, external_item_id) WHERE external_item_id IS NOT NULL` — not a
+  resurrection of the removed `external_source_id`/`data_source_integration_id` columns.
+- A sync job lifecycle with **at most one active job per source** (partial unique index on
+  `kb.source_sync_jobs`), enforced at admission so slow periodic + manual triggers cannot
+  race cursor updates.
+- Expose the **server side** of the `data-source-integrations` REST surface the
+  `add-data-sources` gateway already assumes (providers, provider schema, source-types,
+  test-config/test-connection, integration CRUD, sync trigger/monitor/cancel with job
+  progress, discovery), so the gateway SDK (`apps/server/pkg/sdk/datasources`) has a real
+  server to call.
 - Prefer consuming SaaS sources via **MCP**: `domain/mcpregistry` registers servers+tools
   and its `ProxyManager` (`CallToolOnServer`/`CallTool`) invokes them. (`domain/mcprelay`
   is the inbound WebSocket star relay for NAT'd local connectors only — it cannot reach
@@ -57,13 +68,16 @@ existing capability spec. -->
 
 - **DB** (`apps/server/migrations/`): `kb.sources` (reintroduced as a durable model, not
   the removed `kb.data_source_integrations`) + `kb.source_sync_jobs` (project_id,
-  status, cursor/error jsonb) with sync state/cursor. Prior art is the still-live
-  `kb.external_sources` (`00001_baseline.sql:798-819`).
+  status, cursor/error jsonb, single-active-job partial unique index) with sync
+  state/cursor, plus `kb.documents.source_id`/`external_item_id` attribution columns and
+  their partial unique index. Prior art is the still-live `kb.external_sources`
+  (`00001_baseline.sql:798-819`).
 - **Server** (`apps/server/domain/` + `apps/server/internal/jobs`): new `sources` domain
-  (CRUD + auth config + sync orchestration); reuse `domain/discoveryjobs` (schema
-  auto-discovery), `domain/mcpregistry` `ProxyManager` (transport), `internal/jobs`
-  (queue mechanics), and the existing ingestion pipeline
-  (`domain/documents` → chunking → `domain/extraction` → `domain/graph`).
+  (CRUD + auth config + sync orchestration + the `data-source-integrations` REST routes
+  the gateway calls); reuse `domain/discoveryjobs` (schema auto-discovery),
+  `domain/mcpregistry` `ProxyManager` (transport), `internal/jobs` (queue mechanics), and
+  the existing ingestion pipeline (`domain/documents` → chunking → `domain/extraction` →
+  `domain/graph`).
 - **Migration path from `00089`**: document how the reintroduced model differs from the
   dropped `data_source_integrations` (durable, MCP-first, cursor-based) so we do not
   resurrect the dropped design.

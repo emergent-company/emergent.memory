@@ -45,11 +45,18 @@ multiplies token spend by the chunk count and requires re-embedding semantics ou
 
 `kb.documents` gains a nullable `summary` column. A single LLM call produces the one-line
 summary, cached on the document and reused by all its chunks. The summary is computed on
-document **ingest** and **recomputed when the document content changes** (and/or via a
-backfill job for pre-existing documents). This is the key cost decision: O(1) summary per
-document vs O(chunks) for per-chunk context. The summary is stored on the document so it is
-shared, versioned, and independently re-computable, and so re-embedding has a stable
-trigger (summary value change).
+document **ingest** and **recomputed when the document content, `filename`, or `source_url`
+changes** (and/or via a **resumable, bounded backfill job** for pre-existing documents).
+This is the key cost decision: O(1) summary per document vs O(chunks) for per-chunk context.
+The summary is stored on the document so it is shared, versioned, and independently
+re-computable, and so re-embedding has a stable trigger (summary value change).
+
+Summary computation is **atomic per document**. The chunk worker processes many chunks
+concurrently, so several chunks can observe a NULL summary simultaneously; a bare
+"compute-if-null" would fire one LLM call per racing chunk. The helper therefore uses a
+compare-and-set / row-lock re-read (or a keyed singleflight guarded by the document row):
+one writer computes and commits; every loser re-reads the committed value. This is what
+makes "one LLM call per document" hold under concurrency, not merely in a sequential test.
 
 ### D3 — Embedding input vs stored text are separate
 

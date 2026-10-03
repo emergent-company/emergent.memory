@@ -6,13 +6,14 @@
 
 ## 2. Summary computation once per document (TDD)
 
-- [ ] 2.1 Add a summary-computation helper (in `domain/documents` or a small `pkg`) that produces a one-line summary via a single LLM call, caches it on `kb.documents.summary`, and returns the cached value when present.
+- [ ] 2.1 Add a summary-computation helper (in `domain/documents` or a small `pkg`) that produces a one-line summary via a single LLM call, caches it on `kb.documents.summary`, and returns the cached value when present. Make computation **atomic per document**: a compare-and-set / `SELECT … FOR UPDATE` re-read (or keyed singleflight guarded by the row) so concurrent callers observing a NULL summary compute exactly once — the loser re-reads the committed value instead of computing again.
 - [ ] 2.2 (TDD) Unit test with a fake model: computing a summary for a multi-chunk document invokes the model once; a second request returns the cached value without a second call.
+- [ ] 2.3 (TDD) Concurrent test: many chunks of the same document request a summary simultaneously; exactly ONE model call runs and all callers observe the same cached value (no duplicate LLM calls, no lost update).
 
 ## 3. Summary compute/recompute wiring
 
-- [ ] 3.1 Wire summary computation into the document ingest path (compute on create) and the document update path (recompute on content change); add a backfill job to compute summaries for pre-existing documents.
-- [ ] 3.2 (TDD) Unit test: ingest computes and caches a summary; a content change recomputes it; a backfill computes summaries for documents missing one.
+- [ ] 3.1 Wire summary computation into the document ingest path (compute on create) and the document update path (recompute on **content change OR `filename` OR `source_url` change** — each is a document-mutation invalidation trigger). Add a **resumable, bounded backfill job** that schedules summary computation for pre-existing documents (batch processing with a checkpoint, so it survives interruption and never double-computes/double-enqueues).
+- [ ] 3.2 (TDD) Unit test: ingest computes and caches a summary; a content change recomputes it; a `filename`/`source_url` change recomputes it; the backfill computes summaries for documents missing one and resumes from its checkpoint after interruption.
 
 ## 4. Embedding input = filename/source_url + summary + text (TDD)
 

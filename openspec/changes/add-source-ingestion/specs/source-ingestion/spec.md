@@ -21,7 +21,7 @@ A source SHALL be a durable, project-scoped record carrying a `type`, a `config`
 
 ### Requirement: Incremental sync with state and cursor
 
-A source sync SHALL be incremental: it SHALL persist a sync state/cursor (e.g. last-synced external id, watermark, or etag) and SHALL resume from that cursor on the next sync rather than re-reading the entire source.
+A source sync SHALL be incremental **when its transport exposes a cursor**: it SHALL persist a sync state/cursor (e.g. last-synced external id, watermark, or etag) and SHALL resume from that cursor on the next sync rather than re-reading the entire source. Incremental semantics SHALL be scoped to cursor-capable transports only.
 
 #### Scenario: Cursor advances after sync
 
@@ -37,6 +37,43 @@ A source sync SHALL be incremental: it SHALL persist a sync state/cursor (e.g. l
 
 - **WHEN** the server restarts
 - **THEN** the persisted cursor SHALL survive and the next sync resumes from it
+
+### Requirement: Cursor-less sources use full-sync idempotency
+
+A source whose transport exposes **no** cursor SHALL NOT be given a synthesized watermark in this change. It SHALL instead use full-sync idempotency: re-fetch the whole source and deduplicate by `(source_id, external_item_id)`, so repeated syncs SHALL still not duplicate content. The source's `sync_state` SHALL record which mode it uses.
+
+#### Scenario: Cursor-less source re-fetches without duplicates
+
+- **WHEN** a cursor-less source is synced twice with unchanged external content
+- **THEN** the second sync SHALL re-fetch the source and produce no duplicate documents, chunks, or graph objects
+
+### Requirement: At most one active sync job per source
+
+At most one sync job SHALL be `pending` or `processing` for a given source at any time, enforced by a partial unique constraint on `kb.source_sync_jobs`. A trigger while a job is active SHALL be rejected (or return the in-flight job) rather than enqueued, so a slow periodic sync and a manual trigger cannot race cursor updates. A stale `processing` row from a crashed worker SHALL be recovered (requeued or `failed`) before the source can be admitted again.
+
+#### Scenario: Overlapping trigger rejected
+
+- **WHEN** a sync job is `pending`/`processing` for a source and a second trigger arrives
+- **THEN** the second trigger SHALL be rejected (or return the existing job), and no second active job SHALL exist for that source
+
+#### Scenario: Stale job recovered before re-admission
+
+- **WHEN** a source has a `processing` job whose worker died
+- **THEN** that job SHALL be recovered (requeued or `failed`), after which a new trigger for the source SHALL be admitted
+
+### Requirement: Documents are attributable to their source
+
+An ingested document SHALL carry a nullable `source_id` (FK to `kb.sources`) and a nullable `external_item_id`, with a partial unique constraint on `(source_id, external_item_id) WHERE external_item_id IS NOT NULL` so a single external item under one source maps to a single document (the idempotency key). Deleting a source SHALL set `source_id` to NULL (documents are kept and lose attribution) rather than cascade-delete documents.
+
+#### Scenario: One document per source external item
+
+- **WHEN** a sync ingests the same external item twice under the same source
+- **THEN** it SHALL update the existing document (keyed on `(source_id, external_item_id)`) rather than create a duplicate
+
+#### Scenario: Source deletion keeps documents
+
+- **WHEN** a source is deleted
+- **THEN** its documents SHALL be retained with `source_id` set to NULL, and re-ingesting the same external item under a new source SHALL create a distinct document
 
 ### Requirement: Sync job lifecycle
 

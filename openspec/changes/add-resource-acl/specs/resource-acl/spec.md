@@ -58,7 +58,7 @@ A principal SHALL be authorized for a resource if any group they belong to (tran
 
 ### Requirement: Search never returns unauthorized resources
 
-Authorization SHALL be enforced at every search and graph hybrid search entry point, so no read path can bypass the ACL. Enforcement SHALL be centralized in a single `authorizeResources()` helper used by all legs.
+Authorization SHALL be enforced at every search and graph hybrid search entry point, so no search path can bypass the ACL. Enforcement SHALL be centralized in a single `authorizeResources()` helper used by all legs.
 
 #### Scenario: All legs share one enforcement point
 
@@ -69,6 +69,25 @@ Authorization SHALL be enforced at every search and graph hybrid search entry po
 
 - **WHEN** a resource is denied to a caller
 - **THEN** it SHALL NOT appear in any leg's results
+
+### Requirement: Direct read paths enforce the ACL
+
+The per-resource `authorizeResources()` predicate SHALL also gate **direct** reads — document list/get/content/download/extraction-summary and graph object/relationship get/list/edges/similar/traverse/expand/count/history — not only search, so a denied resource is unreadable and uncountable outside search. A relationship SHALL be hidden on direct read when either endpoint is unreadable, matching the search-leg rule.
+
+#### Scenario: Denied document is not directly readable
+
+- **WHEN** a document is denied to a caller
+- **THEN** the caller SHALL NOT read, list, download, or fetch its content or extraction-summary through the direct document routes
+
+#### Scenario: Denied object is not directly readable or counted
+
+- **WHEN** a graph object is denied to a caller
+- **THEN** the caller SHALL NOT fetch, list, traverse, expand, or see it in object/edge counts through the direct graph routes
+
+#### Scenario: Relationship to an unreadable endpoint is hidden on direct read
+
+- **WHEN** one endpoint object of a relationship is denied to a caller
+- **THEN** the relationship SHALL NOT be returned by the direct relationship get/list/count/history routes
 
 ### Requirement: Relationship visibility follows endpoint readability
 
@@ -88,19 +107,24 @@ An explicit admin (superadmin / org admin) SHALL have a documented, controlled b
 - **WHEN** an org/super admin reads resources
 - **THEN** they SHALL bypass the per-resource ACL (subject to project/org membership where applicable), applied through one documented path
 
-### Requirement: Backfill preserves existing access
+### Requirement: Migration preserves existing access (schema-only)
 
-The migration that introduces ACL SHALL backfill entries such that every existing project member SHALL have `read` on their project's existing resources, preserving current behaviour with no observed change for existing users. The backfill SHALL be keyed on `kb.organization_memberships` projected onto each org's projects, and SHALL cover an org member who has **no** `kb.project_memberships` row.
+The migration that introduces ACL SHALL create the `kb.acl_entries`, `kb.groups`, and `kb.group_members` tables and SHALL **not** materialize a read row per member × resource. Existing project members' access SHALL be preserved by the member-default-read rule (default project-member read), keyed on `kb.organization_memberships` projected onto each org's projects, so the migration is an identity migration with no observed change for existing users and no O(members × resources) backfill. Only real overrides (`deny`, or `read` to a non-member) are ever written, and none exist at migration time.
 
 #### Scenario: Existing members unaffected by migration
 
 - **WHEN** the ACL migration runs against existing data
-- **THEN** existing project members SHALL retain read access to their project's resources exactly as before the migration
+- **THEN** existing project members SHALL retain read access to their project's resources exactly as before the migration, via the default rule rather than materialized grant rows
 
 #### Scenario: Org member without a project_memberships row keeps access
 
 - **WHEN** a user is an org member with no `kb.project_memberships` row
-- **THEN** the backfill SHALL still grant them `read` on the org's projects' resources (keyed on `kb.organization_memberships`)
+- **THEN** the default rule SHALL still grant them `read` on the org's projects' resources (keyed on `kb.organization_memberships`), with no materialized ACL row required
+
+#### Scenario: No per-member × per-resource backfill rows
+
+- **WHEN** the ACL migration runs
+- **THEN** it SHALL be schema-only: zero `acl_entries` rows are inserted by the migration, so the migration cost is bounded regardless of member or resource count
 
 ### Requirement: PermissionSource contract for future syncers
 

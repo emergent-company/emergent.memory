@@ -39,6 +39,13 @@ candidates, so rerank only pays for survivors; (b) the output is still a single 
 Reranking before `filterBelowMinScore` would waste provider calls on candidates that
 would be dropped; reranking after assembly would require tearing apart the response.
 
+`fuse` currently truncates to the caller's `limit` (`service.go:169` passes `limit`, and
+`fuseWeighted`/`fuseRRF`/etc. slice to `[:limit]`), so a small `limit` would starve the
+rerank stage of its top-N block. When the reranker is configured, `Search` SHALL fuse at
+`max(limit, RerankTopN)`, apply `filterBelowMinScore` and the rerank stage to that wider
+set, then truncate to the caller's `limit` at assembly. When the reranker is nil, fuse at
+`limit` exactly as today — the hot path is unchanged.
+
 ### D2 — Interface: `pkg/rerank`
 
 ```go

@@ -13,3 +13,8 @@ The search pipeline SHALL support an optional post-fusion rerank stage that runs
 
 - **WHEN** a reranker is configured
 - **THEN** the top-N fused candidates SHALL be re-scored by the reranker and re-ordered by their rerank scores, and results beyond top-N SHALL retain their fused order
+
+#### Scenario: Fuse width preserves the top-N block
+
+- **WHEN** a reranker is configured and the caller's response `limit` is smaller than `RerankTopN`
+- **THEN** fusion SHALL run over `max(limit, RerankTopN)` candidates so the reranker receives its full top-N block, and the final result SHALL be truncated to the caller's `limit`

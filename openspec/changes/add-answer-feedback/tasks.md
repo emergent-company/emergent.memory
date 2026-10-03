@@ -12,17 +12,17 @@
 - [ ] 2.4 Add `TraceStore.ListByProject(ctx, projectID, opts)` and `ListByUser` read methods returning reverse-chronological traces (reusing existing project/created indexes).
 - [ ] 2.5 (TDD) Unit test: `ListByProject` returns only that project's traces newest-first; `ListByUser` filters to the user (excluding null-user traces); empty result returns `[]` not nil.
 
-## 3. Chat message → trace linkage
+## 3. Chat message → provenance linkage (run + trace)
 
-- [ ] 3.1 New migration adding nullable `retrieval_trace_id` to `kb.chat_messages` (FK `kb.retrieval_traces(id) ON DELETE SET NULL`), plus the `domain/chat` entity field.
-- [ ] 3.2 At chat-response time, capture the unified search response `TraceID` (`domain/search/service.go:177-180`) and persist it on the chat message's `retrieval_trace_id` (chat → gateway → message persist).
-- [ ] 3.3 (TDD) Unit test: a chat response backed by a search stores the search `TraceID`; a response with no search stores `retrieval_trace_id = NULL`.
+- [ ] 3.1 New migration adding nullable `retrieval_trace_id` (FK `kb.retrieval_traces(id) ON DELETE SET NULL`) and nullable `run_id` (FK `kb.agent_runs(id) ON DELETE SET NULL`) to `kb.chat_messages`, plus the `domain/chat` entity fields.
+- [ ] 3.2 At chat-response time, capture the unified search response `TraceID` (`domain/search/service.go:177-180`) and persist it on the chat message's `retrieval_trace_id`; stamp `run_id` from the producing agent run id already in scope at persist time (chat → gateway → message persist). Both are server-derived, never client-supplied.
+- [ ] 3.3 (TDD) Unit test: a chat response backed by a search stores the search `TraceID` and its producing `run_id`; a response with no search stores `retrieval_trace_id = NULL`; a non-agent response stores `run_id = NULL`.
 
 ## 4. Feedback domain — submit / list / aggregate
 
 - [ ] 4.1 New `domain/answerfeedback` package: Bun entity, `store.go` (upsert by `(message_id, user_id)`, delete for clear, list, aggregate), `service.go` (submit-with-idempotency, project access check, aggregation by model via `run_id` and by search-fusion config via `retrieval_traces.filters`), `handler.go` (Echo routes), `module.go` (fx wiring).
 - [ ] 4.2 (TDD) Store unit test: first submit inserts; re-submit updates the same row (no duplicate); clear deletes; two users on one message produce two rows; `thumbs` CHECK rejects any value other than `-1`/`1`.
-- [ ] 4.3 (TDD) Service unit test: submit derives user from context (request `user_id` field ignored); `run_id` and `retrieval_trace_id` are derived server-side (from the agent run and the message, respectively), not from the submit DTO; project access denied for a non-member; aggregation groups correctly by model (via `run_id`) and by search-fusion config (via `filters`), returns zero counts for an empty range, and reports `NULL` for a dimension with no provenance.
+- [ ] 4.3 (TDD) Service unit test: submit derives user from context (request `user_id` field ignored); `run_id` and `retrieval_trace_id` are derived server-side (both denormalized from the chat message, which carries them per §3), not from the submit DTO; project access denied for a non-member; aggregation groups correctly by model (via `run_id`) and by search-fusion config (via `filters`), returns zero counts for an empty range, and reports `NULL` for a dimension with no provenance.
 - [ ] 4.4 (TDD) Handler unit test: routes `POST /feedback`, `GET /feedback/aggregate` validate and return the expected DTOs.
 
 ## 5. API + DTOs

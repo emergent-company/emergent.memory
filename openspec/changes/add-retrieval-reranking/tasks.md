@@ -10,13 +10,13 @@
 
 ## 2. Config + validation (TDD)
 
-- [ ] 2.1 New Goose migration adding `rerank_model` to `ProjectModelConfig` (`domain/modelconfig`), plus the resolution-chain entry that resolves `rerank_model` per project using `projectID` (like generative/embedding model selection); env `RERANK_MODEL`/`RERANK_TOP_N` as bootstrap fallback only; default empty → off.
+- [ ] 2.1 New Goose migration adding nullable `rerank_model` and `rerank_top_n` (default `50`) to `ProjectModelConfig` (`domain/modelconfig`), plus the Bun entity fields, the request/response DTOs (`UpsertModelConfigRequest`, `ModelConfigResponse`, `EffectiveModelConfig`), the resolution-chain entry that resolves `rerank_model` per project using `projectID` (like generative/embedding model selection), and credential validation for the resolved rerank provider at use time (reuse `domain/provider`); env `RERANK_MODEL`/`RERANK_TOP_N` as bootstrap fallback only; empty model → off; omitted `rerank_top_n` defaults to `50` (ceiling `100`).
 - [ ] 2.2 (TDD) Config validation unit test: empty model → off; unknown model → validation error; `RerankTopN <= 0` or `> 100` → validation error; valid config passes; per-project resolution returns a project's model, not a global one.
 
 ## 3. Stage placement in `Search` (TDD)
 
-- [ ] 3.1 In `domain/search/service.go` `Search`, insert the rerank call after `filterBelowMinScore` and before `countTypes`/assembly; skip when the reranker is nil. Build each `Candidate.Text` per result type (graph → Key/Fields serialization, text → Snippet, relationship → TripletText).
-- [ ] 3.2 (TDD) Unit test: nil reranker → fused order unchanged (byte-for-byte today's order); configured reranker re-orders only the top-N block and appends the rest in original order; fewer-than-N candidates reranks all.
+- [ ] 3.1 In `domain/search/service.go` `Search`, when the reranker is configured fuse at `max(limit, RerankTopN)` (so a small caller `limit` cannot starve the top-N rerank block; today `fuse` truncates to `limit`), insert the rerank call after `filterBelowMinScore` and before `countTypes`/assembly, then truncate the final result to the caller's `limit` at assembly; skip the rerank (and fuse at `limit` exactly as today) when the reranker is nil. Build each `Candidate.Text` per result type (graph → Key/Fields serialization, text → Snippet, relationship → TripletText).
+- [ ] 3.2 (TDD) Unit test: nil reranker → fused order unchanged (byte-for-byte today's order); configured reranker re-orders only the top-N block and appends the rest in original order; fewer-than-N candidates reranks all; a caller `limit` smaller than `RerankTopN` still reranks the full top-N block then truncates to `limit`.
 
 ## 4. Fallback + trace metadata (TDD)
 

@@ -75,21 +75,31 @@ Clearing a vote deletes the row. This mirrors Onyx's one-vote-per-user-per-messa
 semantics and keeps aggregation a `COUNT ... GROUP BY` over a small table rather than a
 delta/revision reconstruction.
 
-### D2b — Feedback → retrieval trace linkage is carried on the chat message
+### D2b — Provenance keys (run + trace) are carried on the chat message
 
-`chat.Message` has no retrieval trace id — `RetrievalContext` is a JSON array of graph
-object IDs, not a trace pointer. So the trace link must be threaded end-to-end:
+`chat.Message` carries no run, model, or trace provenance — `RetrievalContext` is a JSON
+array of graph object IDs, not a trace pointer. `kb.chat_messages` stores no `run_id`
+(`00001` baseline has only `id/conversation_id/role/content/citations/created_at`), and the
+indirect `conversation_id → chat_conversations.session_id → agent_runs.session_id` chain is
+**not deterministic**: `agent_runs.session_id` is indexed non-uniquely (`00195`
+`idx_agent_runs_session_id`), so one session maps to many runs (resume/sub-runs). Both
+provenance keys must therefore be threaded end-to-end and stamped on the message at
+chat-response time, when the producing run and the search trace are both known server-side:
 
 1. Chat retrieval invokes unified search, whose response carries `TraceID`
    (`domain/search/service.go:177-180`, `resp.TraceID = &traceIDStr`).
-2. `kb.chat_messages` gains a nullable `retrieval_trace_id` (uuid), populated from that
-   search response trace id at chat-response time (chat → gateway → message persist).
-3. `answer_feedback.retrieval_trace_id` is set from the message's `retrieval_trace_id` at
-   submit time (denormalized copy, FK to `kb.retrieval_traces(id)`), so aggregation can
-   join feedback → traces without re-joining through chat.
+2. `kb.chat_messages` gains two nullable uuid columns, populated at chat-response time
+   (chat → gateway → message persist):
+   - `retrieval_trace_id` — from the search response trace id;
+   - `run_id` (FK `kb.agent_runs(id) ON DELETE SET NULL`) — the agent run that produced
+     the assistant message, stamped from the run id already in scope at persist time.
+3. `answer_feedback` denormalizes both at submit time: `run_id` and `retrieval_trace_id`
+   are copied from the message (FKs to `kb.agent_runs(id)` / `kb.retrieval_traces(id)`), so
+   aggregation joins feedback → runs / traces without re-joining through chat.
 
 This removes the earlier ambiguity of an "optional trace id with no stated source": the
-source is the chat message's stored trace id, which in turn comes from the search response.
+source is the chat message's stored provenance keys, which in turn come from the run and
+the search response at persist time. No key is client-supplied.
 
 ### D3 — Aggregation provenance (model via run, config via filters)
 
@@ -100,13 +110,15 @@ trace provenance on the chat message, and `kb.retrieval_traces` stores only `fil
 embedding/model-config column. Therefore:
 
 - **Model aggregation** goes through `run_id`: `answer_feedback.run_id →
-  kb.llm_usage_events.run_id` (which carries `Model`). A single run MAY emit multiple
-  usage events (multiple LLM calls), so model aggregation is **counts/sums grouped by
-  model**, not a single-model attribution. The full derivation chain for a chat message's
-  run is `chat_messages.conversation_id → chat_conversations.session_id →
-  agent_runs.session_id → run_id → llm_usage_events.run_id`; `session_id` is nullable and
-  `run_id` is `ON DELETE SET NULL` (migration `00050`), so a run-less legacy message
-  reports `NULL` model.
+  kb.llm_usage_events.run_id` (which carries `model`), where `answer_feedback.run_id` is
+  denormalized from the message's `run_id` (D2b). A single run MAY emit multiple usage
+  events (multiple LLM calls), so model aggregation is **counts/sums grouped by model**,
+  not a single-model attribution. `kb.llm_usage_events` also carries `root_run_id`
+  (`00053`), so aggregation MAY group by `run_id` or roll up to `root_run_id`. The earlier
+  `chat_messages.conversation_id → chat_conversations.session_id → agent_runs.session_id`
+  chain is **rejected**: `agent_runs.session_id` is indexed non-uniquely (`00195`), so a
+  session maps to many runs and the join is non-deterministic. `run_id` is nullable
+  (`ON DELETE SET NULL`, `00050`), so a run-less legacy message reports `NULL` model.
 - **Search-fusion config aggregation** uses `kb.retrieval_traces.filters` (which stores
   resultTypes/fusionStrategy/weights), joined via `answer_feedback.retrieval_trace_id →
   kb.retrieval_traces`.
@@ -135,6 +147,7 @@ The handler validates project access via the existing membership path.
 - **Trace retention deletes query history.** The trace TTL (bounded retention) will
   eventually expire old queries, so search-query history is not immutable audit. That is
   consistent with `retrieval-trace-persistence`; long-term audit is out of scope.
-- **`retrieval_trace_id` set-null cascades.** If a trace row is purged, the chat message's
+- **Provenance-key set-null cascades.** If a trace row is purged, the chat message's
   `retrieval_trace_id` (FK `ON DELETE SET NULL`) and the feedback row's copy become NULL;
-  feedback is still retained (its `created_at` is independent), only the trace join dims.
+  if a run is deleted, `run_id` likewise nulls. Feedback is still retained (its
+  `created_at` is independent); only the trace/run join dims.

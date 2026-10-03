@@ -15,13 +15,16 @@ existing users.
 - A per-resource ACL data model (with `deny`) and recursive group resolution.
 - One `authorizeResources()` enforcement helper wired into the text, relationship, and
   graph-object legs.
-- A default/backfill rule that preserves current behaviour.
+- A default rule (project-member read) that preserves current behaviour, with a
+  schema-only migration (no per-member × per-resource grant backfill).
 - A `PermissionSource` interface contract for future syncers.
 
 **Non-Goals (deferred, explicit)**
 
 - 50 connector ACL syncers — the breadth trap this change is designed to avoid.
-- A `source` resource type (no `kb.sources` table exists; matches collections v1).
+- A `source` resource type (no `kb.sources` table exists; matches collections v1). Adding
+  this type is a follow-up migration that depends on `add-source-ingestion` creating
+  `kb.sources` — it is not part of this change.
 - Write/update permissions at the resource level — this change is read authorization
   only; writes remain governed by project role.
 
@@ -53,6 +56,10 @@ kb.groups ( id, project_id, name )
 kb.group_members ( group_id, principal_type, principal_id )   -- shared enum; may nest groups
 ```
 
+- The `UNIQUE (resource_type, resource_id, principal_type, principal_id)` **deliberately
+  excludes** `permission`: a principal holds at most one effect row per resource (`read`
+  OR `deny`), and flipping the effect is an in-place upsert. Including `permission` in the
+  key would admit contradictory `read` **and** `deny` rows for the same principal+resource.
 - For `object` entries, `resource_id` stores a graph object's `canonical_id`; at
   enforcement time it is mapped to `graph_objects.id → canonical_id` (head-resolved) so
   the ACL follows the live object.
@@ -66,7 +73,8 @@ the user's (transitive) groups, or the user directly, has an entry (subject to d
 ### D2 — Enforcement point: `authorizeResources()`
 
 A single function computes the set of resource ids (per type) a principal may read in a
-project, then each search leg adds that set as a predicate (`IN (allowed)`, or an
+project, then **every read path** — each search leg **and** the direct document / graph
+object / relationship read routes — adds that set as a predicate (`IN (allowed)`, or an
 existence check against `acl_entries` + group membership). Resolution happens once per
 request and is translated into SQL, never a post-hoc in-memory filter (which would break
 candidate caps, scores, and the retrieval-trace guarantees).
@@ -81,6 +89,16 @@ overrides) collapses to today's project-id-only predicate with negligible overhe
 are readable — i.e. `src` OR `dst` unreadable hides the relationship. This matches the
 existing endpoint-visibility semantics (a relationship to an object you cannot see must
 not leak that object).
+
+**Direct read paths.** The same `authorizeResources()` helper SHALL gate direct reads, not
+only search: in `domain/documents` — `List`, `GetByID`, `GetContent`, `Download`,
+`GetExtractionSummary` — and in `domain/graph` — object reads (`GetObject`, `ListObjects`,
+`GetObjectEdges`, `GetSimilarObjects`, `GetObjectHistory`, `CountObjects`, `TraverseGraph`,
+`ExpandGraph`) and relationship reads (`GetRelationship`, `ListRelationships`,
+`CountRelationships`, `GetRelationshipHistory`). A resource denied to a caller SHALL be
+unreadable/uncountable via these routes exactly as it is unsearchable, so the ACL has no
+search-only gap. (Collections are a separate change; ACL does not add a collection
+resource type in this change.)
 
 ### D3 — Relationship to the existing Postgres RLS layer
 
@@ -111,20 +129,25 @@ get RLS policies scoped to `app.current_project_id` (via the resource's/group's
 
 ### D4 — Phasing
 
-This change ships **Phase 1 only**: data model + migration/backfill + `authorizeResources`
-+ search enforcement + `PermissionSource` contract + admin bypass. Phase 2 (connector
+This change ships **Phase 1 only**: data model + schema-only migration + `authorizeResources`
++ read-path enforcement + `PermissionSource` contract + admin bypass. Phase 2 (connector
 ACL syncers) is explicitly out of scope; the interface contract is the seam. Tasks list
 Phase 2 as deferred.
 
 ## Risks / Trade-offs
 
-- **Migration risk.** The backfill must grant read to every existing project member for
-  every existing resource. The backfill is keyed on **`kb.organization_memberships`** (the
-  real project-read gate via `lookupOrgMember` in `apps/server/pkg/auth/middleware.go`,
-  esp. 663), projected onto each org's projects — NOT `kb.project_memberships` (which is
-  role display). A parity test must exercise an org member with **no**
-  `project_memberships` row. If the backfill misses resources, existing users silently
-  lose access.
+- **Migration risk.** The migration SHALL **not** materialize a read row per member ×
+  resource: the member-default-read rule (D2) already preserves every existing member's
+  access, so a per-resource grant backfill is O(members × resources) with zero added
+  permission information and would fight the default rule. The migration is therefore
+  **schema-only** (create `acl_entries`/`groups`/`group_members`) — an identity migration
+  with no row backfill. Only real overrides (an explicit `deny`, or a `read` grant to a
+  non-member) are ever written, and none exist at migration time. A parity test must prove
+  observed behaviour is unchanged: an org member with **no** `kb.project_memberships` row
+  (keyed on `kb.organization_memberships`, the real project-read gate via `lookupOrgMember`
+  in `apps/server/pkg/auth/middleware.go`, esp. 663) still reads every resource they could
+  before, and a non-member still cannot. If the default rule is mis-evaluated, existing
+  users silently lose access.
 - **Performance.** Adding an authorization predicate to every leg risks regression.
   Mitigation: the common case collapses to project-id-only (D2); an EXPLAIN/bench task is
   in the plan; an index on `acl_entries (resource_type, resource_id)`.

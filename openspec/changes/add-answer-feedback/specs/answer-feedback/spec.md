@@ -62,9 +62,34 @@ A feedback row SHALL reference the retrieval trace that produced the answer bein
 - **WHEN** feedback is submitted against a chat message with no retrieval trace
 - **THEN** the feedback row's `retrieval_trace_id` SHALL be null and submission still succeeds
 
+### Requirement: Feedback is linked to the producing run end-to-end
+
+A feedback row SHALL reference the agent run that produced the answer being rated, via a
+nullable `run_id`. The linkage SHALL be threaded end-to-end: `kb.chat_messages.run_id` is
+stamped from the producing agent run at answer time (server-side, never client-supplied),
+and the feedback row denormalizes that value at submit time. Model aggregation SHALL resolve
+through `answer_feedback.run_id → kb.llm_usage_events.run_id` (optionally rolling up to
+`root_run_id`), never through an indirect `conversation_id → session_id →
+agent_runs.session_id` join, which is non-deterministic (a session maps to many runs).
+
+#### Scenario: Chat message records the producing run
+
+- **WHEN** an agent-backed chat response is produced
+- **THEN** `kb.chat_messages.run_id` SHALL be set to the producing agent run id
+
+#### Scenario: Feedback copies the message's run
+
+- **WHEN** feedback is submitted against a chat message that has a `run_id`
+- **THEN** the feedback row's `run_id` SHALL equal that message's run id
+
+#### Scenario: No run yields null
+
+- **WHEN** feedback is submitted against a chat message with no run (a non-agent response)
+- **THEN** the feedback row's `run_id` SHALL be null and submission still succeeds
+
 ### Requirement: Feedback is queryable by model and by search-fusion config
 
-Feedback SHALL be queryable and aggregable by model and by search-fusion configuration. Model SHALL be resolved via `run_id → kb.llm_usage_events.run_id`; because a run MAY emit multiple usage events, model aggregation SHALL be counts/sums grouped by model, not single-model attribution. Search-fusion config SHALL be resolved via `kb.retrieval_traces.filters` (resultTypes/fusionStrategy/weights), joined through `retrieval_trace_id`. Per-embedding-model aggregation SHALL NOT be available and SHALL be out of scope.
+Feedback SHALL be queryable and aggregable by model and by search-fusion configuration. Model SHALL be resolved via `answer_feedback.run_id → kb.llm_usage_events.run_id` (the message's stamped run id, see "Feedback is linked to the producing run end-to-end"); because a run MAY emit multiple usage events, model aggregation SHALL be counts/sums grouped by model, not single-model attribution. Search-fusion config SHALL be resolved via `kb.retrieval_traces.filters` (resultTypes/fusionStrategy/weights), joined through `retrieval_trace_id`. Per-embedding-model aggregation SHALL NOT be available and SHALL be out of scope.
 
 #### Scenario: Aggregation by model
 
