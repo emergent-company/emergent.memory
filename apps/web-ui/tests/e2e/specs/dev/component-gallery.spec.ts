@@ -1,18 +1,18 @@
 import { test, expect } from '@playwright/test';
 
 // The component gallery (/dev/components) is a dev-gated surface rendered by the
-// gateway (gateway/devgallery.go + devgallery.templ). The external session-mode
-// gateway this suite targets leaves MEMORY_COMPONENT_GALLERY off by default, so
-// the route returns 404 and this spec skips fast rather than failing. When the
-// flag is on, it asserts the catalog shell, a layer section, and that at least
-// one lazy preview iframe renders non-empty isolated content.
+// gateway (gateway/devgallery.go + devgallery.templ). It only serves when
+// MEMORY_COMPONENT_GALLERY=on, so it runs under the dedicated flag-on harness
+// (`dev-gallery.config.ts`, which starts `run-e2e.sh`) rather than the
+// session-mode suite — `playwright.config.ts` excludes `specs/dev` because the
+// live gateway leaves the flag off and the route 404s. This spec therefore
+// asserts the surface for real: catalog shell, a layer section, and that at
+// least one lazy preview iframe renders non-empty isolated content.
+// Run:  npx playwright test --config=dev-gallery.config.ts
 
 test('renders the component gallery with an isolated preview', async ({ page }) => {
   const response = await page.goto('/dev/components');
-  test.skip(
-    !response || response.status() === 404,
-    'component gallery is disabled (MEMORY_COMPONENT_GALLERY off on the target gateway)',
-  );
+  expect(response?.status(), 'gallery route should serve (MEMORY_COMPONENT_GALLERY=on)').toBe(200);
 
   // The catalog shell anchors the page.
   await expect(page.getByTestId('component-gallery')).toBeVisible();

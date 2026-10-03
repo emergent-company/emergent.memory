@@ -32,7 +32,7 @@
 - [x] 5.1 Add the `MEMORY_COMPONENT_GALLERY` config flag (explicit, default off in every mode; no `AuthMode`-based default because `task dev` is session mode) in `config.go`; verify with config unit tests for set and unset
 - [x] 5.2 Register `/dev/components` and `/dev/components/preview/:slug` in `main.go` with an in-handler flag check (route always registered; handler returns 404 when `MEMORY_COMPONENT_GALLERY` is off) so both states are httptest-able; exempt `/dev/` from project scoping (`projectScopePath`) and from `canonicalHostRedirect`; verify with `httptest` for flag on/off and for no-active-project (no `/orgs` redirect)
 - [x] 5.3 Render no sidebar navigation entry for the gallery; verify the rendered shell contains no gallery nav link
-- [x] 5.4 Enable the flag in the dev environment (`apps/web-ui/.env.example` + local `.env`), forward it through `apps/web-ui/docker-compose.yml` (its `environment:` block lists vars explicitly), and set it in the e2e/dev harness (`tests/e2e/run-e2e.sh`); verify `task dev` and `docker compose up` both serve `/dev/components` and `run-e2e.sh` exports it
+- [x] 5.4 Document enabling the flag in the dev environment (`.env.example` lists it commented/off; the local `.env` opts in), forward it through `apps/web-ui/docker-compose.yml` (its `environment:` block lists vars explicitly, defaulting off via `${MEMORY_COMPONENT_GALLERY:-off}`), and set it in the e2e/dev harness (`tests/e2e/run-e2e.sh`); verify `task dev` and `docker compose up` both serve `/dev/components` when opted in and `run-e2e.sh` exports it
 - [x] 5.5 Wire the generated graph into the dev loop and CI: `task dev`/air runs `templ generate` then `go generate ./...` so the graph is fresh; `cmd/componentgraph` is covered by the gateway `./...` build/vet/lint; verify the staleness check passes on a clean tree and fails after a stale edit
 
 ## 6. Verification
@@ -40,7 +40,7 @@
 - [x] 6.1 Run `templ generate ./...`, `go generate ./...`, `go build ./...`, and `go test ./...` from `apps/web-ui/gateway`; all succeed
 - [x] 6.2 Run `task lint` from `apps/web-ui/gateway`; clean
 - [ ] 6.3 Run `task dev` and load `/dev/components` in the browser; verify the catalog renders, previews load, and an interactive component's overlay stays inside its preview
-- [x] 6.4 Add a Playwright e2e spec asserting the page loads and each listed slug's preview renders non-empty; run it under the dev harness with `MEMORY_COMPONENT_GALLERY=on` (`run-e2e.sh`, `AUTH_MODE=dev`); if it must run in the session-mode project against an external gateway, that gateway's deployment sets the flag; verify it passes
+- [x] 6.4 Add a Playwright e2e spec asserting the page loads and each listed slug's preview renders non-empty; it runs under a dedicated flag-on harness config (`tests/e2e/dev-gallery.config.ts`, which starts `run-e2e.sh` with `MEMORY_COMPONENT_GALLERY=on`, `AUTH_MODE=dev`) and is excluded from the session-mode `chromium` project (whose external gateway leaves the flag off); verify it passes (`task e2e:gallery`)
 - [x] 6.5 Run `openspec validate web-ui-component-gallery --strict`; clean
 
 <!-- 6.3 (manual browser check) is owner-side: the dev server runs on the dev host and the browser is on the operator's machine. Unit + httptest + Playwright coverage is in place. -->

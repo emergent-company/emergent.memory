@@ -43,14 +43,14 @@ Previews MUST NOT be able to mutate the backend. The session cookie is `SameSite
 
 - **Generator misses dynamic renders** → the walk unwraps `X(...).Render(...)`/`templ.WithChildren` but component-typed params and `templ.Raw` remain uncaptured; the registry supports a manual `AdditionalUses` field and a unit test asserts known edges (e.g. a composite → `ui.Card`).
 - **Fixtures drift as components change** → fixture functions are typed Go against the components, so prop changes fail the build; an e2e test asserts each listed slug's preview renders non-empty.
-- **Default-off gate hides the gallery from the Playwright run** → the in-repo dev harness (`tests/e2e/run-e2e.sh`, `AUTH_MODE=dev`) exports `MEMORY_COMPONENT_GALLERY=on`; if the gallery spec runs in the session-mode project against an external gateway, that gateway's deployment must set the flag (out of this change's scope).
+- **Default-off gate hides the gallery from the Playwright run** → the gallery spec is excluded from the session-mode `chromium` project (whose external gateway leaves the flag off) and runs under a dedicated flag-on harness config (`tests/e2e/dev-gallery.config.ts`), which starts the in-repo dev harness (`tests/e2e/run-e2e.sh`, `AUTH_MODE=dev`) that exports `MEMORY_COMPONENT_GALLERY=on`.
 - **go-daisy upgrade changes the used set** → the graph is regenerated; the go-daisy entry list derives from edges, so it tracks automatically.
 - **Many iframes on one page** → previews use `loading="lazy"` and detail rendering is on demand.
 - **Generated files are stale in CI** → a check regenerates the graph and fails if it differs (covered by a task).
 
 ## Migration Plan
 
-Additive; no data or API migration. The flag is off by default, so a deployment opts in explicitly: the dev environment (`.env.example`) and the in-repo e2e/dev harness set `MEMORY_COMPONENT_GALLERY=on`; production leaves it unset. Rollback is unsetting the flag (routes 404 after auth, no other behaviour affected).
+Additive; no data or API migration. The flag is off by default, so a deployment opts in explicitly: the local dev `.env` (documented commented/off in `.env.example`) and the in-repo e2e/dev harness set `MEMORY_COMPONENT_GALLERY=on`; production leaves it unset. Rollback is unsetting the flag (routes 404 after auth, no other behaviour affected).
 
 ## Open Questions
 

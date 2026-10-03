@@ -65,6 +65,12 @@ tasks:
     cmds:
       - npx playwright test --config=js-dom.config.ts
 
+  e2e:gallery:
+    desc: Run the dev-gated component gallery spec against the flag-on mock harness (starts run-e2e.sh; run `npm ci` + `npx playwright install chromium` first)
+    dir: tests/e2e
+    cmds:
+      - npx playwright test --config=dev-gallery.config.ts
+
   e2e:ui:
     desc: Open the Playwright UI runner (observe + run tests interactively) on https://alfred-dev.tail0358fa.ts.net:8444 — auto-managed via systemd playwright-ui.service + air
     dir: tests/e2e

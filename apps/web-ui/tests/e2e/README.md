@@ -426,4 +426,10 @@ tracked as follow-up, not attempted here.
   no other run is active before treating a batch of failures as real.
 - Legacy mock harness (`mock-memory.mjs`, `run-e2e.sh`) still exists for the
   dev-mode (no-auth) smoke path; this suite is the primary, session-mode path.
+- **Dev-gated component gallery** (`specs/dev/component-gallery.spec.ts`): the
+  gallery route only serves with `MEMORY_COMPONENT_GALLERY=on`, which the live
+  session-mode gateway leaves off. The spec is excluded from the `chromium`
+  project and runs under its own flag-on harness config instead —
+  `npx playwright test --config=dev-gallery.config.ts` (or `task e2e:gallery`),
+  which starts `run-e2e.sh` exactly like `share.config.ts`.
 - Voice/LiveKit/STT and the iOS client are not browser-testable and are out of scope.
