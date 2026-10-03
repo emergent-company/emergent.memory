@@ -160,16 +160,28 @@ Assistant messages SHALL offer a copy action, and each fenced code block SHALL o
 - **THEN** the message layout and reading flow are unchanged from before the affordances were added
 
 ### Requirement: Typed run markers in the transcript
-The transcript SHALL render `run_start` and `run_end` timeline items as turn boundaries rather than generic content. A `run_start` marker SHALL carry the run's model. A `run_end` marker SHALL render status-distinct states so that `failed` and `input-required` are visually and textually distinguishable from `completed`, and a `failed` run SHALL surface its `error_message`.
+The transcript SHALL render `run_start` and `run_end` timeline items as turn boundaries rather than generic content **when debug mode is enabled**, and SHALL hide those boundary rows by default. Debug mode SHALL be off by default and transient (no persisted preference): it SHALL be enabled by the `?debug`, `?debug=1`, or `?debug=true` query flag on the chat URL, or by `window.MemoryChatDebug === true`. The query flag SHALL remain in effect after a conversation or run is opened (the URL normalization that appends the conversation id SHALL NOT drop it). Run lifecycle state (header status, working placeholder, cancelable run id, and turn footers) SHALL be derived from the same `run_start`/`run_end` items regardless of debug mode. A `run_start` marker SHALL carry the run's model. A `run_end` marker SHALL render status-distinct states so that `failed` and `input-required` are visually and textually distinguishable from `completed`, and a `failed` run SHALL surface its `error_message`.
+
+#### Scenario: Boundary rows are hidden by default
+- **WHEN** a transcript contains `run_start`/`run_end` items and debug mode is off
+- **THEN** no run boundary rows render, while the run lifecycle state derived from those items (header, working placeholder, cancelable run id) is still tracked
+
+#### Scenario: Debug mode reveals the boundary rows
+- **WHEN** debug mode is enabled for the chat transcript (the `?debug`, `?debug=1`, or `?debug=true` query flag, or the `window.MemoryChatDebug` switch)
+- **THEN** the transcript renders the `run_start`/`run_end` boundary rows as described above
+
+#### Scenario: Debug query flag survives opening a conversation
+- **WHEN** the chat is opened at a debug URL (for example `/chat?debug`) and a conversation or run is then opened, which normalizes the URL to also carry the conversation id
+- **THEN** the debug flag is not lost to that URL normalization and the transcript still renders the run boundary rows
 
 #### Scenario: Failed run renders its error
-- **WHEN** a `run_end` item has `run_status` `failed` and a non-empty `error_message`
+- **WHEN** a `run_end` item has `run_status` `failed` and a non-empty `error_message`, and debug mode is enabled
 - **THEN** the transcript renders a failed turn boundary that includes that error message
 
 #### Scenario: Paused run renders as waiting
-- **WHEN** a `run_end` item has `run_status` `input-required`
+- **WHEN** a `run_end` item has `run_status` `input-required` and debug mode is enabled
 - **THEN** the transcript renders that turn boundary as waiting on the user, not as completed or failed
 
 #### Scenario: run_start carries the model
-- **WHEN** a `run_start` item has a non-empty `run_model`
+- **WHEN** a `run_start` item has a non-empty `run_model` and debug mode is enabled
 - **THEN** the turn boundary renders that model name
