@@ -217,9 +217,12 @@ func (f *fakeAgentRepo) UpdateAgent(ctx context.Context, a *agents.Agent) error 
 	f.updatedAgents = append(f.updatedAgents, a)
 	return nil
 }
-func (f *fakeAgentRepo) DeleteAgentsBySourceBlueprint(ctx context.Context, blueprintID string) (int, error) {
+func (f *fakeAgentRepo) DeleteAgentsBySourceBlueprint(ctx context.Context, projectID, blueprintID string) (int, error) {
 	n := 0
 	for name, a := range f.agentsByName {
+		if a.ProjectID != projectID {
+			continue
+		}
 		if v, ok := a.Config["sourceBlueprintId"]; ok && v == blueprintID {
 			delete(f.agentsByName, name)
 			n++

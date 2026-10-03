@@ -29,8 +29,9 @@ func TestNewTriggerService_WiresAgentDeletionListener(t *testing.T) {
 	require.Contains(t, sched.ListTasks(), triggerTaskName("wire-1"))
 
 	// This is exactly what Repository.Delete / DeleteAgentsBySourceBlueprint
-	// invoke after a successful row delete.
-	repo.notifyAgentsDeleted([]string{"wire-1"})
+	// invoke after a successful row delete, and what the backup restorer
+	// invokes for agent rows its raw table wipe removed.
+	repo.NotifyAgentsDeleted([]string{"wire-1"})
 
 	assert.Empty(t, ts.GetEventListeners("document:created"))
 	assert.NotContains(t, sched.ListTasks(), triggerTaskName("wire-1"))
