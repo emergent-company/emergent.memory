@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/url"
+	"strconv"
 
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
@@ -54,15 +55,54 @@ templ ApprovalsPage(approvals []ToolApprovalItem, questions []AgentQuestionItem,
 }
 
 // questionRow renders one pending agent question with an answer control shaped
-// by its interaction type: option buttons for a choice question, a free-text
-// input for an open-ended one. Both post to the same respond route the approval
-// rows use, which resolves the question and resumes the paused run.
+// by its interaction type: option buttons for a single-choice question, a
+// free-text input for an open-ended one, or a checkbox group for a multi-select
+// one. All post to the same respond route the approval rows use, which resolves
+// the question and resumes the paused run.
 templ questionRow(q AgentQuestionItem) {
+	{{ isText := q.InteractionType == "text" || len(q.Options) == 0 }}
+	{{ isMulti := q.InteractionType == "multi_select" }}
 	<div class="card card-border bg-base-100" data-testid="pending-question" data-question-id={ q.ID }>
 		<div class="card-body gap-3 memory-density-compact">
 			<p class="text-sm whitespace-pre-wrap break-words">{ q.Question }</p>
-			if len(q.Options) > 0 {
+			if isText {
 				<div class="flex flex-wrap items-center gap-2">
+					<form method="post" action={ "/settings/approvals/" + q.ID + "/respond" } class="flex min-w-56 flex-1 items-center gap-2">
+						<input
+							type="text"
+							name="response"
+							required
+							aria-label={ q.Question }
+							placeholder={ questionPlaceholder(q) }
+							if q.MaxLength > 0 {
+								maxlength={ strconv.Itoa(q.MaxLength) }
+							}
+							class="input input-bordered w-full"
+						/>
+						@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM}) { Send }
+					</form>
+					<form method="post" action={ "/settings/approvals/" + q.ID + "/cancel" }>
+						@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Cancel }
+					</form>
+				</div>
+			} else if isMulti {
+				<div class="flex flex-wrap items-center gap-2">
+					<form method="post" action={ "/settings/approvals/" + q.ID + "/respond" } class="flex flex-wrap items-center gap-2" role="group" aria-label={ q.Question }>
+						<input type="hidden" name="multi" value="1"/>
+						for i, opt := range q.Options {
+							<label class="flex items-center gap-2 text-sm">
+								<input type="checkbox" name="response" value={ opt.Value } class="checkbox checkbox-sm" required?={ i == 0 }/>
+								<span>{ opt.Label }</span>
+							</label>
+						}
+						@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM}) { Send }
+					</form>
+					<form method="post" action={ "/settings/approvals/" + q.ID + "/cancel" }>
+						@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Cancel }
+					</form>
+				</div>
+			} else {
+				<div class="flex flex-wrap items-center gap-2" role="group" aria-label={ q.Question }>
 					for _, opt := range q.Options {
 						<form method="post" action={ "/settings/approvals/" + q.ID + "/respond" }>
 							@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM, Attrs: templ.Attributes{"name": "response", "value": opt.Value}}) {
@@ -70,16 +110,6 @@ templ questionRow(q AgentQuestionItem) {
 							}
 						</form>
 					}
-					<form method="post" action={ "/settings/approvals/" + q.ID + "/cancel" }>
-						@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Cancel }
-					</form>
-				</div>
-			} else {
-				<div class="flex flex-wrap items-center gap-2">
-					<form method="post" action={ "/settings/approvals/" + q.ID + "/respond" } class="flex min-w-56 flex-1 items-center gap-2">
-						<input type="text" name="response" required placeholder={ questionPlaceholder(q) } maxlength="2000" class="input input-bordered w-full"/>
-						@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM}) { Send }
-					</form>
 					<form method="post" action={ "/settings/approvals/" + q.ID + "/cancel" }>
 						@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Cancel }
 					</form>

@@ -62,9 +62,23 @@ func questionPlaceholder(q AgentQuestionItem) string {
 // or rejects (with optional message) a pending tool approval, then redirects back.
 func (s *Server) uiApproveReject(c echo.Context) error {
 	questionID := c.Param("questionId")
-	response := c.FormValue("response")
+	_ = c.Request().ParseForm()
 	message := c.FormValue("message")
-	if response == "" {
+	var response string
+	switch {
+	case c.FormValue("multi") == "1":
+		values := c.Request().Form["response"]
+		if values == nil {
+			values = []string{}
+		}
+		b, err := json.Marshal(values)
+		if err != nil {
+			return redirectWithError(c, "/settings/approvals", err)
+		}
+		response = string(b)
+	case len(c.Request().Form["response"]) > 0 && c.Request().Form["response"][0] != "":
+		response = c.Request().Form["response"][0]
+	default:
 		response = "reject"
 	}
 	if _, err := s.memory.RespondQuestion(c.Request().Context(), questionID, response, message); err != nil {

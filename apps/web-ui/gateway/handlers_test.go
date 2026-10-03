@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -2289,6 +2290,124 @@ func TestApprovalsPageChoiceQuestionRendersOptionButtons(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("option %q missing: %s", want, body)
 		}
+	}
+}
+
+// TestApprovalsPageMultiSelectQuestionRendersCheckboxesAndSubmitsJSON covers the
+// multi_select interaction: the page renders one form with a `multi=1` marker and
+// a checkbox per option, and the respond route serializes the checked values to a
+// JSON array rather than a scalar.
+func TestApprovalsPageMultiSelectQuestionRendersCheckboxesAndSubmitsJSON(t *testing.T) {
+	f := &fakeMemory{questions: []AgentQuestionItem{{
+		ID:              "q-multi",
+		Question:        "Which environments?",
+		Status:          "pending",
+		InteractionType: "multi_select",
+		Options: []AgentQuestionOption{
+			{Label: "Staging", Value: "staging"},
+			{Label: "Production", Value: "production"},
+		},
+	}}}
+	_, e := newTestServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/approvals", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`name="multi"`, `value="1"`, `value="staging"`, `value="production"`, `type="checkbox"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected %q in body: %s", want, body)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/settings/approvals/q-multi/respond",
+		strings.NewReader(url.Values{"multi": {"1"}, "response": {"staging", "production"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther && rec.Code != http.StatusOK {
+		t.Fatalf("respond status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if f.questionID != "q-multi" {
+		t.Fatalf("question id = %q, want q-multi", f.questionID)
+	}
+	if f.questionResponse != `["staging","production"]` {
+		t.Fatalf("response = %q, want JSON array", f.questionResponse)
+	}
+}
+
+// TestApprovalsPageTextQuestionWithOptionsRendersFreeText guards that a `text`
+// interaction renders a free-text input even when options are present (options
+// alone no longer force the button branch).
+func TestApprovalsPageTextQuestionWithOptionsRendersFreeText(t *testing.T) {
+	f := &fakeMemory{questions: []AgentQuestionItem{{
+		ID:              "q-text",
+		Question:        "Which environment?",
+		Status:          "pending",
+		InteractionType: "text",
+		Options: []AgentQuestionOption{
+			{Label: "Staging", Value: "staging"},
+		},
+	}}}
+	_, e := newTestServer(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/approvals", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `type="text"`) || !strings.Contains(body, `name="response"`) {
+		t.Fatalf("free-text input missing: %s", body)
+	}
+	// A text question must not render checkbox inputs for its options. Scope the
+	// check to the `response` input so the page shell's own spotlight/command-
+	// palette checkbox (which has no `name="response"`) does not false-positive.
+	if strings.Contains(body, `type="checkbox" name="response"`) {
+		t.Fatalf("text question must not render checkboxes: %s", body)
+	}
+}
+
+// TestApprovalsPageTextInputHonorsMaxLengthAndAriaLabel covers the free-text
+// input's maxlength and aria-label wiring: maxlength renders only for a
+// non-zero MaxLength, and the aria-label carries the question text.
+func TestApprovalsPageTextInputHonorsMaxLengthAndAriaLabel(t *testing.T) {
+	f := &fakeMemory{questions: []AgentQuestionItem{{
+		ID:              "q-long",
+		Question:        "Describe the change",
+		Status:          "pending",
+		InteractionType: "text",
+		MaxLength:       5000,
+	}}}
+	_, e := newTestServer(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/approvals", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`maxlength="5000"`, `aria-label="Describe the change"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected %q in body: %s", want, body)
+		}
+	}
+
+	// A question with no MaxLength must omit the maxlength attribute.
+	f2 := &fakeMemory{questions: []AgentQuestionItem{{
+		ID:              "q-no-max",
+		Question:        "Describe the change",
+		Status:          "pending",
+		InteractionType: "text",
+	}}}
+	_, e2 := newTestServer(f2)
+	rec2 := httptest.NewRecorder()
+	e2.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/settings/approvals", nil))
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec2.Code, rec2.Body.String())
+	}
+	if strings.Contains(rec2.Body.String(), "maxlength") {
+		t.Fatalf("MaxLength=0 must not render maxlength: %s", rec2.Body.String())
 	}
 }
 
