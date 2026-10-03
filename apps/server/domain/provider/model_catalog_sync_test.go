@@ -45,8 +45,14 @@ func modelStoreKey(provider ProviderType, name string) string {
 	return string(provider) + "\x00" + name
 }
 
-func (f *modelCatalogFakeRepo) ListProjectProviderConfigsByProvider(_ context.Context, _ ProviderType) ([]ProjectProviderConfig, error) {
-	return f.configs, nil
+func (f *modelCatalogFakeRepo) ListProjectProviderConfigsByProvider(_ context.Context, provider ProviderType) ([]ProjectProviderConfig, error) {
+	var out []ProjectProviderConfig
+	for _, c := range f.configs {
+		if c.Provider == provider {
+			out = append(out, c)
+		}
+	}
+	return out, nil
 }
 
 func (f *modelCatalogFakeRepo) UpsertSupportedModels(_ context.Context, models []ProviderSupportedModel) error {
@@ -130,13 +136,21 @@ func newTestCatalogSyncCredentialService(t *testing.T) *CredentialService {
 // is encrypted with the given service's key.
 func encryptedOpenAIConfig(t *testing.T, credsvc *CredentialService, projectID, baseURL, generativeModel string) ProjectProviderConfig {
 	t.Helper()
+	return encryptedProviderConfig(t, credsvc, ProviderOpenAI, projectID, baseURL, generativeModel)
+}
+
+// encryptedProviderConfig builds a stored ProjectProviderConfig for an arbitrary
+// vendor whose credential is encrypted with the given service's key.
+func encryptedProviderConfig(t *testing.T, credsvc *CredentialService, provider ProviderType, projectID, baseURL, generativeModel string) ProjectProviderConfig {
+	t.Helper()
 	ciphertext, nonce, err := credsvc.EncryptCredential([]byte("sk-" + projectID))
 	if err != nil {
 		t.Fatalf("failed to encrypt test credential: %v", err)
 	}
 	return ProjectProviderConfig{
 		ProjectID:           projectID,
-		Provider:            ProviderOpenAI,
+		Provider:            provider,
+		Slug:                ProviderSlug(provider),
 		EncryptedCredential: ciphertext,
 		EncryptionNonce:     nonce,
 		BaseURL:             baseURL,
@@ -284,6 +298,53 @@ func TestModelCatalogSync_DecryptFailure_SkipsConfig(t *testing.T) {
 	// Skipped config means the union is incomplete — never prune.
 	if repo.pruneCount() != 0 {
 		t.Errorf("DeleteSupportedModelsNotIn called %d times, want 0", repo.pruneCount())
+	}
+}
+
+// TestModelCatalogSync_PerProviderPruneCompleteness verifies prune completeness
+// is tracked per provider: a fallback for one OpenAI-compatible vendor must not
+// suppress pruning for a different vendor whose live fetch was complete.
+func TestModelCatalogSync_PerProviderPruneCompleteness(t *testing.T) {
+	srvA := openAIModelServer("openai-fresh-1", "openai-fresh-2")
+	defer srvA.Close()
+
+	// LiteLLM proxy is unreachable → its config falls back to configured models.
+	closed := openAIModelServer("unused")
+	closedURL := closed.URL
+	closed.Close()
+
+	credsvc := newTestCatalogSyncCredentialService(t)
+	cfgOpenAI := encryptedProviderConfig(t, credsvc, ProviderOpenAI, "proj-openai", srvA.URL, "openai-fresh-1")
+	cfgLiteLLM := encryptedProviderConfig(t, credsvc, ProviderLiteLLM, "proj-litellm", closedURL, "litellm-fallback")
+
+	repo := newModelCatalogFakeRepo(cfgOpenAI, cfgLiteLLM)
+	// Pre-existing stale rows for both vendors.
+	if err := repo.UpsertSupportedModels(context.Background(), []ProviderSupportedModel{
+		{Provider: ProviderOpenAI, ModelName: "openai-stale", ModelType: ModelTypeGenerative},
+		{Provider: ProviderLiteLLM, ModelName: "litellm-stale", ModelType: ModelTypeGenerative},
+	}); err != nil {
+		t.Fatalf("seed stale models: %v", err)
+	}
+
+	svc := newModelCatalogSyncHarness(t, credsvc, repo)
+	if err := svc.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+
+	// OpenAI fetched completely → its stale row is pruned.
+	if got := repo.storedNames(ProviderOpenAI); !equalStrings(got, []string{"openai-fresh-1", "openai-fresh-2"}) {
+		t.Errorf("OpenAI models = %v, want [openai-fresh-1 openai-fresh-2] (complete fetch prunes)", got)
+	}
+	// LiteLLM fell back → its stale row must survive.
+	if got := repo.storedNames(ProviderLiteLLM); !equalStrings(got, []string{"litellm-fallback", "litellm-stale"}) {
+		t.Errorf("LiteLLM models = %v, want [litellm-fallback litellm-stale] (fallback suppresses only its own prune)", got)
+	}
+	// Exactly one prune, for OpenAI only.
+	if len(repo.pruneCalls) != 1 {
+		t.Fatalf("prune calls = %d, want 1 (OpenAI only)", len(repo.pruneCalls))
+	}
+	if repo.pruneCalls[0].provider != ProviderOpenAI {
+		t.Errorf("prune provider = %q, want %q", repo.pruneCalls[0].provider, ProviderOpenAI)
 	}
 }
 

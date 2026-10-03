@@ -77,12 +77,13 @@ func NewModelCatalogSyncService(repo *Repository, credsvc *CredentialService, ca
 //  1. resolves each config's model set WITHOUT persisting anything,
 //  2. unions all resolved sets (deduplicated by provider+model_name),
 //  3. runs a single upsert against the union, and
-//  4. prunes stale rows against the union only when every config contributed a
-//     complete live fetch (no fallback, no decrypt/skip failure).
+//  4. prunes stale rows per provider, but only for providers whose every config
+//     contributed a complete live fetch (no fallback, no decrypt/skip failure).
 //
 // Per-config failures are logged and skipped — they never fail the process and
-// never leave the catalog empty: fallback or skipped configs simply suppress the
-// prune, so previously synced rows are kept (stale-but-complete over empty).
+// never leave the catalog empty: a fallback or skipped config marks only its
+// own provider incomplete, so that provider's prune is suppressed while other
+// providers are still pruned (stale-but-complete over empty, per vendor).
 func (s *ModelCatalogSyncService) Sync(ctx context.Context) error {
 	var configs []ProjectProviderConfig
 	for _, d := range Builtins() {
@@ -101,9 +102,14 @@ func (s *ModelCatalogSyncService) Sync(ctx context.Context) error {
 
 	// Resolve every config first. ResolveModels never persists, so a config
 	// whose /v1/models fetch fails contributes only its configured-model
-	// fallback — a partial snapshot that must suppress the prune.
+	// fallback — a partial snapshot of that provider that must suppress the
+	// prune for that provider (and only that provider).
 	var union []ProviderSupportedModel
-	allFetchedOK := true // prune only when every config yielded a complete live fetch
+	// incompleteProviders records providers for which this pass is not a
+	// complete, authoritative view (a failed/fallback/skipped config), so their
+	// stale rows must survive. Tracking is per provider: one vendor's fallback
+	// no longer suppresses pruning for every other OpenAI-compatible vendor.
+	incompleteProviders := make(map[ProviderType]bool)
 	resolved := 0
 	for i := range configs {
 		cfg := configs[i]
@@ -111,8 +117,8 @@ func (s *ModelCatalogSyncService) Sync(ctx context.Context) error {
 		cred, err := s.credsvc.decryptProjectConfig(&cfg)
 		if err != nil {
 			// Cannot know this config's model set, so its previously synced
-			// rows must survive — do not prune this pass.
-			allFetchedOK = false
+			// rows must survive — do not prune this provider this pass.
+			incompleteProviders[cfg.Provider] = true
 			s.log.Debug("model catalog resync: skipping provider config (credential decryption failed)",
 				logger.Error(err),
 				slog.String("projectID", cfg.ProjectID),
@@ -124,7 +130,7 @@ func (s *ModelCatalogSyncService) Sync(ctx context.Context) error {
 		models, pruneOK, resolveErr := s.catalog.ResolveModels(syncCtx, cfg.Provider, cred)
 		cancel()
 		if resolveErr != nil {
-			allFetchedOK = false
+			incompleteProviders[cfg.Provider] = true
 			s.log.Warn("model catalog resync: resolve failed for provider config",
 				logger.Error(resolveErr),
 				slog.String("projectID", cfg.ProjectID),
@@ -134,7 +140,7 @@ func (s *ModelCatalogSyncService) Sync(ctx context.Context) error {
 		resolved++
 
 		if !pruneOK {
-			allFetchedOK = false
+			incompleteProviders[cfg.Provider] = true
 		}
 		union = unionSupportedModels(union, models)
 	}
@@ -151,22 +157,24 @@ func (s *ModelCatalogSyncService) Sync(ctx context.Context) error {
 		return fmt.Errorf("model catalog resync: upsert supported models: %w", err)
 	}
 
-	// Single prune against the full union, only when every config resolved a
-	// complete live catalog. Any fallback or skipped config means the union may
-	// be missing rows, so stale rows are kept rather than deleted. The union may
-	// span several OpenAI-compatible vendors, so prune each provider separately.
-	if allFetchedOK {
-		namesByProvider := make(map[ProviderType][]string)
-		for _, m := range union {
-			namesByProvider[m.Provider] = append(namesByProvider[m.Provider], m.ModelName)
+	// Prune each provider separately, only when every one of its configs
+	// resolved a complete live catalog. A fallback or skipped config for a
+	// provider means its union may be missing rows, so that provider's stale
+	// rows are kept rather than deleted — but other providers still prune.
+	namesByProvider := make(map[ProviderType][]string)
+	for _, m := range union {
+		namesByProvider[m.Provider] = append(namesByProvider[m.Provider], m.ModelName)
+	}
+	for p, names := range namesByProvider {
+		if incompleteProviders[p] {
+			continue
 		}
-		for p, names := range namesByProvider {
-			if err := s.repo.DeleteSupportedModelsNotIn(ctx, p, names); err != nil {
-				// Non-fatal: stale rows are cosmetic, don't fail the whole sync.
-				s.log.Warn("model catalog resync: failed to delete stale models",
-					logger.Error(err),
-				)
-			}
+		if err := s.repo.DeleteSupportedModelsNotIn(ctx, p, names); err != nil {
+			// Non-fatal: stale rows are cosmetic, don't fail the whole sync.
+			s.log.Warn("model catalog resync: failed to delete stale models",
+				logger.Error(err),
+				slog.String("provider", string(p)),
+			)
 		}
 	}
 
