@@ -1,7 +1,15 @@
 package xberg
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestError_Error(t *testing.T) {
@@ -571,5 +579,185 @@ func TestEmailExtensions(t *testing.T) {
 		if !EmailExtensions[ext] {
 			t.Errorf("EmailExtensions missing expected extension: %q", ext)
 		}
+	}
+}
+
+// newExtractTestClient returns a Client wired to an httptest server running
+// handler, with the same unexported configuration NewClient would produce.
+// It lives in the same package so it can set the internal fields.
+func newExtractTestClient(t *testing.T, handler http.HandlerFunc) *Client {
+	t.Helper()
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+	return &Client{
+		httpClient: srv.Client(),
+		baseURL:    srv.URL,
+		timeout:    5 * time.Second,
+		enabled:    true,
+		log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+}
+
+// TestExtractText_DecodesSingleResultEnvelope pins the /extract envelope
+// contract: the response is {"results":[...],"errors":[...],"summary":{}} (not
+// a bare array), and the sole result is decoded into the returned ExtractResult.
+func TestExtractText_DecodesSingleResultEnvelope(t *testing.T) {
+	var gotPath string
+	c := newExtractTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"results": [{
+				"content": "hello world",
+				"metadata": {"page_count": 2, "title": "Doc"},
+				"tables": [],
+				"images": []
+			}],
+			"errors": [],
+			"summary": {"num_files": 1}
+		}`)
+	})
+
+	got, err := c.ExtractText(context.Background(), []byte("pdf-bytes"), "doc.pdf", "application/pdf", nil)
+	if err != nil {
+		t.Fatalf("ExtractText() error = %v, want nil", err)
+	}
+	if gotPath != "/extract" {
+		t.Errorf("request path = %q, want %q", gotPath, "/extract")
+	}
+	if got.Content != "hello world" {
+		t.Errorf("Content = %q, want %q", got.Content, "hello world")
+	}
+	if got.Metadata == nil {
+		t.Fatal("Metadata = nil, want decoded metadata")
+	}
+	if got.Metadata.PageCount == nil || *got.Metadata.PageCount != 2 {
+		t.Errorf("Metadata.PageCount = %v, want 2", got.Metadata.PageCount)
+	}
+	if got.Metadata.Title != "Doc" {
+		t.Errorf("Metadata.Title = %q, want %q", got.Metadata.Title, "Doc")
+	}
+}
+
+// TestExtractText_SelectsFirstResultFromMultiResultEnvelope pins which result is
+// selected when the envelope carries more than one: the client returns
+// results[0]. With the current single-file upload there should only ever be one
+// result, but the selection rule is deliberate and must not silently change.
+func TestExtractText_SelectsFirstResultFromMultiResultEnvelope(t *testing.T) {
+	c := newExtractTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"content":"first"},{"content":"second"}],"errors":[],"summary":{}}`)
+	})
+
+	got, err := c.ExtractText(context.Background(), []byte("pdf-bytes"), "doc.pdf", "application/pdf", nil)
+	if err != nil {
+		t.Fatalf("ExtractText() error = %v, want nil", err)
+	}
+	if got.Content != "first" {
+		t.Errorf("Content = %q, want %q (results[0] is selected)", got.Content, "first")
+	}
+}
+
+// TestExtractText_SurfacesPerInputErrors pins how a per-input failure surfaces:
+// when the envelope has no results but carries errors, the first error's `error`
+// (falling back to `message`) is run through the friendly-message mapping while
+// the joined "file: message" list is preserved as Error.Detail.
+func TestExtractText_SurfacesPerInputErrors(t *testing.T) {
+	c := newExtractTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"results": [],
+			"errors": [{"message": "could not parse", "error": "Invalid PDF", "file": "broken.pdf"}],
+			"summary": {"num_files": 1}
+		}`)
+	})
+
+	_, err := c.ExtractText(context.Background(), []byte("bad-pdf"), "broken.pdf", "application/pdf", nil)
+	if err == nil {
+		t.Fatal("ExtractText() error = nil, want an error for a per-input failure")
+	}
+
+	var xe *Error
+	if !errors.As(err, &xe) {
+		t.Fatalf("error = %T (%v), want *xberg.Error", err, err)
+	}
+	if xe.Message != "This PDF file appears to be corrupted or invalid." {
+		t.Errorf("Message = %q, want the friendly Invalid PDF message", xe.Message)
+	}
+	if xe.Detail != "broken.pdf: could not parse" {
+		t.Errorf("Detail = %q, want %q", xe.Detail, "broken.pdf: could not parse")
+	}
+	// The envelope arrived on a 2xx response, so the synthesized Error carries
+	// the HTTP status of the response rather than a dedicated error code.
+	if xe.StatusCode != http.StatusOK {
+		t.Errorf("StatusCode = %d, want %d", xe.StatusCode, http.StatusOK)
+	}
+}
+
+// TestExtractText_JoinsMultiplePerInputErrors pins the detail join for an
+// envelope with several failed inputs.
+func TestExtractText_JoinsMultiplePerInputErrors(t *testing.T) {
+	c := newExtractTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"results": [],
+			"errors": [
+				{"error": "Invalid PDF", "file": "a.pdf"},
+				{"error": "Unsupported file format", "file": "b.docx"}
+			],
+			"summary": {"num_files": 2}
+		}`)
+	})
+
+	_, err := c.ExtractText(context.Background(), []byte("bytes"), "a.pdf", "application/pdf", nil)
+	var xe *Error
+	if !errors.As(err, &xe) {
+		t.Fatalf("error = %T (%v), want *xberg.Error", err, err)
+	}
+	wantDetail := "a.pdf: Invalid PDF; b.docx: Unsupported file format"
+	if xe.Detail != wantDetail {
+		t.Errorf("Detail = %q, want %q", xe.Detail, wantDetail)
+	}
+}
+
+// TestExtractText_SendsOCRLanguageAsCanonicalArray pins the canonical
+// ocr.language form: an array of language codes, not a bare string. A
+// multi-language hint like "eng+deu" is split on "+" so each code stays a
+// separate element.
+func TestExtractText_SendsOCRLanguageAsCanonicalArray(t *testing.T) {
+	var gotConfig struct {
+		OCR struct {
+			Backend  string   `json:"backend"`
+			Language []string `json:"language"`
+		} `json:"ocr"`
+		ForceOCR bool `json:"force_ocr"`
+	}
+
+	c := newExtractTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Errorf("ParseMultipartForm() error = %v", err)
+		}
+		raw := r.FormValue("config")
+		if raw == "" {
+			t.Error("config field missing from multipart request")
+		}
+		if err := json.Unmarshal([]byte(raw), &gotConfig); err != nil {
+			t.Errorf("config is not valid JSON / wrong shape: %v (raw=%q)", err, raw)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"content":"ok"}],"errors":[]}`)
+	})
+
+	_, err := c.ExtractText(context.Background(), []byte("bytes"), "doc.pdf", "application/pdf", &ExtractOptions{
+		OCRLanguage: "eng+deu",
+	})
+	if err != nil {
+		t.Fatalf("ExtractText() error = %v, want nil", err)
+	}
+	if gotConfig.OCR.Backend != "tesseract" {
+		t.Errorf("ocr.backend = %q, want %q", gotConfig.OCR.Backend, "tesseract")
+	}
+	if len(gotConfig.OCR.Language) != 2 || gotConfig.OCR.Language[0] != "eng" || gotConfig.OCR.Language[1] != "deu" {
+		t.Errorf("ocr.language = %#v, want []string{\"eng\", \"deu\"}", gotConfig.OCR.Language)
 	}
 }
