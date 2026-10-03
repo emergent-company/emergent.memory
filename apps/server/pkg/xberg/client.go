@@ -98,8 +98,11 @@ type ExtractedImage struct {
 
 // OCRConfig contains OCR-specific configuration for Xberg
 type OCRConfig struct {
-	Backend  string `json:"backend,omitempty"`  // "tesseract", "paddleocr", "sceptre", "vlm"
-	Language string `json:"language,omitempty"` // "eng", "deu", "eng+deu"
+	Backend string `json:"backend,omitempty"` // "tesseract", "paddleocr", "sceptre", "vlm"
+	// Language is the canonical array of language codes, e.g. ["eng"] or
+	// ["eng", "deu"]. A bare string is accepted on deserialize but is not
+	// canonical and may break if the API tightens.
+	Language []string `json:"language,omitempty"`
 }
 
 // ExtractConfig is the JSON configuration sent to Xberg's /extract endpoint
@@ -231,9 +234,11 @@ func (c *Client) ExtractText(ctx context.Context, content []byte, filename, mime
 			if backend == "" {
 				backend = "tesseract"
 			}
-			config.OCR = &OCRConfig{
-				Backend:  backend,
-				Language: opts.OCRLanguage,
+			config.OCR = &OCRConfig{Backend: backend}
+			if opts.OCRLanguage != "" {
+				// OCRLanguage carries a "+"-joined hint ("eng+deu"); send the
+				// canonical array form.
+				config.OCR.Language = strings.Split(opts.OCRLanguage, "+")
 			}
 		}
 		configJSON, err := json.Marshal(config)
