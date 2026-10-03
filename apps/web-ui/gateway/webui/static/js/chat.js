@@ -706,31 +706,104 @@
     }
   }
 
-  /* ---------- session lifecycle actions (archive / unarchive / delete) ---------- */
+  /* ---------- optimistic session lifecycle (archive / unarchive, #1382) ---------- */
 
-  // POSTs one lifecycle route and refreshes the rail. Archiving the open
-  // conversation is intentionally non-destructive: the workspace is left
-  // untouched, only the rail row disappears under the default (exclude)
-  // filter. A missing id is a no-op (defensive — the menu always carries one).
-  // `verb` is the past participle for the success toast ("Session archived");
-  // `action` is the present-tense verb for the failure paths, so the error
-  // reads "Could not archive session" rather than "Could not archived session".
-  function runSessionAction(id, route, verb, action) {
-    if (!id) return Promise.resolve();
+  // sessionRowById returns the rail row for a conversation id, or null. Used by
+  // the optimistic transitions to hide/restore a row without a server
+  // round-trip.
+  function sessionRowById(id) {
+    if (!id) return null;
+    var railList = document.getElementById("chat-rail-list");
+    if (!railList) return null;
+    var rows = railList.querySelectorAll("[data-action='resume-session']");
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].getAttribute("data-id") === id) return rows[i];
+    }
+    return null;
+  }
+
+  // postSessionRoute POSTs one lifecycle route and resolves on 2xx, rejecting
+  // with an Error carrying the HTTP status otherwise.
+  function postSessionRoute(id, route) {
     return fetch("/api/conversations/" + encodeURIComponent(id) + route, { method: "POST" })
       .then(function (r) {
         if (!r.ok) throw new Error("HTTP " + r.status);
-        notify("success", "Session " + verb);
-        return refreshSessionRail();
-      })
-      .catch(function (err) {
-        reportError(err, "session " + action + " failed");
-        notify("error", "Could not " + action + " session: " + err.message);
       });
   }
 
-  function archiveSession(id) { return runSessionAction(id, "/archive", "archived", "archive"); }
-  function unarchiveSession(id) { return runSessionAction(id, "/unarchive", "unarchived", "unarchive"); }
+  // applyArchiveOptimistic hides the row immediately (#1382): under the default
+  // filter an archived conversation drops out of the rail, so hiding is the
+  // visible outcome the user expects the instant they click. With "Include
+  // archived" on the row stays listed, so there is nothing to hide — the refresh
+  // after the request settles re-renders its archived marker. Returns a rollback
+  // that restores the pre-request DOM if the request fails.
+  function applyArchiveOptimistic(id) {
+    var row = sessionRowById(id);
+    if (!row || filterIncludeArchived) return function () {};
+    row.classList.add("hidden");
+    return function () { row.classList.remove("hidden"); };
+  }
+
+  // applyUnarchiveOptimistic clears the archived visual state at once. The
+  // unarchive action only exists while "Include archived" is on, so the row must
+  // stay listed; only the marker/muted styling flips optimistically.
+  function applyUnarchiveOptimistic(id) {
+    var row = sessionRowById(id);
+    if (!row || row.getAttribute("data-archived") !== "true") return function () {};
+    var marker = row.querySelector('[data-testid="session-archived-marker"]');
+    row.removeAttribute("data-archived");
+    row.classList.remove("opacity-60");
+    if (marker) marker.classList.add("hidden");
+    return function () {
+      row.setAttribute("data-archived", "true");
+      row.classList.add("opacity-60");
+      if (marker) marker.classList.remove("hidden");
+    };
+  }
+
+  // runSessionAction applies one lifecycle route to a set of sessions. It is
+  // optimistic: rows are hidden (archive) / un-marked (unarchive) before the
+  // request, restored individually if they fail, and reconciled with the server
+  // by a rail refresh once every request settles. A multi-id call backs the bulk
+  // archive (#1385). Resolves to {total, failed} so the caller can exit selection
+  // mode after completion regardless of partial failures. A missing id is a
+  // no-op (defensive — the menu always carries one). `verb` is the past
+  // participle for the success toast; `action` is the present-tense verb for the
+  // failure paths ("Could not archive session", not "Could not archived …").
+  function runSessionAction(ids, route, verb, action) {
+    var list = (ids || []).filter(Boolean);
+    if (!list.length) return Promise.resolve({ total: 0, failed: 0 });
+    var rollbacks = list.map(function (id) {
+      return route === "/archive" ? applyArchiveOptimistic(id) : applyUnarchiveOptimistic(id);
+    });
+    return Promise.allSettled(list.map(function (id) { return postSessionRoute(id, route); }))
+      .then(function (results) {
+        var failed = [];
+        results.forEach(function (r, i) {
+          if (r.status === "rejected") failed.push({ id: list[i], err: r.reason });
+        });
+        if (failed.length === 0) {
+          notify("success", list.length > 1 ? (list.length + " sessions " + verb) : ("Session " + verb));
+        } else {
+          failed.forEach(function (f) {
+            var idx = list.indexOf(f.id);
+            if (rollbacks[idx]) rollbacks[idx]();
+            reportError(f.err, "session " + action + " failed");
+          });
+          var first = failed[0].err;
+          var what = failed.length === 1
+            ? ("Could not " + action + " session: ")
+            : ("Could not " + action + " " + failed.length + " sessions: ");
+          notify("error", what + ((first && first.message) || first));
+        }
+        return refreshSessionRail().then(function () {
+          return { total: list.length, failed: failed.length };
+        });
+      });
+  }
+
+  function archiveSession(id) { return runSessionAction([id], "/archive", "archived", "archive"); }
+  function unarchiveSession(id) { return runSessionAction([id], "/unarchive", "unarchived", "unarchive"); }
 
   // openDeleteSessionConfirm fills the shared confirm dialog and opens it. No
   // request is sent here — DELETE only fires from confirmDeleteSession, so
