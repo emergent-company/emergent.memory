@@ -100,7 +100,7 @@ interface StubWindow {
   __toasts: Toast[];
   __railHtml: string;
   __railStatus: number;
-  __archiveReleases: Array<(r: Response) => void>;
+  __archiveReleases: Array<{ url: string; resolve: (r: Response) => void }>;
   fetch: (url: unknown) => Promise<Response>;
 }
 
@@ -130,7 +130,7 @@ async function bootstrap(page: Page): Promise<string[]> {
         w.__fetchCalls.push(u);
         if (u.indexOf('/archive') !== -1) {
           return new Promise<Response>((resolve) => {
-            w.__archiveReleases.push(resolve);
+            w.__archiveReleases.push({ url: u, resolve });
           });
         }
         if (u.indexOf('/partial/chat-rail') === 0) {
@@ -198,6 +198,13 @@ function rowHidden(page: Page, id: string): Promise<boolean> {
   }, id);
 }
 
+function rowPresent(page: Page, id: string): Promise<boolean> {
+  return page.evaluate(
+    (rowId) => !!document.querySelector(`li[data-action="resume-session"][data-id="${rowId}"]`),
+    id,
+  );
+}
+
 function checkboxVisible(page: Page, id: string): Promise<boolean> {
   return page.evaluate((rowId) => {
     const el = document.querySelector(`.session-select[data-id="${rowId}"]`);
@@ -215,8 +222,22 @@ async function releaseArchives(page: Page, status: number): Promise<void> {
   await page.evaluate((code) => {
     const w = window as unknown as StubWindow;
     const releases = w.__archiveReleases.splice(0);
-    releases.forEach((resolve) => resolve(new Response('', { status: code })));
+    releases.forEach((entry) => entry.resolve(new Response('', { status: code })));
   }, status);
+}
+
+async function releaseArchiveFor(page: Page, id: string, status: number): Promise<void> {
+  await page.evaluate(
+    ({ rowId, code }) => {
+      const w = window as unknown as StubWindow;
+      const prefix = '/api/conversations/' + rowId + '/archive';
+      const idx = w.__archiveReleases.findIndex((entry) => entry.url.indexOf(prefix) === 0);
+      if (idx === -1) throw new Error(`no held archive request for ${rowId}`);
+      const [entry] = w.__archiveReleases.splice(idx, 1);
+      entry.resolve(new Response('', { status: code }));
+    },
+    { rowId: id, code: status },
+  );
 }
 
 test.describe('bulk session selection and archive (#1385)', () => {
@@ -377,6 +398,39 @@ test.describe('bulk session selection and archive (#1385)', () => {
         })),
       )
       .toEqual({ pressed: 'true', barHidden: false, count: '1 selected' });
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
+  test('a partial bulk-archive failure restores only the failed row', async ({ page }) => {
+    const errors = await bootstrap(page);
+
+    await click(page, '[data-action="toggle-session-select"]');
+    await click(page, '.session-select[data-id="A"]');
+    await click(page, '.session-select[data-id="B"]');
+    await click(page, '[data-action="bulk-archive-sessions"]');
+    await expect.poll(() => rowHidden(page, 'A')).toBe(true);
+    await expect.poll(() => rowHidden(page, 'B')).toBe(true);
+
+    // A succeeds, B fails. The reconciling refresh fails too, so only the
+    // per-id rollback can reveal the failed row again.
+    await setRailStatus(page, 500);
+    await releaseArchiveFor(page, 'A', 200);
+    await releaseArchiveFor(page, 'B', 500);
+
+    await expect.poll(() => rowHidden(page, 'A')).toBe(true);
+    await expect.poll(() => rowPresent(page, 'B')).toBe(true);
+    await expect.poll(() => rowHidden(page, 'B')).toBe(false);
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as StubWindow).__toasts.some((t) => t.kind === 'error')))
+      .toBe(true);
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          document.querySelector('[data-action="toggle-session-select"]')!.getAttribute('aria-pressed'),
+        ),
+      )
+      .toBe('false');
 
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });
