@@ -239,7 +239,7 @@ The existing per-agent consecutive-failure breaker SHALL be extended with explic
 
 ### Requirement: Kanban projection
 
-The board SHALL be a read projection over board-enabled object types joined to their runs, with no separate work-item store. A board card SHALL be draggable only for the board's supported transitions — `blocked → ready` (execute), `review → done` (approve), `review → revision` (open the request-changes form), and any non-`done → blocked` (cancel); any other pair is rejected in the UI. The board does not derive draggable lanes from a type's declared work statuses, so a card whose status has no mapped action is not draggable. Activating a card SHALL open the shared read-only object preview rather than a board-specific summary.
+The board SHALL be a read projection over board-enabled object types joined to their runs, with no separate work-item store. The board SHALL derive its draggable transitions and its work-item actions from the project's work-path status mapping — the object status value each lifecycle phase resolves to, declared on the project's agents' `workConfig.status` — instead of the built-in status literals. It SHALL fall back to the built-in statuses (`ready`, `in_progress`, `review`, `revision`, `blocked`, `done`) when no mapping is declared. A phase SHALL be remapped only when every agent declaring it agrees on a single non-empty value; an unset or ambiguous phase keeps its built-in default, so a board with no configured mapping is unchanged. The supported transitions are `blocked → ready` (execute/retry), `review → done` (approve), `review → revision` (open the request-changes form), and any non-`done → blocked` (cancel), resolved through the mapping; any other pair is rejected in the UI. Activating a card SHALL open the shared read-only object preview rather than a board-specific summary.
 
 #### Scenario: Columns from work status
 
@@ -275,6 +275,21 @@ The board SHALL be a read projection over board-enabled object types joined to t
 
 - **WHEN** a card in the review lane is moved to the revision lane
 - **THEN** the item's request-changes form is opened so feedback can be supplied, rather than a blind transition
+
+#### Scenario: Custom-mapped transitions use the configured statuses
+
+- **WHEN** the project's work-path mapping resolves ready to `todo` and blocked to `rejected`
+- **THEN** dragging a `rejected` card to the `todo` lane fires the retry/execute action, and a literal `blocked` card is not a valid source for that transition
+
+#### Scenario: Custom-mapped statuses gate the drawer actions
+
+- **WHEN** the work-path mapping resolves review to `checking`, blocked to `rejected`, and done to `shipped`
+- **THEN** a `checking` item exposes approve and request-changes, a `rejected` item exposes retry, and a `shipped` item exposes neither cancel nor reassign
+
+#### Scenario: An ambiguous phase keeps the built-in status
+
+- **WHEN** two agents declare different non-empty status values for the same lifecycle phase
+- **THEN** that phase keeps its built-in status so the board's transitions remain well-defined
 
 #### Scenario: Activating a card opens the shared preview
 
