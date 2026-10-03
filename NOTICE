@@ -85,6 +85,24 @@ Runtime Dependencies (not compiled into binary, used at runtime):
 
 ================================================================================
 
+Bundled AI agent skills (redistributed verbatim under `.agents/skills/`):
+
+  design-taste-frontend
+  Copyright (c) 2026 Leonxlnx
+  Licensed under the MIT License
+  https://github.com/Leonxlnx/taste-skill
+  Full licence text: .agents/skills/design-taste-frontend/LICENSE
+
+  web-design-guidelines
+  Copyright (c) 2025 Vercel Labs
+  Licensed under the MIT License
+  https://github.com/vercel-labs/agent-skills
+  Includes the Web Interface Guidelines vendored from
+  https://github.com/vercel-labs/web-interface-guidelines
+  Full licence text: .agents/skills/web-design-guidelines/LICENSE
+
+================================================================================
+
 For the full text of the Apache License, Version 2.0, see:
 https://www.apache.org/licenses/LICENSE-2.0
 

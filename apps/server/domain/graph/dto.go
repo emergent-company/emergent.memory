@@ -486,6 +486,13 @@ type HybridSearchRequest struct {
 	Limit           int        `json:"limit,omitempty"`
 	Offset          int        `json:"offset,omitempty"`
 	IncludeDebug    bool       `json:"includeDebug,omitempty"` // Can also use ?debug=true query param
+
+	// DisableAutoEmbed suppresses the auto-embed of Query when no Vector was
+	// supplied. Callers that have already run their own bounded embedding
+	// attempts (notably unified search) set this so HybridSearch never issues a
+	// further, unbounded embedding call. Defaults to false: all other callers
+	// keep the existing auto-embed behaviour.
+	DisableAutoEmbed bool `json:"disableAutoEmbed,omitempty"`
 }
 
 // SearchResultItem represents a single search result with scores.

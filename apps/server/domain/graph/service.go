@@ -2616,6 +2616,16 @@ type HybridSearchOptions struct {
 	Debug bool // Include timing and statistics in response
 }
 
+// shouldAutoEmbedQuery reports whether HybridSearch must generate its own query
+// embedding. It is false when the caller explicitly disabled auto-embedding
+// (DisableAutoEmbed — unified search has already run its own bounded embedding
+// attempts), when there is no query text, when a vector was supplied, or when
+// the vector channel is disabled (vectorWeight == 0). The embedding-service
+// availability check stays at the call site.
+func shouldAutoEmbedQuery(req *HybridSearchRequest, hasVector bool, vectorWeight float32) bool {
+	return !req.DisableAutoEmbed && req.Query != "" && !hasVector && vectorWeight > 0
+}
+
 // HybridSearch performs combined lexical and vector search with score fusion.
 func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *HybridSearchRequest, opts *HybridSearchOptions) (*SearchResponse, error) {
 	// Start total timing
@@ -2671,8 +2681,10 @@ func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *Hy
 	hasVector := len(req.Vector) > 0
 
 	// Auto-embed query when no vector is provided — mirrors unified search behavior
-	// Skip when vectorWeight is 0 (lexical-only mode) to avoid unnecessary embedding calls.
-	if hasQuery && !hasVector && vectorWeight > 0 && s.embeddings != nil {
+	// Skip when vectorWeight is 0 (lexical-only mode) to avoid unnecessary embedding calls,
+	// and when the caller explicitly opted out (DisableAutoEmbed) because it already ran its
+	// own bounded embedding attempts.
+	if shouldAutoEmbedQuery(req, hasVector, vectorWeight) && s.embeddings != nil {
 		vec, err := s.embeddings.EmbedQuery(ctx, req.Query)
 		if err != nil {
 			s.log.Warn("HybridSearch: failed to auto-embed query, continuing with lexical-only", logger.Error(err))
