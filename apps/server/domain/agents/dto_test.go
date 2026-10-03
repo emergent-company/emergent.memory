@@ -52,6 +52,41 @@ func TestAgentDefinitionDTOUIConfigRoundTrip(t *testing.T) {
 	require.NotContains(t, string(bare), "uiConfig")
 }
 
+// TestAgentDefinitionToSummaryDTOIncludesWorkConfig locks the work-path status
+// map onto the list summary: the gateway's board derives its drag/drawer actions
+// from the agent definitions list, so workConfig.status must survive
+// ToSummaryDTO. A zero config is omitted so unconfigured definitions stay lean.
+func TestAgentDefinitionToSummaryDTOIncludesWorkConfig(t *testing.T) {
+	d := &AgentDefinition{
+		ID:         "ad-1",
+		WorkConfig: AgentWorkConfig{Status: AgentWorkStatusConfig{Ready: "todo", InProgress: "doing"}},
+	}
+
+	s := d.ToSummaryDTO()
+	require.NotNil(t, s.WorkConfig)
+	require.Equal(t, "todo", s.WorkConfig.Status.Ready)
+	require.Equal(t, "doing", s.WorkConfig.Status.InProgress)
+
+	// The gateway's board reads this over the wire: the list payload must carry
+	// workConfig.status with the exact JSON names boardStatusMapFromDefinitions
+	// decodes (ready/inProgress/...). Asserting only the Go struct would miss a
+	// JSON-tag drift that silently nil's the gateway's WorkConfig (#1428).
+	encoded, err := json.Marshal(s)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &payload))
+	wc, ok := payload["workConfig"].(map[string]any)
+	require.True(t, ok, "list payload must carry workConfig, got %s", encoded)
+	status, ok := wc["status"].(map[string]any)
+	require.True(t, ok, "workConfig must carry status, got %s", encoded)
+	require.Equal(t, "todo", status["ready"])
+	require.Equal(t, "doing", status["inProgress"])
+
+	bare, err := json.Marshal((&AgentDefinition{ID: "ad-2"}).ToSummaryDTO())
+	require.NoError(t, err)
+	require.NotContains(t, string(bare), "workConfig")
+}
+
 // TestAgentToDTOIncludesAgentDefinitionID ensures the response DTO exposes the
 // linked agent definition so clients can read back a scheduled agent's
 // definition after create/update. The field was previously absent from

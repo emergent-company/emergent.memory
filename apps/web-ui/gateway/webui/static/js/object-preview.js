@@ -24,6 +24,11 @@
   var root = null, panel = null, backdrop = null, body = null;
   var editLink = null, closeBtn = null;
   var lastFocused = null;
+  // Focus is restored on close, but a board action (from the preview's action
+  // slot) swaps #board as it closes, removing the card that opened the preview.
+  // pendingFocus holds the opener until htmx:after:swap so focus lands on the
+  // refreshed card instead of falling to <body>.
+  var pendingFocus = null;
   var resizeHandle = null, widthToggle = null, modalOpenBtn = null;
 
   // Drawer width: single source of truth is the shared resize grip
@@ -106,7 +111,7 @@
     modalBox = document.getElementById("object-preview-modal-box");
     if (!panel || !body) return;
 
-    if (backdrop) backdrop.addEventListener("click", close);
+    if (backdrop) backdrop.addEventListener("click", function () { close(); });
     if (closeBtn) closeBtn.addEventListener("click", onCloseClick);
     if (widthToggle) widthToggle.addEventListener("click", toggleWidth);
     if (modalOpenBtn) modalOpenBtn.addEventListener("click", openModal);
@@ -137,6 +142,7 @@
     document.addEventListener("htmx:response:error", onResponseError);
     document.addEventListener("htmx:error", onResponseError);
     document.addEventListener("htmx:after:request", onAfterRequest);
+    document.addEventListener("htmx:after:swap", restorePendingFocus);
   }
 
   function isOpen() {
@@ -195,6 +201,7 @@
   function open(ref) {
     if (!panel || !ref) return;
     if (modalMode) backToDrawer(); // never open a fresh preview inside the modal shell
+    pendingFocus = null; // a fresh open supersedes any deferred restore
     lastFocused = document.activeElement;
     if (editLink) editLink.setAttribute("href", ref.editHref || "/objects/" + ref.id);
 
@@ -225,7 +232,11 @@
     close();
   }
 
-  function close() {
+  // close hides the drawer and restores focus to the element that opened it.
+  // deferFocus (used by a board action, see onAfterRequest) holds the restore
+  // until after the next htmx swap: the action re-renders #board, so focusing
+  // the opener synchronously would target a node the swap then removes.
+  function close(deferFocus) {
     if (!panel || !isOpen()) return;
     // Programmatic close while promoted: return to the drawer first so the
     // aside is not hidden inside a still-open modal.
@@ -235,10 +246,40 @@
     panel.setAttribute("inert", ""); // drop the closed drawer's controls from the tab order
     if (backdrop) backdrop.classList.add("hidden");
     body.innerHTML = "";
-    if (lastFocused && typeof lastFocused.focus === "function") {
-      try { lastFocused.focus(); } catch (e) { /* element may be gone */ }
-    }
+    var restore = lastFocused;
     lastFocused = null;
+    if (restore && typeof restore.focus === "function") {
+      if (deferFocus) pendingFocus = restore;
+      else { try { restore.focus(); } catch (e) { /* element may be gone */ } }
+    }
+  }
+
+  // resolveBoardFocus re-finds the element to focus after a board swap: the
+  // same card by data-canonical-id when it still exists (its lane may have
+  // changed), else the board container itself (#board carries tabindex="-1"),
+  // else the opener when it is still attached.
+  function resolveBoardFocus(el) {
+    if (!el) return null;
+    var id = el.getAttribute ? el.getAttribute("data-canonical-id") : null;
+    if (id) {
+      var cards = document.querySelectorAll("[data-board-card]");
+      for (var i = 0; i < cards.length; i++) {
+        if (cards[i].getAttribute("data-canonical-id") === id) return cards[i];
+      }
+      var board = document.getElementById("board");
+      if (board) return board;
+    }
+    return document.contains(el) ? el : null;
+  }
+
+  function restorePendingFocus() {
+    if (!pendingFocus) return;
+    var el = pendingFocus;
+    pendingFocus = null;
+    var target = resolveBoardFocus(el);
+    if (target && typeof target.focus === "function") {
+      try { target.focus(); } catch (e) { /* element may be gone */ }
+    }
   }
 
   function setLoading() {
@@ -338,7 +379,9 @@
     if (typeof status === "number" && (status < 200 || status >= 300)) return;
     var elt = (ctx && ctx.sourceElement) || (detail && detail.elt);
     if (!elt || !elt.closest || !elt.closest("#object-preview-actions-slot")) return;
-    close();
+    // The action swaps #board (outerHTML) and clears the drawer, so defer the
+    // focus restore to htmx:after:swap (see close/restorePendingFocus).
+    close(true);
   }
 
   function onResponseError(ev) {

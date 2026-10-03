@@ -386,6 +386,11 @@ type AgentDefinitionSummaryDTO struct {
 	// (project config → provider-credential generative model). Empty when the
 	// project has neither configured.
 	EffectiveModel string `json:"effectiveModel,omitempty"`
+	// WorkConfig is the object-driven work configuration, carried on the list
+	// summary so clients (e.g. the board's work-path status map) can read an
+	// agent's declared status phases without a per-agent fetch. Omitted when the
+	// definition does not opt into object-driven work.
+	WorkConfig *AgentWorkConfig `json:"workConfig,omitempty"`
 }
 
 // CreateAgentDefinitionDTO is the request DTO for creating an agent definition
@@ -709,7 +714,7 @@ func groupPolicyString(p ToolPolicy, present bool) string {
 
 // ToSummaryDTO converts an AgentDefinition entity to AgentDefinitionSummaryDTO
 func (d *AgentDefinition) ToSummaryDTO() *AgentDefinitionSummaryDTO {
-	return &AgentDefinitionSummaryDTO{
+	s := &AgentDefinitionSummaryDTO{
 		ID:               d.ID,
 		ProjectID:        d.ProjectID,
 		Name:             d.Name,
@@ -725,6 +730,11 @@ func (d *AgentDefinition) ToSummaryDTO() *AgentDefinitionSummaryDTO {
 		CreatedAt:        d.CreatedAt,
 		UpdatedAt:        d.UpdatedAt,
 	}
+	if !d.WorkConfig.IsZero() {
+		wc := d.WorkConfig
+		s.WorkConfig = &wc
+	}
+	return s
 }
 
 // ToDTO converts an AgentRunMessage entity to AgentRunMessageDTO
