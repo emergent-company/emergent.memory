@@ -1296,8 +1296,13 @@
   // in `ctx`).
   //
   // flags — the REAL deviations between the two call sites, no others:
-  //   showRunMarkers  chat renders run_start/run_end boundaries (and the
-  //                   failed-run fallback); the side panel skips lifecycle items.
+  //   showRunMarkers  render run_start/run_end boundary rows (and the
+  //                   failed-run fallback). Both surfaces default to false: the
+  //                   boundaries are a debug affordance, hidden in the normal
+  //                   chat transcript (#1381). Run lifecycle STATE is tracked
+  //                   regardless (header, working placeholder, cancelable run
+  //                   id, turn footers) — only the visible rows are gated. The
+  //                   /chat page enables this via its debug switch (chat.js).
   //   showThinking    chat renders the planning/thinking monologue and the final
   //                   answer's persisted reasoning; the side panel renders neither.
   //   showMeta        chat annotates bubbles/chips with "step N · rel time" on a
@@ -1378,9 +1383,9 @@
         : "";
       switch (item.kind) {
         case "run_start":
-          // The side panel renders no lifecycle boundaries; skip the item (and
-          // its run context) exactly as before.
-          if (!showRunMarkers) break;
+          // Run lifecycle state is tracked for every surface — the chat header,
+          // the working placeholder, the cancelable run id and the turn footers
+          // all read it; only the visible boundary row is debug-gated (#1381).
           runCtx = {
             model: item.run_model || "",
             createdAt: item.created_at || "",
@@ -1404,13 +1409,15 @@
           // [data-status="failed"] banner layout (display:block) — killing its
           // flex row and collapsing it to a left-aligned unspaced line (#1300).
           // The end marker (or the no-run_end fallback below) owns the failure.
-          container.appendChild(runMarker({
-            phase: "start",
-            model: runCtx.model,
-          }));
+          if (showRunMarkers) {
+            container.appendChild(runMarker({
+              phase: "start",
+              model: runCtx.model,
+            }));
+          }
           break;
         case "run_end":
-          if (!showRunMarkers) break;
+          // State first (see run_start); the boundary row is debug-only (#1381).
           runEnded = true;
           if (item.run_id) newestRunId = item.run_id;
           newestRunStatus = item.run_status || runStatus;
@@ -1424,11 +1431,13 @@
           }
           // Status-distinct boundary: completed / failed (with its error) /
           // input-required ("waiting on you").
-          container.appendChild(runMarker({
-            phase: "end",
-            status: item.run_status || runStatus,
-            error: item.error_message || runError,
-          }));
+          if (showRunMarkers) {
+            container.appendChild(runMarker({
+              phase: "end",
+              status: item.run_status || runStatus,
+              error: item.error_message || runError,
+            }));
+          }
           break;
         case "tool_call":
           // ask_user never renders as a tool chip. A pending question renders
@@ -1510,6 +1519,7 @@
 
     // A run with no run_end item (partial/older history) still has to surface
     // its failure, so fall back to the run_start's status once the loop ends.
+    // Debug-only, like the end marker it mimics (#1381).
     if (showRunMarkers && !runEnded && isFailedRun(runStatus)) {
       container.appendChild(runMarker({ phase: "end", status: runStatus, error: runError }));
     }
