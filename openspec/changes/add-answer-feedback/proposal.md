@@ -21,10 +21,12 @@ retrieve for this query" half of the signal.
   carrying the chat message id, the agent `run_id` (nullable, for model attribution),
   the retrieval trace id (nullable), a thumbs up/down (`SMALLINT CHECK (thumbs IN
   (-1,1))`), an optional free-text comment, the submitting user, and the project.
-- Add nullable `kb.chat_messages.retrieval_trace_id` (from the search response `TraceID`,
+- Add nullable `kb.chat_messages.retrieval_trace_id` (FK to `kb.retrieval_traces.trace_id`,
+  the public trace id already returned in the search response `TraceID`,
   `domain/search/service.go:177-180`) and `kb.chat_messages.run_id` (from the producing
-  agent run), both stamped server-side at chat time, so feedback can link back to the
-  retrieval and the producing run without a separate store or an indirect session join.
+  agent run), both stamped server-side at chat time; the trace is persisted synchronously
+  before the message so the FK is satisfied. Feedback then links back to the retrieval and
+  the producing run without a separate store or an indirect session join.
 - Extend the **existing** persisted `RetrievalTrace` with a user id (no query-key
   column) rather than building a parallel query-log store; expose a read path for
   search-query history (`TraceStore` already has `GetByTraceID` — add a
@@ -61,9 +63,10 @@ retrieve for this query" half of the signal.
 
 - **DB** (`apps/server/migrations/`): new migration creating `kb.answer_feedback`
   (unique on `(message_id, user_id)` for idempotent submit; FKs to `kb.chat_messages(id)`,
-  `kb.agent_runs(id)`, `kb.retrieval_traces(id)`, `core.user_profiles(id)`; `CHECK
+  `kb.agent_runs(id)`, `kb.retrieval_traces(trace_id)`, `core.user_profiles(id)`; `CHECK
   (thumbs IN (-1,1))`; indexes on `(project_id, created_at)` and `(user_id, created_at)`).
-  Also nullable `retrieval_trace_id` and `run_id` columns on `kb.chat_messages`.
+  Also nullable `retrieval_trace_id` and `run_id` columns on `kb.chat_messages`, plus a
+  UNIQUE constraint on `kb.retrieval_traces.trace_id` (the public trace id).
 - **Server** (`apps/server/domain/`): new `answerfeedback` domain
   (`store.go`/`service.go`/`handler.go`/`module.go`) or an extension of
   `domain/monitoring`; `domain/search/trace_store.go` gains a `user_id` column and a list

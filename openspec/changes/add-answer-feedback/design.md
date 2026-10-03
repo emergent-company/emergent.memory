@@ -64,8 +64,13 @@ updated_at          TIMESTAMPTZ NOT NULL
 UNIQUE (message_id, user_id)
 ```
 
-- `retrieval_trace_id` references the trace row's **primary key** `id` (not the separate
-  `trace_id` column — `RetrievalTrace` at `trace_store.go:22-24` has both).
+- `retrieval_trace_id` references `kb.retrieval_traces.trace_id` — the **public, addressable
+  trace identifier** already returned in `UnifiedSearchResponse.TraceID` and used by
+  `TraceStore.GetByTraceID` — NOT the surrogate primary key `id` (`RetrievalTrace` at
+  `trace_store.go:22-24` has both). This makes the FK target and the response value one and
+  the same identifier. `trace_id` is currently only non-uniquely indexed (`00143`
+  `idx_retrieval_traces_trace`), so this change adds a UNIQUE constraint on `trace_id` to
+  make it a valid FK target (see D2c).
 - `user_id` mirrors `llm_usage_events.user_id → core.user_profiles(id)` (`00108`).
 - The feedback row's own `created_at` is independent of the trace's bounded retention/TTL,
   so a thumbs-down remains queryable even after its trace row expires.
@@ -90,16 +95,30 @@ chat-response time, when the producing run and the search trace are both known s
    (`domain/search/service.go:177-180`, `resp.TraceID = &traceIDStr`).
 2. `kb.chat_messages` gains two nullable uuid columns, populated at chat-response time
    (chat → gateway → message persist):
-   - `retrieval_trace_id` — from the search response trace id;
+   - `retrieval_trace_id` (FK `kb.retrieval_traces(trace_id) ON DELETE SET NULL`) — set to
+     the search response `TraceID`, which IS the trace's `trace_id` column value;
    - `run_id` (FK `kb.agent_runs(id) ON DELETE SET NULL`) — the agent run that produced
      the assistant message, stamped from the run id already in scope at persist time.
 3. `answer_feedback` denormalizes both at submit time: `run_id` and `retrieval_trace_id`
-   are copied from the message (FKs to `kb.agent_runs(id)` / `kb.retrieval_traces(id)`), so
-   aggregation joins feedback → runs / traces without re-joining through chat.
+   are copied from the message (FKs to `kb.agent_runs(id)` / `kb.retrieval_traces(trace_id)`),
+   so aggregation joins feedback → runs / traces without re-joining through chat.
 
 This removes the earlier ambiguity of an "optional trace id with no stated source": the
 source is the chat message's stored provenance keys, which in turn come from the run and
 the search response at persist time. No key is client-supplied.
+
+### D2c — Synchronous trace persist closes the FK race
+
+`TraceID` (the `trace_id` value) is generated client-side in `Search`
+(`traceID := uuid.New()`, `service.go:197`) before `persistTraceAsync` fires, so the value
+is known synchronously even though the existing write is async and best-effort. Because the
+FK now targets `trace_id` (not the DB-generated `id`), the only remaining hazard is
+parent/child ordering: the trace row must be committed before the chat message that
+references it. The chat-response path SHALL therefore persist the trace **synchronously** —
+await `TraceStore.Insert` before persisting the message — and SHALL NOT also let the search
+path fire the async best-effort write for the same trace (single writer, no duplicate row).
+`trace_id` is the ONE stable identifier used for both the search response and the
+message/feedback FK, and the FK is satisfied by construction (committed parent before child).
 
 ### D3 — Aggregation provenance (model via run, config via filters)
 

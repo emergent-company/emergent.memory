@@ -91,14 +91,26 @@ existing endpoint-visibility semantics (a relationship to an object you cannot s
 not leak that object).
 
 **Direct read paths.** The same `authorizeResources()` helper SHALL gate direct reads, not
-only search: in `domain/documents` — `List`, `GetByID`, `GetContent`, `Download`,
-`GetExtractionSummary` — and in `domain/graph` — object reads (`GetObject`, `ListObjects`,
-`GetObjectEdges`, `GetSimilarObjects`, `GetObjectHistory`, `CountObjects`, `TraverseGraph`,
-`ExpandGraph`) and relationship reads (`GetRelationship`, `ListRelationships`,
-`CountRelationships`, `GetRelationshipHistory`). A resource denied to a caller SHALL be
-unreadable/uncountable via these routes exactly as it is unsearchable, so the ACL has no
-search-only gap. (Collections are a separate change; ACL does not add a collection
-resource type in this change.)
+only search, covering **every** graph query/read route in
+`apps/server/domain/graph/routes.go` and the document/chunk read surfaces. Concretely:
+
+- `domain/documents` — `List`, `GetByID`, `GetContent`, `Download`, `GetExtractionSummary`.
+- `domain/chunks` — `List` (chunks are joined to their document's authorization, so a
+  chunk of a denied document is not returned even when the request filters by `documentId`).
+- `domain/graph` object reads — `ListObjects`, `CountObjects`, `FTSSearch`, `VectorSearch`,
+  `GetTags`, `GetObject`, `GetSimilarObjects`, `GetObjectHistory`, `GetObjectEdges`.
+- `domain/graph` hybrid/expansion — `HybridSearch`, `SearchWithNeighbors`, `ExpandGraph`,
+  `TraverseGraph`.
+- `domain/graph` branch reads — `MergeReadiness`, `CompareBranches` (results restricted to
+  readable objects/branches).
+- `domain/graph` analytics reads — `GetMostAccessed`, `GetUnused` (aggregate over readable
+  objects only).
+- `domain/graph` relationship reads — `ListRelationships`, `CountRelationships`,
+  `GetRelationship`, `GetRelationshipHistory` (both-endpoints-readable rule).
+
+A resource denied to a caller SHALL be unreadable/uncountable via these routes exactly as
+it is unsearchable, so the ACL has no search-only gap. (Collections are a separate change;
+ACL does not add a collection resource type in this change.)
 
 ### D3 — Relationship to the existing Postgres RLS layer
 
@@ -119,7 +131,10 @@ in the application rather than extending RLS:
   once per request and is easier to reason about than one new policy per table.
 - `PermissionSource` syncers write plain `acl_entries` rows; they do not manage RLS
   policies.
-- The existing RLS layer stays untouched, so this change is purely additive.
+- The existing RLS layer stays project-scoped, but it is **not** entirely untouched: the
+  entry gate for granted non-members (D5) requires a coordinated RLS change, because the
+  current membership subqueries would hide rows from any non-member even after the app
+  admits them. See D5.
 
 **RLS on the new tables:** `kb.acl_entries`, `kb.groups`, and `kb.group_members` SHALL
 get RLS policies scoped to `app.current_project_id` (via the resource's/group's
@@ -133,6 +148,36 @@ This change ships **Phase 1 only**: data model + schema-only migration + `author
 + read-path enforcement + `PermissionSource` contract + admin bypass. Phase 2 (connector
 ACL syncers) is explicitly out of scope; the interface contract is the seam. Tasks list
 Phase 2 as deferred.
+
+### D5 — ACL-aware entry gate for granted non-members
+
+The default rule has a non-member leg: **non-member ⇒ deny unless an explicit ACL entry
+grants read**. But today every document/graph/chunks read route runs
+`RequireProjectMember()` (see `domain/documents/routes.go`, `domain/graph/routes.go`,
+`domain/chunks/routes.go`), which 403s any non-member **before** a service or
+`authorizeResources()` runs. As written, an explicit grant to a non-member is unreachable.
+
+This change therefore introduces an **ACL-aware entry gate** (`RequireACLRead`), applied on
+the ACL-protected read routes in place of `RequireProjectMember()`:
+
+- It keeps `RequireAuth` + `RequireProjectTokenScope` (unchanged identity/context).
+- For a project **member**, it behaves exactly as `RequireProjectMember()` today
+  (pass-through; default-read applies).
+- For a **non-member**, it does not blanket-403. It resolves the caller's explicit ACL
+  grants in the requested project and admits the request with a principal context only if
+  at least one grant exists; otherwise it returns the same 403 as today (no observed
+  behaviour change for grant-less non-members). The admitted non-member is then narrowed by
+  `authorizeResources()` to exactly the granted ids.
+
+**RLS reconciliation.** Project-scoping RLS policies on `kb.documents`, `kb.chunks`,
+`kb.graph_objects`, and `kb.graph_relationships` key their membership subqueries on
+`kb.organization_memberships`, which returns empty for a granted non-member and would hide
+every row even after admission. The gate SHALL therefore also set the session project
+context (`app.current_project_id`) to the granted project so project scoping is satisfied,
+**and** the read-table RLS policies SHALL be extended (membership **OR** a `read` grant in
+`kb.acl_entries` for this principal) so a granted non-member sees their granted rows and
+nothing else. This is the one coordinated RLS change in the change; member behavior is
+unchanged.
 
 ## Risks / Trade-offs
 

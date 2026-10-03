@@ -1,14 +1,14 @@
 <!-- openspec:archive-hold: spec-only change; implementation intentionally deferred (PR #1410) -->
 ## 1. Migration — document summary column (TDD)
 
-- [ ] 1.1 New migration `apps/server/migrations/<n>_add_document_summary.sql`: add nullable `summary` (text) to `kb.documents`.
-- [ ] 1.2 (TDD) Migration test: up adds the column (nullable); down drops it cleanly.
+- [ ] 1.1 New migration `apps/server/migrations/<n>_add_document_summary.sql`: add nullable `summary` (text) plus nullable `summary_lease_owner` (uuid) and `summary_lease_expires_at` (timestamptz) to `kb.documents` (the database-backed claim/lease state used to guarantee one summary call per document across replicas — see §2).
+- [ ] 1.2 (TDD) Migration test: up adds the columns (all nullable); down drops them cleanly.
 
 ## 2. Summary computation once per document (TDD)
 
-- [ ] 2.1 Add a summary-computation helper (in `domain/documents` or a small `pkg`) that produces a one-line summary via a single LLM call, caches it on `kb.documents.summary`, and returns the cached value when present. Make computation **atomic per document**: a compare-and-set / `SELECT … FOR UPDATE` re-read (or keyed singleflight guarded by the row) so concurrent callers observing a NULL summary compute exactly once — the loser re-reads the committed value instead of computing again.
+- [ ] 2.1 Add a summary-computation helper (in `domain/documents` or a small `pkg`) that produces a one-line summary via a single LLM call, caches it on `kb.documents.summary`, and returns the cached value when present. Guard computation with a **database-backed claim/lease acquired BEFORE the LLM call**: atomically claim the document (`UPDATE kb.documents SET summary_lease_owner = $owner, summary_lease_expires_at = now() + interval '2 minutes' WHERE id = $id AND summary IS NULL AND (summary_lease_expires_at IS NULL OR summary_lease_expires_at < now())`). Only the claimant invokes the model; on success it writes `summary` and clears the lease; on failure it clears the lease (expiry is a backstop) so a retry can claim. A caller that observes a held lease with `summary` still NULL does NOT call the model — it falls back to embedding without a summary (graceful-fallback requirement). This covers multiple server replicas; a process-local keyed singleflight is an optional extra, NOT the guarantee.
 - [ ] 2.2 (TDD) Unit test with a fake model: computing a summary for a multi-chunk document invokes the model once; a second request returns the cached value without a second call.
-- [ ] 2.3 (TDD) Concurrent test: many chunks of the same document request a summary simultaneously; exactly ONE model call runs and all callers observe the same cached value (no duplicate LLM calls, no lost update).
+- [ ] 2.3 (TDD) Concurrent test: many chunks of the same document request a summary simultaneously (simulate racing callers across replicas — separate DB connections/transactions, no shared process state); exactly ONE model call runs, all callers observe the same cached value, and a caller that finds the lease held (summary still NULL) returns the no-summary fallback without calling the model (no duplicate LLM calls, no lost update, no lease leak).
 
 ## 3. Summary compute/recompute wiring
 

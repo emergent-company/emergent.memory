@@ -2,7 +2,7 @@
 
 ### Requirement: Document summary is computed once per document
 
-The document summary used for chunk embedding context SHALL be computed once per document (a single LLM call) and cached on the document, and SHALL NOT be recomputed per chunk. All of a document's chunks SHALL share the same cached summary. Summary computation SHALL be atomic per document (row lock / compare-and-set, or keyed singleflight with a database guard): if many of a document's chunks are embedded concurrently and the summary is absent, exactly one computation SHALL run and the rest SHALL observe the cached value, so a document NEVER triggers more than one LLM summary call.
+The document summary used for chunk embedding context SHALL be computed once per document (a single LLM call) and cached on the document, and SHALL NOT be recomputed per chunk. All of a document's chunks SHALL share the same cached summary. Summary computation SHALL be guarded by a database-backed claim/lease acquired BEFORE the model is invoked: a caller SHALL atomically claim the document (an `UPDATE ... WHERE summary IS NULL AND (lease free or expired)`), and ONLY the claimant SHALL call the model; on success it writes the summary and releases the claim, and on failure it releases the claim so a retry can re-claim. A caller that observes a held claim with no summary SHALL NOT call the model — it SHALL fall back to embedding without a summary. This guarantee SHALL hold across concurrent requests AND across multiple server replicas, so a document NEVER triggers more than one in-flight LLM summary call.
 
 #### Scenario: One summary per document
 
@@ -18,6 +18,11 @@ The document summary used for chunk embedding context SHALL be computed once per
 
 - **WHEN** many chunks of a document are embedded concurrently and the document has no cached summary
 - **THEN** exactly one summary LLM call SHALL run for that document, and the remaining chunks SHALL reuse the computed value rather than each triggering a call
+
+#### Scenario: Claim is acquired before the model call, across replicas
+
+- **WHEN** concurrent callers (including from different server replicas) request a document summary and none has claimed it yet
+- **THEN** exactly one caller SHALL win the database claim and invoke the model; every other caller SHALL observe the held claim and fall back to embedding without a summary (or re-read the committed value) without invoking the model
 
 ### Requirement: Summary is computed on ingest and recomputed on content change
 
@@ -45,7 +50,7 @@ The summary SHALL be computed when a document is ingested, and SHALL be recomput
 
 ### Requirement: Backfill computes summaries for pre-existing documents
 
-A backfill job SHALL compute summaries for documents that lack one. The backfill SHALL be resumable and bounded (e.g. process documents in batches, checkpoint progress, and survive interruption), and SHALL schedule computation through the same atomic once-per-document path as ingest so a document never receives more than one summary call.
+A backfill job SHALL compute summaries for documents that lack one. The backfill SHALL be resumable and bounded (e.g. process documents in batches, checkpoint progress, and survive interruption), and SHALL schedule computation through the same database-backed claim/lease once-per-document path as ingest so a document never receives more than one summary call.
 
 #### Scenario: Backfill fills missing summaries
 

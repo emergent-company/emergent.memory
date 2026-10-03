@@ -45,12 +45,18 @@ Feedback SHALL always carry a project id and the submitting user id. The submitt
 
 ### Requirement: Feedback is linked to the retrieval trace end-to-end
 
-A feedback row SHALL reference the retrieval trace that produced the answer being rated, via a nullable `retrieval_trace_id`. The linkage SHALL be threaded end-to-end: the chat response records the search's trace id on `kb.chat_messages.retrieval_trace_id` at answer time (from the search response `TraceID`), and the feedback row copies that value at submit time.
+A feedback row SHALL reference the retrieval trace that produced the answer being rated, via a nullable `retrieval_trace_id` that SHALL be a foreign key to `kb.retrieval_traces.trace_id` — the public, addressable trace identifier already returned in the search response `TraceID` (NOT the surrogate primary key `id`). The linkage SHALL be threaded end-to-end: the chat response records the search's trace id on `kb.chat_messages.retrieval_trace_id` at answer time (equal to the search response `TraceID`), and the feedback row copies that value at submit time. `kb.retrieval_traces.trace_id` SHALL be UNIQUE, and the trace row SHALL be committed before the chat message that references it, so the foreign key is satisfied by construction.
 
 #### Scenario: Chat message records the search trace
 
 - **WHEN** a chat response is produced from a unified search
 - **THEN** `kb.chat_messages.retrieval_trace_id` SHALL be set to the search response's `TraceID`
+
+#### Scenario: Trace id is the foreign-key target and is committed first
+
+- **WHEN** a chat response is produced from a unified search
+- **THEN** `kb.chat_messages.retrieval_trace_id` SHALL equal both the search response `TraceID` and `kb.retrieval_traces.trace_id` (NOT the surrogate `id`)
+- **AND** the trace row SHALL be committed before the message so the foreign key holds (no async-insert race)
 
 #### Scenario: Feedback copies the message's trace
 

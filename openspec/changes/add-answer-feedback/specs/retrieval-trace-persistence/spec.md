@@ -2,7 +2,7 @@
 
 ### Requirement: Retrieval traces are persisted with stable IDs
 
-Every search operation SHALL persist a retrieval trace containing: the raw query, applied filters, the candidate set, per-result scores (lexical, vector, fused), the selected node/passage IDs, and a stable, addressable trace ID. The trace MUST be retrievable later by that ID. In addition, the trace SHALL record the authenticated user who issued the search when that is known, so the trace can be correlated with answer feedback for retrieval-quality evaluation.
+Every search operation SHALL persist a retrieval trace containing: the raw query, applied filters, the candidate set, per-result scores (lexical, vector, fused), the selected node/passage IDs, and a stable, addressable trace ID. The trace MUST be retrievable later by that ID. The addressable trace ID is the `trace_id` column, which SHALL be UNIQUE; the surrogate primary key `id` is internal and SHALL NOT be exposed or used as the trace identifier. In addition, the trace SHALL record the authenticated user who issued the search when that is known, so the trace can be correlated with answer feedback for retrieval-quality evaluation.
 
 #### Scenario: Search persists an addressable trace
 
@@ -10,6 +10,12 @@ Every search operation SHALL persist a retrieval trace containing: the raw query
 - **THEN** a trace row is written with a stable trace ID
 - **AND** the response includes the trace ID
 - **AND** the trace can be fetched by ID via an API or internal lookup
+
+#### Scenario: Trace id is unique and addressable
+
+- **WHEN** a search completes
+- **THEN** the trace's `trace_id` SHALL be unique and SHALL be the identifier returned in the response and used for later lookup
+- **AND** the surrogate primary key `id` SHALL NOT be used as the public trace identifier
 
 #### Scenario: Trace captures selection, not just candidates
 

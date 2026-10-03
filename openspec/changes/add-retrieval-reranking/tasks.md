@@ -15,8 +15,8 @@
 
 ## 3. Stage placement in `Search` (TDD)
 
-- [ ] 3.1 In `domain/search/service.go` `Search`, when the reranker is configured fuse at `max(limit, RerankTopN)` (so a small caller `limit` cannot starve the top-N rerank block; today `fuse` truncates to `limit`), insert the rerank call after `filterBelowMinScore` and before `countTypes`/assembly, then truncate the final result to the caller's `limit` at assembly; skip the rerank (and fuse at `limit` exactly as today) when the reranker is nil. Build each `Candidate.Text` per result type (graph → Key/Fields serialization, text → Snippet, relationship → TripletText).
-- [ ] 3.2 (TDD) Unit test: nil reranker → fused order unchanged (byte-for-byte today's order); configured reranker re-orders only the top-N block and appends the rest in original order; fewer-than-N candidates reranks all; a caller `limit` smaller than `RerankTopN` still reranks the full top-N block then truncates to `limit`.
+- [ ] 3.1 In `domain/search/service.go` `Search`, when the reranker is configured compute `candidateLimit = max(limit, RerankTopN)` BEFORE `runParallelSearches` and pass it into all three legs (`hybridSearchRequestFromUnified`, text search, relationship search — today each uses `req.Limit`), so every leg can return up to `candidateLimit` candidates and the wider set reaches fusion; fuse at `candidateLimit`, insert the rerank call after `filterBelowMinScore` and before `countTypes`/assembly, then truncate the final result to the caller's `limit` at assembly; skip the rerank (and use `limit` everywhere exactly as today) when the reranker is nil. Build each `Candidate.Text` per result type (graph → Key/Fields serialization, text → Snippet, relationship → TripletText).
+- [ ] 3.2 (TDD) Unit test: nil reranker → fused order unchanged (byte-for-byte today's order); configured reranker re-orders only the top-N block and appends the rest in original order; fewer-than-N candidates reranks all; a caller `limit` smaller than `RerankTopN` still fetches `RerankTopN` candidates per leg, reranks the full top-N block, then truncates to `limit`.
 
 ## 4. Fallback + trace metadata (TDD)
 

@@ -16,7 +16,7 @@ the server **framework** underneath.
 - A sync job lifecycle (`pending/processing/completed/failed/cancelled`) with structured
   errors.
 - Ingest through the existing documents → chunking → extraction → graph pipeline.
-- MCP registry's `ProxyManager` as the preferred outbound transport (no vendor SDKs in
+- MCP registry's **service layer** as the preferred outbound transport (no vendor SDKs in
   the server).
 
 **Non-Goals**
@@ -36,20 +36,36 @@ would block on auth, pagination, and vendor quirks. This change builds the frame
 source that has an MCP server is consumable immediately, with zero server code. First-class
 connectors are limited to the 1-2 targets whose MCP story is weak (documented future work).
 
-### D2 — MCP registry `ProxyManager` is the outbound connector bus
+### D2 — MCP registry service layer is the outbound connector bus
 
 `domain/mcprelay` is the **inbound** WebSocket star relay for NAT'd local connectors: it
 requires a registered live `(projectID, instanceID)` session to route a call and **cannot
 reach SaaS**. So the relay is not the SaaS ingestion transport.
 
-The correct outbound client is `domain/mcpregistry`'s `ProxyManager`
-(`proxy.go:85-154`): `CallToolOnServer`/`CallTool` over stdio/sse/http, plus
-`DiscoverTools`. It is the component that actually invokes an MCP server's tools. A
-source's `config` therefore specifies an MCP **server + tool** registered in
-`mcpregistry`; the sync worker invokes it through `ProxyManager`. `domain/mcprelay` is
-used only for OS-level local-node connectors (`connector.linux/internal/mcphost` hosts
-local tools **to** Memory — it does not pull SaaS content). This keeps credentials in the
-provider/registry layer and keeps the server free of vendor SDKs.
+The correct outbound entry is **`mcpregistry.Service.CallToolOnServer`**
+(`apps/server/domain/mcpregistry/service.go:601`), the policy-enforcing layer: it resolves
+the server by id scoped to the project, enforces **server and tool enablement**, the
+**share-instance tool allowlist** (deny-by-default), builtin **per-tool authority**
+(`AuthorizeToolCall`), and an **invocation timeout** (`mcpToolCallTimeout`, 30s). It then
+dispatches external (stdio/sse/http) servers through `ProxyManager.CallToolOnServer` as the
+raw transport leaf.
+
+`ProxyManager.CallToolOnServer` (`proxy.go:124-154`) is **not** the ingestion entry: it
+takes an already-resolved `*MCPServer` and connects directly, bypassing the service layer's
+enablement/allowlist/authority/timeout checks. A source's `config` therefore specifies an
+MCP **server + tool** registered in `mcpregistry` (a registry server row, not a relay
+instance), and the sync worker invokes it through the **service** layer.
+
+Because the sync worker is an internal caller with no API token, it SHALL use a defined
+**internal service identity**: either a dedicated internal invoke method on
+`mcpregistry.Service` (e.g. `CallToolOnServerInternal`) that skips only the API-token-scoped
+allowlist resolution while still enforcing server/tool enablement, a deny-by-default
+internal tool policy, and the timeout — or `Service.CallToolOnServer` invoked with an
+explicit trusted-internal policy (nil/empty `apiTokenID` + a documented scope set) that the
+resolver treats as an internal, deny-by-default caller. `domain/mcprelay` is used only for
+OS-level local-node connectors (`connector.linux/internal/mcphost` hosts local tools **to**
+Memory — it does not pull SaaS content). This keeps credentials in the provider/registry
+layer and keeps the server free of vendor SDKs.
 
 ### D3 — Cursor-based incremental sync
 
@@ -104,8 +120,26 @@ The worker **reuses `apps/server/internal/jobs`**, the generic table-agnostic PG
 (`NewQueue(db, QueueConfig, logger)`, with the table/entity supplied via
 `DefaultQueueConfig(tableName, entityIDColumn)`; atomic `Dequeue` with `FOR UPDATE SKIP LOCKED`,
 `MarkCompleted`/`MarkFailed`, `RecoverStaleJobs`, `GetStats`) already used by chunk/graph
-embedding. `kb.source_sync_jobs` supplies the source-specific columns (cursor, error
-jsonb) on top of the shared queue mechanics; no new queue is written.
+embedding. `kb.source_sync_jobs` supplies the source-specific columns on top of the shared
+queue mechanics; no new queue is written.
+
+**Queue column contract.** `internal/jobs.Queue` reads/writes a fixed column set, so
+`kb.source_sync_jobs` MUST carry every one of them or `Dequeue`/`MarkCompleted`/
+`MarkFailed`/`RecoverStaleJobs` will fail: `id`, `status`, `scheduled_at` (Dequeue
+filter + retry backoff), `priority` (Dequeue ordering), `started_at`, `updated_at`
+(every mutation), `attempt_count` (MarkFailed retries), `last_error` (MarkFailed error
+text), and `completed_at` (MarkCompleted). The earlier draft's `finished_at` is wrong —
+the queue writes `completed_at`. The source-specific columns (`source_id`, `cursor_before/
+after`, `error` jsonb, and the progress fields below) sit alongside, not instead of, these.
+
+**Progress persistence for the gateway.** The `add-data-sources` gateway `SyncJob` DTO
+requires durable, restart-surviving progress: `total_items`, `processed_items`,
+`successful_items`, `failed_items`, `skipped_items` (counters), `current_phase`,
+`status_message` (phase/message), `trigger_type` (scheduled vs manual), and
+`retry_count`/`max_retries` (mapped from the queue's `attempt_count` and
+`QueueConfig.MaxAttempts`). All are columns on `kb.source_sync_jobs`, updated by the worker
+as it advances; the sync-job read routes report them directly so progress is accurate after
+a restart without a live in-memory state.
 
 ### D6 — Atomic single-active-job admission per source
 
@@ -115,9 +149,17 @@ source**: a partial unique index
 `UNIQUE (source_id) WHERE status IN ('pending','processing')` on `kb.source_sync_jobs` makes
 the "one queued|running job per source" rule a database invariant, and the trigger path
 SHALL insert the job under that constraint (an `ON CONFLICT`/unique-violation maps to a
-"sync already in progress" result rather than enqueuing a second job). Stale `processing`
-rows from a crashed worker are recovered by the existing `internal/jobs.RecoverStaleJobs`
-(requeue/transition to `failed`), which clears the index slot before the next admission.
+"sync already in progress" result rather than enqueuing a second job).
+
+**Stale recovery does not clear the slot by requeue.** `internal/jobs.RecoverStaleJobs`
+sets a stale `processing` row back to `pending` (and resets `started_at`), and `pending`
+STILL occupies the partial unique index. So a requeued job **remains** the single active
+job for its source: a trigger arriving during that window SHALL return/reject the in-flight
+job rather than enqueuing a new one. The admission slot is cleared **only** by a terminal
+transition (`completed`, `failed`, or `cancelled`). If the source sync policy chooses to
+terminal-fail a repeatedly-stale job (e.g. `MarkFailed` at `MaxAttempts`, or an explicit
+`failed`/`cancelled` on dead-letter), that terminal transition — not the requeue — is what
+permits the next new job.
 
 ## Risks / Trade-offs
 

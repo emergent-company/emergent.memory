@@ -1,8 +1,8 @@
 <!-- openspec:archive-hold: spec-only change; implementation intentionally deferred (PR #1410) -->
 ## 1. Migration — `kb.answer_feedback`
 
-- [ ] 1.1 New migration `apps/server/migrations/<n>_create_answer_feedback.sql`: create `kb.answer_feedback` per design D2 — id, project_id, message_id, run_id, retrieval_trace_id, user_id, thumbs (`SMALLINT NOT NULL CHECK (thumbs IN (-1, 1))`), comment, created_at, updated_at, `UNIQUE (message_id, user_id)`. FKs: `message_id → kb.chat_messages(id)`, `run_id → kb.agent_runs(id) ON DELETE SET NULL`, `retrieval_trace_id → kb.retrieval_traces(id) ON DELETE SET NULL`, `user_id → core.user_profiles(id)` (mirrors `00108`). Indexes on `(project_id, created_at)` and `(user_id, created_at)`.
-- [ ] 1.2 (TDD) Migration round-trip test in the migration test suite: up then down drops the table cleanly; the unique index is present; the `CHECK (thumbs IN (-1, 1))` constraint rejects out-of-range values; the `retrieval_trace_id` FK targets `kb.retrieval_traces.id`; deleting a trace row sets `retrieval_trace_id` to NULL (`ON DELETE SET NULL`) and leaves the feedback row intact.
+- [ ] 1.1 New migration `apps/server/migrations/<n>_create_answer_feedback.sql`: create `kb.answer_feedback` per design D2 — id, project_id, message_id, run_id, retrieval_trace_id, user_id, thumbs (`SMALLINT NOT NULL CHECK (thumbs IN (-1, 1))`), comment, created_at, updated_at, `UNIQUE (message_id, user_id)`. FKs: `message_id → kb.chat_messages(id)`, `run_id → kb.agent_runs(id) ON DELETE SET NULL`, `retrieval_trace_id → kb.retrieval_traces(trace_id) ON DELETE SET NULL` (the public trace id, matching `UnifiedSearchResponse.TraceID`), `user_id → core.user_profiles(id)` (mirrors `00108`). Indexes on `(project_id, created_at)` and `(user_id, created_at)`. A companion migration adds a UNIQUE constraint on `kb.retrieval_traces.trace_id` (today only non-uniquely indexed via `00143` `idx_retrieval_traces_trace`) so it is a valid FK target.
+- [ ] 1.2 (TDD) Migration round-trip test in the migration test suite: up then down drops the table cleanly; the unique indexes are present (`(message_id, user_id)` and the new UNIQUE on `kb.retrieval_traces.trace_id`); the `CHECK (thumbs IN (-1, 1))` constraint rejects out-of-range values; the `retrieval_trace_id` FK targets `kb.retrieval_traces.trace_id` (the public trace id, not `id`); deleting a trace row sets `retrieval_trace_id` to NULL (`ON DELETE SET NULL`) and leaves the feedback row intact.
 
 ## 2. Trace extension — user attribution + query history
 
@@ -14,9 +14,9 @@
 
 ## 3. Chat message → provenance linkage (run + trace)
 
-- [ ] 3.1 New migration adding nullable `retrieval_trace_id` (FK `kb.retrieval_traces(id) ON DELETE SET NULL`) and nullable `run_id` (FK `kb.agent_runs(id) ON DELETE SET NULL`) to `kb.chat_messages`, plus the `domain/chat` entity fields.
-- [ ] 3.2 At chat-response time, capture the unified search response `TraceID` (`domain/search/service.go:177-180`) and persist it on the chat message's `retrieval_trace_id`; stamp `run_id` from the producing agent run id already in scope at persist time (chat → gateway → message persist). Both are server-derived, never client-supplied.
-- [ ] 3.3 (TDD) Unit test: a chat response backed by a search stores the search `TraceID` and its producing `run_id`; a response with no search stores `retrieval_trace_id = NULL`; a non-agent response stores `run_id = NULL`.
+- [ ] 3.1 New migration adding nullable `retrieval_trace_id` (FK `kb.retrieval_traces(trace_id) ON DELETE SET NULL` — the public trace id, not the surrogate `id`) and nullable `run_id` (FK `kb.agent_runs(id) ON DELETE SET NULL`) to `kb.chat_messages`, plus the `domain/chat` entity fields.
+- [ ] 3.2 At chat-response time, capture the unified search response `TraceID` (`domain/search/service.go:177-180`) and persist it on the chat message's `retrieval_trace_id`; stamp `run_id` from the producing agent run id already in scope at persist time (chat → gateway → message persist). Persist the trace **synchronously** (await `TraceStore.Insert` for the trace's `trace_id`) before persisting the message so the FK is satisfied — do NOT rely on the async `persistTraceAsync`, and do not double-write the same trace. Both keys are server-derived, never client-supplied.
+- [ ] 3.3 (TDD) Unit test: a chat response backed by a search stores the search `TraceID` (equal to `kb.retrieval_traces.trace_id`, not `id`) and its producing `run_id`; a response with no search stores `retrieval_trace_id = NULL`; a non-agent response stores `run_id = NULL`; the trace row is committed before the message (FK holds — no async-insert race, no FK violation).
 
 ## 4. Feedback domain — submit / list / aggregate
 

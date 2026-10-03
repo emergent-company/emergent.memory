@@ -19,10 +19,17 @@ syncers up front would be a breadth trap; the interface contract is what unblock
   permission)` with `permission ∈ {read, deny}` plus recursive group resolution
   (principals are users or groups).
 - A single `authorizeResources()` helper, enforced as a filter in `domain/search` (text +
-  relationship legs), in `domain/graph` hybrid search (graph-object leg), **and on direct
-  read paths** (`domain/documents` list/get/content/download/extraction-summary;
-  `domain/graph` object/relationship get/list/edges/similar/traverse/expand/count/history)
-  — no read path returns an unauthorized resource.
+  relationship legs), in `domain/graph` hybrid search (graph-object leg), **and on every
+  direct read path** — `domain/documents` list/get/content/download/extraction-summary,
+  `domain/chunks` list (chunk→document join), and all `domain/graph` query/read routes
+  (object get/list/edges/similar/traverse/expand/count/fts/vector-search/tags/history,
+  search-with-neighbors, branch merge-readiness/compare, analytics most-accessed/unused,
+  relationship get/list/count/history) — no read path returns an unauthorized resource.
+- An **ACL-aware entry gate** (`RequireACLRead`) on the read routes (in place of
+  `RequireProjectMember()`) so an explicitly granted non-member is admitted to the
+  authorization helper rather than rejected by the membership middleware; with a
+  coordinated project-scoping RLS reconciliation so granted non-members read their granted
+  rows and nothing else.
 - A `PermissionSource` interface contract for future connector ACL syncers (no connector
   implementations in this change).
 - Default rule: existing project members get `read` on their project's resources via the
@@ -60,7 +67,9 @@ syncers up front would be a breadth trap; the interface contract is what unblock
 - **Server** (`apps/server/domain/`): new `acl` package (`authorizeResources` +
   `PermissionSource` interface + group resolution); `domain/search/repository.go` +
   `service.go` (text + relationship legs); `domain/graph` hybrid search (graph-object leg)
-  and direct object/relationship reads; `domain/documents` direct reads.
+  and every direct object/relationship/branch/analytics read; `domain/documents` and
+  `domain/chunks` direct reads; an ACL-aware entry gate (`RequireACLRead`) plus a
+  coordinated read-table RLS policy extension for granted non-members.
 - **Authz posture**: consistent with `scope-authority` and `project-viewer-role`
   (viewer = read-only is a member-level rule; ACL is a finer resource-level rule).
 

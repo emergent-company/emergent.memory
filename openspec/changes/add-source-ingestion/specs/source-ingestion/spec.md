@@ -56,10 +56,10 @@ At most one sync job SHALL be `pending` or `processing` for a given source at an
 - **WHEN** a sync job is `pending`/`processing` for a source and a second trigger arrives
 - **THEN** the second trigger SHALL be rejected (or return the existing job), and no second active job SHALL exist for that source
 
-#### Scenario: Stale job recovered before re-admission
+#### Scenario: Stale job remains the single active job until terminal
 
-- **WHEN** a source has a `processing` job whose worker died
-- **THEN** that job SHALL be recovered (requeued or `failed`), after which a new trigger for the source SHALL be admitted
+- **WHEN** a source has a `processing` job whose worker died and `RecoverStaleJobs` requeues it to `pending`
+- **THEN** that requeued job SHALL remain the source's single active job (a new trigger returns/rejects it), and a new job SHALL be admitted only after a terminal transition (`completed`, `failed`, or `cancelled`) clears the admission slot
 
 ### Requirement: Documents are attributable to their source
 
@@ -88,6 +88,20 @@ A sync SHALL be a job with a lifecycle of `pending`, `processing`, `completed`, 
 
 - **WHEN** a running sync is cancelled
 - **THEN** it SHALL transition to `cancelled` and stop fetching further source items
+
+### Requirement: Sync progress is persisted and reported
+
+A sync job SHALL persist durable progress on `kb.source_sync_jobs` — total/processed/successful/failed/skipped item counts, the current phase and status message, and the trigger type — and SHALL report them through the sync-job read routes. Progress SHALL be accurate after a restart, derived from the persisted columns (with retry count served from the queue's `attempt_count` and the retry cap from `QueueConfig.MaxAttempts`), not from in-memory worker state.
+
+#### Scenario: Progress survives a restart
+
+- **WHEN** a sync job is interrupted (e.g. server restart) and later read via the sync-job route
+- **THEN** the reported totals, phase, and message SHALL reflect the persisted progress up to the interruption, not reset to zero
+
+#### Scenario: Sync job DTO carries the gateway fields
+
+- **WHEN** a sync job is fetched
+- **THEN** the response SHALL include `totalItems`, `processedItems`, `successfulItems`, `failedItems`, `skippedItems`, `currentPhase`, `statusMessage`, `triggerType`, `retryCount`, `maxRetries`, `startedAt`, and `completedAt`
 
 ### Requirement: Idempotent re-sync
 
@@ -126,19 +140,24 @@ Content ingested from a source SHALL flow through the existing pipeline — `dom
 - **WHEN** extraction runs over ingested content
 - **THEN** the resulting graph objects SHALL be attributable to the source that produced them
 
-### Requirement: MCP registry ProxyManager is the connector bus
+### Requirement: MCP registry service layer is the connector bus
 
-The preferred transport for a source SHALL be an MCP server/tool registered via `domain/mcpregistry` and invoked through its `ProxyManager` (`CallToolOnServer`/`CallTool`), so that consuming a SaaS source SHALL NOT require a vendor SDK hard-coded into the server. `domain/mcprelay` (the inbound WebSocket star relay for NAT'd local connectors) SHALL be used only for OS-level local-node connectors, not SaaS ingestion.
+The preferred transport for a source SHALL be an MCP server/tool registered via `domain/mcpregistry` and invoked through its **service layer** (`Service.CallToolOnServer`, or a dedicated internal method), so server/tool enablement, the share-instance tool allowlist, builtin per-tool authority, and the invocation timeout are enforced on every ingestion call, and a SaaS source SHALL NOT require a vendor SDK hard-coded into the server. The raw `ProxyManager.CallToolOnServer` (which takes an already-resolved server and connects directly) SHALL be used only as the transport leaf beneath the service layer, not as the ingestion entry. `domain/mcprelay` (the inbound WebSocket star relay for NAT'd local connectors) SHALL be used only for OS-level local-node connectors, not SaaS ingestion.
 
 #### Scenario: Source configured via MCP
 
 - **WHEN** a source declares an MCP server/tool as its transport
-- **THEN** ingestion SHALL be performed by invoking that tool through `domain/mcpregistry`'s `ProxyManager`, not by a bespoke server-side vendor client
+- **THEN** ingestion SHALL be performed by invoking that tool through `domain/mcpregistry`'s **service layer**, not by a bespoke server-side vendor client
+
+#### Scenario: Service-layer policy is enforced on ingestion
+
+- **WHEN** a source's configured MCP server or tool is disabled, or the tool is not in the internal deny-by-default allowlist
+- **THEN** the ingestion call SHALL be rejected by the service layer (not silently bypassed via a raw proxy call)
 
 #### Scenario: Relay is not the SaaS path
 
 - **WHEN** a source targets a SaaS provider
-- **THEN** it SHALL be reached through `mcpregistry`'s `ProxyManager`, and SHALL NOT depend on `mcprelay` (which requires a live local `(projectID, instanceID)` session)
+- **THEN** it SHALL be reached through `mcpregistry`'s service layer, and SHALL NOT depend on `mcprelay` (which requires a live local `(projectID, instanceID)` session)
 
 ### Requirement: Schema auto-discovery on new sources
 

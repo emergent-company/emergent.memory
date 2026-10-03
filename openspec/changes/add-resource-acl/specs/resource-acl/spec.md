@@ -72,22 +72,51 @@ Authorization SHALL be enforced at every search and graph hybrid search entry po
 
 ### Requirement: Direct read paths enforce the ACL
 
-The per-resource `authorizeResources()` predicate SHALL also gate **direct** reads — document list/get/content/download/extraction-summary and graph object/relationship get/list/edges/similar/traverse/expand/count/history — not only search, so a denied resource is unreadable and uncountable outside search. A relationship SHALL be hidden on direct read when either endpoint is unreadable, matching the search-leg rule.
+The per-resource `authorizeResources()` predicate SHALL gate **direct** reads — not only search. This SHALL cover document list/get/content/download/extraction-summary; chunk list (each chunk joined to its document's authorization, so a chunk of a denied document is never returned even when filtered by `documentId`); and **every** graph query/read route — object get/list/edges/similar/traverse/expand/count/fts/vector-search/tags/history, hybrid search, search-with-neighbors, branch merge-readiness/compare, analytics most-accessed/unused, and relationship get/list/count/history. A relationship SHALL be hidden on direct read when either endpoint is unreadable, matching the search-leg rule.
 
 #### Scenario: Denied document is not directly readable
 
 - **WHEN** a document is denied to a caller
 - **THEN** the caller SHALL NOT read, list, download, or fetch its content or extraction-summary through the direct document routes
 
+#### Scenario: Denied document's chunks are not directly readable
+
+- **WHEN** a document is denied to a caller
+- **THEN** its chunks SHALL NOT be returned by `domain/chunks` list — whether the list is unfiltered or filtered by that `documentId`
+
 #### Scenario: Denied object is not directly readable or counted
 
 - **WHEN** a graph object is denied to a caller
 - **THEN** the caller SHALL NOT fetch, list, traverse, expand, or see it in object/edge counts through the direct graph routes
 
+#### Scenario: Denied object is excluded from every graph query surface
+
+- **WHEN** a graph object is denied to a caller
+- **THEN** it SHALL NOT appear in FTS, vector-search, tags, similar, history, search-with-neighbors, analytics (`most-accessed`/`unused`), or branch `compare`/`merge-readiness` results
+
 #### Scenario: Relationship to an unreadable endpoint is hidden on direct read
 
 - **WHEN** one endpoint object of a relationship is denied to a caller
 - **THEN** the relationship SHALL NOT be returned by the direct relationship get/list/count/history routes
+
+### Requirement: ACL-aware entry gate admits granted non-members
+
+A non-member with an explicit `read` grant SHALL be admitted on the ACL-protected read routes rather than being rejected by the project-membership middleware before the authorization helper runs. The read routes SHALL use an ACL-aware entry gate that admits members unchanged, admits non-members only when they hold an explicit grant, and returns the same denial as today to a grant-less non-member. The project-scoping RLS SHALL be reconciled so a granted non-member can read their granted rows and nothing else.
+
+#### Scenario: Granted non-member can read granted resources
+
+- **WHEN** a non-member has an explicit `read` grant on a resource and calls a read route
+- **THEN** the caller SHALL be admitted and SHALL read that resource (and only that resource), not being rejected by the project-membership middleware
+
+#### Scenario: Grant-less non-member still denied
+
+- **WHEN** a non-member has no explicit grant and calls a read route
+- **THEN** the caller SHALL receive the same denial as before this change (no behaviour change for grant-less non-members)
+
+#### Scenario: Granted non-member is project-isolated by RLS
+
+- **WHEN** a granted non-member reads
+- **THEN** project-scoping RLS SHALL admit only their granted rows and SHALL NOT leak un-granted rows from the same project
 
 ### Requirement: Relationship visibility follows endpoint readability
 
