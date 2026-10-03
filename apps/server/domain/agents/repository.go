@@ -52,6 +52,16 @@ func (r *Repository) AddAgentDeletionListener(fn func(agentIDs []string)) {
 	r.agentDeletionListeners = append(r.agentDeletionListeners, fn)
 }
 
+// NotifyAgentsDeleted fans the given ids out to every registered deletion
+// listener, exactly as an in-repository delete would. It exists for delete
+// paths that remove agent rows outside this repository (notably the backup
+// restorer's generic table wipe): callers must only pass ids whose rows are
+// actually gone, after the surrounding transaction has committed, so a
+// rolled-back delete never strands a live agent without its registrations.
+func (r *Repository) NotifyAgentsDeleted(agentIDs []string) {
+	r.notifyAgentsDeleted(agentIDs)
+}
+
 // notifyAgentsDeleted fans the deleted ids out to every registered listener.
 // Called after a successful row delete so a failed delete never drops live
 // registrations.
