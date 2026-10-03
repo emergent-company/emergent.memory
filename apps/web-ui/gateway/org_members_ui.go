@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/emergent-company/go-daisy/components/nav"
@@ -784,6 +785,64 @@ func inviteDeliveryBadge(status *string) (string, ui.BadgeIntent) {
 		// unknown value read as the neutral sent state.
 		return "Sent", ui.BadgeGhost
 	}
+}
+
+// inviteDeliveryStatusLabel is a send's headline state in the delivery log:
+// the delivery event once one has arrived, else the email job's processing
+// status (queued, sending, failed to send, gave up). It never claims more than
+// memory knows — a job with no delivery event reads as "Sent".
+func inviteDeliveryStatusLabel(send *InviteDeliveryEventDto) string {
+	if send.DeliveryStatus != nil {
+		label, _ := inviteDeliveryBadge(send.DeliveryStatus)
+		return label
+	}
+	switch send.Status {
+	case "pending":
+		return "Queued"
+	case "processing":
+		return "Sending"
+	case "failed":
+		return "Failed to send"
+	case "dead_letter":
+		return "Gave up"
+	default:
+		return "Sent"
+	}
+}
+
+// inviteDeliveryEventLabel humanizes a Mailgun delivery event type for the
+// delivery-log event line, falling back to the raw type for anything unmapped.
+func inviteDeliveryEventLabel(event string) string {
+	switch event {
+	case "delivered":
+		return "Delivered"
+	case "opened":
+		return "Opened"
+	case "clicked":
+		return "Clicked"
+	case "failed":
+		return "Failed"
+	case "bounced":
+		return "Bounced"
+	case "rejected":
+		return "Rejected"
+	case "dropped":
+		return "Dropped"
+	case "complained":
+		return "Complained"
+	case "unsubscribed":
+		return "Unsubscribed"
+	default:
+		return event
+	}
+}
+
+// inviteDeliveryLogSummary is the delivery log's one-line count header.
+func inviteDeliveryLogSummary(sends int) string {
+	if sends == 1 {
+		return "1 email sent"
+	}
+	return strconv.Itoa(sends) + " emails sent"
 }
 
 // validProjectRole reports whether role is a project membership role the

@@ -287,6 +287,64 @@ func TestRenderMembersPageErrors(t *testing.T) {
 	}
 }
 
+// TestRenderMembersInviteDeliveryLog asserts a pending-invite row exposes the
+// invitation's email delivery log in a hover/focus popover (issue #1390):
+// server-rendered entries with each send's state, absolute date/time, and any
+// bounce detail, in newest-first order, plus the neutral empty state when no
+// email has been sent yet.
+func TestRenderMembersInviteDeliveryLog(t *testing.T) {
+	inv := pendingInviteFixture()
+	inv.DeliveryStatus = strPtr("bounced")
+	inv.DeliveryLog = []InviteDeliveryEventDto{
+		{
+			JobID: "job-2", CreatedAt: "2026-08-22T10:00:00Z", Status: "sent",
+			DeliveryStatus: strPtr("bounced"),
+			Events: []InviteDeliveryLogEventDto{
+				{Type: "bounced", Detail: "mailbox full", CreatedAt: "2026-08-22T10:01:00Z"},
+			},
+		},
+		{
+			JobID: "job-1", CreatedAt: "2026-08-20T09:00:00Z", Status: "sent",
+			DeliveryStatus: strPtr("delivered"),
+			Events: []InviteDeliveryLogEventDto{
+				{Type: "delivered", CreatedAt: "2026-08-20T09:01:00Z"},
+			},
+		},
+	}
+	html := renderHTML(t, MembersPage(membersPageData{Pending: []SentInviteDto{inv}}))
+
+	newestTime := notificationWhen("2026-08-22T10:00:00Z")
+	oldestTime := notificationWhen("2026-08-20T09:00:00Z")
+	for _, want := range []string{
+		// the popover is a hover trigger whose content is wired to a focusable
+		// button; the log is rendered server-side into that content.
+		`data-gd-popover-type="hover"`,
+		`aria-controls="invite-delivery-log-inv-1"`,
+		`id="invite-delivery-log-inv-1"`,
+		`data-testid="invite-delivery-log-inv-1"`,
+		"Invitation email log", "2 emails sent",
+		"Bounced", "mailbox full", "Delivered",
+		newestTime, oldestTime,
+		// the popover runtime ships with the page
+		"go-daisy-popover.js",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("invite delivery log missing %q", want)
+		}
+	}
+	// newest send renders before the oldest
+	i, j := strings.Index(html, "mailbox full"), strings.Index(html, "Delivered")
+	if i < 0 || j < 0 || i > j {
+		t.Errorf("delivery log must render newest send first (bounced at %d, delivered at %d)", i, j)
+	}
+
+	// no invented state for an invite with no sends
+	empty := renderHTML(t, MembersPage(membersPageData{Pending: []SentInviteDto{pendingInviteFixture()}}))
+	if !strings.Contains(empty, "No emails sent yet.") {
+		t.Error("empty delivery log must render the neutral no-sends note")
+	}
+}
+
 // --- Member invite form page (/members/new) ---
 
 // TestRenderMemberInvitePage asserts the standalone invite form: email input

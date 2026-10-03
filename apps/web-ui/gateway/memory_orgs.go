@@ -323,6 +323,32 @@ type SentInviteDto struct {
 	DeliveryStatus *string `json:"deliveryStatus,omitempty"`
 	// DeliveryStatusAt is when the latest delivery event happened (RFC3339).
 	DeliveryStatusAt *time.Time `json:"deliveryStatusAt,omitempty"`
+	// DeliveryLog is the invitation's email send history (initial send plus
+	// every resend), newest first, each send carrying its Mailgun delivery
+	// events. Empty when no email has been enqueued yet.
+	DeliveryLog []InviteDeliveryEventDto `json:"deliveryLog"`
+}
+
+// InviteDeliveryEventDto is one email send in an invitation's delivery log: an
+// invite-scoped email job with its current processing/delivery state and the
+// Mailgun delivery events recorded against it.
+type InviteDeliveryEventDto struct {
+	JobID            string                      `json:"jobId"`
+	CreatedAt        string                      `json:"createdAt"`
+	Status           string                      `json:"status"`
+	DeliveryStatus   *string                     `json:"deliveryStatus,omitempty"`
+	DeliveryStatusAt string                      `json:"deliveryStatusAt,omitempty"`
+	LastError        *string                     `json:"lastError,omitempty"`
+	Events           []InviteDeliveryLogEventDto `json:"events"`
+}
+
+// InviteDeliveryLogEventDto is one Mailgun delivery event for an invitation
+// email: its type (delivered/opened/bounced/complained/failed), the reason
+// Mailgun supplied when present, and when it happened (RFC3339).
+type InviteDeliveryLogEventDto struct {
+	Type      string `json:"type"`
+	Detail    string `json:"detail,omitempty"`
+	CreatedAt string `json:"createdAt"`
 }
 
 // ListInvites lists invitations sent for the active project

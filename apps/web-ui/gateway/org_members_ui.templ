@@ -249,6 +249,7 @@ templ membersBody(data membersPageData) {
 				})
 			}
 		} else {
+			@ui.PopoverScript()
 			@components.TableCard(nil) {
 				@table.TableWithProps(table.TableProps{Bordered: false}) {
 					@table.TableHead() {
@@ -340,24 +341,46 @@ templ memberAvatar(m ProjectMemberDto) {
 templ memberInviteRow(inv SentInviteDto, base string, canRevoke bool) {
 	@table.TableRow(inv.ID, true, nil) {
 		@table.TableCell("", nil) {
-			<div class="flex items-center gap-3">
-				<div class="border-base-content/15 flex size-8 shrink-0 items-center justify-center rounded-full border">
-					@ui.IconSpan("lucide--mail", "size-4 text-muted-faint")
-				</div>
-				<div class="min-w-0">
-					<p class="truncate text-sm font-medium">{ inv.Email }</p>
-					<div class="mt-1 flex flex-wrap items-center gap-1.5">
-						@ui.Badge(ui.BadgeProps{
-							Label:   "Not responded",
-							Variant: ui.BadgeGhost,
-							Size:    ui.BadgeSizeXS,
-							Dot:     true,
-						})
-						{{ label, intent := inviteDeliveryBadge(inv.DeliveryStatus) }}
-						@components.StatusBadge(label, intent, "", components.StatusBadgeOpts{Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Dot: true})
-					</div>
-				</div>
-			</div>
+			@ui.Popover(ui.PopoverRootProps{}) {
+				@ui.PopoverTrigger(ui.PopoverTriggerProps{
+					TriggerType: ui.PopoverTriggerHover,
+					Class:       "flex w-full cursor-help items-center gap-3 rounded-field text-left outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
+					Attrs: templ.Attributes{
+						"aria-label":    "Invitation email log for " + inv.Email,
+						"aria-controls": "invite-delivery-log-" + inv.ID,
+					},
+				}) {
+					<span class="border-base-content/15 flex size-8 shrink-0 items-center justify-center rounded-full border">
+						@ui.IconSpan("lucide--mail", "size-4 text-muted-faint")
+					</span>
+					<span class="block min-w-0">
+						<span class="block truncate text-sm font-medium">{ inv.Email }</span>
+						<span class="mt-1 flex flex-wrap items-center gap-1.5">
+							@ui.Badge(ui.BadgeProps{
+								Label:   "Not responded",
+								Variant: ui.BadgeGhost,
+								Size:    ui.BadgeSizeXS,
+								Dot:     true,
+							})
+							{{ label, intent := inviteDeliveryBadge(inv.DeliveryStatus) }}
+							@components.StatusBadge(label, intent, "", components.StatusBadgeOpts{Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Dot: true})
+						</span>
+					</span>
+				}
+				@ui.PopoverContent(ui.PopoverContentProps{
+					Placement: ui.PopoverTopStart,
+					Offset:    6,
+					Exclusive: true,
+					Class:     "w-80 p-3",
+					Attrs: templ.Attributes{
+						"id":         "invite-delivery-log-" + inv.ID,
+						"role":       "region",
+						"aria-label": "Invitation email log for " + inv.Email,
+					},
+				}) {
+					@inviteDeliveryLog(inv)
+				}
+			}
 		}
 		@table.TableCell("", nil) {
 			@roleBadge(inv.Role)
@@ -402,6 +425,50 @@ templ memberInviteRow(inv SentInviteDto, base string, canRevoke bool) {
 			}
 		}
 	}
+}
+
+// inviteDeliveryLog renders an invitation's email send history inside the
+// row's hover/focus popover (issue #1390): one block per send — the initial
+// invitation plus every resend — newest first, each with its delivery events
+// and any bounce/complaint reason Mailgun supplied. The content is rendered
+// server-side into the popover, so it is reachable by hover and by keyboard
+// (the trigger is a button; Escape closes the popover).
+templ inviteDeliveryLog(inv SentInviteDto) {
+	<div data-testid={ "invite-delivery-log-" + inv.ID }>
+		<p class="text-xs font-semibold">Invitation email log</p>
+		if len(inv.DeliveryLog) == 0 {
+			<p class="text-muted-faint mt-1 text-xs">No emails sent yet.</p>
+		} else {
+			<p class="text-muted-faint mt-0.5 text-xs">{ inviteDeliveryLogSummary(len(inv.DeliveryLog)) }</p>
+			<ul class="mt-2 flex max-h-64 flex-col gap-2 overflow-y-auto">
+				for _, send := range inv.DeliveryLog {
+					<li class="border-base-content/10 border-t pt-2 first:border-t-0 first:pt-0">
+						<div class="flex items-center justify-between gap-2">
+							<span class="text-xs font-medium">{ inviteDeliveryStatusLabel(&send) }</span>
+							<span class="text-muted-faint text-xs whitespace-nowrap">{ notificationWhen(send.CreatedAt) }</span>
+						</div>
+						if len(send.Events) == 0 {
+							<p class="text-muted-faint mt-0.5 text-xs">No delivery events yet.</p>
+						} else {
+							<ul class="mt-0.5 flex flex-col gap-0.5">
+								for _, ev := range send.Events {
+									<li class="flex items-start justify-between gap-2">
+										<span class="text-muted text-xs">
+											{ inviteDeliveryEventLabel(ev.Type) }
+											if ev.Detail != "" {
+												<span class="text-muted-faint"> — { ev.Detail }</span>
+											}
+										</span>
+										<span class="text-muted-faint text-xs whitespace-nowrap">{ notificationWhen(ev.CreatedAt) }</span>
+									</li>
+								}
+							</ul>
+						}
+					</li>
+				}
+			</ul>
+		}
+	</div>
 }
 
 // MemberInvitePage renders the standalone invite-a-member page (<base>/new).
