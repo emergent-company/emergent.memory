@@ -75,6 +75,12 @@ func NewTriggerService(
 		// DeleteAgentsBySourceBlueprint tears down the matching in-memory
 		// registrations in the same step, so callers cannot forget to do it.
 		repo.AddAgentDeletionListener(ts.removeAgentTriggers)
+		// Tie trigger reconciliation to out-of-repository restore inserts: the
+		// backup restorer rewrites kb.agents with raw SQL, so without this a
+		// re-created agent keeps a stale registration (old config) and a newly
+		// added restored agent gets none. The listener reloads each restored id
+		// and reconciles it from the restored row.
+		repo.AddAgentRestoreListener(ts.reconcileRestoredAgents)
 	}
 	ts.dispatch = func(ctx context.Context, agent *Agent, projectID, objectType, objectID string) error {
 		return ts.executeTriggeredAgent(ctx, agent.ID, projectID, objectType, objectID)
@@ -345,6 +351,31 @@ func (ts *TriggerService) RemoveAgentTrigger(agentID string) {
 func (ts *TriggerService) removeAgentTriggers(agentIDs []string) {
 	for _, id := range agentIDs {
 		ts.RemoveAgentTrigger(id)
+	}
+}
+
+// reconcileRestoredAgents re-registers triggers for agents an overwrite restore
+// re-created or newly added. It reloads each restored id from the database and
+// runs SyncAgentTrigger, which removes any existing registration before adding
+// the restored one, so it is idempotent: a repeated reconciliation, an
+// overlapping startup SyncAllTriggers, or a concurrent restore all converge on
+// the restored configuration. A restored row that is already gone (a concurrent
+// restore removed it again) is skipped.
+func (ts *TriggerService) reconcileRestoredAgents(ctx context.Context, projectID string, agentIDs []string) {
+	for _, id := range agentIDs {
+		agent, err := ts.repo.FindByID(ctx, id, &projectID)
+		if err != nil {
+			ts.log.Warn("failed to load restored agent for trigger reconciliation",
+				slog.String("agent_id", id),
+				slog.String("project_id", projectID),
+				slog.String("error", err.Error()),
+			)
+			continue
+		}
+		if agent == nil {
+			continue
+		}
+		ts.SyncAgentTrigger(agent)
 	}
 }
 
