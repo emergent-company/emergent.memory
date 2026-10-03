@@ -17,7 +17,7 @@ Every search leg (graph, text/chunk, relationship) SHALL filter by project id **
 #### Scenario: Project members see their resources by default
 
 - **WHEN** a caller is a project member and no explicit ACL entry denies them
-- **THEN** they SHALL see their project's resources as today (backfill preserves current behaviour)
+- **THEN** they SHALL see their project's resources as today (the default project-member-read rule preserves current behaviour)
 
 #### Scenario: ACL applies with or without a collection filter
 

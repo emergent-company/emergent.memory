@@ -45,11 +45,27 @@ multiplies token spend by the chunk count and requires re-embedding semantics ou
 
 `kb.documents` gains a nullable `summary` column. A single LLM call produces the one-line
 summary, cached on the document and reused by all its chunks. The summary is computed on
-document **ingest** and **recomputed when the document content changes** (and/or via a
-backfill job for pre-existing documents). This is the key cost decision: O(1) summary per
-document vs O(chunks) for per-chunk context. The summary is stored on the document so it is
-shared, versioned, and independently re-computable, and so re-embedding has a stable
-trigger (summary value change).
+document **ingest** and **recomputed when the document content, `filename`, or `source_url`
+changes** (and/or via a **resumable, bounded backfill job** for pre-existing documents).
+This is the key cost decision: O(1) summary per document vs O(chunks) for per-chunk context.
+The summary is stored on the document so it is shared, versioned, and independently
+re-computable, and so re-embedding has a stable trigger (summary value change).
+
+Summary computation is **atomic per document and guarded by a database-backed claim/lease
+acquired BEFORE the model call**, not by a compare-and-set that runs after the LLM returns.
+The chunk worker processes many chunks concurrently, and multiple server replicas can all
+observe a NULL `summary` simultaneously; a bare "compute-if-null" or a post-hoc CAS would
+fire one LLM call per racing caller, and a process-local keyed singleflight does not cover
+replicas. The helper therefore claims the document first via an atomic
+`UPDATE kb.documents SET summary_lease_owner = $owner, summary_lease_expires_at = now() +
+interval '2 minutes' WHERE id = $id AND summary IS NULL AND (summary_lease_expires_at IS
+NULL OR summary_lease_expires_at < now())`, invokes the model only when the claim succeeds,
+writes `summary` + clears the lease on success (clears the lease on failure so a retry can
+claim), and lets every loser re-read the committed value — or fall back to embedding
+without a summary while the lease is held. This makes "one LLM call per document" hold
+under concurrency and across replicas. The lease is a short-lived state write, NOT a
+long-running row lock held across the model call, so it does not tie up a DB
+transaction/connection for the duration of the LLM round-trip.
 
 ### D3 — Embedding input vs stored text are separate
 
@@ -84,3 +100,6 @@ and its dequeue admission.
 - **Determinism.** The prefix must be deterministic so re-embedding the same chunk with the
   same summary yields a stable vector; the summary is cached (not recomputed per chunk), so
   the prefix is stable across a document's chunks.
+- **Claim/lease expiry.** A crashed claimant holds the lease until it expires (backstop
+  timeout), after which a retry re-claims and recomputes. This trades a rare duplicate call
+  after a crash for never holding a DB transaction open across an LLM round-trip.

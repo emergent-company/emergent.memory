@@ -2,7 +2,7 @@
 
 ### Requirement: Document summary is computed once per document
 
-The document summary used for chunk embedding context SHALL be computed once per document (a single LLM call) and cached on the document, and SHALL NOT be recomputed per chunk. All of a document's chunks SHALL share the same cached summary.
+The document summary used for chunk embedding context SHALL be computed once per document (a single LLM call) and cached on the document, and SHALL NOT be recomputed per chunk. All of a document's chunks SHALL share the same cached summary. Summary computation SHALL be guarded by a database-backed claim/lease acquired BEFORE the model is invoked: a caller SHALL atomically claim the document (an `UPDATE ... WHERE summary IS NULL AND (lease free or expired)`), and ONLY the claimant SHALL call the model; on success it writes the summary and releases the claim, and on failure it releases the claim so a retry can re-claim. A caller that observes a held claim with no summary SHALL NOT call the model — it SHALL fall back to embedding without a summary. This guarantee SHALL hold across concurrent requests AND across multiple server replicas, so a document NEVER triggers more than one in-flight LLM summary call.
 
 #### Scenario: One summary per document
 
@@ -14,9 +14,19 @@ The document summary used for chunk embedding context SHALL be computed once per
 - **WHEN** a document's summary is computed
 - **THEN** it is stored on the document (`kb.documents`), not duplicated onto each chunk
 
+#### Scenario: Concurrent chunks trigger one summary call
+
+- **WHEN** many chunks of a document are embedded concurrently and the document has no cached summary
+- **THEN** exactly one summary LLM call SHALL run for that document, and the remaining chunks SHALL reuse the computed value rather than each triggering a call
+
+#### Scenario: Claim is acquired before the model call, across replicas
+
+- **WHEN** concurrent callers (including from different server replicas) request a document summary and none has claimed it yet
+- **THEN** exactly one caller SHALL win the database claim and invoke the model; every other caller SHALL observe the held claim and fall back to embedding without a summary (or re-read the committed value) without invoking the model
+
 ### Requirement: Summary is computed on ingest and recomputed on content change
 
-The summary SHALL be computed when a document is ingested, and SHALL be recomputed when the document's content changes (and/or via a backfill job for pre-existing documents). When a summary transitions from absent to present, the document's chunks SHALL be enqueued for re-embedding.
+The summary SHALL be computed when a document is ingested, and SHALL be recomputed when the document's content changes (and/or via a backfill job for pre-existing documents). The recomputation SHALL be triggered when the document's content OR its `filename` OR its `source_url` changes, since any of those alters the document-context prefix. When a summary transitions from absent to present, the document's chunks SHALL be enqueued for re-embedding.
 
 #### Scenario: Summary computed on ingest
 
@@ -28,10 +38,29 @@ The summary SHALL be computed when a document is ingested, and SHALL be recomput
 - **WHEN** a document's content changes after ingest
 - **THEN** its summary SHALL be recomputed and, if it differs, its chunks SHALL be enqueued for re-embedding
 
+#### Scenario: Summary recomputed on filename/source_url change
+
+- **WHEN** a document's `filename` or `source_url` changes after ingest
+- **THEN** its summary SHALL be recomputed and, if it differs, its chunks SHALL be enqueued for re-embedding
+
 #### Scenario: Absent-to-present summary triggers re-embed
 
 - **WHEN** a document that previously had no summary (e.g. computation failed, or a backfill runs) gains a summary
 - **THEN** the document's chunks SHALL be enqueued for re-embedding using the new summary
+
+### Requirement: Backfill computes summaries for pre-existing documents
+
+A backfill job SHALL compute summaries for documents that lack one. The backfill SHALL be resumable and bounded (e.g. process documents in batches, checkpoint progress, and survive interruption), and SHALL schedule computation through the same database-backed claim/lease once-per-document path as ingest so a document never receives more than one summary call.
+
+#### Scenario: Backfill fills missing summaries
+
+- **WHEN** the backfill runs over pre-existing documents lacking a summary
+- **THEN** it SHALL compute and cache a summary for each, enqueuing each document's chunks for re-embedding
+
+#### Scenario: Backfill is resumable and bounded
+
+- **WHEN** the backfill is interrupted partway
+- **THEN** it SHALL resume from its checkpoint without recomputing already-summarized documents or double-enqueueing chunks
 
 ### Requirement: Embedding input is filename/source_url + summary + chunk text
 
@@ -49,9 +78,9 @@ At embed time, the text passed to the embedding model SHALL be `filename_or_sour
 
 ### Requirement: Graceful fallback when summary is missing
 
-When a document has no cached summary (not yet computed, computation failed, or the document has no filename and no source_url), embedding SHALL fall back to the raw chunk text and SHALL NOT fail the chunk's embedding.
+When a document has no cached summary (not yet computed, computation failed, or the summary is otherwise absent), embedding SHALL omit the summary part and fall back to `filename_or_source_url + "\n" + chunk.Text` — collapsing to raw `chunk.Text` only when the document also has no filename and no source_url — and SHALL NOT fail the chunk's embedding. The filename/source_url prefix is deterministic and non-LLM, so it is always retained when present; only the summary (the LLM-derived part) is dropped on absence.
 
-#### Scenario: Missing summary falls back to raw text
+#### Scenario: Missing summary retains the filename prefix
 
 - **WHEN** a chunk is embedded and its document has no summary
 - **THEN** the chunk is embedded using `filename_or_source_url + "\n" + chunk.Text` (or raw `chunk.Text` when neither is present), and embedding does not fail
@@ -59,7 +88,7 @@ When a document has no cached summary (not yet computed, computation failed, or 
 #### Scenario: Summary computation failure does not block embedding
 
 - **WHEN** summary computation fails for a document
-- **THEN** its chunks SHALL still be embedded using raw text
+- **THEN** its chunks SHALL still be embedded using `filename_or_source_url + "\n" + chunk.Text` (or raw `chunk.Text` when neither is present)
 
 ### Requirement: Re-embed on summary change
 

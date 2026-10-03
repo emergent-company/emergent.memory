@@ -45,12 +45,15 @@ chunk text — the retrieval payload — is unchanged; only the embedding input 
 - **Server** (`apps/server/domain/extraction/chunk_embedding_worker.go`): build the
   embedding input from `chunk.Text` + document filename/source_url + summary instead of
   raw `chunk.Text`.
-- **DB** (`apps/server/migrations/`): add a nullable `summary` (text) column to
+- **DB** (`apps/server/migrations/`): add a nullable `summary` (text) column plus nullable
+  `summary_lease_owner` (uuid) and `summary_lease_expires_at` (timestamptz) claim columns to
   `kb.documents`. No `title` column exists; the existing `filename` (fallback `source_url`)
   is reused.
 - **Summary computation** (`apps/server/domain/documents` or a small helper): compute the
-  one-line summary once per document on ingest and cache it; recompute on content change
-  and via a backfill job.
+  one-line summary once per document on ingest and cache it, guarded by a database-backed
+  claim/lease (nullable `summary_lease_owner` / `summary_lease_expires_at` on
+  `kb.documents`) acquired before the model call so concurrent and multi-replica callers
+  trigger exactly one call; recompute on content change and via a backfill job.
 - **Re-embed trigger** (`apps/server/domain/extraction`): when a document's summary
   changes (including absent→present), enqueue its chunks via
   `ChunkEmbeddingJobsService.EnqueueBatch`.

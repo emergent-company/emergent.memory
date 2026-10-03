@@ -21,7 +21,7 @@ A source SHALL be a durable, project-scoped record carrying a `type`, a `config`
 
 ### Requirement: Incremental sync with state and cursor
 
-A source sync SHALL be incremental: it SHALL persist a sync state/cursor (e.g. last-synced external id, watermark, or etag) and SHALL resume from that cursor on the next sync rather than re-reading the entire source.
+A source sync SHALL be incremental **when its transport exposes a cursor**: it SHALL persist a sync state/cursor (e.g. last-synced external id, watermark, or etag) and SHALL resume from that cursor on the next sync rather than re-reading the entire source. Incremental semantics SHALL be scoped to cursor-capable transports only.
 
 #### Scenario: Cursor advances after sync
 
@@ -38,6 +38,43 @@ A source sync SHALL be incremental: it SHALL persist a sync state/cursor (e.g. l
 - **WHEN** the server restarts
 - **THEN** the persisted cursor SHALL survive and the next sync resumes from it
 
+### Requirement: Cursor-less sources use full-sync idempotency
+
+A source whose transport exposes **no** cursor SHALL NOT be given a synthesized watermark in this change. It SHALL instead use full-sync idempotency: re-fetch the whole source and deduplicate by `(source_id, external_item_id)`, so repeated syncs SHALL still not duplicate content. The source's `sync_state` SHALL record which mode it uses.
+
+#### Scenario: Cursor-less source re-fetches without duplicates
+
+- **WHEN** a cursor-less source is synced twice with unchanged external content
+- **THEN** the second sync SHALL re-fetch the source and produce no duplicate documents, chunks, or graph objects
+
+### Requirement: At most one active sync job per source
+
+At most one sync job SHALL be `pending` or `processing` for a given source at any time, enforced by a partial unique constraint on `kb.source_sync_jobs`. A trigger while a job is active SHALL be rejected (or return the in-flight job) rather than enqueued, so a slow periodic sync and a manual trigger cannot race cursor updates. A stale `processing` row from a crashed worker SHALL be recovered (requeued or `failed`) before the source can be admitted again.
+
+#### Scenario: Overlapping trigger rejected
+
+- **WHEN** a sync job is `pending`/`processing` for a source and a second trigger arrives
+- **THEN** the second trigger SHALL be rejected (or return the existing job), and no second active job SHALL exist for that source
+
+#### Scenario: Stale job remains the single active job until terminal
+
+- **WHEN** a source has a `processing` job whose worker died and `RecoverStaleJobs` requeues it to `pending`
+- **THEN** that requeued job SHALL remain the source's single active job (a new trigger returns/rejects it), and a new job SHALL be admitted only after a terminal transition (`completed`, `failed`, or `cancelled`) clears the admission slot
+
+### Requirement: Documents are attributable to their source
+
+An ingested document SHALL carry a nullable `source_id` (FK to `kb.sources`) and a nullable `external_item_id`, with a partial unique constraint on `(source_id, external_item_id) WHERE external_item_id IS NOT NULL` so a single external item under one source maps to a single document (the idempotency key). Deleting a source SHALL set `source_id` to NULL (documents are kept and lose attribution) rather than cascade-delete documents.
+
+#### Scenario: One document per source external item
+
+- **WHEN** a sync ingests the same external item twice under the same source
+- **THEN** it SHALL update the existing document (keyed on `(source_id, external_item_id)`) rather than create a duplicate
+
+#### Scenario: Source deletion keeps documents
+
+- **WHEN** a source is deleted
+- **THEN** its documents SHALL be retained with `source_id` set to NULL, and re-ingesting the same external item under a new source SHALL create a distinct document
+
 ### Requirement: Sync job lifecycle
 
 A sync SHALL be a job with a lifecycle of `pending`, `processing`, `completed`, `failed`, and `cancelled` (plus `dead_letter` for poison items), each transition SHALL be recorded, and a cancelled sync SHALL stop consuming source items.
@@ -51,6 +88,20 @@ A sync SHALL be a job with a lifecycle of `pending`, `processing`, `completed`, 
 
 - **WHEN** a running sync is cancelled
 - **THEN** it SHALL transition to `cancelled` and stop fetching further source items
+
+### Requirement: Sync progress is persisted and reported
+
+A sync job SHALL persist durable progress on `kb.source_sync_jobs` — total/processed/successful/failed/skipped item counts, the current phase and status message, and the trigger type — and SHALL report them through the sync-job read routes. Progress SHALL be accurate after a restart, derived from the persisted columns (with retry count served from the queue's `attempt_count` and the retry cap from `QueueConfig.MaxAttempts`), not from in-memory worker state.
+
+#### Scenario: Progress survives a restart
+
+- **WHEN** a sync job is interrupted (e.g. server restart) and later read via the sync-job route
+- **THEN** the reported totals, phase, and message SHALL reflect the persisted progress up to the interruption, not reset to zero
+
+#### Scenario: Sync job DTO carries the gateway fields
+
+- **WHEN** a sync job is fetched
+- **THEN** the response SHALL include `totalItems`, `processedItems`, `successfulItems`, `failedItems`, `skippedItems`, `currentPhase`, `statusMessage`, `triggerType`, `retryCount`, `maxRetries`, `startedAt`, and `completedAt`
 
 ### Requirement: Idempotent re-sync
 
@@ -89,19 +140,24 @@ Content ingested from a source SHALL flow through the existing pipeline — `dom
 - **WHEN** extraction runs over ingested content
 - **THEN** the resulting graph objects SHALL be attributable to the source that produced them
 
-### Requirement: MCP registry ProxyManager is the connector bus
+### Requirement: MCP registry service layer is the connector bus
 
-The preferred transport for a source SHALL be an MCP server/tool registered via `domain/mcpregistry` and invoked through its `ProxyManager` (`CallToolOnServer`/`CallTool`), so that consuming a SaaS source SHALL NOT require a vendor SDK hard-coded into the server. `domain/mcprelay` (the inbound WebSocket star relay for NAT'd local connectors) SHALL be used only for OS-level local-node connectors, not SaaS ingestion.
+The preferred transport for a source SHALL be an MCP server/tool registered via `domain/mcpregistry` and invoked through its **service layer** (`Service.CallToolOnServer`, or a dedicated internal method), so server/tool enablement, the share-instance tool allowlist, builtin per-tool authority, and the invocation timeout are enforced on every ingestion call, and a SaaS source SHALL NOT require a vendor SDK hard-coded into the server. The raw `ProxyManager.CallToolOnServer` (which takes an already-resolved server and connects directly) SHALL be used only as the transport leaf beneath the service layer, not as the ingestion entry. `domain/mcprelay` (the inbound WebSocket star relay for NAT'd local connectors) SHALL be used only for OS-level local-node connectors, not SaaS ingestion.
 
 #### Scenario: Source configured via MCP
 
 - **WHEN** a source declares an MCP server/tool as its transport
-- **THEN** ingestion SHALL be performed by invoking that tool through `domain/mcpregistry`'s `ProxyManager`, not by a bespoke server-side vendor client
+- **THEN** ingestion SHALL be performed by invoking that tool through `domain/mcpregistry`'s **service layer**, not by a bespoke server-side vendor client
+
+#### Scenario: Service-layer policy is enforced on ingestion
+
+- **WHEN** a source's configured MCP server or tool is disabled, or the tool is not in the internal deny-by-default allowlist
+- **THEN** the ingestion call SHALL be rejected by the service layer (not silently bypassed via a raw proxy call)
 
 #### Scenario: Relay is not the SaaS path
 
 - **WHEN** a source targets a SaaS provider
-- **THEN** it SHALL be reached through `mcpregistry`'s `ProxyManager`, and SHALL NOT depend on `mcprelay` (which requires a live local `(projectID, instanceID)` session)
+- **THEN** it SHALL be reached through `mcpregistry`'s service layer, and SHALL NOT depend on `mcprelay` (which requires a live local `(projectID, instanceID)` session)
 
 ### Requirement: Schema auto-discovery on new sources
 

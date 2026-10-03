@@ -39,6 +39,17 @@ candidates, so rerank only pays for survivors; (b) the output is still a single 
 Reranking before `filterBelowMinScore` would waste provider calls on candidates that
 would be dropped; reranking after assembly would require tearing apart the response.
 
+Widening only `fuse` is not enough: all three upstream legs also bound themselves by the
+caller's `limit` (`hybridSearchRequestFromUnified` sets `Limit: req.Limit`, and the text +
+relationship searches pass `Limit: req.Limit` at `service.go:611/660`), so with `limit=5`
+each leg returns at most 5 candidates and fusion cannot assemble a 50-candidate top-N
+block. When the reranker is configured, `Search` SHALL therefore compute
+`candidateLimit = max(limit, RerankTopN)` **before** `runParallelSearches` and pass it into
+every leg AND fusion; `fuse`/`fuseWeighted`/`fuseRRF`/etc. still slice to `[:limit]`, so
+they must receive `candidateLimit`, then `filterBelowMinScore` and the rerank stage run on
+that wider set, and the final result is truncated to the caller's `limit` at assembly. When
+the reranker is nil, use `limit` everywhere exactly as today — the hot path is unchanged.
+
 ### D2 — Interface: `pkg/rerank`
 
 ```go
