@@ -241,12 +241,14 @@ func featureFxOptions(f config.FeatureSet) []fx.Option {
 	}
 	if f.Backups {
 		opts = append(opts, backups.Module)
-		// Wire the agents deletion seam into the backup restorer so an
-		// overwrite restore tears down trigger registrations for agent ids it
-		// removes. Only possible when the agents feature is also enabled.
+		// Wire the agents deletion + restore seams into the backup restorer so
+		// an overwrite restore tears down registrations for agent ids it
+		// removes and re-registers the ids it re-creates or adds. Only possible
+		// when the agents feature is also enabled.
 		if f.Agents {
 			opts = append(opts, fx.Invoke(func(r *backups.Restorer, agentRepo *agents.Repository) {
 				r.SetAgentDeletionNotifier(agentRepo.NotifyAgentsDeleted)
+				r.SetAgentRestoreNotifier(agentRepo.NotifyAgentsRestored)
 			}))
 		}
 	}
