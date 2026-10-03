@@ -27,6 +27,10 @@ service, whose `validateSchemaDefinitions` requires a non-empty singular
   schemas service, in both the create and update pack paths. The stored
   blueprint manifest keeps the plural fields (round-trip); only the schemas
   payload is singular.
+- Bound each pack's expansion to 10 000 singular relationship types. The total is
+  pre-computed and an over-budget pack is rejected with `400 bad_request` naming
+  the offending definition *before* any output is allocated, so a pathological
+  cross-product cannot exhaust memory.
 - Add an end-to-end regression test driving GitHub import → apply and asserting
   the schemas layer receives two singular entries for `sourceTypes: [Alpha,
   Beta]` + `targetType: Gamma`.

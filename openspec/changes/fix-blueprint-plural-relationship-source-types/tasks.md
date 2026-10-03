@@ -18,3 +18,8 @@
 - [x] 4.2 `go test ./domain/blueprints/... ./domain/schemas/...`
 - [x] 4.3 `gofmt -l` on changed files
 - [x] 4.4 `openspec validate fix-blueprint-plural-relationship-source-types --strict`
+
+## 5. Bound the per-pack expansion
+
+- [x] 5.1 Enforce `maxExpandedRelationshipTypesPerPack = 10_000` in `expandRelationshipTypes`: pre-compute the pack total and reject with `400 bad_request` naming the offending definition before any allocation.
+- [x] 5.2 Unit test: `TestExpandRelationshipTypes_Budget` locks the single over-budget rejection, the cumulative pack-total rejection (offending definition named), and a large legitimate pack under the budget.
