@@ -36,3 +36,10 @@
 - [x] 6.1 Run server suites: `task test` and `task test:integration`; fix any regressions in chat domain tests.
 - [x] 6.2 Run gateway suites: `go build ./...`, `go test ./...`, and `task lint` from `apps/web-ui/gateway`; ensure no lint findings.
 - [ ] 6.3 Manual rail smoke (`task dev` in `apps/web-ui`): archive an active session (disappears), enable include-archived (reappears marked), unarchive (returns to active), delete a session (confirmation shown; confirming removes it, dismissing keeps it); record the outcome.
+
+## 7. Optimistic + bulk rail actions (#1382, #1385)
+
+- [x] 7.1 Make archive/unarchive optimistic in `chat.js`: hide an archived row instantly, restore it on failure, and reconcile with the server list on settle; verify with the hermetic js-dom spec `chat-session-optimistic-archive.spec.ts`.
+- [x] 7.2 Add bulk session selection to the rail: a selection-mode toggle, per-row labelled checkboxes, select-all with an indeterminate state, a live selected count, and a bulk archive action reusing the per-session archive route; verify the markup contract test and `chat-session-bulk-archive.spec.ts`.
+- [x] 7.3 Keep the selection controls accessible (accessible names, `aria-pressed` on the toggle, `aria-live` selector count, keyboard-operable checkboxes) and re-apply selection state after every rail refresh.
+- [x] 7.4 Keep the optimistic pending-archive hide distinct from the agent/origin filter's `hidden` class (a filter change or a failed rollback must not reveal a still-hidden row), and re-sync selection state when `#chat-root` is swapped; verify with the bulk js-dom regression cases and `openspec validate --strict`.
