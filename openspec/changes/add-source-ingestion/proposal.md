@@ -1,0 +1,104 @@
+## Why
+
+A generic datasource/integration framework once existed in
+`migrations/00001_baseline.sql` and was permanently removed in
+`migrations/00089_remove_integrations_datasource_githubapp.sql`. Only OS-level
+connectors remain (`apps/connector.linux`, `apps/connector.mac`). There is no SaaS
+ingestion: no path to pull email, Drive, GitHub, or ClickUp content into the graph.
+
+Two existing OpenSpec changes already describe the *connection surfaces*: `add-data-sources`
+and `add-integrations` (gateway connect/configure/test/sync UX). What neither covers is the
+**server-side ingestion framework** — the durable `kb.sources` model, auth/credentials, the
+sync job lifecycle, and the pipeline that turns source content into documents → chunks →
+extraction → graph. This change is that framework, deliberately framework-first rather than
+50 hand-written connectors.
+
+## What Changes
+
+- Add `kb.sources (type, config, auth, sync_state)` and a generic ingestion path feeding
+  the **existing** pipeline: `domain/documents` → chunking → `domain/extraction` →
+  `domain/graph`. Document attribution is restored as a **new** `kb.documents.source_id`
+  (nullable FK, `ON DELETE SET NULL`) + `external_item_id` with a partial unique index
+  `UNIQUE (source_id, external_item_id) WHERE external_item_id IS NOT NULL` — not a
+  resurrection of the removed `external_source_id`/`data_source_integration_id` columns.
+- A sync job lifecycle with **at most one active job per source** (partial unique index on
+  `kb.source_sync_jobs`), enforced at admission so slow periodic + manual triggers cannot
+  race cursor updates. The job table carries the `internal/jobs` queue column contract
+  (`scheduled_at`/`priority`/`updated_at`/`attempt_count`/`last_error`/`completed_at`/…)
+  **and** durable progress (totals, processed/successful/failed/skipped counts, phase,
+  message, trigger type) so the gateway `SyncJob` DTO is accurate after a restart.
+- Expose the **server side** of the `data-source-integrations` REST surface the
+  `add-data-sources` gateway already assumes (providers, provider schema, source-types,
+  test-config/test-connection, integration CRUD, sync trigger/monitor/cancel with job
+  progress, discovery), so the gateway SDK (`apps/server/pkg/sdk/datasources`) has a real
+  server to call.
+- Prefer consuming SaaS sources via **MCP**: `domain/mcpregistry` registers servers+tools
+  and its **service layer** (`Service.CallToolOnServer`, or a dedicated internal method)
+  invokes them, enforcing server/tool enablement, the share-instance tool allowlist, and
+  the invocation timeout; `ProxyManager.CallToolOnServer` is only the raw transport leaf
+  beneath it. (`domain/mcprelay` is the inbound WebSocket star relay for NAT'd local
+  connectors only — it cannot reach SaaS; `connector.linux/internal/mcphost` hosts local
+  tools *to* Memory, it does not pull SaaS content.) A source declares an MCP server/tool
+  as its transport rather than hard-coding a vendor SDK.
+- Reuse `discoveryjobs` for schema auto-discovery on new sources.
+- A hand-written first-class connector is documented as future work for only the 1-2
+  highest-value targets; **not** implemented in this change.
+- Requirements cover source CRUD + auth config, incremental sync with state/cursor, sync
+  job lifecycle (`pending/processing/completed/failed/cancelled`), idempotent re-sync,
+  error surfacing, and that ingested content lands in documents/chunks/graph.
+
+## Capabilities
+
+### New Capabilities
+
+- `source-ingestion`: a durable source model, auth/credential storage, incremental sync
+  with cursor/state, and a sync job lifecycle that feeds the existing documents → chunking
+  → extraction → graph pipeline, with the MCP registry's **service layer** as the preferred
+  transport.
+
+### Modified Capabilities
+
+<!-- None: this change consumes existing pipelines but writes no delta against an
+existing capability spec. -->
+
+### Related / Consumed Capabilities
+
+- `document-extraction` (consumed): ingested source documents flow through the existing
+  extraction pipeline unchanged (the pipeline spans `domain/documents` + chunking +
+  `domain/extraction` + `domain/graph`, not extraction alone).
+- `mcp-connector` (consumed): the MCP registry's **service layer** acts as the outbound
+  source transport bus (`ProxyManager` is the raw transport leaf beneath it).
+
+## Impact
+
+- **DB** (`apps/server/migrations/`): `kb.sources` (reintroduced as a durable model, not
+  the removed `kb.data_source_integrations`) + `kb.source_sync_jobs` (project_id, status,
+  the `internal/jobs` queue columns, cursor/error jsonb, durable progress fields, and the
+  single-active-job partial unique index) with sync state/cursor, plus
+  `kb.documents.source_id`/`external_item_id` attribution columns and their partial unique
+  index. Prior art is the still-live `kb.external_sources` (`00001_baseline.sql:798-819`).
+- **Server** (`apps/server/domain/` + `apps/server/internal/jobs`): new `sources` domain
+  (CRUD + auth config + sync orchestration + the `data-source-integrations` REST routes
+  the gateway calls); reuse `domain/discoveryjobs` (schema auto-discovery),
+  `domain/mcpregistry` service layer (transport, via `ProxyManager` leaf), `internal/jobs`
+  (queue mechanics), and the existing ingestion pipeline (`domain/documents` → chunking →
+  `domain/extraction` → `domain/graph`).
+- **Migration path from `00089`**: document how the reintroduced model differs from the
+  dropped `data_source_integrations` (durable, MCP-first, cursor-based) so we do not
+  resurrect the dropped design.
+
+## Relationship to existing changes (not duplicated here)
+
+- `add-data-sources` (capability `data-sources`) = the gateway connect/sync **surface**.
+- `add-integrations` (capability `integrations`) = GitHub App + general integration **UX**.
+- This change = the server-side **ingestion framework** those surfaces call. The three are
+  complementary; this proposal references both in Impact and does not re-specify their UI.
+- Terminology: a **source** is the server entity (`kb.sources`) this change owns; an
+  **integration** is the gateway-facing connection surface (`add-integrations`). A source
+  is what an integration connects to and syncs from.
+
+## Dependency
+
+Relates to `add-resource-acl` for per-source permissions (a source's ingested resources
+should inherit the source's ACL). Not blocked by it; ingestion ships first and ACL is
+applied at read time.
