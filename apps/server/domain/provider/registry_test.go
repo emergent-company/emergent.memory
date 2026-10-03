@@ -7,24 +7,33 @@ import (
 func TestNewRegistry(t *testing.T) {
 	r := NewRegistry()
 
-	if len(r.providers) != 4 {
-		t.Fatalf("expected 4 providers, got %d", len(r.providers))
+	if len(r.providers) != 27 {
+		t.Fatalf("expected 27 providers, got %d", len(r.providers))
 	}
 
-	if !r.IsSupported(ProviderGoogleAI) {
-		t.Error("expected google to be supported")
+	legacy := []ProviderType{ProviderGoogleAI, ProviderVertexAI, ProviderOpenAI, ProviderDeepSeek}
+	for _, pt := range legacy {
+		if !r.IsSupported(pt) {
+			t.Errorf("expected %q to be supported", pt)
+		}
 	}
-	if !r.IsSupported(ProviderVertexAI) {
-		t.Error("expected google-vertex to be supported")
+
+	for _, d := range r.List() {
+		if d.Protocol == "" {
+			t.Errorf("provider %q has empty protocol", d.Type)
+		}
+		if !validAuthStyle(d.Auth) {
+			t.Errorf("provider %q has invalid auth style %q", d.Type, d.Auth)
+		}
 	}
-	if !r.IsSupported(ProviderOpenAI) {
-		t.Error("expected openai to be supported")
-	}
-	if !r.IsSupported(ProviderDeepSeek) {
-		t.Error("expected deepseek to be supported")
-	}
-	if !r.IsSupported(ProviderOpenAI) {
-		t.Error("expected openai to be supported (ProviderOpenAI)")
+}
+
+func validAuthStyle(a AuthStyle) bool {
+	switch a {
+	case AuthBearer, AuthAPIKeyHeader, AuthXAPIKey, AuthGoogleAPIKey, AuthNone, AuthSigned:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -83,8 +92,8 @@ func TestRegistryList(t *testing.T) {
 	r := NewRegistry()
 
 	defs := r.List()
-	if len(defs) != 4 {
-		t.Fatalf("expected 4 definitions, got %d", len(defs))
+	if len(defs) != 27 {
+		t.Fatalf("expected 27 definitions, got %d", len(defs))
 	}
 
 	types := make(map[ProviderType]bool)
@@ -100,8 +109,8 @@ func TestRegistrySupportedTypes(t *testing.T) {
 	r := NewRegistry()
 
 	types := r.SupportedTypes()
-	if len(types) != 4 {
-		t.Fatalf("expected 4 types, got %d", len(types))
+	if len(types) != 27 {
+		t.Fatalf("expected 27 types, got %d", len(types))
 	}
 
 	typeSet := make(map[ProviderType]bool)
@@ -110,6 +119,30 @@ func TestRegistrySupportedTypes(t *testing.T) {
 	}
 	if !typeSet[ProviderGoogleAI] || !typeSet[ProviderVertexAI] || !typeSet[ProviderOpenAI] || !typeSet[ProviderDeepSeek] {
 		t.Errorf("expected google, google-vertex, openai, and deepseek, got %v", typeSet)
+	}
+}
+
+// TestRegistryBuiltinsHaveIcons asserts every built-in vendor definition
+// carries a non-empty brand icon, so the definitions API can always emit an
+// icon data URI.
+func TestRegistryBuiltinsHaveIcons(t *testing.T) {
+	for _, d := range Builtins() {
+		if len(d.Icon) == 0 {
+			t.Errorf("provider %q has no icon", d.Type)
+		}
+	}
+}
+
+// TestRegistry_NoUnsupportedSignedVendor asserts no built-in vendor declares
+// the OpenAI-compatible protocol with signed auth: ApplyAuth has no signer hook
+// for that style, so such a vendor would be advertised but deterministically
+// fail. Service-account vendors are fine because they use the google-genai
+// path, which does not go through ApplyAuth.
+func TestRegistry_NoUnsupportedSignedVendor(t *testing.T) {
+	for _, d := range Builtins() {
+		if d.Auth == AuthSigned && d.Protocol == ProtocolOpenAIChat {
+			t.Errorf("vendor %q declares %s + %s auth, but no signer is implemented; it would always fail", d.Type, d.Protocol, d.Auth)
+		}
 	}
 }
 
@@ -137,5 +170,19 @@ func TestOperationTypeConstants(t *testing.T) {
 	}
 	if OperationEmbed != "embed" {
 		t.Errorf("expected OperationEmbed to be 'embed', got %q", OperationEmbed)
+	}
+}
+
+// TestBuiltinsMemoized verifies Builtins returns the same cached slice rather
+// than rebuilding every vendor definition on each call (auto-selection resolves
+// the provider order per credential lookup).
+func TestBuiltinsMemoized(t *testing.T) {
+	a := Builtins()
+	b := Builtins()
+	if len(a) == 0 {
+		t.Fatal("Builtins() returned no definitions")
+	}
+	if &a[0] != &b[0] {
+		t.Errorf("Builtins() rebuilt the definitions: first elements differ (%p vs %p)", &a[0], &b[0])
 	}
 }

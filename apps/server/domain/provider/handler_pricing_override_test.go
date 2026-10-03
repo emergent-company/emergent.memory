@@ -66,7 +66,7 @@ func newPricingOverrideHandler(t *testing.T) (*provider.Handler, *testutil.TestD
 
 	repo := provider.NewRepository(testDB.GetDB(), slog.Default())
 	credSvc := provider.NewCredentialService(repo, provider.NewRegistry(), nil, &config.Config{}, slog.Default())
-	h := provider.NewHandler(credSvc, nil, repo)
+	h := provider.NewHandler(credSvc, nil, repo, provider.NewRegistry())
 
 	return h, testDB, orgA, projectA, projectB, userID
 }

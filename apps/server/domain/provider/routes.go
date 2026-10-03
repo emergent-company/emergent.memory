@@ -70,6 +70,9 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Global retail pricing (read-only)
 	api.GET("/pricing", h.ListPricing)
 
+	// Supported vendor definitions (read-only)
+	api.GET("/provider-definitions", h.ListProviderDefinitions)
+
 	// Live provider credential test
 	api.POST("/providers/:provider/test", h.TestProvider)
 }

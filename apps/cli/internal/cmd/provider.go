@@ -773,6 +773,53 @@ func runProviderList(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// ── definitions ────────────────────────────────────────────────────────────────
+
+var providerDefinitionsCmd = &cobra.Command{
+	Use:   "definitions",
+	Short: "List supported LLM vendor definitions",
+	Long: `List every supported LLM vendor from the server registry, showing the
+vendor id and its display name.
+
+Examples:
+  memory provider definitions
+  memory provider definitions --json`,
+	RunE: runProviderDefinitions,
+}
+
+var definitionsJSONFlag bool
+
+func runProviderDefinitions(cmd *cobra.Command, _ []string) error {
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	defs, err := c.SDK.Provider.ListProviderDefinitions(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to list provider definitions: %w", err)
+	}
+
+	if definitionsJSONFlag || output == "json" {
+		enc := json.NewEncoder(cmd.OutOrStdout())
+		enc.SetIndent("", "  ")
+		return enc.Encode(defs)
+	}
+
+	if len(defs) == 0 {
+		fmt.Println("No provider definitions returned.")
+		return nil
+	}
+
+	t := internalui.NewTable(internalui.TableConfig{Compact: true})
+	t.SetHeaders([]string{"ID", "DISPLAY NAME"})
+	for _, d := range defs {
+		t.AddRow([]string{d.Type, d.DisplayName})
+	}
+	fmt.Print(t.Render())
+	return nil
+}
+
 // valueOrDash returns the value or "-" if empty.
 func valueOrDash(s string) string {
 	if s == "" {
@@ -1093,6 +1140,9 @@ func init() {
 	providerListCmd.Flags().BoolVar(&listJSONFlag, "json", false, "Output raw JSON")
 	providerListCmd.Flags().StringVar(&listProjectID, "project", "", "Filter to a specific project (name or ID)")
 
+	// definitions flags
+	providerDefinitionsCmd.Flags().BoolVar(&definitionsJSONFlag, "json", false, "Output raw JSON")
+
 	// pricing flags
 	providerPricingListCmd.Flags().StringVar(&pricingProjectID, "project", "", "Project ID (auto-detected from MEMORY_PROJECT_ID)")
 	providerPricingListCmd.Flags().BoolVar(&pricingJSONFlag, "json", false, "Output raw JSON")
@@ -1112,6 +1162,7 @@ func init() {
 	// Wire sub-commands
 	providerCmd.AddCommand(configureProjectCmd)
 	providerCmd.AddCommand(providerListCmd)
+	providerCmd.AddCommand(providerDefinitionsCmd)
 	providerCmd.AddCommand(providerModelsCmd)
 	providerCmd.AddCommand(providerUsageCmd)
 	providerCmd.AddCommand(providerUsageTimeseriesCmd)

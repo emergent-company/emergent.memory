@@ -28,6 +28,16 @@ type ResolvedCredential struct {
 	// Source describes where the credential was resolved from (project/organization/environment).
 	// Informational only; used for logging and tracing.
 	Source string
+	// Protocol is the wire protocol the vendor speaks: "openai-chat",
+	// "google-genai", or "anthropic-messages". Empty means derive from legacy
+	// flags (IsGoogleAI/IsVertexAI/Provider).
+	Protocol string
+	// Auth is the credential-injection style: "bearer", "api-key", "x-api-key",
+	// "x-goog-api-key", "none", or "signed". Empty defaults to bearer.
+	Auth string
+	// Extra carries vendor-specific configuration keyed by field name (e.g.
+	// Azure "api_version").
+	Extra map[string]string
 }
 
 // CredentialResolver resolves LLM credentials for the current request context.

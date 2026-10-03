@@ -51,7 +51,7 @@ func TestResolveSlug(t *testing.T) {
 	}{
 		{name: "empty defaults to dialect", requested: "", dialect: ProviderOpenAI, want: "openai"},
 		{name: "whitespace defaults to dialect", requested: "   ", dialect: ProviderDeepSeek, want: "deepseek"},
-		{name: "explicit slug", requested: "azure-openai", dialect: ProviderOpenAI, want: "azure-openai"},
+		{name: "explicit slug", requested: "openai-prod", dialect: ProviderOpenAI, want: "openai-prod"},
 		{name: "explicit trimmed", requested: "  azure  ", dialect: ProviderOpenAI, want: "azure"},
 		{name: "invalid explicit", requested: "Bad Slug", dialect: ProviderOpenAI, wantErr: true},
 		{name: "shadowing explicit", requested: "google", dialect: ProviderOpenAI, wantErr: true},

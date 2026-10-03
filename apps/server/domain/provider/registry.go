@@ -10,70 +10,87 @@ type CredentialField struct {
 	Secret      bool   `json:"secret"` // if true, the field value is encrypted
 }
 
-// ProviderDefinition describes a supported LLM provider and its authentication requirements.
+// Compat carries a vendor's protocol-level request/response quirks.
+type Compat struct {
+	// MaxTokensField is the output-cap field name: "max_tokens" or
+	// "max_completion_tokens". Empty means the adapter default.
+	MaxTokensField string
+	// SupportsToolChoice reports whether the vendor accepts an explicit
+	// tool_choice constraint.
+	SupportsToolChoice bool
+	// ThinkingStyle names the vendor's thinking/CoT toggle mechanism:
+	// "", "chat_template_kwargs", "thinking", "thinking_type".
+	ThinkingStyle string
+}
+
+// ProviderDefinition describes a supported LLM/embedding vendor and its
+// wire protocol, authentication, endpoints, and vendor-specific inputs.
 type ProviderDefinition struct {
-	Type             ProviderType      `json:"type"`
-	DisplayName      string            `json:"displayName"`
-	Description      string            `json:"description"`
+	Type        ProviderType `json:"type"`
+	DisplayName string       `json:"displayName"`
+	Description string       `json:"description"`
+
+	// Protocol is the default wire protocol.
+	Protocol Protocol `json:"protocol"`
+	// Auth is the default credential-injection style.
+	Auth AuthStyle `json:"auth"`
+	// AuthByProtocol overrides Auth for a specific protocol.
+	AuthByProtocol map[Protocol]AuthStyle `json:"-"`
+
+	// DefaultBaseURLs maps model type to the vendor's default endpoint.
+	DefaultBaseURLs map[ModelType]string `json:"defaultBaseUrls,omitempty"`
+	// ModelTypes lists the model types this vendor serves.
+	ModelTypes []ModelType `json:"modelTypes,omitempty"`
+	// URLPatterns identify the vendor from a base URL when unset.
+	URLPatterns []string `json:"urlPatterns,omitempty"`
+	// ExtraFields are vendor-specific configuration inputs rendered dynamically.
+	ExtraFields []ExtraField `json:"extraFields,omitempty"`
+	// CredentialLabel optionally renames the primary credential input.
+	CredentialLabel *CredentialLabel `json:"credentialLabel,omitempty"`
+
+	// CatalogStrategy selects how the model catalog is resolved.
+	CatalogStrategy CatalogStrategy `json:"catalogStrategy"`
+	// Compat holds protocol-level quirks.
+	Compat Compat `json:"compat,omitempty"`
+
+	// Order sorts the vendor list in the UI (lower first).
+	Order int `json:"order"`
+
+	// Icon is the vendor brand mark as SVG bytes (not serialized).
+	Icon []byte `json:"-"`
+
+	// Names/Descriptions carry localized variants keyed by locale.
+	Names        map[string]string `json:"-"`
+	Descriptions map[string]string `json:"-"`
+
+	// CredentialFields is the legacy UI-facing credential list.
 	CredentialFields []CredentialField `json:"credentialFields"`
 }
 
-// Registry holds the set of supported LLM providers.
+// Registry holds the set of supported LLM vendors.
 type Registry struct {
 	providers map[ProviderType]*ProviderDefinition
+	order     []ProviderType
 }
 
-// NewRegistry creates and returns a Registry pre-populated with the
-// supported providers: Google AI, Vertex AI, OpenAI, and DeepSeek.
+// NewRegistry creates a Registry from the embedded built-in vendor definitions.
 func NewRegistry() *Registry {
+	defs := Builtins()
 	r := &Registry{
-		providers: make(map[ProviderType]*ProviderDefinition, 4),
+		providers: make(map[ProviderType]*ProviderDefinition, len(defs)),
+		order:     make([]ProviderType, 0, len(defs)),
 	}
-
-	r.providers[ProviderGoogleAI] = &ProviderDefinition{
-		Type:        ProviderGoogleAI,
-		DisplayName: "Google AI",
-		Description: "Google AI (Gemini API) authenticated via API key",
-		CredentialFields: []CredentialField{
-			{Name: "api_key", Description: "Google AI API key", Required: true, Secret: true},
-		},
+	for _, d := range defs {
+		if _, exists := r.providers[d.Type]; exists {
+			continue
+		}
+		r.providers[d.Type] = d
+		r.order = append(r.order, d.Type)
 	}
-
-	r.providers[ProviderVertexAI] = &ProviderDefinition{
-		Type:        ProviderVertexAI,
-		DisplayName: "Vertex AI",
-		Description: "Google Cloud Vertex AI authenticated via service account",
-		CredentialFields: []CredentialField{
-			{Name: "service_account_json", Description: "GCP service account JSON key file contents", Required: true, Secret: true},
-			{Name: "gcp_project", Description: "GCP project ID", Required: true, Secret: false},
-			{Name: "location", Description: "GCP region (e.g. us-central1)", Required: true, Secret: false},
-		},
-	}
-
-	r.providers[ProviderOpenAI] = &ProviderDefinition{
-		Type:        ProviderOpenAI,
-		DisplayName: "OpenAI",
-		Description: "OpenAI API (GPT-4o, o1, etc.) authenticated via API key",
-		CredentialFields: []CredentialField{
-			{Name: "api_key", Description: "OpenAI API key", Required: true, Secret: true},
-			{Name: "base_url", Description: "Base URL override (optional, defaults to https://api.openai.com/v1)", Required: false, Secret: false},
-		},
-	}
-
-	r.providers[ProviderDeepSeek] = &ProviderDefinition{
-		Type:        ProviderDeepSeek,
-		DisplayName: "DeepSeek",
-		Description: "DeepSeek AI models (deepseek-v4-flash, deepseek-v4-pro, deepseek-chat, deepseek-reasoner) via API key. Note: DeepSeek does not provide embeddings — configure a separate embedding provider.",
-		CredentialFields: []CredentialField{
-			{Name: "api_key", Description: "DeepSeek API key", Required: true, Secret: true},
-		},
-	}
-
 	return r
 }
 
-// Get returns the definition for the given provider type.
-// Returns an error if the provider is not registered.
+// Get returns the definition for the given vendor type.
 func (r *Registry) Get(pt ProviderType) (*ProviderDefinition, error) {
 	def, ok := r.providers[pt]
 	if !ok {
@@ -82,26 +99,33 @@ func (r *Registry) Get(pt ProviderType) (*ProviderDefinition, error) {
 	return def, nil
 }
 
-// List returns all registered provider definitions.
+// List returns all registered vendor definitions in display order.
 func (r *Registry) List() []*ProviderDefinition {
-	defs := make([]*ProviderDefinition, 0, len(r.providers))
-	for _, d := range r.providers {
-		defs = append(defs, d)
+	defs := make([]*ProviderDefinition, 0, len(r.order))
+	for _, t := range r.order {
+		defs = append(defs, r.providers[t])
 	}
 	return defs
 }
 
-// IsSupported returns true if the given provider type is registered.
+// IsSupported returns true if the given vendor type is registered.
 func (r *Registry) IsSupported(pt ProviderType) bool {
 	_, ok := r.providers[pt]
 	return ok
 }
 
-// SupportedTypes returns a slice of all registered provider types.
+// SupportedTypes returns all registered vendor types in display order.
 func (r *Registry) SupportedTypes() []ProviderType {
-	types := make([]ProviderType, 0, len(r.providers))
-	for t := range r.providers {
-		types = append(types, t)
+	out := make([]ProviderType, len(r.order))
+	copy(out, r.order)
+	return out
+}
+
+// ProtocolFor returns the effective protocol for a vendor, allowing a
+// per-protocol auth override lookup.
+func (r *Registry) ProtocolFor(pt ProviderType) Protocol {
+	if d, ok := r.providers[pt]; ok {
+		return d.Protocol
 	}
-	return types
+	return ""
 }

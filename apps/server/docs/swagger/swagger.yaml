@@ -292,6 +292,19 @@ definitions:
       success:
         type: boolean
     type: object
+  domain_agents.APIResponse-array_domain_agents_AgentQueueDTO:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/domain_agents.AgentQueueDTO'
+        type: array
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
   domain_agents.APIResponse-array_domain_agents_AgentRunDTO:
     properties:
       data:
@@ -323,6 +336,19 @@ definitions:
       data:
         items:
           $ref: '#/definitions/domain_agents.ToolGroupDTO'
+        type: array
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  domain_agents.APIResponse-array_domain_agents_WorkItemDTO:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/domain_agents.WorkItemDTO'
         type: array
       error:
         type: string
@@ -364,6 +390,17 @@ definitions:
       success:
         type: boolean
     type: object
+  domain_agents.APIResponse-domain_agents_AgentQueueDTO:
+    properties:
+      data:
+        $ref: '#/definitions/domain_agents.AgentQueueDTO'
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
   domain_agents.APIResponse-domain_agents_AgentRunDTO:
     properties:
       data:
@@ -386,10 +423,43 @@ definitions:
       success:
         type: boolean
     type: object
+  domain_agents.APIResponse-domain_agents_EnqueueWorkItemResponseDTO:
+    properties:
+      data:
+        $ref: '#/definitions/domain_agents.EnqueueWorkItemResponseDTO'
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
   domain_agents.APIResponse-domain_agents_PendingEventsResponseDTO:
     properties:
       data:
         $ref: '#/definitions/domain_agents.PendingEventsResponseDTO'
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  domain_agents.APIResponse-domain_agents_WorkItemActionDTO:
+    properties:
+      data:
+        $ref: '#/definitions/domain_agents.WorkItemActionDTO'
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  domain_agents.APIResponse-domain_agents_WorkItemDetailDTO:
+    properties:
+      data:
+        $ref: '#/definitions/domain_agents.WorkItemDetailDTO'
       error:
         type: string
       message:
@@ -497,6 +567,8 @@ definitions:
         type: object
       createdAt:
         type: string
+      defaultQueue:
+        type: string
       defaultTimeout:
         type: integer
       defaultToolPolicy:
@@ -561,6 +633,8 @@ definitions:
         type: string
       visibility:
         $ref: '#/definitions/domain_agents.AgentVisibility'
+      workConfig:
+        $ref: '#/definitions/domain_agents.AgentWorkConfig'
       workspaceConfig:
         additionalProperties: {}
         type: object
@@ -722,6 +796,40 @@ definitions:
     - QuestionStatusAnswered
     - QuestionStatusExpired
     - QuestionStatusCancelled
+  domain_agents.AgentQueueDTO:
+    properties:
+      concurrency:
+        type: integer
+      createdAt:
+        type: string
+      description:
+        type: string
+      displayName:
+        type: string
+      enabled:
+        type: boolean
+      name:
+        type: string
+      pending:
+        type: integer
+      priority:
+        type: integer
+      processing:
+        type: integer
+      updatedAt:
+        type: string
+    type: object
+  domain_agents.AgentRetryPolicy:
+    properties:
+      backoffCoefficient:
+        type: number
+      initialIntervalMs:
+        type: integer
+      maxAttempts:
+        type: integer
+      maxIntervalMs:
+        type: integer
+    type: object
   domain_agents.AgentRunDTO:
     properties:
       agentDefinitionId:
@@ -882,6 +990,64 @@ definitions:
     - VisibilityExternal
     - VisibilityProject
     - VisibilityInternal
+  domain_agents.AgentWorkConfig:
+    properties:
+      failureLimit:
+        type: integer
+      requiresReview:
+        type: boolean
+      retryPolicy:
+        allOf:
+        - $ref: '#/definitions/domain_agents.AgentRetryPolicy'
+        description: RetryPolicy configures retry backoff for queued work runs.
+      revisionLimit:
+        description: |-
+          RevisionLimit caps the number of rework (request-changes) rounds before
+          the item is escalated to a human instead of re-enqueued. Zero = default.
+        type: integer
+      status:
+        $ref: '#/definitions/domain_agents.AgentWorkStatusConfig'
+      workContract:
+        allOf:
+        - $ref: '#/definitions/domain_agents.AgentWorkContract'
+        description: |-
+          WorkContract declares the deliverables the agent must produce before it
+          may complete a work item (P6). Zero value = no validation. It is
+          agent-only (no per-type override): the required deliverable types describe
+          what the *agent* produces, whereas the per-type config describes how items
+          of a type are processed (see design.md "Work contract").
+    type: object
+  domain_agents.AgentWorkContract:
+    properties:
+      requireArtifacts:
+        description: |-
+          RequireArtifacts requires work_complete to carry a non-empty summary or
+          artifacts before the item may be completed.
+        type: boolean
+      requiredDeliverableTypes:
+        description: |-
+          RequiredDeliverableTypes lists object types that must be among the
+          declared deliverables, each resolving to an existing object, before the
+          item may be completed. Empty means no required deliverable types.
+        items:
+          type: string
+        type: array
+    type: object
+  domain_agents.AgentWorkStatusConfig:
+    properties:
+      blocked:
+        type: string
+      done:
+        type: string
+      inProgress:
+        type: string
+      ready:
+        type: string
+      review:
+        type: string
+      revision:
+        type: string
+    type: object
   domain_agents.BatchTriggerDTO:
     properties:
       objectIds:
@@ -951,6 +1117,48 @@ definitions:
     - name
     - projectId
     - strategyType
+    type: object
+  domain_agents.CreateAgentQueueDTO:
+    properties:
+      concurrency:
+        type: integer
+      description:
+        type: string
+      displayName:
+        type: string
+      enabled:
+        type: boolean
+      name:
+        type: string
+      priority:
+        type: integer
+    required:
+    - name
+    type: object
+  domain_agents.EnqueueWorkItemDTO:
+    properties:
+      agentId:
+        type: string
+      agentName:
+        type: string
+      message:
+        type: string
+      metadata:
+        additionalProperties: {}
+        type: object
+      priority:
+        type: integer
+    type: object
+  domain_agents.EnqueueWorkItemResponseDTO:
+    properties:
+      agentId:
+        type: string
+      queue:
+        type: string
+      runId:
+        type: string
+      status:
+        type: string
     type: object
   domain_agents.ModelConfig:
     properties:
@@ -1059,6 +1267,18 @@ definitions:
     - EventTypeCreated
     - EventTypeUpdated
     - EventTypeDeleted
+  domain_agents.ReassignWorkItemDTO:
+    properties:
+      assignee:
+        type: string
+    type: object
+  domain_agents.RequestChangesWorkItemDTO:
+    properties:
+      feedback:
+        description: Feedback is required (non-empty) review feedback recorded as
+          a new round.
+        type: string
+    type: object
   domain_agents.RespondToQuestionRequest:
     properties:
       message:
@@ -1209,6 +1429,122 @@ definitions:
         $ref: '#/definitions/domain_agents.ReactionConfig'
       triggerType:
         $ref: '#/definitions/domain_agents.AgentTriggerType'
+    type: object
+  domain_agents.UpdateAgentQueueDTO:
+    properties:
+      concurrency:
+        type: integer
+      description:
+        type: string
+      displayName:
+        type: string
+      enabled:
+        type: boolean
+      priority:
+        type: integer
+    type: object
+  domain_agents.WorkItemActionDTO:
+    properties:
+      escalated:
+        type: boolean
+      item:
+        $ref: '#/definitions/domain_agents.WorkItemHeadDTO'
+      round:
+        type: integer
+      runId:
+        type: string
+    type: object
+  domain_agents.WorkItemDTO:
+    properties:
+      assignee:
+        type: string
+      canonicalId:
+        type: string
+      key:
+        type: string
+      latestRunFailureClass:
+        type: string
+      latestRunId:
+        type: string
+      latestRunStatus:
+        type: string
+      needsReview:
+        type: boolean
+      projectId:
+        type: string
+      runCount:
+        type: integer
+      status:
+        type: string
+      type:
+        type: string
+      unroutable:
+        type: boolean
+      updatedAt:
+        type: string
+      version:
+        type: integer
+    type: object
+  domain_agents.WorkItemDetailDTO:
+    properties:
+      feedback:
+        items:
+          $ref: '#/definitions/domain_agents.WorkItemFeedbackDTO'
+        type: array
+      item:
+        $ref: '#/definitions/domain_agents.WorkItemDTO'
+      runs:
+        items:
+          $ref: '#/definitions/domain_agents.WorkItemRunDTO'
+        type: array
+    type: object
+  domain_agents.WorkItemFeedbackDTO:
+    properties:
+      author:
+        type: string
+      createdAt:
+        type: string
+      round:
+        type: integer
+      runId:
+        type: string
+      text:
+        type: string
+    type: object
+  domain_agents.WorkItemHeadDTO:
+    properties:
+      assignee:
+        type: string
+      canonicalId:
+        type: string
+      key:
+        type: string
+      projectId:
+        type: string
+      status:
+        type: string
+      type:
+        type: string
+      version:
+        type: integer
+    type: object
+  domain_agents.WorkItemRunDTO:
+    properties:
+      completedAt:
+        type: string
+      errorMessage:
+        type: string
+      failureClass:
+        type: string
+      id:
+        type: string
+      startedAt:
+        type: string
+      status:
+        type: string
+      summary:
+        additionalProperties: {}
+        type: object
     type: object
   domain_apitoken.ApiTokenDTO:
     properties:
@@ -1636,6 +1972,15 @@ definitions:
       projectId:
         type: string
       version:
+        type: string
+    type: object
+  domain_blueprints.ImportGitHubRequest:
+    properties:
+      ref:
+        type: string
+      token:
+        type: string
+      url:
         type: string
     type: object
   domain_blueprints.NewVersionRequest:
@@ -3028,6 +3373,9 @@ definitions:
     type: object
   domain_graph.CreateGraphObjectRequest:
     properties:
+      assignee:
+        maxLength: 255
+        type: string
       branch_id:
         type: string
       key:
@@ -3233,6 +3581,11 @@ definitions:
       actor_type:
         description: Actor tracking
         type: string
+      assignee:
+        description: |-
+          Assignee is the work lane for board-enabled types (the agent identity
+          expected to claim the object). NULL = any listening agent.
+        type: string
       branch_id:
         type: string
       canonical_id:
@@ -3339,6 +3692,8 @@ definitions:
         type: string
       actor_type:
         description: Actor tracking (provenance)
+        type: string
+      assignee:
         type: string
       branch_id:
         type: string
@@ -3516,6 +3871,14 @@ definitions:
         type: number
       branchId:
         type: string
+      disableAutoEmbed:
+        description: |-
+          DisableAutoEmbed suppresses the auto-embed of Query when no Vector was
+          supplied. Callers that have already run their own bounded embedding
+          attempts (notably unified search) set this so HybridSearch never issues a
+          further, unbounded embedding call. Defaults to false: all other callers
+          keep the existing auto-embed behaviour.
+        type: boolean
       includeDebug:
         description: Can also use ?debug=true query param
         type: boolean
@@ -3593,6 +3956,8 @@ definitions:
     type: object
   domain_graph.PatchGraphObjectRequest:
     properties:
+      assignee:
+        type: string
       branch_id:
         type: string
       key:
@@ -4024,9 +4389,52 @@ definitions:
       token:
         type: string
     type: object
+  domain_invites.ResendOutcome:
+    enum:
+    - sent
+    - noop
+    - enqueue_failed
+    type: string
+    x-enum-varnames:
+    - ResendOutcomeSent
+    - ResendOutcomeNoOp
+    - ResendOutcomeEnqueueFailed
+  domain_invites.ResendResponse:
+    properties:
+      acceptedAt:
+        type: string
+      createdAt:
+        type: string
+      email:
+        type: string
+      expiresAt:
+        type: string
+      id:
+        type: string
+      invitedByUserId:
+        type: string
+      organizationId:
+        type: string
+      outcome:
+        $ref: '#/definitions/domain_invites.ResendOutcome'
+      projectId:
+        type: string
+      revokedAt:
+        type: string
+      role:
+        type: string
+      status:
+        type: string
+      token:
+        type: string
+    type: object
   domain_invites.SentInvite:
     properties:
       createdAt:
+        type: string
+      deliveryStatus:
+        type: string
+      deliveryStatusAt:
         type: string
       email:
         type: string
@@ -4986,6 +5394,8 @@ definitions:
         type: boolean
       eventKey:
         type: string
+      required:
+        type: boolean
       requiresAction:
         type: boolean
       scope:
@@ -5189,6 +5599,8 @@ definitions:
       auto_merge_extraction_branches:
         description: AutoMergeExtractionBranches is emitted only when true.
         type: boolean
+      budget_alert_threshold:
+        type: number
       budget_usd:
         type: number
       chat_prompt_template:
@@ -5300,6 +5712,62 @@ definitions:
       project:
         $ref: '#/definitions/domain_projects.ProjectDTO'
     type: object
+  domain_provider.AuthStyle:
+    enum:
+    - bearer
+    - api-key
+    - x-api-key
+    - x-goog-api-key
+    - none
+    - signed
+    type: string
+    x-enum-varnames:
+    - AuthBearer
+    - AuthAPIKeyHeader
+    - AuthXAPIKey
+    - AuthGoogleAPIKey
+    - AuthNone
+    - AuthSigned
+  domain_provider.CredentialLabel:
+    properties:
+      hint:
+        type: string
+      label:
+        type: string
+      placeholder:
+        type: string
+      required:
+        type: boolean
+    type: object
+  domain_provider.ExtraField:
+    properties:
+      default:
+        type: string
+      key:
+        type: string
+      label:
+        type: string
+      options:
+        items:
+          $ref: '#/definitions/domain_provider.ExtraFieldOption'
+        type: array
+      placeholder:
+        type: string
+      required:
+        type: boolean
+      secret:
+        type: boolean
+      type:
+        description: string | password | number | boolean | select
+        type: string
+    type: object
+  domain_provider.ExtraFieldOption:
+    properties:
+      label:
+        type: string
+      value:
+        type: string
+    type: object
   domain_provider.ModelType:
     enum:
     - embedding
@@ -5390,6 +5858,16 @@ definitions:
       updatedAt:
         type: string
     type: object
+  domain_provider.Protocol:
+    enum:
+    - openai-chat
+    - google-genai
+    - anthropic-messages
+    type: string
+    x-enum-varnames:
+    - ProtocolOpenAIChat
+    - ProtocolGoogleGenAI
+    - ProtocolAnthropicMessages
   domain_provider.ProviderConfigResponse:
     properties:
       baseUrl:
@@ -5413,18 +5891,104 @@ definitions:
       updatedAt:
         type: string
     type: object
+  domain_provider.ProviderDefinitionResponse:
+    properties:
+      auth:
+        $ref: '#/definitions/domain_provider.AuthStyle'
+      credentialLabel:
+        $ref: '#/definitions/domain_provider.CredentialLabel'
+      defaultBaseUrls:
+        additionalProperties:
+          type: string
+        type: object
+      description:
+        type: string
+      displayName:
+        type: string
+      extraFields:
+        items:
+          $ref: '#/definitions/domain_provider.ExtraField'
+        type: array
+      iconDataUri:
+        description: |-
+          IconDataURI is the vendor brand mark as a base64 data URI; the raw SVG
+          bytes are never serialized.
+        type: string
+      modelTypes:
+        items:
+          $ref: '#/definitions/domain_provider.ModelType'
+        type: array
+      names:
+        additionalProperties:
+          type: string
+        type: object
+      order:
+        type: integer
+      protocol:
+        $ref: '#/definitions/domain_provider.Protocol'
+      type:
+        $ref: '#/definitions/domain_provider.ProviderType'
+    type: object
   domain_provider.ProviderDialect:
     enum:
     - google
     - google-vertex
     - openai
     - deepseek
+    - azure-openai
+    - anthropic
+    - aliyun
+    - zhipu
+    - volcengine
+    - hunyuan
+    - siliconflow
+    - minimax
+    - moonshot
+    - mimo
+    - modelscope
+    - qianfan
+    - qiniu
+    - longcat
+    - lkeap
+    - nvidia
+    - novita
+    - openrouter
+    - requesty
+    - litellm
+    - generic
+    - gpustack
+    - jina
+    - weknoracloud
     type: string
     x-enum-varnames:
     - ProviderGoogleAI
     - ProviderVertexAI
     - ProviderOpenAI
     - ProviderDeepSeek
+    - ProviderAzureOpenAI
+    - ProviderAnthropic
+    - ProviderAliyun
+    - ProviderZhipu
+    - ProviderVolcengine
+    - ProviderHunyuan
+    - ProviderSiliconFlow
+    - ProviderMiniMax
+    - ProviderMoonshot
+    - ProviderMimo
+    - ProviderModelScope
+    - ProviderQianfan
+    - ProviderQiniu
+    - ProviderLongCat
+    - ProviderLKEAP
+    - ProviderNVIDIA
+    - ProviderNovita
+    - ProviderOpenRouter
+    - ProviderRequesty
+    - ProviderLiteLLM
+    - ProviderGeneric
+    - ProviderGPUStack
+    - ProviderJina
+    - ProviderWeKnoraCloud
   domain_provider.ProviderPricing:
     properties:
       audioInputPrice:
@@ -5471,12 +6035,60 @@ definitions:
     - google-vertex
     - openai
     - deepseek
+    - azure-openai
+    - anthropic
+    - aliyun
+    - zhipu
+    - volcengine
+    - hunyuan
+    - siliconflow
+    - minimax
+    - moonshot
+    - mimo
+    - modelscope
+    - qianfan
+    - qiniu
+    - longcat
+    - lkeap
+    - nvidia
+    - novita
+    - openrouter
+    - requesty
+    - litellm
+    - generic
+    - gpustack
+    - jina
+    - weknoracloud
     type: string
     x-enum-varnames:
     - ProviderGoogleAI
     - ProviderVertexAI
     - ProviderOpenAI
     - ProviderDeepSeek
+    - ProviderAzureOpenAI
+    - ProviderAnthropic
+    - ProviderAliyun
+    - ProviderZhipu
+    - ProviderVolcengine
+    - ProviderHunyuan
+    - ProviderSiliconFlow
+    - ProviderMiniMax
+    - ProviderMoonshot
+    - ProviderMimo
+    - ProviderModelScope
+    - ProviderQianfan
+    - ProviderQiniu
+    - ProviderLongCat
+    - ProviderLKEAP
+    - ProviderNVIDIA
+    - ProviderNovita
+    - ProviderOpenRouter
+    - ProviderRequesty
+    - ProviderLiteLLM
+    - ProviderGeneric
+    - ProviderGPUStack
+    - ProviderJina
+    - ProviderWeKnoraCloud
   domain_provider.TestProjectProviderResponse:
     properties:
       embeddingError:
@@ -6727,8 +7339,19 @@ definitions:
     type: object
   domain_schemas.ObjectTypeSchema:
     properties:
+      allowedStatuses:
+        items:
+          type: string
+        type: array
+      boardEnabled:
+        description: |-
+          Object-driven work configuration (P4): board-enabled flag, allowed work
+          status values, and operational pipeline skip-flags.
+        type: boolean
       description:
         type: string
+      excludeFromSearch:
+        type: boolean
       label:
         type: string
       name:
@@ -6744,6 +7367,10 @@ definitions:
       schemaVersion:
         type: string
       shadowed:
+        type: boolean
+      skipEmbeddings:
+        type: boolean
+      skipExtraction:
         type: boolean
       ui:
         description: type-level ui block (e.g. {"icon":...,"color":...})
@@ -7316,6 +7943,12 @@ definitions:
       fusionStrategy:
         $ref: '#/definitions/domain_search.UnifiedSearchFusionStrategy'
       includeDebug:
+        type: boolean
+      includeRelationships:
+        description: |-
+          IncludeRelationships controls the relationship-vector search leg.
+          nil preserves existing behaviour (leg runs when ResultTypes allows);
+          false skips it for faster entity/text-only searches.
         type: boolean
       labels:
         description: restrict graph-object candidates to objects carrying any of these
@@ -9966,6 +10599,53 @@ paths:
       security:
       - bearerAuth: []
       summary: List applied blueprints
+      tags:
+      - blueprints
+  /api/blueprints/import:
+    post:
+      consumes:
+      - application/json
+      description: Fetches a blueprint from https://github.com/<org>/<repo>[#ref],
+        extracts and validates its manifest, and creates + publishes a blueprint in
+        the caller's scope. The optional token is used only for private-repo fetch
+        and is never stored or returned.
+      parameters:
+      - description: GitHub source
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_blueprints.ImportGitHubRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created blueprint
+          schema:
+            $ref: '#/definitions/domain_blueprints.Blueprint'
+        "400":
+          description: Invalid URL or manifest
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "413":
+          description: Archive too large
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "502":
+          description: Fetch failed
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Import blueprint from a GitHub URL
       tags:
       - blueprints
   /api/blueprints/name/{name}/versions:
@@ -13517,6 +14197,47 @@ paths:
       summary: Decline invitation
       tags:
       - invites
+  /api/invites/{id}/resend:
+    post:
+      description: 'Re-sends the invitation email for a pending invitation, extending
+        its expiry by 7 days (requires org_admin authority over the invite''s organization).
+        The response carries an `outcome` field: "sent" when a fresh email was enqueued,
+        "noop" when a recently sent/in-flight email suppressed the resend, "enqueue_failed"
+        when the attempt failed to queue.'
+      parameters:
+      - description: Invitation ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Resend outcome and the (possibly unchanged) invitation
+          schema:
+            $ref: '#/definitions/domain_invites.ResendResponse'
+        "400":
+          description: Missing invite_id
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Invitation not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Resend an invitation
+      tags:
+      - invites
   /api/invites/accept:
     post:
       consumes:
@@ -14320,6 +15041,10 @@ paths:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "404":
           description: Notification not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: A newer notification for the same group key is already active
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
       security:
@@ -15792,6 +16517,180 @@ paths:
       summary: Respond to an agent question
       tags:
       - agent-questions
+  /api/projects/{projectId}/agent-queues:
+    get:
+      description: Lists a project's named agent work queues with live pending/processing
+        depth
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Agent queues
+          schema:
+            $ref: '#/definitions/domain_agents.APIResponse-array_domain_agents_AgentQueueDTO'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List agent work queues
+      tags:
+      - agents
+    post:
+      consumes:
+      - application/json
+      description: Creates a named agent work queue with an optional concurrency and
+        priority
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Queue
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_agents.CreateAgentQueueDTO'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created queue
+          schema:
+            $ref: '#/definitions/domain_agents.APIResponse-domain_agents_AgentQueueDTO'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: Queue already exists
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Create an agent work queue
+      tags:
+      - agents
+  /api/projects/{projectId}/agent-queues/{name}:
+    delete:
+      description: Deletes a queue that has no pending or processing jobs
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Queue name
+        in: path
+        name: name
+        required: true
+        type: string
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Queue not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: Queue has jobs in flight
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Delete an agent work queue
+      tags:
+      - agents
+    patch:
+      consumes:
+      - application/json
+      description: Updates a queue's display name, description, concurrency, priority,
+        or enabled flag
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Queue name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Queue updates
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_agents.UpdateAgentQueueDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Updated queue
+          schema:
+            $ref: '#/definitions/domain_agents.APIResponse-domain_agents_AgentQueueDTO'
+        "404":
+          description: Queue not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Update an agent work queue
+      tags:
+      - agents
+  /api/projects/{projectId}/agent-queues/{name}/enqueue:
+    post:
+      consumes:
+      - application/json
+      description: Creates a queued agent run on the named queue, optionally selecting
+        a runtime agent and attaching trigger metadata
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Queue name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Work item
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_agents.EnqueueWorkItemDTO'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Enqueued
+          schema:
+            $ref: '#/definitions/domain_agents.APIResponse-domain_agents_EnqueueWorkItemResponseDTO'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Queue or agent not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Enqueue a work item onto a queue
+      tags:
+      - agents
   /api/projects/{projectId}/agent-runs/{runId}/questions:
     get:
       consumes:
@@ -16642,6 +17541,254 @@ paths:
       summary: Create webhook trigger credential
       tags:
       - api-tokens
+  /api/projects/{projectId}/work-items:
+    get:
+      description: Returns the Kanban projection of board-enabled work items (object
+        HEAD joined to latest run), filterable by status and type
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Filter by work status
+        in: query
+        name: status
+        type: string
+      - description: Filter by object type
+        in: query
+        name: type
+        type: string
+      - description: Max items (default 200, max 1000)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Work items
+          schema:
+            $ref: '#/definitions/domain_agents.APIResponse-array_domain_agents_WorkItemDTO'
+      security:
+      - bearerAuth: []
+      summary: List work items
+      tags:
+      - agents
+  /api/projects/{projectId}/work-items/{canonicalId}:
+    get:
+      description: Returns one work item joined to its latest run, its feedback history,
+        and its recent runs
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Work item canonical ID
+        in: path
+        name: canonicalId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Work item detail
+          schema:
+            $ref: '#/definitions/domain_agents.APIResponse-domain_agents_WorkItemDetailDTO'
+        "404":
+          description: Not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get a work item
+      tags:
+      - agents
+  /api/projects/{projectId}/work-items/{canonicalId}/approve:
+    post:
+      consumes:
+      - application/json
+      description: 'Finalizes a work item in review: sets reviewed_by/reviewed_at,
+        clears needs_review, and moves it to done'
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Work item canonical ID
+        in: path
+        name: canonicalId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Approved
+          schema:
+            $ref: '#/definitions/domain_agents.APIResponse-domain_agents_WorkItemActionDTO'
+        "404":
+          description: Not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: Not in review
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Approve a work item
+      tags:
+      - agents
+  /api/projects/{projectId}/work-items/{canonicalId}/cancel:
+    post:
+      consumes:
+      - application/json
+      description: Closes a work item (blocked) and cancels any in-flight run
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Work item canonical ID
+        in: path
+        name: canonicalId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Cancelled
+          schema:
+            $ref: '#/definitions/domain_agents.APIResponse-domain_agents_WorkItemActionDTO'
+        "409":
+          description: Already done
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Cancel a work item
+      tags:
+      - agents
+  /api/projects/{projectId}/work-items/{canonicalId}/reassign:
+    post:
+      consumes:
+      - application/json
+      description: Sets or clears the assignee of a work item (empty assignee clears
+        it)
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Work item canonical ID
+        in: path
+        name: canonicalId
+        required: true
+        type: string
+      - description: Assignee
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_agents.ReassignWorkItemDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Reassigned
+          schema:
+            $ref: '#/definitions/domain_agents.APIResponse-domain_agents_WorkItemActionDTO'
+        "404":
+          description: Not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Reassign a work item
+      tags:
+      - agents
+  /api/projects/{projectId}/work-items/{canonicalId}/request-changes:
+    post:
+      consumes:
+      - application/json
+      description: Returns a work item in review to revision, records feedback, and
+        enqueues a rework run (or escalates at the revision cap)
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Work item canonical ID
+        in: path
+        name: canonicalId
+        required: true
+        type: string
+      - description: Feedback
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_agents.RequestChangesWorkItemDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Changes requested
+          schema:
+            $ref: '#/definitions/domain_agents.APIResponse-domain_agents_WorkItemActionDTO'
+        "400":
+          description: Empty feedback
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: Not in review
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Request changes on a work item
+      tags:
+      - agents
+  /api/projects/{projectId}/work-items/{canonicalId}/retry:
+    post:
+      consumes:
+      - application/json
+      description: Returns a blocked work item to ready and enqueues it
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Work item canonical ID
+        in: path
+        name: canonicalId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Retried
+          schema:
+            $ref: '#/definitions/domain_agents.APIResponse-domain_agents_WorkItemActionDTO'
+        "409":
+          description: Not blocked
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Retry a work item
+      tags:
+      - agents
   /api/projects/current:
     get:
       description: Returns the project bound to the current authentication token.
@@ -22493,6 +23640,24 @@ paths:
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
       summary: Get project LLM usage time series
+  /provider-definitions:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/domain_provider.ProviderDefinitionResponse'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: List supported provider (vendor) definitions
+      tags:
+      - providers
   /providers/{provider}/models:
     get:
       parameters:

@@ -24,6 +24,7 @@ type openaiCompatibleModel struct {
 	baseURL   string
 	apiKey    string
 	modelName string
+	auth      AuthStyle
 	client    *http.Client
 	// enableThinking overrides the per-request thinking default when non-nil.
 	// nil  → keep existing per-request logic (disable when tools present)
@@ -38,15 +39,22 @@ type ThinkingConfigurator interface {
 	SetEnableThinking(v *bool)
 }
 
-// NewOpenAICompatibleModel creates a new openaiCompatibleModel.
+// NewOpenAICompatibleModel creates a new openaiCompatibleModel using bearer auth.
 // baseURL is the base URL of the OpenAI-compatible API (e.g. "http://localhost:11434/v1").
 // apiKey is optional — pass empty string for keyless local servers.
 // modelName is the model to request (e.g. "llama3", "kvasir", "mistral").
 func NewOpenAICompatibleModel(baseURL, apiKey, modelName string) model.LLM {
+	return NewOpenAICompatibleModelWithAuth(baseURL, apiKey, modelName, AuthBearer)
+}
+
+// NewOpenAICompatibleModelWithAuth creates a new openaiCompatibleModel with an
+// explicit auth style (e.g. AuthAPIKeyHeader for Azure OpenAI).
+func NewOpenAICompatibleModelWithAuth(baseURL, apiKey, modelName string, auth AuthStyle) model.LLM {
 	return &openaiCompatibleModel{
 		baseURL:   strings.TrimSuffix(baseURL, "/"),
 		apiKey:    apiKey,
 		modelName: modelName,
+		auth:      auth,
 		client:    &http.Client{Timeout: 900 * time.Second},
 	}
 }
@@ -552,8 +560,9 @@ func (m *openaiCompatibleModel) GenerateContent(ctx context.Context, req *model.
 			return
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
-		if m.apiKey != "" {
-			httpReq.Header.Set("Authorization", "Bearer "+m.apiKey)
+		if err := ApplyAuth(httpReq, m.auth, m.apiKey); err != nil {
+			yield(nil, fmt.Errorf("openai-compatible: %w", err))
+			return
 		}
 
 		resp, err := m.client.Do(httpReq)

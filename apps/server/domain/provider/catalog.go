@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"cloud.google.com/go/auth/credentials"
+	adkmodel "google.golang.org/adk/model"
 	"google.golang.org/genai"
 
+	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings/openai"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings/vertex"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
@@ -103,8 +105,16 @@ func (s *ModelCatalogService) SyncModels(ctx context.Context, provider ProviderT
 func (s *ModelCatalogService) ResolveModels(ctx context.Context, provider ProviderType, cred *ResolvedCredential) (models []ProviderSupportedModel, pruneOK bool, err error) {
 	pruneOK = true
 
-	switch provider {
-	case ProviderOpenAI:
+	def := definitionFor(provider)
+	switch {
+	case def != nil && def.CatalogStrategy == CatalogStatic:
+		// Static model list (DeepSeek): no live catalog fetch — the fixed
+		// endpoint lists only deepseek-chat/deepseek-reasoner and would prune
+		// the alfred-specific aliases. The static list is authoritative, so
+		// pruning is safe.
+		models = staticModels(provider)
+
+	case def != nil && def.CatalogStrategy == CatalogOpenAIModels:
 		// OpenAI-compatible (incl. LiteLLM proxies): list the full model set
 		// exposed by GET {base_url}/models. Fall back to the configured model(s)
 		// when the proxy's model list is unreachable, so the user's selection is
@@ -118,14 +128,9 @@ func (s *ModelCatalogService) ResolveModels(ctx context.Context, provider Provid
 		}
 		models = fetched
 
-	case ProviderDeepSeek:
-		// DeepSeek: use static model list (no live catalog fetch — the fixed
-		// endpoint lists only deepseek-chat/deepseek-reasoner and would prune
-		// the alfred-specific aliases). The static list is authoritative, so
-		// pruning is safe.
-		models = staticModels(provider)
-
 	default:
+		// CatalogGoogleGenAI and any other google-genai protocol vendor: use the
+		// genai SDK to list models.
 		fetched, fetchErr := s.fetchModelsFromAPI(ctx, provider, cred)
 		if fetchErr != nil {
 			return nil, false, fmt.Errorf("failed to fetch model catalog from %s API: %w", provider, fetchErr)
@@ -232,8 +237,8 @@ func (s *ModelCatalogService) fetchOpenAICompatibleModels(ctx context.Context, p
 	if err != nil {
 		return nil, fmt.Errorf("failed to build /v1/models request: %w", err)
 	}
-	if cred.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+cred.APIKey)
+	if err := adk.ApplyAuth(req, credentialAuthStyle(provider, cred), cred.APIKey); err != nil {
+		return nil, fmt.Errorf("failed to apply auth to /v1/models request: %w", err)
 	}
 
 	client := &http.Client{Timeout: 8 * time.Second}
@@ -504,12 +509,35 @@ func (s *ModelCatalogService) TestGenerateForModel(ctx context.Context, provider
 }
 
 // generateContentForModel runs the raw generate call against an explicit model
-// name. OpenAI-compatible and DeepSeek use a direct HTTP call; Google/Vertex use
-// the genai client. Returns the LLM's reply text.
+// name, dispatching by the vendor definition's wire protocol: openai-chat uses a
+// direct HTTP call, google-genai uses the genai client, and anthropic-messages
+// uses the adk Anthropic adapter. Returns the LLM's reply text.
 func (s *ModelCatalogService) generateContentForModel(ctx context.Context, provider ProviderType, cred *ResolvedCredential, model string) (reply string, err error) {
-	// OpenAI-compatible and DeepSeek: use direct HTTP call instead of genai client.
-	if provider == ProviderOpenAI || provider == ProviderDeepSeek {
-		if cred.BaseURL == "" {
+	def := definitionFor(provider)
+	var protocol Protocol
+	if def != nil {
+		protocol = def.Protocol
+	}
+	if protocol == "" {
+		protocol = cred.Protocol
+	}
+	if protocol == "" {
+		// Legacy fallback for callers that predate the Protocol field.
+		switch provider {
+		case ProviderGoogleAI, ProviderVertexAI:
+			protocol = ProtocolGoogleGenAI
+		default:
+			protocol = ProtocolOpenAIChat
+		}
+	}
+
+	switch protocol {
+	case ProtocolOpenAIChat:
+		baseURL := cred.BaseURL
+		if baseURL == "" && def != nil {
+			baseURL = def.DefaultBaseURLs[ModelTypeGenerative]
+		}
+		if baseURL == "" {
 			return "", fmt.Errorf("openai-compatible provider requires base_url")
 		}
 		reqBody := map[string]interface{}{
@@ -524,14 +552,14 @@ func (s *ModelCatalogService) generateContentForModel(ctx context.Context, provi
 			return "", fmt.Errorf("failed to marshal request: %w", err)
 		}
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-			strings.TrimSuffix(cred.BaseURL, "/")+"/chat/completions",
+			strings.TrimSuffix(baseURL, "/")+"/chat/completions",
 			bytes.NewReader(bodyBytes))
 		if err != nil {
 			return "", fmt.Errorf("failed to create request: %w", err)
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
-		if cred.APIKey != "" {
-			httpReq.Header.Set("Authorization", "Bearer "+cred.APIKey)
+		if err := adk.ApplyAuth(httpReq, credentialAuthStyle(provider, cred), cred.APIKey); err != nil {
+			return "", fmt.Errorf("failed to apply auth to generate request: %w", err)
 		}
 		httpClient := &http.Client{Timeout: 30 * time.Second}
 		resp, err := httpClient.Do(httpReq)
@@ -565,24 +593,60 @@ func (s *ModelCatalogService) generateContentForModel(ctx context.Context, provi
 			reply = "(ok)" // model responded with no text content but no error
 		}
 		return reply, nil
-	}
 
-	clientCfg, err := buildClientConfig(provider, cred)
-	if err != nil {
-		return "", err
-	}
+	case ProtocolAnthropicMessages:
+		baseURL := cred.BaseURL
+		if baseURL == "" && def != nil {
+			baseURL = def.DefaultBaseURLs[ModelTypeGenerative]
+		}
+		if baseURL == "" {
+			return "", fmt.Errorf("anthropic provider requires base_url")
+		}
+		llm := adk.NewAnthropicModel(baseURL, cred.APIKey, model)
+		llmReq := &adkmodel.LLMRequest{
+			Contents: []*genai.Content{{
+				Role:  "user",
+				Parts: []*genai.Part{{Text: "Say hello in one sentence."}},
+			}},
+		}
+		for resp, genErr := range llm.GenerateContent(ctx, llmReq, false) {
+			if genErr != nil {
+				return "", fmt.Errorf("anthropic generate call failed: %w", genErr)
+			}
+			if resp != nil && resp.Content != nil {
+				for _, p := range resp.Content.Parts {
+					if p != nil && p.Text != "" {
+						reply += p.Text
+					}
+				}
+			}
+		}
+		if reply == "" {
+			reply = "(ok)" // model responded with no text content but no error
+		}
+		return reply, nil
 
-	client, err := genai.NewClient(ctx, clientCfg)
-	if err != nil {
-		return "", fmt.Errorf("failed to create genai client: %w", err)
-	}
+	case ProtocolGoogleGenAI:
+		clientCfg, err := buildClientConfig(provider, cred)
+		if err != nil {
+			return "", err
+		}
 
-	resp, err := client.Models.GenerateContent(ctx, model, genai.Text("Say hello in one sentence."), nil)
-	if err != nil {
-		return "", fmt.Errorf("generate call failed: %w", err)
-	}
+		client, err := genai.NewClient(ctx, clientCfg)
+		if err != nil {
+			return "", fmt.Errorf("failed to create genai client: %w", err)
+		}
 
-	return resp.Text(), nil
+		resp, err := client.Models.GenerateContent(ctx, model, genai.Text("Say hello in one sentence."), nil)
+		if err != nil {
+			return "", fmt.Errorf("generate call failed: %w", err)
+		}
+
+		return resp.Text(), nil
+
+	default:
+		return "", fmt.Errorf("unsupported protocol %q for provider %s", protocol, provider)
+	}
 }
 
 // TestEmbed sends a single embed call to verify embedding credentials and model
@@ -615,32 +679,43 @@ func (s *ModelCatalogService) TestEmbedForModel(ctx context.Context, provider Pr
 // by TestGenerate when the target model turns out to be an embedding model.
 // Returns the model name used.
 func (s *ModelCatalogService) embedContentForModel(ctx context.Context, provider ProviderType, cred *ResolvedCredential, model string) (string, error) {
-	switch provider {
-	case ProviderVertexAI:
-		if cred.GCPProject == "" || cred.Location == "" {
-			return "", fmt.Errorf("GCP project and location required for Vertex AI embedding test")
-		}
-		opts := []vertex.ClientOption{}
-		if cred.ServiceAccountJSON != "" {
-			opts = append(opts, vertex.WithCredentialsJSON([]byte(cred.ServiceAccountJSON)))
-		}
-		client, clientErr := vertex.NewClient(ctx, vertex.Config{
-			ProjectID: cred.GCPProject,
-			Location:  cred.Location,
-			Model:     model,
-		}, opts...)
-		if clientErr != nil {
-			return "", fmt.Errorf("embedding model test failed: %w", clientErr)
-		}
-		vec, embedErr := client.EmbedQuery(ctx, "test")
-		if embedErr != nil {
-			return "", fmt.Errorf("embedding model test failed: %w", embedErr)
-		}
-		if len(vec) == 0 {
-			return "", fmt.Errorf("embedding model test failed: empty vector returned")
+	def := definitionFor(provider)
+	var protocol Protocol
+	if def != nil {
+		protocol = def.Protocol
+	}
+	if protocol == "" {
+		protocol = cred.Protocol
+	}
+
+	switch protocol {
+	case ProtocolGoogleGenAI:
+		if provider == ProviderVertexAI {
+			if cred.GCPProject == "" || cred.Location == "" {
+				return "", fmt.Errorf("GCP project and location required for Vertex AI embedding test")
+			}
+			opts := []vertex.ClientOption{}
+			if cred.ServiceAccountJSON != "" {
+				opts = append(opts, vertex.WithCredentialsJSON([]byte(cred.ServiceAccountJSON)))
+			}
+			client, clientErr := vertex.NewClient(ctx, vertex.Config{
+				ProjectID: cred.GCPProject,
+				Location:  cred.Location,
+				Model:     model,
+			}, opts...)
+			if clientErr != nil {
+				return "", fmt.Errorf("embedding model test failed: %w", clientErr)
+			}
+			vec, embedErr := client.EmbedQuery(ctx, "test")
+			if embedErr != nil {
+				return "", fmt.Errorf("embedding model test failed: %w", embedErr)
+			}
+			if len(vec) == 0 {
+				return "", fmt.Errorf("embedding model test failed: empty vector returned")
+			}
+			return model, nil
 		}
 
-	case ProviderGoogleAI:
 		clientCfg, cfgErr := buildClientConfig(provider, cred)
 		if cfgErr != nil {
 			return "", fmt.Errorf("embedding model test failed: %w", cfgErr)
@@ -656,12 +731,22 @@ func (s *ModelCatalogService) embedContentForModel(ctx context.Context, provider
 		if result == nil || len(result.Embeddings) == 0 || len(result.Embeddings[0].Values) == 0 {
 			return "", fmt.Errorf("embedding model test failed: empty vector returned")
 		}
+		return model, nil
 
-	case ProviderOpenAI:
-		// OpenAI-compatible providers (including LiteLLM proxies): use the
-		// OpenAI-compatible embeddings client to verify the target embedding
-		// model works end-to-end.
-		if cred.BaseURL == "" {
+	case ProtocolOpenAIChat:
+		// Vendors with only generative model types have no embedding API.
+		if !hasEmbeddingModelType(def) {
+			return "not supported", nil
+		}
+		baseURL := cred.BaseURL
+		if baseURL == "" && def != nil {
+			if u := def.DefaultBaseURLs[ModelTypeEmbedding]; u != "" {
+				baseURL = u
+			} else {
+				baseURL = def.DefaultBaseURLs[ModelTypeGenerative]
+			}
+		}
+		if baseURL == "" {
 			return "", fmt.Errorf("embedding model test failed: openai-compatible provider requires base_url")
 		}
 		if model == "" {
@@ -669,8 +754,9 @@ func (s *ModelCatalogService) embedContentForModel(ctx context.Context, provider
 		}
 		client, clientErr := openai.NewClient(openai.Config{
 			APIKey:  cred.APIKey,
-			BaseURL: cred.BaseURL,
+			BaseURL: baseURL,
 			Model:   model,
+			Auth:    credentialAuthStyle(provider, cred),
 		})
 		if clientErr != nil {
 			return "", fmt.Errorf("embedding model test failed: %w", clientErr)
@@ -684,15 +770,10 @@ func (s *ModelCatalogService) embedContentForModel(ctx context.Context, provider
 		}
 		return model, nil
 
-	case ProviderDeepSeek:
-		// DeepSeek has no embedding API.
-		return "not supported", nil
-
 	default:
-		return "", fmt.Errorf("unsupported provider for embedding test: %s", provider)
+		// anthropic-messages and any other protocol with no embedding support.
+		return "not supported", nil
 	}
-
-	return model, nil
 }
 
 // modelIsEmbedding reports whether the given model name is an embedding model.
@@ -749,19 +830,29 @@ func (s *ModelCatalogService) pickCheapTestModel(models []ProviderSupportedModel
 	return best
 }
 
+// credentialAuthStyle returns the credential-injection style to use for a
+// vendor's HTTP requests: the resolved credential's style (populated from the
+// registry definition by applyDefinition), falling back to the definition, then
+// bearer. This mirrors the ADK runtime's dispatch so the catalog fetch and
+// test-connection calls inject the same header as real generation.
+func credentialAuthStyle(provider ProviderType, cred *ResolvedCredential) adk.AuthStyle {
+	if cred != nil && cred.Auth != "" {
+		return adk.AuthStyle(cred.Auth)
+	}
+	if def := definitionFor(provider); def != nil && def.Auth != "" {
+		return adk.AuthStyle(def.Auth)
+	}
+	return adk.AuthBearer
+}
+
 // buildClientConfig constructs a genai.ClientConfig from resolved credentials.
 func buildClientConfig(provider ProviderType, cred *ResolvedCredential) (*genai.ClientConfig, error) {
-	switch provider {
-	case ProviderGoogleAI:
-		if cred.APIKey == "" {
-			return nil, fmt.Errorf("API key required for Google AI")
-		}
-		return &genai.ClientConfig{
-			Backend: genai.BackendGeminiAPI,
-			APIKey:  cred.APIKey,
-		}, nil
+	def := definitionFor(provider)
+	if def != nil && def.Protocol != ProtocolGoogleGenAI {
+		return nil, fmt.Errorf("%s provider does not use genai client — use the HTTP adapter directly", provider)
+	}
 
-	case ProviderVertexAI:
+	if provider == ProviderVertexAI {
 		if cred.GCPProject == "" || cred.Location == "" {
 			return nil, fmt.Errorf("GCP project and location required for Vertex AI")
 		}
@@ -784,16 +875,16 @@ func buildClientConfig(provider ProviderType, cred *ResolvedCredential) (*genai.
 			cfg.Credentials = c
 		}
 		return cfg, nil
-
-	case ProviderOpenAI:
-		return nil, fmt.Errorf("openai-compatible provider does not use genai client — use the HTTP adapter directly")
-
-	case ProviderDeepSeek:
-		return nil, fmt.Errorf("deepseek provider does not use genai client — use the HTTP adapter directly")
-
-	default:
-		return nil, fmt.Errorf("unsupported provider: %s", provider)
 	}
+
+	// Google AI (Gemini API), or any other google-genai vendor using an API key.
+	if cred.APIKey == "" {
+		return nil, fmt.Errorf("API key required for Google AI")
+	}
+	return &genai.ClientConfig{
+		Backend: genai.BackendGeminiAPI,
+		APIKey:  cred.APIKey,
+	}, nil
 }
 
 const (

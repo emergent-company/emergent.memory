@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -39,6 +40,19 @@ type ResolvedCredential struct {
 
 	// BaseURL is the HTTP endpoint for OpenAI-protocol providers (openai, deepseek)
 	BaseURL string
+
+	// Protocol is the wire protocol the vendor speaks ("openai-chat",
+	// "google-genai", "anthropic-messages"). Populated from the registry
+	// definition at resolution time.
+	Protocol Protocol
+
+	// Auth is the credential-injection style (bearer, api-key, x-api-key,
+	// x-goog-api-key, none, signed). Populated from the registry definition.
+	Auth AuthStyle
+
+	// Extra carries vendor-specific configuration keyed by field name
+	// (e.g. Azure "api_version").
+	Extra map[string]string
 
 	// Selected models (may come from org selection, project override, or env config)
 	EmbeddingModel  string
@@ -139,25 +153,44 @@ func (s *CredentialService) decryptProjectConfig(cfg *ProjectProviderConfig) (*R
 		GenerativeModel: modelref.StripRoutingPrefix(cfg.GenerativeModel, isDialectName),
 		EmbeddingModel:  modelref.StripRoutingPrefix(cfg.EmbeddingModel, isDialectName),
 	}
-	switch cfg.Provider {
-	case ProviderGoogleAI:
-		resolved.APIKey = string(plaintext)
-	case ProviderVertexAI:
+
+	// Route the decrypted blob to the field the vendor's definition expects:
+	// service-account vendors hold a service-account JSON document, every other
+	// credential-bearing vendor holds an API key. Derived from the definition's
+	// credential fields — no per-vendor switch — so a newly registered vendor's
+	// credential is routed without touching this code.
+	if definitionUsesServiceAccount(definitionFor(cfg.Provider)) {
 		resolved.ServiceAccountJSON = string(plaintext)
-	case ProviderOpenAI:
-		resolved.BaseURL = cfg.BaseURL
-		if resolved.BaseURL == "" {
-			resolved.BaseURL = "https://api.openai.com/v1"
-		}
-		resolved.APIKey = string(plaintext)
-	case ProviderDeepSeek:
-		resolved.BaseURL = cfg.BaseURL
-		if resolved.BaseURL == "" {
-			resolved.BaseURL = "https://api.deepseek.com/v1"
-		}
+	} else {
 		resolved.APIKey = string(plaintext)
 	}
+
+	s.applyDefinition(resolved)
 	return resolved, nil
+}
+
+// applyDefinition populates Protocol/Auth from the registry definition and
+// fills a default BaseURL (generative first, then embedding) when none was
+// configured. It is nil-safe: an unknown provider or an absent registry leaves
+// the credential with only the fields populated by the legacy per-provider
+// switch.
+func (s *CredentialService) applyDefinition(resolved *ResolvedCredential) {
+	if resolved == nil {
+		return
+	}
+	def := definitionFor(resolved.Provider)
+	if def == nil {
+		return
+	}
+	resolved.Protocol = def.Protocol
+	resolved.Auth = def.Auth
+	if resolved.BaseURL == "" {
+		if u := def.DefaultBaseURLs[ModelTypeGenerative]; u != "" {
+			resolved.BaseURL = u
+		} else if u := def.DefaultBaseURLs[ModelTypeEmbedding]; u != "" {
+			resolved.BaseURL = u
+		}
+	}
 }
 
 // EncryptCredential encrypts a plaintext credential for storage.
@@ -216,11 +249,12 @@ func (s *CredentialService) ResolveByRef(ctx context.Context, ref modelref.Ref) 
 }
 
 // ResolveAny attempts to resolve the best available credential for the request
-// context. Tries project-level configs in order: DeepSeek → OpenAI → VertexAI → GoogleAI.
+// context. It tries every generative-capable vendor in auto-selection order:
+// the legacy preference first, then the remaining registry vendors by Order.
 // Returns nil, nil when no project context is present.
 // This method satisfies the adk.CredentialResolver interface.
 func (s *CredentialService) ResolveAny(ctx context.Context) (*ResolvedCredential, error) {
-	providerOrder := []ProviderType{ProviderDeepSeek, ProviderOpenAI, ProviderVertexAI, ProviderGoogleAI}
+	providerOrder := generativeProviderOrder()
 
 	projectID := auth.ProjectIDFromContext(ctx)
 	if projectID == "" {
@@ -248,17 +282,18 @@ func (s *CredentialService) ResolveAny(ctx context.Context) (*ResolvedCredential
 }
 
 // DefaultGenerativeModel returns a prefixed "provider/model" name for the
-// given project's first provider credential (DeepSeek → OpenAI → VertexAI →
-// GoogleAI) that carries a generative model, or "" when none does. The project
-// is passed explicitly (not read from the request context) so callers can
-// resolve for a project that may differ from the session's active one.
+// given project's first credential in generative auto-selection order (the
+// legacy preference first, then remaining registry vendors by Order) that
+// carries a generative model, or "" when none does. The project is passed
+// explicitly (not read from the request context) so callers can resolve for a
+// project that may differ from the session's active one.
 //
 // This is the canonical home of the executor's provider-config fallback
 // (pkg/adk CreateModel): name building is identical (prefix the bare model
 // with its routing provider), so the model reported via
 // modelconfig.ResolveGenerativeModel matches what a run would use.
 func (s *CredentialService) DefaultGenerativeModel(ctx context.Context, projectID string) (string, error) {
-	providerOrder := []ProviderType{ProviderDeepSeek, ProviderOpenAI, ProviderVertexAI, ProviderGoogleAI}
+	providerOrder := generativeProviderOrder()
 	if projectID == "" {
 		return "", nil
 	}
@@ -304,22 +339,100 @@ func prefixedEmbeddingModelName(slug ProviderSlug, emb string) string {
 	return string(slug) + "/" + modelref.StripRoutingPrefix(emb, isDialectName)
 }
 
-// embeddingProviderOrder lists providers in preference order for embedding
-// resolution. Google AI and Vertex AI come first (native embedding support),
-// then OpenAI (embedding via the OpenAI API). DeepSeek is last — it has no
-// embedding API, so its configs never carry an EmbeddingModel.
-var embeddingProviderOrder = []ProviderType{
+// legacyGenerativePreference pins the historical generative auto-selection
+// preference for the four legacy vendors so their behaviour is unchanged; any
+// other generative-capable registry vendor is appended, ordered by the
+// definition's Order field.
+var legacyGenerativePreference = []ProviderType{
+	ProviderDeepSeek,
+	ProviderOpenAI,
+	ProviderVertexAI,
+	ProviderGoogleAI,
+}
+
+// legacyEmbeddingPreference pins the historical embedding auto-selection
+// preference for the four legacy vendors. Google AI and Vertex AI come first
+// (native embedding support), then OpenAI (embedding via the OpenAI API).
+// DeepSeek is last — it has no embedding API, so its configs never carry an
+// EmbeddingModel. Other registry vendors that serve embeddings follow, ordered
+// by Order.
+var legacyEmbeddingPreference = []ProviderType{
 	ProviderGoogleAI,
 	ProviderVertexAI,
 	ProviderOpenAI,
 	ProviderDeepSeek,
 }
 
+// generativeProviderOrder returns provider IDs in generative auto-selection
+// preference order: the legacy preference first (compatibility), then every
+// other registry vendor that serves generative models, ordered by Order.
+func generativeProviderOrder() []ProviderType {
+	return providerOrderForModelType(ModelTypeGenerative, legacyGenerativePreference)
+}
+
+// embeddingProviderOrder returns provider IDs in embedding auto-selection
+// preference order: the legacy preference first, then every other registry
+// vendor that serves embeddings, ordered by Order. A vendor with only
+// generative model types is omitted.
+func embeddingProviderOrder() []ProviderType {
+	return providerOrderForModelType(ModelTypeEmbedding, legacyEmbeddingPreference)
+}
+
+// providerOrderForModelType builds an auto-selection order: the pinned legacy
+// preference first, then the remaining registry vendors that serve mt, sorted
+// by definition Order (ties broken by vendor ID for determinism). The registry
+// is the source of truth for which new vendors are selectable, so a project
+// configured solely with a registry vendor still resolves.
+func providerOrderForModelType(mt ModelType, legacy []ProviderType) []ProviderType {
+	seen := make(map[ProviderType]bool, len(legacy))
+	defs := Builtins()
+	order := make([]ProviderType, 0, len(defs))
+	for _, p := range legacy {
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		order = append(order, p)
+	}
+
+	rest := make([]*ProviderDefinition, 0, len(defs))
+	for _, d := range defs {
+		if seen[d.Type] || !definitionServesModelType(d, mt) {
+			continue
+		}
+		rest = append(rest, d)
+	}
+	sort.SliceStable(rest, func(i, j int) bool {
+		if rest[i].Order != rest[j].Order {
+			return rest[i].Order < rest[j].Order
+		}
+		return rest[i].Type < rest[j].Type
+	})
+	for _, d := range rest {
+		order = append(order, d.Type)
+	}
+	return order
+}
+
+// definitionServesModelType reports whether a definition serves the given model
+// type.
+func definitionServesModelType(def *ProviderDefinition, mt ModelType) bool {
+	if def == nil {
+		return false
+	}
+	for _, t := range def.ModelTypes {
+		if t == mt {
+			return true
+		}
+	}
+	return false
+}
+
 // pickEmbeddingConfig selects the first project provider config (from cfgs,
 // keyed by provider) that carries a non-empty embedding model, in
 // embeddingProviderOrder. Returns nil when no provider has an embedding model.
 func pickEmbeddingConfig(cfgs map[ProviderType]*ProjectProviderConfig) *ProjectProviderConfig {
-	for _, p := range embeddingProviderOrder {
+	for _, p := range embeddingProviderOrder() {
 		if cfg := cfgs[p]; cfg != nil && cfg.EmbeddingModel != "" {
 			return cfg
 		}
@@ -340,8 +453,8 @@ func (s *CredentialService) ResolveAnyEmbedding(ctx context.Context) (*ResolvedC
 		return nil, nil // no project context — env-var callers handle this
 	}
 
-	cfgs := make(map[ProviderType]*ProjectProviderConfig, len(embeddingProviderOrder))
-	for _, p := range embeddingProviderOrder {
+	cfgs := make(map[ProviderType]*ProjectProviderConfig, len(embeddingProviderOrder()))
+	for _, p := range embeddingProviderOrder() {
 		cfg, err := s.repo.GetProjectProviderConfig(ctx, projectID, p)
 		if err != nil {
 			s.log.Debug("embedding credential lookup failed, trying next",
@@ -377,7 +490,7 @@ func (s *CredentialService) DefaultEmbeddingModel(ctx context.Context, projectID
 	if projectID == "" {
 		return "", nil
 	}
-	for _, p := range embeddingProviderOrder {
+	for _, p := range embeddingProviderOrder() {
 		cfg, err := s.repo.GetProjectProviderConfig(ctx, projectID, p)
 		if err != nil || cfg == nil {
 			continue
@@ -672,14 +785,24 @@ const maxProviderSlugLen = 63
 
 var providerSlugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
-// isDialectName reports whether s names a supported provider dialect.
+// isDialectName reports whether s names a supported provider dialect (or an
+// accepted alias). The set is built once from the embedded vendor registry.
 func isDialectName(s string) bool {
-	switch ProviderDialect(s) {
-	case ProviderGoogleAI, ProviderVertexAI, ProviderOpenAI, ProviderDeepSeek:
-		return true
-	default:
-		return false
+	return dialectNames[s]
+}
+
+// dialectNames is the set of recognized provider dialect IDs plus accepted
+// aliases, built from Builtins() at package init.
+var dialectNames = buildDialectNames()
+
+func buildDialectNames() map[string]bool {
+	names := make(map[string]bool, len(Builtins())+1)
+	for _, d := range Builtins() {
+		names[string(d.Type)] = true
 	}
+	// "gemini" is an accepted alias for the "google" dialect.
+	names["gemini"] = true
+	return names
 }
 
 // validateProviderSlug validates a user-supplied instance slug. A slug must not
@@ -722,14 +845,19 @@ func resolveSlug(requested string, dialect ProviderDialect) (ProviderSlug, error
 // needsStoredCredential reports whether the request is missing credential
 // fields that must be filled from the previously stored config.
 func (s *CredentialService) needsStoredCredential(provider ProviderType, req UpsertProviderConfigRequest) bool {
-	switch provider {
-	case ProviderGoogleAI, ProviderOpenAI, ProviderDeepSeek:
-		return req.APIKey == ""
-	case ProviderVertexAI:
+	def := definitionFor(provider)
+	if definitionUsesServiceAccount(def) {
 		return req.ServiceAccountJSON == "" || req.GCPProject == "" || req.Location == ""
-	default:
+	}
+	if def == nil {
 		return false
 	}
+	if def.Auth == AuthNone {
+		return false
+	}
+	// bearer, api-key, x-api-key, x-goog-api-key, and signed (non-vertex)
+	// vendors all use a single API-key credential.
+	return req.APIKey == ""
 }
 
 // reuseStoredCredential fills credential fields omitted by the caller from the
@@ -744,11 +872,11 @@ func (s *CredentialService) reuseStoredCredential(provider ProviderType, existin
 	}
 
 	needsPlaintext := false
-	switch provider {
-	case ProviderGoogleAI, ProviderOpenAI, ProviderDeepSeek:
-		needsPlaintext = req.APIKey == ""
-	case ProviderVertexAI:
+	isVertex := definitionUsesServiceAccount(definitionFor(provider))
+	if isVertex {
 		needsPlaintext = req.ServiceAccountJSON == ""
+	} else if def := definitionFor(provider); def != nil && def.Auth != AuthNone {
+		needsPlaintext = req.APIKey == ""
 	}
 
 	if needsPlaintext {
@@ -756,16 +884,15 @@ func (s *CredentialService) reuseStoredCredential(provider ProviderType, existin
 		if err != nil {
 			return fmt.Errorf("failed to decrypt existing credential: %w", err)
 		}
-		switch provider {
-		case ProviderGoogleAI, ProviderOpenAI, ProviderDeepSeek:
-			req.APIKey = string(plaintext)
-		case ProviderVertexAI:
+		if isVertex {
 			req.ServiceAccountJSON = string(plaintext)
+		} else {
+			req.APIKey = string(plaintext)
 		}
 	}
 
 	// Vertex GCPProject/Location are stored as plaintext columns — reuse when omitted.
-	if provider == ProviderVertexAI {
+	if isVertex {
 		if req.GCPProject == "" {
 			req.GCPProject = existing.GCPProject
 		}
@@ -794,66 +921,54 @@ func (s *CredentialService) reuseStoredModels(existing *ProjectProviderConfig, r
 
 // extractPlaintext returns the credential bytes to encrypt from the request.
 func (s *CredentialService) extractPlaintext(provider ProviderType, req UpsertProviderConfigRequest) ([]byte, error) {
-	switch provider {
-	case ProviderGoogleAI:
-		if req.APIKey == "" {
-			return nil, apperror.NewBadRequest("apiKey is required for google")
-		}
-		return []byte(req.APIKey), nil
-	case ProviderVertexAI:
+	def := definitionFor(provider)
+	if definitionUsesServiceAccount(def) {
 		if req.ServiceAccountJSON == "" {
-			return nil, apperror.NewBadRequest("serviceAccountJson is required for google-vertex")
+			return nil, apperror.NewBadRequest(fmt.Sprintf("serviceAccountJson is required for %s", provider))
 		}
 		if req.GCPProject == "" {
-			return nil, apperror.NewBadRequest("gcpProject is required for google-vertex")
+			return nil, apperror.NewBadRequest(fmt.Sprintf("gcpProject is required for %s", provider))
 		}
 		if req.Location == "" {
-			return nil, apperror.NewBadRequest("location is required for google-vertex")
+			return nil, apperror.NewBadRequest(fmt.Sprintf("location is required for %s", provider))
 		}
 		return []byte(req.ServiceAccountJSON), nil
-	case ProviderOpenAI:
-		if req.APIKey == "" {
-			return nil, apperror.NewBadRequest("apiKey is required for openai")
-		}
-		// BaseURL is optional; defaults to https://api.openai.com/v1
-		return []byte(req.APIKey), nil
-	case ProviderDeepSeek:
-		if req.APIKey == "" {
-			return nil, apperror.NewBadRequest("apiKey is required for deepseek")
-		}
-		return []byte(req.APIKey), nil
-	default:
+	}
+
+	if def == nil {
 		return nil, apperror.NewBadRequest(fmt.Sprintf("unsupported provider: %s", provider))
 	}
+	if def.Auth == AuthNone {
+		return nil, nil // no credential required
+	}
+	if req.APIKey == "" {
+		return nil, apperror.NewBadRequest(fmt.Sprintf("apiKey is required for %s", provider))
+	}
+	return []byte(req.APIKey), nil
 }
 
 // buildTempResolvedCred constructs a plaintext ResolvedCredential for testing/syncing.
 func (s *CredentialService) buildTempResolvedCred(provider ProviderType, req UpsertProviderConfigRequest) *ResolvedCredential {
 	cred := &ResolvedCredential{
 		Provider:        provider,
+		BaseURL:         req.BaseURL,
 		GCPProject:      req.GCPProject,
 		Location:        req.Location,
 		GenerativeModel: modelref.StripRoutingPrefix(req.GenerativeModel, isDialectName),
 		EmbeddingModel:  modelref.StripRoutingPrefix(req.EmbeddingModel, isDialectName),
 	}
-	switch provider {
-	case ProviderGoogleAI:
-		cred.APIKey = req.APIKey
-	case ProviderVertexAI:
+
+	// Mirror decryptProjectConfig: route the configured credential to the field
+	// the vendor's definition expects, derived from the definition (not a
+	// per-vendor switch) so new vendors' credentials survive the configure,
+	// catalog-sync, and test-connection paths.
+	if definitionUsesServiceAccount(definitionFor(provider)) {
 		cred.ServiceAccountJSON = req.ServiceAccountJSON
-	case ProviderOpenAI:
-		cred.BaseURL = req.BaseURL
-		if cred.BaseURL == "" {
-			cred.BaseURL = "https://api.openai.com/v1"
-		}
-		cred.APIKey = req.APIKey
-	case ProviderDeepSeek:
-		cred.BaseURL = req.BaseURL
-		if cred.BaseURL == "" {
-			cred.BaseURL = "https://api.deepseek.com/v1"
-		}
+	} else {
 		cred.APIKey = req.APIKey
 	}
+
+	s.applyDefinition(cred)
 	return cred
 }
 

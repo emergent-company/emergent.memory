@@ -1962,6 +1962,10 @@ routes:
       level: auth
       note: RequireAuth
     - method: GET
+      path: /api/v1/provider-definitions
+      level: auth
+      note: RequireAuth
+    - method: GET
       path: /api/v1/providers/:provider/models
       level: auth
       note: RequireAuth
