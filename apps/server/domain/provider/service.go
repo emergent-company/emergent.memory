@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -248,11 +249,12 @@ func (s *CredentialService) ResolveByRef(ctx context.Context, ref modelref.Ref) 
 }
 
 // ResolveAny attempts to resolve the best available credential for the request
-// context. Tries project-level configs in order: DeepSeek → OpenAI → VertexAI → GoogleAI.
+// context. It tries every generative-capable vendor in auto-selection order:
+// the legacy preference first, then the remaining registry vendors by Order.
 // Returns nil, nil when no project context is present.
 // This method satisfies the adk.CredentialResolver interface.
 func (s *CredentialService) ResolveAny(ctx context.Context) (*ResolvedCredential, error) {
-	providerOrder := []ProviderType{ProviderDeepSeek, ProviderOpenAI, ProviderVertexAI, ProviderGoogleAI}
+	providerOrder := generativeProviderOrder()
 
 	projectID := auth.ProjectIDFromContext(ctx)
 	if projectID == "" {
@@ -280,17 +282,18 @@ func (s *CredentialService) ResolveAny(ctx context.Context) (*ResolvedCredential
 }
 
 // DefaultGenerativeModel returns a prefixed "provider/model" name for the
-// given project's first provider credential (DeepSeek → OpenAI → VertexAI →
-// GoogleAI) that carries a generative model, or "" when none does. The project
-// is passed explicitly (not read from the request context) so callers can
-// resolve for a project that may differ from the session's active one.
+// given project's first credential in generative auto-selection order (the
+// legacy preference first, then remaining registry vendors by Order) that
+// carries a generative model, or "" when none does. The project is passed
+// explicitly (not read from the request context) so callers can resolve for a
+// project that may differ from the session's active one.
 //
 // This is the canonical home of the executor's provider-config fallback
 // (pkg/adk CreateModel): name building is identical (prefix the bare model
 // with its routing provider), so the model reported via
 // modelconfig.ResolveGenerativeModel matches what a run would use.
 func (s *CredentialService) DefaultGenerativeModel(ctx context.Context, projectID string) (string, error) {
-	providerOrder := []ProviderType{ProviderDeepSeek, ProviderOpenAI, ProviderVertexAI, ProviderGoogleAI}
+	providerOrder := generativeProviderOrder()
 	if projectID == "" {
 		return "", nil
 	}
@@ -336,22 +339,100 @@ func prefixedEmbeddingModelName(slug ProviderSlug, emb string) string {
 	return string(slug) + "/" + modelref.StripRoutingPrefix(emb, isDialectName)
 }
 
-// embeddingProviderOrder lists providers in preference order for embedding
-// resolution. Google AI and Vertex AI come first (native embedding support),
-// then OpenAI (embedding via the OpenAI API). DeepSeek is last — it has no
-// embedding API, so its configs never carry an EmbeddingModel.
-var embeddingProviderOrder = []ProviderType{
+// legacyGenerativePreference pins the historical generative auto-selection
+// preference for the four legacy vendors so their behaviour is unchanged; any
+// other generative-capable registry vendor is appended, ordered by the
+// definition's Order field.
+var legacyGenerativePreference = []ProviderType{
+	ProviderDeepSeek,
+	ProviderOpenAI,
+	ProviderVertexAI,
+	ProviderGoogleAI,
+}
+
+// legacyEmbeddingPreference pins the historical embedding auto-selection
+// preference for the four legacy vendors. Google AI and Vertex AI come first
+// (native embedding support), then OpenAI (embedding via the OpenAI API).
+// DeepSeek is last — it has no embedding API, so its configs never carry an
+// EmbeddingModel. Other registry vendors that serve embeddings follow, ordered
+// by Order.
+var legacyEmbeddingPreference = []ProviderType{
 	ProviderGoogleAI,
 	ProviderVertexAI,
 	ProviderOpenAI,
 	ProviderDeepSeek,
 }
 
+// generativeProviderOrder returns provider IDs in generative auto-selection
+// preference order: the legacy preference first (compatibility), then every
+// other registry vendor that serves generative models, ordered by Order.
+func generativeProviderOrder() []ProviderType {
+	return providerOrderForModelType(ModelTypeGenerative, legacyGenerativePreference)
+}
+
+// embeddingProviderOrder returns provider IDs in embedding auto-selection
+// preference order: the legacy preference first, then every other registry
+// vendor that serves embeddings, ordered by Order. A vendor with only
+// generative model types is omitted.
+func embeddingProviderOrder() []ProviderType {
+	return providerOrderForModelType(ModelTypeEmbedding, legacyEmbeddingPreference)
+}
+
+// providerOrderForModelType builds an auto-selection order: the pinned legacy
+// preference first, then the remaining registry vendors that serve mt, sorted
+// by definition Order (ties broken by vendor ID for determinism). The registry
+// is the source of truth for which new vendors are selectable, so a project
+// configured solely with a registry vendor still resolves.
+func providerOrderForModelType(mt ModelType, legacy []ProviderType) []ProviderType {
+	seen := make(map[ProviderType]bool, len(legacy))
+	defs := Builtins()
+	order := make([]ProviderType, 0, len(defs))
+	for _, p := range legacy {
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		order = append(order, p)
+	}
+
+	rest := make([]*ProviderDefinition, 0, len(defs))
+	for _, d := range defs {
+		if seen[d.Type] || !definitionServesModelType(d, mt) {
+			continue
+		}
+		rest = append(rest, d)
+	}
+	sort.SliceStable(rest, func(i, j int) bool {
+		if rest[i].Order != rest[j].Order {
+			return rest[i].Order < rest[j].Order
+		}
+		return rest[i].Type < rest[j].Type
+	})
+	for _, d := range rest {
+		order = append(order, d.Type)
+	}
+	return order
+}
+
+// definitionServesModelType reports whether a definition serves the given model
+// type.
+func definitionServesModelType(def *ProviderDefinition, mt ModelType) bool {
+	if def == nil {
+		return false
+	}
+	for _, t := range def.ModelTypes {
+		if t == mt {
+			return true
+		}
+	}
+	return false
+}
+
 // pickEmbeddingConfig selects the first project provider config (from cfgs,
 // keyed by provider) that carries a non-empty embedding model, in
 // embeddingProviderOrder. Returns nil when no provider has an embedding model.
 func pickEmbeddingConfig(cfgs map[ProviderType]*ProjectProviderConfig) *ProjectProviderConfig {
-	for _, p := range embeddingProviderOrder {
+	for _, p := range embeddingProviderOrder() {
 		if cfg := cfgs[p]; cfg != nil && cfg.EmbeddingModel != "" {
 			return cfg
 		}
@@ -372,8 +453,8 @@ func (s *CredentialService) ResolveAnyEmbedding(ctx context.Context) (*ResolvedC
 		return nil, nil // no project context — env-var callers handle this
 	}
 
-	cfgs := make(map[ProviderType]*ProjectProviderConfig, len(embeddingProviderOrder))
-	for _, p := range embeddingProviderOrder {
+	cfgs := make(map[ProviderType]*ProjectProviderConfig, len(embeddingProviderOrder()))
+	for _, p := range embeddingProviderOrder() {
 		cfg, err := s.repo.GetProjectProviderConfig(ctx, projectID, p)
 		if err != nil {
 			s.log.Debug("embedding credential lookup failed, trying next",
@@ -409,7 +490,7 @@ func (s *CredentialService) DefaultEmbeddingModel(ctx context.Context, projectID
 	if projectID == "" {
 		return "", nil
 	}
-	for _, p := range embeddingProviderOrder {
+	for _, p := range embeddingProviderOrder() {
 		cfg, err := s.repo.GetProjectProviderConfig(ctx, projectID, p)
 		if err != nil || cfg == nil {
 			continue
