@@ -57,6 +57,36 @@ func (s *ChatLifecycleSuite) seedOwnedConversation(ownerID string) string {
 	return convID.String()
 }
 
+// seedSharedConversation inserts a project-shared (is_private=false)
+// conversation owned by ownerID. Under the owner-or-shared predicate any member
+// of the same project may read and mutate it, even when they are not the owner.
+func (s *ChatLifecycleSuite) seedSharedConversation(ownerID string) string {
+	convID := uuid.New()
+	_, err := s.DB().NewRaw(`
+		INSERT INTO kb.chat_conversations (id, title, project_id, is_private, owner_user_id, created_at, updated_at)
+		VALUES (?, ?, ?, false, ?, NOW(), NOW())
+	`, convID, "member-shared", s.ProjectID, ownerID).Exec(s.Ctx)
+	s.Require().NoError(err)
+	return convID.String()
+}
+
+// conversationArchived reads the persisted archive state for a conversation id.
+func (s *ChatLifecycleSuite) conversationArchived(id string) bool {
+	var archived bool
+	err := s.DB().NewRaw(`SELECT is_archived FROM kb.chat_conversations WHERE id = ?::uuid`, id).Scan(s.Ctx, &archived)
+	s.Require().NoError(err)
+	return archived
+}
+
+// conversationExists reports whether a conversation row is still present, used
+// to prove a blocked delete was a no-op rather than merely absent from a read.
+func (s *ChatLifecycleSuite) conversationExists(id string) bool {
+	var count int
+	err := s.DB().NewRaw(`SELECT count(*) FROM kb.chat_conversations WHERE id = ?::uuid`, id).Scan(s.Ctx, &count)
+	s.Require().NoError(err)
+	return count > 0
+}
+
 // TestArchiveUnarchiveHandler covers task 3.2: owner archives/unarchives (200),
 // the archive state round-trips through the read path, and a foreign member
 // archiving another user's private conversation receives 404.
@@ -171,4 +201,68 @@ func (s *ChatLifecycleSuite) TestNonAdminReachesLifecycleRoutes() {
 	s.Require().Equal(http.StatusNotFound, resp.StatusCode,
 		"delete of a foreign private conversation must be 404, got %d: %s",
 		resp.StatusCode, resp.String())
+}
+
+// TestNonOwnerMemberSharedConversationLifecycle covers the spec's
+// "Member with access can delete" scenario end to end: a non-owner project
+// member acting on a project-shared (is_private=false) conversation owned by
+// another user may archive, unarchive, and permanently delete it under the
+// owner-or-shared predicate. The private counterpart proves the predicate is
+// still enforced: the same non-owner gets 404 and, crucially, the blocked
+// operations leave the row untouched (is_archived stays false).
+func (s *ChatLifecycleSuite) TestNonOwnerMemberSharedConversationLifecycle() {
+	// testutil.AdminUser is a member of s.OrgID/s.ProjectID but is NOT the
+	// owner of the conversation seeded below — the non-owner project member.
+	token := "e2e-test-user"
+	shared := s.seedSharedConversation(s.userBID)
+
+	// Archive a shared conversation the caller does not own → 200.
+	resp := s.Client.POST("/api/chat/"+shared+"/archive",
+		testutil.WithAuth(token), testutil.WithProjectID(s.ProjectID))
+	s.Require().Equal(http.StatusOK, resp.StatusCode,
+		"non-owner member must be able to archive a shared conversation, got %d: %s",
+		resp.StatusCode, resp.String())
+	s.Require().True(s.conversationArchived(shared), "shared conversation must persist archive state")
+
+	got := s.Client.GET("/api/chat/"+shared,
+		testutil.WithAuth(token), testutil.WithProjectID(s.ProjectID))
+	s.Require().Equal(http.StatusOK, got.StatusCode)
+	s.Require().Contains(got.String(), `"isArchived":true`)
+
+	// Unarchive the shared conversation the caller does not own → 200.
+	resp = s.Client.POST("/api/chat/"+shared+"/unarchive",
+		testutil.WithAuth(token), testutil.WithProjectID(s.ProjectID))
+	s.Require().Equal(http.StatusOK, resp.StatusCode,
+		"non-owner member must be able to unarchive a shared conversation, got %d: %s",
+		resp.StatusCode, resp.String())
+	s.Require().False(s.conversationArchived(shared), "unarchive must clear the archive state")
+
+	// Delete the shared conversation the caller does not own → 200, gone.
+	resp = s.Client.DELETE("/api/chat/"+shared,
+		testutil.WithAuth(token), testutil.WithProjectID(s.ProjectID))
+	s.Require().Equal(http.StatusOK, resp.StatusCode,
+		"non-owner member must be able to delete a shared conversation, got %d: %s",
+		resp.StatusCode, resp.String())
+	got = s.Client.GET("/api/chat/"+shared,
+		testutil.WithAuth(token), testutil.WithProjectID(s.ProjectID))
+	s.Require().Equal(http.StatusNotFound, got.StatusCode,
+		"deleted shared conversation must be gone, got %d: %s", got.StatusCode, got.String())
+
+	// Private conversation owned by the other user: a non-owner member must
+	// fail closed with 404, and the blocked ops must not mutate the row.
+	private := s.seedOwnedConversation(s.userBID)
+	resp = s.Client.POST("/api/chat/"+private+"/archive",
+		testutil.WithAuth(token), testutil.WithProjectID(s.ProjectID))
+	s.Require().Equal(http.StatusNotFound, resp.StatusCode,
+		"non-owner member archiving a foreign private conversation must be 404, got %d: %s",
+		resp.StatusCode, resp.String())
+	resp = s.Client.DELETE("/api/chat/"+private,
+		testutil.WithAuth(token), testutil.WithProjectID(s.ProjectID))
+	s.Require().Equal(http.StatusNotFound, resp.StatusCode,
+		"non-owner member deleting a foreign private conversation must be 404, got %d: %s",
+		resp.StatusCode, resp.String())
+	s.Require().False(s.conversationArchived(private),
+		"a blocked archive must leave the foreign private conversation unarchived")
+	s.Require().True(s.conversationExists(private),
+		"a blocked delete must leave the foreign private conversation in place")
 }
