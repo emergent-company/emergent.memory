@@ -2,7 +2,7 @@
 
 ### Requirement: Kanban projection
 
-The board SHALL be a read projection over board-enabled object types joined to their runs, with no separate work-item store. A board card SHALL be draggable to the lanes for which the work path defines a transition from its current status, and activating a card SHALL open the shared read-only object preview rather than a board-specific summary.
+The board SHALL be a read projection over board-enabled object types joined to their runs, with no separate work-item store. A board card SHALL be draggable only for the board's supported transitions — `blocked → ready` (execute), `review → done` (approve), `review → revision` (open the request-changes form), and any non-`done → blocked` (cancel); any other pair is rejected in the UI. The board does not derive draggable lanes from a type's declared work statuses, so a card whose status has no mapped action is not draggable. Activating a card SHALL open the shared read-only object preview rather than a board-specific summary.
 
 #### Scenario: Columns from work status
 
@@ -31,7 +31,7 @@ The board SHALL be a read projection over board-enabled object types joined to t
 
 #### Scenario: Unsupported move is rejected in the UI
 
-- **WHEN** a card is dragged to a lane for which its current status has no work-path transition
+- **WHEN** a card is dragged to a lane that is not one of the supported transitions for its current status
 - **THEN** no request is issued and the drop is rejected
 
 #### Scenario: Revision drag requests feedback
