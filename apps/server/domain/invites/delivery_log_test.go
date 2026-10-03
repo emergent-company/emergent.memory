@@ -32,13 +32,23 @@ func TestListByProjectDeliveryLog(t *testing.T) {
 	jobNew := uuid.NewString()
 	old := time.Now().Add(-48 * time.Hour).UTC().Truncate(time.Second)
 	newer := time.Now().Add(-1 * time.Hour).UTC().Truncate(time.Second)
+	oldProcessed := old.Add(5 * time.Second)
+	newProcessed := newer.Add(5 * time.Second)
 
-	mustExecResend(t, db, `INSERT INTO kb.email_jobs (id, template_name, to_email, subject, status, source_type, source_id, delivery_status, delivery_status_at, created_at)
-		VALUES (?, 'project-invitation', 'a@example.com', 'Invitation', 'sent', 'invite', ?, 'delivered', ?, ?)`,
-		jobOld, inviteA, old, old)
-	mustExecResend(t, db, `INSERT INTO kb.email_jobs (id, template_name, to_email, subject, status, source_type, source_id, delivery_status, delivery_status_at, created_at)
-		VALUES (?, 'project-invitation', 'a@example.com', 'Invitation', 'sent', 'invite', ?, 'bounced', ?, ?)`,
-		jobNew, inviteA, newer, newer)
+	// Two sends. processed_at is when the send actually completed, distinct
+	// from the enqueue time (created_at), so the log can report the real
+	// send time rather than the queue time.
+	mustExecResend(t, db, `INSERT INTO kb.email_jobs (id, template_name, to_email, subject, status, source_type, source_id, delivery_status, delivery_status_at, processed_at, created_at)
+		VALUES (?, 'project-invitation', 'a@example.com', 'Invitation', 'sent', 'invite', ?, 'delivered', ?, ?, ?)`,
+		jobOld, inviteA, old, oldProcessed, old)
+	mustExecResend(t, db, `INSERT INTO kb.email_jobs (id, template_name, to_email, subject, status, source_type, source_id, delivery_status, delivery_status_at, processed_at, created_at)
+		VALUES (?, 'project-invitation', 'a@example.com', 'Invitation', 'sent', 'invite', ?, 'bounced', ?, ?, ?)`,
+		jobNew, inviteA, newer, newProcessed, newer)
+	// The oldest send's two events are inserted in reverse chronological order
+	// (later event first) to prove the returned order comes from created_at,
+	// not insertion order or id.
+	mustExecResend(t, db, `INSERT INTO kb.email_logs (email_job_id, event_type, details, created_at)
+		VALUES (?, 'opened', '{}'::jsonb, ?)`, jobOld, old.Add(2*time.Minute))
 	mustExecResend(t, db, `INSERT INTO kb.email_logs (email_job_id, event_type, details, created_at)
 		VALUES (?, 'delivered', '{}'::jsonb, ?)`, jobOld, old)
 	mustExecResend(t, db, `INSERT INTO kb.email_logs (email_job_id, event_type, details, created_at)
@@ -89,10 +99,18 @@ func TestListByProjectDeliveryLog(t *testing.T) {
 	if got := newest.Events[0].Detail; got != "mailbox full" {
 		t.Errorf("bounce detail = %q, want %q", got, "mailbox full")
 	}
-	// The oldest send carries its delivered event.
+	// The send's real completion time is surfaced, not just its enqueue time.
+	if newest.ProcessedAt == nil || !newest.ProcessedAt.Equal(newProcessed) {
+		t.Errorf("newest send ProcessedAt = %v, want %v", newest.ProcessedAt, newProcessed)
+	}
+	// The oldest send carries its two events oldest-first, even though the
+	// later event was inserted first.
 	oldest := a.DeliveryLog[1]
-	if len(oldest.Events) != 1 || oldest.Events[0].Type != "delivered" {
-		t.Errorf("oldest send events = %+v, want one delivered event", oldest.Events)
+	if len(oldest.Events) != 2 {
+		t.Fatalf("oldest send events = %+v, want two events", oldest.Events)
+	}
+	if oldest.Events[0].Type != "delivered" || oldest.Events[1].Type != "opened" {
+		t.Errorf("oldest send events = %+v, want delivered then opened (oldest first)", oldest.Events)
 	}
 
 	// B: no sends → an empty, non-nil log (stable JSON [] rather than null).

@@ -129,6 +129,15 @@ func TestEmbeddingJobPurgeTask_Run(t *testing.T) {
 	// email_jobs has no updated_at column — must never reference it.
 	emailQ := state.queries[5]
 	assert.NotContains(t, emailQ, "updated_at")
+	// Invite-scoped email jobs are the durable per-invitation delivery log
+	// (#1390): their kb.email_logs events cascade on delete, so the purge must
+	// exclude them while still purging every other source type.
+	assert.Contains(t, emailQ, "source_type IS DISTINCT FROM 'invite'",
+		"email purge must exclude invite sends")
+	for i, q := range state.queries[:5] {
+		assert.NotContains(t, q, "source_type",
+			"only kb.email_jobs carries the invite exclusion (table %d)", i)
+	}
 }
 
 func TestEmbeddingJobPurgeTask_Run_ErrorDoesNotStopOthers(t *testing.T) {

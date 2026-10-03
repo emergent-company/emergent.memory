@@ -61,8 +61,12 @@ type SentInvite struct {
 // delivery events (delivered, opened, bounced, complained, failed, …) recorded
 // against it.
 type InviteDeliveryEvent struct {
-	JobID            string     `json:"jobId"`
+	JobID string `json:"jobId"`
+	// CreatedAt is when the send was enqueued. ProcessedAt, when set, is when
+	// the job finished processing (Mailgun accepted the send, or the job gave
+	// up) and is the truthful "sent at" for a completed send.
 	CreatedAt        time.Time  `json:"createdAt"`
+	ProcessedAt      *time.Time `json:"processedAt,omitempty"`
 	Status           string     `json:"status"`
 	DeliveryStatus   *string    `json:"deliveryStatus,omitempty"`
 	DeliveryStatusAt *time.Time `json:"deliveryStatusAt,omitempty"`

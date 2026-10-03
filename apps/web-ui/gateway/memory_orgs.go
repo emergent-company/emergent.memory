@@ -333,8 +333,11 @@ type SentInviteDto struct {
 // invite-scoped email job with its current processing/delivery state and the
 // Mailgun delivery events recorded against it.
 type InviteDeliveryEventDto struct {
-	JobID            string                      `json:"jobId"`
+	JobID string `json:"jobId"`
+	// CreatedAt is the enqueue time (RFC3339); ProcessedAt, when set, is when
+	// the send actually finished (Mailgun accepted it, or the job gave up).
 	CreatedAt        string                      `json:"createdAt"`
+	ProcessedAt      string                      `json:"processedAt,omitempty"`
 	Status           string                      `json:"status"`
 	DeliveryStatus   *string                     `json:"deliveryStatus,omitempty"`
 	DeliveryStatusAt string                      `json:"deliveryStatusAt,omitempty"`

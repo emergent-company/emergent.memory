@@ -44,5 +44,8 @@ of the invitations, shown on hover of the sent-invitation row.
 - `apps/web-ui/gateway/memory_orgs.go` — delivery-log DTOs on `SentInviteDto`.
 - `apps/web-ui/gateway/org_members_ui.templ` / `org_members_ui.go` — popover log
   in `memberInviteRow` plus presentation helpers.
+- `apps/server/domain/scheduler/embedding_job_purge_task.go` — exempt
+  invite-scoped `kb.email_jobs` from the generic terminal-job retention purge so
+  the delivery log does not silently empty once sends age past the window.
 - No database migration: `kb.email_jobs` / `kb.email_logs` and their indexes
   already exist.

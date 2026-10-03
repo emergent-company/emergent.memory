@@ -347,6 +347,7 @@ templ memberInviteRow(inv SentInviteDto, base string, canRevoke bool) {
 					Class:       "flex w-full cursor-help items-center gap-3 rounded-field text-left outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
 					Attrs: templ.Attributes{
 						"aria-label":    "Invitation email log for " + inv.Email,
+						"aria-expanded": "false",
 						"aria-controls": "invite-delivery-log-" + inv.ID,
 					},
 				}) {
@@ -445,7 +446,7 @@ templ inviteDeliveryLog(inv SentInviteDto) {
 					<li class="border-base-content/10 border-t pt-2 first:border-t-0 first:pt-0">
 						<div class="flex items-center justify-between gap-2">
 							<span class="text-xs font-medium">{ inviteDeliveryStatusLabel(&send) }</span>
-							<span class="text-muted-faint text-xs whitespace-nowrap">{ notificationWhen(send.CreatedAt) }</span>
+							<span class="text-muted-faint text-xs whitespace-nowrap">{ notificationWhen(inviteDeliverySendTime(&send)) }</span>
 						</div>
 						if len(send.Events) == 0 {
 							<p class="text-muted-faint mt-0.5 text-xs">No delivery events yet.</p>
@@ -453,13 +454,13 @@ templ inviteDeliveryLog(inv SentInviteDto) {
 							<ul class="mt-0.5 flex flex-col gap-0.5">
 								for _, ev := range send.Events {
 									<li class="flex items-start justify-between gap-2">
-										<span class="text-muted text-xs">
+										<span class="text-muted min-w-0 text-xs break-words">
 											{ inviteDeliveryEventLabel(ev.Type) }
 											if ev.Detail != "" {
 												<span class="text-muted-faint"> — { ev.Detail }</span>
 											}
 										</span>
-										<span class="text-muted-faint text-xs whitespace-nowrap">{ notificationWhen(ev.CreatedAt) }</span>
+										<span class="text-muted-faint shrink-0 text-xs whitespace-nowrap">{ notificationWhen(ev.CreatedAt) }</span>
 									</li>
 								}
 							</ul>

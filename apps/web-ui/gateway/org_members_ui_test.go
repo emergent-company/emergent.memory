@@ -297,14 +297,14 @@ func TestRenderMembersInviteDeliveryLog(t *testing.T) {
 	inv.DeliveryStatus = strPtr("bounced")
 	inv.DeliveryLog = []InviteDeliveryEventDto{
 		{
-			JobID: "job-2", CreatedAt: "2026-08-22T10:00:00Z", Status: "sent",
+			JobID: "job-2", CreatedAt: "2026-08-22T09:58:00Z", ProcessedAt: "2026-08-22T10:00:00Z", Status: "sent",
 			DeliveryStatus: strPtr("bounced"),
 			Events: []InviteDeliveryLogEventDto{
 				{Type: "bounced", Detail: "mailbox full", CreatedAt: "2026-08-22T10:01:00Z"},
 			},
 		},
 		{
-			JobID: "job-1", CreatedAt: "2026-08-20T09:00:00Z", Status: "sent",
+			JobID: "job-1", CreatedAt: "2026-08-20T08:55:00Z", ProcessedAt: "2026-08-20T09:00:00Z", Status: "sent",
 			DeliveryStatus: strPtr("delivered"),
 			Events: []InviteDeliveryLogEventDto{
 				{Type: "delivered", CreatedAt: "2026-08-20T09:01:00Z"},
@@ -313,12 +313,19 @@ func TestRenderMembersInviteDeliveryLog(t *testing.T) {
 	}
 	html := renderHTML(t, MembersPage(membersPageData{Pending: []SentInviteDto{inv}}))
 
+	// The log reports when each send actually completed (processedAt), not when
+	// it was enqueued (createdAt).
 	newestTime := notificationWhen("2026-08-22T10:00:00Z")
 	oldestTime := notificationWhen("2026-08-20T09:00:00Z")
+	enqueuedOnly := []string{
+		notificationWhen("2026-08-22T09:58:00Z"),
+		notificationWhen("2026-08-20T08:55:00Z"),
+	}
 	for _, want := range []string{
 		// the popover is a hover trigger whose content is wired to a focusable
 		// button; the log is rendered server-side into that content.
 		`data-gd-popover-type="hover"`,
+		`aria-expanded="false"`,
 		`aria-controls="invite-delivery-log-inv-1"`,
 		`id="invite-delivery-log-inv-1"`,
 		`data-testid="invite-delivery-log-inv-1"`,
@@ -332,6 +339,11 @@ func TestRenderMembersInviteDeliveryLog(t *testing.T) {
 			t.Errorf("invite delivery log missing %q", want)
 		}
 	}
+	for _, ts := range enqueuedOnly {
+		if strings.Contains(html, ts) {
+			t.Errorf("delivery log must show the processed time, not the enqueue time %q", ts)
+		}
+	}
 	// newest send renders before the oldest
 	i, j := strings.Index(html, "mailbox full"), strings.Index(html, "Delivered")
 	if i < 0 || j < 0 || i > j {
@@ -342,6 +354,20 @@ func TestRenderMembersInviteDeliveryLog(t *testing.T) {
 	empty := renderHTML(t, MembersPage(membersPageData{Pending: []SentInviteDto{pendingInviteFixture()}}))
 	if !strings.Contains(empty, "No emails sent yet.") {
 		t.Error("empty delivery log must render the neutral no-sends note")
+	}
+}
+
+// TestInviteDeliverySendTime asserts the log's display time prefers the actual
+// completion time (processedAt) and falls back to the enqueue time (createdAt)
+// for a send that has not finished processing.
+func TestInviteDeliverySendTime(t *testing.T) {
+	withProcessed := &InviteDeliveryEventDto{CreatedAt: "2026-08-20T09:00:00Z", ProcessedAt: "2026-08-20T09:00:05Z"}
+	if got := inviteDeliverySendTime(withProcessed); got != "2026-08-20T09:00:05Z" {
+		t.Errorf("processed send time = %q, want processedAt", got)
+	}
+	pending := &InviteDeliveryEventDto{CreatedAt: "2026-08-20T09:00:00Z"}
+	if got := inviteDeliverySendTime(pending); got != "2026-08-20T09:00:00Z" {
+		t.Errorf("pending send time = %q, want createdAt fallback", got)
 	}
 }
 

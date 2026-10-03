@@ -23,3 +23,10 @@
 - [x] 4.2 `templ generate` + `go build ./...` + `go test ./...` in `apps/web-ui/gateway`
 - [x] 4.3 js-dom gate (`npx playwright test --config=js-dom.config.ts`) and `golangci-lint run ./...`
 - [ ] 4.4 Manual check on the dev server: hovering a sent-invitation row shows its delivery log
+
+## 5. Review hardening
+
+- [x] 5.1 Exempt invite-scoped `kb.email_jobs` (and their cascading `kb.email_logs`) from the terminal email-job retention purge so the delivery log stays durable; assert the purge excludes invite sends while still purging other source types (`apps/server/domain/scheduler/embedding_job_purge_task.go` + test)
+- [x] 5.2 Surface `processedAt` (actual send completion) on each send and render it as the log's sent time, falling back to `createdAt` for an unprocessed send (`entity.go`, `service.go`, SDK, gateway DTO + helper)
+- [x] 5.3 Strengthen the delivery-log test: two events for one send inserted out of order, asserting oldest-first ordering by timestamp
+- [x] 5.4 Wrap long Mailgun reason text and give the send time `shrink-0` so a long reason cannot overflow the popover (`org_members_ui.templ`)

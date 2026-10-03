@@ -61,8 +61,12 @@ type SentInvite struct {
 // InviteDeliveryEvent is one email send in an invitation's delivery log: an
 // invite-scoped email job with its current state and Mailgun delivery events.
 type InviteDeliveryEvent struct {
-	JobID            string                   `json:"jobId"`
+	JobID string `json:"jobId"`
+	// CreatedAt is when the send was enqueued; ProcessedAt, when set, is when
+	// the job finished processing (Mailgun accepted the send, or it gave up) —
+	// the truthful "sent at" for a completed send.
 	CreatedAt        time.Time                `json:"createdAt"`
+	ProcessedAt      *time.Time               `json:"processedAt,omitempty"`
 	Status           string                   `json:"status"`
 	DeliveryStatus   *string                  `json:"deliveryStatus,omitempty"`
 	DeliveryStatusAt *time.Time               `json:"deliveryStatusAt,omitempty"`

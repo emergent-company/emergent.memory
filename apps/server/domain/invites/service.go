@@ -214,6 +214,7 @@ type inviteDeliveryJobRow struct {
 	InviteID         string     `bun:"source_id"`
 	JobID            string     `bun:"id"`
 	CreatedAt        time.Time  `bun:"created_at"`
+	ProcessedAt      *time.Time `bun:"processed_at"`
 	Status           string     `bun:"status"`
 	DeliveryStatus   *string    `bun:"delivery_status"`
 	DeliveryStatusAt *time.Time `bun:"delivery_status_at"`
@@ -236,12 +237,12 @@ type inviteDeliveryEventRow struct {
 func (s *Service) inviteDeliveryLogs(ctx context.Context, projectID string) (map[string][]InviteDeliveryEvent, error) {
 	var jobs []inviteDeliveryJobRow
 	if err := s.db.NewRaw(`
-		SELECT j.source_id, j.id, j.created_at, j.status,
+		SELECT j.source_id, j.id, j.created_at, j.processed_at, j.status,
 		       j.delivery_status, j.delivery_status_at, j.last_error
 		FROM kb.email_jobs j
 		JOIN kb.invites i ON i.id = j.source_id
 		WHERE j.source_type = 'invite' AND i.project_id = ?
-		ORDER BY j.created_at DESC
+		ORDER BY j.created_at DESC, j.id DESC
 	`, projectID).Scan(ctx, &jobs); err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
@@ -254,6 +255,7 @@ func (s *Service) inviteDeliveryLogs(ctx context.Context, projectID string) (map
 		byJob[j.JobID] = &InviteDeliveryEvent{
 			JobID:            j.JobID,
 			CreatedAt:        j.CreatedAt,
+			ProcessedAt:      j.ProcessedAt,
 			Status:           j.Status,
 			DeliveryStatus:   j.DeliveryStatus,
 			DeliveryStatusAt: j.DeliveryStatusAt,
@@ -272,7 +274,7 @@ func (s *Service) inviteDeliveryLogs(ctx context.Context, projectID string) (map
 			JOIN kb.email_jobs j ON j.id = l.email_job_id
 			JOIN kb.invites i ON i.id = j.source_id
 			WHERE j.source_type = 'invite' AND i.project_id = ?
-			ORDER BY l.created_at ASC
+			ORDER BY l.created_at ASC, l.id ASC
 		`, projectID).Scan(ctx, &events); err != nil {
 			return nil, apperror.ErrDatabase.WithInternal(err)
 		}

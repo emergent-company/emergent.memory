@@ -54,6 +54,24 @@ The log is a timeline: sends are listed newest first (matching the rest of the
 list ordering), while each send's Mailgun events read oldest first so the story
 of a bounce follows delivery order.
 
+### Decision: report the processed time, not the enqueue time
+
+Each send carries both `createdAt` (when the job was enqueued) and `processedAt`
+(when `JobsService.MarkSent` / dead-letter finished it). The log renders
+`processedAt` when set, falling back to `createdAt` for a still-pending send, so
+a send delayed by queueing or retries is not reported as having gone out earlier
+than it did.
+
+### Decision: exempt invite sends from the email-job retention purge
+
+The log is presented as durable history, but `EmbeddingJobPurgeTask` deletes
+terminal `kb.email_jobs` after `EMBEDDING_JOB_RETENTION_DAYS` (default 7) and
+`kb.email_logs` cascades on that delete — which would silently empty an older
+invitation's log and render the misleading "No emails sent yet." state.
+Invite-scoped jobs are therefore excluded from the generic purge (invite volume
+is small and bounded by invitations); the retention window still applies to every
+other email-job source type.
+
 ## Risks / Trade-offs
 
 - **Payload size**: a project with many invitations and many resends returns

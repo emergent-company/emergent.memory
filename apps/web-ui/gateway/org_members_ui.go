@@ -810,6 +810,17 @@ func inviteDeliveryStatusLabel(send *InviteDeliveryEventDto) string {
 	}
 }
 
+// inviteDeliverySendTime is a send's truthful display time: when the job
+// finished processing (processedAt — Mailgun accepted the send, or the job gave
+// up) when known, else when it was enqueued (createdAt). A still-pending send
+// has only the enqueue time, which is correct for a queued row.
+func inviteDeliverySendTime(send *InviteDeliveryEventDto) string {
+	if send.ProcessedAt != "" {
+		return send.ProcessedAt
+	}
+	return send.CreatedAt
+}
+
 // inviteDeliveryEventLabel humanizes a Mailgun delivery event type for the
 // delivery-log event line, falling back to the raw type for anything unmapped.
 func inviteDeliveryEventLabel(event string) string {
