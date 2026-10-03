@@ -316,6 +316,13 @@ func (h *Handler) runChecks(ctx context.Context) map[string]Check {
 		healthResp, _ := h.xberg.HealthCheck(ctx)
 		if healthResp == nil || healthResp.Status != "healthy" {
 			msg := "unreachable"
+			// This is NOT dead code: xberg's /health never returns
+			// "unhealthy"/"details" itself, but xberg.Client.HealthCheck
+			// synthesizes an unhealthy response carrying Details["error"] on
+			// transport/decode failure, and this surfaces that cause rather
+			// than the generic "unreachable". The Details read is additionally
+			// defensive: should /health ever start returning its own
+			// unhealthy/details payload, it is displayed here too.
 			if healthResp != nil {
 				if errDetail, ok := healthResp.Details["error"]; ok {
 					msg = errDetail.(string)

@@ -3,6 +3,8 @@ package health
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -358,5 +360,40 @@ func TestRunChecksDoesNotLeakScopeAuthority(t *testing.T) {
 	}
 	if _, ok := checks["scope_authority"]; ok {
 		t.Fatalf("runChecks leaked the scope_authority entry on the anonymous health response: %v", checks)
+	}
+}
+
+// TestRunChecksXbergSurfacesSynthesizedDetail pins the contract behind the
+// xberg Details fallback: xberg's /health does not itself return
+// "unhealthy"/"details", but the client synthesizes an unhealthy response
+// carrying Details["error"] on transport/decode failure. runChecks must
+// surface that cause instead of the generic "unreachable", which means the
+// Details branch is live — not dead code.
+func TestRunChecksXbergSurfacesSynthesizedDetail(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Xberg.Enabled = true
+	cfg.Xberg.ServiceURL = "http://127.0.0.1:1" // nothing listens here
+	cfg.Xberg.TimeoutMs = 1000
+
+	h := &Handler{
+		pool:       healthTestPool(t),
+		db:         fakeRowQuerier{row: fakeRow{scanErr: pgx.ErrNoRows}},
+		cfg:        cfg,
+		storage:    &storage.Service{},
+		xberg:      xberg.NewClient(cfg, slog.New(slog.NewTextHandler(io.Discard, nil))),
+		whisper:    &whisper.Client{},
+		embeddings: &embeddings.Service{},
+	}
+
+	checks := h.runChecks(context.Background())
+	xchk, ok := checks["xberg"]
+	if !ok {
+		t.Fatal("runChecks produced no xberg check")
+	}
+	if xchk.Status != "unhealthy" {
+		t.Fatalf("xberg status = %q, want %q", xchk.Status, "unhealthy")
+	}
+	if xchk.Message == "unreachable" || strings.TrimSpace(xchk.Message) == "" {
+		t.Fatalf("xberg message = %q, want the synthesized transport-failure detail from Details[\"error\"]", xchk.Message)
 	}
 }
