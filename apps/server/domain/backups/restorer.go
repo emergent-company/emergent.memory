@@ -35,6 +35,11 @@ type Restorer struct {
 	// ids an overwrite restore removed and did not re-create. Wired from the
 	// agents domain when that feature is enabled; nil-safe.
 	notifyAgentsDeleted func(agentIDs []string)
+
+	// reconcileRestoredAgents re-registers in-memory trigger registrations for
+	// agent ids an overwrite restore re-created or added, from the restored
+	// rows. Wired from the agents domain when that feature is enabled; nil-safe.
+	reconcileRestoredAgents func(ctx context.Context, projectID string, agentIDs []string)
 }
 
 // NewRestorer creates a new restore orchestrator.
@@ -62,6 +67,14 @@ func NewRestorer(
 // proceeds without teardown.
 func (r *Restorer) SetAgentDeletionNotifier(fn func(agentIDs []string)) {
 	r.notifyAgentsDeleted = fn
+}
+
+// SetAgentRestoreNotifier wires the callback used to reconcile in-memory
+// trigger registrations for agents an overwrite restore re-created, modified, or
+// newly added. It is optional and nil-safe: when unset (e.g. the agents feature
+// is disabled) the restore proceeds without reconciliation.
+func (r *Restorer) SetAgentRestoreNotifier(fn func(ctx context.Context, projectID string, agentIDs []string)) {
+	r.reconcileRestoredAgents = fn
 }
 
 // refAction describes how a clone-mode foreign-key column is resolved against
@@ -297,6 +310,15 @@ func (r *Restorer) restoreOverwrite(ctx context.Context, job *Restore, req Resto
 		return fmt.Errorf("resolve removed agent ids: %w", err)
 	}
 
+	// Resolve the agent ids the snapshot re-creates or adds. Their in-memory
+	// trigger registrations must be reconciled from the restored rows after
+	// commit: a re-created agent's config may differ (its stale registration is
+	// wrong), and a newly added restored agent has no registration at all.
+	restoredAgentIDs, err := r.restoredAgentIDs(archive, projectID)
+	if err != nil {
+		return fmt.Errorf("resolve restored agent ids: %w", err)
+	}
+
 	// FK-safe wipe of every table present in the snapshot (reverse topo order).
 	if err := r.wipeProject(ctx, tx, archive, projectID); err != nil {
 		return fmt.Errorf("wipe project data: %w", err)
@@ -319,10 +341,13 @@ func (r *Restorer) restoreOverwrite(ctx context.Context, job *Restore, req Resto
 	}
 
 	// Only after a successful commit: a rolled-back restore left every row in
-	// place, so tearing registrations down before commit would strand agents
-	// that still exist.
+	// place, so tearing registrations down (or re-registering from restored
+	// rows) before commit would strand agents that still exist / do not yet.
 	if len(removedAgentIDs) > 0 && r.notifyAgentsDeleted != nil {
 		r.notifyAgentsDeleted(removedAgentIDs)
+	}
+	if len(restoredAgentIDs) > 0 && r.reconcileRestoredAgents != nil {
+		r.reconcileRestoredAgents(ctx, projectID, restoredAgentIDs)
 	}
 	return nil
 }
@@ -364,6 +389,34 @@ func (r *Restorer) removedAgentIDs(ctx context.Context, tx bun.Tx, archive *Arch
 		}
 	}
 	return removed, nil
+}
+
+// restoredAgentIDs returns the agent ids the snapshot re-creates or adds for the
+// project. Their in-memory trigger registrations must be reconciled from the
+// restored rows after commit: a re-created agent's config may have changed and a
+// newly added agent has no registration yet. When the snapshot has no agents
+// table nothing is inserted, so the result is empty. Rows for a different
+// project (defensive; overwrite archives are project-scoped) are ignored.
+func (r *Restorer) restoredAgentIDs(archive *Archive, projectID string) ([]string, error) {
+	if !archive.HasTable("agents") {
+		return nil, nil
+	}
+
+	rows, err := archive.Rows("agents")
+	if err != nil {
+		return nil, err
+	}
+
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if pid := stringValue(row["project_id"]); pid != "" && pid != projectID {
+			continue
+		}
+		if id := stringValue(row["id"]); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
 }
 
 // restoreClone implements Decision 8: create a fresh project row and remap
