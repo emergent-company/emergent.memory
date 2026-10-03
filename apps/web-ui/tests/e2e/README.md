@@ -390,6 +390,13 @@ npx playwright test --config=js-dom.config.ts   # or: task e2e:js
   identifier) is raised. It also asserts an unknown component degrades to a
   summary card without throwing, and that the `result`/`proposal`/`approval`
   structured props render as key/value rows (not raw JSON).
+- `specs/js/chat-session-lifecycle.spec.ts` drives the session-rail lifecycle
+  wiring (#1318): the delete confirmation is shown with the session title and
+  sends no request until confirmed, dismissing it keeps the session, confirming
+  issues the `DELETE` and reconciles the rail, the `includeArchived` filter
+  round-trips through a server refresh, and archive → unarchive round-trips a
+  row through its persisted state. Hermetic (no gateway/credentials), so it runs
+  in this CI job with the rest of `specs/js/`.
 - The same CI job runs `node --check` over every
   `gateway/webui/static/js/*.js` first — a fast syntax gate.
 - The gateway-free specs are excluded from the live `chromium` project
