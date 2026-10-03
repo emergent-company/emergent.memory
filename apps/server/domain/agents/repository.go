@@ -32,6 +32,16 @@ type Repository struct {
 	// Registered once at construction by TriggerService; nil-safe.
 	agentDeletionMu        sync.RWMutex
 	agentDeletionListeners []func(agentIDs []string)
+
+	// agentRestoreListeners are invoked, after an out-of-repository restore has
+	// re-created or newly added runtime agent rows, with the affected project
+	// and the ids present in the restored snapshot. This is how in-memory
+	// trigger registrations are reconciled from the restored rows: a re-created
+	// agent's config may have changed, and a newly added agent has no
+	// registration yet. Registered once at construction by TriggerService;
+	// nil-safe.
+	agentRestoreMu        sync.RWMutex
+	agentRestoreListeners []func(ctx context.Context, projectID string, agentIDs []string)
 }
 
 // NewRepository creates a new agents repository
@@ -60,6 +70,37 @@ func (r *Repository) AddAgentDeletionListener(fn func(agentIDs []string)) {
 // rolled-back delete never strands a live agent without its registrations.
 func (r *Repository) NotifyAgentsDeleted(agentIDs []string) {
 	r.notifyAgentsDeleted(agentIDs)
+}
+
+// AddAgentRestoreListener registers a callback invoked, after an
+// out-of-repository restore re-creates or adds runtime agent rows, with the
+// affected project and the restored agent ids. It lets callers that rewrite rows
+// outside this repository (notably the backup restorer's generic wipe+insert)
+// drive trigger reconciliation from the restored rows, without the restorer
+// depending on the agents domain. Safe to leave unset (no-op).
+func (r *Repository) AddAgentRestoreListener(fn func(ctx context.Context, projectID string, agentIDs []string)) {
+	if fn == nil {
+		return
+	}
+	r.agentRestoreMu.Lock()
+	defer r.agentRestoreMu.Unlock()
+	r.agentRestoreListeners = append(r.agentRestoreListeners, fn)
+}
+
+// NotifyAgentsRestored fans the restored agent ids out to every registered
+// restore listener. Callers must invoke it only after the rows are committed,
+// and pass exactly the ids the snapshot re-created or added, so reconciliation
+// never runs against a rolled-back state.
+func (r *Repository) NotifyAgentsRestored(ctx context.Context, projectID string, agentIDs []string) {
+	if len(agentIDs) == 0 {
+		return
+	}
+	r.agentRestoreMu.RLock()
+	listeners := r.agentRestoreListeners
+	r.agentRestoreMu.RUnlock()
+	for _, fn := range listeners {
+		fn(ctx, projectID, agentIDs)
+	}
 }
 
 // notifyAgentsDeleted fans the deleted ids out to every registered listener.

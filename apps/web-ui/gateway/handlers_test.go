@@ -2263,6 +2263,74 @@ func TestApprovalsPageAnswersOpenEndedQuestion(t *testing.T) {
 	}
 }
 
+// TestApprovalsPageRendersQuestionProposal is the #1425 regression: a pending
+// ask_user question that carries a structured proposal must show the proposal
+// card on the conversation-less fallback surface, so the user does not approve a
+// schema/object change blind. The card is the same sanitized render path the
+// inline chat transcript uses.
+func TestApprovalsPageRendersQuestionProposal(t *testing.T) {
+	f := &fakeMemory{questions: []AgentQuestionItem{{
+		ID:       "q-prop",
+		Question: "Apply these schema changes?",
+		Status:   "pending",
+		Proposal: json.RawMessage(proposalBlueprintJSON),
+		Options: []AgentQuestionOption{
+			{Label: "Approve", Value: "approve"},
+			{Label: "Reject", Value: "reject"},
+		},
+	}}}
+	_, e := newTestServer(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/approvals", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-testid="pending-question-proposal"`,
+		`data-proposal-kind="blueprint"`,
+		"Adds 2 object types, 1 relationship type",
+		"Person",
+		"assigned_to",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("proposal preview missing %q:\n%s", want, body)
+		}
+	}
+	// The answer controls still render, after the proposal preview.
+	if !strings.Contains(body, `action="/settings/approvals/q-prop/respond"`) {
+		t.Fatalf("answer form missing after proposal: %s", body)
+	}
+}
+
+// TestApprovalsPageEscapesHostileProposal guards the untrusted-agent-payload
+// boundary: a proposal carrying markup must be escaped by the sanitized render
+// path, never emitted as live HTML. agent/LLM output is untrusted
+// (gateway/AGENTS.md).
+func TestApprovalsPageEscapesHostileProposal(t *testing.T) {
+	const hostile = `<script>alert(1)</script>`
+	raw := `{"kind":"skill","summary":"` + hostile + `","body":{"name":"` + hostile + `"}}`
+	f := &fakeMemory{questions: []AgentQuestionItem{{
+		ID:       "q-evil",
+		Question: "Install this skill?",
+		Status:   "pending",
+		Proposal: json.RawMessage(raw),
+	}}}
+	_, e := newTestServer(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/approvals", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, hostile) {
+		t.Fatalf("hostile proposal rendered unescaped:\n%s", body)
+	}
+	if !strings.Contains(body, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Fatalf("escaped proposal text missing:\n%s", body)
+	}
+}
+
 // TestApprovalsPageChoiceQuestionRendersOptionButtons covers the button-shaped
 // ask_user question: each option becomes a submit that posts its value, so a
 // conversation-less multiple-choice question is answerable from the same page.

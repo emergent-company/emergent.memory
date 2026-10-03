@@ -58,6 +58,19 @@ func (s *ChatMembershipSuite) seedConversation(projectID string) string {
 	return convID.String()
 }
 
+// seedActiveConversation inserts a project-shared (is_private=false) conversation
+// into projectID owned by the admin user, so a member of that project can mutate
+// it under the owner-or-shared predicate.
+func (s *ChatMembershipSuite) seedActiveConversation(projectID string) string {
+	convID := uuid.New()
+	_, err := s.DB().NewRaw(`
+		INSERT INTO kb.chat_conversations (id, title, project_id, is_private, owner_user_id, created_at, updated_at)
+		VALUES (?, ?, ?, false, ?, NOW(), NOW())
+	`, convID, "own-project", projectID, testutil.AdminUser.ID).Exec(s.Ctx)
+	s.Require().NoError(err)
+	return convID.String()
+}
+
 // TestCrossProjectConversationReadForbidden is the read reproducer: a member of
 // org A who sends org B's project id via X-Project-ID must not read or list
 // org B's conversations. Before the fix these returned 200 because the handlers
@@ -202,4 +215,86 @@ func (s *ChatMembershipSuite) TestAskTokenProjectBindingForbidden() {
 	s.Require().Equal(http.StatusForbidden, resp.StatusCode,
 		"project token addressing a different project via X-Project-ID must be 403, got %d: %s",
 		resp.StatusCode, resp.String())
+}
+
+// TestCrossProjectConversationLifecycleForbidden guards the archive/unarchive/
+// delete counterpart of the #864 cross-project membership boundary. Two
+// independent isolation layers are asserted:
+//
+//  1. Addressing a foreign project's id (X-Project-ID: projectB, where the
+//     caller is not a member) is rejected 403 by RequireProjectMember before the
+//     handler runs.
+//  2. Addressing a foreign conversation id while writing to the caller's OWN
+//     project is scoped out by the repository's project_id predicate and returns
+//     fail-closed 404 — never a cross-project mutation.
+//
+// After every attempt the foreign conversation is read directly from the DB to
+// prove it still exists and was not archived; a same-project conversation can
+// still be archived, so the guard is not over-broad.
+func (s *ChatMembershipSuite) TestCrossProjectConversationLifecycleForbidden() {
+	projectB := s.newForeignProject()
+	convB := s.seedConversation(projectB)
+
+	// Layer 1: foreign project header → 403 for archive, unarchive, and delete.
+	resp := s.Client.POST("/api/chat/"+convB+"/archive",
+		testutil.WithAuth("e2e-test-user"), testutil.WithProjectID(projectB))
+	s.Require().Equal(http.StatusForbidden, resp.StatusCode,
+		"cross-project archive with a foreign project header must be 403, got %d: %s",
+		resp.StatusCode, resp.String())
+
+	resp = s.Client.POST("/api/chat/"+convB+"/unarchive",
+		testutil.WithAuth("e2e-test-user"), testutil.WithProjectID(projectB))
+	s.Require().Equal(http.StatusForbidden, resp.StatusCode,
+		"cross-project unarchive with a foreign project header must be 403, got %d: %s",
+		resp.StatusCode, resp.String())
+
+	resp = s.Client.DELETE("/api/chat/"+convB,
+		testutil.WithAuth("e2e-test-user"), testutil.WithProjectID(projectB))
+	s.Require().Equal(http.StatusForbidden, resp.StatusCode,
+		"cross-project delete with a foreign project header must be 403, got %d: %s",
+		resp.StatusCode, resp.String())
+
+	// Layer 2: foreign conversation id under the caller's own project header →
+	// fail-closed 404 (the project scope rejects it, indistinguishable from an
+	// unknown id).
+	resp = s.Client.POST("/api/chat/"+convB+"/archive",
+		testutil.WithAuth("e2e-test-user"), testutil.WithProjectID(s.ProjectID))
+	s.Require().Equal(http.StatusNotFound, resp.StatusCode,
+		"archiving a foreign project's conversation via the caller's own project must be 404, got %d: %s",
+		resp.StatusCode, resp.String())
+
+	resp = s.Client.POST("/api/chat/"+convB+"/unarchive",
+		testutil.WithAuth("e2e-test-user"), testutil.WithProjectID(s.ProjectID))
+	s.Require().Equal(http.StatusNotFound, resp.StatusCode,
+		"unarchiving a foreign project's conversation via the caller's own project must be 404, got %d: %s",
+		resp.StatusCode, resp.String())
+
+	resp = s.Client.DELETE("/api/chat/"+convB,
+		testutil.WithAuth("e2e-test-user"), testutil.WithProjectID(s.ProjectID))
+	s.Require().Equal(http.StatusNotFound, resp.StatusCode,
+		"deleting a foreign project's conversation via the caller's own project must be 404, got %d: %s",
+		resp.StatusCode, resp.String())
+
+	// The foreign conversation must be untouched by every blocked attempt.
+	if s.DB() != nil {
+		var archived bool
+		err := s.DB().NewRaw(`SELECT is_archived FROM kb.chat_conversations WHERE id = ?::uuid`, convB).Scan(s.Ctx, &archived)
+		s.Require().NoError(err)
+		s.Require().False(archived,
+			"a blocked cross-project archive must not set the foreign conversation's archive state")
+
+		var count int
+		err = s.DB().NewRaw(`SELECT count(*) FROM kb.chat_conversations WHERE id = ?::uuid`, convB).Scan(s.Ctx, &count)
+		s.Require().NoError(err)
+		s.Require().Equal(1, count,
+			"a blocked cross-project delete must leave the foreign conversation in place")
+	}
+
+	// A same-project conversation can still be archived: the isolation guard
+	// must not reject legitimate own-project lifecycle calls.
+	own := s.seedActiveConversation(s.ProjectID)
+	resp = s.Client.POST("/api/chat/"+own+"/archive",
+		testutil.WithAuth("e2e-test-user"), testutil.WithProjectID(s.ProjectID))
+	s.Require().Equal(http.StatusOK, resp.StatusCode,
+		"own-project archive must still succeed, got %d: %s", resp.StatusCode, resp.String())
 }
