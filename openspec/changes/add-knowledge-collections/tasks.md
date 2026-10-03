@@ -1,3 +1,4 @@
+<!-- openspec:archive-hold: spec-only change; implementation intentionally deferred (PR #1410) -->
 ## 1. Migration — collections tables
 
 - [ ] 1.1 New migration `apps/server/migrations/<n>_create_collections.sql`: `kb.collections` (id, project_id, name, description, created_at, updated_at) and `kb.collection_items` (id, collection_id, item_type ∈ {document, canonical}, item_id, created_at, `UNIQUE (collection_id, item_type, item_id)`). `item_id` carries a real FK to `kb.documents.id` (`ON DELETE CASCADE`) **only** for `item_type='document'`; `canonical` items have no FK (soft-delete-aware app cleanup). Index on `(collection_id)`.

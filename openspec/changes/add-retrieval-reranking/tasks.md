@@ -1,3 +1,4 @@
+<!-- openspec:archive-hold: spec-only change; implementation intentionally deferred (PR #1410) -->
 ## 1. Reranker interface + adapters (TDD)
 
 - [ ] 1.1 New `pkg/rerank`: `Candidate` + `Reranker` interface per design D2, plus a `Nil`/no-op sentinel for the unconfigured case.

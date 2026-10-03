@@ -1,3 +1,4 @@
+<!-- openspec:archive-hold: spec-only change; implementation intentionally deferred (PR #1410) -->
 ## 1. Migration — `kb.sources` + sync jobs (TDD)
 
 - [ ] 1.1 New migration `apps/server/migrations/<n>_create_sources.sql`: `kb.sources` (id, project_id, type, config jsonb, auth_ref, sync_state jsonb, created_at, updated_at) + `kb.source_sync_jobs` (id, project_id, source_id, status, cursor_before/after, error jsonb, created_at, started_at, finished_at), with RLS scoping to `project_id` (matching prior job tables).

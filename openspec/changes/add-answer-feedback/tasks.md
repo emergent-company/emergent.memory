@@ -1,3 +1,4 @@
+<!-- openspec:archive-hold: spec-only change; implementation intentionally deferred (PR #1410) -->
 ## 1. Migration — `kb.answer_feedback`
 
 - [ ] 1.1 New migration `apps/server/migrations/<n>_create_answer_feedback.sql`: create `kb.answer_feedback` per design D2 — id, project_id, message_id, run_id, retrieval_trace_id, user_id, thumbs (`SMALLINT NOT NULL CHECK (thumbs IN (-1, 1))`), comment, created_at, updated_at, `UNIQUE (message_id, user_id)`. FKs: `message_id → kb.chat_messages(id)`, `run_id → kb.agent_runs(id) ON DELETE SET NULL`, `retrieval_trace_id → kb.retrieval_traces(id) ON DELETE SET NULL`, `user_id → core.user_profiles(id)` (mirrors `00108`). Indexes on `(project_id, created_at)` and `(user_id, created_at)`.

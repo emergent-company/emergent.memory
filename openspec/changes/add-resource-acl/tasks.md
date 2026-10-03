@@ -1,3 +1,4 @@
+<!-- openspec:archive-hold: spec-only change; implementation intentionally deferred (PR #1410) -->
 ## 1. Migration — ACL schema + backfill (TDD)
 
 - [ ] 1.1 New migration `apps/server/migrations/<n>_create_acl.sql`: `kb.acl_entries` (resource_type ∈ {document, object}, resource_id, principal_type ∈ {user, group}, principal_id, `permission CHECK (permission IN ('read','deny'))`, timestamps, `UNIQUE (resource_type, resource_id, principal_type, principal_id)`), `kb.groups` (project_id, name), `kb.group_members` (group_id, principal_type, principal_id). Indexes on `(resource_type, resource_id)` and `(principal_type, principal_id)`. Add project-scoped RLS policies to `acl_entries`, `groups`, `group_members` (matching the existing layer).

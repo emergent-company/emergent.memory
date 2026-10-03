@@ -1,3 +1,4 @@
+<!-- openspec:archive-hold: spec-only change; implementation intentionally deferred (PR #1410) -->
 ## 1. Migration — document summary column (TDD)
 
 - [ ] 1.1 New migration `apps/server/migrations/<n>_add_document_summary.sql`: add nullable `summary` (text) to `kb.documents`.
