@@ -324,8 +324,13 @@ func (h *Handler) runChecks(ctx context.Context) map[string]Check {
 			// defensive: should /health ever start returning its own
 			// unhealthy/details payload, it is displayed here too.
 			if healthResp != nil {
-				if errDetail, ok := healthResp.Details["error"]; ok {
-					msg = errDetail.(string)
+				// Comma-ok, not a bare assertion: Details is
+				// map[string]interface{}, so a remote /health could return a
+				// non-string error (JSON number/object). This runs on its own
+				// goroutine, where no recover middleware applies, so a panicking
+				// assertion would crash the whole process.
+				if errDetail, ok := healthResp.Details["error"].(string); ok && errDetail != "" {
+					msg = errDetail
 				}
 			}
 			emit("xberg", Check{Status: "unhealthy", Message: msg})

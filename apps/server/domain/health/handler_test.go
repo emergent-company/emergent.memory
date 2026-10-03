@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -370,9 +371,16 @@ func TestRunChecksDoesNotLeakScopeAuthority(t *testing.T) {
 // surface that cause instead of the generic "unreachable", which means the
 // Details branch is live — not dead code.
 func TestRunChecksXbergSurfacesSynthesizedDetail(t *testing.T) {
+	// A closed ephemeral server: the port is guaranteed free, so the client
+	// deterministically hits a transport failure (no reliance on a fixed,
+	// possibly-privileged port being unused).
+	closed := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	deadURL := closed.URL
+	closed.Close()
+
 	cfg := &config.Config{}
 	cfg.Xberg.Enabled = true
-	cfg.Xberg.ServiceURL = "http://127.0.0.1:1" // nothing listens here
+	cfg.Xberg.ServiceURL = deadURL
 	cfg.Xberg.TimeoutMs = 1000
 
 	h := &Handler{
@@ -395,5 +403,44 @@ func TestRunChecksXbergSurfacesSynthesizedDetail(t *testing.T) {
 	}
 	if xchk.Message == "unreachable" || strings.TrimSpace(xchk.Message) == "" {
 		t.Fatalf("xberg message = %q, want the synthesized transport-failure detail from Details[\"error\"]", xchk.Message)
+	}
+}
+
+// TestRunChecksXbergToleratesNonStringDetail pins the robustness guard: a remote
+// /health that returns an "unhealthy" payload whose details["error"] is not a
+// string (JSON numbers decode to float64, objects to map) must not panic the
+// health-check goroutine — it falls back to the generic "unreachable" message.
+func TestRunChecksXbergToleratesNonStringDetail(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"status":"unhealthy","details":{"error":42}}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := &config.Config{}
+	cfg.Xberg.Enabled = true
+	cfg.Xberg.ServiceURL = srv.URL
+	cfg.Xberg.TimeoutMs = 1000
+
+	h := &Handler{
+		pool:       healthTestPool(t),
+		db:         fakeRowQuerier{row: fakeRow{scanErr: pgx.ErrNoRows}},
+		cfg:        cfg,
+		storage:    &storage.Service{},
+		xberg:      xberg.NewClient(cfg, slog.New(slog.NewTextHandler(io.Discard, nil))),
+		whisper:    &whisper.Client{},
+		embeddings: &embeddings.Service{},
+	}
+
+	checks := h.runChecks(context.Background())
+	xchk, ok := checks["xberg"]
+	if !ok {
+		t.Fatal("runChecks produced no xberg check")
+	}
+	if xchk.Status != "unhealthy" {
+		t.Fatalf("xberg status = %q, want %q", xchk.Status, "unhealthy")
+	}
+	if xchk.Message != "unreachable" {
+		t.Fatalf("xberg message = %q, want the fallback %q for a non-string detail", xchk.Message, "unreachable")
 	}
 }
