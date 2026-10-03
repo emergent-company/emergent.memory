@@ -756,6 +756,7 @@ func (s *ModelCatalogService) embedContentForModel(ctx context.Context, provider
 			APIKey:  cred.APIKey,
 			BaseURL: baseURL,
 			Model:   model,
+			Auth:    credentialAuthStyle(provider, cred),
 		})
 		if clientErr != nil {
 			return "", fmt.Errorf("embedding model test failed: %w", clientErr)

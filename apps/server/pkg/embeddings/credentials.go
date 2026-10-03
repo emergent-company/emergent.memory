@@ -16,6 +16,10 @@ type ResolvedEmbeddingCredential struct {
 	// BaseURL is the HTTP endpoint override for OpenAI-compatible providers (LiteLLM, etc.).
 	// When set alongside APIKey, the OpenAI-compatible client is used instead of Google AI.
 	BaseURL string
+	// Auth is the vendor's declared credential-injection style (e.g. "bearer",
+	// "api-key"). Empty defaults to bearer. Azure OpenAI embeddings require
+	// "api-key"; OpenAI-compatible vendors use bearer.
+	Auth string
 	// Source describes where the credential was resolved from (project/organization/environment).
 	// Informational only; used for logging and tracing.
 	Source string

@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/emergent-company/emergent.memory/pkg/adk"
 )
 
 // serveEmbeddings returns an httptest server that replies to POST /embeddings
@@ -146,5 +148,55 @@ func TestEmbedDocumentsEmpty(t *testing.T) {
 	}
 	if res.Usage != nil {
 		t.Errorf("Usage = %+v, want nil for empty batch", res.Usage)
+	}
+}
+
+// TestEmbedAuthStyles verifies the /embeddings client injects the credential
+// using the configured auth style: bearer by default (OpenAI-compatible) and
+// api-key for Azure OpenAI, mirroring pkg/adk.
+func TestEmbedAuthStyles(t *testing.T) {
+	cases := []struct {
+		name       string
+		auth       adk.AuthStyle
+		wantAuth   string
+		wantAPIKey string
+	}{
+		{name: "default bearer", auth: "", wantAuth: "Bearer sk-embed", wantAPIKey: ""},
+		{name: "explicit bearer", auth: adk.AuthBearer, wantAuth: "Bearer sk-embed", wantAPIKey: ""},
+		{name: "azure api-key", auth: adk.AuthAPIKeyHeader, wantAuth: "", wantAPIKey: "sk-embed"},
+		{name: "none", auth: adk.AuthNone, wantAuth: "", wantAPIKey: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotAuth, gotAPIKey string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotAuth = r.Header.Get("Authorization")
+				gotAPIKey = r.Header.Get("api-key")
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"data": []map[string]any{{"embedding": []float32{0.1, 0.2}, "index": 0}},
+				})
+			}))
+			defer srv.Close()
+
+			client, err := NewClient(Config{
+				APIKey:  "sk-embed",
+				BaseURL: srv.URL,
+				Model:   "text-embedding-3-small",
+				Auth:    tc.auth,
+			})
+			if err != nil {
+				t.Fatalf("NewClient() error = %v", err)
+			}
+			if _, err := client.EmbedQuery(context.Background(), "hello"); err != nil {
+				t.Fatalf("EmbedQuery() error = %v", err)
+			}
+			if gotAuth != tc.wantAuth {
+				t.Errorf("Authorization header = %q, want %q", gotAuth, tc.wantAuth)
+			}
+			if gotAPIKey != tc.wantAPIKey {
+				t.Errorf("api-key header = %q, want %q", gotAPIKey, tc.wantAPIKey)
+			}
+		})
 	}
 }
