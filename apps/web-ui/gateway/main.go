@@ -516,6 +516,13 @@ func main() {
 	e.GET("/inbox/preferences", s.uiNotificationPreferences)
 	e.POST("/inbox/preferences", s.uiNotificationPreferencesSave)
 
+	// Dev-gated component gallery. Routes are always registered; the handlers
+	// 404 when MEMORY_COMPONENT_GALLERY is off so both states are httptest-able.
+	// The /dev/ prefix is exempted from project scoping and the canonical-host
+	// redirect (see auth.go), but still requires a session in session mode.
+	e.GET("/dev/components", s.uiComponentGallery)
+	e.GET("/dev/components/preview/:slug", s.uiComponentPreview)
+
 	srv := &http.Server{
 		Addr:              "0.0.0.0:" + cfg.Port,
 		Handler:           e,

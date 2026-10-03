@@ -48,6 +48,11 @@ export default defineConfig({
         // (`js-dom.config.ts`) — they need no gateway/session, so the live
         // suite must not schedule them behind `setup`.
         /specs\/js\/.*\.spec\.ts/,
+        // Dev-gated component gallery (/dev/components). The live gateway runs
+        // with MEMORY_COMPONENT_GALLERY off, so the route 404s and the spec
+        // would only ever skip. It runs under its own flag-on harness
+        // (`dev-gallery.config.ts`).
+        /specs\/dev\/.*\.spec\.ts/,
       ],
       use: { ...devices['Desktop Chrome'], storageState: STORAGE_STATE },
       dependencies: ['setup'],
