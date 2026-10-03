@@ -217,9 +217,9 @@ func (s *ChatMembershipSuite) TestAskTokenProjectBindingForbidden() {
 		resp.StatusCode, resp.String())
 }
 
-// TestCrossProjectConversationLifecycleForbidden guards the archive/delete
-// counterpart of the #864 cross-project membership boundary. Two independent
-// isolation layers are asserted:
+// TestCrossProjectConversationLifecycleForbidden guards the archive/unarchive/
+// delete counterpart of the #864 cross-project membership boundary. Two
+// independent isolation layers are asserted:
 //
 //  1. Addressing a foreign project's id (X-Project-ID: projectB, where the
 //     caller is not a member) is rejected 403 by RequireProjectMember before the
@@ -235,11 +235,17 @@ func (s *ChatMembershipSuite) TestCrossProjectConversationLifecycleForbidden() {
 	projectB := s.newForeignProject()
 	convB := s.seedConversation(projectB)
 
-	// Layer 1: foreign project header → 403 for both archive and delete.
+	// Layer 1: foreign project header → 403 for archive, unarchive, and delete.
 	resp := s.Client.POST("/api/chat/"+convB+"/archive",
 		testutil.WithAuth("e2e-test-user"), testutil.WithProjectID(projectB))
 	s.Require().Equal(http.StatusForbidden, resp.StatusCode,
 		"cross-project archive with a foreign project header must be 403, got %d: %s",
+		resp.StatusCode, resp.String())
+
+	resp = s.Client.POST("/api/chat/"+convB+"/unarchive",
+		testutil.WithAuth("e2e-test-user"), testutil.WithProjectID(projectB))
+	s.Require().Equal(http.StatusForbidden, resp.StatusCode,
+		"cross-project unarchive with a foreign project header must be 403, got %d: %s",
 		resp.StatusCode, resp.String())
 
 	resp = s.Client.DELETE("/api/chat/"+convB,
@@ -255,6 +261,12 @@ func (s *ChatMembershipSuite) TestCrossProjectConversationLifecycleForbidden() {
 		testutil.WithAuth("e2e-test-user"), testutil.WithProjectID(s.ProjectID))
 	s.Require().Equal(http.StatusNotFound, resp.StatusCode,
 		"archiving a foreign project's conversation via the caller's own project must be 404, got %d: %s",
+		resp.StatusCode, resp.String())
+
+	resp = s.Client.POST("/api/chat/"+convB+"/unarchive",
+		testutil.WithAuth("e2e-test-user"), testutil.WithProjectID(s.ProjectID))
+	s.Require().Equal(http.StatusNotFound, resp.StatusCode,
+		"unarchiving a foreign project's conversation via the caller's own project must be 404, got %d: %s",
 		resp.StatusCode, resp.String())
 
 	resp = s.Client.DELETE("/api/chat/"+convB,

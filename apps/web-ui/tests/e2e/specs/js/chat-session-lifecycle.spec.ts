@@ -361,8 +361,18 @@ test.describe('session lifecycle rail (#1318)', () => {
   test('the include-archived filter toggles archived rows via a server refresh', async ({ page }) => {
     const errors = await bootstrap(page);
 
-    // Default (filter off): the archived row is not in the rail.
+    // Model ONE persisted server state: A is archived. The includeArchived query
+    // only selects which list the server returns — it never flips a row's
+    // archived flag — so with the filter off the server list excludes A
+    // entirely, and with it on the list includes A marked archived.
+    await setRails(page, { active: ACTIVE_B_ONLY, archived: ARCHIVED });
+    await page.evaluate((html) => {
+      document.getElementById('chat-rail-list')!.innerHTML = html;
+    }, ACTIVE_B_ONLY);
+
+    // Default (filter off): the archived row is absent from the rail.
     expect(await markerCount(page)).toBe(0);
+    expect(await rowPresent(page, 'A')).toBe(false);
 
     await click(page, '#chat-include-archived');
     await expect
@@ -372,13 +382,14 @@ test.describe('session lifecycle rail (#1318)', () => {
     await expect.poll(() => rowArchived(page, 'A')).toBe(true);
     expect(await markerCount(page)).toBe(1);
 
-    // Turning it back off drops the archived row again.
+    // Turning it back off drops the archived row again — it does not revert it
+    // to an active row.
     await click(page, '#chat-include-archived');
     await expect
       .poll(async () => (await lastRailUrl(page)).includes('includeArchived=false'))
       .toBe(true);
-    await expect.poll(() => markerCount(page)).toBe(0);
-    expect(await rowArchived(page, 'A')).toBe(false);
+    await expect.poll(() => rowPresent(page, 'A')).toBe(false);
+    expect(await markerCount(page)).toBe(0);
 
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });
