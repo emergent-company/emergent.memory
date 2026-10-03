@@ -237,8 +237,8 @@ func (s *ModelCatalogService) fetchOpenAICompatibleModels(ctx context.Context, p
 	if err != nil {
 		return nil, fmt.Errorf("failed to build /v1/models request: %w", err)
 	}
-	if cred.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+cred.APIKey)
+	if err := adk.ApplyAuth(req, credentialAuthStyle(provider, cred), cred.APIKey); err != nil {
+		return nil, fmt.Errorf("failed to apply auth to /v1/models request: %w", err)
 	}
 
 	client := &http.Client{Timeout: 8 * time.Second}
@@ -558,8 +558,8 @@ func (s *ModelCatalogService) generateContentForModel(ctx context.Context, provi
 			return "", fmt.Errorf("failed to create request: %w", err)
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
-		if cred.APIKey != "" {
-			httpReq.Header.Set("Authorization", "Bearer "+cred.APIKey)
+		if err := adk.ApplyAuth(httpReq, credentialAuthStyle(provider, cred), cred.APIKey); err != nil {
+			return "", fmt.Errorf("failed to apply auth to generate request: %w", err)
 		}
 		httpClient := &http.Client{Timeout: 30 * time.Second}
 		resp, err := httpClient.Do(httpReq)
@@ -827,6 +827,21 @@ func (s *ModelCatalogService) pickCheapTestModel(models []ProviderSupportedModel
 		}
 	}
 	return best
+}
+
+// credentialAuthStyle returns the credential-injection style to use for a
+// vendor's HTTP requests: the resolved credential's style (populated from the
+// registry definition by applyDefinition), falling back to the definition, then
+// bearer. This mirrors the ADK runtime's dispatch so the catalog fetch and
+// test-connection calls inject the same header as real generation.
+func credentialAuthStyle(provider ProviderType, cred *ResolvedCredential) adk.AuthStyle {
+	if cred != nil && cred.Auth != "" {
+		return adk.AuthStyle(cred.Auth)
+	}
+	if def := definitionFor(provider); def != nil && def.Auth != "" {
+		return adk.AuthStyle(def.Auth)
+	}
+	return adk.AuthBearer
 }
 
 // buildClientConfig constructs a genai.ClientConfig from resolved credentials.
