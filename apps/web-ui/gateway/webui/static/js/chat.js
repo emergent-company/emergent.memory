@@ -486,6 +486,13 @@
 
     // initial pre-send model-availability banner state for the selected agent
     updateModelWarning();
+
+    // The shell re-renders #chat-root on swap; selectionMode is module-scoped
+    // and survives, so mirror it onto the fresh DOM here. Without this the new
+    // checkboxes/footer stay hidden and the toggle's aria-pressed resets while
+    // row clicks still act in selection mode (#1419 review).
+    pruneSelection();
+    applySelectionMode();
   }
 
   function currentAgent() {
@@ -682,6 +689,10 @@
       var agent = rows[i].getAttribute("data-agent") || "";
       var origin = rows[i].getAttribute("data-origin") || "";
       var show = (!filterAgent || agent === filterAgent) && (!filterOrigin || origin === filterOrigin);
+      // A pending optimistic archive is a second, independent reason a row is
+      // hidden. Fold it in here so a filter change recomputes visibility from
+      // both conditions instead of clearing the optimistic hide (#1419 review).
+      if (rows[i].getAttribute("data-archive-pending") === "true") show = false;
       rows[i].classList.toggle("hidden", !show);
       if (show) visible++;
     }
@@ -753,13 +764,23 @@
   // filter an archived conversation drops out of the rail, so hiding is the
   // visible outcome the user expects the instant they click. With "Include
   // archived" on the row stays listed, so there is nothing to hide — the refresh
-  // after the request settles re-renders its archived marker. Returns a rollback
-  // that restores the pre-request DOM if the request fails.
+  // after the request settles re-renders its archived marker.
+  //
+  // The pending marker is kept separate from the filter's `hidden` class
+  // (#1419 review): a filter change goes through applyAgentFilter(), which
+  // re-derives visibility from both the filter and the pending marker, and the
+  // rollback clears only the marker then lets applyAgentFilter() decide whether
+  // the row is visible again — so a row the filter hides stays hidden, and a
+  // pending archive is not revealed by a concurrent filter change.
   function applyArchiveOptimistic(id) {
     var row = sessionRowById(id);
     if (!row || filterIncludeArchived) return function () {};
+    row.setAttribute("data-archive-pending", "true");
     row.classList.add("hidden");
-    return function () { row.classList.remove("hidden"); };
+    return function () {
+      row.removeAttribute("data-archive-pending");
+      applyAgentFilter();
+    };
   }
 
   // applyUnarchiveOptimistic clears the archived visual state at once. The

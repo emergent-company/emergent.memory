@@ -55,7 +55,7 @@ const SKELETON = `<!doctype html>
       <button type="button" data-action="toggle-session-select" data-testid="toggle-session-select" aria-pressed="false">Select</button>
     </div>
     <select id="chat-agent-filter" aria-label="Filter sessions by agent"><option value="">All agents</option></select>
-    <select id="chat-origin-filter" aria-label="Filter sessions by type"><option value="">All types</option></select>
+    <select id="chat-origin-filter" aria-label="Filter sessions by type"><option value="">All types</option><option value="scheduled">Scheduled</option></select>
     <div id="chat-rail-list" data-testid="session-list">${ALL_ROWS}</div>
     <div id="chat-bulk-bar" data-testid="chat-bulk-bar" class="hidden" role="group" aria-label="Bulk session actions">
       <input id="chat-select-all" data-testid="chat-select-all" data-action="select-all-sessions" type="checkbox" aria-label="Select all sessions" />
@@ -99,6 +99,7 @@ interface StubWindow {
   __fetchCalls: string[];
   __toasts: Toast[];
   __railHtml: string;
+  __railStatus: number;
   __archiveReleases: Array<(r: Response) => void>;
   fetch: (url: unknown) => Promise<Response>;
 }
@@ -115,6 +116,7 @@ async function bootstrap(page: Page): Promise<string[]> {
       w.__fetchCalls = [];
       w.__toasts = [];
       w.__railHtml = rows;
+      w.__railStatus = 200;
       w.__archiveReleases = [];
 
       (w as unknown as { MemoryApp: unknown }).MemoryApp = {
@@ -134,7 +136,7 @@ async function bootstrap(page: Page): Promise<string[]> {
         if (u.indexOf('/partial/chat-rail') === 0) {
           return Promise.resolve(
             new Response(w.__railHtml, {
-              status: 200,
+              status: w.__railStatus || 200,
               headers: { 'Content-Type': 'text/html' },
             }),
           );
@@ -160,6 +162,31 @@ async function click(page: Page, selector: string): Promise<void> {
     if (!el) throw new Error(`missing element: ${sel}`);
     (el as HTMLElement).click();
   }, selector);
+}
+
+async function setFilter(page: Page, selector: string, value: string): Promise<void> {
+  await page.evaluate(
+    ({ sel, val }) => {
+      const el = document.querySelector(sel) as HTMLSelectElement | null;
+      if (!el) throw new Error(`missing element: ${sel}`);
+      el.value = val;
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    },
+    { sel: selector, val: value },
+  );
+}
+
+async function setRailStatus(page: Page, status: number): Promise<void> {
+  await page.evaluate((s) => {
+    (window as unknown as StubWindow).__railStatus = s;
+  }, status);
+}
+
+function checkboxChecked(page: Page, id: string): Promise<boolean> {
+  return page.evaluate((rowId) => {
+    const el = document.querySelector(`.session-select[data-id="${rowId}"]`) as HTMLInputElement | null;
+    return !!el && el.checked;
+  }, id);
 }
 
 function rowHidden(page: Page, id: string): Promise<boolean> {
@@ -274,6 +301,82 @@ test.describe('bulk session selection and archive (#1385)', () => {
         page.evaluate(() => (window as unknown as StubWindow).__toasts.some((t) => t.kind === 'success')),
       )
       .toBe(true);
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
+  test('a filter change never reveals a pending archive, and a failed rollback respects the filter', async ({ page }) => {
+    const errors = await bootstrap(page);
+
+    await click(page, '[data-action="toggle-session-select"]');
+    await click(page, '.session-select[data-id="A"]');
+    await click(page, '.session-select[data-id="B"]');
+
+    // Filter the selected rows out, then archive them.
+    await setFilter(page, '#chat-origin-filter', 'scheduled');
+    await expect.poll(() => rowHidden(page, 'A')).toBe(true);
+    await click(page, '[data-action="bulk-archive-sessions"]');
+    await expect.poll(() => rowHidden(page, 'A')).toBe(true);
+
+    // Back to "all": without a pending marker distinct from the filter's
+    // `hidden` class the filter pass would clear the optimistic hide and expose
+    // a session that is mid-archive.
+    await setFilter(page, '#chat-origin-filter', '');
+    await expect.poll(() => rowHidden(page, 'A')).toBe(true);
+    await expect.poll(() => rowHidden(page, 'B')).toBe(true);
+
+    // Fail the archive while the filter hides the rows again, and fail the
+    // reconciling refresh too, so only the rollback's visibility logic decides.
+    await setFilter(page, '#chat-origin-filter', 'scheduled');
+    await setRailStatus(page, 500);
+    await releaseArchives(page, 500);
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as StubWindow).__toasts.some((t) => t.kind === 'error')))
+      .toBe(true);
+    await expect.poll(() => rowHidden(page, 'A')).toBe(true);
+    await expect.poll(() => rowHidden(page, 'B')).toBe(true);
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
+  test('re-applies selection state after a #chat-root shell swap', async ({ page }) => {
+    const errors = await bootstrap(page);
+
+    await click(page, '[data-action="toggle-session-select"]');
+    await click(page, '.session-select[data-id="A"]');
+    await expect.poll(() => checkboxChecked(page, 'A')).toBe(true);
+
+    // Simulate an htmx shell swap: fresh server markup (checkboxes hidden,
+    // footer hidden, aria-pressed=false) replacing the rail + footer, with the
+    // post-swap init pass. selectionMode survives as module state.
+    await page.evaluate(
+      ({ rows }) => {
+        const root = document.getElementById('chat-root')!;
+        root.removeAttribute('data-ready');
+        document.getElementById('chat-rail-list')!.innerHTML = rows;
+        const bar = document.getElementById('chat-bulk-bar')!;
+        bar.classList.add('hidden');
+        bar.classList.remove('flex');
+        document
+          .querySelector('[data-action="toggle-session-select"]')!
+          .setAttribute('aria-pressed', 'false');
+        document.dispatchEvent(new CustomEvent('htmx:after:swap'));
+      },
+      { rows: ALL_ROWS },
+    );
+
+    await expect.poll(() => checkboxVisible(page, 'A')).toBe(true);
+    await expect
+      .poll(() =>
+        page.evaluate(() => ({
+          pressed: document
+            .querySelector('[data-action="toggle-session-select"]')!
+            .getAttribute('aria-pressed'),
+          barHidden: document.getElementById('chat-bulk-bar')!.classList.contains('hidden'),
+          count: document.getElementById('chat-selection-count')!.textContent,
+        })),
+      )
+      .toEqual({ pressed: 'true', barHidden: false, count: '1 selected' });
 
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });

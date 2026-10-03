@@ -175,6 +175,11 @@ Archive and unarchive SHALL apply their rail-list effect optimistically: choosin
 - **WHEN** an optimistic archive or unarchive request settles
 - **THEN** the rail is re-fetched from the server and reflects the server's authoritative archive state
 
+#### Scenario: Filtering does not reveal a pending archive
+
+- **WHEN** the agent or origin filter changes while an optimistic archive is in flight
+- **THEN** the pending row stays hidden regardless of the filter, and a failed request restores it only if the active filter would show it
+
 ### Requirement: Bulk session selection
 
 The web chat session rail SHALL provide a selection mode in which multiple conversation sessions can be checked and acted on together. Selection mode SHALL expose a checkbox per conversation row, a select-all control, a live count of the selected sessions, and a bulk archive action that applies the same lifecycle semantics as the per-row Archive action to every selected session. The controls SHALL be keyboard-operable and expose their state to assistive technology. Leaving selection mode or completing a bulk action SHALL clear the selection; the selection SHALL survive a rail refresh.
@@ -203,3 +208,8 @@ The web chat session rail SHALL provide a selection mode in which multiple conve
 
 - **WHEN** the rail is re-fetched while selection mode is on
 - **THEN** the selected sessions remain checked and the count is unchanged
+
+#### Scenario: Selection state survives a shell swap
+
+- **WHEN** the chat shell (#chat-root) is swapped while selection mode is active
+- **THEN** the re-rendered rail shows the checkboxes, footer controls, and toggle state matching the still-active selection mode
