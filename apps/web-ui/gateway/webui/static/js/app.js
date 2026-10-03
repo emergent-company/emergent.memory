@@ -662,43 +662,82 @@
   document.addEventListener("DOMContentLoaded", function () { openAutoOpenDialogs(document); });
   document.addEventListener("htmx:after:swap", function (ev) { openAutoOpenDialogs(ev.target); });
 
-  /* Kanban board drag = execute. Dropping a card onto the Ready lane fires the
-     retry (execute) action via htmx; the response re-renders #board and clears
-     the drawer. Delegated on document so it survives htmx swaps. */
+  /* Kanban board drag = the existing board action that matches the move. Every
+     card is draggable; a valid (fromStatus, targetLane) pair maps to one of the
+     backend's work-path transitions. Invalid pairs are rejected in the UI with
+     no request. Delegated on document so it survives htmx swaps. */
+  var boardDrag = null;
+
+  /* boardMoveAction maps a drag (from status -> target lane) to the board action
+     that implements it, or null when the pair is not a supported transition:
+       blocked -> ready     execute        POST .../retry
+       review  -> done      approve        POST .../approve
+       *       -> blocked   cancel         POST .../cancel   (not from done)
+       review  -> revision  request changes: needs feedback, so open the item
+                            action dialog rather than firing a blind POST. */
+  function boardMoveAction(from, to) {
+    if (from === to) return null;
+    if (from === "blocked" && to === "ready") return "retry";
+    if (from === "review" && to === "done") return "approve";
+    if (from === "review" && to === "revision") return "dialog";
+    if (to === "blocked" && from !== "done") return "cancel";
+    return null;
+  }
+
+  function clearBoardDropTargets() {
+    var lanes = document.querySelectorAll(".memory-board__lane--drop");
+    for (var i = 0; i < lanes.length; i++) lanes[i].classList.remove("memory-board__lane--drop");
+  }
+
   document.addEventListener("dragstart", function (ev) {
     var card = ev.target.closest("[data-board-card]");
     if (!card) return;
-    // Only blocked cards are draggable: the Ready lane's drop fires the
-    // server-gated blocked->ready "retry" transition. Cancelling the drag for
-    // any other status avoids a 409 error banner on an unsupported move.
-    if (card.getAttribute("data-board-status") !== "blocked") {
-      ev.preventDefault();
-      return;
-    }
     var id = card.getAttribute("data-canonical-id");
+    boardDrag = { id: id, fromStatus: card.getAttribute("data-board-status") };
     if (ev.dataTransfer) {
       ev.dataTransfer.setData("text/plain", id || "");
       ev.dataTransfer.effectAllowed = "move";
     }
+    card.classList.add("memory-board__card--dragging");
   });
   document.addEventListener("dragover", function (ev) {
-    var col = ev.target.closest("[data-board-column]");
-    if (!col || col.getAttribute("data-board-column") !== "ready") return;
+    var col = ev.target.closest ? ev.target.closest("[data-board-column]") : null;
+    if (!col) return;
+    clearBoardDropTargets();
+    var action = boardDrag && boardMoveAction(boardDrag.fromStatus, col.getAttribute("data-board-column"));
+    if (!action) return; // unsupported move: do not accept the drop
     ev.preventDefault();
     if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
+    col.classList.add("memory-board__lane--drop");
   });
   document.addEventListener("drop", function (ev) {
-    var col = ev.target.closest("[data-board-column]");
-    if (!col || col.getAttribute("data-board-column") !== "ready") return;
+    var col = ev.target.closest ? ev.target.closest("[data-board-column]") : null;
+    if (!col || !boardDrag) return;
+    var action = boardMoveAction(boardDrag.fromStatus, col.getAttribute("data-board-column"));
+    if (!action) return; // invalid pair: reject the drop, no request
     ev.preventDefault();
-    var id = ev.dataTransfer ? ev.dataTransfer.getData("text/plain") : "";
-    if (!id) return;
-    if (window.htmx) {
-      htmx.ajax("POST", "/board/items/" + encodeURIComponent(id) + "/retry", {
-        target: "#board",
-        swap: "outerHTML"
+    clearBoardDropTargets();
+    var id = boardDrag.id || (ev.dataTransfer ? ev.dataTransfer.getData("text/plain") : "");
+    boardDrag = null;
+    if (!id || !window.htmx) return;
+    if (action === "dialog") {
+      // Open the item action dialog (review -> revision needs feedback).
+      htmx.ajax("GET", "/board/items/" + encodeURIComponent(id), {
+        target: "#board-drawer",
+        swap: "innerHTML"
       });
+      return;
     }
+    htmx.ajax("POST", "/board/items/" + encodeURIComponent(id) + "/" + action, {
+      target: "#board",
+      swap: "outerHTML"
+    });
+  });
+  document.addEventListener("dragend", function (ev) {
+    clearBoardDropTargets();
+    var card = ev.target.closest ? ev.target.closest("[data-board-card]") : null;
+    if (card) card.classList.remove("memory-board__card--dragging");
+    boardDrag = null;
   });
 
   /* expose for templ script blocks */
