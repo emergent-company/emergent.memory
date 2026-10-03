@@ -16,3 +16,5 @@
 - [x] 3.2 `golangci-lint run ./...` and `node --check` on changed JS
 - [x] 3.3 Hermetic js-dom gate (`npx playwright test --config=js-dom.config.ts`)
 - [ ] 3.4 Browser smoke test against a live gateway (drag blocked→ready, review→done, any→blocked; click card → shared preview)
+
+<!-- openspec:archive-ready -->
