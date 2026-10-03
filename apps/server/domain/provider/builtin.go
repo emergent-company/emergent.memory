@@ -34,23 +34,11 @@ func Builtins() []*ProviderDefinition {
 			Order:            0,
 			CredentialFields: keyFields(),
 		},
-		// --- WeKnora Cloud ---
-		{
-			Type:            ProviderWeKnoraCloud,
-			DisplayName:     "WeKnora Cloud",
-			Description:     "WeKnora Cloud via its OpenAI-compatible endpoint",
-			Protocol:        ProtocolOpenAIChat,
-			Auth:            AuthSigned,
-			DefaultBaseURLs: both("https://weknora.weixin.qq.com", "https://weknora.weixin.qq.com"),
-			ModelTypes:      []ModelType{ModelTypeGenerative, ModelTypeEmbedding},
-			CatalogStrategy: CatalogOpenAIModels,
-			Compat:          Compat{MaxTokensField: "max_tokens", SupportsToolChoice: true},
-			Order:           1,
-			Names:           map[string]string{"zh-CN": "WeKnora 云"},
-			CredentialFields: []CredentialField{
-				{Name: "api_key", Required: true, Secret: true},
-			},
-		},
+		// --- WeKnora Cloud is intentionally NOT registered ---
+		// It would speak openai-chat with signed auth, but no signer hook is
+		// implemented (pkg/adk ApplyAuth returns "signed auth is not supported"),
+		// so advertising it would offer a vendor that deterministically fails.
+		// Re-add it only together with a real signing implementation.
 		// --- Aliyun DashScope ---
 		{
 			Type:             ProviderAliyun,

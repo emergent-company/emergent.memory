@@ -28,7 +28,9 @@ const (
 	AuthGoogleAPIKey AuthStyle = "x-goog-api-key"
 	// AuthNone sends no credential header (local deployments).
 	AuthNone AuthStyle = "none"
-	// AuthSigned delegates to a registered signer hook (WeKnora Cloud).
+	// AuthSigned delegates to a registered signer hook. No signer is currently
+	// implemented, so an openai-chat vendor must not declare it; service-account
+	// vendors use the google-genai path instead.
 	AuthSigned AuthStyle = "signed"
 )
 

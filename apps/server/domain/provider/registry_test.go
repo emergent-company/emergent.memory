@@ -7,8 +7,8 @@ import (
 func TestNewRegistry(t *testing.T) {
 	r := NewRegistry()
 
-	if len(r.providers) != 28 {
-		t.Fatalf("expected 28 providers, got %d", len(r.providers))
+	if len(r.providers) != 27 {
+		t.Fatalf("expected 27 providers, got %d", len(r.providers))
 	}
 
 	legacy := []ProviderType{ProviderGoogleAI, ProviderVertexAI, ProviderOpenAI, ProviderDeepSeek}
@@ -92,8 +92,8 @@ func TestRegistryList(t *testing.T) {
 	r := NewRegistry()
 
 	defs := r.List()
-	if len(defs) != 28 {
-		t.Fatalf("expected 28 definitions, got %d", len(defs))
+	if len(defs) != 27 {
+		t.Fatalf("expected 27 definitions, got %d", len(defs))
 	}
 
 	types := make(map[ProviderType]bool)
@@ -109,8 +109,8 @@ func TestRegistrySupportedTypes(t *testing.T) {
 	r := NewRegistry()
 
 	types := r.SupportedTypes()
-	if len(types) != 28 {
-		t.Fatalf("expected 28 types, got %d", len(types))
+	if len(types) != 27 {
+		t.Fatalf("expected 27 types, got %d", len(types))
 	}
 
 	typeSet := make(map[ProviderType]bool)
@@ -129,6 +129,19 @@ func TestRegistryBuiltinsHaveIcons(t *testing.T) {
 	for _, d := range Builtins() {
 		if len(d.Icon) == 0 {
 			t.Errorf("provider %q has no icon", d.Type)
+		}
+	}
+}
+
+// TestRegistry_NoUnsupportedSignedVendor asserts no built-in vendor declares
+// the OpenAI-compatible protocol with signed auth: ApplyAuth has no signer hook
+// for that style, so such a vendor would be advertised but deterministically
+// fail. Service-account vendors are fine because they use the google-genai
+// path, which does not go through ApplyAuth.
+func TestRegistry_NoUnsupportedSignedVendor(t *testing.T) {
+	for _, d := range Builtins() {
+		if d.Auth == AuthSigned && d.Protocol == ProtocolOpenAIChat {
+			t.Errorf("vendor %q declares %s + %s auth, but no signer is implemented; it would always fail", d.Type, d.Protocol, d.Auth)
 		}
 	}
 }

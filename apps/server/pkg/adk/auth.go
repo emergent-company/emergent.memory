@@ -22,7 +22,9 @@ const (
 	AuthGoogleAPIKey AuthStyle = "x-goog-api-key"
 	// AuthNone sends no credential header (local deployments).
 	AuthNone AuthStyle = "none"
-	// AuthSigned delegates to a registered signer hook (WeKnora Cloud).
+	// AuthSigned delegates to a registered signer hook. No signer is currently
+	// implemented, so ApplyAuth rejects it; service-account vendors use the
+	// google-genai path instead of this injector.
 	AuthSigned AuthStyle = "signed"
 )
 

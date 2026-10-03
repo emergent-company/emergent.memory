@@ -8,7 +8,7 @@
 ## 2. Registry rework
 
 - [x] 2.1 Extend `ProviderDefinition` with `Protocol`, `Auth`, `AuthByProtocol`, `DefaultBaseURLs`, `ModelTypes`, `URLPatterns`, `ExtraFields`, `CredentialLabel`, `CatalogStrategy`, `Compat`, `Order`, `Icon`; add `Protocol`/`AuthStyle`/`ExtraField`/`CredentialLabel` types. Verify `go build ./...`.
-- [x] 2.2 Add `domain/provider/builtin.go` registering all target vendors as data (28 entries: openai, azure-openai, anthropic, deepseek, google, google-vertex, aliyun, zhipu, volcengine, hunyuan, siliconflow, minimax, moonshot, mimo, modelscope, qianfan, qiniu, longcat, lkeap, nvidia, novita, openrouter, requesty, litellm, generic, gpustack, jina, weknoracloud). Verify `go build ./...`.
+- [x] 2.2 Add `domain/provider/builtin.go` registering all target vendors as data (27 entries: openai, azure-openai, anthropic, deepseek, google, google-vertex, aliyun, zhipu, volcengine, hunyuan, siliconflow, minimax, moonshot, mimo, modelscope, qianfan, qiniu, longcat, lkeap, nvidia, novita, openrouter, requesty, litellm, generic, gpustack, jina). WeKnora Cloud is **not registered**: it would require a signer hook that does not exist (`ApplyAuth` rejects `signed`), so advertising it would offer a vendor that always fails. Verify `go build ./...`.
 - [x] 2.3 Add embedded SVG brand icons under `domain/provider/assets/` and set `Definition.Icon`. 27 WeKnora MIT-licensed SVGs embedded via `//go:embed`; every builtin definition carries a non-empty icon; exposed as `iconDataUri` from the definitions API.
 - [x] 2.4 Unit-test registry completeness (every expected ID present, IDs unique, every entry has a protocol/auth). Verify `go test ./domain/provider/ -run Registry -count=1`.
 
