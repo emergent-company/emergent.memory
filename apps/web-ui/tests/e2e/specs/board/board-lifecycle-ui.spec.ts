@@ -33,10 +33,22 @@ function cardIn(page: Page, status: string) {
   return page.locator(`[data-board-column="${status}"]`).getByTestId(`board-card-${canonicalId}`);
 }
 
-/** Click the seeded card and wait for its drawer to open. */
-async function openDrawer(page: Page): Promise<void> {
+/**
+ * Click the seeded card and wait for the shared object preview drawer + its
+ * board action slot (#1379: the card click opens the preview, not the board's
+ * native dialog).
+ */
+async function openPreview(page: Page): Promise<void> {
   await page.getByTestId(`board-card-${canonicalId}`).click();
-  await expect(page.getByTestId('board-item-dialog')).toBeVisible();
+  const panel = page.locator('#object-preview-panel');
+  await expect(panel).toHaveAttribute('aria-hidden', 'false');
+  // The summary and the ?actions=board action slot load over htmx.
+  await expect(page.locator('#object-preview-heading')).toHaveText(key);
+}
+
+/** The preview's board action slot (status-gated approve / retry / reassign / cancel). */
+function previewActions(page: Page) {
+  return page.locator('#object-preview-actions-slot');
 }
 
 /** PATCH the object's status directly (the graph API is the deterministic setter). */
@@ -121,28 +133,30 @@ test.describe.serial('board work-item lifecycle', () => {
     }
   });
 
-  test('renders the seeded item in the ready lane and opens the drawer', async ({ page }) => {
+  test('renders the seeded item in the ready lane and opens the shared preview', async ({ page }) => {
     expect(canonicalId, 'beforeAll must seed the item').toBeTruthy();
     await page.goto('/board');
     await expectAppPage(page, /Board/);
 
     await expect(cardIn(page, 'ready')).toBeVisible();
 
-    await openDrawer(page);
-    const dialog = page.getByTestId('board-item-dialog');
-    await expect(dialog.getByRole('heading', { name: key })).toBeVisible();
+    await openPreview(page);
+    // The ready item's status-gated actions are available in the preview slot.
+    await expect(previewActions(page).getByRole('button', { name: 'Cancel' })).toBeVisible();
 
-    // Close (data-dialog-close) so later steps start from a clean board.
-    await dialog.getByRole('button', { name: 'Close' }).click();
-    await expect(page.getByTestId('board-item-dialog')).toBeHidden();
+    // Close (object-preview-close) so later steps start from a clean board.
+    await page.getByTestId('object-preview-close').click();
+    await expect(page.locator('#object-preview-panel')).toHaveAttribute('aria-hidden', 'true');
   });
 
   test('approve moves a review item to done', async ({ page }) => {
     await setStatus(page, 'review');
     await page.goto('/board');
-    await openDrawer(page);
+    await openPreview(page);
 
-    await page.getByTestId('board-item-dialog').getByRole('button', { name: 'Approve' }).click();
+    await previewActions(page).getByRole('button', { name: 'Approve' }).click();
+    // A successful slot action closes the preview to reveal the refreshed board.
+    await expect(page.locator('#object-preview-panel')).toHaveAttribute('aria-hidden', 'true');
 
     await expect(cardIn(page, 'done')).toBeVisible();
     expect((await workItem(page)).status).toBe('done');
@@ -151,9 +165,10 @@ test.describe.serial('board work-item lifecycle', () => {
   test('retry moves a blocked item back to ready', async ({ page }) => {
     await setStatus(page, 'blocked');
     await page.goto('/board');
-    await openDrawer(page);
+    await openPreview(page);
 
-    await page.getByTestId('board-item-dialog').getByRole('button', { name: 'Retry' }).click();
+    await previewActions(page).getByRole('button', { name: 'Retry' }).click();
+    await expect(page.locator('#object-preview-panel')).toHaveAttribute('aria-hidden', 'true');
 
     await expect(cardIn(page, 'ready')).toBeVisible();
     expect((await workItem(page)).status).toBe('ready');
@@ -161,11 +176,11 @@ test.describe.serial('board work-item lifecycle', () => {
 
   test('reassign sets the assignee on the item', async ({ page }) => {
     await page.goto('/board');
-    await openDrawer(page);
+    await openPreview(page);
 
-    const dialog = page.getByTestId('board-item-dialog');
-    await dialog.locator('input[name="assignee"]').fill(assignee);
-    await dialog.getByRole('button', { name: 'Reassign' }).click();
+    await previewActions(page).locator('input[name="assignee"]').fill(assignee);
+    await previewActions(page).getByRole('button', { name: 'Reassign' }).click();
+    await expect(page.locator('#object-preview-panel')).toHaveAttribute('aria-hidden', 'true');
 
     // The card re-renders with the assignee badge; cross-check via the API.
     await expect(cardIn(page, 'ready')).toBeVisible();
@@ -175,9 +190,10 @@ test.describe.serial('board work-item lifecycle', () => {
 
   test('cancel moves the item to blocked', async ({ page }) => {
     await page.goto('/board');
-    await openDrawer(page);
+    await openPreview(page);
 
-    await page.getByTestId('board-item-dialog').getByRole('button', { name: 'Cancel' }).click();
+    await previewActions(page).getByRole('button', { name: 'Cancel' }).click();
+    await expect(page.locator('#object-preview-panel')).toHaveAttribute('aria-hidden', 'true');
 
     await expect(cardIn(page, 'blocked')).toBeVisible();
     expect((await workItem(page)).status).toBe('blocked');

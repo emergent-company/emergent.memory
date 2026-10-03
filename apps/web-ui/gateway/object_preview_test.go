@@ -71,7 +71,7 @@ func TestObjectPreviewContentIsReadOnly(t *testing.T) {
 			"extra":   "",
 		},
 	}
-	html := renderHTML(t, objectPreviewContent(obj, nil, ""))
+	html := renderHTML(t, objectPreviewContent(obj, nil, "", nil))
 
 	for _, want := range []string{
 		`id="object-preview-heading"`,
@@ -98,11 +98,11 @@ func TestObjectPreviewContentIsReadOnly(t *testing.T) {
 // context line carried through from a /objects/<src>#relationship-<rel> ref.
 func TestObjectPreviewContentRelationshipLabel(t *testing.T) {
 	obj := &GraphObject{ID: "abc", Type: "note", Key: "k"}
-	withRel := renderHTML(t, objectPreviewContent(obj, nil, "cites"))
+	withRel := renderHTML(t, objectPreviewContent(obj, nil, "cites", nil))
 	if !strings.Contains(withRel, "Referenced via") || !strings.Contains(withRel, "cites") {
 		t.Errorf("relationship context missing:\n%s", withRel)
 	}
-	withoutRel := renderHTML(t, objectPreviewContent(obj, nil, ""))
+	withoutRel := renderHTML(t, objectPreviewContent(obj, nil, "", nil))
 	if strings.Contains(withoutRel, "Referenced via") {
 		t.Errorf("relationship context should be omitted when absent:\n%s", withoutRel)
 	}

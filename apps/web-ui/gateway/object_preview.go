@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/a-h/templ"
 	"github.com/emergent-company/go-daisy/render"
 	"github.com/labstack/echo/v4"
 )
@@ -39,8 +40,20 @@ func (s *Server) uiObjectPreviewPartial(c echo.Context) error {
 		typeUIByType = objectTypeUIMap(compiled.ObjectTypes)
 	}
 
+	// ?actions=board renders the board's status-gated work-item actions into the
+	// preview's action slot so the drawer is a usable surface, not just a
+	// summary. Chat previews carry no actions param and stay read-only. A failed
+	// work-item fetch leaves the slot empty — intentionally not captured, so a
+	// missing work item never degrades the object summary.
+	var actions templ.Component
+	if c.QueryParam("actions") == "board" {
+		if detail, werr := s.memory.GetWorkItem(ctx, id); werr == nil && detail != nil && detail.Item != nil {
+			actions = boardDrawerActions(detail.Item)
+		}
+	}
+
 	render.RenderPartial(c.Response().Writer, c.Request(),
-		objectPreviewContent(obj, typeUIByType, s.objectPreviewRelationshipLabel(ctx, id, relID)))
+		objectPreviewContent(obj, typeUIByType, s.objectPreviewRelationshipLabel(ctx, id, relID), actions))
 	return nil
 }
 
