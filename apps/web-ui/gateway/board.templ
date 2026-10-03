@@ -72,7 +72,7 @@ templ boardHealth(agents []ScheduledAgent) {
 // actions and drag re-render. errMsg, when set, renders an error banner above
 // the lanes.
 templ BoardColumns(items []WorkItem, statuses []string, errMsg string) {
-	<div id="board" data-testid="board">
+	<div id="board" data-testid="board" tabindex="-1">
 		if errMsg != "" {
 			@ui.Alert(ui.AlertProps{
 				Type:    ui.AlertError,

@@ -41,6 +41,8 @@ func TestBoardPageRendersColumnsAndCards(t *testing.T) {
 	for _, want := range []string{
 		`data-testid="page-board"`,
 		`data-testid="board"`,
+		// #board is the stable post-swap focus target (object-preview.js).
+		`tabindex="-1"`,
 		`data-testid="board-card-w1"`,
 		`data-testid="board-card-w2"`,
 		`data-testid="board-drawer"`,
