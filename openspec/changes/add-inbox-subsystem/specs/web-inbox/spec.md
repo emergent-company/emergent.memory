@@ -91,6 +91,7 @@ The inbox SHALL render action controls for actionable notifications and SHALL re
 
 - **WHEN** the inbox shows a notification with a target (such as an agent question or approval request)
 - **THEN** the item's title/message is a link that navigates to the target — the chat conversation holding the pending question/approval, or the approvals page when the run has no conversation (#1362)
+- **AND** the fallback approvals page renders and accepts an answer for every pending agent question, whether open-ended or choice, not only tool approvals, so a conversation-less `ask_user` question reaches a surface that can answer it (#1375)
 - **AND** clicking the item marks it read before navigating
 
 ### Requirement: Project inbox opt-in

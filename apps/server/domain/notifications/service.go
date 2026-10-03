@@ -102,7 +102,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Notification, er
 		Type:                in.Type,
 		Severity:            severity,
 		Importance:          importance,
-		Category:            in.Category,
+		Category:            resolveCategory(in.Category, entry),
 		SourceType:          in.SourceType,
 		SourceID:            in.SourceID,
 		RelatedResourceType: in.RelatedResourceType,
@@ -152,6 +152,21 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Notification, er
 // marks a not-yet-registered actionable event from silently losing that flag.
 func resolveRequiresAction(producer bool, entry taxonomy.Entry) bool {
 	return producer || entry.RequiresAction
+}
+
+// resolveCategory keeps the stored category consistent with the taxonomy when a
+// producer omits it. A producer-supplied category wins (it may deliberately
+// narrow), but an omitted one falls back to the taxonomy entry's category so a
+// row is never left NULL for a type the taxonomy classifies (issue #1375).
+func resolveCategory(producer *string, entry taxonomy.Entry) *string {
+	if producer != nil && *producer != "" {
+		return producer
+	}
+	if entry.Category == "" {
+		return producer
+	}
+	category := entry.Category
+	return &category
 }
 
 // emitCreated publishes a real-time notification entity event.

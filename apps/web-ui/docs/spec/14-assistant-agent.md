@@ -320,7 +320,10 @@ dispatching a tool, independent of the model's behaviour.
 - **Audit** — every decision lands in `agent_tool_approvals`; `/settings/approvals`
   lists them (real args, secret keys redacted) with Approve/Reject/Cancel actions
   for pending ones. Each row links back to the chat session that produced it
-  (`conversationId` resolved via `run_id → acp_session_id → conversation`).
+  (`conversationId` resolved via `run_id → acp_session_id → conversation`). The
+  same page renders pending agent questions that are not tool approvals
+  (open-ended or choice), so a run without a chat conversation is answerable
+  there — the fallback target for `agent.question` notifications (#1375).
 
 ## UI integration
 
