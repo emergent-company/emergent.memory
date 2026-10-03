@@ -11,7 +11,7 @@ The system SHALL define each supported vendor as a declarative registry entry ca
 #### Scenario: Registry exposes all configured vendors
 
 - **WHEN** the provider registry is initialized
-- **THEN** it contains an entry for each supported vendor, including the previously hardcoded `openai`, `deepseek`, `google` (as `gemini`) and `google-vertex`
+- **THEN** it contains an entry for each supported vendor, including the previously hardcoded `openai`, `deepseek`, `google` and `google-vertex`
 
 #### Scenario: Adding a vendor requires no dispatch edits
 
@@ -57,12 +57,17 @@ The system SHALL resolve a vendor's model catalog using a strategy declared on i
 
 ### Requirement: Existing provider identifiers remain valid
 
-Previously stored provider identifiers SHALL continue to resolve after the registry is introduced. The legacy identifier `google` SHALL alias to the `gemini` vendor; `google-vertex`, `openai`, and `deepseek` SHALL retain their meaning.
+Previously stored provider identifiers SHALL continue to resolve after the registry is introduced. The canonical Google vendor identifier is `google`; `gemini` is accepted only as a model-routing dialect alias (the routing prefix is stripped before the model is resolved against the `google` vendor) and is **not** a separate registry entry. `google-vertex`, `openai`, and `deepseek` SHALL retain their meaning.
 
 #### Scenario: Legacy google row resolves
 
 - **WHEN** a stored provider config uses the identifier `google`
-- **THEN** resolution maps it to the `gemini` vendor definition and credentials still decrypt and dispatch
+- **THEN** resolution maps it to the `google` vendor definition and credentials still decrypt and dispatch
+
+#### Scenario: gemini routing prefix resolves to google
+
+- **WHEN** a stored model reference uses the `gemini` routing prefix (for example `gemini/gemini-embedding-001`)
+- **THEN** the prefix is recognized as a dialect alias and stripped, and the model resolves against the `google` vendor definition
 
 ### Requirement: Anthropic Messages protocol
 
