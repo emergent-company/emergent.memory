@@ -123,8 +123,9 @@ Main user UI. Pages:
   keywords — env-driven, display only), and the registered-device revoke list.
 - **API Tokens** — project-scoped token management (`/settings/tokens`): create, revoke,
   regenerate, scope editing.
-- **Approvals** — pending-question approvals (`/settings/approvals`): approve, reject,
-  cancel.
+- **Approvals** — the project-wide human-input surface (`/settings/approvals`): answer
+  pending agent questions (open-ended or choice) and review every tool-approval decision.
+  A conversation-less `agent.question` notification falls back here (#1375).
 - **Blueprints & schema migrations** — the Blueprints gallery (`/blueprints`) lists
   installable packs and installed/active versions; per-pack detail pages install, enable,
   and unapply (`/blueprints/:id`). Schema migrations migrate live graph data between

@@ -106,6 +106,7 @@ type fakeMemory struct {
 	questionMessage     string        // optional reject message received via RespondQuestion
 	questionCancelID    string        // question id received via CancelQuestion
 	approvals           []ToolApprovalItem
+	questions           []AgentQuestionItem
 	convErr             error // ListConversations failure
 	histErr             error // GetConversationHistory failure
 	documents           []Document
@@ -705,7 +706,7 @@ func (f *fakeMemory) ListSessionTodos(ctx context.Context, sessionID string) ([]
 }
 
 func (f *fakeMemory) ListAgentQuestions(ctx context.Context) ([]AgentQuestionItem, error) {
-	return nil, nil
+	return f.questions, nil
 }
 
 func (f *fakeMemory) ListConversations(ctx context.Context, includeArchived bool) (*ConversationList, error) {
@@ -1890,6 +1891,8 @@ func newTestServer(f *fakeMemory) (*Server, *echo.Echo) {
 	api.GET("/conversations/:id/history", s.getConversationHistory)
 	api.GET("/conversations/:id/events", s.conversationEvents)
 	e.GET("/settings/approvals", s.uiApprovals)
+	e.POST("/settings/approvals/:questionId/respond", s.uiApproveReject)
+	e.POST("/settings/approvals/:questionId/cancel", s.uiCancelApproval)
 	return s, e
 }
 
@@ -2208,6 +2211,114 @@ func TestApprovalsPage(t *testing.T) {
 	}
 	if !strings.Contains(body, "set_field") || !strings.Contains(body, "rejected") || !strings.Contains(body, "too long") {
 		t.Fatalf("reject message missing: %s", body)
+	}
+}
+
+// TestApprovalsPageAnswersOpenEndedQuestion is the #1375 regression: a
+// conversation-less open-ended ask_user question falls back to
+// /settings/approvals (see agents.questionNotificationActionURL), so that page
+// MUST render the question with an answer control and accept the answer through
+// its respond route. Before the fix the page showed only tool approvals and the
+// question was unreachable.
+func TestApprovalsPageAnswersOpenEndedQuestion(t *testing.T) {
+	const answer = "Call it Memory"
+	f := &fakeMemory{questions: []AgentQuestionItem{{
+		ID:              "q-open",
+		RunID:           "run-1",
+		Question:        "What should I name the project?",
+		Status:          "pending",
+		InteractionType: "text",
+		Placeholder:     "Project name",
+	}}}
+	_, e := newTestServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/approvals", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "What should I name the project?") {
+		t.Fatalf("pending open-ended question not rendered: %s", body)
+	}
+	if !strings.Contains(body, `action="/settings/approvals/q-open/respond"`) {
+		t.Fatalf("answer form not rendered: %s", body)
+	}
+	if !strings.Contains(body, `name="response"`) {
+		t.Fatalf("free-text answer input missing: %s", body)
+	}
+
+	// The rendered form target actually resolves the question.
+	req := httptest.NewRequest(http.MethodPost, "/settings/approvals/q-open/respond",
+		strings.NewReader("response=Call+it+Memory"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther && rec.Code != http.StatusOK {
+		t.Fatalf("respond status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if f.questionID != "q-open" || f.questionResponse != answer {
+		t.Fatalf("answer not forwarded: id=%q response=%q", f.questionID, f.questionResponse)
+	}
+}
+
+// TestApprovalsPageChoiceQuestionRendersOptionButtons covers the button-shaped
+// ask_user question: each option becomes a submit that posts its value, so a
+// conversation-less multiple-choice question is answerable from the same page.
+func TestApprovalsPageChoiceQuestionRendersOptionButtons(t *testing.T) {
+	f := &fakeMemory{questions: []AgentQuestionItem{{
+		ID:       "q-choice",
+		Question: "Which environment?",
+		Status:   "pending",
+		Options: []AgentQuestionOption{
+			{Label: "Staging", Value: "staging"},
+			{Label: "Production", Value: "production"},
+		},
+	}}}
+	_, e := newTestServer(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/approvals", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `action="/settings/approvals/q-choice/respond"`) {
+		t.Fatalf("choice form missing: %s", body)
+	}
+	for _, want := range []string{`value="staging"`, `value="production"`, "Staging", "Production"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("option %q missing: %s", want, body)
+		}
+	}
+}
+
+// TestApprovalsPageDedupesAndHidesQuestions guards the page's question filter:
+// an answered question is not rendered, and a question already represented by a
+// pending tool approval is not rendered twice.
+func TestApprovalsPageDedupesAndHidesQuestions(t *testing.T) {
+	f := &fakeMemory{
+		approvals: []ToolApprovalItem{{ID: "a1", QuestionID: "q-tool", ToolName: "delete_all", Decision: "pending"}},
+		questions: []AgentQuestionItem{
+			{ID: "q-tool", Question: "Approve delete_all?", Status: "pending"},
+			{ID: "q-done", Question: "Already answered?", Status: "answered"},
+		},
+	}
+	_, e := newTestServer(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/approvals", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "Already answered?") {
+		t.Fatalf("answered question must not render: %s", body)
+	}
+	if strings.Contains(body, "Approve delete_all?") {
+		t.Fatalf("tool-confirmation question must not be duplicated: %s", body)
+	}
+	// The tool approval itself still renders with its action controls.
+	if !strings.Contains(body, "delete_all") || !strings.Contains(body, `action="/settings/approvals/q-tool/respond"`) {
+		t.Fatalf("pending approval row missing: %s", body)
 	}
 }
 
