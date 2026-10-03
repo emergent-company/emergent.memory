@@ -89,9 +89,9 @@ templ questionRow(q AgentQuestionItem) {
 				<div class="flex flex-wrap items-center gap-2">
 					<form method="post" action={ "/settings/approvals/" + q.ID + "/respond" } class="flex flex-wrap items-center gap-2" role="group" aria-label={ q.Question }>
 						<input type="hidden" name="multi" value="1"/>
-						for i, opt := range q.Options {
+						for _, opt := range q.Options {
 							<label class="flex items-center gap-2 text-sm">
-								<input type="checkbox" name="response" value={ opt.Value } class="checkbox checkbox-sm" required?={ i == 0 }/>
+								<input type="checkbox" name="response" value={ opt.Value } class="checkbox checkbox-sm"/>
 								<span>{ opt.Label }</span>
 							</label>
 						}

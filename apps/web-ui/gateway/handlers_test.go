@@ -2321,6 +2321,12 @@ func TestApprovalsPageMultiSelectQuestionRendersCheckboxesAndSubmitsJSON(t *test
 			t.Fatalf("expected %q in body: %s", want, body)
 		}
 	}
+	// No checkbox may carry `required`: HTML marks the individual checkbox
+	// required, not "one of the group", so it would force the user to select
+	// the first option — corrupting the answer (#1375 follow-up).
+	if strings.Contains(body, `checkbox checkbox-sm" required`) {
+		t.Fatalf("multi-select checkbox must not be required: %s", body)
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/settings/approvals/q-multi/respond",
 		strings.NewReader(url.Values{"multi": {"1"}, "response": {"staging", "production"}}.Encode()))
@@ -2335,6 +2341,40 @@ func TestApprovalsPageMultiSelectQuestionRendersCheckboxesAndSubmitsJSON(t *test
 	}
 	if f.questionResponse != `["staging","production"]` {
 		t.Fatalf("response = %q, want JSON array", f.questionResponse)
+	}
+}
+
+// TestApprovalsPageMultiSelectEmptySelectionIsRejected guards that a multi-select
+// submit with nothing checked does not resume the run with an empty answer.
+func TestApprovalsPageMultiSelectEmptySelectionIsRejected(t *testing.T) {
+	f := &fakeMemory{questions: []AgentQuestionItem{{
+		ID:              "q-multi-empty",
+		Question:        "Which environments?",
+		Status:          "pending",
+		InteractionType: "multi_select",
+		Options: []AgentQuestionOption{
+			{Label: "Staging", Value: "staging"},
+			{Label: "Production", Value: "production"},
+		},
+	}}}
+	_, e := newTestServer(f)
+
+	req := httptest.NewRequest(http.MethodPost, "/settings/approvals/q-multi-empty/respond",
+		strings.NewReader(url.Values{"multi": {"1"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("respond status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "err=") {
+		t.Fatalf("expected error redirect, got %q", loc)
+	}
+	if f.questionID != "" {
+		t.Fatalf("empty multi-select must not resume: questionID = %q", f.questionID)
+	}
+	if f.questionResponse != "" {
+		t.Fatalf("empty multi-select must not post a response: %q", f.questionResponse)
 	}
 }
 

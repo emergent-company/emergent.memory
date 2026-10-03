@@ -3,6 +3,7 @@ package main
 import (
 	"cmp"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -67,9 +68,13 @@ func (s *Server) uiApproveReject(c echo.Context) error {
 	var response string
 	switch {
 	case c.FormValue("multi") == "1":
+		// A multi-select question posts `multi=1` plus one repeated `response`
+		// field per checked option. An unchecked submit carries no response at
+		// all (the surface asks for at least one selection); resume must not be
+		// driven by an empty answer.
 		values := c.Request().Form["response"]
-		if values == nil {
-			values = []string{}
+		if len(values) == 0 {
+			return redirectWithError(c, "/settings/approvals", errors.New("select at least one option"))
 		}
 		b, err := json.Marshal(values)
 		if err != nil {
