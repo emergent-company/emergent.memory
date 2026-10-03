@@ -126,7 +126,9 @@ templ boardLaneView(col boardLane) {
 
 // boardCard renders one work-item card: type, key, assignee, and the latest-run
 // execution badge. Blocked/failed cards get an error accent; unroutable cards a
-// warning accent. The card is both clickable (opens the drawer) and draggable.
+// warning accent. The card is both clickable (opens the shared object preview
+// drawer) and draggable; app.js owns the click/keydown preview hook and the
+// drag action mapping.
 templ boardCard(it WorkItem) {
 	{{ accent := "border-base-content/10"
 	if it.Status == "blocked" || it.LatestRunStatus == "error" {
@@ -140,10 +142,8 @@ templ boardCard(it WorkItem) {
 		data-board-card=""
 		data-canonical-id={ it.CanonicalID }
 		data-board-status={ it.Status }
-		hx-get={ boardItemPath(it.CanonicalID) }
-		hx-trigger="click, keydown[key=='Enter' || key==' ']"
-		hx-target="#board-drawer"
-		hx-swap="innerHTML"
+		data-board-open-preview=""
+		aria-haspopup="dialog"
 		role="button"
 		tabindex="0"
 		data-testid={ "board-card-" + it.CanonicalID }

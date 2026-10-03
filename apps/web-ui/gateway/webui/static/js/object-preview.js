@@ -136,6 +136,7 @@
     // drawer shows a graceful state instead of a stuck spinner.
     document.addEventListener("htmx:response:error", onResponseError);
     document.addEventListener("htmx:error", onResponseError);
+    document.addEventListener("htmx:after:request", onAfterRequest);
   }
 
   function isOpen() {
@@ -204,7 +205,13 @@
     if (backdrop) backdrop.classList.remove("hidden");
     focusClose();
 
-    var url = "/objects/" + ref.id + "/preview" + (ref.rel ? "?rel=" + encodeURIComponent(ref.rel) : "");
+    var params = [];
+    if (ref.rel) params.push("rel=" + encodeURIComponent(ref.rel));
+    // Optional surface selector (e.g. "board"): the partial renders that
+    // surface's actions into #object-preview-actions-slot. Absent for chat
+    // references, which stay read-only.
+    if (ref.actions) params.push("actions=" + encodeURIComponent(ref.actions));
+    var url = "/objects/" + ref.id + "/preview" + (params.length ? "?" + params.join("&") : "");
     if (window.htmx && htmx.ajax) {
       htmx.ajax("GET", url, { target: "#object-preview-body", swap: "innerHTML" });
     }
@@ -317,6 +324,21 @@
       ev.preventDefault();
       first.focus();
     }
+  }
+
+  // Action buttons rendered into #object-preview-actions-slot (e.g. the board's
+  // status-gated work-item actions) POST and re-render the board behind the
+  // drawer. On success close the preview to reveal the refreshed board; a failed
+  // request stays open so its error is visible. htmx v4 fires htmx:after:request
+  // with detail.ctx.sourceElement as the triggering element.
+  function onAfterRequest(ev) {
+    var detail = ev && ev.detail;
+    var ctx = detail && detail.ctx;
+    var status = ctx && ctx.response && ctx.response.raw && ctx.response.raw.status;
+    if (typeof status === "number" && (status < 200 || status >= 300)) return;
+    var elt = (ctx && ctx.sourceElement) || (detail && detail.elt);
+    if (!elt || !elt.closest || !elt.closest("#object-preview-actions-slot")) return;
+    close();
   }
 
   function onResponseError(ev) {

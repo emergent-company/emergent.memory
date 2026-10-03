@@ -1570,6 +1570,17 @@ pre.memory-scroll::-webkit-scrollbar-thumb { background: var(--color-base-300); 
   }
 }
 
+/* Kanban board drag affordance. A valid drop target gets a primary outline
+   (shape, not colour alone) and the held card dims. State-only styles — no
+   transition — so they are already reduced-motion safe. */
+.memory-board__lane--drop {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.memory-board__card--dragging {
+  opacity: 0.5;
+}
+
 /* prefers-reduced-motion: kill the flourish */
 @media (prefers-reduced-motion: reduce) {
   .memory-rise { animation: none; }

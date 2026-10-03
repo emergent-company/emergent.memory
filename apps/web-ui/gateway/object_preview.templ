@@ -123,10 +123,15 @@ templ objectPreviewDrawer() {
 // icon matches the rest of the UI; relLabel, when set, is the humanised
 // relationship type the reference carried.
 //
+// actions, when non-nil, is rendered into #object-preview-actions-slot at the
+// foot of the summary. This is the documented extension point for surface-
+// specific actions (the board passes its status-gated work-item actions); chat
+// previews pass nil and stay read-only.
+//
 // Empty values still render (de-emphasised with a muted em dash) so the shape of
 // every property is visible; each row carries data-empty="true" so a future
 // "hide empties" toggle can fold them without a markup change.
-templ objectPreviewContent(obj *GraphObject, typeUIByType map[string]typeUI, relLabel string) {
+templ objectPreviewContent(obj *GraphObject, typeUIByType map[string]typeUI, relLabel string, actions templ.Component) {
 	{{ tui := typeUIOf(typeUIByType, obj.Type) }}
 	<div class="flex flex-col gap-5 p-4">
 		<div class="flex items-start gap-3">
@@ -191,8 +196,12 @@ templ objectPreviewContent(obj *GraphObject, typeUIByType map[string]typeUI, rel
 			}
 		}
 
-		<!-- Extension point for future preview surfaces (comments, actions). -->
-		<div id="object-preview-actions-slot"></div>
+		<!-- Extension point for surface-specific actions (empty when read-only). -->
+		<div id="object-preview-actions-slot">
+			if actions != nil {
+				@actions
+			}
+		</div>
 	</div>
 }
 

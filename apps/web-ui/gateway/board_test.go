@@ -21,6 +21,7 @@ func newBoardEcho(f MemoryBackend) (*Server, *echo.Echo) {
 	e.POST("/board/items/:canonicalId/retry", s.uiBoardRetry)
 	e.POST("/board/items/:canonicalId/reassign", s.uiBoardReassign)
 	e.POST("/board/items/:canonicalId/cancel", s.uiBoardCancel)
+	e.GET("/objects/:id/preview", s.uiObjectPreviewPartial)
 	return s, e
 }
 
@@ -48,12 +49,17 @@ func TestBoardPageRendersColumnsAndCards(t *testing.T) {
 		`data-board-column="done"`,
 		`data-board-card`,
 		`draggable="true"`,
-		`hx-target="#board-drawer"`,
+		`data-board-open-preview`,
+		`aria-haspopup="dialog"`,
 		`data-canonical-id="w2"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("board page missing %q", want)
 		}
+	}
+	// Clicking a card opens the shared object preview, not the board dialog.
+	if strings.Contains(body, `hx-target="#board-drawer"`) {
+		t.Error("board card must not load the board dialog on click")
 	}
 }
 
@@ -237,6 +243,65 @@ func TestBoardApprovePostsAndRefreshes(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `id="board"`) {
 		t.Errorf("action must re-render the board:\n%s", rec.Body.String())
+	}
+}
+
+// TestObjectPreviewBoardActionsSlot pins the ?actions=board extension: the
+// object summary carries the work item's status-gated action routes in the
+// shared #object-preview-actions-slot.
+func TestObjectPreviewBoardActionsSlot(t *testing.T) {
+	f := &fakeMemory{
+		objects: []GraphObject{{ID: "w1", Type: "BoardTask", Key: "k", Status: "review"}},
+		workItemDetail: &WorkItemDetail{
+			Item: &WorkItem{CanonicalID: "w1", Type: "BoardTask", Key: "k", Status: "review"},
+		},
+	}
+	_, e := newBoardEcho(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/w1/preview?actions=board", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`id="object-preview-actions-slot"`,
+		`/board/items/w1/approve`,
+		`/board/items/w1/request-changes`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("board preview missing %q", want)
+		}
+	}
+}
+
+// TestObjectPreviewWithoutActionsStaysReadOnly pins that chat previews (no
+// actions param) render the empty action slot and never fetch or render a work
+// item's board actions.
+func TestObjectPreviewWithoutActionsStaysReadOnly(t *testing.T) {
+	f := &fakeMemory{
+		objects:        []GraphObject{{ID: "w1", Type: "BoardTask", Key: "k", Status: "review"}},
+		workItemDetail: &WorkItemDetail{Item: &WorkItem{CanonicalID: "w1", Status: "review"}},
+	}
+	_, e := newBoardEcho(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/w1/preview", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `id="object-preview-actions-slot"`) {
+		t.Errorf("preview missing action slot:\n%s", body)
+	}
+	if strings.Contains(body, "/board/items/") {
+		t.Errorf("read-only preview must not render board actions:\n%s", body)
+	}
+}
+
+// TestBoardItemPath pins the drawer route builder retained for the
+// review->revision drag path (app.js GETs this route into #board-drawer).
+func TestBoardItemPath(t *testing.T) {
+	if got := boardItemPath("w1"); got != "/board/items/w1" {
+		t.Errorf("boardItemPath = %q, want /board/items/w1", got)
 	}
 }
 
