@@ -263,6 +263,39 @@ func TestChatRailListArchivedMarkerOnlyOnArchivedRows(t *testing.T) {
 	}
 }
 
+// --- bulk session selection (#1385) ---
+
+// TestChatRailBulkSelectionContract pins the #1385 markup contract: the
+// selection-mode toggle, the footer bulk-action bar, and every conversation
+// row's server-rendered selection checkbox (keyboard-operable, labelled).
+func TestChatRailBulkSelectionContract(t *testing.T) {
+	convs := &ConversationList{Conversations: []Conversation{{ID: "c1", Title: "Alpha"}}}
+	html := renderHTML(t, chatWorkspace(nil, convs, nil, nil, nil, "", "", "", false, nil, chatRunControl{}))
+	for _, want := range []string{
+		`data-action="toggle-session-select"`,
+		`data-testid="toggle-session-select"`,
+		`aria-pressed="false"`,
+		`id="chat-bulk-bar"`,
+		`data-testid="chat-bulk-bar"`,
+		`role="group"`,
+		`aria-label="Bulk session actions"`,
+		`id="chat-select-all"`,
+		`data-action="select-all-sessions"`,
+		`aria-label="Select all sessions"`,
+		`id="chat-selection-count"`,
+		`aria-live="polite"`,
+		`data-action="bulk-archive-sessions"`,
+		`data-testid="chat-bulk-archive"`,
+		`data-action="select-session"`,
+		`data-testid="session-select"`,
+		`aria-label="Select session: Alpha"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("rail bulk-selection contract missing %q", want)
+		}
+	}
+}
+
 // --- delete confirmation (task 5.5) ---
 
 // TestChatDeleteConfirmDialogRender asserts the shared confirmation dialog and

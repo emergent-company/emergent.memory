@@ -252,8 +252,11 @@ func TestChatRailBadgeAboveTitle(t *testing.T) {
 
 	grow := strings.Index(html, `class="list-col-grow"`)
 	badge := strings.Index(html, `class="memory-rail-badge"`)
-	title := strings.Index(html, "A very long session title that needs the full width")
-	if grow == -1 || badge == -1 || title == -1 {
+	// The selection checkbox's aria-label also names the session, so locate the
+	// title text inside the grow column rather than at first occurrence.
+	relTitle := strings.Index(html[grow:], "A very long session title that needs the full width")
+	title := grow + relTitle
+	if grow == -1 || badge == -1 || relTitle == -1 {
 		t.Fatalf("missing grow column, badge, or title: %s", html)
 	}
 	if grow >= badge || badge >= title {

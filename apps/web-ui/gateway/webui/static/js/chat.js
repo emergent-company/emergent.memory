@@ -43,6 +43,10 @@
   var filterOrigin = "";  // session rail origin filter ("" = all types)
   var filterIncludeArchived = false; // rail "Include archived" filter (server-side query)
   var deleteSessionId = "";          // session pending the delete confirmation
+  var selectionMode = false;         // bulk-selection mode (#1385): row checkboxes + footer bar
+  var selectedSessions = {};         // session id -> true, the checked set while selecting
+  var bulkBusy = false;              // a bulk archive is in flight (footer button disabled)
+  var archivePendingIds = {};        // session id -> true, optimistic archive in flight (#1419 review)
   var aborter = null;
   var eventSource = null;   // SSE live-update channel for the active conversation/run
   var eventSourceId = "";   // scope key the current eventSource is subscribed to ("conv:<id>" / "run:<id>")
@@ -415,7 +419,11 @@
       if (t.getAttribute("data-action") === "resume-session") {
         var id = t.getAttribute("data-id");
         var agent = t.getAttribute("data-agent") || "";
-        if (id) {
+        if (selectionMode) {
+          // Selection mode repurposes a row click: toggle its checkbox
+          // instead of resuming the conversation.
+          if (id) setSessionSelected(id, !selectedSessions[id]);
+        } else if (id) {
           closeSessionRail();
           resumeConversation(id, agent, t);
         }
@@ -444,6 +452,15 @@
         // action, so a click on the menu button is seen as "session-menu" and
         // deliberately does nothing here; the enclosing row's resume-session
         // action never fires. No stopPropagation is involved.
+      } else if (t.getAttribute("data-action") === "toggle-session-select") {
+        toggleSelectionMode();
+      } else if (t.getAttribute("data-action") === "select-session") {
+        // The native checkbox has already flipped its checked state; mirror it.
+        setSessionSelected(t.getAttribute("data-id"), !!t.checked);
+      } else if (t.getAttribute("data-action") === "select-all-sessions") {
+        selectAllSessions(!!t.checked);
+      } else if (t.getAttribute("data-action") === "bulk-archive-sessions") {
+        bulkArchiveSelected();
       } else if (t.getAttribute("data-action") === "archive-session") {
         archiveSession(t.getAttribute("data-id"));
       } else if (t.getAttribute("data-action") === "unarchive-session") {
@@ -490,6 +507,13 @@
 
     // initial pre-send model-availability banner state for the selected agent
     updateModelWarning();
+
+    // The shell re-renders #chat-root on swap; selectionMode is module-scoped
+    // and survives, so mirror it onto the fresh DOM here. Without this the new
+    // checkboxes/footer stay hidden and the toggle's aria-pressed resets while
+    // row clicks still act in selection mode (#1419 review).
+    pruneSelection();
+    applySelectionMode();
   }
 
   function currentAgent() {
@@ -693,6 +717,12 @@
       var agent = rows[i].getAttribute("data-agent") || "";
       var origin = rows[i].getAttribute("data-origin") || "";
       var show = (!filterAgent || agent === filterAgent) && (!filterOrigin || origin === filterOrigin);
+      // A pending optimistic archive is a second, independent reason a row is
+      // hidden. Fold it in here so a filter change recomputes visibility from
+      // both conditions instead of clearing the optimistic hide (#1419 review).
+      // Only while "Include archived" is off: with it on an archived row is
+      // expected to stay listed, pending or not.
+      if (!filterIncludeArchived && rows[i].getAttribute("data-archive-pending") === "true") show = false;
       rows[i].classList.toggle("hidden", !show);
       if (show) visible++;
     }
@@ -725,39 +755,291 @@
       var res = await fetch("/partial/chat-rail?c=" + encodeURIComponent(conversationId || "") + "&includeArchived=" + (filterIncludeArchived ? "true" : "false"));
       if (!res.ok) throw new Error("HTTP " + res.status);
       railList.innerHTML = await res.text();
+      reapplyArchivePending();
       applyAgentFilter();
       applyRailBadges();
+      pruneSelection();
+      applySelectionMode();
     } catch (err) {
       reportError(err, "session rail refresh failed");
       // keep the stale list; the next refresh retries
     }
   }
 
-  /* ---------- session lifecycle actions (archive / unarchive / delete) ---------- */
+  /* ---------- optimistic session lifecycle (archive / unarchive, #1382) ---------- */
 
-  // POSTs one lifecycle route and refreshes the rail. Archiving the open
-  // conversation is intentionally non-destructive: the workspace is left
-  // untouched, only the rail row disappears under the default (exclude)
-  // filter. A missing id is a no-op (defensive — the menu always carries one).
-  // `verb` is the past participle for the success toast ("Session archived");
-  // `action` is the present-tense verb for the failure paths, so the error
-  // reads "Could not archive session" rather than "Could not archived session".
-  function runSessionAction(id, route, verb, action) {
-    if (!id) return Promise.resolve();
+  // sessionRowById returns the rail row for a conversation id, or null. Used by
+  // the optimistic transitions to hide/restore a row without a server
+  // round-trip.
+  function sessionRowById(id) {
+    if (!id) return null;
+    var railList = document.getElementById("chat-rail-list");
+    if (!railList) return null;
+    var rows = railList.querySelectorAll("[data-action='resume-session']");
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].getAttribute("data-id") === id) return rows[i];
+    }
+    return null;
+  }
+
+  // postSessionRoute POSTs one lifecycle route and resolves on 2xx, rejecting
+  // with an Error carrying the HTTP status otherwise.
+  function postSessionRoute(id, route) {
     return fetch("/api/conversations/" + encodeURIComponent(id) + route, { method: "POST" })
       .then(function (r) {
         if (!r.ok) throw new Error("HTTP " + r.status);
-        notify("success", "Session " + verb);
-        return refreshSessionRail();
-      })
-      .catch(function (err) {
-        reportError(err, "session " + action + " failed");
-        notify("error", "Could not " + action + " session: " + err.message);
       });
   }
 
-  function archiveSession(id) { return runSessionAction(id, "/archive", "archived", "archive"); }
-  function unarchiveSession(id) { return runSessionAction(id, "/unarchive", "unarchived", "unarchive"); }
+  // applyArchiveOptimistic hides the row immediately (#1382): under the default
+  // filter an archived conversation drops out of the rail, so hiding is the
+  // visible outcome the user expects the instant they click. With "Include
+  // archived" on the row stays listed, so there is nothing to hide — the refresh
+  // after the request settles re-renders its archived marker.
+  //
+  // The pending marker is kept separate from the filter's `hidden` class
+  // (#1419 review): a filter change goes through applyAgentFilter(), which
+  // re-derives visibility from both the filter and the pending marker, and the
+  // rollback clears only the marker then lets applyAgentFilter() decide whether
+  // the row is visible again — so a row the filter hides stays hidden, and a
+  // pending archive is not revealed by a concurrent filter change.
+  //
+  // The marker itself does not survive refreshSessionRail()'s innerHTML swap
+  // (an SSE live-update, finishTurn, a delete of another row, or the
+  // include-archived toggle can all refresh the rail before the POST settles),
+  // so the in-flight ids live in the module-level archivePendingIds set and
+  // reapplyArchivePending() re-stamps the marker after every rebuild.
+  function applyArchiveOptimistic(id) {
+    var row = sessionRowById(id);
+    if (!row || filterIncludeArchived) return function () {};
+    archivePendingIds[id] = true;
+    row.setAttribute("data-archive-pending", "true");
+    row.classList.add("hidden");
+    return function () {
+      delete archivePendingIds[id];
+      var current = sessionRowById(id);
+      if (current) current.removeAttribute("data-archive-pending");
+      applyAgentFilter();
+    };
+  }
+
+  // reapplyArchivePending re-marks the rows whose archive request is still in
+  // flight after the rail list is rebuilt. Visibility is then decided by
+  // applyAgentFilter(), which hides a pending row only while "Include archived"
+  // is off.
+  function reapplyArchivePending() {
+    var ids = Object.keys(archivePendingIds);
+    for (var i = 0; i < ids.length; i++) {
+      var row = sessionRowById(ids[i]);
+      if (row) row.setAttribute("data-archive-pending", "true");
+    }
+  }
+
+  // applyUnarchiveOptimistic clears the archived visual state at once. The
+  // unarchive action only exists while "Include archived" is on, so the row must
+  // stay listed; only the marker/muted styling flips optimistically.
+  function applyUnarchiveOptimistic(id) {
+    var row = sessionRowById(id);
+    if (!row || row.getAttribute("data-archived") !== "true") return function () {};
+    var marker = row.querySelector('[data-testid="session-archived-marker"]');
+    row.removeAttribute("data-archived");
+    row.classList.remove("opacity-60");
+    if (marker) marker.classList.add("hidden");
+    return function () {
+      row.setAttribute("data-archived", "true");
+      row.classList.add("opacity-60");
+      if (marker) marker.classList.remove("hidden");
+    };
+  }
+
+  // runSessionAction applies one lifecycle route to a set of sessions. It is
+  // optimistic: rows are hidden (archive) / un-marked (unarchive) before the
+  // request, restored individually if they fail, and reconciled with the server
+  // by a rail refresh once every request settles. A multi-id call backs the bulk
+  // archive (#1385). Resolves to {total, failed} so the caller can exit selection
+  // mode after completion regardless of partial failures. A missing id is a
+  // no-op (defensive — the menu always carries one). `verb` is the past
+  // participle for the success toast; `action` is the present-tense verb for the
+  // failure paths ("Could not archive session", not "Could not archived …").
+  function runSessionAction(ids, route, verb, action) {
+    var list = (ids || []).filter(Boolean);
+    if (!list.length) return Promise.resolve({ total: 0, failed: 0 });
+    var rollbacks = list.map(function (id) {
+      return route === "/archive" ? applyArchiveOptimistic(id) : applyUnarchiveOptimistic(id);
+    });
+    return Promise.allSettled(list.map(function (id) { return postSessionRoute(id, route); }))
+      .then(function (results) {
+        var failed = [];
+        results.forEach(function (r, i) {
+          if (r.status === "rejected") failed.push({ id: list[i], err: r.reason });
+        });
+        if (failed.length === 0) {
+          notify("success", list.length > 1 ? (list.length + " sessions " + verb) : ("Session " + verb));
+        } else {
+          failed.forEach(function (f) {
+            var idx = list.indexOf(f.id);
+            if (rollbacks[idx]) rollbacks[idx]();
+            reportError(f.err, "session " + action + " failed");
+          });
+          var first = failed[0].err;
+          var what = failed.length === 1
+            ? ("Could not " + action + " session: ")
+            : ("Could not " + action + " " + failed.length + " sessions: ");
+          notify("error", what + ((first && first.message) || first));
+        }
+        // Every request has settled, so nothing here is in flight any more: a
+        // later refresh must not re-hide a successfully archived row (the
+        // server list is authoritative now). Failed ids were rolled back above.
+        list.forEach(function (id) { delete archivePendingIds[id]; });
+        return refreshSessionRail().then(function () {
+          return { total: list.length, failed: failed.length };
+        });
+      });
+  }
+
+  function archiveSession(id) { return runSessionAction([id], "/archive", "archived", "archive"); }
+  function unarchiveSession(id) { return runSessionAction([id], "/unarchive", "unarchived", "unarchive"); }
+
+  /* ---------- bulk session selection (#1385) ---------- */
+
+  // rowCheckbox returns the row's selection checkbox, or null for rows that are
+  // not selectable conversations (scheduled / shared rows).
+  function rowCheckbox(row) {
+    return row ? row.querySelector(".session-select") : null;
+  }
+
+  // selectableRowsInDom returns the conversation rows bulk archive may target:
+  // manual-origin rows currently visible under the filters and not already
+  // archived. Archived rows are excluded from select-all (archiving them is a
+  // no-op); they can still be checked individually when "Include archived" is on.
+  function selectableRowsInDom() {
+    var railList = document.getElementById("chat-rail-list");
+    if (!railList) return [];
+    var rows = railList.querySelectorAll("[data-action='resume-session']");
+    var out = [];
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      if (!rowCheckbox(row)) continue;
+      if (row.getAttribute("data-origin") !== "manual") continue;
+      if (row.classList.contains("hidden")) continue;
+      if (row.getAttribute("data-archived") === "true") continue;
+      out.push(row);
+    }
+    return out;
+  }
+
+  function setRowChecked(row, checked) {
+    var cb = rowCheckbox(row);
+    if (cb) cb.checked = checked;
+    row.setAttribute("data-selected", checked ? "true" : "false");
+  }
+
+  // syncSelectionUi mirrors the selected set onto the footer controls: the live
+  // count, the disabled archive button, and the select-all checkbox with its
+  // indeterminate state.
+  function syncSelectionUi() {
+    var ids = Object.keys(selectedSessions);
+    var countEl = document.getElementById("chat-selection-count");
+    if (countEl) countEl.textContent = ids.length + " selected";
+    var archiveBtn = document.getElementById("chat-bulk-archive");
+    if (archiveBtn) archiveBtn.disabled = bulkBusy || ids.length === 0;
+    var selectAll = document.getElementById("chat-select-all");
+    if (selectAll) {
+      var rows = selectableRowsInDom();
+      var selected = 0;
+      for (var i = 0; i < rows.length; i++) {
+        if (selectedSessions[rows[i].getAttribute("data-id")]) selected++;
+      }
+      selectAll.checked = rows.length > 0 && selected === rows.length;
+      selectAll.indeterminate = selected > 0 && selected < rows.length;
+    }
+  }
+
+  // applySelectionMode reflects the client-side selection state onto the
+  // server-rendered rail: checkbox visibility, the footer bar, the toggle's
+  // aria-pressed, and each row's checked/selected state. Called after every rail
+  // refresh so a swapped-in list picks the state back up.
+  function applySelectionMode() {
+    var railList = document.getElementById("chat-rail-list");
+    var boxes = railList ? railList.querySelectorAll(".session-select") : [];
+    for (var i = 0; i < boxes.length; i++) boxes[i].classList.toggle("hidden", !selectionMode);
+    var bar = document.getElementById("chat-bulk-bar");
+    if (bar) {
+      bar.classList.toggle("hidden", !selectionMode);
+      bar.classList.toggle("flex", selectionMode);
+    }
+    var toggle = document.querySelector("[data-action='toggle-session-select']");
+    if (toggle) toggle.setAttribute("aria-pressed", selectionMode ? "true" : "false");
+    var rows = railList ? railList.querySelectorAll("[data-action='resume-session']") : [];
+    for (var j = 0; j < rows.length; j++) {
+      if (rowCheckbox(rows[j])) setRowChecked(rows[j], !!selectedSessions[rows[j].getAttribute("data-id")]);
+    }
+    syncSelectionUi();
+  }
+
+  // pruneSelection drops checked ids no longer present in the rail (e.g. archived
+  // by another surface), so the count cannot drift after a refresh. Selection
+  // deliberately survives filter changes.
+  function pruneSelection() {
+    var railList = document.getElementById("chat-rail-list");
+    if (!railList || !Object.keys(selectedSessions).length) return;
+    var present = {};
+    var rows = railList.querySelectorAll("[data-action='resume-session']");
+    for (var i = 0; i < rows.length; i++) present[rows[i].getAttribute("data-id")] = true;
+    Object.keys(selectedSessions).forEach(function (id) {
+      if (!present[id]) delete selectedSessions[id];
+    });
+  }
+
+  function setSessionSelected(id, checked) {
+    if (!id) return;
+    if (checked) selectedSessions[id] = true; else delete selectedSessions[id];
+    var row = sessionRowById(id);
+    if (row) setRowChecked(row, checked);
+    syncSelectionUi();
+  }
+
+  function selectAllSessions(checked) {
+    var rows = selectableRowsInDom();
+    for (var i = 0; i < rows.length; i++) {
+      var id = rows[i].getAttribute("data-id");
+      if (checked) selectedSessions[id] = true; else delete selectedSessions[id];
+      setRowChecked(rows[i], checked);
+    }
+    syncSelectionUi();
+  }
+
+  function enterSelectionMode() {
+    selectionMode = true;
+    applySelectionMode();
+  }
+
+  function exitSelectionMode() {
+    selectionMode = false;
+    selectedSessions = {};
+    applySelectionMode();
+  }
+
+  function toggleSelectionMode() {
+    if (selectionMode) exitSelectionMode(); else enterSelectionMode();
+  }
+
+  // bulkArchiveSelected archives every checked session through the same
+  // per-session route the row menu uses. On completion (success or partial
+  // failure) selection mode is exited and the rail refreshed; failed rows were
+  // already restored by runSessionAction.
+  function bulkArchiveSelected() {
+    if (bulkBusy) return Promise.resolve({ total: 0, failed: 0 });
+    var ids = Object.keys(selectedSessions);
+    if (!ids.length) return Promise.resolve({ total: 0, failed: 0 });
+    bulkBusy = true;
+    syncSelectionUi();
+    return runSessionAction(ids, "/archive", "archived", "archive").then(function (result) {
+      bulkBusy = false;
+      exitSelectionMode();
+      return result;
+    });
+  }
 
   // openDeleteSessionConfirm fills the shared confirm dialog and opens it. No
   // request is sent here — DELETE only fires from confirmDeleteSession, so
@@ -2632,6 +2914,12 @@
   // This file is loaded once from the shell — it must not live in the swapped
   // fragment, where htmx re-executes it in a racy order relative to the swap.
   document.addEventListener("htmx:after:swap", init);
+
+  // Escape leaves bulk-selection mode (#1385). Registered once at boot —
+  // selectionMode is module state, so it survives every #chat-root swap.
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape" && selectionMode) exitSelectionMode();
+  });
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);

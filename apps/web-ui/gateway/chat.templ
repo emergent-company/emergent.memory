@@ -85,6 +85,18 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 					}) {
 						New chat
 					}
+					<!-- Bulk-selection toggle (#1385). aria-pressed is flipped by
+					     chat.js; while selection is on, every conversation row
+					     shows a checkbox and the footer action bar appears. -->
+					@ui.Button(ui.ButtonProps{
+						Type:       ui.ButtonTypeButton,
+						Variant:    ui.ButtonGhost,
+						Size:       ui.ButtonSM,
+						Shape:      ui.ButtonShapeSquare,
+						Icon:       "lucide--list-checks",
+						AriaLabel:  "Select sessions",
+						Attrs:      templ.Attributes{"data-action": "toggle-session-select", "data-testid": "toggle-session-select", "aria-pressed": "false"},
+					})
 					@ui.Button(ui.ButtonProps{
 						Type:       ui.ButtonTypeButton,
 						Variant:    ui.ButtonGhost,
@@ -121,6 +133,41 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 			</div>
 			<div id="chat-rail-list" data-testid="session-list" class="min-h-0 grow overflow-y-auto p-2">
 				@chatRailList(convs, appearances, schedRuns, shared, convID)
+			</div>
+			<!-- Bulk-selection footer (#1385). Hidden until chat.js turns on
+			     selection mode; "Archive" applies to every checked conversation
+			     row via the same per-session lifecycle route the row menu uses.
+			     flex is added alongside the removal of hidden so the two display
+			     utilities never conflict. -->
+			<div
+				id="chat-bulk-bar"
+				data-testid="chat-bulk-bar"
+				class="hidden border-base-content/5 shrink-0 items-center gap-2 border-t p-3"
+				role="group"
+				aria-label="Bulk session actions"
+			>
+				<label class="flex cursor-pointer items-center gap-1.5 text-xs text-muted-strong select-none">
+					<input
+						id="chat-select-all"
+						data-testid="chat-select-all"
+						data-action="select-all-sessions"
+						type="checkbox"
+						class="checkbox checkbox-sm"
+						aria-label="Select all sessions"
+					/>
+					<span>All</span>
+				</label>
+				<span id="chat-selection-count" data-testid="chat-selection-count" class="text-muted min-w-0 grow text-xs" aria-live="polite">0 selected</span>
+				<button
+					type="button"
+					id="chat-bulk-archive"
+					data-action="bulk-archive-sessions"
+					data-testid="chat-bulk-archive"
+					class="btn btn-primary btn-xs"
+					disabled
+				>
+					Archive
+				</button>
 			</div>
 		</aside>
 		<div class="flex min-w-0 grow flex-col">
@@ -504,7 +551,22 @@ templ sessionRailItem(c Conversation, ap agentAppearance, active bool) {
 		}
 	}}
 	<li class={ "list-row", templ.KV("opacity-60", c.IsArchived) } { attrs... }>
-		@agentInlineGlyph(ap.Icon, ap.Color)
+		<!-- Selection checkbox (#1385). Always rendered so the markup is
+		     server-owned and stable across rail refreshes; hidden until
+		     chat.js enables selection mode. It carries its own data-action so
+		     the delegated rail handler resolves the checkbox — not the
+		     enclosing resume-session row — and a click never resumes. -->
+		<div class="flex items-center gap-1.5">
+			<input
+				type="checkbox"
+				class="checkbox checkbox-sm session-select hidden"
+				data-action="select-session"
+				data-id={ c.ID }
+				data-testid="session-select"
+				aria-label={ "Select session: " + c.Title }
+			/>
+			@agentInlineGlyph(ap.Icon, ap.Color)
+		</div>
 		<div class="list-col-grow">
 			<div class="flex flex-wrap items-center gap-1.5">
 				@railStatusBadge(c.Bucket, c.PendingApprovals, c.PendingQuestions)
