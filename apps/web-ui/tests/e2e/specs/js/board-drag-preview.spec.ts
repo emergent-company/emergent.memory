@@ -180,4 +180,34 @@ test.describe('Board drag + preview wiring (app.js)', () => {
 
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });
+
+  test('Enter and Space activate a focused card and open the preview', async ({ page }) => {
+    const errors = await bootstrap(page);
+
+    await page.evaluate(() => {
+      const w = window as unknown as { __previewRef: unknown };
+      w.__previewRef = null;
+      (window as unknown as { MemoryObjectPreview: unknown }).MemoryObjectPreview = {
+        open: (ref: unknown) => {
+          w.__previewRef = ref;
+        },
+      };
+    });
+
+    const card = page.locator('#card-ready');
+    const ref = () =>
+      page.evaluate(() => (window as unknown as { __previewRef: unknown }).__previewRef);
+
+    await card.focus();
+    await card.press('Enter');
+    expect(await ref()).toEqual({ id: 'w2', editHref: '/objects/w2', actions: 'board' });
+
+    await page.evaluate(() => {
+      (window as unknown as { __previewRef: unknown }).__previewRef = null;
+    });
+    await card.press('Space');
+    expect(await ref()).toEqual({ id: 'w2', editHref: '/objects/w2', actions: 'board' });
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
 });
