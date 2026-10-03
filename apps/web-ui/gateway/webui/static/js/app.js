@@ -740,6 +740,36 @@
     boardDrag = null;
   });
 
+  /* Board card click/keyboard opens the shared object preview drawer (the same
+     component chat uses) with the board action slot. The preview is a read-only
+     summary plus the status-gated work-item actions. Falls back to the object
+     page when the preview client is unavailable. */
+  function openBoardCardPreview(card) {
+    var id = card.getAttribute("data-canonical-id");
+    if (!id) return;
+    if (window.MemoryObjectPreview && typeof window.MemoryObjectPreview.open === "function") {
+      window.MemoryObjectPreview.open({ id: id, editHref: "/objects/" + id, actions: "board" });
+      return;
+    }
+    window.location.assign("/objects/" + encodeURIComponent(id));
+  }
+
+  document.addEventListener("click", function (ev) {
+    if (ev.defaultPrevented) return;
+    if (ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+    var card = ev.target.closest ? ev.target.closest("[data-board-open-preview]") : null;
+    if (!card) return;
+    ev.preventDefault();
+    openBoardCardPreview(card);
+  });
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key !== "Enter" && ev.key !== " ") return;
+    var card = ev.target && ev.target.closest ? ev.target.closest("[data-board-open-preview]") : null;
+    if (!card || card !== ev.target) return; // only the card itself, not nested controls
+    ev.preventDefault();
+    openBoardCardPreview(card);
+  });
+
   /* expose for templ script blocks */
   window.MemoryApp = {
     openAgentForm: openAgentForm,
