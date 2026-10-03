@@ -33,3 +33,28 @@ func TestResolveRequiresAction_TaxonomyIsAuthoritative(t *testing.T) {
 	require.True(t, ok)
 	require.True(t, resolveRequiresAction(false, invite))
 }
+
+// TestResolveCategory_TaxonomyIsFallback is the #1375 regression: the
+// agent-question producer omits Category, which used to store NULL and leave
+// the row inconsistent with the taxonomy. An omitted category must now fall
+// back to the taxonomy entry, while an explicit producer category still wins.
+func TestResolveCategory_TaxonomyIsFallback(t *testing.T) {
+	agentQuestion, ok := taxonomy.Lookup("agent.question")
+	require.True(t, ok)
+	require.Equal(t, "agents", agentQuestion.Category)
+
+	// Producer omitted the category: fall back to the taxonomy.
+	require.NotNil(t, resolveCategory(nil, agentQuestion))
+	require.Equal(t, "agents", *resolveCategory(nil, agentQuestion))
+
+	// Empty pointer is treated as omitted.
+	empty := ""
+	require.Equal(t, "agents", *resolveCategory(&empty, agentQuestion))
+
+	// An explicit producer category is authoritative.
+	explicit := "custom"
+	require.Equal(t, "custom", *resolveCategory(&explicit, agentQuestion))
+
+	// A taxonomy entry without a category leaves the producer value untouched.
+	require.Nil(t, resolveCategory(nil, taxonomy.Entry{Key: "n/a"}))
+}

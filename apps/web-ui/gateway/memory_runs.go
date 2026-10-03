@@ -224,6 +224,7 @@ type AgentQuestionItem struct {
 	Options         []AgentQuestionOption `json:"options"`
 	InteractionType string                `json:"interactionType"`
 	Placeholder     string                `json:"placeholder,omitempty"`
+	MaxLength       int                   `json:"maxLength,omitempty"`
 	Proposal        json.RawMessage       `json:"proposal,omitempty"`
 	Status          string                `json:"status"`
 	Response        *string               `json:"response"`

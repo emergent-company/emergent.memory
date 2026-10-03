@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -106,6 +107,7 @@ type fakeMemory struct {
 	questionMessage     string        // optional reject message received via RespondQuestion
 	questionCancelID    string        // question id received via CancelQuestion
 	approvals           []ToolApprovalItem
+	questions           []AgentQuestionItem
 	convErr             error // ListConversations failure
 	histErr             error // GetConversationHistory failure
 	documents           []Document
@@ -705,7 +707,7 @@ func (f *fakeMemory) ListSessionTodos(ctx context.Context, sessionID string) ([]
 }
 
 func (f *fakeMemory) ListAgentQuestions(ctx context.Context) ([]AgentQuestionItem, error) {
-	return nil, nil
+	return f.questions, nil
 }
 
 func (f *fakeMemory) ListConversations(ctx context.Context, includeArchived bool) (*ConversationList, error) {
@@ -1890,6 +1892,8 @@ func newTestServer(f *fakeMemory) (*Server, *echo.Echo) {
 	api.GET("/conversations/:id/history", s.getConversationHistory)
 	api.GET("/conversations/:id/events", s.conversationEvents)
 	e.GET("/settings/approvals", s.uiApprovals)
+	e.POST("/settings/approvals/:questionId/respond", s.uiApproveReject)
+	e.POST("/settings/approvals/:questionId/cancel", s.uiCancelApproval)
 	return s, e
 }
 
@@ -2208,6 +2212,272 @@ func TestApprovalsPage(t *testing.T) {
 	}
 	if !strings.Contains(body, "set_field") || !strings.Contains(body, "rejected") || !strings.Contains(body, "too long") {
 		t.Fatalf("reject message missing: %s", body)
+	}
+}
+
+// TestApprovalsPageAnswersOpenEndedQuestion is the #1375 regression: a
+// conversation-less open-ended ask_user question falls back to
+// /settings/approvals (see agents.questionNotificationActionURL), so that page
+// MUST render the question with an answer control and accept the answer through
+// its respond route. Before the fix the page showed only tool approvals and the
+// question was unreachable.
+func TestApprovalsPageAnswersOpenEndedQuestion(t *testing.T) {
+	const answer = "Call it Memory"
+	f := &fakeMemory{questions: []AgentQuestionItem{{
+		ID:              "q-open",
+		RunID:           "run-1",
+		Question:        "What should I name the project?",
+		Status:          "pending",
+		InteractionType: "text",
+		Placeholder:     "Project name",
+	}}}
+	_, e := newTestServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/approvals", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "What should I name the project?") {
+		t.Fatalf("pending open-ended question not rendered: %s", body)
+	}
+	if !strings.Contains(body, `action="/settings/approvals/q-open/respond"`) {
+		t.Fatalf("answer form not rendered: %s", body)
+	}
+	if !strings.Contains(body, `name="response"`) {
+		t.Fatalf("free-text answer input missing: %s", body)
+	}
+
+	// The rendered form target actually resolves the question.
+	req := httptest.NewRequest(http.MethodPost, "/settings/approvals/q-open/respond",
+		strings.NewReader("response=Call+it+Memory"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther && rec.Code != http.StatusOK {
+		t.Fatalf("respond status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if f.questionID != "q-open" || f.questionResponse != answer {
+		t.Fatalf("answer not forwarded: id=%q response=%q", f.questionID, f.questionResponse)
+	}
+}
+
+// TestApprovalsPageChoiceQuestionRendersOptionButtons covers the button-shaped
+// ask_user question: each option becomes a submit that posts its value, so a
+// conversation-less multiple-choice question is answerable from the same page.
+func TestApprovalsPageChoiceQuestionRendersOptionButtons(t *testing.T) {
+	f := &fakeMemory{questions: []AgentQuestionItem{{
+		ID:       "q-choice",
+		Question: "Which environment?",
+		Status:   "pending",
+		Options: []AgentQuestionOption{
+			{Label: "Staging", Value: "staging"},
+			{Label: "Production", Value: "production"},
+		},
+	}}}
+	_, e := newTestServer(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/approvals", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `action="/settings/approvals/q-choice/respond"`) {
+		t.Fatalf("choice form missing: %s", body)
+	}
+	for _, want := range []string{`value="staging"`, `value="production"`, "Staging", "Production"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("option %q missing: %s", want, body)
+		}
+	}
+}
+
+// TestApprovalsPageMultiSelectQuestionRendersCheckboxesAndSubmitsJSON covers the
+// multi_select interaction: the page renders one form with a `multi=1` marker and
+// a checkbox per option, and the respond route serializes the checked values to a
+// JSON array rather than a scalar.
+func TestApprovalsPageMultiSelectQuestionRendersCheckboxesAndSubmitsJSON(t *testing.T) {
+	f := &fakeMemory{questions: []AgentQuestionItem{{
+		ID:              "q-multi",
+		Question:        "Which environments?",
+		Status:          "pending",
+		InteractionType: "multi_select",
+		Options: []AgentQuestionOption{
+			{Label: "Staging", Value: "staging"},
+			{Label: "Production", Value: "production"},
+		},
+	}}}
+	_, e := newTestServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/approvals", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`name="multi"`, `value="1"`, `value="staging"`, `value="production"`, `type="checkbox"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected %q in body: %s", want, body)
+		}
+	}
+	// No checkbox may carry `required`: HTML marks the individual checkbox
+	// required, not "one of the group", so it would force the user to select
+	// the first option — corrupting the answer (#1375 follow-up).
+	if strings.Contains(body, `checkbox checkbox-sm" required`) {
+		t.Fatalf("multi-select checkbox must not be required: %s", body)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/settings/approvals/q-multi/respond",
+		strings.NewReader(url.Values{"multi": {"1"}, "response": {"staging", "production"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther && rec.Code != http.StatusOK {
+		t.Fatalf("respond status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if f.questionID != "q-multi" {
+		t.Fatalf("question id = %q, want q-multi", f.questionID)
+	}
+	if f.questionResponse != `["staging","production"]` {
+		t.Fatalf("response = %q, want JSON array", f.questionResponse)
+	}
+}
+
+// TestApprovalsPageMultiSelectEmptySelectionIsRejected guards that a multi-select
+// submit with nothing checked does not resume the run with an empty answer.
+func TestApprovalsPageMultiSelectEmptySelectionIsRejected(t *testing.T) {
+	f := &fakeMemory{questions: []AgentQuestionItem{{
+		ID:              "q-multi-empty",
+		Question:        "Which environments?",
+		Status:          "pending",
+		InteractionType: "multi_select",
+		Options: []AgentQuestionOption{
+			{Label: "Staging", Value: "staging"},
+			{Label: "Production", Value: "production"},
+		},
+	}}}
+	_, e := newTestServer(f)
+
+	req := httptest.NewRequest(http.MethodPost, "/settings/approvals/q-multi-empty/respond",
+		strings.NewReader(url.Values{"multi": {"1"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("respond status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "err=") {
+		t.Fatalf("expected error redirect, got %q", loc)
+	}
+	if f.questionID != "" {
+		t.Fatalf("empty multi-select must not resume: questionID = %q", f.questionID)
+	}
+	if f.questionResponse != "" {
+		t.Fatalf("empty multi-select must not post a response: %q", f.questionResponse)
+	}
+}
+
+// TestApprovalsPageTextQuestionWithOptionsRendersFreeText guards that a `text`
+// interaction renders a free-text input even when options are present (options
+// alone no longer force the button branch).
+func TestApprovalsPageTextQuestionWithOptionsRendersFreeText(t *testing.T) {
+	f := &fakeMemory{questions: []AgentQuestionItem{{
+		ID:              "q-text",
+		Question:        "Which environment?",
+		Status:          "pending",
+		InteractionType: "text",
+		Options: []AgentQuestionOption{
+			{Label: "Staging", Value: "staging"},
+		},
+	}}}
+	_, e := newTestServer(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/approvals", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `type="text"`) || !strings.Contains(body, `name="response"`) {
+		t.Fatalf("free-text input missing: %s", body)
+	}
+	// A text question must not render checkbox inputs for its options. Scope the
+	// check to the `response` input so the page shell's own spotlight/command-
+	// palette checkbox (which has no `name="response"`) does not false-positive.
+	if strings.Contains(body, `type="checkbox" name="response"`) {
+		t.Fatalf("text question must not render checkboxes: %s", body)
+	}
+}
+
+// TestApprovalsPageTextInputHonorsMaxLengthAndAriaLabel covers the free-text
+// input's maxlength and aria-label wiring: maxlength renders only for a
+// non-zero MaxLength, and the aria-label carries the question text.
+func TestApprovalsPageTextInputHonorsMaxLengthAndAriaLabel(t *testing.T) {
+	f := &fakeMemory{questions: []AgentQuestionItem{{
+		ID:              "q-long",
+		Question:        "Describe the change",
+		Status:          "pending",
+		InteractionType: "text",
+		MaxLength:       5000,
+	}}}
+	_, e := newTestServer(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/approvals", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`maxlength="5000"`, `aria-label="Describe the change"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected %q in body: %s", want, body)
+		}
+	}
+
+	// A question with no MaxLength must omit the maxlength attribute.
+	f2 := &fakeMemory{questions: []AgentQuestionItem{{
+		ID:              "q-no-max",
+		Question:        "Describe the change",
+		Status:          "pending",
+		InteractionType: "text",
+	}}}
+	_, e2 := newTestServer(f2)
+	rec2 := httptest.NewRecorder()
+	e2.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/settings/approvals", nil))
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec2.Code, rec2.Body.String())
+	}
+	if strings.Contains(rec2.Body.String(), "maxlength") {
+		t.Fatalf("MaxLength=0 must not render maxlength: %s", rec2.Body.String())
+	}
+}
+
+// TestApprovalsPageDedupesAndHidesQuestions guards the page's question filter:
+// an answered question is not rendered, and a question already represented by a
+// pending tool approval is not rendered twice.
+func TestApprovalsPageDedupesAndHidesQuestions(t *testing.T) {
+	f := &fakeMemory{
+		approvals: []ToolApprovalItem{{ID: "a1", QuestionID: "q-tool", ToolName: "delete_all", Decision: "pending"}},
+		questions: []AgentQuestionItem{
+			{ID: "q-tool", Question: "Approve delete_all?", Status: "pending"},
+			{ID: "q-done", Question: "Already answered?", Status: "answered"},
+		},
+	}
+	_, e := newTestServer(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/approvals", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "Already answered?") {
+		t.Fatalf("answered question must not render: %s", body)
+	}
+	if strings.Contains(body, "Approve delete_all?") {
+		t.Fatalf("tool-confirmation question must not be duplicated: %s", body)
+	}
+	// The tool approval itself still renders with its action controls.
+	if !strings.Contains(body, "delete_all") || !strings.Contains(body, `action="/settings/approvals/q-tool/respond"`) {
+		t.Fatalf("pending approval row missing: %s", body)
 	}
 }
 
