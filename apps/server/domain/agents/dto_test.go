@@ -67,6 +67,21 @@ func TestAgentDefinitionToSummaryDTOIncludesWorkConfig(t *testing.T) {
 	require.Equal(t, "todo", s.WorkConfig.Status.Ready)
 	require.Equal(t, "doing", s.WorkConfig.Status.InProgress)
 
+	// The gateway's board reads this over the wire: the list payload must carry
+	// workConfig.status with the exact JSON names boardStatusMapFromDefinitions
+	// decodes (ready/inProgress/...). Asserting only the Go struct would miss a
+	// JSON-tag drift that silently nil's the gateway's WorkConfig (#1428).
+	encoded, err := json.Marshal(s)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &payload))
+	wc, ok := payload["workConfig"].(map[string]any)
+	require.True(t, ok, "list payload must carry workConfig, got %s", encoded)
+	status, ok := wc["status"].(map[string]any)
+	require.True(t, ok, "workConfig must carry status, got %s", encoded)
+	require.Equal(t, "todo", status["ready"])
+	require.Equal(t, "doing", status["inProgress"])
+
 	bare, err := json.Marshal((&AgentDefinition{ID: "ad-2"}).ToSummaryDTO())
 	require.NoError(t, err)
 	require.NotContains(t, string(bare), "workConfig")

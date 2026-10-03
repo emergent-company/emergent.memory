@@ -480,4 +480,50 @@ func TestBoardDrawerGatesActionsByCustomStatus(t *testing.T) {
 	}
 }
 
+// TestListAgentDefinitionsWorkConfigFlowsToStatusMap is the cross-boundary
+// regression for #1428. It feeds the success envelope the memory server emits
+// for GET /agent-definitions (an AgentDefinitionSummaryDTO carrying a custom
+// workConfig.status) through the real MemoryClient HTTP unmarshal, then derives
+// the board's status map. Unlike TestBoardStatusMapFromDefinitions, which
+// hand-builds AgentDefinitionSummary values, this exercises the wire field
+// names and the gateway unmarshal path, so it fails if any layer drops
+// workConfig instead of silently defaulting.
+func TestListAgentDefinitionsWorkConfigFlowsToStatusMap(t *testing.T) {
+	const body = `{"success":true,"data":[{"id":"ad-1","projectId":"p1","name":"diane",` +
+		`"flowType":"single","visibility":"project","isDefault":false,"enabled":true,` +
+		`"toolCount":0,"skills":[],"createdAt":"2026-01-01T00:00:00Z",` +
+		`"updatedAt":"2026-01-01T00:00:00Z",` +
+		`"workConfig":{"status":{"ready":"todo","inProgress":"doing","review":"checking",` +
+		`"revision":"rework","blocked":"rejected","done":"shipped"}}}]}`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/projects/p1/agent-definitions" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	defs, err := NewMemoryClient(srv.URL, "p1").ListAgentDefinitions(t.Context())
+	if err != nil {
+		t.Fatalf("ListAgentDefinitions: %v", err)
+	}
+	if len(defs) != 1 || defs[0].WorkConfig == nil {
+		t.Fatalf("workConfig dropped between server payload and summary DTO: %+v", defs)
+	}
+
+	want := boardStatusMap{
+		Ready: "todo", InProgress: "doing", Review: "checking",
+		Revision: "rework", Blocked: "rejected", Done: "shipped",
+	}
+	if got := boardStatusMapFromDefinitions(defs); got != want {
+		t.Errorf("status map = %+v, want %+v", got, want)
+	}
+	// The derived map must be serialisable into the data attribute app.js reads.
+	if j := want.statusMapJSON(); !strings.Contains(j, `"ready":"todo"`) || !strings.Contains(j, `"done":"shipped"`) {
+		t.Errorf("statusMapJSON = %s", j)
+	}
+}
+
 var errTestBoard = &memoryHTTPError{Status: 503, Message: "down"}
