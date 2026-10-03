@@ -146,7 +146,7 @@ func TestDeleteAgentsBySourceBlueprint_TearsDownEveryTriggerRegistration(t *test
 	}
 	require.Len(t, ts.GetEventListeners("document:created"), 3)
 
-	n, err := repo.DeleteAgentsBySourceBlueprint(ctx, blueprintID)
+	n, err := repo.DeleteAgentsBySourceBlueprint(ctx, projectID, blueprintID)
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
 

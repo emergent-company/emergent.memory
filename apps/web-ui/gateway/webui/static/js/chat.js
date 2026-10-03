@@ -63,6 +63,26 @@
   var replayFrames = [];    // active run's open thinking + running-tool frames (live_replay)
   var transcriptReady = false; // persisted history rendered at least once for this scope
 
+  // chatDebugEnabled's URL half, captured ONCE at script init. updateUrl()
+  // normalizes the /chat URL (rewritten to /chat or /chat?c=<id>) when a
+  // conversation/run is resumed, which would strip `?debug` before the
+  // transcript rendered — so the advertised URL switch silently did nothing
+  // (#1416). Snapshot it here, before any resume can rewrite the URL. The
+  // window.MemoryChatDebug switch stays read live (a console/test harness sets
+  // it after load), so it is deliberately NOT captured.
+  var debugParam = (function () {
+    try {
+      var params = new URLSearchParams(window.location.search || "");
+      if (params.has("debug")) {
+        var v = params.get("debug");
+        return v === "" || v === "1" || v === "true";
+      }
+    } catch (e) {
+      /* URLSearchParams unavailable — treat as debug off. */
+    }
+    return false;
+  })();
+
   // --- agentic run-control state ---
   var liveRunId = "";       // active run id (refresh payload runId / newest run lifecycle item)
   var liveRunStatus = "";   // active run status (submitted/working/input-required/failed/…)
@@ -607,7 +627,14 @@
 
   function updateUrl() {
     var url = "/chat";
-    if (conversationId) url += "?c=" + encodeURIComponent(conversationId);
+    var qs = [];
+    if (conversationId) qs.push("c=" + encodeURIComponent(conversationId));
+    // Preserve the transient debug switch across URL normalization so the
+    // advertised `?debug` link keeps working (and survives a refresh) after a
+    // conversation/run resume (#1416). Only re-emitted when the flag came from
+    // the URL — window.MemoryChatDebug stays console/test-only, never persisted.
+    if (debugParam) qs.push("debug=1");
+    if (qs.length) url += "?" + qs.join("&");
     try { history.replaceState(null, "", url); } catch (e) {}
   }
 
@@ -1305,11 +1332,28 @@
     }
   }
 
+  // chatDebugEnabled reports whether the transcript's run lifecycle boundary
+  // rows ("Run started" / "Run complete") should render. They are a debug
+  // affordance, hidden by default (#1381) — the underlying run_start/run_end
+  // items still drive the header, working placeholder, cancelation id and turn
+  // footers (renderTimeline tracks that state regardless of this flag).
+  //
+  // Debug mode is deliberately transient — no persisted preference is created:
+  //   - `?debug` / `?debug=1` / `?debug=true` on the /chat URL (captured once
+  //     at init into `debugParam`, and preserved by updateUrl() across a
+  //     resume so the link keeps working — #1416), or
+  //   - `window.MemoryChatDebug = true` (console / test harness; read live).
+  function chatDebugEnabled() {
+    if (window.MemoryChatDebug === true) return true;
+    return debugParam;
+  }
+
   // renderTimelineItems renders a raw history payload (conversation or run) —
   // the item vocabulary, sorting, and rendering are shared with the side panel
   // via MemoryChatComponents.renderTimeline; this page supplies the chat-specific
-  // flags + hooks (run markers, thinking, run-scope meta, turn footers, the
-  // pending-work dock, the mid-run placeholder) and the DOM-ownership guard.
+  // flags + hooks (thinking, run-scope meta, turn footers, the pending-work dock,
+  // the mid-run placeholder) and the DOM-ownership guard. Run boundary rows are
+  // debug-gated (chatDebugEnabled), not always on (#1381).
   function renderTimelineItems(items, pendingApprovals) {
     // Guard: never render history over a live stream THIS page owns. Wiping
     // #chat-messages mid-stream would destroy the in-flight assistant bubble,
@@ -1319,7 +1363,7 @@
     // keep re-rendering as steps persist.
     if (liveTurn) return;
     MemoryChatComponents.renderTimeline(items, timelineCtx(pendingApprovals), {
-      showRunMarkers: true,
+      showRunMarkers: chatDebugEnabled(),
       showThinking: true,
       showMeta: currentScopeIsRun(),
       silent: false,
