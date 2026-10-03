@@ -59,6 +59,26 @@
   var replayFrames = [];    // active run's open thinking + running-tool frames (live_replay)
   var transcriptReady = false; // persisted history rendered at least once for this scope
 
+  // chatDebugEnabled's URL half, captured ONCE at script init. updateUrl()
+  // normalizes the /chat URL (rewritten to /chat or /chat?c=<id>) when a
+  // conversation/run is resumed, which would strip `?debug` before the
+  // transcript rendered — so the advertised URL switch silently did nothing
+  // (#1416). Snapshot it here, before any resume can rewrite the URL. The
+  // window.MemoryChatDebug switch stays read live (a console/test harness sets
+  // it after load), so it is deliberately NOT captured.
+  var debugParam = (function () {
+    try {
+      var params = new URLSearchParams(window.location.search || "");
+      if (params.has("debug")) {
+        var v = params.get("debug");
+        return v === "" || v === "1" || v === "true";
+      }
+    } catch (e) {
+      /* URLSearchParams unavailable — treat as debug off. */
+    }
+    return false;
+  })();
+
   // --- agentic run-control state ---
   var liveRunId = "";       // active run id (refresh payload runId / newest run lifecycle item)
   var liveRunStatus = "";   // active run status (submitted/working/input-required/failed/…)
@@ -583,7 +603,14 @@
 
   function updateUrl() {
     var url = "/chat";
-    if (conversationId) url += "?c=" + encodeURIComponent(conversationId);
+    var qs = [];
+    if (conversationId) qs.push("c=" + encodeURIComponent(conversationId));
+    // Preserve the transient debug switch across URL normalization so the
+    // advertised `?debug` link keeps working (and survives a refresh) after a
+    // conversation/run resume (#1416). Only re-emitted when the flag came from
+    // the URL — window.MemoryChatDebug stays console/test-only, never persisted.
+    if (debugParam) qs.push("debug=1");
+    if (qs.length) url += "?" + qs.join("&");
     try { history.replaceState(null, "", url); } catch (e) {}
   }
 
@@ -1030,20 +1057,13 @@
   // footers (renderTimeline tracks that state regardless of this flag).
   //
   // Debug mode is deliberately transient — no persisted preference is created:
-  //   - `?debug` / `?debug=1` / `?debug=true` on the /chat URL, or
-  //   - `window.MemoryChatDebug = true` (console / test harness).
+  //   - `?debug` / `?debug=1` / `?debug=true` on the /chat URL (captured once
+  //     at init into `debugParam`, and preserved by updateUrl() across a
+  //     resume so the link keeps working — #1416), or
+  //   - `window.MemoryChatDebug = true` (console / test harness; read live).
   function chatDebugEnabled() {
     if (window.MemoryChatDebug === true) return true;
-    try {
-      var params = new URLSearchParams(window.location.search || "");
-      if (params.has("debug")) {
-        var v = params.get("debug");
-        return v === "" || v === "1" || v === "true";
-      }
-    } catch (e) {
-      /* URLSearchParams unavailable — treat as debug off. */
-    }
-    return false;
+    return debugParam;
   }
 
   // renderTimelineItems renders a raw history payload (conversation or run) —

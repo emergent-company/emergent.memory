@@ -246,6 +246,7 @@ const CHAT_SKELETON = `<!doctype html>
     <select id="chat-agent-filter" aria-label="Filter sessions by agent"><option value="">All agents</option></select>
     <select id="chat-origin-filter" aria-label="Filter sessions by type"><option value="">All types</option></select>
     <div id="chat-rail-list">
+      <div data-action="resume-session" data-id="${CONV_ID}" data-agent="">Past conversation</div>
       <div data-action="open-run" data-id="${RUN_ID}" data-agent="" data-origin="scheduled">Scheduled run</div>
     </div>
   </aside>
@@ -274,12 +275,16 @@ const CHAT_SKELETON = `<!doctype html>
 </body>
 </html>`;
 
-async function installStubs(page: Page, runItems: HistoryItem[]): Promise<void> {
+async function installStubs(
+  page: Page,
+  runItems: HistoryItem[],
+  convItems: HistoryItem[] = [],
+): Promise<void> {
   await page.evaluate(
-    ({ convId, runId, runItems }) => {
+    ({ convId, runId, runItems, convItems }) => {
       const w = window as unknown as StubWindow;
       w.__eventsources = [];
-      w.__historyItems = [];
+      w.__historyItems = convItems;
       w.__runHistoryItems = runItems;
       w.fetch = function (url) {
         const u = String(url);
@@ -308,7 +313,7 @@ async function installStubs(page: Page, runItems: HistoryItem[]): Promise<void> 
       }
       (w as any).EventSource = FakeEventSource;
     },
-    { convId: CONV_ID, runId: RUN_ID, runItems },
+    { convId: CONV_ID, runId: RUN_ID, runItems, convItems },
   );
 }
 
@@ -366,6 +371,35 @@ test.describe('shared timeline renderer — /chat surface (chat.js)', () => {
     // The debug switch gates only the marker rows — thinking/meta still render.
     await expect(messages.locator('.memory-thinking')).toHaveCount(1);
     await expect(messages.locator('.chat-footer').first()).toContainText('step 1');
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
+  test('renders run boundary rows from the ?debug query flag, surviving conversation open — #1416', async ({ page }) => {
+    // A real URL is required: the flag is read from location.search at script
+    // init, and updateUrl() normalizes the URL on resume. setContent leaves an
+    // about:blank URL with no query string, so serve the skeleton at
+    // /chat?debug over a routed origin instead.
+    await page.route('http://memory.test/**', (route) =>
+      route.fulfill({ contentType: 'text/html', body: CHAT_SKELETON }),
+    );
+    await page.goto('http://memory.test/chat?debug');
+    await installStubs(page, [], ITEMS);
+    const errors = await loadChatSurface(page);
+
+    // Open a CONVERSATION (resumeConversation → updateUrl() → renderHistory):
+    // URL normalization must not drop the debug flag before the transcript renders.
+    await page.locator(`[data-action="resume-session"][data-id="${CONV_ID}"]`).click();
+    await expect(page.locator(`[data-action="resume-session"][data-id="${CONV_ID}"]`)).toHaveAttribute('data-active', 'true');
+
+    const messages = page.locator('#chat-messages');
+    await expect(messages.locator('.memory-run-marker[data-phase="start"]')).toHaveCount(1);
+    await expect(messages.locator('.memory-run-marker[data-phase="end"]')).toHaveCount(1);
+    // updateUrl() preserved the flag alongside the conversation id, so a refresh
+    // of the normalized URL keeps debug mode on.
+    await expect
+      .poll(() => page.evaluate(() => window.location.search))
+      .toContain('debug');
 
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });
