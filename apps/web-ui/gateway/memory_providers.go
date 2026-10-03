@@ -159,7 +159,12 @@ type ProviderDefinition struct {
 	Auth        string       `json:"auth"`
 	ModelTypes  []string     `json:"modelTypes,omitempty"`
 	ExtraFields []ExtraField `json:"extraFields,omitempty"`
-	Order       int          `json:"order"`
+	// DefaultBaseURLs maps model type ("generative"/"embedding") to the
+	// vendor's default endpoint; a value may carry a {placeholder} the
+	// operator must replace (Azure's {resource}). Empty means the endpoint is
+	// required from the operator.
+	DefaultBaseURLs map[string]string `json:"defaultBaseUrls,omitempty"`
+	Order           int               `json:"order"`
 	// IconDataURI is the vendor brand mark as a base64 data URI.
 	IconDataURI string `json:"iconDataUri,omitempty"`
 }

@@ -50,7 +50,7 @@ func TestListProviderDefinitions(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `[
 			{"type":"anthropic","displayName":"Anthropic","description":"Anthropic Claude via the native Messages API","protocol":"anthropic-messages","auth":"x-api-key","modelTypes":["generative"],"order":32,"iconDataUri":"data:image/svg+xml;base64,PHN2Zz48L3N2Zz4="},
-			{"type":"openrouter","displayName":"OpenRouter","description":"OpenRouter via its OpenAI-compatible endpoint","protocol":"openai-chat","auth":"bearer","modelTypes":["generative","embedding"],"extraFields":[{"key":"api_version","label":"API version","type":"string","required":false,"placeholder":"2024-10-21"}],"order":40}
+			{"type":"openrouter","displayName":"OpenRouter","description":"OpenRouter via its OpenAI-compatible endpoint","protocol":"openai-chat","auth":"bearer","modelTypes":["generative","embedding"],"defaultBaseUrls":{"generative":"https://openrouter.ai/api/v1","embedding":"https://openrouter.ai/api/v1"},"extraFields":[{"key":"api_version","label":"API version","type":"string","required":false,"placeholder":"2024-10-21"}],"order":40}
 		]`)
 	}))
 	defer srv.Close()
@@ -74,6 +74,9 @@ func TestListProviderDefinitions(t *testing.T) {
 	}
 	if len(got[1].ExtraFields) != 1 || got[1].ExtraFields[0].Key != "api_version" {
 		t.Errorf("definitions[1].ExtraFields = %+v", got[1].ExtraFields)
+	}
+	if got[1].DefaultBaseURLs["generative"] != "https://openrouter.ai/api/v1" {
+		t.Errorf("definitions[1].DefaultBaseURLs = %+v", got[1].DefaultBaseURLs)
 	}
 }
 

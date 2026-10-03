@@ -978,14 +978,16 @@ templ providerConfigRow(p ProjectProviderConfig, iconURI string) {
 // extraFields are rendered read-only beneath the credential fields —
 // server-side configuration this form does not submit.
 //
-// Save is gated on a live connection test, but only for openai: the submit
-// button starts disabled, "Test connection" probes the typed base_url + api_key
-// via HTMX (POST /settings/providers/test) and the resulting success toast
-// enables Save and shows a "Connection verified" hint. Any edit to the form
-// re-disables Save until the next successful test. The base_url field and the
-// test button only exist for openai (the official-API providers — google,
-// deepseek, google-vertex — don't use a probe-able base URL, so Save is always
-// enabled for them and the backend validates credentials on save).
+// Save is gated on a live connection test for vendors whose endpoint is
+// user-supplied: the submit button starts disabled, "Test connection" probes
+// the typed base_url + api_key via HTMX (POST /settings/providers/test) and the
+// resulting success toast enables Save and shows a "Connection verified" hint.
+// Any edit to the form re-disables Save until the next successful test. Whether
+// the endpoint field and test button appear is driven by registry metadata:
+// they are shown when the vendor's declared endpoint is absent or carries a
+// {placeholder} (generic, Azure OpenAI), and for canonical openai; vendors with
+// a concrete default (google, deepseek, google-vertex) show neither and the
+// backend validates credentials on save.
 templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, draftProvider string, vendors []ProviderDefinition, genModels, embModels []Model) {
 	<form
 		id="provider-form"
@@ -994,6 +996,10 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 		class="flex flex-col gap-4"
 		if p != nil {
 			data-provider={ p.Provider }
+			data-base-url={ providerDefaultBaseURL(vendors, p.Provider) }
+			if providerRequiresBaseURL(vendors, p.Provider) {
+				data-requires-base-url="1"
+			}
 		}
 	>
 		<h3 class="text-sm font-semibold">{ providerFormTitle(p) }</h3>
@@ -1006,7 +1012,7 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 					<img id="provider-icon" alt="" aria-hidden="true" class="size-6 shrink-0" if iconURI != "" { src={ iconURI } } if iconURI == "" { style="display:none" }/>
 					<select id="provider-type" name="provider" class="select w-full">
 						for _, v := range vendors {
-							<option value={ v.Type } if v.Type == sel { selected } data-description={ v.Description } data-icon-uri={ v.IconDataURI }>{ v.DisplayName }</option>
+							<option value={ v.Type } if v.Type == sel { selected } data-description={ v.Description } data-icon-uri={ v.IconDataURI } data-base-url={ providerDefaultBaseURL(vendors, v.Type) } if providerRequiresBaseURL(vendors, v.Type) { data-requires-base-url="1" }>{ v.DisplayName }</option>
 						}
 					</select>
 				</div>
@@ -1068,7 +1074,7 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 				if draft != nil {
 					value={ draft.BaseURL }
 				} else {
-					value={ providerConfigBaseURL(p) }
+					value={ providerPrefillBaseURL(p, vendors) }
 				}
 			/>
 			<div id="base-url-status" class="mt-1 items-center gap-1.5 text-xs" style="display:none"></div>
@@ -1167,14 +1173,17 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 				Icon:    "lucide--save",
 				Attrs: templ.Attributes{
 					"id": "provider-save-btn",
-					// Edit mode gates the openai Save on a successful connection
-					// test (its base_url is user-supplied). google/deepseek/
-					// google-vertex have no probe-able base URL, so Save is
-					// always enabled for them and the backend validates
-					// credentials on save. Add mode is never gated — memory
-					// validates credentials on save and the form must stay
-					// retryable after a failed-save re-render.
-					"disabled": p != nil && p.Provider == "openai",
+					// Edit mode gates Save on a successful connection test for
+					// vendors whose endpoint is user-supplied (no registry
+					// default, or a {placeholder} default such as Azure's
+					// {resource}; canonical openai keeps its editable
+					// endpoint). Official-API providers with a concrete default
+					// (google, deepseek, google-vertex) have no probe-able base
+					// URL, so Save is always enabled for them and the backend
+					// validates credentials on save. Add mode is never gated —
+					// memory validates credentials on save and the form must
+					// stay retryable after a failed-save re-render.
+					"disabled": p != nil && providerRequiresBaseURL(vendors, p.Provider),
 				},
 			}) {
 				if p == nil {
@@ -1217,6 +1226,8 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 				var descEl = document.getElementById('provider-description');
 				var iconEl = document.getElementById('provider-icon');
 				var extraBlocks = form.querySelectorAll('[data-provider-extra]');
+				var lastBaseDefault = '';
+				var lastProvider = null;
 
 				/* Advisory reachability check under the base_url field: fires
 				   ~600ms after typing stops, posts base_url + api_key to
@@ -1289,8 +1300,23 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 					if (sel) return sel.value;
 					return form.getAttribute('data-provider') || '';
 				}
-				function isOpenAI() {
-					return currentProvider() === 'openai';
+				/* Endpoint metadata for the current selection: read from the
+				   selected <option> in add mode, or the form's data-*
+				   attributes in edit mode (the edit form has no vendor
+				   select). requires is true when the vendor's declared
+				   endpoint is absent or carries a {placeholder}. */
+				function selectedBaseMeta() {
+					if (sel) {
+						var opt = sel.options[sel.selectedIndex];
+						return {
+							requires: !!opt && opt.getAttribute('data-requires-base-url') === '1',
+							def: opt ? (opt.getAttribute('data-base-url') || '') : ''
+						};
+					}
+					return {
+						requires: form.getAttribute('data-requires-base-url') === '1',
+						def: form.getAttribute('data-base-url') || ''
+					};
 				}
 				function isVertex() {
 					return currentProvider() === 'google-vertex';
@@ -1304,17 +1330,28 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 					   is credentials-only and its Save/Add button is never
 					   gated on a connection test. */
 					var isEdit = !!form.getAttribute('data-provider');
-					var openai = isOpenAI();
+					var meta = selectedBaseMeta();
+					var needsURL = meta.requires;
 					var v = isVertex();
-					if (baseUrlField) baseUrlField.style.display = openai ? '' : 'none';
-					if (testBtn) testBtn.style.display = openai ? '' : 'none';
+					var prov = currentProvider();
+					if (baseUrlField) baseUrlField.style.display = needsURL ? '' : 'none';
+					if (testBtn) testBtn.style.display = needsURL ? '' : 'none';
+					/* Prefill the endpoint only when the vendor changed (or the
+					   field is empty on first render), so a typed value or a
+					   submitted draft is never overwritten. */
+					if (needsURL && urlInput && prov !== lastProvider) {
+						if (urlInput.value === '' || urlInput.value === lastBaseDefault) {
+							urlInput.value = meta.def;
+						}
+					}
+					lastBaseDefault = meta.def;
+					lastProvider = prov;
 					if (vertexFields) vertexFields.style.display = v ? 'flex' : 'none';
 					if (vertexHint) vertexHint.style.display = v ? 'flex' : 'none';
 					if (officialHint) officialHint.style.display = isOfficial() ? 'flex' : 'none';
 					/* Vendor description and read-only extra-field metadata
 					   follow the selected vendor. Both are render-only and are
 					   never submitted with the form. */
-					var prov = currentProvider();
 					if (sel) {
 						var opt = sel.options[sel.selectedIndex];
 						if (descEl) {
@@ -1335,8 +1372,8 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 						extraBlocks[i].style.display = extraBlocks[i].getAttribute('data-provider-extra') === prov ? '' : 'none';
 					}
 					var tested = form.getAttribute('data-tested') === '1';
-					if (testedHint) testedHint.style.display = (openai && tested) ? 'flex' : 'none';
-					if (saveBtn && isEdit) saveBtn.disabled = openai && !tested;
+					if (testedHint) testedHint.style.display = (needsURL && tested) ? 'flex' : 'none';
+					if (saveBtn && isEdit) saveBtn.disabled = needsURL && !tested;
 				}
 				/* Any edit invalidates the previous successful test. */
 				function invalidate() {

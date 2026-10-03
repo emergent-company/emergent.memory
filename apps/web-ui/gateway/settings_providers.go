@@ -1126,13 +1126,50 @@ func vertexFieldsStyle(p *ProjectProviderConfig) string {
 	return "display:none"
 }
 
-// providerConfigBaseURL/GCPProject/Location are nil-safe accessors for the
-// provider config form prefill (p is nil on the add form).
-func providerConfigBaseURL(p *ProjectProviderConfig) string {
+// providerDefaultBaseURL returns the vendor's declared default endpoint
+// (generative first, then embedding), or "" when unknown.
+func providerDefaultBaseURL(vendors []ProviderDefinition, providerType string) string {
+	for _, v := range vendors {
+		if v.Type != providerType {
+			continue
+		}
+		if u := v.DefaultBaseURLs["generative"]; u != "" {
+			return u
+		}
+		return v.DefaultBaseURLs["embedding"]
+	}
+	return ""
+}
+
+// providerRequiresBaseURL reports whether the form must surface an editable
+// endpoint for a vendor. That is the case when the registry declares no
+// default, or a default carrying a {placeholder} the operator must replace
+// (e.g. Azure OpenAI's {resource}). The canonical OpenAI vendor keeps its
+// pre-existing editable endpoint even though its default is concrete.
+func providerRequiresBaseURL(vendors []ProviderDefinition, providerType string) bool {
+	if providerType == "openai" {
+		return true
+	}
+	for _, v := range vendors {
+		if v.Type == providerType {
+			u := providerDefaultBaseURL(vendors, providerType)
+			return u == "" || strings.Contains(u, "{")
+		}
+	}
+	return false
+}
+
+// providerPrefillBaseURL returns the value the endpoint input should start
+// with: the configured URL when present, otherwise the vendor's declared
+// default.
+func providerPrefillBaseURL(p *ProjectProviderConfig, vendors []ProviderDefinition) string {
 	if p == nil {
 		return ""
 	}
-	return p.BaseURL
+	if p.BaseURL != "" {
+		return p.BaseURL
+	}
+	return providerDefaultBaseURL(vendors, p.Provider)
 }
 
 func providerConfigGCPProject(p *ProjectProviderConfig) string {
