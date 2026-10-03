@@ -193,6 +193,10 @@ type providerConfigPageData struct {
 	DraftProvider string
 	FlashMsg      string
 	FlashErr      error
+	// Vendors is the server's vendor registry, ordered by each definition's
+	// Order field ascending. The add form builds its vendor <select> from it;
+	// it is empty only when the registry fetch failed.
+	Vendors []ProviderDefinition
 	// GenerativeModels/EmbeddingModels are the credential-prefixed model
 	// options ("provider/model") for the fallback dropdowns.
 	GenerativeModels []Model
@@ -331,6 +335,7 @@ func (s *Server) uiProjectProviderNew(c echo.Context) error {
 	data := providerConfigPageData{}
 	data.FlashErr = flashError(c)
 	data.ProvidersMissing = s.projectHasNoProviders(ctx)
+	data.Vendors = s.providerVendorDefinitions(ctx)
 	data.GenerativeModels, data.EmbeddingModels = s.providerModelOptions(ctx)
 	return s.page(c, pageTitle("Add provider"), providerConfigPage(data))
 }
@@ -352,6 +357,7 @@ func (s *Server) uiProjectProviderEdit(c echo.Context) error {
 	data := providerConfigPageData{Provider: cfg}
 	data.FlashErr = flashError(c)
 	data.ProvidersMissing = s.projectHasNoProviders(ctx)
+	data.Vendors = s.providerVendorDefinitions(ctx)
 	data.GenerativeModels, data.EmbeddingModels = s.providerModelOptions(ctx)
 	return s.page(c, pageTitle("Edit provider"), providerConfigPage(data))
 }

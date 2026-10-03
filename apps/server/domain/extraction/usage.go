@@ -89,6 +89,39 @@ func (c *orgIDCache) resolve(ctx context.Context, projectID string) string {
 	return result.OrgID
 }
 
+// registeredVendorIDs is the set of vendor ids the provider registry defines,
+// built once at package init so embedding usage events can pass an unknown
+// vendor string through as its own dialect without importing a registry
+// instance.
+var registeredVendorIDs = func() map[string]bool {
+	m := make(map[string]bool)
+	for _, d := range provider.Builtins() {
+		m[string(d.Type)] = true
+	}
+	return m
+}()
+
+// providerDialectFromString maps an embedding client's provider string to a
+// domain/provider dialect. The legacy short names map to their canonical
+// dialects; any other registered vendor id passes through as its own dialect;
+// an unknown string defaults to the OpenAI-compatible dialect.
+func providerDialectFromString(s string) provider.ProviderType {
+	switch s {
+	case "vertex":
+		return provider.ProviderVertexAI
+	case "googleai", "google", "gemini":
+		return provider.ProviderGoogleAI
+	case "openai":
+		return provider.ProviderOpenAI
+	case "deepseek":
+		return provider.ProviderDeepSeek
+	}
+	if registeredVendorIDs[s] {
+		return provider.ProviderType(s)
+	}
+	return provider.ProviderOpenAI
+}
+
 // recordEmbeddingUsage is a helper that creates and records an embedding usage event.
 // It is safe to call with nil recorder (no-op). Events without token usage
 // (usage unavailable or zero tokens) are skipped so no $0 noise rows are stored.
@@ -105,19 +138,7 @@ func recordEmbeddingUsage(
 		return
 	}
 
-	var providerType provider.ProviderType
-	// Map our provider strings to the ProviderType enum
-	switch result.Provider {
-	case "vertex":
-		providerType = provider.ProviderVertexAI
-	case "googleai":
-		providerType = provider.ProviderGoogleAI
-	case "openai":
-		// OpenAI-compatible endpoint (OpenAI direct or a LiteLLM-style proxy).
-		providerType = provider.ProviderOpenAI
-	default:
-		providerType = provider.ProviderGoogleAI // safe default
-	}
+	providerType := providerDialectFromString(result.Provider)
 
 	recorder.RecordAsync(&provider.LLMUsageEvent{
 		ProjectID:       projectID,

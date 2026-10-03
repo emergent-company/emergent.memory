@@ -88,13 +88,45 @@ func (o *ObjectTypeDef) UnmarshalJSON(data []byte) error {
 // RelationshipTypeDef is a single relationship type schema in a pack manifest.
 // Properties carries any relationship-level sub-block (e.g. a description
 // property) as a raw map for lossless pass-through.
+//
+// It accepts both singular (sourceType/targetType) and plural
+// (sourceTypes/targetTypes) field names, mirroring the CLI loader
+// (apps/cli/internal/blueprints/types.go). The schemas relationship contract is
+// singular-only, so apply.go expands plural declarations into singular entries
+// before posting to the schemas service (see expandRelationshipTypes).
 type RelationshipTypeDef struct {
 	Name        string         `json:"name"`
 	Label       string         `json:"label"`
 	Description string         `json:"description"`
 	SourceType  string         `json:"sourceType"`
 	TargetType  string         `json:"targetType"`
+	SourceTypes []string       `json:"sourceTypes,omitempty"`
+	TargetTypes []string       `json:"targetTypes,omitempty"`
 	Properties  map[string]any `json:"properties,omitempty"`
+}
+
+// GetSourceTypes returns the effective source types, preferring the plural
+// array field over the singular string.
+func (r RelationshipTypeDef) GetSourceTypes() []string {
+	if len(r.SourceTypes) > 0 {
+		return r.SourceTypes
+	}
+	if r.SourceType != "" {
+		return []string{r.SourceType}
+	}
+	return nil
+}
+
+// GetTargetTypes returns the effective target types, preferring the plural
+// array field over the singular string.
+func (r RelationshipTypeDef) GetTargetTypes() []string {
+	if len(r.TargetTypes) > 0 {
+		return r.TargetTypes
+	}
+	if r.TargetType != "" {
+		return []string{r.TargetType}
+	}
+	return nil
 }
 
 // AgentManifest describes an agent definition to create or update.

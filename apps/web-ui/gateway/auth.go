@@ -503,7 +503,8 @@ func (s *Server) canonicalHostRedirect(next echo.HandlerFunc) echo.HandlerFunc {
 		p := c.Request().URL.Path
 		if strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/internal/") ||
 			strings.HasPrefix(p, "/webhooks/") ||
-			strings.HasPrefix(p, "/static/") || strings.HasPrefix(p, "/assets/") {
+			strings.HasPrefix(p, "/static/") || strings.HasPrefix(p, "/assets/") ||
+			strings.HasPrefix(p, "/dev/") {
 			return next(c)
 		}
 		return c.Redirect(http.StatusFound, u.Scheme+"://"+u.Host+c.Request().URL.RequestURI())
@@ -664,6 +665,8 @@ func projectScopePath(p string) bool {
 		return false
 	case p == "/profile", strings.HasPrefix(p, "/profile/"), strings.HasPrefix(p, "/partial/invite-user-search"):
 		return false
+	case p == "/dev", strings.HasPrefix(p, "/dev/"):
+		return false // dev-gated tools (component gallery) are not project-scoped
 	default:
 		return true
 	}

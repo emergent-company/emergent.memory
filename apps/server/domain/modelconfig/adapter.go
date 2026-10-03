@@ -123,6 +123,7 @@ func (a *EmbeddingResolverAdapter) buildEmbeddingCredential(cred *provider.Resol
 		ServiceAccountJSON: cred.ServiceAccountJSON,
 		EmbeddingModel:     bareModel,
 		BaseURL:            cred.BaseURL,
+		Auth:               string(cred.Auth),
 		Source:             string(cred.Source),
 	}
 }

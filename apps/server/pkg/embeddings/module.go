@@ -9,6 +9,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/adk"
 	embgenai "github.com/emergent-company/emergent.memory/pkg/embeddings/genai"
 	embopenai "github.com/emergent-company/emergent.memory/pkg/embeddings/openai"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings/vertex"
@@ -322,6 +323,7 @@ func (s *Service) resolveClientWithMeta(ctx context.Context) (Client, string, st
 			BaseURL:    cred.BaseURL,
 			Model:      model,
 			Dimensions: EmbeddingDimension, // request 768-dim vectors to match DB vector(768)
+			Auth:       adk.AuthStyle(cred.Auth),
 		}, embopenai.WithLogger(s.log))
 		if err != nil {
 			return nil, "", "", err

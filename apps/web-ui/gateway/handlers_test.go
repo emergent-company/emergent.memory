@@ -318,14 +318,15 @@ type fakeMemory struct {
 	usageSeries  *UsageTimeSeriesResponse // returned by GetProjectUsageTimeSeries
 	usageErr     error                    // failure for the usage methods
 
-	projectProviders []ProjectProviderConfig             // returned by ListProjectProviders
-	modelsByProvider map[string][]ProviderSupportedModel // returned by ListProviderModels per provider
-	pricing          []ProviderPricing                   // returned by ListPricing
-	pricingOverrides []ProjectCustomPricing              // returned by ListProjectPricingOverrides
-	providerErr      error                               // failure for the providers/pricing/overrides reads
-	modelErr         error                               // failure for ListProviderModels
-	overrideWrites   []ProjectCustomPricing              // every UpsertProjectPricingOverride call, in order
-	deletedOverrides []string                            // "provider/model" keys passed to DeleteProjectPricingOverride
+	projectProviders    []ProjectProviderConfig             // returned by ListProjectProviders
+	providerDefinitions []ProviderDefinition                // returned by ListProviderDefinitions
+	modelsByProvider    map[string][]ProviderSupportedModel // returned by ListProviderModels per provider
+	pricing             []ProviderPricing                   // returned by ListPricing
+	pricingOverrides    []ProjectCustomPricing              // returned by ListProjectPricingOverrides
+	providerErr         error                               // failure for the providers/pricing/overrides reads
+	modelErr            error                               // failure for ListProviderModels
+	overrideWrites      []ProjectCustomPricing              // every UpsertProjectPricingOverride call, in order
+	deletedOverrides    []string                            // "provider/model" keys passed to DeleteProjectPricingOverride
 
 	providerConfigInput    ProviderConfigInput // last UpsertProjectProviderConfig input
 	lastProviderConfig     string              // provider name of the last upsert
@@ -1718,6 +1719,20 @@ func (f *fakeMemory) ListProjectProviders(ctx context.Context) ([]ProjectProvide
 		return nil, f.providerErr
 	}
 	return f.projectProviders, nil
+}
+
+func (f *fakeMemory) ListProviderDefinitions(ctx context.Context) ([]ProviderDefinition, error) {
+	if f.providerDefinitions != nil {
+		return f.providerDefinitions, nil
+	}
+	// Default to the legacy vendor set so tests that predate the registry still
+	// exercise the four historical providers without setting the field.
+	return []ProviderDefinition{
+		{Type: "google", DisplayName: "Google AI", Protocol: "google-genai"},
+		{Type: "google-vertex", DisplayName: "Vertex AI", Protocol: "google-genai"},
+		{Type: "openai", DisplayName: "OpenAI", Protocol: "openai-chat"},
+		{Type: "deepseek", DisplayName: "DeepSeek", Protocol: "openai-chat"},
+	}, nil
 }
 
 func (f *fakeMemory) ListProviderModels(ctx context.Context, provider string) ([]ProviderSupportedModel, error) {

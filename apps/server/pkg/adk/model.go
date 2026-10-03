@@ -228,47 +228,75 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 				return nil, fmt.Errorf("no model configured: model name has no model portion and provider credential has no generative model stored")
 			}
 
-			switch cred.Provider {
-			case "openai", "deepseek":
+			// Resolve the effective protocol, preferring the explicit field and
+			// falling back to legacy flags/dialect for compatibility with
+			// callers that still populate only the deprecated fields.
+			protocol := cred.Protocol
+			if protocol == "" {
+				switch {
+				case cred.IsGoogleAI || cred.Provider == "google",
+					cred.IsVertexAI || cred.Provider == "google-vertex":
+					protocol = "google-genai"
+				case cred.Provider == "anthropic":
+					protocol = "anthropic-messages"
+				default:
+					protocol = "openai-chat"
+				}
+			}
+
+			switch protocol {
+			case "openai-chat":
 				f.log.Debug("creating ADK model via OpenAI-protocol endpoint (DB cred)",
+					slog.String("model", resolvedModel),
+					slog.String("baseURL", cred.BaseURL),
+					slog.String("provider", cred.Provider),
+					slog.String("protocol", protocol),
+					slog.String("auth", cred.Auth),
+					slog.String("source", cred.Source),
+				)
+				llm := NewOpenAICompatibleModelWithAuth(cred.BaseURL, cred.APIKey, resolvedModel, AuthStyle(cred.Auth))
+				return f.wrapModel(llm, cred.Slug, cred.Provider), nil
+			case "anthropic-messages":
+				f.log.Debug("creating ADK model via Anthropic Messages endpoint (DB cred)",
 					slog.String("model", resolvedModel),
 					slog.String("baseURL", cred.BaseURL),
 					slog.String("provider", cred.Provider),
 					slog.String("source", cred.Source),
 				)
-				llm := NewOpenAICompatibleModel(cred.BaseURL, cred.APIKey, resolvedModel)
+				llm := NewAnthropicModel(cred.BaseURL, cred.APIKey, resolvedModel)
 				return f.wrapModel(llm, cred.Slug, cred.Provider), nil
-			case "google-vertex":
-				clientCfg := &genai.ClientConfig{
-					Backend:  genai.BackendVertexAI,
-					Project:  cred.GCPProject,
-					Location: cred.Location,
-				}
-				if cred.ServiceAccountJSON != "" {
-					creds, err := credentials.NewCredentialsFromJSON(
-						credentials.ServiceAccount,
-						[]byte(cred.ServiceAccountJSON),
-						&credentials.DetectOptions{
-							Scopes: []string{"https://www.googleapis.com/auth/cloud-platform"},
-						},
-					)
-					if err != nil {
-						return nil, fmt.Errorf("failed to parse service account credentials: %w", err)
+			case "google-genai":
+				if cred.IsVertexAI || cred.Provider == "google-vertex" {
+					clientCfg := &genai.ClientConfig{
+						Backend:  genai.BackendVertexAI,
+						Project:  cred.GCPProject,
+						Location: cred.Location,
 					}
-					clientCfg.Credentials = creds
+					if cred.ServiceAccountJSON != "" {
+						creds, err := credentials.NewCredentialsFromJSON(
+							credentials.ServiceAccount,
+							[]byte(cred.ServiceAccountJSON),
+							&credentials.DetectOptions{
+								Scopes: []string{"https://www.googleapis.com/auth/cloud-platform"},
+							},
+						)
+						if err != nil {
+							return nil, fmt.Errorf("failed to parse service account credentials: %w", err)
+						}
+						clientCfg.Credentials = creds
+					}
+					f.log.Debug("creating ADK Gemini model via Vertex AI (DB cred)",
+						slog.String("model", resolvedModel),
+						slog.String("project", cred.GCPProject),
+						slog.String("location", cred.Location),
+						slog.String("source", cred.Source),
+					)
+					llm, err := gemini.NewModel(ctx, resolvedModel, clientCfg)
+					if err != nil {
+						return nil, fmt.Errorf("failed to create Gemini model via Vertex AI (DB cred): %w", err)
+					}
+					return f.wrapModel(llm, "google-vertex", "google-vertex"), nil
 				}
-				f.log.Debug("creating ADK Gemini model via Vertex AI (DB cred)",
-					slog.String("model", resolvedModel),
-					slog.String("project", cred.GCPProject),
-					slog.String("location", cred.Location),
-					slog.String("source", cred.Source),
-				)
-				llm, err := gemini.NewModel(ctx, resolvedModel, clientCfg)
-				if err != nil {
-					return nil, fmt.Errorf("failed to create Gemini model via Vertex AI (DB cred): %w", err)
-				}
-				return f.wrapModel(llm, "google-vertex", "google-vertex"), nil
-			case "google":
 				clientCfg := &genai.ClientConfig{
 					Backend: genai.BackendGeminiAPI,
 					APIKey:  cred.APIKey,
@@ -282,6 +310,8 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 					return nil, fmt.Errorf("failed to create Gemini model via Google AI (DB cred): %w", err)
 				}
 				return f.wrapModel(llm, "google", "google"), nil
+			default:
+				return nil, fmt.Errorf("unsupported protocol %q for provider %q", protocol, cred.Provider)
 			}
 		}
 		// cred == nil means no DB credential found — fall through to env vars

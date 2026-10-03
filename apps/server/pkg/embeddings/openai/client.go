@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings/vertex"
 )
 
@@ -36,6 +37,10 @@ type Config struct {
 	BaseURL    string // defaults to DefaultBaseURL
 	Model      string // the model name passed to the API
 	Dimensions int    // output dimension; 0 = provider default
+	// Auth is the credential-injection style used for /embeddings requests.
+	// Empty defaults to bearer. Azure OpenAI declares "api-key"; other
+	// OpenAI-compatible vendors use bearer. Mirrors pkg/adk's ApplyAuth.
+	Auth adk.AuthStyle
 }
 
 // Client is an OpenAI-compatible embeddings client.
@@ -44,6 +49,7 @@ type Client struct {
 	baseURL    string
 	model      string
 	dimensions int // 0 = provider default
+	authStyle  adk.AuthStyle
 	httpClient *http.Client
 	log        *slog.Logger
 }
@@ -79,6 +85,7 @@ func NewClient(cfg Config, opts ...ClientOption) (*Client, error) {
 		baseURL:    baseURL,
 		model:      model,
 		dimensions: cfg.Dimensions,
+		authStyle:  cfg.Auth,
 		httpClient: &http.Client{Timeout: DefaultTimeout},
 		log:        slog.Default(),
 	}
@@ -213,7 +220,11 @@ func (c *Client) embed(ctx context.Context, texts []string) ([][]float32, int, e
 		return nil, 0, fmt.Errorf("new request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	// Inject the credential using the vendor's declared auth style. Azure
+	// OpenAI expects "api-key"; OpenAI-compatible vendors expect bearer.
+	if err := adk.ApplyAuth(req, c.authStyle, c.apiKey); err != nil {
+		return nil, 0, fmt.Errorf("auth: %w", err)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

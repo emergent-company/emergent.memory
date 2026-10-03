@@ -11,10 +11,34 @@ import (
 type ProviderDialect string
 
 const (
-	ProviderGoogleAI ProviderDialect = "google"
-	ProviderVertexAI ProviderDialect = "google-vertex"
-	ProviderOpenAI   ProviderDialect = "openai"
-	ProviderDeepSeek ProviderDialect = "deepseek"
+	ProviderGoogleAI     ProviderDialect = "google"
+	ProviderVertexAI     ProviderDialect = "google-vertex"
+	ProviderOpenAI       ProviderDialect = "openai"
+	ProviderDeepSeek     ProviderDialect = "deepseek"
+	ProviderAzureOpenAI  ProviderDialect = "azure-openai"
+	ProviderAnthropic    ProviderDialect = "anthropic"
+	ProviderAliyun       ProviderDialect = "aliyun"
+	ProviderZhipu        ProviderDialect = "zhipu"
+	ProviderVolcengine   ProviderDialect = "volcengine"
+	ProviderHunyuan      ProviderDialect = "hunyuan"
+	ProviderSiliconFlow  ProviderDialect = "siliconflow"
+	ProviderMiniMax      ProviderDialect = "minimax"
+	ProviderMoonshot     ProviderDialect = "moonshot"
+	ProviderMimo         ProviderDialect = "mimo"
+	ProviderModelScope   ProviderDialect = "modelscope"
+	ProviderQianfan      ProviderDialect = "qianfan"
+	ProviderQiniu        ProviderDialect = "qiniu"
+	ProviderLongCat      ProviderDialect = "longcat"
+	ProviderLKEAP        ProviderDialect = "lkeap"
+	ProviderNVIDIA       ProviderDialect = "nvidia"
+	ProviderNovita       ProviderDialect = "novita"
+	ProviderOpenRouter   ProviderDialect = "openrouter"
+	ProviderRequesty     ProviderDialect = "requesty"
+	ProviderLiteLLM      ProviderDialect = "litellm"
+	ProviderGeneric      ProviderDialect = "generic"
+	ProviderGPUStack     ProviderDialect = "gpustack"
+	ProviderJina         ProviderDialect = "jina"
+	ProviderWeKnoraCloud ProviderDialect = "weknoracloud"
 )
 
 // ProviderType is a deprecated alias for ProviderDialect, retained so existing
