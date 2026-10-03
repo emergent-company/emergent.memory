@@ -32,6 +32,9 @@ const BOARD_HTML = `<!doctype html><html><body>
   <div id="card-ready" draggable="true" data-board-card data-board-status="ready"
        data-board-open-preview aria-haspopup="dialog" role="button" tabindex="0"
        data-canonical-id="w2">ready card</div>
+  <div id="card-review" draggable="true" data-board-card data-board-status="review"
+       data-board-open-preview aria-haspopup="dialog" role="button" tabindex="0"
+       data-canonical-id="w3">review card</div>
 </body></html>`;
 
 interface AjaxCall {
@@ -108,6 +111,49 @@ test.describe('Board drag + preview wiring (app.js)', () => {
     expect(await calls(page)).toHaveLength(0);
     const drops = await page.locator('.memory-board__lane--drop').count();
     expect(drops).toBe(0);
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
+  // The #1379 defect cancelled dragstart for every non-blocked card, so these
+  // supported moves never fired. They fail against that guard, which is what
+  // makes the regression bite.
+  test('a ready card dropped on the blocked lane fires the cancel action', async ({ page }) => {
+    const errors = await bootstrap(page);
+
+    await drag(page, 'card-ready', 'blocked');
+
+    const fired = await calls(page);
+    expect(fired).toHaveLength(1);
+    expect(fired[0].method).toBe('POST');
+    expect(fired[0].url).toBe('/board/items/w2/cancel');
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
+  test('a review card dropped on the done lane fires the approve action', async ({ page }) => {
+    const errors = await bootstrap(page);
+
+    await drag(page, 'card-review', 'done');
+
+    const fired = await calls(page);
+    expect(fired).toHaveLength(1);
+    expect(fired[0].method).toBe('POST');
+    expect(fired[0].url).toBe('/board/items/w3/approve');
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
+  test('a review card dropped on the revision lane opens the feedback dialog', async ({ page }) => {
+    const errors = await bootstrap(page);
+
+    await drag(page, 'card-review', 'revision');
+
+    const fired = await calls(page);
+    expect(fired).toHaveLength(1);
+    expect(fired[0].method).toBe('GET');
+    expect(fired[0].url).toBe('/board/items/w3');
+    expect(fired[0].opts).toMatchObject({ target: '#board-drawer' });
 
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });
