@@ -65,6 +65,14 @@ templ questionRow(q AgentQuestionItem) {
 	<div class="card card-border bg-base-100" data-testid="pending-question" data-question-id={ q.ID }>
 		<div class="card-body gap-3 memory-density-compact">
 			<p class="text-sm whitespace-pre-wrap break-words">{ q.Question }</p>
+			// A pending question may carry a structured proposal (issue #1425):
+			// render it through the same sanitized card path the chat transcript
+			// uses, above the answer controls, so a schema/object change is
+			// reviewable before the user approves it. A question without a
+			// renderable proposal stays plain text, unchanged.
+			if proposalHTML := renderProposalHTML(q.Proposal); proposalHTML != "" {
+				<div data-testid="pending-question-proposal">@templ.Raw(proposalHTML)</div>
+			}
 			if isText {
 				<div class="flex flex-wrap items-center gap-2">
 					<form method="post" action={ "/settings/approvals/" + q.ID + "/respond" } class="flex min-w-56 flex-1 items-center gap-2">
