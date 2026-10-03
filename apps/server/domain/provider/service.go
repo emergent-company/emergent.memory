@@ -152,24 +152,18 @@ func (s *CredentialService) decryptProjectConfig(cfg *ProjectProviderConfig) (*R
 		GenerativeModel: modelref.StripRoutingPrefix(cfg.GenerativeModel, isDialectName),
 		EmbeddingModel:  modelref.StripRoutingPrefix(cfg.EmbeddingModel, isDialectName),
 	}
-	switch cfg.Provider {
-	case ProviderGoogleAI:
-		resolved.APIKey = string(plaintext)
-	case ProviderVertexAI:
+
+	// Route the decrypted blob to the field the vendor's definition expects:
+	// service-account vendors hold a service-account JSON document, every other
+	// credential-bearing vendor holds an API key. Derived from the definition's
+	// credential fields — no per-vendor switch — so a newly registered vendor's
+	// credential is routed without touching this code.
+	if definitionUsesServiceAccount(definitionFor(cfg.Provider)) {
 		resolved.ServiceAccountJSON = string(plaintext)
-	case ProviderOpenAI:
-		resolved.BaseURL = cfg.BaseURL
-		if resolved.BaseURL == "" {
-			resolved.BaseURL = "https://api.openai.com/v1"
-		}
-		resolved.APIKey = string(plaintext)
-	case ProviderDeepSeek:
-		resolved.BaseURL = cfg.BaseURL
-		if resolved.BaseURL == "" {
-			resolved.BaseURL = "https://api.deepseek.com/v1"
-		}
+	} else {
 		resolved.APIKey = string(plaintext)
 	}
+
 	s.applyDefinition(resolved)
 	return resolved, nil
 }
@@ -770,10 +764,10 @@ func resolveSlug(requested string, dialect ProviderDialect) (ProviderSlug, error
 // needsStoredCredential reports whether the request is missing credential
 // fields that must be filled from the previously stored config.
 func (s *CredentialService) needsStoredCredential(provider ProviderType, req UpsertProviderConfigRequest) bool {
-	if provider == ProviderVertexAI {
+	def := definitionFor(provider)
+	if definitionUsesServiceAccount(def) {
 		return req.ServiceAccountJSON == "" || req.GCPProject == "" || req.Location == ""
 	}
-	def := definitionFor(provider)
 	if def == nil {
 		return false
 	}
@@ -797,7 +791,7 @@ func (s *CredentialService) reuseStoredCredential(provider ProviderType, existin
 	}
 
 	needsPlaintext := false
-	isVertex := provider == ProviderVertexAI
+	isVertex := definitionUsesServiceAccount(definitionFor(provider))
 	if isVertex {
 		needsPlaintext = req.ServiceAccountJSON == ""
 	} else if def := definitionFor(provider); def != nil && def.Auth != AuthNone {
@@ -846,20 +840,20 @@ func (s *CredentialService) reuseStoredModels(existing *ProjectProviderConfig, r
 
 // extractPlaintext returns the credential bytes to encrypt from the request.
 func (s *CredentialService) extractPlaintext(provider ProviderType, req UpsertProviderConfigRequest) ([]byte, error) {
-	if provider == ProviderVertexAI {
+	def := definitionFor(provider)
+	if definitionUsesServiceAccount(def) {
 		if req.ServiceAccountJSON == "" {
-			return nil, apperror.NewBadRequest("serviceAccountJson is required for google-vertex")
+			return nil, apperror.NewBadRequest(fmt.Sprintf("serviceAccountJson is required for %s", provider))
 		}
 		if req.GCPProject == "" {
-			return nil, apperror.NewBadRequest("gcpProject is required for google-vertex")
+			return nil, apperror.NewBadRequest(fmt.Sprintf("gcpProject is required for %s", provider))
 		}
 		if req.Location == "" {
-			return nil, apperror.NewBadRequest("location is required for google-vertex")
+			return nil, apperror.NewBadRequest(fmt.Sprintf("location is required for %s", provider))
 		}
 		return []byte(req.ServiceAccountJSON), nil
 	}
 
-	def := definitionFor(provider)
 	if def == nil {
 		return nil, apperror.NewBadRequest(fmt.Sprintf("unsupported provider: %s", provider))
 	}
@@ -876,29 +870,23 @@ func (s *CredentialService) extractPlaintext(provider ProviderType, req UpsertPr
 func (s *CredentialService) buildTempResolvedCred(provider ProviderType, req UpsertProviderConfigRequest) *ResolvedCredential {
 	cred := &ResolvedCredential{
 		Provider:        provider,
+		BaseURL:         req.BaseURL,
 		GCPProject:      req.GCPProject,
 		Location:        req.Location,
 		GenerativeModel: modelref.StripRoutingPrefix(req.GenerativeModel, isDialectName),
 		EmbeddingModel:  modelref.StripRoutingPrefix(req.EmbeddingModel, isDialectName),
 	}
-	switch provider {
-	case ProviderGoogleAI:
-		cred.APIKey = req.APIKey
-	case ProviderVertexAI:
+
+	// Mirror decryptProjectConfig: route the configured credential to the field
+	// the vendor's definition expects, derived from the definition (not a
+	// per-vendor switch) so new vendors' credentials survive the configure,
+	// catalog-sync, and test-connection paths.
+	if definitionUsesServiceAccount(definitionFor(provider)) {
 		cred.ServiceAccountJSON = req.ServiceAccountJSON
-	case ProviderOpenAI:
-		cred.BaseURL = req.BaseURL
-		if cred.BaseURL == "" {
-			cred.BaseURL = "https://api.openai.com/v1"
-		}
-		cred.APIKey = req.APIKey
-	case ProviderDeepSeek:
-		cred.BaseURL = req.BaseURL
-		if cred.BaseURL == "" {
-			cred.BaseURL = "https://api.deepseek.com/v1"
-		}
+	} else {
 		cred.APIKey = req.APIKey
 	}
+
 	s.applyDefinition(cred)
 	return cred
 }

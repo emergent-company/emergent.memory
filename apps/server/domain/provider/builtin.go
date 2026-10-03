@@ -472,3 +472,20 @@ func hasEmbeddingModelType(def *ProviderDefinition) bool {
 	}
 	return false
 }
+
+// definitionUsesServiceAccount reports whether a vendor's primary credential is
+// a service-account JSON document rather than an API key. It is derived from the
+// definition's declared credential fields (the vendor carries a
+// "service_account_json" field) rather than a per-vendor switch, so credential
+// routing follows new registry entries automatically.
+func definitionUsesServiceAccount(def *ProviderDefinition) bool {
+	if def == nil {
+		return false
+	}
+	for _, f := range def.CredentialFields {
+		if f.Name == "service_account_json" {
+			return true
+		}
+	}
+	return false
+}
