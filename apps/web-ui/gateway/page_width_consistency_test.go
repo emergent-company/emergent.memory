@@ -218,3 +218,35 @@ func TestChatWorkspaceKeepsScrollFillAndSharedContainer(t *testing.T) {
 		}
 	}
 }
+
+// TestChatTranscriptColumnFillsWidth covers #1383: a session whose bubbles are
+// very short must render the transcript column at the same width as a session
+// with long messages. The scroll-fill flex wrapper turns layout.Container into a
+// flex item, and Container's mx-auto (auto cross-axis margins) suppresses flex
+// stretch — so without a full-width guard the column sizes to its content (fit-
+// content) and a short session collapses to the width of its longest bubble,
+// while a long one grows toward the max-width cap. The guard must directly wrap
+// the transcript's Container so the column fills the pane at any session length.
+// Bubbles stay content-sized; only the column is pinned.
+func TestChatTranscriptColumnFillsWidth(t *testing.T) {
+	html := renderHTML(t, ChatPage(
+		[]AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+		nil, nil, nil, nil, "", "", "", nil, false, nil,
+	))
+
+	_, transcriptRegion, ok := strings.Cut(html, `id="chat-log"`)
+	if !ok {
+		t.Fatal("chat transcript region missing (no chat-log target)")
+	}
+	transcriptRegion, _, ok = strings.Cut(transcriptRegion, `<form id="chat-form"`)
+	if !ok {
+		t.Fatal("could not delimit chat transcript region (no chat-form target)")
+	}
+
+	// The guard must be the Container's direct parent: rendered without
+	// whitespace between the two tags.
+	const want = `<div class="w-full"><div class="` + chatContainerClass + `">`
+	if !strings.Contains(transcriptRegion, want) {
+		t.Errorf("chat transcript column must be wrapped in a full-width guard so its width is independent of message content (#1383)\nwant: %s", want)
+	}
+}

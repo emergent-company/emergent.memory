@@ -179,31 +179,41 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 				     plus a very generous width cap (only bites on very large
 				     screens) so the stream can actually fill the chat pane. -->
 				<div class="flex min-h-full min-w-0 flex-col justify-end">
-					@layout.Container(layout.ContainerSize("max-w-[100rem]"), nil) {
-						<div class="flex w-full flex-col gap-3">
-							@chatWelcomeHero("chat-empty", "lucide--sparkles", "gap-4 py-10", "Ready when you are", 2, "text-base", "Ask anything — Memory answers from the selected agent's persona, using its model and tools.", "mt-1 max-w-sm text-sm") {
-								<div class="flex w-full max-w-xs flex-col items-center gap-1.5">
-									<label for="chat-agent" class="text-muted-faint text-xs font-semibold tracking-wider uppercase">Agent</label>
-									<select id="chat-agent" class="select select-bordered w-full" aria-label="Agent">
-										for _, a := range agents {
-											<option value={ a.ID } data-icon={ agentIcon(a.UIConfig) } data-color={ agentColor(a.UIConfig) } data-warn={ modelWarnings[a.ID] } data-description={ a.Description } selected?={ a.ID == defaultAgentID(agents, preselect) }>{ a.Name }</option>
-										}
-									</select>
-								</div>
-								<div class="mt-1 flex flex-wrap justify-center gap-2">
-									@chatSuggestion("What can you do?")
-									@chatSuggestion("Summarize the latest conversations")
-									@chatSuggestion("Help me draft a status update")
-								</div>
-							}
-							<!-- Session todo card. Pre-rendered when the active
+					<!-- Full-width guard (#1383): this flex wrapper makes
+					     layout.Container a flex item, and Container's mx-auto (auto
+					     cross-axis margins) suppresses flex stretch — so the column
+					     sized to its content and a short session collapsed to the
+					     width of its longest bubble. w-full pins the column to the
+					     pane width at every session length; bubbles stay
+					     content-sized. -->
+					<div class="w-full">
+						@layout.Container(layout.ContainerSize("max-w-[100rem]"), nil) {
+							<div class="flex w-full flex-col gap-3">
+								@chatWelcomeHero("chat-empty", "lucide--sparkles", "gap-4 py-10", "Ready when you are", 2, "text-base", "Ask anything — Memory answers from the selected agent's persona, using its model and tools.", "mt-1 max-w-sm text-sm") {
+									<div class="flex w-full max-w-xs flex-col items-center gap-1.5">
+										<label for="chat-agent" class="text-muted-faint text-xs font-semibold tracking-wider uppercase">Agent</label>
+										<select id="chat-agent" class="select select-bordered w-full" aria-label="Agent">
+											for _, a := range agents {
+												<option value={ a.ID } data-icon={ agentIcon(a.UIConfig) } data-color={ agentColor(a.UIConfig) } data-warn={ modelWarnings[a.ID] } data-description={ a.Description } selected?={ a.ID == defaultAgentID(agents, preselect) }>{ a.Name }</option>
+											}
+										</select>
+									</div>
+									<div class="mt-1 flex flex-wrap justify-center gap-2">
+										@chatSuggestion("What can you do?")
+										@chatSuggestion("Summarize the latest conversations")
+										@chatSuggestion("Help me draft a status update")
+									</div>
+								}
+								<!-- Session todo card. Pre-rendered when the active
 							     conversation's ACP session has todos; chat.js
 							     refreshes it in place from /partial/chat-todos. -->
-							<div id="chat-todos" class={ templ.KV("hidden", len(runControl.Todos) == 0) }>@TodoCard(runControl.Todos)
-</div>
-							<div id="chat-messages" class="flex flex-col gap-3"></div>
-						</div>
-					}
+								<div id="chat-todos" class={ templ.KV("hidden", len(runControl.Todos) == 0) }>
+									@TodoCard(runControl.Todos)
+								</div>
+								<div id="chat-messages" class="flex flex-col gap-3"></div>
+							</div>
+						}
+					</div>
 				</div>
 			</div>
 			<div class="border-base-content/5 border-t bg-base-100">
@@ -216,8 +226,9 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 				     the dock route fails is the transcript's inline approval
 				     path, not a second copy in the dock). -->
 				<div id="chat-dock" aria-live="polite" class="hidden"></div>
-				<noscript>@DockPanel(convID, runControl.Approvals, runControl.Questions)
-</noscript>
+				<noscript>
+					@DockPanel(convID, runControl.Approvals, runControl.Questions)
+				</noscript>
 				<!-- Composer queue lane; chat.js renders queued rows here and
 				     toggles the hidden class. -->
 				<div id="chat-queue" class="memory-queue hidden" aria-live="polite"></div>
