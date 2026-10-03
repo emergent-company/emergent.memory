@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -9,6 +11,28 @@ import (
 
 	"github.com/labstack/echo/v4"
 )
+
+// boardStatusMapAttr extracts and decodes the #board[data-board-status-map]
+// value from a rendered board response (templ HTML-escapes the JSON quotes).
+func boardStatusMapAttr(t *testing.T, body string) boardStatusMap {
+	t.Helper()
+	const marker = `data-board-status-map="`
+	i := strings.Index(body, marker)
+	if i < 0 {
+		t.Fatalf("missing data-board-status-map:\n%s", body)
+	}
+	rest := body[i+len(marker):]
+	j := strings.IndexByte(rest, '"')
+	if j < 0 {
+		t.Fatalf("unterminated data-board-status-map: %q", rest)
+	}
+	raw := html.UnescapeString(rest[:j])
+	var m boardStatusMap
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		t.Fatalf("data-board-status-map %q is not JSON: %v", raw, err)
+	}
+	return m
+}
 
 func newBoardEcho(f MemoryBackend) (*Server, *echo.Echo) {
 	s := &Server{cfg: Config{}, memory: f}
@@ -304,6 +328,155 @@ func TestObjectPreviewWithoutActionsStaysReadOnly(t *testing.T) {
 func TestBoardItemPath(t *testing.T) {
 	if got := boardItemPath("w1"); got != "/board/items/w1" {
 		t.Errorf("boardItemPath = %q, want /board/items/w1", got)
+	}
+}
+
+// TestBoardStatusMapFromDefinitions pins the work-path mapping derivation:
+// unanimous explicit phases win, unset/ambiguous phases fall back to the
+// built-in defaults, and a zero config contributes nothing.
+func TestBoardStatusMapFromDefinitions(t *testing.T) {
+	def := func(status AgentWorkStatusConfig) AgentDefinitionSummary {
+		return AgentDefinitionSummary{WorkConfig: &AgentWorkConfig{Status: status}}
+	}
+
+	// No definitions -> canonical defaults.
+	if got := boardStatusMapFromDefinitions(nil); got != defaultBoardStatusMap() {
+		t.Errorf("no definitions = %+v, want defaults", got)
+	}
+
+	// A zero work config (WorkConfig present, all phases empty) contributes
+	// nothing — the default board must be unaffected.
+	zero := []AgentDefinitionSummary{{WorkConfig: &AgentWorkConfig{}}}
+	if got := boardStatusMapFromDefinitions(zero); got != defaultBoardStatusMap() {
+		t.Errorf("zero config = %+v, want defaults", got)
+	}
+
+	// Two agreeing agents resolve the custom statuses; unset phases stay default.
+	agreeing := []AgentDefinitionSummary{
+		def(AgentWorkStatusConfig{Ready: "todo", InProgress: "doing", Review: "checking"}),
+		def(AgentWorkStatusConfig{Ready: "todo", InProgress: "doing", Review: "checking"}),
+	}
+	want := defaultBoardStatusMap()
+	want.Ready = "todo"
+	want.InProgress = "doing"
+	want.Review = "checking"
+	if got := boardStatusMapFromDefinitions(agreeing); got != want {
+		t.Errorf("agreeing defs = %+v, want %+v", got, want)
+	}
+
+	// Conflicting declarations for one phase keep the default for that phase
+	// only (a stray agent cannot hijack the board).
+	conflicting := []AgentDefinitionSummary{
+		def(AgentWorkStatusConfig{Ready: "todo", Done: "shipped"}),
+		def(AgentWorkStatusConfig{Ready: "backlog", Done: "shipped"}),
+	}
+	want = defaultBoardStatusMap()
+	want.Done = "shipped"
+	if got := boardStatusMapFromDefinitions(conflicting); got != want {
+		t.Errorf("conflicting defs = %+v, want %+v (ambiguous ready keeps default)", got, want)
+	}
+
+	// A merge across agents is per-phase: each phase is independent.
+	merged := []AgentDefinitionSummary{
+		def(AgentWorkStatusConfig{Ready: "todo"}),
+		def(AgentWorkStatusConfig{Blocked: "rejected"}),
+	}
+	want = defaultBoardStatusMap()
+	want.Ready = "todo"
+	want.Blocked = "rejected"
+	if got := boardStatusMapFromDefinitions(merged); got != want {
+		t.Errorf("merged defs = %+v, want %+v", got, want)
+	}
+}
+
+// TestBoardPageEmitsStatusMap pins that the board carries the project's
+// work-path status map for app.js to derive drag transitions from.
+func TestBoardPageEmitsStatusMap(t *testing.T) {
+	f := &fakeMemory{
+		agents: []AgentDefinitionSummary{
+			{WorkConfig: &AgentWorkConfig{Status: AgentWorkStatusConfig{Ready: "todo", InProgress: "doing"}}},
+		},
+		workItems: []WorkItem{{CanonicalID: "w1", Type: "Task", Key: "k", Status: "todo"}},
+	}
+	_, e := newBoardEcho(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/board", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	got := boardStatusMapAttr(t, rec.Body.String())
+	want := defaultBoardStatusMap()
+	want.Ready = "todo"
+	want.InProgress = "doing"
+	if got != want {
+		t.Errorf("board status map = %+v, want %+v", got, want)
+	}
+
+	// An unconfigured project emits the canonical defaults.
+	def := &fakeMemory{workItems: []WorkItem{{CanonicalID: "w1", Status: "ready"}}}
+	_, e2 := newBoardEcho(def)
+	rec2 := httptest.NewRecorder()
+	e2.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/board", nil))
+	if got := boardStatusMapAttr(t, rec2.Body.String()); got != defaultBoardStatusMap() {
+		t.Errorf("default board status map = %+v, want %+v", got, defaultBoardStatusMap())
+	}
+}
+
+// TestBoardDrawerGatesActionsByCustomStatus pins that the drawer actions are
+// selected through the project's work-path mapping, not the literal statuses.
+func TestBoardDrawerGatesActionsByCustomStatus(t *testing.T) {
+	f := &fakeMemory{
+		agents: []AgentDefinitionSummary{
+			{WorkConfig: &AgentWorkConfig{Status: AgentWorkStatusConfig{
+				Ready: "todo", InProgress: "doing", Review: "checking",
+				Revision: "rework", Blocked: "rejected", Done: "shipped",
+			}}},
+		},
+		workItemDetail: &WorkItemDetail{
+			Item: &WorkItem{CanonicalID: "w1", Type: "BoardTask", Key: "k", Status: "checking"},
+		},
+	}
+	_, e := newBoardEcho(f)
+
+	// "checking" is the mapped review status -> approve + request changes.
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/board/items/w1", nil))
+	body := rec.Body.String()
+	for _, want := range []string{`/board/items/w1/approve`, `name="feedback"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("custom review status missing %q", want)
+		}
+	}
+	if strings.Contains(body, "/board/items/w1/retry") {
+		t.Error("retry must be hidden for a custom-review item")
+	}
+	// review != done, so reassign + cancel stay available.
+	if !strings.Contains(body, "/board/items/w1/cancel") {
+		t.Error("cancel must be available for a custom-review item")
+	}
+
+	// "rejected" is the mapped blocked status -> retry only.
+	f.workItemDetail.Item.Status = "rejected"
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/board/items/w1", nil))
+	body = rec.Body.String()
+	if !strings.Contains(body, "/board/items/w1/retry") {
+		t.Error("custom blocked status must expose retry")
+	}
+	if strings.Contains(body, "/board/items/w1/approve") {
+		t.Error("approve must be hidden for a custom-blocked item")
+	}
+
+	// "shipped" is the mapped done status -> no cancel/reassign.
+	f.workItemDetail.Item.Status = "shipped"
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/board/items/w1", nil))
+	body = rec.Body.String()
+	if strings.Contains(body, "/board/items/w1/cancel") {
+		t.Error("cancel must be hidden for a custom-done item")
+	}
+	if strings.Contains(body, `name="assignee"`) {
+		t.Error("reassign must be hidden for a custom-done item")
 	}
 }
 

@@ -37,17 +37,54 @@ const BOARD_HTML = `<!doctype html><html><body>
        data-canonical-id="w3">review card</div>
 </body></html>`;
 
+// A custom-mapped board (#1428): the project's agent workConfig maps the
+// lifecycle phases to todo/doing/checking/rework/rejected/shipped, emitted as
+// #board[data-board-status-map]. The literal statuses must no longer drive
+// transitions.
+const CUSTOM_MAP = {
+  ready: 'todo',
+  inProgress: 'doing',
+  review: 'checking',
+  revision: 'rework',
+  blocked: 'rejected',
+  done: 'shipped',
+};
+
+const CUSTOM_BOARD_HTML = `<!doctype html><html><body>
+  <div id="board" data-board-status-map='${JSON.stringify(CUSTOM_MAP)}'>
+    <section data-board-column="todo"><div class="lane-body"></div></section>
+    <section data-board-column="doing"><div class="lane-body"></div></section>
+    <section data-board-column="checking"><div class="lane-body"></div></section>
+    <section data-board-column="rework"><div class="lane-body"></div></section>
+    <section data-board-column="rejected"><div class="lane-body"></div></section>
+    <section data-board-column="shipped"><div class="lane-body"></div></section>
+  </div>
+  <div id="board-drawer"></div>
+  <div id="card-todo" draggable="true" data-board-card data-board-status="todo"
+       data-board-open-preview aria-haspopup="dialog" role="button" tabindex="0"
+       data-canonical-id="w1">todo card</div>
+  <div id="card-rejected" draggable="true" data-board-card data-board-status="rejected"
+       data-board-open-preview aria-haspopup="dialog" role="button" tabindex="0"
+       data-canonical-id="w2">rejected card</div>
+  <div id="card-checking" draggable="true" data-board-card data-board-status="checking"
+       data-board-open-preview aria-haspopup="dialog" role="button" tabindex="0"
+       data-canonical-id="w3">checking card</div>
+  <div id="card-literal-blocked" draggable="true" data-board-card data-board-status="blocked"
+       data-board-open-preview aria-haspopup="dialog" role="button" tabindex="0"
+       data-canonical-id="w4">literal blocked card</div>
+</body></html>`;
+
 interface AjaxCall {
   method: string;
   url: string;
   opts: unknown;
 }
 
-async function bootstrap(page: Page): Promise<string[]> {
+async function bootstrap(page: Page, html: string = BOARD_HTML): Promise<string[]> {
   const errors: string[] = [];
   page.on('pageerror', (err) => errors.push(err.message));
 
-  await page.setContent(BOARD_HTML);
+  await page.setContent(html);
   await page.addScriptTag({ path: APP_JS });
 
   await page.evaluate(() => {
@@ -207,6 +244,85 @@ test.describe('Board drag + preview wiring (app.js)', () => {
     });
     await card.press('Space');
     expect(await ref()).toEqual({ id: 'w2', editHref: '/objects/w2', actions: 'board' });
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+});
+
+// #1428: drag transitions derive from the project's work-path status map, so a
+// custom-mapped board exposes the same actions as the default one.
+test.describe('Board drag wiring — custom-mapped statuses (app.js)', () => {
+  test('a custom-blocked card dropped on the custom-ready lane fires retry', async ({ page }) => {
+    const errors = await bootstrap(page, CUSTOM_BOARD_HTML);
+
+    await drag(page, 'card-rejected', 'todo');
+
+    const fired = await calls(page);
+    expect(fired).toHaveLength(1);
+    expect(fired[0].method).toBe('POST');
+    expect(fired[0].url).toBe('/board/items/w2/retry');
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
+  test('a custom-review card dropped on the custom-done lane fires approve', async ({ page }) => {
+    const errors = await bootstrap(page, CUSTOM_BOARD_HTML);
+
+    await drag(page, 'card-checking', 'shipped');
+
+    const fired = await calls(page);
+    expect(fired).toHaveLength(1);
+    expect(fired[0].method).toBe('POST');
+    expect(fired[0].url).toBe('/board/items/w3/approve');
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
+  test('a custom-review card dropped on the custom-revision lane opens the feedback dialog', async ({ page }) => {
+    const errors = await bootstrap(page, CUSTOM_BOARD_HTML);
+
+    await drag(page, 'card-checking', 'rework');
+
+    const fired = await calls(page);
+    expect(fired).toHaveLength(1);
+    expect(fired[0].method).toBe('GET');
+    expect(fired[0].url).toBe('/board/items/w3');
+    expect(fired[0].opts).toMatchObject({ target: '#board-drawer' });
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
+  test('a custom-ready card dropped on the custom-blocked lane fires cancel', async ({ page }) => {
+    const errors = await bootstrap(page, CUSTOM_BOARD_HTML);
+
+    await drag(page, 'card-todo', 'rejected');
+
+    const fired = await calls(page);
+    expect(fired).toHaveLength(1);
+    expect(fired[0].method).toBe('POST');
+    expect(fired[0].url).toBe('/board/items/w1/cancel');
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
+  test('the literal status names no longer drive transitions on a custom board', async ({ page }) => {
+    const errors = await bootstrap(page, CUSTOM_BOARD_HTML);
+
+    // "blocked" is not this board's mapped blocked status ("rejected"), so
+    // blocked -> ready is not a supported pair here and must not fire retry.
+    await drag(page, 'card-literal-blocked', 'todo');
+
+    expect(await calls(page)).toHaveLength(0);
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
+  test('an unsupported custom pair fires no request', async ({ page }) => {
+    const errors = await bootstrap(page, CUSTOM_BOARD_HTML);
+
+    await drag(page, 'card-todo', 'doing');
+
+    expect(await calls(page)).toHaveLength(0);
 
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });

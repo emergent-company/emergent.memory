@@ -668,19 +668,52 @@
      no request. Delegated on document so it survives htmx swaps. */
   var boardDrag = null;
 
+  // boardStatusDefaults mirrors the built-in work-path statuses. A project that
+  // configures custom ones (e.g. todo/doing) renders them into
+  // #board[data-board-status-map], which boardStatusMap() reads.
+  var boardStatusDefaults = {
+    ready: "ready",
+    inProgress: "in_progress",
+    review: "review",
+    revision: "revision",
+    blocked: "blocked",
+    done: "done",
+  };
+
+  // boardStatusMap reads the board's configured work-path status mapping from
+  // the #board swap region, falling back to the built-in statuses when the
+  // attribute is absent or malformed. Read per gesture so it tracks re-renders.
+  function boardStatusMap() {
+    var board = document.getElementById("board");
+    var raw = board && board.getAttribute("data-board-status-map");
+    if (!raw) return boardStatusDefaults;
+    try {
+      var parsed = JSON.parse(raw);
+      var map = {};
+      for (var key in boardStatusDefaults) {
+        map[key] = parsed[key] || boardStatusDefaults[key];
+      }
+      return map;
+    } catch (e) {
+      return boardStatusDefaults;
+    }
+  }
+
   /* boardMoveAction maps a drag (from status -> target lane) to the board action
-     that implements it, or null when the pair is not a supported transition:
-       blocked -> ready     execute        POST .../retry
+     that implements it, or null when the pair is not a supported transition.
+     Statuses resolve through the board's configured work-path mapping (sm), so a
+     custom-mapped board exposes the same transitions as the default one:
+       blocked -> ready     execute/retry  POST .../retry
        review  -> done      approve        POST .../approve
        *       -> blocked   cancel         POST .../cancel   (not from done)
        review  -> revision  request changes: needs feedback, so open the item
                             action dialog rather than firing a blind POST. */
-  function boardMoveAction(from, to) {
+  function boardMoveAction(from, to, sm) {
     if (from === to) return null;
-    if (from === "blocked" && to === "ready") return "retry";
-    if (from === "review" && to === "done") return "approve";
-    if (from === "review" && to === "revision") return "dialog";
-    if (to === "blocked" && from !== "done") return "cancel";
+    if (from === sm.blocked && to === sm.ready) return "retry";
+    if (from === sm.review && to === sm.done) return "approve";
+    if (from === sm.review && to === sm.revision) return "dialog";
+    if (to === sm.blocked && from !== sm.done) return "cancel";
     return null;
   }
 
@@ -704,7 +737,7 @@
     var col = ev.target.closest ? ev.target.closest("[data-board-column]") : null;
     if (!col) return;
     clearBoardDropTargets();
-    var action = boardDrag && boardMoveAction(boardDrag.fromStatus, col.getAttribute("data-board-column"));
+    var action = boardDrag && boardMoveAction(boardDrag.fromStatus, col.getAttribute("data-board-column"), boardStatusMap());
     if (!action) return; // unsupported move: do not accept the drop
     ev.preventDefault();
     if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
@@ -713,7 +746,7 @@
   document.addEventListener("drop", function (ev) {
     var col = ev.target.closest ? ev.target.closest("[data-board-column]") : null;
     if (!col || !boardDrag) return;
-    var action = boardMoveAction(boardDrag.fromStatus, col.getAttribute("data-board-column"));
+    var action = boardMoveAction(boardDrag.fromStatus, col.getAttribute("data-board-column"), boardStatusMap());
     if (!action) return; // invalid pair: reject the drop, no request
     ev.preventDefault();
     clearBoardDropTargets();

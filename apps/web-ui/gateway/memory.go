@@ -393,6 +393,27 @@ func (m *MemoryClient) doOnce(ctx context.Context, method, path string, body []b
 
 // --- agent definitions ---
 
+// AgentWorkStatusConfig mirrors the server's agent workConfig.status: the object
+// status values that mean each work-item lifecycle phase. An empty value
+// inherits the platform default for that phase.
+type AgentWorkStatusConfig struct {
+	Ready      string `json:"ready"`
+	InProgress string `json:"inProgress"`
+	Review     string `json:"review"`
+	Revision   string `json:"revision"`
+	Blocked    string `json:"blocked"`
+	Done       string `json:"done"`
+}
+
+// AgentWorkConfig is the subset of an agent definition's object-driven work
+// configuration the board consumes: the status phase map. It is read-only and
+// never written by the gateway; the board uses it to translate its fixed
+// transitions (retry/approve/request-changes/cancel) into the project's
+// configured status names instead of the built-in literals.
+type AgentWorkConfig struct {
+	Status AgentWorkStatusConfig `json:"status"`
+}
+
 type AgentDefinitionSummary struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -416,6 +437,10 @@ type AgentDefinitionSummary struct {
 	// ({"icon":"<kebab-lucide-name>","color":"<CSS color>"}); absent/{} means no
 	// appearance. Parsed by agentUIOf; see agent_ui.go.
 	UIConfig json.RawMessage `json:"uiConfig,omitempty"`
+	// WorkConfig carries the agent's object-driven work status map (read-only).
+	// The board derives its work-path transitions from it so custom-mapped
+	// boards expose drag/drawer actions; nil/zero means "use the defaults".
+	WorkConfig *AgentWorkConfig `json:"workConfig,omitempty"`
 }
 
 // UnmarshalJSON defaults Enabled to true when the `enabled` key is absent, so

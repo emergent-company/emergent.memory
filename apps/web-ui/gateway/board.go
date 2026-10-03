@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 	"sort"
 	"strings"
@@ -74,6 +75,120 @@ func boardRunIntent(status string) ui.BadgeIntent {
 type boardLane struct {
 	Status string
 	Items  []WorkItem
+}
+
+// boardStatusMap is the project's work-path status mapping: which object status
+// value means each work-item lifecycle phase. It lets the board translate its
+// fixed transition set (retry/approve/request-changes/cancel) into whatever
+// statuses the project's agents configured, defaulting to the built-in names so
+// an unconfigured project keeps the canonical behaviour. Zero value is not
+// meaningful — always start from defaultBoardStatusMap.
+type boardStatusMap struct {
+	Ready      string `json:"ready"`
+	InProgress string `json:"inProgress"`
+	Review     string `json:"review"`
+	Revision   string `json:"revision"`
+	Blocked    string `json:"blocked"`
+	Done       string `json:"done"`
+}
+
+// defaultBoardStatusMap is the canonical mapping. Its phase values match
+// boardStatusOrder, so a default board renders and behaves exactly as before.
+func defaultBoardStatusMap() boardStatusMap {
+	return boardStatusMap{
+		Ready:      "ready",
+		InProgress: "in_progress",
+		Review:     "review",
+		Revision:   "revision",
+		Blocked:    "blocked",
+		Done:       "done",
+	}
+}
+
+// statusMapJSON serialises the map for the #board[data-board-status-map]
+// attribute app.js reads to derive drag transitions. Falls back to "" on the
+// (practically impossible) marshal error.
+func (m boardStatusMap) statusMapJSON() string {
+	b, err := json.Marshal(m)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// boardStatusMapFromDefinitions derives the project's work-path status mapping
+// from its agent definitions' workConfig.status blocks. Each phase is overridden
+// only when every declaring agent agrees on one non-empty value (exactly one
+// distinct value), so a stray agent cannot silently hijack the board's
+// transitions; a phase no agent declares keeps its built-in default.
+func boardStatusMapFromDefinitions(defs []AgentDefinitionSummary) boardStatusMap {
+	ready := map[string]struct{}{}
+	inProgress := map[string]struct{}{}
+	review := map[string]struct{}{}
+	revision := map[string]struct{}{}
+	blocked := map[string]struct{}{}
+	done := map[string]struct{}{}
+	add := func(set map[string]struct{}, v string) {
+		if v != "" {
+			set[v] = struct{}{}
+		}
+	}
+	for _, d := range defs {
+		if d.WorkConfig == nil {
+			continue
+		}
+		s := d.WorkConfig.Status
+		add(ready, s.Ready)
+		add(inProgress, s.InProgress)
+		add(review, s.Review)
+		add(revision, s.Revision)
+		add(blocked, s.Blocked)
+		add(done, s.Done)
+	}
+	m := defaultBoardStatusMap()
+	if v, ok := soleValue(ready); ok {
+		m.Ready = v
+	}
+	if v, ok := soleValue(inProgress); ok {
+		m.InProgress = v
+	}
+	if v, ok := soleValue(review); ok {
+		m.Review = v
+	}
+	if v, ok := soleValue(revision); ok {
+		m.Revision = v
+	}
+	if v, ok := soleValue(blocked); ok {
+		m.Blocked = v
+	}
+	if v, ok := soleValue(done); ok {
+		m.Done = v
+	}
+	return m
+}
+
+// soleValue returns the one value in set, or ("", false) when the set is empty
+// or carries more than one distinct value (an ambiguous declaration).
+func soleValue(set map[string]struct{}) (string, bool) {
+	if len(set) != 1 {
+		return "", false
+	}
+	for v := range set {
+		return v, true
+	}
+	return "", false
+}
+
+// boardStatusMap derives the project's work-path status mapping. A failed
+// definitions fetch is captured and yields the canonical default so the board
+// never breaks on a definitions outage.
+func (s *Server) boardStatusMap(ctx context.Context) boardStatusMap {
+	defs, err := s.memory.ListAgentDefinitions(ctx)
+	if err != nil {
+		captureError(err)
+		return defaultBoardStatusMap()
+	}
+	return boardStatusMapFromDefinitions(defs)
 }
 
 // boardStatusesFromCompiled derives the board lane order from the compiled
@@ -167,14 +282,14 @@ func (s *Server) uiBoard(c echo.Context) error {
 	ctx := c.Request().Context()
 	items, err := s.memory.ListWorkItems(ctx, "", "", 200)
 	if err != nil {
-		return s.page(c, pageTitle("Board"), BoardPage(nil, nil, nil, err))
+		return s.page(c, pageTitle("Board"), BoardPage(nil, nil, nil, defaultBoardStatusMap(), err))
 	}
 	agents, aerr := s.memory.ListScheduledAgents(ctx)
 	if aerr != nil {
 		captureError(aerr)
 		agents = nil
 	}
-	return s.page(c, pageTitle("Board"), BoardPage(items, agents, s.boardStatuses(ctx), nil))
+	return s.page(c, pageTitle("Board"), BoardPage(items, agents, s.boardStatuses(ctx), s.boardStatusMap(ctx), nil))
 }
 
 // uiBoardPartial renders just the board columns (the htmx swap region), used by
@@ -194,7 +309,7 @@ func (s *Server) renderBoardColumns(c echo.Context, actionErr error) error {
 	} else if err != nil {
 		errMsg = err.Error()
 	}
-	render.RenderPartial(c.Response().Writer, c.Request(), BoardRefresh(items, s.boardStatuses(ctx), errMsg))
+	render.RenderPartial(c.Response().Writer, c.Request(), BoardRefresh(items, s.boardStatuses(ctx), s.boardStatusMap(ctx), errMsg))
 	return nil
 }
 
@@ -207,7 +322,7 @@ func (s *Server) uiBoardItem(c echo.Context) error {
 		render.RenderPartial(c.Response().Writer, c.Request(), BoardDrawerError(err))
 		return nil
 	}
-	render.RenderPartial(c.Response().Writer, c.Request(), BoardDrawer(detail))
+	render.RenderPartial(c.Response().Writer, c.Request(), BoardDrawer(detail, s.boardStatusMap(ctx)))
 	return nil
 }
 

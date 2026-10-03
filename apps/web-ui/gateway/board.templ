@@ -12,14 +12,14 @@ import (
 
 // BoardPage renders the Kanban board: a header, the circuit-breaker health
 // readout (when any reaction agent is unhealthy), and the status columns.
-templ BoardPage(items []WorkItem, agents []ScheduledAgent, statuses []string, loadErr error) {
+templ BoardPage(items []WorkItem, agents []ScheduledAgent, statuses []string, statusMap boardStatusMap, loadErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@boardHeader(len(items), loadErr == nil)
 		if loadErr != nil {
 			@pageError("Board unavailable", loadErr)
 		} else {
 			@boardHealth(agents)
-			@BoardColumns(items, statuses, "")
+			@BoardColumns(items, statuses, statusMap, "")
 		}
 		<div id="board-drawer" data-testid="board-drawer"></div>
 	}
@@ -28,8 +28,8 @@ templ BoardPage(items []WorkItem, agents []ScheduledAgent, statuses []string, lo
 // BoardRefresh renders the board columns plus an out-of-band swap that clears
 // the drawer (closing any open dialog). This is the response for the htmx
 // action and partial routes.
-templ BoardRefresh(items []WorkItem, statuses []string, errMsg string) {
-	@BoardColumns(items, statuses, errMsg)
+templ BoardRefresh(items []WorkItem, statuses []string, statusMap boardStatusMap, errMsg string) {
+	@BoardColumns(items, statuses, statusMap, errMsg)
 	<div id="board-drawer" hx-swap-oob="true" data-testid="board-drawer"></div>
 }
 
@@ -70,9 +70,10 @@ templ boardHealth(agents []ScheduledAgent) {
 
 // BoardColumns renders the status lanes. It is the htmx swap region (#board) that
 // actions and drag re-render. errMsg, when set, renders an error banner above
-// the lanes.
-templ BoardColumns(items []WorkItem, statuses []string, errMsg string) {
-	<div id="board" data-testid="board" tabindex="-1">
+// the lanes. The work-path status map is emitted as a data attribute so app.js
+// derives drag transitions from the project's configured statuses.
+templ BoardColumns(items []WorkItem, statuses []string, statusMap boardStatusMap, errMsg string) {
+	<div id="board" data-testid="board" tabindex="-1" data-board-status-map={ statusMap.statusMapJSON() }>
 		if errMsg != "" {
 			@ui.Alert(ui.AlertProps{
 				Type:    ui.AlertError,
@@ -170,8 +171,9 @@ templ boardCard(it WorkItem) {
 }
 
 // BoardDrawer renders the card detail as a native dialog: the item identity,
-// its latest run, feedback history, recent runs, and the human actions.
-templ BoardDrawer(detail *WorkItemDetail) {
+// its latest run, feedback history, recent runs, and the human actions. The
+// status map resolves which of the item's statuses gate each action.
+templ BoardDrawer(detail *WorkItemDetail, statusMap boardStatusMap) {
 	{{ item := detail.Item }}
 	@ui.Dialog(ui.DialogProps{
 		ID:       "board-item-dialog",
@@ -211,7 +213,7 @@ templ BoardDrawer(detail *WorkItemDetail) {
 			}
 		</div>
 
-		@boardDrawerActions(item)
+		@boardDrawerActions(item, statusMap)
 
 		if len(detail.Feedback) > 0 {
 			<div class="mt-5">
@@ -252,18 +254,20 @@ templ BoardDrawer(detail *WorkItemDetail) {
 }
 
 // boardDrawerActions renders the human actions for an item, gated by its status
-// (hide, don't disable). Every action posts to the gateway action route and
-// swaps the board columns; the drawer is cleared out-of-band.
-templ boardDrawerActions(item *WorkItem) {
+// (hide, don't disable). The statuses are resolved through the project's
+// work-path map, so a custom-mapped board exposes the same actions as the
+// default one. Every action posts to the gateway action route and swaps the
+// board columns; the drawer is cleared out-of-band.
+templ boardDrawerActions(item *WorkItem, statusMap boardStatusMap) {
 	<div class="mt-4 flex flex-wrap gap-2">
-		if item.Status == "review" {
+		if item.Status == statusMap.Review {
 			@boardActionButton("Approve", "lucide--check", ui.ButtonSuccess, boardActionPath(item.CanonicalID, "approve"))
 			@boardRequestChangesForm(item.CanonicalID)
 		}
-		if item.Status == "blocked" {
+		if item.Status == statusMap.Blocked {
 			@boardActionButton("Retry", "lucide--rotate-cw", ui.ButtonPrimary, boardActionPath(item.CanonicalID, "retry"))
 		}
-		if item.Status != "done" {
+		if item.Status != statusMap.Done {
 			@boardReassignForm(item.CanonicalID, item.Assignee)
 			@boardActionButton("Cancel", "lucide--ban", ui.ButtonGhost, boardActionPath(item.CanonicalID, "cancel"))
 		}

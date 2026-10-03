@@ -48,7 +48,7 @@ func (s *Server) uiObjectPreviewPartial(c echo.Context) error {
 	var actions templ.Component
 	if c.QueryParam("actions") == "board" {
 		if detail, werr := s.memory.GetWorkItem(ctx, id); werr == nil && detail != nil && detail.Item != nil {
-			actions = boardDrawerActions(detail.Item)
+			actions = boardDrawerActions(detail.Item, s.boardStatusMap(ctx))
 		}
 	}
 
