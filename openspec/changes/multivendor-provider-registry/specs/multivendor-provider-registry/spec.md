@@ -39,7 +39,7 @@ The registry SHALL describe vendor-specific configuration inputs (for example an
 #### Scenario: Dynamic configuration rendered
 
 - **WHEN** a vendor definition declares an extra configuration field
-- **THEN** the provider configuration response exposes that field's key, type, required flag, and secret flag, and the UI renders a matching input without a per-vendor code branch
+- **THEN** the provider configuration response exposes that field's key, type, required flag, and secret flag, and the UI surfaces the field's metadata read-only without a per-vendor code branch (submitted values are not yet persisted)
 
 ### Requirement: Catalog fetch strategy is per vendor
 

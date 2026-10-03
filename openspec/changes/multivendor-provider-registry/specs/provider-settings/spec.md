@@ -29,14 +29,14 @@ The surface SHALL display each vendor's registry-provided display name and icon.
 
 ### Requirement: Dynamic vendor configuration fields
 
-The surface SHALL render the vendor's declared extra configuration fields (label, type, required, secret, placeholder) as form inputs, and SHALL round-trip their values through the provider configuration API without a per-vendor UI branch.
+The surface SHALL surface the vendor's declared extra configuration fields (key, label, type, required, secret) as registry-driven metadata, without a per-vendor UI branch. Persisting submitted values and round-tripping them through the provider configuration API is deferred: the panel renders the fields read-only and does not submit them.
 
 #### Scenario: Azure api-version field
 
 - **WHEN** the Azure OpenAI vendor is selected
-- **THEN** an `api-version` input is rendered from its registry metadata
+- **THEN** its `api-version` registry metadata is rendered read-only from the definition
 
 #### Scenario: Secret extra field masked
 
 - **WHEN** an extra field is marked secret
-- **THEN** its stored value is never echoed back to the client
+- **THEN** only its key/label metadata is rendered and no stored value is echoed back to the client
