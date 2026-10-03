@@ -1813,6 +1813,75 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/blueprints/import": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Fetches a blueprint from https://github.com/\u003corg\u003e/\u003crepo\u003e[#ref], extracts and validates its manifest, and creates + publishes a blueprint in the caller's scope. The optional token is used only for private-repo fetch and is never stored or returned.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "blueprints"
+                ],
+                "summary": "Import blueprint from a GitHub URL",
+                "parameters": [
+                    {
+                        "description": "GitHub source",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_blueprints.ImportGitHubRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created blueprint",
+                        "schema": {
+                            "$ref": "#/definitions/domain_blueprints.Blueprint"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid URL or manifest",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "413": {
+                        "description": "Archive too large",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "502": {
+                        "description": "Fetch failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/blueprints/name/{name}/versions": {
             "get": {
                 "security": [
@@ -7804,6 +7873,64 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/invites/{id}/resend": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Re-sends the invitation email for a pending invitation, extending its expiry by 7 days (requires org_admin authority over the invite's organization). The response carries an ` + "`" + `outcome` + "`" + ` field: \"sent\" when a fresh email was enqueued, \"noop\" when a recently sent/in-flight email suppressed the resend, \"enqueue_failed\" when the attempt failed to queue.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "invites"
+                ],
+                "summary": "Resend an invitation",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Invitation ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Resend outcome and the (possibly unchanged) invitation",
+                        "schema": {
+                            "$ref": "#/definitions/domain_invites.ResendResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing invite_id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Invitation not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/mcp-relay/connect": {
             "get": {
                 "description": "Remote MCP providers (e.g. Diane) open an outbound WebSocket here. First frame must be a register frame with instance_id and tools list.",
@@ -9151,6 +9278,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Notification not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "A newer notification for the same group key is already active",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -11181,6 +11314,271 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/projects/{projectId}/agent-queues": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Lists a project's named agent work queues with live pending/processing depth",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "List agent work queues",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Agent queues",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.APIResponse-array_domain_agents_AgentQueueDTO"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Creates a named agent work queue with an optional concurrency and priority",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "Create an agent work queue",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Queue",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.CreateAgentQueueDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created queue",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.APIResponse-domain_agents_AgentQueueDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Queue already exists",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/agent-queues/{name}": {
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Deletes a queue that has no pending or processing jobs",
+                "tags": [
+                    "agents"
+                ],
+                "summary": "Delete an agent work queue",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Queue name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Deleted"
+                    },
+                    "404": {
+                        "description": "Queue not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Queue has jobs in flight",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Updates a queue's display name, description, concurrency, priority, or enabled flag",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "Update an agent work queue",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Queue name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Queue updates",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.UpdateAgentQueueDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Updated queue",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.APIResponse-domain_agents_AgentQueueDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Queue not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/agent-queues/{name}/enqueue": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Creates a queued agent run on the named queue, optionally selecting a runtime agent and attaching trigger metadata",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "Enqueue a work item onto a queue",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Queue name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Work item",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.EnqueueWorkItemDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Enqueued",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.APIResponse-domain_agents_EnqueueWorkItemResponseDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Queue or agent not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/projects/{projectId}/agent-runs/{runId}/questions": {
             "get": {
                 "security": [
@@ -12461,6 +12859,385 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/work-items": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the Kanban projection of board-enabled work items (object HEAD joined to latest run), filterable by status and type",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "List work items",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by work status",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by object type",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max items (default 200, max 1000)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Work items",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.APIResponse-array_domain_agents_WorkItemDTO"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/work-items/{canonicalId}": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns one work item joined to its latest run, its feedback history, and its recent runs",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "Get a work item",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Work item canonical ID",
+                        "name": "canonicalId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Work item detail",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.APIResponse-domain_agents_WorkItemDetailDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/work-items/{canonicalId}/approve": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Finalizes a work item in review: sets reviewed_by/reviewed_at, clears needs_review, and moves it to done",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "Approve a work item",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Work item canonical ID",
+                        "name": "canonicalId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Approved",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.APIResponse-domain_agents_WorkItemActionDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Not in review",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/work-items/{canonicalId}/cancel": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Closes a work item (blocked) and cancels any in-flight run",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "Cancel a work item",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Work item canonical ID",
+                        "name": "canonicalId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Cancelled",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.APIResponse-domain_agents_WorkItemActionDTO"
+                        }
+                    },
+                    "409": {
+                        "description": "Already done",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/work-items/{canonicalId}/reassign": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Sets or clears the assignee of a work item (empty assignee clears it)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "Reassign a work item",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Work item canonical ID",
+                        "name": "canonicalId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Assignee",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.ReassignWorkItemDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Reassigned",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.APIResponse-domain_agents_WorkItemActionDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/work-items/{canonicalId}/request-changes": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns a work item in review to revision, records feedback, and enqueues a rework run (or escalates at the revision cap)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "Request changes on a work item",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Work item canonical ID",
+                        "name": "canonicalId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Feedback",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.RequestChangesWorkItemDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Changes requested",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.APIResponse-domain_agents_WorkItemActionDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Empty feedback",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Not in review",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/work-items/{canonicalId}/retry": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns a blocked work item to ready and enqueues it",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "Retry a work item",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Work item canonical ID",
+                        "name": "canonicalId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Retried",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.APIResponse-domain_agents_WorkItemActionDTO"
+                        }
+                    },
+                    "409": {
+                        "description": "Not blocked",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -21343,6 +22120,34 @@ const docTemplate = `{
                 }
             }
         },
+        "/provider-definitions": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "providers"
+                ],
+                "summary": "List supported provider (vendor) definitions",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_provider.ProviderDefinitionResponse"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/providers/{provider}/models": {
             "get": {
                 "summary": "List available models for a provider",
@@ -22140,6 +22945,26 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_agents.APIResponse-array_domain_agents_AgentQueueDTO": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_agents.AgentQueueDTO"
+                    }
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
         "domain_agents.APIResponse-array_domain_agents_AgentRunDTO": {
             "type": "object",
             "properties": {
@@ -22187,6 +23012,26 @@ const docTemplate = `{
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/domain_agents.ToolGroupDTO"
+                    }
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_agents.APIResponse-array_domain_agents_WorkItemDTO": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_agents.WorkItemDTO"
                     }
                 },
                 "error": {
@@ -22251,6 +23096,23 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_agents.APIResponse-domain_agents_AgentQueueDTO": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/domain_agents.AgentQueueDTO"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
         "domain_agents.APIResponse-domain_agents_AgentRunDTO": {
             "type": "object",
             "properties": {
@@ -22285,11 +23147,62 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_agents.APIResponse-domain_agents_EnqueueWorkItemResponseDTO": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/domain_agents.EnqueueWorkItemResponseDTO"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
         "domain_agents.APIResponse-domain_agents_PendingEventsResponseDTO": {
             "type": "object",
             "properties": {
                 "data": {
                     "$ref": "#/definitions/domain_agents.PendingEventsResponseDTO"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_agents.APIResponse-domain_agents_WorkItemActionDTO": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/domain_agents.WorkItemActionDTO"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_agents.APIResponse-domain_agents_WorkItemDetailDTO": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/domain_agents.WorkItemDetailDTO"
                 },
                 "error": {
                     "type": "string"
@@ -22453,6 +23366,9 @@ const docTemplate = `{
                 "createdAt": {
                     "type": "string"
                 },
+                "defaultQueue": {
+                    "type": "string"
+                },
                 "defaultTimeout": {
                     "type": "integer"
                 },
@@ -22535,6 +23451,9 @@ const docTemplate = `{
                 },
                 "visibility": {
                     "$ref": "#/definitions/domain_agents.AgentVisibility"
+                },
+                "workConfig": {
+                    "$ref": "#/definitions/domain_agents.AgentWorkConfig"
                 },
                 "workspaceConfig": {
                     "type": "object",
@@ -22755,6 +23674,58 @@ const docTemplate = `{
                 "QuestionStatusCancelled"
             ]
         },
+        "domain_agents.AgentQueueDTO": {
+            "type": "object",
+            "properties": {
+                "concurrency": {
+                    "type": "integer"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "displayName": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "pending": {
+                    "type": "integer"
+                },
+                "priority": {
+                    "type": "integer"
+                },
+                "processing": {
+                    "type": "integer"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_agents.AgentRetryPolicy": {
+            "type": "object",
+            "properties": {
+                "backoffCoefficient": {
+                    "type": "number"
+                },
+                "initialIntervalMs": {
+                    "type": "integer"
+                },
+                "maxAttempts": {
+                    "type": "integer"
+                },
+                "maxIntervalMs": {
+                    "type": "integer"
+                }
+            }
+        },
         "domain_agents.AgentRunDTO": {
             "type": "object",
             "properties": {
@@ -22966,6 +23937,79 @@ const docTemplate = `{
                 "VisibilityInternal"
             ]
         },
+        "domain_agents.AgentWorkConfig": {
+            "type": "object",
+            "properties": {
+                "failureLimit": {
+                    "type": "integer"
+                },
+                "requiresReview": {
+                    "type": "boolean"
+                },
+                "retryPolicy": {
+                    "description": "RetryPolicy configures retry backoff for queued work runs.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_agents.AgentRetryPolicy"
+                        }
+                    ]
+                },
+                "revisionLimit": {
+                    "description": "RevisionLimit caps the number of rework (request-changes) rounds before\nthe item is escalated to a human instead of re-enqueued. Zero = default.",
+                    "type": "integer"
+                },
+                "status": {
+                    "$ref": "#/definitions/domain_agents.AgentWorkStatusConfig"
+                },
+                "workContract": {
+                    "description": "WorkContract declares the deliverables the agent must produce before it\nmay complete a work item (P6). Zero value = no validation. It is\nagent-only (no per-type override): the required deliverable types describe\nwhat the *agent* produces, whereas the per-type config describes how items\nof a type are processed (see design.md \"Work contract\").",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_agents.AgentWorkContract"
+                        }
+                    ]
+                }
+            }
+        },
+        "domain_agents.AgentWorkContract": {
+            "type": "object",
+            "properties": {
+                "requireArtifacts": {
+                    "description": "RequireArtifacts requires work_complete to carry a non-empty summary or\nartifacts before the item may be completed.",
+                    "type": "boolean"
+                },
+                "requiredDeliverableTypes": {
+                    "description": "RequiredDeliverableTypes lists object types that must be among the\ndeclared deliverables, each resolving to an existing object, before the\nitem may be completed. Empty means no required deliverable types.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "domain_agents.AgentWorkStatusConfig": {
+            "type": "object",
+            "properties": {
+                "blocked": {
+                    "type": "string"
+                },
+                "done": {
+                    "type": "string"
+                },
+                "inProgress": {
+                    "type": "string"
+                },
+                "ready": {
+                    "type": "string"
+                },
+                "review": {
+                    "type": "string"
+                },
+                "revision": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_agents.BatchTriggerDTO": {
             "type": "object",
             "required": [
@@ -23066,6 +24110,70 @@ const docTemplate = `{
                 },
                 "triggerType": {
                     "$ref": "#/definitions/domain_agents.AgentTriggerType"
+                }
+            }
+        },
+        "domain_agents.CreateAgentQueueDTO": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "concurrency": {
+                    "type": "integer"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "displayName": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "priority": {
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_agents.EnqueueWorkItemDTO": {
+            "type": "object",
+            "properties": {
+                "agentId": {
+                    "type": "string"
+                },
+                "agentName": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "priority": {
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_agents.EnqueueWorkItemResponseDTO": {
+            "type": "object",
+            "properties": {
+                "agentId": {
+                    "type": "string"
+                },
+                "queue": {
+                    "type": "string"
+                },
+                "runId": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
                 }
             }
         },
@@ -23197,6 +24305,23 @@ const docTemplate = `{
                 "EventTypeUpdated",
                 "EventTypeDeleted"
             ]
+        },
+        "domain_agents.ReassignWorkItemDTO": {
+            "type": "object",
+            "properties": {
+                "assignee": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_agents.RequestChangesWorkItemDTO": {
+            "type": "object",
+            "properties": {
+                "feedback": {
+                    "description": "Feedback is required (non-empty) review feedback recorded as a new round.",
+                    "type": "string"
+                }
+            }
         },
         "domain_agents.RespondToQuestionRequest": {
             "type": "object",
@@ -23397,6 +24522,183 @@ const docTemplate = `{
                 },
                 "triggerType": {
                     "$ref": "#/definitions/domain_agents.AgentTriggerType"
+                }
+            }
+        },
+        "domain_agents.UpdateAgentQueueDTO": {
+            "type": "object",
+            "properties": {
+                "concurrency": {
+                    "type": "integer"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "displayName": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "priority": {
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_agents.WorkItemActionDTO": {
+            "type": "object",
+            "properties": {
+                "escalated": {
+                    "type": "boolean"
+                },
+                "item": {
+                    "$ref": "#/definitions/domain_agents.WorkItemHeadDTO"
+                },
+                "round": {
+                    "type": "integer"
+                },
+                "runId": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_agents.WorkItemDTO": {
+            "type": "object",
+            "properties": {
+                "assignee": {
+                    "type": "string"
+                },
+                "canonicalId": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "latestRunFailureClass": {
+                    "type": "string"
+                },
+                "latestRunId": {
+                    "type": "string"
+                },
+                "latestRunStatus": {
+                    "type": "string"
+                },
+                "needsReview": {
+                    "type": "boolean"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "runCount": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "unroutable": {
+                    "type": "boolean"
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_agents.WorkItemDetailDTO": {
+            "type": "object",
+            "properties": {
+                "feedback": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_agents.WorkItemFeedbackDTO"
+                    }
+                },
+                "item": {
+                    "$ref": "#/definitions/domain_agents.WorkItemDTO"
+                },
+                "runs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_agents.WorkItemRunDTO"
+                    }
+                }
+            }
+        },
+        "domain_agents.WorkItemFeedbackDTO": {
+            "type": "object",
+            "properties": {
+                "author": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "round": {
+                    "type": "integer"
+                },
+                "runId": {
+                    "type": "string"
+                },
+                "text": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_agents.WorkItemHeadDTO": {
+            "type": "object",
+            "properties": {
+                "assignee": {
+                    "type": "string"
+                },
+                "canonicalId": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_agents.WorkItemRunDTO": {
+            "type": "object",
+            "properties": {
+                "completedAt": {
+                    "type": "string"
+                },
+                "errorMessage": {
+                    "type": "string"
+                },
+                "failureClass": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "startedAt": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "summary": {
+                    "type": "object",
+                    "additionalProperties": {}
                 }
             }
         },
@@ -24023,6 +25325,20 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_blueprints.ImportGitHubRequest": {
+            "type": "object",
+            "properties": {
+                "ref": {
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
+                },
+                "url": {
                     "type": "string"
                 }
             }
@@ -26045,6 +27361,10 @@ const docTemplate = `{
                 "type"
             ],
             "properties": {
+                "assignee": {
+                    "type": "string",
+                    "maxLength": 255
+                },
                 "branch_id": {
                     "type": "string"
                 },
@@ -26332,6 +27652,10 @@ const docTemplate = `{
                     "description": "Actor tracking",
                     "type": "string"
                 },
+                "assignee": {
+                    "description": "Assignee is the work lane for board-enabled types (the agent identity\nexpected to claim the object). NULL = any listening agent.",
+                    "type": "string"
+                },
                 "branch_id": {
                     "type": "string"
                 },
@@ -26472,6 +27796,9 @@ const docTemplate = `{
                 },
                 "actor_type": {
                     "description": "Actor tracking (provenance)",
+                    "type": "string"
+                },
+                "assignee": {
                     "type": "string"
                 },
                 "branch_id": {
@@ -26736,6 +28063,10 @@ const docTemplate = `{
                 "branchId": {
                     "type": "string"
                 },
+                "disableAutoEmbed": {
+                    "description": "DisableAutoEmbed suppresses the auto-embed of Query when no Vector was\nsupplied. Callers that have already run their own bounded embedding\nattempts (notably unified search) set this so HybridSearch never issues a\nfurther, unbounded embedding call. Defaults to false: all other callers\nkeep the existing auto-embed behaviour.",
+                    "type": "boolean"
+                },
                 "includeDebug": {
                     "description": "Can also use ?debug=true query param",
                     "type": "boolean"
@@ -26850,6 +28181,9 @@ const docTemplate = `{
         "domain_graph.PatchGraphObjectRequest": {
             "type": "object",
             "properties": {
+                "assignee": {
+                    "type": "string"
+                },
                 "branch_id": {
                     "type": "string"
                 },
@@ -27478,10 +28812,73 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_invites.ResendOutcome": {
+            "type": "string",
+            "enum": [
+                "sent",
+                "noop",
+                "enqueue_failed"
+            ],
+            "x-enum-varnames": [
+                "ResendOutcomeSent",
+                "ResendOutcomeNoOp",
+                "ResendOutcomeEnqueueFailed"
+            ]
+        },
+        "domain_invites.ResendResponse": {
+            "type": "object",
+            "properties": {
+                "acceptedAt": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "expiresAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "invitedByUserId": {
+                    "type": "string"
+                },
+                "organizationId": {
+                    "type": "string"
+                },
+                "outcome": {
+                    "$ref": "#/definitions/domain_invites.ResendOutcome"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "revokedAt": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_invites.SentInvite": {
             "type": "object",
             "properties": {
                 "createdAt": {
+                    "type": "string"
+                },
+                "deliveryStatus": {
+                    "type": "string"
+                },
+                "deliveryStatusAt": {
                     "type": "string"
                 },
                 "email": {
@@ -28909,6 +30306,9 @@ const docTemplate = `{
                 "eventKey": {
                     "type": "string"
                 },
+                "required": {
+                    "type": "boolean"
+                },
                 "requiresAction": {
                     "type": "boolean"
                 },
@@ -29205,6 +30605,9 @@ const docTemplate = `{
                     "description": "AutoMergeExtractionBranches is emitted only when true.",
                     "type": "boolean"
                 },
+                "budget_alert_threshold": {
+                    "type": "number"
+                },
                 "budget_usd": {
                     "type": "number"
                 },
@@ -29362,6 +30765,86 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_provider.AuthStyle": {
+            "type": "string",
+            "enum": [
+                "bearer",
+                "api-key",
+                "x-api-key",
+                "x-goog-api-key",
+                "none",
+                "signed"
+            ],
+            "x-enum-varnames": [
+                "AuthBearer",
+                "AuthAPIKeyHeader",
+                "AuthXAPIKey",
+                "AuthGoogleAPIKey",
+                "AuthNone",
+                "AuthSigned"
+            ]
+        },
+        "domain_provider.CredentialLabel": {
+            "type": "object",
+            "properties": {
+                "hint": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "placeholder": {
+                    "type": "string"
+                },
+                "required": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_provider.ExtraField": {
+            "type": "object",
+            "properties": {
+                "default": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "options": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_provider.ExtraFieldOption"
+                    }
+                },
+                "placeholder": {
+                    "type": "string"
+                },
+                "required": {
+                    "type": "boolean"
+                },
+                "secret": {
+                    "type": "boolean"
+                },
+                "type": {
+                    "description": "string | password | number | boolean | select",
+                    "type": "string"
+                }
+            }
+        },
+        "domain_provider.ExtraFieldOption": {
+            "type": "object",
+            "properties": {
+                "label": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_provider.ModelType": {
             "type": "string",
             "enum": [
@@ -29498,6 +30981,19 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_provider.Protocol": {
+            "type": "string",
+            "enum": [
+                "openai-chat",
+                "google-genai",
+                "anthropic-messages"
+            ],
+            "x-enum-varnames": [
+                "ProtocolOpenAIChat",
+                "ProtocolGoogleGenAI",
+                "ProtocolAnthropicMessages"
+            ]
+        },
         "domain_provider.ProviderConfigResponse": {
             "type": "object",
             "properties": {
@@ -29533,19 +31029,121 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_provider.ProviderDefinitionResponse": {
+            "type": "object",
+            "properties": {
+                "auth": {
+                    "$ref": "#/definitions/domain_provider.AuthStyle"
+                },
+                "credentialLabel": {
+                    "$ref": "#/definitions/domain_provider.CredentialLabel"
+                },
+                "defaultBaseUrls": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "description": {
+                    "type": "string"
+                },
+                "displayName": {
+                    "type": "string"
+                },
+                "extraFields": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_provider.ExtraField"
+                    }
+                },
+                "iconDataUri": {
+                    "description": "IconDataURI is the vendor brand mark as a base64 data URI; the raw SVG\nbytes are never serialized.",
+                    "type": "string"
+                },
+                "modelTypes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_provider.ModelType"
+                    }
+                },
+                "names": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "order": {
+                    "type": "integer"
+                },
+                "protocol": {
+                    "$ref": "#/definitions/domain_provider.Protocol"
+                },
+                "type": {
+                    "$ref": "#/definitions/domain_provider.ProviderType"
+                }
+            }
+        },
         "domain_provider.ProviderDialect": {
             "type": "string",
             "enum": [
                 "google",
                 "google-vertex",
                 "openai",
-                "deepseek"
+                "deepseek",
+                "azure-openai",
+                "anthropic",
+                "aliyun",
+                "zhipu",
+                "volcengine",
+                "hunyuan",
+                "siliconflow",
+                "minimax",
+                "moonshot",
+                "mimo",
+                "modelscope",
+                "qianfan",
+                "qiniu",
+                "longcat",
+                "lkeap",
+                "nvidia",
+                "novita",
+                "openrouter",
+                "requesty",
+                "litellm",
+                "generic",
+                "gpustack",
+                "jina",
+                "weknoracloud"
             ],
             "x-enum-varnames": [
                 "ProviderGoogleAI",
                 "ProviderVertexAI",
                 "ProviderOpenAI",
-                "ProviderDeepSeek"
+                "ProviderDeepSeek",
+                "ProviderAzureOpenAI",
+                "ProviderAnthropic",
+                "ProviderAliyun",
+                "ProviderZhipu",
+                "ProviderVolcengine",
+                "ProviderHunyuan",
+                "ProviderSiliconFlow",
+                "ProviderMiniMax",
+                "ProviderMoonshot",
+                "ProviderMimo",
+                "ProviderModelScope",
+                "ProviderQianfan",
+                "ProviderQiniu",
+                "ProviderLongCat",
+                "ProviderLKEAP",
+                "ProviderNVIDIA",
+                "ProviderNovita",
+                "ProviderOpenRouter",
+                "ProviderRequesty",
+                "ProviderLiteLLM",
+                "ProviderGeneric",
+                "ProviderGPUStack",
+                "ProviderJina",
+                "ProviderWeKnoraCloud"
             ]
         },
         "domain_provider.ProviderPricing": {
@@ -29615,13 +31213,61 @@ const docTemplate = `{
                 "google",
                 "google-vertex",
                 "openai",
-                "deepseek"
+                "deepseek",
+                "azure-openai",
+                "anthropic",
+                "aliyun",
+                "zhipu",
+                "volcengine",
+                "hunyuan",
+                "siliconflow",
+                "minimax",
+                "moonshot",
+                "mimo",
+                "modelscope",
+                "qianfan",
+                "qiniu",
+                "longcat",
+                "lkeap",
+                "nvidia",
+                "novita",
+                "openrouter",
+                "requesty",
+                "litellm",
+                "generic",
+                "gpustack",
+                "jina",
+                "weknoracloud"
             ],
             "x-enum-varnames": [
                 "ProviderGoogleAI",
                 "ProviderVertexAI",
                 "ProviderOpenAI",
-                "ProviderDeepSeek"
+                "ProviderDeepSeek",
+                "ProviderAzureOpenAI",
+                "ProviderAnthropic",
+                "ProviderAliyun",
+                "ProviderZhipu",
+                "ProviderVolcengine",
+                "ProviderHunyuan",
+                "ProviderSiliconFlow",
+                "ProviderMiniMax",
+                "ProviderMoonshot",
+                "ProviderMimo",
+                "ProviderModelScope",
+                "ProviderQianfan",
+                "ProviderQiniu",
+                "ProviderLongCat",
+                "ProviderLKEAP",
+                "ProviderNVIDIA",
+                "ProviderNovita",
+                "ProviderOpenRouter",
+                "ProviderRequesty",
+                "ProviderLiteLLM",
+                "ProviderGeneric",
+                "ProviderGPUStack",
+                "ProviderJina",
+                "ProviderWeKnoraCloud"
             ]
         },
         "domain_provider.TestProjectProviderResponse": {
@@ -31457,8 +33103,21 @@ const docTemplate = `{
         "domain_schemas.ObjectTypeSchema": {
             "type": "object",
             "properties": {
+                "allowedStatuses": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "boardEnabled": {
+                    "description": "Object-driven work configuration (P4): board-enabled flag, allowed work\nstatus values, and operational pipeline skip-flags.",
+                    "type": "boolean"
+                },
                 "description": {
                     "type": "string"
+                },
+                "excludeFromSearch": {
+                    "type": "boolean"
                 },
                 "label": {
                     "type": "string"
@@ -31482,6 +33141,12 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "shadowed": {
+                    "type": "boolean"
+                },
+                "skipEmbeddings": {
+                    "type": "boolean"
+                },
+                "skipExtraction": {
                     "type": "boolean"
                 },
                 "ui": {
@@ -32326,6 +33991,10 @@ const docTemplate = `{
                     "$ref": "#/definitions/domain_search.UnifiedSearchFusionStrategy"
                 },
                 "includeDebug": {
+                    "type": "boolean"
+                },
+                "includeRelationships": {
+                    "description": "IncludeRelationships controls the relationship-vector search leg.\nnil preserves existing behaviour (leg runs when ResultTypes allows);\nfalse skips it for faster entity/text-only searches.",
                     "type": "boolean"
                 },
                 "labels": {
