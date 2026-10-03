@@ -167,8 +167,10 @@ func (s *Service) ListPendingForUser(ctx context.Context, userID string) ([]Pend
 }
 
 // ListByProject returns invites sent for a specific project, with each invite's
-// delivery state resolved from its most recent invite-scoped kb.email_jobs row in
-// the same query (no per-row round trip).
+// latest delivery state resolved from its most recent invite-scoped
+// kb.email_jobs row in the same query (no per-row round trip), plus each
+// invite's full email delivery log (every send/resend with its delivery events)
+// loaded in two further batched queries for the whole project.
 func (s *Service) ListByProject(ctx context.Context, projectID string) ([]SentInvite, error) {
 	var invites []SentInvite
 	err := s.db.NewRaw(`
@@ -191,7 +193,111 @@ func (s *Service) ListByProject(ctx context.Context, projectID string) ([]SentIn
 	if invites == nil {
 		return []SentInvite{}, nil
 	}
+
+	logs, err := s.inviteDeliveryLogs(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range invites {
+		entries, ok := logs[invites[i].ID]
+		if !ok {
+			entries = []InviteDeliveryEvent{}
+		}
+		invites[i].DeliveryLog = entries
+	}
 	return invites, nil
+}
+
+// inviteDeliveryJobRow is one invite-scoped kb.email_jobs row, used to build an
+// invitation's delivery log.
+type inviteDeliveryJobRow struct {
+	InviteID         string     `bun:"source_id"`
+	JobID            string     `bun:"id"`
+	CreatedAt        time.Time  `bun:"created_at"`
+	ProcessedAt      *time.Time `bun:"processed_at"`
+	Status           string     `bun:"status"`
+	DeliveryStatus   *string    `bun:"delivery_status"`
+	DeliveryStatusAt *time.Time `bun:"delivery_status_at"`
+	LastError        *string    `bun:"last_error"`
+}
+
+// inviteDeliveryEventRow is one kb.email_logs Mailgun event, joined back to its
+// email job.
+type inviteDeliveryEventRow struct {
+	JobID     string    `bun:"email_job_id"`
+	EventType string    `bun:"event_type"`
+	CreatedAt time.Time `bun:"created_at"`
+	Detail    string    `bun:"detail"`
+}
+
+// inviteDeliveryLogs resolves the email send history for every invitation in a
+// project in two batched queries (no per-invitation round trip): the
+// invite-scoped email jobs, then the Mailgun delivery events recorded against
+// them. The result maps invitation id → sends, newest first.
+func (s *Service) inviteDeliveryLogs(ctx context.Context, projectID string) (map[string][]InviteDeliveryEvent, error) {
+	var jobs []inviteDeliveryJobRow
+	if err := s.db.NewRaw(`
+		SELECT j.source_id, j.id, j.created_at, j.processed_at, j.status,
+		       j.delivery_status, j.delivery_status_at, j.last_error
+		FROM kb.email_jobs j
+		JOIN kb.invites i ON i.id = j.source_id
+		WHERE j.source_type = 'invite' AND i.project_id = ?
+		ORDER BY j.created_at DESC, j.id DESC
+	`, projectID).Scan(ctx, &jobs); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	// byJob lets delivery events be attached to their send without holding
+	// pointers into the per-invite slices (which may reallocate as jobs append).
+	byJob := make(map[string]*InviteDeliveryEvent, len(jobs))
+	order := make(map[string][]string, len(jobs))
+	for _, j := range jobs {
+		byJob[j.JobID] = &InviteDeliveryEvent{
+			JobID:            j.JobID,
+			CreatedAt:        j.CreatedAt,
+			ProcessedAt:      j.ProcessedAt,
+			Status:           j.Status,
+			DeliveryStatus:   j.DeliveryStatus,
+			DeliveryStatusAt: j.DeliveryStatusAt,
+			LastError:        j.LastError,
+			Events:           []InviteDeliveryLogEvent{},
+		}
+		order[j.InviteID] = append(order[j.InviteID], j.JobID)
+	}
+
+	if len(jobs) > 0 {
+		var events []inviteDeliveryEventRow
+		if err := s.db.NewRaw(`
+			SELECT l.email_job_id, l.event_type, l.created_at,
+			       COALESCE(l.details->>'reason', '') AS detail
+			FROM kb.email_logs l
+			JOIN kb.email_jobs j ON j.id = l.email_job_id
+			JOIN kb.invites i ON i.id = j.source_id
+			WHERE j.source_type = 'invite' AND i.project_id = ?
+			ORDER BY l.created_at ASC, l.id ASC
+		`, projectID).Scan(ctx, &events); err != nil {
+			return nil, apperror.ErrDatabase.WithInternal(err)
+		}
+		for _, e := range events {
+			if ev, ok := byJob[e.JobID]; ok {
+				ev.Events = append(ev.Events, InviteDeliveryLogEvent{
+					Type:      e.EventType,
+					Detail:    e.Detail,
+					CreatedAt: e.CreatedAt,
+				})
+			}
+		}
+	}
+
+	logs := make(map[string][]InviteDeliveryEvent, len(order))
+	for inviteID, jobIDs := range order {
+		entries := make([]InviteDeliveryEvent, 0, len(jobIDs))
+		for _, jobID := range jobIDs {
+			entries = append(entries, *byJob[jobID])
+		}
+		logs[inviteID] = entries
+	}
+	return logs, nil
 }
 
 // Create creates a new invitation

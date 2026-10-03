@@ -47,6 +47,43 @@ type SentInvite struct {
 	ExpiresAt        *time.Time `json:"expiresAt,omitempty"`
 	DeliveryStatus   *string    `json:"deliveryStatus,omitempty"`
 	DeliveryStatusAt *time.Time `json:"deliveryStatusAt,omitempty"`
+	// DeliveryLog is the invitation's email send history, newest first: one
+	// entry per invite-scoped kb.email_jobs row (the initial send plus every
+	// resend), each carrying its current processing/delivery state and the
+	// Mailgun delivery events recorded against it. Empty when no email has been
+	// enqueued yet.
+	DeliveryLog []InviteDeliveryEvent `json:"deliveryLog"`
+}
+
+// InviteDeliveryEvent is one email send in an invitation's delivery log: an
+// invite-scoped kb.email_jobs row with its current processing status, its
+// latest delivery state, any failure recorded on the job, and the Mailgun
+// delivery events (delivered, opened, bounced, complained, failed, …) recorded
+// against it.
+type InviteDeliveryEvent struct {
+	JobID string `json:"jobId"`
+	// CreatedAt is when the send was enqueued. ProcessedAt, when set, is when
+	// the job finished processing (Mailgun accepted the send, or the job gave
+	// up) and is the truthful "sent at" for a completed send.
+	CreatedAt        time.Time  `json:"createdAt"`
+	ProcessedAt      *time.Time `json:"processedAt,omitempty"`
+	Status           string     `json:"status"`
+	DeliveryStatus   *string    `json:"deliveryStatus,omitempty"`
+	DeliveryStatusAt *time.Time `json:"deliveryStatusAt,omitempty"`
+	LastError        *string    `json:"lastError,omitempty"`
+	// Events is the job's Mailgun delivery events, oldest first. Always
+	// non-nil so the JSON shape is a stable [] rather than null.
+	Events []InviteDeliveryLogEvent `json:"events"`
+}
+
+// InviteDeliveryLogEvent is one Mailgun delivery event recorded in
+// kb.email_logs for an invitation email send. Detail carries the
+// human-readable reason Mailgun supplied (bounce/complaint reason) when
+// present.
+type InviteDeliveryLogEvent struct {
+	Type      string    `json:"type"`
+	Detail    string    `json:"detail,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
 }
 
 // ResendOutcome reports what a resend request actually did, so a caller (and the

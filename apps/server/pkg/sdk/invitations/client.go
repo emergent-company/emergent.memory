@@ -53,6 +53,33 @@ type SentInvite struct {
 	ExpiresAt        *time.Time `json:"expiresAt,omitempty"`
 	DeliveryStatus   *string    `json:"deliveryStatus,omitempty"`
 	DeliveryStatusAt *time.Time `json:"deliveryStatusAt,omitempty"`
+	// DeliveryLog is the invitation's email send history (initial send plus
+	// resends), newest first.
+	DeliveryLog []InviteDeliveryEvent `json:"deliveryLog"`
+}
+
+// InviteDeliveryEvent is one email send in an invitation's delivery log: an
+// invite-scoped email job with its current state and Mailgun delivery events.
+type InviteDeliveryEvent struct {
+	JobID string `json:"jobId"`
+	// CreatedAt is when the send was enqueued; ProcessedAt, when set, is when
+	// the job finished processing (Mailgun accepted the send, or it gave up) —
+	// the truthful "sent at" for a completed send.
+	CreatedAt        time.Time                `json:"createdAt"`
+	ProcessedAt      *time.Time               `json:"processedAt,omitempty"`
+	Status           string                   `json:"status"`
+	DeliveryStatus   *string                  `json:"deliveryStatus,omitempty"`
+	DeliveryStatusAt *time.Time               `json:"deliveryStatusAt,omitempty"`
+	LastError        *string                  `json:"lastError,omitempty"`
+	Events           []InviteDeliveryLogEvent `json:"events"`
+}
+
+// InviteDeliveryLogEvent is one Mailgun delivery event recorded for an
+// invitation email send (delivered, opened, bounced, complained, failed, …).
+type InviteDeliveryLogEvent struct {
+	Type      string    `json:"type"`
+	Detail    string    `json:"detail,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
 }
 
 // PendingInvite represents an invitation received by the current user

@@ -37,14 +37,17 @@ func NewEmbeddingJobPurgeTask(db *bun.DB, log *slog.Logger, retentionDays int) *
 
 // purgeTable describes retention for one terminal job table. terminal lists the
 // status values that are safe to delete; ageExpr is the timestamp column (or
-// expression) that determines a row's retention age.
+// expression) that determines a row's retention age. extraWhere is an optional
+// predicate (ANDed with the others) that narrows the delete — e.g. it excludes a
+// table's durable subset from the generic retention window.
 //
 // kb.email_jobs has no updated_at column (see migration 00173) and its terminal
 // success status is 'sent', not 'completed' — hence the per-table config.
 type purgeTable struct {
-	table    string
-	terminal []string
-	ageExpr  string
+	table      string
+	terminal   []string
+	ageExpr    string
+	extraWhere string
 }
 
 // purgeTables is every table the stale-job sweep terminal-fails, so a bulk
@@ -55,7 +58,16 @@ var purgeTables = []purgeTable{
 	{table: "kb.chunk_embedding_jobs", terminal: []string{"completed", "failed", "dead_letter"}, ageExpr: "updated_at"},
 	{table: "kb.document_parsing_jobs", terminal: []string{"completed", "failed"}, ageExpr: "updated_at"},
 	{table: "kb.object_extraction_jobs", terminal: []string{"completed", "failed"}, ageExpr: "updated_at"},
-	{table: "kb.email_jobs", terminal: []string{"sent", "failed", "dead_letter"}, ageExpr: "COALESCE(processed_at, created_at)"},
+	{
+		table:    "kb.email_jobs",
+		terminal: []string{"sent", "failed", "dead_letter"},
+		ageExpr:  "COALESCE(processed_at, created_at)",
+		// Invite sends are the durable per-invitation delivery log (#1390):
+		// their kb.email_logs events cascade on delete, so purging the jobs
+		// would erase an invitation's send history. Exclude them from the
+		// generic retention window; every other source type is still purged.
+		extraWhere: "source_type IS DISTINCT FROM 'invite'",
+	},
 }
 
 // Run deletes terminal jobs older than the retention cutoff from every job
@@ -66,11 +78,14 @@ func (t *EmbeddingJobPurgeTask) Run(ctx context.Context) error {
 
 	totalDeleted := int64(0)
 	for _, pt := range purgeTables {
-		res, err := t.db.NewDelete().
+		q := t.db.NewDelete().
 			TableExpr(pt.table).
 			Where("status IN (?)", bun.In(pt.terminal)).
-			Where(pt.ageExpr+" < ?", cutoff).
-			Exec(ctx)
+			Where(pt.ageExpr+" < ?", cutoff)
+		if pt.extraWhere != "" {
+			q = q.Where(pt.extraWhere)
+		}
+		res, err := q.Exec(ctx)
 		if err != nil {
 			t.log.Warn("embedding job purge: delete failed",
 				slog.String("table", pt.table), slog.String("error", err.Error()))
