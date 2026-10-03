@@ -172,3 +172,17 @@ func TestOperationTypeConstants(t *testing.T) {
 		t.Errorf("expected OperationEmbed to be 'embed', got %q", OperationEmbed)
 	}
 }
+
+// TestBuiltinsMemoized verifies Builtins returns the same cached slice rather
+// than rebuilding every vendor definition on each call (auto-selection resolves
+// the provider order per credential lookup).
+func TestBuiltinsMemoized(t *testing.T) {
+	a := Builtins()
+	b := Builtins()
+	if len(a) == 0 {
+		t.Fatal("Builtins() returned no definitions")
+	}
+	if &a[0] != &b[0] {
+		t.Errorf("Builtins() rebuilt the definitions: first elements differ (%p vs %p)", &a[0], &b[0])
+	}
+}

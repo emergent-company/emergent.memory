@@ -1,8 +1,27 @@
 package provider
 
+import "sync"
+
 // Builtins returns the supported vendor definitions in display order
 // (ascending Order). NewRegistry normalizes this into the runtime Registry.
+//
+// The definitions are immutable after construction, so the slice is built once
+// and cached: auto-selection resolves the provider order on every credential
+// lookup, and rebuilding all vendor definitions per call was pure overhead.
+// Callers MUST NOT mutate the returned definitions or slice.
 func Builtins() []*ProviderDefinition {
+	builtinsOnce.Do(func() {
+		builtins = buildBuiltins()
+	})
+	return builtins
+}
+
+var (
+	builtinsOnce sync.Once
+	builtins     []*ProviderDefinition
+)
+
+func buildBuiltins() []*ProviderDefinition {
 	gen := func(u string) map[ModelType]string {
 		return map[ModelType]string{ModelTypeGenerative: u}
 	}
