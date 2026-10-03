@@ -78,3 +78,59 @@ func TestUnapply_RemovesTriggerRegistrationsForDeletedRuntimeAgents(t *testing.T
 	assert.Empty(t, ts.GetEventListeners("document:created"), "reaction registration must be removed")
 	assert.NotContains(t, sched.ListTasks(), "agent:"+agentID, "cron registration must be removed")
 }
+
+// TestUnapply_DoesNotDeleteAgentsOwnedByTheSameBlueprintInAnotherProject covers
+// issue #1361 item 2: a blueprint source id can be applied in more than one
+// project, so Unapply must scope the runtime-agent delete by project_id. Before
+// the project scope was added, unapplying the blueprint in project A removed
+// project B's agents too.
+func TestUnapply_DoesNotDeleteAgentsOwnedByTheSameBlueprintInAnotherProject(t *testing.T) {
+	db := connectTestDB(t)
+	ctx := context.Background()
+	_, projectA := seedProject(t, db)
+	_, projectB := seedProject(t, db)
+
+	repo := NewRepository(db, testLogger())
+	agentRepo := agents.NewRepository(db)
+
+	bp := testBlueprint(uniqueName("unapply-scope"), "1.0.0")
+	require.NoError(t, repo.Create(ctx, bp))
+
+	userID := uuid.NewString()
+	for _, projectID := range []string{projectA, projectB} {
+		require.NoError(t, repo.RecordApplication(ctx, &BlueprintApplication{
+			BlueprintID: bp.ID,
+			ProjectID:   projectID,
+			Version:     bp.Version,
+			Checksum:    bp.Checksum,
+			AppliedBy:   &userID,
+			AppliedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		}))
+	}
+
+	insertAgent := func(projectID, name string) string {
+		id := uuid.NewString()
+		_, err := db.ExecContext(ctx,
+			`INSERT INTO kb.agents (id, name, strategy_type, cron_schedule, project_id, config)
+			 VALUES (?, ?, 'graph', '', ?, CAST(? AS jsonb))`,
+			id, name, projectID, `{"sourceBlueprintId":"`+bp.ID+`"}`)
+		require.NoError(t, err)
+		return id
+	}
+	agentA := insertAgent(projectA, "scoped-agent-a")
+	agentB := insertAgent(projectB, "scoped-agent-b")
+
+	svc := &Service{repo: repo, agentRepo: agentRepo, log: testLogger()}
+	result, err := svc.Unapply(ctx, bp.ID, projectA)
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Agents.Removed, "only project A's agent may be removed")
+
+	countRow := func(id string) int {
+		n, err := db.NewSelect().Model((*agents.Agent)(nil)).Where("id = ?", id).Count(ctx)
+		require.NoError(t, err)
+		return n
+	}
+	assert.Equal(t, 0, countRow(agentA), "project A's agent must be deleted")
+	assert.Equal(t, 1, countRow(agentB), "project B's agent must be untouched")
+}

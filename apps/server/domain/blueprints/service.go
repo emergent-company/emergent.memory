@@ -35,7 +35,7 @@ type AgentRepo interface {
 	FindAgentByName(ctx context.Context, projectID, name string) (*agents.Agent, error)
 	CreateAgent(ctx context.Context, agent *agents.Agent) error
 	UpdateAgent(ctx context.Context, agent *agents.Agent) error
-	DeleteAgentsBySourceBlueprint(ctx context.Context, blueprintID string) (int, error)
+	DeleteAgentsBySourceBlueprint(ctx context.Context, projectID, blueprintID string) (int, error)
 }
 
 // Service handles business logic for blueprints
@@ -437,7 +437,7 @@ func (s *Service) Unapply(ctx context.Context, blueprintID, projectID string) (*
 		// Agents.Removed (they are the runtime half of the definition). The
 		// repository tears down each deleted agent's in-memory trigger
 		// registrations as part of the delete, so they stop firing here too.
-		if n, err := s.agentRepo.DeleteAgentsBySourceBlueprint(ctx, blueprintID); err != nil {
+		if n, err := s.agentRepo.DeleteAgentsBySourceBlueprint(ctx, projectID, blueprintID); err != nil {
 			return nil, err
 		} else {
 			result.Agents.Removed += n

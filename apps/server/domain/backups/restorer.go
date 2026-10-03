@@ -30,6 +30,11 @@ type Restorer struct {
 	creator  *Creator
 	importer *Importer
 	log      *slog.Logger
+
+	// notifyAgentsDeleted tears down in-memory trigger registrations for agent
+	// ids an overwrite restore removed and did not re-create. Wired from the
+	// agents domain when that feature is enabled; nil-safe.
+	notifyAgentsDeleted func(agentIDs []string)
 }
 
 // NewRestorer creates a new restore orchestrator.
@@ -49,6 +54,14 @@ func NewRestorer(
 		importer: importer,
 		log:      log.With(slog.String("component", "backups.restorer")),
 	}
+}
+
+// SetAgentDeletionNotifier wires the callback used to tear down in-memory
+// trigger registrations for agents an overwrite restore removed. It is optional
+// and nil-safe: when unset (e.g. the agents feature is disabled) the restore
+// proceeds without teardown.
+func (r *Restorer) SetAgentDeletionNotifier(fn func(agentIDs []string)) {
+	r.notifyAgentsDeleted = fn
 }
 
 // refAction describes how a clone-mode foreign-key column is resolved against
@@ -273,6 +286,17 @@ func (r *Restorer) restoreOverwrite(ctx context.Context, job *Restore, req Resto
 	}
 	defer tx.Rollback() //nolint:errcheck // rolled back on every error path
 
+	// Resolve, inside the transaction, the agent ids the wipe is about to
+	// remove but the snapshot does not re-create. Their in-memory trigger
+	// registrations must be torn down (the raw table wipe bypasses the
+	// repository deletion seam). Ids that the snapshot re-creates keep their
+	// registrations: the rows reappear with the same ids, so firing the
+	// deletion listener for them would strand live agents until a restart.
+	removedAgentIDs, err := r.removedAgentIDs(ctx, tx, archive, projectID)
+	if err != nil {
+		return fmt.Errorf("resolve removed agent ids: %w", err)
+	}
+
 	// FK-safe wipe of every table present in the snapshot (reverse topo order).
 	if err := r.wipeProject(ctx, tx, archive, projectID); err != nil {
 		return fmt.Errorf("wipe project data: %w", err)
@@ -293,7 +317,53 @@ func (r *Restorer) restoreOverwrite(ctx context.Context, job *Restore, req Resto
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit restore transaction: %w", err)
 	}
+
+	// Only after a successful commit: a rolled-back restore left every row in
+	// place, so tearing registrations down before commit would strand agents
+	// that still exist.
+	if len(removedAgentIDs) > 0 && r.notifyAgentsDeleted != nil {
+		r.notifyAgentsDeleted(removedAgentIDs)
+	}
 	return nil
+}
+
+// removedAgentIDs returns the project's current agent ids that the overwrite
+// wipe will delete and the snapshot will not re-create. When the snapshot has no
+// agents table the wipe leaves kb.agents untouched, so there is nothing to tear
+// down and the result is empty. The query runs inside tx so the resolved set
+// matches the rows the subsequent project-scoped DELETE removes.
+func (r *Restorer) removedAgentIDs(ctx context.Context, tx bun.Tx, archive *Archive, projectID string) ([]string, error) {
+	if !archive.HasTable("agents") {
+		return nil, nil
+	}
+
+	var existing []string
+	if err := tx.NewSelect().
+		Table("kb.agents").
+		Column("id").
+		Where("project_id = ?", projectID).
+		Scan(ctx, &existing); err != nil {
+		return nil, err
+	}
+
+	rows, err := archive.Rows("agents")
+	if err != nil {
+		return nil, err
+	}
+	restored := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		if id := stringValue(row["id"]); id != "" {
+			restored[id] = struct{}{}
+		}
+	}
+
+	var removed []string
+	for _, id := range existing {
+		if _, ok := restored[id]; !ok {
+			removed = append(removed, id)
+		}
+	}
+	return removed, nil
 }
 
 // restoreClone implements Decision 8: create a fresh project row and remap
