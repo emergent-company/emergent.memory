@@ -56,6 +56,7 @@ const SKELETON = `<!doctype html>
     </div>
     <select id="chat-agent-filter" aria-label="Filter sessions by agent"><option value="">All agents</option></select>
     <select id="chat-origin-filter" aria-label="Filter sessions by type"><option value="">All types</option><option value="scheduled">Scheduled</option></select>
+    <label><input id="chat-include-archived" type="checkbox" aria-label="Include archived sessions" /> Include archived</label>
     <div id="chat-rail-list" data-testid="session-list">${ALL_ROWS}</div>
     <div id="chat-bulk-bar" data-testid="chat-bulk-bar" class="hidden" role="group" aria-label="Bulk session actions">
       <input id="chat-select-all" data-testid="chat-select-all" data-action="select-all-sessions" type="checkbox" aria-label="Select all sessions" />
@@ -431,6 +432,32 @@ test.describe('bulk session selection and archive (#1385)', () => {
         ),
       )
       .toBe('false');
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
+  test('a rail refresh during an in-flight archive does not reveal the row', async ({ page }) => {
+    const errors = await bootstrap(page);
+
+    await click(page, '[data-action="archive-session"][data-id="A"]');
+    await expect.poll(() => rowHidden(page, 'A')).toBe(true);
+
+    // An SSE live-update, finishTurn, or another row's delete can rebuild the
+    // rail before the archive POST settles; the server still lists A. The
+    // pending hide must survive the innerHTML swap (#1419 review).
+    await setRailHtml(page, ALL_ROWS);
+    await page.evaluate(() =>
+      (
+        window as unknown as { MemoryChat: { refreshSessionRail: () => Promise<void> } }
+      ).MemoryChat.refreshSessionRail(),
+    );
+    await expect.poll(() => rowHidden(page, 'A')).toBe(true);
+
+    // Turning "Include archived" on and off again must also not expose it: the
+    // re-stamped marker is applied only while the filter is off.
+    await click(page, '#chat-include-archived');
+    await click(page, '#chat-include-archived');
+    await expect.poll(() => rowHidden(page, 'A')).toBe(true);
 
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });

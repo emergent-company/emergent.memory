@@ -46,6 +46,7 @@
   var selectionMode = false;         // bulk-selection mode (#1385): row checkboxes + footer bar
   var selectedSessions = {};         // session id -> true, the checked set while selecting
   var bulkBusy = false;              // a bulk archive is in flight (footer button disabled)
+  var archivePendingIds = {};        // session id -> true, optimistic archive in flight (#1419 review)
   var aborter = null;
   var eventSource = null;   // SSE live-update channel for the active conversation/run
   var eventSourceId = "";   // scope key the current eventSource is subscribed to ("conv:<id>" / "run:<id>")
@@ -692,7 +693,9 @@
       // A pending optimistic archive is a second, independent reason a row is
       // hidden. Fold it in here so a filter change recomputes visibility from
       // both conditions instead of clearing the optimistic hide (#1419 review).
-      if (rows[i].getAttribute("data-archive-pending") === "true") show = false;
+      // Only while "Include archived" is off: with it on an archived row is
+      // expected to stay listed, pending or not.
+      if (!filterIncludeArchived && rows[i].getAttribute("data-archive-pending") === "true") show = false;
       rows[i].classList.toggle("hidden", !show);
       if (show) visible++;
     }
@@ -725,6 +728,7 @@
       var res = await fetch("/partial/chat-rail?c=" + encodeURIComponent(conversationId || "") + "&includeArchived=" + (filterIncludeArchived ? "true" : "false"));
       if (!res.ok) throw new Error("HTTP " + res.status);
       railList.innerHTML = await res.text();
+      reapplyArchivePending();
       applyAgentFilter();
       applyRailBadges();
       pruneSelection();
@@ -772,15 +776,36 @@
   // rollback clears only the marker then lets applyAgentFilter() decide whether
   // the row is visible again — so a row the filter hides stays hidden, and a
   // pending archive is not revealed by a concurrent filter change.
+  //
+  // The marker itself does not survive refreshSessionRail()'s innerHTML swap
+  // (an SSE live-update, finishTurn, a delete of another row, or the
+  // include-archived toggle can all refresh the rail before the POST settles),
+  // so the in-flight ids live in the module-level archivePendingIds set and
+  // reapplyArchivePending() re-stamps the marker after every rebuild.
   function applyArchiveOptimistic(id) {
     var row = sessionRowById(id);
     if (!row || filterIncludeArchived) return function () {};
+    archivePendingIds[id] = true;
     row.setAttribute("data-archive-pending", "true");
     row.classList.add("hidden");
     return function () {
-      row.removeAttribute("data-archive-pending");
+      delete archivePendingIds[id];
+      var current = sessionRowById(id);
+      if (current) current.removeAttribute("data-archive-pending");
       applyAgentFilter();
     };
+  }
+
+  // reapplyArchivePending re-marks the rows whose archive request is still in
+  // flight after the rail list is rebuilt. Visibility is then decided by
+  // applyAgentFilter(), which hides a pending row only while "Include archived"
+  // is off.
+  function reapplyArchivePending() {
+    var ids = Object.keys(archivePendingIds);
+    for (var i = 0; i < ids.length; i++) {
+      var row = sessionRowById(ids[i]);
+      if (row) row.setAttribute("data-archive-pending", "true");
+    }
   }
 
   // applyUnarchiveOptimistic clears the archived visual state at once. The
@@ -835,6 +860,10 @@
             : ("Could not " + action + " " + failed.length + " sessions: ");
           notify("error", what + ((first && first.message) || first));
         }
+        // Every request has settled, so nothing here is in flight any more: a
+        // later refresh must not re-hide a successfully archived row (the
+        // server list is authoritative now). Failed ids were rolled back above.
+        list.forEach(function (id) { delete archivePendingIds[id]; });
         return refreshSessionRail().then(function () {
           return { total: list.length, failed: failed.length };
         });
