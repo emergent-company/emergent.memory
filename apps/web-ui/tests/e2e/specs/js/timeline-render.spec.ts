@@ -10,8 +10,9 @@ import path from 'node:path';
 //
 //   1. the renderer exists and its `flags` actually gate behaviour (a direct
 //      flag matrix — flipping a flag changes the DOM);
-//   2. the chat surface renders run lifecycle markers, thinking blocks, the
-//      run-scope "step N · …" meta annotations, tool chips and bubbles;
+//   2. the chat surface's debug-on variant renders run lifecycle markers,
+//      thinking blocks, the run-scope "step N · …" meta annotations, tool chips
+//      and bubbles (the default chat transcript hides the marker rows — #1381);
 //   3. the side panel renders the SAME items WITHOUT markers/thinking/meta
 //      (its documented deviations), while still rendering chips and bubbles.
 //
@@ -96,7 +97,11 @@ const FAILED_ITEMS: HistoryItem[] = [
   { kind: 'run_end', run_id: RUN_ID, run_status: 'failed', error_message: 'boom', created_at: T0, completed_at: T2 },
 ];
 
-const CHAT_FLAGS = { showRunMarkers: true, showThinking: true, showMeta: true, silent: false };const SIDEPANEL_FLAGS = { showRunMarkers: false, showThinking: false, showMeta: false, silent: true };
+// Debug-on chat flags: markers ON (the /chat page enables this transiently via
+// ?debug / window.MemoryChatDebug), thinking + meta ON. Side panel flags leave
+// all three OFF.
+const DEBUG_FLAGS = { showRunMarkers: true, showThinking: true, showMeta: true, silent: false };
+const SIDEPANEL_FLAGS = { showRunMarkers: false, showThinking: false, showMeta: false, silent: true };
 
 interface StubWindow {
   __eventsources: unknown[];
@@ -201,10 +206,10 @@ test.describe('shared timeline renderer — flag matrix (chat-components.js)', (
       .poll(async () => page.evaluate(() => typeof (window as any).MemoryChatComponents.renderTimeline))
       .toBe('function');
 
-    const chat = await renderWithFlags(page, CHAT_FLAGS);
+    const chat = await renderWithFlags(page, DEBUG_FLAGS);
     const side = await renderWithFlags(page, SIDEPANEL_FLAGS);
 
-    // Chat flags: both lifecycle markers, the thinking block, and the
+    // Debug-on flags: both lifecycle markers, the thinking block, and the
     // "step N · …" meta annotations on the user + assistant bubbles.
     expect(chat.markers).toBe(2);
     expect(chat.thinking).toBe(1);
@@ -316,7 +321,7 @@ async function loadChatSurface(page: Page): Promise<string[]> {
 }
 
 test.describe('shared timeline renderer — /chat surface (chat.js)', () => {
-  test('renders run markers, thinking, run-scope meta, chips and bubbles from the run transcript', async ({ page }) => {
+  test('hides run boundary rows by default, keeping thinking, meta, chips and bubbles', async ({ page }) => {
     await page.setContent(CHAT_SKELETON);
     await installStubs(page, ITEMS);
     const errors = await loadChatSurface(page);
@@ -326,9 +331,9 @@ test.describe('shared timeline renderer — /chat surface (chat.js)', () => {
     await expect(page.locator(`[data-action="open-run"][data-id="${RUN_ID}"]`)).toHaveAttribute('data-active', 'true');
 
     const messages = page.locator('#chat-messages');
-    // Run lifecycle boundaries (chat-only deviation: showRunMarkers).
-    await expect(messages.locator('.memory-run-marker[data-phase="start"]')).toHaveCount(1);
-    await expect(messages.locator('.memory-run-marker[data-phase="end"]')).toHaveCount(1);
+    // Run lifecycle boundary rows are a debug affordance, hidden by default
+    // (#1381). The items still drive the rest of the transcript.
+    await expect(messages.locator('.memory-run-marker')).toHaveCount(0);
     // Thinking block (chat-only deviation: showThinking).
     await expect(messages.locator('.memory-thinking')).toHaveCount(1);
     await expect(messages.locator('.memory-thinking-body')).toContainText('planning out loud');
@@ -342,10 +347,37 @@ test.describe('shared timeline renderer — /chat surface (chat.js)', () => {
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });
 
+  test('renders run boundary rows when debug mode is enabled (MemoryChatDebug)', async ({ page }) => {
+    await page.setContent(CHAT_SKELETON);
+    await installStubs(page, ITEMS);
+    const errors = await loadChatSurface(page);
+    // Enable the transient debug switch before the transcript renders.
+    await page.evaluate(() => {
+      (window as any).MemoryChatDebug = true;
+    });
+
+    await page.locator(`[data-action="open-run"][data-id="${RUN_ID}"]`).click();
+    await expect(page.locator(`[data-action="open-run"][data-id="${RUN_ID}"]`)).toHaveAttribute('data-active', 'true');
+
+    const messages = page.locator('#chat-messages');
+    // Debug mode restores both lifecycle boundaries (chat-only deviation).
+    await expect(messages.locator('.memory-run-marker[data-phase="start"]')).toHaveCount(1);
+    await expect(messages.locator('.memory-run-marker[data-phase="end"]')).toHaveCount(1);
+    // The debug switch gates only the marker rows — thinking/meta still render.
+    await expect(messages.locator('.memory-thinking')).toHaveCount(1);
+    await expect(messages.locator('.chat-footer').first()).toContainText('step 1');
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
   test('a failed run keeps the "Run started" marker a flex divider (no terminal status) — #1300', async ({ page }) => {
     await page.setContent(CHAT_SKELETON);
     await installStubs(page, FAILED_ITEMS);
     const errors = await loadChatSurface(page);
+    // Debug mode — the boundary rows are hidden by default (#1381).
+    await page.evaluate(() => {
+      (window as any).MemoryChatDebug = true;
+    });
 
     await page.locator(`[data-action="open-run"][data-id="${RUN_ID}"]`).click();
     await expect(page.locator(`[data-action="open-run"][data-id="${RUN_ID}"]`)).toHaveAttribute('data-active', 'true');

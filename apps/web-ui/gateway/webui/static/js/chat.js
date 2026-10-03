@@ -1023,11 +1023,35 @@
     }
   }
 
+  // chatDebugEnabled reports whether the transcript's run lifecycle boundary
+  // rows ("Run started" / "Run complete") should render. They are a debug
+  // affordance, hidden by default (#1381) — the underlying run_start/run_end
+  // items still drive the header, working placeholder, cancelation id and turn
+  // footers (renderTimeline tracks that state regardless of this flag).
+  //
+  // Debug mode is deliberately transient — no persisted preference is created:
+  //   - `?debug` / `?debug=1` / `?debug=true` on the /chat URL, or
+  //   - `window.MemoryChatDebug = true` (console / test harness).
+  function chatDebugEnabled() {
+    if (window.MemoryChatDebug === true) return true;
+    try {
+      var params = new URLSearchParams(window.location.search || "");
+      if (params.has("debug")) {
+        var v = params.get("debug");
+        return v === "" || v === "1" || v === "true";
+      }
+    } catch (e) {
+      /* URLSearchParams unavailable — treat as debug off. */
+    }
+    return false;
+  }
+
   // renderTimelineItems renders a raw history payload (conversation or run) —
   // the item vocabulary, sorting, and rendering are shared with the side panel
   // via MemoryChatComponents.renderTimeline; this page supplies the chat-specific
-  // flags + hooks (run markers, thinking, run-scope meta, turn footers, the
-  // pending-work dock, the mid-run placeholder) and the DOM-ownership guard.
+  // flags + hooks (thinking, run-scope meta, turn footers, the pending-work dock,
+  // the mid-run placeholder) and the DOM-ownership guard. Run boundary rows are
+  // debug-gated (chatDebugEnabled), not always on (#1381).
   function renderTimelineItems(items, pendingApprovals) {
     // Guard: never render history over a live stream THIS page owns. Wiping
     // #chat-messages mid-stream would destroy the in-flight assistant bubble,
@@ -1037,7 +1061,7 @@
     // keep re-rendering as steps persist.
     if (liveTurn) return;
     MemoryChatComponents.renderTimeline(items, timelineCtx(pendingApprovals), {
-      showRunMarkers: true,
+      showRunMarkers: chatDebugEnabled(),
       showThinking: true,
       showMeta: currentScopeIsRun(),
       silent: false,

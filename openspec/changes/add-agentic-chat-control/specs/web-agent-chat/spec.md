@@ -160,7 +160,15 @@ Assistant messages SHALL offer a copy action, and each fenced code block SHALL o
 - **THEN** the message layout and reading flow are unchanged from before the affordances were added
 
 ### Requirement: Typed run markers in the transcript
-The transcript SHALL render `run_start` and `run_end` timeline items as turn boundaries rather than generic content. A `run_start` marker SHALL carry the run's model. A `run_end` marker SHALL render status-distinct states so that `failed` and `input-required` are visually and textually distinguishable from `completed`, and a `failed` run SHALL surface its `error_message`.
+The transcript SHALL render `run_start` and `run_end` timeline items as turn boundaries rather than generic content **when debug mode is enabled**, and SHALL hide those boundary rows by default. Run lifecycle state (header status, working placeholder, cancelable run id, and turn footers) SHALL be derived from the same `run_start`/`run_end` items regardless of debug mode. A `run_start` marker SHALL carry the run's model. A `run_end` marker SHALL render status-distinct states so that `failed` and `input-required` are visually and textually distinguishable from `completed`, and a `failed` run SHALL surface its `error_message`.
+
+#### Scenario: Boundary rows are hidden by default
+- **WHEN** a transcript contains `run_start`/`run_end` items and debug mode is off
+- **THEN** no run boundary rows render, while the run lifecycle state derived from those items (header, working placeholder, cancelable run id) is still tracked
+
+#### Scenario: Debug mode reveals the boundary rows
+- **WHEN** debug mode is enabled for the chat transcript (the `?debug` query flag or the `window.MemoryChatDebug` switch)
+- **THEN** the transcript renders the `run_start`/`run_end` boundary rows as described above
 
 #### Scenario: Failed run renders its error
 - **WHEN** a `run_end` item has `run_status` `failed` and a non-empty `error_message`
