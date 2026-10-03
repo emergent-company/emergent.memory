@@ -84,7 +84,8 @@ in the dedicated `kb.source_sync_jobs` table (status
 cursor/error jsonb, `project_id` + `created_at` for RLS and per-project listing).
 
 The worker **reuses `apps/server/internal/jobs`**, the generic table-agnostic PG queue
-(`NewQueue(tableName, entityIDColumn)`, atomic `Dequeue` with `FOR UPDATE SKIP LOCKED`,
+(`NewQueue(db, QueueConfig, logger)`, with the table/entity supplied via
+`DefaultQueueConfig(tableName, entityIDColumn)`; atomic `Dequeue` with `FOR UPDATE SKIP LOCKED`,
 `MarkCompleted`/`MarkFailed`, `RecoverStaleJobs`, `GetStats`) already used by chunk/graph
 embedding. `kb.source_sync_jobs` supplies the source-specific columns (cursor, error
 jsonb) on top of the shared queue mechanics; no new queue is written.

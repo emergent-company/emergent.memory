@@ -12,7 +12,7 @@
 
 ## 3. Sync lifecycle + cursor (TDD)
 
-- [ ] 3.1 Sync worker over `apps/server/internal/jobs` (`NewQueue("kb.source_sync_jobs", ...)`, atomic `Dequeue`, `MarkCompleted`/`MarkFailed`, `RecoverStaleJobs`): state machine `pending → processing → completed|failed|cancelled` (+`dead_letter`), cancellation flag checked between batches, structured error recorded on failure.
+- [ ] 3.1 Sync worker over `apps/server/internal/jobs` (`NewQueue(db, jobs.DefaultQueueConfig("kb.source_sync_jobs", "source_id"), logger)`, atomic `Dequeue`, `MarkCompleted`/`MarkFailed`, `RecoverStaleJobs`): state machine `pending → processing → completed|failed|cancelled` (+`dead_letter`), cancellation flag checked between batches, structured error recorded on failure.
 - [ ] 3.2 (TDD) Unit test: lifecycle transitions recorded; cancel sets `cancelled` and stops fetching; failure records structured error; partial failure leaves cursor at last-success and ingested items intact.
 - [ ] 3.3 (TDD) Idempotency test: re-syncing identical external ids produces no duplicate documents/chunks/graph objects (updates in place).
 

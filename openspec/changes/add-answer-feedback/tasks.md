@@ -1,7 +1,7 @@
 ## 1. Migration — `kb.answer_feedback`
 
 - [ ] 1.1 New migration `apps/server/migrations/<n>_create_answer_feedback.sql`: create `kb.answer_feedback` per design D2 — id, project_id, message_id, run_id, retrieval_trace_id, user_id, thumbs (`SMALLINT NOT NULL CHECK (thumbs IN (-1, 1))`), comment, created_at, updated_at, `UNIQUE (message_id, user_id)`. FKs: `message_id → kb.chat_messages(id)`, `run_id → kb.agent_runs(id) ON DELETE SET NULL`, `retrieval_trace_id → kb.retrieval_traces(id) ON DELETE SET NULL`, `user_id → core.user_profiles(id)` (mirrors `00108`). Indexes on `(project_id, created_at)` and `(user_id, created_at)`.
-- [ ] 1.2 (TDD) Migration round-trip test in the migration test suite: up then down drops the table cleanly; the unique index is present; the `CHECK (thumbs IN (-1, 1))` constraint rejects out-of-range values; the `retrieval_trace_id` FK targets `kb.retrieval_traces.id`.
+- [ ] 1.2 (TDD) Migration round-trip test in the migration test suite: up then down drops the table cleanly; the unique index is present; the `CHECK (thumbs IN (-1, 1))` constraint rejects out-of-range values; the `retrieval_trace_id` FK targets `kb.retrieval_traces.id`; deleting a trace row sets `retrieval_trace_id` to NULL (`ON DELETE SET NULL`) and leaves the feedback row intact.
 
 ## 2. Trace extension — user attribution + query history
 
