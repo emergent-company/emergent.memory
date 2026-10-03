@@ -3,6 +3,7 @@ package schemas
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"testing"
 )
 
@@ -95,6 +96,94 @@ func TestParseObjectTypeSchemas(t *testing.T) {
 			t.Errorf("expected nil for invalid JSON, got %v", got)
 		}
 	})
+}
+
+// TestParseObjectTypeSchemasPreservesBoardWorkConfig pins the compiled-types
+// contract for the blueprint/array storage format: the flagship
+// `blueprints/task-board/schemas/task-board.yaml` is stored as a JSON array of
+// object types, and the compiled-types path must carry `boardEnabled` /
+// `allowedStatuses` (and the operational skip flags) through to the returned
+// ObjectTypeSchema. Before this was fixed, parseObjectTypeSchemasToMap
+// reconstructed each array entry with only properties/ui/scopeKey/label/
+// description, so compiled types silently returned zero board config and the
+// gateway fell back to canonical lanes.
+func TestParseObjectTypeSchemasPreservesBoardWorkConfig(t *testing.T) {
+	const packID = "pack-1"
+	const packName = "task-board"
+	const packVersion = "1.0.0"
+
+	// Verbatim shape of blueprints/task-board/schemas/task-board.yaml objectTypes.
+	data := json.RawMessage(`[
+		{
+			"name":"Task",
+			"label":"Task",
+			"description":"A single unit of work tracked on the Kanban board.",
+			"boardEnabled":true,
+			"allowedStatuses":["ready","in_progress","review","revision","blocked","done"],
+			"skipEmbeddings":true,
+			"skipExtraction":true,
+			"excludeFromSearch":true,
+			"properties":{"title":{"type":"string"}}
+		}
+	]`)
+
+	got := parseObjectTypeSchemas(data, packID, packName, packVersion)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 type, got %d", len(got))
+	}
+	task := got[0]
+	if task.Name != "Task" {
+		t.Fatalf("expected Task, got %q", task.Name)
+	}
+	if !task.BoardEnabled {
+		t.Error("compiled Task.BoardEnabled = false, want true (array-form board config was dropped)")
+	}
+	want := []string{"ready", "in_progress", "review", "revision", "blocked", "done"}
+	if !slices.Equal(task.AllowedStatuses, want) {
+		t.Errorf("compiled Task.AllowedStatuses = %v, want %v (array-form board config was dropped)", task.AllowedStatuses, want)
+	}
+	if !task.SkipEmbeddings {
+		t.Error("compiled Task.SkipEmbeddings = false, want true")
+	}
+	if !task.SkipExtraction {
+		t.Error("compiled Task.SkipExtraction = false, want true")
+	}
+	if !task.ExcludeFromSearch {
+		t.Error("compiled Task.ExcludeFromSearch = false, want true")
+	}
+	// The compiled JSON the gateway consumes must carry the board fields too.
+	raw, err := json.Marshal(task)
+	if err != nil {
+		t.Fatalf("marshal compiled Task: %v", err)
+	}
+	for _, wantKey := range []string{`"boardEnabled":true`, `"allowedStatuses"`} {
+		if !bytes.Contains(raw, []byte(wantKey)) {
+			t.Errorf("compiled Task JSON missing %s: %s", wantKey, raw)
+		}
+	}
+}
+
+// TestParseObjectTypeSchemasPreservesBoardWorkConfigMapFormat is the map-format
+// counterpart: the runtime extraction normalisation already preserves these
+// fields for map-form storage, and the compiled path must agree.
+func TestParseObjectTypeSchemasPreservesBoardWorkConfigMapFormat(t *testing.T) {
+	data := json.RawMessage(`{
+		"Task":{"boardEnabled":true,"allowedStatuses":["todo","doing"],"skipEmbeddings":true}
+	}`)
+	got := parseObjectTypeSchemas(data, "pack-1", "task-board", "1.0.0")
+	if len(got) != 1 {
+		t.Fatalf("expected 1 type, got %d", len(got))
+	}
+	task := got[0]
+	if !task.BoardEnabled {
+		t.Error("compiled Task.BoardEnabled = false, want true")
+	}
+	if !slices.Equal(task.AllowedStatuses, []string{"todo", "doing"}) {
+		t.Errorf("compiled Task.AllowedStatuses = %v, want [todo doing]", task.AllowedStatuses)
+	}
+	if !task.SkipEmbeddings {
+		t.Error("compiled Task.SkipEmbeddings = false, want true")
+	}
 }
 
 // TestCompiledTypesUIResolution covers the type-level ui resolution used by the

@@ -1,17 +1,36 @@
 name: Preview Environment
 
-# Thin caller for the reusable per-PR preview workflow owned by
-# emergent-company/emergent.memory.infra. All logic (build, provision, health
-# gate, teardown, E2E, deployment URL, sticky comment) lives there; this job
-# only forwards PR identity and the caller-repo secrets.
+# Thin caller that dispatches a per-PR preview event to the private infra repo
+# emergent-company/emergent.memory.infra. This repo is public and cannot `uses:`
+# a private repo's reusable workflow, so instead of calling it directly we fire
+# a `repository_dispatch` with event_type `pr-preview`. The infra workflow listens
+# for that event and runs all the real logic (build, provision, health gate,
+# teardown, E2E, deployment URL, sticky comment). This job only forwards PR
+# identity and mints the dispatch token.
+#
+# Client payload keys (contract with the infra workflow):
+#   repo       -> github.repository
+#   pr_number  -> github.event.pull_request.number
+#   head_sha   -> github.event.pull_request.head.sha
+#   action     -> github.event.action (opened | synchronize | reopened | closed)
 #
 # Fork PRs are excluded: they get a read-only token and no secrets, so they can
 # never provision. Every same-repository PR gets an environment automatically.
 #
 # Rollout switch: the job only runs when the repository variable
 # PREVIEW_ENABLED == 'true'. Set it once the preview host, wildcard DNS/TLS,
-# and org secrets exist. Until then the workflow is inert, so merging it does
-# not make every PR attempt (and fail) provisioning.
+# and org secrets exist. Until then the workflow is inert and the check stays
+# green (job skipped), so merging this does not make every PR attempt (and fail)
+# provisioning.
+#
+# Dispatch token: the job mints a short-lived installation token for the
+# emergent-company/emergent.memory.infra repo using the GitHub App identified by
+# secrets GH_APP_ID / GH_APP_PRIVATE_KEY. That App MUST be installed on
+# emergent-company/emergent.memory.infra with `contents: write` so the dispatch
+# (which creates a `repository_dispatch` event) is accepted. Fallback: if the
+# App is not available, use a repo secret named PREVIEW_DISPATCH_TOKEN instead
+# (a fine-grained PAT or App token scoped to that repo), e.g.
+#   GH_TOKEN: ${{ secrets.PREVIEW_DISPATCH_TOKEN }}
 #
 # A protected `preview` environment with required reviewers MAY be attached to
 # the secret-bearing job later if per-PR human approval is wanted (design D11);
@@ -22,12 +41,6 @@ on:
     branches: [main]
     types: [opened, synchronize, reopened, closed]
 
-permissions:
-  contents: read
-  packages: write
-  deployments: write
-  pull-requests: write
-
 # Per-PR serialization at the caller too: rapid pushes collapse, and a close
 # (teardown) is never cancelled by an in-flight update.
 concurrency:
@@ -37,11 +50,31 @@ concurrency:
 jobs:
   preview:
     name: Preview environment
-    if: github.event.pull_request.head.repo.full_name == github.repository
-    uses: emergent-company/emergent.memory.infra/.github/workflows/preview.yml@main
-    secrets: inherit
-    with:
-      repo: ${{ github.repository }}
-      pr_number: ${{ github.event.pull_request.number }}
-      head_sha: ${{ github.event.pull_request.head.sha }}
-      action: ${{ github.event.action }}
+    if: github.event.pull_request.head.repo.full_name == github.repository && vars.PREVIEW_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Mint infra dispatch token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: emergent-company
+          repositories: emergent.memory.infra
+      - name: Dispatch preview event to infra
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          ACTION: ${{ github.event.action }}
+        run: |
+          gh api repos/emergent-company/emergent.memory.infra/dispatches \
+            --method POST \
+            -f event_type=pr-preview \
+            -f "client_payload[repo]=$REPO" \
+            -f "client_payload[pr_number]=$PR_NUMBER" \
+            -f "client_payload[head_sha]=$HEAD_SHA" \
+            -f "client_payload[action]=$ACTION"
