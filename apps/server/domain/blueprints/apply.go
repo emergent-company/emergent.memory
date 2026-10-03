@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -147,7 +148,11 @@ func (s *Service) applyPacks(ctx context.Context, projectID, blueprintID, userID
 			if err != nil {
 				return counts, apperror.ErrBadRequest.WithMessage("invalid objectTypes in pack " + p.Name)
 			}
-			relationshipTypes, err := json.Marshal(p.RelationshipTypes)
+			expandedRels, err := expandRelationshipTypes(p.RelationshipTypes)
+			if err != nil {
+				return counts, err
+			}
+			relationshipTypes, err := json.Marshal(expandedRels)
 			if err != nil {
 				return counts, apperror.ErrBadRequest.WithMessage("invalid relationshipTypes in pack " + p.Name)
 			}
@@ -198,7 +203,11 @@ func (s *Service) updateExistingPack(ctx context.Context, projectID string, pack
 	if err != nil {
 		return apperror.ErrBadRequest.WithMessage("invalid objectTypes in pack " + p.Name)
 	}
-	relationshipTypes, err := json.Marshal(p.RelationshipTypes)
+	expandedRels, err := expandRelationshipTypes(p.RelationshipTypes)
+	if err != nil {
+		return err
+	}
+	relationshipTypes, err := json.Marshal(expandedRels)
 	if err != nil {
 		return apperror.ErrBadRequest.WithMessage("invalid relationshipTypes in pack " + p.Name)
 	}
@@ -209,6 +218,108 @@ func (s *Service) updateExistingPack(ctx context.Context, projectID string, pack
 		Migrations:              p.Migrations,
 	})
 	return err
+}
+
+// maxExpandedRelationshipTypesPerPack bounds the number of singular
+// relationship-type definitions a single pack may expand into via plural
+// sourceTypes/targetTypes cross-products. The expansion allocates one
+// RelationshipTypeDef per (source, target) pair before the schemas service
+// validates anything, so an unbounded cross-product is a memory-exhaustion
+// vector: a manifest declaring 5 000 source types × 5 000 target types would
+// materialize ~25 million definitions (multiple GB) and the GitHub-import path
+// accepts archives up to 200 MiB, so an imported pack could trigger it.
+//
+// 10 000 is generous for hand-authored packs (an all-to-all relationship over
+// 100 object types is already an extreme case; typical packs expand to tens of
+// entries) while keeping the worst-case allocation in the low single-digit MB.
+// Exceeding the budget is reported as a 400 before anything is allocated.
+const maxExpandedRelationshipTypesPerPack = 10_000
+
+// expandRelationshipTypes flattens plural sourceTypes/targetTypes declarations
+// into singular SourceType/TargetType entries for the schemas service, whose
+// relationship contract is singular-only (see
+// schemas.Service.validateSchemaDefinitions). The stored blueprint manifest may
+// keep the plural fields (round-trip), but the payload sent to the schemas
+// service must be singular-only.
+//
+//   - A def with plural source and/or target types yields the cross-product of
+//     GetSourceTypes() × GetTargetTypes() as singular entries, preserving
+//     Name/Label/Description/Properties.
+//   - A def with only singular fields passes through unchanged (one entry).
+//   - A def with neither source nor target yields one empty entry (matching the
+//     pre-expansion behaviour) so the schemas validator still reports a precise
+//     missing-field error rather than silently dropping the relationship.
+//
+// The total expansion for the pack is pre-computed and rejected with a 400
+// bad_request when it exceeds maxExpandedRelationshipTypesPerPack, so the
+// cross-product is never materialized. The returned error identifies the
+// offending definition.
+func expandRelationshipTypes(defs []RelationshipTypeDef) ([]RelationshipTypeDef, error) {
+	// First pass: compute the total expanded size without allocating any
+	// output, and reject budget overruns before the blowup can happen.
+	total := int64(0)
+	for i, d := range defs {
+		count := expandedRelationshipTypeCount(d)
+		total += count
+		if total > maxExpandedRelationshipTypesPerPack {
+			ident := d.Name
+			if ident == "" {
+				ident = fmt.Sprintf("#%d", i)
+			}
+			return nil, apperror.NewBadRequest(fmt.Sprintf(
+				"relationship types expand to %d definitions, exceeding the limit of %d per pack (definition %q expands to %d); reduce the sourceTypes/targetTypes cross-product",
+				total, maxExpandedRelationshipTypesPerPack, ident, count))
+		}
+	}
+
+	// Second pass: the budget is known to hold, so this allocation is bounded.
+	out := make([]RelationshipTypeDef, 0, int(total))
+	for _, d := range defs {
+		srcs := d.GetSourceTypes()
+		tgts := d.GetTargetTypes()
+
+		// Only expand when both sides resolve to at least one type; otherwise
+		// pass the singular fields through unchanged so malformed defs keep the
+		// existing validation surface.
+		if len(srcs) == 0 || len(tgts) == 0 {
+			out = append(out, RelationshipTypeDef{
+				Name:        d.Name,
+				Label:       d.Label,
+				Description: d.Description,
+				SourceType:  d.SourceType,
+				TargetType:  d.TargetType,
+				Properties:  d.Properties,
+			})
+			continue
+		}
+
+		for _, src := range srcs {
+			for _, tgt := range tgts {
+				out = append(out, RelationshipTypeDef{
+					Name:        d.Name,
+					Label:       d.Label,
+					Description: d.Description,
+					SourceType:  src,
+					TargetType:  tgt,
+					Properties:  d.Properties,
+				})
+			}
+		}
+	}
+	return out, nil
+}
+
+// expandedRelationshipTypeCount reports how many singular entries a single
+// relationship definition expands into: the source×target cross-product, or 1
+// for a pass-through (singular or empty) definition. The product is computed in
+// int64 so a pathological input cannot overflow.
+func expandedRelationshipTypeCount(d RelationshipTypeDef) int64 {
+	srcs := d.GetSourceTypes()
+	tgts := d.GetTargetTypes()
+	if len(srcs) == 0 || len(tgts) == 0 {
+		return 1
+	}
+	return int64(len(srcs)) * int64(len(tgts))
 }
 
 // applyAgents creates or updates agent definitions by name within the project.
