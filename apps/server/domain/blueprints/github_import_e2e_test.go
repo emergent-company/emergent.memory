@@ -3,11 +3,15 @@ package blueprints
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
 // TestImportFromGitHub_PluralRelationshipSourceTypes is the end-to-end
@@ -100,7 +104,8 @@ relationshipTypes:
 func TestExpandRelationshipTypes(t *testing.T) {
 	t.Run("singular pass-through", func(t *testing.T) {
 		in := []RelationshipTypeDef{{Name: "knows", SourceType: "Person", TargetType: "Person"}}
-		out := expandRelationshipTypes(in)
+		out, err := expandRelationshipTypes(in)
+		require.NoError(t, err)
 		require.Len(t, out, 1)
 		assert.Equal(t, "knows", out[0].Name)
 		assert.Equal(t, "Person", out[0].SourceType)
@@ -109,7 +114,8 @@ func TestExpandRelationshipTypes(t *testing.T) {
 
 	t.Run("plural source cross-product", func(t *testing.T) {
 		in := []RelationshipTypeDef{{Name: "delivered_in", SourceTypes: []string{"Alpha", "Beta"}, TargetType: "Gamma"}}
-		out := expandRelationshipTypes(in)
+		out, err := expandRelationshipTypes(in)
+		require.NoError(t, err)
 		require.Len(t, out, 2)
 		assert.Equal(t, "Alpha", out[0].SourceType)
 		assert.Equal(t, "Gamma", out[0].TargetType)
@@ -119,13 +125,15 @@ func TestExpandRelationshipTypes(t *testing.T) {
 
 	t.Run("plural source and target cross-product", func(t *testing.T) {
 		in := []RelationshipTypeDef{{Name: "links", SourceTypes: []string{"A", "B"}, TargetTypes: []string{"C", "D"}}}
-		out := expandRelationshipTypes(in)
+		out, err := expandRelationshipTypes(in)
+		require.NoError(t, err)
 		require.Len(t, out, 4)
 	})
 
 	t.Run("neither source nor target yields one empty entry", func(t *testing.T) {
 		in := []RelationshipTypeDef{{Name: "orphan"}}
-		out := expandRelationshipTypes(in)
+		out, err := expandRelationshipTypes(in)
+		require.NoError(t, err)
 		require.Len(t, out, 1)
 		assert.Equal(t, "orphan", out[0].Name)
 		assert.Empty(t, out[0].SourceType)
@@ -141,7 +149,8 @@ func TestExpandRelationshipTypes(t *testing.T) {
 			TargetType:  "Gamma",
 			Properties:  map[string]any{"weight": 1},
 		}}
-		out := expandRelationshipTypes(in)
+		out, err := expandRelationshipTypes(in)
+		require.NoError(t, err)
 		require.Len(t, out, 2)
 		for _, o := range out {
 			assert.Equal(t, "Delivered In", o.Label)
@@ -151,4 +160,70 @@ func TestExpandRelationshipTypes(t *testing.T) {
 			assert.Empty(t, o.TargetTypes, "expanded entries must be singular-only")
 		}
 	})
+}
+
+// TestExpandRelationshipTypes_Budget locks the expansion budget. The
+// cross-product is pre-computed and rejected with a 400 bad_request *before*
+// the output slice is materialized, so a pathological pack cannot allocate the
+// blowup; a large-but-legitimate pack under the budget still expands.
+func TestExpandRelationshipTypes_Budget(t *testing.T) {
+	t.Run("single definition over budget is rejected with 400", func(t *testing.T) {
+		// Just over the per-pack budget: one target, budget+1 sources.
+		in := []RelationshipTypeDef{{
+			Name:        "relates_to",
+			SourceTypes: makeStrings("S", maxExpandedRelationshipTypesPerPack+1),
+			TargetType:  "T",
+		}}
+		out, err := expandRelationshipTypes(in)
+		require.Error(t, err)
+		assert.Nil(t, out, "must not materialize an over-budget expansion")
+
+		var appErr *apperror.Error
+		require.ErrorAs(t, err, &appErr)
+		assert.Equal(t, http.StatusBadRequest, appErr.HTTPStatus)
+		assert.Contains(t, appErr.Message, "relates_to",
+			"the error must identify the offending definition")
+	})
+
+	t.Run("cumulative pack budget rejects a later definition", func(t *testing.T) {
+		// Each definition is individually under the budget, but the pack total
+		// exceeds it. The second (offending) definition must be identified.
+		in := []RelationshipTypeDef{
+			{Name: "first", SourceTypes: makeStrings("S", 6000), TargetType: "T"},
+			{Name: "offender", SourceTypes: makeStrings("A", 5000), TargetType: "B"},
+		}
+		out, err := expandRelationshipTypes(in)
+		require.Error(t, err)
+		assert.Nil(t, out)
+
+		var appErr *apperror.Error
+		require.ErrorAs(t, err, &appErr)
+		assert.Equal(t, http.StatusBadRequest, appErr.HTTPStatus)
+		assert.Contains(t, appErr.Message, "offender")
+	})
+
+	t.Run("large legitimate pack under budget expands", func(t *testing.T) {
+		const srcs, tgts = 100, 50 // 5 000 entries, half the budget
+		in := []RelationshipTypeDef{{
+			Name:        "links",
+			SourceTypes: makeStrings("S", srcs),
+			TargetTypes: makeStrings("T", tgts),
+		}}
+		out, err := expandRelationshipTypes(in)
+		require.NoError(t, err)
+		require.Len(t, out, srcs*tgts)
+		assert.Equal(t, "S0", out[0].SourceType)
+		assert.Equal(t, "T0", out[0].TargetType)
+		assert.Equal(t, fmt.Sprintf("S%d", srcs-1), out[len(out)-1].SourceType)
+		assert.Equal(t, fmt.Sprintf("T%d", tgts-1), out[len(out)-1].TargetType)
+	})
+}
+
+// makeStrings returns n distinct strings with the given prefix.
+func makeStrings(prefix string, n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = fmt.Sprintf("%s%d", prefix, i)
+	}
+	return out
 }
