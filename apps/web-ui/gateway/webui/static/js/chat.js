@@ -43,6 +43,9 @@
   var filterOrigin = "";  // session rail origin filter ("" = all types)
   var filterIncludeArchived = false; // rail "Include archived" filter (server-side query)
   var deleteSessionId = "";          // session pending the delete confirmation
+  var selectionMode = false;         // bulk-selection mode (#1385): row checkboxes + footer bar
+  var selectedSessions = {};         // session id -> true, the checked set while selecting
+  var bulkBusy = false;              // a bulk archive is in flight (footer button disabled)
   var aborter = null;
   var eventSource = null;   // SSE live-update channel for the active conversation/run
   var eventSourceId = "";   // scope key the current eventSource is subscribed to ("conv:<id>" / "run:<id>")
@@ -395,7 +398,11 @@
       if (t.getAttribute("data-action") === "resume-session") {
         var id = t.getAttribute("data-id");
         var agent = t.getAttribute("data-agent") || "";
-        if (id) {
+        if (selectionMode) {
+          // Selection mode repurposes a row click: toggle its checkbox
+          // instead of resuming the conversation.
+          if (id) setSessionSelected(id, !selectedSessions[id]);
+        } else if (id) {
           closeSessionRail();
           resumeConversation(id, agent, t);
         }
@@ -424,6 +431,15 @@
         // action, so a click on the menu button is seen as "session-menu" and
         // deliberately does nothing here; the enclosing row's resume-session
         // action never fires. No stopPropagation is involved.
+      } else if (t.getAttribute("data-action") === "toggle-session-select") {
+        toggleSelectionMode();
+      } else if (t.getAttribute("data-action") === "select-session") {
+        // The native checkbox has already flipped its checked state; mirror it.
+        setSessionSelected(t.getAttribute("data-id"), !!t.checked);
+      } else if (t.getAttribute("data-action") === "select-all-sessions") {
+        selectAllSessions(!!t.checked);
+      } else if (t.getAttribute("data-action") === "bulk-archive-sessions") {
+        bulkArchiveSelected();
       } else if (t.getAttribute("data-action") === "archive-session") {
         archiveSession(t.getAttribute("data-id"));
       } else if (t.getAttribute("data-action") === "unarchive-session") {
@@ -700,6 +716,8 @@
       railList.innerHTML = await res.text();
       applyAgentFilter();
       applyRailBadges();
+      pruneSelection();
+      applySelectionMode();
     } catch (err) {
       reportError(err, "session rail refresh failed");
       // keep the stale list; the next refresh retries
@@ -804,6 +822,147 @@
 
   function archiveSession(id) { return runSessionAction([id], "/archive", "archived", "archive"); }
   function unarchiveSession(id) { return runSessionAction([id], "/unarchive", "unarchived", "unarchive"); }
+
+  /* ---------- bulk session selection (#1385) ---------- */
+
+  // rowCheckbox returns the row's selection checkbox, or null for rows that are
+  // not selectable conversations (scheduled / shared rows).
+  function rowCheckbox(row) {
+    return row ? row.querySelector(".session-select") : null;
+  }
+
+  // selectableRowsInDom returns the conversation rows bulk archive may target:
+  // manual-origin rows currently visible under the filters and not already
+  // archived. Archived rows are excluded from select-all (archiving them is a
+  // no-op); they can still be checked individually when "Include archived" is on.
+  function selectableRowsInDom() {
+    var railList = document.getElementById("chat-rail-list");
+    if (!railList) return [];
+    var rows = railList.querySelectorAll("[data-action='resume-session']");
+    var out = [];
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      if (!rowCheckbox(row)) continue;
+      if (row.getAttribute("data-origin") !== "manual") continue;
+      if (row.classList.contains("hidden")) continue;
+      if (row.getAttribute("data-archived") === "true") continue;
+      out.push(row);
+    }
+    return out;
+  }
+
+  function setRowChecked(row, checked) {
+    var cb = rowCheckbox(row);
+    if (cb) cb.checked = checked;
+    row.setAttribute("data-selected", checked ? "true" : "false");
+  }
+
+  // syncSelectionUi mirrors the selected set onto the footer controls: the live
+  // count, the disabled archive button, and the select-all checkbox with its
+  // indeterminate state.
+  function syncSelectionUi() {
+    var ids = Object.keys(selectedSessions);
+    var countEl = document.getElementById("chat-selection-count");
+    if (countEl) countEl.textContent = ids.length + " selected";
+    var archiveBtn = document.getElementById("chat-bulk-archive");
+    if (archiveBtn) archiveBtn.disabled = bulkBusy || ids.length === 0;
+    var selectAll = document.getElementById("chat-select-all");
+    if (selectAll) {
+      var rows = selectableRowsInDom();
+      var selected = 0;
+      for (var i = 0; i < rows.length; i++) {
+        if (selectedSessions[rows[i].getAttribute("data-id")]) selected++;
+      }
+      selectAll.checked = rows.length > 0 && selected === rows.length;
+      selectAll.indeterminate = selected > 0 && selected < rows.length;
+    }
+  }
+
+  // applySelectionMode reflects the client-side selection state onto the
+  // server-rendered rail: checkbox visibility, the footer bar, the toggle's
+  // aria-pressed, and each row's checked/selected state. Called after every rail
+  // refresh so a swapped-in list picks the state back up.
+  function applySelectionMode() {
+    var railList = document.getElementById("chat-rail-list");
+    var boxes = railList ? railList.querySelectorAll(".session-select") : [];
+    for (var i = 0; i < boxes.length; i++) boxes[i].classList.toggle("hidden", !selectionMode);
+    var bar = document.getElementById("chat-bulk-bar");
+    if (bar) {
+      bar.classList.toggle("hidden", !selectionMode);
+      bar.classList.toggle("flex", selectionMode);
+    }
+    var toggle = document.querySelector("[data-action='toggle-session-select']");
+    if (toggle) toggle.setAttribute("aria-pressed", selectionMode ? "true" : "false");
+    var rows = railList ? railList.querySelectorAll("[data-action='resume-session']") : [];
+    for (var j = 0; j < rows.length; j++) {
+      if (rowCheckbox(rows[j])) setRowChecked(rows[j], !!selectedSessions[rows[j].getAttribute("data-id")]);
+    }
+    syncSelectionUi();
+  }
+
+  // pruneSelection drops checked ids no longer present in the rail (e.g. archived
+  // by another surface), so the count cannot drift after a refresh. Selection
+  // deliberately survives filter changes.
+  function pruneSelection() {
+    var railList = document.getElementById("chat-rail-list");
+    if (!railList || !Object.keys(selectedSessions).length) return;
+    var present = {};
+    var rows = railList.querySelectorAll("[data-action='resume-session']");
+    for (var i = 0; i < rows.length; i++) present[rows[i].getAttribute("data-id")] = true;
+    Object.keys(selectedSessions).forEach(function (id) {
+      if (!present[id]) delete selectedSessions[id];
+    });
+  }
+
+  function setSessionSelected(id, checked) {
+    if (!id) return;
+    if (checked) selectedSessions[id] = true; else delete selectedSessions[id];
+    var row = sessionRowById(id);
+    if (row) setRowChecked(row, checked);
+    syncSelectionUi();
+  }
+
+  function selectAllSessions(checked) {
+    var rows = selectableRowsInDom();
+    for (var i = 0; i < rows.length; i++) {
+      var id = rows[i].getAttribute("data-id");
+      if (checked) selectedSessions[id] = true; else delete selectedSessions[id];
+      setRowChecked(rows[i], checked);
+    }
+    syncSelectionUi();
+  }
+
+  function enterSelectionMode() {
+    selectionMode = true;
+    applySelectionMode();
+  }
+
+  function exitSelectionMode() {
+    selectionMode = false;
+    selectedSessions = {};
+    applySelectionMode();
+  }
+
+  function toggleSelectionMode() {
+    if (selectionMode) exitSelectionMode(); else enterSelectionMode();
+  }
+
+  // bulkArchiveSelected archives every checked session through the same
+  // per-session route the row menu uses. On completion (success or partial
+  // failure) selection mode is exited and the rail refreshed; failed rows were
+  // already restored by runSessionAction.
+  function bulkArchiveSelected() {
+    if (bulkBusy) return Promise.resolve({ total: 0, failed: 0 });
+    var ids = Object.keys(selectedSessions);
+    if (!ids.length) return Promise.resolve({ total: 0, failed: 0 });
+    bulkBusy = true;
+    syncSelectionUi();
+    return runSessionAction(ids, "/archive", "archived", "archive").then(function (result) {
+      bulkBusy = false;
+      exitSelectionMode();
+      return result;
+    });
+  }
 
   // openDeleteSessionConfirm fills the shared confirm dialog and opens it. No
   // request is sent here — DELETE only fires from confirmDeleteSession, so
@@ -2661,6 +2820,12 @@
   // This file is loaded once from the shell — it must not live in the swapped
   // fragment, where htmx re-executes it in a racy order relative to the swap.
   document.addEventListener("htmx:after:swap", init);
+
+  // Escape leaves bulk-selection mode (#1385). Registered once at boot —
+  // selectionMode is module state, so it survives every #chat-root swap.
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape" && selectionMode) exitSelectionMode();
+  });
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);

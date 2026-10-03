@@ -167,6 +167,7 @@ Legend: L0 = go-daisy primitive, L3 = page-local helper (see `gateway/AGENTS.md:
 | Generic dialog open/close | `app.js:573-589` (`data-dialog-open` / `data-dialog-close`) | vanilla `data-*` | `showModal()` / `close()` |
 | Blueprint edit-gate confirm | `app.js:619-640` (`data-requires-confirm`) | vanilla `data-*` | intercepts submit, re-submits on `close` confirm |
 | Chat surface | `chat.js` (page client) | JS-heavy | SSE stream, bubbles, session rail |
+| Session bulk selection | `chat.js` (`selectionMode`, `.session-select`) + server-rendered row checkboxes (`chat.templ:562`, footer bar `chat.templ:143`) | JS-heavy | server renders the checkboxes hidden and the footer bar hidden; `chat.js` toggles them, mirrors the checked set onto `select-all` (incl. indeterminate), and re-applies after every rail refresh |
 | Assistant side panel | `sidepanel.js` (drawer outside `#main-content`, `sidepanel.templ:14`) | JS-heavy | `window.MemorySidepanel` API, localStorage transcript |
 | Object preview drawer | `object-preview.js` (`object_preview.templ:17`) | JS-heavy | HTMX fetch of `/objects/:id/preview` |
 | Public share page | `share-agent.js` | JS-heavy | self-contained, no shell/htmx |

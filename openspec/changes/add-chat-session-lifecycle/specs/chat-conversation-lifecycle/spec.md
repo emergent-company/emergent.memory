@@ -155,3 +155,51 @@ Archiving the conversation currently open in the chat workspace SHALL NOT close,
 - **GIVEN** a conversation is open in the chat workspace
 - **WHEN** it is archived
 - **THEN** the conversation remains open with its messages visible and is simply absent from the default session rail list
+
+### Requirement: Rail lifecycle actions are optimistic
+
+Archive and unarchive SHALL apply their rail-list effect optimistically: choosing Archive SHALL remove the session from the rail (while the include-archived filter is off) before the request settles, and choosing Unarchive SHALL clear the archived presentation immediately. If the request fails, the client SHALL restore the row to its pre-request state and surface an error. The server-rendered session list remains the source of truth: once the request settles, the rail SHALL be re-fetched and reconciled with the server's archive state.
+
+#### Scenario: Archive hides the row before the request settles
+
+- **WHEN** the user chooses Archive on an active session while the include-archived filter is off
+- **THEN** the row disappears from the rail immediately, without waiting for the archive request to complete
+
+#### Scenario: Failed archive restores the row
+
+- **WHEN** an optimistically hidden session's archive request fails
+- **THEN** the row reappears in the rail and an error is surfaced to the user
+
+#### Scenario: Rail reconciles with the server after settling
+
+- **WHEN** an optimistic archive or unarchive request settles
+- **THEN** the rail is re-fetched from the server and reflects the server's authoritative archive state
+
+### Requirement: Bulk session selection
+
+The web chat session rail SHALL provide a selection mode in which multiple conversation sessions can be checked and acted on together. Selection mode SHALL expose a checkbox per conversation row, a select-all control, a live count of the selected sessions, and a bulk archive action that applies the same lifecycle semantics as the per-row Archive action to every selected session. The controls SHALL be keyboard-operable and expose their state to assistive technology. Leaving selection mode or completing a bulk action SHALL clear the selection; the selection SHALL survive a rail refresh.
+
+#### Scenario: Selection mode reveals row checkboxes
+
+- **WHEN** the user turns on selection mode
+- **THEN** each conversation row shows a labelled checkbox and the bulk action controls become available
+
+#### Scenario: Select-all checks the selectable rows
+
+- **WHEN** the user activates select-all
+- **THEN** every currently selectable (visible, not already archived) conversation row is checked and the count reflects the full set
+
+#### Scenario: Bulk archive applies to the checked set
+
+- **WHEN** the user triggers the bulk archive action with a subset of rows checked
+- **THEN** exactly the checked sessions are archived through the per-session archive operation, and the selection is cleared once the action completes
+
+#### Scenario: Selection controls are accessible
+
+- **WHEN** the selection controls are rendered
+- **THEN** the per-row checkboxes and select-all control carry accessible names, the selected count is announced, and the controls can be operated by keyboard
+
+#### Scenario: Selection survives a rail refresh
+
+- **WHEN** the rail is re-fetched while selection mode is on
+- **THEN** the selected sessions remain checked and the count is unchanged
