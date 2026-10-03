@@ -2,6 +2,7 @@ package xberg
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -716,5 +717,47 @@ func TestExtractText_JoinsMultiplePerInputErrors(t *testing.T) {
 	wantDetail := "a.pdf: Invalid PDF; b.docx: Unsupported file format"
 	if xe.Detail != wantDetail {
 		t.Errorf("Detail = %q, want %q", xe.Detail, wantDetail)
+	}
+}
+
+// TestExtractText_SendsOCRLanguageAsCanonicalArray pins the canonical
+// ocr.language form: an array of language codes, not a bare string. A
+// multi-language hint like "eng+deu" is split on "+" so each code stays a
+// separate element.
+func TestExtractText_SendsOCRLanguageAsCanonicalArray(t *testing.T) {
+	var gotConfig struct {
+		OCR struct {
+			Backend  string   `json:"backend"`
+			Language []string `json:"language"`
+		} `json:"ocr"`
+		ForceOCR bool `json:"force_ocr"`
+	}
+
+	c := newExtractTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Errorf("ParseMultipartForm() error = %v", err)
+		}
+		raw := r.FormValue("config")
+		if raw == "" {
+			t.Error("config field missing from multipart request")
+		}
+		if err := json.Unmarshal([]byte(raw), &gotConfig); err != nil {
+			t.Errorf("config is not valid JSON / wrong shape: %v (raw=%q)", err, raw)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"content":"ok"}],"errors":[]}`)
+	})
+
+	_, err := c.ExtractText(context.Background(), []byte("bytes"), "doc.pdf", "application/pdf", &ExtractOptions{
+		OCRLanguage: "eng+deu",
+	})
+	if err != nil {
+		t.Fatalf("ExtractText() error = %v, want nil", err)
+	}
+	if gotConfig.OCR.Backend != "tesseract" {
+		t.Errorf("ocr.backend = %q, want %q", gotConfig.OCR.Backend, "tesseract")
+	}
+	if len(gotConfig.OCR.Language) != 2 || gotConfig.OCR.Language[0] != "eng" || gotConfig.OCR.Language[1] != "deu" {
+		t.Errorf("ocr.language = %#v, want []string{\"eng\", \"deu\"}", gotConfig.OCR.Language)
 	}
 }
