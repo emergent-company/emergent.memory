@@ -21,7 +21,7 @@
 
 - [ ] 4.1 Wrap the rerank call with a timeout; on error/timeout/malformed output, fall back to the pre-rerank order and set a `fallback` flag.
 - [ ] 4.2 (TDD) Unit test: provider error → search completes with fused order + `fallback=true`; no error surfaces to the caller.
-- [ ] 4.3 Extend `RetrievalTrace` with `rerank_metadata` jsonb (`{model, topN, fallback, scores}`) and populate in `persistTraceAsync`.
+- [ ] 4.3 New Goose migration adding nullable `rerank_metadata` jsonb to `kb.retrieval_traces` (with a down migration), extend the `RetrievalTrace` Bun model with `rerank_metadata` (`{model, topN, fallback, scores}`), populate in `persistTraceAsync`, and add a migration round-trip (up/down) test.
 - [ ] 4.4 (TDD) Unit test: a reranked search persists the rerank model, top-N, and fallback flag on the trace; an unreranked search persists no rerank metadata.
 
 ## 5. Verify

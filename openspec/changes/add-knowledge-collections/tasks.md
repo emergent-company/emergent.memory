@@ -14,7 +14,7 @@
 
 - [ ] 3.1 Add `resolveCollectionItemIDs(ctx, projectID, collectionIDs)` in `domain/search` (or shared `pkg`) returning allowed `document_id`s and head-resolved `canonical_id`s for the requested collections.
 - [ ] 3.2 Resolve `canonical` items to current head via `domain/graph` head resolution (following the current head, NOT a merge into a new canonical_id).
-- [ ] 3.3 (TDD) Unit test: resolver returns the union of item ids per type; a canonical item returns its head; a merge into a new canonical id is not followed; an empty collection returns empty sets; cross-project collection ids return empty sets; an all-dangling collection returns empty sets (no error).
+- [ ] 3.3 (TDD) Unit test: resolver returns the allowed item ids per requested collection and per type, and the search combines multiple collections with AND (intersection) semantics (spec `search`: Multiple collections are AND-combined) — NOT a union; a canonical item returns its head; a merge into a new canonical id is not followed; an empty collection returns empty sets; cross-project collection ids return empty sets; an all-dangling collection returns empty sets (no error).
 
 ## 4. Search filtering across three legs
 
