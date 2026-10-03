@@ -83,6 +83,25 @@ func TestLoadConfigFeedbackOverlay(t *testing.T) {
 	}
 }
 
+// TestLoadConfigComponentGallery asserts the gallery flag defaults off in every
+// mode and is enabled by an explicit MEMORY_COMPONENT_GALLERY value.
+func TestLoadConfigComponentGallery(t *testing.T) {
+	t.Setenv("MEMORY_COMPONENT_GALLERY", "")
+	if got := LoadConfig().ComponentGallery; got {
+		t.Error("ComponentGallery = true, want default-off")
+	}
+
+	t.Setenv("MEMORY_COMPONENT_GALLERY", "on")
+	if got := LoadConfig().ComponentGallery; !got {
+		t.Error("ComponentGallery = false, want on when MEMORY_COMPONENT_GALLERY=on")
+	}
+
+	t.Setenv("MEMORY_COMPONENT_GALLERY", "false")
+	if got := LoadConfig().ComponentGallery; got {
+		t.Error("ComponentGallery = true, want false when MEMORY_COMPONENT_GALLERY=false")
+	}
+}
+
 // TestConfigValidate covers the fail-closed auth posture check: session mode
 // requires a full Zitadel + cookie config, while dev is an explicit opt-in.
 func TestConfigValidate(t *testing.T) {

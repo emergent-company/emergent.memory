@@ -37,6 +37,8 @@ services:
       SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-}
       SENTRY_REPLAY_SESSION_SAMPLE_RATE: ${SENTRY_REPLAY_SESSION_SAMPLE_RATE:-}
       SENTRY_REPLAY_ON_ERROR_SAMPLE_RATE: ${SENTRY_REPLAY_ON_ERROR_SAMPLE_RATE:-}
+      # dev-gated component gallery (default off)
+      MEMORY_COMPONENT_GALLERY: ${MEMORY_COMPONENT_GALLERY:-off}
       # prod stays on 8080; app default is 8095 (local dev)
       MEMORY_PORT: 8080
     ports:

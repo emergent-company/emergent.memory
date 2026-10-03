@@ -41,9 +41,12 @@ tasks:
       - "{{.TAILWIND_BIN}} -i {{.CSS_IN}} -o {{.CSS_OUT}} --minify"
 
   generate:
-    desc: Generate templ Go files
+    desc: Generate templ Go files + the component dependency graph
     cmds:
       - templ generate ./...
+      # The component graph (cmd/componentgraph) reads the generated *_templ.go
+      # files, so it MUST run after `templ generate`.
+      - go generate ./...
 
   build:
     desc: Compile CSS + templ, then build the binary
