@@ -156,7 +156,7 @@ func NewTestServerWithLLM(testDB *TestDB) *TestServer {
 	// Build real per-project embedding service so search-hybrid returns semantic
 	// results in tests. Uses the provider credentials seeded by SetupFullTestProject.
 	providerRegistry := provider.NewRegistry()
-	providerCatalogSvc := provider.NewModelCatalogService(providerRepo, log)
+	providerCatalogSvc := provider.NewModelCatalogService(providerRepo, log, provider.WithNetworkDisabled(cfg.LLM.NetworkDisabled))
 	credSvc := provider.NewCredentialService(providerRepo, providerRegistry, providerCatalogSvc, cfg, log)
 	modelconfigStore := modelconfig.NewStore(db, log)
 	modelconfigSvc := modelconfig.NewService(modelconfigStore, log)
@@ -622,7 +622,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 
 	// Register provider routes (LLM credential management, model catalog, usage)
 	providerRegistry := provider.NewRegistry()
-	providerCatalogSvc := provider.NewModelCatalogService(providerRepo, log)
+	providerCatalogSvc := provider.NewModelCatalogService(providerRepo, log, provider.WithNetworkDisabled(testDB.Config.LLM.NetworkDisabled))
 	providerCredSvc := provider.NewCredentialService(providerRepo, providerRegistry, providerCatalogSvc, testDB.Config, log)
 	providerHandler := provider.NewHandler(providerCredSvc, providerCatalogSvc, providerRepo, providerRegistry)
 	provider.RegisterRoutes(e, providerHandler, authMiddleware)

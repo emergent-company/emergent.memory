@@ -35,14 +35,49 @@ type modelCatalogRepo interface {
 type ModelCatalogService struct {
 	repo modelCatalogRepo
 	log  *slog.Logger
+
+	// networkDisabled mirrors config.LLM.NetworkDisabled (LLM_NETWORK_DISABLED).
+	// It is the same kill switch pkg/adk enforces at model creation; threading
+	// it here gates every live provider call this service makes.
+	networkDisabled bool
+}
+
+// ModelCatalogOption configures a ModelCatalogService at construction time.
+type ModelCatalogOption func(*ModelCatalogService)
+
+// WithNetworkDisabled sets the LLM_NETWORK_DISABLED kill switch. When on,
+// every live provider call in this service returns adk.ErrNetworkDisabled
+// before constructing a client or issuing a request.
+func WithNetworkDisabled(disabled bool) ModelCatalogOption {
+	return func(s *ModelCatalogService) { s.networkDisabled = disabled }
 }
 
 // NewModelCatalogService creates a new ModelCatalogService.
-func NewModelCatalogService(repo *Repository, log *slog.Logger) *ModelCatalogService {
-	return &ModelCatalogService{
+func NewModelCatalogService(repo *Repository, log *slog.Logger, opts ...ModelCatalogOption) *ModelCatalogService {
+	s := &ModelCatalogService{
 		repo: repo,
 		log:  log.With(logger.Scope("provider.catalog")),
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+// NetworkDisabled reports whether the LLM_NETWORK_DISABLED kill switch is on.
+func (s *ModelCatalogService) NetworkDisabled() bool {
+	return s != nil && s.networkDisabled
+}
+
+// checkNetwork returns adk.ErrNetworkDisabled when the kill switch is on, so
+// callers can bail before constructing any client or issuing any request. It is
+// the same sentinel pkg/adk uses at model creation, so both gates report
+// identically and errors.Is works across them.
+func (s *ModelCatalogService) checkNetwork() error {
+	if s.NetworkDisabled() {
+		return adk.ErrNetworkDisabled
+	}
+	return nil
 }
 
 // SyncModels resolves the model catalog for the provider using the given
@@ -169,6 +204,10 @@ func (s *ModelCatalogService) ListAllModels(ctx context.Context, modelType *Mode
 
 // fetchModelsFromAPI calls the provider API to list available models.
 func (s *ModelCatalogService) fetchModelsFromAPI(ctx context.Context, provider ProviderType, cred *ResolvedCredential) ([]ProviderSupportedModel, error) {
+	if err := s.checkNetwork(); err != nil {
+		return nil, err
+	}
+
 	// Apply a timeout so we don't block credential setup
 	fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -225,6 +264,9 @@ func (s *ModelCatalogService) fetchModelsFromAPI(ctx context.Context, provider P
 // max_model_len). The configured generative + embedding models are always
 // appended (deduped), so the catalog never loses the user's selected models.
 func (s *ModelCatalogService) fetchOpenAICompatibleModels(ctx context.Context, provider ProviderType, cred *ResolvedCredential) ([]ProviderSupportedModel, error) {
+	if err := s.checkNetwork(); err != nil {
+		return nil, err
+	}
 	if cred.BaseURL == "" {
 		return nil, fmt.Errorf("openai-compatible provider requires base_url")
 	}
@@ -468,6 +510,10 @@ func normalizeModelName(name string) string {
 // credential when available, otherwise falls back to a cheap flash model from
 // the catalog. Returns the model name used and the LLM's reply text.
 func (s *ModelCatalogService) TestGenerate(ctx context.Context, provider ProviderType, cred *ResolvedCredential) (model, reply string, err error) {
+	if err := s.checkNetwork(); err != nil {
+		return "", "", err
+	}
+
 	// Use the configured generative model so the test validates exactly what
 	// the user will use in practice.
 	if cred.GenerativeModel != "" {
@@ -507,6 +553,9 @@ func (s *ModelCatalogService) TestGenerate(ctx context.Context, provider Provide
 // same embedding-model auto-detection: an embedding model is exercised through
 // the embed endpoint rather than generateContent. Returns the LLM's reply text.
 func (s *ModelCatalogService) TestGenerateForModel(ctx context.Context, provider ProviderType, cred *ResolvedCredential, model string) (reply string, err error) {
+	if err := s.checkNetwork(); err != nil {
+		return "", err
+	}
 	if s.modelIsEmbedding(ctx, provider, model) {
 		_, embErr := s.embedContentForModel(ctx, provider, cred, model)
 		if embErr != nil {
@@ -522,6 +571,10 @@ func (s *ModelCatalogService) TestGenerateForModel(ctx context.Context, provider
 // direct HTTP call, google-genai uses the genai client, and anthropic-messages
 // uses the adk Anthropic adapter. Returns the LLM's reply text.
 func (s *ModelCatalogService) generateContentForModel(ctx context.Context, provider ProviderType, cred *ResolvedCredential, model string) (reply string, err error) {
+	if err := s.checkNetwork(); err != nil {
+		return "", err
+	}
+
 	def := definitionFor(provider)
 	baseURL := cred.BaseURL
 	if baseURL == "" && def != nil {
@@ -725,6 +778,10 @@ func (s *ModelCatalogService) generateContentForModel(ctx context.Context, provi
 // credential when available, otherwise falls back to a known default.
 // Returns the model name used.
 func (s *ModelCatalogService) TestEmbed(ctx context.Context, provider ProviderType, cred *ResolvedCredential) (model string, err error) {
+	if err := s.checkNetwork(); err != nil {
+		return "", err
+	}
+
 	// Use the configured embedding model or pick from catalog. Error if none available.
 	model = cred.EmbeddingModel
 	if model == "" {
@@ -750,6 +807,10 @@ func (s *ModelCatalogService) TestEmbedForModel(ctx context.Context, provider Pr
 // by TestGenerate when the target model turns out to be an embedding model.
 // Returns the model name used.
 func (s *ModelCatalogService) embedContentForModel(ctx context.Context, provider ProviderType, cred *ResolvedCredential, model string) (string, error) {
+	if err := s.checkNetwork(); err != nil {
+		return "", err
+	}
+
 	def := definitionFor(provider)
 	var protocol Protocol
 	if cred != nil {

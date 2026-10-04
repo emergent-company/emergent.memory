@@ -60,8 +60,8 @@ func provideCredentialService(repo *Repository, registry *Registry, catalog *Mod
 	return NewCredentialService(repo, registry, catalog, cfg, log)
 }
 
-func provideModelCatalogService(repo *Repository, log *slog.Logger) *ModelCatalogService {
-	return NewModelCatalogService(repo, log)
+func provideModelCatalogService(repo *Repository, cfg *config.Config, log *slog.Logger) *ModelCatalogService {
+	return NewModelCatalogService(repo, log, WithNetworkDisabled(cfg.LLM.NetworkDisabled))
 }
 
 func provideUsageService(lc fx.Lifecycle, repo *Repository, db bun.IDB, notificationsSvc *notifications.Service, log *slog.Logger) *UsageService {

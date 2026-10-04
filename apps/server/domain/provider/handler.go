@@ -7,6 +7,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
@@ -67,6 +68,17 @@ func toProviderDefinitionResponse(def *ProviderDefinition) ProviderDefinitionRes
 		resp.IconDataURI = "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString(def.Icon)
 	}
 	return resp
+}
+
+// networkDisabledErr returns the standard bad-request error when the
+// LLM_NETWORK_DISABLED kill switch is on. The live credential-verification
+// endpoints short-circuit here so they never resolve/decrypt credentials and
+// never issue an outbound request; the error is a normal 400, not a panic.
+func (h *Handler) networkDisabledErr() error {
+	if h != nil && h.catalog.NetworkDisabled() {
+		return apperror.ErrBadRequest.WithMessage("provider test failed: " + adk.ErrNetworkDisabled.Error())
+	}
+	return nil
 }
 
 // --- Project Provider Config Endpoints ---
@@ -626,6 +638,10 @@ func (h *Handler) TestProjectProvider(c echo.Context) error {
 	}
 	ctx = auth.ContextWithProjectID(ctx, projectID)
 
+	if err := h.networkDisabledErr(); err != nil {
+		return err
+	}
+
 	cred, err := h.creds.Resolve(ctx, p)
 	if err != nil {
 		return fail("failed to resolve credentials: " + err.Error())
@@ -731,6 +747,10 @@ func (h *Handler) TestProvider(c echo.Context) error {
 	// credential resolution is project-scoped only (org-level config is
 	// deprecated), so writing a request-controlled org into the context would be
 	// an untrusted-org injection with no effect (issue #841 sibling audit).
+
+	if err := h.networkDisabledErr(); err != nil {
+		return err
+	}
 
 	cred, err := h.creds.Resolve(ctx, p)
 	if err != nil {
