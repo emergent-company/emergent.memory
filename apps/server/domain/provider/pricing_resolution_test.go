@@ -206,3 +206,60 @@ func TestCalculateCostWith_TotalMissReturnsZero(t *testing.T) {
 		t.Errorf("calculateCostWith() = %v, want 0.0 (total miss)", got)
 	}
 }
+
+// parsedRateLookup builds a pricingLookup from the models.dev parser output, so
+// the test covers the real feed→table→resolution path end to end.
+func parsedRateLookup(raw modelsDevPricingResponse) fakePricingLookup {
+	byKey := map[string]ProviderPricing{}
+	for _, e := range parseModelsDevPricing(raw) {
+		byKey[string(e.Provider)+"/"+e.Model] = e.ProviderPricing
+	}
+	return fakePricingLookup{
+		pricing: func(_ context.Context, provider ProviderType, model string) (*ProviderPricing, error) {
+			if e, ok := byKey[string(provider)+"/"+model]; ok {
+				return &e, nil
+			}
+			return nil, nil
+		},
+	}
+}
+
+// TestCalculateCostWith_NewlyCoveredVendorResolvesNonZero covers requirement
+// (a): a vendor added to the registry in #1409, priced via the models.dev feed,
+// resolves a non-zero rate.
+func TestCalculateCostWith_NewlyCoveredVendorResolvesNonZero(t *testing.T) {
+	lookup := parsedRateLookup(modelsDevPricingResponse{
+		"zhipuai": {
+			Models: map[string]modelsDevPricingModel{
+				"glm-4.6": {Cost: &modelsDevCost{Input: f64(0.60), Output: f64(2.20)}},
+			},
+		},
+	})
+	svc := &UsageService{log: slog.Default()}
+
+	// 0.60 * 1 + 2.20 * 0.5 = 1.70
+	got := svc.calculateCostWith(context.Background(), lookup, testUsageEvent(ProviderZhipu, "glm-4.6"))
+	const epsilon = 1e-9
+	if diff := got - 1.70; diff < -epsilon || diff > epsilon {
+		t.Errorf("calculateCostWith() = %v, want 1.70 (newly covered vendor rate)", got)
+	}
+}
+
+// TestCalculateCostWith_NewlyCoveredVendorUnknownModelZero covers requirement
+// (b): a model with no sourced rate for a covered vendor still falls through to
+// 0 rather than borrowing an unrelated vendor's price.
+func TestCalculateCostWith_NewlyCoveredVendorUnknownModelZero(t *testing.T) {
+	lookup := parsedRateLookup(modelsDevPricingResponse{
+		"zhipuai": {
+			Models: map[string]modelsDevPricingModel{
+				"glm-4.6": {Cost: &modelsDevCost{Input: f64(0.60), Output: f64(2.20)}},
+			},
+		},
+	})
+	svc := &UsageService{log: slog.Default()}
+
+	got := svc.calculateCostWith(context.Background(), lookup, testUsageEvent(ProviderZhipu, "glm-unlisted-model"))
+	if got != 0.0 {
+		t.Errorf("calculateCostWith() = %v, want 0.0 (unknown model, no sourced rate)", got)
+	}
+}

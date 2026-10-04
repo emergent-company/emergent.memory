@@ -544,6 +544,44 @@ func (r *Repository) UpsertPricing(ctx context.Context, entries []ProviderPricin
 	return nil
 }
 
+// PruneStalePricing deletes pricing rows for the given managed vendors whose
+// (provider, model) is absent from keep, returning the number removed. It is
+// called only after a models.dev fetch+parse succeeded, so a transient outage
+// cannot wipe already-known rates. Callers pass the merged entries (static
+// baseline + feed) as keep, which protects the always-upserted baseline.
+func (r *Repository) PruneStalePricing(ctx context.Context, managedProviders []ProviderType, keep []ProviderPricing) (int64, error) {
+	if len(managedProviders) == 0 {
+		return 0, nil
+	}
+
+	keptModels := make(map[ProviderType][]string, len(managedProviders))
+	for _, e := range keep {
+		keptModels[e.Provider] = append(keptModels[e.Provider], e.Model)
+	}
+
+	var total int64
+	for _, p := range managedProviders {
+		q := r.db.NewDelete().
+			Model((*ProviderPricing)(nil)).
+			Where("provider = ?", string(p))
+		if models := keptModels[p]; len(models) > 0 {
+			q = q.Where("model NOT IN (?)", bun.In(models))
+		}
+
+		res, err := q.Exec(ctx)
+		if err != nil {
+			r.log.Error("failed to prune stale pricing",
+				logger.Error(err),
+				slog.String("provider", string(p)),
+			)
+			return total, apperror.ErrDatabase.WithInternal(err)
+		}
+		n, _ := res.RowsAffected()
+		total += n
+	}
+	return total, nil
+}
+
 // --- Organization Custom Pricing ---
 
 // GetOrgCustomPricing returns the custom pricing for a specific org, provider, and model.

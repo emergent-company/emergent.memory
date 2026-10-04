@@ -20,7 +20,7 @@ import (
 //   - *CredentialService            — credential resolution hierarchy (Project → Env)
 //   - *ModelCatalogService          — model catalog with API fetch + static fallback
 //   - *UsageService                 — async LLM usage event recording
-//   - *PricingSyncService           — daily refresh of provider_pricing from the embedded static pricing list
+//   - *PricingSyncService           — daily refresh of provider_pricing from models.dev overlaid on the embedded static baseline
 //   - *ModelLimitsSyncService       — daily model output token limits sync from models.dev
 //   - *ModelCatalogSyncService      — periodic re-sync of OpenAI-compatible provider model catalogs
 //   - adk.CredentialResolver        — adapts CredentialService to pkg/adk interface
@@ -82,14 +82,32 @@ func provideModelCatalogSyncService(repo *Repository, credsvc *CredentialService
 // runStartupPricingSync seeds provider_pricing from the embedded static pricing
 // list on server startup. This ensures the pricing table is populated on first
 // run without waiting for the next daily cron execution.
+//
+// The sync now performs up to 30s of HTTP (the models.dev fetch) before the
+// baseline upsert. The fx OnStart context is cancelled as soon as start-up
+// completes, so it must not be handed to the goroutine: a cancelled context
+// would abort the fetch AND the baseline upsert, leaving the table unseeded
+// until the daily cron. Give the startup sync its own bounded context, cancelled
+// on shutdown so a long-running fetch does not outlive the app.
 func runStartupPricingSync(lc fx.Lifecycle, pricingSync *PricingSyncService, log *slog.Logger) {
+	var cancel context.CancelFunc
+
 	lc.Append(fx.Hook{
-		OnStart: func(ctx context.Context) error {
+		OnStart: func(context.Context) error {
+			ctx, c := context.WithTimeout(context.Background(), startupPricingSyncTimeout)
+			cancel = c
 			go func() {
+				defer c()
 				if err := pricingSync.Sync(ctx); err != nil {
 					log.Warn("startup pricing sync failed", slog.String("error", err.Error()))
 				}
 			}()
+			return nil
+		},
+		OnStop: func(context.Context) error {
+			if cancel != nil {
+				cancel()
+			}
 			return nil
 		},
 	})

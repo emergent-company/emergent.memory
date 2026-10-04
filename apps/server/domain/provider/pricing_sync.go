@@ -14,13 +14,21 @@ const (
 	// pricingSyncSchedule runs the sync daily at 02:00 UTC.
 	// Scheduler uses seconds-precision (6-field) cron: "second minute hour dom month dow".
 	pricingSyncSchedule = "0 0 2 * * *"
+
+	// startupPricingSyncTimeout bounds the best-effort startup sync. It is
+	// deliberately longer than modelsDevPricingFetchTimeout (30s) so a slow
+	// feed cannot consume the whole budget and abort the baseline upsert that
+	// follows the fetch.
+	startupPricingSyncTimeout = 2 * time.Minute
 )
 
-// staticPricing is the canonical retail pricing list, embedded at compile time.
-// It is the single source of truth for retail pricing: Sync upserts exactly
-// these rows into provider_pricing, and there is no remote registry to fetch
-// from. These reflect publicly documented Google AI / Vertex AI / OpenAI /
-// DeepSeek pricing as of Sept 2026. All prices are per 1M tokens in USD.
+// staticPricing is the embedded retail-pricing baseline. It is always upserted,
+// and it is the guaranteed fallback when the models.dev feed is unavailable, so
+// a feed outage never removes already-known rates. Sync overlays the models.dev
+// feed on top for every registry vendor (see pricing_modelsdev.go); rows here
+// cover the legacy vendors with hand-verified rates. These reflect publicly
+// documented Google AI / Vertex AI / OpenAI / DeepSeek pricing as of Sept 2026.
+// All prices are per 1M tokens in USD.
 //
 // Embedding prices are text-input rates only (embedding usage events carry no
 // output tokens).
@@ -74,15 +82,21 @@ var staticPricing = []ProviderPricing{
 // a database.
 type pricingUpserter interface {
 	UpsertPricing(ctx context.Context, entries []ProviderPricing) error
+	// PruneStalePricing deletes managed-vendor rows absent from keep and
+	// returns the number removed. Callers must only invoke it after a feed
+	// fetch+parse succeeded.
+	PruneStalePricing(ctx context.Context, managedProviders []ProviderType, keep []ProviderPricing) (int64, error)
 }
 
-// PricingSyncService seeds and refreshes provider_pricing from the embedded
-// staticPricing list, the canonical source of retail pricing. A daily cron job
-// drives the sync.
+// PricingSyncService seeds and refreshes provider_pricing. It merges the
+// embedded staticPricing baseline with rates fetched from the models.dev
+// catalog (the same feed used for token limits). A daily cron job drives the
+// sync.
 type PricingSyncService struct {
-	repo  pricingUpserter
-	sched *scheduler.Scheduler
-	log   *slog.Logger
+	repo    pricingUpserter
+	fetcher pricingRatesFetcher
+	sched   *scheduler.Scheduler
+	log     *slog.Logger
 }
 
 // NewPricingSyncService creates a PricingSyncService.
@@ -90,9 +104,10 @@ type PricingSyncService struct {
 // immediate sync at startup so that pricing data is available from first run.
 func NewPricingSyncService(repo *Repository, sched *scheduler.Scheduler, log *slog.Logger) *PricingSyncService {
 	s := &PricingSyncService{
-		repo:  repo,
-		sched: sched,
-		log:   log.With(logger.Scope("provider.pricing_sync")),
+		repo:    repo,
+		fetcher: newModelsDevPricingFetcher(),
+		sched:   sched,
+		log:     log.With(logger.Scope("provider.pricing_sync")),
 	}
 
 	// Register the daily cron job
@@ -105,32 +120,64 @@ func NewPricingSyncService(repo *Repository, sched *scheduler.Scheduler, log *sl
 	return s
 }
 
-// Sync upserts the embedded staticPricing list into provider_pricing. Pricing
-// has no remote source: staticPricing is the source of truth, so Sync performs
-// no network I/O. It runs once at startup and then daily via cron to refresh
-// the table (and to backfill rows after a schema change).
+// Sync upserts retail pricing into provider_pricing: the embedded staticPricing
+// baseline overlaid with rates fetched from models.dev. If the feed is
+// unavailable the baseline alone is written and the failure is logged, so a
+// transient outage cannot wipe known rates. When the feed fetch+parse succeeds,
+// managed-vendor rows the feed no longer publishes (removed or now $0) are
+// pruned so stale rates do not persist.
 func (s *PricingSyncService) Sync(ctx context.Context) error {
-	entries := staticPricingEntries()
+	remote, fetched := s.fetchRemoteRates(ctx)
+	entries := mergePricingEntries(remote)
 
 	if err := s.repo.UpsertPricing(ctx, entries); err != nil {
 		return fmt.Errorf("failed to upsert pricing: %w", err)
 	}
 
+	if fetched {
+		pruned, err := s.repo.PruneStalePricing(ctx, managedPricingProviders(), entries)
+		if err != nil {
+			return fmt.Errorf("failed to prune stale pricing: %w", err)
+		}
+		if pruned > 0 {
+			s.log.Info("provider pricing: pruned stale rows",
+				slog.Int64("rows", pruned),
+			)
+		}
+	}
+
 	s.log.Info("provider pricing synced",
-		slog.Int("models", len(entries)),
-		slog.String("source", "embedded static list"),
+		slog.Int("rows", len(entries)),
+		slog.Int("static_baseline", len(staticPricing)),
+		slog.Bool("feed_parsed", fetched),
+		slog.String("source", "models.dev overlay on embedded static list"),
 	)
 	return nil
 }
 
-// staticPricingEntries returns the embedded canonical pricing list with
-// LastSynced stamped to the current time.
-func staticPricingEntries() []ProviderPricing {
-	now := time.Now().UTC()
-	entries := make([]ProviderPricing, len(staticPricing))
-	copy(entries, staticPricing)
-	for i := range entries {
-		entries[i].LastSynced = now
+// fetchRemoteRates returns models.dev rates for mapped registry vendors and
+// whether the fetch+parse succeeded. It never returns an error: the static
+// baseline is sufficient to keep the pricing table populated. The success flag
+// gates stale-row pruning — an outage or parse failure must never wipe rows.
+func (s *PricingSyncService) fetchRemoteRates(ctx context.Context) ([]fetchedPricing, bool) {
+	if s.fetcher == nil {
+		return nil, false
 	}
-	return entries
+
+	rates, err := s.fetcher.FetchRates(ctx)
+	if err != nil {
+		s.log.Warn("failed to fetch models.dev pricing, using embedded static baseline",
+			logger.Error(err),
+		)
+		return nil, false
+	}
+
+	// An empty but successfully parsed feed is treated as untrustworthy for
+	// pruning: wiping every managed row on a schema-drift/empty response is far
+	// worse than leaving some stale rates until the next sync. Upsert still runs.
+	if len(rates) == 0 {
+		s.log.Warn("models.dev pricing feed parsed empty, skipping stale-row pruning")
+		return nil, false
+	}
+	return rates, true
 }
