@@ -37,7 +37,7 @@
 ## 6. API and UI
 
 - [ ] 6.1 Add unit tests for chunk edit/list-revisions/diff/rollback endpoints (success and not-found), then implement handlers and routes
-- [ ] 6.2 Add the gateway chunk editor with history and rollback; verify with render tests
+- [x] 6.2 Add the gateway chunk editor with history and rollback; verify with render tests
 
 ## 7. Verification
 

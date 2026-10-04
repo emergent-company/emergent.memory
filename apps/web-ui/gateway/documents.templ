@@ -164,6 +164,7 @@ templ DocumentDetailPage(doc *Document, chunks []Chunk, results extractionResult
 			@extractionCard(doc, flashMsg, flashErr)
 			@extractionResultsSection(results)
 			@chunksSection(chunks)
+			@chunkRollbackDialog()
 		}
 	}
 }
@@ -218,41 +219,6 @@ templ extractionCard(doc *Document, flashMsg string, flashErr error) {
 		</div>
 		@flashToasts(flashMsg, flashErr)
 	}
-}
-
-templ chunksSection(chunks []Chunk) {
-	@cardList("Chunks", cardListProps{
-		Margin:    "mt-6",
-		Empty:     len(chunks) == 0,
-		EmptyIcon: "lucide--braces", EmptyTitle: "No chunks yet", EmptyDesc: "This document has not been chunked yet.",
-	}) {
-		for _, c := range chunks {
-			@chunkRow(c)
-		}
-	}
-}
-
-templ chunkRow(c Chunk) {
-	<div class="px-4 py-3">
-		<div class="mb-1.5 flex items-center gap-2">
-			@ui.Badge(ui.BadgeProps{
-				Label:   "chunk " + strconv.Itoa(c.Index),
-				Variant: ui.BadgeNeutral,
-				Size:    ui.BadgeSizeXS,
-			})
-			if c.HasEmbedding {
-				@ui.Badge(ui.BadgeProps{
-					Label:   "embedded",
-					Variant: ui.BadgeSuccess,
-					Style:   ui.BadgeStyleSoft,
-					Size:    ui.BadgeSizeXS,
-					Icon:    "lucide--check",
-				})
-			}
-			<span class="text-muted-faint text-xs">{ strconv.Itoa(c.Size) } chars</span>
-		</div>
-		<p class="text-sm text-muted-bright" style="white-space: pre-wrap">{ c.Text }</p>
-	</div>
 }
 
 // --- extraction results ---
