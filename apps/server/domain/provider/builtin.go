@@ -35,6 +35,9 @@ func buildBuiltins() []*ProviderDefinition {
 	emb := func(e string) map[ModelType]string {
 		return map[ModelType]string{ModelTypeEmbedding: e}
 	}
+	rr := func(u string) map[ModelType]string {
+		return map[ModelType]string{ModelTypeRerank: u}
+	}
 	keyFields := func() []CredentialField {
 		return []CredentialField{
 			{Name: "api_key", Required: true, Secret: true},
@@ -59,13 +62,18 @@ func buildBuiltins() []*ProviderDefinition {
 		},
 		// --- Aliyun DashScope ---
 		{
-			Type:             ProviderAliyun,
-			DisplayName:      "Aliyun DashScope",
-			Description:      "Aliyun DashScope via its OpenAI-compatible endpoint",
-			Protocol:         ProtocolOpenAIChat,
-			Auth:             AuthBearer,
-			DefaultBaseURLs:  both("https://dashscope.aliyuncs.com/compatible-mode/v1", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
-			ModelTypes:       []ModelType{ModelTypeGenerative, ModelTypeEmbedding},
+			Type:        ProviderAliyun,
+			DisplayName: "Aliyun DashScope",
+			Description: "Aliyun DashScope via its OpenAI-compatible endpoint",
+			Protocol:    ProtocolOpenAIChat,
+			Auth:        AuthBearer,
+			RerankAPI:   RerankAPIDashScope,
+			DefaultBaseURLs: map[ModelType]string{
+				ModelTypeGenerative: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+				ModelTypeEmbedding:  "https://dashscope.aliyuncs.com/compatible-mode/v1",
+				ModelTypeRerank:     "https://dashscope.aliyuncs.com",
+			},
+			ModelTypes:       []ModelType{ModelTypeGenerative, ModelTypeEmbedding, ModelTypeRerank},
 			CatalogStrategy:  CatalogOpenAIModels,
 			Compat:           Compat{MaxTokensField: "max_tokens", SupportsToolChoice: true},
 			Order:            10,
@@ -89,13 +97,18 @@ func buildBuiltins() []*ProviderDefinition {
 		},
 		// --- Volcengine Ark (Doubao) ---
 		{
-			Type:            ProviderVolcengine,
-			DisplayName:     "Volcengine Ark (Doubao)",
-			Description:     "Volcengine Ark (Doubao) via its OpenAI-compatible endpoint",
-			Protocol:        ProtocolOpenAIChat,
-			Auth:            AuthBearer,
-			DefaultBaseURLs: both("https://ark.cn-beijing.volces.com/api/v3", "https://ark.cn-beijing.volces.com/api/v3/embeddings/multimodal"),
-			ModelTypes:      []ModelType{ModelTypeGenerative, ModelTypeEmbedding},
+			Type:        ProviderVolcengine,
+			DisplayName: "Volcengine Ark (Doubao)",
+			Description: "Volcengine Ark (Doubao) via its OpenAI-compatible endpoint",
+			Protocol:    ProtocolOpenAIChat,
+			Auth:        AuthBearer,
+			RerankAPI:   RerankAPIVolcengine,
+			DefaultBaseURLs: map[ModelType]string{
+				ModelTypeGenerative: "https://ark.cn-beijing.volces.com/api/v3",
+				ModelTypeEmbedding:  "https://ark.cn-beijing.volces.com/api/v3/embeddings/multimodal",
+				ModelTypeRerank:     "https://api-knowledgebase.mlp.cn-beijing.volces.com",
+			},
+			ModelTypes: []ModelType{ModelTypeGenerative, ModelTypeEmbedding, ModelTypeRerank},
 			ExtraFields: []ExtraField{
 				{Key: "region", Label: "Region", Type: "string", Required: false, Default: "cn-beijing", Placeholder: "cn-beijing"},
 			},
@@ -238,13 +251,17 @@ func buildBuiltins() []*ProviderDefinition {
 		},
 		// --- Tencent Cloud LKEAP ---
 		{
-			Type:            ProviderLKEAP,
-			DisplayName:     "Tencent Cloud LKEAP",
-			Description:     "Tencent Cloud LKEAP via its OpenAI-compatible endpoint",
-			Protocol:        ProtocolOpenAIChat,
-			Auth:            AuthBearer,
-			DefaultBaseURLs: gen("https://api.lkeap.cloud.tencent.com/v1"),
-			ModelTypes:      []ModelType{ModelTypeGenerative},
+			Type:        ProviderLKEAP,
+			DisplayName: "Tencent Cloud LKEAP",
+			Description: "Tencent Cloud LKEAP via its OpenAI-compatible endpoint",
+			Protocol:    ProtocolOpenAIChat,
+			Auth:        AuthBearer,
+			RerankAPI:   RerankAPITencentLKEAP,
+			DefaultBaseURLs: map[ModelType]string{
+				ModelTypeGenerative: "https://api.lkeap.cloud.tencent.com/v1",
+				ModelTypeRerank:     "https://lkeap.tencentcloudapi.com",
+			},
+			ModelTypes: []ModelType{ModelTypeGenerative, ModelTypeRerank},
 			ExtraFields: []ExtraField{
 				{Key: "secret_key", Label: "Secret key", Type: "password", Required: false, Secret: true, Header: "X-Secret-Key", Placeholder: "Tencent Cloud secret key"},
 			},
@@ -444,6 +461,23 @@ func buildBuiltins() []*ProviderDefinition {
 			CatalogStrategy:  CatalogOpenAIModels,
 			Compat:           Compat{MaxTokensField: "max_tokens", SupportsToolChoice: true, ThinkingStyle: "chat_template_kwargs"},
 			Order:            60,
+			CredentialFields: keyFields(),
+		},
+		// --- Cohere (rerank-only) ---
+		{
+			Type:        ProviderCohere,
+			DisplayName: "Cohere",
+			// Cohere is registered for rerank only; the OpenAI-compatible
+			// protocol is a compatibility placeholder and is never used for
+			// rerank requests.
+			Description:      "Cohere rerank via /v2/rerank",
+			Protocol:         ProtocolOpenAIChat,
+			Auth:             AuthBearer,
+			RerankAPI:        RerankAPICohere,
+			DefaultBaseURLs:  rr("https://api.cohere.com/v2"),
+			ModelTypes:       []ModelType{ModelTypeRerank},
+			CatalogStrategy:  CatalogStatic,
+			Order:            70,
 			CredentialFields: keyFields(),
 		},
 	}

@@ -7,8 +7,8 @@ import (
 func TestNewRegistry(t *testing.T) {
 	r := NewRegistry()
 
-	if len(r.providers) != 27 {
-		t.Fatalf("expected 27 providers, got %d", len(r.providers))
+	if len(r.providers) != 28 {
+		t.Fatalf("expected 28 providers, got %d", len(r.providers))
 	}
 
 	legacy := []ProviderType{ProviderGoogleAI, ProviderVertexAI, ProviderOpenAI, ProviderDeepSeek}
@@ -92,8 +92,8 @@ func TestRegistryList(t *testing.T) {
 	r := NewRegistry()
 
 	defs := r.List()
-	if len(defs) != 27 {
-		t.Fatalf("expected 27 definitions, got %d", len(defs))
+	if len(defs) != 28 {
+		t.Fatalf("expected 28 definitions, got %d", len(defs))
 	}
 
 	types := make(map[ProviderType]bool)
@@ -109,8 +109,8 @@ func TestRegistrySupportedTypes(t *testing.T) {
 	r := NewRegistry()
 
 	types := r.SupportedTypes()
-	if len(types) != 27 {
-		t.Fatalf("expected 27 types, got %d", len(types))
+	if len(types) != 28 {
+		t.Fatalf("expected 28 types, got %d", len(types))
 	}
 
 	typeSet := make(map[ProviderType]bool)

@@ -38,6 +38,7 @@ const (
 	ProviderGeneric     ProviderDialect = "generic"
 	ProviderGPUStack    ProviderDialect = "gpustack"
 	ProviderJina        ProviderDialect = "jina"
+	ProviderCohere      ProviderDialect = "cohere"
 )
 
 // ProviderType is a deprecated alias for ProviderDialect, retained so existing
@@ -54,6 +55,9 @@ type ModelType string
 const (
 	ModelTypeEmbedding  ModelType = "embedding"
 	ModelTypeGenerative ModelType = "generative"
+	// ModelTypeRerank marks rerank models, which are scored against a query but
+	// are not generative or embedding.
+	ModelTypeRerank ModelType = "rerank"
 )
 
 // OperationType classifies an LLM operation for usage tracking.

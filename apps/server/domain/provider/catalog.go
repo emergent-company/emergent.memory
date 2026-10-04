@@ -422,6 +422,14 @@ func staticModels(p ProviderType) []ProviderSupportedModel {
 		}
 	}
 
+	// Cohere is rerank-only; the provider-agnostic list above is Google
+	// generative/embedding models and must never be attributed to it.
+	if p == ProviderCohere {
+		known = []entry{
+			{"rerank-v3.5", "Rerank v3.5", ModelTypeRerank},
+		}
+	}
+
 	models := make([]ProviderSupportedModel, 0, len(known))
 	for _, e := range known {
 		models = append(models, ProviderSupportedModel{

@@ -34,6 +34,7 @@ type ProviderDefinitionResponse struct {
 	Description     string               `json:"description"`
 	Protocol        Protocol             `json:"protocol"`
 	Auth            AuthStyle            `json:"auth"`
+	RerankAPI       RerankAPI            `json:"rerankApi,omitempty"`
 	ModelTypes      []ModelType          `json:"modelTypes,omitempty"`
 	DefaultBaseURLs map[ModelType]string `json:"defaultBaseUrls,omitempty"`
 	ExtraFields     []ExtraField         `json:"extraFields,omitempty"`
@@ -52,6 +53,7 @@ func toProviderDefinitionResponse(def *ProviderDefinition) ProviderDefinitionRes
 		Description:     def.Description,
 		Protocol:        def.Protocol,
 		Auth:            def.Auth,
+		RerankAPI:       def.RerankAPI,
 		ModelTypes:      def.ModelTypes,
 		DefaultBaseURLs: def.DefaultBaseURLs,
 		ExtraFields:     def.ExtraFields,

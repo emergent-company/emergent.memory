@@ -17,6 +17,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/rerank"
 	"github.com/emergent-company/emergent.memory/pkg/tracing"
 )
 
@@ -48,6 +49,12 @@ type Service struct {
 	graphWeight  float32
 	textWeight   float32
 	relWeight    float32
+
+	// reranker is the optional post-fusion vendor reranker. Nil (the default)
+	// keeps the existing in-house fused ranking unchanged. rerankTopN bounds the
+	// number of fused candidates sent to the provider.
+	reranker   rerank.Reranker
+	rerankTopN int
 }
 
 // NewService creates a new search service
@@ -57,6 +64,7 @@ func NewService(
 	embeddingsSvc *embeddings.Service,
 	log *slog.Logger,
 	traceStore *TraceStore,
+	opts ...Option,
 ) *Service {
 	defaultLimit := 32
 	if v := os.Getenv("MEMORY_SEARCH_DEFAULT_LIMIT"); v != "" {
@@ -80,6 +88,9 @@ func NewService(
 	// remains a truthful "embedding is available" check.
 	if embeddingsSvc != nil {
 		svc.embeddings = embeddingsSvc
+	}
+	for _, opt := range opts {
+		opt(svc)
 	}
 	return svc
 }
@@ -170,6 +181,9 @@ func (s *Service) Search(ctx context.Context, projectID uuid.UUID, req *UnifiedS
 
 	// Fused cutoff: drop any fused item below the requested min score (nil/0 keeps baseline).
 	fusedResults = filterBelowMinScore(fusedResults, req.MinScore, func(i UnifiedSearchResultItem) float32 { return i.Score })
+
+	// Optional post-fusion vendor rerank (opt-in; nil reranker is a no-op).
+	fusedResults = s.applyRerank(ctx, req.Query, fusedResults)
 
 	// Count result types
 	graphCount, textCount, relationshipCount := s.countTypes(fusedResults)

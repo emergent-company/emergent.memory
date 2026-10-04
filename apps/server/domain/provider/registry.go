@@ -34,6 +34,9 @@ type ProviderDefinition struct {
 	Protocol Protocol `json:"protocol"`
 	// Auth is the default credential-injection style.
 	Auth AuthStyle `json:"auth"`
+	// RerankAPI is the vendor's rerank wire shape. Empty means the vendor has no
+	// rerank support.
+	RerankAPI RerankAPI `json:"rerankApi,omitempty"`
 	// AuthByProtocol overrides Auth for a specific protocol.
 	AuthByProtocol map[Protocol]AuthStyle `json:"-"`
 
@@ -134,6 +137,15 @@ func (r *Registry) SupportedTypes() []ProviderType {
 func (r *Registry) ProtocolFor(pt ProviderType) Protocol {
 	if d, ok := r.providers[pt]; ok {
 		return d.Protocol
+	}
+	return ""
+}
+
+// RerankAPIFor returns the effective rerank API for a vendor. Empty means the
+// vendor does not support reranking.
+func (r *Registry) RerankAPIFor(pt ProviderType) RerankAPI {
+	if d, ok := r.providers[pt]; ok {
+		return d.RerankAPI
 	}
 	return ""
 }

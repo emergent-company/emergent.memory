@@ -20,6 +20,17 @@ const (
 	ProtocolAnthropicMessages Protocol = "anthropic-messages"
 )
 
+// RerankAPI names the wire shape a vendor uses for reranking. Several vendors
+// may share one shape; the value selects the rerank adapter.
+type RerankAPI string
+
+const (
+	RerankAPICohere       RerankAPI = "cohere"
+	RerankAPIDashScope    RerankAPI = "dashscope"
+	RerankAPIVolcengine   RerankAPI = "volcengine"
+	RerankAPITencentLKEAP RerankAPI = "tencent-lkeap"
+)
+
 // AuthStyle names how a vendor expects credentials to be injected.
 type AuthStyle string
 
