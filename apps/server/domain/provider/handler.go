@@ -29,18 +29,19 @@ func NewHandler(creds *CredentialService, catalog *ModelCatalogService, repo *Re
 // style, model types, default endpoints, extra config fields, and localized
 // names, and never serializes the raw Icon bytes.
 type ProviderDefinitionResponse struct {
-	Type            ProviderType         `json:"type"`
-	DisplayName     string               `json:"displayName"`
-	Description     string               `json:"description"`
-	Protocol        Protocol             `json:"protocol"`
-	Auth            AuthStyle            `json:"auth"`
-	RerankAPI       RerankAPI            `json:"rerankApi,omitempty"`
-	ModelTypes      []ModelType          `json:"modelTypes,omitempty"`
-	DefaultBaseURLs map[ModelType]string `json:"defaultBaseUrls,omitempty"`
-	ExtraFields     []ExtraField         `json:"extraFields,omitempty"`
-	CredentialLabel *CredentialLabel     `json:"credentialLabel,omitempty"`
-	Order           int                  `json:"order"`
-	Names           map[string]string    `json:"names,omitempty"`
+	Type             ProviderType         `json:"type"`
+	DisplayName      string               `json:"displayName"`
+	Description      string               `json:"description"`
+	Protocol         Protocol             `json:"protocol"`
+	Auth             AuthStyle            `json:"auth"`
+	RerankAPI        RerankAPI            `json:"rerankApi,omitempty"`
+	TranscriptionAPI TranscriptionAPI     `json:"transcriptionApi,omitempty"`
+	ModelTypes       []ModelType          `json:"modelTypes,omitempty"`
+	DefaultBaseURLs  map[ModelType]string `json:"defaultBaseUrls,omitempty"`
+	ExtraFields      []ExtraField         `json:"extraFields,omitempty"`
+	CredentialLabel  *CredentialLabel     `json:"credentialLabel,omitempty"`
+	Order            int                  `json:"order"`
+	Names            map[string]string    `json:"names,omitempty"`
 	// IconDataURI is the vendor brand mark as a base64 data URI; the raw SVG
 	// bytes are never serialized.
 	IconDataURI string `json:"iconDataUri,omitempty"`
@@ -48,18 +49,19 @@ type ProviderDefinitionResponse struct {
 
 func toProviderDefinitionResponse(def *ProviderDefinition) ProviderDefinitionResponse {
 	resp := ProviderDefinitionResponse{
-		Type:            def.Type,
-		DisplayName:     def.DisplayName,
-		Description:     def.Description,
-		Protocol:        def.Protocol,
-		Auth:            def.Auth,
-		RerankAPI:       def.RerankAPI,
-		ModelTypes:      def.ModelTypes,
-		DefaultBaseURLs: def.DefaultBaseURLs,
-		ExtraFields:     def.ExtraFields,
-		CredentialLabel: def.CredentialLabel,
-		Order:           def.Order,
-		Names:           def.Names,
+		Type:             def.Type,
+		DisplayName:      def.DisplayName,
+		Description:      def.Description,
+		Protocol:         def.Protocol,
+		Auth:             def.Auth,
+		RerankAPI:        def.RerankAPI,
+		TranscriptionAPI: def.TranscriptionAPI,
+		ModelTypes:       def.ModelTypes,
+		DefaultBaseURLs:  def.DefaultBaseURLs,
+		ExtraFields:      def.ExtraFields,
+		CredentialLabel:  def.CredentialLabel,
+		Order:            def.Order,
+		Names:            def.Names,
 	}
 	if len(def.Icon) > 0 {
 		resp.IconDataURI = "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString(def.Icon)

@@ -36,8 +36,11 @@ type DocumentParsingWorker struct {
 	chunkingService *chunking.Service
 	xbergClient     *xberg.Client
 	whisperClient   *whisper.Client
-	storageService  *storage.Service
-	scaler          *syshealth.ConcurrencyScaler
+	// asr is the opt-in vendor speech-to-text adapter. When nil (the default)
+	// the audio branch uses the in-house Whisper client unchanged.
+	asr            *vendorASR
+	storageService *storage.Service
+	scaler         *syshealth.ConcurrencyScaler
 	// extractionJobsSvc is optional; when set, triggers object extraction
 	// automatically after content is written (honoring the auto_extract flag
 	// stored in the parsing job's metadata). This avoids the race condition
@@ -71,6 +74,7 @@ func NewDocumentParsingWorker(
 	chunkingService *chunking.Service,
 	xbergClient *xberg.Client,
 	whisperClient *whisper.Client,
+	vendorASRTranscriber *vendorASR,
 	storageService *storage.Service,
 	cfg *DocumentParsingWorkerConfig,
 	log *slog.Logger,
@@ -100,6 +104,7 @@ func NewDocumentParsingWorker(
 		chunkingService:   chunkingService,
 		xbergClient:       xbergClient,
 		whisperClient:     whisperClient,
+		asr:               vendorASRTranscriber,
 		storageService:    storageService,
 		interval:          interval,
 		batchSize:         batchSize,
@@ -298,8 +303,15 @@ func (w *DocumentParsingWorker) processJob(ctx context.Context, job *DocumentPar
 				}
 			}
 		}
-		parsedContent, err = w.extractWithWhisper(ctx, storageKey, filename, mimeType, initialPrompt, fileSizeBytes)
-		extractionMethod = "whisper"
+		if w.asr != nil {
+			// Vendor speech-to-text (opt-in via ASR_PROVIDER); the in-house
+			// Whisper path below remains the default.
+			parsedContent, err = w.extractWithVendorASR(ctx, storageKey, filename, mimeType, initialPrompt)
+			extractionMethod = "asr:" + w.asr.provider
+		} else {
+			parsedContent, err = w.extractWithWhisper(ctx, storageKey, filename, mimeType, initialPrompt, fileSizeBytes)
+			extractionMethod = "whisper"
+		}
 	} else if useXberg {
 		// Binary document - use Xberg for extraction
 		parsedContent, err = w.extractWithXberg(ctx, storageKey, filename, mimeType)

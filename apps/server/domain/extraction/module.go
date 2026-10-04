@@ -428,6 +428,7 @@ func provideDocumentParsingWorker(
 	chunkingService *chunking.Service,
 	xbergClient *xberg.Client,
 	whisperClient *whisper.Client,
+	registry *provider.Registry,
 	storageService *storage.Service,
 	cfg *ExtractionConfig,
 	log *slog.Logger,
@@ -446,7 +447,10 @@ func provideDocumentParsingWorker(
 		cfg.DocumentParsing.MinConcurrency,
 		cfg.DocumentParsing.MaxConcurrency,
 	)
-	return NewDocumentParsingWorker(jobs, documentsRepo, projectsRepo, chunkingService, xbergClient, whisperClient, storageService, workerConfig, log, scaler, extractionJobsSvc)
+	// Opt-in vendor speech-to-text (ASR_PROVIDER). Nil (the default) keeps the
+	// in-house Whisper client as the audio transcription path.
+	vendorASRTranscriber := vendorTranscriberFromEnv(registry, log)
+	return NewDocumentParsingWorker(jobs, documentsRepo, projectsRepo, chunkingService, xbergClient, whisperClient, vendorASRTranscriber, storageService, workerConfig, log, scaler, extractionJobsSvc)
 }
 
 // RegisterDocumentParsingWorkerLifecycle registers the document parsing worker with fx lifecycle

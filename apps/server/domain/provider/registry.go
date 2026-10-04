@@ -37,6 +37,9 @@ type ProviderDefinition struct {
 	// RerankAPI is the vendor's rerank wire shape. Empty means the vendor has no
 	// rerank support.
 	RerankAPI RerankAPI `json:"rerankApi,omitempty"`
+	// TranscriptionAPI is the vendor's speech-to-text wire shape. Empty means
+	// the vendor has no transcription support.
+	TranscriptionAPI TranscriptionAPI `json:"transcriptionApi,omitempty"`
 	// AuthByProtocol overrides Auth for a specific protocol.
 	AuthByProtocol map[Protocol]AuthStyle `json:"-"`
 
@@ -146,6 +149,15 @@ func (r *Registry) ProtocolFor(pt ProviderType) Protocol {
 func (r *Registry) RerankAPIFor(pt ProviderType) RerankAPI {
 	if d, ok := r.providers[pt]; ok {
 		return d.RerankAPI
+	}
+	return ""
+}
+
+// TranscriptionAPIFor returns the effective speech-to-text API for a vendor.
+// Empty means the vendor does not support transcription.
+func (r *Registry) TranscriptionAPIFor(pt ProviderType) TranscriptionAPI {
+	if d, ok := r.providers[pt]; ok {
+		return d.TranscriptionAPI
 	}
 	return ""
 }

@@ -58,6 +58,9 @@ const (
 	// ModelTypeRerank marks rerank models, which are scored against a query but
 	// are not generative or embedding.
 	ModelTypeRerank ModelType = "rerank"
+	// ModelTypeTranscription marks speech-to-text (ASR) models, which turn
+	// audio into text and are not generative or embedding.
+	ModelTypeTranscription ModelType = "transcription"
 )
 
 // OperationType classifies an LLM operation for usage tracking.

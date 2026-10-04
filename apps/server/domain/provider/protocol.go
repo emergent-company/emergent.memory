@@ -31,6 +31,19 @@ const (
 	RerankAPITencentLKEAP RerankAPI = "tencent-lkeap"
 )
 
+// TranscriptionAPI names the wire shape a vendor uses for speech-to-text
+// (ASR/transcription). Several vendors may share one shape; the value selects
+// the transcription adapter.
+type TranscriptionAPI string
+
+const (
+	// TranscriptionAPIOpenAITranscriptions is the OpenAI-compatible multipart
+	// POST {base}/audio/transcriptions protocol (fields: file, model, optional
+	// language / response_format / prompt). Any OpenAI-compatible relay that
+	// speaks this shape (e.g. a Generic provider pointed at Groq) selects it.
+	TranscriptionAPIOpenAITranscriptions TranscriptionAPI = "openai-transcriptions"
+)
+
 // AuthStyle names how a vendor expects credentials to be injected.
 type AuthStyle string
 
