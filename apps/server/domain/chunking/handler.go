@@ -1,6 +1,8 @@
 package chunking
 
 import (
+	"errors"
+	"io"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -48,7 +50,15 @@ func (h *Handler) RecreateChunks(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("document id required")
 	}
 
-	result, err := h.svc.RecreateChunks(c.Request().Context(), user.ProjectID, documentID)
+	// Optional body: {"force": true} discards manually edited chunks.
+	var req RecreateChunksRequest
+	if c.Request().ContentLength != 0 {
+		if err := c.Bind(&req); err != nil && !errors.Is(err, io.EOF) {
+			return apperror.NewBadRequest("invalid request body")
+		}
+	}
+
+	result, err := h.svc.RecreateChunks(c.Request().Context(), user.ProjectID, documentID, req.Force)
 	if err != nil {
 		return err // apperror is already wrapped by service
 	}

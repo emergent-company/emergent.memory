@@ -5,14 +5,18 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/emergent-company/emergent.memory/domain/chunks"
 	"github.com/emergent-company/emergent.memory/domain/extraction"
 	"github.com/emergent-company/emergent.memory/internal/testutil"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings/vertex"
 )
 
 // ChunkEmbeddingWorkerTestSuite tests the chunk embedding worker functionality
@@ -386,4 +390,362 @@ func (s *ChunkEmbeddingWorkerTestSuite) TestWorker_ProcessesHighPriorityFirst() 
 	s.Nil(highJob, "High priority job should be completed")
 	s.Nil(lowJob, "Low priority job should be completed")
 	s.Equal(int64(2), mockEmbeds.CallCount())
+}
+
+// =============================================================================
+// Test: Stale-revision TOCTOU & skipped-embedding vector clearing
+// =============================================================================
+
+// blockingEmbeddingService is a controllable embedding mock for the stale-revision
+// test. It blocks on the first EmbedQueryWithUsage call until released, letting the
+// test mutate the chunk mid-flight, and produces a deterministic embedding whose
+// first element is the input length — so the final stored vector proves which text
+// was embedded.
+type blockingEmbeddingService struct {
+	entered   chan struct{}
+	release   chan struct{}
+	callCount int64
+	dimension int
+}
+
+func newBlockingEmbeddingService() *blockingEmbeddingService {
+	return &blockingEmbeddingService{
+		entered:   make(chan struct{}),
+		release:   make(chan struct{}),
+		dimension: 768,
+	}
+}
+
+func (m *blockingEmbeddingService) IsEnabled() bool { return true }
+
+func (m *blockingEmbeddingService) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
+	res, err := m.EmbedQueryWithUsage(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	return res.Embedding, nil
+}
+
+func (m *blockingEmbeddingService) EmbedQueryWithUsage(ctx context.Context, query string) (*vertex.EmbedResult, error) {
+	n := atomic.AddInt64(&m.callCount, 1)
+	if n == 1 {
+		close(m.entered)
+		select {
+		case <-m.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	embedding := make([]float32, m.dimension)
+	embedding[0] = float32(len(query))
+	return &vertex.EmbedResult{
+		Embedding: embedding,
+		Usage:     &vertex.Usage{PromptTokens: len(query) / 4, TotalTokens: len(query) / 4},
+	}, nil
+}
+
+func (s *ChunkEmbeddingWorkerTestSuite) TestWorker_DiscardsStaleEmbeddingOnRevisionChange() {
+	oldText := "This is the original chunk text before any edit."
+	newText := "This is the rewritten chunk text after a mid-flight edit landed."
+
+	chunkID := s.createTestChunk(0, oldText)
+
+	_, err := s.jobsService.Enqueue(s.ctx, extraction.ChunkEnqueueOptions{ChunkID: chunkID})
+	s.NoError(err)
+
+	mock := newBlockingEmbeddingService()
+	worker := extraction.NewChunkEmbeddingWorker(s.jobsService, mock, s.testDB.DB, s.cfg, s.log, nil, nil, nil, false)
+	err = worker.Start(s.ctx)
+	s.NoError(err)
+
+	// Wait until the first embedding call is in flight (blocked).
+	select {
+	case <-mock.entered:
+	case <-time.After(5 * time.Second):
+		s.FailNow("worker never entered the first embedding call")
+	}
+
+	// Simulate a mid-flight edit: rewrite the text and bump the revision.
+	_, err = s.testDB.DB.NewRaw(
+		`UPDATE kb.chunks SET text = ?, current_revision = current_revision + 1, updated_at = now() WHERE id = ?`,
+		newText, chunkID).Exec(s.ctx)
+	s.NoError(err)
+
+	// Release the first call; its stale vector must be discarded and re-embedded.
+	close(mock.release)
+
+	// Wait for the job to finish (no active job remains).
+	s.Eventually(func() bool {
+		active, _ := s.jobsService.GetActiveJobForChunk(s.ctx, chunkID)
+		return active == nil
+	}, 10*time.Second, 50*time.Millisecond, "job should be re-embedded and completed")
+
+	stopCtx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
+	defer cancel()
+	s.NoError(worker.Stop(stopCtx))
+
+	// At least two embedding calls: the stale one and the fresh one.
+	s.GreaterOrEqual(atomic.LoadInt64(&mock.callCount), int64(2))
+
+	// The final stored vector corresponds to the NEW text, not the stale one.
+	embedding := s.getChunkEmbedding(chunkID)
+	s.Require().NotEmpty(embedding)
+	s.Equal(float32(len(newText)), embedding[0])
+}
+
+func (s *ChunkEmbeddingWorkerTestSuite) TestWorker_SkippedEmbeddingClearsStaleVector() {
+	// Oversized atomic segment beyond the embedding context: metadata oversized
+	// and text longer than maxEmbedChars (32000).
+	oversizedText := strings.Repeat("a", 32001)
+	chunkID := s.createTestChunk(0, oversizedText)
+
+	_, err := s.testDB.DB.NewRaw(
+		`UPDATE kb.chunks SET metadata = jsonb_build_object('oversized', true) WHERE id = ?`,
+		chunkID).Exec(s.ctx)
+	s.NoError(err)
+
+	// Pre-set an embedding directly so we can prove the skip clears it.
+	_, err = s.testDB.DB.NewRaw(
+		`UPDATE kb.chunks SET embedding = ('[' || array_to_string(array_fill(0.5::real, ARRAY[768]), ',') || ']')::vector WHERE id = ?`,
+		chunkID).Exec(s.ctx)
+	s.NoError(err)
+	s.Require().NotEmpty(s.getChunkEmbedding(chunkID), "pre-set embedding should exist before the worker runs")
+
+	job, err := s.jobsService.Enqueue(s.ctx, extraction.ChunkEnqueueOptions{ChunkID: chunkID})
+	s.NoError(err)
+
+	mockEmbeds := newMockEmbeddingService(true)
+	worker := extraction.NewChunkEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log, nil, nil, nil, false)
+	err = worker.Start(s.ctx)
+	s.NoError(err)
+
+	s.Eventually(func() bool {
+		active, _ := s.jobsService.GetActiveJobForChunk(s.ctx, chunkID)
+		return active == nil
+	}, 5*time.Second, 100*time.Millisecond, "job should be completed")
+
+	stopCtx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
+	defer cancel()
+	s.NoError(worker.Stop(stopCtx))
+
+	completedJob, err := s.jobsService.GetJob(s.ctx, job.ID)
+	s.NoError(err)
+	s.Require().NotNil(completedJob)
+	s.Equal(extraction.JobStatusCompleted, completedJob.Status)
+
+	// Embedding cleared — no stale vector remains.
+	s.Empty(s.getChunkEmbedding(chunkID))
+
+	// The embedding service must never have been called for a skipped chunk.
+	s.Equal(int64(0), mockEmbeds.CallCount())
+}
+
+// =============================================================================
+// Test: rollback TOCTOU, requeue bound, oversized-skip rollback, Requeue unit
+// =============================================================================
+
+func (s *ChunkEmbeddingWorkerTestSuite) TestWorker_DiscardsStaleEmbeddingOnRollback() {
+	revision1Text := "Original revision one text for rollback."
+	newText := "This is the edited second-revision text that replaced the original."
+
+	chunkID := s.createTestChunk(0, revision1Text)
+
+	projectUUID, err := uuid.Parse(s.projectID)
+	s.NoError(err)
+	chunkUUID, err := uuid.Parse(chunkID)
+	s.NoError(err)
+
+	repo := chunks.NewRepository(s.testDB.DB, s.log)
+	svc := chunks.NewService(repo, s.log)
+
+	// Create a second revision (revision 2) via the chunks service.
+	_, err = svc.EditChunk(s.ctx, projectUUID, chunkUUID, newText)
+	s.NoError(err)
+
+	// Enqueue a job (idempotent — returns the job the edit already queued).
+	_, err = s.jobsService.Enqueue(s.ctx, extraction.ChunkEnqueueOptions{ChunkID: chunkID})
+	s.NoError(err)
+
+	mock := newBlockingEmbeddingService()
+	worker := extraction.NewChunkEmbeddingWorker(s.jobsService, mock, s.testDB.DB, s.cfg, s.log, nil, nil, nil, false)
+	err = worker.Start(s.ctx)
+	s.NoError(err)
+
+	// Wait until the first embedding call is in flight (blocked).
+	select {
+	case <-mock.entered:
+	case <-time.After(5 * time.Second):
+		s.FailNow("worker never entered the first embedding call")
+	}
+
+	// Perform a real rollback to revision 1 while the embedding is in flight.
+	_, err = svc.RollbackChunk(s.ctx, projectUUID, chunkUUID, 1)
+	s.NoError(err)
+
+	// Release the first call; its stale vector must be discarded and re-embedded.
+	close(mock.release)
+
+	// Wait for the job to finish (no active job remains).
+	s.Eventually(func() bool {
+		active, _ := s.jobsService.GetActiveJobForChunk(s.ctx, chunkID)
+		return active == nil
+	}, 10*time.Second, 50*time.Millisecond, "job should be re-embedded and completed")
+
+	stopCtx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
+	defer cancel()
+	s.NoError(worker.Stop(stopCtx))
+
+	// At least two embedding calls: the stale one and the fresh one.
+	s.GreaterOrEqual(atomic.LoadInt64(&mock.callCount), int64(2))
+
+	// The final stored vector corresponds to the rolled-back (revision 1) text.
+	embedding := s.getChunkEmbedding(chunkID)
+	s.Require().NotEmpty(embedding)
+	s.Equal(float32(len(revision1Text)), embedding[0])
+}
+
+func (s *ChunkEmbeddingWorkerTestSuite) TestRequeueDoesNotSpinForever() {
+	oldText := "Original text before the in-flight edit."
+	newText := "Rewritten text that replaces the original during flight."
+
+	chunkID := s.createTestChunk(0, oldText)
+
+	_, err := s.jobsService.Enqueue(s.ctx, extraction.ChunkEnqueueOptions{ChunkID: chunkID})
+	s.NoError(err)
+
+	mock := newBlockingEmbeddingService()
+	worker := extraction.NewChunkEmbeddingWorker(s.jobsService, mock, s.testDB.DB, s.cfg, s.log, nil, nil, nil, false)
+	err = worker.Start(s.ctx)
+	s.NoError(err)
+
+	select {
+	case <-mock.entered:
+	case <-time.After(5 * time.Second):
+		s.FailNow("worker never entered the first embedding call")
+	}
+
+	// Simulate a mid-flight edit: rewrite the text and bump the revision.
+	_, err = s.testDB.DB.NewRaw(
+		`UPDATE kb.chunks SET text = ?, current_revision = current_revision + 1, updated_at = now() WHERE id = ?`,
+		newText, chunkID).Exec(s.ctx)
+	s.NoError(err)
+
+	// Release the stale call; the worker must re-embed once and reach a terminal
+	// state without spinning on requeue.
+	close(mock.release)
+
+	s.Eventually(func() bool {
+		active, _ := s.jobsService.GetActiveJobForChunk(s.ctx, chunkID)
+		return active == nil
+	}, 10*time.Second, 50*time.Millisecond, "job should reach a terminal state")
+
+	stopCtx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
+	defer cancel()
+	s.NoError(worker.Stop(stopCtx))
+
+	// Total embedding calls must stay small (stale + one fresh), proving the
+	// stale-revision path does not requeue indefinitely.
+	s.LessOrEqual(atomic.LoadInt64(&mock.callCount), int64(3))
+
+	// The final vector matches the current text, not the stale one.
+	embedding := s.getChunkEmbedding(chunkID)
+	s.Require().NotEmpty(embedding)
+	s.Equal(float32(len(newText)), embedding[0])
+}
+
+func (s *ChunkEmbeddingWorkerTestSuite) TestSkipClearsVectorSurvivesRollback() {
+	oversizedText1 := strings.Repeat("a", 32001)
+	oversizedText2 := strings.Repeat("b", 32001)
+
+	chunkID := s.createTestChunk(0, oversizedText1)
+
+	// Mark oversized.
+	_, err := s.testDB.DB.NewRaw(
+		`UPDATE kb.chunks SET metadata = jsonb_build_object('oversized', true) WHERE id = ?`,
+		chunkID).Exec(s.ctx)
+	s.NoError(err)
+
+	// Pre-set an embedding directly so we can prove the skip clears it.
+	_, err = s.testDB.DB.NewRaw(
+		`UPDATE kb.chunks SET embedding = ('[' || array_to_string(array_fill(0.5::real, ARRAY[768]), ',') || ']')::vector WHERE id = ?`,
+		chunkID).Exec(s.ctx)
+	s.NoError(err)
+	s.Require().NotEmpty(s.getChunkEmbedding(chunkID), "pre-set embedding should exist before the worker runs")
+
+	projectUUID, err := uuid.Parse(s.projectID)
+	s.NoError(err)
+	chunkUUID, err := uuid.Parse(chunkID)
+	s.NoError(err)
+
+	repo := chunks.NewRepository(s.testDB.DB, s.log)
+	svc := chunks.NewService(repo, s.log)
+
+	// Edit to a still-oversized text; the revision bump must not keep the stale
+	// vector alive.
+	_, err = svc.EditChunk(s.ctx, projectUUID, chunkUUID, oversizedText2)
+	s.NoError(err)
+
+	job, err := s.jobsService.Enqueue(s.ctx, extraction.ChunkEnqueueOptions{ChunkID: chunkID})
+	s.NoError(err)
+
+	mockEmbeds := newMockEmbeddingService(true)
+	worker := extraction.NewChunkEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log, nil, nil, nil, false)
+	err = worker.Start(s.ctx)
+	s.NoError(err)
+
+	s.Eventually(func() bool {
+		active, _ := s.jobsService.GetActiveJobForChunk(s.ctx, chunkID)
+		return active == nil
+	}, 5*time.Second, 100*time.Millisecond, "job should be completed")
+
+	stopCtx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
+	defer cancel()
+	s.NoError(worker.Stop(stopCtx))
+
+	completedJob, err := s.jobsService.GetJob(s.ctx, job.ID)
+	s.NoError(err)
+	s.Require().NotNil(completedJob)
+	s.Equal(extraction.JobStatusCompleted, completedJob.Status)
+
+	// Stale vector cleared — nothing searchable remains.
+	s.Empty(s.getChunkEmbedding(chunkID))
+
+	// The embedding service must never have been called for a skipped chunk.
+	s.Equal(int64(0), mockEmbeds.CallCount())
+}
+
+func (s *ChunkEmbeddingWorkerTestSuite) TestRequeue_ResetsToPendingAndBoundedRetry() {
+	chunkID := s.createTestChunk(0, "chunk for requeue unit test")
+
+	job, err := s.jobsService.Enqueue(s.ctx, extraction.ChunkEnqueueOptions{ChunkID: chunkID})
+	s.NoError(err)
+
+	// Dequeue: claim the job (processing).
+	claimed, err := s.jobsService.Dequeue(s.ctx, 1)
+	s.NoError(err)
+	s.Require().Len(claimed, 1)
+	s.Equal(job.ID, claimed[0].ID)
+	s.Equal(extraction.JobStatusProcessing, claimed[0].Status)
+
+	// Requeue resets it back to pending with a fresh schedule.
+	err = s.jobsService.Requeue(s.ctx, job.ID)
+	s.NoError(err)
+
+	updated, err := s.jobsService.GetJob(s.ctx, job.ID)
+	s.NoError(err)
+	s.Require().NotNil(updated)
+	s.Equal(extraction.JobStatusPending, updated.Status)
+	s.False(updated.ScheduledAt.IsZero(), "scheduled_at must be set after requeue")
+
+	// The requeued job can be dequeued exactly once more (bounded retry).
+	reclaimed, err := s.jobsService.Dequeue(s.ctx, 1)
+	s.NoError(err)
+	s.Require().Len(reclaimed, 1)
+	s.Equal(job.ID, reclaimed[0].ID)
+	s.Equal(extraction.JobStatusProcessing, reclaimed[0].Status)
+
+	// And no more: a second dequeue finds nothing pending.
+	empty, err := s.jobsService.Dequeue(s.ctx, 1)
+	s.NoError(err)
+	s.Empty(empty)
 }

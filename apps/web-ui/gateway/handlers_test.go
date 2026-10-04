@@ -1023,6 +1023,34 @@ func (f *fakeMemory) ListChunks(ctx context.Context, documentID string) ([]Chunk
 	return f.chunks, nil
 }
 
+func (f *fakeMemory) EditChunk(ctx context.Context, chunkID, text string) (ChunkEditResult, error) {
+	if f.docErr != nil {
+		return ChunkEditResult{}, f.docErr
+	}
+	return ChunkEditResult{ChunkID: chunkID, Revision: 2}, nil
+}
+
+func (f *fakeMemory) ListChunkRevisions(ctx context.Context, chunkID string) ([]ChunkRevision, error) {
+	if f.docErr != nil {
+		return nil, f.docErr
+	}
+	return nil, nil
+}
+
+func (f *fakeMemory) DiffChunkRevisions(ctx context.Context, chunkID string, from, to int) (ChunkDiff, error) {
+	if f.docErr != nil {
+		return ChunkDiff{}, f.docErr
+	}
+	return ChunkDiff{From: from, To: to}, nil
+}
+
+func (f *fakeMemory) RollbackChunk(ctx context.Context, chunkID string, seq int) (ChunkEditResult, error) {
+	if f.docErr != nil {
+		return ChunkEditResult{}, f.docErr
+	}
+	return ChunkEditResult{ChunkID: chunkID, Revision: seq + 1}, nil
+}
+
 func (f *fakeMemory) UploadDocument(ctx context.Context, filename string, r io.Reader) (UploadResult, error) {
 	if f.docErr != nil {
 		return UploadResult{}, f.docErr

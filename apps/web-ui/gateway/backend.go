@@ -90,6 +90,10 @@ type MemoryBackend interface {
 	GetDocument(ctx context.Context, id string) (*Document, error)
 	DeleteDocument(ctx context.Context, id string) error
 	ListChunks(ctx context.Context, documentID string) ([]Chunk, error)
+	EditChunk(ctx context.Context, chunkID, text string) (ChunkEditResult, error)
+	ListChunkRevisions(ctx context.Context, chunkID string) ([]ChunkRevision, error)
+	DiffChunkRevisions(ctx context.Context, chunkID string, from, to int) (ChunkDiff, error)
+	RollbackChunk(ctx context.Context, chunkID string, seq int) (ChunkEditResult, error)
 	UploadDocument(ctx context.Context, filename string, r io.Reader) (UploadResult, error)
 	CreateExtractionJob(ctx context.Context, documentID string) (string, error)
 	GetExtractionSummary(ctx context.Context, documentID string) (*ExtractionSummary, error)

@@ -19,6 +19,8 @@ func RegisterRoutes(e *echo.Echo, handler *Handler, authMiddleware *auth.Middlew
 	chunksRead := chunks.Group("")
 	chunksRead.Use(authMiddleware.RequireAPITokenScopes("chunks:read"))
 	chunksRead.GET("", handler.List)
+	chunksRead.GET("/:id/revisions", handler.ListRevisions)
+	chunksRead.GET("/:id/revisions/diff", handler.DiffRevisions)
 
 	// Write operations (requires chunks:write scope)
 	chunksWrite := chunks.Group("")
@@ -27,4 +29,6 @@ func RegisterRoutes(e *echo.Echo, handler *Handler, authMiddleware *auth.Middlew
 	chunksWrite.DELETE("", handler.BulkDelete)
 	chunksWrite.DELETE("/by-document/:documentId", handler.DeleteByDocument)
 	chunksWrite.DELETE("/by-documents", handler.BulkDeleteByDocuments)
+	chunksWrite.PATCH("/:id", handler.EditChunk)
+	chunksWrite.POST("/:id/rollback", handler.RollbackChunk)
 }

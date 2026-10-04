@@ -289,6 +289,14 @@ routes:
       path: /api/chat/stream
       level: project-member
       note: RequireAuth, RequireProjectID, RequireAPITokenScopes(chat:use), RequireProjectTokenScope, RequireProjectMember
+    - method: GET
+      path: /api/chunking/config
+      level: project-member
+      note: RequireAuth, RequireProjectID, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:read)
+    - method: PUT
+      path: /api/chunking/config
+      level: project-member
+      note: RequireAuth, RequireProjectID, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
     - method: DELETE
       path: /api/chunks
       level: project-member
@@ -299,6 +307,22 @@ routes:
       note: RequireAuth, RequireProjectID, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(chunks:read)
     - method: DELETE
       path: /api/chunks/:id
+      level: project-member
+      note: RequireAuth, RequireProjectID, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(chunks:write)
+    - method: PATCH
+      path: /api/chunks/:id
+      level: project-member
+      note: RequireAuth, RequireProjectID, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(chunks:write)
+    - method: GET
+      path: /api/chunks/:id/revisions
+      level: project-member
+      note: RequireAuth, RequireProjectID, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(chunks:read)
+    - method: GET
+      path: /api/chunks/:id/revisions/diff
+      level: project-member
+      note: RequireAuth, RequireProjectID, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(chunks:read)
+    - method: POST
+      path: /api/chunks/:id/rollback
       level: project-member
       note: RequireAuth, RequireProjectID, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(chunks:write)
     - method: DELETE

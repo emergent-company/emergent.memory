@@ -261,6 +261,26 @@ func (s *ChunkEmbeddingJobsService) MarkCompleted(ctx context.Context, id string
 	return nil
 }
 
+// Requeue resets a job back to pending immediately so it runs again. Used when
+// a chunk's text changed while its embedding was in flight: the produced vector
+// is stale and must be regenerated against the fresh revision. last_error is set
+// to a sentinel so the retry is attributable; if the chunk was deleted its job
+// was cascade-deleted and this UPDATE matches nothing (a no-op).
+func (s *ChunkEmbeddingJobsService) Requeue(ctx context.Context, id string) error {
+	_, err := s.db.NewRaw(`UPDATE kb.chunk_embedding_jobs
+		SET status = 'pending',
+			started_at = NULL,
+			scheduled_at = now(),
+			last_error = 'stale_chunk_revision',
+			updated_at = now()
+		WHERE id = ?`, id).Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("requeue chunk embedding job: %w", err)
+	}
+	s.log.Warn("chunk embedding job requeued (stale chunk revision)", slog.String("job_id", id))
+	return nil
+}
+
 // MarkFailed marks a job as failed and schedules retry with exponential backoff.
 // Unlike email jobs, chunk embedding jobs retry indefinitely (no max attempts).
 func (s *ChunkEmbeddingJobsService) MarkFailed(ctx context.Context, id string, jobErr error) error {

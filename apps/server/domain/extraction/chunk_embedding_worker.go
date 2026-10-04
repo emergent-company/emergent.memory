@@ -280,11 +280,14 @@ func (w *ChunkEmbeddingWorker) processTrackedJob(ctx context.Context, job *Chunk
 
 // chunkRow represents the minimal data needed from a chunk for embedding
 type chunkRow struct {
-	ID         string `bun:"id,type:uuid"`
-	DocumentID string `bun:"document_id,type:uuid"`
-	ChunkIndex int    `bun:"chunk_index"`
-	Text       string `bun:"text"`
-	ProjectID  string `bun:"project_id,type:uuid"`
+	ID              string `bun:"id,type:uuid"`
+	DocumentID      string `bun:"document_id,type:uuid"`
+	ChunkIndex      int    `bun:"chunk_index"`
+	Text            string `bun:"text"`
+	CurrentRevision int    `bun:"current_revision"`
+	ProjectID       string `bun:"project_id,type:uuid"`
+	IsParent        bool   `bun:"is_parent"`
+	Oversized       bool   `bun:"oversized"`
 }
 
 // processJob processes a single chunk embedding job
@@ -299,7 +302,9 @@ func (w *ChunkEmbeddingWorker) processJob(ctx context.Context, job *ChunkEmbeddi
 	// Fetch the chunk along with the project ID from its parent document.
 	chunk := &chunkRow{}
 	err := w.db.NewRaw(`
-		SELECT c.id, c.document_id, c.chunk_index, c.text, d.project_id
+		SELECT c.id, c.document_id, c.chunk_index, c.text, c.current_revision, d.project_id,
+		       COALESCE((c.metadata->>'isParent')::boolean, false) AS is_parent,
+		       COALESCE((c.metadata->>'oversized')::boolean, false) AS oversized
 		FROM kb.chunks c
 		JOIN kb.documents d ON d.id = c.document_id
 		WHERE c.id = ?`, job.ChunkID).Scan(ctx, chunk)
@@ -337,6 +342,41 @@ func (w *ChunkEmbeddingWorker) processJob(ctx context.Context, job *ChunkEmbeddi
 	if chunk.ProjectID != "" {
 		ctx = auth.ContextWithProjectID(ctx, chunk.ProjectID)
 		span.SetAttributes(attribute.String("memory.project.id", chunk.ProjectID))
+	}
+
+	// Structural parents and oversized atomic segments beyond the embedding
+	// context are not embedded; mark the job complete so it is not retried.
+	if reason := skipEmbeddingReason(chunk.IsParent, chunk.Oversized, textLength); reason != "" {
+		span.SetAttributes(attribute.String("memory.embedding.skipped", reason))
+		w.log.Info("chunk embedding skipped",
+			slog.String("job_id", job.ID),
+			slog.String("chunk_id", chunk.ID),
+			slog.String("reason", reason),
+		)
+		// A skipped chunk must not stay searchable: clear any previous vector so
+		// stale content is never served. If the clear fails, mark the job failed
+		// (retry) rather than silently keeping the stale vector.
+		if _, clearErr := w.db.NewRaw(`UPDATE kb.chunks
+			SET embedding = NULL,
+				updated_at = now()
+			WHERE id = ?`, chunk.ID).Exec(ctx); clearErr != nil {
+			span.RecordError(clearErr)
+			span.SetStatus(codes.Error, clearErr.Error())
+			if markErr := w.jobs.MarkFailed(ctx, job.ID, clearErr); markErr != nil {
+				w.log.Error("failed to mark job failed after skip clear failure",
+					slog.String("job_id", job.ID),
+					slog.String("error", markErr.Error()))
+			}
+			w.incrementFailure()
+			return fmt.Errorf("clear skipped chunk embedding: %w", clearErr)
+		}
+		if markErr := w.jobs.MarkCompleted(ctx, job.ID); markErr != nil {
+			w.log.Error("failed to mark skipped job completed",
+				slog.String("job_id", job.ID),
+				slog.String("error", markErr.Error()))
+			return fmt.Errorf("mark skipped job completed: %w", markErr)
+		}
+		return nil
 	}
 
 	// Budget pre-flight check — skip embedding when project has exceeded its monthly budget.
@@ -414,17 +454,71 @@ func (w *ChunkEmbeddingWorker) processJob(ctx context.Context, job *ChunkEmbeddi
 	orgID := w.orgCache.resolve(ctx, chunk.ProjectID)
 	recordEmbeddingUsage(w.usage, chunk.ProjectID, orgID, result)
 
-	// Update the chunk with the embedding
-	// Note: embedding is vector(768), we need to use raw SQL for pgvector
+	// Update the chunk with the embedding and complete the job atomically.
+	//
+	// Note: embedding is vector(768), we need to use raw SQL for pgvector.
+	// Two things must hold together:
+	//   - The vector write is guarded by current_revision so a stale embedding
+	//     produced from text that was edited/rolled back/re-chunked while the
+	//     request was in flight is never stored.
+	//   - The job's completion is serialized with concurrent edits on the chunk
+	//     row lock. A single transaction holds that lock from the guarded
+	//     UPDATE until the job is marked completed. An edit therefore either
+	//     commits before the guard (0 rows → the job is requeued in the same tx)
+	//     or blocks until completion commits (its own enqueue then sees the job
+	//     as terminal and schedules a fresh job). Without this, an edit landing
+	//     between the vector write and MarkCompleted left the stale vector with
+	//     no job to regenerate it.
 	now := time.Now()
-	_, err = w.db.NewRaw(`UPDATE kb.chunks
-		SET embedding = ?::vector,
-			updated_at = ?
-		WHERE id = ?`,
-		vectorToString(result.Embedding), now, job.ChunkID).Exec(ctx)
+	requeued := false
+	err = w.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		res, err := tx.NewRaw(`UPDATE kb.chunks
+			SET embedding = ?::vector,
+				updated_at = ?
+			WHERE id = ? AND current_revision = ?`,
+			vectorToString(result.Embedding), now, job.ChunkID, chunk.CurrentRevision).Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("update embedding: %w", err)
+		}
+
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("check embedding update affected rows: %w", err)
+		}
+
+		if affected == 0 {
+			// The chunk changed (edited/rolled back/re-chunked) or vanished while
+			// the embedding was in flight. Discard the stale vector and make the
+			// SAME job run again against the fresh text; it is still 'processing'
+			// inside this tx, so the partial unique index does not block it. If the
+			// chunk was deleted its job was cascade-deleted and this matches nothing.
+			if _, err := tx.NewRaw(`UPDATE kb.chunk_embedding_jobs
+				SET status = 'pending',
+					started_at = NULL,
+					scheduled_at = now(),
+					last_error = 'stale_chunk_revision',
+					updated_at = now()
+				WHERE id = ?`, job.ID).Exec(ctx); err != nil {
+				return fmt.Errorf("requeue stale embedding job: %w", err)
+			}
+			requeued = true
+			return nil
+		}
+
+		if _, err := tx.NewUpdate().
+			Model((*ChunkEmbeddingJob)(nil)).
+			Set("status = ?", JobStatusCompleted).
+			Set("completed_at = ?", now).
+			Set("last_error = NULL").
+			Set("updated_at = ?", now).
+			Where("id = ?", job.ID).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("mark chunk embedding job completed: %w", err)
+		}
+		return nil
+	})
 
 	if err != nil {
-		// Update failed
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		if markErr := w.jobs.MarkFailed(ctx, job.ID, err); markErr != nil {
@@ -433,17 +527,14 @@ func (w *ChunkEmbeddingWorker) processJob(ctx context.Context, job *ChunkEmbeddi
 				slog.String("error", markErr.Error()))
 		}
 		w.incrementFailure()
-		return fmt.Errorf("update embedding: %w", err)
+		return err
 	}
 
-	// Mark job as completed
-	if err := w.jobs.MarkCompleted(ctx, job.ID); err != nil {
-		w.log.Error("failed to mark job as completed",
+	if requeued {
+		w.log.Warn("chunk changed while embedding in flight; discarding stale vector",
 			slog.String("job_id", job.ID),
-			slog.String("error", err.Error()))
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		return err
+			slog.String("chunk_id", chunk.ID))
+		return nil
 	}
 	span.SetStatus(codes.Ok, "")
 

@@ -21,30 +21,42 @@ type Chunk struct {
 	Metadata   *ChunkMetadata `bun:"metadata,type:jsonb" json:"metadata,omitempty"`
 	CreatedAt  time.Time      `bun:"created_at,notnull,default:now()" json:"createdAt"`
 	UpdatedAt  time.Time      `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+
+	// Curation / structure.
+	ParentChunkID   *uuid.UUID `bun:"parent_chunk_id,type:uuid" json:"parentChunkId,omitempty"`
+	Edited          bool       `bun:"edited,notnull,default:false" json:"edited"`
+	CurrentRevision int        `bun:"current_revision,notnull,default:1" json:"currentRevision"`
 }
 
 // ChunkMetadata contains metadata about how the chunk was created
 type ChunkMetadata struct {
-	Strategy     string `json:"strategy,omitempty"`     // character, sentence, paragraph
+	Strategy     string `json:"strategy,omitempty"`     // recursive_character, markdown_structure
 	StartOffset  int    `json:"startOffset,omitempty"`  // Character offset in original document
 	EndOffset    int    `json:"endOffset,omitempty"`    // Character offset in original document
 	BoundaryType string `json:"boundaryType,omitempty"` // sentence, paragraph, character, section
+	Oversized    bool   `json:"oversized,omitempty"`    // atomic protected segment larger than the chunk size
+	HeaderCarry  string `json:"headerCarry,omitempty"`  // "unknown" when a table header could not be determined
+	IsParent     bool   `json:"isParent,omitempty"`     // structural parent chunk; excluded from embedding/search
+	Stale        bool   `json:"stale,omitempty"`        // preserved edited chunk whose source span no longer exists
 }
 
 // ChunkDTO is the response format for chunks
 type ChunkDTO struct {
-	ID             string         `json:"id"`
-	DocumentID     string         `json:"documentId"`
-	DocumentTitle  string         `json:"documentTitle,omitempty"`
-	Index          int            `json:"index"`
-	Size           int            `json:"size"` // Size in characters
-	HasEmbedding   bool           `json:"hasEmbedding"`
-	Text           string         `json:"text"`
-	CreatedAt      string         `json:"createdAt,omitempty"`
-	Metadata       *ChunkMetadata `json:"metadata,omitempty"`
-	TotalChars     *int           `json:"totalChars,omitempty"`     // Total chars across all doc chunks
-	ChunkCount     *int           `json:"chunkCount,omitempty"`     // Total chunks in document
-	EmbeddedChunks *int           `json:"embeddedChunks,omitempty"` // Chunks with embeddings in document
+	ID              string         `json:"id"`
+	DocumentID      string         `json:"documentId"`
+	DocumentTitle   string         `json:"documentTitle,omitempty"`
+	Index           int            `json:"index"`
+	Size            int            `json:"size"` // Size in characters
+	HasEmbedding    bool           `json:"hasEmbedding"`
+	Text            string         `json:"text"`
+	CreatedAt       string         `json:"createdAt,omitempty"`
+	Metadata        *ChunkMetadata `json:"metadata,omitempty"`
+	TotalChars      *int           `json:"totalChars,omitempty"`     // Total chars across all doc chunks
+	ChunkCount      *int           `json:"chunkCount,omitempty"`     // Total chunks in document
+	EmbeddedChunks  *int           `json:"embeddedChunks,omitempty"` // Chunks with embeddings in document
+	ParentChunkID   *string        `json:"parentChunkId,omitempty"`
+	Edited          bool           `json:"edited"`
+	CurrentRevision int            `json:"currentRevision"`
 }
 
 // ChunkWithDocInfo is used for queries that join with documents table
@@ -67,19 +79,28 @@ func (c *ChunkWithDocInfo) ToDTO() *ChunkDTO {
 		title = *c.DocumentSourceURL
 	}
 
+	var parentChunkID *string
+	if c.ParentChunkID != nil {
+		id := c.ParentChunkID.String()
+		parentChunkID = &id
+	}
+
 	return &ChunkDTO{
-		ID:             c.ID.String(),
-		DocumentID:     c.DocumentID.String(),
-		DocumentTitle:  title,
-		Index:          c.ChunkIndex,
-		Size:           len(c.Text),
-		HasEmbedding:   len(c.Embedding) > 0,
-		Text:           c.Text,
-		CreatedAt:      c.CreatedAt.Format(time.RFC3339),
-		Metadata:       c.Metadata,
-		TotalChars:     c.TotalChars,
-		ChunkCount:     c.ChunkCount,
-		EmbeddedChunks: c.EmbeddedChunks,
+		ID:              c.ID.String(),
+		DocumentID:      c.DocumentID.String(),
+		DocumentTitle:   title,
+		Index:           c.ChunkIndex,
+		Size:            len(c.Text),
+		HasEmbedding:    len(c.Embedding) > 0,
+		Text:            c.Text,
+		CreatedAt:       c.CreatedAt.Format(time.RFC3339),
+		Metadata:        c.Metadata,
+		TotalChars:      c.TotalChars,
+		ChunkCount:      c.ChunkCount,
+		EmbeddedChunks:  c.EmbeddedChunks,
+		ParentChunkID:   parentChunkID,
+		Edited:          c.Edited,
+		CurrentRevision: c.CurrentRevision,
 	}
 }
 

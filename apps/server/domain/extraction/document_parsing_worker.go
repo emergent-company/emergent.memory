@@ -354,7 +354,7 @@ func (w *DocumentParsingWorker) processJob(ctx context.Context, job *DocumentPar
 			}
 		}
 
-		chunkResult, err := w.chunkingService.RecreateChunks(ctx, job.ProjectID, *job.DocumentID)
+		chunkResult, err := w.chunkingService.RecreateChunks(ctx, job.ProjectID, *job.DocumentID, false)
 		if err != nil {
 			jobLog.Error("failed to create chunks", logger.Error(err))
 		} else {

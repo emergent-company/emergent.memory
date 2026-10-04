@@ -70,7 +70,7 @@ type chunkingServiceAdapter struct {
 }
 
 func (a *chunkingServiceAdapter) RecreateChunks(ctx context.Context, projectID, documentID string) error {
-	_, err := a.svc.RecreateChunks(ctx, projectID, documentID)
+	_, err := a.svc.RecreateChunks(ctx, projectID, documentID, false)
 	return err
 }
 

@@ -33,14 +33,17 @@ type Document struct {
 
 // Chunk is one chunk of a document (GET /api/chunks).
 type Chunk struct {
-	ID            string `json:"id"`
-	DocumentID    string `json:"documentId"`
-	DocumentTitle string `json:"documentTitle"`
-	Index         int    `json:"index"`
-	Size          int    `json:"size"`
-	HasEmbedding  bool   `json:"hasEmbedding"`
-	Text          string `json:"text"`
-	CreatedAt     string `json:"createdAt"`
+	ID              string  `json:"id"`
+	DocumentID      string  `json:"documentId"`
+	DocumentTitle   string  `json:"documentTitle"`
+	Index           int     `json:"index"`
+	Size            int     `json:"size"`
+	HasEmbedding    bool    `json:"hasEmbedding"`
+	Text            string  `json:"text"`
+	CreatedAt       string  `json:"createdAt"`
+	ParentChunkID   *string `json:"parentChunkId,omitempty"`
+	Edited          bool    `json:"edited"`
+	CurrentRevision int     `json:"currentRevision"`
 }
 
 // documentHeaders returns the per-request headers for the document/chunk REST
@@ -94,6 +97,71 @@ func (m *MemoryClient) ListChunks(ctx context.Context, documentID string) ([]Chu
 		return nil, err
 	}
 	return out.Data, nil
+}
+
+// --- chunk curation ---
+
+// ChunkRevision is one version of a chunk's text (GET /api/chunks/:id/revisions).
+type ChunkRevision struct {
+	ID        string `json:"id"`
+	ChunkID   string `json:"chunkId"`
+	Seq       int    `json:"seq"`
+	Text      string `json:"text"`
+	Author    string `json:"author"`
+	CreatedAt string `json:"createdAt"`
+}
+
+// ChunkEditResult reports the revision created by an edit or rollback.
+type ChunkEditResult struct {
+	ChunkID  string `json:"chunkId"`
+	Revision int    `json:"revision"`
+}
+
+// ChunkDiffLine is one line of a diff between two chunk revisions.
+type ChunkDiffLine struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// ChunkDiff is the diff between two revisions of a chunk.
+type ChunkDiff struct {
+	From  int             `json:"from"`
+	To    int             `json:"to"`
+	Lines []ChunkDiffLine `json:"lines"`
+}
+
+// EditChunk replaces a chunk's text (PATCH /api/chunks/:id), recording a
+// revision and scheduling re-embedding.
+func (m *MemoryClient) EditChunk(ctx context.Context, chunkID, text string) (ChunkEditResult, error) {
+	var out ChunkEditResult
+	err := m.doH(ctx, http.MethodPatch, "/api/chunks/"+url.PathEscape(chunkID), map[string]any{"text": text}, m.documentHeaders(ctx), &out)
+	return out, err
+}
+
+// ListChunkRevisions returns a chunk's revisions in ascending seq order.
+func (m *MemoryClient) ListChunkRevisions(ctx context.Context, chunkID string) ([]ChunkRevision, error) {
+	var out struct {
+		Data []ChunkRevision `json:"data"`
+	}
+	if err := m.doH(ctx, http.MethodGet, "/api/chunks/"+url.PathEscape(chunkID)+"/revisions", nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return out.Data, nil
+}
+
+// DiffChunkRevisions returns the line diff between two revisions of a chunk.
+func (m *MemoryClient) DiffChunkRevisions(ctx context.Context, chunkID string, from, to int) (ChunkDiff, error) {
+	var out ChunkDiff
+	path := fmt.Sprintf("/api/chunks/%s/revisions/diff?from=%d&to=%d", url.PathEscape(chunkID), from, to)
+	err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out)
+	return out, err
+}
+
+// RollbackChunk restores a previous revision's text as a new revision.
+func (m *MemoryClient) RollbackChunk(ctx context.Context, chunkID string, seq int) (ChunkEditResult, error) {
+	var out ChunkEditResult
+	err := m.doH(ctx, http.MethodPost, "/api/chunks/"+url.PathEscape(chunkID)+"/rollback", map[string]any{"seq": seq}, m.documentHeaders(ctx), &out)
+	return out, err
 }
 
 // UploadDocument uploads a file as a new document (multipart POST

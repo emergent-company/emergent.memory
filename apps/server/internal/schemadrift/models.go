@@ -171,6 +171,7 @@ var models = []any{
 
 	// domain/chunks
 	(*chunks.Chunk)(nil),
+	(*chunks.ChunkRevision)(nil),
 
 	// domain/blueprints
 	(*blueprints.Blueprint)(nil),
