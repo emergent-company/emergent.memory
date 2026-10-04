@@ -26,6 +26,12 @@ type openaiCompatibleModel struct {
 	modelName string
 	auth      AuthStyle
 	client    *http.Client
+	// extra carries vendor-specific config keyed by field name (e.g. Azure
+	// "api_version"), applied to the request URL.
+	extra map[string]string
+	// extraHeaders are additional request headers derived from vendor extra
+	// fields (e.g. a secondary secret header).
+	extraHeaders map[string]string
 	// enableThinking overrides the per-request thinking default when non-nil.
 	// nil  → keep existing per-request logic (disable when tools present)
 	// true → always request thinking tokens
@@ -44,18 +50,22 @@ type ThinkingConfigurator interface {
 // apiKey is optional — pass empty string for keyless local servers.
 // modelName is the model to request (e.g. "llama3", "kvasir", "mistral").
 func NewOpenAICompatibleModel(baseURL, apiKey, modelName string) model.LLM {
-	return NewOpenAICompatibleModelWithAuth(baseURL, apiKey, modelName, AuthBearer)
+	return NewOpenAICompatibleModelWithAuth(baseURL, apiKey, modelName, AuthBearer, nil, nil)
 }
 
 // NewOpenAICompatibleModelWithAuth creates a new openaiCompatibleModel with an
-// explicit auth style (e.g. AuthAPIKeyHeader for Azure OpenAI).
-func NewOpenAICompatibleModelWithAuth(baseURL, apiKey, modelName string, auth AuthStyle) model.LLM {
+// explicit auth style (e.g. AuthAPIKeyHeader for Azure OpenAI). extra and
+// extraHeaders carry vendor-specific request config (e.g. Azure api_version as a
+// query param, LKEAP secret_key as a header); both may be nil.
+func NewOpenAICompatibleModelWithAuth(baseURL, apiKey, modelName string, auth AuthStyle, extra, extraHeaders map[string]string) model.LLM {
 	return &openaiCompatibleModel{
-		baseURL:   strings.TrimSuffix(baseURL, "/"),
-		apiKey:    apiKey,
-		modelName: modelName,
-		auth:      auth,
-		client:    &http.Client{Timeout: 900 * time.Second},
+		baseURL:      strings.TrimSuffix(baseURL, "/"),
+		apiKey:       apiKey,
+		modelName:    modelName,
+		auth:         auth,
+		extra:        extra,
+		extraHeaders: extraHeaders,
+		client:       &http.Client{Timeout: 900 * time.Second},
 	}
 }
 
@@ -552,8 +562,11 @@ func (m *openaiCompatibleModel) GenerateContent(ctx context.Context, req *model.
 			return
 		}
 
+		// Azure OpenAI's legacy dated endpoint requires ?api-version=<v> on the
+		// request URL; other vendors leave the extra unset and the URL unchanged.
+		requestURL := AppendQueryParam(m.baseURL+"/chat/completions", "api-version", extraValue(m.extra, "api_version"))
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-			m.baseURL+"/chat/completions",
+			requestURL,
 			bytes.NewReader(bodyBytes))
 		if err != nil {
 			yield(nil, fmt.Errorf("openai-compatible: failed to create request: %w", err))
@@ -564,6 +577,7 @@ func (m *openaiCompatibleModel) GenerateContent(ctx context.Context, req *model.
 			yield(nil, fmt.Errorf("openai-compatible: %w", err))
 			return
 		}
+		ApplyExtraHeaders(httpReq, m.extraHeaders)
 
 		resp, err := m.client.Do(httpReq)
 		if err != nil {

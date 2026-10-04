@@ -232,7 +232,7 @@ func (s *ModelCatalogService) fetchOpenAICompatibleModels(ctx context.Context, p
 	fetchCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 
-	url := strings.TrimSuffix(cred.BaseURL, "/") + "/models"
+	url := adk.AppendQueryParam(strings.TrimSuffix(cred.BaseURL, "/")+"/models", "api-version", cred.Extra["api_version"])
 	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build /v1/models request: %w", err)
@@ -240,6 +240,7 @@ func (s *ModelCatalogService) fetchOpenAICompatibleModels(ctx context.Context, p
 	if err := adk.ApplyAuth(req, credentialAuthStyle(provider, cred), cred.APIKey); err != nil {
 		return nil, fmt.Errorf("failed to apply auth to /v1/models request: %w", err)
 	}
+	adk.ApplyExtraHeaders(req, cred.ExtraHeaders)
 
 	client := &http.Client{Timeout: 8 * time.Second}
 	resp, err := client.Do(req)
@@ -570,8 +571,9 @@ func (s *ModelCatalogService) generateContentForModel(ctx context.Context, provi
 		if err != nil {
 			return "", fmt.Errorf("failed to marshal request: %w", err)
 		}
+		requestURL := adk.AppendQueryParam(strings.TrimSuffix(baseURL, "/")+endpoint, "api-version", cred.Extra["api_version"])
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-			strings.TrimSuffix(baseURL, "/")+endpoint,
+			requestURL,
 			bytes.NewReader(bodyBytes))
 		if err != nil {
 			return "", fmt.Errorf("failed to create request: %w", err)
@@ -580,6 +582,7 @@ func (s *ModelCatalogService) generateContentForModel(ctx context.Context, provi
 		if err := adk.ApplyAuth(httpReq, credentialAuthStyle(provider, cred), cred.APIKey); err != nil {
 			return "", fmt.Errorf("failed to apply auth to generate request: %w", err)
 		}
+		adk.ApplyExtraHeaders(httpReq, cred.ExtraHeaders)
 		httpClient := &http.Client{Timeout: 30 * time.Second}
 		resp, err := httpClient.Do(httpReq)
 		if err != nil {
@@ -820,10 +823,12 @@ func (s *ModelCatalogService) embedContentForModel(ctx context.Context, provider
 			return "", fmt.Errorf("embedding model test failed: openai-compatible provider requires an embedding model")
 		}
 		client, clientErr := openai.NewClient(openai.Config{
-			APIKey:  cred.APIKey,
-			BaseURL: baseURL,
-			Model:   model,
-			Auth:    credentialAuthStyle(provider, cred),
+			APIKey:       cred.APIKey,
+			BaseURL:      baseURL,
+			Model:        model,
+			Auth:         credentialAuthStyle(provider, cred),
+			Extra:        cred.Extra,
+			ExtraHeaders: cred.ExtraHeaders,
 		})
 		if clientErr != nil {
 			return "", fmt.Errorf("embedding model test failed: %w", clientErr)

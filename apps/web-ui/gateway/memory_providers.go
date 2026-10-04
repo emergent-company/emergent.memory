@@ -26,8 +26,12 @@ type ProjectProviderConfig struct {
 	BaseURL         string `json:"baseUrl,omitempty"`
 	GenerativeModel string `json:"generativeModel,omitempty"`
 	EmbeddingModel  string `json:"embeddingModel,omitempty"`
-	CreatedAt       string `json:"createdAt,omitempty"`
-	UpdatedAt       string `json:"updatedAt,omitempty"`
+	// ExtraConfig holds the vendor-specific extra fields (e.g. Azure OpenAI's
+	// api_version). Only non-secret fields are ever returned by memory; secret
+	// extras are omitted from the response entirely.
+	ExtraConfig map[string]string `json:"extraConfig,omitempty"`
+	CreatedAt   string            `json:"createdAt,omitempty"`
+	UpdatedAt   string            `json:"updatedAt,omitempty"`
 }
 
 // ProviderConfigInput is the request body for upserting a project provider
@@ -48,6 +52,11 @@ type ProviderConfigInput struct {
 	BaseURL            string `json:"baseUrl,omitempty"`
 	GenerativeModel    string `json:"generativeModel,omitempty"`
 	EmbeddingModel     string `json:"embeddingModel,omitempty"`
+	// ExtraConfig carries the vendor-specific extra fields (map of field key to
+	// value). A nil map omits the key, preserving stored extras; a map is a
+	// per-key merge, where an empty value clears a non-secret field or preserves
+	// a stored secret.
+	ExtraConfig map[string]string `json:"extraConfig,omitempty"`
 }
 
 // ProviderTestResult is the response of a live credential test (POST

@@ -604,32 +604,67 @@ func TestProviderSortedDefinitionsByOrder(t *testing.T) {
 	}
 }
 
-// TestProviderExtraFieldsRenderedReadOnly asserts a vendor's registry extra
-// fields render as read-only metadata (key + label + required/optional) and
-// are toggled per selected vendor — no inputs, so nothing is half-wired.
-func TestProviderExtraFieldsRenderedReadOnly(t *testing.T) {
+// TestProviderExtraFieldsRenderedEditable asserts a vendor's registry extra
+// fields render as real, named inputs (label + Required/Optional hint) inside
+// the per-vendor toggle block — never read-only metadata.
+func TestProviderExtraFieldsRenderedEditable(t *testing.T) {
 	vendors := []ProviderDefinition{
 		{Type: "azure-openai", DisplayName: "Azure OpenAI", Order: 1, ExtraFields: []ExtraField{
-			{Key: "api-version", Label: "API version", Required: true},
-			{Key: "deployment", Label: "Deployment", Required: false},
+			{Key: "api-version", Label: "API version", Type: "string", Required: true, Placeholder: "2024-10-21"},
+			{Key: "deployment", Label: "Deployment", Type: "string", Required: false},
 		}},
 		{Type: "openai", DisplayName: "OpenAI", Order: 2},
 	}
 	html := renderHTML(t, providerConfigPage(providerConfigPageData{Vendors: vendors}))
 	for _, want := range []string{
 		`data-provider-extra="azure-openai"`,
-		"not editable here",
 		"API version",
-		`api-version`,
+		"Deployment",
+		`name="extra_api-version"`,
+		`name="extra_deployment"`,
+		`data-testid="provider-extra-api-version"`,
+		`placeholder="2024-10-21"`,
 		"Required",
 		"Optional",
 	} {
 		if !strings.Contains(html, want) {
-			t.Errorf("extra-field metadata missing %q, got:\n%s", want, html)
+			t.Errorf("editable extra field missing %q, got:\n%s", want, html)
 		}
 	}
-	if strings.Contains(html, `name="api-version"`) {
-		t.Errorf("extra fields must be read-only, no input named api-version, got:\n%s", html)
+	if strings.Contains(html, "not editable here") {
+		t.Errorf("extra fields must be editable, got read-only copy:\n%s", html)
+	}
+}
+
+// TestProviderExtraFieldsRenderedByType asserts each declared extra-field type
+// maps to the right control: password never prefills, select renders its
+// options with the stored value selected, boolean renders a checkbox, and
+// number renders a number input. A stored secret is never echoed back.
+func TestProviderExtraFieldsRenderedByType(t *testing.T) {
+	vendors := []ProviderDefinition{{Type: "vendor", DisplayName: "Vendor", ExtraFields: []ExtraField{
+		{Key: "token", Label: "Token", Type: "password", Secret: true},
+		{Key: "region", Label: "Region", Type: "select", Options: []ExtraFieldOption{{Label: "US", Value: "us"}, {Label: "EU", Value: "eu"}}},
+		{Key: "stream", Label: "Stream", Type: "boolean"},
+		{Key: "retries", Label: "Retries", Type: "number"},
+	}}}
+	p := &ProjectProviderConfig{Provider: "vendor", ExtraConfig: map[string]string{
+		"token": "should-not-leak", "region": "eu", "stream": "true", "retries": "3",
+	}}
+	html := renderHTML(t, providerConfigPage(providerConfigPageData{Provider: p, Vendors: vendors}))
+	for _, want := range []string{
+		`type="password"`,
+		`autocomplete="new-password"`,
+		`value="eu" selected`,
+		`type="checkbox"`,
+		`type="number"`,
+		`value="3"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("typed extra field missing %q, got:\n%s", want, html)
+		}
+	}
+	if strings.Contains(html, "should-not-leak") {
+		t.Errorf("secret extra value must never be prefilled, got:\n%s", html)
 	}
 }
 
@@ -900,6 +935,52 @@ func TestUIProviderConfigPersists(t *testing.T) {
 	if f.providerConfigInput.APIKey != "sk-test" || f.providerConfigInput.BaseURL != "http://litellm:4000/v1" ||
 		f.providerConfigInput.GenerativeModel != "openai/deepseek-v4-flash" || f.providerConfigInput.EmbeddingModel != "google/gemini-embedding-2-preview" {
 		t.Errorf("config input = %+v", f.providerConfigInput)
+	}
+}
+
+// TestUIProviderConfigExtraConfigFromForm asserts the extra fields of the
+// selected vendor are read from the form into in.ExtraConfig, while a blank
+// declared secret is omitted (preserving the stored secret) and an empty
+// non-secret is included (clearing it).
+func TestUIProviderConfigExtraConfigFromForm(t *testing.T) {
+	defs := []ProviderDefinition{{Type: "azure-openai", DisplayName: "Azure OpenAI", ExtraFields: []ExtraField{
+		{Key: "api_version", Label: "API version", Type: "string"},
+		{Key: "client_secret", Label: "Client secret", Type: "password", Secret: true},
+	}}}
+	f := &fakeMemory{providerDefinitions: defs}
+	_, e := newProvidersSettingsEcho(f)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/settings/providers/config",
+		strings.NewReader("provider=azure-openai&api_key=sk-test&base_url=https://r.openai.azure.com/openai/v1&extra_api_version=2024-10-21&extra_client_secret="))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303 (body:\n%s)", rec.Code, rec.Body.String())
+	}
+	got := f.providerConfigInput.ExtraConfig
+	if got["api_version"] != "2024-10-21" {
+		t.Errorf("extraConfig[api_version] = %q, want 2024-10-21 (map %+v)", got["api_version"], got)
+	}
+	if _, ok := got["client_secret"]; ok {
+		t.Errorf("blank secret must be omitted to preserve the stored secret, got %+v", got)
+	}
+}
+
+// TestUIProviderConfigExtraConfigNoneDeclared asserts a vendor with no extra
+// fields submits a nil extraConfig, preserving stored extras on update.
+func TestUIProviderConfigExtraConfigNoneDeclared(t *testing.T) {
+	f := &fakeMemory{} // default registry: no extra fields
+	_, e := newProvidersSettingsEcho(f)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/settings/providers/config",
+		strings.NewReader("provider=openai&api_key=sk-test&base_url=http://litellm:4000/v1&extra_stray=ignored"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", rec.Code)
+	}
+	if f.providerConfigInput.ExtraConfig != nil {
+		t.Errorf("vendor with no declared extra fields must submit nil extraConfig, got %+v", f.providerConfigInput.ExtraConfig)
 	}
 }
 

@@ -200,3 +200,39 @@ func TestEmbedAuthStyles(t *testing.T) {
 		})
 	}
 }
+
+// TestEmbedExtraConfigApplied verifies the OpenAI-compatible embeddings client
+// appends the vendor api_version query parameter (Azure legacy endpoint) and
+// attaches declared extra headers (a secondary secret).
+func TestEmbedExtraConfigApplied(t *testing.T) {
+	var gotAPIVersion, gotSecret string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAPIVersion = r.URL.Query().Get("api-version")
+		gotSecret = r.Header.Get("X-Secret-Key")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"embedding": []float32{0.1, 0.2}, "index": 0}},
+		})
+	}))
+	defer srv.Close()
+
+	client, err := NewClient(Config{
+		APIKey:       "sk-embed",
+		BaseURL:      srv.URL,
+		Model:        "text-embedding-3-small",
+		Extra:        map[string]string{"api_version": "2024-10-21"},
+		ExtraHeaders: map[string]string{"X-Secret-Key": "sk-secondary"},
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	if _, _, err := client.embed(context.Background(), []string{"hi"}); err != nil {
+		t.Fatalf("embed() error = %v", err)
+	}
+	if gotAPIVersion != "2024-10-21" {
+		t.Errorf("request api-version = %q, want 2024-10-21", gotAPIVersion)
+	}
+	if gotSecret != "sk-secondary" {
+		t.Errorf("request X-Secret-Key = %q, want sk-secondary", gotSecret)
+	}
+}

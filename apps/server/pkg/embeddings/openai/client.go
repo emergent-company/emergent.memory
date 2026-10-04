@@ -41,17 +41,24 @@ type Config struct {
 	// Empty defaults to bearer. Azure OpenAI declares "api-key"; other
 	// OpenAI-compatible vendors use bearer. Mirrors pkg/adk's ApplyAuth.
 	Auth adk.AuthStyle
+	// Extra carries vendor-specific request config (e.g. Azure "api_version",
+	// applied as a query parameter). May be nil.
+	Extra map[string]string
+	// ExtraHeaders are additional request headers from vendor extra fields.
+	ExtraHeaders map[string]string
 }
 
 // Client is an OpenAI-compatible embeddings client.
 type Client struct {
-	apiKey     string
-	baseURL    string
-	model      string
-	dimensions int // 0 = provider default
-	authStyle  adk.AuthStyle
-	httpClient *http.Client
-	log        *slog.Logger
+	apiKey       string
+	baseURL      string
+	model        string
+	dimensions   int // 0 = provider default
+	authStyle    adk.AuthStyle
+	extra        map[string]string
+	extraHeaders map[string]string
+	httpClient   *http.Client
+	log          *slog.Logger
 }
 
 // ClientOption configures the Client.
@@ -81,13 +88,15 @@ func NewClient(cfg Config, opts ...ClientOption) (*Client, error) {
 		model = DefaultModel
 	}
 	c := &Client{
-		apiKey:     cfg.APIKey,
-		baseURL:    baseURL,
-		model:      model,
-		dimensions: cfg.Dimensions,
-		authStyle:  cfg.Auth,
-		httpClient: &http.Client{Timeout: DefaultTimeout},
-		log:        slog.Default(),
+		apiKey:       cfg.APIKey,
+		baseURL:      baseURL,
+		model:        model,
+		dimensions:   cfg.Dimensions,
+		authStyle:    cfg.Auth,
+		extra:        cfg.Extra,
+		extraHeaders: cfg.ExtraHeaders,
+		httpClient:   &http.Client{Timeout: DefaultTimeout},
+		log:          slog.Default(),
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -214,8 +223,11 @@ func (c *Client) embed(ctx context.Context, texts []string) ([][]float32, int, e
 		return nil, 0, fmt.Errorf("marshal: %w", err)
 	}
 
+	// Azure OpenAI's legacy dated endpoint requires ?api-version=<v>; other
+	// vendors leave the extra unset and the URL unchanged.
+	requestURL := adk.AppendQueryParam(c.baseURL+"/embeddings", "api-version", c.extra["api_version"])
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.baseURL+"/embeddings", bytes.NewReader(payload))
+		requestURL, bytes.NewReader(payload))
 	if err != nil {
 		return nil, 0, fmt.Errorf("new request: %w", err)
 	}
@@ -225,6 +237,7 @@ func (c *Client) embed(ctx context.Context, texts []string) ([][]float32, int, e
 	if err := adk.ApplyAuth(req, c.authStyle, c.apiKey); err != nil {
 		return nil, 0, fmt.Errorf("auth: %w", err)
 	}
+	adk.ApplyExtraHeaders(req, c.extraHeaders)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

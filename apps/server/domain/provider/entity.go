@@ -72,19 +72,22 @@ const (
 type OrgProviderConfig struct {
 	bun.BaseModel `bun:"table:kb.org_provider_configs,alias:opc"`
 
-	ID                  string          `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
-	OrgID               string          `bun:"org_id,notnull,type:uuid" json:"orgId"`
-	Provider            ProviderDialect `bun:"provider,notnull" json:"provider"`
-	Slug                ProviderSlug    `bun:"slug,notnull" json:"slug"`
-	EncryptedCredential []byte          `bun:"encrypted_credential,notnull" json:"-"`
-	EncryptionNonce     []byte          `bun:"encryption_nonce,notnull" json:"-"`
-	GCPProject          string          `bun:"gcp_project" json:"gcpProject,omitempty"`
-	Location            string          `bun:"location" json:"location,omitempty"`
-	BaseURL             string          `bun:"base_url" json:"baseUrl,omitempty"`
-	GenerativeModel     string          `bun:"generative_model" json:"generativeModel,omitempty"`
-	EmbeddingModel      string          `bun:"embedding_model" json:"embeddingModel,omitempty"`
-	CreatedAt           time.Time       `bun:"created_at,notnull,default:now()" json:"createdAt"`
-	UpdatedAt           time.Time       `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+	ID                   string            `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
+	OrgID                string            `bun:"org_id,notnull,type:uuid" json:"orgId"`
+	Provider             ProviderDialect   `bun:"provider,notnull" json:"provider"`
+	Slug                 ProviderSlug      `bun:"slug,notnull" json:"slug"`
+	EncryptedCredential  []byte            `bun:"encrypted_credential,notnull" json:"-"`
+	EncryptionNonce      []byte            `bun:"encryption_nonce,notnull" json:"-"`
+	GCPProject           string            `bun:"gcp_project" json:"gcpProject,omitempty"`
+	Location             string            `bun:"location" json:"location,omitempty"`
+	BaseURL              string            `bun:"base_url" json:"baseUrl,omitempty"`
+	GenerativeModel      string            `bun:"generative_model" json:"generativeModel,omitempty"`
+	EmbeddingModel       string            `bun:"embedding_model" json:"embeddingModel,omitempty"`
+	ExtraConfig          map[string]string `bun:"extra_config,type:jsonb,notnull,default:'{}'" json:"extraConfig,omitempty"`
+	ExtraSecretEncrypted []byte            `bun:"extra_secret_encrypted" json:"-"`
+	ExtraSecretNonce     []byte            `bun:"extra_secret_nonce" json:"-"`
+	CreatedAt            time.Time         `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	UpdatedAt            time.Time         `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
 }
 
 // ProjectProviderConfig stores encrypted credentials and model selections for a
@@ -93,19 +96,22 @@ type OrgProviderConfig struct {
 type ProjectProviderConfig struct {
 	bun.BaseModel `bun:"table:kb.project_provider_configs,alias:ppc"`
 
-	ID                  string          `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
-	ProjectID           string          `bun:"project_id,notnull,type:uuid" json:"projectId"`
-	Provider            ProviderDialect `bun:"provider,notnull" json:"provider"`
-	Slug                ProviderSlug    `bun:"slug,notnull" json:"slug"`
-	EncryptedCredential []byte          `bun:"encrypted_credential,notnull" json:"-"`
-	EncryptionNonce     []byte          `bun:"encryption_nonce,notnull" json:"-"`
-	GCPProject          string          `bun:"gcp_project" json:"gcpProject,omitempty"`
-	Location            string          `bun:"location" json:"location,omitempty"`
-	BaseURL             string          `bun:"base_url" json:"baseUrl,omitempty"`
-	GenerativeModel     string          `bun:"generative_model" json:"generativeModel,omitempty"`
-	EmbeddingModel      string          `bun:"embedding_model" json:"embeddingModel,omitempty"`
-	CreatedAt           time.Time       `bun:"created_at,notnull,default:now()" json:"createdAt"`
-	UpdatedAt           time.Time       `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+	ID                   string            `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
+	ProjectID            string            `bun:"project_id,notnull,type:uuid" json:"projectId"`
+	Provider             ProviderDialect   `bun:"provider,notnull" json:"provider"`
+	Slug                 ProviderSlug      `bun:"slug,notnull" json:"slug"`
+	EncryptedCredential  []byte            `bun:"encrypted_credential,notnull" json:"-"`
+	EncryptionNonce      []byte            `bun:"encryption_nonce,notnull" json:"-"`
+	GCPProject           string            `bun:"gcp_project" json:"gcpProject,omitempty"`
+	Location             string            `bun:"location" json:"location,omitempty"`
+	BaseURL              string            `bun:"base_url" json:"baseUrl,omitempty"`
+	GenerativeModel      string            `bun:"generative_model" json:"generativeModel,omitempty"`
+	EmbeddingModel       string            `bun:"embedding_model" json:"embeddingModel,omitempty"`
+	ExtraConfig          map[string]string `bun:"extra_config,type:jsonb,notnull,default:'{}'" json:"extraConfig,omitempty"`
+	ExtraSecretEncrypted []byte            `bun:"extra_secret_encrypted" json:"-"`
+	ExtraSecretNonce     []byte            `bun:"extra_secret_nonce" json:"-"`
+	CreatedAt            time.Time         `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	UpdatedAt            time.Time         `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
 }
 
 // UpsertProviderConfigRequest is the request body for creating or updating a
@@ -123,6 +129,11 @@ type UpsertProviderConfigRequest struct {
 	BaseURL            string `json:"baseUrl,omitempty"`
 	GenerativeModel    string `json:"generativeModel,omitempty"`
 	EmbeddingModel     string `json:"embeddingModel,omitempty"`
+	// ExtraConfig carries vendor-specific extra fields keyed by field name (e.g.
+	// Azure OpenAI "api_version", Volcengine "region"). A nil map omits the key
+	// and preserves the stored extras; a non-nil map merges per key, where an
+	// empty value clears a non-secret field or preserves a stored secret.
+	ExtraConfig map[string]string `json:"extraConfig,omitempty"`
 }
 
 // ProviderConfigResponse is the public-safe representation of a stored provider config.
@@ -136,8 +147,11 @@ type ProviderConfigResponse struct {
 	BaseURL         string          `json:"baseUrl,omitempty"`
 	GenerativeModel string          `json:"generativeModel,omitempty"`
 	EmbeddingModel  string          `json:"embeddingModel,omitempty"`
-	CreatedAt       time.Time       `json:"createdAt"`
-	UpdatedAt       time.Time       `json:"updatedAt"`
+	// ExtraConfig returns the non-secret vendor-specific extra fields. Secret
+	// fields (ExtraField.Secret) are never serialized.
+	ExtraConfig map[string]string `json:"extraConfig,omitempty"`
+	CreatedAt   time.Time         `json:"createdAt"`
+	UpdatedAt   time.Time         `json:"updatedAt"`
 }
 
 // ProjectProviderConfigResponse is the public-safe representation of a
@@ -153,8 +167,11 @@ type ProjectProviderConfigResponse struct {
 	BaseURL         string          `json:"baseUrl,omitempty"`
 	GenerativeModel string          `json:"generativeModel,omitempty"`
 	EmbeddingModel  string          `json:"embeddingModel,omitempty"`
-	CreatedAt       time.Time       `json:"createdAt"`
-	UpdatedAt       time.Time       `json:"updatedAt"`
+	// ExtraConfig returns the non-secret vendor-specific extra fields. Secret
+	// fields (ExtraField.Secret) are never serialized.
+	ExtraConfig map[string]string `json:"extraConfig,omitempty"`
+	CreatedAt   time.Time         `json:"createdAt"`
+	UpdatedAt   time.Time         `json:"updatedAt"`
 }
 
 // ProviderSupportedModel is a cached entry of a model available from a provider.

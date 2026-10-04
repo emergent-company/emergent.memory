@@ -285,7 +285,7 @@ func (f *ModelFactory) createEnvModel(ctx context.Context, provider, bareModel s
 			"baseURL", cfg.BaseURL,
 			"auth", cfg.Auth,
 		)
-		return f.wrapModel(NewOpenAICompatibleModelWithAuth(cfg.BaseURL, cfg.APIKey, cfg.Model, AuthStyle(cfg.Auth)), provider, provider), nil
+		return f.wrapModel(NewOpenAICompatibleModelWithAuth(cfg.BaseURL, cfg.APIKey, cfg.Model, AuthStyle(cfg.Auth), nil, nil), provider, provider), nil
 	}
 }
 

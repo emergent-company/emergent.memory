@@ -20,6 +20,12 @@ type ResolvedEmbeddingCredential struct {
 	// "api-key"). Empty defaults to bearer. Azure OpenAI embeddings require
 	// "api-key"; OpenAI-compatible vendors use bearer.
 	Auth string
+	// Extra carries vendor-specific request config (e.g. Azure "api_version",
+	// applied as a query parameter by the OpenAI-compatible client). May be nil.
+	Extra map[string]string
+	// ExtraHeaders are additional request headers derived from vendor extra
+	// fields (e.g. a secondary secret header). May be nil.
+	ExtraHeaders map[string]string
 	// Source describes where the credential was resolved from (project/organization/environment).
 	// Informational only; used for logging and tracing.
 	Source string

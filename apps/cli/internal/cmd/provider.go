@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -39,6 +40,13 @@ Supported providers:
   openai             — OpenAI API; requires --api-key
   deepseek          — DeepSeek AI models; requires --api-key
 
+Any other registered vendor (e.g. azure-openai, volcengine, lkeap) can also be
+configured via --api-key, --base-url, and vendor-specific --extra key=value pairs.
+
+The --extra flag is repeatable (one key=value per occurrence) and stores
+vendor-specific fields such as azure-openai's api_version, volcengine's region,
+or lkeap's secret_key.
+
 The project is read from --project or the MEMORY_PROJECT_ID environment variable.
 
 Examples:
@@ -46,9 +54,11 @@ Examples:
   memory provider configure-project google-vertex --gcp-project my-proj --location us-central1 --key-file sa.json
   memory provider configure-project openai --api-key sk-...
   memory provider configure-project deepseek --api-key sk-... --generative-model deepseek-v4-flash
+  memory provider configure-project azure-openai --api-key ... --base-url https://... --extra api_version=2024-06-01
+  memory provider configure-project volcengine --api-key ... --extra region=cn-north-1
   memory provider configure-project google --remove`,
 	Args:      cobra.ExactArgs(1),
-	ValidArgs: []string{"google", "google-vertex", "openai", "deepseek"},
+	ValidArgs: []string{"google", "google-vertex", "openai", "deepseek", "azure-openai", "volcengine", "lkeap"},
 	RunE:      runProviderConfigureProject,
 }
 
@@ -62,6 +72,7 @@ var (
 	configureProjectEmbeddingModel  string
 	configureProjectID              string
 	configureProjectRemove          bool
+	configureProjectExtra           []string
 )
 
 func runProviderConfigureProject(cmd *cobra.Command, args []string) error {
@@ -92,6 +103,23 @@ func runProviderConfigureProject(cmd *cobra.Command, args []string) error {
 	req := &provider.UpsertProviderConfigRequest{
 		GenerativeModel: configureProjectGenerativeModel,
 		EmbeddingModel:  configureProjectEmbeddingModel,
+	}
+
+	// Parse --extra key=value pairs into the request's extra config map.
+	if len(configureProjectExtra) > 0 {
+		extra := make(map[string]string, len(configureProjectExtra))
+		for _, kv := range configureProjectExtra {
+			key, val, found := strings.Cut(kv, "=")
+			key = strings.TrimSpace(key)
+			if !found {
+				return fmt.Errorf("--extra value %q must be in key=value form", kv)
+			}
+			if key == "" {
+				continue
+			}
+			extra[key] = strings.TrimSpace(val)
+		}
+		req.ExtraConfig = extra
 	}
 
 	switch providerArg {
@@ -132,7 +160,14 @@ func runProviderConfigureProject(cmd *cobra.Command, args []string) error {
 		req.APIKey = configureProjectAPIKey
 
 	default:
-		return fmt.Errorf("unsupported provider %q; must be google, google-vertex, openai, or deepseek", providerArg)
+		// Generic fallback: other registry vendors (azure-openai, volcengine,
+		// lkeap, etc.) can be configured with an API key, base URL, and/or
+		// vendor-specific --extra fields.
+		if configureProjectAPIKey == "" && configureProjectBaseURL == "" && len(req.ExtraConfig) == 0 {
+			return fmt.Errorf("unsupported provider %q; must be google, google-vertex, openai, deepseek, or a registered vendor configured with --api-key, --base-url, or --extra", providerArg)
+		}
+		req.APIKey = configureProjectAPIKey
+		req.BaseURL = configureProjectBaseURL
 	}
 
 	fmt.Printf("Configuring %s for project %s...\n", providerArg, projectID)
@@ -1110,6 +1145,7 @@ func init() {
 	configureProjectCmd.Flags().StringVar(&configureProjectEmbeddingModel, "embedding-model", "", "Embedding model to use (auto-selected from catalog if omitted)")
 	configureProjectCmd.Flags().StringVar(&configureProjectID, "project", "", "Project ID (auto-detected from MEMORY_PROJECT_ID)")
 	configureProjectCmd.Flags().BoolVar(&configureProjectRemove, "remove", false, "Remove the project-level override and inherit org config")
+	configureProjectCmd.Flags().StringArrayVar(&configureProjectExtra, "extra", nil, "Vendor-specific extra config field (key=value, repeatable)")
 
 	// models flags
 	providerModelsCmd.Flags().StringVar(&modelsTypeFlag, "type", "", "Filter by model type: embedding or generative")

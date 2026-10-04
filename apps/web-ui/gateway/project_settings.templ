@@ -1124,23 +1124,19 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 				/>
 			</label>
 		</div>
+		// Vendor-specific extra fields (e.g. Azure OpenAI's api_version). Every
+		// vendor's block is rendered but hidden; the script below shows only the
+		// selected vendor's block (and disables the hidden controls so they are
+		// never submitted).
 		for _, v := range vendors {
 			if len(v.ExtraFields) > 0 {
 				<div class="rounded-box border border-base-content/10 bg-base-200/30 p-3" data-provider-extra={ v.Type } style="display:none">
-					<p class="text-muted text-xs">Additional configuration for { v.DisplayName } is set server-side — not editable here.</p>
-					<ul class="mt-1 flex flex-col gap-0.5">
+					<p class="text-muted mb-3 text-xs">Additional settings for { v.DisplayName }.</p>
+					<div class="flex flex-col gap-4">
 						for _, f := range v.ExtraFields {
-							<li class="text-sm">
-								<span class="font-medium">{ f.Label }</span>
-								<span class="text-muted-faint font-mono text-xs">{ f.Key }</span>
-								if f.Required {
-									<span class="text-muted-faint text-xs">· Required</span>
-								} else {
-									<span class="text-muted-faint text-xs">· Optional</span>
-								}
-							</li>
+							@providerExtraField(f, providerExtraFieldValue(draft, p, f))
 						}
-					</ul>
+					</div>
 				</div>
 			}
 		}
@@ -1349,9 +1345,11 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 					if (vertexFields) vertexFields.style.display = v ? 'flex' : 'none';
 					if (vertexHint) vertexHint.style.display = v ? 'flex' : 'none';
 					if (officialHint) officialHint.style.display = isOfficial() ? 'flex' : 'none';
-					/* Vendor description and read-only extra-field metadata
-					   follow the selected vendor. Both are render-only and are
-					   never submitted with the form. */
+					/* Vendor description and the vendor-specific extra fields
+					   follow the selected vendor. Only the active vendor's
+					   block is enabled; the others are disabled so their
+					   inputs never submit (the gateway reads extra_<key> for
+					   the selected vendor only). */
 					if (sel) {
 						var opt = sel.options[sel.selectedIndex];
 						if (descEl) {
@@ -1369,7 +1367,12 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 						}
 					}
 					for (var i = 0; i < extraBlocks.length; i++) {
-						extraBlocks[i].style.display = extraBlocks[i].getAttribute('data-provider-extra') === prov ? '' : 'none';
+						var extraActive = extraBlocks[i].getAttribute('data-provider-extra') === prov;
+						extraBlocks[i].style.display = extraActive ? '' : 'none';
+						var extraControls = extraBlocks[i].querySelectorAll('input, select, textarea');
+						for (var j = 0; j < extraControls.length; j++) {
+							extraControls[j].disabled = !extraActive;
+						}
 					}
 					var tested = form.getAttribute('data-tested') === '1';
 					if (testedHint) testedHint.style.display = (needsURL && tested) ? 'flex' : 'none';
@@ -1422,6 +1425,71 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 			})();
 		</script>
 	</form>
+}
+
+// providerExtraField renders one vendor-declared extra-input: a labelled control
+// whose name is "extra_<key>" (the gateway reads these back by the selected
+// vendor's declared fields). Type drives the control — password inputs never
+// prefill (a stored secret is never echoed), select renders the declared
+// options, boolean a checkbox, and string/number a matching text input.
+// value is the prefill already resolved from the draft/stored config; callers
+// pass "" for secret fields.
+templ providerExtraField(f ExtraField, value string) {
+	<label class="form-control w-full">
+		<div class="label">
+			<span class="label-text">{ f.Label }</span>
+			if f.Required {
+				<span class="label-text-alt text-muted-faint">Required</span>
+			} else {
+				<span class="label-text-alt text-muted-faint">Optional</span>
+			}
+		</div>
+		switch f.Type {
+			case "password":
+				<input
+					type="password"
+					name={ "extra_" + f.Key }
+					autocomplete="new-password"
+					class="input w-full"
+					placeholder={ f.Placeholder }
+					data-testid={ "provider-extra-" + f.Key }
+				/>
+			case "boolean":
+				<input
+					type="checkbox"
+					name={ "extra_" + f.Key }
+					value="true"
+					class="toggle toggle-sm"
+					data-testid={ "provider-extra-" + f.Key }
+					checked?={ value == "true" || value == "1" }
+				/>
+			case "select":
+				<select name={ "extra_" + f.Key } class="select w-full" data-testid={ "provider-extra-" + f.Key }>
+					<option value="" selected?={ value == "" }>Default</option>
+					for _, o := range f.Options {
+						<option value={ o.Value } selected?={ o.Value == value }>{ o.Label }</option>
+					}
+				</select>
+			case "number":
+				<input
+					type="number"
+					name={ "extra_" + f.Key }
+					class="input w-full"
+					value={ value }
+					placeholder={ f.Placeholder }
+					data-testid={ "provider-extra-" + f.Key }
+				/>
+			default:
+				<input
+					type="text"
+					name={ "extra_" + f.Key }
+					class="input w-full"
+					value={ value }
+					placeholder={ f.Placeholder }
+					data-testid={ "provider-extra-" + f.Key }
+				/>
+		}
+	</label>
 }
 
 // providerConfigSaveErrorModal is the auto-opening alert shown when a save

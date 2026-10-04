@@ -38,6 +38,9 @@ type ResolvedCredential struct {
 	// Extra carries vendor-specific configuration keyed by field name (e.g.
 	// Azure "api_version").
 	Extra map[string]string
+	// ExtraHeaders carries HTTP headers derived from vendor extra fields that
+	// declare a header (e.g. a secondary secret header), keyed by header name.
+	ExtraHeaders map[string]string
 }
 
 // CredentialResolver resolves LLM credentials for the current request context.

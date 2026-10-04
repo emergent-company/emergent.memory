@@ -436,9 +436,17 @@ func (s *Server) uiProjectProviderConfig(c echo.Context) error {
 		GenerativeModel:    strings.TrimSpace(c.FormValue("generative_model")),
 		EmbeddingModel:     strings.TrimSpace(c.FormValue("embedding_model")),
 	}
-	if !s.providerIsKnown(ctx, provider) {
+	// The registry is the single source of truth for both known vendors and the
+	// extra fields each vendor declares; fetch it once so the vendor check and
+	// the extra-config parse share it.
+	defs, err := s.memory.ListProviderDefinitions(ctx)
+	if err != nil {
+		return s.renderProviderConfigError(c, provider, in, fmt.Errorf("could not load the provider registry: %w", err))
+	}
+	if providerDefinitionByType(defs, provider) == nil {
 		return s.renderProviderConfigError(c, provider, in, fmt.Errorf("unsupported provider %q", provider))
 	}
+	in.ExtraConfig = providerExtraConfigFromForm(c, defs, provider)
 	if in.BaseURL != "" {
 		u, err := url.Parse(in.BaseURL)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
@@ -464,22 +472,79 @@ func providerConfigSaveError(_ ProviderConfigInput, err error) error {
 	return fmt.Errorf("could not save provider: %w", err)
 }
 
-// providerIsKnown reports whether the given provider type is present in the
-// server's vendor registry. The registry is the single source of truth for the
-// selectable vendors, so the provider-config form no longer keeps a hardcoded
-// whitelist. A fetch failure rejects the request — the gateway must never
-// persist a vendor it cannot confirm the backend supports.
-func (s *Server) providerIsKnown(ctx context.Context, provider string) bool {
-	defs, err := s.memory.ListProviderDefinitions(ctx)
-	if err != nil {
-		return false
-	}
-	for _, d := range defs {
-		if d.Type == provider {
-			return true
+// providerDefinitionByType returns the registry definition for a vendor type, or
+// nil when the registry does not declare it. The registry is the single source
+// of truth for the selectable vendors, so the provider-config form keeps no
+// hardcoded whitelist.
+func providerDefinitionByType(defs []ProviderDefinition, providerType string) *ProviderDefinition {
+	for i := range defs {
+		if defs[i].Type == providerType {
+			return &defs[i]
 		}
 	}
-	return false
+	return nil
+}
+
+// providerExtraConfigFromForm builds the extraConfig map for a submitted
+// provider save. Only the selected vendor's declared extra fields are read, so
+// unselected vendors' inputs (hidden in the DOM) can never leak in. A blank
+// secret field is omitted, preserving the stored secret; every other declared
+// field is included — even when blank — so an empty value clears a non-secret
+// field (per-key merge). Nil means the vendor declares no extra fields (or only
+// blank secrets): the key is omitted entirely, preserving all stored extras.
+func providerExtraConfigFromForm(c echo.Context, defs []ProviderDefinition, provider string) map[string]string {
+	def := providerDefinitionByType(defs, provider)
+	if def == nil || len(def.ExtraFields) == 0 {
+		return nil
+	}
+	extra := make(map[string]string, len(def.ExtraFields))
+	for _, f := range def.ExtraFields {
+		value := strings.TrimSpace(c.FormValue("extra_" + f.Key))
+		if f.Secret && value == "" {
+			continue
+		}
+		extra[f.Key] = value
+	}
+	if len(extra) == 0 {
+		return nil
+	}
+	return extra
+}
+
+// providerExtraValue returns the stored non-secret extra value for key from a
+// saved provider config. Nil-safe: an unset config or a missing key is "".
+func providerExtraValue(p *ProjectProviderConfig, key string) string {
+	if p == nil {
+		return ""
+	}
+	return p.ExtraConfig[key]
+}
+
+// providerExtraDraftValue is the prefill for an extra field: a submitted draft
+// wins while re-rendering after a failed save, otherwise the stored config
+// value. Secret fields are rendered blank by the form regardless.
+func providerExtraDraftValue(draft *ProviderConfigInput, p *ProjectProviderConfig, key string) string {
+	if draft != nil {
+		return draft.ExtraConfig[key]
+	}
+	return providerExtraValue(p, key)
+}
+
+// providerExtraFieldValue is the value an extra field's control starts with: the
+// draft/stored value, falling back to the vendor-declared default only when no
+// provider config exists yet (add mode). Secret fields always render blank so a
+// stored secret is never echoed back into the form.
+func providerExtraFieldValue(draft *ProviderConfigInput, p *ProjectProviderConfig, f ExtraField) string {
+	if f.Secret {
+		return ""
+	}
+	if v := providerExtraDraftValue(draft, p, f.Key); v != "" {
+		return v
+	}
+	if p == nil && draft == nil {
+		return f.Default
+	}
+	return ""
 }
 
 // providerVendorDefinitions returns the server's vendor registry ordered by each

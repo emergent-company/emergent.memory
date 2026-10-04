@@ -135,6 +135,11 @@ func (r *Repository) ProjectProviderSlugs(ctx context.Context, projectID string)
 // UpsertProjectProviderConfig inserts or updates a project's provider instance.
 // The identity is (project_id, slug).
 func (r *Repository) UpsertProjectProviderConfig(ctx context.Context, cfg *ProjectProviderConfig) error {
+	if cfg.ExtraConfig == nil {
+		// The jsonb column is NOT NULL DEFAULT '{}'; normalise so an unset map is
+		// stored as {} rather than emitted as SQL NULL.
+		cfg.ExtraConfig = map[string]string{}
+	}
 	_, err := r.db.NewInsert().
 		Model(cfg).
 		On("CONFLICT (project_id, slug) DO UPDATE").
@@ -146,6 +151,9 @@ func (r *Repository) UpsertProjectProviderConfig(ctx context.Context, cfg *Proje
 		Set("base_url = EXCLUDED.base_url").
 		Set("generative_model = EXCLUDED.generative_model").
 		Set("embedding_model = EXCLUDED.embedding_model").
+		Set("extra_config = EXCLUDED.extra_config").
+		Set("extra_secret_encrypted = EXCLUDED.extra_secret_encrypted").
+		Set("extra_secret_nonce = EXCLUDED.extra_secret_nonce").
 		Set("updated_at = NOW()").
 		Returning("*").
 		Exec(ctx)
@@ -167,6 +175,9 @@ func (r *Repository) UpsertProjectProviderConfig(ctx context.Context, cfg *Proje
 // violation surfaces to the caller (used for concurrency-safe auto-suffix
 // allocation).
 func (r *Repository) InsertProjectProviderConfig(ctx context.Context, cfg *ProjectProviderConfig) error {
+	if cfg.ExtraConfig == nil {
+		cfg.ExtraConfig = map[string]string{}
+	}
 	_, err := r.db.NewInsert().
 		Model(cfg).
 		Returning("*").
@@ -255,7 +266,7 @@ func (r *Repository) ListProjectProviderConfigsByOrg(ctx context.Context, orgID 
 	var cfgs []ProjectProviderConfig
 	err := r.db.NewSelect().
 		Model(&cfgs).
-		Column("ppc.id", "ppc.project_id", "ppc.provider", "ppc.gcp_project", "ppc.location", "ppc.generative_model", "ppc.embedding_model", "ppc.created_at", "ppc.updated_at").
+		Column("ppc.id", "ppc.project_id", "ppc.provider", "ppc.gcp_project", "ppc.location", "ppc.generative_model", "ppc.embedding_model", "ppc.extra_config", "ppc.created_at", "ppc.updated_at").
 		Join("JOIN kb.projects AS p ON p.id = ppc.project_id").
 		Where("p.organization_id = ?", orgID).
 		Order("ppc.provider ASC").

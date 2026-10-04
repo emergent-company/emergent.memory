@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
+	"github.com/emergent-company/emergent.memory/domain/provider"
 )
 
 // fakeStore implements modelConfigStore in memory.
@@ -226,5 +228,31 @@ func TestResolveEmbeddingModelIgnoresResolverError(t *testing.T) {
 	}
 	if model != "" || source != ModelSourceNone {
 		t.Errorf("on resolver error ResolveEmbeddingModel = (%q, %q), want (\"\", none)", model, source)
+	}
+}
+
+// TestBuildEmbeddingCredentialCarriesExtraConfig pins that the adapter forwards
+// vendor extra config (Azure api_version, declared extra headers) from the
+// resolved provider credential into the embeddings credential, so the runtime
+// OpenAI-compatible embeddings client can apply it. Regression guard: these
+// fields were previously dropped, so only the catalog test path applied them.
+func TestBuildEmbeddingCredentialCarriesExtraConfig(t *testing.T) {
+	a := &EmbeddingResolverAdapter{}
+	cred := &provider.ResolvedCredential{
+		Provider:       provider.ProviderAzureOpenAI,
+		APIKey:         "sk",
+		BaseURL:        "https://x.openai.azure.com/openai/v1",
+		Auth:           provider.AuthAPIKeyHeader,
+		EmbeddingModel: "text-embedding-3-small",
+		Extra:          map[string]string{"api_version": "2024-10-21"},
+		ExtraHeaders:   map[string]string{"X-Secret-Key": "sk-secondary"},
+		Source:         provider.SourceProject,
+	}
+	got := a.buildEmbeddingCredential(cred, "text-embedding-3-small")
+	if got.Extra["api_version"] != "2024-10-21" {
+		t.Errorf("Extra[api_version] = %q, want 2024-10-21", got.Extra["api_version"])
+	}
+	if got.ExtraHeaders["X-Secret-Key"] != "sk-secondary" {
+		t.Errorf("ExtraHeaders[X-Secret-Key] = %q, want sk-secondary", got.ExtraHeaders["X-Secret-Key"])
 	}
 }

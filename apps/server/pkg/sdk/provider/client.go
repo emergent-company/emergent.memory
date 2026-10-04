@@ -55,32 +55,34 @@ const (
 // ProviderConfig is the public-safe representation of a stored provider config.
 // Credential fields (APIKey, ServiceAccountJSON) are never returned.
 type ProviderConfig struct {
-	ID              string    `json:"id"`
-	Provider        string    `json:"provider"`
-	Slug            string    `json:"slug"`
-	GCPProject      string    `json:"gcpProject,omitempty"`
-	Location        string    `json:"location,omitempty"`
-	BaseURL         string    `json:"baseUrl,omitempty"`
-	GenerativeModel string    `json:"generativeModel,omitempty"`
-	EmbeddingModel  string    `json:"embeddingModel,omitempty"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	ID              string            `json:"id"`
+	Provider        string            `json:"provider"`
+	Slug            string            `json:"slug"`
+	GCPProject      string            `json:"gcpProject,omitempty"`
+	Location        string            `json:"location,omitempty"`
+	BaseURL         string            `json:"baseUrl,omitempty"`
+	GenerativeModel string            `json:"generativeModel,omitempty"`
+	EmbeddingModel  string            `json:"embeddingModel,omitempty"`
+	ExtraConfig     map[string]string `json:"extraConfig,omitempty"`
+	CreatedAt       time.Time         `json:"createdAt"`
+	UpdatedAt       time.Time         `json:"updatedAt"`
 }
 
 // ProjectProviderConfig is the public-safe representation of a project-level
 // provider config override. It includes the ProjectID field.
 type ProjectProviderConfig struct {
-	ID              string    `json:"id"`
-	ProjectID       string    `json:"projectId"`
-	Provider        string    `json:"provider"`
-	Slug            string    `json:"slug"`
-	GCPProject      string    `json:"gcpProject,omitempty"`
-	Location        string    `json:"location,omitempty"`
-	BaseURL         string    `json:"baseUrl,omitempty"`
-	GenerativeModel string    `json:"generativeModel,omitempty"`
-	EmbeddingModel  string    `json:"embeddingModel,omitempty"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	ID              string            `json:"id"`
+	ProjectID       string            `json:"projectId"`
+	Provider        string            `json:"provider"`
+	Slug            string            `json:"slug"`
+	GCPProject      string            `json:"gcpProject,omitempty"`
+	Location        string            `json:"location,omitempty"`
+	BaseURL         string            `json:"baseUrl,omitempty"`
+	GenerativeModel string            `json:"generativeModel,omitempty"`
+	EmbeddingModel  string            `json:"embeddingModel,omitempty"`
+	ExtraConfig     map[string]string `json:"extraConfig,omitempty"`
+	CreatedAt       time.Time         `json:"createdAt"`
+	UpdatedAt       time.Time         `json:"updatedAt"`
 }
 
 // SupportedModel is a cached model entry from the provider catalog.
@@ -170,14 +172,15 @@ type TestProviderResponse struct {
 type UpsertProviderConfigRequest struct {
 	// Slug optionally names the provider instance. When empty it defaults to
 	// the dialect name; a save with an existing slug updates in place.
-	Slug               string `json:"slug,omitempty"`
-	APIKey             string `json:"apiKey,omitempty"`
-	ServiceAccountJSON string `json:"serviceAccountJson,omitempty"`
-	GCPProject         string `json:"gcpProject,omitempty"`
-	Location           string `json:"location,omitempty"`
-	BaseURL            string `json:"baseUrl,omitempty"`
-	GenerativeModel    string `json:"generativeModel,omitempty"`
-	EmbeddingModel     string `json:"embeddingModel,omitempty"`
+	Slug               string            `json:"slug,omitempty"`
+	APIKey             string            `json:"apiKey,omitempty"`
+	ServiceAccountJSON string            `json:"serviceAccountJson,omitempty"`
+	GCPProject         string            `json:"gcpProject,omitempty"`
+	Location           string            `json:"location,omitempty"`
+	BaseURL            string            `json:"baseUrl,omitempty"`
+	GenerativeModel    string            `json:"generativeModel,omitempty"`
+	EmbeddingModel     string            `json:"embeddingModel,omitempty"`
+	ExtraConfig        map[string]string `json:"extraConfig,omitempty"`
 }
 
 // --- Project Provider Config Methods ---

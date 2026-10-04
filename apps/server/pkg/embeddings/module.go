@@ -319,11 +319,13 @@ func (s *Service) resolveClientWithMeta(ctx context.Context) (Client, string, st
 	// APIKey + BaseURL are set for openai/deepseek providers.
 	if cred.APIKey != "" && cred.BaseURL != "" {
 		client, err := embopenai.NewClient(embopenai.Config{
-			APIKey:     cred.APIKey,
-			BaseURL:    cred.BaseURL,
-			Model:      model,
-			Dimensions: EmbeddingDimension, // request 768-dim vectors to match DB vector(768)
-			Auth:       adk.AuthStyle(cred.Auth),
+			APIKey:       cred.APIKey,
+			BaseURL:      cred.BaseURL,
+			Model:        model,
+			Dimensions:   EmbeddingDimension, // request 768-dim vectors to match DB vector(768)
+			Auth:         adk.AuthStyle(cred.Auth),
+			Extra:        cred.Extra,
+			ExtraHeaders: cred.ExtraHeaders,
 		}, embopenai.WithLogger(s.log))
 		if err != nil {
 			return nil, "", "", err

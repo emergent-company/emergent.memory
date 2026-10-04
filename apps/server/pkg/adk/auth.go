@@ -3,6 +3,8 @@ package adk
 import (
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 )
 
 // AuthStyle names how a provider expects credentials to be injected into an
@@ -70,4 +72,35 @@ func ApplyAuth(req *http.Request, style AuthStyle, apiKey string) error {
 	default:
 		return fmt.Errorf("unknown auth style %q", style)
 	}
+}
+
+// ApplyExtraHeaders sets each non-empty extra header on req. It is used for
+// vendor extra fields that declare a Header (e.g. a secondary secret header).
+func ApplyExtraHeaders(req *http.Request, headers map[string]string) {
+	for k, v := range headers {
+		if k != "" && v != "" {
+			req.Header.Set(k, v)
+		}
+	}
+}
+
+// extraValue returns extra[key], or "" when extra is nil or the key is unset.
+func extraValue(extra map[string]string, key string) string {
+	if extra == nil {
+		return ""
+	}
+	return extra[key]
+}
+
+// AppendQueryParam appends "?key=value" (or "&key=value") to rawURL when value
+// is non-empty, leaving the URL unchanged otherwise.
+func AppendQueryParam(rawURL, key, value string) string {
+	if value == "" {
+		return rawURL
+	}
+	sep := "?"
+	if strings.Contains(rawURL, "?") {
+		sep = "&"
+	}
+	return rawURL + sep + url.QueryEscape(key) + "=" + url.QueryEscape(value)
 }

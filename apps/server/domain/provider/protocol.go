@@ -63,6 +63,10 @@ type ExtraField struct {
 	Default     string             `json:"default,omitempty"`
 	Placeholder string             `json:"placeholder,omitempty"`
 	Options     []ExtraFieldOption `json:"options,omitempty"`
+	// Header, when set, names the HTTP header the field value is injected as on
+	// every outbound request (e.g. a secondary signing/secret header). Empty
+	// means the field is not attached as a header.
+	Header string `json:"header,omitempty"`
 }
 
 // ExtraFieldOption is one choice of a select extra field.

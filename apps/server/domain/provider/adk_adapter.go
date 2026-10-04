@@ -72,6 +72,7 @@ func toADKCredential(c *ResolvedCredential) *adk.ResolvedCredential {
 		Protocol:           string(c.Protocol),
 		Auth:               string(c.Auth),
 		Extra:              c.Extra,
+		ExtraHeaders:       c.ExtraHeaders,
 	}
 }
 

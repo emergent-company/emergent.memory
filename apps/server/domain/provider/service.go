@@ -2,8 +2,10 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -54,6 +56,11 @@ type ResolvedCredential struct {
 	// Extra carries vendor-specific configuration keyed by field name
 	// (e.g. Azure "api_version").
 	Extra map[string]string
+
+	// ExtraHeaders carries HTTP headers derived from vendor extra fields that
+	// declare an ExtraField.Header (e.g. a secondary secret header). Keyed by
+	// header name.
+	ExtraHeaders map[string]string
 
 	// Selected models (may come from org selection, project override, or env config)
 	EmbeddingModel  string
@@ -166,8 +173,61 @@ func (s *CredentialService) decryptProjectConfig(cfg *ProjectProviderConfig) (*R
 		resolved.APIKey = string(plaintext)
 	}
 
+	if err := s.applyExtraConfig(resolved, cfg); err != nil {
+		return nil, err
+	}
 	s.applyDefinition(resolved)
 	return resolved, nil
+}
+
+// applyExtraConfig merges the stored non-secret extra config and the decrypted
+// secret extra config into the resolved credential. A decrypt failure is
+// returned so a corrupted secret blob surfaces to the caller instead of
+// silently resolving the credential without its extra fields.
+func (s *CredentialService) applyExtraConfig(resolved *ResolvedCredential, cfg *ProjectProviderConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	resolved.Extra = copyStringMap(cfg.ExtraConfig)
+	secrets, err := s.decryptExtraSecrets(cfg)
+	if err != nil {
+		s.log.Error("failed to decrypt stored provider extra secrets",
+			logger.Error(err),
+			slog.String("provider", string(cfg.Provider)),
+			slog.String("slug", string(cfg.Slug)),
+		)
+		return fmt.Errorf("failed to decrypt provider extra secrets for %s/%s: %w", cfg.Provider, cfg.Slug, err)
+	}
+	if resolved.Extra == nil && len(secrets) > 0 {
+		resolved.Extra = make(map[string]string, len(secrets))
+	}
+	for k, v := range secrets {
+		resolved.Extra[k] = v
+	}
+	return nil
+}
+
+// decryptExtraSecrets decrypts the config's secret extra field map (returning an
+// empty map when none is stored).
+func (s *CredentialService) decryptExtraSecrets(cfg *ProjectProviderConfig) (map[string]string, error) {
+	if cfg == nil || len(cfg.ExtraSecretEncrypted) == 0 {
+		return map[string]string{}, nil
+	}
+	if s.encryptor == nil {
+		return nil, fmt.Errorf("credential encryption not configured (LLM_ENCRYPTION_KEY missing)")
+	}
+	plaintext, err := s.encryptor.Decrypt(cfg.ExtraSecretEncrypted, cfg.ExtraSecretNonce)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt provider extra secrets: %w", err)
+	}
+	out := map[string]string{}
+	if len(plaintext) == 0 {
+		return out, nil
+	}
+	if err := json.Unmarshal(plaintext, &out); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal provider extra secrets: %w", err)
+	}
+	return out, nil
 }
 
 // applyDefinition populates Protocol/Auth from the registry definition and
@@ -184,6 +244,26 @@ func (s *CredentialService) applyDefinition(resolved *ResolvedCredential) {
 		return
 	}
 	resolved.Auth = def.Auth
+
+	// Materialise vendor extra fields: unset fields take their declared default,
+	// and any field declaring a Header becomes an HTTP header at request time.
+	if resolved.Extra == nil {
+		resolved.Extra = map[string]string{}
+	}
+	for _, f := range def.ExtraFields {
+		if _, ok := resolved.Extra[f.Key]; !ok && f.Default != "" {
+			resolved.Extra[f.Key] = f.Default
+		}
+	}
+	if resolved.ExtraHeaders == nil {
+		resolved.ExtraHeaders = map[string]string{}
+	}
+	for _, f := range def.ExtraFields {
+		if f.Header != "" && resolved.Extra[f.Key] != "" {
+			resolved.ExtraHeaders[f.Header] = resolved.Extra[f.Key]
+		}
+	}
+
 	if resolved.BaseURL == "" {
 		if u := def.DefaultBaseURLs[ModelTypeGenerative]; u != "" {
 			resolved.BaseURL = u
@@ -191,10 +271,51 @@ func (s *CredentialService) applyDefinition(resolved *ResolvedCredential) {
 			resolved.BaseURL = u
 		}
 	}
+	// Vendor extra config may rewrite the endpoint (Volcengine Ark region).
+	resolved.BaseURL = applyExtraBaseURL(def, resolved.BaseURL, resolved.Extra)
+
 	// Protocol is resolved after BaseURL is known: a vendor may promote its
 	// openai-chat default to openai-responses for a first-party host, while a
 	// relay/proxy base URL keeps the default. See ProtocolForBaseURL.
 	resolved.Protocol = def.ProtocolForBaseURL(resolved.BaseURL)
+}
+
+// applyExtraBaseURL rewrites a resolved endpoint when a vendor extra field
+// changes the host. Currently only Volcengine Ark, whose region is the subdomain
+// segment of ark.<region>.volces.com.
+func applyExtraBaseURL(def *ProviderDefinition, baseURL string, extra map[string]string) string {
+	if def == nil || baseURL == "" || extra == nil {
+		return baseURL
+	}
+	if def.Type != ProviderVolcengine {
+		return baseURL
+	}
+	region := strings.TrimSpace(extra["region"])
+	if region == "" {
+		return baseURL
+	}
+	u, err := url.Parse(baseURL)
+	if err != nil || u.Host == "" {
+		return baseURL
+	}
+	rest, ok := strings.CutPrefix(u.Host, "ark.")
+	if !ok {
+		return baseURL
+	}
+	if i := strings.Index(rest, "."); i > 0 {
+		u.Host = "ark." + region + rest[i:]
+		return u.String()
+	}
+	return baseURL
+}
+
+// copyStringMap returns a non-nil copy of a string map.
+func copyStringMap(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 // EncryptCredential encrypts a plaintext credential for storage.
@@ -548,6 +669,7 @@ func (s *CredentialService) ListProjectConfigs(ctx context.Context, projectID st
 			BaseURL:         cfg.BaseURL,
 			GenerativeModel: cfg.GenerativeModel,
 			EmbeddingModel:  cfg.EmbeddingModel,
+			ExtraConfig:     cfg.ExtraConfig,
 			CreatedAt:       cfg.CreatedAt,
 			UpdatedAt:       cfg.UpdatedAt,
 		}
@@ -577,6 +699,7 @@ func (s *CredentialService) ListProjectConfigsByOrg(ctx context.Context, orgID s
 			BaseURL:         cfg.BaseURL,
 			GenerativeModel: cfg.GenerativeModel,
 			EmbeddingModel:  cfg.EmbeddingModel,
+			ExtraConfig:     cfg.ExtraConfig,
 			CreatedAt:       cfg.CreatedAt,
 			UpdatedAt:       cfg.UpdatedAt,
 		}
@@ -601,17 +724,29 @@ func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID s
 	// the API key / service account on every upsert. Model selections are
 	// reused too, so re-saving credentials/baseURL never silently re-auto-selects
 	// a different model from the (possibly larger) synced catalog.
-	if s.needsStoredCredential(provider, req) || req.GenerativeModel == "" || req.EmbeddingModel == "" {
-		existing, err := s.repo.GetProjectProviderConfigBySlug(ctx, projectID, slug)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get existing provider config: %w", err)
+	// Always load the existing config: credential/model reuse and the extra
+	// config merge both need it.
+	existing, err := s.repo.GetProjectProviderConfigBySlug(ctx, projectID, slug)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get existing provider config: %w", err)
+	}
+	if s.needsStoredCredential(provider, req) {
+		if err := s.reuseStoredCredential(provider, existing, &req); err != nil {
+			return nil, err
 		}
-		if s.needsStoredCredential(provider, req) {
-			if err := s.reuseStoredCredential(provider, existing, &req); err != nil {
-				return nil, err
-			}
-		}
-		s.reuseStoredModels(existing, &req)
+	}
+	s.reuseStoredModels(existing, &req)
+
+	// Merge vendor extra fields over the stored ones (nil submitted map preserves
+	// everything; blank secrets preserve the stored secret). Secret fields are
+	// kept in a separate encrypted blob, never in the plaintext jsonb column.
+	extraConfig, extraSecrets, err := s.mergeExtraConfig(provider, existing, req.ExtraConfig)
+	if err != nil {
+		return nil, err
+	}
+	extraSecretCiphertext, extraSecretNonce, err := s.encryptExtraSecrets(extraSecrets)
+	if err != nil {
+		return nil, err
 	}
 
 	plaintext, err := s.extractPlaintext(provider, req)
@@ -624,7 +759,17 @@ func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID s
 		return nil, fmt.Errorf("failed to encrypt credential: %w", err)
 	}
 
-	tempCred := s.buildTempResolvedCred(provider, req)
+	// The temporary credential used for catalog sync and connection tests must
+	// carry the *merged* extras (stored values + decrypted stored secrets +
+	// submitted values), not just the raw request: an update that omits
+	// extraConfig (or submits a blank secret to preserve it) must still validate
+	// against the stored api_version/secret header, or a valid existing config
+	// would fail before it is saved.
+	tempExtra := copyStringMap(extraConfig)
+	for k, v := range extraSecrets {
+		tempExtra[k] = v
+	}
+	tempCred := s.buildTempResolvedCredWithExtra(provider, req, tempExtra)
 
 	// Sync model catalog (15s timeout). Non-fatal — same as UpsertOrgConfig.
 	catalogSynced := true
@@ -704,16 +849,19 @@ func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID s
 	}
 
 	cfg := &ProjectProviderConfig{
-		ProjectID:           projectID,
-		Provider:            provider,
-		Slug:                slug,
-		EncryptedCredential: ciphertext,
-		EncryptionNonce:     nonce,
-		GCPProject:          req.GCPProject,
-		Location:            req.Location,
-		BaseURL:             req.BaseURL,
-		GenerativeModel:     generativeModel,
-		EmbeddingModel:      embeddingModel,
+		ProjectID:            projectID,
+		Provider:             provider,
+		Slug:                 slug,
+		EncryptedCredential:  ciphertext,
+		EncryptionNonce:      nonce,
+		GCPProject:           req.GCPProject,
+		Location:             req.Location,
+		BaseURL:              req.BaseURL,
+		GenerativeModel:      generativeModel,
+		EmbeddingModel:       embeddingModel,
+		ExtraConfig:          extraConfig,
+		ExtraSecretEncrypted: extraSecretCiphertext,
+		ExtraSecretNonce:     extraSecretNonce,
 	}
 
 	if err := s.repo.UpsertProjectProviderConfig(ctx, cfg); err != nil {
@@ -729,9 +877,78 @@ func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID s
 		BaseURL:         cfg.BaseURL,
 		GenerativeModel: cfg.GenerativeModel,
 		EmbeddingModel:  cfg.EmbeddingModel,
+		ExtraConfig:     cfg.ExtraConfig,
 		CreatedAt:       cfg.CreatedAt,
 		UpdatedAt:       cfg.UpdatedAt,
 	}, nil
+}
+
+// mergeExtraConfig folds a submitted extra-config map over the stored one.
+// A nil submitted map preserves all stored extras. For a submitted key:
+//   - a declared secret field with a blank value preserves the stored secret;
+//   - any other blank value removes the (non-secret) key.
+//
+// It returns the non-secret map and the secret map separately so the caller can
+// encrypt the secret half.
+func (s *CredentialService) mergeExtraConfig(provider ProviderType, existing *ProjectProviderConfig, submitted map[string]string) (map[string]string, map[string]string, error) {
+	merged := map[string]string{}
+	secrets := map[string]string{}
+	if existing != nil {
+		for k, v := range existing.ExtraConfig {
+			merged[k] = v
+		}
+		storedSecrets, err := s.decryptExtraSecrets(existing)
+		if err != nil {
+			return nil, nil, err
+		}
+		for k, v := range storedSecrets {
+			secrets[k] = v
+		}
+	}
+	if submitted == nil {
+		return merged, secrets, nil
+	}
+
+	isSecret := map[string]bool{}
+	if def := definitionFor(provider); def != nil {
+		for _, f := range def.ExtraFields {
+			if f.Secret {
+				isSecret[f.Key] = true
+			}
+		}
+	}
+	for k, v := range submitted {
+		if isSecret[k] {
+			if v == "" {
+				continue // preserve the stored secret
+			}
+			secrets[k] = v
+			continue
+		}
+		if v == "" {
+			delete(merged, k)
+			continue
+		}
+		merged[k] = v
+	}
+	return merged, secrets, nil
+}
+
+// encryptExtraSecrets encrypts the secret extra field map. An empty map yields
+// nil ciphertext/nonce so no secret blob is stored.
+func (s *CredentialService) encryptExtraSecrets(secrets map[string]string) (ciphertext, nonce []byte, err error) {
+	if len(secrets) == 0 {
+		return nil, nil, nil
+	}
+	raw, err := json.Marshal(secrets)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to marshal provider extra secrets: %w", err)
+	}
+	ct, n, err := s.EncryptCredential(raw)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to encrypt provider extra secrets: %w", err)
+	}
+	return ct, n, nil
 }
 
 // GetProjectConfig retrieves the public-safe metadata for a project's provider
@@ -763,6 +980,7 @@ func (s *CredentialService) GetProjectConfig(ctx context.Context, projectID stri
 		BaseURL:         cfg.BaseURL,
 		GenerativeModel: cfg.GenerativeModel,
 		EmbeddingModel:  cfg.EmbeddingModel,
+		ExtraConfig:     cfg.ExtraConfig,
 		CreatedAt:       cfg.CreatedAt,
 		UpdatedAt:       cfg.UpdatedAt,
 	}, nil
@@ -953,6 +1171,13 @@ func (s *CredentialService) extractPlaintext(provider ProviderType, req UpsertPr
 
 // buildTempResolvedCred constructs a plaintext ResolvedCredential for testing/syncing.
 func (s *CredentialService) buildTempResolvedCred(provider ProviderType, req UpsertProviderConfigRequest) *ResolvedCredential {
+	return s.buildTempResolvedCredWithExtra(provider, req, copyStringMap(req.ExtraConfig))
+}
+
+// buildTempResolvedCredWithExtra is buildTempResolvedCred with an explicit extra
+// map, so UpsertProjectConfig can pass the merged stored+submitted extras
+// instead of the raw request. extra may be nil.
+func (s *CredentialService) buildTempResolvedCredWithExtra(provider ProviderType, req UpsertProviderConfigRequest, extra map[string]string) *ResolvedCredential {
 	cred := &ResolvedCredential{
 		Provider:        provider,
 		BaseURL:         req.BaseURL,
@@ -960,6 +1185,7 @@ func (s *CredentialService) buildTempResolvedCred(provider ProviderType, req Ups
 		Location:        req.Location,
 		GenerativeModel: modelref.StripRoutingPrefix(req.GenerativeModel, isDialectName),
 		EmbeddingModel:  modelref.StripRoutingPrefix(req.EmbeddingModel, isDialectName),
+		Extra:           extra,
 	}
 
 	// Mirror decryptProjectConfig: route the configured credential to the field
