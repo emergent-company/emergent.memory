@@ -671,7 +671,7 @@ templ objectBadges(o GraphObject) {
 // (each rendered with a widget matching its declared data type). Labels and
 // array/object properties use a chip TagList; labelSuggestions feeds the
 // labels input's autocomplete from existing labels in the graph.
-templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef, form objectCreateForm, labelSuggestions []string, loadErr error) {
+templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef, form objectCreateForm, labelSuggestions []string, loadErr error, statusOptions []string) {
 	@layout.Container(layout.ContainerLG, nil) {
 		if loadErr != nil {
 			@pageError("Failed to load object types", loadErr)
@@ -714,7 +714,7 @@ templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef,
 							<input id="object-key" name="key" type="text" value={ form.Key } class="input w-full"/>
 						}
 						@fm.FormControl("object-status", "Status", fm.LabelAbove, "", "", nil) {
-							<input id="object-status" name="status" type="text" value={ form.Status } class="input w-full"/>
+							@objectStatusField("object-status", form.Status, statusOptions)
 						}
 					@fm.FormControl("object-labels", "Labels/Tags", fm.LabelAbove, "Comma-separated labels.", "", nil) {
 						@fm.TagList(fm.TagListProps{ID: "object-labels", Name: "labels", Values: form.Labels, Suggestions: labelSuggestions, Placeholder: "Add a label..."})
@@ -740,6 +740,33 @@ templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef,
 				<p class="text-muted text-sm">Pick a type to see its fields.</p>
 			}
 		}
+	}
+}
+
+// objectStatusField renders the built-in `status` control of the object
+// create/edit forms. A type gets a native select of its work statuses — the
+// declared `allowedStatuses` when present, otherwise the canonical board order
+// — so the picker is populated even for a type with no board config (its
+// objects still appear on the board through the canonical-lane fallback). A
+// stored value outside the option set (agent-written data is not constrained)
+// is kept as an extra selected option so saving never drops it. The text input
+// is retained only when no options are available (compiled types unavailable on
+// the edit form).
+templ objectStatusField(id string, current string, options []string) {
+	if len(options) > 0 {
+		<select id={ id } name="status" class="select w-full">
+			if current == "" {
+				<option value="" selected>Pick…</option>
+			}
+			for _, opt := range options {
+				<option value={ opt } selected?={ current == opt }>{ boardStatusLabel(opt) }</option>
+			}
+			if current != "" && !slices.Contains(options, current) {
+				<option value={ current } selected>{ current }</option>
+			}
+		</select>
+	} else {
+		<input id={ id } name="status" type="text" value={ current } class="input w-full"/>
 	}
 }
 
@@ -821,14 +848,14 @@ templ longTextarea(name string, value string) {
 // as an auto-dismissing toast. typeUIByType carries the compiled types'
 // declared ui accents (icon/color) so the header chip can render the object
 // type's icon.
-templ ObjectDetailPage(obj *GraphObject, relTypes []CompiledType, edges []GraphRelationship, related []GraphObject, similar []SimilarObject, loadErr error, flashMsg string, flashErr error, labelSuggestions []string, propDefs []objectPropertyDef, typeUIByType map[string]typeUI) {
+templ ObjectDetailPage(obj *GraphObject, relTypes []CompiledType, edges []GraphRelationship, related []GraphObject, similar []SimilarObject, loadErr error, flashMsg string, flashErr error, labelSuggestions []string, propDefs []objectPropertyDef, typeUIByType map[string]typeUI, statusOptions []string) {
 	@flashToasts(flashMsg, flashErr)
 	@layout.Container(layout.ContainerLG, nil) {
 		if loadErr != nil {
 			@pageError("Object unavailable", loadErr)
 		} else {
 			@objectDetailHeader(obj, typeUIByType)
-			@objectPropertiesCard(obj, propDefs, labelSuggestions)
+			@objectPropertiesCard(obj, propDefs, labelSuggestions, statusOptions)
 			@objectRelationships(obj, relTypes, edges, related)
 			if similar != nil {
 				@objectSimilarObjects(obj, similar)
@@ -889,7 +916,7 @@ templ objectDetailHeader(obj *GraphObject, typeUIByType map[string]typeUI) {
 // objectPropertiesCard renders the editable property form: common fields
 // (key, status, labels) then one input per stored property (prop_<key>).
 // POST /objects/{id} delta-merges the submitted fields.
-templ objectPropertiesCard(obj *GraphObject, propDefs []objectPropertyDef, labelSuggestions []string) {
+templ objectPropertiesCard(obj *GraphObject, propDefs []objectPropertyDef, labelSuggestions []string, statusOptions []string) {
 	@ui.Section("Properties", ui.SectionProps{
 		Margin:    "mt-6",
 		BodyClass: "memory-density-comfortable",
@@ -899,7 +926,7 @@ templ objectPropertiesCard(obj *GraphObject, propDefs []objectPropertyDef, label
 				<input id="object-key" name="key" type="text" value={ obj.Key } class="input w-full"/>
 			}
 			@fm.FormControl("object-status", "Status", fm.LabelAbove, "", "", nil) {
-				<input id="object-status" name="status" type="text" value={ obj.Status } class="input w-full"/>
+				@objectStatusField("object-status", obj.Status, statusOptions)
 			}
 			@fm.FormControl("object-labels", "Labels/Tags", fm.LabelAbove, "Comma-separated labels — replaces the current set.", "", nil) {
 				@fm.TagList(fm.TagListProps{ID: "object-labels", Name: "labels", Values: obj.Labels, Suggestions: labelSuggestions, Placeholder: "Add a label..."})

@@ -21,13 +21,16 @@ async function createPerson(page: import('@playwright/test').Page, key: string):
 
 test('edit form save persists changes and shows a success toast', async ({ page }) => {
   const key = `e2e-edit-${Date.now()}`;
-  const status = `reviewed-${Date.now()}`;
+  // Person is not board-enabled, but the status field is still a constrained
+  // select of the canonical work statuses, so edit it through the option value
+  // (Playwright's fill() rejects a <select>).
+  const status = 'review';
 
   await createPerson(page, key);
   await expect(page.locator('#object-key')).toHaveValue(key);
 
   // Edit the Status field and save.
-  await page.locator('#object-status').fill(status);
+  await page.locator('#object-status').selectOption(status);
   await page.getByRole('button', { name: 'Save changes' }).click();
 
   // PRG: the boosted POST redirects to the detail page with ?updated=1 (the

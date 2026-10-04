@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -535,7 +536,7 @@ func TestRenderObjectDetailPage(t *testing.T) {
 	}
 	edges := []GraphRelationship{{ID: "r1", Type: "assigned_to", SrcID: "c2", DstID: "c1"}}
 	related := []GraphObject{{ID: "o2", CanonicalID: "c2", Type: "task", Key: "call dentist"}}
-	html := renderHTML(t, ObjectDetailPage(obj, nil, edges, related, nil, nil, "", nil, nil, nil, nil))
+	html := renderHTML(t, ObjectDetailPage(obj, nil, edges, related, nil, nil, "", nil, nil, nil, nil, nil))
 	for _, want := range []string{
 		"sam-lee", "person", "first_name", "Sam", "relationship", "colleague",
 		"assigned to", "call dentist", `href="/objects"`,
@@ -545,18 +546,18 @@ func TestRenderObjectDetailPage(t *testing.T) {
 		}
 	}
 
-	htmlNoEdges := renderHTML(t, ObjectDetailPage(obj, nil, nil, nil, nil, nil, "", nil, nil, nil, nil))
+	htmlNoEdges := renderHTML(t, ObjectDetailPage(obj, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil))
 	if !strings.Contains(htmlNoEdges, "No relationships") {
 		t.Error("no-relationships state missing")
 	}
 
-	htmlErr := renderHTML(t, ObjectDetailPage(nil, nil, nil, nil, nil, errTest, "", nil, nil, nil, nil))
+	htmlErr := renderHTML(t, ObjectDetailPage(nil, nil, nil, nil, nil, errTest, "", nil, nil, nil, nil, nil))
 	if !strings.Contains(htmlErr, "Object unavailable") {
 		t.Error("error state missing")
 	}
 
 	// flash feedback renders an auto-dismissing toast carrying the message
-	htmlFlash := renderHTML(t, ObjectDetailPage(obj, nil, nil, nil, nil, nil, "", errTest, nil, nil, nil))
+	htmlFlash := renderHTML(t, ObjectDetailPage(obj, nil, nil, nil, nil, nil, "", errTest, nil, nil, nil, nil))
 	if !strings.Contains(htmlFlash, "memory-toast") || !strings.Contains(htmlFlash, errTest.Error()) {
 		t.Error("flash toast missing")
 	}
@@ -567,7 +568,7 @@ func TestRenderObjectDetailSimilar(t *testing.T) {
 	similar := []SimilarObject{
 		{ID: "o2", Type: "person", Key: "samuel-lee", Distance: 0.12},
 	}
-	html := renderHTML(t, ObjectDetailPage(obj, nil, nil, nil, similar, nil, "", nil, nil, nil, nil))
+	html := renderHTML(t, ObjectDetailPage(obj, nil, nil, nil, similar, nil, "", nil, nil, nil, nil, nil))
 	for _, want := range []string{
 		"Similar objects", "samuel-lee", "88% match", "Merge", `href="/objects/o1/merge?with=o2"`,
 	} {
@@ -579,7 +580,7 @@ func TestRenderObjectDetailSimilar(t *testing.T) {
 	// Without similar data the page defers the section to /objects/:id/similar
 	// instead of rendering it inline, so a slow /similar cannot hold the render
 	// (issue #1096).
-	htmlDeferred := renderHTML(t, ObjectDetailPage(obj, nil, nil, nil, nil, nil, "", nil, nil, nil, nil))
+	htmlDeferred := renderHTML(t, ObjectDetailPage(obj, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil))
 	for _, want := range []string{`hx-get="/objects/o1/similar"`, "Finding similar objects", `hx-target="this"`} {
 		if !strings.Contains(htmlDeferred, want) {
 			t.Errorf("deferred similar placeholder missing %q", want)
@@ -608,7 +609,7 @@ func TestRenderObjectDetailEditable(t *testing.T) {
 		{Name: "works_with", Label: "Works with", SourceType: "person", TargetType: "person"},
 		{Name: "located_in", Label: "Located in", SourceType: "place", TargetType: "place"},
 	}
-	html := renderHTML(t, ObjectDetailPage(obj, relTypes, nil, nil, nil, nil, "", nil, nil, nil, nil))
+	html := renderHTML(t, ObjectDetailPage(obj, relTypes, nil, nil, nil, nil, "", nil, nil, nil, nil, nil))
 
 	// properties form: common fields + one input per property
 	for _, want := range []string{
@@ -653,7 +654,7 @@ func TestRenderObjectDetailEditable(t *testing.T) {
 	// non-empty relationships still render the list rows
 	edges := []GraphRelationship{{ID: "r1", Type: "works_with", SrcID: "o1", DstID: "c2"}}
 	related := []GraphObject{{ID: "o2", CanonicalID: "c2", Type: "person", Key: "jamie-doe"}}
-	htmlEdges := renderHTML(t, ObjectDetailPage(obj, relTypes, edges, related, nil, nil, "", nil, nil, nil, nil))
+	htmlEdges := renderHTML(t, ObjectDetailPage(obj, relTypes, edges, related, nil, nil, "", nil, nil, nil, nil, nil))
 	for _, want := range []string{"works with", "jamie-doe", "Relationships"} {
 		if !strings.Contains(htmlEdges, want) {
 			t.Errorf("relationship list missing %q", want)
@@ -716,7 +717,7 @@ func TestRenderObjectDetailTypeAwareWidgets(t *testing.T) {
 		{Name: "priority", Type: "string", Enum: []string{"low", "high"}},
 		{Name: "title", Type: "string"},
 	}
-	html := renderHTML(t, ObjectDetailPage(obj, nil, nil, nil, nil, nil, "", nil, nil, propDefs, nil))
+	html := renderHTML(t, ObjectDetailPage(obj, nil, nil, nil, nil, nil, "", nil, nil, propDefs, nil, nil))
 
 	// boolean → hidden false + checked toggle (never a text input)
 	if !strings.Contains(html, `name="prop_cleared" value="false"`) {
@@ -1701,6 +1702,79 @@ func TestUIObjectNew(t *testing.T) {
 	})
 }
 
+// TestUIObjectStatusDropdownWiring proves the handlers plumb the compiled
+// type's board config through to the rendered status control, for both the
+// detail (edit) page and the create page.
+func TestUIObjectStatusDropdownWiring(t *testing.T) {
+	compiled := &CompiledSchemaTypes{ObjectTypes: []CompiledType{
+		{Name: "Task", Label: "Task", BoardEnabled: true, AllowedStatuses: []string{"ready", "in_progress", "done"}},
+		{Name: "Note", Label: "Note"},
+	}}
+	f := &fakeMemory{
+		compiled: compiled,
+		objects:  []GraphObject{{ID: "o1", CanonicalID: "o1", Type: "Task", Key: "t1", Status: "in_progress"}},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/objects/:id", s.uiObject)
+	e.GET("/objects/new", s.uiObjectNew)
+
+	t.Run("detail page selects the board statuses", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/o1", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `<select id="object-status" name="status"`) {
+			t.Fatalf("detail page missing status select in:\n%s", body)
+		}
+		for _, opt := range []string{"ready", "in_progress", "done"} {
+			if !strings.Contains(body, `value="`+opt+`"`) {
+				t.Errorf("detail select missing option %q in:\n%s", opt, body)
+			}
+		}
+		if !strings.Contains(body, `value="in_progress" selected`) {
+			t.Errorf("detail current status not selected in:\n%s", body)
+		}
+	})
+
+	t.Run("create page selects the board statuses", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/new?type=Task", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `<select id="object-status" name="status"`) {
+			t.Fatalf("create page missing status select in:\n%s", body)
+		}
+		for _, opt := range []string{"ready", "in_progress", "done"} {
+			if !strings.Contains(body, `value="`+opt+`"`) {
+				t.Errorf("create select missing option %q in:\n%s", opt, body)
+			}
+		}
+	})
+
+	t.Run("type with no board config also gets the canonical select (user report)", func(t *testing.T) {
+		f.objects = append(f.objects, GraphObject{ID: "o2", CanonicalID: "o2", Type: "Note", Key: "n1", Status: "anything"})
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/o2", nil))
+		body := rec.Body.String()
+		if !strings.Contains(body, `<select id="object-status" name="status"`) {
+			t.Fatalf("no-board-config detail page should render a status select in:\n%s", body)
+		}
+		for _, opt := range boardStatusOrder {
+			if !strings.Contains(body, `value="`+opt+`"`) {
+				t.Errorf("detail select missing canonical option %q in:\n%s", opt, body)
+			}
+		}
+		if !strings.Contains(body, `<option value="anything" selected>`) {
+			t.Errorf("off-list stored status should be preserved in:\n%s", body)
+		}
+	})
+}
+
 func TestUIObjectCreate(t *testing.T) {
 	compiled := &CompiledSchemaTypes{ObjectTypes: []CompiledType{{Name: "person", Properties: json.RawMessage(`{"first_name":{"type":"string"},"active":{"type":"boolean"},"tags":{"type":"array"}}`)}}}
 	newServer := func(f *fakeMemory) *Server { return &Server{cfg: Config{DefaultAgent: "memory"}, memory: f} }
@@ -1896,7 +1970,7 @@ func TestRenderObjectCreatePage(t *testing.T) {
 
 	t.Run("renders the type selector and TagList labels input", func(t *testing.T) {
 		form := objectCreateForm{Type: "person", Key: "k", Status: "s", Labels: []string{"vip"}, Props: map[string][]string{"first_name": {"Sam"}}}
-		html := renderHTML(t, ObjectCreatePage(objectTypes, propDefs, form, []string{"vip", "urgent"}, nil))
+		html := renderHTML(t, ObjectCreatePage(objectTypes, propDefs, form, []string{"vip", "urgent"}, nil, nil))
 		for _, want := range []string{
 			"New object", `name="type"`, "Pick a type…", "Person", "task",
 			`name="key"`, `name="status"`, `value="k"`, "Create object", `action="/objects"`,
@@ -1920,7 +1994,7 @@ func TestRenderObjectCreatePage(t *testing.T) {
 
 	t.Run("renders type-aware property widgets", func(t *testing.T) {
 		form := objectCreateForm{Type: "person", Props: map[string][]string{}}
-		html := renderHTML(t, ObjectCreatePage(objectTypes, propDefs, form, nil, nil))
+		html := renderHTML(t, ObjectCreatePage(objectTypes, propDefs, form, nil, nil, nil))
 		for _, want := range []string{
 			// date → date picker
 			`name="prop_born" type="date"`,
@@ -1960,7 +2034,7 @@ func TestRenderObjectCreatePage(t *testing.T) {
 
 	t.Run("boolean toggle reflects a true form value", func(t *testing.T) {
 		form := objectCreateForm{Type: "person", Props: map[string][]string{"active": {"true"}}}
-		html := renderHTML(t, ObjectCreatePage(objectTypes, propDefs, form, nil, nil))
+		html := renderHTML(t, ObjectCreatePage(objectTypes, propDefs, form, nil, nil, nil))
 		// Pins ToggleInput's canonical attribute order (class before checked).
 		if !strings.Contains(html, `type="checkbox" name="prop_active" value="true" class="toggle" checked`) {
 			t.Errorf("checked toggle missing in:\n%s", html)
@@ -1968,16 +2042,162 @@ func TestRenderObjectCreatePage(t *testing.T) {
 	})
 
 	t.Run("renders schema-install guidance when no types", func(t *testing.T) {
-		html := renderHTML(t, ObjectCreatePage(nil, nil, objectCreateForm{}, nil, nil))
+		html := renderHTML(t, ObjectCreatePage(nil, nil, objectCreateForm{}, nil, nil, nil))
 		if !strings.Contains(html, "No object types available") {
 			t.Error("empty-types guidance missing")
 		}
 	})
 
 	t.Run("renders the load error state", func(t *testing.T) {
-		html := renderHTML(t, ObjectCreatePage(nil, nil, objectCreateForm{}, nil, errTest))
+		html := renderHTML(t, ObjectCreatePage(nil, nil, objectCreateForm{}, nil, errTest, nil))
 		if !strings.Contains(html, "Failed to load object types") {
 			t.Error("load error state missing")
+		}
+	})
+}
+
+// TestObjectStatusOptions pins the option-source rules for the built-in status
+// field: a type uses its declared AllowedStatuses when present, otherwise the
+// canonical board order. That fallback applies to a type with no board config
+// too (the user-reported `Task` shape: no boardEnabled/allowedStatuses), so the
+// form still gets a populated select rather than a free-form text input.
+// Returns nil only when no type is selected.
+func TestObjectStatusOptions(t *testing.T) {
+	boardWithStatuses := []CompiledType{{
+		Name: "Task", BoardEnabled: true,
+		AllowedStatuses: []string{"triage", "doing", "done"},
+	}}
+	boardWithoutStatuses := []CompiledType{{Name: "Task", BoardEnabled: true}}
+	// The user-reported shape: a work type whose registry row declares neither
+	// boardEnabled nor allowedStatuses, yet is projected onto the board via the
+	// canonical-lane fallback.
+	noBoardConfig := []CompiledType{{Name: "Task"}}
+
+	if got := objectStatusOptions(boardWithStatuses, "Task"); !slices.Equal(got, []string{"triage", "doing", "done"}) {
+		t.Errorf("declared statuses = %v, want [triage doing done]", got)
+	}
+	if got := objectStatusOptions(boardWithoutStatuses, "Task"); !slices.Equal(got, boardStatusOrder) {
+		t.Errorf("board canonical fallback = %v, want %v", got, boardStatusOrder)
+	}
+	if got := objectStatusOptions(noBoardConfig, "Task"); !slices.Equal(got, boardStatusOrder) {
+		t.Errorf("no-board-config fallback = %v, want %v", got, boardStatusOrder)
+	}
+	if got := objectStatusOptions(noBoardConfig, "Unknown"); !slices.Equal(got, boardStatusOrder) {
+		t.Errorf("unknown type options = %v, want canonical %v", got, boardStatusOrder)
+	}
+	if got := objectStatusOptions(boardWithStatuses, ""); got != nil {
+		t.Errorf("no type selected options = %v, want nil", got)
+	}
+
+	// A shadowed (losing) declaration listed before the effective override must
+	// not leak its statuses; the winner's declared statuses win.
+	shadowedFirst := []CompiledType{
+		{Name: "Task", Shadowed: true, AllowedStatuses: []string{"stale"}},
+		{Name: "Task", AllowedStatuses: []string{"triage", "doing"}},
+	}
+	if got := objectStatusOptions(shadowedFirst, "Task"); !slices.Equal(got, []string{"triage", "doing"}) {
+		t.Errorf("shadowed declaration leaked: options = %v, want [triage doing]", got)
+	}
+}
+
+// TestObjectStatusField pins the rendered control: types get a native select of
+// their work statuses with the current value selected (and a stored value
+// outside the set preserved), including a type with no board config (the
+// user-reported `Task` shape).
+func TestObjectStatusField(t *testing.T) {
+	boardStatuses := []string{"ready", "in_progress", "review", "revision", "blocked", "done"}
+
+	renderSelect := func(current string) string {
+		obj := &GraphObject{ID: "o1", Type: "Task", Key: "t1", Status: current}
+		return renderHTML(t, ObjectDetailPage(obj, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, boardStatuses))
+	}
+
+	t.Run("edit page renders a select of the allowed statuses", func(t *testing.T) {
+		html := renderSelect("review")
+		if !strings.Contains(html, `<select id="object-status" name="status"`) {
+			t.Fatalf("edit page missing status select in:\n%s", html)
+		}
+		for _, opt := range boardStatuses {
+			if !strings.Contains(html, `value="`+opt+`"`) {
+				t.Errorf("status select missing option %q in:\n%s", opt, html)
+			}
+		}
+		if !strings.Contains(html, `value="review" selected`) {
+			t.Errorf("current status not marked selected in:\n%s", html)
+		}
+		if !strings.Contains(html, "In progress") {
+			t.Errorf("status labels should be humanised in:\n%s", html)
+		}
+		if strings.Contains(html, `name="status" type="text"`) {
+			t.Errorf("board type should not render a text input in:\n%s", html)
+		}
+	})
+
+	t.Run("blank pick option only when the current value is empty", func(t *testing.T) {
+		html := renderSelect("")
+		if !strings.Contains(html, `<option value="" selected>Pick…</option>`) {
+			t.Errorf("empty status should render a blank selected option in:\n%s", html)
+		}
+		for _, opt := range boardStatuses {
+			if strings.Contains(html, `value="`+opt+`" selected`) {
+				t.Errorf("no status should be selected when empty; %q was in:\n%s", opt, html)
+			}
+		}
+	})
+
+	t.Run("stored status outside the allowed set is preserved", func(t *testing.T) {
+		html := renderSelect("shipped")
+		if !strings.Contains(html, `<option value="shipped" selected>`) {
+			t.Errorf("off-list status should be kept as a selected option in:\n%s", html)
+		}
+	})
+
+	t.Run("create page renders the same status select", func(t *testing.T) {
+		objectTypes := []CompiledType{{Name: "Task", BoardEnabled: true, AllowedStatuses: boardStatuses}}
+		form := objectCreateForm{Type: "Task", Status: "in_progress"}
+		html := renderHTML(t, ObjectCreatePage(objectTypes, nil, form, nil, nil, objectStatusOptions(objectTypes, "Task")))
+		if !strings.Contains(html, `<select id="object-status" name="status"`) {
+			t.Fatalf("create page missing status select in:\n%s", html)
+		}
+		for _, opt := range boardStatuses {
+			if !strings.Contains(html, `value="`+opt+`"`) {
+				t.Errorf("create status select missing option %q in:\n%s", opt, html)
+			}
+		}
+		if !strings.Contains(html, `value="in_progress" selected`) {
+			t.Errorf("create current status not marked selected in:\n%s", html)
+		}
+	})
+
+	t.Run("type with no board config renders the canonical select (user report)", func(t *testing.T) {
+		// Registry row declares neither boardEnabled nor allowedStatuses, yet the
+		// type is shown on the board via the canonical-lane fallback. The form
+		// must offer the canonical statuses, not a free-form text input.
+		objectTypes := []CompiledType{{Name: "Task"}}
+		obj := &GraphObject{ID: "o1", Type: "Task", Key: "t1", Status: "in_progress"}
+		html := renderHTML(t, ObjectDetailPage(obj, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, objectStatusOptions(objectTypes, "Task")))
+		if !strings.Contains(html, `<select id="object-status" name="status"`) {
+			t.Fatalf("no-board-config type should render a status select in:\n%s", html)
+		}
+		for _, opt := range boardStatuses {
+			if !strings.Contains(html, `value="`+opt+`"`) {
+				t.Errorf("status select missing canonical option %q in:\n%s", opt, html)
+			}
+		}
+		if !strings.Contains(html, `value="in_progress" selected`) {
+			t.Errorf("current status not marked selected in:\n%s", html)
+		}
+		if strings.Contains(html, `name="status" type="text"`) {
+			t.Errorf("no-board-config type should not render a text input in:\n%s", html)
+		}
+	})
+
+	t.Run("off-list stored value still preserved for no-board-config type", func(t *testing.T) {
+		objectTypes := []CompiledType{{Name: "Task"}}
+		obj := &GraphObject{ID: "o1", Type: "Task", Key: "t1", Status: "pending"}
+		html := renderHTML(t, ObjectDetailPage(obj, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, objectStatusOptions(objectTypes, "Task")))
+		if !strings.Contains(html, `<option value="pending" selected>`) {
+			t.Errorf("off-list status should be kept as a selected option in:\n%s", html)
 		}
 	})
 }
@@ -2217,7 +2437,7 @@ func TestObjectPropertiesCardLongTextFallback(t *testing.T) {
 		{Name: "category", Type: "string", Enum: []string{"fact", "opinion"}},
 		{Name: "amount", Type: "number"},
 	}
-	html := renderHTML(t, objectPropertiesCard(obj, propDefs, nil))
+	html := renderHTML(t, objectPropertiesCard(obj, propDefs, nil, nil))
 
 	// the un-schema'd stored property renders the long-text field with a counter
 	if !strings.Contains(html, `name="prop_content"`) || !strings.Contains(html, `data-autogrow`) {

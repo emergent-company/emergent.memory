@@ -628,7 +628,7 @@ func (s *Server) uiObject(c echo.Context) error {
 
 	obj, err := s.memory.GetGraphObject(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle("Object"), ObjectDetailPage(nil, nil, nil, nil, nil, err, "", flashErr, nil, nil, nil))
+		return s.page(c, pageTitle("Object"), ObjectDetailPage(nil, nil, nil, nil, nil, err, "", flashErr, nil, nil, nil, nil))
 	}
 
 	var (
@@ -649,10 +649,12 @@ func (s *Server) uiObject(c echo.Context) error {
 	var relTypes []CompiledType
 	var propDefs []objectPropertyDef
 	var typeUIByType map[string]typeUI
+	var statusOptions []string
 	if compiled != nil {
 		relTypes = compiled.RelationshipTypes
 		propDefs = compiledTypePropertyDefs(compiled.ObjectTypes, obj.Type)
 		typeUIByType = objectTypeUIMap(compiled.ObjectTypes)
+		statusOptions = objectStatusOptions(compiled.ObjectTypes, obj.Type)
 	}
 
 	related := s.loadRelatedObjects(ctx, obj, edges)
@@ -665,7 +667,7 @@ func (s *Server) uiObject(c echo.Context) error {
 	// (issue #1096): it is not fetched here. The detail page renders the section
 	// as a deferred HTMX partial (/objects/:id/similar) so a slow /similar can
 	// never hold the page render again. nil similar triggers that deferred path.
-	return s.page(c, pageTitle(graphObjectLabel(*obj)), ObjectDetailPage(obj, relTypes, edges, related, nil, nil, flashMsg, flashErr, labelSuggestions, propDefs, typeUIByType))
+	return s.page(c, pageTitle(graphObjectLabel(*obj)), ObjectDetailPage(obj, relTypes, edges, related, nil, nil, flashMsg, flashErr, labelSuggestions, propDefs, typeUIByType, statusOptions))
 }
 
 // uiObjectSimilarPartial renders the "Similar objects" section as an HTMX
@@ -903,13 +905,39 @@ func compiledTypePropertyDefs(objectTypes []CompiledType, typeName string) []obj
 	return out
 }
 
+// objectStatusOptions returns the work-status options for an object type's
+// built-in `status` field: the type's declared AllowedStatuses when present,
+// otherwise the canonical board order. Every type that reaches the form gets a
+// populated picker — including a type with no board config, whose objects are
+// still projected onto the board through the canonical-lane fallback — so the
+// status field is never a free-form text input. Returns nil only when no type
+// is selected, where the create form renders no status field at all.
+func objectStatusOptions(objectTypes []CompiledType, typeName string) []string {
+	if typeName == "" {
+		return nil
+	}
+	// Iterate the visible view so a shadowed (losing) declaration cannot leak
+	// stale statuses for an overridden type — same rule as every other
+	// compiled-type consumer.
+	for _, t := range visibleCompiledTypes(objectTypes) {
+		if t.Name != typeName {
+			continue
+		}
+		if len(t.AllowedStatuses) > 0 {
+			return t.AllowedStatuses
+		}
+		return boardStatusOrder
+	}
+	return boardStatusOrder
+}
+
 // uiObjectNew renders the create-object form, driven by the project's compiled
 // object types. Selecting a type (via ?type=) reveals that type's property inputs.
 func (s *Server) uiObjectNew(c echo.Context) error {
 	ctx := c.Request().Context()
 	compiled, err := s.memory.GetCompiledTypes(ctx)
 	if err != nil {
-		return s.page(c, pageTitle("New object"), ObjectCreatePage(nil, nil, objectCreateForm{}, nil, err))
+		return s.page(c, pageTitle("New object"), ObjectCreatePage(nil, nil, objectCreateForm{}, nil, err, nil))
 	}
 	var objectTypes []CompiledType
 	if compiled != nil {
@@ -917,7 +945,7 @@ func (s *Server) uiObjectNew(c echo.Context) error {
 	}
 	selectedType := c.QueryParam("type")
 	propDefs := compiledTypePropertyDefs(objectTypes, selectedType)
-	return s.page(c, pageTitle("New object"), ObjectCreatePage(objectTypes, propDefs, objectCreateForm{Type: selectedType}, s.objectLabelSuggestions(ctx), nil))
+	return s.page(c, pageTitle("New object"), ObjectCreatePage(objectTypes, propDefs, objectCreateForm{Type: selectedType}, s.objectLabelSuggestions(ctx), nil, objectStatusOptions(objectTypes, selectedType)))
 }
 
 // uiObjectCreate creates an object from the create form and redirects to the
@@ -976,7 +1004,7 @@ func (s *Server) uiObjectCreate(c echo.Context) error {
 
 	render := func(errMsg string) error {
 		form.Error = errMsg
-		return s.page(c, pageTitle("New object"), ObjectCreatePage(objectTypes, compiledTypePropertyDefs(objectTypes, form.Type), form, suggestions, nil))
+		return s.page(c, pageTitle("New object"), ObjectCreatePage(objectTypes, compiledTypePropertyDefs(objectTypes, form.Type), form, suggestions, nil, objectStatusOptions(objectTypes, form.Type)))
 	}
 
 	if form.Type == "" {
