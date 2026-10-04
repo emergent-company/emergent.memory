@@ -4,9 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
+
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/adk"
 )
 
 // TestProviderDefinition_ProtocolForBaseURL is the data-driven selection
@@ -45,6 +50,74 @@ func TestProviderDefinition_ProtocolForBaseURL(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestEnvAndDBProtocolSelection_Agree pins the env/DB protocol parity contract:
+// for the same resolved base URL both paths select the same protocol. A
+// non-OpenAI openai-chat vendor (OpenRouter) whose base URL is overridden to a
+// first-party OpenAI host must NOT be promoted to Responses, because its
+// definition does not declare that host.
+func TestEnvAndDBProtocolSelection_Agree(t *testing.T) {
+	registry := NewRegistry()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	t.Run("non-openai vendor at overridden openai host keeps chat", func(t *testing.T) {
+		f := adk.NewModelFactory(&config.LLMConfig{}, logger, nil, nil, nil)
+		f.WithEnvVendorResolver(NewEnvVendorAdapter(registry))
+		f.WithEnvLookup(func(k string) string {
+			switch k {
+			case "OPENROUTER_API_KEY":
+				return "rk"
+			case "OPENROUTER_BASE_URL":
+				return "https://api.openai.com/v1"
+			}
+			return ""
+		})
+
+		def, err := registry.Get(ProviderOpenRouter)
+		if err != nil {
+			t.Fatalf("registry.Get(openrouter) error = %v", err)
+		}
+		wantDB := def.ProtocolForBaseURL("https://api.openai.com/v1")
+		if wantDB != ProtocolOpenAIChat {
+			t.Fatalf("precondition: openrouter DB protocol = %q, want %q", wantDB, ProtocolOpenAIChat)
+		}
+
+		cfg, err := f.ResolveEnvVendor(string(ProviderOpenRouter), "openai/gpt-4o")
+		if err != nil {
+			t.Fatalf("ResolveEnvVendor() error = %v", err)
+		}
+		if cfg.Protocol != string(wantDB) {
+			t.Errorf("env protocol = %q, DB protocol = %q — env and DB diverge", cfg.Protocol, wantDB)
+		}
+		if cfg.Protocol == string(ProtocolOpenAIResponses) {
+			t.Errorf("non-OpenAI openai-chat vendor promoted to Responses by an overridden host")
+		}
+	})
+
+	t.Run("openai vendor at first-party host is responses on both paths", func(t *testing.T) {
+		f := adk.NewModelFactory(&config.LLMConfig{
+			OpenAIAPIKey:  "ok",
+			OpenAIBaseURL: "https://api.openai.com/v1",
+		}, logger, nil, nil, nil)
+
+		def, err := registry.Get(ProviderOpenAI)
+		if err != nil {
+			t.Fatalf("registry.Get(openai) error = %v", err)
+		}
+		wantDB := def.ProtocolForBaseURL("https://api.openai.com/v1")
+		if wantDB != ProtocolOpenAIResponses {
+			t.Fatalf("precondition: openai first-party DB protocol = %q, want %q", wantDB, ProtocolOpenAIResponses)
+		}
+
+		cfg, err := f.ResolveEnvVendor(string(ProviderOpenAI), "gpt-4o")
+		if err != nil {
+			t.Fatalf("ResolveEnvVendor() error = %v", err)
+		}
+		if cfg.Protocol != string(wantDB) {
+			t.Errorf("env protocol = %q, DB protocol = %q — env and DB diverge", cfg.Protocol, wantDB)
+		}
+	})
 }
 
 // TestOpenAIResponsesSelection_ResolvedCredential proves the selection reaches

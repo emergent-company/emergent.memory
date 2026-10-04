@@ -37,6 +37,7 @@ var Module = fx.Module("provider",
 		provideADKCredentialAdapter,
 		provideUsageTrackerAdapter,
 		provideModelLimitAdapter,
+		provideEnvVendorAdapter,
 		NewHandler,
 	),
 	fx.Invoke(
@@ -157,6 +158,14 @@ func provideADKCredentialAdapter(svc *CredentialService) adk.CredentialResolver 
 // into ModelFactory so every LLM created by the factory is automatically wrapped.
 func provideUsageTrackerAdapter(svc *UsageService, log *slog.Logger) adk.ModelWrapper {
 	return NewUsageTrackerAdapter(svc, log)
+}
+
+// provideEnvVendorAdapter exposes the vendor Registry as adk.EnvVendorResolver.
+// Consumed by adk.Module so the env-var fallback can build any registered
+// vendor (not just the four legacy providers) from <PREFIX>_API_KEY /
+// <PREFIX>_BASE_URL / <PREFIX>_MODEL.
+func provideEnvVendorAdapter(registry *Registry) adk.EnvVendorResolver {
+	return NewEnvVendorAdapter(registry)
 }
 
 // provideModelLimitAdapter exposes CredentialService + Repository as

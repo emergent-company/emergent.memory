@@ -301,6 +301,37 @@ See `migrations/README.md` for detailed documentation.
 | `MINIO_ACCESS_KEY`      | MinIO access key        | (required)        |
 | `MINIO_SECRET_KEY`      | MinIO secret key        | (required)        |
 
+### LLM provider environment variables
+
+When no provider credentials are configured in the database, the server can
+build an LLM client from environment variables. The four legacy providers keep
+their historical variables:
+
+| Provider       | Variables                                                                 |
+| -------------- | ------------------------------------------------------------------------- |
+| DeepSeek       | `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL` (routed, e.g. `deepseek/deepseek-v4-flash`) |
+| OpenAI         | `OPENAI_API_KEY`, `OPENAI_BASE_URL` (optional), `OPENAI_MODEL`            |
+| Google AI      | `GOOGLE_API_KEY`                                                          |
+| Vertex AI      | `GCP_PROJECT_ID`, `VERTEX_AI_LOCATION`                                    |
+
+Every other registered vendor is configured generically. The prefix is the
+vendor's dialect upper-cased with `-` replaced by `_`:
+
+```
+<PREFIX>_API_KEY    # required to enable the vendor
+<PREFIX>_BASE_URL   # optional; defaults to the vendor's registered endpoint
+<PREFIX>_MODEL      # model id (bare, or routed as <vendor>/<model>)
+```
+
+Examples: `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` (Anthropic),
+`OPENROUTER_API_KEY` / `OPENROUTER_BASE_URL` / `OPENROUTER_MODEL`
+(OpenRouter), and `AZURE_OPENAI_API_KEY` / `AZURE_OPENAI_BASE_URL` (Azure
+OpenAI, whose registered endpoint contains a `{resource}` placeholder that the
+env path does not substitute, so the concrete base URL is required). A vendor
+is enabled only when its API key is set — a base URL or model alone never
+enables it. Database provider configuration always takes precedence over env;
+env is a fallback only when no stored credential exists.
+
 ### Loading from .env
 
 The server loads environment variables from:

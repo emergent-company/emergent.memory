@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	"cloud.google.com/go/auth/credentials"
 	"go.uber.org/fx"
@@ -33,6 +32,7 @@ type modelFactoryParams struct {
 	Wrapper       ModelWrapper       `optional:"true"`
 	ModelResolver ModelResolver      `optional:"true"`
 	TestLLM       TestLLMChecker     `optional:"true"`
+	EnvVendors    EnvVendorResolver  `optional:"true"`
 }
 
 // provideModelFactory creates a ModelFactory from the main config, with an
@@ -43,6 +43,9 @@ func provideModelFactory(p modelFactoryParams) *ModelFactory {
 	if p.TestLLM != nil {
 		f.WithTestLLMChecker(p.TestLLM)
 	}
+	if p.EnvVendors != nil {
+		f.WithEnvVendorResolver(p.EnvVendors)
+	}
 	return f
 }
 
@@ -50,10 +53,12 @@ func provideModelFactory(p modelFactoryParams) *ModelFactory {
 type ModelFactory struct {
 	cfg           *config.LLMConfig
 	log           *slog.Logger
-	resolver      CredentialResolver // optional; nil → env-var-only mode
-	wrapper       ModelWrapper       // optional; nil → no usage tracking
-	modelResolver ModelResolver      // optional; nil → env default only
-	testLLM       TestLLMChecker     // optional; nil → no test-LLM mode
+	resolver      CredentialResolver  // optional; nil → env-var-only mode
+	wrapper       ModelWrapper        // optional; nil → no usage tracking
+	modelResolver ModelResolver       // optional; nil → env default only
+	testLLM       TestLLMChecker      // optional; nil → no test-LLM mode
+	envVendors    EnvVendorResolver   // optional; nil → legacy env providers only
+	envLookup     func(string) string // optional test seam; nil → os.Getenv
 }
 
 // NewModelFactory creates a new ModelFactory with the given configuration.
@@ -77,6 +82,19 @@ func (f *ModelFactory) WithTestLLMChecker(c TestLLMChecker) {
 	f.testLLM = c
 }
 
+// WithEnvVendorResolver sets the optional registry-backed vendor resolver used
+// by the generic env-var fallback. Without it only the four legacy providers
+// can be built from env.
+func (f *ModelFactory) WithEnvVendorResolver(r EnvVendorResolver) {
+	f.envVendors = r
+}
+
+// WithEnvLookup overrides the environment getter used by the generic env-var
+// fallback. It exists for tests; production uses os.Getenv.
+func (f *ModelFactory) WithEnvLookup(lookup func(string) string) {
+	f.envLookup = lookup
+}
+
 // maybeTestLLM returns a deterministic test model when the project in ctx has
 // test-LLM mode enabled, or nil otherwise.
 func (f *ModelFactory) maybeTestLLM(ctx context.Context) model.LLM {
@@ -97,11 +115,14 @@ func (f *ModelFactory) maybeTestLLM(ctx context.Context) model.LLM {
 //
 // Model resolution order:
 //  1. ModelResolver.ResolveGenerativeModelByID — project config → provider
-//     credential generative model. If the resolved model is empty (nothing
-//     configured) an error is returned.
-//  2. If no ModelResolver is wired (tests / env-var-only mode), falls back to
-//     the first configured env-var model (DEEPSEEK_MODEL → OPENAI_MODEL →
-//     VERTEX_AI_MODEL). If none are set, returns ErrNoModelConfigured.
+//     credential generative model. DB precedence is absolute: when it resolves
+//     a model it wins and env is never consulted.
+//  2. When the DB hierarchy yields nothing, fall back to env-var configuration:
+//     the legacy vars (DEEPSEEK_MODEL → OPENAI_MODEL → VERTEX_AI_MODEL) and then
+//     the generic registry vendor vars (<PREFIX>_MODEL). If none are set,
+//     returns a "no generative model configured" error.
+//  3. If no ModelResolver is wired at all (tests / env-var-only mode), uses the
+//     same env-var fallback directly.
 //
 // The resolved model name must include a provider prefix (e.g. "deepseek/deepseek-v4-flash").
 func (f *ModelFactory) CreateModel(ctx context.Context) (model.LLM, error) {
@@ -148,6 +169,18 @@ func (f *ModelFactory) CreateModel(ctx context.Context) (model.LLM, error) {
 					return f.CreateModelWithName(ctx, name)
 				}
 			}
+			// No DB project/provider model. Fall back to env-var configuration
+			// (legacy vars plus generic registry vendors) before erroring, so
+			// env-only self-host chat keeps working even though the model
+			// resolver module is always wired in production. DB precedence is
+			// preserved: this runs only when the DB hierarchy yields nothing.
+			if envModel := f.ModelName(); envModel != "" {
+				f.log.Debug("resolved generative model from env fallback",
+					slog.String("model", envModel),
+					slog.String("projectID", projectID),
+				)
+				return f.CreateModelWithName(ctx, envModel)
+			}
 			return nil, fmt.Errorf("no generative model configured for project %s — set a model via 'memory projects set-models --generative provider/model' or 'memory provider configure-project <provider> --generative-model <model>'", projectID)
 		}
 		f.log.Debug("resolved generative model",
@@ -161,7 +194,7 @@ func (f *ModelFactory) CreateModel(ctx context.Context) (model.LLM, error) {
 	// No DB resolver — fall back to env vars (used in tests and env-var-only mode).
 	envModel := f.ModelName()
 	if envModel == "" {
-		return nil, fmt.Errorf("no generative model configured: set DEEPSEEK_MODEL, OPENAI_MODEL, or VERTEX_AI_MODEL")
+		return nil, fmt.Errorf("no generative model configured: set DEEPSEEK_MODEL, OPENAI_MODEL, VERTEX_AI_MODEL, or <PROVIDER>_MODEL (e.g. ANTHROPIC_MODEL)")
 	}
 	return f.CreateModelWithName(ctx, envModel)
 }
@@ -176,11 +209,15 @@ func (f *ModelFactory) CreateModel(ctx context.Context) (model.LLM, error) {
 //  1. If a CredentialResolver is configured, resolve per-request credentials from
 //     the DB hierarchy (project → org → env). This is the production path when
 //     domain/provider.Module is registered.
-//  2. Fall back to per-provider env vars:
+//  2. Fall back to per-provider env vars. The four legacy providers keep their
+//     historical variables:
 //     DeepSeek: DEEPSEEK_API_KEY
 //     OpenAI:   OPENAI_API_KEY (+ optional OPENAI_BASE_URL)
 //     Google:   GOOGLE_API_KEY
 //     Vertex:   GCP_PROJECT_ID + VERTEX_AI_LOCATION
+//     Every other registered vendor resolves `<PREFIX>_API_KEY`,
+//     `<PREFIX>_BASE_URL`, and `<PREFIX>_MODEL` via the registry-driven
+//     resolver (see EnvPrefix).
 //
 // If a ModelWrapper is configured the returned LLM is wrapped for usage tracking.
 func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string) (model.LLM, error) {
@@ -208,9 +245,7 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 		if err != nil {
 			// Only fall through to env-var config when env vars are actually
 			// configured. Otherwise the credential error would be masked.
-			hasEnvFallback := f.cfg.UseVertexAI() || f.cfg.GoogleAPIKey != "" ||
-				f.cfg.DeepSeekAPIKey != "" || f.cfg.OpenAIAPIKey != ""
-			if hasEnvFallback {
+			if f.hasEnvFallback(providerHint) {
 				f.log.Warn("credential resolver returned error, falling back to env config",
 					slog.String("error", err.Error()),
 				)
@@ -330,116 +365,8 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 		// cred == nil means no DB credential found — fall through to env vars
 	}
 
-	// --- 2. Per-provider env-var fallback ---
-	switch providerHint {
-	case "deepseek":
-		return f.createDeepSeekEnv(bareModel)
-	case "openai":
-		return f.createOpenAIEnv(bareModel)
-	case "google-vertex":
-		return f.createVertexAIEnv(ctx, bareModel)
-	case "google":
-		return f.createGoogleAIEnv(ctx, bareModel)
-	default:
-		return nil, fmt.Errorf("unsupported provider %q in model name %q — supported providers: deepseek, openai, google, google-vertex", providerHint, modelName)
-	}
-}
-
-// createDeepSeekEnv creates a model from DEEPSEEK_API_KEY env var.
-func (f *ModelFactory) createDeepSeekEnv(bareModel string) (model.LLM, error) {
-	if f.cfg.DeepSeekAPIKey == "" {
-		return nil, fmt.Errorf("DEEPSEEK_API_KEY is not set")
-	}
-	if bareModel == "" {
-		// Strip an optional "provider/" prefix from the DEEPSEEK_MODEL env var
-		// if it was configured in routed form. modelref:allow — this is the
-		// untrusted environment-variable input boundary, not a routed model
-		// reference reconstructed from a trusted internal string, so the
-		// canonical modelref.Parse (strict) does not apply here.
-		m := f.cfg.DeepSeekModel
-		if _, stripped, ok := strings.Cut(m, "/"); ok {
-			m = stripped
-		}
-		bareModel = m
-	}
-	if bareModel == "" {
-		return nil, fmt.Errorf("model name is required: set DEEPSEEK_MODEL (e.g. deepseek/deepseek-v4-flash)")
-	}
-	f.log.Debug("creating ADK model via DeepSeek (env config)", slog.String("model", bareModel))
-	llm := NewOpenAICompatibleModel("https://api.deepseek.com/v1", f.cfg.DeepSeekAPIKey, bareModel)
-	return f.wrapModel(llm, "deepseek", "deepseek"), nil
-}
-
-// createOpenAIEnv creates a model from OPENAI_API_KEY env var.
-func (f *ModelFactory) createOpenAIEnv(bareModel string) (model.LLM, error) {
-	if f.cfg.OpenAIAPIKey == "" {
-		return nil, fmt.Errorf("OPENAI_API_KEY is not set")
-	}
-	if bareModel == "" {
-		// Strip an optional "provider/" prefix from the OPENAI_MODEL env var
-		// if it was configured in routed form. modelref:allow — this is the
-		// untrusted environment-variable input boundary, not a routed model
-		// reference reconstructed from a trusted internal string, so the
-		// canonical modelref.Parse (strict) does not apply here.
-		m := f.cfg.OpenAIModel
-		if _, stripped, ok := strings.Cut(m, "/"); ok {
-			m = stripped
-		}
-		bareModel = m
-	}
-	if bareModel == "" {
-		return nil, fmt.Errorf("model name is required: set OPENAI_MODEL (e.g. openai/gpt-4o)")
-	}
-	baseURL := f.cfg.OpenAIBaseURL
-	if baseURL == "" {
-		baseURL = "https://api.openai.com/v1"
-	}
-	f.log.Debug("creating ADK model via OpenAI (env config)",
-		slog.String("model", bareModel),
-		slog.String("baseURL", baseURL),
-		slog.String("protocol", SelectOpenAIProtocol(baseURL)),
-	)
-	if SelectOpenAIProtocol(baseURL) == protocolOpenAIResponses {
-		llm := NewOpenAIResponsesModel(baseURL, f.cfg.OpenAIAPIKey, bareModel, AuthBearer)
-		return f.wrapModel(llm, "openai", "openai"), nil
-	}
-	llm := NewOpenAICompatibleModel(baseURL, f.cfg.OpenAIAPIKey, bareModel)
-	return f.wrapModel(llm, "openai", "openai"), nil
-}
-
-// createVertexAIEnv creates a model from env-var Vertex AI config.
-func (f *ModelFactory) createVertexAIEnv(ctx context.Context, bareModel string) (model.LLM, error) {
-	clientCfg := &genai.ClientConfig{
-		Backend:  genai.BackendVertexAI,
-		Project:  f.cfg.GCPProjectID,
-		Location: f.cfg.VertexAILocation,
-	}
-	f.log.Debug("creating ADK Gemini model via Vertex AI (env config)",
-		slog.String("model", bareModel),
-		slog.String("project", f.cfg.GCPProjectID),
-		slog.String("location", f.cfg.VertexAILocation),
-	)
-	llm, err := gemini.NewModel(ctx, bareModel, clientCfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Gemini model: %w", err)
-	}
-	return f.wrapModel(llm, "google-vertex", "google-vertex"), nil
-}
-
-// createGoogleAIEnv creates a model from env-var Google AI API key config.
-func (f *ModelFactory) createGoogleAIEnv(ctx context.Context, bareModel string) (model.LLM, error) {
-	clientCfg := &genai.ClientConfig{
-		Backend: genai.BackendGeminiAPI,
-		APIKey:  f.cfg.GoogleAPIKey,
-	}
-	f.log.Debug("creating ADK Gemini model via Google AI (env config)",
-		slog.String("model", bareModel),
-	)
-	llm, err := gemini.NewModel(ctx, bareModel, clientCfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Gemini model via Google AI: %w", err)
-	}
-	return f.wrapModel(llm, "google", "google"), nil
+	// --- 2. Env-var fallback (registry-driven; legacy providers preserved) ---
+	return f.createEnvModel(ctx, providerHint, bareModel)
 }
 
 // wrapModel applies the optional ModelWrapper to the given LLM.
@@ -489,14 +416,22 @@ func (f *ModelFactory) ExtractionGenerateConfigWithSchema(schema *genai.Schema) 
 }
 
 // IsEnabled returns true if the LLM configuration is valid for creating models.
+// The four legacy providers keep the exact semantics of LLMConfig.IsEnabled();
+// a registered non-legacy vendor also enables the factory once it has both an
+// env API key and an env model (never on a key alone). LLM_NETWORK_DISABLED is
+// a hard kill switch: when set, no provider — legacy or generic — is enabled.
 func (f *ModelFactory) IsEnabled() bool {
-	return f.cfg.IsEnabled()
+	if f.cfg.NetworkDisabled {
+		return false
+	}
+	return f.cfg.IsEnabled() || f.genericEnvModelName() != ""
 }
 
 // ModelName returns the first configured model name across all env-var providers.
-// Priority: DEEPSEEK_MODEL → OPENAI_MODEL → VERTEX_AI_MODEL.
-// Returns "" if no provider is configured via env vars.
-// Used primarily in tests and env-var-only mode; production resolves models via DB.
+// Priority: DEEPSEEK_MODEL → OPENAI_MODEL → VERTEX_AI_MODEL → registered
+// vendor env models in registry order. Returns "" if no provider is configured
+// via env vars. Used primarily in tests and env-var-only mode; production
+// resolves models via DB.
 func (f *ModelFactory) ModelName() string {
 	if f.cfg.DeepSeekAPIKey != "" && f.cfg.DeepSeekModel != "" {
 		return f.cfg.DeepSeekModel
@@ -507,7 +442,7 @@ func (f *ModelFactory) ModelName() string {
 	if f.cfg.Model != "" {
 		return f.cfg.Model
 	}
-	return ""
+	return f.genericEnvModelName()
 }
 
 // Helper function for pointer values

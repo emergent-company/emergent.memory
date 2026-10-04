@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
@@ -255,7 +256,7 @@ func TestModelFactoryCreateModel_ValidationErrors(t *testing.T) {
 				VertexAILocation: "us-central1",
 				Model:            "",
 			},
-			wantErr: "no generative model configured: set DEEPSEEK_MODEL, OPENAI_MODEL, or VERTEX_AI_MODEL",
+			wantErr: "no generative model configured: set DEEPSEEK_MODEL, OPENAI_MODEL, VERTEX_AI_MODEL, or <PROVIDER>_MODEL (e.g. ANTHROPIC_MODEL)",
 		},
 	}
 
@@ -451,6 +452,88 @@ func TestModelFactoryCreateModel_FallsBackToProviderConfig(t *testing.T) {
 	}
 	if llm == nil {
 		t.Fatal("CreateModel() returned nil model")
+	}
+}
+
+// TestCreateModel_EnvFallbackWhenResolverWired pins the #1456 reachability fix:
+// the production model resolver is always wired, so a DB resolver that yields no
+// model must still fall through to env configuration. Before the fix this path
+// returned the "no generative model configured" error without ever consulting
+// ModelName(), killing env-only self-host deployments.
+func TestCreateModel_EnvFallbackWhenResolverWired(t *testing.T) {
+	f := NewModelFactory(&config.LLMConfig{}, testLogger(), nil, nil,
+		&stubModelResolver{model: "", source: ""})
+	f.WithEnvVendorResolver(registryStub())
+	f.WithEnvLookup(envMap(map[string]string{
+		"ANTHROPIC_API_KEY": "ak",
+		"ANTHROPIC_MODEL":   "claude-sonnet-4-5",
+	}))
+
+	ctx := WithProjectID(context.Background(), "00000000-0000-0000-0000-000000000000")
+	llm, err := f.CreateModel(ctx)
+	if err != nil {
+		t.Fatalf("CreateModel() error = %v, want env fallback when resolver yields no model", err)
+	}
+	m, ok := llm.(*anthropicModel)
+	if !ok {
+		t.Fatalf("model type = %T, want *anthropicModel", llm)
+	}
+	if m.modelName != "claude-sonnet-4-5" {
+		t.Errorf("modelName = %q, want claude-sonnet-4-5", m.modelName)
+	}
+}
+
+// TestCreateModel_NoDBNoEnv_Errors verifies that when neither the DB resolver nor
+// env yields a model, CreateModel still returns the clear configuration error
+// rather than a nil model or a panic.
+func TestCreateModel_NoDBNoEnv_Errors(t *testing.T) {
+	f := NewModelFactory(&config.LLMConfig{}, testLogger(), nil, nil,
+		&stubModelResolver{model: "", source: ""})
+
+	ctx := WithProjectID(context.Background(), "00000000-0000-0000-0000-000000000000")
+	_, err := f.CreateModel(ctx)
+	if err == nil {
+		t.Fatal("CreateModel() error = nil, want no-generative-model error")
+	}
+	if !strings.Contains(err.Error(), "no generative model configured") {
+		t.Errorf("error = %q, want mention of no generative model configured", err.Error())
+	}
+}
+
+// TestCreateModel_DBModelBeatsEnv verifies DB precedence survives the env
+// fallback: when the resolver yields a model, env is never consulted even though
+// a (different) env model is configured.
+func TestCreateModel_DBModelBeatsEnv(t *testing.T) {
+	cfg := &config.LLMConfig{DeepSeekAPIKey: "dk", DeepSeekModel: "deepseek/deepseek-env"}
+	f := NewModelFactory(cfg, testLogger(), nil, nil,
+		&stubModelResolver{model: "anthropic/db-model", source: "project"})
+	f.WithEnvVendorResolver(registryStub())
+	f.WithEnvLookup(envMap(map[string]string{
+		"ANTHROPIC_API_KEY": "ak",
+	}))
+	w := &captureWrapper{}
+	f.wrapper = w
+
+	// The env default (deepseek) is a different provider than the DB model
+	// (anthropic); if env leaked through we would build a deepseek model.
+	if got := f.ModelName(); got != "deepseek/deepseek-env" {
+		t.Fatalf("ModelName() = %q, want deepseek/deepseek-env (env default)", got)
+	}
+
+	ctx := WithProjectID(context.Background(), "00000000-0000-0000-0000-000000000000")
+	llm, err := f.CreateModel(ctx)
+	if err != nil {
+		t.Fatalf("CreateModel() error = %v", err)
+	}
+	m, ok := llm.(*anthropicModel)
+	if !ok {
+		t.Fatalf("model type = %T, want *anthropicModel (DB model wins over env)", llm)
+	}
+	if m.modelName != "db-model" {
+		t.Errorf("modelName = %q, want db-model", m.modelName)
+	}
+	if !w.called || w.slug != "anthropic" {
+		t.Errorf("wrapper slug = %q (called=%v), want anthropic — DB model must win over env", w.slug, w.called)
 	}
 }
 
