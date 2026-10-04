@@ -240,11 +240,24 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 				case cred.Provider == "anthropic":
 					protocol = "anthropic-messages"
 				default:
-					protocol = "openai-chat"
+					// Host-aware: first-party api.openai.com selects
+					// openai-responses; relays/proxies keep openai-chat.
+					protocol = SelectOpenAIProtocol(cred.BaseURL)
 				}
 			}
 
 			switch protocol {
+			case protocolOpenAIResponses:
+				f.log.Debug("creating ADK model via OpenAI Responses endpoint (DB cred)",
+					slog.String("model", resolvedModel),
+					slog.String("baseURL", cred.BaseURL),
+					slog.String("provider", cred.Provider),
+					slog.String("protocol", protocol),
+					slog.String("auth", cred.Auth),
+					slog.String("source", cred.Source),
+				)
+				llm := NewOpenAIResponsesModel(cred.BaseURL, cred.APIKey, resolvedModel, AuthStyle(cred.Auth))
+				return f.wrapModel(llm, cred.Slug, cred.Provider), nil
 			case "openai-chat":
 				f.log.Debug("creating ADK model via OpenAI-protocol endpoint (DB cred)",
 					slog.String("model", resolvedModel),
@@ -384,7 +397,12 @@ func (f *ModelFactory) createOpenAIEnv(bareModel string) (model.LLM, error) {
 	f.log.Debug("creating ADK model via OpenAI (env config)",
 		slog.String("model", bareModel),
 		slog.String("baseURL", baseURL),
+		slog.String("protocol", SelectOpenAIProtocol(baseURL)),
 	)
+	if SelectOpenAIProtocol(baseURL) == protocolOpenAIResponses {
+		llm := NewOpenAIResponsesModel(baseURL, f.cfg.OpenAIAPIKey, bareModel, AuthBearer)
+		return f.wrapModel(llm, "openai", "openai"), nil
+	}
 	llm := NewOpenAICompatibleModel(baseURL, f.cfg.OpenAIAPIKey, bareModel)
 	return f.wrapModel(llm, "openai", "openai"), nil
 }

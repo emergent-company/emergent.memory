@@ -514,12 +514,22 @@ func (s *ModelCatalogService) TestGenerateForModel(ctx context.Context, provider
 // uses the adk Anthropic adapter. Returns the LLM's reply text.
 func (s *ModelCatalogService) generateContentForModel(ctx context.Context, provider ProviderType, cred *ResolvedCredential, model string) (reply string, err error) {
 	def := definitionFor(provider)
-	var protocol Protocol
-	if def != nil {
-		protocol = def.Protocol
+	baseURL := cred.BaseURL
+	if baseURL == "" && def != nil {
+		baseURL = def.DefaultBaseURLs[ModelTypeGenerative]
 	}
-	if protocol == "" {
+	var protocol Protocol
+	if cred != nil {
+		// The resolved credential already carries the base-URL-aware protocol
+		// (applyDefinition → ProtocolForBaseURL); prefer it so an explicit
+		// selection is honoured.
 		protocol = cred.Protocol
+	}
+	if protocol == "" && def != nil {
+		// Fall back to base-URL-aware resolution: a first-party api.openai.com
+		// credential resolves to openai-responses; a relay/proxy base URL
+		// keeps openai-chat.
+		protocol = def.ProtocolForBaseURL(baseURL)
 	}
 	if protocol == "" {
 		// Legacy fallback for callers that predate the Protocol field.
@@ -532,14 +542,8 @@ func (s *ModelCatalogService) generateContentForModel(ctx context.Context, provi
 	}
 
 	switch protocol {
-	case ProtocolOpenAIChat:
-		baseURL := cred.BaseURL
-		if baseURL == "" && def != nil {
-			baseURL = def.DefaultBaseURLs[ModelTypeGenerative]
-		}
-		if baseURL == "" {
-			return "", fmt.Errorf("openai-compatible provider requires base_url")
-		}
+	case ProtocolOpenAIChat, ProtocolOpenAIResponses:
+		endpoint := "/chat/completions"
 		reqBody := map[string]interface{}{
 			"model": model,
 			"messages": []map[string]string{
@@ -547,12 +551,27 @@ func (s *ModelCatalogService) generateContentForModel(ctx context.Context, provi
 			},
 			"max_tokens": 64,
 		}
+		if protocol == ProtocolOpenAIResponses {
+			endpoint = "/responses"
+			reqBody = map[string]interface{}{
+				"model": model,
+				"input": []map[string]any{
+					{"type": "message", "role": "user", "content": []map[string]string{
+						{"type": "input_text", "text": "Say hello in one sentence."},
+					}},
+				},
+				"max_output_tokens": 64,
+			}
+		}
+		if baseURL == "" {
+			return "", fmt.Errorf("openai-compatible provider requires base_url")
+		}
 		bodyBytes, err := json.Marshal(reqBody)
 		if err != nil {
 			return "", fmt.Errorf("failed to marshal request: %w", err)
 		}
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-			strings.TrimSuffix(baseURL, "/")+"/chat/completions",
+			strings.TrimSuffix(baseURL, "/")+endpoint,
 			bytes.NewReader(bodyBytes))
 		if err != nil {
 			return "", fmt.Errorf("failed to create request: %w", err)
@@ -570,6 +589,47 @@ func (s *ModelCatalogService) generateContentForModel(ctx context.Context, provi
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			body, _ := io.ReadAll(resp.Body)
 			return "", fmt.Errorf("openai-compatible generate call returned %d: %s", resp.StatusCode, string(body))
+		}
+		if protocol == ProtocolOpenAIResponses {
+			var result struct {
+				Output []struct {
+					Type    string `json:"type"`
+					Content []struct {
+						Text string `json:"text"`
+					} `json:"content"`
+					Summary []struct {
+						Text string `json:"text"`
+					} `json:"summary"`
+				} `json:"output"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+				return "", fmt.Errorf("failed to decode openai-responses response: %w", err)
+			}
+			for _, item := range result.Output {
+				switch item.Type {
+				case "message":
+					for _, c := range item.Content {
+						reply += c.Text
+					}
+				}
+			}
+			// Only fall back to the reasoning summary when the model returned
+			// no message text, mirroring the chat path's reasoning_content
+			// fallback: the summary is not the assistant's reply and must not
+			// be concatenated ahead of it.
+			if reply == "" {
+				for _, item := range result.Output {
+					if item.Type == "reasoning" {
+						for _, s := range item.Summary {
+							reply += s.Text
+						}
+					}
+				}
+			}
+			if reply == "" {
+				reply = "(ok)" // model responded with no text content but no error
+			}
+			return reply, nil
 		}
 		var result struct {
 			Choices []struct {
@@ -681,11 +741,18 @@ func (s *ModelCatalogService) TestEmbedForModel(ctx context.Context, provider Pr
 func (s *ModelCatalogService) embedContentForModel(ctx context.Context, provider ProviderType, cred *ResolvedCredential, model string) (string, error) {
 	def := definitionFor(provider)
 	var protocol Protocol
-	if def != nil {
-		protocol = def.Protocol
-	}
-	if protocol == "" {
+	if cred != nil {
 		protocol = cred.Protocol
+	}
+	if protocol == "" && def != nil {
+		baseURL := cred.BaseURL
+		if baseURL == "" {
+			baseURL = def.DefaultBaseURLs[ModelTypeEmbedding]
+			if baseURL == "" {
+				baseURL = def.DefaultBaseURLs[ModelTypeGenerative]
+			}
+		}
+		protocol = def.ProtocolForBaseURL(baseURL)
 	}
 
 	switch protocol {
@@ -733,7 +800,7 @@ func (s *ModelCatalogService) embedContentForModel(ctx context.Context, provider
 		}
 		return model, nil
 
-	case ProtocolOpenAIChat:
+	case ProtocolOpenAIChat, ProtocolOpenAIResponses:
 		// Vendors with only generative model types have no embedding API.
 		if !hasEmbeddingModelType(def) {
 			return "not supported", nil

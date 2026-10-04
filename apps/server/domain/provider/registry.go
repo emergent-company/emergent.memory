@@ -37,6 +37,14 @@ type ProviderDefinition struct {
 	// AuthByProtocol overrides Auth for a specific protocol.
 	AuthByProtocol map[Protocol]AuthStyle `json:"-"`
 
+	// ResponsesHosts lists hostnames whose vendor base URL must use
+	// ProtocolOpenAIResponses instead of the definition's default protocol.
+	// Empty means the vendor never auto-selects Responses. Selection is driven
+	// by the resolved host, so first-party OpenAI (api.openai.com) uses
+	// Responses while a relay/proxy endpoint on any other host keeps Chat
+	// Completions.
+	ResponsesHosts []string `json:"responsesHosts,omitempty"`
+
 	// DefaultBaseURLs maps model type to the vendor's default endpoint.
 	DefaultBaseURLs map[ModelType]string `json:"defaultBaseUrls,omitempty"`
 	// ModelTypes lists the model types this vendor serves.

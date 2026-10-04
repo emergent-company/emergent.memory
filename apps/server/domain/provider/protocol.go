@@ -8,6 +8,12 @@ type Protocol string
 const (
 	// ProtocolOpenAIChat is the OpenAI Chat Completions wire protocol.
 	ProtocolOpenAIChat Protocol = "openai-chat"
+	// ProtocolOpenAIResponses is OpenAI's Responses wire protocol
+	// (POST {base}/responses). It is required by the newest OpenAI reasoning
+	// models, which reject `tools` combined with a graded reasoning effort on
+	// /v1/chat/completions, and it is the only protocol that accepts some
+	// effort levels (e.g. "max").
+	ProtocolOpenAIResponses Protocol = "openai-responses"
 	// ProtocolGoogleGenAI is Google's native generateContent protocol.
 	ProtocolGoogleGenAI Protocol = "google-genai"
 	// ProtocolAnthropicMessages is Anthropic's native Messages protocol.

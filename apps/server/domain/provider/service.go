@@ -42,8 +42,9 @@ type ResolvedCredential struct {
 	BaseURL string
 
 	// Protocol is the wire protocol the vendor speaks ("openai-chat",
-	// "google-genai", "anthropic-messages"). Populated from the registry
-	// definition at resolution time.
+	// "openai-responses", "google-genai", "anthropic-messages"). Populated from
+	// the registry definition at resolution time, base-URL-aware so a
+	// first-party OpenAI host selects the Responses protocol.
 	Protocol Protocol
 
 	// Auth is the credential-injection style (bearer, api-key, x-api-key,
@@ -182,7 +183,6 @@ func (s *CredentialService) applyDefinition(resolved *ResolvedCredential) {
 	if def == nil {
 		return
 	}
-	resolved.Protocol = def.Protocol
 	resolved.Auth = def.Auth
 	if resolved.BaseURL == "" {
 		if u := def.DefaultBaseURLs[ModelTypeGenerative]; u != "" {
@@ -191,6 +191,10 @@ func (s *CredentialService) applyDefinition(resolved *ResolvedCredential) {
 			resolved.BaseURL = u
 		}
 	}
+	// Protocol is resolved after BaseURL is known: a vendor may promote its
+	// openai-chat default to openai-responses for a first-party host, while a
+	// relay/proxy base URL keeps the default. See ProtocolForBaseURL.
+	resolved.Protocol = def.ProtocolForBaseURL(resolved.BaseURL)
 }
 
 // EncryptCredential encrypts a plaintext credential for storage.

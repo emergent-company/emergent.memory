@@ -29,8 +29,8 @@ type ResolvedCredential struct {
 	// Informational only; used for logging and tracing.
 	Source string
 	// Protocol is the wire protocol the vendor speaks: "openai-chat",
-	// "google-genai", or "anthropic-messages". Empty means derive from legacy
-	// flags (IsGoogleAI/IsVertexAI/Provider).
+	// "openai-responses", "google-genai", or "anthropic-messages". Empty means
+	// derive from legacy flags (IsGoogleAI/IsVertexAI/Provider).
 	Protocol string
 	// Auth is the credential-injection style: "bearer", "api-key", "x-api-key",
 	// "x-goog-api-key", "none", or "signed". Empty defaults to bearer.

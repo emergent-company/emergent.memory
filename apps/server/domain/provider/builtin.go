@@ -1,6 +1,10 @@
 package provider
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/emergent-company/emergent.memory/pkg/adk"
+)
 
 // Builtins returns the supported vendor definitions in display order
 // (ascending Order). NewRegistry normalizes this into the runtime Registry.
@@ -246,15 +250,19 @@ func buildBuiltins() []*ProviderDefinition {
 		},
 		// --- OpenAI ---
 		{
-			Type:             ProviderOpenAI,
-			DisplayName:      "OpenAI",
-			Description:      "OpenAI API (GPT-4o, o1, etc.) authenticated via API key",
-			Protocol:         ProtocolOpenAIChat,
-			Auth:             AuthBearer,
-			DefaultBaseURLs:  both("https://api.openai.com/v1", "https://api.openai.com/v1"),
-			ModelTypes:       []ModelType{ModelTypeGenerative, ModelTypeEmbedding},
-			CatalogStrategy:  CatalogOpenAIModels,
-			Compat:           Compat{MaxTokensField: "max_completion_tokens", SupportsToolChoice: true},
+			Type:            ProviderOpenAI,
+			DisplayName:     "OpenAI",
+			Description:     "OpenAI API (GPT-4o, o1, etc.) authenticated via API key",
+			Protocol:        ProtocolOpenAIChat,
+			Auth:            AuthBearer,
+			DefaultBaseURLs: both("https://api.openai.com/v1", "https://api.openai.com/v1"),
+			ModelTypes:      []ModelType{ModelTypeGenerative, ModelTypeEmbedding},
+			CatalogStrategy: CatalogOpenAIModels,
+			Compat:          Compat{MaxTokensField: "max_completion_tokens", SupportsToolChoice: true},
+			// First-party api.openai.com uses the Responses protocol; any
+			// relay/proxy base URL stays on Chat Completions. The host list is
+			// shared with the env-var path in pkg/adk so both agree.
+			ResponsesHosts:   adk.FirstPartyOpenAIResponseHosts,
 			Order:            30,
 			CredentialFields: keyFields(),
 		},
