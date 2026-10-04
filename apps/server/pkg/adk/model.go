@@ -3,6 +3,7 @@ package adk
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -111,6 +112,17 @@ func (f *ModelFactory) maybeTestLLM(ctx context.Context) model.LLM {
 	return nil
 }
 
+// ErrNetworkDisabled is returned by CreateModel and CreateModelWithName when the
+// LLM_NETWORK_DISABLED kill switch is on. It is a hard error: while network
+// access is disabled, no provider-backed model is constructed from either env
+// vars or the DB credential hierarchy.
+var ErrNetworkDisabled = errors.New("LLM network access is disabled by LLM_NETWORK_DISABLED")
+
+// networkDisabled reports whether the LLM_NETWORK_DISABLED kill switch is on.
+func (f *ModelFactory) networkDisabled() bool {
+	return f != nil && f.cfg != nil && f.cfg.NetworkDisabled
+}
+
 // CreateModel creates an ADK-compatible LLM model.
 //
 // Model resolution order:
@@ -125,12 +137,20 @@ func (f *ModelFactory) maybeTestLLM(ctx context.Context) model.LLM {
 //     same env-var fallback directly.
 //
 // The resolved model name must include a provider prefix (e.g. "deepseek/deepseek-v4-flash").
+//
+// The LLM_NETWORK_DISABLED kill switch takes precedence over both paths: when
+// on, CreateModel returns ErrNetworkDisabled without building a model. The
+// deterministic test-LLM model (a no-network canned model) still takes
+// precedence over the kill switch.
 func (f *ModelFactory) CreateModel(ctx context.Context) (model.LLM, error) {
 	if f == nil {
 		return nil, fmt.Errorf("ModelFactory is nil — no LLM provider configured")
 	}
 	if llm := f.maybeTestLLM(ctx); llm != nil {
 		return llm, nil
+	}
+	if f.networkDisabled() {
+		return nil, ErrNetworkDisabled
 	}
 	if f.modelResolver != nil {
 		projectID := ProjectIDFromContext(ctx)
@@ -220,9 +240,16 @@ func (f *ModelFactory) CreateModel(ctx context.Context) (model.LLM, error) {
 //     resolver (see EnvPrefix).
 //
 // If a ModelWrapper is configured the returned LLM is wrapped for usage tracking.
+//
+// The LLM_NETWORK_DISABLED kill switch is a hard gate: when on,
+// CreateModelWithName returns ErrNetworkDisabled without resolving credentials
+// or building a model. The deterministic test-LLM model is exempt (no network).
 func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string) (model.LLM, error) {
 	if llm := f.maybeTestLLM(ctx); llm != nil {
 		return llm, nil
+	}
+	if f.networkDisabled() {
+		return nil, ErrNetworkDisabled
 	}
 	if modelName == "" {
 		return nil, fmt.Errorf("model name is required")

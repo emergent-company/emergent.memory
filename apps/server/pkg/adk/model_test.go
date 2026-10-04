@@ -3,6 +3,7 @@ package adk
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -272,6 +273,132 @@ func TestModelFactoryCreateModel_ValidationErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestModelFactory_NetworkDisabled_HardGate verifies that LLM_NETWORK_DISABLED
+// is a hard gate at model-creation time: when the kill switch is on, no
+// provider-backed model is constructed from either env vars or the DB
+// credential hierarchy.
+func TestModelFactory_NetworkDisabled_HardGate(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	envCfg := &config.LLMConfig{
+		NetworkDisabled: true,
+		DeepSeekAPIKey:  "test-key",
+		DeepSeekModel:   "deepseek/deepseek-v4-flash",
+	}
+	dbCred := &ResolvedCredential{
+		Provider:        "deepseek",
+		GenerativeModel: "deepseek-v4-flash",
+		BaseURL:         "https://api.deepseek.com/v1",
+		APIKey:          "test-key",
+		Source:          "project",
+	}
+
+	t.Run("CreateModel env path errors", func(t *testing.T) {
+		f := NewModelFactory(envCfg, log, nil, nil, nil)
+		llm, err := f.CreateModel(context.Background())
+		if !errors.Is(err, ErrNetworkDisabled) {
+			t.Fatalf("CreateModel() error = %v, want ErrNetworkDisabled", err)
+		}
+		if llm != nil {
+			t.Fatal("CreateModel() built a model despite LLM_NETWORK_DISABLED")
+		}
+	})
+
+	t.Run("CreateModelWithName env path errors", func(t *testing.T) {
+		f := NewModelFactory(envCfg, log, nil, nil, nil)
+		llm, err := f.CreateModelWithName(context.Background(), "deepseek/deepseek-v4-flash")
+		if !errors.Is(err, ErrNetworkDisabled) {
+			t.Fatalf("CreateModelWithName() error = %v, want ErrNetworkDisabled", err)
+		}
+		if llm != nil {
+			t.Fatal("CreateModelWithName() built a model despite LLM_NETWORK_DISABLED")
+		}
+	})
+
+	t.Run("CreateModel DB path errors", func(t *testing.T) {
+		f := NewModelFactory(&config.LLMConfig{NetworkDisabled: true}, log,
+			&stubCredentialResolver{cred: dbCred},
+			nil,
+			&stubModelResolver{model: "deepseek/deepseek-v4-flash", source: "project"},
+		)
+		ctx := WithProjectID(context.Background(), "00000000-0000-0000-0000-000000000000")
+		llm, err := f.CreateModel(ctx)
+		if !errors.Is(err, ErrNetworkDisabled) {
+			t.Fatalf("CreateModel() error = %v, want ErrNetworkDisabled", err)
+		}
+		if llm != nil {
+			t.Fatal("CreateModel() built a DB-backed model despite LLM_NETWORK_DISABLED")
+		}
+	})
+
+	t.Run("CreateModelWithName DB path errors", func(t *testing.T) {
+		f := NewModelFactory(&config.LLMConfig{NetworkDisabled: true}, log,
+			&stubCredentialResolver{cred: dbCred}, nil, nil)
+		llm, err := f.CreateModelWithName(context.Background(), "deepseek/deepseek-v4-flash")
+		if !errors.Is(err, ErrNetworkDisabled) {
+			t.Fatalf("CreateModelWithName() error = %v, want ErrNetworkDisabled", err)
+		}
+		if llm != nil {
+			t.Fatal("CreateModelWithName() built a DB-backed model despite LLM_NETWORK_DISABLED")
+		}
+	})
+}
+
+// TestModelFactory_NetworkEnabled_Unchanged verifies that with the kill switch
+// off (the default), env-var and DB model construction still succeed.
+func TestModelFactory_NetworkEnabled_Unchanged(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	t.Run("env path builds model", func(t *testing.T) {
+		cfg := &config.LLMConfig{
+			DeepSeekAPIKey: "test-key",
+			DeepSeekModel:  "deepseek/deepseek-v4-flash",
+		}
+		f := NewModelFactory(cfg, log, nil, nil, nil)
+		llm, err := f.CreateModel(context.Background())
+		if err != nil {
+			t.Fatalf("CreateModel() unexpected error: %v", err)
+		}
+		if llm == nil {
+			t.Fatal("CreateModel() returned nil model")
+		}
+	})
+
+	t.Run("env path builds named model", func(t *testing.T) {
+		cfg := &config.LLMConfig{DeepSeekAPIKey: "test-key"}
+		f := NewModelFactory(cfg, log, nil, nil, nil)
+		llm, err := f.CreateModelWithName(context.Background(), "deepseek/deepseek-v4-flash")
+		if err != nil {
+			t.Fatalf("CreateModelWithName() unexpected error: %v", err)
+		}
+		if llm == nil {
+			t.Fatal("CreateModelWithName() returned nil model")
+		}
+	})
+
+	t.Run("DB path builds model", func(t *testing.T) {
+		cred := &ResolvedCredential{
+			Provider:        "deepseek",
+			GenerativeModel: "deepseek-v4-flash",
+			BaseURL:         "https://api.deepseek.com/v1",
+			APIKey:          "test-key",
+			Source:          "project",
+		}
+		f := NewModelFactory(&config.LLMConfig{}, log,
+			&stubCredentialResolver{cred: cred}, nil,
+			&stubModelResolver{model: "deepseek/deepseek-v4-flash", source: "project"},
+		)
+		ctx := WithProjectID(context.Background(), "00000000-0000-0000-0000-000000000000")
+		llm, err := f.CreateModel(ctx)
+		if err != nil {
+			t.Fatalf("CreateModel() unexpected error: %v", err)
+		}
+		if llm == nil {
+			t.Fatal("CreateModel() returned nil model")
+		}
+	})
 }
 
 func TestModelFactoryExtractionGenerateConfigWithSchema(t *testing.T) {
@@ -665,4 +792,130 @@ func TestGenerateContent_DeepSeekDisablesThinking(t *testing.T) {
 	if _, hasKwargs := captured["chat_template_kwargs"]; hasKwargs {
 		t.Errorf("deepseek request should not set chat_template_kwargs; body=%v", captured)
 	}
+}
+
+// countingCredentialResolver counts resolver calls so tests can assert the
+// network-disabled gate returns before any credential resolution happens.
+type countingCredentialResolver struct {
+	cred     *ResolvedCredential
+	anyCalls int
+	forCalls int
+}
+
+func (s *countingCredentialResolver) ResolveAny(_ context.Context) (*ResolvedCredential, error) {
+	s.anyCalls++
+	return s.cred, nil
+}
+
+func (s *countingCredentialResolver) ResolveFor(_ context.Context, _ string) (*ResolvedCredential, error) {
+	s.forCalls++
+	return s.cred, nil
+}
+
+func (s *countingCredentialResolver) ResolveBySlug(_ context.Context, _ string) (*ResolvedCredential, error) {
+	return s.cred, nil
+}
+
+// countingModelResolver counts ResolveGenerativeModelByID calls.
+type countingModelResolver struct {
+	model  string
+	source string
+	calls  int
+}
+
+func (s *countingModelResolver) ResolveGenerativeModelByID(_ context.Context, _ string) (string, string, error) {
+	s.calls++
+	return s.model, s.source, nil
+}
+
+// stubTestLLMChecker returns a fixed test-LLM flag value.
+type stubTestLLMChecker struct {
+	enabled bool
+}
+
+func (s *stubTestLLMChecker) IsTestLLM(_ context.Context, _ string) bool { return s.enabled }
+
+// TestModelFactory_NetworkDisabled_ShortCircuitsResolution locks the ordering
+// guarantee that the kill-switch gate fires before any credential or model
+// resolution: with LLM_NETWORK_DISABLED on the resolvers must never be called,
+// so credentials are not even looked up.
+func TestModelFactory_NetworkDisabled_ShortCircuitsResolution(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	ctx := WithProjectID(context.Background(), "00000000-0000-0000-0000-000000000000")
+
+	t.Run("CreateModel does not call model resolver", func(t *testing.T) {
+		mr := &countingModelResolver{model: "deepseek/deepseek-v4-flash", source: "project"}
+		cr := &countingCredentialResolver{cred: &ResolvedCredential{Provider: "deepseek", GenerativeModel: "deepseek-v4-flash"}}
+		f := NewModelFactory(&config.LLMConfig{NetworkDisabled: true}, log, cr, nil, mr)
+		if _, err := f.CreateModel(ctx); !errors.Is(err, ErrNetworkDisabled) {
+			t.Fatalf("CreateModel() error = %v, want ErrNetworkDisabled", err)
+		}
+		if mr.calls != 0 {
+			t.Errorf("model resolver called %d times while network disabled, want 0", mr.calls)
+		}
+		if cr.anyCalls != 0 {
+			t.Errorf("credential resolver called %d times while network disabled, want 0", cr.anyCalls)
+		}
+	})
+
+	t.Run("CreateModelWithName does not call credential resolver", func(t *testing.T) {
+		cr := &countingCredentialResolver{cred: &ResolvedCredential{Provider: "deepseek", GenerativeModel: "deepseek-v4-flash"}}
+		f := NewModelFactory(&config.LLMConfig{NetworkDisabled: true}, log, cr, nil, nil)
+		if _, err := f.CreateModelWithName(ctx, "deepseek/deepseek-v4-flash"); !errors.Is(err, ErrNetworkDisabled) {
+			t.Fatalf("CreateModelWithName() error = %v, want ErrNetworkDisabled", err)
+		}
+		if cr.forCalls != 0 {
+			t.Errorf("credential resolver called %d times while network disabled, want 0", cr.forCalls)
+		}
+	})
+}
+
+// TestModelFactory_NetworkDisabled_TestLLMTakesPrecedence locks the documented
+// ordering: a project with test-LLM enabled still gets the deterministic
+// no-network canned model even when the kill switch is on. A project without the
+// flag gets ErrNetworkDisabled — the test-LLM feature can never route to a live
+// provider model while the switch is on.
+func TestModelFactory_NetworkDisabled_TestLLMTakesPrecedence(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	ctx := WithProjectID(context.Background(), "00000000-0000-0000-0000-000000000000")
+	cfg := &config.LLMConfig{
+		NetworkDisabled: true,
+		DeepSeekAPIKey:  "test-key",
+		DeepSeekModel:   "deepseek/deepseek-v4-flash",
+	}
+
+	t.Run("canned model on both entry points", func(t *testing.T) {
+		f := NewModelFactory(cfg, log, nil, nil, nil)
+		f.WithTestLLMChecker(&stubTestLLMChecker{enabled: true})
+
+		llm, err := f.CreateModel(ctx)
+		if err != nil {
+			t.Fatalf("CreateModel() error = %v, want nil (canned model)", err)
+		}
+		if llm == nil {
+			t.Fatal("CreateModel() returned nil model")
+		}
+		if llm.Name() != "test-llm" {
+			t.Errorf("CreateModel() model name = %q, want test-llm", llm.Name())
+		}
+
+		named, err := f.CreateModelWithName(ctx, "deepseek/deepseek-v4-flash")
+		if err != nil {
+			t.Fatalf("CreateModelWithName() error = %v, want nil (canned model)", err)
+		}
+		if named == nil {
+			t.Fatal("CreateModelWithName() returned nil model")
+		}
+		if named.Name() != "test-llm" {
+			t.Errorf("CreateModelWithName() model name = %q, want test-llm", named.Name())
+		}
+	})
+
+	t.Run("flag off still gated", func(t *testing.T) {
+		f := NewModelFactory(cfg, log, nil, nil, nil)
+		f.WithTestLLMChecker(&stubTestLLMChecker{enabled: false})
+		if _, err := f.CreateModel(ctx); !errors.Is(err, ErrNetworkDisabled) {
+			t.Fatalf("CreateModel() error = %v, want ErrNetworkDisabled", err)
+		}
+	})
 }
