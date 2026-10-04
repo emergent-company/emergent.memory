@@ -31112,8 +31112,7 @@ const docTemplate = `{
                 "litellm",
                 "generic",
                 "gpustack",
-                "jina",
-                "weknoracloud"
+                "jina"
             ],
             "x-enum-varnames": [
                 "ProviderGoogleAI",
@@ -31142,8 +31141,7 @@ const docTemplate = `{
                 "ProviderLiteLLM",
                 "ProviderGeneric",
                 "ProviderGPUStack",
-                "ProviderJina",
-                "ProviderWeKnoraCloud"
+                "ProviderJina"
             ]
         },
         "domain_provider.ProviderPricing": {
@@ -31236,8 +31234,7 @@ const docTemplate = `{
                 "litellm",
                 "generic",
                 "gpustack",
-                "jina",
-                "weknoracloud"
+                "jina"
             ],
             "x-enum-varnames": [
                 "ProviderGoogleAI",
@@ -31266,8 +31263,7 @@ const docTemplate = `{
                 "ProviderLiteLLM",
                 "ProviderGeneric",
                 "ProviderGPUStack",
-                "ProviderJina",
-                "ProviderWeKnoraCloud"
+                "ProviderJina"
             ]
         },
         "domain_provider.TestProjectProviderResponse": {

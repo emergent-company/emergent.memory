@@ -31110,8 +31110,7 @@
                 "litellm",
                 "generic",
                 "gpustack",
-                "jina",
-                "weknoracloud"
+                "jina"
             ],
             "x-enum-varnames": [
                 "ProviderGoogleAI",
@@ -31140,8 +31139,7 @@
                 "ProviderLiteLLM",
                 "ProviderGeneric",
                 "ProviderGPUStack",
-                "ProviderJina",
-                "ProviderWeKnoraCloud"
+                "ProviderJina"
             ]
         },
         "domain_provider.ProviderPricing": {
@@ -31234,8 +31232,7 @@
                 "litellm",
                 "generic",
                 "gpustack",
-                "jina",
-                "weknoracloud"
+                "jina"
             ],
             "x-enum-varnames": [
                 "ProviderGoogleAI",
@@ -31264,8 +31261,7 @@
                 "ProviderLiteLLM",
                 "ProviderGeneric",
                 "ProviderGPUStack",
-                "ProviderJina",
-                "ProviderWeKnoraCloud"
+                "ProviderJina"
             ]
         },
         "domain_provider.TestProjectProviderResponse": {

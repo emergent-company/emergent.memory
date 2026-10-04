@@ -53,11 +53,6 @@ func buildBuiltins() []*ProviderDefinition {
 			Order:            0,
 			CredentialFields: keyFields(),
 		},
-		// --- WeKnora Cloud is intentionally NOT registered ---
-		// It would speak openai-chat with signed auth, but no signer hook is
-		// implemented (pkg/adk ApplyAuth returns "signed auth is not supported"),
-		// so advertising it would offer a vendor that deterministically fails.
-		// Re-add it only together with a real signing implementation.
 		// --- Aliyun DashScope ---
 		{
 			Type:             ProviderAliyun,

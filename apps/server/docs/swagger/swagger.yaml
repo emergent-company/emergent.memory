@@ -5958,7 +5958,6 @@ definitions:
     - generic
     - gpustack
     - jina
-    - weknoracloud
     type: string
     x-enum-varnames:
     - ProviderGoogleAI
@@ -5988,7 +5987,6 @@ definitions:
     - ProviderGeneric
     - ProviderGPUStack
     - ProviderJina
-    - ProviderWeKnoraCloud
   domain_provider.ProviderPricing:
     properties:
       audioInputPrice:
@@ -6058,7 +6056,6 @@ definitions:
     - generic
     - gpustack
     - jina
-    - weknoracloud
     type: string
     x-enum-varnames:
     - ProviderGoogleAI
@@ -6088,7 +6085,6 @@ definitions:
     - ProviderGeneric
     - ProviderGPUStack
     - ProviderJina
-    - ProviderWeKnoraCloud
   domain_provider.TestProjectProviderResponse:
     properties:
       embeddingError:
