@@ -21,6 +21,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/modelref"
 	"github.com/emergent-company/emergent.memory/pkg/sse"
 )
 
@@ -1585,8 +1586,12 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 		return apperror.NewBadRequest("name is required")
 	}
 
-	if dto.Model != nil && dto.Model.Name != "" && !strings.Contains(dto.Model.Name, "/") {
-		return apperror.NewBadRequest(`model.name must include a provider prefix, e.g. "deepseek/deepseek-v4-flash" or "google/gemini-2.5-flash"`)
+	if dto.Model != nil && dto.Model.Name != "" {
+		ref, err := modelref.Parse(dto.Model.Name)
+		if err != nil {
+			return apperror.NewBadRequest(`model.name must be in 'provider/model' form (e.g. "deepseek/deepseek-v4-flash", "google/gemini-2.5-flash")`)
+		}
+		dto.Model.Name = ref.String()
 	}
 
 	// Set defaults
@@ -1697,8 +1702,12 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 		return apperror.NewBadRequest("invalid request body")
 	}
 
-	if dto.Model != nil && dto.Model.Name != "" && !strings.Contains(dto.Model.Name, "/") {
-		return apperror.NewBadRequest(`model.name must include a provider prefix, e.g. "deepseek/deepseek-v4-flash" or "google/gemini-2.5-flash"`)
+	if dto.Model != nil && dto.Model.Name != "" {
+		ref, err := modelref.Parse(dto.Model.Name)
+		if err != nil {
+			return apperror.NewBadRequest(`model.name must be in 'provider/model' form (e.g. "deepseek/deepseek-v4-flash", "google/gemini-2.5-flash")`)
+		}
+		dto.Model.Name = ref.String()
 	}
 
 	var projectID *string
