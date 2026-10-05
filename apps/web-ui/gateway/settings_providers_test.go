@@ -1221,10 +1221,27 @@ func connectionTestPost(t *testing.T, e *echo.Echo, form string) *httptest.Respo
 }
 
 // toastHeader extracts the HX-Trigger detail so assertions can read the event
-// payload (memory-toast or memory-alert) without depending on header quoting.
+// payload without depending on header quoting.
 func toastHeader(t *testing.T, rec *httptest.ResponseRecorder) string {
 	t.Helper()
 	return rec.Header().Get("HX-Trigger")
+}
+
+// assertAlertEvent pins the app-wide alert-modal contract on the paths converted
+// from toasts: the HX-Trigger header must carry the memory-alert event (never a
+// regressed memory-toast) with the expected kind and title. Message-content
+// assertions remain separate and can stay substring-based.
+func assertAlertEvent(t *testing.T, hdr, kind, title string) {
+	t.Helper()
+	if !strings.Contains(hdr, `"memory-alert"`) {
+		t.Errorf("expected memory-alert event, got %q", hdr)
+	}
+	if !strings.Contains(hdr, `"kind":"`+kind+`"`) {
+		t.Errorf("expected memory-alert kind %q, got %q", kind, hdr)
+	}
+	if !strings.Contains(hdr, `"title":"`+title+`"`) {
+		t.Errorf("expected memory-alert title %q, got %q", title, hdr)
+	}
 }
 
 // selectMarkup returns the fragment between a select's opening tag and its
@@ -1264,6 +1281,7 @@ func TestUIProviderTestConnectionEmptyAPIKey(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	hdr := toastHeader(t, rec)
+	assertAlertEvent(t, hdr, "error", "Connection test")
 	if !strings.Contains(hdr, "Enter an API key before testing the connection.") {
 		t.Errorf("empty key toast missing the message, got %q", hdr)
 	}
@@ -1294,9 +1312,8 @@ func TestUIProviderTestConnectionSeedsFallbackModels(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	if hdr := toastHeader(t, rec); !strings.Contains(hdr, `"kind":"success"`) {
-		t.Errorf("successful test should trigger a success toast, got %q", hdr)
-	}
+	hdr := toastHeader(t, rec)
+	assertAlertEvent(t, hdr, "success", "Connection test")
 	body := rec.Body.String()
 	if body == "" {
 		t.Fatal("success path must return the seeded fallback fragment body")
@@ -1344,6 +1361,7 @@ func TestUIProviderTestConnectionUnauthorized(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	hdr := toastHeader(t, rec)
+	assertAlertEvent(t, hdr, "error", "Connection test")
 	if !strings.Contains(hdr, "Authentication failed (HTTP 401)") {
 		t.Errorf("401 toast missing the friendly message, got %q", hdr)
 	}
@@ -1370,6 +1388,7 @@ func TestUIProviderTestConnectionOtherFailureKeepsFraming(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	hdr := toastHeader(t, rec)
+	assertAlertEvent(t, hdr, "error", "Connection test")
 	if !strings.Contains(hdr, "Connection failed (HTTP 500)") || !strings.Contains(hdr, "upstream exploded") {
 		t.Errorf("non-401 failure must keep the framing + detail, got %q", hdr)
 	}
@@ -1424,6 +1443,7 @@ func TestUIProviderTestConnectionEmptyBaseURLForOpenAI(t *testing.T) {
 			t.Fatalf("status = %d, want 200", rec.Code)
 		}
 		hdr := toastHeader(t, rec)
+		assertAlertEvent(t, hdr, "error", "Connection test")
 		if strings.Contains(hdr, "base_url is required") {
 			t.Errorf("openai + empty base_url must not be rejected up front, got %q", hdr)
 		}
@@ -1448,9 +1468,8 @@ func TestUIProviderTestConnectionEmptyBaseURLForOpenAI(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200", rec.Code)
 		}
-		if hdr := toastHeader(t, rec); !strings.Contains(hdr, `"kind":"success"`) {
-			t.Errorf("official-endpoint test should succeed, got %q", hdr)
-		}
+		hdr := toastHeader(t, rec)
+		assertAlertEvent(t, hdr, "success", "Connection test")
 		gen := selectMarkup(t, rec.Body.String(), "generative_model")
 		if !strings.Contains(gen, `value="openai/gpt-4o"`) {
 			t.Errorf("seeding must run against the defaulted official endpoint, got:\n%s", gen)
@@ -1471,6 +1490,7 @@ func TestUIProviderTestConnectionEmptyBaseURLNonOpenAI(t *testing.T) {
 	if hdr := toastHeader(t, rec); !strings.Contains(hdr, "base_url is required to test the connection") {
 		t.Errorf("non-openai empty base_url must keep the guard toast, got %q", hdr)
 	}
+	assertAlertEvent(t, toastHeader(t, rec), "error", "Connection test")
 }
 
 func TestUIProviderRemove(t *testing.T) {
@@ -1628,6 +1648,7 @@ func TestUIProjectDefaultModelTestGenerative(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	hdr := toastHeader(t, rec)
+	assertAlertEvent(t, hdr, "success", "Model test")
 	for _, want := range []string{`"kind":"success"`, "openai/deepseek-v4-flash", "deepseek-v4-flash", "hello", "42ms"} {
 		if !strings.Contains(hdr, want) {
 			t.Errorf("generative success toast missing %q, got %q", want, hdr)
@@ -1654,6 +1675,7 @@ func TestUIProjectDefaultModelTestEmbedding(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	hdr := toastHeader(t, rec)
+	assertAlertEvent(t, hdr, "success", "Model test")
 	for _, want := range []string{`"kind":"success"`, "google/gemini-embedding-001", "gemini-embedding-001", "15ms"} {
 		if !strings.Contains(hdr, want) {
 			t.Errorf("embedding success toast missing %q, got %q", want, hdr)
@@ -1672,7 +1694,8 @@ func TestUIProjectDefaultModelTestEmptySelection(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	hdr := toastHeader(t, rec)
-	if !strings.Contains(hdr, `"kind":"error"`) || !strings.Contains(hdr, "Select a model") {
+	assertAlertEvent(t, hdr, "error", "Model test")
+	if !strings.Contains(hdr, "Select a model") {
 		t.Errorf("empty selection must surface an error toast, got %q", hdr)
 	}
 	if len(f.modelTestCalls) != 0 {
@@ -1688,7 +1711,8 @@ func TestUIProjectDefaultModelTestUnprefixedModel(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	hdr := toastHeader(t, rec)
-	if !strings.Contains(hdr, `"kind":"error"`) || !strings.Contains(hdr, "provider/model") {
+	assertAlertEvent(t, hdr, "error", "Model test")
+	if !strings.Contains(hdr, "provider/model") {
 		t.Errorf("unprefixed model must explain the provider/model form, got %q", hdr)
 	}
 	if len(f.modelTestCalls) != 0 {
@@ -1704,9 +1728,7 @@ func TestUIProjectDefaultModelTestUnknownType(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	hdr := toastHeader(t, rec)
-	if !strings.Contains(hdr, `"kind":"error"`) {
-		t.Errorf("unknown model_type must surface an error toast, got %q", hdr)
-	}
+	assertAlertEvent(t, hdr, "error", "Model test")
 	if len(f.modelTestCalls) != 0 {
 		t.Errorf("unknown model_type must not call the backend: %+v", f.modelTestCalls)
 	}
@@ -1720,7 +1742,8 @@ func TestUIProjectDefaultModelTestBackendError(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	hdr := toastHeader(t, rec)
-	if !strings.Contains(hdr, `"kind":"error"`) || !strings.Contains(hdr, "service down") {
+	assertAlertEvent(t, hdr, "error", "Model test")
+	if !strings.Contains(hdr, "service down") {
 		t.Errorf("backend error must surface in the toast, got %q", hdr)
 	}
 	if len(f.modelTestCalls) != 1 {
