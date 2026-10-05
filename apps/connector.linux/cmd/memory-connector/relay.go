@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/memoryapi"
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/mgmtapi"
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/relay"
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/toolreg"
@@ -115,6 +116,15 @@ func runRelayCommand(name string, args []string, stdout, stderr io.Writer, withL
 			}
 			return mgmtapi.RuntimeStatus{Connected: client.State().Connected, ToolCount: count}
 		})
+		// Install the Memory registry browse source when a project token is
+		// configured; otherwise the registry routes report "unavailable".
+		if cfg.Token != "" {
+			if mem, err := memoryapi.NewProjectClient(cfg.ServerURL, cfg.Token); err != nil {
+				log.Warn("registry browse unavailable: failed to build Memory client", "error", err)
+			} else {
+				api.SetRegistrySource(mem)
+			}
+		}
 		addr := mgmtAPIAddr(*apiPort)
 		httpServer := &http.Server{
 			Addr:              addr,

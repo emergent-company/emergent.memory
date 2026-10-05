@@ -10,6 +10,7 @@ import SwiftUI
 struct MCPServersPage: View {
     @StateObject private var store = MCPServersStore()
     @State private var showingAdd = false
+    @State private var showingRegistry = false
     @State private var selectedServer: HostedMCPServer?
 
     var body: some View {
@@ -20,6 +21,13 @@ struct MCPServersPage: View {
                 HStack {
                     Text("Hosted MCP Servers")
                     Spacer()
+                    Button {
+                        showingRegistry = true
+                    } label: {
+                        Label("Browse registry", systemImage: "magnifyingglass")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Search the MCP registry and add a suggested server")
                     Button {
                         showingAdd = true
                     } label: {
@@ -45,6 +53,9 @@ struct MCPServersPage: View {
         .onDisappear { store.stopPolling() }
         .sheet(isPresented: $showingAdd) {
             AddMCPServerSheet(store: store)
+        }
+        .sheet(isPresented: $showingRegistry) {
+            MCPRegistryBrowseSheet(store: store)
         }
         .sheet(item: $selectedServer) { server in
             MCPServerDetailView(server: server, store: store)
@@ -84,6 +95,7 @@ struct MCPServersPage: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
+            Button("Browse registry…") { showingRegistry = true }
             Button("Add Server…") { showingAdd = true }
         }
         .padding(.vertical, 4)

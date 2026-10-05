@@ -3,12 +3,18 @@ package mcpregistry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"time"
 )
+
+// ErrRegistryServerNotFound is returned when the official registry has no
+// server with the requested name. The service/handler map it to 404 so a
+// missing entry is distinguishable from a generic upstream/transport failure.
+var ErrRegistryServerNotFound = errors.New("registry server not found")
 
 const (
 	// DefaultRegistryBaseURL is the official MCP registry API endpoint.
@@ -248,7 +254,7 @@ func (c *RegistryClient) GetServerVersion(ctx context.Context, name string, vers
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("server %q not found in registry", name)
+		return nil, fmt.Errorf("%w: server %q not found in registry", ErrRegistryServerNotFound, name)
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

@@ -148,17 +148,38 @@ struct AddMCPServerSheet: View {
     // which shadows SwiftUI's, so the property wrapper must be namespaced.
     @SwiftUI.Environment(\.dismiss) private var dismiss
 
-    @State private var form = MCPServerForm()
+    /// Required/secret metadata surfaced when the sheet is prefilled from the
+    /// registry browse flow. `nil` for a manual add.
+    let notes: MCPRegistryNotes?
+
+    @State private var form: MCPServerForm
     @State private var errorMessage: String?
     @State private var isSaving = false
+
+    /// Every field stays editable; `prefill` only seeds the starting values.
+    init(store: MCPServersStore,
+         prefill: MCPServerForm = MCPServerForm(),
+         notes: MCPRegistryNotes? = nil)
+    {
+        _store = ObservedObject(wrappedValue: store)
+        self.notes = notes
+        _form = State(initialValue: prefill)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: "server.rack")
                     .foregroundStyle(.secondary)
-                Text("Add MCP Server")
-                    .font(.headline)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Add MCP Server")
+                        .font(.headline)
+                    if notes != nil {
+                        Text("Suggested from the MCP registry")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Spacer()
             }
             .padding(16)
@@ -166,6 +187,9 @@ struct AddMCPServerSheet: View {
             Divider()
 
             Form {
+                if let notes, !notes.isEmpty {
+                    registryNotesSection(notes)
+                }
                 MCPServerFormFields(form: $form)
             }
             .formStyle(.grouped)
@@ -174,6 +198,43 @@ struct AddMCPServerSheet: View {
             footer
         }
         .frame(width: 540, height: 580)
+    }
+
+    /// Registry context shown above the fields: runner/other warnings and the
+    /// required/secret variables the entry declares. Warnings do not block
+    /// adding; the user can install a missing runner later.
+    private func registryNotesSection(_ notes: MCPRegistryNotes) -> some View {
+        Section {
+            ForEach(notes.warnings, id: \.self) { warning in
+                Label(warning, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !notes.requiredEnvLabels.isEmpty {
+                registryRequirementRow(label: "Required environment variables",
+                                       values: notes.requiredEnvLabels)
+            }
+            if !notes.requiredHeaderLabels.isEmpty {
+                registryRequirementRow(label: "Required headers",
+                                       values: notes.requiredHeaderLabels)
+            }
+        } header: {
+            Text("Registry Suggestion")
+        } footer: {
+            Text("Values from the registry entry are a starting point and can be edited. Secret values are masked and stay on this Mac — they are never sent to Memory.")
+        }
+    }
+
+    private func registryRequirementRow(label: String, values: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(values.joined(separator: ", "))
+                .font(.caption)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private var validationMessage: String? {
@@ -279,122 +340,6 @@ struct MCPServerFormFields: View {
             Text(form.transport.usesCommand ? "Process" : "Connection")
         } footer: {
             Text("Environment variables and headers are stored in the connector's local config file in plaintext. They stay on this Mac and are never sent to Memory.")
-        }
-    }
-}
-
-// MARK: - Editors
-
-/// Editable list of key/value rows. Values are masked by default; the reveal
-/// control is per row so secret values (auth headers, API keys) are never shown
-/// unless the user asks.
-struct MCPKeyValueEditor: View {
-    let title: String
-    let keyPlaceholder: String
-    @Binding var entries: [MCPServerForm.Entry]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if !entries.isEmpty {
-                Text(title)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            ForEach($entries) { $entry in
-                HStack(spacing: 6) {
-                    TextField(keyPlaceholder, text: $entry.key)
-                        .autocorrectionDisabled()
-                    MCPSecretField(placeholder: "Value", text: $entry.value)
-                    Button {
-                        entries.removeAll { $0.id == entry.id }
-                    } label: {
-                        Image(systemName: "minus.circle")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Remove row")
-                }
-            }
-            Button {
-                entries.append(MCPServerForm.Entry())
-            } label: {
-                Label("Add \(title.lowercased())", systemImage: "plus.circle")
-            }
-            .buttonStyle(.borderless)
-            .font(.caption)
-        }
-        .padding(.vertical, 2)
-    }
-}
-
-/// Editable list of positional arguments (stdio servers).
-struct MCPArgsEditor: View {
-    @Binding var args: [String]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if !args.isEmpty {
-                Text("Arguments")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            ForEach(args.indices, id: \.self) { index in
-                HStack(spacing: 6) {
-                    TextField("Argument", text: Binding(
-                        get: { index < args.count ? args[index] : "" },
-                        set: {
-                            if index < args.count {
-                                args[index] = $0
-                            }
-                        }
-                    ))
-                    .autocorrectionDisabled()
-                    Button {
-                        if index < args.count {
-                            args.remove(at: index)
-                        }
-                    } label: {
-                        Image(systemName: "minus.circle")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Remove argument")
-                }
-            }
-            Button {
-                args.append("")
-            } label: {
-                Label("Add argument", systemImage: "plus.circle")
-            }
-            .buttonStyle(.borderless)
-            .font(.caption)
-        }
-        .padding(.vertical, 2)
-    }
-}
-
-/// A text field that masks its value by default, with a reveal toggle. Used for
-/// env vars and headers so secrets are not displayed on screen.
-struct MCPSecretField: View {
-    let placeholder: String
-    @Binding var text: String
-    @State private var revealed = false
-
-    var body: some View {
-        HStack(spacing: 4) {
-            if revealed {
-                TextField(placeholder, text: $text)
-                    .autocorrectionDisabled()
-            } else {
-                SecureField(placeholder, text: $text)
-                    .autocorrectionDisabled()
-            }
-            Button {
-                revealed.toggle()
-            } label: {
-                Image(systemName: revealed ? "eye.slash" : "eye")
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.borderless)
-            .help(revealed ? "Hide value" : "Reveal value")
         }
     }
 }

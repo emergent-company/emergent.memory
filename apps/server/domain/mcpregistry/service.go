@@ -33,6 +33,23 @@ type Service struct {
 	toolPoolInvalidator ToolPoolInvalidator
 }
 
+// Sentinel errors returned by the registry browse/install flow, mapped to
+// distinct HTTP statuses by the handler.
+var (
+	// ErrRegistryUpstream marks a transport/upstream failure talking to the
+	// official registry (network error, non-200). Handler maps it to 502.
+	ErrRegistryUpstream = errors.New("registry upstream failure")
+	// ErrUnsupportedRegistryTransport marks a registry entry whose transport
+	// cannot be installed (e.g. stdio-only). Handler maps it to 400.
+	ErrUnsupportedRegistryTransport = errors.New("unsupported registry transport")
+	// ErrRegistryRemoteNotAllowed marks a registry remote URL rejected by the
+	// SSRF guard. Handler maps it to 400, not 502, because it is a bad entry.
+	ErrRegistryRemoteNotAllowed = errors.New("registry remote URL not allowed")
+	// ErrServerNameConflict marks an attempted create whose name already exists
+	// in the project. Handler maps it to 409.
+	ErrServerNameConflict = errors.New("mcp server name already exists")
+)
+
 // NewService creates a new MCP registry service.
 // The ToolPool invalidator is wired post-construction via RegisterToolPoolInvalidator
 // (nil-safe) to break the mcpregistry ↔ agents circular dependency.
@@ -196,7 +213,7 @@ func (s *Service) CreateServer(ctx context.Context, projectID string, dto *Creat
 		return nil, fmt.Errorf("checking name uniqueness: %w", err)
 	}
 	if existing != nil {
-		return nil, fmt.Errorf("server with name %q already exists in this project", dto.Name)
+		return nil, fmt.Errorf("%w: server with name %q already exists in this project", ErrServerNameConflict, dto.Name)
 	}
 
 	enabled := true
@@ -727,7 +744,7 @@ func IsExternalTool(toolName string) bool {
 func (s *Service) SearchRegistry(ctx context.Context, query string, limit int, cursor string) (*RegistrySearchResultDTO, error) {
 	resp, err := s.registryClient.SearchServers(ctx, query, limit, cursor)
 	if err != nil {
-		return nil, fmt.Errorf("searching registry: %w", err)
+		return nil, fmt.Errorf("%w: searching registry: %w", ErrRegistryUpstream, err)
 	}
 
 	servers := make([]RegistryServerDTO, 0, len(resp.Servers))
@@ -746,7 +763,10 @@ func (s *Service) SearchRegistry(ctx context.Context, query string, limit int, c
 func (s *Service) GetRegistryServer(ctx context.Context, name string) (*RegistryServerDTO, error) {
 	resp, err := s.registryClient.GetServer(ctx, name)
 	if err != nil {
-		return nil, fmt.Errorf("fetching registry server: %w", err)
+		if errors.Is(err, ErrRegistryServerNotFound) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: fetching registry server: %w", ErrRegistryUpstream, err)
 	}
 
 	dto := registryServerToDTO(resp.Server)
@@ -766,7 +786,10 @@ func (s *Service) InstallFromRegistry(ctx context.Context, projectID string, dto
 	// Fetch the server definition from the official registry
 	resp, err := s.registryClient.GetServerVersion(ctx, dto.RegistryName, version)
 	if err != nil {
-		return nil, fmt.Errorf("fetching from registry: %w", err)
+		if errors.Is(err, ErrRegistryServerNotFound) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: fetching from registry: %w", ErrRegistryUpstream, err)
 	}
 
 	regServer := resp.Server
@@ -778,7 +801,7 @@ func (s *Service) InstallFromRegistry(ctx context.Context, projectID string, dto
 	}
 
 	// Select the best transport and build the CreateMCPServerDTO
-	createDTO, err := selectTransport(regServer, localName)
+	createDTO, err := selectTransport(ctx, regServer, localName)
 	if err != nil {
 		return nil, fmt.Errorf("selecting transport: %w", err)
 	}
@@ -857,15 +880,26 @@ func (s *Service) InstallFromRegistry(ctx context.Context, projectID string, dto
 // Priority:
 //  1. Remote with streamable-http → type=http
 //  2. Remote with sse → type=sse
-func selectTransport(regServer RegistryServer, localName string) (*CreateMCPServerDTO, error) {
+//
+// The selected remote URL is validated by validateRegistryRemoteURL before it
+// is accepted: registry entries are community-authored, so a URL pointing at
+// loopback/private/link-local/metadata addresses (or using userinfo, or a
+// non-http(s) scheme) is rejected as ErrRegistryRemoteNotAllowed.
+func selectTransport(ctx context.Context, regServer RegistryServer, localName string) (*CreateMCPServerDTO, error) {
 	// Try remotes (prefer streamable-http over sse)
 	for _, remote := range regServer.Remotes {
 		if remote.Type == "streamable-http" {
+			if err := validateRegistryRemoteURL(ctx, remote.URL); err != nil {
+				return nil, fmt.Errorf("%w: %v", ErrRegistryRemoteNotAllowed, err)
+			}
 			return buildRemoteDTO(localName, ServerTypeHTTP, remote), nil
 		}
 	}
 	for _, remote := range regServer.Remotes {
 		if remote.Type == "sse" {
+			if err := validateRegistryRemoteURL(ctx, remote.URL); err != nil {
+				return nil, fmt.Errorf("%w: %v", ErrRegistryRemoteNotAllowed, err)
+			}
 			return buildRemoteDTO(localName, ServerTypeSSE, remote), nil
 		}
 	}
@@ -878,17 +912,18 @@ func selectTransport(regServer RegistryServer, localName string) (*CreateMCPServ
 			pkgTypes = append(pkgTypes, pkg.RegistryType)
 		}
 		return nil, fmt.Errorf(
-			"server %q only offers stdio-based packages (%s) which are not supported for registry installs — "+
-				"only remote transports (HTTP/SSE) are allowed. "+
-				"You can manually create a stdio server via the CRUD API if needed",
-			regServer.Name, strings.Join(pkgTypes, ", "),
+			"%w: server %q only offers stdio-based packages (%s); only remote transports (HTTP/SSE) are allowed — "+
+				"you can manually create a stdio server via the CRUD API if needed",
+			ErrUnsupportedRegistryTransport, regServer.Name, strings.Join(pkgTypes, ", "),
 		)
 	}
 
-	return nil, fmt.Errorf("no supported transport found for server %q (no remotes or packages available)", regServer.Name)
+	return nil, fmt.Errorf("%w: no supported transport found for server %q (no remotes or packages available)", ErrUnsupportedRegistryTransport, regServer.Name)
 }
 
-// buildRemoteDTO builds a CreateMCPServerDTO for a remote transport.
+// buildRemoteDTO builds a CreateMCPServerDTO for a remote transport. Headers and
+// env vars the registry flags as secret are recorded in the corresponding
+// Secret*Keys lists so they are encrypted at rest rather than stored plaintext.
 func buildRemoteDTO(name string, serverType MCPServerType, remote RegistryRemote) *CreateMCPServerDTO {
 	url := remote.URL
 	dto := &CreateMCPServerDTO{
@@ -901,8 +936,15 @@ func buildRemoteDTO(name string, serverType MCPServerType, remote RegistryRemote
 	if len(remote.Headers) > 0 {
 		headers := make(map[string]any, len(remote.Headers))
 		for _, h := range remote.Headers {
-			// Store the header with its value template (e.g. "Bearer {api_key}")
-			// The admin must fill in actual values later
+			if h.IsSecret {
+				// Secret headers keep only a named, empty placeholder: the value
+				// (e.g. "Bearer {api_key}") is a template, not a usable secret, so
+				// storing it as plaintext is wrong and encrypting it is pointless.
+				// Listing the key lets a later PATCH encrypt the real value.
+				headers[h.Name] = ""
+				dto.SecretHeadersKeys = append(dto.SecretHeadersKeys, h.Name)
+				continue
+			}
 			headers[h.Name] = h.Value
 		}
 		dto.Headers = headers
@@ -914,6 +956,9 @@ func buildRemoteDTO(name string, serverType MCPServerType, remote RegistryRemote
 		for _, ev := range remote.EnvironmentVariables {
 			// Store with empty string as placeholder — admin must fill in
 			env[ev.Name] = ""
+			if ev.IsSecret {
+				dto.SecretEnvKeys = append(dto.SecretEnvKeys, ev.Name)
+			}
 		}
 		dto.Env = env
 	}
@@ -991,10 +1036,13 @@ func registryServerToDTO(s RegistryServer) RegistryServerDTO {
 	envVarMap := make(map[string]RegistryEnvVarDTO)
 	for _, pkg := range s.Packages {
 		dto.Packages = append(dto.Packages, RegistryPackageDTO{
-			RegistryType: pkg.RegistryType,
-			Name:         pkg.Name,
-			Identifier:   pkg.Identifier,
-			Transport:    pkg.Transport.Type,
+			RegistryType:     pkg.RegistryType,
+			Name:             pkg.Name,
+			Identifier:       pkg.Identifier,
+			Version:          pkg.Version,
+			Transport:        pkg.Transport.Type,
+			RuntimeArguments: renderArguments(pkg.RuntimeArguments),
+			PackageArguments: renderArguments(pkg.PackageArguments),
 		})
 		for _, ev := range pkg.EnvironmentVariables {
 			envVarMap[ev.Name] = RegistryEnvVarDTO{
@@ -1006,6 +1054,10 @@ func registryServerToDTO(s RegistryServer) RegistryServerDTO {
 		}
 	}
 
+	// Collect all unique headers across remotes (packages do not declare
+	// headers). Dedupe by name, preserving first; the value may be a template
+	// like "Bearer {api_key}".
+	headerMap := make(map[string]RegistryHeaderDTO)
 	for _, remote := range s.Remotes {
 		dto.Remotes = append(dto.Remotes, RegistryRemoteDTO{
 			Type: remote.Type,
@@ -1019,6 +1071,12 @@ func registryServerToDTO(s RegistryServer) RegistryServerDTO {
 				IsSecret:    ev.IsSecret,
 			}
 		}
+		for _, h := range remote.Headers {
+			if _, seen := headerMap[h.Name]; seen {
+				continue
+			}
+			headerMap[h.Name] = RegistryHeaderDTO(h)
+		}
 	}
 
 	if len(envVarMap) > 0 {
@@ -1027,6 +1085,13 @@ func registryServerToDTO(s RegistryServer) RegistryServerDTO {
 			envVars = append(envVars, ev)
 		}
 		dto.EnvVars = envVars
+	}
+	if len(headerMap) > 0 {
+		headers := make([]RegistryHeaderDTO, 0, len(headerMap))
+		for _, h := range headerMap {
+			headers = append(headers, h)
+		}
+		dto.Headers = headers
 	}
 
 	// Initialize empty slices for JSON serialization
@@ -1039,8 +1104,32 @@ func registryServerToDTO(s RegistryServer) RegistryServerDTO {
 	if dto.EnvVars == nil {
 		dto.EnvVars = []RegistryEnvVarDTO{}
 	}
+	if dto.Headers == nil {
+		dto.Headers = []RegistryHeaderDTO{}
+	}
 
 	return dto
+}
+
+// renderArguments renders a list of registry arguments to command tokens. For
+// each argument: if Name is set, emit "--"+Name; then emit Value (falling back
+// to Default) when non-empty. Positional (unnamed) arguments emit only their
+// value; empty/omitted arguments emit nothing.
+func renderArguments(args []RegistryArgument) []string {
+	out := make([]string, 0, len(args)*2)
+	for _, a := range args {
+		if a.Name != "" {
+			out = append(out, "--"+a.Name)
+		}
+		val := a.Value
+		if val == "" {
+			val = a.Default
+		}
+		if val != "" {
+			out = append(out, val)
+		}
+	}
+	return out
 }
 
 // --- Helpers ---

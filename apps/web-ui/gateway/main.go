@@ -438,6 +438,9 @@ func main() {
 	e.GET("/settings/mcp-servers", s.uiMCPServers)
 	e.GET("/settings/mcp-servers/new", s.uiMCPNewPage)
 	e.POST("/settings/mcp-servers/new", s.uiMCPCreate)
+	// Official MCP registry browse/install (see mcp_registry.go).
+	e.GET("/settings/mcp-registry", s.uiMCPRegistry)
+	e.POST("/settings/mcp-registry/install", s.uiMCPRegistryInstall)
 	// MCP Sharing: nested under the MCP Servers area (see mcp_shares_handlers.go).
 	e.GET("/settings/mcp-servers/shares", s.uiMCPShares)
 	e.GET("/settings/mcp-servers/shares/new", s.uiMCPShareNewPage)

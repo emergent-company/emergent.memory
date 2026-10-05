@@ -515,7 +515,7 @@ func TestMCPRegistry_GetRegistryServer_NotFound(t *testing.T) {
 
 	projectID, _ := setupProjectLogged(t, rl)
 	resp := doAPILogged(t, rl, "GET", "/api/admin/mcp-registry/servers/io.nonexistent.server%2Fdoes-not-exist", e2eTestToken(), projectID, nil)
-	mustStatus(t, resp, http.StatusBadRequest)
+	mustStatus(t, resp, http.StatusNotFound)
 }
 
 func TestMCPRegistry_InstallFromRegistry_RequiresAuth(t *testing.T) {

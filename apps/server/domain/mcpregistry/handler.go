@@ -550,7 +550,7 @@ func (h *Handler) SearchRegistry(c echo.Context) error {
 
 	result, err := h.svc.SearchRegistry(c.Request().Context(), query, limit, cursor)
 	if err != nil {
-		return apperror.NewInternal("failed to search MCP registry", err)
+		return apperror.New(http.StatusBadGateway, "registry_unavailable", "failed to search MCP registry")
 	}
 
 	return c.JSON(http.StatusOK, SuccessResponse(result))
@@ -567,7 +567,10 @@ func (h *Handler) GetRegistryServer(c echo.Context) error {
 
 	result, err := h.svc.GetRegistryServer(c.Request().Context(), name)
 	if err != nil {
-		return apperror.NewBadRequest("failed to get registry server: " + err.Error())
+		if errors.Is(err, ErrRegistryServerNotFound) {
+			return apperror.NewNotFound("registry_server", name)
+		}
+		return apperror.New(http.StatusBadGateway, "registry_unavailable", "failed to get registry server")
 	}
 
 	return c.JSON(http.StatusOK, SuccessResponse(result))
@@ -590,7 +593,18 @@ func (h *Handler) InstallFromRegistry(c echo.Context) error {
 
 	result, err := h.svc.InstallFromRegistry(c.Request().Context(), user.ProjectID, &dto)
 	if err != nil {
-		return apperror.NewBadRequest("failed to install from registry: " + err.Error())
+		switch {
+		case errors.Is(err, ErrRegistryServerNotFound):
+			return apperror.NewNotFound("registry_server", dto.RegistryName)
+		case errors.Is(err, ErrServerNameConflict):
+			return apperror.New(http.StatusConflict, "conflict", err.Error())
+		case errors.Is(err, ErrUnsupportedRegistryTransport), errors.Is(err, ErrRegistryRemoteNotAllowed):
+			return apperror.NewBadRequest(err.Error())
+		case errors.Is(err, ErrRegistryUpstream):
+			return apperror.New(http.StatusBadGateway, "registry_unavailable", "failed to install from registry")
+		default:
+			return apperror.NewInternal("failed to install from registry", err)
+		}
 	}
 
 	return c.JSON(http.StatusCreated, SuccessResponse(result))

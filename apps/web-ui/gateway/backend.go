@@ -59,6 +59,9 @@ type MemoryBackend interface {
 	// ListBuiltinToolGroups returns memory's builtin tool capability taxonomy
 	// (the grouped view of the builtin server's tools).
 	ListBuiltinToolGroups(ctx context.Context) ([]BuiltinToolGroup, error)
+	// Official MCP registry browse/install (see mcp_registry_client.go).
+	SearchRegistry(ctx context.Context, query string, limit int, cursor string) (*MCPRegistrySearchResult, error)
+	InstallRegistryServer(ctx context.Context, registryName, version, name string) (*MCPRegistryInstallResult, error)
 	// MCP share instances (project-scoped MCP exposure; see mcp_shares.go).
 	// The raw key is only ever present on Create/Rotate results.
 	ListMCPShareInstances(ctx context.Context) ([]MCPShareInstance, error)

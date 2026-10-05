@@ -200,6 +200,7 @@ type RegistryServerDTO struct {
 	Packages    []RegistryPackageDTO `json:"packages,omitempty"`
 	Remotes     []RegistryRemoteDTO  `json:"remotes,omitempty"`
 	EnvVars     []RegistryEnvVarDTO  `json:"envVars,omitempty"`
+	Headers     []RegistryHeaderDTO  `json:"headers,omitempty"`
 }
 
 // RegistryRepoDTO is the response DTO for a registry server's repository.
@@ -210,10 +211,13 @@ type RegistryRepoDTO struct {
 
 // RegistryPackageDTO is the response DTO for a registry package.
 type RegistryPackageDTO struct {
-	RegistryType string `json:"registryType"`
-	Name         string `json:"name,omitempty"`
-	Identifier   string `json:"identifier,omitempty"`
-	Transport    string `json:"transport"`
+	RegistryType     string   `json:"registryType"`
+	Name             string   `json:"name,omitempty"`
+	Identifier       string   `json:"identifier,omitempty"`
+	Version          string   `json:"version,omitempty"`
+	Transport        string   `json:"transport"`
+	RuntimeArguments []string `json:"runtimeArguments,omitempty"`
+	PackageArguments []string `json:"packageArguments,omitempty"`
 }
 
 // RegistryRemoteDTO is the response DTO for a registry remote.
@@ -228,6 +232,15 @@ type RegistryEnvVarDTO struct {
 	Description string `json:"description,omitempty"`
 	IsRequired  bool   `json:"isRequired"`
 	IsSecret    bool   `json:"isSecret"`
+}
+
+// RegistryHeaderDTO is the response DTO for a registry-declared HTTP header.
+type RegistryHeaderDTO struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	IsRequired  bool   `json:"isRequired"`
+	IsSecret    bool   `json:"isSecret"`
+	Value       string `json:"value,omitempty"`
 }
 
 // InstallResultDTO wraps the install response with the created server and

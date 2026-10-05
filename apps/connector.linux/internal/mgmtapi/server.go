@@ -44,7 +44,8 @@ type RuntimeStatus struct {
 type RuntimeStatusFunc func() RuntimeStatus
 
 // Server is the management API state: the config file path, the in-memory
-// config, the reload callback, and the latest per-server status.
+// config, the reload callback, the latest per-server status, and the optional
+// registry browse source (nil when the connector has no Memory connection).
 type Server struct {
 	mu         sync.Mutex
 	configPath string
@@ -53,6 +54,7 @@ type Server struct {
 	reload     Reloader
 	statuses   []mcphost.ServerStatus
 	runtime    RuntimeStatusFunc
+	registry   RegistrySource
 }
 
 // NewServer builds a management API server. reload must be non-nil; the caller
@@ -99,6 +101,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/mcp-servers/{name}", s.handleDelete)
 	mux.HandleFunc("GET /api/mcp-servers/{name}/tools", s.handleTools)
 	mux.HandleFunc("GET /api/status", s.handleStatus)
+	mux.HandleFunc("GET /api/mcp-registry/search", s.handleRegistrySearch)
+	mux.HandleFunc("GET /api/mcp-registry/servers/{name}", s.handleRegistryServer)
 }
 
 // --- request/response DTOs ---------------------------------------------------

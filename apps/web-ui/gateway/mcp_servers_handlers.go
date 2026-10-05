@@ -35,6 +35,11 @@ func (s *Server) uiMCPServers(c echo.Context) error {
 			{key: "deleted", msg: "MCP server deleted."},
 		}),
 	}
+	// A registry install redirects here with ?created=1&env=<names>; surface the
+	// required environment variables memory reported (see mcp_registry.go).
+	if env := c.QueryParam("env"); env != "" {
+		data.FlashMsg = "MCP server created. Configure required environment variables before use: " + env + "."
+	}
 	data.FlashErr = flashError(c)
 	servers, err := s.memory.ListMCPServers(ctx)
 	if err != nil {

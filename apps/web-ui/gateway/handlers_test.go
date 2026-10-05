@@ -831,6 +831,16 @@ func (f *fakeMemory) ListBuiltinToolGroups(ctx context.Context) ([]BuiltinToolGr
 	return nil, nil
 }
 
+// Registry: the base fake returns zero values so unrelated tests compile;
+// registry handler tests use mcpRegistryTestBackend (mcp_registry_handlers_test.go).
+func (f *fakeMemory) SearchRegistry(ctx context.Context, query string, limit int, cursor string) (*MCPRegistrySearchResult, error) {
+	return &MCPRegistrySearchResult{}, nil
+}
+
+func (f *fakeMemory) InstallRegistryServer(ctx context.Context, registryName, version, name string) (*MCPRegistryInstallResult, error) {
+	return &MCPRegistryInstallResult{}, nil
+}
+
 // MCP share instances: the base fake returns zero values so unrelated tests
 // compile; share-handler tests use mcpShareTestBackend (mcp_shares_handlers_test.go),
 // which overrides these with real semantics.

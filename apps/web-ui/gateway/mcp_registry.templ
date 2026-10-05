@@ -1,0 +1,160 @@
+package main
+
+import (
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- MCP Registry browse/install page (/settings/mcp-registry) ---
+//
+// One crumb-framed list page: a search box plus a list of matching registry
+// entries. An entry with a remote transport (http/sse) is installable into the
+// project via POST /settings/mcp-registry/install (PRG). A stdio-only entry
+// (packages, no remotes) renders connector guidance instead of an install
+// action, because memory's registry install is remote-only.
+
+// MCPServerRegistryPage renders the registry browse page.
+templ MCPServerRegistryPage(data mcpRegistryPageData) {
+	@layout.Container(layout.ContainerLG, templ.Attributes{"data-mcp-registry-root": ""}) {
+		{{ crumbs := crumbsActive(nav.Crumbs("Settings", "/settings", "MCP Servers", mcpServerSettingsBase, "Registry")) }}
+		@detailHeader(crumbs, "", "MCP Registry", "Browse the official MCP registry through Memory and install remote servers into this project.", detailHeaderOpts{Margin: "mb-6"}) {
+			@countBadge(len(data.Servers), "result", "lucide--globe")
+		}
+		@mcpRegistrySearchBox(data.Query)
+		@flashToasts(data.FlashMsg, data.FlashErr)
+		if data.LoadErr != nil {
+			@pageError("MCP registry unavailable", data.LoadErr)
+		} else if len(data.Servers) == 0 {
+			@mcpRegistryEmptyState(data.Query)
+		} else {
+			<div class="flex flex-col gap-2">
+				for _, entry := range data.Servers {
+					@mcpRegistryEntry(entry)
+				}
+			</div>
+			@mcpRegistryNextLink(data.Query, data.NextCursor)
+		}
+	}
+}
+
+// mcpRegistrySearchBox renders the search form (GET /settings/mcp-registry?q=).
+templ mcpRegistrySearchBox(query string) {
+	<form method="get" action={ templ.URL(mcpRegistrySettingsBase) } class="mb-4 flex items-center gap-2">
+		<input type="search" name="q" value={ query } placeholder="Search the registry — e.g. chrome-devtools, github" class="input w-full" autocomplete="off" data-testid="mcp-registry-search"/>
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeSubmit,
+			Variant: ui.ButtonPrimary,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--search",
+			Attrs:   templ.Attributes{"data-testid": "mcp-registry-search-submit"},
+		}) {
+			Search
+		}
+	</form>
+}
+
+// mcpRegistryEmptyState renders the pre-search hint or the no-results state,
+// keyed on whether a query is present.
+templ mcpRegistryEmptyState(query string) {
+	if query == "" {
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--globe",
+			Title:       "Search the MCP registry",
+			Description: "Find MCP servers by name or description — e.g. github, chrome-devtools, or sentry.",
+			Bordered:    true,
+			Class:       "py-12",
+		})
+	} else {
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--search-x",
+			Title:       "No matching servers",
+			Description: "No registry entries matched \"" + query + "\". Try a different search.",
+			Bordered:    true,
+			Class:       "py-12",
+		})
+	}
+}
+
+// mcpRegistryEntry renders one registry result: name/title/description, the
+// remote/package availability badges, and either an Install action (remote
+// transport) or connector guidance (stdio-only).
+templ mcpRegistryEntry(entry MCPRegistryServer) {
+	<div class="rounded-box border border-base-content/10 bg-base-200/40 p-3" data-testid="mcp-registry-entry" data-registry-name={ entry.Name }>
+		<div class="flex flex-wrap items-start justify-between gap-3">
+			<div class="min-w-0">
+				<div class="flex min-w-0 items-center gap-2">
+					@ui.IconSpan("lucide--server", "size-4 shrink-0 text-muted-faint")
+					<span class="truncate text-sm font-medium">{ mcpRegistryDisplayTitle(entry) }</span>
+				</div>
+				if entry.Name != "" {
+					<p class="text-muted-faint mt-0.5 truncate font-mono text-xs">{ entry.Name }</p>
+				}
+				if entry.Description != "" {
+					<p class="text-muted mt-1 text-xs leading-snug">{ entry.Description }</p>
+				}
+			</div>
+			<div class="flex shrink-0 items-center gap-1.5">
+				if entry.HasRemotes {
+					@ui.Badge(ui.BadgeProps{Label: "remote", Variant: ui.BadgeAccent, Size: ui.BadgeSizeXS, Icon: "lucide--radio"})
+				}
+				if entry.HasPackages {
+					@ui.Badge(ui.BadgeProps{Label: "package", Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS, Icon: "lucide--package"})
+				}
+			</div>
+		</div>
+		<div class="mt-2 flex items-center justify-between gap-3 border-t border-base-content/10 pt-2">
+			if entry.HasRemotes {
+				@mcpRegistryInstallAction(entry)
+			} else {
+				@mcpRegistryConnectorGuidance()
+			}
+		</div>
+	</div>
+}
+
+// mcpRegistryInstallAction renders the per-entry install form for entries with
+// a remote transport (POST /settings/mcp-registry/install).
+templ mcpRegistryInstallAction(entry MCPRegistryServer) {
+	<form method="post" action={ templ.URL(mcpRegistrySettingsBase + "/install") }>
+		<input type="hidden" name="registryName" value={ entry.Name }/>
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeSubmit,
+			Variant: ui.ButtonPrimary,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--download",
+			Attrs:   templ.Attributes{"data-testid": "mcp-registry-install"},
+		}) {
+			Install
+		}
+	</form>
+}
+
+// mcpRegistryConnectorGuidance explains that a stdio-only entry must be
+// installed locally through the macOS connector — no server-side install
+// action exists for it.
+templ mcpRegistryConnectorGuidance() {
+	<p class="text-muted flex items-center gap-1.5 text-[11px]" data-testid="mcp-registry-connector-guidance">
+		@ui.IconSpan("lucide--laptop", "size-3.5 shrink-0 text-muted-faint")
+		Install locally via the macOS connector — stdio servers can't run on the shared host.
+	</p>
+}
+
+// mcpRegistryNextLink renders the "Next page" affordance when the search result
+// carries a next cursor.
+templ mcpRegistryNextLink(query, nextCursor string) {
+	if nextCursor != "" {
+		<div class="mt-3 flex justify-center">
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    mcpRegistryNextURL(query, nextCursor),
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--chevron-right",
+				Attrs:   templ.Attributes{"data-testid": "mcp-registry-next"},
+			}) {
+				Next page
+			}
+		</div>
+	}
+}
