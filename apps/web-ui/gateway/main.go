@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/emergent-company/emergent.memory/apps/web-ui/webui"
+	"github.com/emergent-company/go-daisy/devmode"
 	"github.com/emergent-company/go-daisy/staticfs"
 	"github.com/getsentry/sentry-go"
 	"github.com/labstack/echo/v4"
@@ -59,6 +60,10 @@ func main() {
 	// reached through traefik on a private network — keys rate limits (and any
 	// future RealIP() use) on the client rather than traefik's socket address.
 	e.IPExtractor = echo.ExtractIPFromXFFHeader()
+	// Annotate every go-daisy component root with data-component="pkg/Component"
+	// so the element-level feedback overlay can name the component instead of a
+	// raw CSS selector. Always on: names only (no data-props); see componentAnnotations.
+	e.Use(componentAnnotations())
 	e.Use(requestLogger())
 	// Compress text/HTML/CSS/JS/JSON responses. The 185KB app CSS and go-daisy's
 	// 473KB CSS compress ~5-10x, and every HTMX partial swap shrinks too.
@@ -565,6 +570,21 @@ func main() {
 	case <-sup.Done():
 	case <-time.After(5 * time.Second):
 		log.Printf("supervisor did not stop within 5s")
+	}
+}
+
+// componentAnnotations marks every render context as go-daisy dev mode so the
+// library's components emit data-component="pkg/Component" on their root
+// elements. The element-level feedback overlay reads that attribute to name the
+// component (and build its hierarchy picker) instead of falling back to a raw
+// CSS selector. Always on: emitted names only, no data-props.
+func componentAnnotations() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			ctx := devmode.WithDevMode(c.Request().Context())
+			c.SetRequest(c.Request().WithContext(ctx))
+			return next(c)
+		}
 	}
 }
 
