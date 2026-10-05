@@ -7,17 +7,22 @@ A vertical sub-navigation rail that organizes the Settings area into focused pag
 
 ### Requirement: Show the settings sub-navigation
 
-The Settings area SHALL show a vertical sub-navigation rail listing its sections: General, Assistant, Overrides, Providers, Voice, Devices, and Budget.
+The Settings area SHALL show a vertical sub-navigation rail listing its sections: General, Assistant, Members, Overrides, Providers, Voice, Connected devices, and Budget. The external-machines sections previously split across Devices and MCP nodes SHALL appear as the single Connected devices entry.
 
 #### Scenario: Sub-navigation present
 
 - **WHEN** a Settings page loads
-- **THEN** the sub-navigation shows General, Assistant, Overrides, Providers, Voice, Devices, and Budget links
+- **THEN** the sub-navigation shows General, Assistant, Members, Overrides, Providers, Voice, Connected devices, and Budget links
 
 #### Scenario: Active section highlighted
 
 - **WHEN** a Settings page loads
 - **THEN** the sub-navigation highlights the link for the current section
+
+#### Scenario: No separate MCP nodes entry
+
+- **WHEN** a Settings page loads
+- **THEN** the sub-navigation does not show a separate MCP nodes link, and external machines are reached through the single Connected devices entry
 
 ### Requirement: Navigate to each settings section
 
@@ -50,8 +55,18 @@ Each sub-navigation link SHALL open its own Settings sub-page.
 
 #### Scenario: Open Devices
 
-- **WHEN** the user selects the Devices link
-- **THEN** the Devices settings page opens, showing the iOS setup and devices panels
+- **WHEN** a previously saved Devices link is opened
+- **THEN** the same Connected devices page at `/settings/devices` opens, showing the Connect a device, Devices, and MCP nodes sections
+
+#### Scenario: Open Connected devices
+
+- **WHEN** the user selects the Connected devices link
+- **THEN** the page at `/settings/devices` opens, showing the Connect a device, Devices, and MCP nodes sections
+
+#### Scenario: Legacy MCP nodes route redirects
+
+- **WHEN** the user opens `/settings/mcp-nodes`
+- **THEN** the browser is redirected (303) to `/settings/devices`, preserving any `?node=` query parameter
 
 #### Scenario: Open Budget
 
