@@ -159,6 +159,7 @@ jobs:
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
+        continue-on-error: true
         with:
           files: apps/cli/coverage.out
           flags: memory-cli

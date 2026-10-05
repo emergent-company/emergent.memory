@@ -86,6 +86,7 @@ jobs:
       - name: Upload coverage
         if: matrix.python-version == '3.12'
         uses: codecov/codecov-action@v4
+        continue-on-error: true
         with:
           files: sdk/python/coverage.xml
           flags: python-sdk
