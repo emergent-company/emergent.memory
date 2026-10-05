@@ -506,37 +506,310 @@ func TestRenderDocumentsUploadPicker(t *testing.T) {
 }
 
 func TestRenderDocumentDetailPage(t *testing.T) {
-	doc := &Document{ID: "d1", Filename: "Spec.md", Chunks: 2, ExtractionStatus: "completed", ObjectsCreated: 15}
-	chunks := []Chunk{
-		{ID: "c1", Index: 0, Size: 5, HasEmbedding: true, Text: "hello"},
-		{ID: "c2", Index: 1, Size: 5, HasEmbedding: false, Text: "world"},
-	}
-	html := renderHTML(t, DocumentDetailPage(doc, chunks, extractionResults{}, nil, "", nil))
+	doc := &Document{ID: "d1", Filename: "Spec.md", MimeType: "text/markdown", Chunks: 2, ExtractionStatus: "completed", ObjectsCreated: 15}
+	preview := documentPreview{Mode: previewModeText, Text: "hello preview"}
+	html := renderHTML(t, DocumentDetailPage(doc, preview, nil, "", nil))
 	for _, want := range []string{
 		"Spec.md", "2 chunks", "completed", "15 objects extracted",
-		"hello", "world", "embedded", "chunk 0", "chunk 1",
 		`action="/documents/d1/extract"`, `href="/documents"`,
 		`action="/documents/d1/delete"`, "Delete this document? This cannot be undone.", "lucide--trash-2", ">Delete<",
+		// sub-navigation rail
+		`aria-label="Document sections"`, "Overview", "Chunks", "Extraction history",
+		`href="/documents/d1/chunks"`, `href="/documents/d1/extractions"`,
+		// text preview
+		`data-testid="document-preview-text"`, "hello preview",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("detail page missing %q", want)
 		}
 	}
-
-	htmlNoChunks := renderHTML(t, DocumentDetailPage(doc, nil, extractionResults{}, nil, "", nil))
-	if !strings.Contains(htmlNoChunks, "No chunks yet") {
-		t.Error("no-chunks state missing")
+	// Chunks and extraction results now live on their own sub-pages.
+	if strings.Contains(html, "No chunks yet") {
+		t.Error("overview should not render the chunks section")
+	}
+	if strings.Contains(html, "Extraction results") {
+		t.Error("overview should not render the inline extraction results section")
 	}
 
-	htmlErr := renderHTML(t, DocumentDetailPage(nil, nil, extractionResults{}, errTest, "", nil))
+	htmlErr := renderHTML(t, DocumentDetailPage(nil, documentPreview{}, errTest, "", nil))
 	if !strings.Contains(htmlErr, "Document unavailable") {
 		t.Error("load error state missing")
 	}
 
-	htmlFlash := renderHTML(t, DocumentDetailPage(doc, nil, extractionResults{}, nil, "Extraction triggered.", nil))
+	htmlFlash := renderHTML(t, DocumentDetailPage(doc, preview, nil, "Extraction triggered.", nil))
 	if !strings.Contains(htmlFlash, "Extraction triggered.") {
 		t.Error("extraction flash missing")
 	}
+}
+
+// TestDocumentPreviewEscapesHostileContent pins that stored document text is
+// HTML-escaped in the preview: templ renders the string as text, so a document
+// containing script/HTML tags cannot execute in the gateway origin.
+func TestDocumentPreviewEscapesHostileContent(t *testing.T) {
+	doc := &Document{ID: "d1", Filename: "evil.md", MimeType: "text/markdown"}
+	hostile := `<script>alert(1)</script><img src=x onerror=alert(2)></pre><svg onload=alert(3)>`
+	html := renderHTML(t, DocumentDetailPage(doc, documentPreview{Mode: previewModeText, Text: hostile}, nil, "", nil))
+	for _, raw := range []string{"<script>alert", "<img src=x", "<svg onload", "</pre><svg"} {
+		if strings.Contains(html, raw) {
+			t.Errorf("hostile preview content rendered unescaped: %q", raw)
+		}
+	}
+	for _, esc := range []string{"&lt;script&gt;alert", "&lt;img src=x", "&lt;svg onload"} {
+		if !strings.Contains(html, esc) {
+			t.Errorf("expected escaped preview content %q", esc)
+		}
+	}
+}
+
+// TestDocumentSubNavActive asserts the shared document sub-nav marks exactly the
+// active view current.
+func TestDocumentSubNavActive(t *testing.T) {
+	html := renderHTML(t, documentSubNav("d1", "chunks"))
+	if !strings.Contains(html, `aria-label="Document sections"`) {
+		t.Error("sub-nav label missing")
+	}
+	if !linkMarkedCurrent(html, "/documents/d1/chunks") {
+		t.Error("chunks link should be marked current")
+	}
+	if linkMarkedCurrent(html, "/documents/d1") || linkMarkedCurrent(html, "/documents/d1/extractions") {
+		t.Error("only the active sub-nav link should be current")
+	}
+
+	overview := renderHTML(t, documentSubNav("d1", "overview"))
+	if !linkMarkedCurrent(overview, "/documents/d1") {
+		t.Error("overview link should be current on the overview view")
+	}
+}
+
+// linkMarkedCurrent reports whether the anchor with exactly href carries
+// aria-current="page".
+func linkMarkedCurrent(html, href string) bool {
+	marker := `href="` + href + `"`
+	for i := strings.Index(html, marker); i >= 0; {
+		rest := html[i:]
+		end := strings.Index(rest, ">")
+		if end < 0 {
+			return false
+		}
+		if strings.Contains(rest[:end], `aria-current="page"`) {
+			return true
+		}
+		next := strings.Index(rest[len(marker):], marker)
+		if next < 0 {
+			return false
+		}
+		i += len(marker) + next
+	}
+	return false
+}
+
+// TestDocumentPreviewMode covers the preview strategy chosen from the document's
+// media type.
+func TestDocumentPreviewMode(t *testing.T) {
+	cases := []struct {
+		name string
+		doc  *Document
+		want string
+	}{
+		{"pdf", &Document{ID: "d1", Filename: "a.pdf", MimeType: "application/pdf"}, `data-testid="document-preview-pdf"`},
+		{"image", &Document{ID: "d1", Filename: "a.png", MimeType: "image/png"}, `data-testid="document-preview-image"`},
+		{"markdown-mime", &Document{ID: "d1", Filename: "a.md", MimeType: "text/markdown"}, `data-testid="document-preview-text"`},
+		{"markdown-filename", &Document{ID: "d1", Filename: "notes.md", MimeType: ""}, `data-testid="document-preview-text"`},
+		{"plaintext", &Document{ID: "d1", Filename: "a.txt", MimeType: "text/plain"}, `data-testid="document-preview-text"`},
+		{"download", &Document{ID: "d1", Filename: "a.bin", MimeType: "application/octet-stream"}, `data-testid="document-preview-download"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			preview := documentPreview{Mode: previewModeFor(tc.doc)}
+			html := renderHTML(t, DocumentDetailPage(tc.doc, preview, nil, "", nil))
+			if !strings.Contains(html, tc.want) {
+				t.Errorf("preview mode %s missing %q", tc.name, tc.want)
+			}
+			if !strings.Contains(html, `href="/documents/d1/file"`) {
+				t.Errorf("preview mode %s missing download link", tc.name)
+			}
+		})
+	}
+}
+
+// TestDocumentPreviewUnavailable asserts a failed server-side text fetch
+// degrades to a note with a Chunks link rather than an error.
+func TestDocumentPreviewUnavailable(t *testing.T) {
+	doc := &Document{ID: "d1", Filename: "a.md", MimeType: "text/markdown"}
+	html := renderHTML(t, DocumentDetailPage(doc, documentPreview{Mode: previewModeText, Err: errTest}, nil, "", nil))
+	if !strings.Contains(html, `data-testid="document-preview-unavailable"`) {
+		t.Error("failed text preview should degrade to the unavailable card")
+	}
+	if !strings.Contains(html, `href="/documents/d1/chunks"`) {
+		t.Error("unavailable preview should link to the Chunks view")
+	}
+}
+
+// TestLoadDocumentPreview covers the overview preview resolver: text comes from
+// the stored-content endpoint (so raw-content documents with no original file
+// still preview), empty/error content degrades, long content is capped, and
+// non-text media types skip the content read.
+func TestLoadDocumentPreview(t *testing.T) {
+	textDoc := &Document{ID: "d1", Filename: "a.md", MimeType: "text/markdown"}
+
+	t.Run("content present without original file", func(t *testing.T) {
+		content := "# Title\n\nBody"
+		// DownloadDocument fails/absent; the preview must still come from content.
+		f := &fakeMemory{docContent: &content, downloadDocErr: errTest}
+		s := &Server{memory: f}
+		p := s.loadDocumentPreview(context.Background(), textDoc)
+		if p.Err != nil || p.Text != content || p.Truncated {
+			t.Fatalf("preview = %+v", p)
+		}
+		html := renderHTML(t, DocumentDetailPage(textDoc, p, nil, "", nil))
+		if !strings.Contains(html, `data-testid="document-preview-text"`) || !strings.Contains(html, content) {
+			t.Fatalf("expected text preview, got %s", html)
+		}
+		if strings.Contains(html, `data-testid="document-preview-unavailable"`) {
+			t.Fatal("should not degrade when content is available")
+		}
+	})
+
+	t.Run("empty content degrades", func(t *testing.T) {
+		empty := ""
+		s := &Server{memory: &fakeMemory{docContent: &empty}}
+		p := s.loadDocumentPreview(context.Background(), textDoc)
+		if p.Err == nil {
+			t.Fatalf("empty content should degrade, got %+v", p)
+		}
+		html := renderHTML(t, DocumentDetailPage(textDoc, p, nil, "", nil))
+		if !strings.Contains(html, `data-testid="document-preview-unavailable"`) {
+			t.Error("empty content should render the unavailable card, not a blank box")
+		}
+	})
+
+	t.Run("content read error degrades", func(t *testing.T) {
+		s := &Server{memory: &fakeMemory{docErr: errTest}}
+		p := s.loadDocumentPreview(context.Background(), textDoc)
+		if p.Err == nil {
+			t.Fatalf("read error should degrade, got %+v", p)
+		}
+	})
+
+	t.Run("caps long content", func(t *testing.T) {
+		long := strings.Repeat("a", maxTextPreviewChars+10)
+		s := &Server{memory: &fakeMemory{docContent: &long}}
+		p := s.loadDocumentPreview(context.Background(), textDoc)
+		if !p.Truncated || len([]rune(p.Text)) != maxTextPreviewChars {
+			t.Fatalf("truncation = %v, len = %d", p.Truncated, len([]rune(p.Text)))
+		}
+	})
+
+	t.Run("non-text mode skips content", func(t *testing.T) {
+		s := &Server{memory: &fakeMemory{docErr: errTest}}
+		p := s.loadDocumentPreview(context.Background(), &Document{ID: "d1", Filename: "a.pdf", MimeType: "application/pdf"})
+		if p.Mode != previewModePDF || p.Text != "" || p.Err != nil {
+			t.Fatalf("pdf preview = %+v", p)
+		}
+	})
+}
+
+// TestRenderExtractionHistoryEmpty covers the no-extractions state.
+func TestRenderExtractionHistoryEmpty(t *testing.T) {
+	doc := &Document{ID: "d1", Filename: "Spec.md"}
+	html := renderHTML(t, DocumentExtractionsPage(doc, nil, nil, "", nil))
+	if !strings.Contains(html, "No extractions yet") {
+		t.Error("empty extraction history state missing")
+	}
+	if !strings.Contains(html, `href="/documents/d1/extractions"`) {
+		t.Error("extraction history sub-nav missing")
+	}
+}
+
+// TestRenderExtractionHistoryRows covers the per-job rows and their lazy detail
+// targets.
+func TestRenderExtractionHistoryRows(t *testing.T) {
+	doc := &Document{ID: "d1", Filename: "Spec.md"}
+	jobs := []ExtractionJob{
+		{ID: "job1", Status: "completed", CreatedAt: "2026-08-26T10:00:00Z", CreatedObjects: []string{"o1"}, DiscoveredTypes: []string{"person"}},
+		{ID: "job2", Status: "failed", CreatedAt: "2026-08-25T10:00:00Z"},
+	}
+	html := renderHTML(t, DocumentExtractionsPage(doc, jobs, nil, "", nil))
+	for _, want := range []string{
+		`data-testid="extraction-history"`,
+		`id="extraction-detail-job1"`,
+		`hx-get="/documents/d1/extractions/job1"`,
+		`hx-trigger="load"`,
+		`hx-target="this"`,
+		`hx-swap="outerHTML"`,
+		`data-testid="extraction-job-row"`,
+		"1 object", "person", "failed",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("extraction history missing %q", want)
+		}
+	}
+}
+
+// TestSortExtractionJobsNewestFirst pins the newest-first order the view relies
+// on.
+func TestSortExtractionJobsNewestFirst(t *testing.T) {
+	jobs := []ExtractionJob{
+		{ID: "old", CreatedAt: "2026-01-01T00:00:00Z"},
+		{ID: "new", CreatedAt: "2026-03-01T00:00:00Z"},
+	}
+	sortExtractionJobsNewestFirst(jobs)
+	if jobs[0].ID != "new" || jobs[1].ID != "old" {
+		t.Fatalf("order = %s,%s", jobs[0].ID, jobs[1].ID)
+	}
+}
+
+// TestRenderExtractionJobDetailMergeForm covers the merge-action visibility
+// rule: shown only for an unmerged, resolvable branch.
+func TestRenderExtractionJobDetailMergeForm(t *testing.T) {
+	base := extractionJobDetail{
+		Job:     ExtractionJob{ID: "job1", Status: "completed"},
+		Objects: []GraphObject{{ID: "o1", CanonicalID: "c1", Type: "person", Key: "sam"}},
+		Relationships: []GraphRelationship{
+			{ID: "r1", Type: "assigned_to", SrcID: "c1", DstID: "c1"},
+		},
+	}
+
+	t.Run("unmerged branch shows merge form", func(t *testing.T) {
+		d := base
+		d.BranchID = "b1"
+		d.Branch = &Branch{ID: "b1", Name: "extract-1"}
+		d.Readiness = &MergeReadiness{Ready: true, TotalObjects: 1}
+		html := renderHTML(t, ExtractionJobDetail("d1", d))
+		for _, want := range []string{
+			`data-testid="extraction-merge-form"`,
+			`action="/documents/d1/extractions/job1/merge"`,
+			"extract-1", "Ready to merge", "assigned to", "sam",
+		} {
+			if !strings.Contains(html, want) {
+				t.Errorf("unmerged detail missing %q", want)
+			}
+		}
+	})
+
+	t.Run("merged branch hides merge form", func(t *testing.T) {
+		d := base
+		d.Branch = &Branch{ID: "b1", Name: "extract-1", MergedAt: "2026-08-27T00:00:00Z"}
+		html := renderHTML(t, ExtractionJobDetail("d1", d))
+		if strings.Contains(html, `data-testid="extraction-merge-form"`) {
+			t.Error("merged branch must not render the merge form")
+		}
+		if !strings.Contains(html, "Merged into main") {
+			t.Error("merged branch should report it is merged")
+		}
+	})
+
+	t.Run("no branch hides merge form", func(t *testing.T) {
+		d := base
+		d.NoBranch = true
+		html := renderHTML(t, ExtractionJobDetail("d1", d))
+		if strings.Contains(html, `data-testid="extraction-merge-form"`) {
+			t.Error("branchless job must not render the merge form")
+		}
+		if !strings.Contains(html, `data-testid="extraction-detail-nobranch"`) {
+			t.Error("branchless job should show the no-branch note")
+		}
+	})
 }
 
 // TestDocumentRoutes exercises the page routes against the fake backend,
@@ -688,67 +961,253 @@ func TestDocumentStatusIntent(t *testing.T) {
 	}
 }
 
-// TestRenderExtractionResults covers the extraction results section: extracted
-// objects (type + label) and relationships (type + resolved src/dst labels).
-func TestRenderExtractionResults(t *testing.T) {
-	results := extractionResults{
-		Summary: &ExtractionSummary{JobID: "job1", ObjectsCreated: 2, RelationshipsCreated: 1},
+// TestRenderExtractionJobDetailObjects covers the per-job detail's extracted
+// object and relationship rendering (type + resolved endpoint labels).
+func TestRenderExtractionJobDetailObjects(t *testing.T) {
+	d := extractionJobDetail{
+		Job: ExtractionJob{ID: "job1", Status: "completed"},
 		Objects: []GraphObject{
-			{ID: "o1", CanonicalID: "c1", Type: "person", Key: "sam", Properties: map[string]any{"first_name": "Sam"}},
-			{ID: "o2", CanonicalID: "c2", Type: "task", Key: "call dentist", Properties: map[string]any{"title": "call dentist"}},
+			{ID: "o1", CanonicalID: "c1", Type: "person", Key: "sam"},
+			{ID: "o2", CanonicalID: "c2", Type: "task", Key: "call dentist"},
 		},
 		Relationships: []GraphRelationship{
 			{ID: "r1", Type: "assigned_to", SrcID: "c2", DstID: "c1"},
 		},
 	}
-	doc := &Document{ID: "d1", Filename: "Spec.md"}
-	html := renderHTML(t, DocumentDetailPage(doc, nil, results, nil, "", nil))
+	html := renderHTML(t, ExtractionJobDetail("d1", d))
 	for _, want := range []string{
-		"Extraction results", "2 objects", "1 relationship",
+		"2 objects", "1 relationship",
 		"person", "sam", "task", "call dentist", "assigned to",
 		`href="/objects/o1"`, `href="/objects/o2"`,
 	} {
 		if !strings.Contains(html, want) {
-			t.Errorf("extraction results missing %q", want)
+			t.Errorf("extraction job detail missing %q", want)
 		}
 	}
 }
 
-// TestLoadExtractionResults exercises the assembly: a document with no
-// extraction yields empty results; with an extraction it gathers objects and
-// the relationships touching them (deduped).
-func TestLoadExtractionResults(t *testing.T) {
-	t.Run("no summary", func(t *testing.T) {
-		s := &Server{memory: &fakeMemory{}}
-		res := s.loadExtractionResults(context.Background(), "d1")
-		if res.Summary != nil || len(res.Objects) != 0 || len(res.Relationships) != 0 {
-			t.Fatalf("want empty results, got %+v", res)
+// TestDocumentRoutesRegister asserts the new document sub-routes coexist with
+// the existing document routes without a router conflict (Echo panics on a
+// conflicting registration).
+func TestDocumentRoutesRegister(t *testing.T) {
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: &fakeMemory{}}
+	e := echo.New()
+	e.GET("/documents", s.uiDocuments)
+	e.GET("/documents/:id", s.uiDocument)
+	e.GET("/documents/:id/chunks", s.uiDocumentChunks)
+	e.GET("/documents/:id/extractions", s.uiDocumentExtractions)
+	e.GET("/documents/:id/extractions/:jobId", s.uiDocumentExtractionDetail)
+	e.GET("/documents/:id/file", s.uiDocumentFile)
+	e.POST("/documents", s.uiUploadDocument)
+	e.POST("/documents/:id/extract", s.uiTriggerExtraction)
+	e.POST("/documents/:id/extractions/:jobId/merge", s.uiDocumentMerge)
+	e.POST("/documents/:id/delete", s.uiDeleteDocument)
+}
+
+// TestLoadExtractionJobDetail exercises per-job assembly: branch resolution
+// from the job's first created object, branch-scoped objects, relationship
+// filtering, readiness, and graceful degradation.
+func TestLoadExtractionJobDetail(t *testing.T) {
+	t.Run("no created objects", func(t *testing.T) {
+		f := &fakeMemory{extractionJobs: []ExtractionJob{{ID: "job1", Status: "completed"}}}
+		s := &Server{memory: f}
+		d := s.loadExtractionJobDetail(context.Background(), "d1", "job1")
+		if d.Err != nil || !d.NoBranch {
+			t.Fatalf("want branchless detail, got %+v", d)
 		}
 	})
 
-	t.Run("with extraction", func(t *testing.T) {
+	t.Run("with branch", func(t *testing.T) {
 		f := &fakeMemory{
-			summary: &ExtractionSummary{JobID: "job1", ObjectsCreated: 2, RelationshipsCreated: 1, ObjectIDs: []string{"c1", "c2"}},
+			extractionJobs: []ExtractionJob{{ID: "job1", Status: "completed", CreatedObjects: []string{"o1", "o2"}}},
 			objects: []GraphObject{
-				{ID: "o1", CanonicalID: "c1", Type: "person", Key: "sam"},
-				{ID: "o2", CanonicalID: "c2", Type: "task", Key: "call dentist"},
+				{ID: "o1", CanonicalID: "c1", BranchID: "br1", Type: "person", Key: "sam"},
+				{ID: "o2", CanonicalID: "c2", BranchID: "br1", Type: "task", Key: "call dentist"},
 			},
 			relns: []GraphRelationship{
 				{ID: "r1", Type: "assigned_to", SrcID: "c2", DstID: "c1"},
-				{ID: "r2", Type: "unrelated", SrcID: "c9", DstID: "c8"},
+				{ID: "r2", Type: "unrelated", SrcID: "x", DstID: "y"},
 			},
+			branches:       []Branch{{ID: "br1", Name: "extract-1"}},
+			mergeReadiness: &MergeReadiness{Ready: true, TotalObjects: 2},
 		}
 		s := &Server{memory: f}
-		res := s.loadExtractionResults(context.Background(), "d1")
-		if res.Summary == nil || res.Summary.JobID != "job1" {
-			t.Fatalf("summary = %+v", res.Summary)
+		d := s.loadExtractionJobDetail(context.Background(), "d1", "job1")
+		if d.Err != nil {
+			t.Fatalf("err = %v", d.Err)
 		}
-		if len(res.Objects) != 2 {
-			t.Fatalf("objects = %d, want 2", len(res.Objects))
+		if d.NoBranch || d.BranchID != "br1" || d.Branch == nil || d.Branch.Name != "extract-1" {
+			t.Fatalf("branch resolution = %+v", d)
+		}
+		if len(d.Objects) != 2 {
+			t.Fatalf("objects = %d, want 2", len(d.Objects))
 		}
 		// only the relationship touching an extracted object is kept
-		if len(res.Relationships) != 1 || res.Relationships[0].Type != "assigned_to" {
-			t.Fatalf("relationships = %+v", res.Relationships)
+		if len(d.Relationships) != 1 || d.Relationships[0].Type != "assigned_to" {
+			t.Fatalf("relationships = %+v", d.Relationships)
+		}
+		if d.Readiness == nil || !d.Readiness.Ready {
+			t.Fatalf("readiness = %+v", d.Readiness)
+		}
+	})
+
+	t.Run("unknown job", func(t *testing.T) {
+		s := &Server{memory: &fakeMemory{}}
+		d := s.loadExtractionJobDetail(context.Background(), "d1", "nope")
+		if d.Err == nil {
+			t.Fatal("expected an error for an unknown job")
+		}
+	})
+}
+
+// TestDocumentSubPageRoutes exercises the chunks/extractions sub-pages, the
+// lazy per-job detail partial, the binary file proxy, and the merge PRG flow
+// against the fake backend.
+func TestDocumentSubPageRoutes(t *testing.T) {
+	f := &fakeMemory{
+		documents: []Document{{ID: "d1", Filename: "Spec.md", MimeType: "text/markdown", Chunks: 1}},
+		chunks:    []Chunk{{ID: "c1", Index: 0, Size: 5, Text: "hello chunk"}},
+		extractionJobs: []ExtractionJob{
+			{ID: "job1", Status: "completed", CreatedAt: "2026-08-26T10:00:00Z", CreatedObjects: []string{"o1"}},
+		},
+		objects:        []GraphObject{{ID: "o1", CanonicalID: "c1", BranchID: "br1", Type: "person", Key: "sam"}},
+		relns:          []GraphRelationship{{ID: "r1", Type: "assigned_to", SrcID: "c1", DstID: "c1"}},
+		branches:       []Branch{{ID: "br1", Name: "extract-1"}},
+		mergeReadiness: &MergeReadiness{Ready: true, TotalObjects: 1},
+		mergeResult:    &BranchMergeResult{AddedCount: 1},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/documents/:id/chunks", s.uiDocumentChunks)
+	e.GET("/documents/:id/extractions", s.uiDocumentExtractions)
+	e.GET("/documents/:id/extractions/:jobId", s.uiDocumentExtractionDetail)
+	e.GET("/documents/:id/file", s.uiDocumentFile)
+	e.POST("/documents/:id/extractions/:jobId/merge", s.uiDocumentMerge)
+
+	t.Run("chunks page", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/documents/d1/chunks", nil))
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "hello chunk") {
+			t.Fatalf("chunks page: %d %s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), `aria-current="page"`) {
+			t.Error("chunks sub-nav active state missing")
+		}
+	})
+
+	t.Run("extractions page", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/documents/d1/extractions", nil))
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `hx-get="/documents/d1/extractions/job1"`) {
+			t.Fatalf("extractions page: %d %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("job detail partial", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/documents/d1/extractions/job1", nil)
+		req.Header.Set("HX-Request-Type", "partial")
+		e.ServeHTTP(rec, req)
+		body := rec.Body.String()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("job detail status = %d", rec.Code)
+		}
+		for _, want := range []string{
+			`data-testid="extraction-job-detail"`,
+			`data-testid="extraction-merge-form"`,
+			`action="/documents/d1/extractions/job1/merge"`,
+			"extract-1", "assigned to",
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("job detail missing %q", want)
+			}
+		}
+	})
+
+	t.Run("missing job detail degrades", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/documents/d1/extractions/nope", nil))
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Failed to load this extraction") {
+			t.Fatalf("missing job detail: %d %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("file proxy serves safe types inline and forces others to download", func(t *testing.T) {
+		f.downloadDocBody = []byte("raw bytes")
+		cases := []struct {
+			name     string
+			ct       string
+			wantCT   string
+			wantDisp string
+		}{
+			{"pdf", "application/pdf", "application/pdf", "inline"},
+			{"png", "image/png", "image/png", "inline"},
+			{"html", "text/html", "application/octet-stream", "attachment"},
+			{"svg", "image/svg+xml", "application/octet-stream", "attachment"},
+			{"unknown", "application/octet-stream", "application/octet-stream", "attachment"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				f.downloadDocCT = tc.ct
+				rec := httptest.NewRecorder()
+				e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/documents/d1/file", nil))
+				if rec.Code != http.StatusOK || rec.Body.String() != "raw bytes" {
+					t.Fatalf("file proxy: %d %q", rec.Code, rec.Body.String())
+				}
+				if ct := rec.Header().Get("Content-Type"); ct != tc.wantCT {
+					t.Errorf("content type = %q, want %q", ct, tc.wantCT)
+				}
+				if cd := rec.Header().Get("Content-Disposition"); cd != tc.wantDisp {
+					t.Errorf("content disposition = %q, want %q", cd, tc.wantDisp)
+				}
+				if nosniff := rec.Header().Get("X-Content-Type-Options"); nosniff != "nosniff" {
+					t.Errorf("X-Content-Type-Options = %q, want nosniff", nosniff)
+				}
+			})
+		}
+	})
+
+	t.Run("missing file is 404", func(t *testing.T) {
+		f.downloadDocBody = nil
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/documents/d1/file", nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("missing file = %d, want 404", rec.Code)
+		}
+	})
+
+	t.Run("merge redirects with partial policy", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/documents/d1/extractions/job1/merge", nil))
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("merge status = %d", rec.Code)
+		}
+		if loc := rec.Header().Get("Location"); loc != "/documents/d1/extractions?merged=1" {
+			t.Errorf("merge location = %q", loc)
+		}
+		if f.lastMergeBranchID != "br1" || f.lastMergePolicy != "partial" {
+			t.Errorf("merge called with (%q,%q)", f.lastMergeBranchID, f.lastMergePolicy)
+		}
+	})
+
+	t.Run("merge without branch flashes error", func(t *testing.T) {
+		f2 := &fakeMemory{
+			documents:      []Document{{ID: "d2", Filename: "Spec.md"}},
+			extractionJobs: []ExtractionJob{{ID: "job1", Status: "completed"}},
+		}
+		s2 := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f2}
+		e2 := echo.New()
+		e2.POST("/documents/:id/extractions/:jobId/merge", s2.uiDocumentMerge)
+		rec := httptest.NewRecorder()
+		e2.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/documents/d2/extractions/job1/merge", nil))
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("branchless merge status = %d", rec.Code)
+		}
+		if loc := rec.Header().Get("Location"); !strings.Contains(loc, "?err=") {
+			t.Errorf("branchless merge location = %q, want ?err=", loc)
+		}
+		if f2.lastMergeBranchID != "" {
+			t.Errorf("MergeBranch should not be called, got branch %q", f2.lastMergeBranchID)
 		}
 	})
 }

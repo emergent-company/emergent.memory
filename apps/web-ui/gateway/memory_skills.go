@@ -11,6 +11,9 @@ type Branch struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	CreatedAt string `json:"created_at"`
+	// MergedAt is set once the branch has been merged into main; empty while
+	// the branch is still open.
+	MergedAt string `json:"merged_at,omitempty"`
 }
 
 // ListBranches lists the project's graph branches (excluding the implicit main

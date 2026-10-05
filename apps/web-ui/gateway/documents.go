@@ -136,48 +136,7 @@ func (s *Server) triggerExtraction(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]any{"jobId": jobID})
 }
 
-// --- extraction results ---
-
-// extractionResults holds what a document's most recent extraction produced:
-// the summary counts plus the extracted objects and relationships. Summary is
-// nil when no completed extraction exists yet.
-type extractionResults struct {
-	Summary       *ExtractionSummary
-	Objects       []GraphObject
-	Relationships []GraphRelationship
-}
-
-// loadExtractionResults assembles the extraction results for a document. A
-// document with no completed extraction yields a zero-value result (no error);
-// individual fetch failures degrade gracefully to the data already gathered.
-func (s *Server) loadExtractionResults(ctx context.Context, documentID string) extractionResults {
-	var res extractionResults
-	summary, err := s.memory.GetExtractionSummary(ctx, documentID)
-	if err != nil || summary == nil {
-		return res
-	}
-	res.Summary = summary
-	if len(summary.ObjectIDs) == 0 {
-		return res
-	}
-
-	// Extracted objects land on a staging branch (invisible to the default
-	// main-branch search), so discover the branch from the first object, then
-	// list by id within that branch.
-	first, err := s.memory.GetGraphObject(ctx, summary.ObjectIDs[0])
-	if err != nil || first == nil {
-		return res
-	}
-	branchID := first.BranchID
-
-	objects, err := s.memory.ListGraphObjects(ctx, branchID, "", summary.ObjectIDs)
-	if err != nil {
-		return res
-	}
-	res.Objects = objects
-	res.Relationships = s.collectExtractionRelationships(ctx, branchID, objects)
-	return res
-}
+// --- extraction assembly ---
 
 // collectExtractionRelationships lists the relationships on the extraction
 // branch and keeps those that touch at least one extracted object (memory has

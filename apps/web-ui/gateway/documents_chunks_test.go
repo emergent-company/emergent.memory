@@ -91,15 +91,16 @@ func TestRenderChunkRollbackDialog(t *testing.T) {
 	}
 }
 
-// TestRenderDocumentDetailChunkEditor pins the integration: the detail page
-// renders each chunk row contract and exactly one shared rollback dialog.
+// TestRenderDocumentDetailChunkEditor pins the integration: the chunks
+// sub-page renders each chunk row contract and exactly one shared rollback
+// dialog (the overview moved chunks onto their own page).
 func TestRenderDocumentDetailChunkEditor(t *testing.T) {
 	doc := &Document{ID: "d1", Filename: "Spec.md", Chunks: 2}
 	chunks := []Chunk{
 		{ID: "c0", Index: 0, Text: "alpha", CurrentRevision: 1},
 		{ID: "c1", Index: 1, Text: "beta", Edited: true, CurrentRevision: 2},
 	}
-	html := renderHTML(t, DocumentDetailPage(doc, chunks, extractionResults{}, nil, "", nil))
+	html := renderHTML(t, DocumentChunksPage(doc, chunks, nil))
 
 	for _, want := range []string{
 		`data-testid="chunk-row-0"`, `data-testid="chunk-row-1"`,
@@ -109,7 +110,7 @@ func TestRenderDocumentDetailChunkEditor(t *testing.T) {
 		`id="chunk-rollback-confirm"`,
 	} {
 		if !strings.Contains(html, want) {
-			t.Errorf("document detail missing %q", want)
+			t.Errorf("chunks sub-page missing %q", want)
 		}
 	}
 	if n := strings.Count(html, `data-chunk-rollback-confirm`); n != 1 {

@@ -23515,6 +23515,14 @@ const docTemplate = `{
                 },
                 "visibility": {
                     "$ref": "#/definitions/domain_agents.AgentVisibility"
+                },
+                "workConfig": {
+                    "description": "WorkConfig is the object-driven work configuration, carried on the list\nsummary so clients (e.g. the board's work-path status map) can read an\nagent's declared status phases without a per-agent fetch. Omitted when the\ndefinition does not opt into object-driven work.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_agents.AgentWorkConfig"
+                        }
+                    ]
                 }
             }
         },
@@ -25445,6 +25453,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "id": {
+                    "type": "string"
+                },
+                "merged_at": {
+                    "description": "MergedAt is set once the branch has been merged into main; nil (omitted)\nwhile the branch is still open.",
                     "type": "string"
                 },
                 "name": {
@@ -28780,6 +28792,54 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_invites.InviteDeliveryEvent": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "description": "CreatedAt is when the send was enqueued. ProcessedAt, when set, is when\nthe job finished processing (Mailgun accepted the send, or the job gave\nup) and is the truthful \"sent at\" for a completed send.",
+                    "type": "string"
+                },
+                "deliveryStatus": {
+                    "type": "string"
+                },
+                "deliveryStatusAt": {
+                    "type": "string"
+                },
+                "events": {
+                    "description": "Events is the job's Mailgun delivery events, oldest first. Always\nnon-nil so the JSON shape is a stable [] rather than null.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_invites.InviteDeliveryLogEvent"
+                    }
+                },
+                "jobId": {
+                    "type": "string"
+                },
+                "lastError": {
+                    "type": "string"
+                },
+                "processedAt": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_invites.InviteDeliveryLogEvent": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "detail": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_invites.PendingInvite": {
             "type": "object",
             "properties": {
@@ -28874,6 +28934,13 @@ const docTemplate = `{
             "properties": {
                 "createdAt": {
                     "type": "string"
+                },
+                "deliveryLog": {
+                    "description": "DeliveryLog is the invitation's email send history, newest first: one\nentry per invite-scoped kb.email_jobs row (the initial send plus every\nresend), each carrying its current processing/delivery state and the\nMailgun delivery events recorded against it. Empty when no email has been\nenqueued yet.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_invites.InviteDeliveryEvent"
+                    }
                 },
                 "deliveryStatus": {
                     "type": "string"

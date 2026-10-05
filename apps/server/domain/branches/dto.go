@@ -26,11 +26,14 @@ type BranchResponse struct {
 	Description    *string `json:"description,omitempty"`
 	ParentBranchID *string `json:"parent_branch_id"`
 	CreatedAt      string  `json:"created_at"`
+	// MergedAt is set once the branch has been merged into main; nil (omitted)
+	// while the branch is still open.
+	MergedAt *string `json:"merged_at,omitempty"`
 }
 
 // ToResponse converts a Branch entity to a BranchResponse
 func ToResponse(b *Branch) *BranchResponse {
-	return &BranchResponse{
+	resp := &BranchResponse{
 		ID:             b.ID,
 		ProjectID:      b.ProjectID,
 		Name:           b.Name,
@@ -38,6 +41,11 @@ func ToResponse(b *Branch) *BranchResponse {
 		ParentBranchID: b.ParentBranchID,
 		CreatedAt:      b.CreatedAt.Format(time.RFC3339Nano),
 	}
+	if b.MergedAt != nil {
+		mergedAt := b.MergedAt.Format(time.RFC3339Nano)
+		resp.MergedAt = &mergedAt
+	}
+	return resp
 }
 
 // ToResponseList converts a slice of Branch entities to BranchResponses

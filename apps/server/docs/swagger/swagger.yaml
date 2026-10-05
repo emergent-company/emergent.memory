@@ -680,6 +680,14 @@ definitions:
         type: string
       visibility:
         $ref: '#/definitions/domain_agents.AgentVisibility'
+      workConfig:
+        allOf:
+        - $ref: '#/definitions/domain_agents.AgentWorkConfig'
+        description: |-
+          WorkConfig is the object-driven work configuration, carried on the list
+          summary so clients (e.g. the board's work-path status map) can read an
+          agent's declared status phases without a per-agent fetch. Omitted when the
+          definition does not opt into object-driven work.
     type: object
   domain_agents.AgentDispatchMode:
     enum:
@@ -2051,6 +2059,11 @@ definitions:
       description:
         type: string
       id:
+        type: string
+      merged_at:
+        description: |-
+          MergedAt is set once the branch has been merged into main; nil (omitted)
+          while the branch is still open.
         type: string
       name:
         type: string
@@ -4368,6 +4381,43 @@ definitions:
       token:
         type: string
     type: object
+  domain_invites.InviteDeliveryEvent:
+    properties:
+      createdAt:
+        description: |-
+          CreatedAt is when the send was enqueued. ProcessedAt, when set, is when
+          the job finished processing (Mailgun accepted the send, or the job gave
+          up) and is the truthful "sent at" for a completed send.
+        type: string
+      deliveryStatus:
+        type: string
+      deliveryStatusAt:
+        type: string
+      events:
+        description: |-
+          Events is the job's Mailgun delivery events, oldest first. Always
+          non-nil so the JSON shape is a stable [] rather than null.
+        items:
+          $ref: '#/definitions/domain_invites.InviteDeliveryLogEvent'
+        type: array
+      jobId:
+        type: string
+      lastError:
+        type: string
+      processedAt:
+        type: string
+      status:
+        type: string
+    type: object
+  domain_invites.InviteDeliveryLogEvent:
+    properties:
+      createdAt:
+        type: string
+      detail:
+        type: string
+      type:
+        type: string
+    type: object
   domain_invites.PendingInvite:
     properties:
       createdAt:
@@ -4432,6 +4482,16 @@ definitions:
     properties:
       createdAt:
         type: string
+      deliveryLog:
+        description: |-
+          DeliveryLog is the invitation's email send history, newest first: one
+          entry per invite-scoped kb.email_jobs row (the initial send plus every
+          resend), each carrying its current processing/delivery state and the
+          Mailgun delivery events recorded against it. Empty when no email has been
+          enqueued yet.
+        items:
+          $ref: '#/definitions/domain_invites.InviteDeliveryEvent'
+        type: array
       deliveryStatus:
         type: string
       deliveryStatusAt:

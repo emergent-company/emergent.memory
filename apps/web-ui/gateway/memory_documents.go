@@ -230,6 +230,81 @@ func (m *MemoryClient) UploadDocument(ctx context.Context, filename string, r io
 	}, nil
 }
 
+// ExtractionJob is one extraction job for a document (GET
+// /api/admin/extraction-jobs). Fields are snake_case per the admin DTO; the
+// timestamp fields are RFC3339 strings (empty when the server omitted a
+// nullable time).
+type ExtractionJob struct {
+	ID              string   `json:"id"`
+	ProjectID       string   `json:"project_id"`
+	SourceType      string   `json:"source_type"`
+	SourceID        string   `json:"source_id"`
+	Status          string   `json:"status"`
+	TotalItems      int      `json:"total_items"`
+	ProcessedItems  int      `json:"processed_items"`
+	SuccessfulItems int      `json:"successful_items"`
+	FailedItems     int      `json:"failed_items"`
+	DiscoveredTypes []string `json:"discovered_types"`
+	CreatedObjects  []string `json:"created_objects"`
+	ErrorMessage    *string  `json:"error_message"`
+	StartedAt       string   `json:"started_at"`
+	CompletedAt     string   `json:"completed_at"`
+	CreatedAt       string   `json:"created_at"`
+	UpdatedAt       string   `json:"updated_at"`
+}
+
+// ListExtractionJobs lists the extraction jobs for one document, newest first
+// (GET /api/admin/extraction-jobs/projects/{projectID}?source_id=...&source_type=document).
+// The response envelope is {success,data:{jobs:[...],total,page,limit,total_pages}}.
+func (m *MemoryClient) ListExtractionJobs(ctx context.Context, documentID string) ([]ExtractionJob, error) {
+	path := "/api/admin/extraction-jobs/projects/" + url.PathEscape(m.projectIDFor(ctx)) +
+		"?source_id=" + url.QueryEscape(documentID) +
+		"&source_type=document&limit=100"
+	var out struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Jobs []ExtractionJob `json:"jobs"`
+		} `json:"data"`
+	}
+	if err := m.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Data.Jobs, nil
+}
+
+// DownloadDocument fetches a document's original file bytes (GET
+// /api/documents/{id}/download). The raw body and its Content-Type are returned
+// unparsed — the caller streams them to the response and owns the returned
+// ReadCloser. The endpoint 307-redirects to a signed URL and the default client
+// follows it. A non-2xx response is an error.
+func (m *MemoryClient) DownloadDocument(ctx context.Context, id string) (io.ReadCloser, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, m.baseURL+"/api/documents/"+id+"/download", nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+m.tokenFor(ctx))
+	for k, v := range m.documentHeaders(ctx) {
+		req.Header.Set(k, v)
+	}
+	for k, v := range sessionHeaders(ctx) {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := m.http.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	if resp.StatusCode >= 400 {
+		defer func() { _ = resp.Body.Close() }()
+		raw, rerr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		if rerr != nil {
+			return nil, "", rerr
+		}
+		return nil, "", parseMemoryError(resp.StatusCode, raw)
+	}
+	return resp.Body, resp.Header.Get("Content-Type"), nil
+}
+
 // CreateExtractionJob triggers object extraction on a document (POST
 // /api/admin/extraction-jobs) and returns the created job id.
 func (m *MemoryClient) CreateExtractionJob(ctx context.Context, documentID string) (string, error) {
@@ -276,4 +351,20 @@ func (m *MemoryClient) GetExtractionSummary(ctx context.Context, documentID stri
 		return nil, err
 	}
 	return &out, nil
+}
+
+// GetDocumentContent fetches a document's stored text content (GET
+// /api/documents/{id}/content). The response is {"content": *string}; a
+// document with no stored content (null/absent) yields "".
+func (m *MemoryClient) GetDocumentContent(ctx context.Context, documentID string) (string, error) {
+	var out struct {
+		Content *string `json:"content"`
+	}
+	if err := m.doH(ctx, http.MethodGet, "/api/documents/"+documentID+"/content", nil, m.documentHeaders(ctx), &out); err != nil {
+		return "", err
+	}
+	if out.Content == nil {
+		return "", nil
+	}
+	return *out.Content, nil
 }

@@ -1124,26 +1124,25 @@ func (s *Server) uiDocuments(c echo.Context) error {
 	return s.page(c, pageTitle("Documents"), DocumentsPage(docs, cursor, err, flashMsg, flashErr))
 }
 
-// uiDocument renders one document's detail: metadata, extraction trigger, and
-// a chunk preview. Chunks are best-effort (a chunk fetch failure still renders
-// the page with the metadata and an empty chunk list).
+// uiDocument renders a document's Overview sub-page: metadata, the extraction
+// trigger, and a preview of the original file. Chunks and extraction history
+// live on their own sub-routes; a failed preview fetch degrades only the
+// preview card.
 func (s *Server) uiDocument(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
 
 	doc, err := s.memory.GetDocument(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle("Document"), DocumentDetailPage(nil, nil, extractionResults{}, err, "", nil))
+		return s.page(c, pageTitle("Document"), DocumentDetailPage(nil, documentPreview{}, err, "", nil))
 	}
 
-	chunks, err := s.memory.ListChunks(ctx, id)
-	captureError(err)
-	results := s.loadExtractionResults(ctx, id)
+	preview := s.loadDocumentPreview(ctx, doc)
 	flashMsg := flashFromQuery(c, []flashParam{
 		{key: "extracted", msg: "Extraction triggered."},
 	})
 	flashErr := flashError(c)
-	return s.page(c, pageTitle(documentName(*doc)), DocumentDetailPage(doc, chunks, results, nil, flashMsg, flashErr))
+	return s.page(c, pageTitle(documentName(*doc)), DocumentDetailPage(doc, preview, nil, flashMsg, flashErr))
 }
 
 // uiUploadDocument handles the documents page upload form (PRG): it forwards

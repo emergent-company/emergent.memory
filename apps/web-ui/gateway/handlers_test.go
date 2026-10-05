@@ -120,9 +120,19 @@ type fakeMemory struct {
 	deletedDocuments    []string                   // document ids passed to DeleteDocument, in order
 	deleteDocErr        error                      // DeleteDocument failure
 	summary             *ExtractionSummary         // returned by GetExtractionSummary
+	docContent          *string                    // returned by GetDocumentContent (nil → "")
 	objects             []GraphObject              // returned by ListExtractionObjects
 	relns               []GraphRelationship        // returned by ListRelationships
 	branches            []Branch                   // returned by ListBranches
+	extractionJobs      []ExtractionJob            // returned by ListExtractionJobs
+	downloadDocBody     []byte                     // raw bytes returned by DownloadDocument
+	downloadDocCT       string                     // Content-Type returned by DownloadDocument
+	downloadDocErr      error                      // DownloadDocument failure
+	mergeReadiness      *MergeReadiness            // returned by GetMergeReadiness
+	mergeResult         *BranchMergeResult         // returned by MergeBranch
+	mergeErr            error                      // GetMergeReadiness/MergeBranch failure
+	lastMergeBranchID   string                     // last sourceBranchID passed to MergeBranch
+	lastMergePolicy     string                     // last policy passed to MergeBranch
 	similar             []SimilarObject            // returned by GetSimilarObjects
 	similarErr          error                      // GetSimilarObjects failure
 	updateResult        *GraphObject               // returned by UpdateObject
@@ -1077,6 +1087,37 @@ func (f *fakeMemory) GetExtractionSummary(ctx context.Context, documentID string
 	return f.summary, nil
 }
 
+func (f *fakeMemory) GetDocumentContent(ctx context.Context, documentID string) (string, error) {
+	if f.docErr != nil {
+		return "", f.docErr
+	}
+	if f.docContent == nil {
+		return "", nil
+	}
+	return *f.docContent, nil
+}
+
+func (f *fakeMemory) ListExtractionJobs(ctx context.Context, documentID string) ([]ExtractionJob, error) {
+	if f.docErr != nil {
+		return nil, f.docErr
+	}
+	return f.extractionJobs, nil
+}
+
+func (f *fakeMemory) DownloadDocument(ctx context.Context, id string) (io.ReadCloser, string, error) {
+	if f.downloadDocErr != nil {
+		return nil, "", f.downloadDocErr
+	}
+	if len(f.downloadDocBody) == 0 {
+		return nil, "", fmt.Errorf("memory 404: document not found")
+	}
+	contentType := f.downloadDocCT
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	return io.NopCloser(bytes.NewReader(f.downloadDocBody)), contentType, nil
+}
+
 func (f *fakeMemory) GetGraphObject(ctx context.Context, objectID string) (*GraphObject, error) {
 	if f.docErr != nil {
 		return nil, f.docErr
@@ -1314,6 +1355,22 @@ func (f *fakeMemory) ListBranches(ctx context.Context) ([]Branch, error) {
 		return nil, f.docErr
 	}
 	return f.branches, nil
+}
+
+func (f *fakeMemory) GetMergeReadiness(ctx context.Context, branchID string) (*MergeReadiness, error) {
+	if f.mergeErr != nil {
+		return nil, f.mergeErr
+	}
+	return f.mergeReadiness, nil
+}
+
+func (f *fakeMemory) MergeBranch(ctx context.Context, sourceBranchID, policy string) (*BranchMergeResult, error) {
+	if f.mergeErr != nil {
+		return nil, f.mergeErr
+	}
+	f.lastMergeBranchID = sourceBranchID
+	f.lastMergePolicy = policy
+	return f.mergeResult, nil
 }
 
 func (f *fakeMemory) GetCompiledTypes(ctx context.Context) (*CompiledSchemaTypes, error) {
