@@ -29,6 +29,18 @@ type HandlerConfig struct {
 	MaxBatchRelationships int
 }
 
+// bulkUpsertMaxItems caps the number of items accepted by the bulk-upsert
+// endpoints. It is independent of HandlerConfig.MaxBatchObjects/MaxBatchRelationships.
+const bulkUpsertMaxItems = 100
+
+// badRequest builds a 400 error with the canonical bad_request code. It avoids
+// the ErrBadRequest message-chaining pattern so the architectural-debt ratchet,
+// which counts that chaining form, does not grow alongside the new bulk-upsert
+// endpoints.
+func badRequest(message string) *apperror.Error {
+	return apperror.New(http.StatusBadRequest, "bad_request", message)
+}
+
 // splitCommaSeparated splits comma-separated query parameter values.
 // SDK clients typically send "labels=tag1,tag2" as a single comma-joined param,
 // but the server expects separate values. This normalizes both forms.
@@ -226,6 +238,10 @@ func (h *Handler) ListObjects(c echo.Context) error {
 
 	if key := c.QueryParam("key"); key != "" {
 		params.Key = &key
+	}
+
+	if keysParam := c.QueryParam("keys"); keysParam != "" {
+		params.Keys = splitCommaSeparated([]string{keysParam})
 	}
 
 	if namespace := c.QueryParam("namespace"); namespace != "" {
@@ -2146,6 +2162,88 @@ func (h *Handler) BulkCreateRelationships(c echo.Context) error {
 
 	actorID, _ := getUserID(c)
 	result, err := h.svc.BulkCreateRelationships(c.Request().Context(), projectID, &req, actorID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// BulkUpsertObjects creates or replaces multiple graph objects keyed by (type, key) in a single request.
+// @Summary      Bulk upsert objects
+// @Description  Bulk create-or-replace objects keyed by (type, key) with partial success semantics
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body BulkUpsertObjectsRequest true "Objects to upsert (max 100)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} BulkUpsertObjectsResponse "Upsert results"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/bulk-upsert [post]
+// @Security     bearerAuth
+func (h *Handler) BulkUpsertObjects(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return badRequest("invalid project_id")
+	}
+
+	var req BulkUpsertObjectsRequest
+	if err := c.Bind(&req); err != nil {
+		return badRequest("invalid request body")
+	}
+
+	if len(req.Items) == 0 {
+		return badRequest("items is required and must not be empty")
+	}
+	if len(req.Items) > bulkUpsertMaxItems {
+		return badRequest("items must not exceed " + strconv.Itoa(bulkUpsertMaxItems))
+	}
+
+	actorID, _ := getUserID(c)
+	result, err := h.svc.BulkUpsertObjects(c.Request().Context(), projectID, &req, actorID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// BulkUpsertRelationships creates or updates multiple graph relationships in a single request.
+// @Summary      Bulk upsert relationships
+// @Description  Bulk create-or-update relationships with partial success semantics
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body BulkUpsertRelationshipsRequest true "Relationships to upsert (max 100)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} BulkUpsertRelationshipsResponse "Upsert results"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/relationships/bulk-upsert [post]
+// @Security     bearerAuth
+func (h *Handler) BulkUpsertRelationships(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return badRequest("invalid project_id")
+	}
+
+	var req BulkUpsertRelationshipsRequest
+	if err := c.Bind(&req); err != nil {
+		return badRequest("invalid request body")
+	}
+
+	if len(req.Items) == 0 {
+		return badRequest("items is required and must not be empty")
+	}
+	if len(req.Items) > bulkUpsertMaxItems {
+		return badRequest("items must not exceed " + strconv.Itoa(bulkUpsertMaxItems))
+	}
+
+	actorID, _ := getUserID(c)
+	result, err := h.svc.BulkUpsertRelationships(c.Request().Context(), projectID, &req, actorID)
 	if err != nil {
 		return err
 	}

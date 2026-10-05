@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	sdkgraph "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/graph"
 )
@@ -95,22 +96,62 @@ func (s *Seeder) applyObjectBatch(ctx context.Context, batch []SeedObjectRecord,
 
 	// Pre-check: find which keys already exist in the project.
 	existingByKey := make(map[string]string) // key → entityID
-	for _, key := range keys {
-		if s.dryRun {
-			// In dry-run we skip the API call.
-			continue
+	if !s.dryRun && len(keys) > 0 {
+		// Keys that round-trip cleanly through the comma-joined "keys" query
+		// param are batched into one lookup. Keys containing a comma or with
+		// leading/trailing whitespace would be mis-encoded by that join (the
+		// server splits/trims on commas), so those are resolved individually
+		// with an exact single-key lookup instead.
+		var batchKeys []string
+		for _, key := range keys {
+			if strings.Contains(key, ",") || key != strings.TrimSpace(key) {
+				resp, err := s.graph.ListObjects(ctx, &sdkgraph.ListObjectsOptions{
+					Key:   key,
+					Limit: 1,
+				})
+				if err != nil {
+					// Non-fatal: treat this key as not-found, attempt create later.
+					fmt.Fprintf(s.out, "  warn: key lookup failed for %q: %v\n", key, err)
+					continue
+				}
+				for _, item := range resp.Items {
+					if item == nil || item.Key == nil {
+						continue
+					}
+					existingByKey[*item.Key] = item.EntityID
+				}
+			} else {
+				batchKeys = append(batchKeys, key)
+			}
 		}
-		resp, err := s.graph.ListObjects(ctx, &sdkgraph.ListObjectsOptions{
-			Key:   key,
-			Limit: 1,
-		})
-		if err != nil {
-			// Non-fatal: treat as not-found, attempt create later.
-			fmt.Fprintf(s.out, "  warn: key lookup failed for %q: %v\n", key, err)
-			continue
-		}
-		if len(resp.Items) > 0 {
-			existingByKey[key] = resp.Items[0].EntityID
+
+		if len(batchKeys) > 0 {
+			cursor := ""
+			for {
+				opts := &sdkgraph.ListObjectsOptions{
+					Keys:  batchKeys,
+					Limit: len(batchKeys),
+				}
+				if cursor != "" {
+					opts.Cursor = cursor
+				}
+				resp, err := s.graph.ListObjects(ctx, opts)
+				if err != nil {
+					// Non-fatal: treat all as not-found, attempt create later.
+					fmt.Fprintf(s.out, "  warn: key lookup failed: %v\n", err)
+					break
+				}
+				for _, item := range resp.Items {
+					if item == nil || item.Key == nil {
+						continue
+					}
+					existingByKey[*item.Key] = item.EntityID
+				}
+				if resp.NextCursor == nil {
+					break
+				}
+				cursor = *resp.NextCursor
+			}
 		}
 	}
 
@@ -206,29 +247,51 @@ func (s *Seeder) applyObjectBatch(ctx context.Context, batch []SeedObjectRecord,
 		}
 	}
 
-	// Upsert existing objects individually.
-	for _, rec := range toUpsert {
-		keyVal := rec.Key // guaranteed non-empty for upsert candidates
-		req := &sdkgraph.CreateObjectRequest{
-			Type:       rec.Type,
-			Key:        &keyVal,
-			Properties: rec.Properties,
-			Labels:     rec.Labels,
+	// Bulk-upsert existing objects (only when upgrade is set).
+	if len(toUpsert) > 0 {
+		items := make([]sdkgraph.CreateObjectRequest, len(toUpsert))
+		for i, rec := range toUpsert {
+			keyVal := rec.Key // guaranteed non-empty for upsert candidates
+			req := sdkgraph.CreateObjectRequest{
+				Type:       rec.Type,
+				Key:        &keyVal,
+				Properties: rec.Properties,
+				Labels:     rec.Labels,
+			}
+			if rec.Status != "" {
+				req.Status = &rec.Status
+			}
+			if rec.Assignee != "" {
+				req.Assignee = &rec.Assignee
+			}
+			items[i] = req
 		}
-		if rec.Status != "" {
-			req.Status = &rec.Status
-		}
-		if rec.Assignee != "" {
-			req.Assignee = &rec.Assignee
-		}
-		obj, err := s.graph.UpsertObject(ctx, req)
+
+		resp, err := s.graph.BulkUpsertObjects(ctx, &sdkgraph.BulkUpsertObjectsRequest{Items: items})
 		if err != nil {
-			result.ObjectsFailed++
-			fmt.Fprintf(s.out, "  error: upsert object type=%s key=%q: %v\n", rec.Type, rec.Key, err)
-			continue
+			// If the whole bulk call fails, count all as failed.
+			fmt.Fprintf(s.out, "  error: bulk upsert failed: %v\n", err)
+			result.ObjectsFailed += len(toUpsert)
+		} else {
+			for i, r := range resp.Results {
+				if r.Success && r.Object != nil {
+					if r.Created {
+						result.ObjectsCreated++
+					} else {
+						result.ObjectsUpdated++
+					}
+					batchKeyMap[toUpsert[i].Key] = r.Object.EntityID
+				} else {
+					result.ObjectsFailed++
+					errMsg := "<unknown>"
+					if r.Error != nil {
+						errMsg = *r.Error
+					}
+					fmt.Fprintf(s.out, "  error: upsert object type=%s key=%q: %s\n",
+						toUpsert[i].Type, toUpsert[i].Key, errMsg)
+				}
+			}
 		}
-		result.ObjectsUpdated++
-		batchKeyMap[rec.Key] = obj.EntityID
 	}
 
 	// Record skipped objects.
@@ -309,9 +372,9 @@ func (s *Seeder) applyRelationshipBatch(ctx context.Context, batch []SeedRelatio
 		items[i] = entry.req
 	}
 
-	resp, err := s.graph.BulkCreateRelationships(ctx, &sdkgraph.BulkCreateRelationshipsRequest{Items: items})
+	resp, err := s.graph.BulkUpsertRelationships(ctx, &sdkgraph.BulkUpsertRelationshipsRequest{Items: items})
 	if err != nil {
-		fmt.Fprintf(s.out, "  error: bulk create relationships failed: %v\n", err)
+		fmt.Fprintf(s.out, "  error: bulk upsert relationships failed: %v\n", err)
 		result.RelsFailed += len(toCreate)
 		return nil
 	}

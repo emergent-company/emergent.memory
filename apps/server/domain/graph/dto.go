@@ -383,6 +383,27 @@ type BulkCreateObjectResult struct {
 	Error   *string              `json:"error,omitempty"`
 }
 
+// BulkUpsertObjectsRequest is the request for bulk create-or-replace by (type, key).
+type BulkUpsertObjectsRequest struct {
+	Items []CreateGraphObjectRequest `json:"items" validate:"required,min=1,max=100"`
+}
+
+// BulkUpsertObjectsResponse is the response for bulk object upserts.
+type BulkUpsertObjectsResponse struct {
+	Success int                      `json:"success"`
+	Failed  int                      `json:"failed"`
+	Results []BulkUpsertObjectResult `json:"results"`
+}
+
+// BulkUpsertObjectResult is the result for a single object in a bulk upsert.
+type BulkUpsertObjectResult struct {
+	Index   int                  `json:"index"`
+	Success bool                 `json:"success"`
+	Created bool                 `json:"created"`
+	Object  *GraphObjectResponse `json:"object,omitempty"`
+	Error   *string              `json:"error,omitempty"`
+}
+
 // =============================================================================
 // Bulk Update DTOs
 // =============================================================================
@@ -435,6 +456,27 @@ type BulkCreateRelationshipsResponse struct {
 type BulkCreateRelationshipResult struct {
 	Index        int                        `json:"index"`
 	Success      bool                       `json:"success"`
+	Relationship *GraphRelationshipResponse `json:"relationship,omitempty"`
+	Error        *string                    `json:"error,omitempty"`
+}
+
+// BulkUpsertRelationshipsRequest is the request for bulk relationship upserts.
+type BulkUpsertRelationshipsRequest struct {
+	Items []CreateGraphRelationshipRequest `json:"items" validate:"required,min=1,max=100"`
+}
+
+// BulkUpsertRelationshipsResponse is the response for bulk relationship upserts.
+type BulkUpsertRelationshipsResponse struct {
+	Success int                            `json:"success"`
+	Failed  int                            `json:"failed"`
+	Results []BulkUpsertRelationshipResult `json:"results"`
+}
+
+// BulkUpsertRelationshipResult is the result for a single relationship in a bulk upsert.
+type BulkUpsertRelationshipResult struct {
+	Index        int                        `json:"index"`
+	Success      bool                       `json:"success"`
+	Created      bool                       `json:"created"`
 	Relationship *GraphRelationshipResponse `json:"relationship,omitempty"`
 	Error        *string                    `json:"error,omitempty"`
 }

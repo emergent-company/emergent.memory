@@ -1086,6 +1086,188 @@ func TestGraphObject_UnmarshalJSON_ViaSDKClient(t *testing.T) {
 	}
 }
 
+// TestGraphListObjectsKeys pins the SDK wiring for the `keys` query param:
+// Keys must serialize as a comma-separated `keys` list.
+func TestGraphListObjectsKeys(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	mock.On("GET", "/api/graph/objects/search", func(w http.ResponseWriter, r *http.Request) {
+		testutil.AssertHeader(t, r, "X-API-Key", "test_key")
+		if got := r.URL.Query().Get("keys"); got != "a,b" {
+			t.Errorf("expected keys=a,b, got %q", got)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		testutil.JSONResponse(t, w, map[string]interface{}{
+			"items": []map[string]interface{}{},
+			"total": 0,
+		})
+	})
+
+	client, _ := sdk.New(sdk.Config{
+		ServerURL: mock.URL,
+		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: "test_key"},
+	})
+
+	_, err := client.Graph.ListObjects(context.Background(), &graph.ListObjectsOptions{
+		Keys: []string{"a", "b"},
+	})
+	if err != nil {
+		t.Fatalf("ListObjects() error = %v", err)
+	}
+}
+
+// TestGraphBulkUpsertObjects pins the SDK wiring for the bulk object upsert
+// endpoint: it must POST to /api/graph/objects/bulk-upsert and decode `created`.
+func TestGraphBulkUpsertObjects(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	mock.On("POST", "/api/graph/objects/bulk-upsert", func(w http.ResponseWriter, r *http.Request) {
+		testutil.AssertHeader(t, r, "X-API-Key", "test_key")
+		testutil.AssertHeader(t, r, "Content-Type", "application/json")
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		testutil.JSONResponse(t, w, map[string]interface{}{
+			"success": 2,
+			"failed":  0,
+			"results": []map[string]interface{}{
+				{
+					"index":   0,
+					"success": true,
+					"created": true,
+					"object": map[string]interface{}{
+						"id":           "obj_new",
+						"project_id":   "proj_1",
+						"canonical_id": "can_new",
+						"version":      1,
+						"type":         "Config",
+						"properties":   map[string]interface{}{},
+						"labels":       []string{},
+						"created_at":   "2026-02-11T10:00:00Z",
+					},
+				},
+				{
+					"index":   1,
+					"success": true,
+					"created": false,
+					"object": map[string]interface{}{
+						"id":           "obj_upd",
+						"project_id":   "proj_1",
+						"canonical_id": "can_upd",
+						"version":      2,
+						"type":         "Config",
+						"properties":   map[string]interface{}{},
+						"labels":       []string{},
+						"created_at":   "2026-02-11T10:00:00Z",
+					},
+				},
+			},
+		})
+	})
+
+	client, _ := sdk.New(sdk.Config{
+		ServerURL: mock.URL,
+		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: "test_key"},
+	})
+
+	keyA := "a"
+	keyB := "b"
+	resp, err := client.Graph.BulkUpsertObjects(context.Background(), &graph.BulkUpsertObjectsRequest{
+		Items: []graph.CreateObjectRequest{
+			{Type: "Config", Key: &keyA},
+			{Type: "Config", Key: &keyB},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BulkUpsertObjects() error = %v", err)
+	}
+
+	if resp.Success != 2 || resp.Failed != 0 {
+		t.Errorf("expected success=2 failed=0, got success=%d failed=%d", resp.Success, resp.Failed)
+	}
+	if len(resp.Results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(resp.Results))
+	}
+	if !resp.Results[0].Created {
+		t.Errorf("expected result[0].Created=true, got %v", resp.Results[0].Created)
+	}
+	if resp.Results[1].Created {
+		t.Errorf("expected result[1].Created=false, got %v", resp.Results[1].Created)
+	}
+	if resp.Results[0].Object == nil || resp.Results[0].Object.EntityID != "can_new" {
+		t.Errorf("expected result[0] object EntityID can_new, got %+v", resp.Results[0].Object)
+	}
+}
+
+// TestGraphBulkUpsertRelationships pins the SDK wiring for the bulk relationship
+// upsert endpoint: it must POST to /api/graph/relationships/bulk-upsert and
+// decode `created`.
+func TestGraphBulkUpsertRelationships(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	mock.On("POST", "/api/graph/relationships/bulk-upsert", func(w http.ResponseWriter, r *http.Request) {
+		testutil.AssertHeader(t, r, "X-API-Key", "test_key")
+		testutil.AssertHeader(t, r, "Content-Type", "application/json")
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		testutil.JSONResponse(t, w, map[string]interface{}{
+			"success": 1,
+			"failed":  0,
+			"results": []map[string]interface{}{
+				{
+					"index":   0,
+					"success": true,
+					"created": true,
+					"relationship": map[string]interface{}{
+						"id":           "rel_new",
+						"project_id":   "proj_1",
+						"canonical_id": "can_rel_new",
+						"version":      1,
+						"type":         "REFERENCES",
+						"src_id":       "can_a",
+						"dst_id":       "can_b",
+						"properties":   map[string]interface{}{},
+						"created_at":   "2026-02-11T10:00:00Z",
+					},
+				},
+			},
+		})
+	})
+
+	client, _ := sdk.New(sdk.Config{
+		ServerURL: mock.URL,
+		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: "test_key"},
+	})
+
+	resp, err := client.Graph.BulkUpsertRelationships(context.Background(), &graph.BulkUpsertRelationshipsRequest{
+		Items: []graph.CreateRelationshipRequest{
+			{Type: "REFERENCES", SrcID: "can_a", DstID: "can_b"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BulkUpsertRelationships() error = %v", err)
+	}
+
+	if resp.Success != 1 || resp.Failed != 0 {
+		t.Errorf("expected success=1 failed=0, got success=%d failed=%d", resp.Success, resp.Failed)
+	}
+	if len(resp.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(resp.Results))
+	}
+	if !resp.Results[0].Created {
+		t.Errorf("expected result[0].Created=true, got %v", resp.Results[0].Created)
+	}
+	if resp.Results[0].Relationship == nil || resp.Results[0].Relationship.EntityID != "can_rel_new" {
+		t.Errorf("expected relationship EntityID can_rel_new, got %+v", resp.Results[0].Relationship)
+	}
+}
+
 // TestGraphListObjectsActorProvenance pins the SDK wiring for the actor
 // provenance filter (issue #1193): ActorType/ActorID/Provenance must serialize
 // as actor_type/actor_id/provenance query params.

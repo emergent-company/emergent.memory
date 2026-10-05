@@ -223,6 +223,7 @@ type ListObjectsOptions struct {
 	PropertyOrder   string // e.g. "ds_score:desc"
 	RelatedToID     string
 	IDs             []string
+	Keys            []string
 	ExtractionJobID string
 	PropertyFilters []PropertyFilter // JSONB property filters (JSON-encoded in query param)
 
@@ -660,6 +661,48 @@ type BulkCreateRelationshipsResponse struct {
 type BulkCreateRelationshipResult struct {
 	Index        int                `json:"index"`
 	Success      bool               `json:"success"`
+	Relationship *GraphRelationship `json:"relationship,omitempty"`
+	Error        *string            `json:"error,omitempty"`
+}
+
+// BulkUpsertObjectsRequest is the request for bulk object upserts by (type, key).
+type BulkUpsertObjectsRequest struct {
+	Items []CreateObjectRequest `json:"items"`
+}
+
+// BulkUpsertObjectsResponse is the response for bulk object upserts.
+type BulkUpsertObjectsResponse struct {
+	Success int                      `json:"success"`
+	Failed  int                      `json:"failed"`
+	Results []BulkUpsertObjectResult `json:"results"`
+}
+
+// BulkUpsertObjectResult is the result for a single object in a bulk upsert.
+type BulkUpsertObjectResult struct {
+	Index   int          `json:"index"`
+	Success bool         `json:"success"`
+	Created bool         `json:"created"`
+	Object  *GraphObject `json:"object,omitempty"`
+	Error   *string      `json:"error,omitempty"`
+}
+
+// BulkUpsertRelationshipsRequest is the request for bulk relationship upserts.
+type BulkUpsertRelationshipsRequest struct {
+	Items []CreateRelationshipRequest `json:"items"`
+}
+
+// BulkUpsertRelationshipsResponse is the response for bulk relationship upserts.
+type BulkUpsertRelationshipsResponse struct {
+	Success int                            `json:"success"`
+	Failed  int                            `json:"failed"`
+	Results []BulkUpsertRelationshipResult `json:"results"`
+}
+
+// BulkUpsertRelationshipResult is the result for a single relationship in a bulk upsert.
+type BulkUpsertRelationshipResult struct {
+	Index        int                `json:"index"`
+	Success      bool               `json:"success"`
+	Created      bool               `json:"created"`
 	Relationship *GraphRelationship `json:"relationship,omitempty"`
 	Error        *string            `json:"error,omitempty"`
 }
@@ -1213,6 +1256,9 @@ func (c *Client) ListObjects(ctx context.Context, opts *ListObjectsOptions) (*Se
 		if len(opts.IDs) > 0 {
 			q.Set("ids", strings.Join(opts.IDs, ","))
 		}
+		if len(opts.Keys) > 0 {
+			q.Set("keys", strings.Join(opts.Keys, ","))
+		}
 		if opts.ExtractionJobID != "" {
 			q.Set("extraction_job_id", opts.ExtractionJobID)
 		}
@@ -1454,6 +1500,18 @@ func (c *Client) BulkCreateObjects(ctx context.Context, req *BulkCreateObjectsRe
 	return &result, nil
 }
 
+// BulkUpsertObjects creates or updates multiple graph objects by (type, key) in a
+// single request. Each item is processed independently — failures don't roll back
+// other successes. The result's Created flag reports whether a new object was
+// inserted (true) or an existing object was matched/updated (false).
+func (c *Client) BulkUpsertObjects(ctx context.Context, req *BulkUpsertObjectsRequest) (*BulkUpsertObjectsResponse, error) {
+	var result BulkUpsertObjectsResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/objects/bulk-upsert", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // BulkUpdateObjects updates multiple graph objects in a single request.
 // Each item is processed independently — failures don't roll back other successes.
 // Maximum 100 items per request.
@@ -1651,6 +1709,19 @@ func (c *Client) UpsertRelationship(ctx context.Context, req *CreateRelationship
 func (c *Client) BulkCreateRelationships(ctx context.Context, req *BulkCreateRelationshipsRequest) (*BulkCreateRelationshipsResponse, error) {
 	var result BulkCreateRelationshipsResponse
 	if err := c.postJSON(ctx, c.base+"/api/graph/relationships/bulk", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// BulkUpsertRelationships creates or updates multiple graph relationships in a
+// single request. Idempotent upsert by (type, src_id, dst_id): a matching
+// relationship is updated, otherwise a new one is created. The result's Created
+// flag reports whether a new relationship was inserted (true) or an existing one
+// was matched/updated (false).
+func (c *Client) BulkUpsertRelationships(ctx context.Context, req *BulkUpsertRelationshipsRequest) (*BulkUpsertRelationshipsResponse, error) {
+	var result BulkUpsertRelationshipsResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/relationships/bulk-upsert", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

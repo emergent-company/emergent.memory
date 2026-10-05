@@ -1957,11 +1957,12 @@ func (s *Service) GetRelationship(ctx context.Context, projectID, id uuid.UUID) 
 	return rel.ToResponse(), nil
 }
 
-// CreateRelationship creates a new relationship or returns existing if properties match.
-func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, req *CreateGraphRelationshipRequest, actorID *uuid.UUID) (*GraphRelationshipResponse, error) {
+// createRelationship creates a new relationship or returns existing if properties match.
+// The boolean return indicates whether a NEW head relationship was inserted.
+func (s *Service) createRelationship(ctx context.Context, projectID uuid.UUID, req *CreateGraphRelationshipRequest, actorID *uuid.UUID) (*GraphRelationshipResponse, bool, error) {
 	// Validate: no self-loops
 	if req.SrcID == req.DstID {
-		return nil, apperror.ErrBadRequest.WithMessage("self_loop_not_allowed")
+		return nil, false, apperror.ErrBadRequest.WithMessage("self_loop_not_allowed")
 	}
 
 	actorType, actorID := actorFromContext(ctx, actorID)
@@ -1987,14 +1988,14 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 	// Start transaction
 	tx, err := s.repo.BeginTx(ctx)
 	if err != nil {
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, false, apperror.ErrDatabase.WithInternal(err)
 	}
 	defer tx.Rollback()
 
 	// Validate endpoints exist and are not deleted
 	srcObj, dstObj, err := s.repo.ValidateEndpoints(ctx, tx.Tx, projectID, req.SrcID, req.DstID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	// Check branch consistency
@@ -2003,12 +2004,12 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 		// Both endpoints must be on the same branch
 		if (srcObj.BranchID == nil || *srcObj.BranchID != *effectiveBranchID) ||
 			(dstObj.BranchID == nil || *dstObj.BranchID != *effectiveBranchID) {
-			return nil, apperror.ErrBadRequest.WithMessage("relationship_branch_mismatch")
+			return nil, false, apperror.ErrBadRequest.WithMessage("relationship_branch_mismatch")
 		}
 	} else {
 		// If no branch specified, endpoints must be on main branch (null) or same branch
 		if !branchIDsEqual(srcObj.BranchID, dstObj.BranchID) {
-			return nil, apperror.ErrBadRequest.WithMessage("relationship_branch_mismatch")
+			return nil, false, apperror.ErrBadRequest.WithMessage("relationship_branch_mismatch")
 		}
 		effectiveBranchID = srcObj.BranchID
 	}
@@ -2019,7 +2020,7 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 	// Validate relationship type, endpoint types, and properties against schema.
 	if schemas != nil {
 		if err := validateRelationship(req.Type, srcObj.Type, dstObj.Type, req.Properties, schemas); err != nil {
-			return nil, apperror.ErrBadRequest.WithMessage(err.Error())
+			return nil, false, apperror.ErrBadRequest.WithMessage(err.Error())
 		}
 	}
 
@@ -2040,7 +2041,7 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 
 	created, err := s.repo.CreateRelationship(ctx, tx.Tx, rel)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	if created {
@@ -2052,7 +2053,7 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 		}
 
 		if err := tx.Commit(); err != nil {
-			return nil, apperror.ErrDatabase.WithInternal(err)
+			return nil, false, apperror.ErrDatabase.WithInternal(err)
 		}
 
 		// Enqueue async embeddings after commit — never block the response.
@@ -2087,7 +2088,7 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 
 		resp := rel.ToResponse()
 		resp.InverseRelationship = inverseResponse
-		return resp, nil
+		return resp, true, nil
 	}
 
 	// Conflict: relationship HEAD already exists (another concurrent goroutine inserted it).
@@ -2097,19 +2098,19 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 	// Read HEAD outside any transaction (no lock needed — the row is stable).
 	existing, err := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, normalizeRelationType(req.Type), srcObj.CanonicalID, dstObj.CanonicalID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if existing == nil {
 		// Extremely rare race: HEAD was deleted between our failed insert and the read.
 		// Treat as "not found" — the caller can retry.
-		return nil, apperror.ErrNotFound.WithMessage("relationship_head_not_found_after_conflict")
+		return nil, false, apperror.ErrNotFound.WithMessage("relationship_head_not_found_after_conflict")
 	}
 
 	// Fast path: no change needed (common during bulk seeding).
 	if existing.DeletedAt == nil {
 		diff := computeChangeSummary(existing.Properties, req.Properties)
 		if diff == nil {
-			return existing.ToResponse(), nil
+			return existing.ToResponse(), false, nil
 		}
 	}
 
@@ -2117,21 +2118,21 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 	// Open a fresh transaction, acquire advisory lock to prevent concurrent version racing.
 	tx2, err := s.repo.BeginTx(ctx)
 	if err != nil {
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, false, apperror.ErrDatabase.WithInternal(err)
 	}
 	defer tx2.Rollback()
 
 	if err := s.repo.AcquireRelationshipLock(ctx, tx2.Tx, projectID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	// Re-fetch inside the locked tx to get the definitive current HEAD.
 	existing, err = s.repo.GetRelationshipHead(ctx, tx2.Tx, projectID, effectiveBranchID, normalizeRelationType(req.Type), srcObj.CanonicalID, dstObj.CanonicalID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if existing == nil {
-		return nil, apperror.ErrNotFound.WithMessage("relationship_head_not_found_after_lock")
+		return nil, false, apperror.ErrNotFound.WithMessage("relationship_head_not_found_after_lock")
 	}
 
 	if existing.DeletedAt != nil {
@@ -2147,27 +2148,27 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 		newVersion.ChangeSummary = computeChangeSummary(existing.Properties, req.Properties)
 
 		if err := s.repo.CreateRelationshipVersion(ctx, tx2.Tx, existing, newVersion); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 
 		if err := tx2.Commit(); err != nil {
-			return nil, apperror.ErrDatabase.WithInternal(err)
+			return nil, false, apperror.ErrDatabase.WithInternal(err)
 		}
 
 		s.enqueueRelationshipEmbedding(ctx, newVersion.ID.String())
 
 		newHead, _ := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, normalizeRelationType(req.Type), srcObj.CanonicalID, dstObj.CanonicalID)
 		if newHead == nil {
-			return newVersion.ToResponse(), nil
+			return newVersion.ToResponse(), false, nil
 		}
-		return newHead.ToResponse(), nil
+		return newHead.ToResponse(), false, nil
 	}
 
 	// Check if properties changed (re-read under lock).
 	diff := computeChangeSummary(existing.Properties, req.Properties)
 	if diff == nil {
 		// No change - return existing (no commit needed).
-		return existing.ToResponse(), nil
+		return existing.ToResponse(), false, nil
 	}
 
 	// Properties differ - create new version.
@@ -2181,20 +2182,26 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 	}
 
 	if err := s.repo.CreateRelationshipVersion(ctx, tx2.Tx, existing, newVersion); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	if err := tx2.Commit(); err != nil {
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, false, apperror.ErrDatabase.WithInternal(err)
 	}
 
 	s.enqueueRelationshipEmbedding(ctx, newVersion.ID.String())
 
 	newHead, _ := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, normalizeRelationType(req.Type), srcObj.CanonicalID, dstObj.CanonicalID)
 	if newHead == nil {
-		return newVersion.ToResponse(), nil
+		return newVersion.ToResponse(), false, nil
 	}
-	return newHead.ToResponse(), nil
+	return newHead.ToResponse(), false, nil
+}
+
+// CreateRelationship creates a new relationship or returns existing if properties match.
+func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, req *CreateGraphRelationshipRequest, actorID *uuid.UUID) (*GraphRelationshipResponse, error) {
+	resp, _, err := s.createRelationship(ctx, projectID, req, actorID)
+	return resp, err
 }
 
 // UpsertRelationship provides idempotent create-or-skip semantics for relationships.
@@ -2202,13 +2209,7 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 // Returns (response, created=true) when a new relationship is inserted.
 // Returns (response, created=false) when an existing relationship is returned or updated.
 func (s *Service) UpsertRelationship(ctx context.Context, projectID uuid.UUID, req *CreateGraphRelationshipRequest, actorID *uuid.UUID) (*GraphRelationshipResponse, bool, error) {
-	// Delegate to CreateRelationship which already implements full upsert logic.
-	// We detect "created" by checking whether the returned relationship is version 1.
-	resp, err := s.CreateRelationship(ctx, projectID, req, actorID)
-	if err != nil {
-		return nil, false, err
-	}
-	return resp, resp.Version == 1, nil
+	return s.createRelationship(ctx, projectID, req, actorID)
 }
 
 // maybeCreateInverse checks if the template pack declares an inverseType for the given
@@ -3301,6 +3302,65 @@ func (s *Service) BulkCreateObjects(ctx context.Context, projectID uuid.UUID, re
 	}, nil
 }
 
+// BulkUpsertObjects creates or replaces multiple objects keyed by (type, key) in
+// a single batch. Each object is upserted independently — one bad item does not
+// fail the batch.
+func (s *Service) BulkUpsertObjects(ctx context.Context, projectID uuid.UUID, req *BulkUpsertObjectsRequest, actorID *uuid.UUID) (*BulkUpsertObjectsResponse, error) {
+	actorType, actorID := actorFromContext(ctx, actorID)
+
+	results := make([]BulkUpsertObjectResult, len(req.Items))
+
+	workerCtx := context.WithoutCancel(ctx)
+
+	// Pre-warm schema cache for this project to avoid lock contention
+	if s.schemaProvider != nil {
+		_, _ = s.schemaProvider.GetProjectSchemas(workerCtx, projectID.String())
+	}
+
+	for i, item := range req.Items {
+		if item.Type == "" || item.Key == nil || *item.Key == "" {
+			errMsg := "type and key are required for upsert"
+			results[i] = BulkUpsertObjectResult{Index: i, Success: false, Error: &errMsg}
+			continue
+		}
+
+		resp, created, err := s.CreateOrUpdate(workerCtx, projectID, &item, actorID)
+		if err != nil {
+			errMsg := err.Error()
+			results[i] = BulkUpsertObjectResult{Index: i, Success: false, Error: &errMsg}
+		} else {
+			results[i] = BulkUpsertObjectResult{Index: i, Success: true, Created: created, Object: resp}
+		}
+	}
+
+	successCount, failedCount := 0, 0
+	for _, r := range results {
+		if r.Success {
+			successCount++
+		} else {
+			failedCount++
+		}
+	}
+
+	if successCount > 0 {
+		_ = s.eventSink.Log(ctx, LogParams{
+			ProjectID: projectID,
+			EventType: EventTypeBatch,
+			ActorType: actorType,
+			ActorID:   actorID,
+			Metadata: map[string]any{
+				"upserted": successCount,
+			},
+		})
+	}
+
+	return &BulkUpsertObjectsResponse{
+		Success: successCount,
+		Failed:  failedCount,
+		Results: results,
+	}, nil
+}
+
 // BulkUpdateObjects updates multiple objects in a single batch.
 // Each object is updated independently and concurrently — failures do not roll back other successes.
 func (s *Service) BulkUpdateObjects(ctx context.Context, projectID uuid.UUID, req *BulkUpdateObjectsRequest, actorID *uuid.UUID) (*BulkUpdateObjectsResponse, error) {
@@ -3426,6 +3486,66 @@ func (s *Service) BulkCreateRelationships(ctx context.Context, projectID uuid.UU
 	}
 
 	return &BulkCreateRelationshipsResponse{
+		Success: successCount,
+		Failed:  failedCount,
+		Results: results,
+	}, nil
+}
+
+// BulkUpsertRelationships creates or updates multiple relationships in a single
+// batch. Each relationship is upserted independently — one bad item does not
+// fail the batch.
+func (s *Service) BulkUpsertRelationships(ctx context.Context, projectID uuid.UUID, req *BulkUpsertRelationshipsRequest, actorID *uuid.UUID) (*BulkUpsertRelationshipsResponse, error) {
+	actorType, actorID := actorFromContext(ctx, actorID)
+
+	results := make([]BulkUpsertRelationshipResult, len(req.Items))
+
+	workerCtx := context.WithoutCancel(ctx)
+
+	// Pre-warm inverse type cache for this project to avoid lock contention
+	if s.inverseTypeProvider != nil {
+		// Just querying an empty type is enough to populate the whole map for the project
+		_, _ = s.inverseTypeProvider.GetInverseType(workerCtx, projectID.String(), "")
+	}
+
+	for i, item := range req.Items {
+		if item.Type == "" || item.SrcID == uuid.Nil || item.DstID == uuid.Nil {
+			errMsg := "type, src_id and dst_id are required"
+			results[i] = BulkUpsertRelationshipResult{Index: i, Success: false, Error: &errMsg}
+			continue
+		}
+
+		resp, created, err := s.UpsertRelationship(workerCtx, projectID, &item, actorID)
+		if err != nil {
+			errMsg := err.Error()
+			results[i] = BulkUpsertRelationshipResult{Index: i, Success: false, Error: &errMsg}
+		} else {
+			results[i] = BulkUpsertRelationshipResult{Index: i, Success: true, Created: created, Relationship: resp}
+		}
+	}
+
+	successCount, failedCount := 0, 0
+	for _, r := range results {
+		if r.Success {
+			successCount++
+		} else {
+			failedCount++
+		}
+	}
+
+	if successCount > 0 {
+		_ = s.eventSink.Log(ctx, LogParams{
+			ProjectID: projectID,
+			EventType: EventTypeBatch,
+			ActorType: actorType,
+			ActorID:   actorID,
+			Metadata: map[string]any{
+				"upserted": successCount,
+			},
+		})
+	}
+
+	return &BulkUpsertRelationshipsResponse{
 		Success: successCount,
 		Failed:  failedCount,
 		Results: results,

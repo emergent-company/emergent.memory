@@ -187,6 +187,7 @@ type ListParams struct {
 	Order           string             // "asc" or "desc" (default: "desc")
 	RelatedToID     *uuid.UUID         // Filter by related object
 	IDs             []uuid.UUID        // Filter by specific IDs
+	Keys            []string           // Filter by specific keys (comma-separated `keys` query param)
 	ExtractionJobID *uuid.UUID         // Filter by extraction job
 	PropertyFilters []PropertyFilter   // JSONB property filters
 	Fields          []string           // Property field projection (include only these property keys)
@@ -381,6 +382,8 @@ func (r *Repository) buildObjectBaseQueryWith(db bun.IDB, params ListParams) *bu
 
 	if params.Key != nil {
 		q = q.Where("key = ?", *params.Key)
+	} else if len(params.Keys) > 0 {
+		q = q.Where("key IN (?)", bun.In(params.Keys))
 	}
 
 	if params.ExtractionJobID != nil {
@@ -1231,6 +1234,37 @@ func (r *Repository) FindHeadByTypeAndKeyNS(ctx context.Context, db bun.IDB, pro
 	}
 
 	return &obj, nil
+}
+
+// FindHeadsByTypeAndKeys returns HEAD rows (supersedes_id IS NULL) for the given
+// project + type + branch (main graph when branchID is nil) whose key is one of keys.
+// It matches FindHeadByTypeAndKeyNS semantics: the type IS filtered, deleted_at is
+// NOT filtered (deleted heads are returned so callers can restore them), and branch
+// IS filtered. An empty keys slice returns an empty slice (not an error).
+func (r *Repository) FindHeadsByTypeAndKeys(ctx context.Context, db bun.IDB, projectID uuid.UUID, branchID *uuid.UUID, objType string, keys []string) ([]*GraphObject, error) {
+	if len(keys) == 0 {
+		return []*GraphObject{}, nil
+	}
+
+	var objs []*GraphObject
+	q := db.NewSelect().
+		Model(&objs).
+		Where("project_id = ?", projectID).
+		Where("type = ?", objType).
+		Where("supersedes_id IS NULL").
+		Where("key IN (?)", bun.In(keys))
+
+	if branchID != nil {
+		q = q.Where("branch_id = ?", *branchID)
+	} else {
+		q = q.Where("branch_id IS NULL")
+	}
+
+	if err := q.Scan(ctx); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return objs, nil
 }
 
 // listWorkObjectsByStatus returns the HEAD rows of board-enabled work objects

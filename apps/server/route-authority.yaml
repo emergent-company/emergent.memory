@@ -609,6 +609,10 @@ routes:
       path: /api/graph/objects/bulk-update-status
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: POST
+      path: /api/graph/objects/bulk-upsert
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: GET
       path: /api/graph/objects/count
       level: project-member
@@ -667,6 +671,10 @@ routes:
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: POST
       path: /api/graph/relationships/bulk
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: POST
+      path: /api/graph/relationships/bulk-upsert
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: GET
