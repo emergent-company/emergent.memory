@@ -687,6 +687,37 @@ func resolveObjectByID(objects []GraphObject, id uuid.UUID) *GraphObject {
 	return &objects[0]
 }
 
+// objectIdentityColumns are the minimal columns needed to resolve an object's
+// canonical identity without loading the (potentially large) properties JSONB.
+var objectIdentityColumns = []string{
+	"id", "project_id", "branch_id", "canonical_id", "supersedes_id", "type",
+}
+
+// GetObjectIdentity resolves a graph object's canonical identity (canonical_id,
+// branch_id) from a physical or canonical ID, applying the same deterministic
+// resolution contract as GetByID but projecting only identity columns. The graph
+// Patch path uses it to acquire the advisory lock and pick the target branch
+// before doing a single authoritative full-row fetch inside the transaction.
+func (r *Repository) GetObjectIdentity(ctx context.Context, projectID, id uuid.UUID) (*GraphObject, error) {
+	var objects []GraphObject
+	err := r.db.NewSelect().
+		Model(&objects).
+		Column(objectIdentityColumns...).
+		Where("(id = ? OR canonical_id = ?)", id, id).
+		Where("project_id = ?", projectID).
+		Where("deleted_at IS NULL").
+		OrderExpr("supersedes_id ASC NULLS FIRST, id ASC").
+		Scan(ctx)
+	if err != nil {
+		r.log.Error("failed to get graph object identity", logger.Error(err), slog.String("id", id.String()))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	if len(objects) == 0 {
+		return nil, apperror.ErrNotFound
+	}
+	return resolveObjectByID(objects, id), nil
+}
+
 // GetByID returns a graph object by its physical ID or canonical ID.
 // It accepts either type of ID transparently:
 //   - If the ID matches a physical id, returns that object
@@ -840,7 +871,12 @@ func (r *Repository) CreateVersion(ctx context.Context, tx bun.Tx, prevHead *Gra
 	newVersion.Version = prevHead.Version + 1
 	newVersion.ProjectID = prevHead.ProjectID
 	newVersion.BranchID = prevHead.BranchID
-	newVersion.ContentHash = computeContentHash(newVersion.Properties, newVersion.Status, newVersion.Key, newVersion.Labels)
+	// Callers that already know the content is unchanged (assignee-only writes,
+	// branch fast-forwards) pre-set ContentHash to the previous HEAD's hash to
+	// avoid a full re-marshal of the properties JSONB. Otherwise compute it.
+	if len(newVersion.ContentHash) == 0 {
+		newVersion.ContentHash = computeContentHash(newVersion.Properties, newVersion.Status, newVersion.Key, newVersion.Labels)
+	}
 	now := time.Now()
 	newVersion.CreatedAt = now
 	newVersion.UpdatedAt = now
@@ -1479,19 +1515,10 @@ func computeContentHash(properties map[string]any, status *string, key *string, 
 		properties = make(map[string]any)
 	}
 
-	// Sort property keys for deterministic ordering
-	propKeys := make([]string, 0, len(properties))
-	for k := range properties {
-		propKeys = append(propKeys, k)
-	}
-	sort.Strings(propKeys)
+	// encoding/json marshals map[string]any with object keys in sorted order, so
+	// no explicit key sort or map copy is needed for determinism.
 
-	sortedProps := make(map[string]any)
-	for _, k := range propKeys {
-		sortedProps[k] = properties[k]
-	}
-
-	// Sort labels for deterministic ordering
+	// Sort labels for deterministic ordering (labels is a slice; order matters).
 	sortedLabels := make([]string, len(labels))
 	copy(sortedLabels, labels)
 	sort.Strings(sortedLabels)
@@ -1502,7 +1529,7 @@ func computeContentHash(properties map[string]any, status *string, key *string, 
 		Key        *string        `json:"k,omitempty"`
 		Labels     []string       `json:"l,omitempty"`
 	}{
-		Properties: sortedProps,
+		Properties: properties,
 		Status:     status,
 		Key:        key,
 		Labels:     sortedLabels,

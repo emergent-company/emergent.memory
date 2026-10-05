@@ -185,6 +185,14 @@ func labelsEqual(a, b []string) bool {
 	return true
 }
 
+// sameOptionalString reports whether two optional strings are both nil or equal.
+func sameOptionalString(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
 // validateObjectProperties validates and coerces object properties against the schema
 // for the given project and type. If the schema provider is nil or has no schema for
 // the type, the original properties are returned unchanged (unknown types are allowed).
@@ -312,6 +320,10 @@ const entityTypeObject = EntityObject
 // entityTypeRelationship is the entity type constant for graph relationships.
 const entityTypeRelationship = EntityRelationship
 
+// bulkUpdateMaxDuration bounds the detached context used by BulkUpdateObjects so
+// a client disconnect cannot leave a batch holding DB connections indefinitely.
+const bulkUpdateMaxDuration = 10 * time.Minute
+
 // enqueueEmbedding enqueues a graph object for async embedding generation.
 // Logs and swallows errors — embedding is best-effort and must never block CRUD.
 func (s *Service) enqueueEmbedding(ctx context.Context, objectID string) {
@@ -359,19 +371,25 @@ func embeddingTextUnchanged(prev, next *GraphObject) bool {
 }
 
 // carryEmbeddingIfUnchanged keeps a newly-created version's embedding in sync
-// when the embedding-relevant text did not change: the previous vector is
-// copied onto the new row (inside the caller's transaction) so the new HEAD
-// stays searchable without a redundant re-embed. It returns wantEnqueue=true
-// when the text DID change, meaning the caller must enqueue a fresh embedding
-// after commit. An unchanged row that was never embedded is left to the
+// when the embedding-relevant text did not change: the previous vector is copied
+// onto the new row (inside the caller's transaction) so the new HEAD stays
+// searchable without a redundant re-embed. It returns wantEnqueue=true when the
+// text DID change. The caller passes propsUnchanged so a write that did not touch
+// properties can skip the Normalize+Text walk entirely (only `key` also affects
+// embedding text). An unchanged row that was never embedded is left to the
 // self-healing embedding sweep.
-func (s *Service) carryEmbeddingIfUnchanged(ctx context.Context, tx bun.Tx, prev, next *GraphObject) (bool, error) {
-	if !embeddingTextUnchanged(prev, next) {
-		return true, nil
+func (s *Service) carryEmbeddingIfUnchanged(ctx context.Context, tx bun.Tx, prev, next *GraphObject, propsUnchanged bool) (bool, error) {
+	// Fast path only when properties AND key are unchanged: embedding text is
+	// built from type + stripped key + properties, so with both provably
+	// identical the Normalize+Text walk can be skipped. A raw key change may
+	// still be semantically identical (the builder strips namespace prefixes and
+	// omits UUID keys), so fall back to the exact #1488 comparison rather than
+	// assuming any key change alters the text.
+	if !propsUnchanged || !sameOptionalString(prev.Key, next.Key) {
+		if !embeddingTextUnchanged(prev, next) {
+			return true, nil
+		}
 	}
-	// CopyEmbedding guards on src.embedding_v2 IS NOT NULL, so actual vector
-	// presence — not the embedding_updated_at timestamp — decides carry-over. A
-	// legacy/backfilled row with a vector but a NULL timestamp still carries.
 	if _, err := s.repo.CopyEmbedding(ctx, tx, prev.ID, next.ID); err != nil {
 		return false, err
 	}
@@ -1006,9 +1024,6 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 		newProps = make(map[string]any)
 	}
 
-	// Check if properties changed
-	diff := computeChangeSummary(existing.Properties, newProps)
-
 	// Check if status changed
 	statusChanged := false
 	newStatus := existing.Status
@@ -1036,6 +1051,21 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 			assigneeChanged = true
 			newAssignee = req.Assignee
 		}
+	}
+
+	// Cheap property-change probe. When status and labels are unchanged the
+	// stored ContentHash isolates the properties (it hashes props+status+key+
+	// labels, and upsert's key is fixed): a matching hash proves the properties
+	// are unchanged, so the full key-by-key diff can be skipped entirely.
+	var diff map[string]any
+	if !statusChanged && !labelsChanged && len(existing.ContentHash) > 0 {
+		if bytesEqual(computeContentHash(newProps, existing.Status, existing.Key, existing.Labels), existing.ContentHash) {
+			diff = nil
+		} else {
+			diff = computeChangeSummary(existing.Properties, newProps)
+		}
+	} else {
+		diff = computeChangeSummary(existing.Properties, newProps)
 	}
 
 	if diff == nil && !statusChanged && !labelsChanged && !assigneeChanged {
@@ -1076,13 +1106,19 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 		newVersion.SchemaVersion = &schemaVersion
 	}
 
+	// If properties/status/labels are unchanged (only the assignee changed), the
+	// stored content hash is still valid — reuse it instead of re-marshalling.
+	if diff == nil && !statusChanged && !labelsChanged {
+		newVersion.ContentHash = existing.ContentHash
+	}
+
 	if err := s.repo.CreateVersion(ctx, tx.Tx, existing, newVersion); err != nil {
 		return nil, false, err
 	}
 
 	// Only re-embed when the embedding-relevant text actually changed; otherwise
 	// carry the previous vector onto the new version row (#1478).
-	wantEnqueue, err := s.carryEmbeddingIfUnchanged(ctx, tx.Tx, existing, newVersion)
+	wantEnqueue, err := s.carryEmbeddingIfUnchanged(ctx, tx.Tx, existing, newVersion, diff == nil)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1102,28 +1138,14 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 
 // Patch updates a graph object by creating a new version.
 func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *PatchGraphObjectRequest, actorID *uuid.UUID) (*GraphObjectResponse, error) {
-	// Get current HEAD (initial lookup to resolve canonical ID)
-	current, err := s.repo.GetByID(ctx, projectID, id)
+	// Resolve the canonical identity WITHOUT loading the properties JSONB. The
+	// in-tx GetHeadByCanonicalID below is the single authoritative full-row read.
+	ident, err := s.repo.GetObjectIdentity(ctx, projectID, id)
 	if err != nil {
 		return nil, err
 	}
 
-	// If a branch is specified, re-fetch the HEAD for that branch using the canonical ID.
-	// GetByID does not filter by branch, so it may return the wrong HEAD when an object
-	// exists on multiple branches.
-	if req.BranchID != nil {
-		current, err = s.repo.GetHeadByCanonicalID(ctx, s.repo.DB(), projectID, current.CanonicalID, req.BranchID)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Check if already deleted
-	if current.DeletedAt != nil {
-		return nil, apperror.ErrBadRequest.WithMessage("cannot patch deleted object")
-	}
-
-	// Fetch schemas BEFORE transaction to avoid deadlock
+	// Fetch schemas BEFORE transaction to avoid deadlock (unchanged).
 	var schemas *ExtractionSchemas
 	if s.schemaProvider != nil {
 		schemas, err = s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
@@ -1141,15 +1163,50 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 	}
 	defer tx.Rollback()
 
-	// Acquire advisory lock
-	if err := s.repo.AcquireObjectLock(ctx, tx.Tx, current.CanonicalID); err != nil {
+	// Acquire advisory lock on the canonical ID (same lock identity as before).
+	if err := s.repo.AcquireObjectLock(ctx, tx.Tx, ident.CanonicalID); err != nil {
 		return nil, err
 	}
 
-	// Re-fetch to ensure we have the latest after acquiring lock
-	current, err = s.repo.GetHeadByCanonicalID(ctx, tx.Tx, projectID, current.CanonicalID, current.BranchID)
+	// Pick the target branch exactly as the old pre-tx resolution did: an
+	// explicit req.BranchID wins, otherwise honor the branch of the resolved
+	// object (a physical-id lookup may resolve a branch-local HEAD).
+	targetBranch := ident.BranchID
+	if req.BranchID != nil {
+		targetBranch = req.BranchID
+	}
+
+	// Authoritative HEAD read after acquiring the lock.
+	current, err := s.repo.GetHeadByCanonicalID(ctx, tx.Tx, projectID, ident.CanonicalID, targetBranch)
 	if err != nil {
 		return nil, err
+	}
+
+	// Reject a tombstoned HEAD (GetHeadByCanonicalID does not filter deleted_at;
+	// this preserves the previous branch-scoped "cannot patch deleted object").
+	if current.DeletedAt != nil {
+		return nil, apperror.ErrBadRequest.WithMessage("cannot patch deleted object")
+	}
+
+	actorType, actorID := actorFromContext(ctx, actorID)
+	workCfg, err := s.objectTypeWorkConfig(ctx, projectID, current.Type)
+	if err != nil {
+		return nil, apperror.ErrInternal.WithMessage("failed to load schemas")
+	}
+	if err := rejectAgentWorkStatusWrite(actorType, isBoardEnabledConfig(workCfg), writesStatus(req.Status, req.Properties)); err != nil {
+		return nil, err
+	}
+	if err := validateTypeStatus(workCfg, req.Status, req.Properties); err != nil {
+		return nil, err
+	}
+
+	// Fast no-op: a patch that touches no property/status/label/key/assignee field
+	// cannot produce a new version. Skip building the merged map and the diff.
+	if len(req.Properties) == 0 && req.Status == nil && req.Key == nil && req.Assignee == nil && !req.ReplaceLabels && len(req.Labels) == 0 {
+		if err := tx.Commit(); err != nil {
+			return nil, apperror.ErrDatabase.WithInternal(err)
+		}
+		return current.ToResponse(), nil
 	}
 
 	// Merge properties
@@ -1241,17 +1298,6 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		newAssignee = req.Assignee
 	}
 
-	actorType, actorID := actorFromContext(ctx, actorID)
-	workCfg, err := s.objectTypeWorkConfig(ctx, projectID, current.Type)
-	if err != nil {
-		return nil, apperror.ErrInternal.WithMessage("failed to load schemas")
-	}
-	if err := rejectAgentWorkStatusWrite(actorType, isBoardEnabledConfig(workCfg), writesStatus(req.Status, req.Properties)); err != nil {
-		return nil, err
-	}
-	if err := validateTypeStatus(workCfg, req.Status, req.Properties); err != nil {
-		return nil, err
-	}
 	newVersion := &GraphObject{
 		Type:       current.Type,
 		Key:        newKey,
@@ -1263,8 +1309,9 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		ActorID:    actorID,
 	}
 
-	// Compute change summary
-	newVersion.ChangeSummary = computeChangeSummary(current.Properties, newProps)
+	// Build the summary from the small request delta instead of diffing the full
+	// property maps (the merge already applied the delta to newProps).
+	newVersion.ChangeSummary = computeChangeSummaryFromDelta(current.Properties, req.Properties, newProps)
 
 	// Check if status changed
 	statusChanged := false
@@ -1301,13 +1348,19 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		return current.ToResponse(), nil
 	}
 
+	// Only the assignee changed (no props/status/labels/key) → the stored content
+	// hash still describes this version; reuse it instead of re-marshalling.
+	if newVersion.ChangeSummary == nil && !statusChanged && !labelsChanged && !keyChanged {
+		newVersion.ContentHash = current.ContentHash
+	}
+
 	if err := s.repo.CreateVersion(ctx, tx.Tx, current, newVersion); err != nil {
 		return nil, err
 	}
 
 	// Only re-embed when the embedding-relevant text actually changed; otherwise
 	// carry the previous vector onto the new version row (#1478).
-	wantEnqueue, err := s.carryEmbeddingIfUnchanged(ctx, tx.Tx, current, newVersion)
+	wantEnqueue, err := s.carryEmbeddingIfUnchanged(ctx, tx.Tx, current, newVersion, newVersion.ChangeSummary == nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1625,6 +1678,56 @@ func computeChangeSummary(oldProps, newProps map[string]any) map[string]any {
 		if _, exists := newProps[k]; !exists {
 			path := "/" + k
 			removed = append(removed, path)
+			paths = append(paths, path)
+		}
+	}
+
+	if len(added) == 0 && len(removed) == 0 && len(updated) == 0 {
+		return nil
+	}
+
+	return map[string]any{
+		"added":   added,
+		"removed": removed,
+		"updated": updated,
+		"paths":   paths,
+		"meta": map[string]any{
+			"added":   len(added),
+			"removed": len(removed),
+			"updated": len(updated),
+		},
+	}
+}
+
+// computeChangeSummaryFromDelta builds the same RFC 6901 diff as
+// computeChangeSummary(oldProps, merged), but visits only the keys present in
+// delta. It is equivalent whenever merged differs from oldProps only at keys in
+// delta (true for Patch: merged = oldProps overwritten at req.Properties keys),
+// while costing O(len(delta)) instead of O(len(properties)) — so a small patch
+// on a large object no longer diffs/marshals the whole JSONB (#1478).
+func computeChangeSummaryFromDelta(oldProps map[string]any, delta map[string]any, merged map[string]any) map[string]any {
+	added := make(map[string]any)
+	removed := make([]string, 0)
+	updated := make(map[string]any)
+	paths := make([]string, 0)
+
+	for k := range delta {
+		path := "/" + k
+		newVal, present := merged[k]
+		if !present {
+			// A nil delta value deletes the property; deleting an absent key is a no-op.
+			if _, existed := oldProps[k]; existed {
+				removed = append(removed, path)
+				paths = append(paths, path)
+			}
+			continue
+		}
+		oldVal, existed := oldProps[k]
+		if !existed {
+			added[path] = newVal
+			paths = append(paths, path)
+		} else if !jsonEqual(oldVal, newVal) {
+			updated[path] = map[string]any{"from": oldVal, "to": newVal}
 			paths = append(paths, path)
 		}
 	}
@@ -3205,7 +3308,11 @@ func (s *Service) BulkUpdateObjects(ctx context.Context, projectID uuid.UUID, re
 
 	results := make([]BulkUpdateObjectResult, len(req.Items))
 
-	workerCtx := context.WithoutCancel(ctx)
+	// Detach from client cancellation so a disconnect cannot abort the batch, but
+	// bound the detached context so a large/slow batch cannot hold DB connections
+	// forever. Short batches finish well within the bound (500 items max).
+	workerCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bulkUpdateMaxDuration)
+	defer cancel()
 
 	// Pre-warm schema cache for this project to avoid lock contention
 	if s.schemaProvider != nil {
