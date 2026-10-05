@@ -66,7 +66,14 @@ func NewPgxPool(lc fx.Lifecycle, cfg *config.Config, log *slog.Logger) (*pgxpool
 		slog.Int("max_conns", cfg.Database.MaxOpenConns),
 	)
 
-	// Register lifecycle hooks
+	// Register lifecycle hooks.
+	//
+	// Shutdown ordering (issue #1481): fx runs OnStop in reverse registration
+	// order. The HTTP server (server.StartServer) depends on *bun.DB, so it is
+	// constructed after this hook is registered and therefore stops BEFORE it.
+	// The server drains in-flight requests first; only then does bun close,
+	// followed by the pgx pool here. Never give the server an earlier
+	// registration slot without re-checking this contract.
 	lc.Append(fx.Hook{
 		OnStop: func(ctx context.Context) error {
 			log.Info("closing database pool")
@@ -98,7 +105,12 @@ func NewBunDB(lc fx.Lifecycle, pool *pgxpool.Pool, cfg *config.Config, log *slog
 
 	log.Info("bun database initialized")
 
-	// Register lifecycle hooks
+	// Register lifecycle hooks.
+	//
+	// Stops before the pgx pool (this hook is registered first, so it runs
+	// last) and after the HTTP server (which depends on *bun.DB and therefore
+	// registered later, so it runs first). See NewPgxPool for the full
+	// server→bun→pool drain ordering contract (issue #1481).
 	lc.Append(fx.Hook{
 		OnStop: func(ctx context.Context) error {
 			log.Info("closing bun database")

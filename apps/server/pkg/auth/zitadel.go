@@ -5,6 +5,7 @@ import (
 	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -76,8 +77,24 @@ type IntrospectionResult struct {
 }
 
 const (
-	circuitBreakerCooldown = 30 * time.Second
+	// circuitBreakerCooldown bounds how long introspection is skipped after a
+	// transport failure. It is deliberately short: a transient blip must not
+	// lock out valid tokens for a long window, and the introspection cache is
+	// consulted first (see Introspect) so last-known-good claims keep working
+	// while the breaker is open. Kept well under the old 30s to favour retrying.
+	circuitBreakerCooldown = 5 * time.Second
 )
+
+// ErrIntrospectionUnavailable marks a token-validation attempt that could not
+// complete for infrastructure reasons (transport failure, Zitadel 5xx, or the
+// circuit breaker being open). It is retryable and must surface as 503, never
+// as 401: the token may still be perfectly valid.
+var ErrIntrospectionUnavailable = errors.New("introspection unavailable")
+
+// errUserInfoInvalidToken marks an authoritative rejection by the userinfo
+// endpoint (HTTP 401). Unlike ErrIntrospectionUnavailable this is a definitive
+// "the token is invalid/expired" signal and maps to 401.
+var errUserInfoInvalidToken = errors.New("userinfo rejected token as invalid")
 
 // NewZitadelService creates a new Zitadel introspection service
 func NewZitadelService(db bun.IDB, cfg *config.Config, log *slog.Logger) *ZitadelService {
@@ -89,8 +106,15 @@ func NewZitadelService(db bun.IDB, cfg *config.Config, log *slog.Logger) *Zitade
 	}
 }
 
-// Introspect validates a token and returns its claims
-// Returns nil, nil if introspection is disabled or unavailable (caller should fall back to other methods)
+// Introspect validates a token and returns its claims.
+//
+// It returns nil, nil ONLY when introspection is disabled or unconfigured (no
+// client credentials); the caller should then fall back to userinfo.
+// Infrastructure failures — transport errors, Zitadel 5xx, or an open circuit
+// breaker — return an error wrapping ErrIntrospectionUnavailable, and an
+// authoritatively inactive token returns its result with Active=false. Neither
+// is a "not configured" signal, so the caller must classify them accordingly
+// (see middleware.validateToken).
 func (z *ZitadelService) Introspect(ctx context.Context, token string) (*IntrospectionResult, error) {
 	// Check if introspection is disabled
 	if z.cfg.Zitadel.DisableIntrospection {
@@ -103,21 +127,26 @@ func (z *ZitadelService) Introspect(ctx context.Context, token string) (*Introsp
 		return nil, nil
 	}
 
-	// Check circuit breaker
-	z.failureMu.RLock()
-	if time.Since(z.lastFailureTime) < circuitBreakerCooldown {
-		z.failureMu.RUnlock()
-		z.log.Debug("circuit breaker open, skipping introspection")
-		return nil, nil
-	}
-	z.failureMu.RUnlock()
-
-	// Check PostgreSQL cache first
+	// Check the PostgreSQL cache FIRST — before the circuit breaker. The cache
+	// holds last-known-good claims from the last successful introspection, so a
+	// transport blip must not lock out a token whose claims are still cached.
+	// (Historically the breaker was checked first, which rejected valid cached
+	// tokens for the whole cooldown window — the #1481 stale-401 bug.)
 	cached, err := z.getCached(ctx, token)
 	if err == nil && cached != nil {
 		z.log.Debug("introspection cache hit")
 		return cached, nil
 	}
+
+	// Check circuit breaker. When open we cannot reach Zitadel: report a
+	// retryable infrastructure error (503 at the edge), never "invalid token".
+	z.failureMu.RLock()
+	if time.Since(z.lastFailureTime) < circuitBreakerCooldown {
+		z.failureMu.RUnlock()
+		z.log.Debug("circuit breaker open, skipping introspection")
+		return nil, fmt.Errorf("introspection circuit breaker open: %w", ErrIntrospectionUnavailable)
+	}
+	z.failureMu.RUnlock()
 
 	// Request coalescing - check if there's already a request in flight
 	tokenHash := z.hashToken(token)
@@ -161,7 +190,7 @@ func (z *ZitadelService) doIntrospect(ctx context.Context, token string) (*Intro
 	})
 
 	if z.rsErr != nil {
-		return nil, fmt.Errorf("resource server init failed: %w", z.rsErr)
+		return nil, fmt.Errorf("%w: resource server init failed: %v", ErrIntrospectionUnavailable, z.rsErr)
 	}
 
 	// Call Zitadel introspection endpoint
@@ -174,7 +203,7 @@ func (z *ZitadelService) doIntrospect(ctx context.Context, token string) (*Intro
 		)
 		// Trip circuit breaker on server errors
 		z.tripCircuitBreaker()
-		return nil, fmt.Errorf("introspection failed: %w", err)
+		return nil, fmt.Errorf("%w: introspection call failed: %v", ErrIntrospectionUnavailable, err)
 	}
 
 	if resp == nil || !resp.Active {
@@ -441,14 +470,14 @@ func (z *ZitadelService) GetUserInfo(ctx context.Context, accessToken string) (*
 
 	req, err := http.NewRequestWithContext(ctx, "GET", userinfoURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
+		return nil, fmt.Errorf("%w: create userinfo request: %v", ErrIntrospectionUnavailable, err)
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("userinfo request: %w", err)
+		return nil, fmt.Errorf("%w: userinfo request: %v", ErrIntrospectionUnavailable, err)
 	}
 	defer resp.Body.Close()
 
@@ -459,14 +488,16 @@ func (z *ZitadelService) GetUserInfo(ctx context.Context, accessToken string) (*
 			slog.String("body", string(body)),
 		)
 		if resp.StatusCode == http.StatusUnauthorized {
-			return nil, fmt.Errorf("unauthorized: token invalid or expired")
+			// Authoritative rejection: the token is genuinely invalid/expired.
+			return nil, errUserInfoInvalidToken
 		}
-		return nil, fmt.Errorf("userinfo failed with status %d", resp.StatusCode)
+		// 5xx/403/etc: an infrastructure failure, not a credential verdict.
+		return nil, fmt.Errorf("%w: userinfo failed with status %d", ErrIntrospectionUnavailable, resp.StatusCode)
 	}
 
 	var result UserInfoResult
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode userinfo: %w", err)
+		return nil, fmt.Errorf("%w: decode userinfo: %v", ErrIntrospectionUnavailable, err)
 	}
 
 	z.log.Debug("userinfo success",

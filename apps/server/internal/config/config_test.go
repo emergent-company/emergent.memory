@@ -4,6 +4,7 @@ import (
 	"io"
 	"log/slog"
 	"net/url"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -496,5 +497,37 @@ func TestZitadelOIDCScopeConfig(t *testing.T) {
 		cfg.Zitadel.OIDCDefaultScopes[0] != "data:read" ||
 		cfg.Zitadel.OIDCDefaultScopes[1] != "search" {
 		t.Fatalf("OIDCDefaultScopes = %v, want [data:read search]", cfg.Zitadel.OIDCDefaultScopes)
+	}
+}
+
+// TestShutdownAndPoolDefaults pins the hardened defaults from issue #1481 by
+// reading the struct tags directly, so ambient CI environment variables cannot
+// mask a regression in the declared defaults.
+func TestShutdownAndPoolDefaults(t *testing.T) {
+	envDefault := func(t *testing.T, typ reflect.Type, field string) string {
+		t.Helper()
+		f, ok := typ.FieldByName(field)
+		if !ok {
+			t.Fatalf("field %s not found on %s", field, typ)
+		}
+		return f.Tag.Get("envDefault")
+	}
+
+	tests := []struct {
+		name  string
+		typ   reflect.Type
+		field string
+		want  string
+	}{
+		{"shutdown timeout", reflect.TypeOf(Config{}), "ShutdownTimeout", "30s"},
+		{"db max open conns", reflect.TypeOf(DatabaseConfig{}), "MaxOpenConns", "100"},
+		{"db max idle conns", reflect.TypeOf(DatabaseConfig{}), "MaxIdleConns", "25"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := envDefault(t, tt.typ, tt.field); got != tt.want {
+				t.Fatalf("%s envDefault = %q, want %q", tt.field, got, tt.want)
+			}
+		})
 	}
 }

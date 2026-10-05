@@ -651,7 +651,7 @@ func TestValidateTokenFinalFallbackFailsClosed(t *testing.T) {
 	m.cfg.Zitadel.ClientJWT = "fake-client-jwt"
 	m.zitadelSvc = &fakeIntrospector{
 		introErr:    errors.New("introspection unavailable"),
-		userInfoErr: errors.New("unauthorized: token invalid or expired"),
+		userInfoErr: errUserInfoInvalidToken,
 	}
 
 	user, err := m.validateToken(context.Background(), "opaque-token", "")

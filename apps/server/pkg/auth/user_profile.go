@@ -69,7 +69,10 @@ func (s *UserProfileService) GetByID(ctx context.Context, id string) (*UserProfi
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, errors.New("user not found")
+			// Wrap the no-rows sentinel so callers (e.g. API-token validation)
+			// can distinguish a genuinely missing user from a database/pool
+			// infrastructure failure.
+			return nil, fmt.Errorf("user not found: %w", sql.ErrNoRows)
 		}
 		return nil, err
 	}

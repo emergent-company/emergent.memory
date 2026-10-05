@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -127,6 +128,10 @@ type Middleware struct {
 	projectOrgLookup projectOrgLookup
 	orgAdminLookup   orgAdminLookup
 	orgMemberLookup  orgMemberLookup
+
+	// introspectCacheLookup is a test seam for the DB-backed introspection
+	// cache read. When nil, getCachedIntrospection queries the database.
+	introspectCacheLookup func(ctx context.Context, token string) (*TokenClaims, error)
 
 	// tokenUsage records last_used_at for validated emt_* tokens (throttled,
 	// non-blocking; see tokenUsageTracker). Nil-safe when unset.
@@ -984,9 +989,28 @@ func (m *Middleware) extractToken(r *http.Request) string {
 	return ""
 }
 
+// errTokenInactive is returned by introspectToken when Zitadel authoritatively
+// reports the token inactive. That is a genuine invalid token (401), not an
+// infrastructure failure.
+var errTokenInactive = errors.New("token is inactive")
+
+// errIntrospectionDisabled means introspection is simply not configured; the
+// caller should fall through to the userinfo path rather than treat it as an
+// infrastructure failure.
+var errIntrospectionDisabled = errors.New("introspection disabled")
+
 // validateToken validates the token and returns the authenticated user.
 // projectID is the request's declared project (X-Project-ID) and is used to
 // derive role-based scopes for OIDC sessions; it may be empty.
+//
+// Error semantics (issue #1481): a validation path that fails because of an
+// infrastructure problem (DB unavailable, introspection/userinfo transport
+// error, Zitadel 5xx, open circuit breaker) must NOT be reported as
+// `401 invalid_token` — that tells the client to discard a perfectly valid
+// credential during a transient blip. Such failures accumulate into
+// `infraErr` and, when no path authoritatively rejected the token, produce a
+// retryable 503. A 401 is only returned when Zitadel explicitly reported the
+// token inactive or the userinfo endpoint returned 401.
 func (m *Middleware) validateToken(ctx context.Context, token, projectID string) (*AuthUser, error) {
 	// 1. Check for API token (emt_ prefix)
 	if strings.HasPrefix(token, "emt_") {
@@ -1000,22 +1024,58 @@ func (m *Middleware) validateToken(ctx context.Context, token, projectID string)
 		}
 	}
 
+	// 2b. Standalone mode has no external OIDC provider: authentication is the
+	// static API key (already checked in authenticate) plus emt_* API tokens and
+	// development test tokens handled above. Any other token is simply not valid
+	// for this deployment. Do NOT attempt external introspection/userinfo — with
+	// no Zitadel configured that path fails with a transport error, which the
+	// infra classification below would report as a retryable 503 even though the
+	// token is permanently invalid here. Fail closed with 401 instead; this is
+	// the documented "invalid token returns 401" contract (issue #1481).
+	if m.cfg.Standalone.IsEnabled() {
+		return nil, apperror.ErrInvalidToken
+	}
+
+	// infraErr records the most recent non-authoritative (retryable) failure.
+	// definitivelyBad is set only when a validation path authoritatively
+	// reported the token itself as invalid/inactive.
+	var (
+		infraErr        error
+		definitivelyBad bool
+	)
+
 	// 3. Check introspection cache
-	cached, err := m.getCachedIntrospection(ctx, token)
-	if err == nil && cached != nil {
+	cached, cacheErr := m.getCachedIntrospection(ctx, token)
+	if cacheErr == nil && cached != nil {
 		return m.finalizeOIDCUser(ctx, cached, projectID)
+	}
+	if cacheErr != nil && !errors.Is(cacheErr, sql.ErrNoRows) {
+		// A cache miss (ErrNoRows) is normal; any other error is the DB being
+		// unavailable — infrastructure, not a token verdict.
+		infraErr = fmt.Errorf("introspection cache lookup: %w", cacheErr)
 	}
 
 	// 4. Zitadel introspection (if not disabled)
 	if !m.cfg.Zitadel.DisableIntrospection {
 		introspection, err := m.introspectToken(ctx, token)
-		if err == nil && introspection != nil {
+		switch {
+		case err == nil && introspection != nil:
 			// Cache raw claims only; derived scopes are re-resolved per request.
 			_ = m.cacheIntrospection(ctx, token, introspection)
 			return m.finalizeOIDCUser(ctx, introspection, projectID)
-		}
-		// Log but continue to userinfo fallback
-		if err != nil {
+		case errors.Is(err, errTokenInactive):
+			// Authoritative: Zitadel says the token is not active. Return
+			// immediately — do NOT fall through to userinfo, or a token Zitadel
+			// has declared inactive could be laundered into a successful
+			// authentication by a later path (fail closed on any authoritative
+			// rejection).
+			m.log.Debug("token rejected by introspection: inactive")
+			return nil, apperror.ErrInvalidToken
+		case errors.Is(err, errIntrospectionDisabled):
+			// Not configured — benign, fall through to userinfo.
+		default:
+			// Transport/5xx/circuit-open: retryable infrastructure failure.
+			infraErr = err
 			m.log.Debug("introspection failed, trying userinfo", logger.Error(err))
 		}
 	}
@@ -1037,16 +1097,28 @@ func (m *Middleware) validateToken(ctx context.Context, token, projectID string)
 		_ = m.cacheIntrospection(ctx, token, claims)
 		return m.finalizeOIDCUser(ctx, claims, projectID)
 	}
+	if err != nil {
+		if errors.Is(err, errUserInfoInvalidToken) {
+			// Authoritative: userinfo returned 401.
+			definitivelyBad = true
+			m.log.Debug("token rejected by userinfo: invalid or expired")
+		} else {
+			infraErr = err
+		}
+	}
 
-	// Final fallback: every configured validation path has been exhausted. The
-	// token is not an emt_* API token, not a test token, not a cached or live
-	// introspection hit, and the userinfo endpoint did not accept it. There is
-	// deliberately no local JWT verification path (see scope-authority: Zitadel
-	// authenticates, the app authorizes; the coarse role signal is
-	// introspection-only and the userinfo fallback carries no role claims), so a
-	// token that reaches this point cannot be trusted and is denied fail-closed.
-	m.log.Warn("token rejected: no configured validation path accepted it")
-	return nil, apperror.ErrInvalidToken
+	// Final fallback: every configured validation path has been exhausted. If a
+	// path authoritatively rejected the token, or no path failed for
+	// infrastructure reasons, deny fail-closed with 401. Otherwise the token
+	// could not be verified because of an outage — return 503 so the client
+	// retries instead of discarding a valid credential.
+	if definitivelyBad || infraErr == nil {
+		m.log.Warn("token rejected: no configured validation path accepted it")
+		return nil, apperror.ErrInvalidToken
+	}
+
+	m.log.Error("token validation unavailable due to infrastructure failure", logger.Error(infraErr))
+	return nil, apperror.NewServiceUnavailable("Token validation temporarily unavailable", infraErr)
 }
 
 // finalizeOIDCUser ensures the user profile exists, then resolves the effective
@@ -1124,10 +1196,13 @@ func (m *Middleware) validateAPIToken(ctx context.Context, token string) (*AuthU
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			m.log.Warn("API token not found or expired", slog.String("token_prefix", token[:min(8, len(token))]))
-		} else {
-			m.log.Error("API token DB lookup failed", logger.Error(err))
+			return nil, apperror.ErrInvalidToken
 		}
-		return nil, apperror.ErrInvalidToken.WithInternal(err)
+		// DB unavailable / pool closed: a retryable infrastructure failure, not
+		// a bad token. Returning 401 here is the #1481 stale-401 seen for valid
+		// project tokens during a restart.
+		m.log.Error("API token DB lookup failed", logger.Error(err))
+		return nil, apperror.NewServiceUnavailable("Token validation temporarily unavailable", err)
 	}
 
 	// Validate-time ceiling for device credentials: a device:api token whose
@@ -1178,7 +1253,7 @@ func (m *Middleware) validateAPIToken(ctx context.Context, token string) (*AuthU
 	// Get user profile
 	user, err := m.userSvc.GetByID(ctx, *result.UserID)
 	if err != nil {
-		return nil, apperror.ErrInvalidToken.WithInternal(err)
+		return nil, classifyProfileLookupError(err)
 	}
 
 	return &AuthUser{
@@ -1189,6 +1264,18 @@ func (m *Middleware) validateAPIToken(ctx context.Context, token string) (*AuthU
 		APITokenProjectID: projectID,
 		APITokenID:        result.ID,
 	}, nil
+}
+
+// classifyProfileLookupError maps a user-profile lookup failure during API-token
+// validation to the correct HTTP error class (issue #1481). A missing user is a
+// genuine invalid token (401): the credential's owning subject no longer exists.
+// Any other failure is the database/pool being unavailable — retryable
+// infrastructure (503), never a credential verdict.
+func classifyProfileLookupError(err error) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return apperror.ErrInvalidToken
+	}
+	return apperror.NewServiceUnavailable("Token validation temporarily unavailable", err)
 }
 
 // checkTestToken checks for static test tokens (development only)
@@ -1335,6 +1422,9 @@ func (m *Middleware) ensureUserProfile(ctx context.Context, claims *TokenClaims)
 
 // getCachedIntrospection retrieves cached introspection result
 func (m *Middleware) getCachedIntrospection(ctx context.Context, token string) (*TokenClaims, error) {
+	if m.introspectCacheLookup != nil {
+		return m.introspectCacheLookup(ctx, token)
+	}
 	if m.db == nil {
 		return nil, errors.New("auth: no database available for introspection cache")
 	}
@@ -1470,17 +1560,21 @@ func (m *Middleware) cacheIntrospection(ctx context.Context, token string, claim
 func (m *Middleware) introspectToken(ctx context.Context, token string) (*TokenClaims, error) {
 	result, err := m.zitadelSvc.Introspect(ctx, token)
 	if err != nil {
+		// Preserve the transport/5xx/circuit-open classification so the caller
+		// can distinguish a retryable outage from an invalid token.
 		return nil, err
 	}
 
-	// nil result means introspection is disabled or unavailable
+	// nil result means introspection is not configured (no client credentials,
+	// or explicitly disabled). Not an infrastructure failure: fall through to
+	// the userinfo path.
 	if result == nil {
-		return nil, errors.New("introspection unavailable")
+		return nil, errIntrospectionDisabled
 	}
 
-	// Inactive token
+	// Inactive token — Zitadel authoritatively rejected it.
 	if !result.Active {
-		return nil, errors.New("token is inactive")
+		return nil, errTokenInactive
 	}
 
 	return &TokenClaims{

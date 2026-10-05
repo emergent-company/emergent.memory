@@ -8,6 +8,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/uptrace/bun"
 	"go.uber.org/fx"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
@@ -117,8 +118,18 @@ func NewEcho(p EchoParams) *echo.Echo {
 	return e
 }
 
-// StartServer starts the HTTP server with graceful shutdown
-func StartServer(lc fx.Lifecycle, e *echo.Echo, cfg *config.Config, log *slog.Logger) {
+// StartServer starts the HTTP server with graceful shutdown.
+//
+// Shutdown ordering (issue #1481): fx runs lifecycle OnStop hooks in REVERSE
+// order of registration, and registration order follows dependency construction
+// order. The `db *bun.DB` parameter is therefore REQUIRED, not incidental: it
+// forces fx to construct the database before this invoke runs, so the server's
+// OnStop hook is registered AFTER the database's and consequently runs FIRST.
+// That guarantees the HTTP server drains in-flight requests (up to
+// cfg.ShutdownTimeout) before bun/the pgx pool are closed. Without the
+// dependency the server hook could register first and the pool would close
+// underneath live handlers ("database is closed"). Do not remove it.
+func StartServer(lc fx.Lifecycle, e *echo.Echo, db *bun.DB, cfg *config.Config, log *slog.Logger) {
 	log = log.With(logger.Scope("server"))
 
 	server := &http.Server{
@@ -133,6 +144,7 @@ func StartServer(lc fx.Lifecycle, e *echo.Echo, cfg *config.Config, log *slog.Lo
 			log.Info("starting HTTP server",
 				slog.String("address", server.Addr),
 				slog.String("environment", cfg.Environment),
+				slog.Int("db_max_open_conns", db.Stats().MaxOpenConnections),
 			)
 
 			// Start server in goroutine

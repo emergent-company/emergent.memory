@@ -183,3 +183,21 @@ func NewDatabase(message string, err error) *Error {
 		Internal:   err,
 	}
 }
+
+// NewServiceUnavailable creates a 503 service_unavailable error with a message
+// and the underlying infrastructure error attached for internal logging.
+// Constructed directly (rather than via ErrServiceUnavailable.WithInternal) for
+// the same ratchet-count reason as NewValidation/NewDatabase.
+//
+// This is the retryable class: use it when a request could not be completed
+// because of a transport/DB/Zitadel outage, NOT when the caller's input or
+// credential was genuinely rejected. Returning 503 (not 401) lets clients
+// retry instead of discarding a valid credential during a transient blip.
+func NewServiceUnavailable(message string, err error) *Error {
+	return &Error{
+		HTTPStatus: http.StatusServiceUnavailable,
+		Code:       "service_unavailable",
+		Message:    message,
+		Internal:   err,
+	}
+}

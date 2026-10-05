@@ -123,10 +123,16 @@ type Config struct {
 	ExtractionSkipStagingBranch bool `env:"EXTRACTION_SKIP_STAGING" envDefault:"false"`
 
 	// Server timeouts
-	ReadTimeout     time.Duration `env:"SERVER_READ_TIMEOUT" envDefault:"3600s"`   // 1 hour for large file uploads
-	WriteTimeout    time.Duration `env:"SERVER_WRITE_TIMEOUT" envDefault:"28800s"` // 8 hours for SSE
-	IdleTimeout     time.Duration `env:"SERVER_IDLE_TIMEOUT" envDefault:"28800s"`  // 8 hours for SSE
-	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"10s"`
+	ReadTimeout  time.Duration `env:"SERVER_READ_TIMEOUT" envDefault:"3600s"`   // 1 hour for large file uploads
+	WriteTimeout time.Duration `env:"SERVER_WRITE_TIMEOUT" envDefault:"28800s"` // 8 hours for SSE
+	IdleTimeout  time.Duration `env:"SERVER_IDLE_TIMEOUT" envDefault:"28800s"`  // 8 hours for SSE
+	// ShutdownTimeout bounds how long the HTTP server waits for in-flight
+	// requests to drain on shutdown before the DB pool is closed. Kept well
+	// above the old 10s so long-running retrieval/embedding/graph requests
+	// finish rather than being killed mid-flight (issue #1481). The effective
+	// ceiling is fx's own stop timeout, which cmd/server sets to
+	// ShutdownTimeout+5s — see cmd/server/main.go.
+	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"30s"`
 
 	// ShareRefSecret is the server-side HMAC key used to verify gateway-minted
 	// end-user references (X-End-User-Ref-Sig) on public agent-share routes.
@@ -143,10 +149,12 @@ type DatabaseConfig struct {
 	Database string `env:"POSTGRES_DB" envDefault:"emergent"`
 	SSLMode  string `env:"POSTGRES_SSL_MODE" envDefault:"disable"`
 	// MaxOpenConns is the pgx pool maximum connections. For multi-tenant deployments
-	// with concurrent retrieval + embedding + graph writes, raise above the 25 default
-	// (e.g. 100) to avoid pool saturation under load.
-	MaxOpenConns int           `env:"DB_MAX_OPEN_CONNS" envDefault:"25"`
-	MaxIdleConns int           `env:"DB_MAX_IDLE_CONNS" envDefault:"5"`
+	// with concurrent retrieval + embedding + graph writes, 100 is the default to
+	// avoid pool saturation under load (raise/lower via env as needed).
+	MaxOpenConns int `env:"DB_MAX_OPEN_CONNS" envDefault:"100"`
+	// MaxIdleConns keeps a warm pool so bursts do not pay connection setup;
+	// a quarter of MaxOpenConns is a sensible steady-state default.
+	MaxIdleConns int           `env:"DB_MAX_IDLE_CONNS" envDefault:"25"`
 	MaxIdleTime  time.Duration `env:"DB_MAX_IDLE_TIME" envDefault:"5m"`
 	QueryDebug   bool          `env:"DB_QUERY_DEBUG" envDefault:"false"`
 }

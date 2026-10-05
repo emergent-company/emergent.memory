@@ -19,6 +19,7 @@ package main
 
 import (
 	"log/slog"
+	"time"
 
 	"github.com/joho/godotenv"
 	"go.uber.org/fx"
@@ -100,6 +101,13 @@ func main() {
 
 	opts := []fx.Option{coreFxOptions()}
 	opts = append(opts, featureFxOptions(features)...)
+	// fx bounds every App.Stop with its own stop timeout (DefaultTimeout, 15s).
+	// StartServer's per-hook shutdownCtx is derived from that parent, so
+	// context.WithTimeout can never EXTEND it: without headroom here the
+	// configured SHUTDOWN_TIMEOUT (default 30s) is silently capped at 15s and
+	// long retrieval/embedding requests are still cancelled early (issue
+	// #1481). Keep this strictly greater than ShutdownTimeout.
+	opts = append(opts, fx.StopTimeout(cfg.ShutdownTimeout+5*time.Second))
 
 	fx.New(opts...).Run()
 }
@@ -112,7 +120,10 @@ func coreFxOptions() fx.Option {
 			return &fxevent.SlogLogger{Logger: log}
 		}),
 
-		// Infrastructure modules
+		// Infrastructure modules.
+		// database.Module must provide *bun.DB before server.StartServer runs;
+		// StartServer depends on *bun.DB so fx orders construction (and thus
+		// reverse-order shutdown: server drains, then bun, then the pool).
 		logger.Module,
 		config.Module,
 		database.Module,
