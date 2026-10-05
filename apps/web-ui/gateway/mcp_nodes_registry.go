@@ -190,10 +190,10 @@ func (s *Server) removeRelayNode(ctx context.Context, instanceID string) error {
 func (s *Server) uiMCPNodesRemove(c echo.Context) error {
 	id := strings.TrimSpace(c.FormValue("instance_id"))
 	if id == "" {
-		return redirectWithError(c, "/settings/mcp-nodes", fmt.Errorf("instance id is required"))
+		return redirectWithError(c, "/settings/devices", fmt.Errorf("instance id is required"))
 	}
 	if err := s.removeRelayNode(c.Request().Context(), id); err != nil {
-		return redirectWithError(c, "/settings/mcp-nodes", err)
+		return redirectWithError(c, "/settings/devices", err)
 	}
-	return c.Redirect(http.StatusSeeOther, "/settings/mcp-nodes?updated=1")
+	return c.Redirect(http.StatusSeeOther, "/settings/devices?mcp_updated=1")
 }

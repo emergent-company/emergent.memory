@@ -10,10 +10,13 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// newTestEcho wires the MCP nodes routes onto a fresh echo instance.
+// newTestEcho wires the Connected devices page (which hosts the MCP nodes
+// section) plus the legacy redirect and remove routes onto a fresh echo
+// instance.
 func newTestEcho(s *Server) *echo.Echo {
 	e := echo.New()
-	e.GET("/settings/mcp-nodes", s.uiMCPNodes)
+	e.GET("/settings/devices", s.uiConnectedDevices)
+	e.GET("/settings/mcp-nodes", s.uiMCPNodesRedirect)
 	e.POST("/settings/mcp-nodes/remove", s.uiMCPNodesRemove)
 	return e
 }
@@ -207,7 +210,7 @@ func TestUIMCPNodesReconciliationOffline(t *testing.T) {
 	}
 
 	e := newTestEcho(s)
-	rec := getRec(t, e, "/settings/mcp-nodes")
+	rec := getRec(t, e, "/settings/devices")
 	body := rec.Body.String()
 	for _, want := range []string{"newer-off", "older-off", "Disconnected", "last seen"} {
 		if !strings.Contains(body, want) {
@@ -218,7 +221,7 @@ func TestUIMCPNodesReconciliationOffline(t *testing.T) {
 		t.Error("offline nodes must render most recently seen first")
 	}
 
-	rec = getRec(t, e, "/settings/mcp-nodes?node=newer-off")
+	rec = getRec(t, e, "/settings/devices?node=newer-off")
 	if !strings.Contains(rec.Body.String(), "newer-off_snap_tool") {
 		t.Error("offline node should serve its cached tool snapshot")
 	}

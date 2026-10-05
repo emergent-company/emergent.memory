@@ -155,14 +155,14 @@ func TestUIProjectVoiceSettingsRoute(t *testing.T) {
 	}
 }
 
-// TestUIProjectDeviceSettingsRoute exercises GET /settings/devices: the
-// Devices sub-page renders its sub-nav, the iOS setup panel, and the devices
-// list empty state.
-func TestUIProjectDeviceSettingsRoute(t *testing.T) {
+// TestUIConnectedDevicesSettingsRoute exercises GET /settings/devices: the
+// Connected devices page renders its sub-nav and all three sections — Connect
+// a device, Devices (empty state), and MCP nodes (empty state).
+func TestUIConnectedDevicesSettingsRoute(t *testing.T) {
 	f := &fakeMemory{}
 	s := &Server{cfg: Config{}, memory: f}
 	e := echo.New()
-	e.GET("/settings/devices", s.uiProjectDeviceSettings)
+	e.GET("/settings/devices", s.uiConnectedDevices)
 
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/devices", nil))
@@ -171,13 +171,14 @@ func TestUIProjectDeviceSettingsRoute(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"Devices", "iOS setup", "No devices registered yet.",
+		"Connected devices", "Connect a device", "memory-connector auth login",
+		"No devices registered yet.", "No external nodes connected",
 		`href="/settings"`, `href="/settings/assistant"`, `href="/settings/overrides"`,
 		`href="/settings/providers"`, `href="/settings/voice"`, `href="/settings/devices"`,
 		`href="/settings/budget"`,
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("devices route missing %q", want)
+			t.Errorf("connected devices route missing %q", want)
 		}
 	}
 }

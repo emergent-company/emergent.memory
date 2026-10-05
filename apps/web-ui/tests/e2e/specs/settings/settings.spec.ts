@@ -6,7 +6,7 @@ const routes: Array<[string, RegExp]> = [
   ['/settings/assistant', /Assistant/],
   ['/settings/overrides', /Agent overrides/],
   ['/settings/voice', /Voice/],
-  ['/settings/devices', /Devices/],
+  ['/settings/devices', /Connected devices/],
   ['/settings/approvals', /Approvals/],
   ['/settings/tokens', /API Tokens/],
 ];

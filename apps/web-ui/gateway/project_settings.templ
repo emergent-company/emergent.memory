@@ -27,9 +27,11 @@ templ settingsField(name, label, tip, hint string, attrs templ.Attributes) {
 }
 
 // settingsSubNav is the vertical sub-navigation rail for the Settings area
-// (General / Assistant / Overrides / Providers / Voice / Devices / Budget /
-// MCP nodes), mirroring agentSubNav. It stacks horizontally on small screens
-// and becomes a sticky left rail on desktop.
+// (General / Assistant / Members / Overrides / Providers / Voice / Connected
+// devices / Budget), mirroring agentSubNav. It stacks horizontally on small
+// screens and becomes a sticky left rail on desktop. Connected devices is the
+// single entry for external machines — it merges the former Devices and MCP
+// nodes sections.
 templ settingsSubNav(active string, providersMissing bool) {
 	@components.SettingsRail("Settings sections", active, []components.RailItem{
 		{Key: "general", Href: "/settings", Icon: "lucide--settings", Label: "General"},
@@ -38,9 +40,8 @@ templ settingsSubNav(active string, providersMissing bool) {
 		{Key: "overrides", Href: "/settings/overrides", Icon: "lucide--wrench", Label: "Overrides"},
 		{Custom: providersRailItem(active, providersMissing)},
 		{Key: "voice", Href: "/settings/voice", Icon: "lucide--mic", Label: "Voice"},
-		{Key: "devices", Href: "/settings/devices", Icon: "lucide--smartphone", Label: "Devices"},
+		{Key: "devices", Href: "/settings/devices", Icon: "lucide--devices", Label: "Connected devices"},
 		{Key: "budget", Href: "/settings/budget", Icon: "lucide--wallet", Label: "Budget"},
-		{Key: "mcp-nodes", Href: "/settings/mcp-nodes", Icon: "lucide--radio", Label: "MCP nodes"},
 	})
 }
 
@@ -145,18 +146,54 @@ templ VoiceSettingsPage(data voiceSettingsPageData) {
 	}
 }
 
-// DevicesSettingsPage renders the Devices section: the iOS setup QR code and
-// the registered-devices list. flashMsg/flashErr surface PRG feedback from the
-// revoke flow.
-templ DevicesSettingsPage(data devicesSettingsPageData) {
+// ConnectedDevicesPage renders the merged external-machines settings page in
+// three stacked sections: Connect a device (the iOS setup QR), Devices (the
+// registered device credentials), and MCP nodes (the reconciled relay node
+// registry with its tools panel). flashMsg/flashErr surface PRG feedback from
+// the revoke flow. The device list and the relay-node registry remain distinct
+// data models; this page only co-locates their rendering.
+templ ConnectedDevicesPage(data connectedDevicesPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Devices")), "", "Devices", "iOS setup and registered devices.", detailHeaderOpts{Margin: "mb-6"}) {
-			@countBadgeLabel("devices", "lucide--smartphone")
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Connected devices")), "", "Connected devices", "The phones and machines connected to this project — the Memory iOS app, and Mac or Linux connector machines that register here as MCP relay nodes. Each relay tool is named by its node's instance id + the tool name, so the instance id is the unique key linking every relay tool back to its node.", detailHeaderOpts{Margin: "mb-6", SubtitleFull: true}) {
+			if len(data.Nodes) > 0 {
+				@countBadge(len(data.Nodes), "node", "lucide--radio")
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    "/settings/devices",
+					Variant: ui.ButtonOutline,
+					Size:    ui.ButtonXS,
+					Icon:    "lucide--refresh-cw",
+				}) {
+					Refresh
+				}
+			}
 		}
 		@flashToasts(data.FlashMsg, data.FlashErr)
 		@layout.Rail(settingsSubNav("devices", data.ProvidersMissing), nil) {
 			@iosSetupPanel(data.IOSQRImage)
 			@devicesPanel(data.Devices)
+			if data.LoadErr != nil {
+				@ui.Alert(ui.AlertProps{
+					Type:    ui.AlertError,
+					Style:   ui.AlertStyleOutline,
+					Icon:    "lucide--alert-triangle",
+					Message: "Couldn't load live relay sessions: " + data.LoadErr.Error() + ". Showing the last-known registry.",
+				})
+			}
+			if len(data.Nodes) == 0 {
+				@ui.EmptyState(ui.EmptyStateProps{
+					Icon:        "lucide--radio",
+					Title:       "No external nodes connected",
+					Description: "External MCP nodes are remote machines that run local MCP servers (Apple Notes, home automation, files) and register here over the relay. When one connects, it appears in this list and its tools become attachable to agents in the agent Settings → Tools picker.",
+					Bordered:    true,
+					Class:       "py-12",
+				})
+			} else {
+				<div class="flex flex-col gap-6">
+					@mcpNodesList(data)
+					@mcpNodeToolsPanel(data)
+				</div>
+			}
 		}
 	}
 }
@@ -408,13 +445,16 @@ templ rememberDedupPanel(rememberAgent, dedupThreshold string, agents []AgentDef
 	}
 }
 
-// iosSetupPanel shows the iOS client onboarding QR code. The QR encodes a
-// fresh one-time setup token that the app exchanges (POST /api/setup) for a
-// scoped per-device credential. It renders whenever the QR can be generated;
-// the image sits on a light background because QR codes need high contrast
-// against the dark theme to scan reliably.
+// iosSetupPanel shows the Connect a device section: the iOS client onboarding
+// QR code plus the connector enrollment note, so both paths onto this page are
+// explained in one place. The QR encodes a fresh one-time setup token that the
+// app exchanges (POST /api/setup) for a scoped per-device credential. It renders
+// whenever the QR can be generated; the image sits on a light background because
+// QR codes need high contrast against the dark theme to scan reliably. Mac and
+// Linux connectors do not use the QR — they enroll through an OAuth login with
+// the memory-connector CLI.
 templ iosSetupPanel(qrImage string) {
-	@ui.Section("iOS setup", ui.SectionProps{
+	@ui.Section("Connect a device", ui.SectionProps{
 		Margin:    "mb-6",
 		BodyClass: "memory-density-comfortable",
 	}) {
@@ -429,6 +469,7 @@ templ iosSetupPanel(qrImage string) {
 		} else {
 			<p class="text-muted-faint text-xs">QR code unavailable.</p>
 		}
+		<p class="text-muted mt-4 text-xs">Mac and Linux connectors enroll with <code class="rounded bg-base-200 px-1 py-0.5 font-mono">memory-connector auth login</code> (OAuth) — no QR code needed.</p>
 	}
 }
 

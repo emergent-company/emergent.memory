@@ -62,12 +62,16 @@ func TestRenderSettingsSubNav(t *testing.T) {
 		`href="/settings/overrides"`, "Overrides",
 		`href="/settings/providers"`, "Providers",
 		`href="/settings/voice"`, "Voice",
-		`href="/settings/devices"`, "Devices",
+		`href="/settings/devices"`, "Connected devices",
 		`href="/settings/budget"`, "Budget",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("settings sub-nav missing %q", want)
 		}
+	}
+	// the legacy MCP nodes rail entry is folded into Connected devices
+	if strings.Contains(html, `href="/settings/mcp-nodes"`) {
+		t.Error("MCP nodes must not appear as a separate settings sub-nav entry")
 	}
 	// Approvals is a top-level menu item, not a settings section
 	if strings.Contains(html, `href="/settings/approvals"`) {
@@ -173,17 +177,49 @@ func TestRenderProvidersSettingsPage(t *testing.T) {
 	}
 }
 
-// TestRenderDevicesSettingsPage covers the Devices sub-page: header, sub-nav,
-// the iOS setup panel, and the devices list empty state.
-func TestRenderDevicesSettingsPage(t *testing.T) {
-	html := renderHTML(t, DevicesSettingsPage(devicesSettingsPageData{}))
+// TestRenderConnectedDevicesPage covers the merged Connected devices page:
+// header, sub-nav, and all three sections — Connect a device (iOS QR +
+// connector enrollment note), Devices (registered credentials), and MCP nodes
+// (relay rows + tools panel) — plus the empty states.
+func TestRenderConnectedDevicesPage(t *testing.T) {
+	data := connectedDevicesPageData{
+		IOSQRImage: "data:image/png;base64,AAAA",
+		Devices: []device{
+			{ID: "tok-1", Name: "iPhone", Prefix: "emt_x", CreatedAt: time.Now().UTC().Format(time.RFC3339)},
+		},
+		Nodes: []mcpNodeView{
+			{InstanceID: "mac-ada", Version: "1.2.0", ToolCount: 2, Live: true, ConnectedAt: time.Now().Add(-25 * time.Minute)},
+		},
+		SelectedLive: true,
+		Selected: &relayNode{
+			Session: RelaySession{InstanceID: "mac-ada", Version: "1.2.0", ToolCount: 2, ConnectedAt: time.Now().Add(-25 * time.Minute)},
+			Tools:   []RelayTool{{Name: "notes_search", Description: "Search Apple Notes"}},
+		},
+	}
+	html := renderHTML(t, ConnectedDevicesPage(data))
 	for _, want := range []string{
-		"Devices", "iOS setup", "No devices registered yet.",
-		`href="/settings"`, `href="/settings/assistant"`, `href="/settings/overrides"`,
-		`href="/settings/providers"`, `href="/settings/voice"`, `href="/settings/devices"`,
+		"Connected devices",
+		// section 1: Connect a device
+		"Connect a device", "Scan with the Memory iOS app to connect.",
+		"Mac and Linux connectors enroll with", "memory-connector auth login",
+		// section 2: Devices
+		"Devices", "iPhone", "Registered",
+		// section 3: MCP nodes
+		"MCP nodes", "mac-ada", "1 node", "mac-ada_notes_search",
+		`href="/settings/devices?node=mac-ada"`,
+		// settings rail
+		`href="/settings"`, `href="/settings/voice"`, `href="/settings/devices"`,
 	} {
 		if !strings.Contains(html, want) {
-			t.Errorf("devices settings page missing %q", want)
+			t.Errorf("connected devices page missing %q", want)
+		}
+	}
+
+	// empty page: both device and node empty states render beneath the header
+	empty := renderHTML(t, ConnectedDevicesPage(connectedDevicesPageData{}))
+	for _, want := range []string{"Connected devices", "Connect a device", "No devices registered yet.", "No external nodes connected"} {
+		if !strings.Contains(empty, want) {
+			t.Errorf("empty connected devices page missing %q", want)
 		}
 	}
 }

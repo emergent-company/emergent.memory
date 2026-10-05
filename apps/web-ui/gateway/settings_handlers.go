@@ -212,14 +212,26 @@ type voiceSettingsPageData struct {
 	FlashErr error
 }
 
-// devicesSettingsPageData is the payload for DevicesSettingsPage: the iOS
-// setup QR and the registered-devices list plus PRG flash feedback.
-type devicesSettingsPageData struct {
+// connectedDevicesPageData is the payload for ConnectedDevicesPage, which
+// consolidates the former Devices and External MCP nodes settings pages into
+// one: the iOS setup QR (Connect a device), the registered-devices list
+// (Devices), and the reconciled relay node registry (MCP nodes) plus PRG flash
+// feedback. The device list and the relay-node registry stay distinct data
+// models underneath — device credentials live in core.api_tokens, relay nodes
+// are reconciled sessions/registry records — this type only co-locates their
+// rendering.
+type connectedDevicesPageData struct {
 	settingsNavCommon
-	IOSQRImage string
-	Devices    []device
-	FlashMsg   string
-	FlashErr   error
+	IOSQRImage   string
+	Devices      []device
+	Nodes        []mcpNodeView
+	Selected     *relayNode
+	SelectedLive bool
+	NodeNotFound bool
+	ToolsErr     error
+	LoadErr      error
+	FlashMsg     string
+	FlashErr     error
 }
 
 // budgetSettingsPageData is the payload for BudgetSettingsPage: the project's
@@ -376,19 +388,32 @@ func (s *Server) uiProjectVoiceSettings(c echo.Context) error {
 	return s.page(c, pageTitle("Voice"), VoiceSettingsPage(data))
 }
 
-// uiProjectDeviceSettings renders the Devices settings page. ?updated=1 /
-// ?err=1 surface PRG feedback from the revoke flow.
-func (s *Server) uiProjectDeviceSettings(c echo.Context) error {
+// uiConnectedDevices renders the Connected devices settings page: the iOS
+// setup path (Connect a device), the registered-devices list (Devices), and the
+// reconciled relay node registry (MCP nodes). It combines the former Devices
+// page data with the relay reconciliation that used to live in uiMCPNodes.
+// ?updated=1 / ?err=1 surface PRG feedback from the revoke flow.
+func (s *Server) uiConnectedDevices(c echo.Context) error {
 	ctx := c.Request().Context()
-	data := devicesSettingsPageData{}
+	data := connectedDevicesPageData{}
 	if c.QueryParam("updated") != "" {
 		data.FlashMsg = "Devices saved."
+	}
+	if c.QueryParam("mcp_updated") != "" {
+		data.FlashMsg = "MCP node removed."
 	}
 	data.FlashErr = flashError(c)
 	data.ProvidersMissing = s.projectHasNoProviders(ctx)
 	data.IOSQRImage = s.setupQRImage(c)
 	data.Devices, _ = s.listDeviceTokens(ctx) // list errors degrade to an empty list
-	return s.page(c, pageTitle("Devices"), DevicesSettingsPage(data))
+	mcp := s.loadMCPNodesData(ctx, c.QueryParam("node"))
+	data.Nodes = mcp.Nodes
+	data.Selected = mcp.Selected
+	data.SelectedLive = mcp.SelectedLive
+	data.NodeNotFound = mcp.NodeNotFound
+	data.ToolsErr = mcp.ToolsErr
+	data.LoadErr = mcp.LoadErr
+	return s.page(c, pageTitle("Connected devices"), ConnectedDevicesPage(data))
 }
 
 // uiProjectBudgetSettings renders the Budget settings page. ?updated=1 / ?err=1

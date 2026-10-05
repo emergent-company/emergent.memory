@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"net/http"
 	"sort"
 	"time"
 
@@ -22,12 +23,13 @@ type mcpNodeView struct {
 	LastSeen    time.Time // offline rows only
 }
 
-// externalMCPNodesPageData is the payload for ExternalMCPNodesPage. Nodes is
-// the unified live+offline list built by reconciling the registry with the
-// backend's live sessions. A failed session-list fetch no longer blanks the
-// page: LoadErr surfaces as a banner while the registry's offline rows still
-// render. A failed per-node tools fetch degrades only the tools panel
-// (ToolsErr), keeping the node list usable.
+// externalMCPNodesPageData holds the MCP-relay fields rendered under the
+// "MCP nodes" section of the Connected devices page. Nodes is the unified
+// live+offline list built by reconciling the registry with the backend's live
+// sessions. A failed session-list fetch no longer blanks the section: LoadErr
+// surfaces as a banner while the registry's offline rows still render. A failed
+// per-node tools fetch degrades only the tools panel (ToolsErr), keeping the
+// node list usable.
 type externalMCPNodesPageData struct {
 	settingsNavCommon
 	Nodes []mcpNodeView
@@ -55,19 +57,31 @@ func sortRelaySessions(sessions []RelaySession) {
 	})
 }
 
-// uiMCPNodes renders the External MCP nodes settings page. On every load it
-// lazily reconciles the persisted registry with the backend's live sessions:
-// each live session is upserted (refresh version/toolCount/tools, lastSeen =
-// now, preserve firstSeen), then the page lists live nodes first (connected_at
+// uiMCPNodesRedirect sends the legacy External MCP nodes route to the merged
+// Connected devices page. The original query is forwarded verbatim so an
+// explicit ?node= selection deep-links to the right row and PRG params
+// (?updated=/?err=) still surface their flash.
+func (s *Server) uiMCPNodesRedirect(c echo.Context) error {
+	target := "/settings/devices"
+	if raw := c.Request().URL.RawQuery; raw != "" {
+		target += "?" + raw
+	}
+	return c.Redirect(http.StatusSeeOther, target)
+}
+
+// loadMCPNodesData reconciles the persisted registry with the backend's live
+// sessions and applies the ?node= selection, returning the MCP-relay fields
+// rendered under the Connected devices page's "MCP nodes" section. On every
+// load each live session is upserted (refresh version/toolCount/tools, lastSeen
+// = now, preserve firstSeen), then Nodes lists live nodes first (connected_at
 // desc) followed by registry nodes no longer connected (last seen desc). The
 // tool list is fetched once per live node while reconciling, so the snapshot
 // cached in the registry is what offline nodes later show. When the live fetch
 // fails the registry still renders (as offline) behind an error banner instead
-// of blanking the page.
-func (s *Server) uiMCPNodes(c echo.Context) error {
-	ctx := c.Request().Context()
+// of blanking the section; a failed per-node tools fetch degrades only the
+// tools panel. selectedNode is the raw ?node= query value ("" when absent).
+func (s *Server) loadMCPNodesData(ctx context.Context, selectedNode string) externalMCPNodesPageData {
 	data := externalMCPNodesPageData{}
-	data.ProvidersMissing = s.projectHasNoProviders(ctx)
 
 	registry, err := s.loadRelayRegistry(ctx)
 	if err != nil {
@@ -134,17 +148,17 @@ func (s *Server) uiMCPNodes(c echo.Context) error {
 		})
 	}
 
-	if sel := c.QueryParam("node"); sel != "" {
-		if sess, isLive := live[sel]; isLive {
+	if selectedNode != "" {
+		if sess, isLive := live[selectedNode]; isLive {
 			data.SelectedLive = true
 			node := &relayNode{Session: sess}
-			if terr, ok := liveToolsErr[sel]; ok {
+			if terr, ok := liveToolsErr[selectedNode]; ok {
 				data.ToolsErr = terr
 			} else {
-				node.Tools = liveTools[sel]
+				node.Tools = liveTools[selectedNode]
 			}
 			data.Selected = node
-		} else if rec, ok := registry[sel]; ok {
+		} else if rec, ok := registry[selectedNode]; ok {
 			data.Selected = &relayNode{
 				Session: RelaySession{
 					InstanceID: rec.InstanceID,
@@ -157,14 +171,14 @@ func (s *Server) uiMCPNodes(c echo.Context) error {
 			data.NodeNotFound = true
 		}
 	}
-	return s.page(c, pageTitle("External MCP nodes"), ExternalMCPNodesPage(data))
+	return data
 }
 
 // loadRelayNodes fetches the project's connected relay sessions and each
 // session's tools for the agent-settings loader (the tool picker's relay
 // groups). Best-effort and silent by design: any relay API failure degrades to
-// no relay groups while the rest of the page stays intact — the dedicated
-// /settings/mcp-nodes page is where the real error state surfaces. Sessions
+// no relay groups while the rest of the page stays intact — the Connected
+// devices page's MCP nodes section is where the real error state surfaces. Sessions
 // are few, so one tools round-trip per connected node stays bounded.
 func (s *Server) loadRelayNodes(ctx context.Context) []relayNode {
 	sessions, err := s.memory.ListRelaySessions(ctx)
