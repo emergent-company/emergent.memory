@@ -21,6 +21,10 @@ type Target struct {
 	User     string
 	Database string
 	SSLMode  string
+	// ApplicationName is reported to Postgres as application_name so migration
+	// connections are identifiable in pg_stat_activity. Defaults to
+	// "memory-migrate" and honors DB_APPLICATION_NAME.
+	ApplicationName string
 	// Password is kept only to build the DSN. It is never included in LogLine.
 	Password string
 
@@ -61,14 +65,48 @@ func (t Target) LogLine() string {
 // URI-reserved characters in the user or password are escaped rather than
 // producing a malformed connection string.
 func (t Target) DSN() string {
+	query := url.Values{"sslmode": {t.SSLMode}}
+	if t.ApplicationName != "" {
+		query.Set("application_name", t.ApplicationName)
+	}
 	u := &url.URL{
 		Scheme:   "postgres",
 		User:     url.UserPassword(t.User, t.Password),
 		Host:     net.JoinHostPort(t.Host, t.Port),
 		Path:     "/" + t.Database,
-		RawQuery: url.Values{"sslmode": {t.SSLMode}}.Encode(),
+		RawQuery: query.Encode(),
 	}
 	return u.String()
+}
+
+// ConnectionURL returns the URL the migrate CLI should dial.
+//
+// When DATABASE_URL is set it is used verbatim (preserving any parameters the
+// resolver does not model, e.g. search_path), with application_name ensured on
+// it — an empty or absent application_name gets the resolved value, an explicit
+// one already in the URL wins. When DATABASE_URL is empty the DSN built from the
+// resolved components is used. This keeps application_name on BOTH resolution
+// paths, which a plain target.DSN() would miss: main.go used the raw
+// DATABASE_URL when set, silently dropping the migration default.
+func (t Target) ConnectionURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return t.DSN(), nil
+	}
+	if t.ApplicationName == "" {
+		return raw, nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("invalid DATABASE_URL: %w", err)
+	}
+	q := u.Query()
+	if strings.TrimSpace(q.Get("application_name")) != "" {
+		return raw, nil
+	}
+	q.Set("application_name", t.ApplicationName)
+	u.RawQuery = q.Encode()
+	return u.String(), nil
 }
 
 // targetDecision is the outcome of the fail-closed check on a resolved target.
@@ -96,6 +134,9 @@ func resolveTarget(getenv func(string) string) (Target, error) {
 		t, err := parseDatabaseURL(raw)
 		if err != nil {
 			return Target{}, err
+		}
+		if t.ApplicationName == "" {
+			t.ApplicationName = migrationAppName(getenv)
 		}
 		t.conflictEnv = detectConflict(getenv, t.Host)
 		return t, nil
@@ -137,15 +178,16 @@ func resolveTarget(getenv func(string) string) (Target, error) {
 	// password is missing, so the caller can still print the target line and
 	// apply the fail-closed rule before reporting the credential error.
 	t := Target{
-		Host:         host,
-		Port:         port,
-		User:         user,
-		Database:     database,
-		SSLMode:      sslMode,
-		Password:     pass,
-		hostSource:   hostSource,
-		explicitHost: hostSource != "built-in default",
-		conflictEnv:  detectConflict(getenv, host),
+		Host:            host,
+		Port:            port,
+		User:            user,
+		Database:        database,
+		SSLMode:         sslMode,
+		ApplicationName: migrationAppName(getenv),
+		Password:        pass,
+		hostSource:      hostSource,
+		explicitHost:    hostSource != "built-in default",
+		conflictEnv:     detectConflict(getenv, host),
 	}
 	if pass == "" {
 		return t, fmt.Errorf("POSTGRES_PASSWORD or DATABASE_URL must be set")
@@ -183,17 +225,30 @@ func parseDatabaseURL(raw string) (Target, error) {
 	if sslMode == "" {
 		sslMode = "disable"
 	}
+	appName := u.Query().Get("application_name")
 
 	return Target{
-		Host:         u.Hostname(),
-		Port:         port,
-		User:         user,
-		Database:     database,
-		SSLMode:      sslMode,
-		Password:     pass,
-		hostSource:   "DATABASE_URL",
-		explicitHost: true,
+		Host:            u.Hostname(),
+		Port:            port,
+		User:            user,
+		Database:        database,
+		SSLMode:         sslMode,
+		ApplicationName: appName,
+		Password:        pass,
+		hostSource:      "DATABASE_URL",
+		explicitHost:    true,
 	}, nil
+}
+
+// migrationAppName resolves the application_name migration connections report
+// to Postgres. DB_APPLICATION_NAME overrides; otherwise migrations announce
+// themselves as "memory-migrate" so they are distinguishable from the server
+// pool in pg_stat_activity.
+func migrationAppName(getenv func(string) string) string {
+	if v := strings.TrimSpace(getenv("DB_APPLICATION_NAME")); v != "" {
+		return v
+	}
+	return "memory-migrate"
 }
 
 // detectConflict returns "NAME=value" for the first host env var that is set,

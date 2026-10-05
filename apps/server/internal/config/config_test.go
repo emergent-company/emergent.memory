@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/url"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -93,6 +94,71 @@ func TestDatabaseConfig_DSNRoundTripsEscapedCredentials(t *testing.T) {
 	}
 	if u.Path != "/testdb" {
 		t.Errorf("path = %q, want /testdb", u.Path)
+	}
+}
+
+// TestDatabaseConfig_DSNApplicationName pins how application_name is rendered
+// in the DSN: included when set, escaped when it contains reserved characters,
+// and omitted when empty.
+func TestDatabaseConfig_DSNApplicationName(t *testing.T) {
+	tests := []struct {
+		name     string
+		config   DatabaseConfig
+		wantSub  string
+		wantSkip bool // assert application_name is absent
+	}{
+		{
+			name: "application name included",
+			config: DatabaseConfig{
+				Host: "localhost", Port: 5432, User: "u", Password: "p",
+				Database: "db", SSLMode: "disable", ApplicationName: "memory-server",
+			},
+			wantSub: "application_name=memory-server",
+		},
+		{
+			name: "reserved characters escaped",
+			config: DatabaseConfig{
+				Host: "localhost", Port: 5432, User: "u", Password: "p",
+				Database: "db", SSLMode: "disable", ApplicationName: "my app/name?x",
+			},
+			wantSub: "application_name=my+app%2Fname%3Fx",
+		},
+		{
+			name: "omitted when empty",
+			config: DatabaseConfig{
+				Host: "localhost", Port: 5432, User: "u", Password: "p",
+				Database: "db", SSLMode: "disable",
+			},
+			wantSub:  "?sslmode=disable",
+			wantSkip: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.config.DSN()
+			if !strings.Contains(got, tt.wantSub) {
+				t.Errorf("DSN() = %q, want it to contain %q", got, tt.wantSub)
+			}
+			if tt.wantSkip && strings.Contains(got, "application_name") {
+				t.Errorf("DSN() = %q, must not contain application_name", got)
+			}
+		})
+	}
+}
+
+// TestDatabaseConfig_ApplicationNameEnv pins the DB_APPLICATION_NAME override
+// and the memory-server default via NewConfig.
+func TestDatabaseConfig_ApplicationNameEnv(t *testing.T) {
+	t.Setenv("DB_APPLICATION_NAME", "my-custom-app")
+	cfg, err := NewConfig(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	if cfg.Database.ApplicationName != "my-custom-app" {
+		t.Errorf("ApplicationName = %q, want %q", cfg.Database.ApplicationName, "my-custom-app")
+	}
+	if !strings.Contains(cfg.Database.DSN(), "application_name=my-custom-app") {
+		t.Errorf("DSN() = %q, want it to contain application_name=my-custom-app", cfg.Database.DSN())
 	}
 }
 
@@ -522,6 +588,7 @@ func TestShutdownAndPoolDefaults(t *testing.T) {
 		{"shutdown timeout", reflect.TypeOf(Config{}), "ShutdownTimeout", "30s"},
 		{"db max open conns", reflect.TypeOf(DatabaseConfig{}), "MaxOpenConns", "100"},
 		{"db max idle conns", reflect.TypeOf(DatabaseConfig{}), "MaxIdleConns", "25"},
+		{"db application name", reflect.TypeOf(DatabaseConfig{}), "ApplicationName", "memory-server"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

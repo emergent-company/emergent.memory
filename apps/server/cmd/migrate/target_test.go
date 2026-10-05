@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // fakeEnv builds a getenv function backed by a map, for deterministic tests.
@@ -400,6 +402,169 @@ func TestDSN(t *testing.T) {
 	want := "postgres://migrator:pw@db:6543/memtest?sslmode=require"
 	if got := target.DSN(); got != want {
 		t.Errorf("DSN() = %q, want %q", got, want)
+	}
+}
+
+// TestDSNApplicationName pins that migration connections announce an
+// application_name: memory-migrate by default, overridable via
+// DB_APPLICATION_NAME, and that the DATABASE_URL path appends/preserves one.
+func TestDSNApplicationName(t *testing.T) {
+	t.Run("default memory-migrate", func(t *testing.T) {
+		target, err := resolveTarget(fakeEnv(map[string]string{
+			"POSTGRES_PASSWORD": "pw",
+			"POSTGRES_HOST":     "db",
+		}))
+		if err != nil {
+			t.Fatalf("resolveTarget() error = %v", err)
+		}
+		if !strings.Contains(target.DSN(), "application_name=memory-migrate") {
+			t.Errorf("DSN() = %q, want application_name=memory-migrate", target.DSN())
+		}
+	})
+
+	t.Run("honors DB_APPLICATION_NAME override", func(t *testing.T) {
+		target, err := resolveTarget(fakeEnv(map[string]string{
+			"POSTGRES_PASSWORD":   "pw",
+			"POSTGRES_HOST":       "db",
+			"DB_APPLICATION_NAME": "my-migrator",
+		}))
+		if err != nil {
+			t.Fatalf("resolveTarget() error = %v", err)
+		}
+		if !strings.Contains(target.DSN(), "application_name=my-migrator") {
+			t.Errorf("DSN() = %q, want application_name=my-migrator", target.DSN())
+		}
+	})
+
+	t.Run("DATABASE_URL lacking application_name gets memory-migrate", func(t *testing.T) {
+		target, err := resolveTarget(fakeEnv(map[string]string{
+			"DATABASE_URL": "postgres://u:p@host:5432/db",
+		}))
+		if err != nil {
+			t.Fatalf("resolveTarget() error = %v", err)
+		}
+		if !strings.Contains(target.DSN(), "application_name=memory-migrate") {
+			t.Errorf("DSN() = %q, want application_name=memory-migrate", target.DSN())
+		}
+	})
+
+	t.Run("DATABASE_URL application_name preserved", func(t *testing.T) {
+		target, err := resolveTarget(fakeEnv(map[string]string{
+			"DATABASE_URL": "postgres://u:p@host:5432/db?application_name=from-url",
+		}))
+		if err != nil {
+			t.Fatalf("resolveTarget() error = %v", err)
+		}
+		if !strings.Contains(target.DSN(), "application_name=from-url") {
+			t.Errorf("DSN() = %q, want application_name=from-url", target.DSN())
+		}
+	})
+}
+
+// TestConnectionURL pins the URL actually dialed by the migrate CLI. main.go
+// uses the raw DATABASE_URL when it is set, so target.DSN() alone does not
+// prove application_name reaches the connection on that path.
+func TestConnectionURL(t *testing.T) {
+	t.Run("component path matches DSN", func(t *testing.T) {
+		target, err := resolveTarget(fakeEnv(map[string]string{
+			"POSTGRES_PASSWORD": "pw",
+			"POSTGRES_HOST":     "db",
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := target.ConnectionURL("")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != target.DSN() {
+			t.Errorf("ConnectionURL() = %q, want %q", got, target.DSN())
+		}
+	})
+
+	t.Run("DATABASE_URL without application_name gets default", func(t *testing.T) {
+		raw := "postgres://u:p@host:5432/db"
+		target, err := resolveTarget(fakeEnv(map[string]string{"DATABASE_URL": raw}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := target.ConnectionURL(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(got, "application_name=memory-migrate") {
+			t.Errorf("ConnectionURL() = %q, want application_name=memory-migrate", got)
+		}
+	})
+
+	t.Run("DATABASE_URL application_name preserved", func(t *testing.T) {
+		raw := "postgres://u:p@host:5432/db?application_name=from-url"
+		target, err := resolveTarget(fakeEnv(map[string]string{"DATABASE_URL": raw}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := target.ConnectionURL(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(got, "application_name=from-url") {
+			t.Errorf("ConnectionURL() = %q, want application_name=from-url", got)
+		}
+	})
+
+	t.Run("DATABASE_URL unmodelled params preserved", func(t *testing.T) {
+		raw := "postgres://u:p@host:5432/db?search_path=kb&sslmode=require"
+		target, err := resolveTarget(fakeEnv(map[string]string{"DATABASE_URL": raw}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := target.ConnectionURL(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(got, "search_path=kb") || !strings.Contains(got, "sslmode=require") {
+			t.Errorf("ConnectionURL() = %q, dropped unmodelled params", got)
+		}
+	})
+
+	t.Run("DB_APPLICATION_NAME override applies on DATABASE_URL path", func(t *testing.T) {
+		raw := "postgres://u:p@host:5432/db"
+		target, err := resolveTarget(fakeEnv(map[string]string{
+			"DATABASE_URL":        raw,
+			"DB_APPLICATION_NAME": "my-migrator",
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := target.ConnectionURL(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(got, "application_name=my-migrator") {
+			t.Errorf("ConnectionURL() = %q, want application_name=my-migrator", got)
+		}
+	})
+}
+
+// TestConnectionURLReachesPgxRuntimeParams closes the loop: the URL returned by
+// ConnectionURL must land in pgx's RuntimeParams, which is what the client sends
+// in the startup packet as application_name.
+func TestConnectionURLReachesPgxRuntimeParams(t *testing.T) {
+	raw := "postgres://u:p@host:5432/db"
+	target, err := resolveTarget(fakeEnv(map[string]string{"DATABASE_URL": raw}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbURL, err := target.ConnectionURL(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	poolCfg, err := pgxpool.ParseConfig(dbURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := poolCfg.ConnConfig.RuntimeParams["application_name"]; got != "memory-migrate" {
+		t.Errorf("RuntimeParams[application_name] = %q, want memory-migrate", got)
 	}
 }
 

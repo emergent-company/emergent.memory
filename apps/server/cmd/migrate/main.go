@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -77,9 +76,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	dbURL := strings.TrimSpace(os.Getenv("DATABASE_URL"))
-	if dbURL == "" {
-		dbURL = target.DSN()
+	// ConnectionURL keeps application_name on both resolution paths: it uses
+	// DATABASE_URL verbatim when set (preserving parameters the resolver does
+	// not model) but ensures application_name is present, and falls back to the
+	// component DSN otherwise.
+	dbURL, err := target.ConnectionURL(os.Getenv("DATABASE_URL"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
 	}
 
 	// Connect to database

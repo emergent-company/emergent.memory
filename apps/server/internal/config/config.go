@@ -157,6 +157,10 @@ type DatabaseConfig struct {
 	MaxIdleConns int           `env:"DB_MAX_IDLE_CONNS" envDefault:"25"`
 	MaxIdleTime  time.Duration `env:"DB_MAX_IDLE_TIME" envDefault:"5m"`
 	QueryDebug   bool          `env:"DB_QUERY_DEBUG" envDefault:"false"`
+	// ApplicationName is reported as the PostgreSQL application_name for every
+	// connection in this pool, so pg_stat_activity can attribute connections to
+	// their client. Set DB_APPLICATION_NAME to override.
+	ApplicationName string `env:"DB_APPLICATION_NAME" envDefault:"memory-server"`
 }
 
 // DSN returns the PostgreSQL connection string
@@ -167,9 +171,14 @@ type DatabaseConfig struct {
 // instead of corrupting the DSN. Ordinary credentials are unchanged.
 func (d *DatabaseConfig) DSN() string {
 	userinfo := url.UserPassword(d.User, d.Password).String()
+	query := url.Values{}
+	query.Set("sslmode", d.SSLMode)
+	if d.ApplicationName != "" {
+		query.Set("application_name", d.ApplicationName)
+	}
 	return fmt.Sprintf(
-		"postgres://%s@%s:%d/%s?sslmode=%s",
-		userinfo, d.Host, d.Port, d.Database, d.SSLMode,
+		"postgres://%s@%s:%d/%s?%s",
+		userinfo, d.Host, d.Port, d.Database, query.Encode(),
 	)
 }
 

@@ -166,6 +166,9 @@ func SetupTestDB(ctx context.Context, suffix string) (*TestDB, error) {
 	if err := Apply(&baseCfg.Database); err != nil {
 		return nil, err
 	}
+	// Distinct application_name so test harness connections are identifiable in
+	// pg_stat_activity separately from the server pool.
+	baseCfg.Database.ApplicationName = "memory-testdb"
 
 	// Ensure template database exists (only done once per test run)
 	templateOnce.Do(func() {
@@ -514,6 +517,7 @@ func DropTemplateDB(ctx context.Context) error {
 	if err := Apply(&baseCfg.Database); err != nil {
 		return err
 	}
+	baseCfg.Database.ApplicationName = "memory-testdb"
 	dropTestDB(ctx, baseCfg, templateDBName)
 	return nil
 }
