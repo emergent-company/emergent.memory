@@ -8,6 +8,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/embeddingtext"
 )
 
 func TestConvertToObjectSchema(t *testing.T) {
@@ -1915,8 +1916,8 @@ func TestGraphEmbeddingWorker_ExtractText(t *testing.T) {
 
 	// --- char budget truncation ---
 	t.Run("long text truncated at char budget", func(t *testing.T) {
-		// Build a property value longer than maxEmbeddingChars
-		longValue := make([]byte, maxEmbeddingChars+500)
+		// Build a property value longer than embeddingtext.MaxChars
+		longValue := make([]byte, embeddingtext.MaxChars+500)
 		for i := range longValue {
 			if i%6 == 5 {
 				longValue[i] = ' '
@@ -1931,8 +1932,8 @@ func TestGraphEmbeddingWorker_ExtractText(t *testing.T) {
 			},
 		}
 		result := w.extractText(obj)
-		if len(result) > maxEmbeddingChars+10 { // small allowance for "..."
-			t.Errorf("extractText() result length %d exceeds maxEmbeddingChars %d", len(result), maxEmbeddingChars)
+		if len(result) > embeddingtext.MaxChars+10 { // small allowance for "..."
+			t.Errorf("extractText() result length %d exceeds embeddingtext.MaxChars %d", len(result), embeddingtext.MaxChars)
 		}
 		if len(result) > 3 && result[len(result)-3:] != "..." {
 			t.Errorf("extractText() truncated result should end with '...', got: %q", result[len(result)-10:])

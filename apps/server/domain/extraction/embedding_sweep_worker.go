@@ -13,6 +13,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings/vertex"
+	"github.com/emergent-company/emergent.memory/pkg/embeddingtext"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -660,7 +661,7 @@ func buildTripletText(srcName, dstName, relType string, label *string, relPropsJ
 	for k, v := range props {
 		lk := strings.ToLower(k)
 		// Reuse the same skip list as graph objects — skip IDs, URLs, timestamps, etc.
-		if skipEmbeddingKey[lk] {
+		if embeddingtext.IsSkippedKey(lk) {
 			continue
 		}
 		s, ok := v.(string)

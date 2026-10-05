@@ -16,6 +16,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings/vertex"
+	"github.com/emergent-company/emergent.memory/pkg/embeddingtext"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/syshealth"
 	"github.com/emergent-company/emergent.memory/pkg/tracing"
@@ -764,152 +765,14 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 	return nil
 }
 
-// maxEmbeddingChars is the character budget for embedding text.
-// Gemini embedding models accept ~3 000 tokens; at ~5 chars/word this gives
-// plenty of headroom while preventing runaway concatenation on large objects.
-const maxEmbeddingChars = 8000
-
-// skipEmbeddingKey lists property keys that carry no semantic value for embedding.
-var skipEmbeddingKey = map[string]bool{
-	"id":         true,
-	"url":        true,
-	"uri":        true,
-	"href":       true,
-	"license":    true,
-	"version":    true,
-	"citations":  true,
-	"references": true,
-	"hash":       true,
-	"checksum":   true,
-	"created_at": true,
-	"updated_at": true,
-	"deleted_at": true,
-}
-
-// boostedEmbeddingKeys are semantic fields prepended (and repeated ×2) to
-// increase their weight in the embedding vector. Order is significant: more
-// important fields first so they are never truncated by the char budget.
-var boostedEmbeddingKeys = []string{"name", "title", "description", "summary", "label"}
-
-// isUUID returns true if s looks like a UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).
-func isUUID(s string) bool {
-	if len(s) != 36 {
-		return false
-	}
-	for i, c := range s {
-		if i == 8 || i == 13 || i == 18 || i == 23 {
-			if c != '-' {
-				return false
-			}
-		} else if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-			return false
-		}
-	}
-	return true
-}
-
-// extractText extracts semantic text from a graph object for embedding.
+// extractText builds the semantic text embedded for a graph object.
 //
-// Token order (most important → least important):
-//  1. obj.Type
-//  2. Stripped key (namespace prefix removed)
-//  3. Boosted fields (name/title/description/summary/label) — each repeated ×2
-//     so their cosine-distance weight dominates over incidental properties.
-//  4. Remaining string/numeric/bool property values (boosted keys skipped here).
-//
-// Skips: IDs, UUIDs, URLs, internal metadata keys (skipEmbeddingKey), large numerics.
-// Output is capped at maxEmbeddingChars characters (word-boundary truncation).
+// The builder lives in pkg/embeddingtext so the graph write path hashes the
+// exact same (deterministic) text to decide whether a write actually changes
+// the embedding — see issue #1478. Keeping a single implementation guarantees
+// the enqueue guard and the worker can never drift.
 func (w *GraphEmbeddingWorker) extractText(obj *graphObjectRow) string {
-	var tokens []string
-
-	tokens = append(tokens, obj.Type)
-
-	// Strip namespace prefix from key (e.g. "ns:sarah" → "sarah")
-	if obj.Key != nil && *obj.Key != "" {
-		k := *obj.Key
-		if i := strings.LastIndex(k, ":"); i >= 0 {
-			k = k[i+1:]
-		}
-		if k != "" && !isUUID(k) {
-			tokens = append(tokens, k)
-		}
-	}
-
-	// isEmbeddableString returns true for non-empty, non-UUID, non-URL strings.
-	isEmbeddableString := func(s string) bool {
-		if s == "" || isUUID(s) {
-			return false
-		}
-		if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
-			return false
-		}
-		return true
-	}
-
-	// Phase 1: boosted keys — prepend each value twice to increase embedding weight.
-	for _, bk := range boostedEmbeddingKeys {
-		v, ok := obj.Properties[bk]
-		if !ok {
-			continue
-		}
-		if s, ok := v.(string); ok && isEmbeddableString(s) {
-			tokens = append(tokens, s, s) // ×2 repetition
-		}
-	}
-
-	// Phase 2: remaining properties (boosted keys skipped to avoid triple-counting).
-	boostedSet := make(map[string]bool, len(boostedEmbeddingKeys))
-	for _, bk := range boostedEmbeddingKeys {
-		boostedSet[bk] = true
-	}
-
-	var walk func(key string, v interface{})
-	walk = func(key string, v interface{}) {
-		if v == nil {
-			return
-		}
-		lk := strings.ToLower(key)
-		if skipEmbeddingKey[lk] || boostedSet[lk] {
-			return
-		}
-		switch val := v.(type) {
-		case string:
-			if isEmbeddableString(val) {
-				tokens = append(tokens, val)
-			}
-		case float64:
-			// Skip large numeric IDs (>= 1e9); include small counts/years
-			if val < 1e9 {
-				tokens = append(tokens, fmt.Sprintf("%v", val))
-			}
-		case bool:
-			tokens = append(tokens, fmt.Sprintf("%v", val))
-		case []interface{}:
-			for _, x := range val {
-				walk(key, x)
-			}
-		case map[string]interface{}:
-			for k, x := range val {
-				walk(k, x)
-			}
-		}
-	}
-
-	for k, v := range obj.Properties {
-		walk(k, v)
-	}
-
-	full := strings.Join(tokens, " ")
-
-	// Apply character budget — truncate at word boundary.
-	if len(full) <= maxEmbeddingChars {
-		return full
-	}
-	truncated := full[:maxEmbeddingChars]
-	if i := strings.LastIndex(truncated, " "); i > 0 {
-		truncated = truncated[:i]
-	}
-	return truncated + "..."
+	return embeddingtext.Text(obj.Type, obj.Key, obj.Properties)
 }
 
 // vectorToString converts a float32 slice to PostgreSQL vector string format

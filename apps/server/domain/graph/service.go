@@ -23,6 +23,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/embeddingtext"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/mathutil"
 )
@@ -342,6 +343,39 @@ func (s *Service) enqueueEmbeddingForType(ctx context.Context, projectID uuid.UU
 		return
 	}
 	s.enqueueEmbedding(ctx, objectID)
+}
+
+// embeddingTextUnchanged reports whether two object states produce byte-
+// identical embedding text (type + stripped key + semantic properties). It uses
+// the same builder as the extraction worker (pkg/embeddingtext), so a change
+// the worker would notice can never be missed by the enqueue guard (#1478).
+func embeddingTextUnchanged(prev, next *GraphObject) bool {
+	// Normalize both states to their JSON representation first: `next` may hold
+	// caller-supplied Go values (int, []string, …) that the worker — reading the
+	// persisted JSONB back — would see as float64/[]any. Hashing the two views
+	// without normalizing could miss a real change (Copilot #1488 review).
+	return embeddingtext.Hash(prev.Type, prev.Key, embeddingtext.Normalize(prev.Properties)) ==
+		embeddingtext.Hash(next.Type, next.Key, embeddingtext.Normalize(next.Properties))
+}
+
+// carryEmbeddingIfUnchanged keeps a newly-created version's embedding in sync
+// when the embedding-relevant text did not change: the previous vector is
+// copied onto the new row (inside the caller's transaction) so the new HEAD
+// stays searchable without a redundant re-embed. It returns wantEnqueue=true
+// when the text DID change, meaning the caller must enqueue a fresh embedding
+// after commit. An unchanged row that was never embedded is left to the
+// self-healing embedding sweep.
+func (s *Service) carryEmbeddingIfUnchanged(ctx context.Context, tx bun.Tx, prev, next *GraphObject) (bool, error) {
+	if !embeddingTextUnchanged(prev, next) {
+		return true, nil
+	}
+	// CopyEmbedding guards on src.embedding_v2 IS NOT NULL, so actual vector
+	// presence — not the embedding_updated_at timestamp — decides carry-over. A
+	// legacy/backfilled row with a vector but a NULL timestamp still carries.
+	if _, err := s.repo.CopyEmbedding(ctx, tx, prev.ID, next.ID); err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
 // enqueueRelationshipEmbedding enqueues a graph relationship for async embedding generation.
@@ -1046,11 +1080,20 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 		return nil, false, err
 	}
 
+	// Only re-embed when the embedding-relevant text actually changed; otherwise
+	// carry the previous vector onto the new version row (#1478).
+	wantEnqueue, err := s.carryEmbeddingIfUnchanged(ctx, tx.Tx, existing, newVersion)
+	if err != nil {
+		return nil, false, err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, false, apperror.ErrDatabase.WithInternal(err)
 	}
 
-	s.enqueueEmbeddingForType(ctx, projectID, newVersion.Type, newVersion.ID.String())
+	if wantEnqueue {
+		s.enqueueEmbeddingForType(ctx, projectID, newVersion.Type, newVersion.ID.String())
+	}
 
 	s.emitObjectUpdated(ctx, newVersion.ToResponse())
 
@@ -1262,11 +1305,20 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		return nil, err
 	}
 
+	// Only re-embed when the embedding-relevant text actually changed; otherwise
+	// carry the previous vector onto the new version row (#1478).
+	wantEnqueue, err := s.carryEmbeddingIfUnchanged(ctx, tx.Tx, current, newVersion)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
-	s.enqueueEmbeddingForType(ctx, projectID, newVersion.Type, newVersion.ID.String())
+	if wantEnqueue {
+		s.enqueueEmbeddingForType(ctx, projectID, newVersion.Type, newVersion.ID.String())
+	}
 
 	if newVersion.Key != nil {
 		objType := newVersion.Type
@@ -5300,8 +5352,12 @@ func (s *Service) MoveObject(ctx context.Context, projectID, objectID uuid.UUID,
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
-	// Re-queue embedding for the moved object
-	s.enqueueEmbeddingForType(ctx, projectID, current.Type, current.ID.String())
+	// A branch move does not change the object's embedding-relevant text, so the
+	// existing vector stays valid. Only enqueue when the moved row has no
+	// embedding yet (#1478).
+	if current.EmbeddingUpdatedAt == nil {
+		s.enqueueEmbeddingForType(ctx, projectID, current.Type, current.ID.String())
+	}
 	for _, rel := range rels {
 		s.enqueueRelationshipEmbedding(ctx, rel.ID.String())
 	}

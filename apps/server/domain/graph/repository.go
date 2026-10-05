@@ -891,6 +891,30 @@ func (r *Repository) CreateVersion(ctx context.Context, tx bun.Tx, prevHead *Gra
 	return nil
 }
 
+// CopyEmbedding copies the pgvector embedding (and its timestamp) from one
+// graph_objects row to another within the same transaction, leaving the source
+// row untouched. It is used when a new version is created but the embedding-
+// relevant text is unchanged, so the new HEAD inherits the existing embedding
+// instead of being re-embedded (issue #1478). Reports whether a non-NULL
+// embedding was actually copied.
+func (r *Repository) CopyEmbedding(ctx context.Context, tx bun.Tx, fromID, toID uuid.UUID) (bool, error) {
+	res, err := tx.NewRaw(`
+		UPDATE kb.graph_objects AS dst
+		SET embedding_v2 = src.embedding_v2,
+		    embedding_updated_at = src.embedding_updated_at
+		FROM kb.graph_objects AS src
+		WHERE dst.id = ? AND src.id = ? AND src.embedding_v2 IS NOT NULL`,
+		toID, fromID).Exec(ctx)
+	if err != nil {
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+	return n > 0, nil
+}
+
 // SoftDelete marks a graph object as deleted by creating a tombstone version.
 func (r *Repository) SoftDelete(ctx context.Context, tx bun.Tx, obj *GraphObject, actorType string, actorID *uuid.UUID, reason *string) error {
 	now := time.Now()
