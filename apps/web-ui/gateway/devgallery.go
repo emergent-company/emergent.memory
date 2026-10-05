@@ -163,12 +163,15 @@ func (e GalleryEntry) ExternalDeps() []string {
 }
 
 // uiComponentGallery serves the catalog page. The route is always registered;
-// the handler 404s when the flag is off so both states are httptest-able.
+// the handler 404s when the flag is off so both states are httptest-able. The
+// page is rendered as its own chromeless document (no app shell): the gallery
+// body is composed into ComponentGalleryDocument and served via RenderPage.
 func (s *Server) uiComponentGallery(c echo.Context) error {
 	if !s.cfg.ComponentGallery {
 		return echo.ErrNotFound
 	}
-	return s.page(c, pageTitle("Component gallery"), ComponentGalleryPage(componentGallery()))
+	render.RenderPage(c.Response().Writer, c.Request(), ComponentGalleryDocument(ComponentGalleryPage(componentGallery())))
+	return nil
 }
 
 // uiComponentPreview serves one component's isolated preview document.

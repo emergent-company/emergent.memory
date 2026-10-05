@@ -92,7 +92,7 @@ The gallery SHALL only be served when it is explicitly enabled by configuration.
 #### Scenario: Enabled gallery is served
 
 - **WHEN** the gallery is enabled and a request is made to the gallery page
-- **THEN** the catalog is rendered inside the application shell
+- **THEN** the catalog is rendered as a chromeless full-width page without the app sidebar or topbar
 
 #### Scenario: No navigation link when disabled
 

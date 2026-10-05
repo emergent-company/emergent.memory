@@ -5,20 +5,44 @@ import (
 
 	tpl "github.com/a-h/templ"
 	"github.com/emergent-company/emergent.memory/apps/web-ui/webui"
-	"github.com/emergent-company/go-daisy/components/layout"
 )
 
-// ComponentGalleryPage lists the catalog grouped by layer and category, with a
-// sticky index, a fixture preview per entry, and a collapsible dependency panel.
+// ComponentGalleryDocument is the standalone, chromeless document for the dev
+// component gallery. It emits its own <head> and <body> instead of the app
+// shell, so the gallery has no sidebar, no topbar, and no project chrome. Its
+// body is passed in as a component: taking the content as a parameter keeps the
+// generated dependency graph stable (a render of a parameter is not a graph
+// edge), so the handler can compose it without changing the committed graph.
+templ ComponentGalleryDocument(content templ.Component) {
+	<!DOCTYPE html>
+	<html lang="en" data-theme="dark">
+		<head>
+			<meta charset="UTF-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+			<meta name="color-scheme" content="dark"/>
+			<meta name="robots" content="noindex,nofollow"/>
+			<title>{ pageTitle("Component gallery") }</title>
+			<link rel="stylesheet" href={ webui.AssetPath("/css/app.css") }/>
+		</head>
+		<body class="bg-base-200 text-base-content min-h-screen">
+			@content
+		</body>
+	</html>
+}
+
+// ComponentGalleryPage renders the gallery body (no app shell): a small header,
+// a full-bleed gutter, and the catalog grouped by layer and category in one
+// column. It is composed into ComponentGalleryDocument by uiComponentGallery.
+// The outer element is a full-width <main> landmark — the page is chromeless,
+// so it does not use the shared app page container, but the document still
+// needs a main landmark of its own.
 //
 // Previews are lazy-loaded isolated iframes; the iframe sandbox omits allow-forms
 // and allow-same-origin so a preview cannot mutate the backend or read the
-// session cookie. The page sits in the shared page container and renders exactly
-// one catalog component (galleryLayerSection); the surrounding chrome is raw
-// markup so the generated component graph stays minimal.
+// session cookie.
 templ ComponentGalleryPage(entries []GalleryEntry) {
 	{{ total, needsFixture := galleryStats(entries) }}
-	@layout.Container(layout.ContainerLG, tpl.Attributes{"data-testid": "component-gallery"}) {
+	<main class="w-full px-6 sm:px-8" { tpl.Attributes{"data-testid": "component-gallery"}... }>
 		@pageHeader("Dev", "Component gallery", "Reusable gateway templ components, grouped by layer and category. Each renders in its own sandboxed fixture frame.") {
 			<span class="badge badge-ghost badge-sm" data-testid="gallery-total">{ countLabel(total, "component", "components") }</span>
 			if needsFixture > 0 {
@@ -26,53 +50,22 @@ templ ComponentGalleryPage(entries []GalleryEntry) {
 			}
 		}
 
-		<div class="lg:grid lg:grid-cols-[15rem_minmax(0,1fr)] lg:items-start lg:gap-8">
-			<nav hx-boost="false" aria-label="Component index" data-testid="gallery-index" class="mb-8 lg:sticky lg:top-6 lg:mb-0 lg:max-h-[calc(100vh-4rem)] lg:overflow-y-auto lg:pr-1">
-				<!-- Mobile: layer jump chips only, so the index does not push the catalog far down. -->
-				<div class="flex gap-2 overflow-x-auto pb-1 lg:hidden">
-					for _, layer := range galleryLayerOrder() {
-						<a href={ "#layer-" + string(layer) } class="badge badge-ghost badge-sm whitespace-nowrap">
-							{ string(layer) } · { galleryLayerBlurb(layer) }
-						</a>
-					}
-				</div>
+		<!-- Compact horizontal jump row; the catalog itself is one column. -->
+		<nav aria-label="Component index" data-testid="gallery-index" class="border-base-content/10 mb-8 flex flex-wrap items-center gap-2 border-y py-2">
+			for _, layer := range galleryLayerOrder() {
+				<a href={ "#layer-" + string(layer) } class="badge badge-ghost badge-sm whitespace-nowrap">
+					{ string(layer) } · { galleryLayerBlurb(layer) }
+					<span class="text-muted-faint ml-1 tabular-nums">{ strconv.Itoa(len(entriesInLayer(entries, layer))) }</span>
+				</a>
+			}
+		</nav>
 
-				<!-- Desktop: full per-component index. -->
-				<div class="hidden lg:block">
-					<h2 class="text-muted-faint text-[11px] font-semibold tracking-[0.14em] uppercase">Index</h2>
-					<div class="mt-2 space-y-4">
-						for _, layer := range galleryLayerOrder() {
-							<div>
-								<a href={ "#layer-" + string(layer) } class="text-muted-strong hover:text-base-content group flex items-center gap-2 transition-colors">
-									<span class="badge badge-ghost badge-xs font-mono">{ string(layer) }</span>
-									<span class="text-xs font-medium">{ galleryLayerBlurb(layer) }</span>
-									<span class="text-muted-faint ml-auto text-[10px] tabular-nums">{ strconv.Itoa(len(entriesInLayer(entries, layer))) }</span>
-								</a>
-								<ul class="border-base-content/10 mt-1.5 space-y-0.5 border-l pl-2">
-									for _, entry := range entriesInLayer(entries, layer) {
-										<li>
-											<a href={ "#component-" + entry.Slug } class="text-muted-strong hover:bg-base-content/5 hover:text-base-content flex items-center gap-1.5 rounded-field px-2 py-1 text-xs transition-colors">
-												<span class="truncate">{ entry.Name }</span>
-												if entry.NeedsFixture() {
-													<span class="bg-warning ml-auto size-1.5 shrink-0 rounded-full" aria-hidden="true" title="needs fixture"></span>
-												}
-											</a>
-										</li>
-									}
-								</ul>
-							</div>
-						}
-					</div>
-				</div>
-			</nav>
-
-			<div class="min-w-0 space-y-12">
-				for _, layer := range galleryLayerOrder() {
-					@galleryLayerSection(entries, layer)
-				}
-			</div>
+		<div class="space-y-12">
+			for _, layer := range galleryLayerOrder() {
+				@galleryLayerSection(entries, layer)
+			}
 		</div>
-	}
+	</main>
 }
 
 templ galleryLayerSection(entries []GalleryEntry, layer GalleryLayer) {
@@ -88,7 +81,7 @@ templ galleryLayerSection(entries []GalleryEntry, layer GalleryLayer) {
 			for _, group := range entriesByCategory(entries, layer) {
 				<div>
 					<h3 class="text-muted-faint text-[11px] font-semibold tracking-[0.14em] uppercase">{ group.Category }</h3>
-					<div class="mt-3 grid grid-cols-1 gap-4 xl:grid-cols-2">
+					<div class="mt-3 space-y-4">
 						for _, entry := range group.Entries {
 							@galleryEntryCard(entry)
 						}
@@ -101,32 +94,71 @@ templ galleryLayerSection(entries []GalleryEntry, layer GalleryLayer) {
 
 templ galleryEntryCard(entry GalleryEntry) {
 	{{ needsFixture := entry.NeedsFixture() }}
-	<article id={ "component-" + entry.Slug } data-testid={ "gallery-entry-" + entry.Slug } class="border-base-content/10 bg-base-100 flex scroll-mt-6 flex-col overflow-hidden rounded-box border">
-		<div class="p-4">
-			<div class="flex flex-wrap items-center gap-2">
-				<h4 class="truncate text-sm font-semibold">{ entry.Name }</h4>
-				<span class="badge badge-ghost badge-sm font-mono">{ string(entry.Layer) }</span>
-				if needsFixture {
-					<span class="badge badge-warning badge-sm" data-testid="needs-fixture">needs fixture</span>
-				}
-			</div>
-			<p class="text-muted mt-1.5 text-xs leading-relaxed">{ entry.Description }</p>
-			<div class="text-muted-faint mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
-				<span class="inline-flex min-w-0 items-center gap-1">
-					<span class="iconify lucide--file-code size-3.5 shrink-0" aria-hidden="true"></span>
-					<span class="truncate font-mono">{ entry.SourceFile }</span>
-				</span>
-				if entry.PropsType != "" {
-					<span class="inline-flex min-w-0 items-center gap-1">
-						<span class="iconify lucide--braces size-3.5 shrink-0" aria-hidden="true"></span>
-						<span class="truncate font-mono">{ entry.PropsType }</span>
-					</span>
-				}
-			</div>
-		</div>
+	<article id={ "component-" + entry.Slug } data-testid={ "gallery-entry-" + entry.Slug } class="border-base-content/10 bg-base-100 scroll-mt-6 overflow-hidden rounded-box border">
+		<div class="grid grid-cols-1 lg:grid-cols-2">
+			<!-- Info column: identity, metadata, and the dependency disclosure. -->
+			<div class="flex min-w-0 flex-col">
+				<div class="p-5">
+					<div class="flex flex-wrap items-center gap-2">
+						<h4 class="truncate text-base font-semibold">{ entry.Name }</h4>
+						<span class="badge badge-ghost badge-sm font-mono">{ string(entry.Layer) }</span>
+						if needsFixture {
+							<span class="badge badge-warning badge-sm" data-testid="needs-fixture">needs fixture</span>
+						}
+					</div>
+					<p class="text-muted mt-2 text-sm leading-relaxed">{ entry.Description }</p>
+					<div class="text-muted-faint mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+						<span class="inline-flex min-w-0 items-center gap-1">
+							<span class="iconify lucide--file-code size-3.5 shrink-0" aria-hidden="true"></span>
+							<span class="truncate font-mono">{ entry.SourceFile }</span>
+						</span>
+						if entry.PropsType != "" {
+							<span class="inline-flex min-w-0 items-center gap-1">
+								<span class="iconify lucide--braces size-3.5 shrink-0" aria-hidden="true"></span>
+								<span class="truncate font-mono">{ entry.PropsType }</span>
+							</span>
+						}
+					</div>
+				</div>
 
-		<div class="px-4 pb-4">
-			<div class="border-base-content/10 bg-base-200/60 rounded-box border p-2">
+				<details class="group/deps border-base-content/10 mt-auto border-t">
+					<summary class="text-muted-strong hover:text-base-content flex cursor-pointer list-none items-center gap-2 px-5 py-2.5 text-xs transition-colors [&::-webkit-details-marker]:hidden">
+						<span class="iconify lucide--git-branch size-3.5 shrink-0" aria-hidden="true"></span>
+						<span class="font-medium">Dependencies</span>
+						<span class="badge badge-ghost badge-xs tabular-nums">{ strconv.Itoa(galleryDependencyCount(entry)) }</span>
+						if len(entry.Uses) > 0 {
+							<span class="badge badge-ghost badge-xs tabular-nums" title="Distinct components reachable through uses edges">reach { strconv.Itoa(galleryTransitiveUses(entry)) }</span>
+						}
+						<span class="iconify lucide--chevron-down ml-auto size-4 shrink-0 transition-transform group-open/deps:rotate-180" aria-hidden="true"></span>
+					</summary>
+					<div class="space-y-2.5 px-5 pb-4 text-xs">
+						if len(entry.Uses) > 0 {
+							<div class="flex gap-2">
+								<span class="text-muted-faint w-16 shrink-0 pt-0.5">Uses</span>
+								<div class="flex flex-wrap gap-1" title={ joinText(entry.Uses) }>
+									for _, use := range entry.Uses {
+										<span class="badge badge-ghost badge-xs font-mono">{ use }</span>
+									}
+								</div>
+							</div>
+						}
+						if len(entry.UsedBy) > 0 {
+							<div class="flex gap-2">
+								<span class="text-muted-faint w-16 shrink-0 pt-0.5">Used by</span>
+								<div class="flex flex-wrap gap-1" title={ joinText(entry.UsedBy) }>
+									for _, caller := range entry.UsedBy {
+										<span class="badge badge-ghost badge-xs">{ caller }</span>
+									}
+								</div>
+							</div>
+						}
+						@externalDepsList(entry)
+					</div>
+				</details>
+			</div>
+
+			<!-- Preview column: the isolated fixture frame on a neutral canvas. -->
+			<div class="border-base-content/10 bg-base-200/50 border-t p-5 lg:border-t-0 lg:border-l">
 				<iframe
 					src={ "/dev/components/preview/" + entry.Slug }
 					sandbox=""
@@ -136,46 +168,11 @@ templ galleryEntryCard(entry GalleryEntry) {
 					height="220"
 					class="bg-base-100 rounded-box block h-[220px] w-full border-0"
 				></iframe>
+				if needsFixture {
+					<p class="text-warning mt-2 text-xs">Zero-value render — add a fixture to populate this preview.</p>
+				}
 			</div>
-			if needsFixture {
-				<p class="text-warning mt-1.5 text-[11px]">Zero-value render — add a fixture to populate this preview.</p>
-			}
 		</div>
-
-		<details class="group/deps border-base-content/10 border-t">
-			<summary class="text-muted-strong hover:text-base-content flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-xs transition-colors [&::-webkit-details-marker]:hidden">
-				<span class="iconify lucide--git-branch size-3.5 shrink-0" aria-hidden="true"></span>
-				<span class="font-medium">Dependencies</span>
-				<span class="badge badge-ghost badge-xs tabular-nums">{ strconv.Itoa(galleryDependencyCount(entry)) }</span>
-				if len(entry.Uses) > 0 {
-					<span class="badge badge-ghost badge-xs tabular-nums" title="Distinct components reachable through uses edges">reach { strconv.Itoa(galleryTransitiveUses(entry)) }</span>
-				}
-				<span class="iconify lucide--chevron-down ml-auto size-4 shrink-0 transition-transform group-open/deps:rotate-180" aria-hidden="true"></span>
-			</summary>
-			<div class="space-y-2.5 px-4 pb-4 text-xs">
-				if len(entry.Uses) > 0 {
-					<div class="flex gap-2">
-						<span class="text-muted-faint w-16 shrink-0 pt-0.5">Uses</span>
-						<div class="flex flex-wrap gap-1" title={ joinText(entry.Uses) }>
-							for _, use := range entry.Uses {
-								<span class="badge badge-ghost badge-xs font-mono">{ use }</span>
-							}
-						</div>
-					</div>
-				}
-				if len(entry.UsedBy) > 0 {
-					<div class="flex gap-2">
-						<span class="text-muted-faint w-16 shrink-0 pt-0.5">Used by</span>
-						<div class="flex flex-wrap gap-1" title={ joinText(entry.UsedBy) }>
-							for _, caller := range entry.UsedBy {
-								<span class="badge badge-ghost badge-xs">{ caller }</span>
-							}
-						</div>
-					</div>
-				}
-				@externalDepsList(entry)
-			</div>
-		</details>
 	</article>
 }
 

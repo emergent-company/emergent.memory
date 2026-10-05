@@ -7,7 +7,7 @@ go-daisy's upstream module ships a reusable gallery (`galleryruntime`) plus dev-
 ## Goals / Non-Goals
 
 **Goals**
-- One dev-gated page, inside the app shell, listing reusable components with metadata and a dependency view.
+- One dev-gated, chromeless full-width page (no app sidebar or topbar), listing reusable components with metadata and a dependency view in a single column.
 - A deterministic, generated dependency graph derived from render call sites.
 - Isolated, render-only fixture previews that cannot drive the app.
 
@@ -19,7 +19,7 @@ go-daisy's upstream module ships a reusable gallery (`galleryruntime`) plus dev-
 
 ## Decisions
 
-**Native page, not an embedded `galleryruntime` server.** `galleryruntime` cannot mount into the existing Echo router (its `register` is unexported and the only entry point starts a second server) and its fixture seed is unimportable, so reuse would still require authoring a registry — while leaving the gallery outside the app shell, outside its auth, and without a dependency graph. We adopt its useful patterns (iframe isolation, story variants) in a native page. Alternatives: run the upstream gallery as a separate dev server (rejected: outside the app, no dependency graph, duplicate fixtures); fork `galleryruntime` into the repo (rejected: vendoring maintenance for no behavioural gain).
+**Native page, not an embedded `galleryruntime` server.** `galleryruntime` cannot mount into the existing Echo router (its `register` is unexported and the only entry point starts a second server) and its fixture seed is unimportable, so reuse would still require authoring a registry — while leaving the gallery a separate process outside the app's auth and without a dependency graph. We adopt its useful patterns (iframe isolation, story variants) in a native page. Alternatives: run the upstream gallery as a separate dev server (rejected: outside the app, no dependency graph, duplicate fixtures); fork `galleryruntime` into the repo (rejected: vendoring maintenance for no behavioural gain).
 
 **Scope is an explicit, test-pinned seed list.** "Shared composite" has no objective source-level signal: of the 89 exported `package main` templ funcs, 75 are `*Page`, and several of the remaining 14 are exported but used by only one page feature (e.g. `BoardColumns`, `ShareLinksHeader`). The registry therefore carries a hand-maintained seed, and a component earns a place only when reused across two or more page features or when it encapsulates an invariant — mirroring the existing "a component earns its place" convention. Operationally, a `package main` candidate is in scope when the generated used-by edges reach two or more distinct L4 page components (direct static call edges), or when the entry documents an encapsulated invariant; L3 page-local helpers are excluded by layer regardless of call count. This is the app-level interpretation of the conventions spec's "two or more call sites" rule. A unit test pins the seed and the exclusion of page/private helpers.
 
