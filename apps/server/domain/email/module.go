@@ -83,6 +83,9 @@ func NewSender(log *slog.Logger, cfg *Config) Sender {
 			log.Info("using Mailgun sender",
 				slog.String("domain", cfg.MailgunDomain),
 				slog.String("from", cfg.FromEmail))
+			if cfg.MailgunSigningKey == "" {
+				log.Warn("Mailgun webhook signing key is not set (MAILGUN_SIGNING_KEY) — the delivery-status webhook will reject every event; email delivery status will not update")
+			}
 			return mailgunSender
 		}
 	}

@@ -1,6 +1,7 @@
 package email
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
@@ -221,6 +222,61 @@ func TestNewSenderSMTPSelection(t *testing.T) {
 
 		if _, ok := sender.(*noOpSender); !ok {
 			t.Errorf("NewSender() = %T, want *noOpSender", sender)
+		}
+	})
+}
+
+func TestNewSenderWarnsWhenMailgunSigningKeyMissing(t *testing.T) {
+	t.Run("warns when signing key is empty", func(t *testing.T) {
+		var buf bytes.Buffer
+		log := slog.New(slog.NewTextHandler(&buf, nil))
+
+		cfg := &Config{
+			Enabled:       true,
+			Transport:     "mailgun",
+			MailgunDomain: "mg.example.com",
+			MailgunAPIKey: "key-abc123",
+			FromEmail:     "noreply@example.com",
+			FromName:      "Test",
+		}
+
+		sender := NewSender(log, cfg)
+
+		if _, ok := sender.(*MailgunSender); !ok {
+			t.Errorf("NewSender() = %T, want *MailgunSender", sender)
+		}
+
+		got := buf.String()
+		if !strings.Contains(got, slog.LevelWarn.String()) {
+			t.Errorf("captured log missing WARN level:\n%s", got)
+		}
+		if !strings.Contains(got, "signing key") {
+			t.Errorf("captured log missing mention of signing key:\n%s", got)
+		}
+	})
+
+	t.Run("does not warn when signing key is set", func(t *testing.T) {
+		var buf bytes.Buffer
+		log := slog.New(slog.NewTextHandler(&buf, nil))
+
+		cfg := &Config{
+			Enabled:           true,
+			Transport:         "mailgun",
+			MailgunDomain:     "mg.example.com",
+			MailgunAPIKey:     "key-abc123",
+			MailgunSigningKey: "test-key",
+			FromEmail:         "noreply@example.com",
+			FromName:          "Test",
+		}
+
+		sender := NewSender(log, cfg)
+
+		if _, ok := sender.(*MailgunSender); !ok {
+			t.Errorf("NewSender() = %T, want *MailgunSender", sender)
+		}
+
+		if got := buf.String(); strings.Contains(got, "signing key is not set") {
+			t.Errorf("captured log unexpectedly warns about missing signing key:\n%s", got)
 		}
 	})
 }

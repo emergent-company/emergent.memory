@@ -33,6 +33,7 @@ Set the following environment variables on the server:
 | `EMAIL_ENABLED` | Yes | Set to `true` to enable email sending |
 | `MAILGUN_DOMAIN` | Yes | Your Mailgun sending domain, e.g. `mg.example.com` |
 | `MAILGUN_API_KEY` | Yes | Mailgun private API key |
+| `MAILGUN_SIGNING_KEY` | No | Mailgun HTTP webhook signing key, required for delivery tracking. Found in the Mailgun control panel under Settings → API keys → HTTP webhook signing key. Without it, every delivery-status webhook is rejected fail-closed and `delivery_status` never updates |
 | `EMAIL_FROM_ADDRESS` | Yes | Sender email address, e.g. `noreply@example.com` |
 | `EMAIL_FROM_NAME` | No | Sender display name, e.g. `Memory Platform` |
 | `MAILGUN_API_BASE` | No | Override the Mailgun API base URL, including the `/v3` segment (e.g. a local stub). Defaults to the SDK US base, or the EU base when `MAILGUN_REGION=eu` |
@@ -76,7 +77,7 @@ Failed jobs use exponential backoff starting from 60 seconds. After 3 attempts (
 
 ## Delivery tracking
 
-After sending, Mailgun delivery events are polled and stored:
+Mailgun delivers delivery events (bounces, complaints, failures, deliveries) by POSTing them to the server's public webhook `POST /api/webhooks/mailgun`. Each request is HMAC-verified against `MAILGUN_SIGNING_KEY`; only validly signed events are recorded in `kb.email_logs` and reconciled to the originating `kb.email_jobs` row.
 
 | Delivery status | Description |
 |---|---|
