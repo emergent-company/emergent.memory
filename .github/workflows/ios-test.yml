@@ -1,0 +1,87 @@
+name: iOS Test
+
+# `VoiceAgentTests` compiled as part of lint/release but never actually ran:
+# there was no workflow that executed the simulator unit tests (issue #1554).
+# This supplies that job on the self-hosted `mcj-mini` Mac runner, mirroring the
+# Xcode-selection step from ios-release.yml. It needs macOS + a bootable
+# simulator, so it cannot run on the ubuntu lint runner.
+#
+# The check is named `ios-test`, NOT `ci`: the repo already emits several
+# distinct checks literally named `ci` (ci.yml, server.yml, cli.yml, web-ui.yml,
+# connector.yml), and another would make check results ambiguous.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/ios/**'
+      - '.github/workflows/ios-test.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/ios/**'
+      - '.github/workflows/ios-test.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One in-flight run per ref; a new push/PR update supersedes the previous run.
+concurrency:
+  group: ios-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios-test:
+    name: ios-test
+    runs-on: [self-hosted, macOS, ARM64, mac]
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          XCODE=$(ls -d /Applications/Xcode.app 2>/dev/null || ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE" ]; then
+            echo "::error::No Xcode found in /Applications"
+            exit 1
+          fi
+          echo "Selecting $XCODE"
+          sudo -n xcode-select -s "$XCODE" 2>/dev/null || true
+          xcodebuild -version
+
+      - name: Cache Swift Package Manager
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/org.swift.swiftpm
+          key: ios-spm-${{ runner.os }}-${{ hashFiles('apps/ios/VoiceAgent.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: |
+            ios-spm-${{ runner.os }}-
+
+      - name: Cache DerivedData
+        uses: actions/cache@v4
+        with:
+          # -derivedDataPath below pins this to a deterministic, cacheable path.
+          path: apps/ios/build/DerivedData
+          key: ios-derived-${{ runner.os }}-${{ hashFiles('apps/ios/VoiceAgent.xcodeproj/project.pbxproj') }}
+          restore-keys: |
+            ios-derived-${{ runner.os }}-
+
+      - name: Build (iOS Simulator)
+        working-directory: apps/ios
+        run: |
+          set -o pipefail
+          xcodebuild -project VoiceAgent.xcodeproj -scheme VoiceAgent \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO build
+
+      - name: Test (iOS Simulator)
+        working-directory: apps/ios
+        run: |
+          set -o pipefail
+          # Use the device NAME, not a UDID: device ids are not stable across runtimes.
+          xcodebuild -project VoiceAgent.xcodeproj -scheme VoiceAgent \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO test
