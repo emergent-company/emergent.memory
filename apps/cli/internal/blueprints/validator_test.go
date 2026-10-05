@@ -87,3 +87,71 @@ func TestValidateAgents_ServerEnums(t *testing.T) {
 		}
 	})
 }
+
+// TestValidateAgents_ModelNameProviderPrefix verifies the blueprint validator
+// rejects a model.name that is not in the server's required "provider/model"
+// form, so an offline `memory blueprints validate` fails before the server
+// would 400 on apply (#1489).
+func TestValidateAgents_ModelNameProviderPrefix(t *testing.T) {
+	t.Run("prefixed model names pass", func(t *testing.T) {
+		agents := []blueprints.AgentFile{
+			{Name: "prefixed", Description: "d", Model: &blueprints.AgentModel{Name: "deepseek/deepseek-v4-flash"}},
+			{Name: "vertex", Description: "d", Model: &blueprints.AgentModel{Name: "google-vertex/publishers/google/models/gemini-2.5-flash"}},
+		}
+		report := blueprints.Validate(nil, nil, agents, nil, nil, nil, nil)
+		if report.HasErrors() {
+			t.Fatalf("expected no errors for prefixed model names, got: %v", report.Errors())
+		}
+	})
+
+	t.Run("bare model name is rejected", func(t *testing.T) {
+		agents := []blueprints.AgentFile{
+			{Name: "bare", Description: "d", Model: &blueprints.AgentModel{Name: "gemini-2.5-flash"}},
+		}
+		report := blueprints.Validate(nil, nil, agents, nil, nil, nil, nil)
+		errs := report.Errors()
+		if len(errs) != 1 {
+			t.Fatalf("expected 1 error for bare model name, got %d: %v", len(errs), errs)
+		}
+		if errs[0].Field != "model.name" {
+			t.Fatalf("expected field model.name, got %q", errs[0].Field)
+		}
+		if !strings.Contains(errs[0].Message, "provider/model") {
+			t.Fatalf("expected message to mention provider/model form, got: %q", errs[0].Message)
+		}
+	})
+
+	t.Run("malformed prefixed names are rejected", func(t *testing.T) {
+		for _, name := range []string{"openai/", "/gpt-4o", "/"} {
+			agents := []blueprints.AgentFile{
+				{Name: "malformed", Description: "d", Model: &blueprints.AgentModel{Name: name}},
+			}
+			report := blueprints.Validate(nil, nil, agents, nil, nil, nil, nil)
+			if !report.HasErrors() {
+				t.Fatalf("expected an error for malformed model name %q, got none", name)
+			}
+		}
+	})
+
+	t.Run("absent model block passes", func(t *testing.T) {
+		agents := []blueprints.AgentFile{{Name: "no-model", Description: "d"}}
+		report := blueprints.Validate(nil, nil, agents, nil, nil, nil, nil)
+		if report.HasErrors() {
+			t.Fatalf("expected no errors without a model block, got: %v", report.Errors())
+		}
+	})
+
+	t.Run("empty model name reports required, not form", func(t *testing.T) {
+		agents := []blueprints.AgentFile{
+			{Name: "empty-model", Description: "d", Model: &blueprints.AgentModel{Name: ""}},
+		}
+		report := blueprints.Validate(nil, nil, agents, nil, nil, nil, nil)
+		errs := report.Errors()
+		if len(errs) != 1 {
+			t.Fatalf("expected 1 error for empty model name, got %d: %v", len(errs), errs)
+		}
+		if !strings.Contains(errs[0].Message, "required") {
+			t.Fatalf("expected required message for empty model name, got: %q", errs[0].Message)
+		}
+	})
+}

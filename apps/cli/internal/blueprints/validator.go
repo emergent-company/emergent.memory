@@ -3,6 +3,8 @@ package blueprints
 import (
 	"fmt"
 	"strings"
+
+	sdkmodelref "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/modelref"
 )
 
 // ──────────────────────────────────────────────
@@ -294,6 +296,16 @@ func (r *ValidationReport) validateAgents(agents []AgentFile) {
 		if a.Model != nil && a.Model.Name == "" {
 			r.add(ValidationError, "agent", a.Name, a.SourceFile, "model.name",
 				"model.name is required when a model block is present")
+		}
+
+		// The server's create/update handlers reject a model name that is not in
+		// "provider/model" form. Parse via the shared SDK package so the CLI and
+		// server apply the exact same rule and cannot drift (#1489).
+		if a.Model != nil && a.Model.Name != "" {
+			if _, err := sdkmodelref.Parse(a.Model.Name); err != nil {
+				r.add(ValidationError, "agent", a.Name, a.SourceFile, "model.name",
+					`model.name must be in 'provider/model' form (e.g. "deepseek/deepseek-v4-flash" or "google/gemini-2.5-flash")`)
+			}
 		}
 
 		if a.MaxSteps != nil && *a.MaxSteps <= 0 {

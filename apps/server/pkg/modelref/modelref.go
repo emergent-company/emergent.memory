@@ -1,14 +1,19 @@
 // Package modelref defines the canonical structured model reference used across
 // the server: a provider instance (slug) plus a bare model name.
 //
-// It lives in a dependency-neutral package so that both pkg/adk and
-// domain/provider can import it without creating an import cycle
-// (domain/provider already imports pkg/adk via its ADK adapters).
+// The implementation lives in the shared SDK package
+// apps/server/pkg/sdk/modelref, which the CLI also imports; this package
+// re-exports it so internal server callers keep their import path and the
+// accept/reject rule cannot drift between server and CLI (#1489).
+//
+// It stays dependency-neutral (the SDK package imports only the standard
+// library) so that both pkg/adk and domain/provider can import it without
+// creating an import cycle (domain/provider already imports pkg/adk via its ADK
+// adapters).
 package modelref
 
 import (
-	"fmt"
-	"strings"
+	sdkmodelref "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/modelref"
 )
 
 // Ref identifies a model served by a specific provider instance.
@@ -20,46 +25,15 @@ import (
 // Model is the bare model name as the provider API expects it. It may itself
 // contain '/' (for example a Vertex resource path such as
 // "publishers/google/models/gemini-2.5-flash").
-type Ref struct {
-	Provider string
-	Model    string
-}
-
-// String renders the display/edge form "provider/model".
-func (r Ref) String() string {
-	switch {
-	case r.Provider == "":
-		return r.Model
-	case r.Model == "":
-		return r.Provider
-	default:
-		return r.Provider + "/" + r.Model
-	}
-}
-
-// IsZero reports whether the reference does not identify both a provider and a
-// model.
-func (r Ref) IsZero() bool { return r.Provider == "" || r.Model == "" }
+type Ref = sdkmodelref.Ref
 
 // Parse parses the edge form "provider/model" into a Ref.
 //
 // It splits on the FIRST '/', so a model name that itself contains slashes is
 // preserved intact. The provider segment and the model must both be non-empty.
+// Delegates to the canonical shared implementation.
 func Parse(s string) (Ref, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return Ref{}, fmt.Errorf("empty model reference")
-	}
-	provider, model, found := strings.Cut(s, "/")
-	provider = strings.TrimSpace(provider)
-	model = strings.TrimSpace(model)
-	if !found || provider == "" {
-		return Ref{}, fmt.Errorf("invalid model reference %q: expected 'provider/model'", s)
-	}
-	if model == "" {
-		return Ref{}, fmt.Errorf("invalid model reference %q: missing model name", s)
-	}
-	return Ref{Provider: provider, Model: model}, nil
+	return sdkmodelref.Parse(s)
 }
 
 // StripRoutingPrefix removes a leading routing-provider prefix from s when the

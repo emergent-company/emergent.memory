@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# Model-name prefix parsing must live in exactly one place: pkg/modelref.
+# Model-name prefix parsing must live in exactly one place: the canonical
+# implementation in pkg/sdk/modelref, re-exported by pkg/modelref for internal
+# server callers and imported directly by the CLI (#1489).
 #
 # Issue #1064 removed the last ad-hoc "exactly one slash" prefix parsers
 # (domain/provider stripModelPrefix, pkg/adk stripRoutingPrefix) in favour of
 # modelref.Parse / modelref.StripRoutingPrefix. This gate runs an AST-based Go
 # guard (apps/server/cmd/modelref-guard) that fails when a model name is split
 # on a literal "/" with strings.Cut / strings.Split / strings.SplitN anywhere
-# outside pkg/modelref, unless the site carries a documented modelref:allow
-# marker explaining why it is not reconstructing provider identity from a routed
-# model string.
+# outside the canonical modelref packages, unless the site carries a documented
+# modelref:allow marker explaining why it is not reconstructing provider identity
+# from a routed model string.
 #
 # AST (not regex) is used for detection so nested calls and unrelated
 # "strings.Cut(x, \"/\")" uses resolve exactly. Wired into CI via

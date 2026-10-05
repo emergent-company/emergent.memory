@@ -1,18 +1,20 @@
 // Command modelref-guard keeps model-name prefix parsing in exactly one place:
-// pkg/modelref.
+// the canonical modelref implementation in pkg/sdk/modelref, which pkg/modelref
+// re-exports for internal server callers and the CLI imports directly (#1489).
 //
 // Issue #1064 removed the last ad-hoc "exactly one slash" prefix parsers
 // (domain/provider's stripModelPrefix and pkg/adk's stripRoutingPrefix) in
 // favour of the canonical modelref.Parse / modelref.StripRoutingPrefix. This
 // guard is the ratchet that keeps them from coming back: it fails when a model
 // name is split on a literal "/" with strings.Cut / strings.Split / strings.SplitN
-// anywhere outside pkg/modelref, unless the site carries a documented
-// "modelref:allow" marker explaining why it is not reconstructing provider
-// identity from a routed model string.
+// anywhere outside the canonical modelref packages, unless the site carries a
+// documented "modelref:allow" marker explaining why it is not reconstructing
+// provider identity from a routed model string.
 //
 // The check is AST-based (go/parser, not regex) so nested calls and unrelated
 // "strings.Cut(x, \"/\")" uses are resolved exactly: only a call whose second
-// argument is the literal "/" separator is flagged. pkg/modelref is exempt as
+// argument is the literal "/" separator is flagged. pkg/sdk/modelref (the
+// implementation) and pkg/modelref (its server-facing re-export) are exempt as
 // the canonical home. Each surviving site must justify itself with a
 // modelref:allow comment on the offending line or the immediately preceding
 // lines; an unmarked site fails the guard.
@@ -118,7 +120,7 @@ func findSplitSites(serverDir string) ([]site, error) {
 		if err != nil {
 			return err
 		}
-		inModelref := rel == "pkg/modelref/modelref.go" || strings.HasPrefix(rel, "pkg/modelref/")
+		inModelref := strings.HasPrefix(rel, "pkg/modelref/") || strings.HasPrefix(rel, "pkg/sdk/modelref/")
 		if inModelref {
 			return nil // canonical home — exempt
 		}
