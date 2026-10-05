@@ -20,9 +20,10 @@ func registerTestRoutes(t *testing.T) *echo.Echo {
 	h := NewHandler(svc, slog.Default(), nil)
 	sse := NewSSEHandler(svc, h, slog.Default())
 	stream := NewStreamableHTTPHandler(svc, slog.Default())
+	adminStream := NewAdminStreamableHTTPHandler(svc, slog.Default())
 	ep := NewAgentEndpointHandler(svc, slog.Default())
 	mw := auth.NewMiddleware(auth.MiddlewareParams{Cfg: &config.Config{}, Log: slog.Default()})
-	RegisterRoutes(e, h, sse, stream, ep, mw)
+	RegisterRoutes(e, h, sse, stream, adminStream, ep, mw)
 	return e
 }
 

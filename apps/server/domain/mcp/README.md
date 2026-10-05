@@ -422,7 +422,7 @@ Contract:
 
 ### Quick Reference by Category
 
-> **Note:** Tool counts below are approximate. For the authoritative list consult the source files in `apps/server/domain/mcp/`.
+> **Note:** Tool counts below are approximate. For the authoritative list consult the source files in `apps/server/domain/mcp/`. Operator (platform-admin) tools are **not** on this table — they are served only on the dedicated `/api/mcp/admin` endpoint; see [Operator MCP Surface](#operator-mcp-surface-apimcpadmin).
 
 | Category | Tools | Count |
 |---|---|---|
@@ -434,11 +434,28 @@ Contract:
 | **Metadata** | `tag-list`, `project-get`, `project-create` | 3 |
 | **Documents** | `document-list`, `document-get`, `document-upload`, `document-delete` | 4 |
 | **Agents** | `agent-question-list`, `agent-question-list-project`, `agent-question-respond`, `agent-hook-list`, `agent-hook-create`, `agent-hook-delete`, `adk-session-list`, `adk-session-get`, `remember-status` | 9 |
-| **Providers** | `provider-list-org`, `provider-configure-org`, `provider-configure-project`, `provider-models-list`, `provider-test`, `provider-usage-get` | 6 |
+| **Providers (project)** | `provider-configure-project`, `provider-models-list` | 2 |
 | **Skills** | `skill-list`, `skill-get`, `skill-create`, `skill-update`, `skill-delete` | 5 |
 | **Tokens** | `token-list`, `token-create`, `token-get`, `token-revoke` | 4 |
-| **Embeddings** | `embedding-status`, `embedding-pause`, `embedding-resume`, `embedding-config-update` | 4 |
-| **Traces** | `trace-list`, `trace-get` | 2 |
+| **Operator (superadmin)** | 40 tools — see [Operator MCP Surface](#operator-mcp-surface-apimcpadmin) | 40 |
+
+---
+
+### Operator MCP Surface (`/api/mcp/admin`)
+
+Platform administration tools are served on a **dedicated endpoint** — `GET|POST|DELETE /api/mcp/admin` — gated by `RequireAuth()` + `RequireSuperadminFull()` (an active `superadmin_full` grant in `core.superadmins`; a `superadmin_readonly` grant, `admin`/`admin:all` token, or `org_admin` does **not** satisfy it). The endpoint speaks the same MCP protocol/transport as `/api/mcp`, resolves no project context, and requires no project membership.
+
+Operator tools are **no longer reachable on `/api/mcp`**: the project endpoint always excludes them from `tools/list` and refuses calls to them (method-not-found), regardless of the caller's superadmin status.
+
+**Operator tool catalog** (40 tools; all `SuperadminOnly`):
+
+- **Reads** (16): `superadmin-get`, `user-list`, `user-get`, `org-list`, `org-get`, `project-list`, `project-record-get`, `project-member-list`, `email-job-list`, `email-job-get`, `embedding-job-list`, `embedding-job-stats`, `extraction-job-list`, `extraction-job-stats`, `document-parsing-job-list`, `document-parsing-job-stats`.
+- **Mutations** (14): `user-delete`, `org-delete`, `project-delete`, `superadmin-grant`, `project-member-create`, `project-member-delete`, `service-token-create`, `embedding-job-delete`, `embedding-job-cleanup`, `embedding-job-reset`, `extraction-job-delete`, `extraction-job-cancel`, `document-parsing-job-delete`, `document-parsing-job-retry`.
+- **Pre-existing operator tools** (10): `embedding-status`, `embedding-pause`, `embedding-resume`, `embedding-config-update`, `provider-list-org`, `provider-configure-org`, `provider-test`, `provider-usage-get`, `trace-list`, `trace-get`.
+
+Every **mutation** requires an explicit `confirm=true` argument — this includes the pre-existing mutators `provider-configure-org`, `embedding-pause`, `embedding-resume`, and `embedding-config-update`. With `confirm` absent or false the tool performs **no side effect** and returns a structured dry-run (`dry_run`, `action`, `targets`, `message`) naming the intended action and its target identifiers.
+
+See [`OPERATOR_MCP.md`](./OPERATOR_MCP.md) for the full runbook (authentication, connecting a client, the confirm/dry-run protocol, and the audit trail).
 
 ---
 

@@ -18,10 +18,13 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/uptrace/bun"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 
@@ -278,6 +281,244 @@ func featureFxOptions(f config.FeatureSet) []fx.Option {
 	if f.SuperAdmin {
 		opts = append(opts, superadmin.Module)
 	}
+	if f.MCP && f.SuperAdmin {
+		// Operator MCP surface: expose the superadmin repository + apitoken mint
+		// as the mcp.SuperadminToolHandler seam, and the DB-backed audit writer.
+		opts = append(opts,
+			fx.Provide(func(repo *superadmin.Repository, tokenSvc *apitoken.Service) mcp.SuperadminToolHandler {
+				return newSuperadminToolHandlerAdapter(repo, tokenSvc)
+			}),
+			fx.Provide(func(db bun.IDB, log *slog.Logger) mcp.SuperadminAuditWriter {
+				return mcp.NewSuperadminAuditWriter(db, log)
+			}),
+		)
+	}
 
 	return opts
 }
+
+// ============================================================================
+// Superadmin MCP adapter
+// ============================================================================
+
+// superadminToolHandlerAdapter implements mcp.SuperadminToolHandler by wrapping
+// the superadmin repository and the apitoken service. It lives in package main
+// so domain/mcp does not import domain/superadmin into its constructor graph
+// (design: the seam is defined in domain/mcp, the adapter in cmd/server).
+type superadminToolHandlerAdapter struct {
+	repo     *superadmin.Repository
+	tokenSvc *apitoken.Service
+}
+
+func newSuperadminToolHandlerAdapter(repo *superadmin.Repository, tokenSvc *apitoken.Service) mcp.SuperadminToolHandler {
+	return &superadminToolHandlerAdapter{repo: repo, tokenSvc: tokenSvc}
+}
+
+func (a *superadminToolHandlerAdapter) SuperadminGet(ctx context.Context) (any, error) {
+	user := auth.UserFromContext(ctx)
+	if user == nil || user.ID == "" {
+		return nil, fmt.Errorf("superadmin_get: no authenticated user")
+	}
+	ok, role, err := a.repo.IsSuperadmin(ctx, user.ID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		role = ""
+	}
+	return map[string]any{"user_id": user.ID, "role": role}, nil
+}
+
+func (a *superadminToolHandlerAdapter) ListUsers(ctx context.Context, page, limit int, search, orgID string) (any, error) {
+	users, total, err := a.repo.ListUsers(ctx, page, limit, search, orgID)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"users": users, "total": total, "page": page, "limit": limit}, nil
+}
+
+func (a *superadminToolHandlerAdapter) GetUser(ctx context.Context, userID string) (any, error) {
+	return a.repo.GetUser(ctx, userID)
+}
+
+func (a *superadminToolHandlerAdapter) ListOrganizations(ctx context.Context, page, limit int) (any, error) {
+	orgs, total, err := a.repo.ListOrganizations(ctx, page, limit)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"organizations": orgs, "total": total, "page": page, "limit": limit}, nil
+}
+
+func (a *superadminToolHandlerAdapter) GetOrg(ctx context.Context, orgID string) (any, error) {
+	return a.repo.GetOrg(ctx, orgID)
+}
+
+func (a *superadminToolHandlerAdapter) ListProjects(ctx context.Context, page, limit int, orgID string) (any, error) {
+	projects, total, err := a.repo.ListProjects(ctx, page, limit, orgID)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"projects": projects, "total": total, "page": page, "limit": limit}, nil
+}
+
+func (a *superadminToolHandlerAdapter) GetProject(ctx context.Context, projectID string) (any, error) {
+	return a.repo.GetProject(ctx, projectID)
+}
+
+func (a *superadminToolHandlerAdapter) ListProjectMembers(ctx context.Context, projectID string) (any, error) {
+	return a.repo.ListProjectMembers(ctx, projectID)
+}
+
+func (a *superadminToolHandlerAdapter) ListEmailJobs(ctx context.Context, page, limit int, status, recipient, fromDate, toDate string) (any, error) {
+	jobs, total, err := a.repo.ListEmailJobs(ctx, page, limit, status, recipient, fromDate, toDate)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"email_jobs": jobs, "total": total, "page": page, "limit": limit}, nil
+}
+
+func (a *superadminToolHandlerAdapter) GetEmailJob(ctx context.Context, id string) (any, error) {
+	return a.repo.GetEmailJob(ctx, id)
+}
+
+func (a *superadminToolHandlerAdapter) ListEmbeddingJobs(ctx context.Context, page, limit int, status string, hasError *bool, projectID, jobType string) (any, error) {
+	var allJobs []superadmin.EmbeddingJobDTO
+	var total int
+	if jobType == "" || jobType == "graph" {
+		jobs, n, err := a.repo.ListGraphEmbeddingJobs(ctx, page, limit, status, hasError, projectID)
+		if err != nil {
+			return nil, err
+		}
+		allJobs = append(allJobs, jobs...)
+		total += n
+	}
+	if jobType == "" || jobType == "chunk" {
+		jobs, n, err := a.repo.ListChunkEmbeddingJobs(ctx, page, limit, status, hasError, projectID)
+		if err != nil {
+			return nil, err
+		}
+		allJobs = append(allJobs, jobs...)
+		total += n
+	}
+	stats, err := a.repo.GetEmbeddingJobStats(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"jobs": allJobs, "stats": stats, "total": total, "page": page, "limit": limit}, nil
+}
+
+func (a *superadminToolHandlerAdapter) GetEmbeddingJobStats(ctx context.Context) (any, error) {
+	return a.repo.GetEmbeddingJobStats(ctx)
+}
+
+func (a *superadminToolHandlerAdapter) ListExtractionJobs(ctx context.Context, page, limit int, status, jobType, projectID string, hasError *bool) (any, error) {
+	jobs, total, err := a.repo.ListExtractionJobs(ctx, page, limit, status, jobType, projectID, hasError)
+	if err != nil {
+		return nil, err
+	}
+	stats, err := a.repo.GetExtractionJobStats(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"jobs": jobs, "stats": stats, "total": total, "page": page, "limit": limit}, nil
+}
+
+func (a *superadminToolHandlerAdapter) GetExtractionJobStats(ctx context.Context) (any, error) {
+	return a.repo.GetExtractionJobStats(ctx)
+}
+
+func (a *superadminToolHandlerAdapter) ListDocumentParsingJobs(ctx context.Context, page, limit int, status, projectID string, hasError *bool) (any, error) {
+	jobs, total, err := a.repo.ListDocumentParsingJobs(ctx, page, limit, status, projectID, hasError)
+	if err != nil {
+		return nil, err
+	}
+	stats, err := a.repo.GetDocumentParsingJobStats(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"jobs": jobs, "stats": stats, "total": total, "page": page, "limit": limit}, nil
+}
+
+func (a *superadminToolHandlerAdapter) GetDocumentParsingJobStats(ctx context.Context) (any, error) {
+	return a.repo.GetDocumentParsingJobStats(ctx)
+}
+
+func (a *superadminToolHandlerAdapter) SoftDeleteUser(ctx context.Context, userID, deletedBy string) error {
+	return a.repo.SoftDeleteUser(ctx, userID, deletedBy)
+}
+
+func (a *superadminToolHandlerAdapter) SoftDeleteOrg(ctx context.Context, orgID, deletedBy string) error {
+	return a.repo.SoftDeleteOrg(ctx, orgID, deletedBy)
+}
+
+func (a *superadminToolHandlerAdapter) SoftDeleteProject(ctx context.Context, projectID, deletedBy string) error {
+	return a.repo.SoftDeleteProject(ctx, projectID, deletedBy)
+}
+
+func (a *superadminToolHandlerAdapter) GrantSuperadmin(ctx context.Context, userID, grantedBy string, notes *string) error {
+	return a.repo.GrantSuperadminToUser(ctx, userID, grantedBy, notes)
+}
+
+func (a *superadminToolHandlerAdapter) AddProjectMember(ctx context.Context, projectID, userID, role string) error {
+	return a.repo.AddProjectMember(ctx, projectID, userID, role)
+}
+
+func (a *superadminToolHandlerAdapter) RemoveProjectMember(ctx context.Context, projectID, userID string) error {
+	return a.repo.RemoveProjectMember(ctx, projectID, userID)
+}
+
+func (a *superadminToolHandlerAdapter) CreateServiceToken(ctx context.Context, name string, notes *string, grantedBy string) (any, error) {
+	zitadelID := fmt.Sprintf("svc_%s", name)
+	displayName := fmt.Sprintf("Service Account: %s", name)
+	userID, err := a.repo.CreateServiceUser(ctx, zitadelID, displayName)
+	if err != nil {
+		return nil, err
+	}
+	if err := a.repo.GrantSuperadminToUser(ctx, userID, grantedBy, notes); err != nil {
+		return nil, err
+	}
+	result, err := a.tokenSvc.CreateAccountToken(ctx, userID, name, serviceTokenScopes)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"user_id":  userID,
+		"token_id": result.ID,
+		"token":    result.Token,
+		"name":     name,
+	}, nil
+}
+
+func (a *superadminToolHandlerAdapter) DeleteEmbeddingJobs(ctx context.Context, ids []string, jobType string) (int, error) {
+	if jobType == "chunk" {
+		return a.repo.DeleteChunkEmbeddingJobs(ctx, ids)
+	}
+	return a.repo.DeleteGraphEmbeddingJobs(ctx, ids)
+}
+
+func (a *superadminToolHandlerAdapter) CleanupEmbeddingJobs(ctx context.Context) (int, error) {
+	return a.repo.CleanupOrphanEmbeddingJobs(ctx)
+}
+
+func (a *superadminToolHandlerAdapter) ResetEmbeddingJobs(ctx context.Context) (int, error) {
+	return a.repo.ResetDeadLetterEmbeddingJobs(ctx)
+}
+
+func (a *superadminToolHandlerAdapter) DeleteExtractionJobs(ctx context.Context, ids []string) (int, error) {
+	return a.repo.DeleteExtractionJobs(ctx, ids)
+}
+
+func (a *superadminToolHandlerAdapter) CancelExtractionJobs(ctx context.Context, ids []string) (int, error) {
+	return a.repo.CancelExtractionJobs(ctx, ids)
+}
+
+func (a *superadminToolHandlerAdapter) DeleteDocumentParsingJobs(ctx context.Context, ids []string) (int, error) {
+	return a.repo.DeleteDocumentParsingJobs(ctx, ids)
+}
+
+func (a *superadminToolHandlerAdapter) RetryDocumentParsingJobs(ctx context.Context, ids []string) (int, error) {
+	return a.repo.RetryDocumentParsingJobs(ctx, ids)
+}
+
+// serviceTokenScopes mirrors the superadmin HTTP service-token mint.
+var serviceTokenScopes = []string{"data:read", "schema:read", "agents:read", "projects:read"}

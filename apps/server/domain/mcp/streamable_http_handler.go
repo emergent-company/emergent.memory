@@ -23,6 +23,11 @@ type StreamableHTTPHandler struct {
 	svc *Service
 	log *slog.Logger
 
+	// admin, when true, marks this instance as the operator transport: it skips
+	// project claim, serves the operator catalog, executes with an empty project,
+	// and skips instance-scope. The project instance leaves admin false.
+	admin bool
+
 	// Session management (session ID -> session state)
 	sessions   map[string]*MCPSession
 	sessionsMu sync.RWMutex
@@ -61,9 +66,31 @@ type SSEStream struct {
 
 // NewStreamableHTTPHandler creates a new spec-compliant MCP handler
 func NewStreamableHTTPHandler(svc *Service, log *slog.Logger) *StreamableHTTPHandler {
+	return newStreamableHTTPHandler(svc, log, false)
+}
+
+// AdminStreamableHTTPHandler is the operator transport handle: a distinct type
+// wrapping *StreamableHTTPHandler. The distinct type is required for fx, which
+// rejects two providers of the same result type — the project transport and the
+// operator transport must be addressable independently in the dependency graph.
+// The embedded handler carries admin=true.
+type AdminStreamableHTTPHandler struct {
+	*StreamableHTTPHandler
+}
+
+// NewAdminStreamableHTTPHandler creates the operator MCP transport (admin mode).
+// It serves the operator catalog, skips project claim and instance scope, and
+// executes with an empty project. It is registered on /api/mcp/admin behind
+// RequireAuth + RequireSuperadminFull.
+func NewAdminStreamableHTTPHandler(svc *Service, log *slog.Logger) *AdminStreamableHTTPHandler {
+	return &AdminStreamableHTTPHandler{newStreamableHTTPHandler(svc, log, true)}
+}
+
+func newStreamableHTTPHandler(svc *Service, log *slog.Logger, admin bool) *StreamableHTTPHandler {
 	return &StreamableHTTPHandler{
 		svc:        svc,
 		log:        log.With(logger.Scope("mcp.streamable")),
+		admin:      admin,
 		sessions:   make(map[string]*MCPSession),
 		streams:    make(map[string][]*SSEStream),
 		eventStore: NewEventStore(100),
@@ -402,11 +429,18 @@ func (h *StreamableHTTPHandler) getOrCreateSession(sessionID string, user *auth.
 	}
 
 	// Create new session (will be assigned ID during initialize)
+	projectID := user.ProjectID
+	orgID := user.OrgID
+	if h.admin {
+		// The operator endpoint resolves no project context.
+		projectID = ""
+		orgID = ""
+	}
 	session := &MCPSession{
 		ID:              uuid.New().String(),
-		ProjectID:       user.ProjectID,
+		ProjectID:       projectID,
 		UserID:          user.ID,
-		OrgID:           user.OrgID,
+		OrgID:           orgID,
 		Scopes:          user.Scopes,
 		Initialized:     false,
 		ProtocolVersion: protocolVersion,
@@ -492,7 +526,10 @@ func (h *StreamableHTTPHandler) handleInitialize(c echo.Context, req *Request, s
 	if candidate == "" {
 		candidate = session.ProjectID
 	}
-	if err := h.svc.authorizeProjectClaim(c.Request().Context(), user, candidate); err != nil {
+	if h.admin {
+		// The operator endpoint resolves no project context and never claims one.
+		candidate = ""
+	} else if err := h.svc.authorizeProjectClaim(c.Request().Context(), user, candidate); err != nil {
 		return NewErrorResponse(req.ID, ErrCodeForbidden, "Project access denied", nil)
 	}
 
@@ -528,11 +565,30 @@ func (h *StreamableHTTPHandler) handleInitialize(c echo.Context, req *Request, s
 		slog.String("project_id", session.ProjectID),
 	)
 
+	if h.admin {
+		h.svc.auditSuperadmin(c.Request().Context(), SuperadminAuditEntry{
+			EventType:    "mcp.superadmin.initialize",
+			Outcome:      "success",
+			UserID:       user.ID,
+			UserEmail:    user.Email,
+			ResourceType: "session",
+			ResourceID:   session.ID,
+			Action:       "initialize",
+			Endpoint:     "/api/mcp/admin",
+			HTTPMethod:   c.Request().Method,
+			StatusCode:   http.StatusOK,
+			RequestID:    session.ID,
+		})
+	}
+
 	return NewSuccessResponse(req.ID, result)
 }
 
 // handleToolsList handles tools/list method
 func (h *StreamableHTTPHandler) handleToolsList(c echo.Context, req *Request, session *MCPSession, user *auth.AuthUser) *Response {
+	if h.admin {
+		return h.handleAdminToolsList(req, session)
+	}
 	if !session.Initialized {
 		return NewErrorResponse(req.ID, ErrCodeInvalidRequest,
 			"Client must call initialize before tools/list",
@@ -542,11 +598,9 @@ func (h *StreamableHTTPHandler) handleToolsList(c echo.Context, req *Request, se
 
 	tools := h.svc.GetToolDefinitionsForProject(c.Request().Context(), session.ProjectID)
 	tools = FilterToolsForScopes(tools, session.Scopes)
-	isSuper, superErr := h.svc.IsSuperadminCaller(c.Request().Context())
-	if superErr != nil {
-		isSuper = false
-	}
-	tools = FilterToolsForSuperadmin(tools, isSuper)
+	// Hard split: operator tools are never listed on the project endpoint,
+	// regardless of the caller's superadmin status.
+	tools = FilterToolsForSuperadmin(tools, false)
 	scope, serr := h.svc.ResolveInstanceScope(c.Request().Context(), user.APITokenID)
 	if serr != nil {
 		// Fail closed on allowlist resolution failure.
@@ -554,6 +608,20 @@ func (h *StreamableHTTPHandler) handleToolsList(c echo.Context, req *Request, se
 			"Failed to resolve share instance scope", nil)
 	}
 	tools = FilterToolsForInstance(tools, scope)
+	return NewSuccessResponse(req.ID, ToolsListResult{Tools: tools})
+}
+
+// handleAdminToolsList serves the operator catalog on the admin endpoint. It is
+// the same catalog regardless of caller project context (there is none) and is
+// not filtered by token scope or share-instance allowlist.
+func (h *StreamableHTTPHandler) handleAdminToolsList(req *Request, session *MCPSession) *Response {
+	if !session.Initialized {
+		return NewErrorResponse(req.ID, ErrCodeInvalidRequest,
+			"Client must call initialize before tools/list",
+			map[string]string{"hint": "Call initialize method first to establish session"},
+		)
+	}
+	tools := h.svc.GetSuperadminToolDefinitions()
 	return NewSuccessResponse(req.ID, ToolsListResult{Tools: tools})
 }
 
@@ -581,6 +649,10 @@ func (h *StreamableHTTPHandler) handleToolsCall(c echo.Context, req *Request, se
 		)
 	}
 
+	if h.admin {
+		return h.handleAdminToolsCall(c, req, session, user, params)
+	}
+
 	// Enforce per-tool scope.
 	if toolDef := h.svc.GetToolByName(params.Name); toolDef != nil {
 		if toolDef.AgentOnly {
@@ -588,19 +660,10 @@ func (h *StreamableHTTPHandler) handleToolsCall(c echo.Context, req *Request, se
 				"Tool not found: "+params.Name, nil)
 		}
 		if toolDef.SuperadminOnly {
-			ok, err := h.svc.IsSuperadminCaller(c.Request().Context())
-			if err != nil {
-				h.log.Error("superadmin authorization failed",
-					slog.String("tool", params.Name),
-					logger.Error(err),
-				)
-				return NewErrorResponse(req.ID, ErrCodeInternalError,
-					"Failed to authorize tool", nil)
-			}
-			if !ok {
-				return NewErrorResponse(req.ID, ErrCodeMethodNotFound,
-					"Tool not found: "+params.Name, nil)
-			}
+			// Hard split: operator tools are reachable only on /api/mcp/admin,
+			// never on the project endpoint, regardless of caller superadmin status.
+			return NewErrorResponse(req.ID, ErrCodeMethodNotFound,
+				"Tool not found: "+params.Name, nil)
 		}
 		if toolDef.RequiredScope != "" {
 			expanded := expandScopesSet(user.Scopes)
@@ -660,7 +723,70 @@ func (h *StreamableHTTPHandler) handleToolsCall(c echo.Context, req *Request, se
 	return NewSuccessResponse(req.ID, result)
 }
 
-// denyInstanceContent resolves the share-instance scope and returns a JSON-RPC
+// handleAdminToolsCall executes an operator tool on the admin endpoint. The
+// route is already gated on superadmin_full, so the dispatch re-gates fail-closed
+// (ExecuteSuperadminTool resolves the platform grant again) and every call is
+// audited best-effort.
+func (h *StreamableHTTPHandler) handleAdminToolsCall(c echo.Context, req *Request, session *MCPSession, user *auth.AuthUser, params ToolsCallParams) *Response {
+	// Only the operator catalog is served on the admin endpoint. An unknown or
+	// project-scoped tool name is method-not-found (never reveals the catalog).
+	if !h.svc.IsAdminOperatorTool(params.Name) {
+		return NewErrorResponse(req.ID, ErrCodeMethodNotFound,
+			"Tool not found: "+params.Name, nil)
+	}
+
+	start := time.Now()
+	execCtx := ContextWithTransportEnforced(c.Request().Context())
+	result, err := h.svc.ExecuteSuperadminTool(execCtx, params.Name, params.Arguments)
+
+	// Audit the call best-effort (never fails the tool call).
+	outcome := "success"
+	statusCode := http.StatusOK
+	errMsg := ""
+	if err != nil {
+		outcome = "error"
+		errMsg = RedactString(err.Error())
+		// The transport maps tool errors to a 200 JSON-RPC error response, but
+		// the audit status reflects the outcome at the JSON-RPC layer.
+		statusCode = http.StatusOK
+	}
+	requestID := c.Response().Header().Get(echo.HeaderXRequestID)
+	if requestID == "" {
+		requestID = session.ID
+	}
+	h.svc.auditSuperadmin(c.Request().Context(), SuperadminAuditEntry{
+		EventType:    "mcp.superadmin.tool_call",
+		Outcome:      outcome,
+		UserID:       user.ID,
+		UserEmail:    user.Email,
+		ResourceType: "tool",
+		ResourceID:   params.Name,
+		Action:       params.Name,
+		Endpoint:     "/api/mcp/admin",
+		HTTPMethod:   c.Request().Method,
+		StatusCode:   statusCode,
+		ErrorMessage: errMsg,
+		IPAddress:    c.RealIP(),
+		UserAgent:    c.Request().UserAgent(),
+		RequestID:    requestID,
+		Details:      RedactSecrets(params.Arguments),
+		Duration:     time.Since(start),
+	})
+
+	if err != nil {
+		h.log.Error("tool execution failed",
+			slog.String("tool", params.Name),
+			slog.String("error", errMsg),
+		)
+		return NewErrorResponse(req.ID, ErrCodeInternalError,
+			"Tool execution failed: "+errMsg,
+			nil,
+		)
+	}
+
+	return NewSuccessResponse(req.ID, result)
+}
+
 // error when a restricted share instance requests MCP resources/prompts, which
 // are not covered by its allowlists. Resolution failures fail closed.
 func (h *StreamableHTTPHandler) denyInstanceContent(c echo.Context, req *Request, user *auth.AuthUser, kind string) *Response {

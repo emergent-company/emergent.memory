@@ -141,6 +141,15 @@ type Service struct {
 	// Injected via SetRelayProvider after construction to avoid circular import.
 	relaySvc RelayToolProvider
 
+	// superadminToolHandler is the cross-domain seam for the operator MCP tools
+	// served on /api/mcp/admin. Nil when MCP or SuperAdmin is disabled; every
+	// operator tool fails closed (see superadminHandler).
+	superadminToolHandler SuperadminToolHandler
+
+	// superadminAuditWriter records operator actions to kb.audit_log. Nil-safe:
+	// auditSuperadmin degrades to structured logs only when unset.
+	superadminAuditWriter SuperadminAuditWriter
+
 	// graphObjectTitlePatcher patches graph object Properties.title when set_session_title runs.
 	// Stored as a func to avoid a circular import (mcp already imports graph).
 	graphObjectTitlePatcher func(ctx context.Context, projectID, objectID, title string) error
@@ -218,6 +227,8 @@ type ServiceParams struct {
 	DiscoverySvc           DiscoveryFinalizer      `optional:"true"`
 	DocSignalsReader       DocumentSignalsReader   `optional:"true"`
 	RelaySvc               RelayToolProvider       `optional:"true"`
+	SuperadminToolHandler  SuperadminToolHandler   `optional:"true"`
+	SuperadminAuditWriter  SuperadminAuditWriter   `optional:"true"`
 }
 
 // NewService creates a new MCP service
@@ -265,6 +276,8 @@ func NewService(p ServiceParams) *Service {
 		discoverySvc:              p.DiscoverySvc,
 		docSignalsReader:          p.DocSignalsReader,
 		relaySvc:                  p.RelaySvc,
+		superadminToolHandler:     p.SuperadminToolHandler,
+		superadminAuditWriter:     p.SuperadminAuditWriter,
 		shareInstances:            shareInstanceOrNil(p.DB),
 		shareTokens:               p.ApitokenSvc,
 		agentDir:                  agentDirectoryOrNil(p.DB),
@@ -1832,6 +1845,15 @@ var superadminOnlyToolNames = func() map[string]bool {
 			if def.SuperadminOnly {
 				names[def.Name] = true
 			}
+		}
+	}
+	// The NEW operator tools live outside dynamicToolBuilders (they must not
+	// pollute the project catalog/tool index). They are still derived from the
+	// same definition list the admin catalog consumes, so the gate set cannot
+	// drift from the tools it guards.
+	for _, def := range superadminToolDefinitions() {
+		if def.SuperadminOnly {
+			names[def.Name] = true
 		}
 	}
 	return names

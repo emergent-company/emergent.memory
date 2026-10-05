@@ -6,7 +6,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
-func RegisterRoutes(e *echo.Echo, h *Handler, sseHandler *SSEHandler, streamableHandler *StreamableHTTPHandler, agentEndpointHandler *AgentEndpointHandler, authMiddleware *auth.Middleware) {
+func RegisterRoutes(e *echo.Echo, h *Handler, sseHandler *SSEHandler, streamableHandler *StreamableHTTPHandler, adminStreamableHandler *AdminStreamableHTTPHandler, agentEndpointHandler *AgentEndpointHandler, authMiddleware *auth.Middleware) {
 	// OAuth 2.0 Protected Resource Metadata (RFC 9728 / MCP 2025-11-25 auth spec).
 	// Tells MCP clients (mcp-remote etc.) that this server uses bearer token auth
 	// and does not require an OAuth authorization flow.
@@ -36,6 +36,15 @@ func RegisterRoutes(e *echo.Echo, h *Handler, sseHandler *SSEHandler, streamable
 	// GET: Open SSE stream for server-initiated messages
 	// DELETE: Terminate session
 	g.Match([]string{"GET", "POST", "DELETE"}, "", streamableHandler.HandleUnifiedEndpoint)
+
+	// Dedicated operator MCP endpoint. It is a distinct group (not nested under
+	// the project group above) so it never inherits RequireProjectTokenScope /
+	// RequireProjectMember. Gated on RequireAuth + RequireSuperadminFull: an
+	// admin/admin:all token or superadmin_readonly grant does not satisfy it.
+	adminG := e.Group("/api/mcp/admin")
+	adminG.Use(authMiddleware.RequireAuth())
+	adminG.Use(authMiddleware.RequireSuperadminFull())
+	adminG.Match([]string{"GET", "POST", "DELETE"}, "", adminStreamableHandler.HandleUnifiedEndpoint)
 
 	// Project-scoped SSE endpoints (convenience API)
 	// These provide direct project access via URL path instead of session management

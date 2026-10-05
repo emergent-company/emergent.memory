@@ -82,12 +82,12 @@ func setupGateDB(t *testing.T) (*bun.DB, string, string) {
 	return dbc, memberID, superID
 }
 
-// TestSuperadminGateOnOperatorTools proves that deployment-wide operator tools
-// (embedding-pause) and org-level provider tools (provider-configure-org) are
-// gated on the superadmin_full authority (core.superadmins), not on a bare
-// `admin` token scope. A project member carrying a bare admin token is refused;
-// a superadmin_full principal succeeds even though its token also carries only
-// the bare admin scope (proving the scope is not the authority).
+// TestSuperadminGateOnOperatorTools proves the hard split: the project MCP
+// endpoint refuses deployment-wide operator tools (embedding-pause) and
+// org-level provider tools (provider-configure-org) for every caller — a project
+// member with a bare admin token AND a superadmin_full principal. Operator
+// authority moved to the dedicated /api/mcp/admin endpoint, so the project
+// transport refuses them as method-not-found (never revealing their existence).
 func TestSuperadminGateOnOperatorTools(t *testing.T) {
 	dbc, memberID, superID := setupGateDB(t)
 
@@ -110,29 +110,25 @@ func TestSuperadminGateOnOperatorTools(t *testing.T) {
 		return h.handleToolsCall(c, req, user)
 	}
 
-	t.Run("project member bare-admin is refused on embedding-pause", func(t *testing.T) {
-		resp := call(t, memberUser, "embedding-pause")
-		require.NotNil(t, resp.Error, "project member with bare admin scope must be refused, got result %v", resp.Result)
-		require.Equal(t, ErrCodeMethodNotFound, resp.Error.Code,
-			"refusal must not reveal the tool's existence (method-not-found), got code %d: %s", resp.Error.Code, resp.Error.Message)
-	})
-
-	t.Run("project member bare-admin is refused on provider-configure-org", func(t *testing.T) {
-		resp := call(t, memberUser, "provider-configure-org")
-		require.NotNil(t, resp.Error, "project member with bare admin scope must be refused, got result %v", resp.Result)
-		require.Equal(t, ErrCodeMethodNotFound, resp.Error.Code,
-			"refusal must not reveal the tool's existence (method-not-found), got code %d: %s", resp.Error.Code, resp.Error.Message)
-	})
-
-	t.Run("superadmin_full succeeds on embedding-pause", func(t *testing.T) {
-		resp := call(t, superUser, "embedding-pause")
-		require.Nil(t, resp.Error, "superadmin_full must execute embedding-pause, got error %+v", resp.Error)
-	})
-
-	t.Run("superadmin_full succeeds on provider-usage-get", func(t *testing.T) {
-		resp := call(t, superUser, "provider-usage-get")
-		require.Nil(t, resp.Error, "superadmin_full must execute provider-usage-get, got error %+v", resp.Error)
-	})
+	for _, tc := range []struct {
+		name string
+		user *auth.AuthUser
+	}{
+		{"project member bare-admin is refused on embedding-pause", memberUser},
+		{"superadmin_full is refused on embedding-pause (hard split)", superUser},
+		{"project member bare-admin is refused on provider-configure-org", memberUser},
+		{"superadmin_full is refused on provider-configure-org (hard split)", superUser},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tool := "embedding-pause"
+			if tc.name[len(tc.name)-len("provider-configure-org"):] == "provider-configure-org" {
+				tool = "provider-configure-org"
+			}
+			resp := call(t, tc.user, tool)
+			require.NotNil(t, resp.Error, "%s must be refused", tool)
+			require.Equal(t, ErrCodeMethodNotFound, resp.Error.Code, "got code %d: %s", resp.Error.Code, resp.Error.Message)
+		})
+	}
 }
 
 // TestExecuteToolSuperadminGate proves the in-process dispatch path — the one
@@ -215,9 +211,10 @@ func TestTraceToolsSuperadminGate(t *testing.T) {
 		})
 	}
 
-	t.Run("superadmin_full reaches trace-list", func(t *testing.T) {
+	t.Run("superadmin_full is refused on trace-list (hard split)", func(t *testing.T) {
 		resp := call(t, superUser, "trace-list")
-		require.Nil(t, resp.Error, "superadmin_full must reach trace-list, got error %+v", resp.Error)
+		require.NotNil(t, resp.Error, "superadmin_full must not reach trace-list on the project endpoint")
+		require.Equal(t, ErrCodeMethodNotFound, resp.Error.Code, "got code %d: %s", resp.Error.Code, resp.Error.Message)
 	})
 
 	// In-process dispatch (the ADK ToolPool path) must gate identically.

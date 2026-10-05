@@ -765,6 +765,18 @@ routes:
       path: /api/mcp-relay/sessions/:instanceId/tools
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: DELETE
+      path: /api/mcp/admin
+      level: superadmin-full
+      note: RequireAuth, RequireSuperadminFull
+    - method: GET
+      path: /api/mcp/admin
+      level: superadmin-full
+      note: RequireAuth, RequireSuperadminFull
+    - method: POST
+      path: /api/mcp/admin
+      level: superadmin-full
+      note: RequireAuth, RequireSuperadminFull
     - method: POST
       path: /api/mcp/agents/:agentId
       level: auth

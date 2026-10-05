@@ -29,9 +29,9 @@ Memory SHALL serve platform-operation MCP tools on a dedicated endpoint `GET|POS
 
 The `/api/mcp/admin` catalog SHALL expose only deployment-wide operator tools, each marked `SuperadminOnly`. The catalog SHALL include:
 
-- Reads: `superadmin-get`, `user-list`, `user-get`, `org-list`, `org-get`, `project-list`, `project-get`, `project-member-list`, `email-job-list`, `email-job-get`, `embedding-job-list`, `embedding-job-stats`, `extraction-job-list`, `extraction-job-stats`, `document-parsing-job-list`, `document-parsing-job-stats`.
+- Reads: `superadmin-get`, `user-list`, `user-get`, `org-list`, `org-get`, `project-list`, `project-record-get`, `project-member-list`, `email-job-list`, `email-job-get`, `embedding-job-list`, `embedding-job-stats`, `extraction-job-list`, `extraction-job-stats`, `document-parsing-job-list`, `document-parsing-job-stats`.
 - Mutations: `user-delete`, `org-delete`, `project-delete`, `superadmin-grant`, `project-member-create`, `project-member-delete`, `service-token-create`, `embedding-job-delete`, `embedding-job-cleanup`, `embedding-job-reset`, `extraction-job-delete`, `extraction-job-cancel`, `document-parsing-job-delete`, `document-parsing-job-retry`.
-- The pre-existing operator tools (`embedding-status`, `embedding-pause`, `embedding-resume`, `embedding-config-update`, `provider-list-org`, `provider-configure-org`, `provider-test`, `provider-usage-get`, `trace-list`, `trace-get`).
+- The pre-existing operator tools: reads `embedding-status`, `provider-list-org`, `provider-test`, `provider-usage-get`, `trace-list`, `trace-get`; mutators (also `confirm`-guarded) `embedding-pause`, `embedding-resume`, `embedding-config-update`, `provider-configure-org`.
 
 Tool names SHALL follow the `area[-noun]-action` kebab-case convention (lowercase letters, digits, hyphens only, no underscores). Each mutating tool's input schema SHALL require the identifiers it acts on; an unknown or malformed identifier SHALL be rejected with an error naming the offending field, not silently ignored. Operator tools that target an organization SHALL require an explicit `org_id`; they SHALL NOT rely on an ambient auth-context organization on this endpoint.
 
@@ -69,7 +69,7 @@ Pre-existing operator tools re-homed onto this endpoint SHALL be adapted to oper
 
 ### Requirement: Mutating operator tools require explicit confirmation
 
-Every mutating operator tool SHALL require an explicit `confirm` argument. When `confirm` is absent or false, the tool SHALL perform no side effect and SHALL return a structured dry-run that names the intended action and its target identifiers. When `confirm` is true, the tool SHALL perform the operation and report its outcome. A mutating call SHALL NOT execute any repository mutation before confirming.
+Every mutating operator tool — the new mutation tools and the pre-existing mutators `provider-configure-org`, `embedding-pause`, `embedding-resume`, `embedding-config-update` — SHALL require an explicit `confirm` argument. When `confirm` is absent or false, the tool SHALL perform no side effect and SHALL return a structured dry-run that names the intended action and its target identifiers. When `confirm` is true, the tool SHALL perform the operation and report its outcome. A mutating call SHALL NOT execute any repository mutation before confirming.
 
 #### Scenario: Unconfirmed mutation is a dry run
 

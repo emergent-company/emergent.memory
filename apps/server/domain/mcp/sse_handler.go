@@ -311,11 +311,9 @@ func (h *SSEHandler) handleInitialize(req *Request, projectID string) *Response 
 func (h *SSEHandler) handleToolsList(c echo.Context, req *Request, projectID string, user *auth.AuthUser) *Response {
 	tools := h.svc.GetToolDefinitionsForProject(c.Request().Context(), projectID)
 	tools = FilterToolsForScopes(tools, user.Scopes)
-	isSuper, superErr := h.svc.IsSuperadminCaller(c.Request().Context())
-	if superErr != nil {
-		isSuper = false
-	}
-	tools = FilterToolsForSuperadmin(tools, isSuper)
+	// Hard split: operator tools are never listed on the project endpoint,
+	// regardless of the caller's superadmin status.
+	tools = FilterToolsForSuperadmin(tools, false)
 	scope, serr := h.svc.ResolveInstanceScope(c.Request().Context(), user.APITokenID)
 	if serr != nil {
 		// Fail closed on allowlist resolution failure.
@@ -346,19 +344,9 @@ func (h *SSEHandler) handleToolsCall(c echo.Context, req *Request, projectID str
 				"Tool not found: "+params.Name, nil)
 		}
 		if toolDef.SuperadminOnly {
-			ok, err := h.svc.IsSuperadminCaller(c.Request().Context())
-			if err != nil {
-				h.log.Error("superadmin authorization failed",
-					slog.String("tool", params.Name),
-					logger.Error(err),
-				)
-				return NewErrorResponse(req.ID, ErrCodeInternalError,
-					"Failed to authorize tool", nil)
-			}
-			if !ok {
-				return NewErrorResponse(req.ID, ErrCodeMethodNotFound,
-					"Tool not found: "+params.Name, nil)
-			}
+			// Hard split: operator tools are reachable only on /api/mcp/admin.
+			return NewErrorResponse(req.ID, ErrCodeMethodNotFound,
+				"Tool not found: "+params.Name, nil)
 		}
 		if toolDef.RequiredScope != "" {
 			expanded := expandScopesSet(user.Scopes)

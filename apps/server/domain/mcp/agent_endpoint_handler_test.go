@@ -212,9 +212,10 @@ func TestAgentEndpointRouteRequiresAuth(t *testing.T) {
 	h := NewHandler(svc, slog.Default(), nil)
 	sse := NewSSEHandler(svc, h, slog.Default())
 	stream := NewStreamableHTTPHandler(svc, slog.Default())
+	adminStream := NewAdminStreamableHTTPHandler(svc, slog.Default())
 	ep := NewAgentEndpointHandler(svc, slog.Default())
 	mw := auth.NewMiddleware(auth.MiddlewareParams{Cfg: &config.Config{}, Log: slog.Default()})
-	RegisterRoutes(e, h, sse, stream, ep, mw)
+	RegisterRoutes(e, h, sse, stream, adminStream, ep, mw)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/mcp/agents/"+agentA, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
