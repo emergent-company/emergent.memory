@@ -53,6 +53,7 @@ type RegistryPackage struct {
 	RegistryType     string   `json:"registryType"` // npm, pypi, oci, nuget, mcpb
 	Name             string   `json:"name,omitempty"`
 	Identifier       string   `json:"identifier,omitempty"`
+	Version          string   `json:"version,omitempty"`
 	Transport        string   `json:"transport"` // stdio, sse, streamable-http
 	RuntimeArguments []string `json:"runtimeArguments,omitempty"`
 	PackageArguments []string `json:"packageArguments,omitempty"`
@@ -124,7 +125,7 @@ func SuggestConfig(entry RegistryServer, localNameOverride string) (mcphost.Serv
 			Name:      name,
 			Transport: mcphost.TransportStdio,
 			Command:   runner,
-			Args:      stdioArgs(runner, pkg.Identifier, entry.Version, pkg),
+			Args:      stdioArgs(runner, pkg.Identifier, pinVersion(pkg.Version, entry.Version), pkg),
 			Env:       env,
 		}
 		sug := Suggestion{
@@ -183,7 +184,16 @@ func stdioArgs(runner, identifier, version string, pkg RegistryPackage) []string
 	return args
 }
 
-// packageSpec renders "<identifier>@<version>" (pinning to the entry version),
+// pinVersion picks the version to pin: the package's own version when present,
+// else the entry version. An empty result renders the bare identifier.
+func pinVersion(pkgVersion, entryVersion string) string {
+	if pkgVersion != "" {
+		return pkgVersion
+	}
+	return entryVersion
+}
+
+// packageSpec renders "<identifier>@<version>" (pinning to the chosen version),
 // or the bare identifier when no version is present.
 func packageSpec(identifier, version string) string {
 	if version == "" {

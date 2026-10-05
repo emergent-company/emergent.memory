@@ -160,7 +160,10 @@ final class MCPRegistryClientTests: XCTestCase {
             .status(404, json: #"{"error":"server \"io.github.x/y\" not found in registry"}"#)
         }
 
-        await XCTAssertThrowsErrorAsync(try makeClient().server(name: "io.github.x/y")) { error in
+        do {
+            _ = try await makeClient().server(name: "io.github.x/y")
+            XCTFail("expected a 404 error")
+        } catch {
             XCTAssertEqual(error as? MCPServersAPIError,
                            .server(404, "server \"io.github.x/y\" not found in registry"))
         }
@@ -171,7 +174,10 @@ final class MCPRegistryClientTests: XCTestCase {
             .status(502, json: #"{"error":"registry unavailable"}"#)
         }
 
-        await XCTAssertThrowsErrorAsync(try makeClient().search(query: "x")) { error in
+        do {
+            _ = try await makeClient().search(query: "x")
+            XCTFail("expected a 502 error")
+        } catch {
             XCTAssertEqual(error as? MCPServersAPIError, .server(502, "registry unavailable"))
         }
     }

@@ -33,7 +33,8 @@ type RegistryPackage struct {
 	RegistryType     string   `json:"registryType"` // npm, pypi, oci, nuget, mcpb
 	Name             string   `json:"name,omitempty"`
 	Identifier       string   `json:"identifier,omitempty"` // e.g. "@modelcontextprotocol/server-github"
-	Transport        string   `json:"transport"`            // stdio, sse, streamable-http
+	Version          string   `json:"version,omitempty"`
+	Transport        string   `json:"transport"` // stdio, sse, streamable-http
 	RuntimeArguments []string `json:"runtimeArguments,omitempty"`
 	PackageArguments []string `json:"packageArguments,omitempty"`
 }

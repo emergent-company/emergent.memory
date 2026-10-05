@@ -135,6 +135,7 @@ func TestGetRegistryServerDecodesFullDetail(t *testing.T) {
 						RegistryType:     "npm",
 						Name:             "github",
 						Identifier:       "@modelcontextprotocol/server-github",
+						Version:          "2.3.4",
 						Transport:        "stdio",
 						RuntimeArguments: []string{"--log-level", "debug"},
 						PackageArguments: []string{"serve"},
@@ -172,6 +173,7 @@ func TestGetRegistryServerDecodesFullDetail(t *testing.T) {
 	require.Len(t, result.Packages, 1)
 	assert.Equal(t, []string{"--log-level", "debug"}, result.Packages[0].RuntimeArguments)
 	assert.Equal(t, []string{"serve"}, result.Packages[0].PackageArguments)
+	assert.Equal(t, "2.3.4", result.Packages[0].Version)
 	require.Len(t, result.Headers, 1)
 	assert.Equal(t, "Authorization", result.Headers[0].Name)
 	assert.Equal(t, "Bearer {api_key}", result.Headers[0].Value)

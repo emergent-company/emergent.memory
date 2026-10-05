@@ -972,22 +972,12 @@ func collectRegistryEnvVars(regServer RegistryServer) []RegistryEnvVarDTO {
 	seen := make(map[string]RegistryEnvVarDTO)
 	for _, pkg := range regServer.Packages {
 		for _, ev := range pkg.EnvironmentVariables {
-			seen[ev.Name] = RegistryEnvVarDTO{
-				Name:        ev.Name,
-				Description: ev.Description,
-				IsRequired:  ev.IsRequired,
-				IsSecret:    ev.IsSecret,
-			}
+			seen[ev.Name] = RegistryEnvVarDTO(ev)
 		}
 	}
 	for _, remote := range regServer.Remotes {
 		for _, ev := range remote.EnvironmentVariables {
-			seen[ev.Name] = RegistryEnvVarDTO{
-				Name:        ev.Name,
-				Description: ev.Description,
-				IsRequired:  ev.IsRequired,
-				IsSecret:    ev.IsSecret,
-			}
+			seen[ev.Name] = RegistryEnvVarDTO(ev)
 		}
 	}
 	if len(seen) == 0 {
@@ -1045,12 +1035,7 @@ func registryServerToDTO(s RegistryServer) RegistryServerDTO {
 			PackageArguments: renderArguments(pkg.PackageArguments),
 		})
 		for _, ev := range pkg.EnvironmentVariables {
-			envVarMap[ev.Name] = RegistryEnvVarDTO{
-				Name:        ev.Name,
-				Description: ev.Description,
-				IsRequired:  ev.IsRequired,
-				IsSecret:    ev.IsSecret,
-			}
+			envVarMap[ev.Name] = RegistryEnvVarDTO(ev)
 		}
 	}
 
@@ -1064,12 +1049,7 @@ func registryServerToDTO(s RegistryServer) RegistryServerDTO {
 			URL:  remote.URL,
 		})
 		for _, ev := range remote.EnvironmentVariables {
-			envVarMap[ev.Name] = RegistryEnvVarDTO{
-				Name:        ev.Name,
-				Description: ev.Description,
-				IsRequired:  ev.IsRequired,
-				IsSecret:    ev.IsSecret,
-			}
+			envVarMap[ev.Name] = RegistryEnvVarDTO(ev)
 		}
 		for _, h := range remote.Headers {
 			if _, seen := headerMap[h.Name]; seen {

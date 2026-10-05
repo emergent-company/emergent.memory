@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/labstack/echo/v4"
@@ -146,5 +147,41 @@ func TestGetRegistryServerHandlerNotFound(t *testing.T) {
 	}
 	if appErr.HTTPStatus != http.StatusNotFound {
 		t.Errorf("HTTPStatus = %d, want 404", appErr.HTTPStatus)
+	}
+}
+
+// TestGetRegistryServerRouteSlashName exercises Echo's actual routing with an
+// encoded %2F and asserts the slash-named entry is forwarded upstream as a
+// single-escaped path (not double-escaped %252F). The e2e registry stub
+// unescapes in handleDetail, so it would not catch a double-encode; asserting
+// the outgoing upstream path here does.
+func TestGetRegistryServerRouteSlashName(t *testing.T) {
+	var upstreamPath string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamPath = r.URL.EscapedPath()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"server":{"name":"io.github.x/y","description":"d","version":"1.0.0"}}`))
+	}))
+	defer upstream.Close()
+
+	svc := &Service{registryClient: NewRegistryClientWithBaseURL(upstream.URL)}
+	h := NewHandler(svc)
+
+	e := echo.New()
+	e.GET("/api/admin/mcp-registry/servers/:name", h.GetRegistryServer)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/mcp-registry/servers/io.github.x%2Fy", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	const want = "/v0.1/servers/io.github.x%2Fy/versions/latest"
+	if upstreamPath != want {
+		t.Errorf("upstream path = %q, want %q (single-escaped)", upstreamPath, want)
+	}
+	if strings.Contains(upstreamPath, "%252F") {
+		t.Errorf("upstream path = %q, double-escaped", upstreamPath)
 	}
 }

@@ -65,6 +65,7 @@ func toRegistryServer(s sdkmcpregistry.RegistryServer) mcpregistry.RegistryServe
 			RegistryType:     p.RegistryType,
 			Name:             p.Name,
 			Identifier:       p.Identifier,
+			Version:          p.Version,
 			Transport:        p.Transport,
 			RuntimeArguments: append([]string(nil), p.RuntimeArguments...),
 			PackageArguments: append([]string(nil), p.PackageArguments...),

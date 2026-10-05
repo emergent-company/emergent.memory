@@ -16,7 +16,7 @@ func TestGetRegistryServerMapsArgsAndHeaders(t *testing.T) {
 		"version":"0.1.0",
 		"hasRemotes":true,
 		"hasPackages":true,
-		"packages":[{"registryType":"npm","name":"y","identifier":"y","transport":"stdio","runtimeArguments":["--log-level","debug"],"packageArguments":["serve"]}],
+		"packages":[{"registryType":"npm","name":"y","identifier":"y","version":"2.3.4","transport":"stdio","runtimeArguments":["--log-level","debug"],"packageArguments":["serve"]}],
 		"remotes":[{"type":"streamable-http","url":"https://mcp.example.com/mcp"}],
 		"envVars":[{"name":"API_KEY","isRequired":true,"isSecret":true}],
 		"headers":[{"name":"Authorization","description":"Bearer","isRequired":true,"isSecret":true,"value":"Bearer {api_key}"}]
@@ -34,6 +34,9 @@ func TestGetRegistryServerMapsArgsAndHeaders(t *testing.T) {
 		t.Fatalf("packages = %d, want 1", len(entry.Packages))
 	}
 	pkg := entry.Packages[0]
+	if pkg.Version != "2.3.4" {
+		t.Errorf("Version = %q, want 2.3.4", pkg.Version)
+	}
 	if !equalStrings(pkg.RuntimeArguments, []string{"--log-level", "debug"}) {
 		t.Errorf("RuntimeArguments = %v", pkg.RuntimeArguments)
 	}

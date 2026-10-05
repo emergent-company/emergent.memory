@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 
 	"github.com/labstack/echo/v4"
 
@@ -560,9 +561,18 @@ func (h *Handler) SearchRegistry(c echo.Context) error {
 // The name parameter is the registry server name (URL-encoded, e.g. "io.github.github%2Fgithub-mcp-server").
 func (h *Handler) GetRegistryServer(c echo.Context) error {
 
-	name := c.Param("name")
-	if name == "" {
+	raw := c.Param("name")
+	if raw == "" {
 		return apperror.NewBadRequest("server name is required")
+	}
+	// Echo's router stores the raw path segment without unescaping, so a
+	// %2F-encoded name arrives still escaped. Decode once here so the registry
+	// client's own url.PathEscape does not double-encode the slash
+	// (name%2F… → name%252F…). Registry names never contain a literal '%', so
+	// this is safe and idempotent.
+	name, err := url.PathUnescape(raw)
+	if err != nil {
+		return apperror.NewBadRequest("invalid server name")
 	}
 
 	result, err := h.svc.GetRegistryServer(c.Request().Context(), name)

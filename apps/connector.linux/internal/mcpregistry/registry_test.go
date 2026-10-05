@@ -45,6 +45,44 @@ func TestSuggestConfig(t *testing.T) {
 			wantSug: Suggestion{Transport: mcphost.TransportStdio, RequiredEnvKeys: []string{"API_KEY"}},
 		},
 		{
+			name: "npm package version wins over entry version",
+			entry: RegistryServer{
+				Name:        "io.github.x/y",
+				Version:     "1.0.0",
+				HasPackages: true,
+				Packages: []RegistryPackage{
+					{RegistryType: "npm", Name: "y", Identifier: "y", Version: "2.3.4", Transport: "stdio"},
+				},
+			},
+			wantCfg: mcphost.ServerConfig{
+				Name:      "y",
+				Transport: mcphost.TransportStdio,
+				Command:   "npx",
+				Args:      []string{"-y", "y@2.3.4"},
+				Env:       map[string]string{},
+			},
+			wantSug: Suggestion{Transport: mcphost.TransportStdio},
+		},
+		{
+			name: "pypi package version wins over entry version",
+			entry: RegistryServer{
+				Name:        "io.github.x/pytool",
+				Version:     "1.0.0",
+				HasPackages: true,
+				Packages: []RegistryPackage{
+					{RegistryType: "pypi", Name: "pytool", Identifier: "pytool", Version: "2.0.0", Transport: "stdio"},
+				},
+			},
+			wantCfg: mcphost.ServerConfig{
+				Name:      "pytool",
+				Transport: mcphost.TransportStdio,
+				Command:   "uvx",
+				Args:      []string{"pytool@2.0.0"},
+				Env:       map[string]string{},
+			},
+			wantSug: Suggestion{Transport: mcphost.TransportStdio},
+		},
+		{
 			name: "npm stdio without version",
 			entry: RegistryServer{
 				Name:        "io.github.x/y",
