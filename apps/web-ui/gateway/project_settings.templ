@@ -1022,7 +1022,7 @@ templ providerConfigRow(p ProjectProviderConfig, iconURI string) {
 // Save is gated on a live connection test for vendors whose endpoint is
 // user-supplied: the submit button starts disabled, "Test connection" probes
 // the typed base_url + api_key via HTMX (POST /settings/providers/test) and the
-// resulting success toast enables Save and shows a "Connection verified" hint.
+// resulting success alert modal enables Save and shows a "Connection verified" hint.
 // Any edit to the form re-disables Save until the next successful test. Whether
 // the endpoint field and test button appear is driven by registry metadata:
 // they are shown when the vendor's declared endpoint is absent or carries a
@@ -1437,15 +1437,15 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 					keyInput.addEventListener('input', scheduleUrlCheck);
 					keyInput.addEventListener('change', scheduleUrlCheck);
 				}
-				/* Only the toast that follows THIS page's test request may
-				   enable Save; the same event also surfaces the toast via
-				   app.js's memory-toast listener. */
+				/* Only the alert modal that follows THIS page's test request may
+				   enable Save; the same event also opens the modal via app.js's
+				   memory-alert listener. */
 				if (testBtn) {
 					testBtn.addEventListener('click', function () {
 						form.setAttribute('data-test-pending', '1');
 					});
 				}
-				document.body.addEventListener('memory-toast', function (evt) {
+				document.body.addEventListener('memory-alert', function (evt) {
 					if (form.getAttribute('data-test-pending') !== '1') return;
 					form.removeAttribute('data-test-pending');
 					var detail = evt.detail || {};

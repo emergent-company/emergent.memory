@@ -67,6 +67,16 @@
     if (d.message) toast(d.kind || "info", d.message);
   });
 
+  /* Provider/model test results: the server signals an alert modal via the
+     HX-Trigger response header ("memory-alert"), carrying {kind, title, message}
+     as the event detail. A modal keeps long provider replies readable and
+     dismissible (a toast auto-dismisses). Delegated on document.body so it
+     survives HTMX swaps. */
+  document.body.addEventListener("memory-alert", function (evt) {
+    var d = evt.detail || {};
+    alertModal(d.kind || "info", d.title, d.message);
+  });
+
   /* ---------- agent form dialog ---------- */
 
   function el(id) { return document.getElementById(id); }
@@ -662,6 +672,34 @@
   document.addEventListener("DOMContentLoaded", function () { openAutoOpenDialogs(document); });
   document.addEventListener("htmx:after:swap", function (ev) { openAutoOpenDialogs(ev.target); });
 
+  /*
+   * alertModal fills and opens the shell's #memory-alert-modal
+   * (components.AlertModal) with a provider/model test outcome. The banner tone
+   * class and icon are driven by kind; title and message are written with
+   * textContent because provider replies are untrusted and must never be parsed
+   * as markup. No-op when the modal is absent (the shell always renders it, but
+   * app.js is shared with pages/tests that may not).
+   */
+  function alertModal(kind, title, message) {
+    var dialog = el("memory-alert-modal");
+    if (!dialog || typeof dialog.showModal !== "function") return;
+    var tones = {
+      success: { cls: "alert-success", glyph: "lucide--check-circle" },
+      error: { cls: "alert-error", glyph: "lucide--circle-alert" },
+      warning: { cls: "alert-warning", glyph: "lucide--alert-triangle" },
+    };
+    var tone = tones[kind] || { cls: "alert-info", glyph: "lucide--info" };
+    var banner = el("memory-alert-banner");
+    var icon = el("memory-alert-icon");
+    var titleEl = el("memory-alert-title");
+    var messageEl = el("memory-alert-message");
+    if (banner) banner.className = "alert " + tone.cls + " items-start gap-3";
+    if (icon) icon.className = "iconify " + tone.glyph + " size-5 shrink-0";
+    if (titleEl) titleEl.textContent = title || "Test result";
+    if (messageEl) messageEl.textContent = message || "";
+    if (!dialog.open) dialog.showModal();
+  }
+
   /* Kanban board drag = the existing board action that matches the move. Every
      card is draggable; a valid (fromStatus, targetLane) pair maps to one of the
      backend's work-path transitions. Invalid pairs are rejected in the UI with
@@ -811,6 +849,7 @@
     openDialogByID: openDialogByID,
     openAutoOpenDialogs: openAutoOpenDialogs,
     toast: toast,
+    alert: alertModal,
   };
 
   /*

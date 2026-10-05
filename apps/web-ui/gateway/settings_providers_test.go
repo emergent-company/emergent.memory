@@ -1220,8 +1220,8 @@ func connectionTestPost(t *testing.T, e *echo.Echo, form string) *httptest.Respo
 	return rec
 }
 
-// toastHeader extracts the memory-toast HX-Trigger detail so assertions can
-// read the toast message without depending on header quoting.
+// toastHeader extracts the HX-Trigger detail so assertions can read the event
+// payload (memory-toast or memory-alert) without depending on header quoting.
 func toastHeader(t *testing.T, rec *httptest.ResponseRecorder) string {
 	t.Helper()
 	return rec.Header().Get("HX-Trigger")
@@ -1511,8 +1511,8 @@ func TestUIProviderTest(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, `"kind":"success"`) {
-		t.Errorf("test should trigger a success toast, got %q", hdr)
+	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, `"memory-alert"`) || !strings.Contains(hdr, `"kind":"success"`) || !strings.Contains(hdr, `"title":"Provider test"`) {
+		t.Errorf("test should trigger a success alert modal, got %q", hdr)
 	}
 }
 
@@ -1524,8 +1524,8 @@ func TestUIProviderTestError(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, "service down") {
-		t.Errorf("failed test should trigger an error toast, got %q", hdr)
+	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, `"memory-alert"`) || !strings.Contains(hdr, "service down") {
+		t.Errorf("failed test should trigger an error alert modal, got %q", hdr)
 	}
 }
 

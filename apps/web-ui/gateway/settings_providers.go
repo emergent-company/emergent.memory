@@ -652,18 +652,19 @@ func (s *Server) uiProjectProviderRemove(c echo.Context) error {
 }
 
 // uiProjectProviderTest runs a live generate+embed call for a provider and
-// surfaces the result as a toast (HTMX → POST /settings/providers/:provider/test).
+// surfaces the result as an alert modal (HTMX → POST
+// /settings/providers/:provider/test).
 func (s *Server) uiProjectProviderTest(c echo.Context) error {
 	ctx := c.Request().Context()
 	provider := strings.TrimSpace(c.Param("provider"))
 	if provider == "" {
-		return toastTrigger(c, "error", "provider is required")
+		return alertTrigger(c, "error", "Provider test", "provider is required")
 	}
 	res, err := s.memory.TestProjectProvider(ctx, provider)
 	if err != nil {
-		return toastTrigger(c, "error", err.Error())
+		return alertTrigger(c, "error", "Provider test", err.Error())
 	}
-	return toastTrigger(c, "success", fmt.Sprintf("%s OK: %s replied %q in %dms", provider, res.Model, res.Reply, res.LatencyMs))
+	return alertTrigger(c, "success", "Provider test", fmt.Sprintf("%s OK: %s replied %q in %dms", provider, res.Model, res.Reply, res.LatencyMs))
 }
 
 // uiProjectProviderTestConnection probes the submitted (unsaved) provider
@@ -673,7 +674,7 @@ func (s *Server) uiProjectProviderTest(c echo.Context) error {
 //
 // Every response — validation failure, probe failure, or success — carries the
 // providerFallbackModelOptions fragment as the body (htmx swaps it into
-// #provider-fallback-models) plus the memory-toast HX-Trigger header. Empty
+// #provider-fallback-models) plus the memory-alert HX-Trigger header. Empty
 // bodies would wipe the fallback selects, so failed/validation paths return
 // the fragment with empty model lists. On a successful probe the fragment is
 // seeded from the endpoint's OpenAI-compatible /models catalog.
@@ -741,13 +742,13 @@ func effectiveTestBaseURL(provider, baseURL string) string {
 }
 
 // providerTestFragmentResponse sends the test-connection response: the
-// memory-toast HX-Trigger header (same shape as toastTrigger) followed by the
-// providerFallbackModelOptions fragment body (the two fallback model selects,
-// seeded when gen/emb carry the endpoint's catalog). Set before WriteHeader so
-// the header actually reaches the client on every path.
+// memory-alert HX-Trigger header (same shape as alertTrigger, title "Connection
+// test") followed by the providerFallbackModelOptions fragment body (the two
+// fallback model selects, seeded when gen/emb carry the endpoint's catalog). Set
+// before WriteHeader so the header actually reaches the client on every path.
 func providerTestFragmentResponse(c echo.Context, kind, msg string, gen, emb []Model) error {
 	c.Response().Header().Set(echo.HeaderContentType, echo.MIMETextHTMLCharsetUTF8)
-	if err := toastTrigger(c, kind, msg); err != nil {
+	if err := alertTrigger(c, kind, "Connection test", msg); err != nil {
 		return err
 	}
 	// Render into a buffer first so an empty body never wipes the selects the
@@ -950,34 +951,35 @@ var defaultModelTestFields = map[string]string{
 // carries model_type ("generative"|"embedding") plus the matching prefixed
 // select value; the bare model name is the part after the first "/", which
 // memory resolves against the project's configured provider credentials. The
-// stored defaults are not touched — the outcome (or the failure) surfaces as a
-// toast via the HX-Trigger header.
+// stored defaults are not touched — the outcome (or the failure) surfaces as an
+// alert modal via the HX-Trigger header.
 func (s *Server) uiProjectDefaultModelTest(c echo.Context) error {
 	ctx := c.Request().Context()
 	modelType := strings.TrimSpace(c.FormValue("model_type"))
 	field, ok := defaultModelTestFields[modelType]
 	if !ok {
-		return toastTrigger(c, "error", `Model type must be "generative" or "embedding".`)
+		return alertTrigger(c, "error", "Model test", `Model type must be "generative" or "embedding".`)
 	}
 	selected := strings.TrimSpace(c.FormValue(field))
 	if selected == "" {
-		return toastTrigger(c, "error", "Select a model before testing it.")
+		return alertTrigger(c, "error", "Model test", "Select a model before testing it.")
 	}
 	provider, model, ok := strings.Cut(selected, "/")
 	if !ok || provider == "" || model == "" {
-		return toastTrigger(c, "error", fmt.Sprintf("%q must be a provider-prefixed model (provider/model).", selected))
+		return alertTrigger(c, "error", "Model test", fmt.Sprintf("%q must be a provider-prefixed model (provider/model).", selected))
 	}
 	res, err := s.memory.TestProjectModel(ctx, provider, model, modelType)
 	if err != nil {
-		return toastTrigger(c, "error", err.Error())
+		return alertTrigger(c, "error", "Model test", err.Error())
 	}
-	return toastTrigger(c, "success", defaultModelTestMessage(selected, modelType, res))
+	return alertTrigger(c, "success", "Model test", defaultModelTestMessage(selected, modelType, res))
 }
 
-// defaultModelTestMessage renders the success toast for a passing default-model
-// test. Generative names the model and echoes its reply snippet; embedding names
-// the verified embedding model. Both include the round-trip latency. The
-// selected prefixed value is the fallback name when memory reports none.
+// defaultModelTestMessage renders the success message for a passing
+// default-model test. Generative names the model and echoes its reply snippet;
+// embedding names the verified embedding model. Both include the round-trip
+// latency. The selected prefixed value is the fallback name when memory reports
+// none.
 func defaultModelTestMessage(selected, modelType string, res *ProviderTestResult) string {
 	if modelType == "embedding" {
 		name := res.EmbeddingModel

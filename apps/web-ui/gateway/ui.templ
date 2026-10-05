@@ -78,6 +78,8 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 			<div id="modal-container"></div>
 			<!-- Toast container -->
 			@ui.ToastQueueWithProps(ui.ToastQueueProps{Position: ui.ToastQueueBottomCenter, PauseOnHover: true, Countdown: true})
+			<!-- Alert modal: provider/model test results (filled + opened by app.js) -->
+			@components.AlertModal()
 			@spotlightSearch(agents)
 			<div class="flex h-screen overflow-hidden">
 				<input

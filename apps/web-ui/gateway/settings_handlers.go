@@ -876,6 +876,22 @@ func toastTrigger(c echo.Context, kind, msg string) error {
 	return nil
 }
 
+// alertTrigger signals an alert modal to the client via the HX-Trigger response
+// header. The "memory-alert" event carries {kind, title, message}; app.js
+// listens for it and opens the shell's #memory-alert-modal, rendering the
+// message as text (provider replies are untrusted — never innerHTML). Like
+// toastTrigger it always returns HTTP 200: the app-wide htmx noSwap config
+// suppresses non-2xx, and the outcome is carried by the trigger detail.
+func alertTrigger(c echo.Context, kind, title, msg string) error {
+	detail, err := json.Marshal(map[string]any{"kind": kind, "title": title, "message": msg})
+	if err != nil {
+		detail = []byte(`{"kind":"info","title":"","message":""}`)
+	}
+	c.Response().Header().Set("HX-Trigger", `{"memory-alert": `+string(detail)+`}`)
+	c.Response().WriteHeader(http.StatusOK)
+	return nil
+}
+
 // uiProjectVoiceField handles one inline per-field voice save (HTMX → POST
 // /settings/voice/:key). The request carries only the changed input's own
 // value (hx-include="this"; the input's name equals the canonical key).
