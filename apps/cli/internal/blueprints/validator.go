@@ -242,11 +242,17 @@ var validFlowTypes = map[string]bool{
 	"loop":       true,
 }
 
+// validVisibilities is the set of agent visibility levels the server accepts.
+// It mirrors the canonical AgentVisibility constants in
+// apps/server/domain/agents/entity.go (VisibilityProject|External|Internal) and
+// the server's NormalizeVisibility, which maps empty to "project". The CLI SDK
+// exposes visibility only as a plain string (no shared enum constants), so the
+// set is hardcoded here and must be kept in sync with the server.
 var validVisibilities = map[string]bool{
-	"":        true, // optional
-	"public":  true,
-	"private": true,
-	"system":  true,
+	"":         true, // optional — server normalizes empty to "project"
+	"project":  true,
+	"external": true,
+	"internal": true,
 }
 
 var validDispatchModes = map[string]bool{
@@ -277,7 +283,7 @@ func (r *ValidationReport) validateAgents(agents []AgentFile) {
 
 		if a.Visibility != "" && !validVisibilities[a.Visibility] {
 			r.add(ValidationError, "agent", a.Name, a.SourceFile, "visibility",
-				fmt.Sprintf("invalid visibility %q (valid: public, private, system)", a.Visibility))
+				fmt.Sprintf("invalid visibility %q (valid: project, external, internal)", a.Visibility))
 		}
 
 		if a.DispatchMode != "" && !validDispatchModes[a.DispatchMode] {
