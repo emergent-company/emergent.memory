@@ -146,17 +146,6 @@ func (s *Server) pendingDockCards(ctx context.Context, convID string) (approvals
 	return approvals, questions
 }
 
-// uiChatDock implements GET /partial/chat-dock?c=<conversationId>: the
-// DockPanel fragment for the active conversation's pending work, or an empty
-// fragment when there is none. DockPanel renders nothing when both sides are
-// empty, so this handler always returns the component.
-func (s *Server) uiChatDock(c echo.Context) error {
-	convID := c.QueryParam("c")
-	approvals, questions := s.pendingDockCards(c.Request().Context(), convID)
-	render.RenderPartial(c.Response().Writer, c.Request(), DockPanel(convID, approvals, questions))
-	return nil
-}
-
 // uiChatTodos implements GET /partial/chat-todos?c=<conversationId>: the
 // TodoCard fragment for the conversation's ACP session todos, or an empty
 // fragment when the conversation has no ACP session or its session has no

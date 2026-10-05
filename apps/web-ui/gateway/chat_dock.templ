@@ -4,16 +4,13 @@ import "strconv"
 
 // DockPanel renders the pending-work dock for one conversation: its pending
 // tool approvals and pending ask_user questions. It renders nothing when both
-// are empty. The approve/reject/answer controls carry data-dock-action /
-// data-dock-option-value attributes; chat.js's delegated handler posts them to
-// the existing approval/question response routes (the same ones the inline
-// cards use), so this component lays out the cards and their controls only.
-// Each option button shows the option's label and exposes its value on
-// data-dock-option-value, so chat.js submits the value — not the label —
-// exactly like the inline question card.
+// are empty. It is the chat page's <noscript> fallback only: with scripting,
+// pending questions and approvals render inline in the transcript as agent
+// bubbles (chat.js/chat-stream.js renderQuestion/renderApproval), so this panel
+// is never part of the live DOM.
 //
-// The fragment root deliberately carries no id: the chat page's mount point
-// owns #chat-dock, and an id here would nest a duplicate #chat-dock inside it.
+// The fragment root deliberately carries no id: it is pre-rendered inside
+// <noscript> and must not collide with any live-DOM id.
 templ DockPanel(convID string, approvals []ApprovalCard, questions []QuestionCard) {
 	if len(approvals) > 0 || len(questions) > 0 {
 		{{ total := len(approvals) + len(questions) }}

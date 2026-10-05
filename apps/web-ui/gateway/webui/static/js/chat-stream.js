@@ -596,6 +596,8 @@
       var card = document.createElement("div");
       card.className =
         "memory-question card card-border bg-base-100 col-start-2 row-start-2 w-fit min-w-[min(100%,30rem)] max-w-[85%] shadow-sm";
+      card.setAttribute("data-testid", "chat-question-card");
+      card.setAttribute("data-question-id", questionId || "");
       card.innerHTML =
         '<div class="card-body gap-3 p-4">' +
         '<div class="q-body memory-md text-base leading-snug break-words">' + (evt.questionHtml || escapeHTML(q)) + '</div>' +
@@ -608,7 +610,7 @@
             '<span class="iconify lucide--check size-3" aria-hidden="true"></span> Answered</span></div>'
           : '<div class="flex items-center justify-between gap-3 pt-1">' +
             '<span class="text-xs text-muted-faint">Esc to dismiss</span>' +
-            '<button type="button" class="q-submit btn btn-primary btn-sm min-w-28" disabled>Submit</button>' +
+            '<button type="button" data-testid="chat-question-submit" class="q-submit btn btn-primary btn-sm min-w-28" disabled>Submit</button>' +
             '</div>') +
         '</div>';
       wrap.appendChild(card);
@@ -651,6 +653,8 @@
         row.setAttribute("role", isMulti ? "checkbox" : "radio");
         row.setAttribute("aria-checked", "false");
         row.className = rowCls(false);
+        row.setAttribute("data-testid", "chat-question-option");
+        row.setAttribute("data-option-value", String(opt.value));
 
         var ind = document.createElement("span");
         ind.className = indicatorCls(false);
@@ -847,6 +851,8 @@
       var card = document.createElement("div");
       card.className =
         "memory-approval card card-border bg-base-100 col-start-2 row-start-2 w-full max-w-[85%] shadow-sm border-warning/30";
+      card.setAttribute("data-testid", "chat-approval-card");
+      card.setAttribute("data-question-id", questionId || "");
       card.innerHTML =
         '<div class="card-body gap-3 p-4">' +
         '<h3 class="text-base leading-snug font-semibold break-words">Approve tool call</h3>' +
@@ -856,9 +862,9 @@
         '<input type="text" class="approval-msg input input-sm w-full" placeholder="Reason (optional)" maxlength="500">' +
         '</div>' +
         '<div class="flex items-center justify-end gap-2 pt-1">' +
-        '<button type="button" class="approval-cancel btn btn-ghost btn-sm">Cancel</button>' +
-        '<button type="button" class="approval-reject btn btn-ghost btn-sm text-error">Reject</button>' +
-        '<button type="button" class="approval-approve btn btn-primary btn-sm">Approve</button>' +
+        '<button type="button" data-testid="chat-approval-cancel" class="approval-cancel btn btn-ghost btn-sm">Cancel</button>' +
+        '<button type="button" data-testid="chat-approval-reject" class="approval-reject btn btn-ghost btn-sm text-error">Reject</button>' +
+        '<button type="button" data-testid="chat-approval-approve" class="approval-approve btn btn-primary btn-sm">Approve</button>' +
         '</div>' +
         '</div>';
       wrap.appendChild(card);

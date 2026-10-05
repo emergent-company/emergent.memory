@@ -35,7 +35,7 @@ Priority order mirrors the reference implementation researched for this change: 
 
 ## Decision 3: Approval semantics untouched
 
-`tool-approval-policy` already specifies that approvals reach the conversation, that multiple approvals can be concurrent and decided independently, that an approval waits indefinitely, and that decisions are audited. The dock is a placement change: same items, same response routes, same audit. The only new obligation is that the dock shows a count and refreshes on the existing refresh event.
+`tool-approval-policy` already specifies that approvals reach the conversation, that multiple approvals can be concurrent and decided independently, that an approval waits indefinitely, and that decisions are audited. The pending-work surface is a placement change: same items, same response routes, same audit, and it refreshes on the existing refresh event. **Amended (#1491):** pending questions and approvals render inline in the transcript as agent bubbles, not in a dock above the composer — the dock was a placement choice the feedback rejected ("cards should be inside chat stream... like bubbles from the agent"). The server-rendered `DockPanel` is retained only as the chat page's `<noscript>` fallback; the `/partial/chat-dock` JS endpoint and the delegated dock controls were removed.
 
 ## Decision 4: The queue is client-side and per-conversation
 
@@ -74,7 +74,7 @@ Routes:
 | Route | Returns |
 |---|---|
 | `POST /api/chat/runs/:runId/cancel` | `{"ok":true,"runId":"…"}` or `{"ok":false,"reason":"…"}` |
-| `GET /partial/chat-dock?c=<conversationId>` | HTML fragment — `DockPanel` or empty |
+| ~~`GET /partial/chat-dock?c=<conversationId>`~~ | **Removed (#1491, see amendment above)** — the route and live mount were retired; pending cards render inline, `DockPanel` survives only as the `<noscript>` fallback |
 | `GET /partial/chat-todos?c=<conversationId>` | HTML fragment — `TodoCard` or empty |
 
 Extended refresh payload (existing `{"type":"refresh"}` gains fields; consumers that ignore unknown fields keep working):

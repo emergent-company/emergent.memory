@@ -264,15 +264,12 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 				</div>
 			</div>
 			<div class="border-base-content/5 border-t bg-base-100">
-				<!-- Pending-work dock mount. With scripting, chat.js owns
-				     #chat-dock and fills it from /partial/chat-dock, so the mount
-				     starts empty + hidden. The server-rendered DockPanel lives in
-				     <noscript> as the no-JS fallback — keeping it out of the live
-				     DOM is what guarantees the pre-render and chat.js's refresh
-				     can never both render the same cards (chat.js's fallback when
-				     the dock route fails is the transcript's inline approval
-				     path, not a second copy in the dock). -->
-				<div id="chat-dock" aria-live="polite" class="hidden"></div>
+				<!-- No-JS fallback only. With scripting, pending ask_user questions
+				     and tool approvals render inline in the transcript as agent
+				     bubbles (chat-stream.js renderQuestion/renderApproval), so the
+				     server-rendered DockPanel lives inside <noscript> and never
+				     enters the live DOM — the pre-render and the inline cards can
+				     never both render the same pending item. -->
 				<noscript>
 					@DockPanel(convID, runControl.Approvals, runControl.Questions)
 				</noscript>

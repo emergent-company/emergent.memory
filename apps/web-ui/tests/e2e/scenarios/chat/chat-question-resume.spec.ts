@@ -9,28 +9,33 @@ import {
   readConversationHistory,
 } from '../../helpers/live-chat';
 
-// ask_user question round-trip: an agent pauses on a pending question in the
-// chat dock (#chat-dock [data-testid="dock-question"], chat_dock.templ), the
-// operator answers it, and the parked run RESUMES and produces its continuation.
-// The resume is not streamed: memory resumes the run in the background and the
-// gateway reads the continuation back from history (chat.js answerQuestion →
-// refreshActiveTranscript), so the assertion is a rendered continuation in the
-// transcript, not a settled send. The dock render itself is asserted by
-// chat-run-control.spec.ts; this scenario proves the ANSWER → RESUME round-trip.
+// ask_user question round-trip: an agent pauses on a pending question rendered
+// INLINE in the transcript (#chat-messages [data-testid="chat-question-card"]),
+// the operator answers it, and the parked run RESUMES and produces its
+// continuation. The resume is not streamed: memory resumes the run in the
+// background and the gateway reads the continuation back from history (chat.js
+// answerQuestion → refreshActiveTranscript), so the assertion is a rendered
+// continuation in the transcript, not a settled send. The inline card render
+// itself is asserted by chat-run-control.spec.ts; this scenario proves the
+// ANSWER → RESUME round-trip.
 //
 // Live-LLM and env-gated on E2E_SCENARIO_LLM_API_KEY. Skips when the model never
-// asks (no dock card) or when the run errors (provider/environment) — a model
+// asks (no inline card) or when the run errors (provider/environment) — a model
 // deviation, not a regression. HARD-FAILS when a card was answered but no
 // continuation appears, which is the behavior under test.
 
 const CHOSEN_VALUE = 'grape';
-// A distinctive prefix the model only emits AFTER the run resumes, so its
+// A distinctive phrase the model only emits AFTER the run resumes, so its
 // presence proves the continuation rather than the question card (whose option
-// labels include the chosen value).
-const MARKER = 'FINALCHOICE';
+// labels include the chosen value). It is deliberately normal prose: an earlier
+// revision pinned a machine token ("FINALCHOICE:<value>"), which was rendered
+// verbatim into the scratch conversation and read to a human as leaked metadata
+// (#1492). The scratch agents/conversations are real rows on the dev instance,
+// so their transcript must read like a conversation.
+const MARKER = 'GREAT, I WILL GO WITH';
 
 test.describe('Chat ask_user question resume', () => {
-  test('answering a dock ask_user question resumes the run and persists the reply', async ({ page }) => {
+  test('answering an inline ask_user question resumes the run and persists the reply', async ({ page }) => {
     // Provider save + question wait + resumed-continuation wait can each be slow.
     test.setTimeout(600_000);
     test.skip(!API_KEY, SKIP_NO_KEY);
@@ -46,12 +51,13 @@ test.describe('Chat ask_user question resume', () => {
         `question "Which fruit should I pick?", options ` +
         `[{"label":"Pineapple","value":"pineapple"},{"label":"Grape","value":"grape"}]. ` +
         `Never answer in prose before asking, and never call any other tool. After you receive ` +
-        `the answer, reply with exactly this single line and nothing else: ` +
-        `"${MARKER}:<the value you were given>".`;
+        `the answer, reply with exactly this single natural sentence and nothing else: ` +
+        `"Great, I will go with <the value you were given>." Do not emit any labels, ` +
+        `prefixes, or machine markers.`;
       // Policy must be "allow": with "ask" the ask_user TOOL CALL itself is
       // gated behind a tool approval, so the run parks on the approval before the
       // question is ever emitted. This scenario drives the question, not the
-      // approval gate (chat-run-control.spec.ts covers the dock card kinds).
+      // approval gate (chat-run-control.spec.ts covers the inline card kinds).
       const seeded = await createScratchAgent(page, name, systemPrompt, ['ask_user'], 'allow');
       projectId = seeded.projectId;
       agentId = seeded.agentId;
@@ -61,25 +67,28 @@ test.describe('Chat ask_user question resume', () => {
       await page.locator('#chat-input').fill('Ask me which fruit to pick.');
       await page.locator('#chat-send').click();
 
-      // The pending question renders in the dock. The dock is re-rendered over
-      // htmx while the run is parked, so select the option and submit in ONE
-      // synchronous in-page poll — a Playwright click would auto-wait on a
-      // replaced element until the test times out. The same poll resolves on a
-      // transcript error span (env failure) so a 429 skips fast instead of
-      // burning the full card timeout. Returning 'submitted' proves the dock
-      // rendered the question AND accepted the answer.
+      // The pending question renders inline in the transcript. The transcript
+      // is re-rendered over the history refresh while the run is parked, so
+      // select the option and submit in ONE synchronous in-page poll — a
+      // Playwright click would auto-wait on a replaced element until the test
+      // times out. The same poll resolves on a transcript error span (env
+      // failure) so a 429 skips fast instead of burning the full card timeout.
+      // Returning 'submitted' proves the transcript rendered the question AND
+      // accepted the answer.
       const cardWaitMs = 300_000;
       const outcome = await page
         .waitForFunction(
           (chosenValue: string) => {
-            const dock = document.querySelector(
-              '#chat-dock [data-testid="dock-question"]',
+            const card = document.querySelector(
+              '#chat-messages [data-testid="chat-question-card"]',
             ) as HTMLElement | null;
-            if (dock) {
-              const opt = dock.querySelector(
-                `.dock-question-option[data-dock-option-value="${chosenValue}"]`,
+            if (card) {
+              const opt = card.querySelector(
+                `[data-testid="chat-question-option"][data-option-value="${chosenValue}"]`,
               ) as HTMLButtonElement | null;
-              const submit = dock.querySelector('.dock-question-submit') as HTMLButtonElement | null;
+              const submit = card.querySelector(
+                '[data-testid="chat-question-submit"]',
+              ) as HTMLButtonElement | null;
               if (opt && submit) {
                 if (opt.getAttribute('aria-checked') !== 'true') opt.click();
                 if (!submit.disabled) {
@@ -107,11 +116,11 @@ test.describe('Chat ask_user question resume', () => {
         test.info().annotations.push({
           type: 'skipped-step',
           description:
-            `no dock question card was answered within ${cardWaitMs / 1000}s (${outcome}) — ` +
+            `no inline question card was answered within ${cardWaitMs / 1000}s (${outcome}) — ` +
             `the turn errored (provider/environment) or the model answered without asking; ` +
             `transcript error: ${errs[0]?.trim() ?? 'none'}`,
         });
-        test.skip(true, 'the model did not ask via a pending-work dock question card');
+        test.skip(true, 'the model did not ask via a pending-work inline question card');
         return;
       }
 
@@ -144,13 +153,20 @@ test.describe('Chat ask_user question resume', () => {
           return;
         }
         throw new Error(
-          'answering the dock ask_user question did not resume the run: no continuation ' +
+          'answering the inline ask_user question did not resume the run: no continuation ' +
             'bubble appeared within 150s',
         );
       }
 
       // Strong resume signal: the continuation echoes the chosen value.
       const transcript = await page.locator('#chat-messages').innerText();
+      // Regression guard (#1492): the resumed continuation is normal prose. It
+      // must never leak a machine sentinel like the retired "FINALCHOICE:<value>"
+      // marker into the user-visible transcript.
+      expect(
+        transcript.toUpperCase(),
+        'the resumed continuation must not contain a raw metadata sentinel',
+      ).not.toContain('FINALCHOICE');
       expect(
         transcript.toUpperCase(),
         `the resumed continuation must echo the chosen answer (tail: ${JSON.stringify(transcript.slice(-400))})`,

@@ -1326,7 +1326,7 @@
   //   renderThinkingBlock(text, html, kind)
   //   isThinkingItem(item, content)          surface-specific thinking guard
   //   stripContextPreamble(text)             optional (chat only)
-  //   pendingApprovals[], renderApproval({questionId,tool,input}), dockAvailable()   optional
+  //   pendingApprovals[], renderApproval({questionId,tool,input})   optional
   //   attachTurnFooters(records), onNewestRun(runId,status,ended), afterRender(status,ended)  optional
   function renderTimeline(items, ctx, flags) {
     if (!ctx || !ctx.container) return;
@@ -1447,10 +1447,9 @@
           if (item.tool_name === "ask_user") {
             var qout = item.tool_output || {};
             if (qout.question_id) {
-              var qAnswered = qout.response !== undefined && qout.response !== null;
-              // A still-pending question lives in the dock when it is live; an
-              // answered one stays as a static historical card.
-              if (ctx.dockAvailable && ctx.dockAvailable() && !qAnswered) break;
+              // Pending and answered questions both render inline in the
+              // transcript; renderHistoryQuestion renders the interactive card
+              // for an unanswered one and the static "Answered" card otherwise.
               ctx.renderHistoryQuestion(item.tool_input || {}, qout.question_id, qout.response);
             }
             break;
@@ -1530,10 +1529,10 @@
     if (ctx.onNewestRun) ctx.onNewestRun(newestRunId, newestRunStatus, newestRunEnded);
 
     // Pending tool approvals (a run paused awaiting a human decision) render as
-    // the same interactive Approve/Reject/Cancel cards as live approval events.
-    // When the pending-work dock is live they belong there instead.
+    // the same interactive Approve/Reject/Cancel cards as live approval events,
+    // inline in the transcript.
     var pendingApprovals = ctx.pendingApprovals || [];
-    if (ctx.renderApproval && !(ctx.dockAvailable && ctx.dockAvailable())) {
+    if (ctx.renderApproval) {
       for (var p = 0; p < pendingApprovals.length; p++) {
         var pa = pendingApprovals[p];
         if (!pa || !pa.questionId) continue;

@@ -90,8 +90,7 @@
   var railFingerprint = ""; // last refresh-derived rail state — avoids redundant rail fetches
   var lastTimelineRun = { status: "", ended: false }; // newest run in the rendered transcript
   var queueStore = {};      // conversationId -> {items:[{id,text}], armed:bool}
-  var mounts = {};          // created mount points: dock, queue, todos, status
-  var dockAvailable = null; // true once /partial/chat-dock answered (dock owns pending work)
+  var mounts = {};          // created mount points: queue, todos, status
 
   // Session rail width: single source of truth is the shared resize grip
   // (chat-host.js), applied as an inline style.width on #chat-rail (beats the
@@ -149,14 +148,12 @@
     updateBubbleText: function () { updateBubbleText(); },
     scrollToBottom: scrollToBottom,
     handleToolEvent: function (evt) { handleToolEvent(evt); },
+    // Pending questions/approvals always render inline in the transcript as an
+    // agent bubble (renderQuestion/renderApproval, shared with the side panel).
     renderQuestion: function (evt) {
-      // With the pending-work dock live, questions are placed there — refresh
-      // it rather than dropping a second card into the transcript.
-      if (dockAvailable === true) { refreshDock(); return; }
       renderQuestion(evt);
     },
     renderApproval: function (evt) {
-      if (dockAvailable === true) { refreshDock(); return; }
       renderApproval(evt);
     },
     renderUI: function (evt) {
@@ -222,7 +219,7 @@
     scrollToBottom: scrollToBottom,
     hideEmpty: hideEmpty,
     // Raised by the engine from openAssistantBubble on EVERY live turn start
-    // (send / answer / dock decision / inline approval): this page now owns the
+    // (send / answer / inline decision / inline approval): this page now owns the
     // turn's DOM, so history renders and refresh re-renders must stand down.
     // The side panel omits this hook and is unaffected.
     onLiveTurnStart: function () { liveTurn = true; },
@@ -401,11 +398,9 @@
     }
 
     // Run-control surfaces. The mount points are created at runtime when
-    // chat.templ does not already provide them, so this lane ships without
-    // depending on the markup lane: #chat-dock + #chat-queue inside the
-    // composer bar, #chat-todos in the transcript column, #chat-run-status in
-    // the header. Every helper degrades to a no-op when a mount is absent.
-    ensureDockMount();
+    // chat.templ does not already provide them: #chat-queue inside the composer
+    // bar, #chat-todos in the transcript column, #chat-run-status in the header.
+    // Every helper degrades to a no-op when a mount is absent.
     ensureQueueMount();
     ensureTodosMount();
     ensureHeaderStatus();
@@ -653,7 +648,7 @@
     if (empty) empty.classList.remove("hidden");
     liveTurn = false;
     setStreaming(false);
-    clearDock();
+    clearRunControlState();
     clearTodos();
     clearHeaderStatus();
     renderQueue();
@@ -1097,7 +1092,7 @@
   // for the same scope and closes any other before opening, so switching
   // surfaces never leaks connections or stacks duplicate sources. The
   // one-shot /api/chat stream ends when a run pauses, so this durable push
-  // channel is what keeps a resumed page/run/dock current.
+  // channel is what keeps a resumed page/run current.
   function closeLiveStream() {
     if (eventSource) { eventSource.close(); eventSource = null; }
     eventSourceId = "";
@@ -1192,9 +1187,8 @@
     activeRunId = "";
     updateUrl();
     // Conversation-scoped surfaces: show this conversation's parked queue and
-    // load its pending-work dock + todo card (a rail switch never carries the
-    // previous conversation's queue across). The dock fetch settles before the
-    // transcript renders so its approval placement is known.
+    // load its todo card (a rail switch never carries the previous
+    // conversation's queue across).
     renderQueue();
 
     // Live updates for this conversation: the one-shot /api/chat SSE stream
@@ -1219,7 +1213,6 @@
       updateChatHeader();
     }
 
-    await refreshDock();
     await refreshTodos();
     await renderHistory(id);
     markRailItem(id);
@@ -1351,8 +1344,8 @@
   // renderTimelineItems renders a raw history payload (conversation or run) —
   // the item vocabulary, sorting, and rendering are shared with the side panel
   // via MemoryChatComponents.renderTimeline; this page supplies the chat-specific
-  // flags + hooks (thinking, run-scope meta, turn footers, the pending-work dock,
-  // the mid-run placeholder) and the DOM-ownership guard. Run boundary rows are
+  // flags + hooks (run markers, thinking, run-scope meta, turn footers, the
+  // mid-run placeholder) and the DOM-ownership guard. Run boundary rows are
   // debug-gated (chatDebugEnabled), not always on (#1381).
   function renderTimelineItems(items, pendingApprovals) {
     // Guard: never render history over a live stream THIS page owns. Wiping
@@ -1413,7 +1406,6 @@
       renderThinkingBlock: renderThinkingBlock,
       renderApproval: renderApproval,
       pendingApprovals: pendingApprovals,
-      dockAvailable: function () { return dockAvailable === true; },
       attachTurnFooters: attachTurnFooters,
       onNewestRun: function (runId, status, ended) {
         // Remember the newest run so the stop action can cancel it.
@@ -1796,9 +1788,8 @@
 
     await waitForResume(currentScopeId(), baseline);
     finishStream("done");
-    // Pull the answered question out of the dock and re-render the transcript
-    // so the resumed run's continuation appears.
-    refreshDock();
+    // Re-render the transcript: the answered question becomes a static
+    // "Answered" card and the resumed run's continuation appears.
     refreshActiveTranscript();
     return true;
   }
@@ -1810,12 +1801,12 @@
 
   // POSTs an approval decision to the gateway: payload is the respond body
   // ({response, message?}) or null to cancel. The resumed run is polled until
-  // it progresses, then the dock drops the decided item and the transcript
-  // re-renders. Returns true when the decision was recorded (the dock's
-  // delegated handler uses this to re-enable its controls on failure). There is
-  // deliberately no `streaming` guard here: the inline approval cards set the
-  // streaming flag before calling in (to show the progress bubble), so guarding
-  // on it would silently drop every inline decision.
+  // it progresses, then the transcript re-renders. Returns true when the
+  // decision was recorded (the inline card uses this to re-enable its controls
+  // on failure). There is deliberately no `streaming` guard here: the inline
+  // approval cards set the streaming flag before calling in (to show the
+  // progress bubble), so guarding on it would silently drop every inline
+  // decision.
   async function postDecision(questionId, payload) {
     if (!questionId) return false;
     var baseline = await resumeBaseline(currentScopeId());
@@ -1833,8 +1824,8 @@
     }
     await waitForResume(currentScopeId(), baseline);
     finishStream("done");
-    // Drop the decided item from the dock and re-render the transcript.
-    refreshDock();
+    // Re-render the transcript so the decided card leaves and the resumed run's
+    // continuation appears.
     refreshActiveTranscript();
     return true;
   }
@@ -1963,7 +1954,7 @@
     return true;
   }
 
-  /* ---------- run-control surfaces (dock, todos, rail, queue, stop) ---------- */
+  /* ---------- run-control surfaces (todos, rail, queue, stop) ---------- */
 
   // --- mount points -------------------------------------------------------
   // Each ensure* creates its mount at runtime when chat.templ does not already
@@ -2005,38 +1996,19 @@
   }
 
   // withAnchoredScroll keeps the transcript pinned to the composer across a
-  // height change (dock appearing, todo card expanding, queue growing): if the
-  // viewport was at the bottom it stays there, otherwise the reading position
-  // is left alone.
+  // height change (todo card expanding, queue growing): if the viewport was at
+  // the bottom it stays there, otherwise the reading position is left alone.
   function withAnchoredScroll(fn) {
     var wasBottom = isAtBottom();
     if (typeof fn === "function") fn();
     if (wasBottom) scrollToBottom(true);
   }
 
-  function ensureDockMount() {
-    if (mounts.dock && document.contains(mounts.dock)) return mounts.dock;
-    var wrap = composerWrapper();
-    if (!wrap) return null;
-    var el = document.getElementById("chat-dock");
-    if (!el) {
-      el = document.createElement("div");
-      el.id = "chat-dock";
-      el.className = "hidden";
-      el.setAttribute("aria-live", "polite");
-      var form = document.getElementById("chat-form");
-      if (form && form.parentNode === wrap) wrap.insertBefore(el, form);
-      else wrap.insertBefore(el, wrap.firstChild);
-    }
-    mounts.dock = el;
-    return el;
-  }
-
   // The queue is a swapped/server-rendered surface (#chat-queue is rendered by
   // chat.templ), so its row controls are delegated at the document level — the
-  // same pattern as the dock and tool-panel handlers. Binding on element
-  // creation missed the server-rendered mount entirely, leaving "Send next" and
-  // remove inert (#1301).
+  // same pattern as the tool-panel handlers. Binding on element creation missed
+  // the server-rendered mount entirely, leaving "Send next" and remove inert
+  // (#1301).
   function onQueueClick(ev) {
     var mount = document.getElementById("chat-queue");
     if (!mount || !ev.target || !mount.contains(ev.target)) return;
@@ -2101,187 +2073,16 @@
     return el;
   }
 
-  // --- pending-work dock --------------------------------------------------
-
-  function clearDock() {
-    var el = mounts.dock || document.getElementById("chat-dock");
-    if (el) { el.innerHTML = ""; el.classList.add("hidden"); }
-    dockAvailable = null;
+  // --- run-control state --------------------------------------------------
+  // clearRunControlState drops the live run identity on a scope switch (reset to
+  // a fresh chat, or resuming a different conversation) so liveRunId /
+  // liveRunStatus / liveBucket can never leak across conversations. (This was
+  // the run-state half of the retired bottom dock's clearDock.)
+  function clearRunControlState() {
     liveRunId = "";
     liveRunStatus = "";
     liveBucket = "";
   }
-
-  function refreshDock() {
-    var el = ensureDockMount();
-    if (!el) return Promise.resolve();
-    if (!conversationId) {
-      dockAvailable = null;
-      withAnchoredScroll(function () { el.innerHTML = ""; el.classList.add("hidden"); });
-      return Promise.resolve();
-    }
-    return fetch("/partial/chat-dock?c=" + encodeURIComponent(conversationId))
-      .then(function (res) {
-        if (!res.ok) throw new Error("HTTP " + res.status);
-        return res.text();
-      })
-      .then(function (html) {
-        dockAvailable = true;
-        withAnchoredScroll(function () {
-          if (html && html.trim()) { el.innerHTML = html; el.classList.remove("hidden"); }
-          else { el.innerHTML = ""; el.classList.add("hidden"); }
-        });
-      })
-      .catch(function (err) {
-        // Best-effort: the transcript's inline approval path stays in charge
-        // when the dock is unavailable, so the chat never blocks on this.
-        dockAvailable = false;
-        console.warn("chat: dock refresh failed (using inline approvals):", err);
-      });
-  }
-
-  // --- dock decision controls ---------------------------------------------
-  // The dock is a server-rendered fragment swapped in by refreshDock, so its
-  // controls are wired by ONE delegated handler (bound on document at boot)
-  // rather than per-render listeners. Decisions reuse the inline path's exact
-  // request code: approvals go through postDecision (respond/cancel), questions
-  // through answerQuestion — both posting the existing /api/chat/questions/…
-  // routes. After success the dock + transcript refresh, which is what makes
-  // the decided item leave the dock (an empty fragment hides the mount).
-
-  function dockCard(el) {
-    return el && el.closest ? el.closest("[data-testid='dock-approval'], [data-testid='dock-question']") : null;
-  }
-
-  // setDockBusy disables a card's controls while its decision is in flight so a
-  // double-click can't post twice. On failure the handler re-enables them.
-  function setDockBusy(card, busy) {
-    if (!card) return;
-    var controls = card.querySelectorAll("button, input");
-    for (var i = 0; i < controls.length; i++) controls[i].disabled = !!busy;
-    if (busy) card.setAttribute("aria-busy", "true");
-    else card.removeAttribute("aria-busy");
-  }
-
-  // selectDockOption toggles one option button. Multi-select keeps independent
-  // checks; single-select is exclusive. aria-checked drives both the styling and
-  // the value read back on submit.
-  function selectDockOption(card, btn) {
-    var multi = card.getAttribute("data-dock-type") === "multi_select";
-    if (multi) {
-      btn.setAttribute("aria-checked", btn.getAttribute("aria-checked") === "true" ? "false" : "true");
-    } else {
-      var opts = card.querySelectorAll(".dock-question-option");
-      for (var i = 0; i < opts.length; i++) {
-        opts[i].setAttribute("aria-checked", opts[i] === btn ? "true" : "false");
-      }
-    }
-    updateDockSubmitState(card);
-  }
-
-  // dockOptionValue resolves the answer value for one checked option button:
-  // the option's value (data-dock-option-value) when present, else the button's
-  // label text. This mirrors the inline renderQuestion, which keys selection on
-  // opt.value and only falls back to the label for a valueless option — the dock
-  // must never submit a display label as the answer when a value exists.
-  function dockOptionValue(btn) {
-    var v = btn.getAttribute("data-dock-option-value");
-    if (v !== null && v !== "") return v;
-    return btn.textContent ? btn.textContent.trim() : "";
-  }
-
-  // dockAnswerValue mirrors the inline renderQuestion's answerValue(): free text
-  // for a text question, a JSON array for multi-select, and the single chosen
-  // option otherwise. Null when nothing valid is selected yet.
-  function dockAnswerValue(card) {
-    if (!card) return null;
-    var input = card.querySelector(".dock-question-input");
-    if (input) return input.value.trim();
-    var checked = card.querySelectorAll(".dock-question-option[aria-checked='true']");
-    if (!checked.length) return null;
-    var type = card.getAttribute("data-dock-type") || "";
-    if (type === "multi_select") {
-      var vals = [];
-      for (var i = 0; i < checked.length; i++) vals.push(dockOptionValue(checked[i]));
-      return JSON.stringify(vals);
-    }
-    return dockOptionValue(checked[0]) || null;
-  }
-
-  function updateDockSubmitState(card) {
-    var submit = card.querySelector("[data-dock-action='answer']");
-    if (!submit) return;
-    var val = dockAnswerValue(card);
-    submit.disabled = val === null || val === "";
-  }
-
-  // runDockDecision kicks off the decision (showing the same progress bubble the
-  // inline cards use) and re-enables the controls if it did not go through.
-  function runDockDecision(card, decision) {
-    setDockBusy(card, true);
-    Promise.resolve(decision).then(
-      function (ok) { if (ok !== true) setDockBusy(card, false); },
-      function () { setDockBusy(card, false); }
-    );
-  }
-
-  function onDockClick(ev) {
-    var t = ev.target;
-    if (!t || !t.closest) return;
-    var option = t.closest(".dock-question-option");
-    if (option) {
-      var optCard = dockCard(option);
-      if (optCard) selectDockOption(optCard, option);
-      return;
-    }
-    var control = t.closest("[data-dock-action]");
-    if (!control) return;
-    var card = dockCard(control);
-    if (!card) return;
-    var qid = control.getAttribute("data-question-id") || card.getAttribute("data-question-id") || "";
-    if (!qid) return;
-    var action = control.getAttribute("data-dock-action");
-    if (action === "answer") {
-      var answer = dockAnswerValue(card);
-      if (answer === null || answer === "") return;
-      runDockDecision(card, answerQuestion(qid, answer));
-      return;
-    }
-    // approve / reject / cancel all begin the resumed turn the same way the
-    // inline approval card does (progress bubble + streaming flag).
-    hideEmpty();
-    setStreaming(true);
-    openAssistantBubble();
-    if (action === "approve") {
-      runDockDecision(card, postDecision(qid, { response: "approve" }));
-    } else if (action === "reject") {
-      var msgEl = card.querySelector(".dock-approval-msg");
-      runDockDecision(card, postDecision(qid, { response: "reject", message: msgEl ? msgEl.value.trim() : "" }));
-    } else if (action === "cancel") {
-      runDockDecision(card, postDecision(qid, null));
-    }
-  }
-
-  // Enter in a dock free-text answer submits it, matching the inline card.
-  function onDockKeydown(ev) {
-    if (ev.key !== "Enter" || ev.shiftKey) return;
-    var el = ev.target;
-    if (!el || !el.classList || !el.classList.contains("dock-question-input")) return;
-    var card = dockCard(el);
-    if (!card) return;
-    var answer = dockAnswerValue(card);
-    if (answer === null || answer === "") return;
-    ev.preventDefault();
-    runDockDecision(card, answerQuestion(card.getAttribute("data-question-id") || "", answer));
-  }
-
-  function onDockInput(ev) {
-    var el = ev.target;
-    if (!el || !el.classList || !el.classList.contains("dock-question-input")) return;
-    var card = dockCard(el);
-    if (card) updateDockSubmitState(card);
-  }
-
 
   // --- session todo card --------------------------------------------------
 
@@ -2426,7 +2227,6 @@
     if (m.runStatus) liveRunStatus = m.runStatus;
     if (m.bucket) liveBucket = m.bucket;
     renderHeaderStatus(liveRunStatus, liveBucket, m.pendingApprovals || 0, m.pendingQuestions || 0);
-    refreshDock();
     refreshTodos();
     // The rail's per-row badge needs the server's fresh row attributes, so
     // re-pull it only when the state actually changed.
@@ -2894,12 +2694,6 @@
     var t = ev.target.closest("[data-action='close-tool-panel']");
     if (t) closeToolPanel();
   });
-  // document-level: the pending-work dock is a swapped-in fragment, so its
-  // decision controls are delegated (and survive every refresh). Registered
-  // once here, like the tool panel above.
-  document.addEventListener("click", onDockClick);
-  document.addEventListener("keydown", onDockKeydown);
-  document.addEventListener("input", onDockInput);
   // document-level: the queue rows live under the server-rendered #chat-queue
   // mount, so their controls are delegated too (survives every render/swap).
   document.addEventListener("click", onQueueClick);
@@ -2935,7 +2729,6 @@
     _debugReplay: debugReplay,
     refreshSessionRail: refreshSessionRail,
     applyRailBadges: applyRailBadges,
-    refreshDock: refreshDock,
     refreshTodos: refreshTodos,
     renderQueue: renderQueue,
   };

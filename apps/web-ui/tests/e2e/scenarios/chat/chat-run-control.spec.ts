@@ -7,11 +7,11 @@ import {
   openChat,
 } from '../../helpers/live-chat';
 
-// Chat run-control scenarios (gateway lane A/B + the dock/queue/rail surfaces):
-// on a FRESH scratch project, a live agent run drives the pending-work dock, the
-// client-side composer queue, and the session-rail run bucket. These are the
-// three signals tasks.md 9.4 calls out, each proven against a real model turn
-// rather than a stubbed stream.
+// Chat run-control scenarios (gateway lane A/B + the inline-card/queue/rail
+// surfaces): on a FRESH scratch project, a live agent run drives the pending
+// work rendered INLINE in the transcript, the client-side composer queue, and
+// the session-rail run bucket. These are the three signals tasks.md 9.4 calls
+// out, each proven against a real model turn rather than a stubbed stream.
 //
 // All three are live-LLM and env-gated on E2E_SCENARIO_LLM_API_KEY (the same
 // key the rest of the scenarios suite uses), so the default full run skips fast.
@@ -23,25 +23,29 @@ import {
 // Shared scaffolding (provider save, scratch agent, openChat, cleanup) lives in
 // helpers/live-chat.ts.
 
-// waitForDock polls until the dock mount (#chat-dock) is populated with at
-// least one card (or the transcript surfaces a run error). Returns the state.
-async function waitForDock(
+// waitForPendingCard polls until the transcript (#chat-messages) is populated
+// with at least one inline card (question or approval), or the transcript
+// surfaces a run error. Returns the state.
+async function waitForPendingCard(
   page: Page,
-): Promise<{ state: 'dock' | 'error'; cards: number; text: string }> {
+): Promise<{ state: 'inline' | 'error'; cards: number; text: string }> {
   const result = await page.waitForFunction(
     () => {
-      const dock = document.getElementById('chat-dock');
       const transcript = document.querySelector('#chat-messages');
       const err = transcript?.querySelector('span.text-error');
       if (err) {
         return { state: 'error', cards: 0, text: (transcript?.textContent || '').slice(0, 500) };
       }
-      if (dock) {
-        const cards = dock.querySelectorAll(
-          '[data-testid="dock-approval"], [data-testid="dock-question"]',
+      if (transcript) {
+        const cards = transcript.querySelectorAll(
+          '[data-testid="chat-question-card"], [data-testid="chat-approval-card"]',
         );
         if (cards.length > 0) {
-          return { state: 'dock', cards: cards.length, text: (dock.textContent || '').slice(0, 500) };
+          return {
+            state: 'inline',
+            cards: cards.length,
+            text: (transcript.textContent || '').slice(0, 500),
+          };
         }
       }
       return null;
@@ -49,7 +53,11 @@ async function waitForDock(
     undefined,
     { timeout: 120_000 },
   );
-  const value = (await result.jsonValue()) as { state: 'dock' | 'error'; cards: number; text: string };
+  const value = (await result.jsonValue()) as {
+    state: 'inline' | 'error';
+    cards: number;
+    text: string;
+  };
   return value;
 }
 
@@ -62,7 +70,7 @@ function skipOnTurnDeviation(reason: string): void {
 }
 
 test.describe('chat run-control scenarios', () => {
-  test('dock renders a pending question with decision controls and a count', async ({ page }) => {
+  test('transcript renders a pending question inline with decision controls', async ({ page }) => {
     // Provider save and the chat turn are both network-bound live calls.
     test.setTimeout(300_000);
     test.skip(!API_KEY, SKIP_NO_KEY);
@@ -72,11 +80,11 @@ test.describe('chat run-control scenarios', () => {
     let agentId = '';
 
     try {
-      // A single forced ask_user call surfaces as a pending QUESTION card in the
-      // dock (submit/cancel controls), not a tool approval — the tool-approval
-      // card path is not covered here.
+      // A single forced ask_user call surfaces as a pending QUESTION card inline
+      // in the transcript (submit/cancel controls), not a tool approval — the
+      // tool-approval card path is not covered here.
       const systemPrompt =
-        `Automated test of the chat pending-work dock. Your ONLY job in this turn is to ` +
+        `Automated test of the chat pending-work inline card. Your ONLY job in this turn is to ` +
         `call the "ask_user" tool exactly once with interaction_type "buttons" and options ` +
         `[{label "Yes, approve", value "yes"}, {label "No, reject", value "no"}], then stop. ` +
         `Never answer in prose and never call any other tool. Do not wrap arguments in markdown.`;
@@ -88,42 +96,37 @@ test.describe('chat run-control scenarios', () => {
       await page.locator('#chat-input').fill('Ask for approval now.');
       await page.locator('#chat-send').click();
 
-      let result: { state: 'dock' | 'error'; cards: number; text: string };
+      let result: { state: 'inline' | 'error'; cards: number; text: string };
       try {
-        result = await waitForDock(page);
+        result = await waitForPendingCard(page);
       } catch (err) {
         const why = (err as Error).message;
         skipOnTurnDeviation(
-          `no dock card rendered within 120s (${why}) — the turn may have stalled or the model answered without asking`,
+          `no inline card rendered within 120s (${why}) — the turn may have stalled or the model answered without asking`,
         );
         return;
       }
 
       if (result.state === 'error') {
-        skipOnTurnDeviation(`chat run errored before rendering a dock card (provider/environment): ${result.text}`);
+        skipOnTurnDeviation(`chat run errored before rendering an inline card (provider/environment): ${result.text}`);
         return;
       }
 
-      // The dock owns the pending decision. The selector accepts either card
-      // kind, but this scenario deterministically produces the question card.
-      const dock = page.locator('#chat-dock');
-      await expect(dock).toBeVisible();
-      await expect(dock.locator('[data-testid="dock-approval"], [data-testid="dock-question"]').first()).toBeVisible();
+      // The transcript owns the pending decision. The selector accepts either
+      // card kind, but this scenario deterministically produces the question
+      // card.
+      const transcript = page.locator('#chat-messages');
+      await expect(transcript.locator('[data-testid="chat-question-card"]')).toBeVisible();
       // A decision control is present for whichever card kind rendered.
-      await expect(dock.locator('[data-dock-action]').first()).toBeVisible();
+      await expect(transcript.locator('[data-testid="chat-question-submit"]')).toBeVisible();
 
-      // The count badge renders only when more than one item is pending — model
-      // tool-use can't be forced to produce two, so assert it only when the dock
-      // actually rendered multiple cards, otherwise annotate.
-      if (result.cards > 1) {
-        await expect(dock.locator('[data-testid="dock-count"]')).toBeVisible();
-        await expect(dock.locator('[data-testid="dock-count"]')).toHaveText(String(result.cards));
-      } else {
-        test.info().annotations.push({
-          type: 'skipped-step',
-          description: 'the model produced exactly one pending item; the >1 dock-count path was not exercised',
-        });
-      }
+      // Inline cards carry no count badge — that dock-only signal no longer
+      // exists. The model can't be forced to produce two pending items, and the
+      // inline rendering has no equivalent of the old dock-count badge.
+      test.info().annotations.push({
+        type: 'skipped-step',
+        description: 'the dock-count signal no longer exists: inline cards render without a count badge',
+      });
     } finally {
       await cleanup(page, { agentIds: [agentId], projectId });
     }

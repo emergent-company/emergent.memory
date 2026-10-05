@@ -731,18 +731,20 @@ div:has(> #_layout-topbar) {
 .memory-queue-send:focus-visible,
 .memory-queue-remove:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 
-/* pending-work dock (fragment controls keep their own styling) */
-#chat-dock {
+/* pending-work dock — the no-JS <noscript> DockPanel fallback only (the live
+   #chat-dock mount was removed with the inline-card change, #1491); fragment
+   controls keep their own styling. */
+.chat-dock {
   border-bottom: 1px solid color-mix(in oklab, var(--color-base-content) 8%, transparent);
   background: color-mix(in oklab, var(--color-base-200) 40%, transparent);
 }
-#chat-dock :is(button, a, input, select, textarea):focus-visible {
+.chat-dock :is(button, a, input, select, textarea):focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
 /* dock cards — pending tool approvals and ask_user questions. The DockPanel
-   fragment root has no id (the mount owns #chat-dock), so the container chrome
-   above is drawn exactly once. */
+   fragment root carries the .chat-dock class (and no id), so the container
+   chrome above is drawn exactly once. */
 .dock-head {
   display: flex;
   align-items: center;

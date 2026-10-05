@@ -43,22 +43,6 @@ const T0 = '2026-09-30T10:00:00.000Z';
 const T1 = '2026-09-30T10:00:05.000Z';
 const T2 = '2026-09-30T10:00:30.000Z';
 
-// A minimal pending-work-dock fragment carrying one ask_user question, shaped
-// like chat_dock.templ's dockQuestion card so chat.js's delegated dock handler
-// owns the answer path in the #1272 regression test.
-const DOCK_QUESTION_HTML = `
-<div class="dock-card dock-question" data-testid="dock-question" data-dock-kind="question" data-dock-type="buttons" data-question-id="q1">
-  <div class="dock-card-main"><span class="dock-card-prompt">Proceed?</span></div>
-  <div class="dock-card-options" role="group" aria-label="Proceed?">
-    <button type="button" class="dock-question-option" role="radio" aria-checked="false" data-dock-option-value="yes">Yes</button>
-    <button type="button" class="dock-question-option" role="radio" aria-checked="false" data-dock-option-value="no">No</button>
-  </div>
-  <div class="dock-card-controls">
-    <button type="button" class="dock-question-cancel btn btn-ghost btn-xs" data-dock-action="cancel" data-question-id="q1">Cancel</button>
-    <button type="button" class="dock-question-submit btn btn-primary btn-xs" data-dock-action="answer" data-question-id="q1" disabled>Submit</button>
-  </div>
-</div>`;
-
 // Timeline items are loosely-shaped server records; only the fields chat.js
 // reads matter for the stub.
 type HistoryItem = Record<string, unknown>;
@@ -164,7 +148,6 @@ const SKELETON = `<!doctype html>
       <div id="chat-messages"></div>
     </div>
     <div>
-      <div id="chat-dock" aria-live="polite" class="hidden"></div>
       <div id="chat-queue" class="memory-queue hidden" aria-live="polite"></div>
       <form id="chat-form">
         <textarea id="chat-input" rows="1" aria-label="Message"></textarea>
@@ -186,7 +169,6 @@ async function bootstrap(
   page: Page,
   items: HistoryItem[] = WORKING_ITEMS,
   runItems: HistoryItem[] = [],
-  dockHtml = '',
 ): Promise<string[]> {
   const errors: string[] = [];
   page.on('pageerror', (err) => errors.push(err.message));
@@ -194,7 +176,7 @@ async function bootstrap(
   await page.setContent(SKELETON);
 
   await page.evaluate(
-    ({ convId, runId, items, runItems, dockHtml }) => {
+    ({ convId, runId, items, runItems }) => {
       const w = window as unknown as StubWindow;
       w.__eventsources = [];
       w.__historyItems = items;
@@ -253,13 +235,7 @@ async function bootstrap(
             ),
           );
         }
-        // /partial/chat-dock, /partial/chat-todos, /partial/chat-rail
-        // When a dockHtml fragment is provided the pending-work dock answers
-        // with it (dockAvailable=true), so chat.js's dock controls — not the
-        // inline cards — own the decision path.
-        if (u.indexOf('/partial/chat-dock') === 0) {
-          return Promise.resolve(new Response(dockHtml, { status: 200 }));
-        }
+        // /partial/chat-todos, /partial/chat-rail
         if (u.indexOf('/partial/') === 0) {
           return Promise.resolve(new Response('', { status: 200 }));
         }
@@ -281,7 +257,7 @@ async function bootstrap(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (w as any).EventSource = FakeEventSource;
     },
-    { convId: CONV_ID, runId: RUN_ID, items, runItems, dockHtml },
+    { convId: CONV_ID, runId: RUN_ID, items, runItems },
   );
 
   await page.addScriptTag({ path: CHAT_TRANSPORT_JS });

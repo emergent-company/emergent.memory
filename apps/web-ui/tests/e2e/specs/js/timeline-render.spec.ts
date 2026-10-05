@@ -262,7 +262,6 @@ const CHAT_SKELETON = `<!doctype html>
       <div id="chat-messages"></div>
     </div>
     <div>
-      <div id="chat-dock" aria-live="polite" class="hidden"></div>
       <div id="chat-queue" class="memory-queue hidden" aria-live="polite"></div>
       <form id="chat-form">
         <textarea id="chat-input" rows="1" aria-label="Message"></textarea>

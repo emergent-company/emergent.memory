@@ -15,7 +15,7 @@ mutations project UI/API mutations (create agent/skill/schedule/token/object, in
 scenarios project live-LLM full journey (provider → agent → blueprint → object → chat) on a
                   scratch project, sequential; skips fast when E2E_SCENARIO_LLM_API_KEY is unset
 chat project      live-LLM chat-UI scenarios (agent switch + session rail, run-control
-                  dock/queue/rail) on a scratch project, sequential; skips fast when
+                  inline-card/queue/rail) on a scratch project, sequential; skips fast when
                   E2E_SCENARIO_LLM_API_KEY is unset
 connector project memory-connector CLI PKCE sign-in with the test user; gateway-independent
 globalTeardown    delete the bootstrap org (idempotent, runs on failure)
@@ -289,8 +289,8 @@ rail after the second, and that resuming A switches the `#chat-agent` picker bac
 to A and loads A's (not B's) transcript. Env-gated on `E2E_SCENARIO_LLM_API_KEY`.
 
 Chat (run control): `chat-run-control.spec.ts` proves the three run-control
-signals on the /chat surface against a real model turn: the pending-work dock
-renders a `ask_user` question card with decision controls and a count; a queued
+signals on the /chat surface against a real model turn: a pending `ask_user`
+question card renders INLINE in the transcript with decision controls; a queued
 follow-up (Cmd/Ctrl+Enter) parks during a streaming turn and auto-releases in
 order when the turn ends; and the session-rail badge reflects the active run's
 bucket change without a navigation. Env-gated on `E2E_SCENARIO_LLM_API_KEY`.
@@ -304,18 +304,21 @@ Env-gated on `E2E_SCENARIO_LLM_API_KEY`; the recall assertion HARD-FAILS (a
 temperature-0 recall of a token just supplied is the contract under test).
 
 Chat (question resume): `chat-question-resume.spec.ts` drives a pending
-`ask_user` question in the chat dock (`#chat-dock [data-testid="dock-question"]`,
-`chat_dock.templ`) end-to-end: select an option, submit, then wait for the parked
-run's resumed continuation to render with the pinned `FINALCHOICE:<value>` marker
-and to persist in history. The resumed continuation is not streamed — memory
+`ask_user` question rendered INLINE in the transcript
+(`#chat-messages [data-testid="chat-question-card"]`) end-to-end: select an
+option, submit, then wait for the parked run's resumed continuation to render
+with the pinned natural-language marker `Great, I will go with <value>` and to
+persist in history. (The marker is plain prose on purpose — an earlier machine
+token rendered verbatim into the scratch conversation and read as leaked
+metadata, #1492.) The resumed continuation is not streamed — memory
 resumes the run in the background and the gateway reads it back from history
 (`chat.js answerQuestion` → `refreshActiveTranscript`) — so the assertion is
 rendered transcript text. The option+submit clicks run in one synchronous
-in-page poll because the dock is re-rendered over htmx while parked. The dock
-card's own render is covered by `chat-run-control.spec.ts`. Env-gated on
-`E2E_SCENARIO_LLM_API_KEY`; skips when the model never asks or the run errors
-(deviation/environment) and HARD-FAILS when an answered card never resumed the
-run.
+in-page poll because the transcript is re-rendered over the history refresh
+while parked. The inline card's own render is covered by
+`chat-run-control.spec.ts`. Env-gated on `E2E_SCENARIO_LLM_API_KEY`; skips when
+the model never asks or the run errors (deviation/environment) and HARD-FAILS
+when an answered card never resumed the run.
 
 Shared live-chat scaffolding (provider save, `createScratchAgent`, `openChat`,
 history read, cleanup) lives in `helpers/live-chat.ts`; all four chat scenarios

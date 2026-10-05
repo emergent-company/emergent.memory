@@ -321,7 +321,6 @@ func main() {
 	e.GET("/agents/:id/mcp-endpoint/sessions", s.uiAgentMCPSessions)
 	e.GET("/chat", s.uiChat)
 	e.GET("/partial/chat-rail", s.uiChatRail)
-	e.GET("/partial/chat-dock", s.uiChatDock)
 	e.GET("/partial/chat-todos", s.uiChatTodos)
 	e.GET("/documents", s.uiDocuments)
 	e.GET("/documents/:id", s.uiDocument)

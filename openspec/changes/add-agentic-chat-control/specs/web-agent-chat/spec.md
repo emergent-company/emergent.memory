@@ -68,24 +68,28 @@ The stop action SHALL continue to abort the local stream and SHALL additionally 
 - **WHEN** cancel is requested for a run that is already `completed` or `cancelled`
 - **THEN** the gateway returns a non-error response and the UI state is unchanged
 
-### Requirement: Dock pending approvals and questions above the composer
-Pending tool approvals and pending `ask_user` questions for the active conversation SHALL be rendered in a dock anchored above the composer instead of inline in the transcript. The dock SHALL show a count when more than one item is pending, SHALL render each item with its existing approve/reject/answer controls, and SHALL refresh when the refresh event fires. Submitting a decision SHALL use the existing approval and question response routes; approval and question semantics SHALL be unchanged.
+### Requirement: Render pending approvals and questions inline in the transcript
+Pending tool approvals and pending `ask_user` questions for the active conversation SHALL render inline in the transcript as agent bubbles, using the same interactive cards as live streaming, and SHALL take space in the scrolling stream rather than sitting in a separate dock above the composer (feedback #1491). Each card SHALL expose its existing approve/reject/answer controls and accessible roles, and SHALL refresh when the refresh event fires. Submitting a decision SHALL use the existing approval and question response routes; approval and question semantics SHALL be unchanged. The server-rendered dock component SHALL remain only as the chat page's `<noscript>` fallback.
 
-#### Scenario: Two pending approvals render in the dock
+#### Scenario: Two pending approvals render inline
 - **WHEN** the active conversation has two pending approvals
-- **THEN** both appear in the dock above the composer, the dock shows a count of two, and each card has its own approve and reject controls
+- **THEN** both render inline in the transcript as agent bubbles, each with its own approve and reject controls
+
+#### Scenario: Pending question renders inline
+- **WHEN** the active conversation has a pending `ask_user` question
+- **THEN** it renders inline in the transcript as an agent bubble with its option and submit controls, with no separate pending-work dock above the composer
 
 #### Scenario: Decision uses the existing route
-- **WHEN** the user approves an item in the dock
-- **THEN** the request goes to the existing approval response route and the item leaves the dock once the decision is recorded
+- **WHEN** the user approves an item or answers a question inline
+- **THEN** the request goes to the existing approval/question response route and the card leaves its pending state once the decision is recorded
 
-#### Scenario: Answered question leaves the dock
+#### Scenario: Answered question becomes static
 - **WHEN** a pending question is answered
-- **THEN** the dock refreshes and no longer renders that question
+- **THEN** the re-rendered transcript shows that question as a static answered card and no longer as interactive
 
-#### Scenario: Empty dock is not rendered
+#### Scenario: No pending work
 - **WHEN** a conversation has no pending approvals and no pending questions
-- **THEN** no dock is rendered and the composer occupies its normal position
+- **THEN** no pending-work card is rendered and the composer occupies its normal position
 
 ### Requirement: Render a session todo card
 The gateway SHALL resolve the active conversation's ACP session id and fetch that session's todos, and the transcript SHALL render a collapsible todo card showing each item's content and status. The card SHALL be collapsed by default, SHALL render nothing when the session has no todos, and SHALL refresh when the refresh event fires.
