@@ -21,6 +21,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -68,7 +69,8 @@ type parsedFile struct {
 }
 
 func main() {
-	out := flag.String("out", "", "output path (default: devgallery_graph_gen.go in the working directory)")
+	out := flag.String("out", "", "output path for the dependency graph (default: devgallery_graph_gen.go in the working directory)")
+	adoptionOut := flag.String("adoption-out", "", "output path for adoption findings (default: devgallery_adoption_gen.go in the working directory)")
 	flag.Parse()
 
 	src, err := generateGraph(".")
@@ -81,6 +83,20 @@ func main() {
 		path = "devgallery_graph_gen.go"
 	}
 	if err := os.WriteFile(path, src, 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, "componentgraph:", err)
+		os.Exit(1)
+	}
+
+	adoptSrc, err := generateAdoption(".")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "componentgraph:", err)
+		os.Exit(1)
+	}
+	adoptPath := *adoptionOut
+	if adoptPath == "" {
+		adoptPath = "devgallery_adoption_gen.go"
+	}
+	if err := os.WriteFile(adoptPath, adoptSrc, 0o644); err != nil {
 		fmt.Fprintln(os.Stderr, "componentgraph:", err)
 		os.Exit(1)
 	}
@@ -343,6 +359,467 @@ func writeMap(b *bytes.Buffer, name string, m map[string]map[string]bool) {
 		for v := range m[k] {
 			vals = append(vals, v)
 		}
+		sort.Strings(vals)
+		b.WriteString("\t" + strconv.Quote(k) + ": []string{")
+		for i, v := range vals {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(strconv.Quote(v))
+		}
+		b.WriteString("},\n")
+	}
+	b.WriteString("}\n\n")
+}
+
+// --- adoption-gap detection ---
+
+// adoptionFinding is one ad-hoc reuse of component-owned markup in an authored
+// template: the file (basename), the 1-indexed line, the owned marker
+// ("class:<name>" or "tag:<name>"), and the sorted component ids that own it.
+type adoptionFinding struct {
+	File   string
+	Line   int
+	Marker string
+	Owners []string
+}
+
+var (
+	// adoptionClassAttrRE matches a static class="..." attribute. The value is a
+	// single quoted string, so a static class attribute never spans lines.
+	adoptionClassAttrRE = regexp.MustCompile(`class="([^"]*)"`)
+	// adoptionMapClassRE matches the templ.Attributes map form `"class": "..."`.
+	adoptionMapClassRE = regexp.MustCompile(`"class"\s*:\s*"([^"]*)"`)
+	// adoptionStringLitRE matches a double-quoted string literal. It is applied
+	// only inside class={ ... } expressions to collect class tokens.
+	adoptionStringLitRE = regexp.MustCompile(`"([^"]*)"`)
+	// adoptionTagRE matches an opening element tag (<tag). Closing tags (</tag)
+	// and comments (<!... ) do not match because a letter must follow the '<'.
+	adoptionTagRE = regexp.MustCompile(`<([a-zA-Z][a-zA-Z0-9-]*)`)
+	// adoptionIgnoreMarker identifies the adoption:ignore directive.
+	adoptionIgnoreMarker = "adoption:ignore"
+)
+
+// generateAdoption scans the authored .templ sources under dir and returns the
+// generated Go source for devgallery_adoption_gen.go. Output is deterministic:
+// findings are sorted by (File, Line, Marker) and de-duplicated, and owners are
+// sorted.
+func generateAdoption(dir string) ([]byte, error) {
+	findings, err := scanAdoption(dir)
+	if err != nil {
+		return nil, err
+	}
+	src := renderAdoptionSource(componentSignatures(), findings)
+	formatted, err := format.Source(src)
+	if err != nil {
+		return nil, fmt.Errorf("format generated adoption source: %w", err)
+	}
+	return formatted, nil
+}
+
+// scanAdoption globs the gateway-root .templ sources (non-recursive, so the
+// components/ package is naturally excluded) and emits a finding for every
+// owned marker an authored template re-declares inline. It is a line-oriented,
+// best-effort scan — the same posture as scanClientWiring — so it reads authored
+// .templ sources (not generated *_templ.go, which carries no source line
+// numbers for static markup).
+func scanAdoption(root string) ([]adoptionFinding, error) {
+	matches, err := filepath.Glob(filepath.Join(root, "*.templ"))
+	if err != nil {
+		return nil, err
+	}
+	owners := invertSignatures(componentSignatures())
+	var findings []adoptionFinding
+	for _, m := range matches {
+		if skipAdoptionFile(filepath.Base(m)) {
+			continue
+		}
+		fs, err := scanAdoptionFile(m, owners)
+		if err != nil {
+			return nil, err
+		}
+		findings = append(findings, fs...)
+	}
+	sort.Slice(findings, func(i, j int) bool {
+		if findings[i].File != findings[j].File {
+			return findings[i].File < findings[j].File
+		}
+		if findings[i].Line != findings[j].Line {
+			return findings[i].Line < findings[j].Line
+		}
+		return findings[i].Marker < findings[j].Marker
+	})
+	return dedupeAdoptionFindings(findings), nil
+}
+
+// skipAdoptionFile reports whether a .templ basename is excluded from the scan:
+// the gallery's own files, test fixtures, and the components-package fixtures.
+func skipAdoptionFile(base string) bool {
+	return strings.HasPrefix(base, "devgallery") ||
+		strings.HasSuffix(base, "_test.templ") ||
+		base == "fixtures_test.templ"
+}
+
+// dedupeAdoptionFindings collapses adjacent findings with the same
+// (File, Line, Marker), assuming the input is sorted.
+func dedupeAdoptionFindings(fs []adoptionFinding) []adoptionFinding {
+	if len(fs) == 0 {
+		return fs
+	}
+	out := fs[:1]
+	for _, f := range fs[1:] {
+		prev := out[len(out)-1]
+		if f.File == prev.File && f.Line == prev.Line && f.Marker == prev.Marker {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// invertSignatures turns the component -> signature map into a marker -> owners
+// map. A marker is "class:<name>" for a class token or "tag:<name>" for an
+// element tag. Owners are the sorted component ids whose signature owns it.
+func invertSignatures(sigs map[string]componentSignature) map[string][]string {
+	ownerSet := map[string]map[string]bool{}
+	for id, sig := range sigs {
+		for _, c := range sig.Classes {
+			marker := "class:" + c
+			if ownerSet[marker] == nil {
+				ownerSet[marker] = map[string]bool{}
+			}
+			ownerSet[marker][id] = true
+		}
+		for _, t := range sig.Tags {
+			marker := "tag:" + t
+			if ownerSet[marker] == nil {
+				ownerSet[marker] = map[string]bool{}
+			}
+			ownerSet[marker][id] = true
+		}
+	}
+	out := make(map[string][]string, len(ownerSet))
+	for marker, set := range ownerSet {
+		sorted := make([]string, 0, len(set))
+		for o := range set {
+			sorted = append(sorted, o)
+		}
+		sort.Strings(sorted)
+		out[marker] = sorted
+	}
+	return out
+}
+
+// signatureMarkers returns the forward component -> markers map (the generated
+// adoptionSignatures), with markers sorted per component.
+func signatureMarkers(sigs map[string]componentSignature) map[string][]string {
+	out := make(map[string][]string, len(sigs))
+	for id, sig := range sigs {
+		var markers []string
+		for _, c := range sig.Classes {
+			markers = append(markers, "class:"+c)
+		}
+		for _, t := range sig.Tags {
+			markers = append(markers, "tag:"+t)
+		}
+		sort.Strings(markers)
+		out[id] = markers
+	}
+	return out
+}
+
+// scanAdoptionFile scans one authored .templ source for owned markers.
+func scanAdoptionFile(path string, owners map[string][]string) ([]adoptionFinding, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	base := filepath.Base(path)
+	lines := strings.Split(string(data), "\n")
+
+	var (
+		findings   []adoptionFinding
+		suppressed map[string]bool // markers to ignore on the following line
+		classDepth int             // >0 while a class={ ... } expression spans lines
+		comments   commentState    // multi-line /* */ and <!-- --> spans
+	)
+
+	emit := func(line int, marker string) {
+		owned, ok := owners[marker]
+		if !ok {
+			return
+		}
+		name := markerName(marker)
+		if suppressed[name] || suppressed[marker] {
+			return
+		}
+		findings = append(findings, adoptionFinding{File: base, Line: line, Marker: marker, Owners: owned})
+	}
+
+	emitClasses := func(line int, tokens []string) {
+		for _, tok := range tokens {
+			emit(line, "class:"+tok)
+		}
+	}
+
+	for i, line := range lines {
+		lineNo := i + 1
+		trimmed := strings.TrimSpace(line)
+
+		// The adoption:ignore directive is an HTML comment; parse it from the
+		// raw line before comment stripping so the marker list is intact. It
+		// suppresses markers on the immediately following line (the next element).
+		// A directive found inside a multi-line comment does not count.
+		if classDepth == 0 && !comments.block && !comments.html && strings.Contains(trimmed, adoptionIgnoreMarker) {
+			suppressed = parseAdoptionIgnore(trimmed)
+			continue
+		}
+
+		stripped := stripTemplComments(line, &comments)
+
+		// Multi-line class={ ... } continuation: the whole line is class
+		// expression text until the brace balance closes.
+		if classDepth > 0 {
+			closeIdx, remaining := adoptionBraceBalance(stripped, classDepth)
+			if closeIdx < 0 {
+				emitClasses(lineNo, classExprTokens(stripped))
+				classDepth = remaining
+				continue
+			}
+			emitClasses(lineNo, classExprTokens(stripped[:closeIdx]))
+			classDepth = 0
+			stripped = stripped[closeIdx:]
+		}
+
+		// Static and map-form class attributes.
+		for _, m := range adoptionClassAttrRE.FindAllStringSubmatch(stripped, -1) {
+			emitClasses(lineNo, strings.Fields(m[1]))
+		}
+		for _, m := range adoptionMapClassRE.FindAllStringSubmatch(stripped, -1) {
+			emitClasses(lineNo, strings.Fields(m[1]))
+		}
+
+		// class={ ... } expressions (single-line or opening a multi-line one).
+		rest := stripped
+		for {
+			idx := strings.Index(rest, "class={")
+			if idx < 0 {
+				break
+			}
+			open := idx + len("class={") - 1 // index of the '{'
+			closeIdx, remaining := adoptionBraceBalance(rest[open:], 0)
+			if closeIdx < 0 {
+				// The expression continues on a later line: emit the tokens
+				// already visible on this opening line, then resume mid-string.
+				emitClasses(lineNo, classExprTokens(rest[open+1:]))
+				classDepth = remaining
+				rest = ""
+				break
+			}
+			emitClasses(lineNo, classExprTokens(rest[open+1:open+closeIdx]))
+			rest = rest[open+closeIdx:]
+		}
+
+		// Element tags.
+		for _, m := range adoptionTagRE.FindAllStringSubmatch(stripped, -1) {
+			emit(lineNo, "tag:"+m[1])
+		}
+
+		suppressed = nil
+	}
+	return findings, nil
+}
+
+// adoptionBraceBalance scans s tracking brace depth starting at depth. It
+// returns the index just past the closing brace when depth returns to zero, or
+// -1 and the remaining depth when the expression is still open at end of s.
+func adoptionBraceBalance(s string, depth int) (closeIdx, remaining int) {
+	for j := 0; j < len(s); j++ {
+		switch s[j] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return j + 1, 0
+			}
+		}
+	}
+	return -1, depth
+}
+
+// classExprTokens returns the class tokens in a class={ ... } expression body
+// (the text between the braces): every double-quoted string literal, split on
+// whitespace. Best-effort: a string literal used as a comparison operand inside
+// a class expression would be included, but owned markers are high-confidence
+// class names, so the false-positive surface is negligible.
+func classExprTokens(expr string) []string {
+	var tokens []string
+	for _, m := range adoptionStringLitRE.FindAllStringSubmatch(expr, -1) {
+		tokens = append(tokens, strings.Fields(m[1])...)
+	}
+	return tokens
+}
+
+// parseAdoptionIgnore extracts the marker tokens from an adoption:ignore
+// directive, e.g. `<!-- adoption:ignore badge btn -->`.
+func parseAdoptionIgnore(line string) map[string]bool {
+	_, after, ok := strings.Cut(line, adoptionIgnoreMarker)
+	if !ok {
+		return nil
+	}
+	rest := strings.TrimSpace(after)
+	if end := strings.Index(rest, "-->"); end >= 0 {
+		rest = strings.TrimSpace(rest[:end])
+	}
+	fields := strings.Fields(rest)
+	if len(fields) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(fields))
+	for _, f := range fields {
+		out[f] = true
+	}
+	return out
+}
+
+// commentState tracks comment spans that outlive a single line so a marker
+// inside a multi-line /* ... */ or <!-- ... --> comment is not mistaken for
+// authored markup. It is carried across the lines of one file by
+// stripTemplComments.
+type commentState struct {
+	block bool // inside a /* ... */ comment
+	html  bool // inside a <!-- ... --> comment
+}
+
+// stripTemplComments removes Go line comments (//, respecting double-quoted
+// strings), block comments (/* ... */), and HTML comments (<!-- ... -->) from a
+// .templ source line, advancing st across multi-line spans. It is a best-effort
+// lexical strip, not a full parser: comment markers inside strings are
+// preserved, and a same-line /* inside a string literal is not distinguished.
+func stripTemplComments(line string, st *commentState) string {
+	// Close any comment span carried over from a previous line before looking
+	// for new openers on this one.
+	if st.block {
+		end := strings.Index(line, "*/")
+		if end < 0 {
+			return ""
+		}
+		line = line[end+2:]
+		st.block = false
+	}
+	if st.html {
+		end := strings.Index(line, "-->")
+		if end < 0 {
+			return ""
+		}
+		line = line[end+3:]
+		st.html = false
+	}
+	line = stripLineComment(line)
+	for {
+		start := strings.Index(line, "/*")
+		if start < 0 {
+			break
+		}
+		end := strings.Index(line[start+2:], "*/")
+		if end < 0 {
+			st.block = true
+			line = line[:start]
+			break
+		}
+		line = line[:start] + line[start+2+end+2:]
+	}
+	for {
+		start := strings.Index(line, "<!--")
+		if start < 0 {
+			break
+		}
+		end := strings.Index(line[start+4:], "-->")
+		if end < 0 {
+			st.html = true
+			line = line[:start]
+			break
+		}
+		line = line[:start] + line[start+4+end+3:]
+	}
+	return line
+}
+
+// stripLineComment removes a // line comment from s, respecting double-quoted
+// string literals so a // inside a URL or other string is not treated as a
+// comment.
+func stripLineComment(s string) string {
+	inString := false
+	for i := 0; i+1 < len(s); i++ {
+		switch s[i] {
+		case '"':
+			inString = !inString
+		case '/':
+			if !inString && s[i+1] == '/' {
+				return s[:i]
+			}
+		}
+	}
+	return s
+}
+
+// markerName returns a marker's bare name: the class or tag name without its
+// "class:"/"tag:" prefix.
+func markerName(marker string) string {
+	if n, ok := strings.CutPrefix(marker, "class:"); ok {
+		return n
+	}
+	if n, ok := strings.CutPrefix(marker, "tag:"); ok {
+		return n
+	}
+	return marker
+}
+
+// renderAdoptionSource serializes the adoption findings deterministically.
+func renderAdoptionSource(sigs map[string]componentSignature, findings []adoptionFinding) []byte {
+	var b bytes.Buffer
+	b.WriteString("// Code generated by cmd/componentgraph. DO NOT EDIT.\n\n")
+	b.WriteString("//go:generate go run ./cmd/componentgraph\n\n")
+	b.WriteString("// Generated adoption-gap findings for the component gallery. Each finding\n")
+	b.WriteString("// flags an authored .templ source line that re-declares inline markup owned\n")
+	b.WriteString("// by a shared component (instead of rendering that component). A marker is\n")
+	b.WriteString("// \"class:<name>\" for a class token or \"tag:<name>\" for an element tag;\n")
+	b.WriteString("// Owners are the sorted component ids whose signature owns the marker.\n")
+	b.WriteString("package main\n\n")
+	b.WriteString("type AdoptionFinding struct {\n")
+	b.WriteString("\tFile   string\n")
+	b.WriteString("\tLine   int\n")
+	b.WriteString("\tMarker string\n")
+	b.WriteString("\tOwners []string\n")
+	b.WriteString("}\n\n")
+	writeStringSliceMap(&b, "adoptionSignatures", signatureMarkers(sigs))
+	b.WriteString("var adoptionFindings = []AdoptionFinding{\n")
+	for _, f := range findings {
+		b.WriteString("\t{File: " + strconv.Quote(f.File) + ", Line: " + strconv.Itoa(f.Line) + ", Marker: " + strconv.Quote(f.Marker) + ", Owners: []string{")
+		for i, o := range f.Owners {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(strconv.Quote(o))
+		}
+		b.WriteString("}},\n")
+	}
+	b.WriteString("}\n\n")
+	return b.Bytes()
+}
+
+// writeStringSliceMap emits `var name = map[string][]string{...}` with sorted
+// keys and sorted values.
+func writeStringSliceMap(b *bytes.Buffer, name string, m map[string][]string) {
+	b.WriteString("var " + name + " = map[string][]string{\n")
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		vals := m[k]
 		sort.Strings(vals)
 		b.WriteString("\t" + strconv.Quote(k) + ": []string{")
 		for i, v := range vals {

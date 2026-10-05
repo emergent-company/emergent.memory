@@ -170,7 +170,7 @@ func (s *Server) uiComponentGallery(c echo.Context) error {
 	if !s.cfg.ComponentGallery {
 		return echo.ErrNotFound
 	}
-	render.RenderPage(c.Response().Writer, c.Request(), ComponentGalleryDocument(ComponentGalleryPage(componentGallery())))
+	render.RenderPage(c.Response().Writer, c.Request(), ComponentGalleryDocument(ComponentGalleryPage(componentGallery(), adoptionGaps())))
 	return nil
 }
 

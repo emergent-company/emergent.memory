@@ -37,3 +37,38 @@ test('renders the component gallery with an isolated preview', async ({ page }) 
   await expect(canvas).toBeVisible();
   await expect(canvas).not.toBeEmpty();
 });
+
+test('surfaces adoption gaps with per-file counts and findings', async ({ page }) => {
+  const response = await page.goto('/dev/components');
+  expect(response?.status(), 'gallery route should serve (MEMORY_COMPONENT_GALLERY=on)').toBe(200);
+
+  // The adoption-gaps section renders at the top of the gallery.
+  const gaps = page.getByTestId('adoption-gaps');
+  await expect(gaps).toBeVisible();
+
+  // The total count badge reports the detector's finding count. A fully-adopted
+  // tree can legitimately reach zero, so assert the section's coherent states
+  // rather than a non-zero count (which would fail once every gap is closed).
+  const total = page.getByTestId('adoption-gap-total');
+  await expect(total).toBeVisible();
+  const totalText = (await total.textContent())?.trim() ?? '0';
+  const totalCount = Number(totalText);
+  expect(Number.isNaN(totalCount), 'total badge should be numeric').toBe(false);
+
+  // Per-file blocks are tagged adoption-gap-<file>, one per offending template.
+  const fileBlocks = page.locator('details[data-testid^="adoption-gap-"]');
+  if (totalCount > 0) {
+    expect(await fileBlocks.count()).toBeGreaterThan(0);
+
+    // Expanding the first block reveals finding rows carrying a marker
+    // (class:<name> or tag:<name>) and the file:line -> marker -> owners chain.
+    await fileBlocks.first().click();
+    const sectionText = (await gaps.textContent()) ?? '';
+    expect(sectionText).toMatch(/(class:|tag:)/);
+    expect(sectionText).toContain('→');
+  } else {
+    // Clean tree: the section renders its explicit empty state and no blocks.
+    await expect(page.getByTestId('adoption-gaps-empty')).toBeVisible();
+    expect(await fileBlocks.count()).toBe(0);
+  }
+});

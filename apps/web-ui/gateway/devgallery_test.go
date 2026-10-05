@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -203,7 +204,8 @@ func TestGalleryTransitiveUses(t *testing.T) {
 
 func TestGraphStaleCheck(t *testing.T) {
 	tmp := filepath.Join(t.TempDir(), "graph_gen.go")
-	cmd := exec.Command("go", "run", "./cmd/componentgraph", "-out", tmp)
+	adoptionTmp := filepath.Join(t.TempDir(), "adoption_gen.go")
+	cmd := exec.Command("go", "run", "./cmd/componentgraph", "-out", tmp, "-adoption-out", adoptionTmp)
 	cmd.Dir = "."
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -219,6 +221,28 @@ func TestGraphStaleCheck(t *testing.T) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatal("devgallery_graph_gen.go is stale; run `templ generate ./...` then `go generate ./...`")
+	}
+}
+
+func TestAdoptionStaleCheck(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "adoption_gen.go")
+	graphTmp := filepath.Join(t.TempDir(), "graph_gen.go")
+	cmd := exec.Command("go", "run", "./cmd/componentgraph", "-out", graphTmp, "-adoption-out", tmp)
+	cmd.Dir = "."
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go run ./cmd/componentgraph: %v\n%s", err, out)
+	}
+	got, err := os.ReadFile(tmp)
+	if err != nil {
+		t.Fatalf("read generated: %v", err)
+	}
+	want, err := os.ReadFile("devgallery_adoption_gen.go")
+	if err != nil {
+		t.Fatalf("read committed: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatal("devgallery_adoption_gen.go is stale; run `templ generate ./...` then `go generate ./...`")
 	}
 }
 
@@ -361,5 +385,137 @@ func TestNoGalleryNavLink(t *testing.T) {
 				t.Errorf("sidebar navigation contains a gallery link %q", item.Href)
 			}
 		}
+	}
+}
+
+// --- adoption gaps ---
+
+func TestAdoptionGapsDeterministic(t *testing.T) {
+	first := adoptionGaps()
+	for range 3 {
+		again := adoptionGaps()
+		if !reflect.DeepEqual(first, again) {
+			t.Fatal("adoptionGaps is not deterministic across calls")
+		}
+	}
+	// Findings are already sorted by (File, Line, Marker); verify each summary
+	// is internally ordered and that files appear in first-seen order.
+	for _, g := range first {
+		for i := 1; i < len(g.Findings); i++ {
+			prev, cur := g.Findings[i-1], g.Findings[i]
+			if prev.Line > cur.Line || (prev.Line == cur.Line && prev.Marker > cur.Marker) {
+				t.Errorf("%s: findings out of order at index %d", g.File, i)
+			}
+		}
+	}
+}
+
+// adoptionFixtures returns a synthetic finding set so the allowlist and
+// aggregation tests are independent of the generated data (and pass on a clean
+// tree, where there are no findings at all). Both files carry two/one findings.
+func adoptionFixtures() []AdoptionFinding {
+	return []AdoptionFinding{
+		{File: "some_page.templ", Line: 10, Marker: "class:badge", Owners: []string{"Badge", "StatusBadge"}},
+		{File: "some_page.templ", Line: 12, Marker: "class:btn", Owners: []string{"Button", "SaveChangesButton"}},
+		{File: "other_page.templ", Line: 3, Marker: "tag:dialog", Owners: []string{"Dialog", "SecretRevealModal"}},
+	}
+}
+
+func TestAdoptionGapsAggregation(t *testing.T) {
+	origFindings := adoptionFindings
+	adoptionFindings = adoptionFixtures()
+	t.Cleanup(func() { adoptionFindings = origFindings })
+
+	gaps := adoptionGaps()
+	if len(gaps) != 2 {
+		t.Fatalf("adoptionGaps files = %d, want 2", len(gaps))
+	}
+	if gaps[0].File != "some_page.templ" || gaps[0].Count != 2 {
+		t.Errorf("first gap = %+v, want some_page.templ count 2", gaps[0])
+	}
+	if gaps[1].File != "other_page.templ" || gaps[1].Count != 1 {
+		t.Errorf("second gap = %+v, want other_page.templ count 1", gaps[1])
+	}
+	if n := adoptionFindingCount(gaps); n != 3 {
+		t.Errorf("adoptionFindingCount = %d, want 3", n)
+	}
+}
+
+func TestAdoptionAllowlist(t *testing.T) {
+	origFindings := adoptionFindings
+	origAllow := adoptionAllowlist
+	adoptionFindings = adoptionFixtures()
+	defer func() {
+		adoptionFindings = origFindings
+		adoptionAllowlist = origAllow
+	}()
+
+	// A bare marker name (the adoption:ignore form) is exempted; the file
+	// survives with its other finding.
+	adoptionAllowlist = map[string][]string{"some_page.templ": {"badge"}}
+	gaps := adoptionGaps()
+	if len(gaps) != 2 || gaps[0].File != "some_page.templ" || gaps[0].Count != 1 {
+		t.Fatalf("after bare-marker allowlist gaps = %+v, want 2 with some_page.templ count 1", gaps)
+	}
+	if gaps[0].Findings[0].Marker != "class:btn" {
+		t.Errorf("remaining some_page finding = %q, want class:btn", gaps[0].Findings[0].Marker)
+	}
+
+	// The fully-qualified marker form ("class:<name>") matches too.
+	adoptionAllowlist = map[string][]string{"some_page.templ": {"class:badge"}}
+	gaps = adoptionGaps()
+	if len(gaps) != 2 || gaps[0].File != "some_page.templ" || gaps[0].Findings[0].Marker != "class:btn" {
+		t.Errorf("after class:badge allowlist gaps = %+v, want only class:btn on some_page.templ", gaps)
+	}
+
+	// Exempting every marker drops the file entirely.
+	adoptionAllowlist = map[string][]string{"some_page.templ": {"badge", "btn"}}
+	for _, g := range adoptionGaps() {
+		if g.File == "some_page.templ" {
+			t.Errorf("fully allowlisted file %q still surfaces", g.File)
+		}
+	}
+
+	// A clean tree (no findings) yields no gaps and no panic.
+	adoptionFindings = nil
+	if got := adoptionGaps(); len(got) != 0 {
+		t.Errorf("adoptionGaps with no findings = %+v, want empty", got)
+	}
+}
+
+func TestAdoptionSectionEmptyState(t *testing.T) {
+	html := renderComp(t, adoptionGapSection(nil))
+	if !strings.Contains(html, `data-testid="adoption-gaps-empty"`) {
+		t.Errorf("empty adoption section missing empty state")
+	}
+	if !strings.Contains(html, `data-testid="adoption-gap-total"`) {
+		t.Errorf("empty adoption section missing total badge")
+	}
+}
+
+func TestUIComponentGalleryRendersAdoption(t *testing.T) {
+	_, e := newDevGalleryServer(true)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dev/components", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("gallery = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`data-testid="adoption-gaps"`, `data-testid="adoption-gap-total"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("gallery body missing %q", want)
+		}
+	}
+}
+
+func TestAdoptionSectionFlagOff(t *testing.T) {
+	_, e := newDevGalleryServer(false)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dev/components", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("flag-off gallery = %d, want 404", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), `data-testid="adoption-gaps"`) {
+		t.Error("flag-off gallery must not render the adoption-gaps section")
 	}
 }
