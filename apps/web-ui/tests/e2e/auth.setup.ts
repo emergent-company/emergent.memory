@@ -14,6 +14,7 @@ import {
   importGitHubBlueprint,
   PERSONAL_MEMORY_BLUEPRINT_URL,
   PERSONAL_MEMORY_BLUEPRINT_REF,
+  PERSONAL_MEMORY_BLUEPRINT_VERSION,
 } from './helpers/blueprints';
 
 // The GitHub import can take longer than a default test timeout (the backend
@@ -88,13 +89,25 @@ setup('authenticate and reuse-or-create tenant', async ({ page }) => {
 
   // Seed the schema pack (idempotent) so object types exist. It ships from the
   // external GitHub blueprint repo, so install via the Import-from-GitHub path.
+  // Match on name AND version: a stale personal-memory v2.x already in the
+  // workspace must not satisfy the guard and let the suite run against the wrong
+  // pack while silently bypassing PERSONAL_MEMORY_BLUEPRINT_REF (#1529).
   const installed = (await (
     await page.request.get('/api/blueprints/installed')
-  ).json()) as Array<{ blueprintId: string; name: string }>;
-  if (!(installed ?? []).some((b) => b.name === SCHEMA_PACK)) {
+  ).json()) as Array<{ blueprintId: string; name: string; version?: string }>;
+  const seeded = (installed ?? []).find((b) => b.name === SCHEMA_PACK);
+  if (!seeded) {
     await importGitHubBlueprint(page, PERSONAL_MEMORY_BLUEPRINT_URL, {
       ref: PERSONAL_MEMORY_BLUEPRINT_REF,
     });
+  } else if (seeded.version !== PERSONAL_MEMORY_BLUEPRINT_VERSION) {
+    throw new Error(
+      `setup: installed "${SCHEMA_PACK}" is version ${seeded.version ?? '(unknown)'}, but this ` +
+        `suite pins ${PERSONAL_MEMORY_BLUEPRINT_REF} (blueprint version ` +
+        `${PERSONAL_MEMORY_BLUEPRINT_VERSION}). A stale pack would run the suite against the ` +
+        `wrong schema. Reset the e2e tenant — re-run once with E2E_RESET=1 to delete it, then ` +
+        `run again — or uninstall/purge the stale "${SCHEMA_PACK}" blueprint.`,
+    );
   }
 
   writeBootstrap({ orgId, projectId, orgName: ORG_NAME, projectName: PROJECT_NAME });

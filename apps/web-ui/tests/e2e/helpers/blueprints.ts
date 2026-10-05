@@ -5,10 +5,30 @@ import { Page } from '@playwright/test';
 export const PERSONAL_MEMORY_BLUEPRINT_URL =
   'https://github.com/mkucharz/personal-memory-blueprint';
 export const PERSONAL_MEMORY_BLUEPRINT_REF = 'v3.0.0';
+// The blueprint manifest version declared at that pinned tag
+// (packs/personal-memory.yaml `version: "3.0.0"`). The installed-blueprints API
+// reports it, so setup can reject a stale pack that predates the pin — matching
+// on name alone let an old v2.x silently satisfy the guard.
+export const PERSONAL_MEMORY_BLUEPRINT_VERSION = '3.0.0';
 
 // The import backend allows the archive fetch alone up to 60s; give the
 // post-submit wait a budget consistent with that (button/form waits stay at 10s).
 const IMPORT_TIMEOUT_MS = 90_000;
+
+/** Best-effort visible error copy for a failed blueprint install/import. */
+async function visibleErrorText(page: Page): Promise<string> {
+  let bodyText = '';
+  try {
+    bodyText = await page.evaluate(() => document.body.innerText);
+  } catch {
+    // page may be mid-navigation; callers still surface the URL
+  }
+  return (
+    (bodyText.match(/^.*(?:error|failed|couldn't|could not).*$/im) || [])
+      .slice(0, 3)
+      .join(' | ') || '(no visible error copy)'
+  );
+}
 
 /**
  * UI-install a blueprint from a GitHub repository URL via the "Import from
@@ -53,25 +73,29 @@ export async function importGitHubBlueprint(
   const success = (u: URL) =>
     u.pathname === '/blueprints/migrations' ||
     (u.pathname === '/blueprints' && u.searchParams.get('installed') === '1');
+  // Failure: the handler PRG-redirects to /blueprints?err=<message> (the legacy
+  // sentinel is ?err=1). Match it too so a failed import throws the instant the
+  // error landing loads instead of burning the full IMPORT_TIMEOUT_MS waiting on
+  // a success URL that will never arrive (#1530).
+  const errorLanding = (u: URL) => u.pathname === '/blueprints' && u.searchParams.has('err');
 
   try {
-    await page.waitForURL(success, { timeout: IMPORT_TIMEOUT_MS });
+    await page.waitForURL((u) => success(u) || errorLanding(u), { timeout: IMPORT_TIMEOUT_MS });
   } catch (err) {
-    // Any other landing (?err= flash, error toast, failed import) is a failure:
-    // surface the URL plus whatever error copy the page is showing.
-    let bodyText = '';
-    try {
-      bodyText = await page.evaluate(() => document.body.innerText);
-    } catch {
-      // page may be mid-navigation; the URL in the error below still helps
-    }
-    const errLine =
-      (bodyText.match(/^.*(?:error|failed|couldn't|could not).*$/im) || [])
-        .slice(0, 3)
-        .join(' | ') || '(no visible error copy)';
+    // Timed out with neither landing: surface the URL plus visible error copy.
     throw new Error(
-      `importGitHubBlueprint("${url}"): import did not succeed; landed on ${page.url()} — ${errLine}`,
+      `importGitHubBlueprint("${url}"): import did not settle; landed on ${page.url()} — ${await visibleErrorText(page)}`,
       { cause: err },
+    );
+  }
+
+  if (errorLanding(new URL(page.url()))) {
+    // Prefer the message the handler carried in ?err=; fall back to page copy.
+    const surfaced = new URL(page.url()).searchParams.get('err') || '';
+    throw new Error(
+      `importGitHubBlueprint("${url}"): import failed; landed on ${page.url()} — ${
+        surfaced && surfaced !== '1' ? surfaced : await visibleErrorText(page)
+      }`,
     );
   }
 }
@@ -110,18 +134,8 @@ export async function installBlueprint(page: Page, name: string): Promise<void> 
   } catch (err) {
     // Any other landing (?err= flash, error toast, failed install) is a failure:
     // surface the URL plus whatever error copy the page is showing.
-    let bodyText = '';
-    try {
-      bodyText = await page.evaluate(() => document.body.innerText);
-    } catch {
-      // page may be mid-navigation; the URL in the error below still helps
-    }
-    const errLine =
-      (bodyText.match(/^.*(?:error|failed|couldn't|could not).*$/im) || [])
-        .slice(0, 3)
-        .join(' | ') || '(no visible error copy)';
     throw new Error(
-      `installBlueprint("${name}"): install did not succeed; landed on ${page.url()} — ${errLine}`,
+      `installBlueprint("${name}"): install did not succeed; landed on ${page.url()} — ${await visibleErrorText(page)}`,
       { cause: err },
     );
   }

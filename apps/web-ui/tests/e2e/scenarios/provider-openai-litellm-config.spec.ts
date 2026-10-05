@@ -18,10 +18,9 @@ import { expectAppPage } from '../helpers/page';
 //   4. SAVE (UI): the save is live-validated by the memory backend (catalog
 //      sync + a real generate test against the submitted base_url + key), so
 //      a real LiteLLM URL + key are required. Without a key the scenario skips.
-//      With a key, the `openai` scenario skips on backend rejection (mirroring
-//      the skip precedent in scenarios/blueprint-object-chat), while the
-//      `generic` scenario fails on rejection — a set key means the save must
-//      succeed, so a rejection is a regression.
+//      With a key, BOTH scenarios fail on a backend rejection — a set key means
+//      the save must succeed, so a rejection is a regression, not an environment
+//      skip (a blanket skip could mask a real save-path failure).
 //   5. VERIFY (UI): PRG redirect → the provider row on /settings/providers
 //      shows `openai` with the LiteLLM base URL.
 // Cleanup mirrors the blueprint-object-chat scenario: remove the provider
@@ -150,8 +149,10 @@ test.describe('OpenAI-compatible provider via LiteLLM', () => {
 
       // 4. SAVE (UI): success PRG-redirects to /settings/providers?updated=1;
       // a rejection re-renders the form with the "Couldn't save provider"
-      // modal carrying the backend's reason — treat that as an environment
-      // problem (unreachable proxy or invalid key), not a product regression.
+      // modal carrying the backend's reason. E2E_OPENAI_API_KEY is set (the
+      // gate above skipped otherwise), so a rejection is a regression — fail
+      // with the backend's copy instead of skipping, which could mask a real
+      // registry/backend save failure (#1531).
       await saveBtn.click();
       await Promise.race([
         page.waitForURL(/\/settings\/providers\?updated=1/, { timeout: 90_000 }),
@@ -168,11 +169,10 @@ test.describe('OpenAI-compatible provider via LiteLLM', () => {
           const reason = await modal.locator('p').last().textContent().catch(() => null);
           if (reason?.trim()) detail = reason.trim();
         }
-        test.skip(
-          true,
+        expect(
+          page.url(),
           `openai provider save rejected by memory backend for ${LITELLM_BASE_URL}: ${detail}`,
-        );
-        return;
+        ).toContain('updated=1');
       }
 
       // 5. VERIFY (UI): the provider is now configured, so the shell sidebar
