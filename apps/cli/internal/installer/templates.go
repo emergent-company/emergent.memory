@@ -262,7 +262,6 @@ func GetDockerComposeTemplateWithVersion(version string) string {
       GITHUB_APP_ENCRYPTION_KEY: ${GITHUB_APP_ENCRYPTION_KEY:-}
       LLM_ENCRYPTION_KEY: ${LLM_ENCRYPTION_KEY:-}
       EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-768}
-      DB_AUTOINIT: 'true'
       SCOPES_DISABLED: 'true'
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4318}
       OTEL_TEMPO_URL: ${OTEL_TEMPO_URL:-http://localhost:3200}

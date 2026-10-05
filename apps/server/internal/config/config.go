@@ -161,6 +161,22 @@ type DatabaseConfig struct {
 	// connection in this pool, so pg_stat_activity can attribute connections to
 	// their client. Set DB_APPLICATION_NAME to override.
 	ApplicationName string `env:"DB_APPLICATION_NAME" envDefault:"memory-server"`
+	// PingMaxAttempts bounds how many times the startup connectivity check
+	// pings the database before the pool construction fails. A transient DB
+	// blip during a restart-flap used to hard-fail immediately; a bounded retry
+	// lets a restart ride out a short outage. Values < 1 are treated as 1.
+	PingMaxAttempts int `env:"DB_PING_MAX_ATTEMPTS" envDefault:"10"`
+	// PingInitialBackoff is the delay before the second startup ping attempt.
+	// Each subsequent delay doubles, capped at PingMaxBackoff.
+	PingInitialBackoff time.Duration `env:"DB_PING_INITIAL_BACKOFF" envDefault:"250ms"`
+	// PingMaxBackoff caps the exponential startup-ping retry delay.
+	PingMaxBackoff time.Duration `env:"DB_PING_MAX_BACKOFF" envDefault:"5s"`
+	// BulkStatementTimeout bounds a single SQL statement issued from a bulk
+	// (batch) endpoint. It is attached to each item's transaction via
+	// `set_config('statement_timeout', …, true)`, so one runaway statement
+	// fails cleanly instead of holding a pool connection (and starving other
+	// requests) past the 10-minute per-request bulk budget. 0 disables it.
+	BulkStatementTimeout time.Duration `env:"DB_BULK_STATEMENT_TIMEOUT" envDefault:"10m"`
 }
 
 // DSN returns the PostgreSQL connection string

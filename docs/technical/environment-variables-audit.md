@@ -42,7 +42,6 @@ These variables are used exclusively by the NestJS server application.
 | `POSTGRES_PASSWORD` | `spec`      | Database password                        |
 | `POSTGRES_DB`       | `spec`      | Database name                            |
 | `POSTGRES_DB_E2E`   | -           | E2E test database name                   |
-| `DB_AUTOINIT`       | `false`     | Auto-initialize database schema          |
 | `SKIP_DB`           | -           | Skip database connection (for build/gen) |
 | `SKIP_MIGRATIONS`   | -           | Skip running migrations                  |
 | `APP_RLS_PASSWORD`  | -           | Password for RLS bypass role             |

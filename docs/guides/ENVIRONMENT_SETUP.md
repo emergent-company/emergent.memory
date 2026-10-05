@@ -1614,7 +1614,6 @@ Located in: `apps/server/.env` or `.env.local`
 | `POSTGRES_USER`     | `spec`      | Startup   | No                      | Yes      | PostgreSQL user          |
 | `POSTGRES_PASSWORD` | `spec`      | Startup   | No                      | Yes      | PostgreSQL password      |
 | `POSTGRES_DB`       | `spec_db`   | Startup   | No                      | Yes      | PostgreSQL database name |
-| `DB_AUTOINIT`       | `true`      | Startup   | No                      | Optional | Auto-initialize database |
 | `SKIP_DB`           | `false`     | Startup   | No                      | Optional | Skip database connection |
 | `SKIP_MIGRATIONS`   | `false`     | Startup   | No                      | Optional | Skip running migrations  |
 

@@ -154,8 +154,6 @@ services:
 
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-768}
-
-      DB_AUTOINIT: 'true'
       LLM_ENCRYPTION_KEY: ${LLM_ENCRYPTION_KEY:-}
 
       # Workspace configuration

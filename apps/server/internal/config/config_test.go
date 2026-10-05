@@ -589,6 +589,10 @@ func TestShutdownAndPoolDefaults(t *testing.T) {
 		{"db max open conns", reflect.TypeOf(DatabaseConfig{}), "MaxOpenConns", "100"},
 		{"db max idle conns", reflect.TypeOf(DatabaseConfig{}), "MaxIdleConns", "25"},
 		{"db application name", reflect.TypeOf(DatabaseConfig{}), "ApplicationName", "memory-server"},
+		{"db ping max attempts", reflect.TypeOf(DatabaseConfig{}), "PingMaxAttempts", "10"},
+		{"db ping initial backoff", reflect.TypeOf(DatabaseConfig{}), "PingInitialBackoff", "250ms"},
+		{"db ping max backoff", reflect.TypeOf(DatabaseConfig{}), "PingMaxBackoff", "5s"},
+		{"db bulk statement timeout", reflect.TypeOf(DatabaseConfig{}), "BulkStatementTimeout", "10m"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

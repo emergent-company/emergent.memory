@@ -70,7 +70,6 @@ services:
       EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-768}
 
       # Features
-      DB_AUTOINIT: ${DB_AUTOINIT:-true}
       ORGS_DEMO_SEED: ${ORGS_DEMO_SEED:-false}
       CHAT_ENABLE_MCP: ${CHAT_ENABLE_MCP:-1}
     depends_on:

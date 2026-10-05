@@ -176,7 +176,6 @@ services:
       # Server
       PORT: "3002"
       GO_ENV: development
-      DB_AUTOINIT: "true"
 
       # Point the MCP registry client at the local stub instead of the live
       # official registry (registry.modelcontextprotocol.io) for hermetic e2e.

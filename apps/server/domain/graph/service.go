@@ -3248,7 +3248,7 @@ func (s *Service) BulkCreateObjects(ctx context.Context, projectID uuid.UUID, re
 
 	results := make([]BulkCreateObjectResult, len(req.Items))
 
-	workerCtx := context.WithoutCancel(ctx)
+	workerCtx := s.repo.BulkContext(context.WithoutCancel(ctx))
 
 	// Pre-warm schema cache for this project to avoid lock contention
 	if s.schemaProvider != nil {
@@ -3310,7 +3310,7 @@ func (s *Service) BulkUpsertObjects(ctx context.Context, projectID uuid.UUID, re
 
 	results := make([]BulkUpsertObjectResult, len(req.Items))
 
-	workerCtx := context.WithoutCancel(ctx)
+	workerCtx := s.repo.BulkContext(context.WithoutCancel(ctx))
 
 	// Pre-warm schema cache for this project to avoid lock contention
 	if s.schemaProvider != nil {
@@ -3373,6 +3373,10 @@ func (s *Service) BulkUpdateObjects(ctx context.Context, projectID uuid.UUID, re
 	// forever. Short batches finish well within the bound (500 items max).
 	workerCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bulkUpdateMaxDuration)
 	defer cancel()
+	// Bound each individual statement (default 10m, matching the request budget)
+	// so one runaway statement fails the item instead of holding a pooled
+	// connection for the whole request.
+	workerCtx = s.repo.BulkContext(workerCtx)
 
 	// Pre-warm schema cache for this project to avoid lock contention
 	if s.schemaProvider != nil {
@@ -3441,7 +3445,7 @@ func (s *Service) BulkCreateRelationships(ctx context.Context, projectID uuid.UU
 
 	results := make([]BulkCreateRelationshipResult, len(req.Items))
 
-	workerCtx := context.WithoutCancel(ctx)
+	workerCtx := s.repo.BulkContext(context.WithoutCancel(ctx))
 
 	// Pre-warm inverse type cache for this project to avoid lock contention
 	if s.inverseTypeProvider != nil {
@@ -3500,7 +3504,7 @@ func (s *Service) BulkUpsertRelationships(ctx context.Context, projectID uuid.UU
 
 	results := make([]BulkUpsertRelationshipResult, len(req.Items))
 
-	workerCtx := context.WithoutCancel(ctx)
+	workerCtx := s.repo.BulkContext(context.WithoutCancel(ctx))
 
 	// Pre-warm inverse type cache for this project to avoid lock contention
 	if s.inverseTypeProvider != nil {

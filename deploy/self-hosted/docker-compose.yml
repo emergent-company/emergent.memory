@@ -171,6 +171,7 @@ services:
   server:
     image: ghcr.io/emergent-company/memory-server:${VERSION:-latest}
     pull_policy: always
+    restart: unless-stopped
     environment:
       # Standalone Mode Configuration
       STANDALONE_MODE: 'true'
@@ -215,9 +216,6 @@ services:
       WHISPER_MODEL: ${WHISPER_MODEL:-base}
       WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-}
       WHISPER_MAX_FILE_SIZE_MB: ${WHISPER_MAX_FILE_SIZE_MB:-500}
-
-      # Features
-      DB_AUTOINIT: 'true'
 
       # Agent Sandboxes (disabled by default)
       ENABLE_AGENT_SANDBOXES: ${ENABLE_AGENT_SANDBOXES:-false}

@@ -201,7 +201,6 @@ env:
   
   # Test-specific
   NODE_ENV: test
-  DB_AUTOINIT: true
 ```
 
 ### Production Deployment

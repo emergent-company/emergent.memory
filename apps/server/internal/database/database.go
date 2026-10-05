@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -44,17 +45,26 @@ func NewPgxPool(lc fx.Lifecycle, cfg *config.Config, log *slog.Logger) (*pgxpool
 	poolConfig.MinConns = int32(cfg.Database.MaxIdleConns)
 	poolConfig.MaxConnIdleTime = cfg.Database.MaxIdleTime
 
-	// Create pool
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Create pool. NewWithConfig does not retain this context; it only bounds
+	// the construction call itself.
+	poolCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	pool, err := pgxpool.NewWithConfig(poolCtx, poolConfig)
 	if err != nil {
 		return nil, fmt.Errorf("create pgx pool: %w", err)
 	}
 
-	// Verify connection
-	if err := pool.Ping(ctx); err != nil {
+	// Verify connection with a bounded retry/backoff. A single Ping used to
+	// hard-fail startup, so a transient DB blip during a restart-flap would
+	// crash the process and amplify the flap (issue #1481). Retry the same pool
+	// (never recreate it) and only give up once the attempt budget is spent.
+	if err := pingWithRetry(context.Background(), pool.Ping,
+		cfg.Database.PingMaxAttempts,
+		cfg.Database.PingInitialBackoff,
+		cfg.Database.PingMaxBackoff,
+		log,
+	); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
@@ -83,6 +93,60 @@ func NewPgxPool(lc fx.Lifecycle, cfg *config.Config, log *slog.Logger) (*pgxpool
 	})
 
 	return pool, nil
+}
+
+// pingAttemptTimeout bounds a single startup ping so a hung TCP connect cannot
+// consume the whole retry budget.
+const pingAttemptTimeout = 10 * time.Second
+
+// pingWithRetry calls ping up to attempts times, sleeping with exponential
+// backoff (initial, doubling, capped at maxBackoff) between failures, and
+// returns nil on the first success. It returns the last ping error once the
+// attempts are exhausted, or the context error if ctx is cancelled while
+// waiting. attempts < 1 is treated as 1; a non-positive initial backoff or
+// maxBackoff means no delay between attempts.
+//
+// Extracted from NewPgxPool so the retry policy is unit-testable with an
+// injected ping (issue #1481).
+func pingWithRetry(ctx context.Context, ping func(context.Context) error, attempts int, initial, maxBackoff time.Duration, log *slog.Logger) error {
+	if attempts < 1 {
+		attempts = 1
+	}
+
+	var lastErr error
+	backoff := initial
+	for attempt := 1; attempt <= attempts; attempt++ {
+		pingCtx, cancel := context.WithTimeout(ctx, pingAttemptTimeout)
+		lastErr = ping(pingCtx)
+		cancel()
+		if lastErr == nil {
+			return nil
+		}
+		if attempt == attempts {
+			break
+		}
+
+		log.Warn("database ping failed, retrying",
+			slog.Int("attempt", attempt),
+			slog.Int("max_attempts", attempts),
+			slog.Duration("backoff", backoff),
+			logger.Error(lastErr))
+
+		if backoff > 0 {
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("ping retry aborted: %w (last error: %v)", ctx.Err(), lastErr)
+			case <-time.After(backoff):
+			}
+			next := backoff * 2
+			if maxBackoff > 0 && next > maxBackoff {
+				next = maxBackoff
+			}
+			backoff = next
+		}
+	}
+
+	return fmt.Errorf("ping failed after %d attempt(s): %w", attempts, lastErr)
 }
 
 // NewBunDB creates a Bun ORM instance wrapping the pgx pool
@@ -210,11 +274,59 @@ type SafeTx struct {
 	committed bool
 }
 
+// statementTimeoutKey carries a per-request statement_timeout through context.
+type statementTimeoutKey struct{}
+
+// WithStatementTimeout returns a context that asks BeginSafeTx to bound every
+// statement in transactions started from it with PostgreSQL's
+// statement_timeout. A non-positive duration leaves ctx unchanged.
+//
+// The bound is applied inside each transaction via
+// set_config('statement_timeout', …, true), so it is released on
+// commit/rollback and never leaks to other requests or pooled connections. Bulk
+// endpoints use it so one runaway statement fails cleanly instead of holding a
+// pool connection (issue #1481).
+func WithStatementTimeout(ctx context.Context, d time.Duration) context.Context {
+	if d <= 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, statementTimeoutKey{}, d)
+}
+
+// statementTimeoutFromContext reports the per-request statement_timeout, if one
+// was attached and is positive.
+func statementTimeoutFromContext(ctx context.Context) (time.Duration, bool) {
+	d, ok := ctx.Value(statementTimeoutKey{}).(time.Duration)
+	return d, ok && d > 0
+}
+
+// StatementTimeoutFromContext reports the per-request statement_timeout, if one
+// is attached and positive. It is the exported form of
+// statementTimeoutFromContext, for callers outside this package that need to
+// decide whether to run a statement inside a transaction so BeginSafeTx can
+// apply the bound (e.g. a single-statement insert reached from a bulk endpoint).
+func StatementTimeoutFromContext(ctx context.Context) (time.Duration, bool) {
+	return statementTimeoutFromContext(ctx)
+}
+
 // BeginSafeTx starts a new transaction and returns a SafeTx wrapper.
+//
+// If ctx carries a statement timeout (see WithStatementTimeout), the
+// transaction sets PostgreSQL's statement_timeout for the duration of the
+// transaction before returning.
 func BeginSafeTx(ctx context.Context, db bun.IDB) (*SafeTx, error) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
+	}
+	if d, ok := statementTimeoutFromContext(ctx); ok {
+		// PostgreSQL's SET does not accept bind parameters, so use set_config
+		// with the millisecond count as text. is_local=true scopes the setting
+		// to this transaction only.
+		if _, err := tx.ExecContext(ctx, "SELECT set_config('statement_timeout', ?, true)", strconv.FormatInt(d.Milliseconds(), 10)); err != nil {
+			_ = tx.Rollback()
+			return nil, fmt.Errorf("set statement_timeout: %w", err)
+		}
 	}
 	return &SafeTx{Tx: tx}, nil
 }

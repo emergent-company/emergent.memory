@@ -580,7 +580,6 @@ services:
       STORAGE_USE_SSL: 'false'
       GOOGLE_API_KEY: \${GOOGLE_API_KEY:-}
       EMBEDDING_DIMENSION: \${EMBEDDING_DIMENSION:-768}
-      DB_AUTOINIT: 'true'
       SCOPES_DISABLED: 'true'
     depends_on:
       db:

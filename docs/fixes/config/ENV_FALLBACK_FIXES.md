@@ -357,7 +357,6 @@ export function setupTestEnvironment() {
     // Set test-specific flags
     process.env.NODE_ENV = 'test';
     process.env.AUTH_TEST_STATIC_TOKENS = '1';
-    process.env.DB_AUTOINIT = 'true';
     process.env.SCOPES_DISABLED = '0';  // Enforce scopes in tests
     
     console.log(`✅ Test environment configured: ${process.env.POSTGRES_USER}@${process.env.POSTGRES_HOST}:${process.env.POSTGRES_PORT}/${process.env.POSTGRES_DB}`);
@@ -455,9 +454,6 @@ VERTEX_EMBEDDING_MODEL=text-embedding-004
 ############################################
 # Development / Testing
 ############################################
-
-# Auto-initialize database schema on startup
-DB_AUTOINIT=true
 
 # Test database (optional, defaults to POSTGRES_DB)
 # POSTGRES_DB_E2E=spec_e2e

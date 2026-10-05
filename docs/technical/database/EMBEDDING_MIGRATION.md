@@ -48,7 +48,7 @@ The `AppConfigService` validates the dimension on startup:
 If you're deploying to a fresh database:
 
 1. Set `EMBEDDING_DIMENSION=1536` in `.env` before first boot
-2. Run `npm run db:init` (or let `DB_AUTOINIT=true` handle it)
+2. Run `npm run db:init`
 3. Database will be created with correct dimension from the start
 
 ### Strategy B: Zero-Downtime Migration (For Production Systems)

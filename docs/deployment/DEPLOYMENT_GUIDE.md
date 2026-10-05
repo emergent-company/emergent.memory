@@ -39,7 +39,7 @@ docker-compose -f docker-compose.staging.yml up -d
 - ✅ PostgreSQL starts and creates extensions (vector, pgcrypto)
 - ✅ PostgreSQL creates Zitadel database and user
 - ✅ Zitadel starts and creates bootstrap PAT (Personal Access Token)
-- ✅ Server starts and runs database migrations (`DB_AUTOINIT=true`)
+- ✅ Server starts and connects to the database
 - ✅ Admin UI starts and serves frontend
 - ⚠️ Server cannot authenticate with Zitadel yet (no service account)
 - ⚠️ Users cannot login yet (no OAuth app configured)

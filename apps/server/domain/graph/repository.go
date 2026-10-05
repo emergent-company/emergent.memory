@@ -30,10 +30,22 @@ type Repository struct {
 	db           bun.IDB
 	log          *slog.Logger
 	maxListLimit int
+	// bulkStatementTimeout is attached to bulk-endpoint contexts so each item
+	// transaction sets PostgreSQL statement_timeout (issue #1481). 0 disables.
+	bulkStatementTimeout time.Duration
 }
 
 func (r *Repository) DB() bun.IDB {
 	return r.db
+}
+
+// BulkContext returns ctx with the configured per-statement timeout attached,
+// so transactions begun from it bound each statement with PostgreSQL's
+// statement_timeout. Bulk endpoints use it to keep a runaway statement from
+// holding a pool connection past the request budget. Returns ctx unchanged when
+// the timeout is disabled.
+func (r *Repository) BulkContext(ctx context.Context) context.Context {
+	return database.WithStatementTimeout(ctx, r.bulkStatementTimeout)
 }
 
 // MaxListLimit returns the configured maximum number of items per list page.
@@ -44,9 +56,10 @@ func (r *Repository) MaxListLimit() int {
 // NewRepository creates a new graph repository.
 func NewRepository(db bun.IDB, log *slog.Logger, cfg *config.Config) *Repository {
 	return &Repository{
-		db:           db,
-		log:          log.With(logger.Scope("graph.repo")),
-		maxListLimit: cfg.Graph.MaxListLimit,
+		db:                   db,
+		log:                  log.With(logger.Scope("graph.repo")),
+		maxListLimit:         cfg.Graph.MaxListLimit,
+		bulkStatementTimeout: cfg.Database.BulkStatementTimeout,
 	}
 }
 
@@ -861,6 +874,25 @@ func (r *Repository) insertGraphObject(ctx context.Context, db bun.IDB, obj *Gra
 // Create inserts a new graph object (version 1).
 func (r *Repository) Create(ctx context.Context, obj *GraphObject) error {
 	initGraphObject(obj)
+	// Bulk endpoints attach a statement_timeout to ctx via BulkContext so each
+	// item transaction is bounded. Create is otherwise a bare single-statement
+	// insert with no transaction to carry the setting, so when a bound is
+	// present run the insert in a transaction to apply it. Ordinary creates
+	// carry no bound and keep the single-statement path (no extra round trip).
+	if _, ok := database.StatementTimeoutFromContext(ctx); ok {
+		tx, err := database.BeginSafeTx(ctx, r.db)
+		if err != nil {
+			return fmt.Errorf("begin create transaction: %w", err)
+		}
+		defer func() { _ = tx.Rollback() }() // no-op after a successful Commit
+		if err := r.insertGraphObject(ctx, tx.Tx, obj); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit create transaction: %w", err)
+		}
+		return nil
+	}
 	return r.insertGraphObject(ctx, r.db, obj)
 }
 
