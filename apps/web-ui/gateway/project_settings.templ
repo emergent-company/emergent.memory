@@ -968,9 +968,7 @@ templ providerConfigRow(p ProjectProviderConfig, iconURI string) {
 	{{ slug := providerInstanceSlug(p) }}
 	<div class="rounded-box border border-base-content/10 bg-base-200/30 p-3" data-testid={ "provider-instance-" + slug }>
 		<div class="flex flex-wrap items-center gap-3">
-			if iconURI != "" {
-				<img src={ iconURI } alt="" aria-hidden="true" class="size-5 shrink-0"/>
-			}
+			@providerIconMark(resolveProviderIcon(iconURI), "size-5")
 			<span class="font-mono text-sm font-medium">{ slug }</span>
 			<span class="text-muted text-xs">{ p.Provider }</span>
 			if p.BaseURL != "" {
@@ -1005,6 +1003,43 @@ templ providerConfigRow(p ProjectProviderConfig, iconURI string) {
 	</div>
 }
 
+// providerIconMark renders one resolved vendor brand mark at the given size
+// class (e.g. "size-6"). A monochrome mark (SVG filled with currentColor) is
+// painted as a CSS mask in the inherited text color, so embedded currentColor
+// resolves against the page theme instead of the SVG's own document (the
+// "black icon on dark" bug, #1499). A colored mark renders as a plain data-URI
+// <img>, keeping its brand colors.
+templ providerIconMark(ic providerIcon, size string) {
+	if ic.Monochrome {
+		<span
+			class={ "block", size }
+			style={ "background-color:currentColor;-webkit-mask-image:url(\"" + ic.URI + "\");mask-image:url(\"" + ic.URI + "\");-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:center;mask-position:center;-webkit-mask-size:contain;mask-size:contain" }
+			aria-hidden="true"
+		></span>
+	} else if ic.URI != "" {
+		<img src={ ic.URI } alt="" aria-hidden="true" class={ size, "shrink-0" }/>
+	}
+}
+
+// providerSelectIcon is the add form's brand mark, positioned inside the
+// provider <select> control: the relative wrapper around the select anchors
+// this absolutely, pointer-events-none so clicks still open the dropdown, and
+// the select carries the matching inline-start padding (ps-10). It keeps
+// id="provider-icon" on the visible element (the on-change sync targets it) and
+// hides itself with no layout shift when the selected vendor has no icon.
+templ providerSelectIcon(ic providerIcon) {
+	<span
+		id="provider-icon"
+		aria-hidden="true"
+		class="pointer-events-none absolute inset-y-0 start-0 z-10 grid w-10 place-items-center text-base-content"
+		if ic.URI == "" {
+			style="display:none"
+		}
+	>
+		@providerIconMark(ic, "size-6")
+	</span>
+}
+
 // providerConfigForm adds or updates a project provider's credentials. p is
 // nil for the add form and non-nil for edit. draft + draftProvider are set
 // when the page re-renders after a failed save: every input then repopulates
@@ -1015,9 +1050,9 @@ templ providerConfigRow(p ProjectProviderConfig, iconURI string) {
 // vendors is the server vendor registry, ordered by Order ascending; the add
 // form builds its vendor <select> from it (value=type, label=displayName),
 // shows the selected vendor's description as the field hint, and previews the
-// selected vendor's brand icon beside the select. The selected vendor's
-// extraFields are rendered read-only beneath the credential fields —
-// server-side configuration this form does not submit.
+// selected vendor's brand icon inside the select control (ps-10 inset icon).
+// The selected vendor's extraFields are rendered read-only beneath the
+// credential fields — server-side configuration this form does not submit.
 //
 // Save is gated on a live connection test for vendors whose endpoint is
 // user-supplied: the submit button starts disabled, "Test connection" probes
@@ -1049,11 +1084,11 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 			{{ iconURI := vendorIconURI(vendors, sel) }}
 			<label class="form-control w-full">
 				<div class="label"><span class="label-text">Provider</span></div>
-				<div class="flex items-center gap-2">
-					<img id="provider-icon" alt="" aria-hidden="true" class="size-6 shrink-0" if iconURI != "" { src={ iconURI } } if iconURI == "" { style="display:none" }/>
-					<select id="provider-type" name="provider" class="select w-full">
+				<div class="relative w-full">
+					@providerSelectIcon(resolveProviderIcon(iconURI))
+					<select id="provider-type" name="provider" class="select w-full ps-10">
 						for _, v := range vendors {
-							<option value={ v.Type } if v.Type == sel { selected } data-description={ v.Description } data-icon-uri={ v.IconDataURI } data-base-url={ providerDefaultBaseURL(vendors, v.Type) } if providerRequiresBaseURL(vendors, v.Type) { data-requires-base-url="1" }>{ v.DisplayName }</option>
+							<option value={ v.Type } if v.Type == sel { selected } data-description={ v.Description } data-icon-uri={ v.IconDataURI } if providerIconMonochrome(v.IconDataURI) { data-icon-mono="1" } data-base-url={ providerDefaultBaseURL(vendors, v.Type) } if providerRequiresBaseURL(vendors, v.Type) { data-requires-base-url="1" }>{ v.DisplayName }</option>
 						}
 					</select>
 				</div>
@@ -1084,9 +1119,7 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 			<input type="hidden" name="slug" value={ providerInstanceSlug(*p) }/>
 			<p class="text-sm text-muted-strong">Name: <span class="font-mono font-semibold">{ providerInstanceSlug(*p) }</span></p>
 			<p class="flex items-center gap-2 text-sm text-muted-strong">
-				if iconURI != "" {
-					<img src={ iconURI } alt="" aria-hidden="true" class="size-6 shrink-0"/>
-				}
+				@providerIconMark(resolveProviderIcon(iconURI), "size-6")
 				<span>Provider: <span class="font-mono font-semibold">{ p.Provider }</span></span>
 			</p>
 		}
@@ -1105,6 +1138,11 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 				return ""
 			}(),
 		})
+		if p != nil {
+			<p class="text-muted-faint mt-1 text-xs" data-testid="api-key-stored-hint">
+				A key is already stored and is never displayed. Leave the field blank to keep it, or enter a new value to replace it — the eye reveals what you type.
+			</p>
+		}
 		<label id="base-url-field" class="form-control w-full" style="display:none">
 			<div class="label"><span class="label-text">Base URL (OpenAI-compatible)</span></div>
 			<input
@@ -1337,6 +1375,41 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 					if (sel) return sel.value;
 					return form.getAttribute('data-provider') || '';
 				}
+				/* Rebuild the select-inset brand mark for the current vendor.
+				   A monochrome (currentColor) icon is painted as a CSS mask in
+				   the inherited text color; a colored brand mark stays an
+				   <img> with its data URI. Both are pointer-transparent so the
+				   select still opens. */
+				function setProviderIcon(el, uri, mono) {
+					if (!el) return;
+					if (!uri) {
+						el.replaceChildren();
+						el.style.display = 'none';
+						return;
+					}
+					el.style.display = '';
+					if (mono) {
+						var mark = document.createElement('span');
+						mark.className = 'block size-6';
+						mark.setAttribute('aria-hidden', 'true');
+						mark.style.backgroundColor = 'currentColor';
+						mark.style.maskImage = 'url("' + uri + '")';
+						mark.style.webkitMaskImage = 'url("' + uri + '")';
+						mark.style.maskRepeat = 'no-repeat';
+						mark.style.webkitMaskRepeat = 'no-repeat';
+						mark.style.maskPosition = 'center';
+						mark.style.webkitMaskPosition = 'center';
+						mark.style.maskSize = 'contain';
+						mark.style.webkitMaskSize = 'contain';
+						el.replaceChildren(mark);
+					} else {
+						var img = document.createElement('img');
+						img.src = uri;
+						img.alt = '';
+						img.className = 'size-6 shrink-0';
+						el.replaceChildren(img);
+					}
+				}
 				/* Endpoint metadata for the current selection: read from the
 				   selected <option> in add mode, or the form's data-*
 				   attributes in edit mode (the edit form has no vendor
@@ -1398,13 +1471,8 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 						}
 						if (iconEl) {
 							var uri = opt ? (opt.getAttribute('data-icon-uri') || '') : '';
-							if (uri) {
-								iconEl.setAttribute('src', uri);
-								iconEl.style.display = '';
-							} else {
-								iconEl.removeAttribute('src');
-								iconEl.style.display = 'none';
-							}
+							var mono = !!opt && opt.getAttribute('data-icon-mono') === '1';
+							setProviderIcon(iconEl, uri, mono);
 						}
 					}
 					for (var i = 0; i < extraBlocks.length; i++) {
@@ -1462,6 +1530,21 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 						form.removeAttribute('data-test-pending');
 					}
 				});
+				/* The API-key reveal toggle is a dead control on an empty field:
+				   on edit the stored key is never returned, so the input starts
+				   blank. Hide the eye until the user types something it can
+				   actually reveal, and re-hide it when the field is cleared. The
+				   stored-key hint above the field explains the blank state. */
+				if (keyInput) {
+					var keyToggle = keyInput.parentElement.querySelector('button[aria-label="Toggle password visibility"]');
+					if (keyToggle) {
+						var syncKeyToggle = function () {
+							keyToggle.style.display = keyInput.value.length ? '' : 'none';
+						};
+						keyInput.addEventListener('input', syncKeyToggle);
+						syncKeyToggle();
+					}
+				}
 				refresh();
 			})();
 		</script>

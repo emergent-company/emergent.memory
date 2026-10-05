@@ -11,8 +11,8 @@ import (
 )
 
 // TestResolveVoiceSettingsDefaults asserts that with no stored settings the
-// resolved config is the env defaults, Enabled defaults to true, and
-// STTProvider defaults to deepgram.
+// resolved config is the env defaults, Enabled defaults to false (a fresh
+// project starts with voice off), and STTProvider defaults to deepgram.
 func TestResolveVoiceSettingsDefaults(t *testing.T) {
 	cfg := Config{
 		TTSProvider:          "cartesia",
@@ -34,8 +34,8 @@ func TestResolveVoiceSettingsDefaults(t *testing.T) {
 		LiveKitAPISecret:     "ls",
 	}
 	v := resolveVoiceSettings(context.Background(), cfg, &fakeMemory{})
-	if !v.Enabled {
-		t.Error("enabled should default to true")
+	if v.Enabled {
+		t.Error("enabled should default to false for a fresh project")
 	}
 	if v.STTProvider != defaultSTTProvider {
 		t.Errorf("STTProvider = %q, want %q", v.STTProvider, defaultSTTProvider)
@@ -114,8 +114,8 @@ func TestResolveVoiceSettingsOverlay(t *testing.T) {
 func TestResolveVoiceSettingsReadError(t *testing.T) {
 	f := &fakeMemory{settingErr: errTest}
 	v := resolveVoiceSettings(context.Background(), Config{TTSProvider: "cartesia"}, f)
-	if !v.Enabled {
-		t.Error("read error should keep the default enabled=true")
+	if v.Enabled {
+		t.Error("read error should keep the default enabled=false")
 	}
 	if v.TTSProvider != "cartesia" {
 		t.Errorf("read error should keep the env default, got %q", v.TTSProvider)
@@ -292,17 +292,61 @@ func TestUIProjectSettingsVoiceError(t *testing.T) {
 }
 
 // TestVoiceEnabled asserts the Server.voiceEnabled helper resolves the
-// project's stored enabled flag (defaulting to on).
+// project's stored enabled flag, defaulting to OFF for a fresh project (#1497)
+// while a stored enabled=true still overrides to on.
 func TestVoiceEnabled(t *testing.T) {
-	s := &Server{cfg: Config{}, memory: &fakeMemory{}}
-	if !s.voiceEnabled(context.Background()) {
-		t.Error("no stored setting should default to enabled")
+	t.Run("fresh project defaults to disabled", func(t *testing.T) {
+		s := &Server{cfg: Config{}, memory: &fakeMemory{}}
+		if s.voiceEnabled(context.Background()) {
+			t.Error("no stored setting should default to disabled")
+		}
+	})
+	t.Run("stored enabled=true resolves enabled", func(t *testing.T) {
+		enabled := &fakeMemory{settings: map[string]map[string]map[string]any{
+			"voice": {"enabled": {"value": true}},
+		}}
+		s := &Server{cfg: Config{}, memory: enabled}
+		if !s.voiceEnabled(context.Background()) {
+			t.Error("stored enabled=true should report enabled")
+		}
+	})
+	t.Run("stored enabled=false resolves disabled", func(t *testing.T) {
+		disabled := &fakeMemory{settings: map[string]map[string]map[string]any{
+			"voice": {"enabled": {"value": false}},
+		}}
+		s := &Server{cfg: Config{}, memory: disabled}
+		if s.voiceEnabled(context.Background()) {
+			t.Error("stored enabled=false should report disabled")
+		}
+	})
+}
+
+// TestResolveVoiceSettingsEnabledDefault pins the fresh-project default and the
+// stored-value override for the voice enabled flag (#1497): absent → false,
+// stored true → true, stored false → false.
+func TestResolveVoiceSettingsEnabledDefault(t *testing.T) {
+	cases := []struct {
+		name    string
+		stored  any
+		present bool
+		want    bool
+	}{
+		{name: "fresh project (no stored setting)", want: false},
+		{name: "stored enabled=true overrides to on", stored: true, present: true, want: true},
+		{name: "stored enabled=false stays off", stored: false, present: true, want: false},
 	}
-	disabled := &fakeMemory{settings: map[string]map[string]map[string]any{
-		"voice": {"enabled": {"value": false}},
-	}}
-	s = &Server{cfg: Config{}, memory: disabled}
-	if s.voiceEnabled(context.Background()) {
-		t.Error("stored enabled=false should report disabled")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeMemory{}
+			if tc.present {
+				f.settings = map[string]map[string]map[string]any{
+					"voice": {"enabled": {"value": tc.stored}},
+				}
+			}
+			v := resolveVoiceSettings(context.Background(), Config{}, f)
+			if v.Enabled != tc.want {
+				t.Errorf("Enabled = %v, want %v", v.Enabled, tc.want)
+			}
+		})
 	}
 }

@@ -71,7 +71,20 @@ templ OrgLandingPage(data orgPageData) {
 			@pageError("Organization unavailable", data.LoadErr)
 		} else {
 			@pageHeader("Organization", data.Org.Name, "Projects in this organization.") {
-				@countBadge(len(data.Projects), "project", "lucide--folder")
+				<div class="flex items-center gap-2">
+					@countBadge(len(data.Projects), "project", "lucide--folder")
+					if data.IsOrgAdmin {
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeButton,
+							Variant: ui.ButtonPrimary,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--plus",
+							Attrs:   templ.Attributes{"onclick": "openNewProjectModal()"},
+						}) {
+							Add project
+						}
+					}
+				</div>
 			}
 			@flashToasts(data.FlashMsg, data.FlashErr)
 			if data.CanTransfer {

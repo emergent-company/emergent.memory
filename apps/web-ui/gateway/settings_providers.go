@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -604,6 +605,75 @@ func vendorIconURI(vendors []ProviderDefinition, providerType string) string {
 		}
 	}
 	return ""
+}
+
+// svgDataURIPrefix is the data-URI form memory uses for embedded vendor brand
+// SVGs (see domain/provider/handler.go toProviderDefinitionResponse).
+const svgDataURIPrefix = "data:image/svg+xml;base64,"
+
+// providerIcon is a vendor brand mark resolved for theme-safe rendering. A
+// monochrome mark — an SVG whose fill is currentColor — is painted as a CSS
+// mask in the current text color so it stays legible on both themes; a colored
+// brand mark keeps its original data-URI <img>.
+type providerIcon struct {
+	URI        string
+	Monochrome bool
+}
+
+// resolveProviderIcon classifies a vendor icon data URI. Only a well-formed
+// base64 SVG that carries currentColor (and no embedded script/event handler)
+// is treated as monochrome; every other value — a colored SVG, a malformed
+// payload, or a non-SVG URI — renders through <img>.
+func resolveProviderIcon(uri string) providerIcon {
+	ic := providerIcon{URI: uri}
+	raw, ok := decodeSVGDataURI(uri)
+	if !ok {
+		return ic
+	}
+	ic.Monochrome = isMonochromeSVG(raw)
+	return ic
+}
+
+// decodeSVGDataURI returns the decoded payload of a base64 SVG data URI, or
+// false when uri is not one (or its payload does not decode).
+func decodeSVGDataURI(uri string) (string, bool) {
+	payload, ok := strings.CutPrefix(uri, svgDataURIPrefix)
+	if !ok {
+		return "", false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		return "", false
+	}
+	return string(decoded), true
+}
+
+// isMonochromeSVG reports whether an SVG may be safely masked so it inherits
+// the page text color: it must start with <svg, use currentColor, and carry no
+// <script> or event handler. Masks only ever reference the URI as an image,
+// never raw markup, so the script/handler check is defense in depth.
+func isMonochromeSVG(svg string) bool {
+	if !strings.HasPrefix(strings.TrimSpace(svg), "<svg") || !strings.Contains(svg, "currentColor") {
+		return false
+	}
+	lower := strings.ToLower(svg)
+	if strings.Contains(lower, "<script") {
+		return false
+	}
+	for _, handler := range []string{"onload=", "onerror=", "onclick=", "onmouseover=", "onmouseenter=", "onfocus=", "onanimationstart=", "onbegin="} {
+		if strings.Contains(lower, handler) {
+			return false
+		}
+	}
+	return true
+}
+
+// providerIconMonochrome reports whether a vendor icon data URI is a
+// monochrome (currentColor) mark. It drives the add form's per-option
+// data-icon-mono hook so the on-change sync picks the same rendering the
+// server used for the initial selection.
+func providerIconMonochrome(uri string) bool {
+	return resolveProviderIcon(uri).Monochrome
 }
 
 // renderProviderConfigError re-renders the add/edit provider form with the

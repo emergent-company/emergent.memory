@@ -73,7 +73,7 @@ var adoptionFindings = []AdoptionFinding{
 	{File: "objects.templ", Line: 576, Marker: "class:card", Owners: []string{"CardRaw", "PanelCard", "TableCard"}},
 	{File: "objects.templ", Line: 576, Marker: "class:card-border", Owners: []string{"CardRaw", "PanelCard", "TableCard"}},
 	{File: "project_settings.templ", Line: 908, Marker: "class:btn", Owners: []string{"Button", "SaveChangesButton"}},
-	{File: "project_settings.templ", Line: 1503, Marker: "class:toggle", Owners: []string{"ToggleField"}},
+	{File: "project_settings.templ", Line: 1586, Marker: "class:toggle", Owners: []string{"ToggleField"}},
 	{File: "runs.templ", Line: 94, Marker: "class:badge", Owners: []string{"Badge", "StatusBadge"}},
 	{File: "runs.templ", Line: 100, Marker: "class:badge", Owners: []string{"Badge", "StatusBadge"}},
 	{File: "schema.templ", Line: 438, Marker: "class:btn", Owners: []string{"Button", "SaveChangesButton"}},

@@ -649,11 +649,12 @@ func (s *Server) uiProjectSettingsEditor(c echo.Context) error {
 // resolveVoiceSettings computes the effective voice configuration: env
 // defaults overlaid with the project's stored settings (category "voice").
 // Stored values win when present; absent keys and read errors degrade to the
-// env default, with Enabled defaulting to true (preserving the always-on
-// behavior). Secrets are never read from storage.
+// env default, with Enabled defaulting to false so a fresh project starts with
+// voice off (a stored enabled=true still overrides to on). Secrets are never
+// read from storage.
 func resolveVoiceSettings(ctx context.Context, cfg Config, mem MemoryBackend) voiceSettings {
 	v := voiceSettings{
-		Enabled:              true,
+		Enabled:              false,
 		TTSProvider:          cfg.TTSProvider,
 		TTSModel:             cfg.CartesiaModel,
 		TTSVoice:             cfg.CartesiaVoice,
@@ -775,7 +776,7 @@ func persistVoiceSettings(ctx context.Context, mem MemoryBackend, v voiceSetting
 }
 
 // voiceEnabled reports whether voice is enabled for the current project
-// (stored setting over env default; defaults to on).
+// (stored setting over env default; defaults to off for a fresh project).
 func (s *Server) voiceEnabled(ctx context.Context) bool {
 	return resolveVoiceSettings(ctx, s.cfg, s.memory).Enabled
 }

@@ -450,41 +450,80 @@ templ apiTokenEditBody(actionBase string, t APIToken, cfg apiTokenScopePickerCon
 	}
 }
 
-// apiTokenScopePickerContent renders the grouped scope checkboxes by AREA
-// (Schemas, Data, …) from scopePickerGroupsFor(cfg). Both admin and admin:all
-// are platform-tier scopes requiring superadmin_full and are intentionally
-// never offered; project/org admins administer a project via project:admin,
-// offered only for project tokens held by a project_admin or the owning
-// org_admin (see apiTokenScopePickerConfig). selected carries the currently
-// granted scopes (edit form); nil/empty means nothing is pre-checked (create
-// form).
+// apiTokenScopePickerContent renders the grouped scope checklist by AREA
+// (Schemas, Data, …) from scopePickerGroupsFor(cfg). Each area is a bordered
+// block: a header row carrying the area label, its hint, and a group-level
+// checkbox that selects/clears every scope in the area (reflecting
+// all/none/indeterminate — see app.js), then a two-column table of one row per
+// scope — the scope name in mono on the left, its human description on the
+// right (GitHub-style). Both admin and admin:all are platform-tier scopes
+// requiring superadmin_full and are intentionally never offered; project/org
+// admins administer a project via project:admin, offered only for project
+// tokens held by a project_admin or the owning org_admin (see
+// apiTokenScopePickerConfig). selected carries the currently granted scopes
+// (edit form); nil/empty means nothing is pre-checked (create form).
 templ apiTokenScopePickerContent(selected []string, cfg apiTokenScopePickerConfig) {
 	<div class="flex flex-col gap-4">
 		@ui.Eyebrow("Scopes", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
 		<p class="text-muted -mt-2 text-xs">Pick at least one scope. Write scopes include their read counterpart.</p>
 		for _, g := range scopePickerGroupsFor(cfg) {
-			<div class="flex flex-col gap-2">
-				<div>
-					<p class="text-xs font-semibold tracking-wide">{ g.Label }</p>
-					<p class="text-muted-faint text-[11px]">{ g.Hint }</p>
-				</div>
-				<div class="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
-					for _, opt := range g.Options {
-						{{ checked := false
-						for _, have := range selected {
-							if have == opt.Value {
-								checked = true
-							}
-						} }}
-						<label class="flex cursor-pointer items-start gap-2 rounded-box border border-base-content/10 bg-base-100 px-3 py-2 transition-colors hover:border-base-content/25">
-							<input type="checkbox" name="scopes" value={ opt.Value } class="checkbox checkbox-sm mt-0.5" checked?={ checked }/>
-							<span class="min-w-0">
-								<span class="block text-xs font-mono">{ opt.Value }</span>
-								<span class="text-muted block text-[11px] leading-snug">{ opt.Label }</span>
-							</span>
-						</label>
+			{{ total := len(g.Options)
+			checkedCount := 0
+			for _, opt := range g.Options {
+				for _, have := range selected {
+					if have == opt.Value {
+						checkedCount++
+						break
 					}
+				}
+			} }}
+			<div class="overflow-hidden rounded-box border border-base-content/10" data-scope-group={ g.Label } data-testid="scope-group">
+				<div class="flex items-start gap-2.5 border-b border-base-200 bg-base-200/40 px-3 py-2">
+					<input
+						type="checkbox"
+						class="checkbox checkbox-sm mt-0.5"
+						data-scope-group-toggle
+						data-testid="scope-group-toggle"
+						checked?={ total > 0 && checkedCount == total }
+						aria-label={ "Select all " + g.Label + " scopes" }
+					/>
+					<div class="min-w-0">
+						<p class="text-xs font-semibold tracking-wide">{ g.Label }</p>
+						<p class="text-muted-faint text-[11px]">{ g.Hint }</p>
+					</div>
 				</div>
+				<table class="table table-sm">
+					<tbody>
+						for _, opt := range g.Options {
+							{{ checked := false
+							for _, have := range selected {
+								if have == opt.Value {
+									checked = true
+								}
+							}
+							fieldID := "scope-" + strings.ReplaceAll(opt.Value, ":", "-") }}
+							<tr data-testid="scope-row" data-scope-group-name={ g.Label }>
+								<td class="w-8">
+									<input
+										id={ fieldID }
+										type="checkbox"
+										name="scopes"
+										value={ opt.Value }
+										class="checkbox checkbox-sm mt-0.5"
+										checked?={ checked }
+										data-scope-group-row
+									/>
+								</td>
+								<td class="font-mono text-xs whitespace-nowrap">
+									<label for={ fieldID } class="cursor-pointer">{ opt.Value }</label>
+								</td>
+								<td class="text-muted text-[11px] leading-snug">
+									<label for={ fieldID } class="cursor-pointer">{ opt.Label }</label>
+								</td>
+							</tr>
+						}
+					</tbody>
+				</table>
 			</div>
 		}
 	</div>

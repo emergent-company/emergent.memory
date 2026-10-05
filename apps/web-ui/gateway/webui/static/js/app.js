@@ -841,6 +841,47 @@
     openBoardCardPreview(card);
   });
 
+  /* ---------- API-token scope group toggles (delegated) ---------- */
+  /* The scope picker renders one bordered block per scope area: a header
+     checkbox (data-scope-group-toggle) and one scope row per option
+     (data-scope-group-row). Checking the header selects/clears every row in
+     that block; checking/unchecking any row keeps the header reflecting
+     all/none/partial (indeterminate). Delegated on document so it survives
+     HTMX swaps; the server pre-checks the header for a fully-selected group,
+     and syncScopeGroups re-derives indeterminate on load and after swaps. */
+  function syncScopeGroupToggle(group) {
+    if (!group) return;
+    var toggle = group.querySelector("[data-scope-group-toggle]");
+    if (!toggle) return;
+    var boxes = group.querySelectorAll("[data-scope-group-row]");
+    var checked = 0;
+    for (var i = 0; i < boxes.length; i++) if (boxes[i].checked) checked++;
+    toggle.checked = boxes.length > 0 && checked === boxes.length;
+    toggle.indeterminate = checked > 0 && checked < boxes.length;
+  }
+
+  function syncScopeGroups(root) {
+    var scope = root && root.querySelectorAll ? root : document;
+    scope.querySelectorAll("[data-scope-group]").forEach(syncScopeGroupToggle);
+  }
+
+  document.addEventListener("change", function (ev) {
+    var t = ev.target;
+    if (!t || !t.matches) return;
+    if (t.matches("[data-scope-group-toggle]")) {
+      var group = t.closest("[data-scope-group]");
+      if (!group) return;
+      var boxes = group.querySelectorAll("[data-scope-group-row]");
+      for (var i = 0; i < boxes.length; i++) boxes[i].checked = t.checked;
+      t.indeterminate = false;
+      return;
+    }
+    if (t.matches("[data-scope-group-row]")) syncScopeGroupToggle(t.closest("[data-scope-group]"));
+  });
+
+  document.addEventListener("DOMContentLoaded", function () { syncScopeGroups(document); });
+  document.addEventListener("htmx:after:swap", function (ev) { syncScopeGroups(ev.target); });
+
   /* expose for templ script blocks */
   window.MemoryApp = {
     openAgentForm: openAgentForm,

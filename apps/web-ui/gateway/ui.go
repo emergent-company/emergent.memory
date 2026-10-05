@@ -770,28 +770,52 @@ func modelGroups(models []Model) []modelGroup {
 }
 
 // modelOptionGroups adapts the model catalog into the shared option-group
-// renderer's shape, marking the agent's current model as selected. The
-// provider bucketing stays here; the markup lives in components.
+// renderer's shape for the agent model select, marking the agent's current
+// model as selected. Option labels are full provider/model references (#1441)
+// so the closed native <select> keeps the provider visible — a native select
+// can only show the selected option's text. The provider bucketing stays here;
+// the markup lives in components.
 func modelOptionGroups(models []Model, current *ModelConfig) []components.SelectOptionGroup {
 	var name string
 	if current != nil {
 		name = current.Name
 	}
-	return modelOptionGroupsFor(models, name)
+	return modelOptionGroupsFullRef(models, name)
 }
 
-// modelOptionGroupsFor is modelOptionGroups for callers holding the current
-// model as a bare provider-prefixed name.
+// modelOptionGroupsFor adapts the catalog into option groups with short
+// display-name labels, for callers holding the current model as a bare
+// provider-prefixed name. The provider-settings selects already group by
+// provider instance and name it in the field help, and friendly model names
+// read better there. Agent-facing selects use modelOptionGroupsFullRef.
 func modelOptionGroupsFor(models []Model, current string) []components.SelectOptionGroup {
+	return modelOptionGroupsWith(models, current, false)
+}
+
+// modelOptionGroupsFullRef labels each option with the full provider/model
+// reference (#1441), so the selected option's text carries its provider even
+// when the native dropdown is closed.
+func modelOptionGroupsFullRef(models []Model, current string) []components.SelectOptionGroup {
+	return modelOptionGroupsWith(models, current, true)
+}
+
+// modelOptionGroupsWith buckets the catalog by provider and marks current as
+// selected. fullRef chooses the option label: the full provider/model value
+// (true) or the catalog's short display name (false).
+func modelOptionGroupsWith(models []Model, current string, fullRef bool) []components.SelectOptionGroup {
 	groups := modelGroups(models)
 	out := make([]components.SelectOptionGroup, 0, len(groups))
 	for _, g := range groups {
 		opts := make([]components.SelectOption, 0, len(g.Models))
 		for _, m := range g.Models {
 			value := m.Provider + "/" + m.ModelName
+			label := modelDisplay(m)
+			if fullRef {
+				label = value
+			}
 			opts = append(opts, components.SelectOption{
 				Value:    value,
-				Label:    modelDisplay(m),
+				Label:    label,
 				Selected: current != "" && value == current,
 			})
 		}
