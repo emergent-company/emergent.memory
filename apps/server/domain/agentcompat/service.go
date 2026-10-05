@@ -207,6 +207,7 @@ func (s *Service) handleNewRun(
 		SystemPromptAppendix: appendix,
 		UserID:               user.ID,
 		ExtraTools:           extraTools,
+		ReasoningEffort:      req.ReasoningEffort,
 		// TrustedInternal defaults false: the OpenAI-compatible surface must not reach internal agents.
 	}
 
@@ -266,6 +267,7 @@ func (s *Service) handleResume(
 		SystemPromptAppendix: buildSystemAppendix(req.Messages, len(req.Tools) > 0, projectInfo),
 		UserID:               user.ID,
 		ExtraTools:           extraTools,
+		ReasoningEffort:      req.ReasoningEffort,
 		// TrustedInternal defaults false: the OpenAI-compatible surface must not reach internal agents.
 	}
 

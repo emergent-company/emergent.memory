@@ -482,6 +482,12 @@ type ExecuteRequest struct {
 	StreamCallback  StreamCallback // Optional: enables streaming of text deltas and tool call events
 	Model           string         // Optional per-run model override; takes precedence over AgentDefinition.Model
 
+	// ReasoningEffort, when non-empty, is applied to the resolved model via the
+	// provider.ReasoningEffortConfigurator interface (OpenAI Responses-only
+	// graded efforts such as "max"). Empty leaves the provider default in place.
+	// Sourced from the agentcompat request DTO (`reasoning_effort`).
+	ReasoningEffort string
+
 	// Ephemeral sandbox token — set by the chat handler before calling Execute.
 	// AuthToken is the raw emt_* token value to inject into sandbox containers as MEMORY_ACCOUNT_API_KEY.
 	// EphemeralTokenID is the DB id of the token; the executor revokes it on workspace teardown.
@@ -2212,6 +2218,16 @@ func (ae *AgentExecutor) runPipeline(
 		req.AgentDefinition.Model.EnableThinking != nil {
 		if tc, ok := llm.(adk.ThinkingConfigurator); ok {
 			tc.SetEnableThinking(req.AgentDefinition.Model.EnableThinking)
+		}
+	}
+
+	// Apply a per-run graded reasoning effort (agentcompat `reasoning_effort`)
+	// when the provider adapter supports it. Only the OpenAI Responses adapter
+	// implements ReasoningEffortConfigurator today; TrackingModel delegates so
+	// the wrapped model stays configurable. Non-supporting providers ignore it.
+	if req.ReasoningEffort != "" {
+		if rc, ok := llm.(adk.ReasoningEffortConfigurator); ok {
+			rc.SetReasoningEffort(req.ReasoningEffort)
 		}
 	}
 

@@ -78,6 +78,20 @@ func (m *TrackingModel) SetEnableThinking(v *bool) {
 	}
 }
 
+// SetReasoningEffort delegates to the inner model if it supports the
+// ReasoningEffortConfigurator interface (e.g. openaiResponsesModel for
+// graded Responses-only efforts such as "max"). It exists so a wrapped model
+// stays configurable: without this delegation the type assertion in the
+// executor never matches the TrackingModel that production returns.
+func (m *TrackingModel) SetReasoningEffort(effort string) {
+	type reasoningEffortConfigurator interface {
+		SetReasoningEffort(effort string)
+	}
+	if rc, ok := m.inner.(reasoningEffortConfigurator); ok {
+		rc.SetReasoningEffort(effort)
+	}
+}
+
 // GenerateContent satisfies adkmodel.LLM. It proxies every response item
 // through the wrapped LLM and, on the last non-partial response that contains
 // UsageMetadata, asynchronously records an LLMUsageEvent.

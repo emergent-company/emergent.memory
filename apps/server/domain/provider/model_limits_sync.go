@@ -23,6 +23,12 @@ const (
 
 	// modelLimitsFetchTimeout is the maximum time allowed for the HTTP fetch.
 	modelLimitsFetchTimeout = 15 * time.Second
+
+	// modelLimitsFetchMaxBytes caps the response body. models.dev/api.json is
+	// several MB and grows over time; a cap that is too low silently truncates
+	// the JSON and fails the parse, which forces the static fallback on every
+	// run. The pricing fetcher shares the same feed and uses 64 MB.
+	modelLimitsFetchMaxBytes = 64 << 20
 )
 
 // modelLimits holds both the context-window (max input) and max output token
@@ -61,9 +67,11 @@ type modelsDevProviderEntry struct {
 	Models map[string]modelsDevModel `json:"models"`
 }
 
-// modelsDevModel is a single model entry from models.dev.
+// modelsDevModel is a single model entry from models.dev. The feed no longer
+// emits a model `type` field (drop in the 2026 catalog — every entry is
+// type-less), so generative entries are identified by their token-limit block
+// instead of by type.
 type modelsDevModel struct {
-	Type  string         `json:"type"` // "generative" or "embed"
 	Limit modelsDevLimit `json:"limit"`
 }
 
@@ -80,6 +88,7 @@ type ModelLimitsSyncService struct {
 	repo   *Repository
 	sched  *scheduler.Scheduler
 	client *http.Client
+	url    string
 	log    *slog.Logger
 }
 
@@ -93,6 +102,7 @@ func NewModelLimitsSyncService(repo *Repository, sched *scheduler.Scheduler, log
 		client: &http.Client{
 			Timeout: modelLimitsFetchTimeout,
 		},
+		url: modelLimitsFetchURL,
 		log: log.With(logger.Scope("provider.model_limits_sync")),
 	}
 
@@ -130,7 +140,7 @@ func (s *ModelLimitsSyncService) Sync(ctx context.Context) error {
 // fetchRemoteLimits downloads models.dev/api.json and extracts generative model
 // token limits for all providers.
 func (s *ModelLimitsSyncService) fetchRemoteLimits(ctx context.Context) (map[string]modelLimits, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelLimitsFetchURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build request: %w", err)
 	}
@@ -145,7 +155,7 @@ func (s *ModelLimitsSyncService) fetchRemoteLimits(ctx context.Context) (map[str
 		return nil, fmt.Errorf("unexpected status %d from models.dev", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20)) // 4 MB cap
+	body, err := io.ReadAll(io.LimitReader(resp.Body, modelLimitsFetchMaxBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
@@ -158,18 +168,17 @@ func (s *ModelLimitsSyncService) fetchRemoteLimits(ctx context.Context) (map[str
 	return parseModelLimits(raw), nil
 }
 
-// parseModelLimits extracts generative model token limits from the models.dev
-// API response. Only "generative" type models are included; embeddings are
-// excluded because their limit.output is a vector dimension, not tokens.
-// Model IDs are provider-agnostic (same model name → same limits across
-// google and google-vertex), so we deduplicate by model ID.
+// parseModelLimits extracts per-model token limits from the models.dev API
+// response. The feed no longer carries a model `type` field, so a positive
+// output-token limit is the presence signal that an entry is generative:
+// entries without one (embedding vectors are not output tokens, and
+// fixture/minimal entries carry zeros) are skipped. Model IDs are
+// provider-agnostic (same model name → same limits across google and
+// google-vertex), so we deduplicate by model ID.
 func parseModelLimits(raw modelsDevResponse) map[string]modelLimits {
 	limits := make(map[string]modelLimits)
 	for _, providerEntry := range raw {
 		for modelID, m := range providerEntry.Models {
-			if m.Type != "generative" {
-				continue
-			}
 			if modelID == "" || m.Limit.Output <= 0 {
 				continue
 			}

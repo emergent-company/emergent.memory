@@ -196,6 +196,93 @@ func TestOpenAIResponsesModel_OrphanToolCallPairing(t *testing.T) {
 	assert.Equal(t, "call_orphan", output.CallID)
 }
 
+// TestOpenAIResponsesModel_CarriesReasoningIDOntoFunctionCall verifies the
+// opaque reasoning item id returned by the Responses API is preserved on the
+// following function_call part (via PartMetadata) so it can be replayed (#1463).
+func TestOpenAIResponsesModel_CarriesReasoningIDOntoFunctionCall(t *testing.T) {
+	const responseJSON = `{"output":[
+		{"type":"reasoning","id":"rs_abc","summary":[{"type":"summary_text","text":"pondering"}]},
+		{"type":"function_call","call_id":"call_1","name":"get_weather","arguments":"{\"city\":\"Paris\"}"}
+	]}`
+	var cap responsesCaptured
+	srv := newResponsesServer(t, responseJSON, &cap)
+
+	m := NewOpenAIResponsesModel(srv.URL, "", "gpt-5", AuthBearer)
+	resp, err := collectResponse(m.GenerateContent(context.Background(), &model.LLMRequest{
+		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "weather?"}}}},
+	}, false))
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Len(t, resp.Content.Parts, 2)
+
+	// reasoning summary is still surfaced as a Thought part.
+	require.True(t, resp.Content.Parts[0].Thought)
+	assert.Equal(t, "pondering", resp.Content.Parts[0].Text)
+
+	// the function_call part carries the opaque reasoning item id.
+	fc := resp.Content.Parts[1]
+	require.NotNil(t, fc.FunctionCall)
+	require.NotNil(t, fc.PartMetadata)
+	assert.Equal(t, "rs_abc", fc.PartMetadata[responsesReasoningIDMetadataKey])
+	assert.Equal(t, "pondering", fc.PartMetadata[responsesReasoningSummaryMetadataKey])
+}
+
+// TestOpenAIResponsesModel_ReplaysReasoningBeforeFunctionCall is the core #1463
+// assertion: a function_call replayed from history is immediately preceded by
+// its reasoning item in `input`. Without the replay, multi-step Responses tool
+// loops lose reasoning state (and can 400 on a dangling/short-circuited pair).
+func TestOpenAIResponsesModel_ReplaysReasoningBeforeFunctionCall(t *testing.T) {
+	// Step 1: a reasoning model returns reasoning + function_call.
+	const turn1JSON = `{"output":[
+		{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"need weather"}]},
+		{"type":"function_call","call_id":"call_1","name":"get_weather","arguments":"{\"city\":\"Paris\"}"}
+	]}`
+	var cap1 responsesCaptured
+	srv1 := newResponsesServer(t, turn1JSON, &cap1)
+	m1 := NewOpenAIResponsesModel(srv1.URL, "", "gpt-5", AuthBearer)
+	resp1, err := collectResponse(m1.GenerateContent(context.Background(), &model.LLMRequest{
+		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "weather?"}}}},
+	}, false))
+	require.NoError(t, err)
+	require.NotNil(t, resp1)
+
+	// Step 2: replay the assistant turn (reasoning + function_call) plus the
+	// tool output on the next request.
+	const turn2JSON = `{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"18C"}]}]}`
+	var cap2 responsesCaptured
+	srv2 := newResponsesServer(t, turn2JSON, &cap2)
+	m2 := NewOpenAIResponsesModel(srv2.URL, "", "gpt-5", AuthBearer)
+
+	_, err = collectResponse(m2.GenerateContent(context.Background(), &model.LLMRequest{
+		Contents: []*genai.Content{
+			{Role: "user", Parts: []*genai.Part{{Text: "weather?"}}},
+			resp1.Content,
+			{Role: "tool", Parts: []*genai.Part{{FunctionResponse: &genai.FunctionResponse{
+				ID: "call_1", Name: "get_weather", Response: map[string]any{"temp": 18},
+			}}}},
+		},
+	}, false))
+	require.NoError(t, err)
+
+	reasoningIdx, callIdx := -1, -1
+	for i, item := range cap2.body.Input {
+		switch item.Type {
+		case "reasoning":
+			reasoningIdx = i
+			assert.Equal(t, "rs_1", item.ID)
+			require.Len(t, item.Summary, 1)
+			assert.Equal(t, "need weather", item.Summary[0].Text)
+		case "function_call":
+			if item.CallID == "call_1" {
+				callIdx = i
+			}
+		}
+	}
+	require.NotEqual(t, -1, reasoningIdx, "reasoning item must be replayed")
+	require.NotEqual(t, -1, callIdx, "function_call must be replayed")
+	assert.Equal(t, callIdx, reasoningIdx+1, "reasoning item must immediately precede its function_call")
+}
+
 // TestOpenAIResponsesModel_RefusalContent verifies an assistant refusal (the
 // Responses message content part {"type":"refusal","refusal":...}) is surfaced
 // as text rather than dropped — a refusal-only response must not error, and a
@@ -226,4 +313,138 @@ func TestOpenAIResponsesModel_RefusalContent(t *testing.T) {
 	require.NotNil(t, resp2)
 	require.NotEmpty(t, resp2.Content.Parts)
 	assert.Equal(t, "I cannot help with that.", resp2.Content.Parts[0].Text)
+}
+
+// TestOpenAIResponsesModel_RequestsEncryptedContent verifies the adapter asks
+// for `reasoning.encrypted_content` so stateless/ZDR (`store:false`) orgs get
+// the opaque blob required to replay reasoning.
+func TestOpenAIResponsesModel_RequestsEncryptedContent(t *testing.T) {
+	const responseJSON = `{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}]}`
+	var cap responsesCaptured
+	srv := newResponsesServer(t, responseJSON, &cap)
+
+	m := NewOpenAIResponsesModel(srv.URL, "", "gpt-5", AuthBearer)
+	_, err := collectResponse(m.GenerateContent(context.Background(), &model.LLMRequest{
+		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}},
+	}, false))
+	require.NoError(t, err)
+
+	assert.Contains(t, cap.body.Include, "reasoning.encrypted_content",
+		"request must include reasoning.encrypted_content for ZDR replay")
+}
+
+// TestOpenAIResponsesModel_ReplaysEncryptedContentNotID is the ZDR regression:
+// a reasoning item returned under `store:false` carries encrypted_content, and
+// the replay must use that blob instead of the (unresolvable) id. Replaying an
+// id-only reasoning item under ZDR is rejected with 404 "Items are not persisted
+// when `store` is set to false".
+func TestOpenAIResponsesModel_ReplaysEncryptedContentNotID(t *testing.T) {
+	const turn1JSON = `{"output":[
+		{"type":"reasoning","id":"rs_zdr","summary":[{"type":"summary_text","text":"need weather"}],"encrypted_content":"gAAAA-opaque-zdr-blob"},
+		{"type":"function_call","call_id":"call_1","name":"get_weather","arguments":"{\"city\":\"Paris\"}"}
+	]}`
+	var cap1 responsesCaptured
+	srv1 := newResponsesServer(t, turn1JSON, &cap1)
+	m1 := NewOpenAIResponsesModel(srv1.URL, "", "gpt-5", AuthBearer)
+	resp1, err := collectResponse(m1.GenerateContent(context.Background(), &model.LLMRequest{
+		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "weather?"}}}},
+	}, false))
+	require.NoError(t, err)
+	require.NotNil(t, resp1)
+	require.Len(t, resp1.Content.Parts, 2)
+
+	// The blob must be carried on the function_call part's metadata so it
+	// survives session persistence.
+	fc := resp1.Content.Parts[1]
+	require.NotNil(t, fc.PartMetadata)
+	assert.Equal(t, "gAAAA-opaque-zdr-blob", fc.PartMetadata[responsesReasoningEncryptedMetadataKey])
+	assert.Equal(t, "rs_zdr", fc.PartMetadata[responsesReasoningIDMetadataKey])
+
+	// Replay: reasoning item must carry encrypted_content and MUST NOT carry the
+	// id (an id under store:false is a dangling handle the API rejects).
+	const turn2JSON = `{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"18C"}]}]}`
+	var cap2 responsesCaptured
+	srv2 := newResponsesServer(t, turn2JSON, &cap2)
+	m2 := NewOpenAIResponsesModel(srv2.URL, "", "gpt-5", AuthBearer)
+	_, err = collectResponse(m2.GenerateContent(context.Background(), &model.LLMRequest{
+		Contents: []*genai.Content{
+			{Role: "user", Parts: []*genai.Part{{Text: "weather?"}}},
+			resp1.Content,
+			{Role: "tool", Parts: []*genai.Part{{FunctionResponse: &genai.FunctionResponse{
+				ID: "call_1", Name: "get_weather", Response: map[string]any{"temp": 18},
+			}}}},
+		},
+	}, false))
+	require.NoError(t, err)
+
+	reasoningIdx, callIdx := -1, -1
+	for i, item := range cap2.body.Input {
+		switch item.Type {
+		case "reasoning":
+			reasoningIdx = i
+			assert.Equal(t, "gAAAA-opaque-zdr-blob", item.EncryptedContent,
+				"replay must carry the encrypted blob")
+			assert.Empty(t, item.ID, "id must not be replayed when encrypted_content is available")
+			require.Len(t, item.Summary, 1)
+			assert.Equal(t, "need weather", item.Summary[0].Text)
+		case "function_call":
+			if item.CallID == "call_1" {
+				callIdx = i
+			}
+		}
+	}
+	require.NotEqual(t, -1, reasoningIdx, "reasoning item must be replayed")
+	require.NotEqual(t, -1, callIdx, "function_call must be replayed")
+	assert.Equal(t, callIdx, reasoningIdx+1, "reasoning item must immediately precede its function_call")
+}
+
+// TestOpenAIResponsesModel_ReplaysEncryptedContentWithoutID covers a reasoning
+// item that has no id at all (only encrypted_content). The replay must still be
+// emitted, keyed off the encrypted blob.
+func TestOpenAIResponsesModel_ReplaysEncryptedContentWithoutID(t *testing.T) {
+	const turn1JSON = `{"output":[
+		{"type":"reasoning","summary":[{"type":"summary_text","text":"think"}],"encrypted_content":"blob-only"},
+		{"type":"function_call","call_id":"call_9","name":"noop","arguments":"{}"}
+	]}`
+	var cap1 responsesCaptured
+	srv1 := newResponsesServer(t, turn1JSON, &cap1)
+	m1 := NewOpenAIResponsesModel(srv1.URL, "", "gpt-5", AuthBearer)
+	resp1, err := collectResponse(m1.GenerateContent(context.Background(), &model.LLMRequest{
+		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "go"}}}},
+	}, false))
+	require.NoError(t, err)
+	require.Len(t, resp1.Content.Parts, 2)
+	fc := resp1.Content.Parts[1]
+	require.NotNil(t, fc.PartMetadata)
+	assert.Equal(t, "blob-only", fc.PartMetadata[responsesReasoningEncryptedMetadataKey])
+	_, hasID := fc.PartMetadata[responsesReasoningIDMetadataKey]
+	assert.False(t, hasID, "no id metadata key when the reasoning item had no id")
+
+	const turn2JSON = `{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]}`
+	var cap2 responsesCaptured
+	srv2 := newResponsesServer(t, turn2JSON, &cap2)
+	m2 := NewOpenAIResponsesModel(srv2.URL, "", "gpt-5", AuthBearer)
+	_, err = collectResponse(m2.GenerateContent(context.Background(), &model.LLMRequest{
+		Contents: []*genai.Content{
+			{Role: "user", Parts: []*genai.Part{{Text: "go"}}},
+			resp1.Content,
+			{Role: "tool", Parts: []*genai.Part{{FunctionResponse: &genai.FunctionResponse{
+				ID: "call_9", Name: "noop", Response: map[string]any{},
+			}}}},
+		},
+	}, false))
+	require.NoError(t, err)
+
+	found := false
+	for i, item := range cap2.body.Input {
+		if item.Type == "reasoning" {
+			found = true
+			assert.Equal(t, "blob-only", item.EncryptedContent)
+			assert.Empty(t, item.ID)
+			if i+1 < len(cap2.body.Input) {
+				assert.Equal(t, "call_9", cap2.body.Input[i+1].CallID, "must be contiguous with its call")
+			}
+		}
+	}
+	require.True(t, found, "reasoning with encrypted_content but no id must still be replayed")
 }

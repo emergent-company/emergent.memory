@@ -22,6 +22,25 @@ import (
 // pkg/adk can reference it without importing domain/provider (import cycle).
 const protocolOpenAIResponses = "openai-responses"
 
+// Opaque OpenAI Responses reasoning-item metadata keys stored on the generated
+// function_call part's genai.PartMetadata. genai.Content (and its parts) is
+// JSON-persisted by the ADK session, so these survive across steps and runs and
+// let a replayed function_call be preceded by the reasoning item that produced
+// it. OpenAI requires a reasoning item and its following function_call to stay
+// contiguous in `input`, and rejects a dangling reasoning item with HTTP 400.
+const (
+	responsesReasoningIDMetadataKey      = "openai_responses_reasoning_id"
+	responsesReasoningSummaryMetadataKey = "openai_responses_reasoning_summary"
+	// responsesReasoningEncryptedMetadataKey carries the opaque
+	// `encrypted_content` blob from a reasoning output item. Under ZDR
+	// (`store:false`, which an org can force) reasoning items are not
+	// persisted server-side, so an id-only replay is rejected with HTTP 404
+	// ("Item with id 'rs_...' not found. Items are not persisted when `store`
+	// is set to false."). Replaying the encrypted blob instead preserves
+	// reasoning without server-side storage.
+	responsesReasoningEncryptedMetadataKey = "openai_responses_reasoning_encrypted_content"
+)
+
 // FirstPartyOpenAIResponseHosts are the hostnames whose base URLs must use the
 // OpenAI Responses API instead of Chat Completions. Any other host — a relay,
 // proxy, or local server — keeps Chat Completions. It is the single source of
@@ -131,6 +150,12 @@ type responsesRequest struct {
 	MaxOutputTokens int32                `json:"max_output_tokens,omitempty"`
 	Reasoning       *responsesReasoning  `json:"reasoning,omitempty"`
 	Text            *responsesTextConfig `json:"text,omitempty"`
+	// Include requests extra output fields. "reasoning.encrypted_content" makes
+	// the API return the opaque reasoning blob needed for stateless/ZDR replay.
+	// It is accepted independently of `store` (a no-op on recent API versions,
+	// which populate encrypted_content by default) and is harmless for
+	// non-reasoning models, which emit no reasoning items.
+	Include []string `json:"include,omitempty"`
 }
 
 type responsesReasoning struct {
@@ -146,11 +171,20 @@ type responsesTextFormat struct {
 }
 
 // responsesInputItem is the union of the Responses API input item shapes:
-// message, function_call, and function_call_output.
+// message, reasoning, function_call, and function_call_output.
 type responsesInputItem struct {
 	Type    string                 `json:"type,omitempty"`
 	Role    string                 `json:"role,omitempty"`
 	Content []responsesContentPart `json:"content,omitempty"`
+	// reasoning: the opaque item id returned by a previous response, replayed
+	// so a function_call keeps its reasoning continuity. Summary is optional
+	// (models only populate it when reasoning.summary is requested).
+	ID      string                 `json:"id,omitempty"`
+	Summary []responsesContentPart `json:"summary,omitempty"`
+	// EncryptedContent is the opaque, stateless reasoning blob. When present it
+	// is replayed instead of ID (the id is a server-side handle that does not
+	// resolve under `store:false`/ZDR).
+	EncryptedContent string `json:"encrypted_content,omitempty"`
 	// function_call / function_call_output
 	CallID    string `json:"call_id,omitempty"`
 	Name      string `json:"name,omitempty"`
@@ -179,9 +213,15 @@ type responsesResponse struct {
 }
 
 type responsesOutputItem struct {
-	Type    string `json:"type"`
-	Role    string `json:"role,omitempty"`
-	Content []struct {
+	Type string `json:"type"`
+	// ID is the opaque item id. Reasoning items carry one (e.g. "rs_...") that
+	// must be replayed alongside the function_call it preceded.
+	ID string `json:"id,omitempty"`
+	// EncryptedContent is the opaque reasoning blob returned for stateless
+	// replay (populated under ZDR / `store:false`). See responsesInputItem.
+	EncryptedContent string `json:"encrypted_content,omitempty"`
+	Role             string `json:"role,omitempty"`
+	Content          []struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 		// Refusal is set when the assistant refused to answer (the OpenAI
@@ -238,9 +278,12 @@ func buildResponsesTools(tools []*genai.Tool) []responsesTool {
 }
 
 // buildResponsesInput converts ADK content history to Responses input items.
-// Reasoning/thought parts are intentionally not replayed — the Responses API
-// requires their opaque reasoning item id to replay reasoning, which ADK does
-// not preserve; only the final text and tool turns are sent back.
+// Reasoning summary text is not replayed as a message (the Responses API does
+// not accept assistant reasoning as text), but the opaque reasoning item id
+// carried on each function_call part is replayed as a `reasoning` input item
+// immediately before that call: OpenAI requires a reasoning item and its
+// function_call to stay contiguous, and dropping it breaks multi-step tool
+// loops (#1463).
 func buildResponsesInput(contents []*genai.Content) []responsesInputItem {
 	var items []responsesInputItem
 	for _, content := range contents {
@@ -265,6 +308,25 @@ func buildResponsesInput(contents []*genai.Content) []responsesInputItem {
 				id := fc.ID
 				if id == "" {
 					id = "call_" + fc.Name
+				}
+				// Replay the reasoning item this call was produced with, directly
+				// before it, so the pair stays contiguous on the wire. Prefer the
+				// stateless encrypted_content blob over the id: under ZDR
+				// (`store:false`) the id is a handle to an item the server never
+				// persisted, and replaying it alone is rejected (404).
+				rid := reasoningIDFromPart(part)
+				renc := reasoningEncryptedFromPart(part)
+				if rid != "" || renc != "" {
+					ri := responsesInputItem{Type: "reasoning"}
+					if renc != "" {
+						ri.EncryptedContent = renc
+					} else {
+						ri.ID = rid
+					}
+					if summary := reasoningSummaryFromPart(part); summary != "" {
+						ri.Summary = []responsesContentPart{{Type: "summary_text", Text: summary}}
+					}
+					calls = append(calls, ri)
 				}
 				argsJSON, _ := json.Marshal(fc.Args)
 				calls = append(calls, responsesInputItem{
@@ -359,13 +421,117 @@ func ensureResponsesCallOutputPairs(items []responsesInputItem) []responsesInput
 	return result
 }
 
+// reasoningIDFromPart returns the opaque reasoning item id carried on a
+// function_call part, or "" when the part was not produced by a reasoning item.
+func reasoningIDFromPart(part *genai.Part) string {
+	if part == nil || part.PartMetadata == nil {
+		return ""
+	}
+	id, _ := part.PartMetadata[responsesReasoningIDMetadataKey].(string)
+	return id
+}
+
+// reasoningSummaryFromPart returns the reasoning summary text carried alongside
+// the id, or "" when none was captured.
+func reasoningSummaryFromPart(part *genai.Part) string {
+	if part == nil || part.PartMetadata == nil {
+		return ""
+	}
+	summary, _ := part.PartMetadata[responsesReasoningSummaryMetadataKey].(string)
+	return summary
+}
+
+// reasoningEncryptedFromPart returns the opaque reasoning encrypted_content
+// carried on a function_call part, or "" when none was captured.
+func reasoningEncryptedFromPart(part *genai.Part) string {
+	if part == nil || part.PartMetadata == nil {
+		return ""
+	}
+	enc, _ := part.PartMetadata[responsesReasoningEncryptedMetadataKey].(string)
+	return enc
+}
+
+// generateContentFromResponsesItems projects Responses output items (reasoning,
+// message, function_call) into ADK parts, carrying the opaque reasoning item id
+// onto the following function_call part so it can be replayed (#1463).
+func generateContentFromResponsesItems(output []responsesOutputItem) []*genai.Part {
+	var parts []*genai.Part
+	var pendingReasoningID, pendingReasoningSummary, pendingReasoningEncrypted string
+	for _, item := range output {
+		switch item.Type {
+		case "reasoning":
+			var summaries []string
+			for _, s := range item.Summary {
+				if s.Text != "" {
+					summaries = append(summaries, s.Text)
+				}
+			}
+			if len(summaries) > 0 {
+				parts = append(parts, &genai.Part{
+					Text:    strings.Join(summaries, "\n"),
+					Thought: true,
+				})
+			}
+			// Remember the item so the next function_call can carry it. OpenAI
+			// requires the pair to be contiguous on replay; a reasoning item with
+			// no following function_call (a text-only turn) is not replayed.
+			// encrypted_content is the stateless carrier that keeps replay
+			// working under ZDR (`store:false`), where the id does not resolve.
+			if item.ID != "" || item.EncryptedContent != "" {
+				pendingReasoningID = item.ID
+				pendingReasoningSummary = strings.Join(summaries, "\n")
+				pendingReasoningEncrypted = item.EncryptedContent
+			}
+		case "message":
+			var text strings.Builder
+			for _, c := range item.Content {
+				text.WriteString(c.Text)
+				text.WriteString(c.Refusal)
+			}
+			if text.Len() > 0 {
+				parts = append(parts, &genai.Part{Text: text.String()})
+			}
+		case "function_call":
+			var args map[string]any
+			if item.Arguments != "" {
+				if err := json.Unmarshal([]byte(item.Arguments), &args); err != nil {
+					args = map[string]any{"_raw": item.Arguments}
+				}
+			}
+			part := &genai.Part{
+				FunctionCall: &genai.FunctionCall{
+					ID:   item.CallID,
+					Name: item.Name,
+					Args: args,
+				},
+			}
+			if pendingReasoningID != "" || pendingReasoningEncrypted != "" {
+				part.PartMetadata = map[string]any{}
+				if pendingReasoningID != "" {
+					part.PartMetadata[responsesReasoningIDMetadataKey] = pendingReasoningID
+				}
+				if pendingReasoningSummary != "" {
+					part.PartMetadata[responsesReasoningSummaryMetadataKey] = pendingReasoningSummary
+				}
+				if pendingReasoningEncrypted != "" {
+					part.PartMetadata[responsesReasoningEncryptedMetadataKey] = pendingReasoningEncrypted
+				}
+				pendingReasoningID, pendingReasoningSummary, pendingReasoningEncrypted = "", "", ""
+			}
+			parts = append(parts, part)
+		}
+	}
+	return parts
+}
+
 // GenerateContent implements model.LLM by calling the OpenAI Responses API,
 // including full function/tool calling support.
 func (m *openaiResponsesModel) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		body := responsesRequest{
-			Model: m.modelName,
-			Input: buildResponsesInput(req.Contents),
+			Model:   m.modelName,
+			Input:   buildResponsesInput(req.Contents),
+			Include: []string{"reasoning.encrypted_content"},
 		}
 
 		// System instruction maps to the Responses `instructions` field.
@@ -456,47 +622,7 @@ func (m *openaiResponsesModel) GenerateContent(ctx context.Context, req *model.L
 			return
 		}
 
-		var parts []*genai.Part
-		for _, item := range result.Output {
-			switch item.Type {
-			case "reasoning":
-				var summaries []string
-				for _, s := range item.Summary {
-					if s.Text != "" {
-						summaries = append(summaries, s.Text)
-					}
-				}
-				if len(summaries) > 0 {
-					parts = append(parts, &genai.Part{
-						Text:    strings.Join(summaries, "\n"),
-						Thought: true,
-					})
-				}
-			case "message":
-				var text strings.Builder
-				for _, c := range item.Content {
-					text.WriteString(c.Text)
-					text.WriteString(c.Refusal)
-				}
-				if text.Len() > 0 {
-					parts = append(parts, &genai.Part{Text: text.String()})
-				}
-			case "function_call":
-				var args map[string]any
-				if item.Arguments != "" {
-					if err := json.Unmarshal([]byte(item.Arguments), &args); err != nil {
-						args = map[string]any{"_raw": item.Arguments}
-					}
-				}
-				parts = append(parts, &genai.Part{
-					FunctionCall: &genai.FunctionCall{
-						ID:   item.CallID,
-						Name: item.Name,
-						Args: args,
-					},
-				})
-			}
-		}
+		parts := generateContentFromResponsesItems(result.Output)
 
 		if len(parts) == 0 {
 			yield(nil, fmt.Errorf("openai-responses: response had no content or tool calls"))
