@@ -1033,9 +1033,12 @@ func buildDialectNames() map[string]bool {
 	return names
 }
 
-// validateProviderSlug validates a user-supplied instance slug. A slug must not
-// equal a dialect other than the instance's own dialect, which would shadow the
-// legacy dialect fallback.
+// validateProviderSlug validates a user-supplied instance slug: non-empty, at
+// most maxProviderSlugLen characters, and matching [a-z0-9][a-z0-9-]*.
+// Uniqueness is enforced per project by the DB (project_id, slug) constraint,
+// not here. A slug MAY equal a dialect name because reference resolution is
+// slug-first, falling back to a dialect's default instance only when no
+// instance slug matches.
 func validateProviderSlug(slug ProviderSlug, dialect ProviderDialect) error {
 	s := string(slug)
 	if s == "" {
@@ -1046,9 +1049,6 @@ func validateProviderSlug(slug ProviderSlug, dialect ProviderDialect) error {
 	}
 	if !providerSlugRe.MatchString(s) {
 		return apperror.NewBadRequest(fmt.Sprintf("invalid provider slug %q: must match [a-z0-9][a-z0-9-]*", s))
-	}
-	if isDialectName(s) && ProviderDialect(s) != dialect {
-		return apperror.NewBadRequest(fmt.Sprintf("provider slug %q is a reserved dialect name", s))
 	}
 	return nil
 }
