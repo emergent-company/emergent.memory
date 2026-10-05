@@ -672,3 +672,116 @@ func TestOpenAICompatibleModel_ToolSchema_SpaceyServerName_ValidFunctionName(t *
 	assert.NotEqual(t, "E2E MCP 123_web_fetch_exa", captured.Tools[0].Function.Name,
 		"the raw spacey server name must never reach the schema")
 }
+
+// captureOpenAIRequestWithCompat runs a single-tool GenerateContent through an
+// openaiCompatibleModel configured with the given vendor compat and returns the
+// request body the backend captured, so compat-shaping tests can assert exactly
+// what reached the wire.
+func captureOpenAIRequestWithCompat(t *testing.T, compat VendorCompat, modelName string) openaiRequest {
+	t.Helper()
+	var captured openaiRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(makeOpenAIResponse("ok")))
+	}))
+	t.Cleanup(srv.Close)
+
+	m := NewOpenAICompatibleModelWithCompat(srv.URL, "", modelName, AuthBearer, compat, nil, nil)
+	req := &model.LLMRequest{
+		Contents: []*genai.Content{
+			{Role: "user", Parts: []*genai.Part{{Text: "do it"}}},
+		},
+		Config: &genai.GenerateContentConfig{
+			Tools: []*genai.Tool{{
+				FunctionDeclarations: []*genai.FunctionDeclaration{
+					{Name: "do_thing", Description: "do the thing"},
+				},
+			}},
+		},
+	}
+	_, err := collectResponse(m.GenerateContent(context.Background(), req, false))
+	require.NoError(t, err)
+	return captured
+}
+
+// TestOpenAICompatibleModel_CompatMaxCompletionTokens verifies that a vendor
+// with MaxTokensField == "max_completion_tokens" gets the output cap sent via
+// the max_completion_tokens field and never via max_tokens.
+func TestOpenAICompatibleModel_CompatMaxCompletionTokens(t *testing.T) {
+	var raw []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(makeOpenAIResponse("ok")))
+	}))
+	defer srv.Close()
+
+	m := NewOpenAICompatibleModelWithCompat(srv.URL, "", "gpt-4o", AuthBearer,
+		VendorCompat{MaxTokensField: "max_completion_tokens"}, nil, nil)
+	req := &model.LLMRequest{
+		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}},
+		Config:   &genai.GenerateContentConfig{MaxOutputTokens: 128},
+	}
+
+	_, err := collectResponse(m.GenerateContent(context.Background(), req, false))
+	require.NoError(t, err)
+
+	body := string(raw)
+	if !strings.Contains(body, `"max_completion_tokens":128`) {
+		t.Errorf("request body missing max_completion_tokens: %s", body)
+	}
+	if strings.Contains(body, `"max_tokens"`) {
+		t.Errorf("request body should not contain max_tokens: %s", body)
+	}
+}
+
+// TestOpenAICompatibleModel_CompatNoToolChoice verifies that NoToolChoice
+// suppresses the tool_choice field even when tools are present.
+func TestOpenAICompatibleModel_CompatNoToolChoice(t *testing.T) {
+	captured := captureOpenAIRequestWithCompat(t, VendorCompat{NoToolChoice: true}, "gpt-4o")
+
+	require.Len(t, captured.Tools, 1, "tools must still be sent")
+	if captured.ToolChoice != "" {
+		t.Errorf("tool_choice = %q, want empty (NoToolChoice)", captured.ToolChoice)
+	}
+}
+
+// TestOpenAICompatibleModel_CompatThinkingObject verifies that a vendor with
+// ThinkingStyle "thinking" gets the top-level thinking object when thinking is
+// disabled alongside tools, and no chat_template_kwargs.
+func TestOpenAICompatibleModel_CompatThinkingObject(t *testing.T) {
+	captured := captureOpenAIRequestWithCompat(t, VendorCompat{ThinkingStyle: "thinking"}, "qwen3")
+
+	require.NotNil(t, captured.Thinking, "expected top-level thinking object")
+	tm, ok := captured.Thinking.(map[string]any)
+	require.True(t, ok, "thinking should unmarshal to an object, got %T", captured.Thinking)
+	assert.Equal(t, "disabled", tm["type"])
+	assert.Nil(t, captured.ChatTemplateKwargs, "chat_template_kwargs must not be set")
+}
+
+// TestOpenAICompatibleModel_CompatChatTemplateKwargs verifies that a vendor with
+// ThinkingStyle "chat_template_kwargs" disables thinking via the kwargs field
+// and leaves the top-level thinking field unset.
+func TestOpenAICompatibleModel_CompatChatTemplateKwargs(t *testing.T) {
+	captured := captureOpenAIRequestWithCompat(t, VendorCompat{ThinkingStyle: "chat_template_kwargs"}, "qwen3")
+
+	require.NotNil(t, captured.ChatTemplateKwargs, "expected chat_template_kwargs")
+	assert.Equal(t, false, captured.ChatTemplateKwargs["enable_thinking"])
+	assert.Nil(t, captured.Thinking, "top-level thinking must not be set")
+}
+
+// TestOpenAICompatibleModel_ZeroCompatLegacyKwargs is a regression guard: a zero
+// VendorCompat on a non-deepseek model must still take the legacy
+// chat_template_kwargs path when thinking is disabled with tools present.
+func TestOpenAICompatibleModel_ZeroCompatLegacyKwargs(t *testing.T) {
+	captured := captureOpenAIRequestWithCompat(t, VendorCompat{}, "llama3")
+
+	require.NotNil(t, captured.ChatTemplateKwargs, "expected legacy chat_template_kwargs")
+	assert.Equal(t, false, captured.ChatTemplateKwargs["enable_thinking"])
+	assert.Nil(t, captured.Thinking, "legacy non-deepseek path must not set top-level thinking")
+	if captured.ToolChoice != "required" {
+		t.Errorf("tool_choice = %q, want %q (legacy tool_choice still sent)", captured.ToolChoice, "required")
+	}
+}

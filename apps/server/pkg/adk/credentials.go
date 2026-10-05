@@ -35,6 +35,10 @@ type ResolvedCredential struct {
 	// Auth is the credential-injection style: "bearer", "api-key", "x-api-key",
 	// "x-goog-api-key", "none", or "signed". Empty defaults to bearer.
 	Auth string
+	// Compat carries vendor-specific request-shaping quirks (output-cap field,
+	// tool_choice support, thinking toggle) resolved from the registry
+	// definition. The zero value preserves legacy heuristic behavior.
+	Compat VendorCompat
 	// Extra carries vendor-specific configuration keyed by field name (e.g.
 	// Azure "api_version").
 	Extra map[string]string

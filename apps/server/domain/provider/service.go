@@ -53,6 +53,11 @@ type ResolvedCredential struct {
 	// x-goog-api-key, none, signed). Populated from the registry definition.
 	Auth AuthStyle
 
+	// Compat carries protocol-level request/response quirks resolved from the
+	// registry definition (output-cap field, tool_choice support, thinking
+	// toggle). Populated alongside Protocol/Auth.
+	Compat Compat
+
 	// Extra carries vendor-specific configuration keyed by field name
 	// (e.g. Azure "api_version").
 	Extra map[string]string
@@ -244,6 +249,7 @@ func (s *CredentialService) applyDefinition(resolved *ResolvedCredential) {
 		return
 	}
 	resolved.Auth = def.Auth
+	resolved.Compat = def.Compat
 
 	// Materialise vendor extra fields: unset fields take their declared default,
 	// and any field declaring a Header becomes an HTTP header at request time.

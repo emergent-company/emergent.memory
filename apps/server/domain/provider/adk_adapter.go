@@ -71,6 +71,7 @@ func toADKCredential(c *ResolvedCredential) *adk.ResolvedCredential {
 		Slug:               string(c.Slug),
 		Protocol:           string(c.Protocol),
 		Auth:               string(c.Auth),
+		Compat:             adk.VendorCompat{MaxTokensField: c.Compat.MaxTokensField, NoToolChoice: !c.Compat.SupportsToolChoice, ThinkingStyle: c.Compat.ThinkingStyle},
 		Extra:              c.Extra,
 		ExtraHeaders:       c.ExtraHeaders,
 	}

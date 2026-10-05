@@ -339,6 +339,7 @@ func buildBuiltins() []*ProviderDefinition {
 			Auth:             AuthXAPIKey,
 			DefaultBaseURLs:  gen("https://api.anthropic.com/v1"),
 			ModelTypes:       []ModelType{ModelTypeGenerative},
+			CatalogStrategy:  CatalogStatic,
 			Compat:           Compat{MaxTokensField: "max_tokens", SupportsToolChoice: false},
 			Order:            32,
 			CredentialFields: keyFields(),

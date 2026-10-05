@@ -329,7 +329,7 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 					slog.String("auth", cred.Auth),
 					slog.String("source", cred.Source),
 				)
-				llm := NewOpenAICompatibleModelWithAuth(cred.BaseURL, cred.APIKey, resolvedModel, AuthStyle(cred.Auth), cred.Extra, cred.ExtraHeaders)
+				llm := NewOpenAICompatibleModelWithCompat(cred.BaseURL, cred.APIKey, resolvedModel, AuthStyle(cred.Auth), cred.Compat, cred.Extra, cred.ExtraHeaders)
 				return f.wrapModel(llm, cred.Slug, cred.Provider), nil
 			case "anthropic-messages":
 				f.log.Debug("creating ADK model via Anthropic Messages endpoint (DB cred)",

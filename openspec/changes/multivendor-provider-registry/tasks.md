@@ -18,7 +18,7 @@
 - [x] 3.2 Add `pkg/adk/auth.go` with an injector for the five header styles plus a signed hook (signed returns a descriptive error); unit-test each style. Verify `go test ./pkg/adk/ -run Auth -count=1`.
 - [x] 3.3 Add `pkg/adk/anthropic_model.go` implementing `model.LLM` against the Messages API (`x-api-key`, `anthropic-version`, mandatory `max_tokens`, text + tool_use/tool_result mapping). Unit-test request shaping and response parsing with `httptest`. Verify `go test ./pkg/adk/ -run Anthropic -count=1`.
 - [x] 3.4 Update `pkg/adk/model.go` `CreateModelWithName` to dispatch by `cred.Protocol` and inject auth; keep the env-var fallback path working. Verify `go build ./...` and `go test ./pkg/adk/ -count=1`.
-- [ ] 3.5 Make `openaiCompatibleModel` request shaping fully vendor-`Compat`-driven (max_tokens vs max_completion_tokens, thinking style). **Deferred** — the `Compat` field is populated per vendor but the adapter still keys the thinking/max-tokens behavior off model-name heuristics; DeepSeek/Qwen behavior is unchanged. Follow-up.
+- [x] 3.5 Make `openaiCompatibleModel` request shaping fully vendor-`Compat`-driven (max_tokens vs max_completion_tokens, thinking style). Implemented: `Compat` is plumbed through `ResolvedCredential.Compat` → `adk.VendorCompat` and drives the output-cap field, `tool_choice` suppression, and thinking-toggle style; a zero `Compat` preserves the legacy model-name heuristic. Verify `go test ./pkg/adk/ -run Compat -count=1`.
 
 ## 4. De-hardcode dispatch sites
 

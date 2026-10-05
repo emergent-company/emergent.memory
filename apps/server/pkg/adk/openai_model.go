@@ -17,6 +17,23 @@ import (
 	"google.golang.org/genai"
 )
 
+// VendorCompat describes a vendor's protocol-level request/response quirks.
+// The zero value preserves the legacy model-name-heuristic behavior: output cap
+// via max_tokens, tool_choice allowed, and a thinking toggle derived from the
+// model name (deepseek → top-level "thinking", otherwise chat_template_kwargs).
+type VendorCompat struct {
+	// MaxTokensField is the output-cap field name: "max_tokens" or
+	// "max_completion_tokens". Empty means the legacy default ("max_tokens").
+	MaxTokensField string
+	// NoToolChoice, when true, never sends the tool_choice field.
+	NoToolChoice bool
+	// ThinkingStyle names the vendor's thinking/CoT toggle mechanism:
+	// "", "thinking", "thinking_type", "chat_template_kwargs", or "none".
+	// Empty resolves to the legacy heuristic (deepseek name → "thinking",
+	// otherwise "chat_template_kwargs").
+	ThinkingStyle string
+}
+
 // openaiCompatibleModel implements model.LLM using the OpenAI Chat Completions wire protocol.
 // It supports any OpenAI-compatible endpoint (Ollama, llama.cpp, vLLM, LM Studio, etc.)
 // including full function/tool calling.
@@ -32,6 +49,10 @@ type openaiCompatibleModel struct {
 	// extraHeaders are additional request headers derived from vendor extra
 	// fields (e.g. a secondary secret header).
 	extraHeaders map[string]string
+	// compat carries vendor-compat-driven request shaping (output-cap field,
+	// tool_choice support, thinking toggle). The zero value reproduces the
+	// legacy model-name heuristic behavior.
+	compat VendorCompat
 	// enableThinking overrides the per-request thinking default when non-nil.
 	// nil  → keep existing per-request logic (disable when tools present)
 	// true → always request thinking tokens
@@ -56,13 +77,23 @@ func NewOpenAICompatibleModel(baseURL, apiKey, modelName string) model.LLM {
 // NewOpenAICompatibleModelWithAuth creates a new openaiCompatibleModel with an
 // explicit auth style (e.g. AuthAPIKeyHeader for Azure OpenAI). extra and
 // extraHeaders carry vendor-specific request config (e.g. Azure api_version as a
-// query param, LKEAP secret_key as a header); both may be nil.
+// query param, LKEAP secret_key as a header); both may be nil. The vendor-compat
+// shaping is left at its zero value, preserving the legacy heuristic behavior.
 func NewOpenAICompatibleModelWithAuth(baseURL, apiKey, modelName string, auth AuthStyle, extra, extraHeaders map[string]string) model.LLM {
+	return NewOpenAICompatibleModelWithCompat(baseURL, apiKey, modelName, auth, VendorCompat{}, extra, extraHeaders)
+}
+
+// NewOpenAICompatibleModelWithCompat creates a new openaiCompatibleModel with an
+// explicit auth style, vendor-compat shaping, and vendor-specific extra request
+// config (extra query/header fields). Passing a zero VendorCompat reproduces the
+// legacy heuristic behavior for existing callers.
+func NewOpenAICompatibleModelWithCompat(baseURL, apiKey, modelName string, auth AuthStyle, compat VendorCompat, extra, extraHeaders map[string]string) model.LLM {
 	return &openaiCompatibleModel{
 		baseURL:      strings.TrimSuffix(baseURL, "/"),
 		apiKey:       apiKey,
 		modelName:    modelName,
 		auth:         auth,
+		compat:       compat,
 		extra:        extra,
 		extraHeaders: extraHeaders,
 		client:       &http.Client{Timeout: 900 * time.Second},
@@ -114,12 +145,15 @@ type openaiToolFunction struct {
 }
 
 type openaiRequest struct {
-	Model          string          `json:"model"`
-	Messages       []openaiMessage `json:"messages"`
-	Tools          []openaiTool    `json:"tools,omitempty"`
-	ToolChoice     string          `json:"tool_choice,omitempty"`
-	MaxTokens      int32           `json:"max_tokens,omitempty"`
-	ResponseFormat *responseFormat `json:"response_format,omitempty"`
+	Model      string          `json:"model"`
+	Messages   []openaiMessage `json:"messages"`
+	Tools      []openaiTool    `json:"tools,omitempty"`
+	ToolChoice string          `json:"tool_choice,omitempty"`
+	MaxTokens  int32           `json:"max_tokens,omitempty"`
+	// MaxCompletionTokens is the output-cap field used by OpenAI reasoning
+	// models and other vendors (e.g. Volcengine Ark) that reject max_tokens.
+	MaxCompletionTokens int32           `json:"max_completion_tokens,omitempty"`
+	ResponseFormat      *responseFormat `json:"response_format,omitempty"`
 	// ChatTemplateKwargs passes model-specific template arguments.
 	// For Qwen3/vLLM, {"enable_thinking": false} suppresses chain-of-thought
 	// reasoning tokens. This is the correct way to disable thinking on vLLM —
@@ -491,21 +525,20 @@ func (m *openaiCompatibleModel) GenerateContent(ctx context.Context, req *model.
 			// user-defined tool has been called, so the model can produce a final
 			// text response after completing its work.
 			// Skip tool_choice entirely for reasoning models (e.g. deepseek-v4-flash,
-			// deepseek-reasoner) — they reject the field outright.
-			if !isReasonerModel(m.modelName) {
+			// deepseek-reasoner) — they reject the field outright — and for vendors
+			// whose compat declares NoToolChoice.
+			if !m.compat.NoToolChoice && !isReasonerModel(m.modelName) {
 				if hasSubstantiveToolCall(req.Contents) {
 					body.ToolChoice = "auto"
 				} else {
 					body.ToolChoice = "required"
 				}
 			}
-			// Disable Qwen3 thinking mode when tools are present — thinking mode
+			// Disable thinking mode when tools are present — thinking mode
 			// causes the model to reason independently and ignore system prompt
 			// instructions about which tools/agents to use.
 			// If the agent definition explicitly sets EnableThinking, honour that
 			// instead of the default (disable) behaviour.
-			// NOTE: must use chat_template_kwargs (vLLM-level) not top-level
-			// enable_thinking — the top-level field empties the content field.
 			wantThinking := true // default: allow thinking when no tools
 			if m.enableThinking != nil {
 				wantThinking = *m.enableThinking
@@ -513,21 +546,43 @@ func (m *openaiCompatibleModel) GenerateContent(ctx context.Context, req *model.
 				wantThinking = false // default: disable when tools present
 			}
 			if !wantThinking {
-				if isDeepSeekModel(m.modelName) {
-					// DeepSeek toggles thinking via a top-level `thinking` field; it
-					// ignores chat_template_kwargs. Without this, DeepSeek V4 stays in
-					// thinking mode, emits reasoning_content, and — because tools are
-					// present — requires it echoed back on every turn, else 400.
+				// Resolve the vendor's thinking-toggle mechanism. The zero value
+				// reproduces the legacy model-name heuristic (deepseek → top-level
+				// "thinking", otherwise chat_template_kwargs).
+				style := m.compat.ThinkingStyle
+				if style == "" {
+					if isDeepSeekModel(m.modelName) {
+						style = "thinking"
+					} else {
+						style = "chat_template_kwargs"
+					}
+				}
+				switch style {
+				case "thinking", "thinking_type":
+					// DeepSeek (and other vendors using a top-level `thinking`
+					// object) toggle thinking via `{"type":"disabled"}`; they ignore
+					// chat_template_kwargs. Without this, they stay in thinking mode,
+					// emit reasoning_content, and — because tools are present —
+					// require it echoed back on every turn, else 400.
 					body.Thinking = map[string]any{"type": "disabled"}
-				} else {
+				case "chat_template_kwargs":
+					// vLLM/Qwen3 toggles thinking via chat_template_kwargs. NOTE:
+					// must use chat_template_kwargs (vLLM-level) not top-level
+					// enable_thinking — the top-level field empties the content field.
 					body.ChatTemplateKwargs = map[string]any{"enable_thinking": false}
+				case "none":
+					// No toggle mechanism — leave the request unchanged.
 				}
 			}
 		}
 
 		// Apply generation config.
 		if req.Config != nil {
-			body.MaxTokens = req.Config.MaxOutputTokens
+			if m.compat.MaxTokensField == "max_completion_tokens" {
+				body.MaxCompletionTokens = req.Config.MaxOutputTokens
+			} else {
+				body.MaxTokens = req.Config.MaxOutputTokens
+			}
 			if req.Config.ResponseMIMEType == "application/json" {
 				body.ResponseFormat = &responseFormat{Type: "json_object"}
 				// DeepSeek requires the word "json" to appear in a user message
