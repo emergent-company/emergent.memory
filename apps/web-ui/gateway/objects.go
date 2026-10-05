@@ -736,6 +736,7 @@ func (s *Server) uiObjectUpdate(c echo.Context) error {
 	if err != nil {
 		return redirectWithError(c, "/objects/"+url.PathEscape(id), err)
 	}
+	s.invalidateObjectLabelSuggestions(ctx)
 	// The graph store is versioned: PATCH returns a new object id for the
 	// updated version. Redirect to it (memory resolves either the version or
 	// canonical id, so stale links still land on the head version) and carry
@@ -1065,6 +1066,7 @@ func (s *Server) uiObjectCreate(c echo.Context) error {
 		captureError(err)
 		return render("Could not create the object.")
 	}
+	s.invalidateObjectLabelSuggestions(ctx)
 	return c.Redirect(http.StatusSeeOther, "/objects/"+url.PathEscape(created.ID))
 }
 
@@ -1318,14 +1320,20 @@ type labelSuggestionsEntry struct {
 	expiresAt time.Time
 }
 
-func (s *Server) objectLabelSuggestions(ctx context.Context) []string {
-	// Resolve the cache key the same way MemoryClient.projectIDFor scopes
-	// requests: the session's active project, else the static server project id
-	// (dev/API-key mode has no session context but still targets one project).
+// labelSuggestionsProjectID resolves the cache key the same way
+// MemoryClient.projectIDFor scopes requests: the session's active project, else
+// the static server project id (dev/API-key mode has no session context but
+// still targets one project).
+func (s *Server) labelSuggestionsProjectID(ctx context.Context) string {
 	pid := s.cfg.MemoryProjectID
 	if sc, ok := sessionContextFrom(ctx); ok && sc.ProjectID != "" {
 		pid = sc.ProjectID
 	}
+	return pid
+}
+
+func (s *Server) objectLabelSuggestions(ctx context.Context) []string {
+	pid := s.labelSuggestionsProjectID(ctx)
 	if pid == "" {
 		// No project scope at all: nothing to key or cache on.
 		objects, err := s.memory.ListGraphObjects(ctx, "", "", nil)
@@ -1388,6 +1396,21 @@ func (s *Server) deleteExpiredLabelSuggestionsLocked(now time.Time) {
 			delete(s.labelCache, pid)
 		}
 	}
+}
+
+// invalidateObjectLabelSuggestions drops the cached label list for the active
+// project and forgets any in-flight coalesced fill so a freshly created or
+// updated object's new labels appear in the create form's suggestion dropdown
+// immediately instead of up to labelSuggestionsTTL later (issue #1504).
+func (s *Server) invalidateObjectLabelSuggestions(ctx context.Context) {
+	pid := s.labelSuggestionsProjectID(ctx)
+	if pid == "" {
+		return
+	}
+	s.labelCacheMu.Lock()
+	delete(s.labelCache, pid)
+	s.labelCacheMu.Unlock()
+	s.labelSuggestionsGroup.Forget(pid)
 }
 
 // objectEndpointLabel resolves one relationship endpoint id to a display

@@ -219,10 +219,16 @@ async function failOnUnrenderedProposal(page: Page): Promise<void> {
   ).toBe(0);
 }
 
-// waitForProposalCard polls the transcript until the proposal card renders (or
-// the stream surfaces an error), then returns its state + text. The ask_user
-// tool pauses the run, so there is no "settled" bubble or `done` event to wait
-// on — the card's presence is the terminal signal for this turn.
+// waitForProposalCard polls the conversation surfaces until the proposal card
+// renders (or the stream surfaces an error), then returns its state + text. The
+// ask_user tool pauses the run, so there is no "settled" bubble or `done` event
+// to wait on — the card's presence is the terminal signal for this turn.
+//
+// The card may render in EITHER surface: while the pending-work dock is live it
+// owns the question and renders the proposal there (chat.js routes `question`
+// events to the dock); without a dock the inline transcript question card
+// carries it. Both mount points are checked so the scenario asserts the card
+// wherever the gateway put it.
 async function waitForProposalCard(
   page: Page,
 ): Promise<{ state: 'card' | 'error'; text: string }> {
@@ -234,9 +240,11 @@ async function waitForProposalCard(
       if (err) {
         return { state: 'error', text: (transcript.textContent || '').slice(0, 500) };
       }
-      const card = transcript.querySelector('.proposal-card');
+      const card =
+        transcript.querySelector('.proposal-card') ||
+        document.querySelector('#chat-dock .proposal-card');
       if (card) {
-        return { state: 'card', text: (card.textContent || '').slice(0, 500) };
+        return { state: 'card', text: ((card as HTMLElement).textContent || '').slice(0, 500) };
       }
       return null;
     },
@@ -456,7 +464,9 @@ test.describe('ask_user proposal card scenario', () => {
         //   - `assertText` (a pinned body-field value) is model-dependent, so its
         //     absence while the section DID render is a model deviation → skip,
         //     never fail on non-deterministic tool-use.
-        const card = page.locator('#chat-messages .proposal-card').first();
+        const card = page
+          .locator('#chat-messages .proposal-card, #chat-dock .proposal-card')
+          .first();
         const sectionKind = await card
           .locator('[data-proposal-kind]')
           .first()
@@ -506,8 +516,9 @@ test.describe('ask_user proposal card scenario', () => {
 
         // The interactive answer controls render alongside the card (buttons
         // interaction type → Accept/Reject radio rows), proving the question card
-        // stays fully usable with a proposal attached.
-        const question = page.locator('#chat-messages .memory-question').first();
+        // stays fully usable with a proposal attached. The card lives in the dock
+        // when the dock is live, otherwise in the inline transcript question.
+        const question = page.locator('#chat-messages .memory-question, #chat-dock .dock-question').first();
         await expect(question.getByRole('radio', { name: 'Accept' })).toBeVisible();
         await expect(question.getByRole('radio', { name: 'Reject' })).toBeVisible();
       } finally {

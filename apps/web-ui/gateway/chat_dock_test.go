@@ -525,6 +525,73 @@ func TestUiChatDock(t *testing.T) {
 	})
 }
 
+// TestUiChatDockRendersQuestionProposal pins the full #1501 plumbing: a pending
+// question whose backend record carries a structured `proposal` must reach the
+// dock with its reviewable card. TestDockPanelRendersProposal only covers the
+// templ render given a pre-built QuestionCard; this drives pendingDockCards →
+// renderProposalHTML → DockPanel over the real /partial/chat-dock route, so
+// removing the ProposalHTML population (the actual pre-fix bug: the dock dropped
+// proposalHtml, so the card reached the DOM nowhere while the dock owned the
+// question) fails here instead of passing silently.
+func TestUiChatDockRendersQuestionProposal(t *testing.T) {
+	f := &fakeMemory{
+		histories: map[string]*ConversationHistory{"c1": {ConversationID: "c1", Items: []json.RawMessage{askUserCall("q1")}}},
+		questions: []AgentQuestionItem{{
+			ID:              "q1",
+			Question:        "Apply these schema changes?",
+			InteractionType: "buttons",
+			Proposal:        json.RawMessage(proposalBlueprintJSON),
+			Options: []AgentQuestionOption{
+				{Label: "Approve", Value: "approve"},
+				{Label: "Reject", Value: "reject"},
+			},
+		}},
+	}
+	_, e := newDockEcho(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/partial/chat-dock?c=c1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-testid="dock-question"`,
+		`data-testid="dock-proposal"`,
+		`data-proposal-kind="blueprint"`,
+		"Person",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("dock question proposal missing %q:\n%s", want, body)
+		}
+	}
+}
+
+// TestUiChatDockEscapesHostileProposal guards the untrusted-payload boundary on
+// the dock surface: the shared sanitized renderProposalHTML path must escape
+// agent markup rather than emitting live HTML (gateway/AGENTS.md).
+func TestUiChatDockEscapesHostileProposal(t *testing.T) {
+	const hostile = `<script>alert(1)</script>`
+	f := &fakeMemory{
+		histories: map[string]*ConversationHistory{"c1": {ConversationID: "c1", Items: []json.RawMessage{askUserCall("q1")}}},
+		questions: []AgentQuestionItem{{
+			ID:       "q1",
+			Question: "Install this skill?",
+			Proposal: json.RawMessage(`{"kind":"skill","summary":"` + hostile + `","body":{"name":"` + hostile + `"}}`),
+			Options:  []AgentQuestionOption{{Label: "Approve", Value: "approve"}},
+		}},
+	}
+	_, e := newDockEcho(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/partial/chat-dock?c=c1", nil))
+	body := rec.Body.String()
+	if strings.Contains(body, hostile) {
+		t.Fatalf("hostile proposal rendered unescaped in dock:\n%s", body)
+	}
+	if !strings.Contains(body, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Fatalf("escaped proposal text missing from dock:\n%s", body)
+	}
+}
+
 // --- templ components ---
 
 func TestDockPanelRender(t *testing.T) {
@@ -551,6 +618,38 @@ func TestDockPanelRender(t *testing.T) {
 	}
 	if got := renderHTML(t, DockPanel("c1", nil, nil)); got != "" {
 		t.Errorf("empty DockPanel must render nothing, got %q", got)
+	}
+}
+
+// TestDockPanelRendersProposal pins the #1501 fix: a pending question that
+// carries a structured proposal must keep its reviewable `.proposal-card` in
+// the dock. Before the fix the dock (which owns pending questions while the run
+// is parked) rendered only the prompt + options and dropped `proposalHtml`, so
+// the card never reached the DOM anywhere once the dock was live.
+func TestDockPanelRendersProposal(t *testing.T) {
+	proposal := `<div class="proposal-card" data-proposal-kind="blueprint">` +
+		`<span>PROPOSAL_SENTINEL</span></div>`
+	html := renderHTML(t, DockPanel("c1", nil, []QuestionCard{{
+		QuestionID:   "q1",
+		Prompt:       "Propose an object type now.",
+		Kind:         "buttons",
+		Options:      []AgentQuestionOption{{Label: "Accept", Value: "accept"}},
+		ProposalHTML: proposal,
+	}}))
+
+	if !strings.Contains(html, `data-testid="dock-proposal"`) {
+		t.Errorf("dock question must expose the proposal slot:\n%s", html)
+	}
+	if !strings.Contains(html, proposal) {
+		t.Errorf("dock must render the proposal HTML verbatim, not escaped:\n%s", html)
+	}
+	if strings.Contains(html, "&lt;div class=") {
+		t.Errorf("proposal HTML was escaped instead of injected raw:\n%s", html)
+	}
+	// A question without a proposal must not render an empty proposal slot.
+	plain := renderHTML(t, DockPanel("c1", nil, []QuestionCard{{QuestionID: "q2", Prompt: "Pick one"}}))
+	if strings.Contains(plain, `data-testid="dock-proposal"`) {
+		t.Errorf("plain question must not render a proposal slot:\n%s", plain)
 	}
 }
 

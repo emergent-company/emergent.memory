@@ -22,11 +22,16 @@ type ApprovalCard struct {
 // Options carries the server's full option shape (label + value + description)
 // so the dock can display the label and submit the value — the same contract
 // the inline question card uses (chat-stream.js keys selection on opt.value).
+// ProposalHTML is the sanitized proposal-card markup for a question that
+// carries a structured proposal; the dock is the pending-work surface, so a
+// proposal question re-rendered here must keep its reviewable card rather than
+// dropping it (the inline transcript path renders the same markup).
 type QuestionCard struct {
-	QuestionID string
-	Prompt     string
-	Kind       string
-	Options    []AgentQuestionOption
+	QuestionID   string
+	Prompt       string
+	Kind         string
+	Options      []AgentQuestionOption
+	ProposalHTML string
 }
 
 // TodoItem is one session todo rendered by the todo card.
@@ -131,10 +136,11 @@ func (s *Server) pendingDockCards(ctx context.Context, convID string) (approvals
 			continue
 		}
 		questions = append(questions, QuestionCard{
-			QuestionID: qid,
-			Prompt:     q.Question,
-			Kind:       q.InteractionType,
-			Options:    q.Options,
+			QuestionID:   qid,
+			Prompt:       q.Question,
+			Kind:         q.InteractionType,
+			Options:      q.Options,
+			ProposalHTML: renderProposalHTML(q.Proposal),
 		})
 	}
 	return approvals, questions

@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/labstack/echo/v4"
 )
@@ -2504,6 +2505,95 @@ func TestDistinctObjectLabels(t *testing.T) {
 	if got := distinctObjectLabels(nil); got != nil {
 		t.Errorf("nil objects = %v, want nil", got)
 	}
+}
+
+func TestInvalidateObjectLabelSuggestions(t *testing.T) {
+	seed := func() map[string]labelSuggestionsEntry {
+		return map[string]labelSuggestionsEntry{
+			"proj-1": {labels: []string{"vip", "contact"}, expiresAt: time.Now().Add(time.Hour)},
+		}
+	}
+
+	// Session project scope: the session's active project wins over the static id.
+	s := &Server{cfg: Config{MemoryProjectID: "static-proj"}, memory: &fakeMemory{}}
+	s.labelCache = seed()
+	s.invalidateObjectLabelSuggestions(withSessionContext(context.Background(), &sessionContext{ProjectID: "proj-1"}))
+	if _, ok := s.labelCache["proj-1"]; ok {
+		t.Errorf("session project entry not removed after invalidation")
+	}
+
+	// Static project id (dev/API-key mode, no session context).
+	s2 := &Server{cfg: Config{MemoryProjectID: "proj-1"}, memory: &fakeMemory{}}
+	s2.labelCache = seed()
+	s2.invalidateObjectLabelSuggestions(context.Background())
+	if _, ok := s2.labelCache["proj-1"]; ok {
+		t.Errorf("static project entry not removed after invalidation")
+	}
+
+	// No project scope: invalidation is a no-op and leaves other entries intact.
+	s3 := &Server{cfg: Config{}, memory: &fakeMemory{}}
+	s3.labelCache = seed()
+	s3.invalidateObjectLabelSuggestions(context.Background())
+	if _, ok := s3.labelCache["proj-1"]; !ok {
+		t.Errorf("entry removed despite no project scope; invalidation should be a no-op")
+	}
+}
+
+// TestObjectMutationInvalidatesLabelSuggestions drives the real create/update
+// routes rather than the invalidateObjectLabelSuggestions helper. The #1504 fix
+// lives at the call sites, and TestInvalidateObjectLabelSuggestions alone passes
+// with both calls deleted (mutation-verified), so it does not guard the wiring.
+// Removing either invalidateObjectLabelSuggestions call must fail here.
+func TestObjectMutationInvalidatesLabelSuggestions(t *testing.T) {
+	const pid = "proj-inval"
+	compiled := &CompiledSchemaTypes{ObjectTypes: []CompiledType{{Name: "person", Properties: json.RawMessage(`{"first_name":{"type":"string"}}`)}}}
+	seed := func() map[string]labelSuggestionsEntry {
+		return map[string]labelSuggestionsEntry{
+			pid: {labels: []string{"stale"}, expiresAt: time.Now().Add(time.Hour)},
+		}
+	}
+	newServer := func(f *fakeMemory) *Server {
+		return &Server{cfg: Config{DefaultAgent: "memory", MemoryProjectID: pid}, memory: f}
+	}
+	post := func(e *echo.Echo, path string, form url.Values) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		return rec
+	}
+
+	t.Run("successful create clears the cache", func(t *testing.T) {
+		f := &fakeMemory{compiled: compiled, createObjectResult: &GraphObject{ID: "o-new"}}
+		s := newServer(f)
+		s.labelCache = seed()
+		e := echo.New()
+		e.POST("/objects", s.uiObjectCreate)
+
+		rec := post(e, "/objects", url.Values{"type": {"person"}})
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("status = %d, want 303 (body: %s)", rec.Code, rec.Body.String())
+		}
+		if _, ok := s.labelCache[pid]; ok {
+			t.Error("successful create must invalidate the label-suggestion cache")
+		}
+	})
+
+	t.Run("successful update clears the cache", func(t *testing.T) {
+		f := &fakeMemory{updateResult: &GraphObject{ID: "o2-new"}}
+		s := newServer(f)
+		s.labelCache = seed()
+		e := echo.New()
+		e.POST("/objects/:id", s.uiObjectUpdate)
+
+		rec := post(e, "/objects/o1", url.Values{"key": {"k"}})
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("status = %d, want 303 (body: %s)", rec.Code, rec.Body.String())
+		}
+		if _, ok := s.labelCache[pid]; ok {
+			t.Error("successful update must invalidate the label-suggestion cache")
+		}
+	})
 }
 
 func TestUIObjectChat(t *testing.T) {

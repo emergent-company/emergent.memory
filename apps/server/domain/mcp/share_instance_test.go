@@ -772,6 +772,56 @@ func TestListShareInstancesIncludesLegacy(t *testing.T) {
 	assert.Equal(t, "legacy-1", legacy.ID)
 }
 
+func TestListShareInstancesExcludesRevoked(t *testing.T) {
+	revoked := time.Now()
+	store := newFakeShareStore()
+	store.byID["active"] = &MCPShareInstance{ID: "active", ProjectID: "proj", Name: "Team A", TokenID: "tok-active"}
+	store.byID["revoked"] = &MCPShareInstance{ID: "revoked", ProjectID: "proj", Name: "Team B", TokenID: "tok-revoked", RevokedAt: &revoked}
+	store.legacy = []*LegacyTokenRef{
+		{ID: "legacy-1", Name: "MCP Read-Only Share — 2020"},
+		{ID: "legacy-revoked", Name: "MCP Share: Revoked", RevokedAt: &revoked},
+	}
+	svc := newTestService(store, &fakeTokenSvc{}, &fakeAgentDir{})
+
+	resp, err := svc.ListShareInstances(context.Background(), "proj", "user")
+	require.NoError(t, err)
+	require.Len(t, resp.Instances, 2, "revoked instance and revoked legacy token must be excluded")
+	assert.Equal(t, 2, resp.Total)
+
+	ids := map[string]bool{}
+	for i := range resp.Instances {
+		ids[resp.Instances[i].ID] = true
+	}
+	assert.True(t, ids["active"], "active instance must be returned")
+	assert.False(t, ids["revoked"], "revoked instance must not be returned")
+	assert.True(t, ids["legacy-1"], "active legacy token must be returned")
+	assert.False(t, ids["legacy-revoked"], "revoked legacy token must not be returned")
+}
+
+// TestListShareInstancesRevokedInstanceSuppressesSameIDLegacyToken pins the
+// anti-leak ordering in ListShareInstances: a revoked instance must still bind
+// its token id *before* it is skipped, so a non-revoked legacy token that
+// happens to share that id cannot resurface as a phantom management row.
+// TestListShareInstancesExcludesRevoked does not cover this — it has no legacy
+// token whose id equals a bound token — so moving the revoked `continue` above
+// the `boundTokens[inst.TokenID] = true` write stays green there but must fail
+// here (#1503).
+func TestListShareInstancesRevokedInstanceSuppressesSameIDLegacyToken(t *testing.T) {
+	revoked := time.Now()
+	store := newFakeShareStore()
+	// The instance is revoked, but its token id still namespaces the legacy row.
+	store.byID["revoked"] = &MCPShareInstance{ID: "revoked", ProjectID: "proj", Name: "Team B", TokenID: "tok-shared", RevokedAt: &revoked}
+	// Same id, but the legacy api_tokens row is not itself revoked: only the
+	// boundTokens suppression can hide it.
+	store.legacy = []*LegacyTokenRef{{ID: "tok-shared", Name: "MCP Share: legacy"}}
+	svc := newTestService(store, &fakeTokenSvc{}, &fakeAgentDir{})
+
+	resp, err := svc.ListShareInstances(context.Background(), "proj", "user")
+	require.NoError(t, err)
+	assert.Empty(t, resp.Instances, "a revoked instance's bound token must suppress the same-id legacy row")
+	assert.Equal(t, 0, resp.Total)
+}
+
 // TestShareInstanceRepresentationOmitsAgentAllowlist covers the MODIFIED spec
 // scenario "List omits agent allowlist": neither list nor get exposes an
 // `agents` field.

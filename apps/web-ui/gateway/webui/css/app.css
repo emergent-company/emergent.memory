@@ -846,6 +846,13 @@ div:has(> #_layout-topbar) {
   color: var(--color-primary);
 }
 .dock-question-input { flex-basis: 100%; }
+/* A proposal question keeps its reviewable card in the dock: full-width so the
+   card's preview table can scroll horizontally rather than squeezing. */
+.dock-card-proposal {
+  flex-basis: 100%;
+  min-width: 0;
+}
+.dock-card-proposal .proposal-card { margin-top: 0; }
 
 /* session todo card */
 #chat-todos { margin-bottom: 0.25rem; }

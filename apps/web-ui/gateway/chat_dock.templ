@@ -59,6 +59,9 @@ templ DockPanel(convID string, approvals []ApprovalCard, questions []QuestionCar
 						<span class="dock-card-kind">Question</span>
 						<span class="dock-card-prompt">{ q.Prompt }</span>
 					</div>
+					if q.ProposalHTML != "" {
+						<div class="dock-card-proposal" data-testid="dock-proposal">@templ.Raw(q.ProposalHTML)</div>
+					}
 					if !isText {
 						<div class="dock-card-options" role="group" aria-label={ q.Prompt }>
 							for _, o := range q.Options {

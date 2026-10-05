@@ -73,17 +73,18 @@ import { MEMORY_API_URL } from '../helpers/tokens';
 //      settings-page tool picker is covered elsewhere). E2E_SCENARIO_LLM_MODEL
 //      is the already-prefixed "provider/model" catalog value, passed through
 //      as-is (never double-prefixed);
-//   4. DELEGATION (UI): /agents/:A/settings → check `#agent-settings-
+//   4. DELEGATION (UI): /agents/:A/settings/delegation (delegation moved to its
+//      own settings subpage in the six-subpage split) → check `#agent-settings-
 //      delegation-enabled`, tick `input[name="delegation-target"][value=B]`,
-//      submit via the real "Save changes" button (PRG → /agents/:A/settings
-//      ?updated=1);
+//      submit via the real "Save changes" button (PRG →
+//      /agents/:A/settings/delegation?updated=1);
 //   5. PERSIST (API): GET /api/agents/:A → tools contain spawn_agents +
 //      list_available_agents and config.spawnPolicy.allow == [B];
-//   6. NO-TARGET REJECTION (UI+API): on /agents/:C/settings check the toggle
-//      only (select no target), submit → PRG → ?err=<message>; decode the err
+//   6. NO-TARGET REJECTION (UI+API): on /agents/:C/settings/delegation check the
+//      toggle only (select no target), submit → PRG → ?err=<message>; decode the err
 //      query param and assert it names the missing target. GET /api/agents/:C
 //      confirms neither delegation tool nor a spawnPolicy was written;
-//   7. DISABLE (UI+API): on /agents/:A/settings uncheck the toggle, submit →
+//   7. DISABLE (UI+API): on /agents/:A/settings/delegation uncheck the toggle, submit →
 //      ?updated=1; GET /api/agents/:A confirms both delegation tools and the
 //      spawnPolicy are gone. Then RE-ENABLE A (toggle + target box + save) and
 //      re-assert the persisted tools/allow so the live chat turn below still
@@ -339,10 +340,11 @@ test.describe('Agent delegation scenario', () => {
       rejectId = reject.id;
 
       // 4. DELEGATION (UI): enable the toggle, pick B, submit via the real
-      // "Save changes" button. The settings form is a plain PRG form (action
-      // /agents/:id/update), so the submit control navigates + 303-redirects
-      // to /agents/:id/settings?updated=1 on success.
-      await page.goto(`/agents/${delegatorId}/settings`);
+      // "Save changes" button. Delegation is its own settings subpage (the
+      // six-subpage split moved it off the General page), so the submit control
+      // navigates + 303-redirects to /agents/:id/settings/delegation?updated=1
+      // on success.
+      await page.goto(`/agents/${delegatorId}/settings/delegation`);
       await expectAppPage(page, /Settings/);
 
       const enabled = page.locator('#agent-settings-delegation-enabled');
@@ -354,7 +356,7 @@ test.describe('Agent delegation scenario', () => {
       await targetBox.check();
 
       await page.getByRole('button', { name: 'Save changes' }).click();
-      await page.waitForURL(/settings\?updated=1/, { timeout: 15_000 });
+      await page.waitForURL(/settings\/delegation\?updated=1/, { timeout: 15_000 });
 
       // 5. PERSIST (API): GET /api/agents/:A round-trips the delegation state.
       const aResp = await page.request.get(`/api/agents/${delegatorId}`);
@@ -372,11 +374,11 @@ test.describe('Agent delegation scenario', () => {
       // (b) NO-TARGET REJECTION: enabling delegation with no target selected
       // must be refused with a readable error, and C must gain neither
       // delegation tool nor a spawn policy.
-      await page.goto(`/agents/${rejectId}/settings`);
+      await page.goto(`/agents/${rejectId}/settings/delegation`);
       await expectAppPage(page, /Settings/);
       await page.locator('#agent-settings-delegation-enabled').check();
       await page.getByRole('button', { name: 'Save changes' }).click();
-      await page.waitForURL(/settings\?err=/, { timeout: 15_000 });
+      await page.waitForURL(/settings\/delegation\?err=/, { timeout: 15_000 });
       const errMsg = new URL(page.url()).searchParams.get('err') ?? '';
       expect(
         errMsg,
@@ -404,11 +406,11 @@ test.describe('Agent delegation scenario', () => {
 
       // (c) DISABLE: unchecking the toggle must strip both delegation tools
       // and the spawnPolicy from A's stored definition.
-      await page.goto(`/agents/${delegatorId}/settings`);
+      await page.goto(`/agents/${delegatorId}/settings/delegation`);
       await expectAppPage(page, /Settings/);
       await page.locator('#agent-settings-delegation-enabled').uncheck();
       await page.getByRole('button', { name: 'Save changes' }).click();
-      await page.waitForURL(/settings\?updated=1/, { timeout: 15_000 });
+      await page.waitForURL(/settings\/delegation\?updated=1/, { timeout: 15_000 });
 
       const disabledResp = await page.request.get(`/api/agents/${delegatorId}`);
       expect(
@@ -430,12 +432,12 @@ test.describe('Agent delegation scenario', () => {
       ).toBeUndefined();
 
       // Re-enable A so the live chat turn below still runs delegated.
-      await page.goto(`/agents/${delegatorId}/settings`);
+      await page.goto(`/agents/${delegatorId}/settings/delegation`);
       await expectAppPage(page, /Settings/);
       await page.locator('#agent-settings-delegation-enabled').check();
       await page.locator(`input[name="delegation-target"][value="${targetName}"]`).check();
       await page.getByRole('button', { name: 'Save changes' }).click();
-      await page.waitForURL(/settings\?updated=1/, { timeout: 15_000 });
+      await page.waitForURL(/settings\/delegation\?updated=1/, { timeout: 15_000 });
 
       // Light re-assert: tools contain both + spawnPolicy.allow deep-equals the
       // target name. The full persist assert already ran above; this only

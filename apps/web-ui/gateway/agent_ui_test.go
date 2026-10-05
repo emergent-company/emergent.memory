@@ -683,9 +683,14 @@ func TestRenderAgentSettingsPage(t *testing.T) {
 		t.Error("unselected skill must not render checked")
 	}
 
-	// Delegation page: enable toggle + target picker; self is excluded.
+	// Delegation page: enable toggle + target picker; self is excluded. The
+	// versioned control id is the contract the agent-delegation e2e scenario
+	// waits on (#1506: the scenario was pointed at the General page after the
+	// six-subpage split moved delegation here) — pin it so a rename cannot
+	// silently break the scenario again.
 	delegation := render("delegation")
 	for _, want := range []string{
+		`id="agent-settings-delegation-enabled"`,
 		`name="delegationEnabled"`,
 		`name="delegation-target"`, `value="milo"`,
 		`/agents/a1/settings/delegation`,

@@ -867,7 +867,12 @@ func (s *Service) ListShareInstances(ctx context.Context, projectID, userID stri
 	out := make([]ShareInstanceDTO, 0, len(instances))
 	boundTokens := make(map[string]bool, len(instances))
 	for _, inst := range instances {
+		// A revoked instance stays bound to its token so the management list
+		// never leaks a same-ID legacy token row, but is itself hidden.
 		boundTokens[inst.TokenID] = true
+		if inst.RevokedAt != nil {
+			continue
+		}
 		out = append(out, inst.toDTO(now))
 	}
 
@@ -876,6 +881,9 @@ func (s *Service) ListShareInstances(ctx context.Context, projectID, userID stri
 		return nil, err
 	}
 	for _, tok := range legacy {
+		if tok.RevokedAt != nil {
+			continue
+		}
 		if boundTokens[tok.ID] {
 			continue
 		}
