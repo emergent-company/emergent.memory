@@ -206,8 +206,18 @@ func gallerySeed() []GalleryEntry {
 			Category: "Feedback", Subcategory: "secret", SourceFile: "components/secret.templ",
 			PropsType:   "SecretRevealProps",
 			Description: "The one-time secret reveal as a modal dialog.",
+			// The catalog's one overlay entry: it needs app.js to open, so it is
+			// marked interactive and opens on its "open" story, which sets
+			// AutoOpen. The default render stays closed (AutoOpen false).
+			Interactive:    true,
+			DefaultVariant: "open",
 			Render: func() templ.Component {
-				return components.SecretRevealModal(secretRevealFixtureProps(true))
+				return components.SecretRevealModal(secretRevealFixtureProps(true, false))
+			},
+			Stories: map[string]func() templ.Component{
+				"open": func() templ.Component {
+					return components.SecretRevealModal(secretRevealFixtureProps(true, true))
+				},
 			},
 		},
 		{
@@ -216,7 +226,7 @@ func gallerySeed() []GalleryEntry {
 			PropsType:   "SecretRevealProps",
 			Description: "The same reveal anatomy inline, for pages that show the secret in the body.",
 			Render: func() templ.Component {
-				return components.SecretRevealPanel(secretRevealFixtureProps(false))
+				return components.SecretRevealPanel(secretRevealFixtureProps(false, false))
 			},
 		},
 
@@ -293,9 +303,10 @@ func gallerySeed() []GalleryEntry {
 }
 
 // secretRevealFixtureProps builds inert sample props for the secret reveal
-// components. modal selects the dialog variant; both omit AutoOpen and carry no
-// live endpoint ids so the preview cannot mutate the backend.
-func secretRevealFixtureProps(modal bool) components.SecretRevealProps {
+// components. modal selects the dialog variant; autoOpen sets the dialog's
+// AutoOpen flag (used only by the interactive "open" story). Both carry no live
+// endpoint ids so the preview cannot mutate the backend.
+func secretRevealFixtureProps(modal, autoOpen bool) components.SecretRevealProps {
 	p := components.SecretRevealProps{
 		Heading:    "MCP share created",
 		Name:       "share-a",
@@ -305,6 +316,7 @@ func secretRevealFixtureProps(modal bool) components.SecretRevealProps {
 		EndpointID: "gallery-endpoint",
 		Endpoint:   "https://example.invalid/mcp",
 		Warning:    "This key will not be shown again.",
+		AutoOpen:   autoOpen,
 	}
 	if modal {
 		p.DialogID = "gallery-reveal-modal"

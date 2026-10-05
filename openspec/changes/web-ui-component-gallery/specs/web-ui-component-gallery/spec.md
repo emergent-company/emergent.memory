@@ -58,7 +58,7 @@ For every catalog entry the gallery SHALL show the components it uses, the call 
 
 ### Requirement: Components render in isolated previews with sample data
 
-The gallery SHALL render each catalog entry against sample data in an isolated, render-only preview that does not share the page's DOM. The preview document SHALL load no client scripts, so a preview cannot mutate the backend and no overlay can escape it; component ids SHALL NOT collide across previews. Scripted/interactive previews are out of scope for this change.
+The gallery SHALL render each catalog entry against sample data in an isolated preview that does not share the page's DOM. Render-only SHALL be the default: unless an entry is explicitly marked interactive, the preview document SHALL load no client scripts, so a preview cannot mutate the backend and no overlay can escape it; component ids SHALL NOT collide across previews. An entry that needs client scripts to be reviewable — a dialog, dropdown, or toast — MAY be marked interactive, in which case its preview document SHALL load the shell's client scripts and its iframe SHALL carry `sandbox="allow-scripts"`. No preview iframe SHALL ever grant `allow-same-origin` or `allow-forms`, so even an interactive preview cannot read the session cookie or mutate the backend.
 
 #### Scenario: Preview renders with fixture data
 
@@ -70,15 +70,20 @@ The gallery SHALL render each catalog entry against sample data in an isolated, 
 - **WHEN** a component has no curated fixture
 - **THEN** it is previewed through an authored default render closure passing zero values, and is marked as needing a fixture when that render is empty (no non-whitespace text and no element) or panics on a nil slot; a panic SHALL NOT crash the gallery or the preview
 
-#### Scenario: Previews are render-only
+#### Scenario: Render-only preview loads no scripts
 
-- **WHEN** any component is previewed
+- **WHEN** a non-interactive component is previewed
 - **THEN** the preview document loads no client scripts, so its markup renders statically and no overlay can open or escape the preview
+
+#### Scenario: Interactive preview opens its overlay
+
+- **WHEN** a component marked interactive — a dialog, dropdown, or toast — is previewed
+- **THEN** its preview document loads the shell's client scripts in order and its iframe's sandbox permits scripts only, so the overlay renders in its open state inside the frame
 
 #### Scenario: Preview cannot mutate the backend
 
-- **WHEN** a previewed component contains a form or an htmx post control
-- **THEN** the preview's sandbox prevents the session cookie from authorising a mutation and any submission fails harmlessly
+- **WHEN** any previewed component contains a form or an htmx post control, render-only or interactive
+- **THEN** the preview's sandbox denies it a same-origin cookie and never grants `allow-forms`, so the session cookie cannot authorise a mutation and any submission fails harmlessly
 
 ### Requirement: Gallery is dev-gated
 

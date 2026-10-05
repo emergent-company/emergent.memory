@@ -37,9 +37,11 @@ templ ComponentGalleryDocument(content templ.Component) {
 // so it does not use the shared app page container, but the document still
 // needs a main landmark of its own.
 //
-// Previews are lazy-loaded isolated iframes; the iframe sandbox omits allow-forms
-// and allow-same-origin so a preview cannot mutate the backend or read the
-// session cookie.
+// Previews are lazy-loaded isolated iframes. Render-only entries use
+// sandbox="" (no scripts, no forms); an interactive entry uses
+// sandbox="allow-scripts" so its client scripts can run — but never
+// allow-same-origin or allow-forms, so a preview still cannot read the session
+// cookie or mutate the backend.
 templ ComponentGalleryPage(entries []GalleryEntry, gaps []AdoptionViewSummary) {
 	{{ total, needsFixture := galleryStats(entries) }}
 	<main class="w-full px-6 sm:px-8" { tpl.Attributes{"data-testid": "component-gallery"}... }>
@@ -184,6 +186,12 @@ templ galleryEntryCard(entry GalleryEntry) {
 					<div class="flex flex-wrap items-center gap-2">
 						<h4 class="truncate text-base font-semibold">{ entry.Name }</h4>
 						<span class="badge badge-ghost badge-sm font-mono">{ string(entry.Layer) }</span>
+						if entry.Interactive {
+							<span class="badge badge-info badge-outline badge-sm gap-1" data-testid="gallery-interactive" title="Client scripts run inside the preview's sandbox.">
+								<span class="iconify lucide--mouse-pointer-click size-3" aria-hidden="true"></span>
+								interactive
+							</span>
+						}
 						if needsFixture {
 							<span class="badge badge-warning badge-sm" data-testid="needs-fixture">needs fixture</span>
 						}
@@ -242,14 +250,22 @@ templ galleryEntryCard(entry GalleryEntry) {
 			<!-- Preview column: the isolated fixture frame on a neutral canvas. -->
 			<div class="border-base-content/10 bg-base-200/50 border-t p-5 lg:border-t-0 lg:border-l">
 				<iframe
-					src={ "/dev/components/preview/" + entry.Slug }
-					sandbox=""
+					src={ entry.previewSrc() }
+					if entry.Interactive {
+						sandbox="allow-scripts"
+						data-interactive="true"
+					} else {
+						sandbox=""
+					}
 					loading="lazy"
 					title={ entry.Name + " preview" }
 					data-testid={ "component-preview-" + entry.Slug }
 					height="220"
 					class="bg-base-100 rounded-box block h-[220px] w-full border-0"
 				></iframe>
+				if entry.Interactive {
+					<p class="text-muted-faint mt-2 text-xs">Interactive preview — client scripts run inside the sandboxed frame, with no cookie or backend access.</p>
+				}
 				if needsFixture {
 					<p class="text-warning mt-2 text-xs">Zero-value render — add a fixture to populate this preview.</p>
 				}
@@ -273,9 +289,12 @@ templ externalDepsList(entry GalleryEntry) {
 }
 
 // componentPreviewDoc renders one component's isolated preview as a standalone
-// document. It reproduces only the shell assets the previewed component needs —
-// the safest default is CSS only, so no scripts are loaded here. The iframe
-// hosting it carries `sandbox` without allow-forms or allow-same-origin.
+// document. It reproduces only the shell assets the previewed component needs:
+// render-only entries get the stylesheet alone (no scripts), while an
+// interactive entry additionally loads the shell client assets in the canonical
+// order so overlays (dialogs, dropdowns, toasts) can open. The iframe hosting it
+// carries sandbox="allow-scripts" for interactive entries and sandbox="" for
+// render-only ones — never allow-forms or allow-same-origin.
 templ componentPreviewDoc(entry GalleryEntry, variant string) {
 	<!DOCTYPE html>
 	<html lang="en" data-theme="dark" class="group/html">
@@ -291,6 +310,9 @@ templ componentPreviewDoc(entry GalleryEntry, variant string) {
 			<div class="border-base-content/10 bg-base-100 rounded-box min-h-[8rem] border p-6" data-testid="preview-canvas">
 				@entry.renderFor(variant)
 			</div>
+			if entry.Interactive {
+				@entry.previewClientScripts()
+			}
 		</body>
 	</html>
 }

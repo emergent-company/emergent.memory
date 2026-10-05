@@ -38,6 +38,43 @@ test('renders the component gallery with an isolated preview', async ({ page }) 
   await expect(canvas).not.toBeEmpty();
 });
 
+test('opens an interactive overlay preview in a script-enabled sandbox', async ({ page }) => {
+  const response = await page.goto('/dev/components');
+  expect(response?.status(), 'gallery route should serve (MEMORY_COMPONENT_GALLERY=on)').toBe(200);
+
+  // The overlay entry (SecretRevealModal) is the one scripted preview: its
+  // iframe is tagged data-interactive and sandboxed with allow-scripts only.
+  const interactive = page.locator(
+    'iframe[data-interactive="true"][data-testid="component-preview-secret-reveal-modal"]'
+  );
+  await expect(interactive).toBeAttached();
+
+  const sandbox = (await interactive.getAttribute('sandbox')) ?? '';
+  expect(sandbox).toContain('allow-scripts');
+  expect(sandbox).not.toContain('allow-same-origin');
+  expect(sandbox).not.toContain('allow-forms');
+
+  // Scroll the lazy frame into view so it loads, then assert the overlay is
+  // actually open: app.js auto-opens dialog[data-dialog-autoopen].
+  await interactive.scrollIntoViewIfNeeded();
+  const frame = page.frameLocator('iframe[data-testid="component-preview-secret-reveal-modal"]');
+  const dialog = frame.locator('dialog[data-dialog-autoopen]');
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toHaveAttribute('open', '');
+
+  // Opaque origin: the frame cannot read the session cookie even though scripts
+  // run. An opaque origin throws on document.cookie (treated here as empty);
+  // either way it must never surface a cookie value.
+  const cookieRead = await frame.locator('body').evaluate(() => {
+    try {
+      return document.cookie;
+    } catch {
+      return '';
+    }
+  });
+  expect(cookieRead).toBe('');
+});
+
 test('surfaces adoption gaps with per-file counts and findings', async ({ page }) => {
   const response = await page.goto('/dev/components');
   expect(response?.status(), 'gallery route should serve (MEMORY_COMPONENT_GALLERY=on)').toBe(200);

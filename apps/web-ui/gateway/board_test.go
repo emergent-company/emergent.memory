@@ -242,7 +242,12 @@ func TestBoardDrawerGatesActionsByStatus(t *testing.T) {
 	}
 	body := rec.Body.String()
 	// Review status gates Approve + Request changes, hides Retry.
-	for _, want := range []string{`data-testid="board-item-dialog"`, `/board/items/w1/approve`, `name="feedback"`} {
+	// data-canonical-id on the dialog is the #1439 focus-restore contract:
+	// object-preview.js reads it from the source element's closest
+	// [data-canonical-id] to re-find the refreshed card after the OOB drawer
+	// clear. Dropping it silently sends focus to <body>, so pin it here — the
+	// hermetic js-dom spec fabricates its own DOM and cannot catch it.
+	for _, want := range []string{`data-testid="board-item-dialog"`, `data-canonical-id="w1"`, `/board/items/w1/approve`, `name="feedback"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("drawer missing %q", want)
 		}

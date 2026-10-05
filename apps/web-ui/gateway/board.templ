@@ -178,7 +178,7 @@ templ BoardDrawer(detail *WorkItemDetail, statusMap boardStatusMap) {
 	@ui.Dialog(ui.DialogProps{
 		ID:       "board-item-dialog",
 		BoxClass: "max-w-lg",
-		Attrs:    templ.Attributes{"data-dialog-autoopen": "true", "data-testid": "board-item-dialog"},
+		Attrs:    templ.Attributes{"data-dialog-autoopen": "true", "data-testid": "board-item-dialog", "data-canonical-id": item.CanonicalID},
 	}) {
 		<div class="flex items-center justify-between gap-2">
 			<div class="flex min-w-0 items-center gap-2">

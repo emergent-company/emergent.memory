@@ -297,6 +297,134 @@ func TestPreviewVariantChangesOutput(t *testing.T) {
 	}
 }
 
+// --- interactive previews (scripted frame for overlay components) ---
+
+// TestPreviewIsRenderOnlyByDefault pins the default: a non-interactive entry's
+// preview document loads no scripts and its iframe stays under sandbox="".
+func TestPreviewIsRenderOnlyByDefault(t *testing.T) {
+	entry, ok := galleryEntryBySlug("panel-card")
+	if !ok {
+		t.Fatal("panel-card entry not found")
+	}
+	if entry.Interactive {
+		t.Fatal("panel-card must stay render-only")
+	}
+
+	doc := renderComp(t, componentPreviewDoc(entry, ""))
+	if strings.Contains(doc, "<script") {
+		t.Errorf("render-only preview must load no scripts:\n%s", doc)
+	}
+	if !strings.Contains(doc, `data-testid="preview-canvas"`) {
+		t.Error("preview missing canvas test id")
+	}
+	if !strings.Contains(doc, "/css/app.css") {
+		t.Error("preview missing the stylesheet link")
+	}
+
+	card := renderComp(t, galleryEntryCard(entry))
+	if !strings.Contains(card, `sandbox=""`) {
+		t.Errorf("render-only iframe should carry sandbox=\"\", got:\n%s", card)
+	}
+	if strings.Contains(card, "allow-scripts") {
+		t.Error("render-only iframe must not enable scripts")
+	}
+	if strings.Contains(card, "data-interactive") {
+		t.Error("render-only iframe must not be marked interactive")
+	}
+}
+
+// TestInteractivePreviewLoadsScriptsInOrder pins the canonical shell load order
+// for an interactive preview.
+func TestInteractivePreviewLoadsScriptsInOrder(t *testing.T) {
+	entry, ok := galleryEntryBySlug("secret-reveal-modal")
+	if !ok {
+		t.Fatal("secret-reveal-modal entry not found")
+	}
+	if !entry.Interactive {
+		t.Fatal("secret-reveal-modal must be marked interactive")
+	}
+
+	doc := renderComp(t, componentPreviewDoc(entry, "open"))
+	if !strings.Contains(doc, "window.htmx") {
+		t.Errorf("interactive preview missing guarded htmx config:\n%s", doc)
+	}
+	order := []string{"htmx.min.js", "hx-alpine-compat.js", "alpine.js", "app.js"}
+	last := -1
+	for _, name := range order {
+		i := strings.Index(doc, name)
+		if i < 0 {
+			t.Fatalf("interactive preview missing %s:\n%s", name, doc)
+		}
+		if i <= last {
+			t.Fatalf("%s is out of order in the preview document", name)
+		}
+		last = i
+	}
+}
+
+// TestInteractivePreviewSandbox pins the iframe sandbox: allow-scripts only,
+// never allow-same-origin or allow-forms, on the entry card and the whole page.
+func TestInteractivePreviewSandbox(t *testing.T) {
+	entry, ok := galleryEntryBySlug("secret-reveal-modal")
+	if !ok {
+		t.Fatal("secret-reveal-modal entry not found")
+	}
+	card := renderComp(t, galleryEntryCard(entry))
+	if !strings.Contains(card, `sandbox="allow-scripts"`) {
+		t.Errorf("interactive iframe should carry sandbox=\"allow-scripts\", got:\n%s", card)
+	}
+	if !strings.Contains(card, `data-interactive="true"`) {
+		t.Error("interactive iframe missing data-interactive=\"true\"")
+	}
+	for _, forbidden := range []string{"allow-same-origin", "allow-forms"} {
+		if strings.Contains(card, forbidden) {
+			t.Errorf("interactive iframe must never carry %q", forbidden)
+		}
+	}
+
+	// The rendered gallery page as a whole never emits a more permissive sandbox.
+	_, e := newDevGalleryServer(true)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dev/components", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("gallery = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-interactive="true"`) {
+		t.Error("gallery page missing the interactive preview iframe")
+	}
+	for _, forbidden := range []string{"allow-same-origin", "allow-forms"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("gallery page must never emit %q", forbidden)
+		}
+	}
+}
+
+// TestInteractivePreviewOpenStory pins how the open state is selected: the open
+// story sets AutoOpen, the default render stays closed, and the card links the
+// iframe at the open variant.
+func TestInteractivePreviewOpenStory(t *testing.T) {
+	entry, ok := galleryEntryBySlug("secret-reveal-modal")
+	if !ok {
+		t.Fatal("secret-reveal-modal entry not found")
+	}
+	openDoc := renderComp(t, componentPreviewDoc(entry, "open"))
+	defDoc := renderComp(t, componentPreviewDoc(entry, ""))
+	if !strings.Contains(openDoc, "data-dialog-autoopen") {
+		t.Errorf("open story should mark the dialog for auto-open:\n%s", openDoc)
+	}
+	if strings.Contains(defDoc, "data-dialog-autoopen") {
+		t.Error("default render should stay closed (no data-dialog-autoopen)")
+	}
+	if entry.DefaultVariant != "open" {
+		t.Errorf("DefaultVariant = %q, want %q", entry.DefaultVariant, "open")
+	}
+	card := renderComp(t, galleryEntryCard(entry))
+	if !strings.Contains(card, "/dev/components/preview/secret-reveal-modal?variant=open") {
+		t.Errorf("card iframe src should select the open variant, got:\n%s", card)
+	}
+}
+
 // --- 5.2 routing + gating ---
 
 func newDevGalleryServer(flag bool) (*Server, *echo.Echo) {

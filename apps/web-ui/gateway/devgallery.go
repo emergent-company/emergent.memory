@@ -2,12 +2,16 @@ package main
 
 import (
 	"context"
+	"io"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/a-h/templ"
+	"github.com/emergent-company/emergent.memory/apps/web-ui/webui"
+	alpine "github.com/emergent-company/go-daisy/components/alpine"
 	"github.com/emergent-company/go-daisy/render"
 	"github.com/labstack/echo/v4"
 )
@@ -40,6 +44,16 @@ type GalleryEntry struct {
 	Uses           []string
 	UsedBy         []string
 	AdditionalUses []string
+	// Interactive marks an entry whose preview needs client scripts (htmx,
+	// Alpine, app.js) to be reviewable — dialogs, dropdowns, toasts. The
+	// default is render-only: no scripts, so the preview cannot drive the app.
+	// An interactive preview still runs in an opaque-origin frame under
+	// sandbox="allow-scripts" (never allow-same-origin or allow-forms).
+	Interactive bool
+	// DefaultVariant optionally names the story variant the gallery's preview
+	// iframe opens with, e.g. "open" to show an overlay in its open state. Empty
+	// selects the default Render closure.
+	DefaultVariant string
 	Render         func() templ.Component
 	Stories        map[string]func() templ.Component
 }
@@ -142,6 +156,49 @@ func (e GalleryEntry) renderFor(variant string) templ.Component {
 		}
 	}
 	return e.Render()
+}
+
+// previewSrc is the preview iframe's src: the entry's preview document, with the
+// DefaultVariant story appended as a query param when set.
+func (e GalleryEntry) previewSrc() string {
+	src := "/dev/components/preview/" + e.Slug
+	if e.DefaultVariant != "" {
+		src += "?variant=" + url.QueryEscape(e.DefaultVariant)
+	}
+	return src
+}
+
+// previewClientScripts returns the client-asset script block for an interactive
+// preview document, in the shell's canonical load order (ui.templ): htmx, the
+// guarded htmx v2-compat config, the htmx/Alpine compatibility extension,
+// deferred Alpine, and app.js. It is a hand-written factory rather than a templ
+// component so the generated dependency graph is unchanged: the graph scanner
+// walks package-level templ definitions and same-package component callees, not
+// methods, and the templ call site (entry.previewClientScripts()) is a method
+// expression the scanner skips.
+func (e GalleryEntry) previewClientScripts() templ.Component {
+	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		if _, err := io.WriteString(w, `<script src="`+webui.AssetPath("/js/htmx.min.js")+`"></script>`); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, `<script>
+			if (window.htmx) {
+				htmx.config.implicitInheritance = true;
+				htmx.config.noSwap = [204, 304, "4xx", "5xx"];
+				htmx.config.defaultTimeout = 0;
+			}
+		</script>`); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, `<script src="`+webui.AssetPath("/js/hx-alpine-compat.js")+`"></script>`); err != nil {
+			return err
+		}
+		if err := alpine.Tag().Render(ctx, w); err != nil {
+			return err
+		}
+		_, err := io.WriteString(w, `<script src="`+webui.AssetPath("/js/app.js")+`"></script>`)
+		return err
+	})
 }
 
 // NeedsFixture reports whether the entry's default render is empty (no

@@ -378,10 +378,22 @@
     var status = ctx && ctx.response && ctx.response.raw && ctx.response.raw.status;
     if (typeof status === "number" && (status < 200 || status >= 300)) return;
     var elt = (ctx && ctx.sourceElement) || (detail && detail.elt);
-    if (!elt || !elt.closest || !elt.closest("#object-preview-actions-slot")) return;
-    // The action swaps #board (outerHTML) and clears the drawer, so defer the
-    // focus restore to htmx:after:swap (see close/restorePendingFocus).
-    close(true);
+    if (!elt || !elt.closest) return;
+    if (elt.closest("#object-preview-actions-slot")) {
+      // The action swaps #board (outerHTML) and clears the drawer, so defer the
+      // focus restore to htmx:after:swap (see close/restorePendingFocus).
+      close(true);
+      return;
+    }
+    // Board-item dialog path (#1439): the dialog opened by dragging a card
+    // review -> revision lives in #board-drawer, and its actions POST targeting
+    // #board while the BoardRefresh response OOB-clears #board-drawer. That
+    // removes the focused control, so hold the dialog's canonical id and let
+    // the post-swap restore re-focus the refreshed card (fallback #board).
+    if (elt.closest("#board-drawer")) {
+      var holder = elt.closest("[data-canonical-id]");
+      if (holder) pendingFocus = holder;
+    }
   }
 
   function onResponseError(ev) {
