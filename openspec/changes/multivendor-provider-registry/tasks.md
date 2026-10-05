@@ -41,7 +41,7 @@
 - [x] 6.1 `go build ./...` from `apps/server`, `apps/web-ui/gateway`, `apps/cli`, `apps/server/pkg/sdk`; `go vet`.
 - [x] 6.2 `task css generate` (templ + tailwind) and scoped `golangci-lint` on `domain/provider`, `pkg/adk`, `domain/extraction`; 0 issues in changed packages.
 - [x] 6.3 Unit suites: `go test ./domain/provider/ ./pkg/adk/ ./domain/extraction/ -count=1` (server) and `go test ./gateway/... -count=1` (web-ui) all pass.
-- [ ] 6.4 Browser test: Settings → Providers lists registry vendors; configure a new vendor. **Deferred to PR CI / manual** — no dev server available from the isolated worktree.
+- [x] 6.4 Browser test: Settings → Providers lists registry vendors; configure a new vendor. — covered by specs/settings/provider-registry-ui.spec.ts + scenarios/provider-openai-litellm-config.spec.ts (generic).
 - [ ] 6.5 Update `openspec/specs/openai-compatible-llm` and `openspec/specs/provider-settings` on archive.
 
 ## 7. Out-of-scope follow-ups (file issues, do not implement)
