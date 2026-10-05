@@ -416,6 +416,55 @@ func TestTriggerExtractionHandler(t *testing.T) {
 	}
 }
 
+func TestTriggerExtractionHandlerBlocked(t *testing.T) {
+	f := &fakeMemory{
+		documents:      []Document{{ID: "d1", Filename: "Spec.md", Chunks: 2}},
+		effectiveModel: &EffectiveModelConfig{},
+	}
+	_, e := newDocAPIServer(f, "")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/documents/d1/extract", nil))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "No generative model is configured") {
+		t.Errorf("body = %s, want no-generative-model error", rec.Body.String())
+	}
+	if len(f.extracted) != 0 {
+		t.Fatalf("extracted = %v, want none (job must not be enqueued)", f.extracted)
+	}
+}
+
+func TestTriggerExtractionHandlerBlockedUnknownDocument(t *testing.T) {
+	// No model + unknown document id must still return 404 (not 409), preserving
+	// the not-found contract even when the project has no generative model.
+	f := &fakeMemory{effectiveModel: &EffectiveModelConfig{}}
+	_, e := newDocAPIServer(f, "")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/documents/nope/extract", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+	if len(f.extracted) != 0 {
+		t.Fatalf("extracted = %v, want none (job must not be enqueued)", f.extracted)
+	}
+}
+
+func TestTriggerExtractionHandlerFailOpenOnConfigError(t *testing.T) {
+	// A model-config fetch error must fail open: extraction proceeds (200, job
+	// enqueued), never 409.
+	f := &fakeMemory{effectiveModelErr: errTest}
+	_, e := newDocAPIServer(f, "")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/documents/d1/extract", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if len(f.extracted) != 1 || f.extracted[0] != "d1" {
+		t.Fatalf("extracted = %v, want [d1]", f.extracted)
+	}
+}
+
 func TestDocumentsRequireAPIKey(t *testing.T) {
 	_, e := newDocAPIServer(&fakeMemory{}, "secret")
 	rec := httptest.NewRecorder()
@@ -508,7 +557,7 @@ func TestRenderDocumentsUploadPicker(t *testing.T) {
 func TestRenderDocumentDetailPage(t *testing.T) {
 	doc := &Document{ID: "d1", Filename: "Spec.md", MimeType: "text/markdown", Chunks: 2, ExtractionStatus: "completed", ObjectsCreated: 15}
 	preview := documentPreview{Mode: previewModeText, Text: "hello preview"}
-	html := renderHTML(t, DocumentDetailPage(doc, preview, nil, "", nil))
+	html := renderHTML(t, DocumentDetailPage(doc, preview, nil, "", nil, false))
 	for _, want := range []string{
 		"Spec.md", "2 chunks", "completed", "15 objects extracted",
 		`action="/documents/d1/extract"`, `href="/documents"`,
@@ -531,14 +580,33 @@ func TestRenderDocumentDetailPage(t *testing.T) {
 		t.Error("overview should not render the inline extraction results section")
 	}
 
-	htmlErr := renderHTML(t, DocumentDetailPage(nil, documentPreview{}, errTest, "", nil))
+	htmlErr := renderHTML(t, DocumentDetailPage(nil, documentPreview{}, errTest, "", nil, false))
 	if !strings.Contains(htmlErr, "Document unavailable") {
 		t.Error("load error state missing")
 	}
 
-	htmlFlash := renderHTML(t, DocumentDetailPage(doc, preview, nil, "Extraction triggered.", nil))
+	htmlFlash := renderHTML(t, DocumentDetailPage(doc, preview, nil, "Extraction triggered.", nil, false))
 	if !strings.Contains(htmlFlash, "Extraction triggered.") {
 		t.Error("extraction flash missing")
+	}
+
+	// The enabled render must not carry a disabled extract button.
+	if strings.Contains(html, "disabled") {
+		t.Error("enabled render must not disable the extract button")
+	}
+
+	// A blocked render disables the extract button, swaps the description, and
+	// surfaces the warning + providers-settings link.
+	htmlBlocked := renderHTML(t, DocumentDetailPage(doc, preview, nil, "", nil, true))
+	for _, want := range []string{
+		"disabled",
+		"Extraction needs a generative model.",
+		"No generative model is configured. Add a provider and set a default model before running extraction.",
+		`href="/settings/providers"`,
+	} {
+		if !strings.Contains(htmlBlocked, want) {
+			t.Errorf("blocked detail page missing %q", want)
+		}
 	}
 }
 
@@ -548,7 +616,7 @@ func TestRenderDocumentDetailPage(t *testing.T) {
 func TestDocumentPreviewEscapesHostileContent(t *testing.T) {
 	doc := &Document{ID: "d1", Filename: "evil.md", MimeType: "text/markdown"}
 	hostile := `<script>alert(1)</script><img src=x onerror=alert(2)></pre><svg onload=alert(3)>`
-	html := renderHTML(t, DocumentDetailPage(doc, documentPreview{Mode: previewModeText, Text: hostile}, nil, "", nil))
+	html := renderHTML(t, DocumentDetailPage(doc, documentPreview{Mode: previewModeText, Text: hostile}, nil, "", nil, false))
 	for _, raw := range []string{"<script>alert", "<img src=x", "<svg onload", "</pre><svg"} {
 		if strings.Contains(html, raw) {
 			t.Errorf("hostile preview content rendered unescaped: %q", raw)
@@ -621,7 +689,7 @@ func TestDocumentPreviewMode(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			preview := documentPreview{Mode: previewModeFor(tc.doc)}
-			html := renderHTML(t, DocumentDetailPage(tc.doc, preview, nil, "", nil))
+			html := renderHTML(t, DocumentDetailPage(tc.doc, preview, nil, "", nil, false))
 			if !strings.Contains(html, tc.want) {
 				t.Errorf("preview mode %s missing %q", tc.name, tc.want)
 			}
@@ -636,7 +704,7 @@ func TestDocumentPreviewMode(t *testing.T) {
 // degrades to a note with a Chunks link rather than an error.
 func TestDocumentPreviewUnavailable(t *testing.T) {
 	doc := &Document{ID: "d1", Filename: "a.md", MimeType: "text/markdown"}
-	html := renderHTML(t, DocumentDetailPage(doc, documentPreview{Mode: previewModeText, Err: errTest}, nil, "", nil))
+	html := renderHTML(t, DocumentDetailPage(doc, documentPreview{Mode: previewModeText, Err: errTest}, nil, "", nil, false))
 	if !strings.Contains(html, `data-testid="document-preview-unavailable"`) {
 		t.Error("failed text preview should degrade to the unavailable card")
 	}
@@ -661,7 +729,7 @@ func TestLoadDocumentPreview(t *testing.T) {
 		if p.Err != nil || p.Text != content || p.Truncated {
 			t.Fatalf("preview = %+v", p)
 		}
-		html := renderHTML(t, DocumentDetailPage(textDoc, p, nil, "", nil))
+		html := renderHTML(t, DocumentDetailPage(textDoc, p, nil, "", nil, false))
 		if !strings.Contains(html, `data-testid="document-preview-text"`) || !strings.Contains(html, content) {
 			t.Fatalf("expected text preview, got %s", html)
 		}
@@ -677,7 +745,7 @@ func TestLoadDocumentPreview(t *testing.T) {
 		if p.Err == nil {
 			t.Fatalf("empty content should degrade, got %+v", p)
 		}
-		html := renderHTML(t, DocumentDetailPage(textDoc, p, nil, "", nil))
+		html := renderHTML(t, DocumentDetailPage(textDoc, p, nil, "", nil, false))
 		if !strings.Contains(html, `data-testid="document-preview-unavailable"`) {
 			t.Error("empty content should render the unavailable card, not a blank box")
 		}
@@ -889,6 +957,53 @@ func TestDocumentRoutes(t *testing.T) {
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/documents?deleted=1", nil))
 	if !strings.Contains(rec.Body.String(), "Document deleted.") {
 		t.Error("deleted flash missing on list page")
+	}
+}
+
+// TestDocumentRoutesExtractionBlocked pins that the web extraction trigger is
+// refused (redirect with ?err=, no job enqueued) when the project has no
+// resolvable generative model.
+func TestDocumentRoutesExtractionBlocked(t *testing.T) {
+	f := &fakeMemory{
+		documents:      []Document{{ID: "d1", Filename: "Spec.md", Chunks: 2, ExtractionStatus: "completed"}},
+		effectiveModel: &EffectiveModelConfig{},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.POST("/documents/:id/extract", s.uiTriggerExtraction)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/documents/d1/extract", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("blocked extract status = %d, want 303", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "?err=") {
+		t.Errorf("blocked extract location = %q, want ?err=", loc)
+	}
+	if len(f.extracted) != 0 {
+		t.Fatalf("extracted = %v, want none (job must not be enqueued)", f.extracted)
+	}
+}
+
+// TestDocumentRoutesExtractionFailOpen pins that the web extraction trigger
+// fails open on a model-config fetch error: it proceeds to enqueue (redirect to
+// ?extracted=1), never the blocked ?err= redirect.
+func TestDocumentRoutesExtractionFailOpen(t *testing.T) {
+	f := &fakeMemory{effectiveModelErr: errTest}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.POST("/documents/:id/extract", s.uiTriggerExtraction)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/documents/d1/extract", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("fail-open extract status = %d, want 303", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/documents/d1?extracted=1" {
+		t.Errorf("fail-open extract location = %q, want /documents/d1?extracted=1", loc)
+	}
+	if len(f.extracted) != 1 || f.extracted[0] != "d1" {
+		t.Fatalf("extracted = %v, want [d1]", f.extracted)
 	}
 }
 

@@ -100,3 +100,35 @@ export async function setDefaultEmbeddingModel(page: Page, model: string): Promi
   await expect(emb).toBeVisible();
   await expect(emb).toHaveValue(model);
 }
+
+/**
+ * Pin the project's default generative model via the Settings → Providers
+ * "Default models" panel — the exact mirror of setDefaultEmbeddingModel for the
+ * generative select. The extraction trigger is gated on the *generative* model,
+ * and addProvider's provider-credential auto-pick only resolves when the cached
+ * catalog is non-empty (not guaranteed with a litellm base_url), so the tests
+ * must pin the project default deterministically. model is the prefixed
+ * "provider/model" catalog value (e.g. "openai/deepseek-v4-flash").
+ */
+export async function setDefaultGenerativeModel(page: Page, model: string): Promise<void> {
+  await page.goto('/settings/providers');
+  const gen = page.locator('select[name="generative_model"]');
+  await expect(gen).toBeVisible();
+
+  // The option list is built from the provider's cached catalog — give the
+  // server a moment if the catalog was only just synced by the provider save.
+  await expect(gen.locator(`option[value="${model}"]`)).toHaveCount(1, { timeout: 10_000 });
+
+  const posted = page.waitForResponse(
+    (r) => r.url().includes('/settings/providers/model-config') && r.request().method() === 'POST',
+    { timeout: 10_000 },
+  );
+  await gen.selectOption(model);
+  await posted;
+
+  // No redirect/swap — assert persistence by reloading and checking the
+  // server-rendered selected value.
+  await page.reload();
+  await expect(gen).toBeVisible();
+  await expect(gen).toHaveValue(model);
+}

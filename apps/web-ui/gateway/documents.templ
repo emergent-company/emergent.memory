@@ -156,14 +156,14 @@ templ documentStatusBadge(status string) {
 // extraction trigger, and a preview of the original file. A failed document
 // fetch renders the whole-page error state; a failed preview fetch degrades
 // only the preview card.
-templ DocumentDetailPage(doc *Document, preview documentPreview, loadErr error, flashMsg string, flashErr error) {
+templ DocumentDetailPage(doc *Document, preview documentPreview, loadErr error, flashMsg string, flashErr error, extractionBlocked bool) {
 	@layout.Container(layout.ContainerLG, nil) {
 		if loadErr != nil {
 			@pageError("Document unavailable", loadErr)
 		} else {
 			@documentDetailHeader(doc)
 			@layout.Rail(documentSubNav(doc.ID, "overview"), nil) {
-				@extractionCard(doc, flashMsg, flashErr)
+				@extractionCard(doc, flashMsg, flashErr, extractionBlocked)
 				@documentPreviewCard(doc, preview)
 			}
 		}
@@ -275,7 +275,9 @@ templ documentDetailHeader(doc *Document) {
 	}
 }
 
-templ extractionCard(doc *Document, flashMsg string, flashErr error) {
+templ extractionCard(doc *Document, flashMsg string, flashErr error, blocked bool) {
+	{{ extractAttrs := templ.Attributes{} }}
+	{{ if blocked { extractAttrs = templ.Attributes{"disabled": true, "title": "Configure a provider and set a default generative model to run extraction."} } }}
 	@components.PanelCard("", nil) {
 		<div class="flex flex-wrap items-center justify-between gap-3">
 		<div class="flex items-center gap-3">
@@ -283,7 +285,9 @@ templ extractionCard(doc *Document, flashMsg string, flashErr error) {
 			<div>
 				<h2 class="text-base font-semibold">Extraction</h2>
 					<p class="text-muted text-sm">
-						if doc.ObjectsCreated > 0 {
+						if blocked {
+							Extraction needs a generative model.
+						} else if doc.ObjectsCreated > 0 {
 							{ strconv.Itoa(doc.ObjectsCreated) } objects extracted
 						} else {
 							Run extraction to pull structured entities out of this document.
@@ -297,11 +301,23 @@ templ extractionCard(doc *Document, flashMsg string, flashErr error) {
 					Variant: ui.ButtonAccent,
 					Size:    ui.ButtonSM,
 					Icon:    "lucide--sparkles",
+					Attrs:   extractAttrs,
 				}) {
 					Extract data
 				}
 			</form>
 		</div>
+		if blocked {
+			<div class="mt-3">
+				@ui.Alert(ui.AlertProps{
+					Type:    ui.AlertWarning,
+					Style:   ui.AlertStyleSoft,
+					Icon:    "lucide--alert-triangle",
+					Message: "No generative model is configured. Add a provider and set a default model before running extraction.",
+				})
+				<a href="/settings/providers" class="link link-primary text-sm">Configure a model</a>
+			</div>
+		}
 		@flashToasts(flashMsg, flashErr)
 	}
 }

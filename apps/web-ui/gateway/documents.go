@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -127,8 +128,34 @@ func (s *Server) uploadDocument(c echo.Context) error {
 	return c.JSON(status, resp)
 }
 
+// errNoGenerativeModel is the client-facing reason extraction is refused when
+// the project has no resolvable generative model.
+var errNoGenerativeModel = errors.New("No generative model is configured. Add a provider and set a default model in Settings \u2192 Providers before running extraction.") //nolint:staticcheck // user-facing guidance sentence; trailing punctuation is intentional
+
+// extractionModelMissing reports whether extraction would fail for lack of a
+// resolvable generative model. It mirrors chatModelWarnings' fail-open
+// convention: a config fetch error is captured but treated as "not blocked", so
+// a transient config outage never disables extraction.
+func (s *Server) extractionModelMissing(ctx context.Context) bool {
+	mc, err := s.memory.GetEffectiveModelConfig(ctx)
+	if err != nil {
+		captureError(err)
+		return false
+	}
+	return mc != nil && mc.GenerativeModel == ""
+}
+
 // triggerExtraction implements POST /api/documents/:id/extract.
 func (s *Server) triggerExtraction(c echo.Context) error {
+	if s.extractionModelMissing(c.Request().Context()) {
+		// Only disambiguate the document when blocked, keeping the happy path at
+		// one memory call. Preserve the not-found contract: an unknown document
+		// is 404 even when the project has no generative model.
+		if _, err := s.memory.GetDocument(c.Request().Context(), c.Param("id")); err != nil {
+			return documentError(c, err) // 404 for unknown, 502 otherwise
+		}
+		return c.JSON(http.StatusConflict, map[string]string{"error": errNoGenerativeModel.Error()})
+	}
 	jobID, err := s.memory.CreateExtractionJob(c.Request().Context(), c.Param("id"))
 	if err != nil {
 		return documentError(c, err)

@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { expectAppPage } from '../../helpers/page';
-import { addProvider, setDefaultEmbeddingModel } from '../../helpers/providers';
+import { readBootstrap, createProject } from '../../helpers/bootstrap';
+import { addProvider, setDefaultEmbeddingModel, setDefaultGenerativeModel } from '../../helpers/providers';
 
 // Document upload + extraction UI (gateway/documents.templ, documents.go, ui.go):
 //
@@ -11,22 +12,31 @@ import { addProvider, setDefaultEmbeddingModel } from '../../helpers/providers';
 //   3. "Extract data"  → POST /documents/:id/extract (uiTriggerExtraction) →
 //                        PRG /documents/:id?extracted=1 (or ?err=…).
 //
-// The trigger only *enqueues* a job — memory's POST /api/admin/extraction-jobs
-// inserts a pending row and does not validate a provider — so the PRG round-trip
-// needs no LLM. Producing actual extraction RESULTS does need a working project
-// provider (the worker resolves it at run time), so the results test is
-// env-gated on the scenario LLM key and configures the provider through the
-// settings UI first.
+// The trigger is gated on a resolvable generative model (gateway/documents.go
+// extractionModelMissing → memory's effective model config): with no generative
+// model the "Extract data" button is disabled and the server refuses the
+// trigger (409 / ?err=). The two extraction tests therefore configure a project
+// provider and pin the project default generative model
+// (setDefaultGenerativeModel) — the provider-credential auto-pick is not
+// deterministic with a litellm base_url — plus the embedding model. Enqueueing
+// still needs no LLM *call* — memory's POST /api/admin/extraction-jobs only
+// inserts a pending row — but it does need a configured generative model for
+// the gateway to offer it. Producing actual extraction RESULTS needs the
+// provider to run a real model, so the results test drives that through the
+// settings UI and polls for the summary. A third test covers the blocked state
+// unconditionally (no LLM key) on a fresh provider-less project.
 //
 // Env (see tests/e2e/.env.e2e.example), shared with the scenario suite:
 //   E2E_SCENARIO_LLM_PROVIDER         default 'openai' (the dev litellm slot)
-//   E2E_SCENARIO_LLM_API_KEY          real key; unset → the results test skips
+//   E2E_SCENARIO_LLM_API_KEY          real key; unset → the two extraction tests skip
 //   E2E_SCENARIO_LLM_BASE_URL         default 'http://litellm:4000/v1'
+//   E2E_SCENARIO_LLM_MODEL            default 'openai/deepseek-v4-flash'
 //   E2E_SCENARIO_LLM_EMBEDDING_MODEL  default 'openai/gemini-embedding-001'
 
 const PROVIDER = process.env.E2E_SCENARIO_LLM_PROVIDER || 'openai';
 const API_KEY = process.env.E2E_SCENARIO_LLM_API_KEY || '';
 const BASE_URL = process.env.E2E_SCENARIO_LLM_BASE_URL || 'http://litellm:4000/v1';
+const GENERATIVE_MODEL = process.env.E2E_SCENARIO_LLM_MODEL || 'openai/deepseek-v4-flash';
 const EMBEDDING_MODEL =
   process.env.E2E_SCENARIO_LLM_EMBEDDING_MODEL || 'openai/gemini-embedding-001';
 
@@ -78,6 +88,30 @@ async function deleteDocument(page: Page, id: string | undefined): Promise<void>
 
 test.describe('Document upload + extraction', () => {
   test('uploads a document and triggers extraction from the detail page', async ({ page }) => {
+    // The trigger is gated on a configured generative model, so the smoke test
+    // configures a provider first (same shape as the results test). Give the
+    // provider save + model-config round-trips headroom.
+    test.setTimeout(300_000);
+    test.skip(
+      !API_KEY,
+      'E2E_SCENARIO_LLM_API_KEY is not set — the trigger is gated on a configured ' +
+        'generative model, which needs a project provider. Set it in ' +
+        'tests/e2e/.env.e2e (defaults target the dev litellm: openai).',
+    );
+
+    const saved = await addProvider(
+      page,
+      PROVIDER,
+      API_KEY,
+      PROVIDER === 'openai' ? BASE_URL : undefined,
+    );
+    if (saved !== 'saved') {
+      test.skip(true, 'provider save rejected by the memory backend (catalog unsynced or invalid key)');
+      return;
+    }
+    await setDefaultGenerativeModel(page, GENERATIVE_MODEL);
+    await setDefaultEmbeddingModel(page, EMBEDDING_MODEL);
+
     const stamp = Date.now();
     const name = `e2e-doc-${stamp}.md`;
     // Unique body per run so memory's content dedup never collapses the upload.
@@ -123,6 +157,7 @@ test.describe('Document upload + extraction', () => {
       test.skip(true, 'provider save rejected by the memory backend (catalog unsynced or invalid key)');
       return;
     }
+    await setDefaultGenerativeModel(page, GENERATIVE_MODEL);
     await setDefaultEmbeddingModel(page, EMBEDDING_MODEL);
 
     const stamp = Date.now();
@@ -157,6 +192,42 @@ test.describe('Document upload + extraction', () => {
       await expect(page.getByText(/\d+ object(s)?/).first()).toBeVisible();
     } finally {
       await deleteDocument(page, id);
+    }
+  });
+
+  test('disables extraction when the project has no generative model', async ({ page }) => {
+    // Unconditional (no LLM key): a fresh, provider-less project must render the
+    // blocked extraction card — disabled button, guidance copy, providers link.
+    const bootstrap = readBootstrap();
+    test.skip(!bootstrap, 'setup project must run first');
+    const orgId = bootstrap!.orgId;
+
+    const base = `E2E Blocked Extraction ${Date.now()}`;
+    const name = `e2e-blocked-${Date.now()}.md`;
+    const body = `# Blocked ${base}\n\nNo provider configured — extraction must be gated.`;
+    let projectId = '';
+
+    try {
+      projectId = await createProject(page, orgId, base);
+
+      await uploadDocument(page, name, body);
+      await openUploadedDocument(page, name);
+
+      const extract = page.getByRole('button', { name: 'Extract data' });
+      await expect(extract).toBeDisabled();
+      await expect(page.getByText('Extraction needs a generative model.')).toBeVisible();
+      await expect(page.getByRole('link', { name: 'Configure a model' })).toHaveAttribute(
+        'href',
+        '/settings/providers',
+      );
+    } finally {
+      // Restore the bootstrap project, then delete the scratch project.
+      if (bootstrap?.projectId) {
+        await page.request.post(`/api/projects/${bootstrap.projectId}/activate`).catch(() => {});
+      }
+      if (projectId && orgId) {
+        await page.request.post(`/projects/delete?projectId=${projectId}&orgId=${orgId}`).catch(() => {});
+      }
     }
   });
 });

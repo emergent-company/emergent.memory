@@ -260,7 +260,7 @@ var graphUses = map[string][]string{
 	"extractedObjectRow":            []string{"Badge", "IconSpan"},
 	"extractedObjects":              []string{"EmptyState"},
 	"extractedRelationshipRow":      []string{"Badge", "IconSpan"},
-	"extractionCard":                []string{"Button", "IconTile", "PanelCard"},
+	"extractionCard":                []string{"Alert", "Button", "IconTile", "PanelCard"},
 	"extractionHistory":             []string{"EmptyState"},
 	"extractionJobRow":              []string{"Alert", "Badge", "IconTile"},
 	"extractionMergeAction":         []string{"Button"},
@@ -514,7 +514,7 @@ var graphUses = map[string][]string{
 }
 
 var graphUsedBy = map[string][]string{
-	"Alert":                []string{"AgentSharePage", "BoardColumns", "BoardDrawerError", "ConnectedDevicesPage", "ExtractionJobDetail", "MigrationsPage", "SchemaAddPage", "SchemaObjectTypeEditPage", "SecretRevealModal", "ShareLinkCreatePanel", "ShareLinksListPanel", "agentChatsList", "agentGeneralSettingsForm", "agentMCPKeysBlock", "agentMCPSection", "agentMCPSessionsBody", "agentModelWarningBox", "apiTokenListState", "backupDetailIntegrity", "boardHealth", "coverageSectionError", "embeddingProviderWarning", "embeddingsModelWarning", "extractionJobRow", "mcpNodeToolsPanel", "mcpServerFormBody", "mcpServerTransportFields", "mcpShareFormBody", "membersBody", "pageError", "previewSection", "providersPanel", "runMetaHeader", "sandboxProviderAvailability", "validationSection", "workerStateError"},
+	"Alert":                []string{"AgentSharePage", "BoardColumns", "BoardDrawerError", "ConnectedDevicesPage", "ExtractionJobDetail", "MigrationsPage", "SchemaAddPage", "SchemaObjectTypeEditPage", "SecretRevealModal", "ShareLinkCreatePanel", "ShareLinksListPanel", "agentChatsList", "agentGeneralSettingsForm", "agentMCPKeysBlock", "agentMCPSection", "agentMCPSessionsBody", "agentModelWarningBox", "apiTokenListState", "backupDetailIntegrity", "boardHealth", "coverageSectionError", "embeddingProviderWarning", "embeddingsModelWarning", "extractionCard", "extractionJobRow", "mcpNodeToolsPanel", "mcpServerFormBody", "mcpServerTransportFields", "mcpShareFormBody", "membersBody", "pageError", "previewSection", "providersPanel", "runMetaHeader", "sandboxProviderAvailability", "validationSection", "workerStateError"},
 	"AlertModal":           []string{"appShell"},
 	"AvatarFull":           []string{"accountAvatar", "memberAvatar", "orgMemberRow", "profileAvatar"},
 	"Badge":                []string{"ApprovalsPage", "BoardDrawer", "ExtractionJobDetail", "StatusBadge", "agentDashboardHeader", "agentDetailRow", "agentMCPEndpointBody", "agentMCPKeyRow", "agentMCPSessionRow", "agentNameChip", "agentRow", "agentSummaryCard", "agentToolCountBadge", "agentToolGroupLeading", "agentToolsSection", "apiTokenRowContent", "appliedRow", "approvalRow", "availableSchemaRow", "backupDetailHeader", "backupDetailSettings", "backupRow", "backupsHeader", "backupsUnavailable", "blueprintDetailMeta", "blueprintVersions", "boardCard", "boardHealth", "chunkRow", "compiledTypesTable", "countBadgeLabel", "diffChangeChip", "diffFlag", "documentRow", "embeddingsHeader", "extractedObjectRow", "extractedRelationshipRow", "extractionJobRow", "extractionReadiness", "historySection", "mcpNodeToolsPanel", "mcpServerRow", "mcpShareRow", "memberInviteRow", "objectBadges", "objectDetailHeader", "objectPreviewContent", "objectRelationshipRow", "objectTypeProperties", "objectTypeWorkStatuses", "objectUnifiedRow", "orgProjectsTable", "orgToolSettingRow", "previewSection", "propertyDiffRow", "propertyTypeBadge", "proposalAgentSection", "proposalCard", "proposalChipRow", "proposalMCPServerSection", "proposalObjectSection", "proposalProviderSection", "providerRateBadge", "relationshipDiffBlock", "relationshipTypeRow", "requiredBadge", "runMetaHeader", "runPageHeader", "scheduleDetailMeta", "scheduleLastRunBadges", "scheduleRow", "scheduleRunsSection", "schemaEditorForm", "schemaObjectTypeHistory", "schemaObjectTypeOrigin", "schemaPackHeader", "schemaPackRow", "sessionMessageItem", "sessionRunBlock", "sessionToolItem", "shareBehaviourChip", "shareHeader", "shareLinkAccessSection", "shareLinkStatusBadge", "shareToolPicker", "similarObjectRow", "skillDetailHeader", "skillDetailMeta", "skillRow", "staleObjectGroups", "typeNameChip", "workerStateBadge", "workerStateSection"},
@@ -829,7 +829,7 @@ var graphDaisyComponents = map[string][]string{
 	"extractedObjectRow":            []string{"Badge", "IconSpan"},
 	"extractedObjects":              []string{"EmptyState"},
 	"extractedRelationshipRow":      []string{"Badge", "IconSpan"},
-	"extractionCard":                []string{"Button", "IconTile"},
+	"extractionCard":                []string{"Alert", "Button", "IconTile"},
 	"extractionHistory":             []string{"EmptyState"},
 	"extractionJobRow":              []string{"Alert", "Badge", "IconTile"},
 	"extractionMergeAction":         []string{"Button"},

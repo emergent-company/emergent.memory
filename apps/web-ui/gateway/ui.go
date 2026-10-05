@@ -1134,15 +1134,16 @@ func (s *Server) uiDocument(c echo.Context) error {
 
 	doc, err := s.memory.GetDocument(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle("Document"), DocumentDetailPage(nil, documentPreview{}, err, "", nil))
+		return s.page(c, pageTitle("Document"), DocumentDetailPage(nil, documentPreview{}, err, "", nil, false))
 	}
 
 	preview := s.loadDocumentPreview(ctx, doc)
+	blocked := s.extractionModelMissing(ctx)
 	flashMsg := flashFromQuery(c, []flashParam{
 		{key: "extracted", msg: "Extraction triggered."},
 	})
 	flashErr := flashError(c)
-	return s.page(c, pageTitle(documentName(*doc)), DocumentDetailPage(doc, preview, nil, flashMsg, flashErr))
+	return s.page(c, pageTitle(documentName(*doc)), DocumentDetailPage(doc, preview, nil, flashMsg, flashErr, blocked))
 }
 
 // uiUploadDocument handles the documents page upload form (PRG): it forwards
@@ -1175,6 +1176,9 @@ func (s *Server) uiUploadDocument(c echo.Context) error {
 // extraction job and redirects back to the document detail view.
 func (s *Server) uiTriggerExtraction(c echo.Context) error {
 	id := c.Param("id")
+	if s.extractionModelMissing(c.Request().Context()) {
+		return redirectWithError(c, "/documents/"+url.PathEscape(id), errNoGenerativeModel)
+	}
 	if _, err := s.memory.CreateExtractionJob(c.Request().Context(), id); err != nil {
 		return redirectWithError(c, "/documents/"+url.PathEscape(id), err)
 	}
