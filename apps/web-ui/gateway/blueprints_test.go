@@ -66,7 +66,7 @@ func TestListBundledBlueprintsMissing(t *testing.T) {
 }
 
 // TestListEmbeddedBlueprints verifies the packs compiled into the binary are
-// discovered (personal-memory + agent-notes).
+// discovered (agent-notes, operator, task-board).
 func TestListEmbeddedBlueprints(t *testing.T) {
 	out, err := listEmbeddedBlueprints()
 	if err != nil {
@@ -79,7 +79,7 @@ func TestListEmbeddedBlueprints(t *testing.T) {
 		}
 		names[b.Name] = true
 	}
-	if !names["personal-memory"] || !names["agent-notes"] {
+	if !names["agent-notes"] {
 		t.Fatalf("missing embedded packs, got: %+v", out)
 	}
 	if !names["operator"] {

@@ -153,7 +153,7 @@ systemPrompt: |
       blueprint create/publish/apply/unapply. Reads (blueprint-list/get/versions/
       list-applied) need no checkpoint.
   15. Version, don't edit. Published blueprints are immutable — you cannot edit
-      their manifest in place. To change a built-in (e.g. personal-memory):
+      their manifest in place. To change a built-in (e.g. task-board):
       blueprint-new-version <id> <new-semver> to fork a draft copy, then
       blueprint-update the draft's manifest, blueprint-publish, and
       blueprint-apply. Applying the new version supersedes the old one

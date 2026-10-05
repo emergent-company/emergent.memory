@@ -3,7 +3,7 @@ import { readBootstrap, createProject } from '../helpers/bootstrap';
 import { expectAppPage } from '../helpers/page';
 import { addProvider, setDefaultEmbeddingModel } from '../helpers/providers';
 import { createAgentViaModal } from '../helpers/agents';
-import { installBlueprint } from '../helpers/blueprints';
+import { importGitHubBlueprint } from '../helpers/blueprints';
 import { createObjectViaForm } from '../helpers/objects';
 import { startObjectChat, sendChatMessage } from '../helpers/chat';
 
@@ -27,7 +27,7 @@ import { startObjectChat, sendChatMessage } from '../helpers/chat';
 //   4. AGENT (UI): create an agent with an explicit model (prefixed
 //      provider/model catalog value, e.g. openai/deepseek-v4-flash — the same
 //      string the agent modal submits and the memory backend stores);
-//   5. BLUEPRINT (UI): install the bundled `personal-memory` pack;
+//   5. BLUEPRINT (UI): import the `personal-memory` pack from its GitHub repo;
 //   6. VERIFY: the blueprint's compiled types now exist in THIS project
 //      (/objects/new offers the Person type);
 //   7. OBJECT (UI): create a Person object with a unique key + tag;
@@ -71,6 +71,9 @@ const API_KEY = process.env.E2E_SCENARIO_LLM_API_KEY || '';
 const BASE_URL = process.env.E2E_SCENARIO_LLM_BASE_URL || 'http://litellm:4000/v1';
 const MODEL = process.env.E2E_SCENARIO_LLM_MODEL || 'openai/deepseek-v4-flash';
 const EMBEDDING_MODEL = process.env.E2E_SCENARIO_LLM_EMBEDDING_MODEL || 'openai/gemini-embedding-001';
+
+// External GitHub blueprint repo that now ships the personal-memory pack.
+const GITHUB_BLUEPRINT_URL = 'https://github.com/mkucharz/personal-memory-blueprint';
 
 function requireBootstrap() {
   const bootstrap = readBootstrap();
@@ -159,9 +162,10 @@ test('full journey: provider → agent → blueprint → object → chat', async
     // rather than skip.
     agentId = await createAgentViaModal(page, name, MODEL, '*');
 
-    // 4. BLUEPRINT (UI): install the bundled personal-memory pack into THIS
-    // project (the fresh scratch project has none of its types yet).
-    await installBlueprint(page, 'personal-memory');
+    // 4. BLUEPRINT (UI): import the personal-memory pack from its external
+    // GitHub repo into THIS project (the fresh scratch project has none of its
+    // types yet).
+    await importGitHubBlueprint(page, GITHUB_BLUEPRINT_URL);
 
     // 5. VERIFY: compiled types come from applied blueprints and are
     // project-scoped — the Person type must now be offered in this project's

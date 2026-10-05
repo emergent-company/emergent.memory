@@ -1,6 +1,72 @@
 import { Page } from '@playwright/test';
 
 /**
+ * UI-install a blueprint from a GitHub repository URL via the "Import from
+ * GitHub" modal on /blueprints. Mirrors installBlueprint's PRG landing:
+ * /blueprints?installed=1, or /blueprints/migrations?migrateMsg=… on migration
+ * drift. `opts.ref` pins a branch/tag/commit; `opts.token` supplies a token for
+ * a private repo.
+ */
+export async function importGitHubBlueprint(
+  page: Page,
+  url: string,
+  opts?: { ref?: string; token?: string },
+): Promise<void> {
+  await page.goto('/blueprints');
+
+  const openBtn = page.locator('[data-testid="blueprint-import-open"]');
+  try {
+    await openBtn.waitFor({ state: 'visible', timeout: 10_000 });
+  } catch (err) {
+    throw new Error(`importGitHubBlueprint("${url}"): no Import button on /blueprints`, {
+      cause: err,
+    });
+  }
+  await openBtn.click();
+
+  const form = page.locator('form[action="/blueprints/import"]');
+  try {
+    await form.waitFor({ state: 'visible', timeout: 10_000 });
+  } catch (err) {
+    throw new Error(`importGitHubBlueprint("${url}"): import form did not open on /blueprints`, {
+      cause: err,
+    });
+  }
+
+  await form.locator('input[name="url"]').fill(url);
+  if (opts?.ref) await form.locator('input[name="ref"]').fill(opts.ref);
+  if (opts?.token) await form.locator('input[name="token"]').fill(opts.token);
+
+  await form.locator('button[type="submit"]').click();
+
+  // Success: installed → list with ?installed=1; migration drift → /blueprints/migrations.
+  const success = (u: URL) =>
+    u.pathname === '/blueprints/migrations' ||
+    (u.pathname === '/blueprints' && u.searchParams.get('installed') === '1');
+
+  try {
+    await page.waitForURL(success, { timeout: 10_000 });
+  } catch (err) {
+    // Any other landing (?err= flash, error toast, failed import) is a failure:
+    // surface the URL plus whatever error copy the page is showing.
+    let bodyText = '';
+    try {
+      bodyText = await page.evaluate(() => document.body.innerText);
+    } catch {
+      // page may be mid-navigation; the URL in the error below still helps
+    }
+    const errLine =
+      (bodyText.match(/^.*(?:error|failed|couldn't|could not).*$/im) || [])
+        .slice(0, 3)
+        .join(' | ') || '(no visible error copy)';
+    throw new Error(
+      `importGitHubBlueprint("${url}"): import did not succeed; landed on ${page.url()} — ${errLine}`,
+      { cause: err },
+    );
+  }
+}
+
+/**
  * UI-install a bundled blueprint pack by name from the /blueprints gallery.
  * Bundled rows post a hidden input[name="name"] to /blueprints/install, so the
  * form filter below is the precise anchor (the same pack can otherwise appear
