@@ -36,6 +36,16 @@ func Parse(s string) (Ref, error) {
 	return sdkmodelref.Parse(s)
 }
 
+// ParseWithProvider parses a model reference that may carry its provider either
+// as the canonical "provider/model" prefix or as a separate structured provider
+// slug. It is the single entry point for write paths that accept both the
+// structured {name, provider} shape and the prefixed shape, so every caller
+// agrees on what a valid reference is. Delegates to the canonical shared
+// implementation so the CLI and server cannot drift.
+func ParseWithProvider(name, provider string) (Ref, error) {
+	return sdkmodelref.ParseWithProvider(name, provider)
+}
+
 // StripRoutingPrefix removes a leading routing-provider prefix from s when the
 // first '/' segment is a recognised routing provider (as reported by
 // isRoutingProvider), returning the bare model name. Otherwise s is returned

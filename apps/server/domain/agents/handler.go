@@ -21,7 +21,6 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
-	"github.com/emergent-company/emergent.memory/pkg/modelref"
 	"github.com/emergent-company/emergent.memory/pkg/sse"
 )
 
@@ -1586,12 +1585,8 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 		return apperror.NewBadRequest("name is required")
 	}
 
-	if dto.Model != nil && dto.Model.Name != "" {
-		ref, err := modelref.Parse(dto.Model.Name)
-		if err != nil {
-			return apperror.NewBadRequest(`model.name must be in 'provider/model' form (e.g. "deepseek/deepseek-v4-flash", "google/gemini-2.5-flash")`)
-		}
-		dto.Model.Name = ref.String()
+	if err := NormalizeAgentModelConfig(dto.Model); err != nil {
+		return apperror.NewBadRequest(err.Error())
 	}
 
 	// Set defaults
@@ -1702,12 +1697,8 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 		return apperror.NewBadRequest("invalid request body")
 	}
 
-	if dto.Model != nil && dto.Model.Name != "" {
-		ref, err := modelref.Parse(dto.Model.Name)
-		if err != nil {
-			return apperror.NewBadRequest(`model.name must be in 'provider/model' form (e.g. "deepseek/deepseek-v4-flash", "google/gemini-2.5-flash")`)
-		}
-		dto.Model.Name = ref.String()
+	if err := NormalizeAgentModelConfig(dto.Model); err != nil {
+		return apperror.NewBadRequest(err.Error())
 	}
 
 	var projectID *string
@@ -3581,6 +3572,10 @@ func (h *Handler) SetAgentOverride(c echo.Context) error {
 	var override AgentOverride
 	if err := c.Bind(&override); err != nil {
 		return apperror.NewBadRequest("invalid request body")
+	}
+
+	if err := NormalizeAgentModelConfig(override.Model); err != nil {
+		return apperror.NewBadRequest(err.Error())
 	}
 
 	setting, err := h.repo.SetAgentOverride(c.Request().Context(), projectID, agentName, &override)

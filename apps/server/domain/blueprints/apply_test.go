@@ -128,6 +128,43 @@ func TestApplyAgentManifestToExisting_BannedTools(t *testing.T) {
 	assert.Equal(t, []string{"blueprint-set"}, def.BannedTools)
 }
 
+// TestAgentModel_ManifestValidatedAgainstFunnel proves the blueprint apply
+// write path routes model.name through the shared agent model-reference funnel
+// (#1465) instead of copying it verbatim: a malformed manifest model is rejected
+// before persist, a valid reference is canonicalized, and an empty model is
+// allowed to select the provider default. The update path must not clobber the
+// existing model when the manifest value is malformed.
+func TestAgentModel_ManifestValidatedAgainstFunnel(t *testing.T) {
+	// Create path: malformed references are rejected.
+	for _, bad := range []string{"/deepseek-v4-flash", "openai//gpt-4o", "gpt-4o", "openai/"} {
+		_, err := buildAgentDefinition(&AgentManifest{Name: "x", Model: &AgentModelManifest{Name: bad}}, "proj-1")
+		require.Error(t, err, "manifest model %q must be rejected", bad)
+	}
+
+	// Create path: a valid reference is canonicalized (whitespace collapsed).
+	def, err := buildAgentDefinition(&AgentManifest{Name: "x", Model: &AgentModelManifest{Name: " openai / gpt-4o "}}, "proj-1")
+	require.NoError(t, err)
+	require.NotNil(t, def.Model)
+	assert.Equal(t, "openai/gpt-4o", def.Model.Name)
+
+	// Create path: empty model selects the provider default.
+	def, err = buildAgentDefinition(&AgentManifest{Name: "x", Model: &AgentModelManifest{}}, "proj-1")
+	require.NoError(t, err)
+	require.NotNil(t, def.Model)
+	assert.Empty(t, def.Model.Name)
+
+	// Update path: malformed value is rejected and leaves the existing model intact.
+	existing := &agents.AgentDefinition{Model: &agents.ModelConfig{Name: "google/gemini-2.5-flash"}}
+	err = applyAgentManifestToExisting(existing, &AgentManifest{Name: "x", Model: &AgentModelManifest{Name: "/bad"}})
+	require.Error(t, err)
+	assert.Equal(t, "google/gemini-2.5-flash", existing.Model.Name, "malformed manifest must not clobber the existing model")
+
+	// Update path: valid value is applied and canonicalized.
+	existing = &agents.AgentDefinition{}
+	require.NoError(t, applyAgentManifestToExisting(existing, &AgentManifest{Name: "x", Model: &AgentModelManifest{Name: " openai / gpt-4o "}}))
+	assert.Equal(t, "openai/gpt-4o", existing.Model.Name)
+}
+
 // TestAgentUI_ManifestToUIConfig locks the appearance contract: an inline
 // `ui: {icon, color}` block is marshalled into the definition's opaque
 // UIConfig JSONB blob, and an absent/empty block leaves ui_config untouched.

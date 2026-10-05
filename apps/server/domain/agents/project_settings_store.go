@@ -137,7 +137,14 @@ func ApplyAgentOverride(def *AgentDefinition, override *AgentOverride) {
 			def.Model = &ModelConfig{}
 		}
 		if override.Model.Name != "" {
-			def.Model.Name = override.Model.Name
+			// Defense in depth: the write path (SetAgentOverride) validates
+			// model references, but a legacy row may predate strict validation.
+			// Only copy a reference that normalizes cleanly — never let a
+			// malformed value reach the definition (and thus the executor).
+			normalized := &ModelConfig{Name: override.Model.Name, Provider: override.Model.Provider}
+			if err := NormalizeAgentModelConfig(normalized); err == nil && normalized.Name != "" {
+				def.Model.Name = normalized.Name
+			}
 		}
 		if override.Model.Temperature != nil {
 			def.Model.Temperature = override.Model.Temperature

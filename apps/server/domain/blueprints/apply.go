@@ -668,12 +668,20 @@ func buildAgentDefinition(m *AgentManifest, projectID string) (*agents.AgentDefi
 		def.SystemPrompt = &m.SystemPrompt
 	}
 	if m.Model != nil {
-		def.Model = &agents.ModelConfig{
+		mc := &agents.ModelConfig{
 			Name:           m.Model.Name,
 			Temperature:    m.Model.Temperature,
 			MaxTokens:      m.Model.MaxTokens,
 			EnableThinking: m.Model.EnableThinking,
 		}
+		// Route the manifest reference through the same shared funnel the REST
+		// and MCP write paths use (#1465), so a malformed model.name cannot be
+		// persisted via a blueprint and only fail later at execution time. An
+		// empty name means "use the provider default" and is allowed.
+		if err := agents.NormalizeAgentModelConfig(mc); err != nil {
+			return nil, apperror.NewBadRequest(fmt.Sprintf("agent %q: %v", m.Name, err))
+		}
+		def.Model = mc
 	} else {
 		// Empty ModelConfig.Name selects the provider default model.
 		def.Model = &agents.ModelConfig{}
@@ -715,12 +723,18 @@ func applyAgentManifestToExisting(def *agents.AgentDefinition, m *AgentManifest)
 		def.SystemPrompt = &m.SystemPrompt
 	}
 	if m.Model != nil {
-		def.Model = &agents.ModelConfig{
+		mc := &agents.ModelConfig{
 			Name:           m.Model.Name,
 			Temperature:    m.Model.Temperature,
 			MaxTokens:      m.Model.MaxTokens,
 			EnableThinking: m.Model.EnableThinking,
 		}
+		// Reject a malformed manifest model.name before it reaches the
+		// repository, mirroring the REST/MCP write paths (#1465).
+		if err := agents.NormalizeAgentModelConfig(mc); err != nil {
+			return apperror.NewBadRequest(fmt.Sprintf("agent %q: %v", m.Name, err))
+		}
+		def.Model = mc
 	}
 	def.Tools = m.Tools
 	if def.Tools == nil {

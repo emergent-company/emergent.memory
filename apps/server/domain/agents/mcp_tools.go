@@ -184,8 +184,16 @@ func (h *MCPToolHandler) ExecuteCreateAgentDefinition(ctx context.Context, proje
 		def.DefaultTimeout = &v
 	}
 
-	if modelName, ok := args["model"].(string); ok && modelName != "" {
-		def.Model = &ModelConfig{Name: modelName}
+	modelName, _ := args["model"].(string)
+	provider, _ := args["provider"].(string)
+	if modelName != "" || provider != "" {
+		mc := &ModelConfig{Name: modelName, Provider: provider}
+		if err := NormalizeAgentModelConfig(mc); err != nil {
+			return errResult(err.Error())
+		}
+		if mc.Name != "" {
+			def.Model = mc
+		}
 	}
 
 	if err := h.repo.CreateDefinition(ctx, def); err != nil {
@@ -200,6 +208,24 @@ func (h *MCPToolHandler) ExecuteUpdateAgentDefinition(ctx context.Context, proje
 	id, _ := args["definition_id"].(string)
 	if id == "" {
 		return errResult("definition_id is required")
+	}
+
+	// Validate the model reference before touching the repository, so a
+	// malformed value is rejected with the same 400-equivalent error as the
+	// REST write path instead of being persisted verbatim.
+	modelName, _ := args["model"].(string)
+	providerName, _ := args["provider"].(string)
+	hasModel := false
+	var normalizedModel string
+	if modelName != "" || providerName != "" {
+		mc := &ModelConfig{Name: modelName, Provider: providerName}
+		if err := NormalizeAgentModelConfig(mc); err != nil {
+			return errResult(err.Error())
+		}
+		if mc.Name != "" {
+			hasModel = true
+			normalizedModel = mc.Name
+		}
 	}
 
 	def, err := h.repo.FindDefinitionByID(ctx, id, &projectID)
@@ -250,11 +276,12 @@ func (h *MCPToolHandler) ExecuteUpdateAgentDefinition(ctx context.Context, proje
 		v := int(dt)
 		def.DefaultTimeout = &v
 	}
-	if modelName, ok := args["model"].(string); ok && modelName != "" {
+	if hasModel {
 		if def.Model == nil {
 			def.Model = &ModelConfig{}
 		}
-		def.Model.Name = modelName
+		def.Model.Name = normalizedModel
+		def.Model.Provider = ""
 	}
 	if c, ok := args["config"].(map[string]any); ok {
 		def.Config = c
@@ -972,7 +999,11 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 					},
 					"model": {
 						Type:        "string",
-						Description: "Model name for this agent. Supports provider/model format to pin a specific provider (e.g. 'google-vertex/gemini-2.5-flash', 'google/gemini-2.5-flash', 'deepseek/deepseek-v4-flash'). Bare model names (e.g. 'gemini-2.5-flash') use the project/org default provider.",
+						Description: "Model name. Use the 'provider/model' form to pin a specific provider (e.g. 'google-vertex/gemini-2.5-flash', 'google/gemini-2.5-flash', 'deepseek/deepseek-v4-flash'), or send a bare name together with the 'provider' field.",
+					},
+					"provider": {
+						Type:        "string",
+						Description: "Provider instance slug for the model (e.g. 'google', 'deepseek', 'openai'). Optional when 'model' already carries a provider prefix; when both are set they must agree.",
 					},
 					"config": {
 						Type:        "string",
@@ -1028,7 +1059,11 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 					},
 					"model": {
 						Type:        "string",
-						Description: "Model name for this agent. Supports provider/model format to pin a specific provider (e.g. 'google-vertex/gemini-2.5-flash', 'google/gemini-2.5-flash', 'deepseek/deepseek-v4-flash'). Bare model names (e.g. 'gemini-2.5-flash') use the project/org default provider.",
+						Description: "Model name. Use the 'provider/model' form to pin a specific provider (e.g. 'google-vertex/gemini-2.5-flash', 'google/gemini-2.5-flash', 'deepseek/deepseek-v4-flash'), or send a bare name together with the 'provider' field.",
+					},
+					"provider": {
+						Type:        "string",
+						Description: "Provider instance slug for the model (e.g. 'google', 'deepseek', 'openai'). Optional when 'model' already carries a provider prefix; when both are set they must agree.",
 					},
 				},
 				Required: []string{"definition_id"},

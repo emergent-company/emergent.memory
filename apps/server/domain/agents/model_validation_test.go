@@ -23,6 +23,10 @@ func TestCreateDefinition_InvalidModelReturns400(t *testing.T) {
 		{name: "empty provider segment", body: `{"name":"a","model":{"name":"/deepseek-v4-flash"}}`},
 		{name: "no provider segment", body: `{"name":"a","model":{"name":"deepseek-v4-flash"}}`},
 		{name: "empty model segment", body: `{"name":"a","model":{"name":"openai/"}}`},
+		// #1466: doubled separator must be rejected at the write boundary.
+		{name: "double separator", body: `{"name":"a","model":{"name":"openai//gpt-4o"}}`},
+		// #1467: provider without a model name is not a valid structured ref.
+		{name: "provider without model", body: `{"name":"a","model":{"provider":"openai"}}`},
 	}
 
 	for _, tc := range cases {
@@ -57,6 +61,8 @@ func TestUpdateDefinition_InvalidModelReturns400(t *testing.T) {
 		{name: "empty provider segment", body: `{"model":{"name":"/deepseek-v4-flash"}}`},
 		{name: "no provider segment", body: `{"model":{"name":"deepseek-v4-flash"}}`},
 		{name: "empty model segment", body: `{"model":{"name":"openai/"}}`},
+		// #1466: doubled separator must be rejected at the write boundary.
+		{name: "double separator", body: `{"model":{"name":"openai//gpt-4o"}}`},
 	}
 
 	for _, tc := range cases {
