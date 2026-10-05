@@ -192,7 +192,7 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 			<script src={ templ.SafeURL(webui.AssetPath("/js/object-preview.js")) }></script>
 			<script src={ templ.SafeURL(webui.AssetPath("/js/documents-chunks.js")) }></script>
 			if feedbackOverlayURL != "" {
-				<script src={ templ.SafeURL(feedbackOverlayURL + "/feedback-overlay.js") } data-api={ feedbackOverlayURL } data-repo="emergent-company/emergent.memory" data-label="feedback" async></script>
+				<script src={ templ.SafeURL(feedbackOverlayURL + "/emergent-feedback.js") } data-api={ feedbackOverlayURL } data-repo="emergent-company/emergent.memory" data-label="feedback" async></script>
 			}
 		</body>
 	</html>

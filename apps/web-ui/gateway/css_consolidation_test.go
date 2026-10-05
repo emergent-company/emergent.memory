@@ -62,8 +62,8 @@ func TestPageHeadFeedbackOverlayScript(t *testing.T) {
 	})
 
 	disabled := renderPageShellWithOverlay(t, "", body)
-	if strings.Contains(disabled, "feedback-overlay.js") {
-		t.Error("page head emits feedback-overlay.js when no overlay URL is configured")
+	if strings.Contains(disabled, "emergent-feedback.js") {
+		t.Error("page head emits emergent-feedback.js when no overlay URL is configured")
 	}
 	if strings.Contains(disabled, `data-label="feedback"`) {
 		t.Error(`page head emits data-label="feedback" when no overlay URL is configured`)
@@ -72,7 +72,7 @@ func TestPageHeadFeedbackOverlayScript(t *testing.T) {
 	const overlayURL = "https://feedback.emergent-company.ai"
 	enabled := renderPageShellWithOverlay(t, overlayURL, body)
 	for _, want := range []string{
-		`src="https://feedback.emergent-company.ai/feedback-overlay.js"`,
+		`src="https://feedback.emergent-company.ai/emergent-feedback.js"`,
 		`data-api="https://feedback.emergent-company.ai"`,
 		`data-repo="emergent-company/emergent.memory"`,
 		`data-label="feedback"`,

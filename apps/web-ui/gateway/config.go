@@ -115,8 +115,8 @@ type Config struct {
 	SentryReplaySessionSampleRate float64
 	SentryReplayOnErrorSampleRate float64
 
-	// FeedbackOverlayURL is the base URL of the feedback-overlay service
-	// (serves the client bundle at /feedback-overlay.js and the API). Empty
+	// FeedbackOverlayURL is the base URL of the emergent.feedback service
+	// (serves the client bundle at /emergent-feedback.js and the API). Empty
 	// disables the overlay entirely. Point it at the deployed overlay only in
 	// environments where element-level feedback is wanted.
 	FeedbackOverlayURL string
