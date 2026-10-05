@@ -10,7 +10,15 @@ import {
   LIVE_PROVIDER_BASE_URL,
 } from './helpers/bootstrap';
 import { STORAGE_STATE } from './constants/storage';
-import { importGitHubBlueprint } from './helpers/blueprints';
+import {
+  importGitHubBlueprint,
+  PERSONAL_MEMORY_BLUEPRINT_URL,
+  PERSONAL_MEMORY_BLUEPRINT_REF,
+} from './helpers/blueprints';
+
+// The GitHub import can take longer than a default test timeout (the backend
+// allows the archive fetch alone up to 60s); give setup a matching budget.
+setup.setTimeout(180_000);
 
 // Stable tenant identity — reused across runs so the org/project are created
 // once, not re-created (and deleted) every run. Force a clean slate by running
@@ -21,7 +29,6 @@ const PROJECT_NAME = 'E2E Main Project';
 // schema object-type detail / blueprint detail are testable. The pack is no
 // longer bundled with the binary — it is imported from a public GitHub repo.
 const SCHEMA_PACK = 'personal-memory';
-const GITHUB_BLUEPRINT_URL = 'https://github.com/mkucharz/personal-memory-blueprint';
 
 interface OrgRef {
   id: string;
@@ -85,7 +92,9 @@ setup('authenticate and reuse-or-create tenant', async ({ page }) => {
     await page.request.get('/api/blueprints/installed')
   ).json()) as Array<{ blueprintId: string; name: string }>;
   if (!(installed ?? []).some((b) => b.name === SCHEMA_PACK)) {
-    await importGitHubBlueprint(page, GITHUB_BLUEPRINT_URL);
+    await importGitHubBlueprint(page, PERSONAL_MEMORY_BLUEPRINT_URL, {
+      ref: PERSONAL_MEMORY_BLUEPRINT_REF,
+    });
   }
 
   writeBootstrap({ orgId, projectId, orgName: ORG_NAME, projectName: PROJECT_NAME });

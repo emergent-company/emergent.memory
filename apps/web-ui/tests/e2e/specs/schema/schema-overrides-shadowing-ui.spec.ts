@@ -11,11 +11,12 @@ import { expectAppPage } from '../../helpers/page';
 // duplicate (shadowed) row for the same type name because the compiled-types
 // merge keeps both the losing blueprint entry and the winning override entry.
 //
-// The seeded `personal-memory` bundled pack defines `Person`, so that is the
-// type under test. The spec self-restores the shared dev tenant afterwards.
+// The seeded `personal-memory` pack (imported from the external GitHub repo in
+// setup) defines `Person`, so that is the type under test. The spec
+// self-restores the shared dev tenant afterwards.
 
 const TYPE = 'Person';
-const BLUEPRINT = 'personal-memory'; // seeded bundled pack that defines Person
+const BLUEPRINT = 'personal-memory'; // seeded pack (GitHub-imported) that defines Person
 const OVERRIDE_PACK = 'project-schema-overrides';
 const OBJECT_TYPE_LINK = `a[href="/schema/object-types/${TYPE}"]`;
 

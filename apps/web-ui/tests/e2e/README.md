@@ -227,8 +227,9 @@ Three limitations worth knowing before extending these:
 
 Scenarios: one full journey on a fresh scratch project —
 provider add via the settings UI (live-validated by the memory backend, so a
-real key is needed), agent with an explicit model, bundled `personal-memory`
-blueprint install, blueprint types in the fresh project, Person object, then a
+real key is needed), agent with an explicit model, `personal-memory` blueprint
+imported from the public GitHub repo `mkucharz/personal-memory-blueprint` (pinned
+to the `v3.0.0` tag), blueprint types in the fresh project, Person object, then a
 real chat turn about the object (asserted reply text) plus session-rail
 persistence. Sequential (`workers: 1`), isolated from the parallel chromium and
 serial mutations projects, and env-gated: without `E2E_SCENARIO_LLM_API_KEY`

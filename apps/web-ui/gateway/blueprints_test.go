@@ -79,6 +79,9 @@ func TestListEmbeddedBlueprints(t *testing.T) {
 		}
 		names[b.Name] = true
 	}
+	if names["personal-memory"] {
+		t.Fatalf("personal-memory must no longer be bundled, got: %+v", out)
+	}
 	if !names["agent-notes"] {
 		t.Fatalf("missing embedded packs, got: %+v", out)
 	}

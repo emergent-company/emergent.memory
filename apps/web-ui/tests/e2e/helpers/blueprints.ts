@@ -1,5 +1,15 @@
 import { Page } from '@playwright/test';
 
+// External public repo that now ships the personal-memory pack. Pin the ref so
+// the e2e fixture cannot silently change with a future push to the repo's HEAD.
+export const PERSONAL_MEMORY_BLUEPRINT_URL =
+  'https://github.com/mkucharz/personal-memory-blueprint';
+export const PERSONAL_MEMORY_BLUEPRINT_REF = 'v3.0.0';
+
+// The import backend allows the archive fetch alone up to 60s; give the
+// post-submit wait a budget consistent with that (button/form waits stay at 10s).
+const IMPORT_TIMEOUT_MS = 90_000;
+
 /**
  * UI-install a blueprint from a GitHub repository URL via the "Import from
  * GitHub" modal on /blueprints. Mirrors installBlueprint's PRG landing:
@@ -45,7 +55,7 @@ export async function importGitHubBlueprint(
     (u.pathname === '/blueprints' && u.searchParams.get('installed') === '1');
 
   try {
-    await page.waitForURL(success, { timeout: 10_000 });
+    await page.waitForURL(success, { timeout: IMPORT_TIMEOUT_MS });
   } catch (err) {
     // Any other landing (?err= flash, error toast, failed import) is a failure:
     // surface the URL plus whatever error copy the page is showing.

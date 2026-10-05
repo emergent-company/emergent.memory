@@ -3,7 +3,7 @@ import { readBootstrap, createProject } from '../helpers/bootstrap';
 import { expectAppPage } from '../helpers/page';
 import { addProvider, setDefaultEmbeddingModel } from '../helpers/providers';
 import { createAgentViaModal } from '../helpers/agents';
-import { importGitHubBlueprint } from '../helpers/blueprints';
+import { importGitHubBlueprint, PERSONAL_MEMORY_BLUEPRINT_URL, PERSONAL_MEMORY_BLUEPRINT_REF } from '../helpers/blueprints';
 import { createObjectViaForm } from '../helpers/objects';
 import { startObjectChat, sendChatMessage } from '../helpers/chat';
 
@@ -71,9 +71,6 @@ const API_KEY = process.env.E2E_SCENARIO_LLM_API_KEY || '';
 const BASE_URL = process.env.E2E_SCENARIO_LLM_BASE_URL || 'http://litellm:4000/v1';
 const MODEL = process.env.E2E_SCENARIO_LLM_MODEL || 'openai/deepseek-v4-flash';
 const EMBEDDING_MODEL = process.env.E2E_SCENARIO_LLM_EMBEDDING_MODEL || 'openai/gemini-embedding-001';
-
-// External GitHub blueprint repo that now ships the personal-memory pack.
-const GITHUB_BLUEPRINT_URL = 'https://github.com/mkucharz/personal-memory-blueprint';
 
 function requireBootstrap() {
   const bootstrap = readBootstrap();
@@ -165,7 +162,9 @@ test('full journey: provider → agent → blueprint → object → chat', async
     // 4. BLUEPRINT (UI): import the personal-memory pack from its external
     // GitHub repo into THIS project (the fresh scratch project has none of its
     // types yet).
-    await importGitHubBlueprint(page, GITHUB_BLUEPRINT_URL);
+    await importGitHubBlueprint(page, PERSONAL_MEMORY_BLUEPRINT_URL, {
+      ref: PERSONAL_MEMORY_BLUEPRINT_REF,
+    });
 
     // 5. VERIFY: compiled types come from applied blueprints and are
     // project-scoped — the Person type must now be offered in this project's
