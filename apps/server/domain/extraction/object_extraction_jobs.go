@@ -3,13 +3,16 @@ package extraction
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/domain/modelconfig"
 	"github.com/emergent-company/emergent.memory/internal/jobs"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
@@ -51,14 +54,39 @@ func DefaultObjectExtractionConfig() *ObjectExtractionConfig {
 	}
 }
 
-// ObjectExtractionJobsService manages object extraction jobs
-type ObjectExtractionJobsService struct {
-	db     bun.IDB
-	log    *slog.Logger
-	config *ObjectExtractionConfig
+// GenerativeModelResolver resolves a project's effective generative model.
+// Implemented by *modelconfig.Service. It is an optional seam on the jobs
+// service: when nil, job creation is not gated (fail-open) so callers and tests
+// that construct the service without a resolver keep working unchanged.
+type GenerativeModelResolver interface {
+	ResolveGenerativeModel(ctx context.Context, projectID uuid.UUID) (string, modelconfig.ModelSource, error)
 }
 
-// NewObjectExtractionJobsService creates a new object extraction jobs service
+// noGenerativeModelMessage is the user-facing reason surfaced by callers (the
+// admin API's 409 no_generative_model body). It is intentionally sentence-cased;
+// the ErrNoGenerativeModel sentinel carries its own lower-case, punctuation-free
+// text so staticcheck ST1005 stays clean.
+const noGenerativeModelMessage = "No generative model is configured for this project. Add a provider and set a default model before creating extraction jobs."
+
+// ErrNoGenerativeModel is returned by CreateJob when the addressed project has
+// no resolvable generative model. The gate lives at the job-creation chokepoint
+// so every creation path (admin API, MCP queue-reextraction, document
+// auto-extract) is covered. Callers map it to their own surface: the admin API
+// returns 409 no_generative_model; MCP returns a tool error; the document
+// auto-extract path logs and skips without failing the upload.
+var ErrNoGenerativeModel = errors.New("no generative model is configured for this project")
+
+// ObjectExtractionJobsService manages object extraction jobs
+type ObjectExtractionJobsService struct {
+	db            bun.IDB
+	log           *slog.Logger
+	config        *ObjectExtractionConfig
+	modelResolver GenerativeModelResolver
+}
+
+// NewObjectExtractionJobsService creates a new object extraction jobs service.
+// Job creation is not gated unless a GenerativeModelResolver is attached with
+// WithGenerativeModelResolver.
 func NewObjectExtractionJobsService(db bun.IDB, log *slog.Logger, config *ObjectExtractionConfig) *ObjectExtractionJobsService {
 	if config == nil {
 		config = DefaultObjectExtractionConfig()
@@ -68,6 +96,37 @@ func NewObjectExtractionJobsService(db bun.IDB, log *slog.Logger, config *Object
 		log:    log.With(logger.Scope("object-extraction-jobs")),
 		config: config,
 	}
+}
+
+// WithGenerativeModelResolver attaches the resolver used to reject job creation
+// when the project has no effective generative model (issue #1555). Passing nil
+// disables the gate (fail-open).
+func (s *ObjectExtractionJobsService) WithGenerativeModelResolver(resolver GenerativeModelResolver) *ObjectExtractionJobsService {
+	s.modelResolver = resolver
+	return s
+}
+
+// ensureGenerativeModel is the job-creation chokepoint gate. It fails open when
+// no resolver is wired, when the project ID is not a UUID, or when resolution
+// itself errors (a transient model-config outage must not disable extraction) —
+// matching the gateway's extractionModelMissing convention (PR #1522). Only a
+// definitive "no model resolves" (empty model name) is rejected.
+func (s *ObjectExtractionJobsService) ensureGenerativeModel(ctx context.Context, projectID string) error {
+	if s.modelResolver == nil {
+		return nil
+	}
+	id, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil
+	}
+	model, _, err := s.modelResolver.ResolveGenerativeModel(ctx, id)
+	if err != nil {
+		return nil
+	}
+	if model == "" {
+		return ErrNoGenerativeModel
+	}
+	return nil
 }
 
 // DB returns the underlying database handle. The admin handler uses it to
@@ -90,8 +149,18 @@ type CreateObjectExtractionJobOptions struct {
 	ReprocessingOf   *string // ID of job being reprocessed
 }
 
-// CreateJob creates a new object extraction job
+// CreateJob creates a new object extraction job.
+//
+// This is the single chokepoint for every extraction-job creation path (admin
+// API, MCP queue-reextraction, document auto-extract). Before inserting, it
+// rejects the request with ErrNoGenerativeModel when the project has no
+// resolvable generative model, so a doomed job is never enqueued only to fail
+// at run time (issue #1555). With no resolver attached the gate is a no-op.
 func (s *ObjectExtractionJobsService) CreateJob(ctx context.Context, opts CreateObjectExtractionJobOptions) (*ObjectExtractionJob, error) {
+	if err := s.ensureGenerativeModel(ctx, opts.ProjectID); err != nil {
+		return nil, err
+	}
+
 	now := time.Now().UTC()
 
 	// Defaults

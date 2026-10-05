@@ -113,6 +113,23 @@ func configureProjectModel(t *testing.T, projectID string, orgIDs ...string) {
 	}
 }
 
+// ensureGenerativeModelConfigured sets a structured "provider/model" generative
+// model on the project so extraction-job creation passes the server-side model
+// gate (issue #1555). Uses the env-configured provider/model when present,
+// otherwise a deterministic placeholder: the gate only checks that a model
+// resolves via model config, it does not call the provider. Tests that actually
+// exercise the LLM should still use configureProjectModel + skipIfNoLLMProvider.
+func ensureGenerativeModelConfigured(t *testing.T, projectID string) {
+	t.Helper()
+	provider, _, model := framework.ProviderFromEnv()
+	if provider == "" || model == "" {
+		provider, model = "e2e", "placeholder-generative-model"
+	}
+	cfg, _ := json.Marshal(map[string]any{"generativeModel": provider + "/" + model})
+	resp := doAPI(t, "PUT", "/api/v1/projects/"+projectID+"/model-config", e2eTestToken(), projectID, cfg)
+	mustStatus(t, resp, http.StatusOK)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // HTTP helpers
 // ─────────────────────────────────────────────────────────────────────────────

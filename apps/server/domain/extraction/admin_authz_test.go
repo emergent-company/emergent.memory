@@ -26,8 +26,16 @@ const (
 
 // newAdminEcho wires a minimal Echo instance with only the /api/admin/extraction-jobs
 // routes and the real auth middleware + admin handler, so the authorization
-// posture of each endpoint can be exercised over HTTP.
+// posture of each endpoint can be exercised over HTTP. The generative-model
+// guard is satisfied by a permissive stub resolver (authorization is the focus).
 func newAdminEcho(t *testing.T, testDB *testutil.TestDB) *testutil.HTTPClient {
+	t.Helper()
+	return newAdminEchoWithResolver(t, testDB, stubGenerativeResolver{model: "test/model"})
+}
+
+// newAdminEchoWithResolver is newAdminEcho with an explicit generative-model
+// resolver, so job-creation model-guard behavior can be exercised over HTTP.
+func newAdminEchoWithResolver(t *testing.T, testDB *testutil.TestDB, resolver extraction.GenerativeModelResolver) *testutil.HTTPClient {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	dbc := testDB.GetDB()
@@ -35,7 +43,8 @@ func newAdminEcho(t *testing.T, testDB *testutil.TestDB) *testutil.HTTPClient {
 	userSvc := auth.NewUserProfileService(dbc, log)
 	am := auth.NewMiddleware(auth.MiddlewareParams{DB: dbc, Cfg: testDB.Config, Log: log, UserSvc: userSvc})
 
-	jobsSvc := extraction.NewObjectExtractionJobsService(dbc, log, extraction.DefaultObjectExtractionConfig())
+	jobsSvc := extraction.NewObjectExtractionJobsService(dbc, log, extraction.DefaultObjectExtractionConfig()).
+		WithGenerativeModelResolver(resolver)
 	handler := extraction.NewAdminHandler(jobsSvc)
 
 	e := echo.New()

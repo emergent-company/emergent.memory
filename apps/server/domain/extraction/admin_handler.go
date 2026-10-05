@@ -1,10 +1,12 @@
 package extraction
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
@@ -46,6 +48,12 @@ func (h *AdminHandler) CreateJob(c echo.Context) error {
 	// Validate project ID matches header if both are provided
 	if user.ProjectID != "" && dto.ProjectID != nil && *dto.ProjectID != "" && *dto.ProjectID != user.ProjectID {
 		return apperror.NewBadRequest("project_id mismatch between body and X-Project-ID header")
+	}
+
+	// Preserve the explicit 400 for a malformed project ID (previously enforced
+	// by the handler-level model guard).
+	if _, err := uuid.Parse(projectID); err != nil {
+		return apperror.NewBadRequest("project_id must be a valid UUID")
 	}
 
 	// Enforce membership on the addressed project (issue #959). The project is
@@ -101,6 +109,11 @@ func (h *AdminHandler) CreateJob(c echo.Context) error {
 
 	job, err := h.jobsService.CreateJob(c.Request().Context(), opts)
 	if err != nil {
+		// The chokepoint gate rejects with ErrNoGenerativeModel; surface it as
+		// the gateway contract's 409 no_generative_model rather than a 500.
+		if errors.Is(err, ErrNoGenerativeModel) {
+			return apperror.New(http.StatusConflict, "no_generative_model", noGenerativeModelMessage)
+		}
 		return apperror.NewInternal("failed to create extraction job", err)
 	}
 

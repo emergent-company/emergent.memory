@@ -383,6 +383,10 @@ func TestExtraction_ListReturnsPaginatedResults(t *testing.T) {
 	skipIfServerDown(t, rl)
 
 	projectID, _ := setupProjectLogged(t, rl)
+	// Job creation is gated on a resolvable generative model (issue #1555).
+	// This test only lists jobs, so seed a placeholder model rather than
+	// requiring a real LLM provider.
+	ensureGenerativeModelConfigured(t, projectID)
 
 	// Create 3 jobs
 	for i := 0; i < 3; i++ {
@@ -430,6 +434,8 @@ func TestExtraction_CancelCancelsPendingJob(t *testing.T) {
 	skipIfServerDown(t, rl)
 
 	projectID, _ := setupProjectLogged(t, rl)
+	// Job creation is gated on a resolvable generative model (issue #1555).
+	ensureGenerativeModelConfigured(t, projectID)
 
 	resp := doAPILogged(t, rl, "POST", "/api/admin/extraction-jobs", e2eTestToken(), projectID,
 		jsonBody(map[string]any{
@@ -470,6 +476,8 @@ func TestExtraction_GetStatisticsReturnsAggregates(t *testing.T) {
 	skipIfServerDown(t, rl)
 
 	projectID, _ := setupProjectLogged(t, rl)
+	// Job creation is gated on a resolvable generative model (issue #1555).
+	ensureGenerativeModelConfigured(t, projectID)
 
 	resp := doAPILogged(t, rl, "POST", "/api/admin/extraction-jobs", e2eTestToken(), projectID,
 		jsonBody(map[string]any{

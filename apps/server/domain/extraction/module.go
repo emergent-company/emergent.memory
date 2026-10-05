@@ -248,7 +248,9 @@ func provideCachedEmbeddingService(embeds *embeddings.Service, db bun.IDB, appCf
 	return svc
 }
 
-// provideAdminHandler creates the extraction jobs admin handler
+// provideAdminHandler creates the extraction jobs admin handler. The 409
+// no_generative_model contract is enforced by the shared jobs service's
+// job-creation chokepoint (issue #1555).
 func provideAdminHandler(jobsService *ObjectExtractionJobsService) *AdminHandler {
 	return NewAdminHandler(jobsService)
 }
@@ -357,9 +359,13 @@ func provideDocumentParsingJobsService(db bun.IDB, log *slog.Logger, cfg *Extrac
 	return NewDocumentParsingJobsService(db, log, cfg.DocumentParsing)
 }
 
-// provideObjectExtractionJobsService creates object extraction jobs service with fx
-func provideObjectExtractionJobsService(db bun.IDB, log *slog.Logger, cfg *ExtractionConfig) *ObjectExtractionJobsService {
-	return NewObjectExtractionJobsService(db, log, cfg.ObjectExtraction)
+// provideObjectExtractionJobsService creates object extraction jobs service with fx.
+// The modelconfig service supplies the generative-model gate at the job-creation
+// chokepoint: CreateJob rejects (ErrNoGenerativeModel) when the project has no
+// resolvable generative model, covering admin API, MCP queue-reextraction and
+// document auto-extract paths (issue #1555).
+func provideObjectExtractionJobsService(db bun.IDB, log *slog.Logger, cfg *ExtractionConfig, modelCfg *modelconfig.Service) *ObjectExtractionJobsService {
+	return NewObjectExtractionJobsService(db, log, cfg.ObjectExtraction).WithGenerativeModelResolver(modelCfg)
 }
 
 // provideMemorySchemaProvider creates template pack schema provider with fx

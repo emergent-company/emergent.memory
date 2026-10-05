@@ -605,7 +605,10 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	blueprintsHandler := blueprints.NewHandler(blueprintsSvc)
 	blueprints.RegisterRoutes(e, blueprintsHandler, authMiddleware)
 
-	// Register extraction admin routes
+	// Register extraction admin routes. The in-process test server leaves the
+	// generative-model gate detached (nil resolver => fail-open) so unrelated
+	// full-server tests keep creating jobs without seeding project model config;
+	// the chokepoint gate itself is covered by domain/extraction DB tests.
 	extractionJobsSvc := extraction.NewObjectExtractionJobsService(db, log, extraction.DefaultObjectExtractionConfig())
 	extractionAdminHandler := extraction.NewAdminHandler(extractionJobsSvc)
 	extraction.RegisterAdminRoutes(e, extractionAdminHandler, authMiddleware)
