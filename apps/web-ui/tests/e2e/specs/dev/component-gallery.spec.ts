@@ -75,6 +75,46 @@ test('opens an interactive overlay preview in a script-enabled sandbox', async (
   expect(cookieRead).toBe('');
 });
 
+test('opens a component standalone (chromeless) with the feedback overlay', async ({ page }) => {
+  const response = await page.goto('/dev/components/preview/panel-card?standalone=1');
+  expect(response?.status(), 'standalone preview should serve').toBe(200);
+
+  // The report document is chromeless: no app shell, just the slim header and the
+  // fixture canvas. It must not leak the app's sidebar/topbar into the tab.
+  await expect(page.getByTestId('preview-canvas')).toBeVisible();
+  await expect(page.locator('[data-testid="sidebar"], [data-testid="topbar"]')).toHaveCount(0);
+
+  // The header carries exactly one h1 (the component name) and a back link to the
+  // component's anchor on the gallery page.
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('PanelCard');
+  await expect(page.getByRole('link', { name: /back to gallery/i })).toHaveAttribute(
+    'href',
+    '/dev/components#component-panel-card'
+  );
+
+  // The feedback overlay is loaded exactly once, with the configured base URL.
+  const overlay = page.locator('script[src$="/emergent-feedback.js"]');
+  await expect(overlay).toHaveCount(1);
+  await expect(overlay).toHaveAttribute('data-api', 'http://localhost:5301');
+  await expect(overlay).toHaveAttribute('data-repo', 'emergent-company/emergent.memory');
+});
+
+test('card "Open in new tab" opens the standalone report', async ({ page, context }) => {
+  const response = await page.goto('/dev/components');
+  expect(response?.status(), 'gallery route should serve').toBe(200);
+
+  const link = page.getByTestId('gallery-open-panel-card');
+  await expect(link).toHaveAttribute('target', '_blank');
+  await expect(link).toHaveAttribute('rel', 'noopener');
+
+  const [popup] = await Promise.all([context.waitForEvent('page'), link.click()]);
+  await popup.waitForLoadState();
+  const url = new URL(popup.url());
+  expect(url.pathname).toBe('/dev/components/preview/panel-card');
+  expect(url.searchParams.get('standalone')).toBe('1');
+  await expect(popup.getByTestId('preview-canvas')).toBeVisible();
+});
+
 test('surfaces adoption gaps with per-file counts and findings', async ({ page }) => {
   const response = await page.goto('/dev/components');
   expect(response?.status(), 'gallery route should serve (MEMORY_COMPONENT_GALLERY=on)').toBe(200);

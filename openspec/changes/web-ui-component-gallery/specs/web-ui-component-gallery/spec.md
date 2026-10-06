@@ -85,6 +85,25 @@ The gallery SHALL render each catalog entry against sample data in an isolated p
 - **WHEN** any previewed component contains a form or an htmx post control, render-only or interactive
 - **THEN** the preview's sandbox denies it a same-origin cookie and never grants `allow-forms`, so the session cookie cannot authorise a mutation and any submission fails harmlessly
 
+### Requirement: A component preview can open standalone for element-level feedback
+
+The gallery SHALL offer, for each catalog entry, an "open in new tab" control that opens that entry's preview as a top-level document. The standalone document SHALL render the same fixture as the embedded preview, preserving the entry's default story variant, in a roomy full-width canvas, and SHALL add only a slim header — the component name, its layer, its source file, and a link back to the component's anchor on the gallery page. When a feedback-overlay URL is configured, the standalone document SHALL load the feedback overlay with the same tag and attributes as the app shell, and the header SHALL also carry one short line explaining that the feedback button reports a specific element; when no URL is configured, that line SHALL be omitted along with the overlay. The embedded preview document SHALL NOT load the feedback overlay, and a render-only embedded preview SHALL still load no scripts.
+
+#### Scenario: Standalone preview is reportable
+
+- **WHEN** a component's "open in new tab" control is followed and a feedback-overlay URL is configured
+- **THEN** the top-level document loads the feedback overlay and lets a reviewer point at an individual element
+
+#### Scenario: Standalone preserves the default variant
+
+- **WHEN** a component's embedded preview selects a story variant
+- **THEN** its standalone document opens that same variant
+
+#### Scenario: Embedded preview never loads the overlay
+
+- **WHEN** a render-only component's embedded preview is loaded, even with a feedback-overlay URL configured
+- **THEN** the preview document loads no scripts and no feedback overlay
+
 ### Requirement: Gallery is dev-gated
 
 The gallery SHALL only be served when it is explicitly enabled by configuration. When it is disabled, its routes SHALL respond as not found after authentication (an unauthenticated request is redirected to sign-in first, as for any protected route) and the gallery SHALL NOT be linked from the main navigation.

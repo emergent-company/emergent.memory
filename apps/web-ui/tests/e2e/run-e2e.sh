@@ -22,6 +22,7 @@ MEMORY_PROJECT_ID=p1 \
 MEMORY_PORT=8097 \
 AUTH_MODE=dev \
 MEMORY_COMPONENT_GALLERY=on \
+FEEDBACK_OVERLAY_URL=http://localhost:5301 \
 PUBLIC_BASE_URL=http://localhost:8097 \
 SHARE_PUBLIC_BASE_URL=http://localhost:8097 \
 SHARE_COOKIE_SECRET=dev-share-cookie-secret \

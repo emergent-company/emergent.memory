@@ -284,8 +284,8 @@ func TestPreviewVariantChangesOutput(t *testing.T) {
 	if !ok {
 		t.Fatal("status-badge entry not found")
 	}
-	def := renderComp(t, componentPreviewDoc(entry, ""))
-	variant := renderComp(t, componentPreviewDoc(entry, "warning"))
+	def := renderComp(t, componentPreviewDoc(entry, "", false, ""))
+	variant := renderComp(t, componentPreviewDoc(entry, "warning", false, ""))
 	if def == variant {
 		t.Error("variant story did not change the rendered preview")
 	}
@@ -310,7 +310,7 @@ func TestPreviewIsRenderOnlyByDefault(t *testing.T) {
 		t.Fatal("panel-card must stay render-only")
 	}
 
-	doc := renderComp(t, componentPreviewDoc(entry, ""))
+	doc := renderComp(t, componentPreviewDoc(entry, "", false, ""))
 	if strings.Contains(doc, "<script") {
 		t.Errorf("render-only preview must load no scripts:\n%s", doc)
 	}
@@ -344,7 +344,7 @@ func TestInteractivePreviewLoadsScriptsInOrder(t *testing.T) {
 		t.Fatal("secret-reveal-modal must be marked interactive")
 	}
 
-	doc := renderComp(t, componentPreviewDoc(entry, "open"))
+	doc := renderComp(t, componentPreviewDoc(entry, "open", false, ""))
 	if !strings.Contains(doc, "window.htmx") {
 		t.Errorf("interactive preview missing guarded htmx config:\n%s", doc)
 	}
@@ -408,8 +408,8 @@ func TestInteractivePreviewOpenStory(t *testing.T) {
 	if !ok {
 		t.Fatal("secret-reveal-modal entry not found")
 	}
-	openDoc := renderComp(t, componentPreviewDoc(entry, "open"))
-	defDoc := renderComp(t, componentPreviewDoc(entry, ""))
+	openDoc := renderComp(t, componentPreviewDoc(entry, "open", false, ""))
+	defDoc := renderComp(t, componentPreviewDoc(entry, "", false, ""))
 	if !strings.Contains(openDoc, "data-dialog-autoopen") {
 		t.Errorf("open story should mark the dialog for auto-open:\n%s", openDoc)
 	}
@@ -422,6 +422,113 @@ func TestInteractivePreviewOpenStory(t *testing.T) {
 	card := renderComp(t, galleryEntryCard(entry))
 	if !strings.Contains(card, "/dev/components/preview/secret-reveal-modal?variant=open") {
 		t.Errorf("card iframe src should select the open variant, got:\n%s", card)
+	}
+}
+
+// --- standalone report view (open in new tab) ---
+
+// TestStandalonePreviewLoadsFeedbackOverlay pins report mode: the standalone
+// document loads the feedback overlay when configured and links back to the
+// gallery anchor for the component.
+func TestStandalonePreviewLoadsFeedbackOverlay(t *testing.T) {
+	const feedbackURL = "https://feedback.example.test"
+	_, e := newDevGalleryServerWithFeedback(true, feedbackURL)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dev/components/preview/panel-card?standalone=1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("standalone preview = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		feedbackURL + "/emergent-feedback.js",
+		`data-api="` + feedbackURL + `"`,
+		`data-repo="emergent-company/emergent.memory"`,
+		`data-label="feedback"`,
+		`href="/dev/components#component-panel-card"`,
+		`data-testid="preview-canvas"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("standalone preview missing %q", want)
+		}
+	}
+}
+
+// TestStandalonePreviewOmitsOverlayWhenUnset pins the no-overlay config: with no
+// feedback URL, report mode loads no overlay and does not show the hint line that
+// references the (absent) feedback button.
+func TestStandalonePreviewOmitsOverlayWhenUnset(t *testing.T) {
+	_, e := newDevGalleryServerWithFeedback(true, "")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dev/components/preview/panel-card?standalone=1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("standalone preview = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "emergent-feedback.js") {
+		t.Error("standalone preview must not load the feedback overlay when FeedbackOverlayURL is empty")
+	}
+	if strings.Contains(body, "feedback button") {
+		t.Error("standalone preview must not promise a feedback button when no overlay URL is configured")
+	}
+}
+
+// TestStandalonePreviewPreservesVariant pins that report mode keeps the entry's
+// DefaultVariant story and adds standalone=1.
+func TestStandalonePreviewPreservesVariant(t *testing.T) {
+	entry, ok := galleryEntryBySlug("secret-reveal-modal")
+	if !ok {
+		t.Fatal("secret-reveal-modal entry not found")
+	}
+	if got, want := entry.previewStandaloneSrc(), "/dev/components/preview/secret-reveal-modal?standalone=1&variant=open"; got != want {
+		t.Errorf("previewStandaloneSrc() = %q, want %q", got, want)
+	}
+}
+
+// TestEmbeddedPreviewOmitsFeedbackOverlay pins the constraint: even with a
+// feedback URL configured, the embedded (non-standalone) render-only preview
+// document loads no scripts at all.
+func TestEmbeddedPreviewOmitsFeedbackOverlay(t *testing.T) {
+	const feedbackURL = "https://feedback.example.test"
+	_, e := newDevGalleryServerWithFeedback(true, feedbackURL)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dev/components/preview/panel-card", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("embedded preview = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "<script") {
+		t.Errorf("embedded render-only preview must not load any script:\n%s", body)
+	}
+	if strings.Contains(body, "emergent-feedback.js") {
+		t.Error("embedded preview must not load the feedback overlay")
+	}
+}
+
+// TestGalleryCardHasOpenInNewTab pins the affordance: the card body links the
+// standalone document in a new tab, while the iframe src never carries the
+// standalone flag.
+func TestGalleryCardHasOpenInNewTab(t *testing.T) {
+	entry, ok := galleryEntryBySlug("secret-reveal-modal")
+	if !ok {
+		t.Fatal("secret-reveal-modal entry not found")
+	}
+	card := renderComp(t, galleryEntryCard(entry))
+	for _, want := range []string{
+		`data-testid="gallery-open-secret-reveal-modal"`,
+		`target="_blank"`,
+		`rel="noopener"`,
+		`href="/dev/components/preview/secret-reveal-modal?standalone=1&amp;variant=open"`,
+	} {
+		if !strings.Contains(card, want) {
+			t.Errorf("gallery card missing %q, got:\n%s", want, card)
+		}
+	}
+	if strings.Contains(card, `sandbox="allow-same-origin"`) || strings.Contains(card, `sandbox="allow-forms"`) {
+		t.Error("gallery card must never widen the iframe sandbox")
+	}
+	// The iframe embed keeps the plain preview src without the standalone flag.
+	if !strings.Contains(card, `src="/dev/components/preview/secret-reveal-modal?variant=open"`) {
+		t.Errorf("card iframe src should stay the plain preview URL, got:\n%s", card)
 	}
 }
 

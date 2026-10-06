@@ -161,9 +161,32 @@ func (e GalleryEntry) renderFor(variant string) templ.Component {
 // previewSrc is the preview iframe's src: the entry's preview document, with the
 // DefaultVariant story appended as a query param when set.
 func (e GalleryEntry) previewSrc() string {
-	src := "/dev/components/preview/" + e.Slug
+	return e.previewURL(nil)
+}
+
+// previewStandaloneSrc is the "Open in new tab" URL: the same route in report
+// mode (standalone=1), preserving the entry's DefaultVariant so the opened tab
+// shows the same story as the embedded preview.
+func (e GalleryEntry) previewStandaloneSrc() string {
+	return e.previewURL(url.Values{"standalone": {"1"}})
+}
+
+// previewURL builds the preview route URL with the DefaultVariant story plus any
+// extra query values, encoded once so both previewSrc and previewStandaloneSrc
+// share the same shape.
+func (e GalleryEntry) previewURL(extra url.Values) string {
+	q := url.Values{}
 	if e.DefaultVariant != "" {
-		src += "?variant=" + url.QueryEscape(e.DefaultVariant)
+		q.Set("variant", e.DefaultVariant)
+	}
+	for k, vs := range extra {
+		for _, v := range vs {
+			q.Add(k, v)
+		}
+	}
+	src := "/dev/components/preview/" + e.Slug
+	if enc := q.Encode(); enc != "" {
+		src += "?" + enc
 	}
 	return src
 }
@@ -231,7 +254,10 @@ func (s *Server) uiComponentGallery(c echo.Context) error {
 	return nil
 }
 
-// uiComponentPreview serves one component's isolated preview document.
+// uiComponentPreview serves one component's preview document. A `standalone=1`
+// query param switches it to report mode: the top-level document opened by the
+// card's "Open in new tab" control, which loads the feedback overlay. The iframe
+// embed never sets the param, so it stays script-free and chrome-free.
 func (s *Server) uiComponentPreview(c echo.Context) error {
 	if !s.cfg.ComponentGallery {
 		return echo.ErrNotFound
@@ -240,7 +266,8 @@ func (s *Server) uiComponentPreview(c echo.Context) error {
 	if !ok {
 		return echo.ErrNotFound
 	}
-	render.RenderPage(c.Response().Writer, c.Request(), componentPreviewDoc(entry, c.QueryParam("variant")))
+	standalone := c.QueryParam("standalone") == "1"
+	render.RenderPage(c.Response().Writer, c.Request(), componentPreviewDoc(entry, c.QueryParam("variant"), standalone, s.cfg.FeedbackOverlayURL))
 	return nil
 }
 
