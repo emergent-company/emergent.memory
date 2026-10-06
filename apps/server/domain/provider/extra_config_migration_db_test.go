@@ -45,8 +45,21 @@ func TestMigration00218_UpDown(t *testing.T) {
 	}
 
 	mig := migrate.NewMigrator(db, zap.NewNop())
-	if err := mig.Down(ctx); err != nil {
-		t.Fatalf("Down() error = %v", err)
+	// Roll back every migration at or above 00218, not just the single head
+	// migration: later migrations (e.g. 00219, whose Down is a documented
+	// no-op) sit above 00218, so a single Down() would not reach it. Loop on
+	// the recorded version so this stays correct as new migrations land.
+	for {
+		version, err := mig.Version(ctx)
+		if err != nil {
+			t.Fatalf("Version() error = %v", err)
+		}
+		if version < 218 {
+			break
+		}
+		if err := mig.Down(ctx); err != nil {
+			t.Fatalf("Down() error = %v", err)
+		}
 	}
 	if got := extraConfigColumnCount(); got != 0 {
 		t.Fatalf("after Down: extra-config column count = %d, want 0", got)
