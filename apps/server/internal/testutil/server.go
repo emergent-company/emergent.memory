@@ -509,8 +509,10 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 
 	// Register MCP registry routes
 	mcpRegistryRepo := mcpregistry.NewRepository(db)
-	mcpRegistryClient := mcpregistry.NewRegistryClient()
-	mcpRegistrySvc := mcpregistry.NewService(mcpRegistryRepo, mcpSvc, mcpRegistryClient, nil, log)
+	mcpRegistrySvc, err := mcpregistry.NewService(mcpRegistryRepo, mcpSvc, nil, log)
+	if err != nil {
+		panic(err)
+	}
 	mcpRegistryHandler := mcpregistry.NewHandler(mcpRegistrySvc)
 	mcpregistry.RegisterRoutes(e, mcpRegistryHandler, authMiddleware)
 

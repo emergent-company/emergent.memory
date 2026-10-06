@@ -38,6 +38,11 @@ var Module = fx.Module("mcpregistry",
 
 // provideRegistryClient builds the RegistryClient, honouring the optional
 // MCP_REGISTRY_BASE_URL override (empty → official registry).
+//
+// NOTE: this client is currently unused by the browse/install request path,
+// which serves from the embedded curated catalog (catalog.go). It is retained
+// for a possible future opt-in "full registry" mode that would re-point browse
+// at the live upstream.
 func provideRegistryClient(cfg *config.Config) *RegistryClient {
 	if cfg == nil {
 		return NewRegistryClient()
@@ -49,17 +54,16 @@ func provideRegistryClient(cfg *config.Config) *RegistryClient {
 type serviceParams struct {
 	fx.In
 
-	Repo           *Repository
-	MCPService     *mcp.Service
-	RegistryClient *RegistryClient
-	Cfg            *config.Config
-	Log            *slog.Logger
+	Repo       *Repository
+	MCPService *mcp.Service
+	Cfg        *config.Config
+	Log        *slog.Logger
 }
 
 // provideService creates a Service from fx dependencies.
 // The encryptor is optional: when LLM_ENCRYPTION_KEY is unset, secret MCP
 // env/header values cannot be stored or read (see Service).
-func provideService(p serviceParams) *Service {
+func provideService(p serviceParams) (*Service, error) {
 	var enc *crypto.Encryptor
 	if p.Cfg != nil && p.Cfg.LLMProvider.IsEncryptionConfigured() {
 		e, err := crypto.NewEncryptor(p.Cfg.LLMProvider.EncryptionKey)
@@ -69,7 +73,7 @@ func provideService(p serviceParams) *Service {
 			enc = e
 		}
 	}
-	return NewService(p.Repo, p.MCPService, p.RegistryClient, enc, p.Log)
+	return NewService(p.Repo, p.MCPService, enc, p.Log)
 }
 
 // registerMCPRegistryToolHandler wires the MCP registry tool handler into

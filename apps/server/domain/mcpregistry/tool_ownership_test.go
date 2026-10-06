@@ -177,9 +177,10 @@ func (s *MCPRegistryToolOwnershipSuite) TestSyncServerToolsForeignServerRefused(
 	s.seedToolOnServer(s.serverBID, "victim-1")
 	s.seedToolOnServer(s.serverBID, "victim-2")
 
-	svc := mcpregistry.NewService(mcpregistry.NewRepository(s.DB()), nil, nil, nil, slog.Default())
+	svc, err := mcpregistry.NewService(mcpregistry.NewRepository(s.DB()), nil, nil, slog.Default())
+	s.Require().NoError(err)
 
-	err := svc.SyncServerTools(s.Ctx, s.ProjectID, s.serverBID, []mcpregistry.DiscoveredTool{{Name: "attacker-tool"}})
+	err = svc.SyncServerTools(s.Ctx, s.ProjectID, s.serverBID, []mcpregistry.DiscoveredTool{{Name: "attacker-tool"}})
 
 	s.Require().Error(err, "foreign server sync must be refused")
 	s.Require().True(errors.Is(err, mcpregistry.ErrServerNotFound),
@@ -195,9 +196,10 @@ func (s *MCPRegistryToolOwnershipSuite) TestSyncServerToolsForeignServerRefused(
 func (s *MCPRegistryToolOwnershipSuite) TestSyncServerToolsOwnProjectOK() {
 	serverAID, _ := s.seedServerAndTool(s.ProjectID, "own-tool")
 
-	svc := mcpregistry.NewService(mcpregistry.NewRepository(s.DB()), nil, nil, nil, slog.Default())
+	svc, err := mcpregistry.NewService(mcpregistry.NewRepository(s.DB()), nil, nil, slog.Default())
+	s.Require().NoError(err)
 
-	err := svc.SyncServerTools(s.Ctx, s.ProjectID, serverAID, []mcpregistry.DiscoveredTool{
+	err = svc.SyncServerTools(s.Ctx, s.ProjectID, serverAID, []mcpregistry.DiscoveredTool{
 		{Name: "own-tool"},
 		{Name: "new-tool"},
 	})

@@ -1,0 +1,42 @@
+# Curated MCP registry catalog — source list
+#
+# One GitHub MCP-registry slug per line. Each slug resolves to
+# https://github.com/mcp/<slug> and is fetched via `?format=json`, from which
+# `payload.mcpDetailsRoute.server_data.raw_data.server` is extracted (with its
+# `_meta` key dropped) to build the embedded catalog.
+#
+# To add or remove a server, edit this file and run the refresh tool:
+#
+#   cd apps/server
+#   go run ./cmd/refresh-mcp-catalog
+#
+# The regenerated `domain/mcpregistry/catalog/servers.json` and this file go
+# through normal PR review before merging.
+github/github-mcp-server
+microsoft/playwright-mcp
+ChromeDevTools/chrome-devtools-mcp
+upstash/context7
+com.supabase/mcp
+com.stripe/mcp
+com.figma.mcp/mcp
+makenotion/notion-mcp-server
+getsentry/sentry-mcp
+firecrawl/firecrawl-mcp-server
+tavily-ai/tavily-mcp
+microsoftdocs/mcp
+com.microsoft/azure
+microsoft/azure-devops-mcp
+hashicorp/terraform-mcp-server
+mongodb-js/mongodb-mcp-server
+com.atlassian/atlassian-mcp-server
+neondatabase/mcp-server-neon
+ClickHouse/mcp-clickhouse
+elastic/mcp-server-elasticsearch
+chroma-core/chroma-mcp
+vercel/next-devtools-mcp
+mapbox/mcp-server
+huggingface/hf-mcp-server
+com.postman/postman-mcp-server
+oraios/serena
+wonderwhy-er/desktop-commander
+netdata/mcp-server

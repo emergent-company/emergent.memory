@@ -67,7 +67,9 @@ func (s *MCPRegistryToolSettingsResolutionSuite) seedOrgToolSetting(orgID, toolN
 }
 
 func (s *MCPRegistryToolSettingsResolutionSuite) svc() *mcpregistry.Service {
-	return mcpregistry.NewService(mcpregistry.NewRepository(s.DB()), nil, nil, nil, slog.Default())
+	svc, err := mcpregistry.NewService(mcpregistry.NewRepository(s.DB()), nil, nil, slog.Default())
+	s.Require().NoError(err)
+	return svc
 }
 
 func (s *MCPRegistryToolSettingsResolutionSuite) TestOrgDefaultUsedWhenNoProjectOverride() {

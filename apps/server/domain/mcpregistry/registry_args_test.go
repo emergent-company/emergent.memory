@@ -2,6 +2,7 @@ package mcpregistry
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -125,12 +126,10 @@ func TestRegistryServerToDTOArgsAndHeaders(t *testing.T) {
 }
 
 func TestGetRegistryServerHandlerNotFound(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "not found", http.StatusNotFound)
-	}))
-	defer ts.Close()
-
-	svc := &Service{registryClient: NewRegistryClientWithBaseURL(ts.URL), registryCache: newRegistryCache(0, nil)}
+	svc, err := NewService(nil, nil, nil, slog.Default())
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
 	h := NewHandler(svc)
 
 	e := echo.New()
@@ -140,7 +139,7 @@ func TestGetRegistryServerHandlerNotFound(t *testing.T) {
 	c.SetParamNames("name")
 	c.SetParamValues("io.github.github/does-not-exist")
 
-	err := h.GetRegistryServer(c)
+	err = h.GetRegistryServer(c)
 	var appErr *apperror.Error
 	if !errors.As(err, &appErr) {
 		t.Fatalf("expected *apperror.Error, got %T: %v", err, err)
@@ -151,37 +150,27 @@ func TestGetRegistryServerHandlerNotFound(t *testing.T) {
 }
 
 // TestGetRegistryServerRouteSlashName exercises Echo's actual routing with an
-// encoded %2F and asserts the slash-named entry is forwarded upstream as a
-// single-escaped path (not double-escaped %252F). The e2e registry stub
-// unescapes in handleDetail, so it would not catch a double-encode; asserting
-// the outgoing upstream path here does.
+// encoded %2F and asserts the slash-named entry resolves from the embedded
+// catalog (a single path-unescape in the handler, no upstream double-escape —
+// there is no upstream anymore).
 func TestGetRegistryServerRouteSlashName(t *testing.T) {
-	var upstreamPath string
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		upstreamPath = r.URL.EscapedPath()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"server":{"name":"io.github.x/y","description":"d","version":"1.0.0"}}`))
-	}))
-	defer upstream.Close()
-
-	svc := &Service{registryClient: NewRegistryClientWithBaseURL(upstream.URL), registryCache: newRegistryCache(0, nil)}
+	svc, err := NewService(nil, nil, nil, slog.Default())
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
 	h := NewHandler(svc)
 
 	e := echo.New()
 	e.GET("/api/admin/mcp-registry/servers/:name", h.GetRegistryServer)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/mcp-registry/servers/io.github.x%2Fy", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/mcp-registry/servers/io.github.github%2Fgithub-mcp-server", nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	const want = "/v0.1/servers/io.github.x%2Fy/versions/latest"
-	if upstreamPath != want {
-		t.Errorf("upstream path = %q, want %q (single-escaped)", upstreamPath, want)
-	}
-	if strings.Contains(upstreamPath, "%252F") {
-		t.Errorf("upstream path = %q, double-escaped", upstreamPath)
+	if !strings.Contains(rec.Body.String(), "github-mcp-server") {
+		t.Errorf("body should contain the resolved catalog entry name: %s", rec.Body.String())
 	}
 }

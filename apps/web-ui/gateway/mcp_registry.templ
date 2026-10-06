@@ -8,7 +8,7 @@ import (
 
 // --- MCP Registry browse/install page (/settings/mcp-registry) ---
 //
-// One crumb-framed list page: a search box plus a list of matching registry
+// One crumb-framed list page: a search box plus a list of matching catalog
 // entries. An entry with a remote transport (http/sse) is installable into the
 // project via POST /settings/mcp-registry/install (PRG). A stdio-only entry
 // (packages, no remotes) renders connector guidance instead of an install
@@ -18,7 +18,7 @@ import (
 templ MCPServerRegistryPage(data mcpRegistryPageData) {
 	@layout.Container(layout.ContainerLG, templ.Attributes{"data-mcp-registry-root": ""}) {
 		{{ crumbs := crumbsActive(nav.Crumbs("Settings", "/settings", "MCP Servers", mcpServerSettingsBase, "Registry")) }}
-		@detailHeader(crumbs, "", "MCP Registry", "Browse the official MCP registry through Memory and install remote servers into this project.", detailHeaderOpts{Margin: "mb-6"}) {
+		@detailHeader(crumbs, "", "MCP Registry", "A curated set of recommended MCP servers, vetted by Memory. Install remote servers into this project.", detailHeaderOpts{Margin: "mb-6"}) {
 			@countBadge(len(data.Servers), "result", "lucide--globe")
 		}
 		@mcpRegistrySearchBox(data.Query)
@@ -41,7 +41,7 @@ templ MCPServerRegistryPage(data mcpRegistryPageData) {
 // mcpRegistrySearchBox renders the search form (GET /settings/mcp-registry?q=).
 templ mcpRegistrySearchBox(query string) {
 	<form method="get" action={ templ.URL(mcpRegistrySettingsBase) } class="mb-4 flex items-center gap-2">
-		<input type="search" name="q" value={ query } placeholder="Search the registry — e.g. chrome-devtools, github" class="input w-full" autocomplete="off" data-testid="mcp-registry-search"/>
+		<input type="search" name="q" value={ query } placeholder="Search recommended servers — e.g. github, playwright, sentry" class="input w-full" autocomplete="off" data-testid="mcp-registry-search"/>
 		@ui.Button(ui.ButtonProps{
 			Type:    ui.ButtonTypeSubmit,
 			Variant: ui.ButtonPrimary,
@@ -60,8 +60,8 @@ templ mcpRegistryEmptyState(query string) {
 	if query == "" {
 		@ui.EmptyState(ui.EmptyStateProps{
 			Icon:        "lucide--globe",
-			Title:       "Search the MCP registry",
-			Description: "Find MCP servers by name or description — e.g. github, chrome-devtools, or sentry.",
+			Title:       "Search recommended servers",
+			Description: "Find MCP servers by name or description — e.g. github, playwright, or sentry.",
 			Bordered:    true,
 			Class:       "py-12",
 		})
@@ -69,7 +69,7 @@ templ mcpRegistryEmptyState(query string) {
 		@ui.EmptyState(ui.EmptyStateProps{
 			Icon:        "lucide--search-x",
 			Title:       "No matching servers",
-			Description: "No registry entries matched \"" + query + "\". Try a different search.",
+			Description: "No recommended servers matched \"" + query + "\". Try a different search.",
 			Bordered:    true,
 			Class:       "py-12",
 		})

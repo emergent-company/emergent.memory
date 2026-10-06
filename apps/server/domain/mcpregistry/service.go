@@ -17,16 +17,12 @@ import (
 
 // Service handles business logic for the MCP server registry.
 type Service struct {
-	repo           *Repository
-	mcpService     *mcp.Service
-	proxy          *ProxyManager
-	registryClient *RegistryClient
-	encryptor      *crypto.Encryptor // nil if encryption key not configured
-	log            *slog.Logger
-
-	// registryCache short-caches successful browse results (search + lookup)
-	// so repeated/identical queries and pagination don't re-hit the slow origin.
-	registryCache *registryCache
+	repo       *Repository
+	mcpService *mcp.Service
+	proxy      *ProxyManager
+	catalog    catalog
+	encryptor  *crypto.Encryptor // nil if encryption key not configured
+	log        *slog.Logger
 
 	// Track registered builtin servers per project to avoid re-registration
 	mu                sync.Mutex
@@ -40,9 +36,6 @@ type Service struct {
 // Sentinel errors returned by the registry browse/install flow, mapped to
 // distinct HTTP statuses by the handler.
 var (
-	// ErrRegistryUpstream marks a transport/upstream failure talking to the
-	// official registry (network error, non-200). Handler maps it to 502.
-	ErrRegistryUpstream = errors.New("registry upstream failure")
 	// ErrUnsupportedRegistryTransport marks a registry entry whose transport
 	// cannot be installed (e.g. stdio-only). Handler maps it to 400.
 	ErrUnsupportedRegistryTransport = errors.New("unsupported registry transport")
@@ -59,17 +52,23 @@ var (
 // (nil-safe) to break the mcpregistry ↔ agents circular dependency.
 // encryptor may be nil when LLM_ENCRYPTION_KEY is not configured; secret values
 // can then not be stored or read.
-func NewService(repo *Repository, mcpService *mcp.Service, registryClient *RegistryClient, encryptor *crypto.Encryptor, log *slog.Logger) *Service {
+// It fails fast if the embedded registry catalog cannot be parsed (a broken
+// build artifact) — browse/install has no network dependency, so the catalog is
+// the sole source of entries.
+func NewService(repo *Repository, mcpService *mcp.Service, encryptor *crypto.Encryptor, log *slog.Logger) (*Service, error) {
+	cat, err := loadCatalog()
+	if err != nil {
+		return nil, err
+	}
 	return &Service{
 		repo:              repo,
 		mcpService:        mcpService,
 		proxy:             NewProxyManager(repo, encryptor, log),
-		registryClient:    registryClient,
+		catalog:           cat,
 		encryptor:         encryptor,
 		log:               log.With(logger.Scope("mcpregistry.svc")),
 		builtinRegistered: make(map[string]bool),
-		registryCache:     newRegistryCache(0, nil),
-	}
+	}, nil
 }
 
 // RegisterToolPoolInvalidator wires the ToolPool invalidation callback after
@@ -745,72 +744,49 @@ func IsExternalTool(toolName string) bool {
 
 // --- Official Registry Browse/Install ---
 
-// SearchRegistry searches the official MCP registry for servers.
+// SearchRegistry searches the curated MCP registry for servers. It is served
+// entirely from the embedded catalog — no network — so it cannot fail at
+// request time. The catalog is small (<30 entries), so pagination is
+// unnecessary: the cursor is ignored and no next page is produced.
 func (s *Service) SearchRegistry(ctx context.Context, query string, limit int, cursor string) (*RegistrySearchResultDTO, error) {
-	key := registrySearchKey(query, limit, cursor)
-	if v, ok := s.registryCache.get(key); ok {
-		return v.(*RegistrySearchResultDTO), nil
+	entries := s.catalog.search(query, limit)
+	servers := make([]RegistryServerDTO, 0, len(entries))
+	for _, entry := range entries {
+		servers = append(servers, registryServerToDTO(entry))
 	}
 
-	resp, err := s.registryClient.SearchServers(ctx, query, limit, cursor)
-	if err != nil {
-		return nil, fmt.Errorf("%w: searching registry: %w", ErrRegistryUpstream, err)
-	}
-
-	servers := make([]RegistryServerDTO, 0, len(resp.Servers))
-	for _, entry := range resp.Servers {
-		servers = append(servers, registryServerToDTO(entry.Server))
-	}
-
-	result := &RegistrySearchResultDTO{
+	return &RegistrySearchResultDTO{
 		Servers:    servers,
-		NextCursor: resp.Metadata.NextCursor,
-		Count:      resp.Metadata.Count,
-	}
-	s.registryCache.set(key, result)
-	return result, nil
+		NextCursor: "",
+		Count:      len(servers),
+	}, nil
 }
 
-// GetRegistryServer fetches a single server from the official MCP registry.
+// GetRegistryServer fetches a single server from the curated MCP registry. It
+// is served from the embedded catalog; an unknown name returns
+// ErrRegistryServerNotFound.
 func (s *Service) GetRegistryServer(ctx context.Context, name string) (*RegistryServerDTO, error) {
-	key := registryLookupKey(name)
-	if v, ok := s.registryCache.get(key); ok {
-		return v.(*RegistryServerDTO), nil
+	entry, ok := s.catalog.get(name)
+	if !ok {
+		return nil, ErrRegistryServerNotFound
 	}
 
-	resp, err := s.registryClient.GetServer(ctx, name)
-	if err != nil {
-		if errors.Is(err, ErrRegistryServerNotFound) {
-			return nil, err
-		}
-		return nil, fmt.Errorf("%w: fetching registry server: %w", ErrRegistryUpstream, err)
-	}
-
-	dto := registryServerToDTO(resp.Server)
-	s.registryCache.set(key, &dto)
+	dto := registryServerToDTO(entry)
 	return &dto, nil
 }
 
-// InstallFromRegistry installs a server from the official MCP registry into the
-// local project. It fetches the server definition, selects the best transport
-// (remote-first: streamable-http > sse > stdio packages), creates an entry in
-// kb.mcp_servers, and triggers tool discovery for remote transports.
+// InstallFromRegistry installs a server from the curated MCP registry into the
+// local project. It resolves the server definition from the embedded catalog,
+// selects the best transport (remote-first: streamable-http > sse > stdio
+// packages), creates an entry in kb.mcp_servers, and triggers tool discovery
+// for remote transports.
 func (s *Service) InstallFromRegistry(ctx context.Context, projectID string, dto *InstallFromRegistryDTO) (*InstallResultDTO, error) {
-	version := dto.Version
-	if version == "" {
-		version = "latest"
+	// Resolve the server definition from the embedded catalog (no network).
+	// The registry version is curated at build time, so dto.Version is ignored.
+	regServer, ok := s.catalog.get(dto.RegistryName)
+	if !ok {
+		return nil, ErrRegistryServerNotFound
 	}
-
-	// Fetch the server definition from the official registry
-	resp, err := s.registryClient.GetServerVersion(ctx, dto.RegistryName, version)
-	if err != nil {
-		if errors.Is(err, ErrRegistryServerNotFound) {
-			return nil, err
-		}
-		return nil, fmt.Errorf("%w: fetching from registry: %w", ErrRegistryUpstream, err)
-	}
-
-	regServer := resp.Server
 
 	// Determine the local name for this server
 	localName := dto.Name

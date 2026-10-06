@@ -542,7 +542,10 @@ func (h *Handler) SearchRegistry(c echo.Context) error {
 	limitStr := c.QueryParam("limit")
 	cursor := c.QueryParam("cursor")
 
-	limit := 20
+	// limit <= 0 means "no cap": browse is served from the small embedded
+	// catalog with no pagination, so an omitted limit must return the whole
+	// curated set rather than a page-sized default.
+	limit := 0
 	if limitStr != "" {
 		if _, err := fmt.Sscanf(limitStr, "%d", &limit); err != nil {
 			return apperror.NewBadRequest("invalid limit parameter")
@@ -566,10 +569,10 @@ func (h *Handler) GetRegistryServer(c echo.Context) error {
 		return apperror.NewBadRequest("server name is required")
 	}
 	// Echo's router stores the raw path segment without unescaping, so a
-	// %2F-encoded name arrives still escaped. Decode once here so the registry
-	// client's own url.PathEscape does not double-encode the slash
-	// (name%2F… → name%252F…). Registry names never contain a literal '%', so
-	// this is safe and idempotent.
+	// %2F-encoded name arrives still escaped. Decode it once before the exact
+	// name lookup against the embedded catalog's literal slash-named entries
+	// (e.g. "io.github.github/github-mcp-server"). Registry names never contain
+	// a literal '%', so this is safe and idempotent.
 	name, err := url.PathUnescape(raw)
 	if err != nil {
 		return apperror.NewBadRequest("invalid server name")
@@ -610,8 +613,6 @@ func (h *Handler) InstallFromRegistry(c echo.Context) error {
 			return apperror.New(http.StatusConflict, "conflict", err.Error())
 		case errors.Is(err, ErrUnsupportedRegistryTransport), errors.Is(err, ErrRegistryRemoteNotAllowed):
 			return apperror.NewBadRequest(err.Error())
-		case errors.Is(err, ErrRegistryUpstream):
-			return apperror.New(http.StatusBadGateway, "registry_unavailable", "failed to install from registry")
 		default:
 			return apperror.NewInternal("failed to install from registry", err)
 		}

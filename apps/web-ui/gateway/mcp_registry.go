@@ -11,7 +11,7 @@ import (
 
 // --- MCP registry browse/install page (/settings/mcp-registry) ---
 //
-// Browses the official MCP registry through memory and installs remote
+// Lists Memory's curated set of recommended MCP servers and installs remote
 // (http/sse) entries into the project. Stdio-only entries render connector
 // guidance instead of an install action (memory's registry install is
 // remote-only and rejects stdio packages). The install flow is PRG: POST →

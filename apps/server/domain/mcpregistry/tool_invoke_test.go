@@ -72,7 +72,9 @@ func (s *MCPRegistryToolInvokeSuite) seedTool(serverID, toolName string, enabled
 func (s *MCPRegistryToolInvokeSuite) newService() *mcpregistry.Service {
 	mcpSvc := mcp.NewService(mcp.ServiceParams{DB: s.DB(), Cfg: s.TestDB.Config, Log: slog.Default()})
 	_ = mcpSvc.GetToolDefinitions() // populate the tool index GetToolByName reads
-	return mcpregistry.NewService(mcpregistry.NewRepository(s.DB()), mcpSvc, nil, nil, slog.Default())
+	svc, err := mcpregistry.NewService(mcpregistry.NewRepository(s.DB()), mcpSvc, nil, slog.Default())
+	s.Require().NoError(err)
+	return svc
 }
 
 func (s *MCPRegistryToolInvokeSuite) TestBuiltinDelegates() {

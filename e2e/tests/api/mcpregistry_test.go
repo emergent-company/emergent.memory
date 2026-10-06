@@ -587,9 +587,10 @@ func TestMCPRegistry_InstallFromRegistry_MissingRegistryName(t *testing.T) {
 
 // TestMCPRegistry_InstallFromRegistry_StdioOnlyBlocked asserts that installing
 // a registry entry whose only package is stdio (and has no remote) is rejected
-// with a 400 containing "stdio". It depends on the hermetic stub fixture
-// "io.github.upstash/context7" (e2e/stubs/mcp-registry), so it runs in
-// standalone CI too — the install path is auth-mode independent.
+// with a 400 containing "stdio". Install now resolves from the embedded curated
+// catalog (no network), so this is hermetic in every environment:
+// "microsoft/playwright-mcp" is a stdio-only catalog entry (one stdio package,
+// no remotes).
 func TestMCPRegistry_InstallFromRegistry_StdioOnlyBlocked(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
@@ -597,7 +598,7 @@ func TestMCPRegistry_InstallFromRegistry_StdioOnlyBlocked(t *testing.T) {
 
 	projectID, _ := setupProjectLogged(t, rl)
 	resp := doAPILogged(t, rl, "POST", "/api/admin/mcp-registry/install", e2eTestToken(), projectID, jsonBody(map[string]any{
-		"registryName": "io.github.upstash/context7",
+		"registryName": "microsoft/playwright-mcp",
 	}))
 	body := mustStatus(t, resp, http.StatusBadRequest)
 	var result map[string]any

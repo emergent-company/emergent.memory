@@ -101,7 +101,7 @@ func TestRenderMCPRegistryLoadError(t *testing.T) {
 // no-results state, keyed on the query.
 func TestRenderMCPRegistryEmptyStates(t *testing.T) {
 	hint := renderHTML(t, MCPServerRegistryPage(mcpRegistryPageData{}))
-	for _, want := range []string{"Search the MCP registry", "Find MCP servers by name"} {
+	for _, want := range []string{"Search recommended servers", "Find MCP servers by name"} {
 		if !strings.Contains(hint, want) {
 			t.Errorf("pre-search empty state missing %q", want)
 		}
