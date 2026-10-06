@@ -281,18 +281,17 @@ func (r *ValidationReport) validateAgents(agents []AgentFile) {
 				fmt.Sprintf("invalid dispatchMode %q (valid: sync, queued)", a.DispatchMode))
 		}
 
-		if a.Model != nil && a.Model.Name == "" {
-			r.add(ValidationError, "agent", a.Name, a.SourceFile, "model.name",
-				"model.name is required when a model block is present")
-		}
-
-		// The server's create/update handlers reject a model name that is not in
-		// "provider/model" form. Parse via the shared SDK package so the CLI and
-		// server apply the exact same rule and cannot drift (#1489).
-		if a.Model != nil && a.Model.Name != "" {
-			if _, err := sdkmodelref.Parse(a.Model.Name); err != nil {
+		if a.Model != nil {
+			if a.Model.Name == "" && a.Model.Provider == "" {
 				r.add(ValidationError, "agent", a.Name, a.SourceFile, "model.name",
-					`model.name must be in 'provider/model' form (e.g. "deepseek/deepseek-v4-flash" or "google/gemini-2.5-flash")`)
+					"model.name is required when a model block is present")
+			} else if _, err := sdkmodelref.ParseWithProvider(a.Model.Name, a.Model.Provider); err != nil {
+				// The server's create/update handlers reject a reference that is
+				// not in "provider/model" form. Parse via the shared SDK package
+				// so the CLI and server apply the exact same rule and cannot
+				// drift (#1489).
+				r.add(ValidationError, "agent", a.Name, a.SourceFile, "model.name",
+					fmt.Sprintf("%s (got %q: %v)", agentModelRefHelp, a.Model.refDisplay(), err))
 			}
 		}
 
@@ -311,6 +310,87 @@ func (r *ValidationReport) validateAgents(agents []AgentFile) {
 				"agent has no systemPrompt and no description — it may behave unexpectedly")
 		}
 	}
+}
+
+// ──────────────────────────────────────────────
+// Install preflight — validate + normalize models
+// ──────────────────────────────────────────────
+
+// agentModelRefHelp mirrors the server's ErrInvalidAgentModelRef
+// (apps/server/domain/agents/model_ref.go) so both write paths describe the
+// expected form identically.
+const agentModelRefHelp = `model.name must be in 'provider/model' form (e.g. "deepseek/deepseek-v4-flash" or "google/gemini-2.5-flash")`
+
+// refDisplay renders a model block in its most useful form for an error message:
+// the canonical "provider/model" when both parts are present, otherwise
+// whichever field is set.
+func (m *AgentModel) refDisplay() string {
+	switch {
+	case m.Provider != "" && m.Name != "":
+		return m.Provider + "/" + m.Name
+	case m.Provider != "":
+		return m.Provider
+	default:
+		return m.Name
+	}
+}
+
+// NormalizeAgentModels validates every agent's model reference with the shared
+// modelref parser and canonicalizes it in place: a structured model.provider is
+// folded into the "provider/model" name and the provider field is cleared, so
+// the applier sends exactly the shape the server accepts (mirroring
+// agents.NormalizeAgentModelConfig). An empty reference is left empty (project
+// default). The returned report collects every malformed reference with
+// agent/file/field context; callers must abort when it HasErrors.
+func NormalizeAgentModels(agents []AgentFile) *ValidationReport {
+	r := &ValidationReport{}
+	for i := range agents {
+		a := &agents[i]
+		if a.Model == nil {
+			continue
+		}
+		ref, err := sdkmodelref.ParseWithProvider(a.Model.Name, a.Model.Provider)
+		if err != nil {
+			r.add(ValidationError, "agent", a.Name, a.SourceFile, "model.name",
+				fmt.Sprintf("%s (got %q: %v)", agentModelRefHelp, a.Model.refDisplay(), err))
+			continue
+		}
+		if ref.IsZero() {
+			// No override. Drop a stray provider so the applied shape is canonical.
+			a.Model.Provider = ""
+			continue
+		}
+		a.Model.Name = ref.String()
+		a.Model.Provider = ""
+	}
+	return r
+}
+
+// Preflight is the offline gate the CLI install path runs before applying any
+// blueprint. It runs the full structural validation and, when that passes,
+// canonicalizes every agent model reference in place (folding a structured
+// model.provider into "provider/model"). It makes no API calls.
+//
+// Install MUST abort when the returned report HasErrors so a malformed
+// blueprint — in particular an agent model that is not in "provider/model" form
+// — applies nothing instead of leaving a partial install (packs already
+// created) behind (#1586).
+func Preflight(
+	project *ProjectFile,
+	packs []PackFile,
+	agents []AgentFile,
+	skills []SkillFile,
+	objects []SeedObjectRecord,
+	rels []SeedRelationshipRecord,
+	loadErrors []BlueprintsResult,
+) *ValidationReport {
+	report := Validate(project, packs, agents, skills, objects, rels, loadErrors)
+	if !report.HasErrors() {
+		// Validate just proved every model reference parses, so normalization
+		// cannot add errors; it only rewrites the references the applier sends.
+		NormalizeAgentModels(agents)
+	}
+	return report
 }
 
 // ──────────────────────────────────────────────

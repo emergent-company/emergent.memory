@@ -199,7 +199,11 @@ type AgentToolPolicy struct {
 
 // AgentModel holds model configuration for an agent definition file.
 type AgentModel struct {
-	Name           string   `json:"name"           yaml:"name"`
+	Name string `json:"name" yaml:"name"`
+	// Provider is the optional provider-instance slug that serves Name. When
+	// set, the install preflight folds it into the canonical "provider/model"
+	// name (matching the server's NormalizeAgentModelConfig) before applying.
+	Provider       string   `json:"provider"       yaml:"provider"`
 	Temperature    *float32 `json:"temperature"    yaml:"temperature"`
 	MaxTokens      *int     `json:"maxTokens"      yaml:"maxTokens"`
 	EnableThinking *bool    `json:"enableThinking" yaml:"enableThinking"`

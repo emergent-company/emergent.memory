@@ -69,20 +69,30 @@ func runBlueprintsInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load directory: %w", err)
 	}
 
-	// Print any load-time errors immediately.
-	out := cmd.OutOrStdout()
-	for _, r := range loadResults {
-		if r.Action == blueprints.BlueprintsActionError {
-			fmt.Fprintf(out, "  warning  %s %q: %v\n", r.ResourceType, r.Name, r.Error)
-		}
-	}
-
 	// Print discovery summary so the user knows what was found.
+	out := cmd.OutOrStdout()
 	blueprints.PrintDiscoverySummary(out, projectFile, packs, agents, skills, seedObjects, seedRels)
 
 	if projectFile == nil && len(packs) == 0 && len(agents) == 0 && len(skills) == 0 && len(seedObjects) == 0 && len(seedRels) == 0 && len(loadResults) == 0 {
 		fmt.Fprintln(out, "Nothing to apply — no blueprint files found.")
 		return nil
+	}
+
+	// ── Preflight: offline validation + model normalization ────────
+	// Runs before ANY API call so a malformed blueprint — e.g. an agent model
+	// not in "provider/model" form — aborts with zero mutations instead of
+	// partially applying packs first (#1586). Preflight also normalizes model
+	// references in place (folds a structured model.provider into the name) so
+	// the applier sends exactly the shape the server accepts.
+	report := blueprints.Preflight(projectFile, packs, agents, skills, seedObjects, seedRels, loadResults)
+	if report.HasErrors() {
+		for _, issue := range report.Errors() {
+			_, _ = fmt.Fprintf(out, "  error    %s\n", issue)
+		}
+		return fmt.Errorf("blueprint validation failed with %d error(s); nothing was applied — run 'memory blueprints validate %s' for the full report", len(report.Errors()), source)
+	}
+	for _, issue := range report.Warnings() {
+		_, _ = fmt.Fprintf(out, "  warning  %s\n", issue)
 	}
 
 	// ── Run blueprinter ────────────────────────────────────────────
@@ -194,6 +204,10 @@ SKILL.md file containing YAML frontmatter (name, description) and Markdown conte
 
 By default the command is additive-only: existing resources are skipped.
 Use --upgrade to update resources that already exist.
+
+The blueprint is validated offline before anything is applied, and agent model
+references are normalized to "provider/model" form. A validation error aborts
+the install with nothing applied.
 
 Examples:
 
