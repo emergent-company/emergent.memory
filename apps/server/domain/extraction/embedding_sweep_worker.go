@@ -14,6 +14,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings/vertex"
 	"github.com/emergent-company/emergent.memory/pkg/embeddingtext"
+	"github.com/emergent-company/emergent.memory/pkg/governor"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -77,6 +78,10 @@ type EmbeddingSweepWorker struct {
 	budgetEnforcementEnabled bool
 	orgCache                 *orgIDCache
 
+	// gov is the resource governor; when non-nil the sweep skips work while the
+	// system is throttled or shedding.
+	gov *governor.Governor
+
 	stopCh    chan struct{}
 	stoppedCh chan struct{}
 	running   bool
@@ -113,6 +118,13 @@ func NewEmbeddingSweepWorker(
 		budgetEnforcementEnabled: budgetEnforcementEnabled,
 		orgCache:                 newOrgIDCache(db, log),
 	}
+}
+
+// WithGovernor attaches the resource governor so the sweep skips work when the
+// system is throttled or shedding. Returns the worker for chaining.
+func (w *EmbeddingSweepWorker) WithGovernor(gov *governor.Governor) *EmbeddingSweepWorker {
+	w.gov = gov
+	return w
 }
 
 // Start begins the sweep worker's polling loop.
@@ -224,6 +236,20 @@ func (w *EmbeddingSweepWorker) sweep(ctx context.Context) {
 	w.mu.Unlock()
 	if paused {
 		return
+	}
+
+	// Respect the resource governor: skip the sweep entirely while the system is
+	// throttled or shedding so background work never increases load on a
+	// saturated host.
+	if w.gov != nil {
+		switch w.gov.Mode() {
+		case governor.Throttle:
+			w.log.Debug("sweep: skipping, system under load (throttle)")
+			return
+		case governor.Shed:
+			w.log.Debug("sweep: skipping, system saturated (shed)")
+			return
+		}
 	}
 
 	w.incrementSweepCount()

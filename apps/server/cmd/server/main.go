@@ -83,6 +83,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
+	"github.com/emergent-company/emergent.memory/pkg/governor"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/whisper"
 	"github.com/emergent-company/emergent.memory/pkg/xberg"
@@ -187,6 +188,10 @@ func coreFxOptions() fx.Option {
 
 		// Extraction module (background workers for document parsing, embeddings, etc.)
 		extraction.Module,
+
+		// Resource governor / admission control (depends on syshealth.Monitor
+		// provided by the extraction module; injected by graph + extraction).
+		governor.Module,
 
 		// Adapter: wires extraction retry capability into documents handler (avoids import cycle)
 		fx.Provide(NewExtractionRetrierAdapter),

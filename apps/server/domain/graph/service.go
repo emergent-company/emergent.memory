@@ -91,6 +91,14 @@ type Service struct {
 	branchStore          branchStoreIface
 	events               *events.Service
 
+	// bulkUpdateMaxItems caps the number of items accepted by a bulk-update
+	// request (default 100, overridden from config).
+	bulkUpdateMaxItems int
+	// bulkUpdateMaxDuration bounds the detached context used by BulkUpdateObjects
+	// so a client disconnect cannot leave a batch holding DB connections
+	// indefinitely (default 60s, overridden from config).
+	bulkUpdateMaxDuration time.Duration
+
 	// accessStamp debounces last_accessed_at writes (issue #1070).
 	accessStamp *accessStampDebouncer
 
@@ -107,18 +115,34 @@ func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvide
 		sink = NoopEventSink{}
 	}
 	return &Service{
-		repo:                 repo,
-		log:                  log.With(logger.Scope("graph.svc")),
-		schemaProvider:       schemaProvider,
-		inverseTypeProvider:  inverseTypeProvider,
-		embeddings:           embeddings,
-		embeddingEnqueuer:    embeddingEnqueuer,
-		relEmbeddingEnqueuer: relEmbeddingEnqueuer,
-		eventSink:            sink,
-		branchStore:          branchStore,
-		events:               eventsSvc,
-		accessStamp:          newAccessStampDebouncer(),
+		repo:                  repo,
+		log:                   log.With(logger.Scope("graph.svc")),
+		schemaProvider:        schemaProvider,
+		inverseTypeProvider:   inverseTypeProvider,
+		embeddings:            embeddings,
+		embeddingEnqueuer:     embeddingEnqueuer,
+		relEmbeddingEnqueuer:  relEmbeddingEnqueuer,
+		eventSink:             sink,
+		branchStore:           branchStore,
+		events:                eventsSvc,
+		bulkUpdateMaxItems:    100,
+		bulkUpdateMaxDuration: 60 * time.Second,
+		accessStamp:           newAccessStampDebouncer(),
 	}
+}
+
+// WithBulkUpdateLimits configures the bulk-update item cap and the bound on the
+// detached context used by BulkUpdateObjects. Values <= 0 leave the current
+// limit unchanged. Called by the fx provider from application config; returns
+// the service for chaining.
+func (s *Service) WithBulkUpdateLimits(maxItems int, maxDuration time.Duration) *Service {
+	if maxItems > 0 {
+		s.bulkUpdateMaxItems = maxItems
+	}
+	if maxDuration > 0 {
+		s.bulkUpdateMaxDuration = maxDuration
+	}
+	return s
 }
 
 // emitObjectCreated emits a graph_object entity.created event (no-op if events not wired).
@@ -320,10 +344,6 @@ const entityTypeObject = EntityObject
 
 // entityTypeRelationship is the entity type constant for graph relationships.
 const entityTypeRelationship = EntityRelationship
-
-// bulkUpdateMaxDuration bounds the detached context used by BulkUpdateObjects so
-// a client disconnect cannot leave a batch holding DB connections indefinitely.
-const bulkUpdateMaxDuration = 10 * time.Minute
 
 // runBulkItems runs fn once for every index in [0,n) using at most
 // `concurrency` goroutines. It is the bounded worker pool behind the bulk
@@ -3413,12 +3433,16 @@ func (s *Service) BulkUpsertObjects(ctx context.Context, projectID uuid.UUID, re
 func (s *Service) BulkUpdateObjects(ctx context.Context, projectID uuid.UUID, req *BulkUpdateObjectsRequest, actorID *uuid.UUID) (*BulkUpdateObjectsResponse, error) {
 	actorType, actorID := actorFromContext(ctx, actorID)
 
+	if len(req.Items) > s.bulkUpdateMaxItems {
+		return nil, apperror.NewBadRequest(fmt.Sprintf("items must not exceed %d", s.bulkUpdateMaxItems))
+	}
+
 	results := make([]BulkUpdateObjectResult, len(req.Items))
 
 	// Detach from client cancellation so a disconnect cannot abort the batch, but
 	// bound the detached context so a large/slow batch cannot hold DB connections
-	// forever. Short batches finish well within the bound (500 items max).
-	workerCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bulkUpdateMaxDuration)
+	// forever. Short batches finish well within the bound.
+	workerCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.bulkUpdateMaxDuration)
 	defer cancel()
 	// Bound each individual statement (default 10m, matching the request budget)
 	// so one runaway statement fails the item instead of holding a pooled

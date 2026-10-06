@@ -68,6 +68,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 	"github.com/emergent-company/emergent.memory/pkg/encryption"
+	"github.com/emergent-company/emergent.memory/pkg/governor"
 	"github.com/emergent-company/emergent.memory/pkg/whisper"
 	"github.com/emergent-company/emergent.memory/pkg/xberg"
 )
@@ -445,7 +446,9 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	graphSchemaProvider := graph.ProvideSchemaProvider(db, log)
 	graphSvc := graph.NewService(graphRepo, log, graphSchemaProvider, graph.ProvideInverseTypeProvider(db, log), embeddingsSvc, nil, nil, nil, nil, nil)
 	graphHandler := graph.NewHandler(graphSvc, testGraphCfg)
-	graph.RegisterRoutes(e, graphHandler, authMiddleware)
+	// A disabled governor keeps admission control out of the test server's hot
+	// path while still satisfying the RegisterRoutes signature.
+	graph.RegisterRoutes(e, graphHandler, authMiddleware, governor.New(nil, &governor.Config{Enabled: false}, log))
 
 	// Register embedding policies routes
 	embPolicyStore := embeddingpolicies.NewStore(db, log)

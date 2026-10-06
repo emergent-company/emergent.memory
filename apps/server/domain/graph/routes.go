@@ -4,10 +4,21 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/governor"
 )
 
+// bulkAdmit wraps a bulk handler with the resource governor's admission
+// middleware. The governor is tier-neutral — it only sheds/limits load, never
+// grants or removes authority — so it is applied as a wrapper handler rather
+// than inline route middleware. internal/routeguard fails closed on inline
+// middleware it cannot classify, and wrapping keeps each bulk route's authority
+// tier derived from the group's auth middleware alone.
+func bulkAdmit(gov *governor.Governor, next echo.HandlerFunc) echo.HandlerFunc {
+	return gov.Middleware(governor.ClassBulk)(next)
+}
+
 // RegisterRoutes registers all graph routes.
-func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
+func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware, gov *governor.Governor) {
 	// All graph routes require authentication and project context. The shared
 	// pair runs in canonical order: RequireProjectTokenScope binds an emt_* token
 	// to its project, then RequireProjectMember asserts real org membership for
@@ -19,6 +30,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g.Use(authMiddleware.RequireProjectTokenScope())
 	g.Use(authMiddleware.RequireProjectMember())
 
+	// Bulk endpoints are gated by the resource governor's admission control:
+	// under saturation these heavy requests are shed with HTTP 429 + Retry-After.
 	// Object routes
 	objects := g.Group("/objects")
 	objects.GET("/search", h.ListObjects)
@@ -27,10 +40,10 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	objects.POST("/vector-search", h.VectorSearch)
 	objects.GET("/tags", h.GetTags)
 	objects.POST("/bulk-update-status", h.BulkUpdateStatus)
-	objects.POST("/bulk", h.BulkCreateObjects)
-	objects.POST("/bulk-update", h.BulkUpdateObjects)
-	objects.POST("/bulk-upsert", h.BulkUpsertObjects)
-	objects.POST("/bulk-action", h.BulkAction)
+	objects.POST("/bulk", bulkAdmit(gov, h.BulkCreateObjects))
+	objects.POST("/bulk-update", bulkAdmit(gov, h.BulkUpdateObjects))
+	objects.POST("/bulk-upsert", bulkAdmit(gov, h.BulkUpsertObjects))
+	objects.POST("/bulk-action", bulkAdmit(gov, h.BulkAction))
 	objects.POST("/validate", h.ValidateObject)
 	objects.PUT("/upsert", h.UpsertObject)
 	objects.GET("/:id", h.GetObject)
@@ -57,7 +70,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g.POST("/subgraph", h.CreateSubgraph)
 
 	// Reindex missing embeddings (recovery for ingest-without-schema scenarios)
-	g.POST("/reindex-embeddings", h.ReindexEmbeddings)
+	g.POST("/reindex-embeddings", bulkAdmit(gov, h.ReindexEmbeddings))
 
 	// Branch routes
 	branches := g.Group("/branches")

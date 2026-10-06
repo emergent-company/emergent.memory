@@ -13,7 +13,9 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/emergent-company/emergent.memory/domain/branches"
+	"github.com/emergent-company/emergent.memory/domain/events"
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
+	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 	"github.com/emergent-company/emergent.memory/pkg/schemanorm"
 )
@@ -23,7 +25,7 @@ var Module = fx.Module("graph",
 	fx.Provide(NewRepository),
 	fx.Provide(
 		fx.Annotate(
-			NewService,
+			provideService,
 			fx.ParamTags(``, ``, ``, ``, ``, ``, ``, `optional:"true"`),
 		),
 	),
@@ -35,6 +37,14 @@ var Module = fx.Module("graph",
 	fx.Invoke(RegisterRoutes),
 	fx.Invoke(RegisterIndexWarmup),
 )
+
+// provideService constructs the graph service and applies the bulk-update
+// limits from application config. It keeps NewService's signature stable for
+// tests while threading the env-driven BULK_UPDATE_* knobs into the runtime.
+func provideService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvider, inverseTypeProvider InverseTypeProvider, embeddings EmbeddingService, embeddingEnqueuer EmbeddingEnqueuer, relEmbeddingEnqueuer RelationshipEmbeddingEnqueuer, sink EventSink, branchStore branchStoreIface, eventsSvc *events.Service, cfg *config.Config) *Service {
+	return NewService(repo, log, schemaProvider, inverseTypeProvider, embeddings, embeddingEnqueuer, relEmbeddingEnqueuer, sink, branchStore, eventsSvc).
+		WithBulkUpdateLimits(cfg.Graph.BulkUpdateMaxItems, cfg.Graph.BulkUpdateMaxDuration)
+}
 
 // provideBranchStore bridges *branches.Store to the graph.branchStoreIface.
 func provideBranchStore(s *branches.Store) branchStoreIface {

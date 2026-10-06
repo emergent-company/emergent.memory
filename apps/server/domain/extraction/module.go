@@ -23,6 +23,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
+	"github.com/emergent-company/emergent.memory/pkg/governor"
 	"github.com/emergent-company/emergent.memory/pkg/syshealth"
 	"github.com/emergent-company/emergent.memory/pkg/whisper"
 	"github.com/emergent-company/emergent.memory/pkg/xberg"
@@ -127,6 +128,33 @@ func provideSysHealthMonitor(db bun.IDB, log *slog.Logger) syshealth.Monitor {
 	return syshealth.NewMonitor(cfg, db, log)
 }
 
+// provideBackgroundPauser exposes the embedding control handler's PauseAll /
+// ResumeAll as the governor's BackgroundPauser. The handler already pauses and
+// resumes the object, relationship, and sweep embedding workers.
+func provideBackgroundPauser(handler *EmbeddingControlHandler) governor.BackgroundPauser {
+	return handler
+}
+
+// RegisterGovernorModeWatcherLifecycle starts a goroutine that pauses background
+// embedding workers when the governor enters Shed and resumes them when it
+// leaves Shed.
+func RegisterGovernorModeWatcherLifecycle(lc fx.Lifecycle, gov *governor.Governor, pauser governor.BackgroundPauser, log *slog.Logger) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			// Use context.Background() so the watcher is not bounded by fx's
+			// 15-second startup timeout.
+			go gov.RunModeWatcher(context.Background(), pauser, governorWatchInterval)
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			return nil
+		},
+	})
+}
+
+// governorWatchInterval is how often the watcher polls the governor's mode.
+const governorWatchInterval = 5 * time.Second
+
 // RegisterSysHealthMonitorLifecycle registers the monitor with fx lifecycle
 func RegisterSysHealthMonitorLifecycle(lc fx.Lifecycle, monitor syshealth.Monitor) {
 	lc.Append(fx.Hook{
@@ -167,6 +195,7 @@ var Module = fx.Module("extraction",
 		provideEmbeddingEnqueuer,
 		provideRelEmbeddingEnqueuer,
 		provideEmbeddingSweepWorker,
+		provideBackgroundPauser,
 		// Expose DomainClassifierHandler for chat handler to pre-classify documents.
 		NewMCPDomainClassifierHandler,
 		// Expose cross-domain tool adapters to mcp.Service via fx (no setter injection).
@@ -186,6 +215,7 @@ var Module = fx.Module("extraction",
 		RegisterDocumentParsingWorkerLifecycle,
 		RegisterObjectExtractionWorkerLifecycle,
 		RegisterEmbeddingSweepWorkerLifecycle,
+		RegisterGovernorModeWatcherLifecycle,
 	),
 )
 
@@ -482,8 +512,9 @@ func provideEmbeddingSweepWorker(
 	log *slog.Logger,
 	usageSvc *provider.UsageService,
 	appCfg *config.Config,
+	gov *governor.Governor,
 ) *EmbeddingSweepWorker {
-	return NewEmbeddingSweepWorker(jobs, embeds, db, cfg.EmbeddingSweep, log, usageSvc, usageSvc, appCfg.AgentSafeguards.BudgetEnforcementEnabled)
+	return NewEmbeddingSweepWorker(jobs, embeds, db, cfg.EmbeddingSweep, log, usageSvc, usageSvc, appCfg.AgentSafeguards.BudgetEnforcementEnabled).WithGovernor(gov)
 }
 
 // RegisterEmbeddingSweepWorkerLifecycle registers the sweep worker with fx lifecycle.
