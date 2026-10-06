@@ -96,6 +96,11 @@ PRG (`post → 303 → flashToasts`) contract, htmx-ownership rules, the interac
 inventory, the Alpine-vs-`data-*` policy, and the htmx v4 + Alpine same-`id` attribute-restore
 trap (#1267). Read it before adding a new page, widget, or mutation flow.
 
+For choosing a layout or editing affordance (inline auto-save vs form+Save vs modal,
+list/detail/settings layouts), use the named-pattern catalog in
+`apps/web-ui/docs/ui-recipes.md` — each pattern has a when/avoid, a ready-to-paste
+instruction, a markup skeleton, and source anchors.
+
 ## Role gating
 
 - **Hide, don't disable.** A control the caller's role cannot use must not render at all — not render

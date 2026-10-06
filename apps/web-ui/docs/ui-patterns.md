@@ -7,6 +7,10 @@ Everything here is grounded in shipped code; paths are relative to
 `apps/web-ui/gateway/` unless stated. Verify before asserting — line numbers
 drift.
 
+To **choose** a layout or editing affordance (inline auto-save vs form+Save vs
+modal, list/detail/settings layouts) use the named-pattern catalog in
+`docs/ui-recipes.md`; this file is the cross-cutting *why* behind those patterns.
+
 ---
 
 ## 1. Page shell & composition
