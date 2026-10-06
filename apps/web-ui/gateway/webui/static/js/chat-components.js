@@ -11,6 +11,16 @@
 (function () {
   "use strict";
 
+  /* Scoped-path helper for JS-built URLs. app.js defines window.MemoryScope on
+     the shell; fall back to the raw path when this script is loaded standalone
+     (the hermetic js-dom specs) or app.js is absent, so a missing global never
+     throws a ReferenceError. */
+  function scopedPath(p) {
+    return window.MemoryScope && typeof window.MemoryScope.path === "function"
+      ? window.MemoryScope.path(p)
+      : p;
+  }
+
   function escapeHTML(s) {
     return String(s).replace(/[&<>"']/g, function (c) {
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
@@ -609,8 +619,8 @@
   // only place a citation becomes a link — labels/types stay textContent.
   function citationHref(c) {
     if (!c || typeof c !== "object") return "";
-    if (typeof c.url === "string" && OBJECT_URL_RE.test(c.url)) return c.url;
-    if (isUUID(c.id)) return "/objects/" + c.id;
+    if (typeof c.url === "string" && OBJECT_URL_RE.test(c.url)) return scopedPath(c.url);
+    if (isUUID(c.id)) return scopedPath("/objects/" + c.id);
     return "";
   }
 
@@ -1121,7 +1131,7 @@
     var shell = a2uiShell();
     // The entity's `id` is the object's canonical id when it is a UUID; render
     // the header as a link to its object page. A non-UUID id stays plain text.
-    var entityHref = isUUID(comp.id) ? "/objects/" + comp.id : "";
+    var entityHref = isUUID(comp.id) ? scopedPath("/objects/" + comp.id) : "";
     var entityName = (comp.label != null && comp.label !== "") ? String(comp.label) : "Entity";
     shell.body.appendChild(a2uiHeader(entityName, comp.type || "entity", entityHref));
     var props = comp.properties;
@@ -1149,7 +1159,7 @@
         }
         var relObj = rel && typeof rel === "object" ? rel : {};
         var target = relObj.target || relObj.entity || relObj.id || "";
-        var targetHref = isUUID(target) ? "/objects/" + target : "";
+        var targetHref = isUUID(target) ? scopedPath("/objects/" + target) : "";
         relRows.push([
           relObj.relation || relObj.type || relObj.label || "related",
           target,

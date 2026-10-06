@@ -5,6 +5,101 @@
 (function () {
   "use strict";
 
+  /* ---------- scoped API calls ---------- */
+  /* Org/project context lives in the URL, not a cookie. Same-origin /api/*
+     calls are unscoped paths, so propagate the shell's resolved scope from the
+     <body> data attributes. fetch gets headers; EventSource (which cannot set
+     headers) gets query params, which the gateway accepts and validates. */
+  function resolveApiURL(input) {
+    try {
+      var raw = typeof input === "string" ? input : (input && input.url) || "";
+      if (!raw) return null;
+      var u = new URL(raw, window.location.href);
+      if (u.origin !== window.location.origin) return null;
+      if (u.pathname.indexOf("/api/") !== 0) return null;
+      return u;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  var scopeProject = document.body
+    ? document.body.getAttribute("data-project-id") || ""
+    : "";
+  var scopeOrg = document.body ? document.body.getAttribute("data-org-id") || "" : "";
+
+  /* Scoped-path helper for URLs built in JS (fetch/htmx targets). Mirrors the
+     gateway's link scoping: app paths get the scope base; API/auth/asset/global
+     paths and external/fragment URLs are returned unchanged. */
+  window.MemoryScope = {
+    org: scopeOrg,
+    project: scopeProject,
+    base: scopeProject
+      ? "/o/" + scopeOrg + "/p/" + scopeProject
+      : scopeOrg
+        ? "/o/" + scopeOrg
+        : "",
+    path: function (p) {
+      if (!p || p.charAt(0) !== "/" || p.charAt(1) === "/") return p;
+      if (
+        p.indexOf("/o/") === 0 ||
+        p.indexOf("/api/") === 0 ||
+        p.indexOf("/auth/") === 0 ||
+        p.indexOf("/share/") === 0 ||
+        p.indexOf("/static/") === 0 ||
+        p.indexOf("/assets/") === 0 ||
+        p.indexOf("/webhooks/") === 0 ||
+        p.indexOf("/internal/") === 0 ||
+        p.indexOf("/dev/") === 0 ||
+        p.indexOf("/profile") === 0 ||
+        p.indexOf("/orgs") === 0 ||
+        p.indexOf("/invites") === 0 ||
+        p.indexOf("/partial/invite-user-search") === 0
+      ) {
+        return p;
+      }
+      return (this.base || "") + p;
+    },
+  };
+
+  if (scopeProject || scopeOrg) {
+    var nativeFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      if (resolveApiURL(input)) {
+        init = init || {};
+        try {
+          var headers = new Headers(
+            init.headers || (input && input.headers) || undefined
+          );
+          if (scopeProject) headers.set("X-Project-ID", scopeProject);
+          if (scopeOrg) headers.set("X-Org-ID", scopeOrg);
+          init.headers = headers;
+        } catch (e) {
+          /* Headers unavailable: leave the request unscoped. */
+        }
+      }
+      return nativeFetch(input, init);
+    };
+
+    var NativeEventSource = window.EventSource;
+    if (NativeEventSource) {
+      window.EventSource = function (url, config) {
+        var u = resolveApiURL(url);
+        if (u) {
+          if (scopeProject && u.searchParams.get("project_id") === null) {
+            u.searchParams.set("project_id", scopeProject);
+          }
+          if (scopeOrg && u.searchParams.get("org_id") === null) {
+            u.searchParams.set("org_id", scopeOrg);
+          }
+          url = u.toString();
+        }
+        return new NativeEventSource(url, config);
+      };
+      window.EventSource.prototype = NativeEventSource.prototype;
+    }
+  }
+
   /* ---------- sentry ---------- */
   /* Report an error to Sentry when the browser SDK is active (gated on
      window.Sentry, present only when the loader was injected because a
@@ -793,13 +888,13 @@
     if (!id || !window.htmx) return;
     if (action === "dialog") {
       // Open the item action dialog (review -> revision needs feedback).
-      htmx.ajax("GET", "/board/items/" + encodeURIComponent(id), {
+      htmx.ajax("GET", MemoryScope.path("/board/items/" + encodeURIComponent(id)), {
         target: "#board-drawer",
         swap: "innerHTML"
       });
       return;
     }
-    htmx.ajax("POST", "/board/items/" + encodeURIComponent(id) + "/" + action, {
+    htmx.ajax("POST", MemoryScope.path("/board/items/" + encodeURIComponent(id) + "/" + action), {
       target: "#board",
       swap: "outerHTML"
     });
@@ -819,10 +914,10 @@
     var id = card.getAttribute("data-canonical-id");
     if (!id) return;
     if (window.MemoryObjectPreview && typeof window.MemoryObjectPreview.open === "function") {
-      window.MemoryObjectPreview.open({ id: id, editHref: "/objects/" + id, actions: "board" });
+      window.MemoryObjectPreview.open({ id: id, editHref: MemoryScope.path("/objects/" + id), actions: "board" });
       return;
     }
-    window.location.assign("/objects/" + encodeURIComponent(id));
+    window.location.assign(MemoryScope.path("/objects/" + encodeURIComponent(id)));
   }
 
   document.addEventListener("click", function (ev) {

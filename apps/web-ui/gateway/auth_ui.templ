@@ -292,19 +292,17 @@ templ projectGroupHeader(g projectGroup) {
 	}
 }
 
-// projectSwitchRow is one project in the switcher menu: a POST form whose
-// submit button fills the row. The active project is marked with a check.
+// projectSwitchRow is one project in the switcher menu: a link to the
+// project's scoped landing, so switching lands on the target project's URL
+// (each tab keeps its own context). The active project is marked with a check.
 templ projectSwitchRow(p ProjectRef, active bool) {
 	<li>
-		<form method="post" action="/projects/activate" class="flex w-full items-center">
-			<input type="hidden" name="projectId" value={ p.ID }/>
-			<button type="submit" role="menuitem" class="flex w-full min-w-0 cursor-pointer items-center gap-2 text-left">
-				<span class={ "min-w-0 flex-1 truncate text-sm", templ.KV("text-muted-strong", !active) }>{ p.Name }</span>
-				if active {
-					@ui.IconSpan("lucide--check", "size-4 shrink-0 text-primary")
-				}
-			</button>
-		</form>
+		<a href={ templ.URL(projectScopeURL(p.OrgID, p.ID) + "/agents") } role="menuitem" class="flex w-full min-w-0 cursor-pointer items-center gap-2 text-left">
+			<span class={ "min-w-0 flex-1 truncate text-sm", templ.KV("text-muted-strong", !active) }>{ p.Name }</span>
+			if active {
+				@ui.IconSpan("lucide--check", "size-4 shrink-0 text-primary")
+			}
+		</a>
 	</li>
 }
 

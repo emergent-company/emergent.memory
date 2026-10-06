@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -65,40 +66,42 @@ func pageTestID(title string) string {
 	return strings.TrimSuffix(b.String(), "-")
 }
 
-// sidebarGroups returns the app navigation. Active state is derived per
-// request via layout.ActiveSidebarGroups. isOrgAdmin gates the Backups entry
-// (org-scoped backups require org_admin of the active project's owning org —
-// see #997); it is threaded in by page() from the caller's access tree.
-func sidebarGroups(isOrgAdmin bool) []layout.SidebarGroup {
+// sidebarGroups returns the app navigation for a project-context page, with
+// every href prefixed by the page's scope base (/o/{org}/p/{project}). Active
+// state is derived per request via layout.ActiveSidebarGroups. isOrgAdmin gates
+// the Backups entry (org-scoped backups require org_admin of the active
+// project's owning org — see #997); it is threaded in by page() from the
+// caller's access tree.
+func sidebarGroups(base string, isOrgAdmin bool) []layout.SidebarGroup {
 	memoryBrowser := []layout.SidebarItem{
-		{Label: "Objects", Href: "/objects", Icon: "lucide--box"},
-		{Label: "Embeddings", Href: "/embeddings", Icon: "lucide--scan-line"},
-		{Label: "Schema", Href: "/schema", Icon: "lucide--git-branch"},
-		{Label: "Documents", Href: "/documents", Icon: "lucide--file-text"},
+		{Label: "Objects", Href: base + "/objects", Icon: "lucide--box"},
+		{Label: "Embeddings", Href: base + "/embeddings", Icon: "lucide--scan-line"},
+		{Label: "Schema", Href: base + "/schema", Icon: "lucide--git-branch"},
+		{Label: "Documents", Href: base + "/documents", Icon: "lucide--file-text"},
 	}
 	if isOrgAdmin {
 		// Backups are org-scoped and org_admin-gated (see #997). Hiding the
 		// entry beats landing a non-admin on a page that degrades to an error.
-		memoryBrowser = append(memoryBrowser, layout.SidebarItem{Label: "Backups", Href: "/backups", Icon: "lucide--archive"})
+		memoryBrowser = append(memoryBrowser, layout.SidebarItem{Label: "Backups", Href: base + "/backups", Icon: "lucide--archive"})
 	}
 	return []layout.SidebarGroup{
 		{
 			// Ungrouped top-level entries: pulled out of their groups to sit
 			// at the very top of the sidebar.
 			Items: []layout.SidebarItem{
-				{Label: "Inbox", Href: "/inbox", Icon: "lucide--inbox"},
-				{Label: "Approvals", Href: "/settings/approvals", Icon: "lucide--shield-check"},
-				{Label: "Chat", Href: "/chat", Icon: "lucide--messages-square"},
-				{Label: "Sessions", Href: "/sessions", Icon: "lucide--history"},
-				{Label: "Board", Href: "/board", Icon: "lucide--kanban-square"},
-				{Label: "Usage", Href: "/usage", Icon: "lucide--chart-column"},
+				{Label: "Inbox", Href: base + "/inbox", Icon: "lucide--inbox"},
+				{Label: "Approvals", Href: base + "/settings/approvals", Icon: "lucide--shield-check"},
+				{Label: "Chat", Href: base + "/chat", Icon: "lucide--messages-square"},
+				{Label: "Sessions", Href: base + "/sessions", Icon: "lucide--history"},
+				{Label: "Board", Href: base + "/board", Icon: "lucide--kanban-square"},
+				{Label: "Usage", Href: base + "/usage", Icon: "lucide--chart-column"},
 			},
 		},
 		{
 			Label: "Agents",
 			Items: []layout.SidebarItem{
-				{Label: "Agents", Href: "/agents", Icon: "lucide--bot"},
-				{Label: "Schedules", Href: "/schedules", Icon: "lucide--calendar-clock"},
+				{Label: "Agents", Href: base + "/agents", Icon: "lucide--bot"},
+				{Label: "Schedules", Href: base + "/schedules", Icon: "lucide--calendar-clock"},
 			},
 		},
 		{
@@ -108,13 +111,13 @@ func sidebarGroups(isOrgAdmin bool) []layout.SidebarGroup {
 		{
 			Label: "Settings",
 			Items: []layout.SidebarItem{
-				{Label: "Project", Href: "/settings", Icon: "lucide--settings"},
-				{Label: "Members", Href: "/settings/members", Icon: "lucide--users"},
-				{Label: "API Tokens", Href: "/settings/tokens", Icon: "lucide--key-round"},
-				{Label: "MCP Servers", Href: "/settings/mcp-servers", Icon: "lucide--server"},
-				{Label: "MCP Registry", Href: "/settings/mcp-registry", Icon: "lucide--globe"},
-				{Label: "Blueprints", Href: "/blueprints", Icon: "lucide--library"},
-				{Label: "Skills", Href: "/skills", Icon: "lucide--sparkles"},
+				{Label: "Project", Href: base + "/settings", Icon: "lucide--settings"},
+				{Label: "Members", Href: base + "/settings/members", Icon: "lucide--users"},
+				{Label: "API Tokens", Href: base + "/settings/tokens", Icon: "lucide--key-round"},
+				{Label: "MCP Servers", Href: base + "/settings/mcp-servers", Icon: "lucide--server"},
+				{Label: "MCP Registry", Href: base + "/settings/mcp-registry", Icon: "lucide--globe"},
+				{Label: "Blueprints", Href: base + "/blueprints", Icon: "lucide--library"},
+				{Label: "Skills", Href: base + "/skills", Icon: "lucide--sparkles"},
 			},
 		},
 	}
@@ -122,11 +125,10 @@ func sidebarGroups(isOrgAdmin bool) []layout.SidebarGroup {
 
 // orgSidebarGroups returns the organization-scoped navigation shown when an
 // organization (not a project) is the active context. Links are path-scoped to
-// the active org; the Settings hub holds the tool overrides and the
-// delete-org danger zone. isOrgAdmin gates the Members entry (the page exposes
-// whole-org member PII, org_admin-only per #1015).
-func orgSidebarGroups(orgID string, isOrgAdmin bool) []layout.SidebarGroup {
-	base := "/orgs/" + url.PathEscape(orgID)
+// the org scope base (/o/{org}); the Settings hub holds the tool overrides and
+// the delete-org danger zone. isOrgAdmin gates the Members entry (the page
+// exposes whole-org member PII, org_admin-only per #1015).
+func orgSidebarGroups(base string, isOrgAdmin bool) []layout.SidebarGroup {
 	items := []layout.SidebarItem{
 		{Label: "Projects", Href: base, Icon: "lucide--folder"},
 	}
@@ -230,13 +232,25 @@ func flashFromQuery(c echo.Context, params []flashParam) string {
 // partial page with no CSS or JS.
 func (s *Server) page(c echo.Context, title string, content templ.Component) error {
 	w, r := c.Response().Writer, c.Request()
+	// Scope base for link generation and the pre-rewrite path for sidebar
+	// active-state matching. Both come from the scope stashed by scopeRewrite;
+	// an unscoped request leaves the base empty (legacy absolute links).
+	linkBase := ""
+	activePath := r.URL.Path
+	if rs, ok := scopeFromContext(r.Context()); ok {
+		linkBase = rs.base()
+		if rs.OriginalPath != "" {
+			activePath = rs.OriginalPath
+		}
+	}
+	r = r.WithContext(withLinkBase(r.Context(), linkBase))
 	if render.IsPartial(r) {
 		// The shell navigates via hx-boost (in-place swaps), so the <title>
 		// lives only in the full page's <head> — partials would otherwise leave
 		// document.title stale on every navigation. htmx extracts the first
 		// <title> from a swapped response and applies it to document.title, so
 		// the partial carries one alongside the content.
-		render.RenderPartial(w, r, partialWithTitle(title, content))
+		s.renderScoped(w, r, partialWithTitle(title, content), linkBase)
 		return nil
 	}
 	agents, err := s.memory.ListAgentDefinitions(c.Request().Context())
@@ -307,12 +321,19 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 		if current != nil {
 			backupsOrgID = current.OrgID
 		}
-		groups = layout.ActiveSidebarGroups(sidebarGroups(isOrgAdmin(tree, backupsOrgID)), r.URL.Path)
+		groups = layout.ActiveSidebarGroups(sidebarGroups(linkBase, isOrgAdmin(tree, backupsOrgID)), activePath)
 		// Warn in the settings nav when the active project has zero configured
 		// LLM providers. Fail-safe helper: false on lookup errors.
 		providersMissing = s.projectHasNoProviders(c.Request().Context())
 	} else if activeOrgID != "" {
-		groups = layout.ActiveSidebarGroups(orgSidebarGroups(activeOrgID, isOrgAdmin(tree, activeOrgID)), r.URL.Path)
+		// Org pages reached through the legacy /orgs/:id routes carry no scope
+		// base; fall back to the canonical /o/{org} so the sidebar links are
+		// still scoped. Scoped requests already have linkBase set.
+		orgNavBase := linkBase
+		if orgNavBase == "" {
+			orgNavBase = "/o/" + activeOrgID
+		}
+		groups = layout.ActiveSidebarGroups(orgSidebarGroups(orgNavBase, isOrgAdmin(tree, activeOrgID)), activePath)
 	}
 	// Recent projects for the picker's "Recent" section (only when the user
 	// has more than ten projects). Recent ids come from the durable cookie,
@@ -377,8 +398,30 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 		bellScope, bellProject := s.inboxBellScope(c)
 		unreadNotifications = s.notificationUnread(c.Request().Context(), bellScope, bellProject)
 	}
-	render.RenderPage(w, r, appShell(title, groups, providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, unreadNotifications, user, accounts, content, objectTypes, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL))
+	// Route the full page through renderScoped too: internal content links
+	// (literal href/action/hx-* in the page templates) must carry the scope base
+	// just like htmx partials, otherwise the first navigation after a full load
+	// hits an unscoped app path and 404s under the session-mode hard cut.
+	s.renderScoped(w, r, appShell(title, groups, providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, unreadNotifications, user, accounts, content, objectTypes, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL), linkBase)
 	return nil
+}
+
+// renderScoped renders a page or partial and rewrites its URL-bearing
+// attributes to the request's scope base, so links and htmx/form actions stay
+// in the active org/project context. It mirrors render.RenderPage /
+// render.RenderPartial's headers (see those for the partial/history contract).
+func (s *Server) renderScoped(w http.ResponseWriter, r *http.Request, content templ.Component, base string) {
+	var buf bytes.Buffer
+	if err := content.Render(r.Context(), &buf); err != nil {
+		captureError(err)
+		http.Error(w, "render error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if render.IsPartial(r) {
+		w.Header().Add("Vary", "HX-Request-Type, HX-Request")
+	}
+	_, _ = w.Write([]byte(rewriteScopedHTML(buf.String(), base)))
 }
 
 // currentProjectID returns the active project id for shell-level data
@@ -389,6 +432,18 @@ func currentProjectID(p *ProjectRef) string {
 		return ""
 	}
 	return p.ID
+}
+
+// currentOrgID returns the active org id for shell-level scope propagation:
+// the active project's org when a project is active, else the active org.
+func currentOrgID(p *ProjectRef, activeOrg *Org) string {
+	if p != nil {
+		return p.OrgID
+	}
+	if activeOrg != nil {
+		return activeOrg.ID
+	}
+	return ""
 }
 
 // currentUser is the signed-in identity shown in the account menu.
@@ -640,7 +695,7 @@ func (s *Server) uiChatRail(c echo.Context) error {
 		schedRuns = nil
 		shared = nil
 	}
-	render.RenderPartial(c.Response().Writer, c.Request(), chatRailList(convs, appearances, schedRuns, shared, c.QueryParam("c")))
+	renderPartial(c.Response().Writer, c.Request(), chatRailList(convs, appearances, schedRuns, shared, c.QueryParam("c")))
 	return nil
 }
 

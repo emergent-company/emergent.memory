@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/emergent-company/go-daisy/render"
 	"github.com/labstack/echo/v4"
 )
 
@@ -164,6 +163,6 @@ func (s *Server) uiChatTodos(c echo.Context) error {
 			}
 		}
 	}
-	render.RenderPartial(c.Response().Writer, c.Request(), TodoCard(items))
+	renderPartial(c.Response().Writer, c.Request(), TodoCard(items))
 	return nil
 }

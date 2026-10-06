@@ -57,7 +57,7 @@ func TestUIRootRedirect(t *testing.T) {
 	})
 
 	t.Run("session project wins", func(t *testing.T) {
-		s := &Server{cfg: sessionCfg(), memory: &fakeMemory{}}
+		s := &Server{cfg: sessionCfg(), memory: &fakeMemory{projects: []ProjectRef{{ID: "p1", Name: "Home", OrgID: "o1"}}}}
 		e := orgContextUIServer(s)
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
@@ -67,8 +67,8 @@ func TestUIRootRedirect(t *testing.T) {
 		}))
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, req)
-		if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/agents" {
-			t.Fatalf("/ with project = %d %q, want 302 /agents", rec.Code, rec.Header().Get("Location"))
+		if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/o/o1/p/p1/agents" {
+			t.Fatalf("/ with project = %d %q, want 302 /o/o1/p/p1/agents", rec.Code, rec.Header().Get("Location"))
 		}
 	})
 
@@ -83,8 +83,8 @@ func TestUIRootRedirect(t *testing.T) {
 		}))
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, req)
-		if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/orgs/o1" {
-			t.Fatalf("/ with org = %d %q, want 302 /orgs/o1", rec.Code, rec.Header().Get("Location"))
+		if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/o/o1" {
+			t.Fatalf("/ with org = %d %q, want 302 /o/o1", rec.Code, rec.Header().Get("Location"))
 		}
 	})
 
@@ -99,8 +99,8 @@ func TestUIRootRedirect(t *testing.T) {
 		}))
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, req)
-		if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/orgs/o1" {
-			t.Fatalf("/ with no org = %d %q, want 302 /orgs/o1", rec.Code, rec.Header().Get("Location"))
+		if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/o/o1" {
+			t.Fatalf("/ with no org = %d %q, want 302 /o/o1", rec.Code, rec.Header().Get("Location"))
 		}
 	})
 
@@ -183,7 +183,7 @@ func TestUIOrgLanding(t *testing.T) {
 		t.Errorf("pending project row must render without clickable affordances, want <tr id=\"p3\">")
 	}
 	// org-context sidebar renders, project nav does not
-	for _, want := range []string{`href="/orgs/o1/members"`, `href="/orgs/o1/settings"`} {
+	for _, want := range []string{`href="/o/o1/members"`, `href="/o/o1/settings"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("org sidebar missing %q", want)
 		}
@@ -277,7 +277,7 @@ func TestUIOrgInviteRoutes(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /orgs/o1/invite = %d, want 200", rec.Code)
 	}
-	for _, want := range []string{`action="/orgs/o1/invite"`, `name="orgId" value="o1"`, `value="org_admin"`, "Send invitation"} {
+	for _, want := range []string{`action="/o/o1/invite"`, `name="orgId" value="o1"`, `value="org_admin"`, "Send invitation"} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("GET /orgs/o1/invite missing %q", want)
 		}
@@ -356,7 +356,7 @@ func TestUIOrgSettings(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /orgs/o1/settings = %d, want 200", rec.Code)
 	}
-	for _, want := range []string{"web_search", `href="/orgs/o1/settings/danger-zone"`} {
+	for _, want := range []string{"web_search", `href="/o/o1/settings/danger-zone"`} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("org settings page missing %q", want)
 		}
@@ -393,7 +393,7 @@ func TestUIOrgSettingsDangerZone(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /orgs/o1/settings/danger-zone = %d, want 200", rec.Code)
 	}
-	for _, want := range []string{"Danger zone", `action="/orgs/o1/delete"`, `href="/orgs/o1/settings"`} {
+	for _, want := range []string{"Danger zone", `action="/o/o1/delete"`, `href="/o/o1/settings"`} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("danger-zone page missing %q", want)
 		}
@@ -415,7 +415,7 @@ func TestUIOrgRename(t *testing.T) {
 		t.Fatalf("GET /orgs/o1/settings/general = %d, want 200", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{`action="/orgs/o1/rename"`, `name="name"`, `value="Acme"`, "Save name", `href="/orgs/o1/settings/general"`} {
+	for _, want := range []string{`action="/o/o1/rename"`, `name="name"`, `value="Acme"`, "Save name", `href="/o/o1/settings/general"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("org general page missing %q", want)
 		}

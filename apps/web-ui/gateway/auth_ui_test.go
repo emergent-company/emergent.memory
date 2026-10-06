@@ -235,7 +235,7 @@ func TestRenderProjectSwitcherGroups(t *testing.T) {
 	}
 
 	segAcme := menu[iAcme:iGlobex]
-	for _, want := range []string{"Home", "Lab", `value="p1"`, `value="p2"`} {
+	for _, want := range []string{"Home", "Lab", `href="/o/o1/p/p1/agents"`, `href="/o/o1/p/p2/agents"`} {
 		if !strings.Contains(segAcme, want) {
 			t.Errorf("Acme group missing %q", want)
 		}
@@ -252,9 +252,12 @@ func TestRenderProjectSwitcherGroups(t *testing.T) {
 		t.Errorf("Other group should contain the orphan project, got %q", segOther)
 	}
 
-	// headers are non-clickable menu-title rows, not activate forms
-	if strings.Count(menu, `action="/projects/activate"`) != 4 {
-		t.Errorf("want 4 activate forms (one per project), got %d", strings.Count(menu, `action="/projects/activate"`))
+	// rows are scoped links (one per project), not activate forms
+	if strings.Contains(menu, `action="/projects/activate"`) {
+		t.Error("project rows must not use the legacy activate form")
+	}
+	if n := strings.Count(menu, `role="menuitem"`); n != 4 {
+		t.Errorf("want 4 project links (one per project), got %d", n)
 	}
 
 	// exactly one active check, on the current project row
@@ -382,8 +385,8 @@ func TestRenderProjectSwitcherScriptNotInMenu(t *testing.T) {
 	if strings.Contains(menu, "<script") {
 		t.Error("menu must not contain a <script> element (daisyUI renders it as a visible grid blob)")
 	}
-	// the New-project row is a plain button child of its <li>
-	if !strings.Contains(menu, "<button") || !strings.Contains(menu, "New project") {
+	// the New-project row is a plain anchor child of its <li>
+	if !strings.Contains(menu, "<a") || !strings.Contains(menu, "New project") {
 		t.Error("New-project row missing from the menu")
 	}
 

@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/emergent-company/go-daisy/components/ui"
-	"github.com/emergent-company/go-daisy/render"
 	"github.com/labstack/echo/v4"
 )
 
@@ -309,7 +308,7 @@ func (s *Server) renderBoardColumns(c echo.Context, actionErr error) error {
 	} else if err != nil {
 		errMsg = err.Error()
 	}
-	render.RenderPartial(c.Response().Writer, c.Request(), BoardRefresh(items, s.boardStatuses(ctx), s.boardStatusMap(ctx), errMsg))
+	renderPartial(c.Response().Writer, c.Request(), BoardRefresh(items, s.boardStatuses(ctx), s.boardStatusMap(ctx), errMsg))
 	return nil
 }
 
@@ -319,10 +318,10 @@ func (s *Server) uiBoardItem(c echo.Context) error {
 	canonicalID := c.Param("canonicalId")
 	detail, err := s.memory.GetWorkItem(ctx, canonicalID)
 	if err != nil {
-		render.RenderPartial(c.Response().Writer, c.Request(), BoardDrawerError(err))
+		renderPartial(c.Response().Writer, c.Request(), BoardDrawerError(err))
 		return nil
 	}
-	render.RenderPartial(c.Response().Writer, c.Request(), BoardDrawer(detail, s.boardStatusMap(ctx)))
+	renderPartial(c.Response().Writer, c.Request(), BoardDrawer(detail, s.boardStatusMap(ctx)))
 	return nil
 }
 

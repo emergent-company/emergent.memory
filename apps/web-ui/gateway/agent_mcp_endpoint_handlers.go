@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/emergent-company/go-daisy/render"
 	"github.com/labstack/echo/v4"
 )
 
@@ -182,7 +181,7 @@ func (s *Server) uiAgentMCPSessions(c echo.Context) error {
 			data.MCPSessions = sessions
 		}
 	}
-	render.RenderPartial(c.Response().Writer, c.Request(), agentMCPSessionsBody(data))
+	renderPartial(c.Response().Writer, c.Request(), agentMCPSessionsBody(data))
 	return nil
 }
 

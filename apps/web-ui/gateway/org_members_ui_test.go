@@ -618,7 +618,7 @@ func TestRenderNewProjectModalOrgSelector(t *testing.T) {
 // group (identity moved to the topbar account menu); the active-state
 // mechanism marks the members family.
 func TestSidebarGroupsWorkspaceAccount(t *testing.T) {
-	groups := sidebarGroups(true)
+	groups := sidebarGroups("", true)
 	byLabel := map[string][]layout.SidebarItem{}
 	for _, g := range groups {
 		byLabel[g.Label] = g.Items
@@ -643,14 +643,14 @@ func TestSidebarGroupsWorkspaceAccount(t *testing.T) {
 	}
 
 	// the org context sidebar exposes the org-scoped pages under /orgs/:id
-	orgGroups := orgSidebarGroups("org-1", true)
+	orgGroups := orgSidebarGroups("/o/org-1", true)
 	hrefs := map[string]bool{}
 	for _, g := range orgGroups {
 		for _, item := range g.Items {
 			hrefs[item.Href] = true
 		}
 	}
-	for _, want := range []string{"/orgs/org-1", "/orgs/org-1/members", "/orgs/org-1/settings"} {
+	for _, want := range []string{"/o/org-1", "/o/org-1/members", "/o/org-1/settings"} {
 		if !hrefs[want] {
 			t.Errorf("org sidebar missing %q", want)
 		}
@@ -671,22 +671,22 @@ func TestSidebarGroupsRoleGating(t *testing.T) {
 		return m
 	}
 
-	if hrefs(sidebarGroups(false))["/backups"] {
+	if hrefs(sidebarGroups("", false))["/backups"] {
 		t.Error("non-admin project sidebar must hide Backups")
 	}
-	if !hrefs(sidebarGroups(true))["/backups"] {
+	if !hrefs(sidebarGroups("", true))["/backups"] {
 		t.Error("org_admin project sidebar must show Backups")
 	}
 
-	nonAdminOrg := hrefs(orgSidebarGroups("org-1", false))
-	if nonAdminOrg["/orgs/org-1/members"] {
+	nonAdminOrg := hrefs(orgSidebarGroups("/o/org-1", false))
+	if nonAdminOrg["/o/org-1/members"] {
 		t.Error("non-admin org sidebar must hide Members")
 	}
-	if !nonAdminOrg["/orgs/org-1"] || !nonAdminOrg["/orgs/org-1/settings"] {
+	if !nonAdminOrg["/o/org-1"] || !nonAdminOrg["/o/org-1/settings"] {
 		t.Error("non-admin org sidebar must keep Projects and Settings")
 	}
 
-	if !hrefs(orgSidebarGroups("org-1", true))["/orgs/org-1/members"] {
+	if !hrefs(orgSidebarGroups("/o/org-1", true))["/o/org-1/members"] {
 		t.Error("org_admin org sidebar must show Members")
 	}
 }
@@ -812,8 +812,8 @@ func TestUIOrgsRoutes(t *testing.T) {
 
 	// create org → 303 to the list with ?ok=1
 	rec = postForm(t, e, "/orgs", "name=Globex")
-	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/orgs/org-1" {
-		t.Fatalf("POST /orgs = %d %q, want 303 /orgs/org-1", rec.Code, rec.Header().Get("Location"))
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/o/org-1" {
+		t.Fatalf("POST /orgs = %d %q, want 303 /o/org-1", rec.Code, rec.Header().Get("Location"))
 	}
 	if len(f.createdOrgs) != 1 || f.createdOrgs[0].Name != "Globex" {
 		t.Errorf("CreateOrg not recorded: %+v", f.createdOrgs)
@@ -827,8 +827,8 @@ func TestUIOrgsRoutes(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("HX-Request", "true")
 	e.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || rec.Header().Get("HX-Redirect") != "/orgs/org-2" {
-		t.Fatalf("HTMX POST /orgs = %d HX-Redirect %q, want 200 /orgs/org-2", rec.Code, rec.Header().Get("HX-Redirect"))
+	if rec.Code != http.StatusOK || rec.Header().Get("HX-Redirect") != "/o/org-2" {
+		t.Fatalf("HTMX POST /orgs = %d HX-Redirect %q, want 200 /o/org-2", rec.Code, rec.Header().Get("HX-Redirect"))
 	}
 
 	// empty name → error flash back to the form page

@@ -14,7 +14,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/emergent-company/go-daisy/render"
 	"github.com/labstack/echo/v4"
 	"golang.org/x/sync/errgroup"
 )
@@ -432,7 +431,7 @@ func (s *Server) uiObjectsPartial(c echo.Context) error {
 
 	// Search mode has no cursor pagination (it renders the top 25 only).
 	if query != "" {
-		render.RenderPartial(c.Response().Writer, c.Request(), objectsRowsPartial(objectsPageData{}))
+		renderPartial(c.Response().Writer, c.Request(), objectsRowsPartial(objectsPageData{}))
 		return nil
 	}
 
@@ -455,7 +454,7 @@ func (s *Server) uiObjectsPartial(c echo.Context) error {
 		data.TypeUIByType = objectTypeUIMap(compiled.ObjectTypes)
 	}
 
-	render.RenderPartial(c.Response().Writer, c.Request(), objectsRowsPartial(data))
+	renderPartial(c.Response().Writer, c.Request(), objectsRowsPartial(data))
 	return nil
 }
 
@@ -535,7 +534,7 @@ func (s *Server) uiObjectsStatsPartial(c echo.Context) error {
 		stats.PendingEmbed = progress.Objects.Pending
 		stats.FailedEmbed = progress.Objects.Failed
 	}
-	render.RenderPartial(c.Response().Writer, c.Request(), objectsStatsSection(stats))
+	renderPartial(c.Response().Writer, c.Request(), objectsStatsSection(stats))
 	return nil
 }
 
@@ -613,10 +612,10 @@ func (s *Server) uiObjectsKnowledge(c echo.Context) error {
 	answer, sessionID, err := s.memory.QueryKnowledge(ctx, question, branch)
 	if err != nil {
 		captureError(err)
-		render.RenderPartial(c.Response().Writer, c.Request(), objectsKnowledgeError(err))
+		renderPartial(c.Response().Writer, c.Request(), objectsKnowledgeError(err))
 		return nil
 	}
-	render.RenderPartial(c.Response().Writer, c.Request(), objectsKnowledgeAnswer(answer, sessionID))
+	renderPartial(c.Response().Writer, c.Request(), objectsKnowledgeAnswer(answer, sessionID))
 	return nil
 }
 
@@ -683,7 +682,7 @@ func (s *Server) uiObjectSimilarPartial(c echo.Context) error {
 		captureError(err)
 		similar = nil
 	}
-	render.RenderPartial(c.Response().Writer, c.Request(), objectSimilarObjects(&GraphObject{ID: id}, filterSimilarMatches(similar)))
+	renderPartial(c.Response().Writer, c.Request(), objectSimilarObjects(&GraphObject{ID: id}, filterSimilarMatches(similar)))
 	return nil
 }
 

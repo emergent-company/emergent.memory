@@ -25,7 +25,7 @@ func (s *Server) uiCreateProject(c echo.Context) error {
 		return redirectWithError(c, "/agents", err)
 	}
 	s.activateProjectInSession(c, project.ID, orgID)
-	return c.Redirect(http.StatusSeeOther, "/agents")
+	return c.Redirect(http.StatusSeeOther, projectScopeURL(orgID, project.ID)+"/agents")
 }
 
 // uiActivateProject handles the project-switcher activate form (POST
@@ -41,10 +41,14 @@ func (s *Server) uiActivateProject(c echo.Context) error {
 	// after the switch; best-effort — an unresolved org leaves it empty.
 	orgID, _ := s.projectOrgID(c.Request().Context(), id)
 	s.activateProjectInSession(c, id, orgID)
+	// Land on the target project's scoped URL so the switch is reflected in the
+	// address bar (an org-context page must not bounce back to the org page,
+	// whose resolveOrg re-activates the org).
+	if orgID != "" {
+		render.RedirectAfterMutation(c.Response().Writer, c.Request(), projectScopeURL(orgID, id)+"/agents")
+		return nil
+	}
 	back := c.Request().Header.Get("Referer")
-	// Switching into a project from the org context must not bounce back to
-	// the org page, whose resolveOrg re-activates the org and clears the
-	// just-activated project. Land on the project page instead.
 	if back == "" || isOrgContextPath(back) {
 		back = "/agents"
 	}

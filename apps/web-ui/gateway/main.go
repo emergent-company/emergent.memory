@@ -98,6 +98,19 @@ func main() {
 	// session mode (AUTH_MODE=session) requires a session for UI and
 	// session-or-key for /api (see auth.go authDispatch).
 	e.Use(s.authDispatch)
+	// Scope resolver: for a /o/{org}[/p/{project}] request, make the path scope
+	// the request's Memory scope (overriding the session cookie). Runs after
+	// authDispatch so the session context is available; fails closed with 404.
+	e.Use(s.applyScope)
+	// Client scope: unscoped /api/* calls (fetch/SSE) carry the shell's scope
+	// in headers/query; validate it against the access tree.
+	e.Use(s.resolveClientScope)
+	// Redirect scoping: rewrite Location/HX-Redirect targets of a scoped
+	// request so PRG redirects stay in the active org/project context.
+	e.Use(s.scopeLocation)
+	// Scope rewrite: strip the /o/... prefix before routing so the flat route
+	// table below is reused unchanged (Pre middlewares run before routing).
+	e.Pre(s.scopeRewrite)
 
 	// Internal worker endpoint — exempt from session auth (see publicAuthPath);
 	// gated by a per-worker credential in the X-Worker-Key header instead.

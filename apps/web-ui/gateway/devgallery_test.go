@@ -507,7 +507,7 @@ func TestProjectScopePathExemptsDev(t *testing.T) {
 // --- 5.3 no sidebar nav entry ---
 
 func TestNoGalleryNavLink(t *testing.T) {
-	for _, group := range sidebarGroups(false) {
+	for _, group := range sidebarGroups("", false) {
 		for _, item := range group.Items {
 			if strings.Contains(item.Href, "/dev/") {
 				t.Errorf("sidebar navigation contains a gallery link %q", item.Href)

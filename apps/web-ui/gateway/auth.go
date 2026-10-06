@@ -686,6 +686,12 @@ func (s *Server) resolveDefaultProject(next echo.HandlerFunc) echo.HandlerFunc {
 			!projectScopePath(c.Request().URL.Path) {
 			return next(c)
 		}
+		// A scoped (/o/{org}/p/{project}) request carries its project in the
+		// path; applyScope sets it after this middleware, so do not auto-select
+		// a cookie default over it.
+		if _, ok := scopeFromContext(c.Request().Context()); ok {
+			return next(c)
+		}
 		sc, ok := sessionContextFrom(c.Request().Context())
 		if !ok || sc.ProjectID != "" {
 			return next(c)

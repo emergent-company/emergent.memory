@@ -251,7 +251,7 @@ func (s *Server) uiDocumentExtractionDetail(c echo.Context) error {
 	ctx := c.Request().Context()
 	docID := c.Param("id")
 	detail := s.loadExtractionJobDetail(ctx, docID, c.Param("jobId"))
-	render.RenderPartial(c.Response().Writer, c.Request(), ExtractionJobDetail(docID, detail))
+	renderPartial(c.Response().Writer, c.Request(), ExtractionJobDetail(docID, detail))
 	return nil
 }
 

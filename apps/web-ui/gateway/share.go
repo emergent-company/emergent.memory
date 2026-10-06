@@ -483,7 +483,7 @@ func (s *Server) sharePartialSessions(c echo.Context) error {
 	if err != nil {
 		return s.shareProxyErrorResponse(c, err)
 	}
-	render.RenderPartial(c.Response().Writer, c.Request(), ShareSessionList(shareSessionItems(sessions)))
+	renderPartial(c.Response().Writer, c.Request(), ShareSessionList(shareSessionItems(sessions)))
 	return nil
 }
 

@@ -116,8 +116,9 @@
     if (!page) return;
     var scope = page.getAttribute("data-scope") || "account";
     var tab = page.getAttribute("data-tab") || "all";
+    var path = window.MemoryScope ? MemoryScope.path("/inbox") : "/inbox";
     var url =
-      "/inbox?scope=" + encodeURIComponent(scope) + "&tab=" + encodeURIComponent(tab);
+      path + "?scope=" + encodeURIComponent(scope) + "&tab=" + encodeURIComponent(tab);
     if (window.htmx && window.htmx.ajax) {
       window.htmx.ajax("GET", url, { target: "#main-content", swap: "innerHTML" });
     } else {

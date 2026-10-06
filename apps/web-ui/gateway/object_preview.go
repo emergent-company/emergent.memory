@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/a-h/templ"
-	"github.com/emergent-company/go-daisy/render"
 	"github.com/labstack/echo/v4"
 )
 
@@ -29,7 +28,7 @@ func (s *Server) uiObjectPreviewPartial(c echo.Context) error {
 	obj, err := s.memory.GetGraphObject(ctx, id)
 	if err != nil {
 		captureError(err)
-		render.RenderPartial(c.Response().Writer, c.Request(), objectPreviewNotFound())
+		renderPartial(c.Response().Writer, c.Request(), objectPreviewNotFound())
 		return nil
 	}
 
@@ -52,7 +51,7 @@ func (s *Server) uiObjectPreviewPartial(c echo.Context) error {
 		}
 	}
 
-	render.RenderPartial(c.Response().Writer, c.Request(),
+	renderPartial(c.Response().Writer, c.Request(),
 		objectPreviewContent(obj, typeUIByType, s.objectPreviewRelationshipLabel(ctx, id, relID), actions))
 	return nil
 }

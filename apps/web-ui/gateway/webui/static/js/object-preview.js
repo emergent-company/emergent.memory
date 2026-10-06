@@ -21,6 +21,16 @@
 (function () {
   "use strict";
 
+  /* Scoped-path helper for JS-built URLs. app.js defines window.MemoryScope on
+     the shell; fall back to the raw path when this script is loaded standalone
+     (the hermetic js-dom specs) or app.js is absent, so a missing global never
+     throws a ReferenceError. */
+  function scopedPath(p) {
+    return window.MemoryScope && typeof window.MemoryScope.path === "function"
+      ? window.MemoryScope.path(p)
+      : p;
+  }
+
   var root = null, panel = null, backdrop = null, body = null;
   var editLink = null, closeBtn = null;
   var lastFocused = null;
@@ -174,22 +184,25 @@
   // previews) and the object list/detail pages are deliberately excluded.
   function isChatObjectRef(a) {
     var href = a.getAttribute("href") || "";
-    if (href.indexOf("/objects/") !== 0) return false;
+    if (href.indexOf("/objects/") < 0) return false;
     if (a.target && a.target !== "" && a.target !== "_self") return false;
     if (a.hasAttribute("download")) return false;
     if (a.getAttribute("data-testid") === "citation-link") return true;
     return !!a.closest("#chat-messages, #sidepanel-messages");
   }
 
-  // parseRef splits a /objects/<id>[#relationship-<rel>] href. Returns null for
-  // refs we should not intercept (empty, or an id containing a slash — a human
-  // key the single-segment preview route cannot address, so navigation wins).
+  // parseRef splits a (possibly scoped) .../objects/<id>[#relationship-<rel>]
+  // href. Returns null for refs we should not intercept (empty, or an id
+  // containing a slash — a human key the single-segment preview route cannot
+  // address, so navigation wins).
   function parseRef(href) {
-    if (!href || href.indexOf("/objects/") !== 0) return null;
+    if (!href) return null;
+    var objIdx = href.indexOf("/objects/");
+    if (objIdx < 0) return null;
     var path = href, frag = "";
     var hash = path.indexOf("#");
     if (hash >= 0) { frag = path.slice(hash + 1); path = path.slice(0, hash); }
-    var id = path.slice("/objects/".length);
+    var id = path.slice(objIdx + "/objects/".length);
     if (!id || id.indexOf("/") >= 0) return null;
     var rel = "";
     if (frag.indexOf("relationship-") === 0) rel = frag.slice("relationship-".length);
@@ -203,7 +216,7 @@
     if (modalMode) backToDrawer(); // never open a fresh preview inside the modal shell
     pendingFocus = null; // a fresh open supersedes any deferred restore
     lastFocused = document.activeElement;
-    if (editLink) editLink.setAttribute("href", ref.editHref || "/objects/" + ref.id);
+    if (editLink) editLink.setAttribute("href", ref.editHref || scopedPath("/objects/" + ref.id));
 
     setLoading();
     panel.classList.remove("translate-x-full");
@@ -218,7 +231,7 @@
     // surface's actions into #object-preview-actions-slot. Absent for chat
     // references, which stay read-only.
     if (ref.actions) params.push("actions=" + encodeURIComponent(ref.actions));
-    var url = "/objects/" + ref.id + "/preview" + (params.length ? "?" + params.join("&") : "");
+    var url = scopedPath("/objects/" + ref.id) + "/preview" + (params.length ? "?" + params.join("&") : "");
     if (window.htmx && htmx.ajax) {
       htmx.ajax("GET", url, { target: "#object-preview-body", swap: "innerHTML" });
     }

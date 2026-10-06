@@ -88,6 +88,30 @@ strings that *are* a component's API (the tool-group disclosure bases, the confi
 Visual regression belongs in the gallery and Playwright e2e, not in unit goldens (see the capability spec
 for the exact policy).
 
+## Scoped URLs — org/project in the path
+
+Org/project context is addressed in the URL, not the session cookie:
+org pages at `/o/{orgRef}`, project pages at `/o/{orgRef}/p/{projectRef}`.
+The session cookie is only the `/` landing default + recent list.
+
+- **Resolution** (`scope.go`): `scopeRewrite` (echo `Pre`, before routing)
+  strips the prefix and stashes the refs; `applyScope` resolves them against the
+  caller's access tree and makes them the request's Memory scope. Fail closed
+  (404) when a ref is outside the tree. Never write the cookie for scope.
+- **Links/actions**: do **not** hardcode the scope prefix. `page()` rewrites
+  URL-bearing attributes (`href`/`action`/`hx-*`/`data-href`/`data-autosave-url`)
+  to the request's base via `rewriteScopedHTML`; `scopeLocation` scopes PRG
+  `Location`/`HX-Redirect`. Global paths (`/api`, `/auth`, `/share`, `/profile`,
+  `/orgs`, `/projects`, …) pass through.
+- **Target-project URLs** (switcher, post-create/switch): use
+  `projectScopeURL(orgID, projectID)`.
+- **Client calls**: `window.MemoryScope.path()` scopes JS-built app URLs; the
+  `app.js` shim adds `X-Org-ID`/`X-Project-ID` to same-origin `/api` fetch and
+  `org_id`/`project_id` to `EventSource`. `resolveClientScope` validates them.
+- **Fragments**: `render.RenderPartial` callers that render links directly
+  bypass `page()`'s rewriter — route them through it before enabling
+  `enforceScopedURLs` (the hard cut).
+
 ## UI patterns — page shell, htmx, Alpine
 
 Cross-cutting rendering/interactivity conventions live in

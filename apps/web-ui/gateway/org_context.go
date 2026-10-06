@@ -615,28 +615,40 @@ func (s *Server) uiRestoreProject(c echo.Context) error {
 // uiRoot resolves the landing redirect (GET /): dev/API-key mode keeps the
 // static-project landing; session mode resolves last-used project → activate,
 // else the active org → org landing, else the first org → activate + landing,
-// else the no-org wizard.
+// else the no-org wizard. Project/org landings are the canonical scoped URLs.
 func (s *Server) uiRoot(c echo.Context) error {
 	sc, hasSession := sessionContextFrom(c.Request().Context())
 	if !hasSession {
 		return c.Redirect(http.StatusFound, "/agents")
 	}
-	if sc.ProjectID != "" {
-		return c.Redirect(http.StatusFound, "/agents")
-	}
+	// Last-used project (durable recent list) wins, then the session's active
+	// project; both resolve to the project's scoped URL.
+	candidates := []string{}
 	if rc, ok := s.readRecentProjects(c); ok {
-		if ids := rc.Recent[sc.Sub]; len(ids) > 0 {
-			s.activateProjectInSession(c, ids[0], "")
-			return c.Redirect(http.StatusFound, "/agents")
+		candidates = append(candidates, rc.Recent[sc.Sub]...)
+	}
+	if sc.ProjectID != "" {
+		candidates = append(candidates, sc.ProjectID)
+	}
+	if len(candidates) > 0 {
+		if projects, err := s.memory.ListProjects(c.Request().Context()); err == nil {
+			for _, id := range candidates {
+				for _, p := range projects {
+					if p.ID == id {
+						s.activateProjectInSession(c, p.ID, p.OrgID)
+						return c.Redirect(http.StatusFound, projectScopeURL(p.OrgID, p.ID)+"/agents")
+					}
+				}
+			}
 		}
 	}
 	if sc.OrgID != "" {
-		return c.Redirect(http.StatusFound, "/orgs/"+url.PathEscape(sc.OrgID))
+		return c.Redirect(http.StatusFound, "/o/"+url.PathEscape(sc.OrgID))
 	}
 	orgs, err := s.memory.ListOrgs(c.Request().Context())
 	if err == nil && len(orgs) > 0 {
 		s.activateOrg(c, orgs[0].ID)
-		return c.Redirect(http.StatusFound, "/orgs/"+url.PathEscape(orgs[0].ID))
+		return c.Redirect(http.StatusFound, "/o/"+url.PathEscape(orgs[0].ID))
 	}
 	return c.Redirect(http.StatusFound, "/orgs/new")
 }

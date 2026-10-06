@@ -410,7 +410,7 @@ func TestInboxBellScope(t *testing.T) {
 func TestSidebarGroupsIncludesInbox(t *testing.T) {
 	for _, admin := range []bool{true, false} {
 		found := false
-		for _, g := range sidebarGroups(admin) {
+		for _, g := range sidebarGroups("", admin) {
 			for _, item := range g.Items {
 				if item.Href == "/inbox" {
 					found = true
@@ -429,7 +429,7 @@ func TestSidebarGroupsIncludesInbox(t *testing.T) {
 // TestLayoutSidebarActiveInbox asserts the active-state mechanism marks the
 // inbox entry on /inbox.
 func TestLayoutSidebarActiveInbox(t *testing.T) {
-	groups := layout.ActiveSidebarGroups(sidebarGroups(false), "/inbox")
+	groups := layout.ActiveSidebarGroups(sidebarGroups("", false), "/inbox")
 	for _, g := range groups {
 		for _, item := range g.Items {
 			if item.Href == "/inbox" && !item.Active {

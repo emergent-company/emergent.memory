@@ -9,6 +9,16 @@
 (function () {
   "use strict";
 
+  /* Scoped-path helper for JS-built URLs. app.js defines window.MemoryScope on
+     the shell; fall back to the raw path when this script is loaded standalone
+     (the hermetic js-dom specs) or app.js is absent, so a missing global never
+     throws a ReferenceError. */
+  function scopedPath(p) {
+    return window.MemoryScope && typeof window.MemoryScope.path === "function"
+      ? window.MemoryScope.path(p)
+      : p;
+  }
+
   /* Report an error to Sentry when the browser SDK is active (gated on
      window.Sentry, present only when the loader was injected because a
      Sentry DSN is configured). No-op otherwise. */
@@ -436,7 +446,7 @@
         // page (they are not resumable in this workspace).
         var shareId = t.getAttribute("data-share-id");
         if (shareId) {
-          window.location.href = "/share-sessions/" + encodeURIComponent(shareId);
+          window.location.href = scopedPath("/share-sessions/" + encodeURIComponent(shareId));
         }
       } else if (t.getAttribute("data-action") === "toggle-chat-rail") {
         var rail = document.getElementById("chat-rail");
@@ -621,7 +631,7 @@
   /* ---------- conversation persistence ---------- */
 
   function updateUrl() {
-    var url = "/chat";
+    var url = scopedPath("/chat");
     var qs = [];
     if (conversationId) qs.push("c=" + encodeURIComponent(conversationId));
     // Preserve the transient debug switch across URL normalization so the
@@ -747,7 +757,7 @@
     var railList = document.getElementById("chat-rail-list");
     if (!railList) return;
     try {
-      var res = await fetch("/partial/chat-rail?c=" + encodeURIComponent(conversationId || "") + "&includeArchived=" + (filterIncludeArchived ? "true" : "false"));
+      var res = await fetch(scopedPath("/partial/chat-rail") + "?c=" + encodeURIComponent(conversationId || "") + "&includeArchived=" + (filterIncludeArchived ? "true" : "false"));
       if (!res.ok) throw new Error("HTTP " + res.status);
       railList.innerHTML = await res.text();
       reapplyArchivePending();
@@ -2103,7 +2113,7 @@
       withAnchoredScroll(function () { el.innerHTML = ""; el.classList.add("hidden"); });
       return Promise.resolve();
     }
-    return fetch("/partial/chat-todos?c=" + encodeURIComponent(conversationId))
+    return fetch(scopedPath("/partial/chat-todos") + "?c=" + encodeURIComponent(conversationId))
       .then(function (res) {
         if (!res.ok) throw new Error("HTTP " + res.status);
         return res.text();

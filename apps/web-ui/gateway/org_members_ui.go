@@ -394,7 +394,7 @@ func (s *Server) uiInviteUserSearch(c echo.Context) error {
 	if len(email) >= 2 {
 		users, _ = s.memory.SearchUsers(c.Request().Context(), email)
 	}
-	render.RenderPartial(c.Response().Writer, c.Request(), userSearchOptions(users))
+	renderPartial(c.Response().Writer, c.Request(), userSearchOptions(users))
 	return nil
 }
 
@@ -419,7 +419,7 @@ func (s *Server) uiCreateOrg(c echo.Context) error {
 	// #main-content while the shell (topbar org switcher, sidebar) still shows
 	// the previous org. HX-Redirect forces a full page load (see the org-delete
 	// and project-activate precedent); plain POSTs keep the 303.
-	render.RedirectAfterMutation(c.Response().Writer, c.Request(), "/orgs/"+url.PathEscape(org.ID))
+	render.RedirectAfterMutation(c.Response().Writer, c.Request(), "/o/"+url.PathEscape(org.ID))
 	return nil
 }
 

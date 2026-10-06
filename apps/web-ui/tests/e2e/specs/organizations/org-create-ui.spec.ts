@@ -13,8 +13,9 @@ test('creates an org via the form and deletes it', async ({ page }) => {
     await page.locator('#new-org-name').fill(orgName);
     await page.getByRole('button', { name: 'Create organization' }).click();
 
-    // Redirects to the new org landing /orgs/:id, which renders the org name.
-    await page.waitForURL(/\/orgs\/[0-9a-f-]{36}/);
+    // Redirects to the new org's canonical scoped landing /o/:id, which
+    // renders the org name.
+    await page.waitForURL(/\/o\/[0-9a-f-]{36}/);
     orgId = new URL(page.url()).pathname.split('/').pop()!;
     await expect(page.getByRole('heading', { name: orgName })).toBeVisible();
 
