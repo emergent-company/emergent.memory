@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"regexp"
 	"strings"
@@ -218,8 +219,14 @@ func TestRefactorOutputExact(t *testing.T) {
 	// flashToasts — pushes into the Alpine queue when the shell is loaded
 	// (hx-boost swaps); falls back to the sessionStorage stash on full loads.
 	got = render(flashToasts("Skill created.", nil))
-	want = `<script type="text/javascript">(function(){try{var p=JSON.parse("{\"kind\":\"success\",\"message\":\"Skill created.\"}");var c=document.getElementById("toast-container");if(c&&window.Alpine){var q=window.Alpine.$data(c);if(q&&q.add){q.add({type:p.kind,message:p.message,duration:4200});return;}}sessionStorage.setItem("memory-toast",JSON.stringify(p));}catch(e){}})();</script>`
+	want = `<script type="text/javascript">(function(){try{var p=JSON.parse("{\"duration\":4200,\"kind\":\"success\",\"message\":\"Skill created.\"}");var c=document.getElementById("toast-container");if(c&&window.Alpine){var q=window.Alpine.$data(c);if(q&&q.add){q.add({type:p.kind,message:p.message,duration:p.duration});return;}}sessionStorage.setItem("memory-toast",JSON.stringify(p));}catch(e){}})();</script>`
 	check("flashToasts", got, want)
+
+	// flashToasts — errors are persistent: duration 0 tells the queue to keep
+	// the toast and render a close button instead of auto-dismissing.
+	got = render(flashToasts("", errors.New("boom")))
+	want = `<script type="text/javascript">(function(){try{var p=JSON.parse("{\"duration\":0,\"kind\":\"error\",\"message\":\"boom\"}");var c=document.getElementById("toast-container");if(c&&window.Alpine){var q=window.Alpine.$data(c);if(q&&q.add){q.add({type:p.kind,message:p.message,duration:p.duration});return;}}sessionStorage.setItem("memory-toast",JSON.stringify(p));}catch(e){}})();</script>`
+	check("flashToasts error persistent", got, want)
 
 	// chatWelcomeHero — chat variant
 	got = render(chatWelcomeHero("chat-empty", "lucide--sparkles", "gap-4 py-10", "Ready when you are", 2, "text-base", "Ask anything.", "mt-1 max-w-sm text-sm"), "<p>extra</p>")

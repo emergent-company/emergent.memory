@@ -714,15 +714,19 @@ templ mcpServersScript() {
 			if (!listRoot) return;
 			window.__mcpUIWired = true;
 
+			// Errors persist (duration 0, dismissed via the close button); every
+			// other kind auto-dismisses. Mirrors toastDuration() in app.js and
+			// toastDurationMs() in ui.go.
 			function toast(kind, message) {
-				var payload = JSON.stringify({ type: kind, message: message, duration: 4200 });
+				var duration = kind === 'error' ? 0 : 4200;
 				try {
 					var c = document.getElementById('toast-container');
 					if (c && window.Alpine) {
 						var q = window.Alpine.$data(c);
-						if (q && q.add) { q.add(JSON.parse(payload)); return; }
+						if (q && q.add) { q.add({ type: kind, message: message, duration: duration }); return; }
 					}
-					sessionStorage.setItem('memory-toast', payload);
+					// Stash uses the "kind" key that flushStashedToast (app.js) reads.
+					sessionStorage.setItem('memory-toast', JSON.stringify({ kind: kind, message: message }));
 				} catch (e) {}
 			}
 			function plural(n) { return n === 1 ? '' : 's'; }

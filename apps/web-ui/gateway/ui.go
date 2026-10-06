@@ -154,27 +154,45 @@ func partialWithTitle(title string, content templ.Component) templ.Component {
 	})
 }
 
-// flashToast renders PRG feedback (create/update/delete flows) as an
-// auto-dismissing toast. Navigation is hx-boosted (in-place swaps), so the
-// message must reach the Alpine toast queue two ways:
+// toastDurationMs is the auto-dismiss timeout for a toast kind. Error toasts
+// are persistent (0 = the queue renders a close button and keeps them until it
+// is used); every other kind auto-dismisses. Mirror any change in app.js's
+// toastDuration so server- and client-originated toasts agree.
+func toastDurationMs(kind string) int {
+	if kind == "error" {
+		return 0
+	}
+	return 4200
+}
+
+// flashToast renders PRG feedback (create/update/delete flows) as a toast.
+// Navigation is hx-boosted (in-place swaps), so the message must reach the
+// Alpine toast queue two ways:
 //  1. when the shell is already loaded (boosted swap), push straight into the
 //     #toast-container Alpine queue;
 //  2. on a full page load the Alpine runtime is not up yet when this inline
 //     script runs, so fall back to stashing under the "memory-toast" key that
 //     app.js's flushStashedToast reads on DOMContentLoaded.
 //
+// Errors are persistent (duration 0, dismissed via the toast's close button);
+// all other kinds auto-dismiss — see toastDurationMs.
+//
 // Go's encoding/json escapes < as \u003c, so message text cannot break out of
 // the <script> block.
 func flashToast(kind, message string) templ.Component {
-	payload, err := json.Marshal(map[string]string{"kind": kind, "message": message})
+	payload, err := json.Marshal(map[string]any{
+		"kind":     kind,
+		"message":  message,
+		"duration": toastDurationMs(kind),
+	})
 	if err != nil {
-		payload = []byte(`{"kind":"info","message":""}`)
+		payload = []byte(`{"kind":"info","message":"","duration":4200}`)
 	}
 	encoded, err := json.Marshal(string(payload))
 	if err != nil {
 		encoded = []byte(`""`)
 	}
-	script := `(function(){try{var p=JSON.parse(` + string(encoded) + `);var c=document.getElementById("toast-container");if(c&&window.Alpine){var q=window.Alpine.$data(c);if(q&&q.add){q.add({type:p.kind,message:p.message,duration:4200});return;}}sessionStorage.setItem("memory-toast",JSON.stringify(p));}catch(e){}})();`
+	script := `(function(){try{var p=JSON.parse(` + string(encoded) + `);var c=document.getElementById("toast-container");if(c&&window.Alpine){var q=window.Alpine.$data(c);if(q&&q.add){q.add({type:p.kind,message:p.message,duration:p.duration});return;}}sessionStorage.setItem("memory-toast",JSON.stringify(p));}catch(e){}})();`
 	return templ.Raw(`<script type="text/javascript">` + script + `</script>`)
 }
 

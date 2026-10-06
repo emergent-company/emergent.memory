@@ -131,12 +131,18 @@
   /* ---------- toast ---------- */
   /* Push a toast into the Alpine toast queue (rendered by
      ui.ToastQueueWithProps in the app shell). Alpine owns the queue, dismissal
-     timer, countdown progress bar, and hover-to-pause. */
+     timer, countdown progress bar, and hover-to-pause.
+     Errors are persistent (duration 0 = no auto-dismiss): the queue renders a
+     close button for them. Every other kind auto-dismisses. Mirrors
+     toastDurationMs in ui.go. */
+  function toastDuration(kind) {
+    return kind === "error" ? 0 : 4200;
+  }
   function toast(kind, message) {
     var container = document.getElementById("toast-container");
     if (!container || !window.Alpine) return;
     var queue = window.Alpine.$data(container);
-    if (queue && queue.add) queue.add({ type: kind, message: message, duration: 4200 });
+    if (queue && queue.add) queue.add({ type: kind, message: message, duration: toastDuration(kind) });
   }
 
   /* stash a toast across a page reload (CRUD flow) */

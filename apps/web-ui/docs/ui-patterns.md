@@ -84,7 +84,7 @@ ride `?err=<urlencoded>`.
 
 | Helper | Where | Does |
 |---|---|---|
-| `flashToast(kind, message)` | `ui.go:163` | inline script pushing into the Alpine `#toast-container` queue, or stashing `sessionStorage["memory-toast"]` for full loads |
+| `flashToast(kind, message)` | `ui.go:163` | inline script pushing into the Alpine `#toast-container` queue, or stashing `sessionStorage["memory-toast"]` for full loads; duration from `toastDurationMs` (`error` → `0`) |
 | `flashToasts(flashMsg, flashErr)` | `ui.templ:1029` | renders error-then-success toast pair; both skipped when unset |
 | `flashError(c)` | `ui.go:185` | decodes `?err=`; `"1"` is the legacy generic-failure sentinel |
 | `redirectWithError(c, path, err)` | `ui.go:178` | 303 to `path?err=<urlencoded>` |
@@ -92,6 +92,17 @@ ride `?err=<urlencoded>`.
 
 The toast queue itself is `ui.ToastQueueWithProps` in the shell (`ui.templ:80`),
 Alpine-owned (queue add, dismiss timer, countdown, hover-pause — `app.js:36-45`).
+
+**Toast severity.** The queue is severity-driven: an **`error` toast is
+persistent** — duration `0`, no auto-dismiss timer — and renders an explicit
+close button; `success`/`info`/`warning` auto-dismiss and are dismissible by
+clicking the toast. The severity→duration rule has one definition per side:
+`toastDurationMs` (`ui.go:168`) for server `flashToast`/`flashToasts`, and
+`toastDuration` (`app.js:139`) for client-side `toast()` calls (inline-save
+`HX-Trigger`, stashed flash). Keep the two in step. Persistence is implemented
+in go-daisy (`ToastQueueInitPausable` + `toast-queue.templ`): a `duration <= 0`
+toast arms no timer, shows no countdown bar, is not click-dismissable, and
+renders the close button.
 
 **Rule for redirects:**
 
@@ -161,7 +172,7 @@ Legend: L0 = go-daisy primitive, L3 = page-local helper (see `gateway/AGENTS.md:
 | Native `<dialog>` | `ui.Dialog` (go-daisy `dialog_templ.go:42`, emits `<dialog>`); `agentFormDialog` (`ui.templ:458`) | L0 | `showModal()` via `MemoryApp.openDialog` |
 | Confirm dialog | `ui.ConfirmDialog` (go-daisy `confirm-dialog_templ.go:33`); `deleteConfirmDialog` (`ui.templ:569`) | L0 | `MemoryApp.openDeleteConfirm` |
 | Dialog auto-open | `components.DialogAutoOpen` (`components/dialog.templ:9`) → `data-dialog-autoopen` | L1 | `app.js` opens on load + after htmx swap (`app.js:671-678`) |
-| Toasts | `ui.ToastQueueWithProps` (`ui.templ:80`) + `flashToast` (`ui.go:163`) | L0 | Alpine queue; add/dismiss/countdown |
+| Toasts | `ui.ToastQueueWithProps` (`ui.templ:80`) + `flashToast` (`ui.go:163`) | L0 | Alpine queue; add/dismiss/countdown; `error` toasts are persistent (`duration 0`) with a close button, others auto-dismiss + click-to-dismiss |
 | Command palette | `ui.CommandPalette` (`spotlight.templ:48`, go-daisy `command-palette_templ.go:49`) | L0 | `⌘K` modal; rows htmx-nav + uncheck `#spotlight-toggle` |
 | Popover (row action menus) | `ui.Popover` (go-daisy `popover_templ.go:75`); `org_context.templ:80,445-457` | L0 | `window.goDaisy.popover.closeAll()` runtime |
 | CSS-only dropdowns | `ui.Dropdown` (go-daisy `dropdown_templ.go:31`); project switcher `auth_ui.templ:180`, account menu `account_menu.templ:13`, search-mode split button `objects.templ:201` | L0 | focus/focus-within; no JS, no truthful `aria-expanded` |

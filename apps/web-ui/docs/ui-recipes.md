@@ -46,6 +46,7 @@ asserting.**
 | Destructive / irreversible confirmation | [`edit.confirm`](#editconfirm--destructive-confirmation) |
 | Secondary actions on one row/entity | [`edit.row-menu`](#editrow-menu--row-action-menu) |
 | One boolean/state control inline in a row | [`edit.row-action`](#editrow-action--in-row-state-mutation) |
+| Report a success/failure without a page change | [`feedback.toast`](#feedbacktoast--toast-feedback) |
 
 ---
 
@@ -477,6 +478,53 @@ form; server responds through the PRG/flash contract.
 
 ---
 
+## Feedback patterns
+
+### `feedback.toast` — toast feedback
+
+**When** an action (mutation, inline save, async job) should report success or
+failure without navigating. **Avoid** for long, actionable, provider-style
+messages that need reading room — those use the `memory-alert` modal
+(`ui-patterns.md` §4).
+
+**Instruction:** "Report the result with pattern `feedback.toast`: render
+`flashToasts(flashMsg, flashErr)` for PRG flows, emit the `memory-toast`
+`HX-Trigger` for inline responses, or call `MemoryApp.toast(kind, message)` from
+client JS. Severity is load-bearing — pass `error` for failures."
+
+Severity is one rule with one definition per side — never pass an ad-hoc
+`duration`:
+
+| Kind | Behaviour |
+|---|---|
+| `error` | **persistent** — no auto-dismiss; explicit accessible close button; clicking the body does nothing |
+| `success` / `info` / `warning` | auto-dismiss after the shared timeout; click-to-dismiss |
+
+The rule lives in `toastDurationMs` (`ui.go:168`, server) and `toastDuration`
+(`app.js:139`, client).
+
+**Recipe** (server PRG — `ui.templ:1029`; client — `app.js:135`):
+
+```go
+@flashToasts(flashMsg, flashErr) // error-then-success pair; both skipped when unset
+```
+
+```js
+window.MemoryApp.toast("error", "Save failed: " + err.message); // persists until closed
+```
+
+**Contract:** PRG errors ride `?err=<message>` → `flashError` → `flashToasts`;
+inline responses use the `memory-toast` `HX-Trigger` with `{kind, message}`;
+client code uses `MemoryApp.toast(kind, message)`. Failures pass `kind="error"`.
+
+**Source:** `ui.go:163,168,181,185`
+(`flashToast`/`toastDurationMs`/`redirectWithError`/`flashError`), `ui.templ:1029`
+(`flashToasts`), `webui/static/js/app.js:135` (`toast`), go-daisy
+`components/alpine/lifecycle.go` (`ToastQueueInitPausable`) +
+`components/ui/toast-queue.templ`.
+
+---
+
 ## Cross-cutting rules (do not duplicate — link)
 
 | Rule | Where |
@@ -489,6 +537,7 @@ form; server responds through the PRG/flash contract.
 | htmx v4 + Alpine same-id restore trap | `ui-patterns.md` §6 |
 | Never `innerHTML` untrusted content | `AGENTS.md` "Role gating" |
 | Test the contract (ids/`data-testid`/`aria-*`/`hx-*`), not class strings | `AGENTS.md`, `ui-patterns.md` §8 |
+| Toast severity (persistent errors + close button) | `ui-patterns.md` §2, `feedback.toast` |
 
 ---
 
@@ -507,6 +556,7 @@ form; server responds through the PRG/flash contract.
 | `edit.confirm` | `ui.templ:596`; `components/confirm.templ:14,32`; `webui/static/js/app.js:390` |
 | `edit.row-menu` | `org_context.templ:93,458` |
 | `edit.row-action` | `schedules.templ:94,120`; `components/form.templ:50` |
+| `feedback.toast` | `ui.go:163`; `ui.templ:1029`; `webui/static/js/app.js:135`; go-daisy `components/ui/toast-queue.templ` |
 
 ## Adding a pattern (or a variant)
 
