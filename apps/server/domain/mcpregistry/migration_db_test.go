@@ -11,8 +11,12 @@ import (
 )
 
 // TestMigration00220_UpDown applies the embedded migrations to head, rolls back
-// the latest migration (00220 device target) and asserts the added columns
+// to before the 00220 device target migration and asserts the added columns
 // disappear, then re-applies it and asserts they return. Exercises both halves.
+//
+// It targets version 219 explicitly rather than calling Down() ("roll back the
+// latest migration"): any migration added after 00220 would otherwise become the
+// one rolled back, leaving 00220's columns in place.
 func TestMigration00220_UpDown(t *testing.T) {
 	if testing.Short() {
 		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
@@ -42,8 +46,8 @@ func TestMigration00220_UpDown(t *testing.T) {
 	}
 
 	mig := migrate.NewMigrator(db, zap.NewNop())
-	if err := mig.Down(ctx); err != nil {
-		t.Fatalf("Down() error = %v", err)
+	if err := mig.DownTo(ctx, 219); err != nil {
+		t.Fatalf("DownTo(219) error = %v", err)
 	}
 	if got := columnCount(); got != 0 {
 		t.Fatalf("after Down: column count = %d, want 0", got)

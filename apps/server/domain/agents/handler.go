@@ -1590,11 +1590,6 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 	}
 
 	// Set defaults
-	flowType := FlowTypeSingle
-	if dto.FlowType != "" {
-		flowType = dto.FlowType
-	}
-
 	visibility := VisibilityProject
 	if dto.Visibility != "" {
 		nv, ok := NormalizeVisibility(dto.Visibility)
@@ -1649,7 +1644,6 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 		BannedTools:       dto.BannedTools,
 		Skills:            skillNames,
 		AutoLoadSkills:    dto.AutoLoadSkills != nil && *dto.AutoLoadSkills,
-		FlowType:          flowType,
 		IsDefault:         isDefault,
 		Enabled:           enabled,
 		MaxSteps:          dto.MaxSteps,
@@ -1738,9 +1732,6 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 	}
 	if dto.AutoLoadSkills != nil {
 		def.AutoLoadSkills = *dto.AutoLoadSkills
-	}
-	if dto.FlowType != nil {
-		def.FlowType = *dto.FlowType
 	}
 	if dto.IsDefault != nil {
 		def.IsDefault = *dto.IsDefault

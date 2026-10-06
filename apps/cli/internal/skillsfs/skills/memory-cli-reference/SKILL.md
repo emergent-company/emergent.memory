@@ -292,7 +292,7 @@ Manage agent definitions
 
 ### Synopsis
 
-Commands for managing agent definitions (system prompts, tools, model config, flow type, visibility)
+Commands for managing agent definitions (system prompts, tools, model config, visibility)
 
 ### Options
 
@@ -310,7 +310,7 @@ Create a new agent definition.
 
 Examples:
   memory agent-definitions create --name "my-def" --system-prompt "You are a helpful agent"
-  memory defs create --name "extractor" --flow-type single --tools "search,graph_query" --visibility project
+  memory defs create --name "extractor" --tools "search,graph_query" --visibility project
 
 ```
 memory agent-definitions create [flags]
@@ -321,7 +321,6 @@ memory agent-definitions create [flags]
 ```
       --default-timeout int    Default timeout in seconds
       --description string     Description
-      --flow-type string       Flow type (single, multi, coordinator)
   -h, --help                   help for create
       --is-default string      Set as default definition (true/false)
       --max-steps int          Maximum steps per run
@@ -359,7 +358,7 @@ Get agent definition details
 
 Get full details for a specific agent definition by ID.
 
-Prints Name, ID, ProjectID, FlowType, Visibility, IsDefault, Description (if
+Prints Name, ID, ProjectID, Visibility, IsDefault, Description (if
 set), System Prompt (truncated to 200 characters), Model configuration (Name,
 Temperature, MaxTokens), Tools list, MaxSteps, DefaultTimeout, ACP Config
 (DisplayName, Description, Capabilities), CreatedAt and UpdatedAt timestamps,
@@ -384,7 +383,7 @@ List all agent definitions
 
 List all agent definitions for the current project.
 
-Prints a numbered list with each definition's Name, ID, FlowType, Visibility,
+Prints a numbered list with each definition's Name, ID, Visibility,
 IsDefault flag, Tool count, and Description (if set).
 
 ```
@@ -474,7 +473,6 @@ memory agent-definitions update [id] [flags]
 ```
       --default-timeout int    New default timeout
       --description string     New description
-      --flow-type string       New flow type
   -h, --help                   help for update
       --is-default string      Set as default (true/false)
       --max-steps int          New max steps
@@ -1725,7 +1723,7 @@ Checks performed:
   Packs      — required fields, object/relationship type definitions, internal
                cross-references (sourceType/targetType must name an objectType
                in the same pack), duplicate names within and across files.
-  Agents     — required fields, enum values (flowType, visibility, dispatchMode),
+  Agents     — required fields, enum values (visibility, dispatchMode),
                model.name required when model block is present, duplicate names.
   Skills     — required fields, non-empty content body, duplicate names.
   Seed data  — required fields, key presence (warning when missing), type

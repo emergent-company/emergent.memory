@@ -43,7 +43,6 @@ func TestCLIInstalled_AgentDefinitionCreateGetDelete(t *testing.T) {
 		"agent-definitions", "create",
 		"--name", defName,
 		"--system-prompt", "You are a test agent for e2e validation.",
-		"--flow-type", "single",
 		"--visibility", "project",
 		"--project", projectID,
 	)
@@ -67,10 +66,7 @@ func TestCLIInstalled_AgentDefinitionCreateGetDelete(t *testing.T) {
 	if !strings.Contains(getOut, defName) {
 		t.Errorf("expected get output to contain name %q, got:\n%s", defName, truncate(getOut, 500))
 	}
-	if !strings.Contains(getOut, "single") {
-		t.Errorf("expected get output to contain flow type 'single', got:\n%s", truncate(getOut, 500))
-	}
-	rl.Printf("get output contains name=%s, flow_type=single: true", defName)
+	rl.Printf("get output contains name=%s: true", defName)
 
 	// Delete the definition.
 	rl.Section("Delete agent definition")
@@ -113,7 +109,6 @@ func TestCLIInstalled_AgentDefinitionList(t *testing.T) {
 		"agent-definitions", "create",
 		"--name", defName,
 		"--system-prompt", "Test agent for list validation.",
-		"--flow-type", "single",
 		"--project", projectID,
 	)
 	rl.CLI("memory agent-definitions create --name "+defName+" --project "+projectID, createOut)
@@ -376,7 +371,6 @@ func TestCLIInstalled_AgentDefinitionUpdate(t *testing.T) {
 		"agent-definitions", "create",
 		"--name", defName,
 		"--system-prompt", "Original prompt.",
-		"--flow-type", "single",
 		"--project", projectID,
 	)
 	rl.CLI("memory agent-definitions create --name "+defName+" --project "+projectID, createOut)

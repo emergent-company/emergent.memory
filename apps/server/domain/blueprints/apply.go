@@ -663,13 +663,9 @@ func (s *Service) applySeedRelationships(ctx context.Context, projectID uuid.UUI
 
 // buildAgentDefinition converts an AgentManifest into a fresh
 // agents.AgentDefinition for the CREATE path. Empty model Name means provider
-// default. Flow type, visibility, and dispatch mode fall back to the domain
-// defaults when omitted in the manifest. Enabled defaults to true.
+// default. Visibility and dispatch mode fall back to the domain defaults when
+// omitted in the manifest. Enabled defaults to true.
 func buildAgentDefinition(m *AgentManifest, projectID string) (*agents.AgentDefinition, error) {
-	flowType := agents.AgentFlowType(m.FlowType)
-	if flowType == "" {
-		flowType = agents.FlowTypeSingle
-	}
 	visibility := agents.AgentVisibility(m.Visibility)
 	if visibility == "" {
 		visibility = agents.VisibilityProject
@@ -685,7 +681,6 @@ func buildAgentDefinition(m *AgentManifest, projectID string) (*agents.AgentDefi
 		Tools:          m.Tools,
 		BannedTools:    m.BannedTools,
 		Skills:         m.Skills,
-		FlowType:       flowType,
 		Enabled:        true,
 		Visibility:     visibility,
 		Config:         m.Config,
@@ -757,7 +752,7 @@ func buildAgentDefinition(m *AgentManifest, projectID string) (*agents.AgentDefi
 // existing agent definition for the UPDATE path. Everything not driven by the
 // manifest — AutoLoadSkills, MaxSessionEvents, ACPConfig, ProductID, Enabled,
 // ID, timestamps, and Name — is preserved untouched.
-// Description/SystemPrompt/FlowType/Visibility/DispatchMode are only set when
+// Description/SystemPrompt/Visibility/DispatchMode are only set when
 // the manifest provides a non-empty value (omitted = keep current); Tools,
 // Skills, Config, SandboxConfig, IsDefault, MaxSteps, DefaultTimeout, and
 // ToolPolicies are overwritten from the manifest. BannedTools is applied only
@@ -795,9 +790,6 @@ func applyAgentManifestToExisting(def *agents.AgentDefinition, m *AgentManifest)
 	def.Skills = m.Skills
 	if def.Skills == nil {
 		def.Skills = []string{}
-	}
-	if m.FlowType != "" {
-		def.FlowType = agents.AgentFlowType(m.FlowType)
 	}
 	if m.Visibility != "" {
 		def.Visibility = agents.AgentVisibility(m.Visibility)

@@ -144,7 +144,6 @@ func buildForgetAgentDefinition(strategy string, cascadeDepth int) *AgentDefinit
 		},
 		Tools:        tools,
 		Skills:       []string{},
-		FlowType:     FlowTypeSingle,
 		IsDefault:    false,
 		MaxSteps:     &maxSteps,
 		Visibility:   VisibilityProject,

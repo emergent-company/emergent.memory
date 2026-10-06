@@ -69,7 +69,6 @@ memory agent-definitions create \
   --name "acp-probe-external" \
   --description "External-visibility ACP probe agent" \
   --system-prompt "You are a terse probe agent." \
-  --flow-type single \
   --model "openai/deepseek-v4-flash" \
   --visibility external
 ```

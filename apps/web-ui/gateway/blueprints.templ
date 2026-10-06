@@ -653,7 +653,6 @@ templ agentDiffBlock(a AgentDiff) {
 			@diffChangeChip(a.Change)
 		</div>
 		@diffField("Model", a.Model)
-		@diffField("Flow", a.FlowType)
 		@diffField("Visibility", a.Visibility)
 		@diffField("Description", a.Description)
 		if a.SystemPrompt.Change != DiffChangeNone {
@@ -996,7 +995,7 @@ templ blueprintAgents(d *BlueprintDetail) {
 }
 
 // agentDetailRow renders one agent definition in full: header (name + model +
-// flow/visibility badges), an unservable-model warning when the pinned model's
+// visibility badges), an unservable-model warning when the pinned model's
 // provider isn't configured, description, tool list, skills, config, and system
 // prompt.
 templ agentDetailRow(a BundledAgent, providerNames []string) {
@@ -1008,9 +1007,6 @@ templ agentDetailRow(a BundledAgent, providerNames []string) {
 			<p class="text-sm font-medium">{ a.Name }</p>
 			if a.Model != "" {
 				@ui.Badge(ui.BadgeProps{Label: a.Model, Variant: ui.BadgePrimary, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--cpu"})
-			}
-			if a.FlowType != "" {
-				@ui.Badge(ui.BadgeProps{Label: a.FlowType, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
 			}
 			if a.Visibility != "" {
 				@ui.Badge(ui.BadgeProps{Label: a.Visibility, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})

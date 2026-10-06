@@ -495,7 +495,7 @@ func TestBoardDrawerGatesActionsByCustomStatus(t *testing.T) {
 // workConfig instead of silently defaulting.
 func TestListAgentDefinitionsWorkConfigFlowsToStatusMap(t *testing.T) {
 	const body = `{"success":true,"data":[{"id":"ad-1","projectId":"p1","name":"diane",` +
-		`"flowType":"single","visibility":"project","isDefault":false,"enabled":true,` +
+		`"visibility":"project","isDefault":false,"enabled":true,` +
 		`"toolCount":0,"skills":[],"createdAt":"2026-01-01T00:00:00Z",` +
 		`"updatedAt":"2026-01-01T00:00:00Z",` +
 		`"workConfig":{"status":{"ready":"todo","inProgress":"doing","review":"checking",` +

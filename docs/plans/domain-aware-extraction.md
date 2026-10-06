@@ -540,7 +540,6 @@ tools:
   - memory_search
   - graph_query
   - graph_write
-flowType: single
 visibility: project
 maxSteps: 50
 ```

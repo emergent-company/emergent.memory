@@ -87,7 +87,7 @@ func TestBuildProposalCardSkill(t *testing.T) {
 }
 
 func TestBuildProposalCardAgent(t *testing.T) {
-	card := buildProposalCard(json.RawMessage(`{"kind":"agent","summary":"Add an editor agent","body":{"name":"editor","model":"openai/deepseek-v4-flash","systemPrompt":"You edit objects.","tools":["entity-create"],"skills":["editing"],"bannedTools":["ask_user"],"flowType":"agentic","visibility":"project"}}`))
+	card := buildProposalCard(json.RawMessage(`{"kind":"agent","summary":"Add an editor agent","body":{"name":"editor","model":"openai/deepseek-v4-flash","systemPrompt":"You edit objects.","tools":["entity-create"],"skills":["editing"],"bannedTools":["ask_user"],"visibility":"project"}}`))
 	if card == nil || card.Agent == nil {
 		t.Fatalf("agent proposal should parse, got %+v", card)
 	}

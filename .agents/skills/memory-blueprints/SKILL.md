@@ -56,7 +56,7 @@ memory blueprints validate https://github.com/org/repo#v1.2.0
 
 Validates the blueprint directory (or GitHub repo) offline — no project, no auth needed. Reports errors and warnings for:
 - **Packs** — missing required fields, invalid relationship `sourceType`/`targetType` cross-references, duplicate names
-- **Agents** — invalid `flowType`, `visibility`, or `dispatchMode` values; missing `model.name`
+- **Agents** — invalid `visibility` or `dispatchMode` values; missing `model.name`
 - **Skills** — missing `name`/`description`, empty content body
 - **Seed objects** — missing `type`, keyless objects (warning)
 - **Seed relationships** — missing endpoints, unresolvable `srcKey`/`dstKey` against seed objects

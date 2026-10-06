@@ -47,7 +47,6 @@ type blueprintAgent struct {
 	Tools        []string        `json:"tools,omitempty"`
 	BannedTools  []string        `json:"bannedTools,omitempty"`
 	Skills       []string        `json:"skills,omitempty"`
-	FlowType     string          `json:"flowType,omitempty"`
 	Visibility   string          `json:"visibility,omitempty"`
 	Config       map[string]any  `json:"config,omitempty"`
 	UI           *BundledAgentUI `json:"ui,omitempty"`
@@ -143,7 +142,6 @@ func buildBlueprintManifest(bp *BundledBlueprint) (json.RawMessage, error) {
 			Tools:          a.Tools,
 			BannedTools:    a.BannedTools,
 			Skills:         a.Skills,
-			FlowType:       a.FlowType,
 			Visibility:     a.Visibility,
 			Config:         a.Config,
 			UI:             nonEmptyAgentUI(a.UI),

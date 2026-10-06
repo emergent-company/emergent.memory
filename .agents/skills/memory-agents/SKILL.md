@@ -14,7 +14,7 @@ Manage runtime agents and agent definitions in an Emergent project using `memory
 
 ## Concepts
 
-- **Agent definition** (`agent-definitions`) — the blueprint: system prompt, model config, tools, flow type, visibility. Created once, reused.
+- **Agent definition** (`agent-definitions`) — the blueprint: system prompt, model config, tools, visibility. Created once, reused.
 - **Agent** (`agents`) — a live instance of a definition in a project, with scheduling, triggers, and run history.
 
 ---

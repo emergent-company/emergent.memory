@@ -47,7 +47,6 @@ func TestRenderAgentDashboard(t *testing.T) {
 		Name:        "diane",
 		Description: "household assistant with a dry wit",
 		Model:       &ModelConfig{Name: "gpt-4o", Temperature: 0.7},
-		FlowType:    "agentic",
 		Visibility:  "project",
 		ToolCount:   2,
 		Tools:       []string{"web_search", "memory_lookup"},
@@ -64,7 +63,7 @@ func TestRenderAgentDashboard(t *testing.T) {
 	html := renderHTML(t, AgentDashboardPage(data))
 	for _, want := range []string{
 		"diane", "household assistant with a dry wit",
-		"gpt-4o", "agentic", "project", "2 tools",
+		"gpt-4o", "project", "2 tools",
 		"web_search", "memory_lookup", "code_exec",
 		"Morning briefing", "Chat " + shortID("c2"),
 		`href="/chat?c=c1"`, `href="/chat?c=c2"`,
@@ -111,7 +110,7 @@ func TestRenderAgentDashboard(t *testing.T) {
 func TestUIAgentRoutes(t *testing.T) {
 	f := &fakeMemory{
 		defs: map[string]*AgentDefinition{
-			"a1": {ID: "a1", Name: "diane", Model: &ModelConfig{Name: "gpt-4o"}, Tools: []string{"web_search"}, FlowType: "agentic", Visibility: "project"},
+			"a1": {ID: "a1", Name: "diane", Model: &ModelConfig{Name: "gpt-4o"}, Tools: []string{"web_search"}, Visibility: "project"},
 			"a2": {ID: "a2", Name: "milo", Tools: []string{"calendar"}},
 		},
 		convs: []Conversation{
@@ -307,7 +306,7 @@ func TestAgentModelDisplay(t *testing.T) {
 	}
 
 	// desktop table headers restored.
-	for _, want := range []string{">Agent</th>", ">Model</th>", ">Tools</th>", ">Flow</th>", ">Visibility</th>", ">Updated</th>"} {
+	for _, want := range []string{">Agent</th>", ">Model</th>", ">Tools</th>", ">Visibility</th>", ">Updated</th>"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("agents table missing header %q", want)
 		}

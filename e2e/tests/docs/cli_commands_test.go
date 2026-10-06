@@ -266,7 +266,7 @@ func TestDocCmd_SkillsListGlobal(t *testing.T) {
 // TestDocCmd_DefsCreateAndDelete verifies the documented agent definition
 // create/delete lifecycle:
 //
-//	memory defs create --name "..." --system-prompt "..." --flow-type single --project <id>
+//	memory defs create --name "..." --system-prompt "..." --project <id>
 //	memory defs delete <def-id> --project <id>
 func TestDocCmd_DefsCreateAndDelete(t *testing.T) {
 	rl := newRunLog(t)
@@ -293,7 +293,6 @@ func TestDocCmd_DefsCreateAndDelete(t *testing.T) {
 		"defs", "create",
 		"--name", defName,
 		"--system-prompt", "You are a test agent for docs e2e validation.",
-		"--flow-type", "single",
 		"--visibility", "project",
 		"--project", projectID,
 	)

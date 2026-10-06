@@ -5,7 +5,6 @@ description: >
   the coding pool. Escalates to premium-tier models when standard variants
   repeatedly fail acceptance criteria.
 
-flowType: agentic
 maxSteps: 15
 isDefault: false
 defaultTimeout: 180

@@ -155,20 +155,14 @@ struct AppShellView: View {
         .listStyle(.insetGrouped)
     }
 
-    /// One native list row: agent name plus its flow type, using system
-    /// semantic fonts and default insets.
+    /// One native list row: agent name, using system semantic fonts and
+    /// default insets.
     private func agentRow(_ agent: Agent) -> some View {
         VStack(alignment: .leading, spacing: 0.5 * .grid) {
             Text(agent.name)
                 .font(.headline)
                 .foregroundStyle(.fg0)
                 .lineLimit(1)
-            if let flowType = agent.flowType, !flowType.isEmpty {
-                Text(LocalizedStringKey(flowType))
-                    .font(.subheadline)
-                    .foregroundStyle(.fg3)
-                    .lineLimit(1)
-            }
         }
     }
 

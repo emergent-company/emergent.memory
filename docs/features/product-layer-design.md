@@ -51,7 +51,7 @@ A product is a **declarative configuration bundle** — not new backend code. It
 | Component         | What It Configures                                      | Core System       | Status         |
 | ----------------- | ------------------------------------------------------- | ----------------- | -------------- |
 | Template Packs    | Domain schemas, extraction prompts, UI config           | `templatepacks`   | Already exists |
-| Agent Definitions | System prompts, model config, tool selection, flow type | `agents` / `chat` | Needs building |
+| Agent Definitions | System prompts, model config, tool selection | `agents` / `chat` | Needs building |
 | Scheduled Jobs    | Recurring tasks, sync intervals, cron expressions       | `scheduler`       | Needs registry |
 | MCP Config        | External MCP servers, tool filtering, custom prompts    | `mcp`             | Needs config   |
 | Onboarding        | Seed data, initial setup steps                          | -                 | Future         |
@@ -376,7 +376,6 @@ CREATE TABLE kb.agent_definitions (
     temperature     REAL DEFAULT 0.7,
     max_tokens      INTEGER DEFAULT 8192,
     trigger         TEXT,                        -- NULL (chat), "on_document_ingested", etc.
-    flow_type       TEXT DEFAULT 'react',        -- "react", "sequential", "custom"
     flow_config     JSONB,                       -- additional flow configuration
     is_default      BOOLEAN DEFAULT false,
     config          JSONB DEFAULT '{}',          -- extra product-specific config
@@ -585,21 +584,7 @@ Load agent definition from kb.agent_definitions
 Configure chat session:
     ├─ System prompt from agent definition
     ├─ Model + temperature from agent definition
-    ├─ Available tools filtered by agent's tool list
-    └─ Flow type determines execution pattern
-```
-
-### Agent Flow Types
-
-```
-react          Default. LLM decides which tools to call.
-               Standard ReAct loop. Most agents use this.
-
-sequential     Steps executed in order. Each step's output
-               feeds the next. Good for extraction pipelines.
-
-custom         Flow defined in flow_config JSONB.
-               DAG of steps with conditions. Future.
+    └─ Available tools filtered by agent's tool list
 ```
 
 ### Integration with Existing Chat

@@ -202,7 +202,6 @@ func (s *RememberExperimentsTestSuite) seedExperiment(name, systemPrompt string)
 		Model:        &agents.ModelConfig{Temperature: &temp},
 		Tools:        []string{"finalize-discovery", "queue-reextraction"},
 		Skills:       []string{},
-		FlowType:     agents.FlowTypeSingle,
 		IsDefault:    false,
 		MaxSteps:     &maxSteps,
 		Visibility:   agents.VisibilityProject,

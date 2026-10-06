@@ -6,7 +6,6 @@ description: >
   before any operational change is made. Has exclusive capability to create or
   modify AgentDefinitionRecord objects in the graph.
 
-flowType: agentic
 maxSteps: 30
 isDefault: false
 defaultTimeout: 480

@@ -49,7 +49,6 @@ memory defs create \
   --system-prompt "You are an expert at summarizing technical documents. Extract key points and write a concise summary." \
   --model "gemini-2.0-flash" \
   --tools "search,graph_query,graph_create_object" \
-  --flow-type single \
   --visibility project \
   --max-steps 20
 ```
@@ -62,7 +61,6 @@ memory defs create \
 | `--system-prompt` | The system-level instructions for the LLM |
 | `--model` | Model name, e.g. `gemini-2.0-flash`, `gemini-2.5-flash` |
 | `--tools` | Comma-separated tool names the agent is allowed to call |
-| `--flow-type` | `single` (one LLM), `multi` (parallel), `coordinator` (spawns sub-agents) |
 | `--visibility` | `project` (default), `internal` (system only), `external` (ACP-exposed) |
 | `--max-steps` | Hard cap on LLM steps per run (server default: 500) |
 
@@ -290,7 +288,6 @@ tools:
   - search
   - graph_query
   - graph_create_object
-flowType: single
 visibility: project
 ```
 

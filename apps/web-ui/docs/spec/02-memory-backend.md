@@ -11,7 +11,7 @@ address it.
 
 | Capability | What it gives Memory |
 |---|---|
-| **Agent definitions** | `AgentDefinition` entity: system prompt, model, tools, banned tools, skills, flow type, max steps, tool policies, sandbox, visibility, ACP config, dispatch mode. Full CRUD at `/api/projects/:projectId/agent-definitions`. |
+| **Agent definitions** | `AgentDefinition` entity: system prompt, model, tools, banned tools, skills, max steps, tool policies, sandbox, visibility, ACP config, dispatch mode. Full CRUD at `/api/projects/:projectId/agent-definitions`. |
 | **Agent runtime** | `Agent` entity + executor (Google ADK `llmagent`), run persistence (`agent_runs`, `agent_run_messages`, `agent_run_tool_calls`). |
 | **Chat** | `POST /api/chat/stream` — streaming SSE, multi-turn, tool-calling, conversation + message persistence. |
 | **MCP registry** | `/api/mcp` + MCP registry domain — ~90–120 tools; schema/search/entity/relationship/document/agent/provider/skill/token/embedding/trace/remember/forget categories. |
@@ -86,7 +86,7 @@ Fields we surface to users (see 03-agent-model.md for the Memory-facing model):
 - `model` — name (provider-prefixed: `deepseek/deepseek-v4-flash`, `google/gemini-2.5-flash`, `openai/gpt-4o`), temperature, max tokens, native tools, thinking
 - `tools` / `banned_tools` — MCP tool references (allowlist) and exclusions
 - `skills` / `auto_load_skills` — (deferred)
-- `flow_type`, `max_steps`, `tool_policies` — loop control (confirm/disable per tool)
+- `max_steps`, `tool_policies` — loop control (confirm/disable per tool)
 - `visibility`, `dispatch_mode`, `acp_config` — exposure and trigger control
 
 ## What memory does NOT provide (Memory must fill)

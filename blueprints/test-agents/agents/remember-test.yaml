@@ -43,7 +43,6 @@ systemPrompt: |
 tools:
   - classify-document
   - finalize-discovery
-flowType: single
 visibility: project
 maxSteps: 30
 model:

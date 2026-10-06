@@ -3,7 +3,6 @@ description: >
   Board worker that claims a Task from the Kanban board, does the work, writes
   any deliverable objects, and then completes or blocks the item.
 
-flowType: single
 dispatchMode: queued
 defaultQueue: default
 maxSteps: 20

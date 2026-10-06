@@ -130,9 +130,6 @@ struct AgentDetailView: View {
                 if let trigger = triggerType, !trigger.isEmpty {
                     ConnectorInfoRow(label: "Trigger", value: humanized(trigger))
                 }
-                if let flow = flowType, !flow.isEmpty {
-                    ConnectorInfoRow(label: "Flow", value: humanized(flow))
-                }
 
                 IdentifierInfoRow(label: "ID", identifier: agent.id)
             }
@@ -312,10 +309,6 @@ struct AgentDetailView: View {
 
     private var triggerType: String? {
         detail?.triggerType ?? agent.triggerType
-    }
-
-    private var flowType: String? {
-        detail?.flowType ?? agent.flowType
     }
 
     /// The server omits the model when the agent has none; show a neutral label.

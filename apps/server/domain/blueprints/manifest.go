@@ -138,7 +138,6 @@ type AgentManifest struct {
 	Tools           []string                   `json:"tools,omitempty"`
 	BannedTools     []string                   `json:"bannedTools,omitempty"`
 	Skills          []string                   `json:"skills,omitempty"`
-	FlowType        string                     `json:"flowType,omitempty"`
 	IsDefault       *bool                      `json:"isDefault,omitempty"`
 	MaxSteps        *int                       `json:"maxSteps,omitempty"`
 	DefaultTimeout  *int                       `json:"defaultTimeout,omitempty"`

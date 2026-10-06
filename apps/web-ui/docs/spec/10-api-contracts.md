@@ -165,7 +165,7 @@ guard to the trigger route (`POST /api/projects/:projectId/agents/:id/trigger`) 
 { "name": "my-agent", "systemPrompt": "…",
   "model": {"name": "deepseek/deepseek-v4-flash", "temperature": 0.7, "maxTokens": 2048},
   "tools": ["search-knowledge"], "bannedTools": [], "skills": [], "autoLoadSkills": false,
-  "flowType": "single", "visibility": "project", "dispatchMode": "sync" }
+  "visibility": "project", "dispatchMode": "sync" }
 ```
 - `name` required; `model.name` must contain a `/` provider prefix; duplicate name → 409.
 - A definition is chat-capable **immediately** — no runtime `Agent`, no enable step.

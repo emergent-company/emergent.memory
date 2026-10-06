@@ -48,7 +48,6 @@ description: >
   documents — and inspects the knowledge graph read-only. Every change is
   proposed first and applied only after explicit user acceptance.
 
-flowType: agentic
 visibility: project
 
 tools:

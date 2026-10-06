@@ -6,7 +6,6 @@ description: >
   proposed first and applied only after explicit user acceptance.
 
 model: openai/deepseek-v4-pro
-flowType: agentic
 visibility: project
 
 tools:
@@ -105,7 +104,7 @@ systemPrompt: |
          the same manifest type definitions the blueprint apply path consumes.
        - skill: {"name","description","prompt","tools":[…],"bannedTools":[…]}
        - agent: {"name","description","model","systemPrompt","tools":[…],
-         "skills":[…],"bannedTools":[…],"flowType","visibility"}
+         "skills":[…],"bannedTools":[…],"visibility"}
        - mcp_server: {"name","type","url","enabled","enabledTools":[…],
          "disabledTools":[…]}. Never put credentials (auth headers) in an
          mcp_server proposal.

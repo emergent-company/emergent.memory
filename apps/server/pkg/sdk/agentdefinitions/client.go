@@ -1,5 +1,5 @@
 // Package agentdefinitions provides the Agent Definitions service client for the Emergent API SDK.
-// Agent definitions store agent configurations (system prompts, tools, model config, flow type, visibility)
+// Agent definitions store agent configurations (system prompts, tools, model config, visibility)
 // separately from runtime agent state. Requires authentication with admin:read and/or admin:write scopes.
 package agentdefinitions
 
@@ -61,7 +61,6 @@ type AgentDefinition struct {
 	Tools          []string        `json:"tools"`
 	Skills         []string        `json:"skills,omitempty"`
 	AutoLoadSkills bool            `json:"autoLoadSkills"`
-	FlowType       string          `json:"flowType"`
 	IsDefault      bool            `json:"isDefault"`
 	MaxSteps       *int            `json:"maxSteps,omitempty"`
 	DefaultTimeout *int            `json:"defaultTimeout,omitempty"`
@@ -80,7 +79,6 @@ type AgentDefinitionSummary struct {
 	ProjectID   string          `json:"projectId"`
 	Name        string          `json:"name"`
 	Description *string         `json:"description,omitempty"`
-	FlowType    string          `json:"flowType"`
 	Visibility  string          `json:"visibility"`
 	IsDefault   bool            `json:"isDefault"`
 	ToolCount   int             `json:"toolCount"`
@@ -130,7 +128,6 @@ type CreateAgentDefinitionRequest struct {
 	Tools          []string              `json:"tools,omitempty"`
 	Skills         []string              `json:"skills,omitempty"`
 	AutoLoadSkills *bool                 `json:"autoLoadSkills,omitempty"`
-	FlowType       string                `json:"flowType,omitempty"`
 	IsDefault      *bool                 `json:"isDefault,omitempty"`
 	MaxSteps       *int                  `json:"maxSteps,omitempty"`
 	DefaultTimeout *int                  `json:"defaultTimeout,omitempty"`
@@ -156,7 +153,6 @@ type UpdateAgentDefinitionRequest struct {
 	Tools          []string              `json:"tools,omitempty"`
 	Skills         []string              `json:"skills,omitempty"`
 	AutoLoadSkills *bool                 `json:"autoLoadSkills,omitempty"`
-	FlowType       *string               `json:"flowType,omitempty"`
 	IsDefault      *bool                 `json:"isDefault,omitempty"`
 	MaxSteps       *int                  `json:"maxSteps,omitempty"`
 	DefaultTimeout *int                  `json:"defaultTimeout,omitempty"`

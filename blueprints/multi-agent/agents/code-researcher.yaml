@@ -6,7 +6,6 @@ description: >
   source code, repository structure, implementation details, or technical
   architecture exploration.
 
-flowType: agentic
 maxSteps: 20
 isDefault: false
 defaultTimeout: 300

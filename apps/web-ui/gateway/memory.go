@@ -459,7 +459,6 @@ type AgentDefinitionSummary struct {
 	// Description is the agent's stored short description, shown under its name
 	// in the chat pane header. Absent/empty means no description.
 	Description string   `json:"description,omitempty"`
-	FlowType    string   `json:"flowType"`
 	Visibility  string   `json:"visibility"`
 	ToolCount   int      `json:"toolCount"`
 	Skills      []string `json:"skills"`
@@ -566,7 +565,6 @@ type AgentDefinition struct {
 	Skills       []string       `json:"skills"`
 	Config       map[string]any `json:"config"`
 	Delegation   *Delegation    `json:"delegation,omitempty"`
-	FlowType     string         `json:"flowType,omitempty"`
 	Visibility   string         `json:"visibility,omitempty"`
 	DispatchMode string         `json:"dispatchMode,omitempty"`
 	Enabled      bool           `json:"enabled"`

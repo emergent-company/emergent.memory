@@ -858,7 +858,6 @@ func agentFileToCreateRequest(ag AgentFile) *sdkagents.CreateAgentDefinitionRequ
 		Name:           ag.Name,
 		Tools:          ag.Tools,
 		Skills:         ag.Skills,
-		FlowType:       ag.FlowType,
 		Visibility:     ag.Visibility,
 		IsDefault:      &ag.IsDefault,
 		MaxSteps:       ag.MaxSteps,
@@ -918,9 +917,6 @@ func agentFileToUpdateRequest(ag AgentFile) *sdkagents.UpdateAgentDefinitionRequ
 	}
 	if ag.SystemPrompt != "" {
 		req.SystemPrompt = &ag.SystemPrompt
-	}
-	if ag.FlowType != "" {
-		req.FlowType = &ag.FlowType
 	}
 	if ag.Visibility != "" {
 		req.Visibility = &ag.Visibility

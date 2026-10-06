@@ -10,7 +10,7 @@ Emergent Memory.  The blueprint creates two layers of structure:
    to represent tasks, agents, pools, experiments, feedback signals, and KPIs.
 2. **Agent definitions** — the live actors: leaf agents, pool managers, an orchestrator,
    and a janitor orchestrator, each wired with the appropriate system prompt, tools,
-   model config, and flow type.
+   and model config.
 
 After applying this blueprint a project contains:
 - A complete, queryable knowledge graph of all work packages, tasks, agents, and

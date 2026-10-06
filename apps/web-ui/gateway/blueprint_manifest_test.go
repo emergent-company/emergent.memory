@@ -44,7 +44,6 @@ func TestBuildBlueprintManifest(t *testing.T) {
 			Model:        "deepseek-v4-pro",
 			Tools:        []string{"agent-def-*"},
 			BannedTools:  []string{"memory-wipe"},
-			FlowType:     "agentic",
 			Visibility:   "project",
 			Config:       map[string]any{"agentType": "operator"},
 		}},
@@ -218,7 +217,6 @@ func TestBuildBlueprintManifestAgentWorkAndReactions(t *testing.T) {
 		Version: "1.0.0",
 		Agents: []BundledAgent{{
 			Name:         "task-worker",
-			FlowType:     "single",
 			DispatchMode: "queued",
 			DefaultQueue: "default",
 			MaxSteps:     &steps,

@@ -112,14 +112,6 @@ templ agentSummaryCard(data agentDashboardData) {
 					<span class="text-muted-faint text-sm">auto — default model</span>
 				}
 			}
-			@agentSummaryField("Flow") {
-				@ui.Badge(ui.BadgeProps{
-					Label:   flowLabel(data.Agent.FlowType),
-					Variant: ui.BadgeNeutral,
-					Style:   ui.BadgeStyleSoft,
-					Size:    ui.BadgeSizeXS,
-				})
-			}
 			@agentSummaryField("Visibility") {
 				@ui.Badge(ui.BadgeProps{
 					Label:   visibilityLabel(data.Agent.Visibility),

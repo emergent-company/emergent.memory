@@ -390,7 +390,6 @@ templ agentsTable(agents []AgentDefinitionSummary) {
 					@table.TableHeadCell("Agent")
 					@table.TableHeadCell("Model")
 					@table.TableHeadCell("Tools")
-					@table.TableHeadCell("Flow")
 					@table.TableHeadCell("Visibility")
 					@table.TableHeadCell("Updated")
 					@table.TableHeadCell("")
@@ -437,14 +436,6 @@ templ agentRow(a AgentDefinitionSummary) {
 			} else {
 				@components.EmptyDash()
 			}
-		}
-		@table.TableCell("", nil) {
-			@ui.Badge(ui.BadgeProps{
-				Label:   flowLabel(a.FlowType),
-				Variant: ui.BadgeNeutral,
-				Style:   ui.BadgeStyleSoft,
-				Size:    ui.BadgeSizeXS,
-			})
 		}
 		@table.TableCell("", nil) {
 			@ui.Badge(ui.BadgeProps{

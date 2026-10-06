@@ -89,7 +89,7 @@ func (r *ValidationReport) Warnings() []ValidationIssue {
 //   - Pack: required fields, per-type required fields, internal cross-references
 //     (relationship sourceType/targetType must name an objectType in the same pack),
 //     duplicate names within a pack, duplicate pack names across files.
-//   - Agent: required fields, enum values (flowType, visibility, dispatchMode),
+//   - Agent: required fields, enum values (visibility, dispatchMode),
 //     model.name required when model block is present, duplicate agent names.
 //   - Skill: required fields, non-empty content body, duplicate skill names.
 //   - Seed objects: type field required, warns on missing key, cross-references
@@ -237,13 +237,6 @@ func (r *ValidationReport) validatePacks(packs []PackFile) {
 // Agent validation
 // ──────────────────────────────────────────────
 
-var validFlowTypes = map[string]bool{
-	"":           true, // optional
-	"single":     true,
-	"sequential": true,
-	"loop":       true,
-}
-
 // validVisibilities is the set of agent visibility levels the server accepts.
 // It mirrors the canonical AgentVisibility constants in
 // apps/server/domain/agents/entity.go (VisibilityProject|External|Internal) and
@@ -276,11 +269,6 @@ func (r *ValidationReport) validateAgents(agents []AgentFile) {
 
 		if a.Name == "" {
 			r.add(ValidationError, "agent", "", a.SourceFile, "name", "name is required")
-		}
-
-		if a.FlowType != "" && !validFlowTypes[a.FlowType] {
-			r.add(ValidationError, "agent", a.Name, a.SourceFile, "flowType",
-				fmt.Sprintf("invalid flowType %q (valid: single, sequential, loop)", a.FlowType))
 		}
 
 		if a.Visibility != "" && !validVisibilities[a.Visibility] {

@@ -68,10 +68,7 @@ struct AgentLevelView: View {
     }
 
     private var subtitle: LocalizedStringKey {
-        guard let agent else { return "agents.notFound" }
-        if let flowType = agent.flowType, !flowType.isEmpty {
-            return LocalizedStringKey(flowType)
-        }
+        guard agent != nil else { return "agents.notFound" }
         return "agents.subtitle"
     }
 

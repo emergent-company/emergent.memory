@@ -148,7 +148,6 @@ tools:                          # optional — list of tool names
   - search
   - graph_query
 
-flowType: conversational        # optional
 isDefault: false                # optional — bool, defaults to false
 maxSteps: 10                    # optional — integer
 defaultTimeout: 30              # optional — integer (seconds)

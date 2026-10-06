@@ -168,7 +168,6 @@ type AgentSummary struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
 	Tools       []string       `json:"tools,omitempty"`
-	FlowType    AgentFlowType  `json:"flow_type"`
 	Visibility  string         `json:"visibility"`
 	Config      map[string]any `json:"config,omitempty"`
 }
@@ -201,7 +200,6 @@ func buildAgentCatalog(defs []*AgentDefinition, policy []string, trustedInternal
 			Name:        def.Name,
 			Description: desc,
 			Tools:       filterWorkspaceToolNames(def.Tools),
-			FlowType:    def.FlowType,
 			Visibility:  string(def.Visibility),
 			Config:      def.Config,
 		})
@@ -214,7 +212,7 @@ func BuildListAvailableAgentsTool(deps CoordinationToolDeps) (tool.Tool, error) 
 	return functiontool.New(
 		functiontool.Config{
 			Name:        ToolNameListAvailableAgents,
-			Description: "List all available agents in the project's catalog. Returns name, description, tools list, flow_type, and visibility for each agent. Does not include system prompts.",
+			Description: "List all available agents in the project's catalog. Returns name, description, tools list, and visibility for each agent. Does not include system prompts.",
 		},
 		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
 			// Query all definitions for the project (include internal — non-external

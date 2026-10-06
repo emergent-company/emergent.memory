@@ -235,7 +235,7 @@ func TestResolveAgentsMCPReference(t *testing.T) {
 		{"id": "agent-2", "name": "Beta"},
 	}
 	definitions := []map[string]any{
-		{"id": "def-1", "name": "My Fancy Agent", "flowType": "graph_object_processor"},
+		{"id": "def-1", "name": "My Fancy Agent"},
 	}
 	client := agentMCPMock(t, runtimeAgents, definitions)
 

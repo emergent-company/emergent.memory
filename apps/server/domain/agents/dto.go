@@ -301,11 +301,10 @@ type AgentWithDefinitionDTO struct {
 	LastRunStatus *string            `json:"lastRunStatus,omitempty"`
 
 	// Definition fields (from kb.agent_definitions, may be nil if no definition)
-	Description *string       `json:"description,omitempty"`
-	FlowType    AgentFlowType `json:"flowType,omitempty"`
-	Model       *ModelConfig  `json:"model,omitempty"`
-	AgentType   *string       `json:"agentType,omitempty"`
-	Tier        *string       `json:"tier,omitempty"`
+	Description *string      `json:"description,omitempty"`
+	Model       *ModelConfig `json:"model,omitempty"`
+	AgentType   *string      `json:"agentType,omitempty"`
+	Tier        *string      `json:"tier,omitempty"`
 }
 
 // --- Agent Definition DTOs ---
@@ -336,7 +335,6 @@ type AgentDefinitionDTO struct {
 	BannedTools       []string              `json:"bannedTools,omitempty"`
 	Skills            []string              `json:"skills"`
 	AutoLoadSkills    bool                  `json:"autoLoadSkills"`
-	FlowType          AgentFlowType         `json:"flowType"`
 	IsDefault         bool                  `json:"isDefault"`
 	Enabled           bool                  `json:"enabled"`
 	MaxSteps          *int                  `json:"maxSteps,omitempty"`
@@ -371,7 +369,6 @@ type AgentDefinitionSummaryDTO struct {
 	ProjectID        string          `json:"projectId"`
 	Name             string          `json:"name"`
 	Description      *string         `json:"description,omitempty"`
-	FlowType         AgentFlowType   `json:"flowType"`
 	Visibility       AgentVisibility `json:"visibility"`
 	IsDefault        bool            `json:"isDefault"`
 	Enabled          bool            `json:"enabled"`
@@ -403,7 +400,6 @@ type CreateAgentDefinitionDTO struct {
 	BannedTools       []string              `json:"bannedTools,omitempty"`
 	Skills            []string              `json:"skills"`
 	AutoLoadSkills    *bool                 `json:"autoLoadSkills"`
-	FlowType          AgentFlowType         `json:"flowType"`
 	IsDefault         *bool                 `json:"isDefault"`
 	Enabled           *bool                 `json:"enabled"`
 	MaxSteps          *int                  `json:"maxSteps"`
@@ -430,7 +426,6 @@ type UpdateAgentDefinitionDTO struct {
 	BannedTools       []string              `json:"bannedTools,omitempty"`
 	Skills            []string              `json:"skills"`
 	AutoLoadSkills    *bool                 `json:"autoLoadSkills"`
-	FlowType          *AgentFlowType        `json:"flowType"`
 	IsDefault         *bool                 `json:"isDefault"`
 	Enabled           *bool                 `json:"enabled"`
 	MaxSteps          *int                  `json:"maxSteps"`
@@ -504,7 +499,6 @@ func (d *AgentDefinition) ToDTO() *AgentDefinitionDTO {
 		BannedTools:       d.BannedTools,
 		Skills:            d.Skills,
 		AutoLoadSkills:    d.AutoLoadSkills,
-		FlowType:          d.FlowType,
 		IsDefault:         d.IsDefault,
 		Enabled:           d.Enabled,
 		MaxSteps:          d.MaxSteps,
@@ -719,7 +713,6 @@ func (d *AgentDefinition) ToSummaryDTO() *AgentDefinitionSummaryDTO {
 		ProjectID:        d.ProjectID,
 		Name:             d.Name,
 		Description:      d.Description,
-		FlowType:         d.FlowType,
 		Visibility:       d.Visibility,
 		IsDefault:        d.IsDefault,
 		Enabled:          d.Enabled,

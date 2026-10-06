@@ -339,15 +339,6 @@ func NormalizeVisibility(v AgentVisibility) (AgentVisibility, bool) {
 	}
 }
 
-// AgentFlowType defines how an agent executes
-type AgentFlowType string
-
-const (
-	FlowTypeSingle     AgentFlowType = "single"     // Single LLM agent
-	FlowTypeSequential AgentFlowType = "sequential" // Sequential pipeline of steps
-	FlowTypeLoop       AgentFlowType = "loop"       // Loop until condition met
-)
-
 // ACPConfig holds Agent Card Protocol metadata for externally-visible agents
 type ACPConfig struct {
 	DisplayName  string   `json:"displayName,omitempty"`
@@ -563,7 +554,6 @@ type AgentDefinition struct {
 	BannedTools      []string          `bun:"banned_tools,array" json:"bannedTools,omitempty"`
 	Skills           []string          `bun:"skills,array" json:"skills"`
 	AutoLoadSkills   bool              `bun:"auto_load_skills,notnull,default:false" json:"autoLoadSkills"`
-	FlowType         AgentFlowType     `bun:"flow_type,notnull,default:'single'" json:"flowType"`
 	IsDefault        bool              `bun:"is_default,notnull,default:false" json:"isDefault"`
 	Enabled          bool              `bun:"enabled,notnull,default:true" json:"enabled"`
 	MaxSteps         *int              `bun:"max_steps" json:"maxSteps,omitempty"`

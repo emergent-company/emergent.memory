@@ -123,11 +123,6 @@ func (h *MCPToolHandler) ExecuteCreateAgentDefinition(ctx context.Context, proje
 	}
 
 	// Set defaults
-	flowType := FlowTypeSingle
-	if ft, ok := args["flow_type"].(string); ok && ft != "" {
-		flowType = AgentFlowType(ft)
-	}
-
 	visibility := VisibilityProject
 	if v, ok := args["visibility"].(string); ok && v != "" {
 		nv, ok := NormalizeVisibility(AgentVisibility(v))
@@ -159,7 +154,6 @@ func (h *MCPToolHandler) ExecuteCreateAgentDefinition(ctx context.Context, proje
 	def := &AgentDefinition{
 		ProjectID:   projectID,
 		Name:        name,
-		FlowType:    flowType,
 		Visibility:  visibility,
 		IsDefault:   isDefault,
 		Tools:       tools,
@@ -245,9 +239,6 @@ func (h *MCPToolHandler) ExecuteUpdateAgentDefinition(ctx context.Context, proje
 	}
 	if sp, ok := args["system_prompt"].(string); ok {
 		def.SystemPrompt = &sp
-	}
-	if ft, ok := args["flow_type"].(string); ok {
-		def.FlowType = AgentFlowType(ft)
 	}
 	if v, ok := args["visibility"].(string); ok {
 		nv, ok := NormalizeVisibility(AgentVisibility(v))
@@ -346,7 +337,6 @@ func (h *MCPToolHandler) ExecuteListAgents(ctx context.Context, projectID string
 		// Enrich with definition metadata (best-effort; ignore errors)
 		if def, defErr := h.repo.ResolveDefinitionForAgent(ctx, agent); defErr == nil && def != nil {
 			dto.Description = def.Description
-			dto.FlowType = def.FlowType
 			dto.Model = def.Model
 			// Extract agentType and tier from definition config
 			if agentType, ok := def.Config["agentType"].(string); ok && agentType != "" {
@@ -882,7 +872,7 @@ func (h *MCPToolHandler) ExecuteGetAgentRunToolCalls(ctx context.Context, projec
 // ============================================================================
 
 // ExecuteListAvailableAgents returns a lightweight catalog of all agent definitions
-// for the project, including name, description, tools, flow_type, and visibility.
+// for the project, including name, description, tools, and visibility.
 // Unlike list_agent_definitions, this returns a simplified summary without IDs or timestamps,
 // matching the format used by agent coordination tools (spawn_agents).
 func (h *MCPToolHandler) ExecuteListAvailableAgents(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
@@ -902,7 +892,6 @@ func (h *MCPToolHandler) ExecuteListAvailableAgents(ctx context.Context, project
 			Name:        def.Name,
 			Description: desc,
 			Tools:       def.Tools,
-			FlowType:    def.FlowType,
 			Visibility:  string(def.Visibility),
 		})
 	}
@@ -923,7 +912,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 		// --- Agent Definitions ---
 		{
 			Name:        "agent-def-list",
-			Description: "List all agent definitions for the current project. Agent definitions store agent configurations (system prompt, tools, flow type, visibility, ACP config). Returns summary DTOs with tool counts.",
+			Description: "List all agent definitions for the current project. Agent definitions store agent configurations (system prompt, tools, visibility, ACP config). Returns summary DTOs with tool counts.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]mcp.PropertySchema{
@@ -952,7 +941,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 		},
 		{
 			Name:        "agent-def-create",
-			Description: "Create a new agent definition. Defines the configuration template for an agent including its system prompt, available tools, flow type, and visibility.",
+			Description: "Create a new agent definition. Defines the configuration template for an agent including its system prompt, available tools, and visibility.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]mcp.PropertySchema{
@@ -971,12 +960,6 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 					"tools": {
 						Type:        "string",
 						Description: "JSON array of tool names available to this agent (e.g. [\"query_entities\", \"create_entity\"])",
-					},
-					"flow_type": {
-						Type:        "string",
-						Description: "Execution flow type",
-						Enum:        []string{"single", "sequential", "loop"},
-						Default:     "single",
 					},
 					"visibility": {
 						Type:        "string",
@@ -1035,11 +1018,6 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 						Type:        "string",
 						Description: "New system prompt",
 					},
-					"flow_type": {
-						Type:        "string",
-						Description: "New flow type",
-						Enum:        []string{"single", "sequential", "loop"},
-					},
 					"visibility": {
 						Type:        "string",
 						Description: "New visibility level",
@@ -1087,7 +1065,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 		// --- Agents (runtime) ---
 		{
 			Name:        "agent-list",
-			Description: "List all runtime agents for the current project, enriched with definition metadata. Each entry includes: id, name, enabled, triggerType, executionMode, lastRunAt, lastRunStatus, description, flowType, model, agentType, and tier. Use agent_name (not id) with trigger_agent.",
+			Description: "List all runtime agents for the current project, enriched with definition metadata. Each entry includes: id, name, enabled, triggerType, executionMode, lastRunAt, lastRunStatus, description, model, agentType, and tier. Use agent_name (not id) with trigger_agent.",
 			InputSchema: mcp.InputSchema{
 				Type:       "object",
 				Properties: map[string]mcp.PropertySchema{},
@@ -1347,7 +1325,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 		// --- Agent Catalog ---
 		{
 			Name:        "agent-list-available",
-			Description: "List all available agents in the project catalog. Returns a lightweight summary with name, description, tools list, flow_type, and visibility for each agent definition. Does not include system prompts or IDs — use list_agent_definitions for full details.",
+			Description: "List all available agents in the project catalog. Returns a lightweight summary with name, description, tools list, and visibility for each agent definition. Does not include system prompts or IDs — use list_agent_definitions for full details.",
 			InputSchema: mcp.InputSchema{
 				Type:       "object",
 				Properties: map[string]mcp.PropertySchema{},

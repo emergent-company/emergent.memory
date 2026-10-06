@@ -2,7 +2,7 @@
 
 Package `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/agentdefinitions`
 
-The `agentdefinitions` client manages agent definitions — reusable configurations that store system prompts, model settings, tools, and flow type. Agent definitions are scoped to a project.
+The `agentdefinitions` client manages agent definitions — reusable configurations that store system prompts, model settings, and tools. Agent definitions are scoped to a project.
 
 See also: [agents](agents.md) for the runtime agents that use these definitions.
 
@@ -30,7 +30,6 @@ type AgentDefinition struct {
     SystemPrompt   *string
     Model          *ModelConfig
     Tools          []string
-    FlowType       string
     IsDefault      bool
     MaxSteps       *int
     DefaultTimeout *int
@@ -52,7 +51,6 @@ type AgentDefinitionSummary struct {
     ProjectID   string
     Name        string
     Description *string
-    FlowType    string
     Visibility  string
     IsDefault   bool
     ToolCount   int
@@ -94,7 +92,6 @@ type CreateAgentDefinitionRequest struct {
     SystemPrompt   *string
     Model          *ModelConfig
     Tools          []string
-    FlowType       string
     IsDefault      *bool
     MaxSteps       *int
     DefaultTimeout *int
@@ -115,7 +112,6 @@ type UpdateAgentDefinitionRequest struct {
     SystemPrompt   *string
     Model          *ModelConfig
     Tools          []string
-    FlowType       *string
     IsDefault      *bool
     MaxSteps       *int
     DefaultTimeout *int
@@ -150,14 +146,13 @@ resp, err := client.AgentDefinitions.Create(ctx, &agentdefinitions.CreateAgentDe
         MaxTokens:   intPtr(1024),
     },
     Tools:    []string{"read_document", "create_graph_object"},
-    FlowType: "adk",
 })
 fmt.Printf("Created definition: %s\n", resp.Data.ID)
 
 // List definitions in the project
 list, err := client.AgentDefinitions.List(ctx)
 for _, def := range list.Data {
-    fmt.Printf("%s (%s) — tools: %d\n", def.Name, def.FlowType, def.ToolCount)
+    fmt.Printf("%s — tools: %d\n", def.Name, def.ToolCount)
 }
 
 // Update the system prompt

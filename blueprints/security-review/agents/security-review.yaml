@@ -3,7 +3,6 @@ description: >
   Security code review agent. Consumes the security-review work queue, inspects a
   pull request, commit, or code artifact for security vulnerabilities, and records
   structured findings for triage.
-flowType: agentic
 dispatchMode: queued
 defaultQueue: security-review
 maxSteps: 30

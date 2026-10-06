@@ -23388,9 +23388,6 @@ const docTemplate = `{
                 "enabled": {
                     "type": "boolean"
                 },
-                "flowType": {
-                    "$ref": "#/definitions/domain_agents.AgentFlowType"
-                },
                 "id": {
                     "type": "string"
                 },
@@ -23477,9 +23474,6 @@ const docTemplate = `{
                 "enabled": {
                     "type": "boolean"
                 },
-                "flowType": {
-                    "$ref": "#/definitions/domain_agents.AgentFlowType"
-                },
                 "hasSandboxConfig": {
                     "type": "boolean"
                 },
@@ -23548,29 +23542,6 @@ const docTemplate = `{
                 "ExecutionModeSuggest",
                 "ExecutionModeExecute",
                 "ExecutionModeHybrid"
-            ]
-        },
-        "domain_agents.AgentFlowType": {
-            "type": "string",
-            "enum": [
-                "single",
-                "sequential",
-                "loop"
-            ],
-            "x-enum-comments": {
-                "FlowTypeLoop": "Loop until condition met",
-                "FlowTypeSequential": "Sequential pipeline of steps",
-                "FlowTypeSingle": "Single LLM agent"
-            },
-            "x-enum-descriptions": [
-                "Single LLM agent",
-                "Sequential pipeline of steps",
-                "Loop until condition met"
-            ],
-            "x-enum-varnames": [
-                "FlowTypeSingle",
-                "FlowTypeSequential",
-                "FlowTypeLoop"
             ]
         },
         "domain_agents.AgentQuestionDTO": {

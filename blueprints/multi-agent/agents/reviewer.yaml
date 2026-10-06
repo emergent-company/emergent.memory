@@ -5,7 +5,6 @@ description: >
   it only evaluates work produced by other agents. Rejections must reference
   specific criteria that were not met.
 
-flowType: agentic
 maxSteps: 8
 isDefault: false
 defaultTimeout: 120

@@ -7,7 +7,6 @@ description: >
   experiments on rejection or proactively at the configured test rate. Reports
   pool health upward to the orchestrator.
 
-flowType: agentic
 maxSteps: 15
 isDefault: false
 defaultTimeout: 180

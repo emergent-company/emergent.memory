@@ -22,7 +22,7 @@ class AgentDefinitionsClient(BaseClient):
     Client for the Agent Definitions API.
 
     Agent definitions store agent configurations (system prompts, tools,
-    model config, flow type, visibility) independently from runtime state.
+    model config, visibility) independently from runtime state.
 
     Example::
 
@@ -31,7 +31,6 @@ class AgentDefinitionsClient(BaseClient):
             "name": "Summariser",
             "systemPrompt": "You summarise knowledge graph objects.",
             "tools": ["graph_read_object"],
-            "flowType": "single",
             "visibility": "project",
         })
     """
@@ -72,8 +71,7 @@ class AgentDefinitionsClient(BaseClient):
 
         Required keys: ``name``.
         Optional keys: ``description``, ``systemPrompt``, ``model``
-        (``{name, temperature, maxTokens}``), ``tools``, ``flowType``
-        (``single`` | ``sequential`` | ``loop``), ``visibility``
+        (``{name, temperature, maxTokens}``), ``tools``, ``visibility``
         (``external`` | ``project`` | ``internal``), ``maxSteps``,
         ``defaultTimeout``, ``dispatchMode``, ``acpConfig``, ``config``.
         """

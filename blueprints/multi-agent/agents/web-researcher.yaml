@@ -6,7 +6,6 @@ description: >
   output with citations and key findings as graph objects. Use this agent for tasks
   requiring external web content, public documentation, news, or online data.
 
-flowType: agentic
 maxSteps: 12
 isDefault: false
 defaultTimeout: 180

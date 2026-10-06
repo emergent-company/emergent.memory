@@ -56,7 +56,6 @@ type BundledAgent struct {
 	BannedTools  []string        `yaml:"bannedTools"`
 	Skills       []string        `yaml:"skills"`
 	Config       map[string]any  `yaml:"config"`
-	FlowType     string          `yaml:"flowType"`
 	Visibility   string          `yaml:"visibility"`
 	UI           *BundledAgentUI `json:"ui,omitempty" yaml:"ui,omitempty"`
 	// WorkConfig is the object-driven work configuration, carried through to
@@ -843,7 +842,6 @@ type AgentDiff struct {
 	Description  FieldDiff
 	Model        FieldDiff
 	SystemPrompt FieldDiff
-	FlowType     FieldDiff
 	Visibility   FieldDiff
 	Tools        ChipDiff
 	BannedTools  ChipDiff
@@ -915,7 +913,6 @@ func bundledAgentsFromManifest(agents []blueprintAgent) []BundledAgent {
 			Tools:          a.Tools,
 			BannedTools:    a.BannedTools,
 			Skills:         a.Skills,
-			FlowType:       a.FlowType,
 			Visibility:     a.Visibility,
 			Config:         a.Config,
 			UI:             a.UI,
@@ -1285,7 +1282,6 @@ func agentFieldsChanged(a AgentDiff) bool {
 	return a.Description.Change != DiffChangeNone ||
 		a.Model.Change != DiffChangeNone ||
 		a.SystemPrompt.Change != DiffChangeNone ||
-		a.FlowType.Change != DiffChangeNone ||
 		a.Visibility.Change != DiffChangeNone ||
 		len(a.Tools.Added) > 0 || len(a.Tools.Removed) > 0 ||
 		len(a.BannedTools.Added) > 0 || len(a.BannedTools.Removed) > 0 ||
@@ -1313,7 +1309,6 @@ func diffAgents(base, target []BundledAgent) []AgentDiff {
 			Description:  presenceField(b.Description, t.Description, inBase, inTarget),
 			Model:        presenceField(b.Model, t.Model, inBase, inTarget),
 			SystemPrompt: presenceField(b.SystemPrompt, t.SystemPrompt, inBase, inTarget),
-			FlowType:     presenceField(b.FlowType, t.FlowType, inBase, inTarget),
 			Visibility:   presenceField(b.Visibility, t.Visibility, inBase, inTarget),
 			Tools:        chipDiff(b.Tools, t.Tools),
 			BannedTools:  chipDiff(b.BannedTools, t.BannedTools),

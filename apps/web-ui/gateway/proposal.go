@@ -73,7 +73,6 @@ type AgentProposal struct {
 	Tools        []string
 	Skills       []string
 	BannedTools  []string
-	FlowType     string
 	Visibility   string
 }
 
@@ -217,7 +216,6 @@ func buildAgentCard(kind, summary string, body map[string]any) *ProposalCard {
 			Tools:        strSlice(body["tools"]),
 			Skills:       strSlice(body["skills"]),
 			BannedTools:  strSlice(body["bannedTools"]),
-			FlowType:     strAny(body["flowType"]),
 			Visibility:   strAny(body["visibility"]),
 		},
 	}

@@ -5,7 +5,6 @@ description: >
   and returns structured output with self-assessment. Operates at the standard model
   tier to balance quality and cost.
 
-flowType: agentic
 maxSteps: 20
 isDefault: false
 defaultTimeout: 300

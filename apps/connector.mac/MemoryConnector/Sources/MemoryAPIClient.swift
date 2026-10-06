@@ -90,7 +90,6 @@ struct AgentDefinitionSummary: Decodable, Equatable, Sendable {
     let visibility: String?
     let triggerType: String?
     let isDefault: Bool?
-    let flowType: String?
     /// Number of configured MCP tools. This is the ONLY tool signal the list
     /// endpoint exposes — it does not return the `tools` whitelist itself.
     let toolCount: Int?
@@ -100,7 +99,6 @@ struct AgentDefinitionSummary: Decodable, Equatable, Sendable {
         case bannedTools, bannedToolsSnake = "banned_tools"
         case triggerType, triggerTypeSnake = "trigger_type"
         case isDefault, isDefaultSnake = "is_default"
-        case flowType, flowTypeSnake = "flow_type"
         case toolCount, toolCountSnake = "tool_count"
     }
 
@@ -116,7 +114,6 @@ struct AgentDefinitionSummary: Decodable, Equatable, Sendable {
         visibility = try container.decodeString(.visibility)
         triggerType = try container.decodeString(.triggerType, .triggerTypeSnake)
         isDefault = try container.decodeBool(.isDefault, .isDefaultSnake)
-        flowType = try container.decodeString(.flowType, .flowTypeSnake)
         toolCount = try container.decodeInt(.toolCount, .toolCountSnake)
     }
 }
@@ -163,7 +160,6 @@ struct AgentDefinitionDetail: Decodable, Equatable, Sendable {
     let isDefault: Bool?
     let visibility: String?
     let triggerType: String?
-    let flowType: String?
     let workspaceTools: [String]?
 
     enum CodingKeys: String, CodingKey {
@@ -173,7 +169,6 @@ struct AgentDefinitionDetail: Decodable, Equatable, Sendable {
         case autoLoadSkills, autoLoadSkillsSnake = "auto_load_skills"
         case isDefault, isDefaultSnake = "is_default"
         case triggerType, triggerTypeSnake = "trigger_type"
-        case flowType, flowTypeSnake = "flow_type"
         case workspaceConfig, workspaceConfigSnake = "workspace_config"
     }
 
@@ -196,7 +191,6 @@ struct AgentDefinitionDetail: Decodable, Equatable, Sendable {
         isDefault = try container.decodeBool(.isDefault, .isDefaultSnake)
         visibility = try container.decodeString(.visibility)
         triggerType = try container.decodeString(.triggerType, .triggerTypeSnake)
-        flowType = try container.decodeString(.flowType, .flowTypeSnake)
 
         // `model` is an object on the server; accept a plain string too.
         if let modelObject = try? container.decode(ModelConfigDTO.self, forKey: .model) {

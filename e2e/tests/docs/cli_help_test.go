@@ -377,7 +377,7 @@ func TestDocHelp_DefsCreateFlags(t *testing.T) {
 	t.Cleanup(rl.Close)
 	rl.Describe("Verify memory defs create --help shows documented flags",
 		"Run `memory defs create --help`",
-		"Assert --name, --system-prompt, --model, --tools, --flow-type, --visibility flags present",
+		"Assert --name, --system-prompt, --model, --tools, --visibility flags present",
 	)
 
 	rl.Section("Run memory defs create --help")
@@ -385,7 +385,7 @@ func TestDocHelp_DefsCreateFlags(t *testing.T) {
 	rl.CLI("memory defs create --help", out)
 
 	rl.Section("Verify documented flags")
-	expected := []string{"name", "system-prompt", "model", "tools", "flow-type", "visibility"}
+	expected := []string{"name", "system-prompt", "model", "tools", "visibility"}
 	for _, flag := range expected {
 		if !strings.Contains(out, flag) {
 			t.Errorf("defs create --help missing documented flag %q", flag)

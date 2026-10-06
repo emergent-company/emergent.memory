@@ -392,7 +392,7 @@ final class MemoryAPIClientTests: XCTestCase {
         {"success":true,"data":[
           {"id":"def-1","name":"Researcher","description":"finds things","model":"gpt-4o",
            "tools":null,"banned_tools":["shell"],"enabled":true,"visibility":"project",
-           "trigger_type":"manual","is_default":true,"flow_type":"sequential",
+           "trigger_type":"manual","is_default":true,
            "unknownField":"ignored"}
         ]}
         """
@@ -412,7 +412,6 @@ final class MemoryAPIClientTests: XCTestCase {
         XCTAssertEqual(definition.visibility, "project")
         XCTAssertEqual(definition.triggerType, "manual")
         XCTAssertEqual(definition.isDefault, true)
-        XCTAssertEqual(definition.flowType, "sequential")
         let request = try XCTUnwrap(StubURLProtocol.registry.capturedRequest)
         XCTAssertEqual(request.url?.absoluteString, baseURL + "/api/projects/proj-1/agent-definitions")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer user-access")
@@ -423,7 +422,7 @@ final class MemoryAPIClientTests: XCTestCase {
         let json = """
         {"success":true,"data":[
           {"id":"def-2","name":"Writer","tools":["notes"],"bannedTools":[],
-           "enabled":false,"triggerType":"auto","isDefault":false,"flowType":"parallel"}
+           "enabled":false,"triggerType":"auto","isDefault":false}
         ]}
         """
         StubURLProtocol.registry.setHandler { _ in .ok(json) }
@@ -435,7 +434,6 @@ final class MemoryAPIClientTests: XCTestCase {
         XCTAssertEqual(defs[0].enabled, false)
         XCTAssertEqual(defs[0].triggerType, "auto")
         XCTAssertEqual(defs[0].isDefault, false)
-        XCTAssertEqual(defs[0].flowType, "parallel")
         XCTAssertNil(defs[0].description)
         XCTAssertNil(defs[0].model)
 
@@ -475,7 +473,7 @@ final class MemoryAPIClientTests: XCTestCase {
           "tools":["search","notes"],"bannedTools":["shell"],
           "skills":["summarize"],"autoLoadSkills":true,
           "enabled":true,"isDefault":false,"visibility":"project",
-          "triggerType":"manual","flowType":"sequential",
+          "triggerType":"manual",
           "workspaceConfig":{"enabled":true,"tools":["workspace_bash","workspace_read"]},
           "unknownField":"ignored"}}
         """
@@ -500,7 +498,6 @@ final class MemoryAPIClientTests: XCTestCase {
         XCTAssertEqual(definition.isDefault, false)
         XCTAssertEqual(definition.visibility, "project")
         XCTAssertEqual(definition.triggerType, "manual")
-        XCTAssertEqual(definition.flowType, "sequential")
         XCTAssertEqual(definition.workspaceTools, ["workspace_bash", "workspace_read"])
 
         let request = try XCTUnwrap(StubURLProtocol.registry.capturedRequest)
@@ -516,7 +513,7 @@ final class MemoryAPIClientTests: XCTestCase {
           "id":"def-2","name":"Snake","system_prompt":"sys",
           "model":{"name":"m","native_tools":["code_execution"]},
           "banned_tools":["x"],"skills":["s"],"auto_load_skills":true,
-          "is_default":true,"trigger_type":"auto","flow_type":"parallel",
+          "is_default":true,"trigger_type":"auto",
           "workspace_config":{"tools":["workspace_write"]}}}
         """
         StubURLProtocol.registry.setHandler { _ in .ok(json) }
@@ -533,7 +530,6 @@ final class MemoryAPIClientTests: XCTestCase {
         XCTAssertEqual(definition?.autoLoadSkills, true)
         XCTAssertEqual(definition?.isDefault, true)
         XCTAssertEqual(definition?.triggerType, "auto")
-        XCTAssertEqual(definition?.flowType, "parallel")
         XCTAssertEqual(definition?.workspaceTools, ["workspace_write"])
     }
 

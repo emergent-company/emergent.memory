@@ -49,7 +49,6 @@ func TestLoadDir_ValidJSONAgent(t *testing.T) {
 	agent := map[string]any{
 		"name":        "my-agent",
 		"description": "A test agent",
-		"flowType":    "agentic",
 	}
 	data, _ := json.Marshal(agent)
 	writeFile(t, dir, "agents/my-agent.json", string(data))

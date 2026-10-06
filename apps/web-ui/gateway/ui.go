@@ -956,18 +956,6 @@ func relTime(iso string) string {
 	return iso
 }
 
-// flowLabel maps a flow type to a display label.
-func flowLabel(flow string) string {
-	switch strings.ToLower(flow) {
-	case "", "flow", "agentic":
-		return "agentic"
-	case "linear":
-		return "linear"
-	default:
-		return flow
-	}
-}
-
 // visibilityIntent maps visibility to a badge color. It resolves through
 // normalizedVisibility (the same single source as the label and the Settings
 // control), so a project badge can never render with a ghost intent and the

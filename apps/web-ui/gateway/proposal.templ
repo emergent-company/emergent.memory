@@ -105,9 +105,6 @@ templ proposalAgentSection(a *AgentProposal) {
 			if a.Model != "" {
 				@ui.Badge(ui.BadgeProps{Label: a.Model, Variant: ui.BadgePrimary, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--cpu"})
 			}
-			if a.FlowType != "" {
-				@ui.Badge(ui.BadgeProps{Label: a.FlowType, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
-			}
 			if a.Visibility != "" {
 				@ui.Badge(ui.BadgeProps{Label: a.Visibility, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
 			}

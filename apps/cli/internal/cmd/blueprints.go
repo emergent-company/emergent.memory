@@ -219,7 +219,7 @@ Checks performed:
   Packs      — required fields, object/relationship type definitions, internal
                cross-references (sourceType/targetType must name an objectType
                in the same pack), duplicate names within and across files.
-  Agents     — required fields, enum values (flowType, visibility, dispatchMode),
+  Agents     — required fields, enum values (visibility, dispatchMode),
                model.name required when model block is present, duplicate names.
   Skills     — required fields, non-empty content body, duplicate names.
   Seed data  — required fields, key presence (warning when missing), type

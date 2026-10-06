@@ -73,6 +73,26 @@ func (m *Migrator) UpTo(ctx context.Context, version int64) error {
 	return nil
 }
 
+// DownTo rolls back migrations to a specific version.
+func (m *Migrator) DownTo(ctx context.Context, version int64) error {
+	m.logger.Info("rolling back database migrations to version", zap.Int64("version", version))
+
+	goose.SetBaseFS(migrations.FS)
+
+	if err := goose.SetDialect("postgres"); err != nil {
+		return fmt.Errorf("failed to set dialect: %w", err)
+	}
+
+	sqlDB := m.db.DB
+
+	if err := goose.DownToContext(ctx, sqlDB, ".", version); err != nil {
+		return DiagnoseError(fmt.Errorf("failed to rollback migrations: %w", err))
+	}
+
+	m.logger.Info("rollback completed successfully", zap.Int64("version", version))
+	return nil
+}
+
 // Down rolls back the last migration.
 func (m *Migrator) Down(ctx context.Context) error {
 	m.logger.Info("rolling back last migration")

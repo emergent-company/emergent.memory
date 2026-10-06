@@ -367,7 +367,6 @@ func TestAgents_CreateDefinition_Success(t *testing.T) {
 		"description":  "A test agent definition",
 		"systemPrompt": "You are a helpful assistant.",
 		"tools":        []string{"search", "read_file"},
-		"flowType":     "single",
 		"visibility":   "project",
 	}))
 	body := mustStatus(t, resp, http.StatusCreated)
@@ -417,9 +416,7 @@ func TestAgents_CreateDefinition_MissingName(t *testing.T) {
 	skipIfServerDown(t, rl)
 
 	projectID, _ := setupProjectLogged(t, rl)
-	resp := doAPILogged(t, rl, "POST", defPath(projectID, ""), e2eTestToken(), projectID, jsonBody(map[string]any{
-		"flowType": "single",
-	}))
+	resp := doAPILogged(t, rl, "POST", defPath(projectID, ""), e2eTestToken(), projectID, jsonBody(map[string]any{}))
 	mustStatus(t, resp, http.StatusBadRequest)
 }
 

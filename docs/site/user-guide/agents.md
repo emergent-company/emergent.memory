@@ -8,7 +8,7 @@ Agents are AI workers that read and write your knowledge graph autonomously. You
 
 | Concept | Description |
 |---|---|
-| **Agent Definition** | Reusable blueprint: system prompt, model, tools, flow type |
+| **Agent Definition** | Reusable blueprint: system prompt, model, tools |
 | **Agent** | Runtime instance: trigger type, schedule, enabled state |
 | **Agent Run** | One execution: status, steps, messages, tool calls |
 
@@ -26,7 +26,6 @@ memory defs create \
   --system-prompt "You are an expert at summarizing technical documents. Extract key points and write a concise summary." \
   --model "gemini-2.0-flash" \
   --tools "search,graph_query,graph_create_object" \
-  --flow-type single \
   --visibility project \
   --max-steps 20
 ```
@@ -37,7 +36,6 @@ memory defs create \
 | `--system-prompt` | Instructions for the LLM |
 | `--model` | Model name, e.g. `gemini-2.0-flash`, `gemini-2.5-flash` |
 | `--tools` | Comma-separated tool names the agent may call |
-| `--flow-type` | `single` (one LLM), `multi` (parallel), `coordinator` (spawns sub-agents) |
 | `--visibility` | `project` (default), `internal` (system only), `external` (ACP-exposed) |
 | `--max-steps` | Hard cap on LLM steps per run (default: 500) |
 
@@ -290,21 +288,6 @@ done
 
 ---
 
-## Multi-Agent Coordination
-
-Set `--flow-type coordinator` to create an orchestrator agent that can spawn sub-agents via the `spawn_agents` tool:
-
-```bash
-memory defs create \
-  --name "research-coordinator" \
-  --flow-type coordinator \
-  --tools "spawn_agents,list_available_agents,graph_query"
-```
-
-The coordinator discovers available agents with `list_available_agents` and delegates work to them. Each sub-agent run is linked to the parent via `parentRunId`.
-
----
-
 ## Google Native Tools
 
 Gemini models expose a set of **built-in tools** that are invoked directly by the model — no function-calling round-trip required. You opt into them per agent definition.
@@ -363,7 +346,6 @@ model:
 tools:
   - graph_create_object
   - graph_query
-flowType: single
 visibility: project
 ```
 
@@ -399,7 +381,6 @@ model:
 tools:
   - search
   - graph_query
-flowType: single
 visibility: project
 ```
 
