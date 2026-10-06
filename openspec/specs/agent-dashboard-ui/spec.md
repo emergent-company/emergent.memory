@@ -16,12 +16,12 @@ The agents list SHALL link each agent to its own dashboard.
 
 ### Requirement: Show the agent summary
 
-The dashboard SHALL display the agent's name, model, flow type, visibility, tool count, and description.
+The dashboard SHALL display the agent's name, model, visibility, tool count, and description.
 
 #### Scenario: Dashboard shows summary
 
 - **WHEN** the dashboard for an agent loads successfully
-- **THEN** the agent's name, model, flow type, visibility, tool count, and description are shown
+- **THEN** the agent's name, model, visibility, tool count, and description are shown
 
 ### Requirement: Show configured tools
 

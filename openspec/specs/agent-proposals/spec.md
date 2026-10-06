@@ -86,7 +86,7 @@ The gateway SHALL resolve a proposal's `kind` through an extensible registry of 
 The proposal card SHALL provide first-class renderers for the operator's writable resources, each using the same body shape the corresponding write tool consumes:
 
 - `skill` — `{name, description, prompt, tools, bannedTools}`
-- `agent` — `{name, description, model, systemPrompt, tools, skills, bannedTools, flowType, visibility}`
+- `agent` — `{name, description, model, systemPrompt, tools, skills, bannedTools, visibility}`
 - `mcp_server` — `{name, type, url, headers, enabled, enabledTools, disabledTools}` (write-path shape; `headers` intentionally omitted from the rendered card)
 - `provider` — `{provider, baseUrl, models}` (secret masked, never echoed)
 - `object` — `{entities, relationships}`
