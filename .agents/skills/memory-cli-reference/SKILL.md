@@ -47,6 +47,182 @@ For self-hosted deployments, use 'memory server' to install and manage your serv
       --server string          Memory server URL
 ```
 
+## memory a2a
+
+A2A Protocol (A2A v1.0) agent operations
+
+### Synopsis
+
+Commands for discovering and invoking agents via the A2A Protocol v1.0 HTTP+JSON API.
+
+### Options
+
+```
+  -h, --help   help for a2a
+```
+
+## memory a2a discover
+
+Discover externally-visible agents (extended AgentCard)
+
+### Synopsis
+
+Fetch and display the authenticated extended AgentCard.
+
+The card lists every agent with visibility='external' in the current project
+as an A2A skill. Use --json for the raw JSON response.
+
+```
+memory a2a discover [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for discover
+```
+
+## memory a2a send
+
+Send a message to an A2A agent
+
+### Synopsis
+
+Send a message to the agent identified by its A2A skill id (the RFC 1123
+slug shown by 'memory a2a discover').
+
+The --mode flag controls execution:
+  sync   (default) — blocks until the task reaches a terminal state, prints output
+  async  — returns immediately with the task ID and state
+  stream — streams the agent's output to stdout in real time
+
+If a sync send pauses for human input (TASK_STATE_INPUT_REQUIRED), the CLI
+prompts you interactively and resumes the task automatically.
+
+Use --task <id> to resume an existing input-required task by ID; in that case
+the skill id positional is accepted but not re-sent (the server infers the
+agent from the task).
+
+```
+memory a2a send <agent-skill-id> [flags]
+```
+
+### Options
+
+```
+  -h, --help             help for send
+      --message string   Input message for the agent (required)
+      --mode string      Execution mode: sync, async, stream (default "sync")
+      --task string      Resume an input-required task by ID
+```
+
+## memory a2a tasks
+
+Inspect and manage A2A tasks
+
+### Synopsis
+
+Get, list, and cancel A2A tasks.
+
+### Options
+
+```
+  -h, --help   help for tasks
+```
+
+## memory a2a tasks cancel
+
+Cancel an A2A task
+
+### Synopsis
+
+Request cancellation of a running or queued A2A task.
+
+The task transitions to TASK_STATE_CANCELED. Cancelling a terminal task is
+rejected.
+
+```
+memory a2a tasks cancel <id> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for cancel
+```
+
+## memory a2a tasks get
+
+Get an A2A task by ID
+
+### Synopsis
+
+Get the current state of an A2A task.
+
+Use --history-length to include history messages. Use --json for raw output.
+
+```
+memory a2a tasks get <id> [flags]
+```
+
+### Options
+
+```
+  -h, --help                 help for get
+      --history-length int   Number of history messages to include
+```
+
+## memory a2a tasks list
+
+List A2A tasks
+
+### Synopsis
+
+List project-scoped A2A tasks.
+
+Optionally filter by --context <id> and/or --status <state>. Use --json for
+the raw JSON response.
+
+```
+memory a2a tasks list [flags]
+```
+
+### Options
+
+```
+      --context string   Filter tasks by context ID
+  -h, --help             help for list
+      --status string    Filter tasks by state (e.g. TASK_STATE_COMPLETED)
+```
+
+## memory acp
+
+Run as an ACP (Agent Client Protocol) agent over stdio
+
+### Synopsis
+
+Run as an Agent Client Protocol v1 agent over stdio, bridging ACP clients
+(Paseo, Claude Code, Gemini CLI, and others) to a Memory agent.
+
+Select the Memory agent to front with --agent <skill-id> (the RFC 1123 slug
+shown by 'memory a2a discover') or the MEMORY_AGENT environment variable.
+Connection, auth, and project are read from the standard CLI config
+(MEMORY_SERVER_URL / MEMORY_PROJECT_TOKEN) — set them as env vars so a
+spawning ACP client can inject them.
+
+Only ACP JSON-RPC messages are written to stdout; diagnostics go to stderr.
+
+```
+memory acp [flags]
+```
+
+### Options
+
+```
+      --agent string   Memory agent skill id to front (default: $MEMORY_AGENT)
+  -h, --help           help for acp
+```
+
 ## memory adk-sessions
 
 Manage and inspect ADK sessions
@@ -196,6 +372,7 @@ memory agent-definitions get [id] [flags]
 
 ```
   -h, --help   help for get
+      --json   Output as JSON
 ```
 
 ## memory agent-definitions list
@@ -217,6 +394,7 @@ memory agent-definitions list [flags]
 
 ```
   -h, --help        help for list
+      --json        Output as JSON
       --limit int   Maximum number of definitions to show (0 = all)
       --page int    Page number (1-based, used with --limit) (default 1)
 ```
@@ -517,6 +695,7 @@ memory agents get [id] [flags]
 
 ```
   -h, --help   help for get
+      --json   Output as JSON
 ```
 
 ## memory agents hooks
@@ -617,8 +796,241 @@ memory agents list [flags]
 
 ```
   -h, --help        help for list
+      --json        Output as JSON
       --limit int   Maximum number of agents to show (0 = all)
       --page int    Page number (1-based, used with --limit) (default 1)
+```
+
+## memory agents mcp-endpoint
+
+Manage an agent's MCP endpoint and its keys
+
+### Synopsis
+
+Manage the MCP endpoint that an external MCP client uses to call an agent.
+
+The endpoint is agent-owned: one active endpoint per agent, with many labeled
+keys. Each key is an independently revocable, rotatable credential. Its secret is
+returned exactly once, on create or rotate.
+
+This is the opposite direction of 'memory agents mcp-servers', which manages the
+external MCP servers an agent can call.
+
+Examples:
+  memory agents mcp-endpoint show my-agent
+  memory agents mcp-endpoint create my-agent
+  memory agents mcp-endpoint keys create my-agent --label "Claude Desktop"
+  memory agents mcp-endpoint keys list my-agent --json
+  memory agents mcp-endpoint keys rotate <key-id> --yes
+  memory agents mcp-endpoint sessions my-agent --status active
+  memory agents mcp-endpoint revoke my-agent --yes
+
+### Options
+
+```
+  -h, --help   help for mcp-endpoint
+```
+
+## memory agents mcp-endpoint create
+
+Create an agent's MCP endpoint
+
+### Synopsis
+
+Create the single active MCP endpoint owned by an agent.
+
+Fails when the agent already has an active endpoint; revoke the existing one
+first. Prints the endpoint id and the MCP URL to paste into a client. Add keys
+with 'memory agents mcp-endpoint keys create'.
+
+```
+memory agents mcp-endpoint create [agent] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for create
+```
+
+## memory agents mcp-endpoint keys
+
+Manage an MCP endpoint's labeled keys
+
+### Synopsis
+
+Create, list, revoke, and rotate the labeled credentials on an agent's MCP
+endpoint. Create and rotate print the raw secret exactly once.
+
+### Options
+
+```
+  -h, --help   help for keys
+```
+
+## memory agents mcp-endpoint keys create
+
+Create a labeled key on an endpoint
+
+### Synopsis
+
+Mint a labeled credential bound to the agent's MCP endpoint.
+
+The raw secret is printed exactly once and cannot be retrieved later; list shows
+only the label, status, and timestamps. Labels are unique per endpoint, ignoring
+case.
+
+Examples:
+  memory agents mcp-endpoint keys create my-agent --label "Claude Desktop"
+  memory agents mcp-endpoint keys create my-agent --label "CI" --expires-at 2026-12-31T00:00:00Z
+
+```
+memory agents mcp-endpoint keys create [agent] [flags]
+```
+
+### Options
+
+```
+      --expires-at string   Optional expiry as RFC3339 (e.g. 2026-12-31T00:00:00Z)
+  -h, --help                help for create
+      --label string        Key label, unique per endpoint (required)
+```
+
+## memory agents mcp-endpoint keys list
+
+List an endpoint's keys
+
+### Synopsis
+
+List the agent's MCP endpoint keys with label, status, creation time, and
+last-used time. Secrets are never shown — rotate or recreate a key if a secret
+is lost.
+
+Use --json for machine-readable output.
+
+```
+memory agents mcp-endpoint keys list [agent] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for list
+      --json   Output as JSON
+```
+
+## memory agents mcp-endpoint keys revoke
+
+Revoke one key
+
+### Synopsis
+
+Revoke one key, immediately invalidating its secret without affecting the
+endpoint or its other keys. Prompts for confirmation unless --yes is passed.
+Idempotent.
+
+```
+memory agents mcp-endpoint keys revoke <key-id> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for revoke
+      --yes    Skip the confirmation prompt
+```
+
+## memory agents mcp-endpoint keys rotate
+
+Rotate one key's secret
+
+### Synopsis
+
+Issue a replacement secret for one key. The previous secret is invalidated
+immediately and the new secret is printed exactly once. The key identity is
+preserved, so existing sessions remain continuable. Prompts for confirmation
+unless --yes is passed.
+
+```
+memory agents mcp-endpoint keys rotate <key-id> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for rotate
+      --yes    Skip the confirmation prompt
+```
+
+## memory agents mcp-endpoint revoke
+
+Revoke an agent's MCP endpoint
+
+### Synopsis
+
+Revoke the agent's active MCP endpoint and all of its remaining keys,
+immediately invalidating their secrets. Prompts for confirmation unless --yes is
+passed. Idempotent: revoking an already-revoked endpoint succeeds.
+
+```
+memory agents mcp-endpoint revoke [agent] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for revoke
+      --yes    Skip the confirmation prompt
+```
+
+## memory agents mcp-endpoint sessions
+
+List an endpoint's MCP sessions
+
+### Synopsis
+
+List the sessions created through the agent's MCP endpoint, most recently
+active first. Each row shows the session id, the owning key's label, status, turn
+count, total steps, and timestamps.
+
+Filter with --status (active, running, interrupted, expired). Use --json for
+machine-readable output.
+
+```
+memory agents mcp-endpoint sessions [agent] [flags]
+```
+
+### Options
+
+```
+  -h, --help            help for sessions
+      --json            Output as JSON
+      --status string   Filter by session status (active, running, interrupted, expired)
+```
+
+## memory agents mcp-endpoint show
+
+Show an agent's MCP endpoint
+
+### Synopsis
+
+Show the agent's active MCP endpoint: id, status, agent, creation time, and
+the MCP URL to paste into a client. Exits non-zero when the agent has no endpoint.
+
+The agent may be an id, a runtime agent name, or an agent-definition name or
+slug; when omitted on a terminal an agent picker is shown.
+
+Use --json for machine-readable output.
+
+```
+memory agents mcp-endpoint show [agent] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for show
+      --json   Output as JSON
 ```
 
 ## memory agents mcp-servers
@@ -913,6 +1325,7 @@ memory agents runs [id] [flags]
 
 ```
   -h, --help        help for runs
+      --json        Output as JSON
       --limit int   Maximum number of runs to return (default 10)
 ```
 
@@ -934,7 +1347,10 @@ memory agents trigger [id] [flags]
 ### Options
 
 ```
-  -h, --help   help for trigger
+      --env stringArray   Environment variable to inject into sandbox (KEY=VALUE, repeatable)
+  -h, --help              help for trigger
+      --input string      Initial message to pass to the agent at trigger time
+      --model string      Override the model for this single run (e.g. claude-sonnet-4.7)
 ```
 
 ## memory agents update
@@ -1004,6 +1420,150 @@ memory ask <question...> [flags]
       --show-time        Show elapsed time at the end of the response
       --show-tools       Show tool calls made by the assistant during reasoning
       --v2               Use the v2 code-generation agent (fewer round-trips, faster)
+```
+
+## memory backups
+
+Manage project backups
+
+### Synopsis
+
+Commands for creating, listing, downloading, importing, and deleting project backups
+
+### Options
+
+```
+  -h, --help   help for backups
+```
+
+## memory backups create
+
+Create a project backup
+
+### Synopsis
+
+Create a full backup of a project (documents, chunks, graph, files, and
+optionally deleted items, chat, and journal). The server starts the backup
+asynchronously and returns a backup with status "creating".
+
+Use --wait to block until the backup reaches "ready" or "failed".
+
+```
+memory backups create [flags]
+```
+
+### Options
+
+```
+  -h, --help                 help for create
+      --include-chat         Include chat conversations and messages
+      --include-deleted      Include soft-deleted items
+      --include-journal      Include journal entries
+      --retention-days int   Retention period in days (1-365) (default 30)
+      --timeout duration     Wait timeout (e.g. 10m, 30s) (default 10m0s)
+      --wait                 Block until the backup reaches a terminal status
+```
+
+## memory backups delete
+
+Delete a backup
+
+### Synopsis
+
+Mark a backup as deleted (soft delete). The archive is retained until the server's retention cleanup removes it. Use --force to skip confirmation.
+
+```
+memory backups delete <backupId> [flags]
+```
+
+### Options
+
+```
+      --force           Skip the confirmation prompt
+  -h, --help            help for delete
+      --org-id string   Organization ID (auto-detected if not specified)
+```
+
+## memory backups download
+
+Download a backup archive
+
+### Synopsis
+
+Download a ready backup archive to --out, streaming it to disk.
+
+```
+memory backups download <backupId> [flags]
+```
+
+### Options
+
+```
+  -h, --help            help for download
+      --org-id string   Organization ID (auto-detected if not specified)
+      --out string      Output file path (required)
+```
+
+## memory backups get
+
+Get backup details
+
+### Synopsis
+
+Get details for a specific backup by ID.
+
+```
+memory backups get <backupId> [flags]
+```
+
+### Options
+
+```
+  -h, --help            help for get
+      --org-id string   Organization ID (auto-detected if not specified)
+```
+
+## memory backups import
+
+Import a backup archive
+
+### Synopsis
+
+Import a backup archive produced by another deployment, registering it as a
+ready backup for clone restore. The archive is streamed (max 1 GiB).
+
+```
+memory backups import <archive.zip> [flags]
+```
+
+### Options
+
+```
+  -h, --help                 help for import
+      --org-id string        Organization ID (auto-detected if not specified)
+      --retention-days int   Retention period in days (1-365) (default 30)
+```
+
+## memory backups list
+
+List backups
+
+### Synopsis
+
+List backups for an organization, optionally filtered by project and
+paginated with --limit and --cursor.
+
+```
+memory backups list [flags]
+```
+
+### Options
+
+```
+      --cursor string   Pagination cursor from a previous response
+  -h, --help            help for list
+      --limit int       Maximum number of results (1-100)
+      --org-id string   Organization ID (auto-detected if not specified)
 ```
 
 ## memory blueprints
@@ -1381,7 +1941,10 @@ Supported keys:
   auto_update_enabled         Enable/disable automatic update checks (true/false)
   auto_update_mode            Update mode: notify (default) or auto
   auto_update_check_interval  How often to check for updates (e.g., 24h, 12h)
-  google_api_key              Google API key (standalone installations only)
+  google_api_key              Google AI API key (for LLM features)
+  openai_base_url             OpenAI-compatible base URL (e.g., http://localhost:11434/v1)
+  openai_api_key              OpenAI-compatible API key (optional for local servers)
+  llm_model                   LLM model name (e.g., llama3, mistral)
 
 For standalone installations, google_api_key is saved to .env.local.
 All other keys are saved to config.yaml.
@@ -1571,6 +2134,29 @@ Examples:
       --server string        Memory server URL (overrides config)
 ```
 
+## memory embeddings clear
+
+Delete all pending and processing embedding jobs from both queues
+
+### Synopsis
+
+Delete all pending and processing jobs from the object and relationship
+embedding queues. Useful when the queue is stuck or polluted.
+
+Examples:
+  memory embeddings clear
+  memory embeddings clear --server http://your-server:3002
+
+```
+memory embeddings clear [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for clear
+```
+
 ## memory embeddings config
 
 Get or set embedding worker config (batch, concurrency, stale-minutes)
@@ -1622,6 +2208,33 @@ memory embeddings pause [flags]
 
 ```
   -h, --help   help for pause
+```
+
+## memory embeddings progress
+
+Show embedding job queue progress (pending, processing, completed, failed, stale_failed)
+
+### Synopsis
+
+Show embedding job queue statistics for all queues.
+
+Displays counts of pending, processing, completed, failed, stale-failed, and
+dead-letter jobs for both the graph object and graph relationship embedding
+queues. "failed" counts genuine failures only; stale-failed jobs are those
+terminal-failed by the stale-job sweep and reported separately.
+
+Examples:
+  memory embeddings progress
+  memory embeddings progress --server http://your-server:3002
+
+```
+memory embeddings progress [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for progress
 ```
 
 ## memory embeddings resume
@@ -1864,6 +2477,51 @@ memory extraction jobs stats [flags]
   -h, --help   help for stats
 ```
 
+## memory forget
+
+Soft-delete knowledge graph objects matching a natural-language query
+
+### Synopsis
+
+Find and soft-delete graph objects that match a natural-language query.
+
+Deletes are REVERSIBLE — use 'memory graph restore <id>' to undo any deletion.
+
+Strategy controls confirmation behaviour:
+  confirm   Ask for approval before executing a batch of deletes (default)
+  auto      Delete automatically without asking
+  ask       Require per-delete confirmation (interactive terminals only)
+
+Cascade depth controls how many hops of neighbors are also deleted:
+  1   Direct matches only
+  2   Direct matches + 1-hop neighbors (default)
+  3   Direct matches + 2-hop neighbors
+
+Examples:
+  memory forget "all auth related nodes"
+  memory forget --strategy auto "temporary test objects"
+  memory forget --cascade 1 "the node named foo"
+  memory forget --dry-run "everything tagged deprecated"
+  memory forget --project abc123 "old migration objects"
+
+```
+memory forget [text] [flags]
+```
+
+### Options
+
+```
+      --cascade int       Cascade depth: 1 (direct only), 2 (1-hop), 3 (2-hop) (default 2)
+      --dry-run           Report what would be deleted without performing any deletes
+  -h, --help              help for forget
+      --json              Output results as JSON
+      --project string    Project ID (uses default project if not specified)
+      --session string    Continue a previous forget session
+      --show-time         Show elapsed time
+      --show-tools        Show tool calls made by the agent
+      --strategy string   Deletion strategy: auto, confirm, ask (default "confirm")
+```
+
 ## memory graph
 
 Manage graph objects and relationships
@@ -1963,17 +2621,60 @@ Delete a branch and all objects that exist only on that branch.
 Objects that have already been merged into another branch are unaffected.
 This operation is irreversible.
 
+When the branch ID is omitted and the terminal is interactive, a picker
+lists the branches in the current project.
+
 Examples:
   memory graph branches delete <branch-id>
 
 ```
-memory graph branches delete <id> [flags]
+memory graph branches delete [id] [flags]
 ```
 
 ### Options
 
 ```
   -h, --help   help for delete
+```
+
+## memory graph branches fork
+
+Fork a branch with object copies
+
+### Synopsis
+
+Fork a branch — create a new branch and copy all HEAD objects and
+relationships from the source into it.
+
+SOURCE: use a branch UUID from "memory graph branches list", or the special
+keyword "main" to fork from the main graph (branch_id IS NULL). When the
+source is omitted and the terminal is interactive, a picker lists the
+branches in the current project.
+
+Copied objects preserve their canonical IDs so a subsequent merge back
+into the source is aware of shared identity. Only HEAD versions are
+copied (not full version history).
+
+Use --filter-type to selectively copy only certain object types. When
+a filter is applied, relationships where one endpoint was excluded are
+silently skipped (the response reports the skipped count).
+
+Examples:
+  memory graph branches fork main --name "what-if-scenario"
+  memory graph branches fork main --name "subset" --filter-type Service --filter-type API
+  memory graph branches fork <source-branch-id> --name "child" --description "child branch"
+
+```
+memory graph branches fork [source-branch-id|main] [flags]
+```
+
+### Options
+
+```
+      --description string    Branch description (optional)
+      --filter-type strings   Only copy objects of these types (repeatable)
+  -h, --help                  help for fork
+      --name string           New branch name (required)
 ```
 
 ## memory graph branches get
@@ -1986,12 +2687,15 @@ Get details for a branch by its ID.
 
 Use --output json to receive the full object as JSON.
 
+When the branch ID is omitted and the terminal is interactive, a picker
+lists the branches in the current project.
+
 Examples:
   memory graph branches get <branch-id>
   memory graph branches get <branch-id> --output json
 
 ```
-memory graph branches get <id> [flags]
+memory graph branches get [id] [flags]
 ```
 
 ### Options
@@ -2042,7 +2746,9 @@ DIRECTION: source → target. The source branch is read; the target branch
 receives the changes.
 
 TARGET: use a branch UUID from "memory graph branches list", or the special
-keyword "main" to merge into the main graph (branch_id IS NULL).
+keyword "main" to merge into the main graph (branch_id IS NULL). When the
+target is omitted and the terminal is interactive, a picker lists the
+branches in the current project.
 
 By default this is a DRY RUN — no changes are made. Pass --execute only
 when you are ready to apply.
@@ -2075,7 +2781,7 @@ Examples:
   memory graph branches merge <target-id> --source <source-id> --output json
 
 ```
-memory graph branches merge <target-branch-id|main> [flags]
+memory graph branches merge [target-branch-id|main] [flags]
 ```
 
 ### Options
@@ -2097,13 +2803,16 @@ Update a branch's name or description.
 Use --name to rename the branch. Use --description to set or update the
 description. At least one flag is required.
 
+When the branch ID is omitted and the terminal is interactive, a picker
+lists the branches in the current project.
+
 Examples:
   memory graph branches update <branch-id> --name "new-name"
   memory graph branches update <branch-id> --description "staging area for Q4 planning"
   memory graph branches update <branch-id> --name "new-name" --description "updated purpose"
 
 ```
-memory graph branches update <id> [flags]
+memory graph branches update [id] [flags]
 ```
 
 ### Options
@@ -2114,6 +2823,57 @@ memory graph branches update <id> [flags]
       --name string          New branch name
 ```
 
+## memory graph events
+
+Stream real-time graph object events via SSE
+
+### Synopsis
+
+Opens a Server-Sent Events stream and prints graph object create/update/delete events as they occur.
+
+```
+memory graph events [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for events
+```
+
+## memory graph explore
+
+Explore the knowledge graph visually in the browser
+
+### Synopsis
+
+Start a local web server and open an interactive graph visualizer in your browser.
+
+The visualizer lets you search for nodes, click to expand neighbors, and follow
+paths through the knowledge graph. All API calls are proxied through the CLI
+process — no credentials are ever sent to the browser.
+
+Examples:
+  memory graph explore
+  memory graph explore --port 7734
+  memory graph explore --host 0.0.0.0 --port 7734
+  memory graph explore --project my-project
+  memory graph explore --branch my-feature-branch
+
+```
+memory graph explore [flags]
+```
+
+### Options
+
+```
+      --branch string    Branch name or ID to explore (default: main graph)
+  -h, --help             help for explore
+      --host string      Host/IP to bind (use 0.0.0.0 to listen on all interfaces) (default "127.0.0.1")
+      --port int         Local port to listen on (default 7734)
+      --project string   Project ID (overrides config/env)
+```
+
 ## memory graph objects
 
 Manage graph objects
@@ -2122,6 +2882,81 @@ Manage graph objects
 
 ```
   -h, --help   help for objects
+```
+
+## memory graph objects bulk-delete
+
+Bulk delete graph objects matching a filter
+
+### Synopsis
+
+Permanently delete all graph objects matching the given filter.
+
+This is a shorthand for bulk-update --action hard_delete. Use --dry-run to
+preview the number of matching objects without deleting any.
+
+Examples:
+  memory graph objects bulk-delete --type Message --dry-run
+  memory graph objects bulk-delete --type Log --filter "created_at=90d" --filter-op lt --limit 5000
+
+```
+memory graph objects bulk-delete [flags]
+```
+
+### Options
+
+```
+      --dry-run              Preview matched count without deleting
+      --filter stringArray   Property filter key=value (repeatable)
+      --filter-op string     Operator for --filter: eq, neq, gt, gte, lt, lte, contains, in, exists (default "eq")
+  -h, --help                 help for bulk-delete
+      --limit int            Maximum number of objects to delete (default 1000, max 100000; 0 = server default)
+      --type string          Filter by object type (comma-separated)
+```
+
+## memory graph objects bulk-update
+
+Bulk update graph objects matching a filter
+
+### Synopsis
+
+Execute a bulk action on all graph objects matching the given filter.
+
+The --action flag controls what operation is performed. Use --dry-run to preview
+the number of matching objects without making any changes.
+
+Supported actions:
+  update_status        Set status field (requires --value)
+  soft_delete          Set deleted_at timestamp
+  hard_delete          Permanently remove objects
+  merge_properties     Deep-merge --properties into existing JSONB properties
+  replace_properties   Replace the entire properties object
+  add_labels           Add labels (--labels)
+  remove_labels        Remove labels (--labels)
+  set_labels           Replace all labels (--labels)
+
+Examples:
+  memory graph objects bulk-update --type Message --action update_status --value archived
+  memory graph objects bulk-update --type Document --filter "days_since_access>365" --action soft_delete --dry-run
+  memory graph objects bulk-update --action merge_properties --properties '{"verified":true}' --limit 500
+
+```
+memory graph objects bulk-update [flags]
+```
+
+### Options
+
+```
+      --action string        Action to perform: update_status, soft_delete, hard_delete, merge_properties, replace_properties, add_labels, remove_labels, set_labels (required)
+      --dry-run              Preview matched count without making changes
+      --filter stringArray   Property filter key=value (repeatable)
+      --filter-op string     Operator for --filter: eq, neq, gt, gte, lt, lte, contains, in, exists (default "eq")
+  -h, --help                 help for bulk-update
+      --labels stringArray   Labels for add_labels/remove_labels/set_labels actions
+      --limit int            Maximum number of objects to affect (default 1000, max 100000; 0 = server default)
+      --properties string    JSON properties for merge_properties/replace_properties actions
+      --type string          Filter by object type (comma-separated)
+      --value string         Value for update_status action
 ```
 
 ## memory graph objects create-batch
@@ -2211,10 +3046,10 @@ memory graph objects create [flags]
 
 ```
       --branch string        Branch ID to create the object on (omit for main branch)
-      --description string   Set properties.description
+      --description string   Shorthand for --properties '{"description": "..."}' (subject to schema validation)
   -h, --help                 help for create
       --key string           Stable key for idempotent operations
-      --name string          Set properties.name
+      --name string          Shorthand for --properties '{"name": "..."}' (subject to schema validation)
       --properties string    JSON properties object
       --status string        Object status (e.g. active, planned, deprecated)
       --type string          Object type (required)
@@ -2236,7 +3071,9 @@ memory graph objects delete <id> [flags]
 ### Options
 
 ```
-  -h, --help   help for delete
+      --branch string   Branch name or ID to scope deletion to (omit for main branch)
+  -f, --force           Skip confirmation prompt (accepted for scripting compatibility)
+  -h, --help            help for delete
 ```
 
 ## memory graph objects edges
@@ -2263,23 +3100,37 @@ memory graph objects edges <id> [flags]
 
 ## memory graph objects get
 
-Get a graph object by ID
+Get a graph object by ID or key
 
 ### Synopsis
 
-Get details for a graph object (entity) by its ID.
+Get details for a graph object (entity) by its ID or key.
+
+When a UUID is provided it is fetched directly. When a non-UUID string is
+provided it is treated as a key and resolved against the specified branch
+(or the main branch when --branch is omitted).
+
+Use --branch to scope key resolution to a specific branch — accepts either
+a branch UUID or a human-readable branch name.
 
 Prints Entity ID, Version ID, Type, Version number, Key (if set), Status (if
 set), Labels (if any), Created timestamp, and Properties as formatted JSON.
 Use --output json to receive the full object as JSON instead.
 
+Examples:
+  memory graph objects get <uuid>
+  memory graph objects get my-object-key
+  memory graph objects get my-object-key --branch plan/next-gen
+  memory graph objects get my-object-key --branch <branch-uuid>
+
 ```
-memory graph objects get <id> [flags]
+memory graph objects get <id|key> [flags]
 ```
 
 ### Options
 
 ```
+      --branch string   Branch ID or name to resolve the key against (omit for main branch)
   -h, --help            help for get
       --output string   Output format: table or json (default "table")
 ```
@@ -2296,6 +3147,9 @@ Output is a table with columns: Entity ID, Type, Version, Status, and Created
 date. Use --type to filter by object type, --limit to control result count, and
 --output json to receive the full list as JSON.
 
+Use --key to filter by the object's stable key field directly. This is the most
+efficient way to look up a single object by key without fetching all objects.
+
 Use --filter key=value to filter by object properties (repeatable). All filters
 are combined with AND. The --filter-op flag sets the comparison operator for
 every --filter in the same invocation (default: eq).
@@ -2303,6 +3157,8 @@ every --filter in the same invocation (default: eq).
   --filter-op operators: eq, neq, gt, gte, lt, lte, contains, in, exists
 
 Examples:
+  memory graph objects list --key sq-soft-delete-employee
+  memory graph objects list --branch <branch-id> --key ep-employees-delete
   memory graph objects list --filter status=active
   memory graph objects list --type Feature --filter status=active --filter inertia_tier=1
   memory graph objects list --filter status=active,draft --filter-op in
@@ -2315,14 +3171,50 @@ memory graph objects list [flags]
 ### Options
 
 ```
+      --actor-id string      Filter by actor ID (UUID; requires --actor-type)
+      --actor-type string    Filter by actor type: user, agent, or system
       --branch string        Branch ID to scope results to (omit for main branch)
       --cursor string        Pagination cursor from a previous response (next_cursor field)
       --filter stringArray   Property filter as key=value (repeatable); see --filter-op
       --filter-op string     Operator for --filter: eq, neq, gt, gte, lt, lte, contains, in, exists (default "eq")
   -h, --help                 help for list
+      --ids string           Fetch specific objects by ID (comma-separated: --ids id1,id2,id3)
+      --key string           Filter by object key (direct key-based lookup)
       --limit int            Maximum number of results (server default: 1000) (default 1000)
+      --provenance string    Provenance filter mode: created, updated, or any (default: any)
       --status string        Filter by object status
       --type string          Filter by object type
+```
+
+## memory graph objects move
+
+Move a graph object to a different branch
+
+### Synopsis
+
+Move a graph object from its current branch to a target branch.
+
+The object's full version chain and any self-referencing relationships are moved.
+If the object has relationships connecting to other objects that are not being
+moved, the operation fails — move related objects first or delete the relationships.
+
+Use --target-branch to specify the destination branch UUID. Use "main" or omit
+the flag to move to the main branch.
+
+Examples:
+  memory graph objects move <entity-id> --target-branch <branch-uuid>
+  memory graph objects move <entity-id> --target-branch main
+
+```
+memory graph objects move <id> [flags]
+```
+
+### Options
+
+```
+  -h, --help                   help for move
+      --output string          Output format: table or json (default "table")
+      --target-branch string   Target branch UUID (use 'main' or omit for main branch)
 ```
 
 ## memory graph objects similar
@@ -2356,6 +3248,43 @@ memory graph objects similar <id> [flags]
       --type string       Filter results by object type
 ```
 
+## memory graph objects update-batch
+
+Batch-update graph objects from a JSON file
+
+### Synopsis
+
+Update multiple graph objects in one API call.
+
+The input file must contain a JSON array of objects, each with:
+  id         (string, required) — object entity ID to update
+  key        (string, optional)
+  properties (object, optional) — merged with existing properties
+  labels     ([]string, optional) — appended (or replaced with replaceLabels)
+  replaceLabels (bool, optional) — replace labels instead of appending
+  status     (string, optional)
+  branch_id  (string, optional)
+
+Example updates.json:
+  [
+    {"id": "<entity-id-1>", "properties": {"priority": "high"}},
+    {"id": "<entity-id-2>", "status": "archived", "labels": ["deprecated"]}
+  ]
+
+Output (one line per object): <entity-id>  <type>  <version>
+
+```
+memory graph objects update-batch [flags]
+```
+
+### Options
+
+```
+      --file string     Path to JSON file containing array of object updates (required)
+  -h, --help            help for update-batch
+      --output string   Output format: table or json (default "table")
+```
+
 ## memory graph objects update
 
 Update a graph object
@@ -2371,10 +3300,13 @@ memory graph objects update <id> [flags]
 ### Options
 
 ```
-  -h, --help                help for update
-      --key string          Set a stable key on the object (enables cross-session src_key/dst_key references)
-      --properties string   JSON properties object to merge
-      --status string       Set object status (e.g. active, planned, deprecated)
+      --branch string        Branch ID to update the object on (omit for main branch)
+      --description string   Shorthand for --properties '{"description": "..."}' (subject to schema validation)
+  -h, --help                 help for update
+      --key string           Set a stable key on the object (enables cross-session src_key/dst_key references)
+      --name string          Shorthand for --properties '{"name": "..."}' (subject to schema validation)
+      --properties string    JSON properties object to merge
+      --status string        Set object status (e.g. active, planned, deprecated)
 ```
 
 ## memory graph relationships
@@ -2401,6 +3333,9 @@ The input file must contain a JSON array of objects, each with:
   to    (string, required) — destination entity ID
   properties (object, optional)
 
+Use --upsert to make the operation idempotent: existing relationships (same
+type, from, to) are returned as-is instead of causing an error. Safe to retry.
+
 Example relationships.json:
   [
     {"type": "knows", "from": "<entity-id-1>", "to": "<entity-id-2>"},
@@ -2418,6 +3353,7 @@ memory graph relationships create-batch [flags]
 ```
       --file string   Path to JSON file containing array of relationships (required)
   -h, --help          help for create-batch
+      --upsert        Apply upsert semantics to all items: skip existing relationships instead of failing
 ```
 
 ## memory graph relationships create
@@ -2426,7 +3362,12 @@ Create a relationship
 
 ### Synopsis
 
-Create a directed relationship between two graph objects
+Create a directed relationship between two graph objects.
+
+When --upsert is given, the operation is idempotent: if a relationship with the
+same type, source, and destination already exists, it is returned as-is without
+creating a duplicate. If the relationship was deleted, it is restored.
+Without --upsert, creating a relationship that already exists returns an error.
 
 ```
 memory graph relationships create [flags]
@@ -2441,6 +3382,7 @@ memory graph relationships create [flags]
       --properties string   JSON properties object
       --to string           Destination object ID (required)
       --type string         Relationship type (required)
+      --upsert              Return existing relationship if (type, from, to) already exists instead of creating a duplicate
 ```
 
 ## memory graph relationships delete
@@ -2449,7 +3391,15 @@ Delete a relationship
 
 ### Synopsis
 
-Soft-delete a graph relationship by ID
+Soft-delete a graph relationship by ID.
+
+Use --branch to scope the deletion to a specific branch (name or UUID).
+Without --branch the relationship is deleted from the main graph.
+
+Examples:
+  memory graph relationships delete <id>
+  memory graph relationships delete <id> --branch plan/next-gen
+  memory graph relationships delete <id> --branch <branch-uuid>
 
 ```
 memory graph relationships delete <id> [flags]
@@ -2458,7 +3408,8 @@ memory graph relationships delete <id> [flags]
 ### Options
 
 ```
-  -h, --help   help for delete
+      --branch string   Branch name or ID to scope deletion to (omit for main branch)
+  -h, --help            help for delete
 ```
 
 ## memory graph relationships get
@@ -2493,8 +3444,9 @@ List relationships in the current project.
 
 Output is a table with columns: Entity ID, Type, From (source entity ID), To
 (destination entity ID), and Created date. Use --type to filter by relationship
-type, --from/--to to filter by endpoint, --limit to control result count, and
---output json to receive the full list as JSON.
+type, --from/--to to filter by endpoint, --limit to control result count,
+--cursor to paginate through large result sets, and --output json to receive
+the full list as JSON.
 
 ```
 memory graph relationships list [flags]
@@ -2504,101 +3456,12 @@ memory graph relationships list [flags]
 
 ```
       --branch string   Branch ID to scope results to (omit for main branch)
+      --cursor string   Pagination cursor from a previous response (next_cursor field)
       --from string     Filter by source object ID
   -h, --help            help for list
       --limit int       Maximum number of results (server default: 1000) (default 1000)
       --to string       Filter by destination object ID
       --type string     Filter by relationship type
-```
-
-## memory journal
-
-Query and annotate the project journal
-
-### Synopsis
-
-The project journal is an automatic, server-side activity log for the knowledge graph.
-Every mutation (object created/updated/deleted, relationships batched, branches merged)
-is logged automatically. You can also add manual markdown notes, standalone or attached
-to a specific entry.
-
-### Options
-
-```
-  -h, --help             help for journal
-      --output string    output format (table, json) (default "table")
-      --project string   Project ID (overrides config/env)
-```
-
-## memory journal list
-
-List recent journal entries
-
-### Synopsis
-
-List recent activity from the project journal, including automatic mutation events
-and manual notes. Defaults to the last 7 days.
-
-### Usage
-
-```
-memory journal list [flags]
-```
-
-### Options
-
-```
-  -h, --help               help for list
-      --branch string      branch name or UUID to filter by (omit for main branch)
-      --include-branches   include main branch and all merged branches in results
-      --limit int          maximum number of entries to return (default 100)
-      --output string      output format (table, json) (default "table")
-      --since string       show entries since this duration or ISO-8601 timestamp (default "7d")
-```
-
-### Examples
-
-```bash
-memory journal list                                    # last 7 days
-memory journal list --since 24h                        # last 24 hours
-memory journal list --since 2026-01-15T10:00:00Z       # since ISO timestamp
-memory journal list --limit 50 --output json           # cap results, JSON output
-memory journal list --branch my-feature                # entries for a branch
-memory journal list --include-branches                 # main + all merged branches
-```
-
-## memory journal note
-
-Add a note to the project journal
-
-### Synopsis
-
-Add a manual markdown note to the project journal. Notes can be standalone or
-attached to a specific journal entry via --entry.
-
-The note text can be passed as a positional argument, piped via stdin, or
-omitted to open $EDITOR.
-
-### Usage
-
-```
-memory journal note [text] [flags]
-```
-
-### Options
-
-```
-      --entry string   (optional) attach this note to a specific journal entry ID
-  -h, --help           help for note
-```
-
-### Examples
-
-```bash
-memory journal note "Skipped worker services — need schema clarification first."
-memory journal note                                        # opens $EDITOR
-echo "Some context" | memory journal note                  # pipe from stdin
-memory journal note --entry <entry-id> "explanation"       # attach to a specific entry
 ```
 
 ## memory init
@@ -2646,8 +3509,16 @@ Install the built-in Memory skills from the embedded catalog into
 Only skills with the "memory-" prefix are installed. This is the set of skills
 that teach AI agents how to use the Memory CLI and platform.
 
-By default the command skips skills that already exist. Use --force to
-overwrite existing skill directories.
+By default the command skips skills that are already up to date. Skills whose
+content has changed since they were last installed are reported as outdated —
+use --force to overwrite them with the latest version.
+
+Use --global to also install into all known global agent skill directories that
+already exist on disk (e.g. ~/.opencode/skills, ~/.claude/skills, ~/.gemini/skills).
+
+After installing, any "memory-" prefixed skill directories in the target that
+are no longer present in the catalog are considered stale. Use --prune to
+remove them automatically, or run interactively to be prompted for each one.
 
 ```
 memory install-memory-skills [flags]
@@ -2658,7 +3529,78 @@ memory install-memory-skills [flags]
 ```
       --dir string   target directory (default: .agents/skills relative to cwd)
       --force        overwrite existing skill directories
+      --global       also install into known global agent skill dirs (e.g. ~/.opencode/skills, ~/.claude/skills)
   -h, --help         help for install-memory-skills
+      --prune        remove stale memory-* skill directories not present in the catalog
+```
+
+## memory journal
+
+View and annotate the project journal
+
+### Options
+
+```
+  -h, --help   help for journal
+```
+
+## memory journal list
+
+List project journal entries
+
+### Synopsis
+
+List recent graph mutations and notes for the current project.
+
+Output is a log-style feed showing each event with timestamp, actor, event type,
+and relevant details. Notes are printed inline with entries or at the end (for
+standalone notes).
+
+Use --since to filter by age (e.g. 7d, 24h, 1h). Defaults to last 7 days.
+Use --limit to control the maximum number of entries returned.
+Use --output json for machine-readable output.
+
+```
+memory journal list [flags]
+```
+
+### Options
+
+```
+      --branch string      Branch name or UUID (omit for main branch)
+  -h, --help               help for list
+      --include-branches   Include merged branches in the feed alongside the main branch
+      --limit int          Maximum number of entries to return (default 100)
+      --since string       Show entries from the last duration (e.g. 7d, 24h, 1h) (default "7d")
+```
+
+## memory journal note
+
+Add a note to the project journal
+
+### Synopsis
+
+Add a markdown note to the project journal.
+
+The note body can be passed as an argument, piped via stdin, or entered
+interactively in your $EDITOR when no argument or stdin is provided.
+
+Use --entry <journal-entry-id> to attach the note to a specific journal entry.
+
+Examples:
+  memory journal note "Skipped worker services — need schema clarification first."
+  echo "Some context" | memory journal note
+  memory journal note --entry <entry-id> "Removed legacy auth service"
+
+```
+memory journal note [text] [flags]
+```
+
+### Options
+
+```
+      --entry string   Journal entry ID to attach the note to
+  -h, --help           help for note
 ```
 
 ## memory login
@@ -2732,6 +3674,59 @@ memory mcp-guide [flags]
 
 ```
   -h, --help   help for mcp-guide
+```
+
+## memory mcp-relay
+
+Inspect and interact with connected MCP relay instances
+
+### Options
+
+```
+  -h, --help   help for mcp-relay
+```
+
+## memory mcp-relay call
+
+Invoke a tool on a connected relay instance
+
+```
+memory mcp-relay call <instance-id> <tool-name> [flags]
+```
+
+### Options
+
+```
+      --args string   Tool arguments as a JSON object, e.g. '{"key":"value"}'
+  -h, --help          help for call
+```
+
+## memory mcp-relay sessions
+
+List connected MCP relay instances for the current project
+
+```
+memory mcp-relay sessions [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for sessions
+```
+
+## memory mcp-relay tools
+
+List tools exposed by a connected relay instance
+
+```
+memory mcp-relay tools <instance-id> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for tools
 ```
 
 ## memory orgs
@@ -2822,7 +3817,8 @@ memory orgs list [flags]
 ### Options
 
 ```
-  -h, --help   help for list
+  -h, --help      help for list
+      --members   Include members with roles
 ```
 
 ## memory projects
@@ -2960,6 +3956,7 @@ memory projects list [flags]
       --filter string   Filter results (e.g., 'name=MyProject,status=active')
   -h, --help            help for list
       --limit int       Maximum number of results (default from config)
+      --members         Include project members with roles
       --offset int      Number of results to skip
       --search string   Search projects by name or description
       --sort string     Sort results (e.g., 'name:asc' or 'updated_at:desc')
@@ -3025,6 +4022,32 @@ memory projects set-info [project-name-or-id] [flags]
       --text string   Inline project info text
 ```
 
+## memory projects set-models
+
+Set the default generative and/or embedding model for a project
+
+### Synopsis
+
+Set the default generative and/or embedding model for a project.
+Model names must include a provider prefix: provider/model-name
+
+Examples:
+  memory projects set-models --generative google/gemini-2.5-flash --embedding google/gemini-embedding-001
+  memory projects set-models --embedding google/gemini-embedding-001 --project <projectId>
+
+```
+memory projects set-models [flags]
+```
+
+### Options
+
+```
+      --embedding string    Embedding model with provider prefix, e.g. google/gemini-embedding-001
+      --generative string   Generative model with provider prefix, e.g. google/gemini-2.5-flash
+  -h, --help                help for set-models
+      --project string      Project ID (auto-detected from MEMORY_PROJECT_ID)
+```
+
 ## memory projects set-provider
 
 Configure the LLM provider for a project
@@ -3033,10 +4056,10 @@ Configure the LLM provider for a project
 
 Configure the LLM provider credentials for a specific project.
 
-Supported providers: google, google-vertex. Prints the provider name, the
-configured generative model, and the embedding model on success. Use flags
-such as --api-key, --embedding-model, and --generative-model to specify
-credentials and model overrides.
+Supported providers: google, google-vertex, openai, deepseek. Prints the
+provider name, the configured generative model, and the embedding model on
+success. Use flags such as --api-key, --embedding-model, and
+--generative-model to specify credentials and model overrides.
 
 ```
 memory projects set-provider [project-name-or-id] <provider> [flags]
@@ -3045,12 +4068,14 @@ memory projects set-provider [project-name-or-id] <provider> [flags]
 ### Options
 
 ```
-      --api-key string            Google AI API key (for google)
+      --api-key string            API key for the provider
+      --base-url string           OpenAI-compatible base URL (for openai)
       --embedding-model string    Override embedding model for this project
       --gcp-project string        GCP project ID (for google-vertex)
       --generative-model string   Override generative model for this project
   -h, --help                      help for set-provider
       --location string           GCP region (for google-vertex)
+      --name string               Provider instance name (slug); defaults to the provider name. Use a distinct name to add a second instance of the same provider type
       --sa-file string            Path to Vertex AI service account JSON (for google-vertex)
 ```
 
@@ -3082,6 +4107,63 @@ memory projects set [name-or-id] [flags]
   -h, --help    help for set
 ```
 
+## memory projects share-mcp
+
+Share read-only MCP access with a teammate or AI agent
+
+### Synopsis
+
+Generate a read-only API token for your project and print ready-to-use
+MCP config snippets for Claude Desktop, Cursor, and OpenCode.
+
+The token is scoped to data:read, schema:read, agents:read, and projects:read.
+Write operations will be rejected. The token can be revoked at any time with:
+
+  memory tokens revoke <token-id> --project <project>
+
+Examples:
+  memory projects share-mcp --project my-project
+  memory projects share-mcp --project my-project --name "Alice read-only"
+  memory projects share-mcp --project my-project --email alice@example.com --email bob@example.com
+
+```
+memory projects share-mcp [flags]
+```
+
+### Options
+
+```
+      --email stringArray   Email address to invite (can be repeated)
+  -h, --help                help for share-mcp
+      --json                Output raw JSON response
+      --name string         Display name for the token (default: auto-generated)
+      --project string      Project name or ID (required if not set in config)
+```
+
+## memory projects show-models
+
+Show the effective model config for a project
+
+### Synopsis
+
+Show the resolved generative and embedding models for a project,
+including where each model was resolved from (project config or none).
+
+Examples:
+  memory projects show-models
+  memory projects show-models --project <projectId>
+
+```
+memory projects show-models [flags]
+```
+
+### Options
+
+```
+  -h, --help             help for show-models
+      --project string   Project ID (auto-detected from MEMORY_PROJECT_ID)
+```
+
 ## memory projects team
 
 Manage project team members
@@ -3094,6 +4176,24 @@ Commands for listing, inviting, and removing members of a project
 
 ```
   -h, --help   help for team
+```
+
+## memory projects team accept
+
+Accept a pending invitation
+
+### Synopsis
+
+Accept a pending invitation using the token from the invitation email.
+
+```
+memory projects team accept <token> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for accept
 ```
 
 ## memory projects team invite
@@ -3121,6 +4221,25 @@ memory projects team invite <email> [project-name-or-id] [flags]
 ```
   -h, --help          help for invite
       --role string   Role to assign (project_viewer, project_user, project_admin) (default "project_viewer")
+```
+
+## memory projects team invites
+
+List pending invitations
+
+### Synopsis
+
+List all pending invitations sent to your account.
+
+```
+memory projects team invites [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for invites
+      --json   Output as JSON
 ```
 
 ## memory projects team list
@@ -3188,14 +4307,27 @@ This overrides the organization's provider config for this project.
 Use --remove to remove the project-level override and fall back to the org config.
 
 Supported providers:
-  google   — Google AI (Gemini API); requires --api-key
-  google-vertex   — Google Cloud Vertex AI; requires --gcp-project, --location
+  google            — Google AI (Gemini API); requires --api-key
+  google-vertex     — Google Cloud Vertex AI; requires --gcp-project, --location
+  openai             — OpenAI API; requires --api-key
+  deepseek          — DeepSeek AI models; requires --api-key
+
+Any other registered vendor (e.g. azure-openai, volcengine, lkeap) can also be
+configured via --api-key, --base-url, and vendor-specific --extra key=value pairs.
+
+The --extra flag is repeatable (one key=value per occurrence) and stores
+vendor-specific fields such as azure-openai's api_version, volcengine's region,
+or lkeap's secret_key.
 
 The project is read from --project or the MEMORY_PROJECT_ID environment variable.
 
 Examples:
   memory provider configure-project google --api-key AIzaSy...
   memory provider configure-project google-vertex --gcp-project my-proj --location us-central1 --key-file sa.json
+  memory provider configure-project openai --api-key sk-...
+  memory provider configure-project deepseek --api-key sk-... --generative-model deepseek-v4-flash
+  memory provider configure-project azure-openai --api-key ... --base-url https://... --extra api_version=2024-06-01
+  memory provider configure-project volcengine --api-key ... --extra region=cn-north-1
   memory provider configure-project google --remove
 
 ```
@@ -3206,7 +4338,9 @@ memory provider configure-project <provider> [flags]
 
 ```
       --api-key string            API key (required for google)
+      --base-url string           OpenAI-compatible base URL (required for openai)
       --embedding-model string    Embedding model to use (auto-selected from catalog if omitted)
+      --extra stringArray         Vendor-specific extra config field (key=value, repeatable)
       --gcp-project string        GCP project ID (required for google-vertex)
       --generative-model string   Generative model to use (auto-selected from catalog if omitted)
   -h, --help                      help for configure-project
@@ -3216,41 +4350,28 @@ memory provider configure-project <provider> [flags]
       --remove                    Remove the project-level override and inherit org config
 ```
 
-## memory provider configure
+## memory provider definitions
 
-Save LLM provider credentials and model selections for the organization
+List supported LLM vendor definitions
 
 ### Synopsis
 
-Save LLM provider credentials (and optionally model selections) for the
-current organization. Runs a live credential test and syncs the model catalog
-on success. Models are auto-selected from the catalog if not specified.
-
-Supported providers:
-  google   — Google AI (Gemini API); requires --api-key
-  google-vertex   — Google Cloud Vertex AI; requires --gcp-project, --location
-                Optionally supply --key-file for a service account JSON key.
+List every supported LLM vendor from the server registry, showing the
+vendor id and its display name.
 
 Examples:
-  memory provider configure google --api-key AIzaSy...
-  memory provider configure google-vertex --gcp-project my-project --location us-central1 --key-file sa.json
-  memory provider configure google --api-key AIzaSy... --generative-model gemini-2.5-flash --embedding-model text-embedding-004
+  memory provider definitions
+  memory provider definitions --json
 
 ```
-memory provider configure <provider> [flags]
+memory provider definitions [flags]
 ```
 
 ### Options
 
 ```
-      --api-key string            API key (required for google)
-      --embedding-model string    Embedding model to use (auto-selected from catalog if omitted)
-      --gcp-project string        GCP project ID (required for google-vertex)
-      --generative-model string   Generative model to use (auto-selected from catalog if omitted)
-  -h, --help                      help for configure
-      --key-file string           Path to service account JSON key file (google-vertex)
-      --location string           GCP region, e.g. us-central1 (required for google-vertex)
-      --org-id string             Organization ID (auto-detected from config)
+  -h, --help   help for definitions
+      --json   Output raw JSON
 ```
 
 ## memory provider list
@@ -3265,9 +4386,13 @@ project-level overrides across all projects in the organization.
 The output is a table with columns: SCOPE, PROVIDER, GENERATIVE MODEL,
 EMBEDDING MODEL, GCP PROJECT, LOCATION, and UPDATED.
 
+Use --project to filter results to a single project (name or ID).
+If multiple projects share the same name, an error is returned with all matching IDs.
+
 Examples:
   memory provider list
   memory provider list --org-id <id>
+  memory provider list --project my-project
   memory provider list --json
 
 ```
@@ -3277,9 +4402,10 @@ memory provider list [flags]
 ### Options
 
 ```
-  -h, --help            help for list
-      --json            Output raw JSON
-      --org-id string   Organization ID (auto-detected from config)
+  -h, --help             help for list
+      --json             Output raw JSON
+      --org-id string    Organization ID (auto-detected from config)
+      --project string   Filter to a specific project (name or ID)
 ```
 
 ## memory provider models
@@ -3297,8 +4423,10 @@ Use --type to filter by model type (embedding or generative).
 
 Examples:
   memory provider models
+  memory provider models openai
   memory provider models google-vertex
   memory provider models google --type generative
+  memory provider models deepseek
 
 ```
 memory provider models [provider] [flags]
@@ -3312,6 +4440,124 @@ memory provider models [provider] [flags]
       --type string     Filter by model type: embedding or generative
 ```
 
+## memory provider pricing
+
+Manage LLM pricing and project overrides
+
+### Synopsis
+
+Show global retail pricing and manage project-level manual pricing overrides.
+
+Global retail prices are synced from the provider registry and drive default LLM
+cost estimation. Manual overrides are in USD per 1 million tokens and only
+affect cost estimates for the given project (they override global retail).
+
+Subcommands:
+  list     List global retail pricing, or a project's overrides with --project
+  set      Create or update a pricing override for a project
+  delete   Remove a pricing override from a project
+
+Examples:
+  memory provider pricing list
+  memory provider pricing list --project <id>
+  memory provider pricing set --project <id> --provider deepseek --model deepseek-v4-pro --output 3.50
+  memory provider pricing delete --project <id> --provider deepseek --model deepseek-v4-pro
+
+### Options
+
+```
+  -h, --help   help for pricing
+```
+
+## memory provider pricing delete
+
+Delete a pricing override from a project
+
+### Synopsis
+
+Remove a pricing override for a project's provider + model pair. After
+deletion the project falls back to global retail pricing for that model.
+
+Examples:
+  memory provider pricing delete --project <id> --provider deepseek --model deepseek-v4-pro
+
+```
+memory provider pricing delete [flags]
+```
+
+### Options
+
+```
+  -h, --help              help for delete
+      --model string      Model name
+      --project string    Project ID (auto-detected from MEMORY_PROJECT_ID)
+      --provider string   Provider name (google, google-vertex, openai, or deepseek)
+```
+
+## memory provider pricing list
+
+List retail pricing (or a project's overrides with --project)
+
+### Synopsis
+
+List global retail pricing for every provider + model.
+
+With --project (or MEMORY_PROJECT_ID set), list that project's manual pricing
+overrides instead.
+
+Retail output is a table with columns: PROVIDER, MODEL, TEXT IN, IMAGE, VIDEO,
+AUDIO, OUTPUT, and LAST SYNCED. Override output replaces LAST SYNCED with UPDATED.
+
+Examples:
+  memory provider pricing list
+  memory provider pricing list --project <id>
+  memory provider pricing list --json
+
+```
+memory provider pricing list [flags]
+```
+
+### Options
+
+```
+  -h, --help             help for list
+      --json             Output raw JSON
+      --project string   Project ID (auto-detected from MEMORY_PROJECT_ID)
+```
+
+## memory provider pricing set
+
+Set a pricing override for a project
+
+### Synopsis
+
+Create or update a pricing override for a project's provider + model pair.
+
+Prices are in USD per 1 million tokens. Omitted prices default to 0.
+
+Examples:
+  memory provider pricing set --project <id> --provider deepseek --model deepseek-v4-pro --output 3.50
+  memory provider pricing set --project <id> --provider openai --model gpt-4o --text-input 2.50 --output 10.00
+
+```
+memory provider pricing set [flags]
+```
+
+### Options
+
+```
+      --audio-input float   Audio input price per 1M tokens (USD)
+  -h, --help                help for set
+      --image-input float   Image input price per 1M tokens (USD)
+      --json                Output raw JSON
+      --model string        Model name
+      --output float        Output price per 1M tokens (USD)
+      --project string      Project ID (auto-detected from MEMORY_PROJECT_ID)
+      --provider string     Provider name (google, google-vertex, openai, or deepseek)
+      --text-input float    Text input price per 1M tokens (USD)
+      --video-input float   Video input price per 1M tokens (USD)
+```
+
 ## memory provider test
 
 Test LLM provider credentials with a live generate call
@@ -3322,13 +4568,15 @@ Send a live "say hello" generate call to verify that provider credentials
 work end-to-end.
 
 Without a provider argument, tests all configured providers.
-Pass a provider name (google or google-vertex) to test a specific one.
+Pass a provider name (google, google-vertex, openai, or deepseek) to test a specific one.
 
 Use --project to test using the project-level credential hierarchy
 (project override → org) instead of org credentials only.
 
 Examples:
   memory provider test
+  memory provider test openai
+  memory provider test deepseek
   memory provider test google-vertex
   memory provider test google --project <id>
 
@@ -3449,22 +4697,198 @@ memory query <question> [flags]
 ### Options
 
 ```
-      --access-boost float32       Boost score by access recency (0 = disabled; try 0.5-2.0) (search mode only)
-      --branch string              Branch ID to search (search mode only; omit to search the main graph)
-      --debug                      Include debug information in output
-      --fusion-strategy string     Fusion strategy: weighted, rrf, interleave, graph_first, text_first (search mode only) (default "weighted")
-  -h, --help                       help for query
-      --json                       Output results as JSON
-      --limit int                  Maximum number of results to return (search mode only) (default 10)
-      --mode string                Query mode: agent (default, AI reasoning) or search (direct hybrid search) (default "agent")
-      --project string             Project ID to query (uses default project if not specified)
-      --recency-boost float32      Boost score by recency (0 = disabled; try 0.5-2.0) (search mode only)
-      --recency-half-life float32  Half-life in hours for recency decay (default 168 = 7 days) (search mode only) (default 168)
-      --result-types string        Types of results: graph, text, or both (search mode only) (default "both")
-      --show-scores                Show relevance scores for each result (search mode only)
-      --show-time                  Show elapsed query time
-      --show-tools                 Show tool calls made by the agent (agent mode only)
-      --session string             Continue a previous query session (use the session ID printed after a query)
+      --access-boost float32        Boost score by access recency (0 = disabled; try 0.5-2.0) (search mode only)
+      --branch string               Branch ID to search (search mode only; omit to search the main graph)
+      --debug                       Include debug information in output
+      --fusion-strategy string      Fusion strategy: weighted, rrf, interleave, graph_first, text_first (search mode only) (default "weighted")
+  -h, --help                        help for query
+      --json                        Output results as JSON
+      --limit int                   Maximum number of results to return (search mode only) (default 10)
+      --mode string                 Query mode: agent (default, AI reasoning) or search (direct hybrid search) (default "agent")
+      --project string              Project ID to query (uses default project if not specified)
+      --recency-boost float32       Boost score by recency (0 = disabled; try 0.5-2.0) (search mode only)
+      --recency-half-life float32   Half-life in hours for recency decay (default 168 = 7 days) (search mode only) (default 168)
+      --result-types string         Types of results: graph, text, or both (search mode only) (default "both")
+      --session string              Continue a previous query session (use the session ID printed after a query)
+      --show-scores                 Show relevance scores for each result (search mode only)
+      --show-time                   Show elapsed query time
+      --show-tools                  Show tool calls made by the agent (agent mode only)
+```
+
+## memory remember
+
+Store information in the knowledge graph using natural language
+
+### Synopsis
+
+Store information in the knowledge graph using natural language.
+
+The domain-remember-agent understands your input, classifies the content,
+discovers or reuses a schema pack, and queues structured extraction — all automatically.
+
+You can remember plain text or upload a file (PDF, DOCX, TXT, etc.) which is
+converted to plaintext first and then processed the same way.
+
+Schema policy controls what happens when no matching entity type exists:
+  reuse_only  Never create new types; use the closest existing type (default)
+  auto        Create new schema types as needed
+  ask         Prompt before creating any new type (requires interactive terminal)
+
+Examples:
+  memory remember "I have to buy toilet paper at Lidl"
+  memory remember "Meeting with Sarah tomorrow at 3pm about the Q3 roadmap"
+  memory remember --file notes.pdf
+  memory remember --file report.docx --guide "this is my quarterly financial report"
+  memory remember --guide "shopping list for birthday party" "milk, eggs, candles"
+  memory remember --schema-policy reuse_only "Task: fix login bug, priority high"
+  memory remember --dry-run "Note: team offsite on 15 June in Berlin"
+  memory remember --project abc123 "remember to call dentist next week"
+
+```
+memory remember [text] [flags]
+```
+
+### Options
+
+```
+      --dry-run                Create branch and write data but do not merge to main
+      --file string            Path to a file to upload, convert, and remember (PDF, DOCX, TXT, etc.)
+      --guide string           Natural-language hint for the agent on how to interpret the content
+  -h, --help                   help for remember
+      --json                   Output results as JSON
+      --project string         Project ID (uses default project if not specified)
+      --schema-policy string   Schema creation policy: auto, reuse_only, ask (default "reuse_only")
+      --session string         Continue a previous remember session (use session ID printed after a run)
+      --show-time              Show elapsed time
+      --show-tools             Show tool calls made by the agent
+```
+
+## memory restores
+
+Manage project restores
+
+### Synopsis
+
+Commands for creating clone restores from backups and tracking restore status
+
+### Options
+
+```
+  -h, --help   help for restores
+```
+
+## memory restores create
+
+Create a clone restore from a backup
+
+### Synopsis
+
+Clone a backup into a new project in the target organization. The server
+starts the restore asynchronously and returns a restore with status "pending".
+
+Use --wait to block until the restore reaches "completed" or "failed".
+
+```
+memory restores create [flags]
+```
+
+### Options
+
+```
+      --backup string        Backup ID to restore from (required)
+  -h, --help                 help for create
+      --org-id string        Organization ID (clone destination, auto-detected if not specified)
+      --target-name string   Name for the cloned project
+      --timeout duration     Wait timeout (e.g. 15m, 30s) (default 15m0s)
+      --wait                 Block until the restore reaches a terminal status
+```
+
+## memory restores get
+
+Get restore job status
+
+### Synopsis
+
+Get the status, progress, and target project of a restore job by ID.
+
+```
+memory restores get <restoreId> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for get
+```
+
+## memory runs
+
+View agent runs for a project
+
+### Synopsis
+
+View agent runs for a project.
+
+This includes runs triggered by /remember, /forget, /query, chat sessions,
+and any scheduled or manually triggered agents.
+
+Use "memory runs get <run-id>" to see messages and tool calls for a run.
+Use "memory runs logs <run-id>" to stream execution logs for a run.
+
+```
+memory runs [flags]
+```
+
+### Options
+
+```
+  -h, --help             help for runs
+      --json             Output as JSON
+      --limit int        Maximum number of runs to return (max 100) (default 20)
+      --project string   Project ID (overrides default project)
+      --status string    Filter by status: running, completed, failed
+```
+
+## memory runs get
+
+Get full details for a run
+
+### Synopsis
+
+Get full details for a run: metadata, messages, and tool calls.
+
+No --project flag is required — run IDs are globally unique.
+
+```
+memory runs get <run-id> [flags]
+```
+
+### Options
+
+```
+  -h, --help             help for get
+      --json             Output as JSON
+      --project string   Project ID (needed for messages/tool calls)
+```
+
+## memory runs logs
+
+Stream execution logs for a run
+
+### Synopsis
+
+Stream the execution log for a run to stdout.
+
+No --project flag is required — run IDs are globally unique.
+
+```
+memory runs logs <run-id> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for logs
 ```
 
 ## memory schemas
@@ -3495,6 +4919,10 @@ Prints two tables: Object Types (columns: Name, Label, Schema, Description)
 and Relationship Types (columns: Name, Label, Source → Target, Schema). Use
 --output json to receive the raw compiled types as JSON.
 
+With --verbose, additional columns show the schema version and whether a type
+is shadowed (overridden) by a higher-priority schema. Shadowed types also emit
+a warning to stderr.
+
 ```
 memory schemas compiled-types [flags]
 ```
@@ -3502,16 +4930,17 @@ memory schemas compiled-types [flags]
 ### Options
 
 ```
-  -h, --help   help for compiled-types
+  -h, --help      help for compiled-types
+      --verbose   Include schema version and shadowed status in output
 ```
 
 ## memory schemas create
 
-Create a schema from a JSON file
+Create a schema from a JSON or YAML file
 
 ### Synopsis
 
-Create a new schema by loading its definition from a JSON file
+Create a new schema by loading its definition from a JSON or YAML file
 
 ```
 memory schemas create [flags]
@@ -3542,6 +4971,39 @@ memory schemas delete <schema-id> [flags]
   -h, --help   help for delete
 ```
 
+## memory schemas diff
+
+Diff two schemas — registry vs registry, or registry vs local file
+
+### Synopsis
+
+Compare two schema definitions and show type-level and property-level differences.
+
+Two modes:
+
+  diff <schema-id> --file <path>
+      Compare a schema in the registry against a local JSON/YAML file.
+      The local file is treated as the "incoming" (new) version.
+
+  diff <schema-id-a> <schema-id-b>
+      Compare two schemas already stored in the registry.
+      Schema A is treated as the "before" (base) version and schema B as the "after" version.
+
+Output shows added (+), removed (-) types, and property-level changes for shared
+types. A suggested migrations YAML block is printed when removals are detected.
+Use --output json for machine-readable output.
+
+```
+memory schemas diff <schema-id-a> [<schema-id-b>] [--file <path>] [flags]
+```
+
+### Options
+
+```
+      --file string   Path to incoming schema file (JSON, YAML, or YML) for registry-vs-file mode
+  -h, --help          help for diff
+```
+
 ## memory schemas get
 
 Get a schema by ID
@@ -3564,6 +5026,28 @@ memory schemas get <schema-id> [flags]
   -h, --help   help for get
 ```
 
+## memory schemas history
+
+Show installation history for schemas on the current project
+
+### Synopsis
+
+Show the full installation history for schemas assigned to the current project,
+including schemas that have since been removed (soft-deleted).
+
+Output is a table with columns: Assignment ID, Schema ID, Name, Version,
+Installed, Removed. Use --output json to receive the full list as JSON.
+
+```
+memory schemas history [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for history
+```
+
 ## memory schemas install
 
 Install a schema into the current project
@@ -3572,9 +5056,9 @@ Install a schema into the current project
 
 Install a schema into the current project.
 
-Two modes:
-  install <schema-id>         Install an existing schema from the registry by ID.
-  install --file schema.json  Create a new schema from a JSON file and install it in one step.
+	Two modes:
+  install <schema-id>          Install an existing schema from the registry by ID.
+  install --file schema.json   Create a new schema from a JSON or YAML file and install it in one step.
 
 ```
 memory schemas install [<schema-id>] [flags]
@@ -3583,10 +5067,12 @@ memory schemas install [<schema-id>] [flags]
 ### Options
 
 ```
-      --dry-run       Preview what would be installed without making changes
-      --file string   Create schema from JSON file and install in one step
-  -h, --help          help for install
-      --merge         Additively merge incoming type schemas into existing registered types
+      --auto-uninstall   Uninstall the from-version schema after successful migration chain
+      --dry-run          Preview what would be installed without making changes
+      --file string      Create schema from JSON file and install in one step
+      --force            Force migration even if risk level is dangerous
+  -h, --help             help for install
+      --merge            Additively merge incoming type schemas into existing registered types
 ```
 
 ## memory schemas installed
@@ -3637,25 +5123,212 @@ memory schemas list [flags]
   -h, --help        help for list
 ```
 
+## memory schemas migrate
+
+Migrate live graph data by renaming types or properties
+
+### Synopsis
+
+Rename object types or properties across live graph objects and edges.
+
+Use --rename-type OldName:NewName to rename an object or edge type.
+Use --rename-property OldType.old_key:OldType.new_key to rename a property within a type.
+Both flags are repeatable. At least one rename must be provided.
+
+Use --dry-run to preview how many objects/edges would be affected without making changes.
+
+```
+memory schemas migrate [flags]
+```
+
+### Options
+
+```
+      --dry-run                       Preview migration without making changes
+  -h, --help                          help for migrate
+      --rename-property stringArray   Rename a property: OldType.old_key:OldType.new_key (repeatable)
+      --rename-type stringArray       Rename a type: OldName:NewName (repeatable)
+```
+
+## memory schemas migrate commit
+
+Commit (prune) migration archive data through a given schema version
+
+### Synopsis
+
+Remove migration_archive entries from all project objects whose to_version is
+<= the given through_version. Once committed, rollback to those versions is no
+longer possible.
+
+This is an explicit user action — run after a migration has been stable for
+some time. The assignment itself is unaffected.
+
+```
+memory schemas migrate commit [flags]
+```
+
+### Options
+
+```
+  -h, --help                     help for commit
+      --through-version string   Prune archive entries at or below this version (required)
+```
+
+## memory schemas migrate execute
+
+Execute a schema migration (System A: full field-level migration with archive)
+
+### Synopsis
+
+Migrate live graph objects from one schema version to another using System A
+(SchemaMigrator). Applies type renames, property renames, and archives dropped
+properties for rollback.
+
+Use --force to bypass the dangerous-risk block. Use --max-objects to limit how
+many objects are migrated (useful for staged rollouts).
+
+A confirmation prompt is shown for risky or dangerous migrations unless --force
+is set.
+
+```
+memory schemas migrate execute [flags]
+```
+
+### Options
+
+```
+      --force             Force migration even if risk level is dangerous
+      --from string       Source schema ID (required)
+  -h, --help              help for execute
+      --max-objects int   Limit number of objects to migrate (0 = no limit)
+      --to string         Target schema ID (required)
+```
+
+## memory schemas migrate job
+
+Check the status of an async schema migration job
+
+### Synopsis
+
+Poll the status of a background schema migration job.
+
+Use --job-id to specify the job ID (returned by 'memory schemas install' when
+auto-migration is triggered).
+
+Use --wait to block until the job completes, streaming progress updates every
+2 seconds.
+
+```
+memory schemas migrate job [flags]
+```
+
+### Options
+
+```
+  -h, --help            help for job
+      --job-id string   Migration job ID to poll (required)
+      --wait            Block until job completes, streaming progress updates
+```
+
+## memory schemas migrate preview
+
+Preview a schema migration (risk assessment, no data changes)
+
+### Synopsis
+
+Preview the risk of migrating live graph objects from one schema version to another.
+
+Returns a risk breakdown per object type (safe/cautious/risky/dangerous) and a
+total object count, but makes no data changes.
+
+Use --from and --to to specify the source and target schema IDs.
+
+```
+memory schemas migrate preview [flags]
+```
+
+### Options
+
+```
+      --from string   Source schema ID (required)
+  -h, --help          help for preview
+      --to string     Target schema ID (required)
+```
+
+## memory schemas migrate rollback
+
+Roll back a schema migration by restoring archived property data
+
+### Synopsis
+
+Restore property data archived during a previous migration.
+
+Use --to-version to name the target version of the migration being undone — it
+must match that migration's archive to_version (the version the objects were
+migrated TO), not the version to roll back to. Objects are restored to the
+archive's from_version.
+Use --restore-registry to also restore the type registry to the pre-migration state
+(re-installs the old schema types and removes new additions). This is a transactional
+operation — if any step fails, the entire rollback is reverted.
+
+```
+memory schemas migrate rollback [flags]
+```
+
+### Options
+
+```
+  -h, --help                help for rollback
+      --restore-registry    Also restore type registry to the pre-migration state
+      --to-version string   Target version of the migration to undo; must match the archive's to_version (required)
+```
+
 ## memory schemas uninstall
 
 Uninstall (remove) a schema assignment from the current project
 
 ### Synopsis
 
-Remove a schema assignment from the current project by its assignment ID.
+Remove a schema assignment from the current project.
 
-Use 'memory schemas installed' to list assignment IDs. Prints
-"Schema assignment <id> removed." on success.
+Single mode: provide the assignment ID to remove one schema.
+Bulk mode: use --all-except or --keep-latest to remove multiple schemas.
+
+Use 'memory schemas installed' to list assignment IDs.
 
 ```
-memory schemas uninstall <assignment-id> [flags]
+memory schemas uninstall [<assignment-id>] [flags]
 ```
 
 ### Options
 
 ```
-  -h, --help   help for uninstall
+      --all-except string   Remove all assignments except the comma-separated IDs (assignment IDs or schema IDs)
+      --dry-run             Preview what would be removed without making changes
+  -h, --help                help for uninstall
+      --keep-latest         Remove all but the most-recently installed assignment per unique schema
+```
+
+## memory schemas validate
+
+Check project objects for schema version mismatches
+
+### Synopsis
+
+Identify objects whose stored schema version is out of date with the
+currently installed schemas in the project.
+
+Returns a list of entity IDs, their types, keys, and the specific issues
+(e.g., version mismatch). Exits with code 1 if any stale objects are found.
+
+```
+memory schemas validate [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for validate
 ```
 
 ## memory server
@@ -3888,6 +5561,7 @@ This command will:
 Example:
   memory install
   memory install --port 8080 --google-api-key YOUR_KEY
+  memory install --open-api-base-url http://localhost:11434/v1 --llm-model llama3
   memory install --dir /opt/memory --skip-start
 
 ```
@@ -3897,12 +5571,14 @@ memory server install [flags]
 ### Options
 
 ```
-      --dir string              Installation directory (default "/root/.memory")
-      --force                   Overwrite existing installation
-      --google-api-key string   Google API key for embeddings
-  -h, --help                    help for install
-      --port int                Server port (default 3002)
-      --skip-start              Generate config but don't start services
+      --dir string                 Installation directory (default "/root/.memory")
+      --force                      Overwrite existing installation
+      --google-api-key string      Google API key for embeddings
+  -h, --help                       help for install
+      --llm-model string           LLM model name (for OpenAI-compatible)
+      --open-api-base-url string   OpenAI-compatible base URL
+      --port int                   Server port (default 3002)
+      --skip-start                 Generate config but don't start services
 ```
 
 ## memory server uninstall
@@ -3963,6 +5639,154 @@ memory server upgrade [flags]
       --dir string   Installation directory (default "/root/.memory")
   -f, --force        Force upgrade without confirmation
   -h, --help         help for upgrade
+```
+
+## memory sessions
+
+Manage AI agent sessions and messages
+
+### Options
+
+```
+  -h, --help             help for sessions
+      --project string   Project name or ID
+```
+
+## memory sessions create
+
+Create a new session
+
+### Synopsis
+
+Creates a new Session graph object to track an AI agent conversation.
+
+```
+memory sessions create [flags]
+```
+
+### Options
+
+```
+      --agent-version string   Optional agent version
+  -h, --help                   help for create
+      --summary string         Optional session summary
+      --title string           Session title (required)
+```
+
+## memory sessions get
+
+Get a session by ID
+
+```
+memory sessions get [session-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for get
+```
+
+## memory sessions list
+
+List sessions in the project
+
+```
+memory sessions list [flags]
+```
+
+### Options
+
+```
+      --cursor string   Pagination cursor
+  -h, --help            help for list
+      --limit int       Max sessions to return (default 20)
+```
+
+## memory sessions messages
+
+Manage messages in a session
+
+### Options
+
+```
+  -h, --help   help for messages
+```
+
+## memory sessions messages add
+
+Append a message to a session
+
+```
+memory sessions messages add [session-id] [flags]
+```
+
+### Options
+
+```
+      --content string   Message content (required)
+  -h, --help             help for add
+      --role string      Message role: user|assistant|system (required)
+      --tokens int       Token count (optional)
+```
+
+## memory sessions messages list
+
+List messages in a session
+
+```
+memory sessions messages list [session-id] [flags]
+```
+
+### Options
+
+```
+      --cursor string   Pagination cursor
+  -h, --help            help for list
+      --limit int       Max messages to return (default 50)
+```
+
+## memory sessions recount
+
+Recount message_count and total_tokens for a session
+
+### Synopsis
+
+Scans all messages for a session and updates message_count and total_tokens on the Session object. Useful for backfilling existing sessions.
+
+```
+memory sessions recount <session-id> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for recount
+```
+
+## memory sessions spawn
+
+Spawn a child session from a parent
+
+### Synopsis
+
+Creates a new child session linked to the parent via a spawned_from relationship.
+
+When --fork-context is set, the parent's message history is copied into the child
+as a snapshot at spawn time. The child then operates independently — no live sync.
+
+```
+memory sessions spawn <parent-session-id> [flags]
+```
+
+### Options
+
+```
+      --fork-context       Copy parent message history into child session
+  -h, --help               help for spawn
+      --max-messages int   Max parent messages to copy when --fork-context is set (default 50)
+      --summary string     Optional session summary
+      --title string       Child session title (required)
 ```
 
 ## memory set-token
@@ -4249,7 +6073,9 @@ On success, prints the full plaintext Token value prominently (this is the only
 time the full token is shown — save it immediately), followed by ID, Name, Type,
 Prefix, Scopes, and Created timestamp.
 
-Valid scopes: schema:read, data:read, data:write, agents:read, agents:write, projects:read, projects:write
+Valid scopes: schema:read, schema:write, data:read, data:write, agents:read, agents:write, projects:read, projects:write, chat:use, graph:read, graph:write, schema:migrate, branches:read, branches:write, search, journal:read, journal:write, skills:read, skills:write, documents:read, documents:write, project:admin, admin, admin:all.
+Scopes are comma-separated. Use --scopes all to grant full admin access (admin:all).
+Run 'memory tokens scopes' for a description of each scope.
 
 ```
 memory tokens create [flags]
@@ -4258,9 +6084,9 @@ memory tokens create [flags]
 ### Options
 
 ```
-  -h, --help            help for create
-      --name string     Token name (required)
-      --scopes string   Comma-separated scopes (default: data:read). Valid: schema:read, data:read, data:write, agents:read, agents:write, projects:read, projects:write
+  -h, --help             help for create
+      --name string      Token name (required)
+      --scopes strings   Comma-separated scopes (e.g. --scopes data:read,data:write). Use --scopes all for full admin access.
 ```
 
 ## memory tokens get
@@ -4311,13 +6137,35 @@ memory tokens list [flags]
       --page int             Page number (1-based, used with --limit) (default 1)
 ```
 
-## memory tokens revoke
+## memory tokens regenerate
 
-Revoke an API token
+Regenerate an API token
 
 ### Synopsis
 
-Permanently revoke an API token, making it unusable. Without --project, revokes an account-level token.
+Atomically revoke an existing API token and issue a new one with the same name and scopes.
+
+Without --project, regenerates an account-level token. With --project, regenerates a project-scoped token.
+
+The new plaintext token value is printed once — save it immediately.
+
+```
+memory tokens regenerate [token-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for regenerate
+```
+
+## memory tokens revoke
+
+Revoke (delete) an API token
+
+### Synopsis
+
+Permanently revoke (delete) an API token, making it unusable. Without --project, revokes an account-level token.
 
 ```
 memory tokens revoke [token-id] [flags]
@@ -4327,6 +6175,50 @@ memory tokens revoke [token-id] [flags]
 
 ```
   -h, --help   help for revoke
+```
+
+## memory tokens scopes
+
+List available API token scopes
+
+### Synopsis
+
+List all valid API token scopes with descriptions.
+
+For full account admin access, create a token with --scopes all (grants admin:all).
+
+```
+memory tokens scopes [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for scopes
+```
+
+## memory tokens update-scopes
+
+Update a token's scopes
+
+### Synopsis
+
+Update the scopes of an existing API token.
+
+Without --project, updates an account-level token. With --project, updates a
+project-scoped token.
+
+Use --scopes all for full admin access (admin:all).
+
+```
+memory tokens update-scopes [token-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help             help for update-scopes
+      --scopes strings   Comma-separated scopes (e.g. --scopes data:read,data:write). Use --scopes all for full admin access.
 ```
 
 ## memory traces

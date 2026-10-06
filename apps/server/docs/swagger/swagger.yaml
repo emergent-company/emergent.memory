@@ -1943,6 +1943,21 @@ definitions:
       version:
         type: string
     type: object
+  domain_blueprints.BlueprintPreview:
+    properties:
+      author:
+        type: string
+      description:
+        type: string
+      manifest:
+        items:
+          type: integer
+        type: array
+      name:
+        type: string
+      version:
+        type: string
+    type: object
   domain_blueprints.CreateBlueprintRequest:
     properties:
       author:
@@ -1962,6 +1977,12 @@ definitions:
     type: object
   domain_blueprints.ImportGitHubRequest:
     properties:
+      apply:
+        type: boolean
+      modelOverrides:
+        additionalProperties:
+          type: string
+        type: object
       ref:
         type: string
       token:
@@ -2260,6 +2281,17 @@ definitions:
         maxLength: 512
         type: string
     type: object
+  domain_chunking.ChunkingConfigResponse:
+    properties:
+      maxChunkSize:
+        type: integer
+      overlap:
+        type: integer
+      parentChild:
+        type: boolean
+      strategy:
+        type: string
+    type: object
   domain_chunking.RecreateChunksResponse:
     properties:
       status:
@@ -2272,10 +2304,29 @@ definitions:
       config:
         additionalProperties: {}
         type: object
+      discardedEdited:
+        type: integer
+      force:
+        type: boolean
       newChunks:
         type: integer
       oldChunks:
         type: integer
+      parentChild:
+        type: boolean
+      preservedEdited:
+        type: integer
+      strategy:
+        type: string
+    type: object
+  domain_chunking.UpdateChunkingConfigRequest:
+    properties:
+      maxChunkSize:
+        type: integer
+      overlap:
+        type: integer
+      parentChild:
+        type: boolean
       strategy:
         type: string
     type: object
@@ -2330,10 +2381,14 @@ definitions:
         type: integer
       createdAt:
         type: string
+      currentRevision:
+        type: integer
       documentId:
         type: string
       documentTitle:
         type: string
+      edited:
+        type: boolean
       embeddedChunks:
         description: Chunks with embeddings in document
         type: integer
@@ -2345,6 +2400,8 @@ definitions:
         type: integer
       metadata:
         $ref: '#/definitions/domain_chunks.ChunkMetadata'
+      parentChunkId:
+        type: string
       size:
         description: Size in characters
         type: integer
@@ -2352,6 +2409,24 @@ definitions:
         type: string
       totalChars:
         description: Total chars across all doc chunks
+        type: integer
+    type: object
+  domain_chunks.ChunkDiffLine:
+    properties:
+      text:
+        type: string
+      type:
+        type: string
+    type: object
+  domain_chunks.ChunkDiffResponse:
+    properties:
+      from:
+        type: integer
+      lines:
+        items:
+          $ref: '#/definitions/domain_chunks.ChunkDiffLine'
+        type: array
+      to:
         type: integer
     type: object
   domain_chunks.ChunkMetadata:
@@ -2362,11 +2437,38 @@ definitions:
       endOffset:
         description: Character offset in original document
         type: integer
+      headerCarry:
+        description: '"unknown" when a table header could not be determined'
+        type: string
+      isParent:
+        description: structural parent chunk; excluded from embedding/search
+        type: boolean
+      oversized:
+        description: atomic protected segment larger than the chunk size
+        type: boolean
+      stale:
+        description: preserved edited chunk whose source span no longer exists
+        type: boolean
       startOffset:
         description: Character offset in original document
         type: integer
       strategy:
-        description: character, sentence, paragraph
+        description: recursive_character, markdown_structure
+        type: string
+    type: object
+  domain_chunks.ChunkRevisionDTO:
+    properties:
+      author:
+        type: string
+      chunkId:
+        type: string
+      createdAt:
+        type: string
+      id:
+        type: string
+      seq:
+        type: integer
+      text:
         type: string
     type: object
   domain_chunks.DeletionResult:
@@ -2389,6 +2491,29 @@ definitions:
       success:
         type: boolean
     type: object
+  domain_chunks.EditChunkRequest:
+    properties:
+      text:
+        type: string
+    required:
+    - text
+    type: object
+  domain_chunks.EditChunkResponse:
+    properties:
+      chunkId:
+        type: string
+      revision:
+        type: integer
+    type: object
+  domain_chunks.ListChunkRevisionsResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/domain_chunks.ChunkRevisionDTO'
+        type: array
+      totalCount:
+        type: integer
+    type: object
   domain_chunks.ListChunksResponse:
     properties:
       data:
@@ -2397,6 +2522,14 @@ definitions:
         type: array
       totalCount:
         type: integer
+    type: object
+  domain_chunks.RollbackChunkRequest:
+    properties:
+      seq:
+        minimum: 1
+        type: integer
+    required:
+    - seq
     type: object
   domain_discoveryjobs.CancelJobResponse:
     properties:
@@ -3361,6 +3494,76 @@ definitions:
     required:
     - ids
     - status
+    type: object
+  domain_graph.BulkUpsertObjectResult:
+    properties:
+      created:
+        type: boolean
+      error:
+        type: string
+      index:
+        type: integer
+      object:
+        $ref: '#/definitions/domain_graph.GraphObjectResponse'
+      success:
+        type: boolean
+    type: object
+  domain_graph.BulkUpsertObjectsRequest:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/domain_graph.CreateGraphObjectRequest'
+        maxItems: 100
+        minItems: 1
+        type: array
+    required:
+    - items
+    type: object
+  domain_graph.BulkUpsertObjectsResponse:
+    properties:
+      failed:
+        type: integer
+      results:
+        items:
+          $ref: '#/definitions/domain_graph.BulkUpsertObjectResult'
+        type: array
+      success:
+        type: integer
+    type: object
+  domain_graph.BulkUpsertRelationshipResult:
+    properties:
+      created:
+        type: boolean
+      error:
+        type: string
+      index:
+        type: integer
+      relationship:
+        $ref: '#/definitions/domain_graph.GraphRelationshipResponse'
+      success:
+        type: boolean
+    type: object
+  domain_graph.BulkUpsertRelationshipsRequest:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/domain_graph.CreateGraphRelationshipRequest'
+        maxItems: 100
+        minItems: 1
+        type: array
+    required:
+    - items
+    type: object
+  domain_graph.BulkUpsertRelationshipsResponse:
+    properties:
+      failed:
+        type: integer
+      results:
+        items:
+          $ref: '#/definitions/domain_graph.BulkUpsertRelationshipResult'
+        type: array
+      success:
+        type: integer
     type: object
   domain_graph.CreateGraphObjectRequest:
     properties:
@@ -4860,6 +5063,14 @@ definitions:
         items:
           type: string
         type: array
+      target:
+        allOf:
+        - $ref: '#/definitions/domain_mcpregistry.MCPServerTarget'
+        description: Target selects the delivery mode ('server' default | 'device').
+      targetInstanceId:
+        description: TargetInstanceID is the relay instance_id for a device row; nil
+          = broadcast.
+        type: string
       type:
         allOf:
         - $ref: '#/definitions/domain_mcpregistry.MCPServerType'
@@ -4910,6 +5121,10 @@ definitions:
         items:
           type: string
         type: array
+      target:
+        $ref: '#/definitions/domain_mcpregistry.MCPServerTarget'
+      targetInstanceId:
+        type: string
       toolCount:
         type: integer
       tools:
@@ -4960,6 +5175,10 @@ definitions:
         items:
           type: string
         type: array
+      target:
+        $ref: '#/definitions/domain_mcpregistry.MCPServerTarget'
+      targetInstanceId:
+        type: string
       toolCount:
         type: integer
       tools:
@@ -4973,6 +5192,14 @@ definitions:
       url:
         type: string
     type: object
+  domain_mcpregistry.MCPServerTarget:
+    enum:
+    - server
+    - device
+    type: string
+    x-enum-varnames:
+    - TargetServer
+    - TargetDevice
   domain_mcpregistry.MCPServerToolDTO:
     properties:
       config:
@@ -5049,6 +5276,15 @@ definitions:
         items:
           type: string
         type: array
+      target:
+        allOf:
+        - $ref: '#/definitions/domain_mcpregistry.MCPServerTarget'
+        description: Target, when non-nil, switches the delivery mode ('server' |
+          'device').
+      targetInstanceId:
+        description: TargetInstanceID is the relay instance_id for a device row; nil
+          = broadcast.
+        type: string
       type:
         $ref: '#/definitions/domain_mcpregistry.MCPServerType'
       url:
@@ -5781,6 +6017,12 @@ definitions:
     properties:
       default:
         type: string
+      header:
+        description: |-
+          Header, when set, names the HTTP header the field value is injected as on
+          every outbound request (e.g. a secondary signing/secret header). Empty
+          means the field is not attached as a header.
+        type: string
       key:
         type: string
       label:
@@ -5810,10 +6052,14 @@ definitions:
     enum:
     - embedding
     - generative
+    - rerank
+    - transcription
     type: string
     x-enum-varnames:
     - ModelTypeEmbedding
     - ModelTypeGenerative
+    - ModelTypeRerank
+    - ModelTypeTranscription
   domain_provider.OrgUsageByProjectResponse:
     properties:
       data:
@@ -5879,6 +6125,13 @@ definitions:
         type: string
       embeddingModel:
         type: string
+      extraConfig:
+        additionalProperties:
+          type: string
+        description: |-
+          ExtraConfig returns the non-secret vendor-specific extra fields. Secret
+          fields (ExtraField.Secret) are never serialized.
+        type: object
       gcpProject:
         type: string
       generativeModel:
@@ -5899,11 +6152,13 @@ definitions:
   domain_provider.Protocol:
     enum:
     - openai-chat
+    - openai-responses
     - google-genai
     - anthropic-messages
     type: string
     x-enum-varnames:
     - ProtocolOpenAIChat
+    - ProtocolOpenAIResponses
     - ProtocolGoogleGenAI
     - ProtocolAnthropicMessages
   domain_provider.ProviderConfigResponse:
@@ -5914,6 +6169,13 @@ definitions:
         type: string
       embeddingModel:
         type: string
+      extraConfig:
+        additionalProperties:
+          type: string
+        description: |-
+          ExtraConfig returns the non-secret vendor-specific extra fields. Secret
+          fields (ExtraField.Secret) are never serialized.
+        type: object
       gcpProject:
         type: string
       generativeModel:
@@ -5964,6 +6226,10 @@ definitions:
         type: integer
       protocol:
         $ref: '#/definitions/domain_provider.Protocol'
+      rerankApi:
+        $ref: '#/definitions/domain_provider.RerankAPI'
+      transcriptionApi:
+        $ref: '#/definitions/domain_provider.TranscriptionAPI'
       type:
         $ref: '#/definitions/domain_provider.ProviderType'
     type: object
@@ -5996,6 +6262,7 @@ definitions:
     - generic
     - gpustack
     - jina
+    - cohere
     type: string
     x-enum-varnames:
     - ProviderGoogleAI
@@ -6025,6 +6292,7 @@ definitions:
     - ProviderGeneric
     - ProviderGPUStack
     - ProviderJina
+    - ProviderCohere
   domain_provider.ProviderPricing:
     properties:
       audioInputPrice:
@@ -6094,6 +6362,7 @@ definitions:
     - generic
     - gpustack
     - jina
+    - cohere
     type: string
     x-enum-varnames:
     - ProviderGoogleAI
@@ -6123,6 +6392,19 @@ definitions:
     - ProviderGeneric
     - ProviderGPUStack
     - ProviderJina
+    - ProviderCohere
+  domain_provider.RerankAPI:
+    enum:
+    - cohere
+    - dashscope
+    - volcengine
+    - tencent-lkeap
+    type: string
+    x-enum-varnames:
+    - RerankAPICohere
+    - RerankAPIDashScope
+    - RerankAPIVolcengine
+    - RerankAPITencentLKEAP
   domain_provider.TestProjectProviderResponse:
     properties:
       embeddingError:
@@ -6157,6 +6439,12 @@ definitions:
       reply:
         type: string
     type: object
+  domain_provider.TranscriptionAPI:
+    enum:
+    - openai-transcriptions
+    type: string
+    x-enum-varnames:
+    - TranscriptionAPIOpenAITranscriptions
   domain_provider.UpsertProjectPricingOverridesRequest:
     properties:
       audioInputPrice:
@@ -6187,6 +6475,15 @@ definitions:
         type: string
       embeddingModel:
         type: string
+      extraConfig:
+        additionalProperties:
+          type: string
+        description: |-
+          ExtraConfig carries vendor-specific extra fields keyed by field name (e.g.
+          Azure OpenAI "api_version", Volcengine "region"). A nil map omits the key
+          and preserves the stored extras; a non-nil map merges per key, where an
+          empty value clears a non-secret field or preserves a stored secret.
+        type: object
       gcpProject:
         type: string
       generativeModel:
@@ -9127,7 +9424,7 @@ info:
   license:
     name: Proprietary
   title: Memory API
-  version: 0.83.0
+  version: 0.85.0
 paths:
   /.well-known/oauth-protected-resource:
     get:
@@ -10682,6 +10979,53 @@ paths:
       summary: Import blueprint from a GitHub URL
       tags:
       - blueprints
+  /api/blueprints/import/preview:
+    post:
+      consumes:
+      - application/json
+      description: Fetches a blueprint from https://github.com/<org>/<repo>[#ref],
+        extracts and validates its manifest (applying any modelOverrides), and returns
+        its metadata and manifest WITHOUT creating anything. The optional token is
+        used only for private-repo fetch and is never stored or returned.
+      parameters:
+      - description: GitHub source
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_blueprints.ImportGitHubRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Import preview
+          schema:
+            $ref: '#/definitions/domain_blueprints.BlueprintPreview'
+        "400":
+          description: Invalid URL or manifest
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "413":
+          description: Archive too large
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "502":
+          description: Fetch failed
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Preview blueprint import from a GitHub URL
+      tags:
+      - blueprints
   /api/blueprints/name/{name}/versions:
     get:
       consumes:
@@ -11119,6 +11463,65 @@ paths:
       summary: Stream chat completion
       tags:
       - chat
+  /api/chunking/config:
+    get:
+      description: Returns the active project's chunking strategy and parameters (or
+        defaults)
+      parameters:
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_chunking.ChunkingConfigResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get project chunking configuration
+      tags:
+      - chunking
+    put:
+      consumes:
+      - application/json
+      description: Validates and persists the active project's chunking strategy and
+        parameters
+      parameters:
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      - description: Chunking configuration
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_chunking.UpdateChunkingConfigRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_chunking.ChunkingConfigResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Update project chunking configuration
+      tags:
+      - chunking
   /api/diagnostics:
     get:
       responses: {}
@@ -13086,6 +13489,44 @@ paths:
       summary: Bulk update object statuses
       tags:
       - graph
+  /api/graph/objects/bulk-upsert:
+    post:
+      consumes:
+      - application/json
+      description: Bulk create-or-replace objects keyed by (type, key) with partial
+        success semantics
+      parameters:
+      - description: Objects to upsert (max 100)
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_graph.BulkUpsertObjectsRequest'
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Upsert results
+          schema:
+            $ref: '#/definitions/domain_graph.BulkUpsertObjectsResponse'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Bulk upsert objects
+      tags:
+      - graph
   /api/graph/objects/count:
     get:
       description: Returns the total count of graph objects matching the given filters,
@@ -13839,6 +14280,43 @@ paths:
       security:
       - bearerAuth: []
       summary: Bulk create relationships
+      tags:
+      - graph
+  /api/graph/relationships/bulk-upsert:
+    post:
+      consumes:
+      - application/json
+      description: Bulk create-or-update relationships with partial success semantics
+      parameters:
+      - description: Relationships to upsert (max 100)
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_graph.BulkUpsertRelationshipsRequest'
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Upsert results
+          schema:
+            $ref: '#/definitions/domain_graph.BulkUpsertRelationshipsResponse'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Bulk upsert relationships
       tags:
       - graph
   /api/graph/relationships/search:
@@ -22696,6 +23174,135 @@ paths:
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
       summary: Delete a chunk
+      tags:
+      - chunks
+    patch:
+      consumes:
+      - application/json
+      description: Replace a chunk's text, recording a revision and scheduling re-embedding
+      parameters:
+      - description: Chunk ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: New chunk text
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_chunks.EditChunkRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_chunks.EditChunkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: Edit a chunk
+      tags:
+      - chunks
+  /chunks/{id}/revisions:
+    get:
+      description: List a chunk's revisions ordered by ascending sequence
+      parameters:
+      - description: Chunk ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_chunks.ListChunkRevisionsResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: List chunk revisions
+      tags:
+      - chunks
+  /chunks/{id}/revisions/diff:
+    get:
+      description: Return the line diff between two revisions of a chunk
+      parameters:
+      - description: Chunk ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: From revision seq
+        in: query
+        name: from
+        required: true
+        type: integer
+      - description: To revision seq
+        in: query
+        name: to
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_chunks.ChunkDiffResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: Diff chunk revisions
+      tags:
+      - chunks
+  /chunks/{id}/rollback:
+    post:
+      consumes:
+      - application/json
+      description: Restore a previous revision's text as a new revision
+      parameters:
+      - description: Chunk ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Target revision
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_chunks.RollbackChunkRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_chunks.EditChunkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: Roll back a chunk
       tags:
       - chunks
   /chunks/by-document/{documentId}:

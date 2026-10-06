@@ -1882,6 +1882,75 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/blueprints/import/preview": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Fetches a blueprint from https://github.com/\u003corg\u003e/\u003crepo\u003e[#ref], extracts and validates its manifest (applying any modelOverrides), and returns its metadata and manifest WITHOUT creating anything. The optional token is used only for private-repo fetch and is never stored or returned.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "blueprints"
+                ],
+                "summary": "Preview blueprint import from a GitHub URL",
+                "parameters": [
+                    {
+                        "description": "GitHub source",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_blueprints.ImportGitHubRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Import preview",
+                        "schema": {
+                            "$ref": "#/definitions/domain_blueprints.BlueprintPreview"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid URL or manifest",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "413": {
+                        "description": "Archive too large",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "502": {
+                        "description": "Fetch failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/blueprints/name/{name}/versions": {
             "get": {
                 "security": [
@@ -3061,6 +3130,96 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/chunking/config": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the active project's chunking strategy and parameters (or defaults)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chunking"
+                ],
+                "summary": "Get project chunking configuration",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "X-Project-ID",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_chunking.ChunkingConfigResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Validates and persists the active project's chunking strategy and parameters",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chunking"
+                ],
+                "summary": "Update project chunking configuration",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "X-Project-ID",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Chunking configuration",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_chunking.UpdateChunkingConfigRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_chunking.ChunkingConfigResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -5474,6 +5633,64 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/graph/objects/bulk-upsert": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Bulk create-or-replace objects keyed by (type, key) with partial success semantics",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "graph"
+                ],
+                "summary": "Bulk upsert objects",
+                "parameters": [
+                    {
+                        "description": "Objects to upsert (max 100)",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.BulkUpsertObjectsRequest"
+                        }
+                    },
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "X-Project-ID",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Upsert results",
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.BulkUpsertObjectsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/graph/objects/count": {
             "get": {
                 "security": [
@@ -6862,6 +7079,64 @@ const docTemplate = `{
                         "description": "Create results",
                         "schema": {
                             "$ref": "#/definitions/domain_graph.BulkCreateRelationshipsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/graph/relationships/bulk-upsert": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Bulk create-or-update relationships with partial success semantics",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "graph"
+                ],
+                "summary": "Bulk upsert relationships",
+                "parameters": [
+                    {
+                        "description": "Relationships to upsert (max 100)",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.BulkUpsertRelationshipsRequest"
+                        }
+                    },
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "X-Project-ID",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Upsert results",
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.BulkUpsertRelationshipsResponse"
                         }
                     },
                     "400": {
@@ -20739,6 +21014,200 @@ const docTemplate = `{
                         }
                     }
                 }
+            },
+            "patch": {
+                "description": "Replace a chunk's text, recording a revision and scheduling re-embedding",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chunks"
+                ],
+                "summary": "Edit a chunk",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Chunk ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "New chunk text",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_chunks.EditChunkRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_chunks.EditChunkResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/chunks/{id}/revisions": {
+            "get": {
+                "description": "List a chunk's revisions ordered by ascending sequence",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chunks"
+                ],
+                "summary": "List chunk revisions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Chunk ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_chunks.ListChunkRevisionsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/chunks/{id}/revisions/diff": {
+            "get": {
+                "description": "Return the line diff between two revisions of a chunk",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chunks"
+                ],
+                "summary": "Diff chunk revisions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Chunk ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "From revision seq",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "To revision seq",
+                        "name": "to",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_chunks.ChunkDiffResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/chunks/{id}/rollback": {
+            "post": {
+                "description": "Restore a previous revision's text as a new revision",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chunks"
+                ],
+                "summary": "Roll back a chunk",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Chunk ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Target revision",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_chunks.RollbackChunkRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_chunks.EditChunkResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
             }
         },
         "/coverage": {
@@ -25282,6 +25751,29 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_blueprints.BlueprintPreview": {
+            "type": "object",
+            "properties": {
+                "author": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "manifest": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_blueprints.CreateBlueprintRequest": {
             "type": "object",
             "properties": {
@@ -25311,6 +25803,15 @@ const docTemplate = `{
         "domain_blueprints.ImportGitHubRequest": {
             "type": "object",
             "properties": {
+                "apply": {
+                    "type": "boolean"
+                },
+                "modelOverrides": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
                 "ref": {
                     "type": "string"
                 },
@@ -25734,6 +26235,23 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_chunking.ChunkingConfigResponse": {
+            "type": "object",
+            "properties": {
+                "maxChunkSize": {
+                    "type": "integer"
+                },
+                "overlap": {
+                    "type": "integer"
+                },
+                "parentChild": {
+                    "type": "boolean"
+                },
+                "strategy": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_chunking.RecreateChunksResponse": {
             "type": "object",
             "properties": {
@@ -25752,11 +26270,40 @@ const docTemplate = `{
                     "type": "object",
                     "additionalProperties": {}
                 },
+                "discardedEdited": {
+                    "type": "integer"
+                },
+                "force": {
+                    "type": "boolean"
+                },
                 "newChunks": {
                     "type": "integer"
                 },
                 "oldChunks": {
                     "type": "integer"
+                },
+                "parentChild": {
+                    "type": "boolean"
+                },
+                "preservedEdited": {
+                    "type": "integer"
+                },
+                "strategy": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_chunking.UpdateChunkingConfigRequest": {
+            "type": "object",
+            "properties": {
+                "maxChunkSize": {
+                    "type": "integer"
+                },
+                "overlap": {
+                    "type": "integer"
+                },
+                "parentChild": {
+                    "type": "boolean"
                 },
                 "strategy": {
                     "type": "string"
@@ -25840,11 +26387,17 @@ const docTemplate = `{
                 "createdAt": {
                     "type": "string"
                 },
+                "currentRevision": {
+                    "type": "integer"
+                },
                 "documentId": {
                     "type": "string"
                 },
                 "documentTitle": {
                     "type": "string"
+                },
+                "edited": {
+                    "type": "boolean"
                 },
                 "embeddedChunks": {
                     "description": "Chunks with embeddings in document",
@@ -25862,6 +26415,9 @@ const docTemplate = `{
                 "metadata": {
                     "$ref": "#/definitions/domain_chunks.ChunkMetadata"
                 },
+                "parentChunkId": {
+                    "type": "string"
+                },
                 "size": {
                     "description": "Size in characters",
                     "type": "integer"
@@ -25871,6 +26427,34 @@ const docTemplate = `{
                 },
                 "totalChars": {
                     "description": "Total chars across all doc chunks",
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_chunks.ChunkDiffLine": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_chunks.ChunkDiffResponse": {
+            "type": "object",
+            "properties": {
+                "from": {
+                    "type": "integer"
+                },
+                "lines": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_chunks.ChunkDiffLine"
+                    }
+                },
+                "to": {
                     "type": "integer"
                 }
             }
@@ -25886,12 +26470,51 @@ const docTemplate = `{
                     "description": "Character offset in original document",
                     "type": "integer"
                 },
+                "headerCarry": {
+                    "description": "\"unknown\" when a table header could not be determined",
+                    "type": "string"
+                },
+                "isParent": {
+                    "description": "structural parent chunk; excluded from embedding/search",
+                    "type": "boolean"
+                },
+                "oversized": {
+                    "description": "atomic protected segment larger than the chunk size",
+                    "type": "boolean"
+                },
+                "stale": {
+                    "description": "preserved edited chunk whose source span no longer exists",
+                    "type": "boolean"
+                },
                 "startOffset": {
                     "description": "Character offset in original document",
                     "type": "integer"
                 },
                 "strategy": {
-                    "description": "character, sentence, paragraph",
+                    "description": "recursive_character, markdown_structure",
+                    "type": "string"
+                }
+            }
+        },
+        "domain_chunks.ChunkRevisionDTO": {
+            "type": "object",
+            "properties": {
+                "author": {
+                    "type": "string"
+                },
+                "chunkId": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "seq": {
+                    "type": "integer"
+                },
+                "text": {
                     "type": "string"
                 }
             }
@@ -25927,6 +26550,42 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_chunks.EditChunkRequest": {
+            "type": "object",
+            "required": [
+                "text"
+            ],
+            "properties": {
+                "text": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_chunks.EditChunkResponse": {
+            "type": "object",
+            "properties": {
+                "chunkId": {
+                    "type": "string"
+                },
+                "revision": {
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_chunks.ListChunkRevisionsResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_chunks.ChunkRevisionDTO"
+                    }
+                },
+                "totalCount": {
+                    "type": "integer"
+                }
+            }
+        },
         "domain_chunks.ListChunksResponse": {
             "type": "object",
             "properties": {
@@ -25938,6 +26597,18 @@ const docTemplate = `{
                 },
                 "totalCount": {
                     "type": "integer"
+                }
+            }
+        },
+        "domain_chunks.RollbackChunkRequest": {
+            "type": "object",
+            "required": [
+                "seq"
+            ],
+            "properties": {
+                "seq": {
+                    "type": "integer",
+                    "minimum": 1
                 }
             }
         },
@@ -27335,6 +28006,112 @@ const docTemplate = `{
                 "status": {
                     "type": "string",
                     "maxLength": 64
+                }
+            }
+        },
+        "domain_graph.BulkUpsertObjectResult": {
+            "type": "object",
+            "properties": {
+                "created": {
+                    "type": "boolean"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "index": {
+                    "type": "integer"
+                },
+                "object": {
+                    "$ref": "#/definitions/domain_graph.GraphObjectResponse"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_graph.BulkUpsertObjectsRequest": {
+            "type": "object",
+            "required": [
+                "items"
+            ],
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.CreateGraphObjectRequest"
+                    }
+                }
+            }
+        },
+        "domain_graph.BulkUpsertObjectsResponse": {
+            "type": "object",
+            "properties": {
+                "failed": {
+                    "type": "integer"
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.BulkUpsertObjectResult"
+                    }
+                },
+                "success": {
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_graph.BulkUpsertRelationshipResult": {
+            "type": "object",
+            "properties": {
+                "created": {
+                    "type": "boolean"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "index": {
+                    "type": "integer"
+                },
+                "relationship": {
+                    "$ref": "#/definitions/domain_graph.GraphRelationshipResponse"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_graph.BulkUpsertRelationshipsRequest": {
+            "type": "object",
+            "required": [
+                "items"
+            ],
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.CreateGraphRelationshipRequest"
+                    }
+                }
+            }
+        },
+        "domain_graph.BulkUpsertRelationshipsResponse": {
+            "type": "object",
+            "properties": {
+                "failed": {
+                    "type": "integer"
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.BulkUpsertRelationshipResult"
+                    }
+                },
+                "success": {
+                    "type": "integer"
                 }
             }
         },
@@ -29502,6 +30279,18 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "target": {
+                    "description": "Target selects the delivery mode ('server' default | 'device').",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_mcpregistry.MCPServerTarget"
+                        }
+                    ]
+                },
+                "targetInstanceId": {
+                    "description": "TargetInstanceID is the relay instance_id for a device row; nil = broadcast.",
+                    "type": "string"
+                },
                 "type": {
                     "enum": [
                         "stdio",
@@ -29569,6 +30358,12 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "target": {
+                    "$ref": "#/definitions/domain_mcpregistry.MCPServerTarget"
+                },
+                "targetInstanceId": {
+                    "type": "string"
                 },
                 "toolCount": {
                     "type": "integer"
@@ -29641,6 +30436,12 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "target": {
+                    "$ref": "#/definitions/domain_mcpregistry.MCPServerTarget"
+                },
+                "targetInstanceId": {
+                    "type": "string"
+                },
                 "toolCount": {
                     "type": "integer"
                 },
@@ -29660,6 +30461,17 @@ const docTemplate = `{
                     "type": "string"
                 }
             }
+        },
+        "domain_mcpregistry.MCPServerTarget": {
+            "type": "string",
+            "enum": [
+                "server",
+                "device"
+            ],
+            "x-enum-varnames": [
+                "TargetServer",
+                "TargetDevice"
+            ]
         },
         "domain_mcpregistry.MCPServerToolDTO": {
             "type": "object",
@@ -29762,6 +30574,18 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "target": {
+                    "description": "Target, when non-nil, switches the delivery mode ('server' | 'device').",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_mcpregistry.MCPServerTarget"
+                        }
+                    ]
+                },
+                "targetInstanceId": {
+                    "description": "TargetInstanceID is the relay instance_id for a device row; nil = broadcast.",
+                    "type": "string"
                 },
                 "type": {
                     "$ref": "#/definitions/domain_mcpregistry.MCPServerType"
@@ -30845,6 +31669,10 @@ const docTemplate = `{
                 "default": {
                     "type": "string"
                 },
+                "header": {
+                    "description": "Header, when set, names the HTTP header the field value is injected as on\nevery outbound request (e.g. a secondary signing/secret header). Empty\nmeans the field is not attached as a header.",
+                    "type": "string"
+                },
                 "key": {
                     "type": "string"
                 },
@@ -30887,11 +31715,15 @@ const docTemplate = `{
             "type": "string",
             "enum": [
                 "embedding",
-                "generative"
+                "generative",
+                "rerank",
+                "transcription"
             ],
             "x-enum-varnames": [
                 "ModelTypeEmbedding",
-                "ModelTypeGenerative"
+                "ModelTypeGenerative",
+                "ModelTypeRerank",
+                "ModelTypeTranscription"
             ]
         },
         "domain_provider.OrgUsageByProjectResponse": {
@@ -30993,6 +31825,13 @@ const docTemplate = `{
                 "embeddingModel": {
                     "type": "string"
                 },
+                "extraConfig": {
+                    "description": "ExtraConfig returns the non-secret vendor-specific extra fields. Secret\nfields (ExtraField.Secret) are never serialized.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
                 "gcpProject": {
                     "type": "string"
                 },
@@ -31023,11 +31862,13 @@ const docTemplate = `{
             "type": "string",
             "enum": [
                 "openai-chat",
+                "openai-responses",
                 "google-genai",
                 "anthropic-messages"
             ],
             "x-enum-varnames": [
                 "ProtocolOpenAIChat",
+                "ProtocolOpenAIResponses",
                 "ProtocolGoogleGenAI",
                 "ProtocolAnthropicMessages"
             ]
@@ -31043,6 +31884,13 @@ const docTemplate = `{
                 },
                 "embeddingModel": {
                     "type": "string"
+                },
+                "extraConfig": {
+                    "description": "ExtraConfig returns the non-secret vendor-specific extra fields. Secret\nfields (ExtraField.Secret) are never serialized.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
                 },
                 "gcpProject": {
                     "type": "string"
@@ -31116,6 +31964,12 @@ const docTemplate = `{
                 "protocol": {
                     "$ref": "#/definitions/domain_provider.Protocol"
                 },
+                "rerankApi": {
+                    "$ref": "#/definitions/domain_provider.RerankAPI"
+                },
+                "transcriptionApi": {
+                    "$ref": "#/definitions/domain_provider.TranscriptionAPI"
+                },
                 "type": {
                     "$ref": "#/definitions/domain_provider.ProviderType"
                 }
@@ -31150,7 +32004,8 @@ const docTemplate = `{
                 "litellm",
                 "generic",
                 "gpustack",
-                "jina"
+                "jina",
+                "cohere"
             ],
             "x-enum-varnames": [
                 "ProviderGoogleAI",
@@ -31179,7 +32034,8 @@ const docTemplate = `{
                 "ProviderLiteLLM",
                 "ProviderGeneric",
                 "ProviderGPUStack",
-                "ProviderJina"
+                "ProviderJina",
+                "ProviderCohere"
             ]
         },
         "domain_provider.ProviderPricing": {
@@ -31272,7 +32128,8 @@ const docTemplate = `{
                 "litellm",
                 "generic",
                 "gpustack",
-                "jina"
+                "jina",
+                "cohere"
             ],
             "x-enum-varnames": [
                 "ProviderGoogleAI",
@@ -31301,7 +32158,23 @@ const docTemplate = `{
                 "ProviderLiteLLM",
                 "ProviderGeneric",
                 "ProviderGPUStack",
-                "ProviderJina"
+                "ProviderJina",
+                "ProviderCohere"
+            ]
+        },
+        "domain_provider.RerankAPI": {
+            "type": "string",
+            "enum": [
+                "cohere",
+                "dashscope",
+                "volcengine",
+                "tencent-lkeap"
+            ],
+            "x-enum-varnames": [
+                "RerankAPICohere",
+                "RerankAPIDashScope",
+                "RerankAPIVolcengine",
+                "RerankAPITencentLKEAP"
             ]
         },
         "domain_provider.TestProjectProviderResponse": {
@@ -31356,6 +32229,15 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_provider.TranscriptionAPI": {
+            "type": "string",
+            "enum": [
+                "openai-transcriptions"
+            ],
+            "x-enum-varnames": [
+                "TranscriptionAPIOpenAITranscriptions"
+            ]
+        },
         "domain_provider.UpsertProjectPricingOverridesRequest": {
             "type": "object",
             "properties": {
@@ -31397,6 +32279,13 @@ const docTemplate = `{
                 },
                 "embeddingModel": {
                     "type": "string"
+                },
+                "extraConfig": {
+                    "description": "ExtraConfig carries vendor-specific extra fields keyed by field name (e.g.\nAzure OpenAI \"api_version\", Volcengine \"region\"). A nil map omits the key\nand preserves the stored extras; a non-nil map merges per key, where an\nempty value clears a non-secret field or preserves a stored secret.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
                 },
                 "gcpProject": {
                     "type": "string"
@@ -35735,7 +36624,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.83.0",
+	Version:          "0.85.0",
 	Host:             "localhost:5300",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},

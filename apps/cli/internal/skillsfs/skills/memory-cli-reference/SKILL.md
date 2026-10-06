@@ -3171,6 +3171,8 @@ memory graph objects list [flags]
 ### Options
 
 ```
+      --actor-id string      Filter by actor ID (UUID; requires --actor-type)
+      --actor-type string    Filter by actor type: user, agent, or system
       --branch string        Branch ID to scope results to (omit for main branch)
       --cursor string        Pagination cursor from a previous response (next_cursor field)
       --filter stringArray   Property filter as key=value (repeatable); see --filter-op
@@ -3179,6 +3181,7 @@ memory graph objects list [flags]
       --ids string           Fetch specific objects by ID (comma-separated: --ids id1,id2,id3)
       --key string           Filter by object key (direct key-based lookup)
       --limit int            Maximum number of results (server default: 1000) (default 1000)
+      --provenance string    Provenance filter mode: created, updated, or any (default: any)
       --status string        Filter by object status
       --type string          Filter by object type
 ```
@@ -4072,6 +4075,7 @@ memory projects set-provider [project-name-or-id] <provider> [flags]
       --generative-model string   Override generative model for this project
   -h, --help                      help for set-provider
       --location string           GCP region (for google-vertex)
+      --name string               Provider instance name (slug); defaults to the provider name. Use a distinct name to add a second instance of the same provider type
       --sa-file string            Path to Vertex AI service account JSON (for google-vertex)
 ```
 
@@ -4308,6 +4312,13 @@ Supported providers:
   openai             — OpenAI API; requires --api-key
   deepseek          — DeepSeek AI models; requires --api-key
 
+Any other registered vendor (e.g. azure-openai, volcengine, lkeap) can also be
+configured via --api-key, --base-url, and vendor-specific --extra key=value pairs.
+
+The --extra flag is repeatable (one key=value per occurrence) and stores
+vendor-specific fields such as azure-openai's api_version, volcengine's region,
+or lkeap's secret_key.
+
 The project is read from --project or the MEMORY_PROJECT_ID environment variable.
 
 Examples:
@@ -4315,6 +4326,8 @@ Examples:
   memory provider configure-project google-vertex --gcp-project my-proj --location us-central1 --key-file sa.json
   memory provider configure-project openai --api-key sk-...
   memory provider configure-project deepseek --api-key sk-... --generative-model deepseek-v4-flash
+  memory provider configure-project azure-openai --api-key ... --base-url https://... --extra api_version=2024-06-01
+  memory provider configure-project volcengine --api-key ... --extra region=cn-north-1
   memory provider configure-project google --remove
 
 ```
@@ -4327,6 +4340,7 @@ memory provider configure-project <provider> [flags]
       --api-key string            API key (required for google)
       --base-url string           OpenAI-compatible base URL (required for openai)
       --embedding-model string    Embedding model to use (auto-selected from catalog if omitted)
+      --extra stringArray         Vendor-specific extra config field (key=value, repeatable)
       --gcp-project string        GCP project ID (required for google-vertex)
       --generative-model string   Generative model to use (auto-selected from catalog if omitted)
   -h, --help                      help for configure-project
@@ -4334,6 +4348,30 @@ memory provider configure-project <provider> [flags]
       --location string           GCP region, e.g. us-central1 (required for google-vertex)
       --project string            Project ID (auto-detected from MEMORY_PROJECT_ID)
       --remove                    Remove the project-level override and inherit org config
+```
+
+## memory provider definitions
+
+List supported LLM vendor definitions
+
+### Synopsis
+
+List every supported LLM vendor from the server registry, showing the
+vendor id and its display name.
+
+Examples:
+  memory provider definitions
+  memory provider definitions --json
+
+```
+memory provider definitions [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for definitions
+      --json   Output raw JSON
 ```
 
 ## memory provider list
