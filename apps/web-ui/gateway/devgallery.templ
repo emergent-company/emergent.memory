@@ -13,7 +13,12 @@ import (
 // body is passed in as a component: taking the content as a parameter keeps the
 // generated dependency graph stable (a render of a parameter is not a graph
 // edge), so the handler can compose it without changing the committed graph.
-templ ComponentGalleryDocument(content templ.Component) {
+//
+// It embeds the feedback overlay (when configured), so the gallery itself is a
+// reportable surface — users can file feedback without leaving /dev/components.
+// The overlay is injected into the gallery document only; previews stay
+// sandboxed and script-free.
+templ ComponentGalleryDocument(content templ.Component, feedbackOverlayURL string) {
 	<!DOCTYPE html>
 	<html lang="en" data-theme="dark">
 		<head>
@@ -26,6 +31,9 @@ templ ComponentGalleryDocument(content templ.Component) {
 		</head>
 		<body class="bg-base-200 text-base-content min-h-screen">
 			@content
+			if feedbackOverlayURL != "" {
+				<script src={ tpl.SafeURL(feedbackOverlayURL + "/emergent-feedback.js") } data-api={ feedbackOverlayURL } data-repo="emergent-company/emergent.memory" data-label="feedback" async></script>
+			}
 		</body>
 	</html>
 }

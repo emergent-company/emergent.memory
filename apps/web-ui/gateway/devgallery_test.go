@@ -428,7 +428,11 @@ func TestInteractivePreviewOpenStory(t *testing.T) {
 // --- 5.2 routing + gating ---
 
 func newDevGalleryServer(flag bool) (*Server, *echo.Echo) {
-	s := &Server{cfg: Config{ComponentGallery: flag}, memory: &fakeMemory{}}
+	return newDevGalleryServerWithFeedback(flag, "")
+}
+
+func newDevGalleryServerWithFeedback(flag bool, feedbackURL string) (*Server, *echo.Echo) {
+	s := &Server{cfg: Config{ComponentGallery: flag, FeedbackOverlayURL: feedbackURL}, memory: &fakeMemory{}}
 	e := echo.New()
 	e.GET("/dev/components", s.uiComponentGallery)
 	e.GET("/dev/components/preview/:slug", s.uiComponentPreview)
@@ -456,6 +460,34 @@ func TestUIComponentGalleryRenders(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("gallery body missing %q", want)
 		}
+	}
+}
+
+func TestUIComponentGalleryLoadsFeedbackOverlay(t *testing.T) {
+	const feedbackURL = "https://feedback.example.test"
+	_, e := newDevGalleryServerWithFeedback(true, feedbackURL)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dev/components", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("gallery = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{feedbackURL + "/emergent-feedback.js", `data-api="` + feedbackURL + `"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("gallery body missing %q", want)
+		}
+	}
+}
+
+func TestUIComponentGalleryOmitsFeedbackOverlayWhenUnset(t *testing.T) {
+	_, e := newDevGalleryServer(true)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dev/components", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("gallery = %d, want 200", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "emergent-feedback.js") {
+		t.Error("gallery body must not contain emergent-feedback.js when FeedbackOverlayURL is empty")
 	}
 }
 
