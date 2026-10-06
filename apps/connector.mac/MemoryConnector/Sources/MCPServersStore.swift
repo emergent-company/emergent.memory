@@ -63,6 +63,28 @@ final class MCPServersStore: ObservableObject {
         Set(servers.map(\.name))
     }
 
+    /// Names of servers configured in Memory. These are read-only locally and
+    /// cannot be edited, toggled, deleted, or tool-toggled from the app.
+    var managedNames: Set<String> {
+        Set(servers.filter(\.managed).map(\.name))
+    }
+
+    /// Names the Add form must treat as taken. Every configured server is
+    /// reserved, including Memory-managed ones — a new local server may not
+    /// reuse a managed name.
+    var reservedNames: Set<String> {
+        existingNames.union(managedNames)
+    }
+
+    /// Whether `name` is a Memory-managed server. Checks the list first, then
+    /// any cached detail (so a detail-only view still knows).
+    func isManaged(_ name: String) -> Bool {
+        if let server = servers.first(where: { $0.name == name }) {
+            return server.managed
+        }
+        return details[name]?.managed ?? false
+    }
+
     // MARK: - Load
 
     /// Fetches the server list and relay status. The status request is
@@ -120,6 +142,9 @@ final class MCPServersStore: ObservableObject {
     /// `PUT /api/mcp-servers/{name}/config` (full replace).
     @discardableResult
     func update(name: String, config: HostedMCPServerConfig) async -> Bool {
+        if refuseIfManaged(name) {
+            return false
+        }
         do {
             _ = try await client.update(name: name, config: config)
             return await didMutate()
@@ -131,6 +156,9 @@ final class MCPServersStore: ObservableObject {
     /// `PUT /api/mcp-servers/{name}/enabled`.
     @discardableResult
     func setEnabled(name: String, enabled: Bool) async -> Bool {
+        if refuseIfManaged(name) {
+            return false
+        }
         do {
             _ = try await client.setEnabled(name: name, enabled: enabled)
             return await didMutate()
@@ -142,6 +170,9 @@ final class MCPServersStore: ObservableObject {
     /// `DELETE /api/mcp-servers/{name}`.
     @discardableResult
     func delete(name: String) async -> Bool {
+        if refuseIfManaged(name) {
+            return false
+        }
         do {
             try await client.delete(name: name)
             return await didMutate()
@@ -217,6 +248,9 @@ final class MCPServersStore: ObservableObject {
     /// failure the error is surfaced and no partial state is published.
     @discardableResult
     func setToolShared(server: String, tool: HostedMCPTool, shared: Bool) async -> Bool {
+        if refuseIfManaged(server) {
+            return false
+        }
         guard !isSavingTools(server: server) else { return false }
         let key = ToolKey(server: server, tool: tool.name)
         togglingTools.insert(key)
@@ -285,6 +319,15 @@ final class MCPServersStore: ObservableObject {
     private func didFail(_ error: Error) -> Bool {
         errorMessage = error.localizedDescription
         return false
+    }
+
+    /// Managed servers are configured in Memory and read-only locally, so every
+    /// local mutation refuses them. Returns `true` (and records why) when
+    /// `name` is managed, `false` otherwise.
+    private func refuseIfManaged(_ name: String) -> Bool {
+        guard isManaged(name) else { return false }
+        errorMessage = "This server is managed in Memory. Edit it there instead."
+        return true
     }
 
     // MARK: - Polling

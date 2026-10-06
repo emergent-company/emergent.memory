@@ -67,9 +67,17 @@ struct HostedMCPServer: Codable, Equatable, Identifiable, Sendable {
     var connected: Bool
     var error: String?
     var toolCount: Int
+    /// True when Memory manages this server. Managed servers are configured in
+    /// Memory and are read-only locally. Absent from older connector API
+    /// responses, so it decodes as `false` when missing.
+    var managed: Bool
 
     var id: String {
         name
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case name, transport, enabled, connected, error, toolCount, managed
     }
 
     init(name: String,
@@ -77,7 +85,8 @@ struct HostedMCPServer: Codable, Equatable, Identifiable, Sendable {
          enabled: Bool = true,
          connected: Bool = false,
          error: String? = nil,
-         toolCount: Int = 0)
+         toolCount: Int = 0,
+         managed: Bool = false)
     {
         self.name = name
         self.transport = transport
@@ -85,6 +94,18 @@ struct HostedMCPServer: Codable, Equatable, Identifiable, Sendable {
         self.connected = connected
         self.error = error
         self.toolCount = toolCount
+        self.managed = managed
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        transport = try container.decode(MCPTransport.self, forKey: .transport)
+        enabled = try container.decode(Bool.self, forKey: .enabled)
+        connected = try container.decode(Bool.self, forKey: .connected)
+        error = try container.decodeIfPresent(String.self, forKey: .error)
+        toolCount = try container.decode(Int.self, forKey: .toolCount)
+        managed = try container.decodeIfPresent(Bool.self, forKey: .managed) ?? false
     }
 }
 
@@ -170,12 +191,16 @@ struct HostedMCPServerConfig: Codable, Equatable, Sendable {
 struct HostedMCPServerDetail: Decodable, Equatable, Sendable {
     var config: HostedMCPServerConfig
     var status: HostedMCPServerStatus
+    /// True when Memory manages this server (read-only locally). Absent from
+    /// older connector API responses, so it decodes as `false` when missing.
+    var managed: Bool
 
-    enum CodingKeys: String, CodingKey { case status }
+    enum CodingKeys: String, CodingKey { case status, managed }
 
-    init(config: HostedMCPServerConfig, status: HostedMCPServerStatus) {
+    init(config: HostedMCPServerConfig, status: HostedMCPServerStatus, managed: Bool = false) {
         self.config = config
         self.status = status
+        self.managed = managed
     }
 
     init(from decoder: Decoder) throws {
@@ -183,6 +208,7 @@ struct HostedMCPServerDetail: Decodable, Equatable, Sendable {
         config = try HostedMCPServerConfig(from: decoder)
         status = try container.decodeIfPresent(HostedMCPServerStatus.self, forKey: .status)
             ?? HostedMCPServerStatus()
+        managed = try container.decodeIfPresent(Bool.self, forKey: .managed) ?? false
     }
 }
 
@@ -193,52 +219,6 @@ struct RelayRuntimeStatus: Codable, Equatable, Sendable {
     var connected: Bool
     var toolCount: Int
     var servers: [HostedMCPServer]
-}
-
-// MARK: - JSON value
-
-/// A decoded arbitrary JSON value, used for a tool's free-form `inputSchema`.
-/// Presented only for completeness; the UI renders the tool's name and
-/// description.
-enum JSONValue: Codable, Equatable, Sendable {
-    case string(String)
-    case number(Double)
-    case bool(Bool)
-    case null
-    case array([JSONValue])
-    case object([String: JSONValue])
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if container.decodeNil() {
-            self = .null
-        } else if let value = try? container.decode(Bool.self) {
-            self = .bool(value)
-        } else if let value = try? container.decode(Double.self) {
-            self = .number(value)
-        } else if let value = try? container.decode(String.self) {
-            self = .string(value)
-        } else if let value = try? container.decode([JSONValue].self) {
-            self = .array(value)
-        } else if let value = try? container.decode([String: JSONValue].self) {
-            self = .object(value)
-        } else {
-            throw DecodingError.dataCorruptedError(in: container,
-                                                   debugDescription: "Unsupported JSON value")
-        }
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        switch self {
-        case let .string(value): try container.encode(value)
-        case let .number(value): try container.encode(value)
-        case let .bool(value): try container.encode(value)
-        case .null: try container.encodeNil()
-        case let .array(value): try container.encode(value)
-        case let .object(value): try container.encode(value)
-        }
-    }
 }
 
 // MARK: - Client

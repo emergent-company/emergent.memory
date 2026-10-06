@@ -125,56 +125,74 @@ struct MCPServersPage: View {
             Button {
                 selectedServer = server
             } label: {
-                HStack(alignment: .center, spacing: 12) {
-                    MCPStatusDot(color: MCPStatusStyle.color(enabled: server.enabled,
-                                                             connected: server.connected,
-                                                             error: server.error))
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 8) {
-                            Text(server.name.isEmpty ? "Untitled server" : server.name)
-                                .font(.callout.weight(.medium))
-                                .lineLimit(1)
-                            MCPTransportBadge(transport: server.transport)
-                        }
-                        HStack(spacing: 6) {
-                            Text(MCPStatusStyle.label(enabled: server.enabled,
-                                                      connected: server.connected,
-                                                      error: server.error))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            if server.toolCount > 0 {
-                                Text("·")
-                                    .font(.caption)
-                                    .foregroundStyle(.tertiary)
-                                Text("\(server.toolCount) \(server.toolCount == 1 ? "tool" : "tools")")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        if let error = server.error, !error.isEmpty {
-                            Text(error)
-                                .font(.caption)
-                                .foregroundStyle(.red)
-                                .lineLimit(2)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                    Spacer(minLength: 8)
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.tertiary)
-                }
-                .contentShape(Rectangle())
+                serverRowLabel(server)
             }
             .buttonStyle(.plain)
-            .help("Edit \(server.name)")
+            .help(server.managed ? "View \(server.name)" : "Edit \(server.name)")
 
-            Toggle("", isOn: enabledBinding(server))
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .help(server.enabled ? "Disable \(server.name)" : "Enable \(server.name)")
+            // Managed servers are toggled in Memory, not here.
+            if !server.managed {
+                Toggle("", isOn: enabledBinding(server))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .help(server.enabled ? "Disable \(server.name)" : "Enable \(server.name)")
+            }
         }
         .padding(.vertical, 4)
+    }
+
+    private func serverRowLabel(_ server: HostedMCPServer) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            MCPStatusDot(color: MCPStatusStyle.color(enabled: server.enabled,
+                                                     connected: server.connected,
+                                                     error: server.error))
+            VStack(alignment: .leading, spacing: 3) {
+                serverTitleRow(server)
+                serverDetailRow(server)
+                if let error = server.error, !error.isEmpty {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tertiary)
+        }
+        .contentShape(Rectangle())
+    }
+
+    private func serverTitleRow(_ server: HostedMCPServer) -> some View {
+        HStack(spacing: 8) {
+            Text(server.name.isEmpty ? "Untitled server" : server.name)
+                .font(.callout.weight(.medium))
+                .lineLimit(1)
+            MCPTransportBadge(transport: server.transport)
+            if server.managed {
+                MCPManagedBadge()
+            }
+        }
+    }
+
+    private func serverDetailRow(_ server: HostedMCPServer) -> some View {
+        HStack(spacing: 6) {
+            Text(MCPStatusStyle.label(enabled: server.enabled,
+                                      connected: server.connected,
+                                      error: server.error))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if server.toolCount > 0 {
+                Text("·")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                Text("\(server.toolCount) \(server.toolCount == 1 ? "tool" : "tools")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     private func enabledBinding(_ server: HostedMCPServer) -> Binding<Bool> {
@@ -235,6 +253,21 @@ enum MCPStatusStyle {
         }
         return "Not connected"
     }
+
+    /// Status line for the detail sheet: `label`, but with the server's error
+    /// text inlined and a loading placeholder until the detail arrives.
+    static func detailLabel(enabled: Bool, connected: Bool, error: String?, loading: Bool = false) -> String {
+        if loading {
+            return "Loading…"
+        }
+        if !enabled {
+            return "Disabled"
+        }
+        if let error, !error.isEmpty {
+            return "Error: \(error)"
+        }
+        return connected ? "Connected" : "Not connected"
+    }
 }
 
 struct MCPStatusDot: View {
@@ -260,5 +293,21 @@ struct MCPTransportBadge: View {
             .background(
                 Capsule().fill(.quaternary.opacity(0.6))
             )
+    }
+}
+
+/// Small capsule marking a server as configured in Memory. Such servers are
+/// read-only locally and are edited in Memory, not in this app.
+struct MCPManagedBadge: View {
+    var body: some View {
+        Text("Managed")
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                Capsule().fill(.quaternary.opacity(0.6))
+            )
+            .help("Managed in Memory. Edit this server in Memory, not here.")
     }
 }

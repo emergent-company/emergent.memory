@@ -35,6 +35,18 @@ final class MCPServerFormTests: XCTestCase {
                        "A server named “filesystem” already exists.")
     }
 
+    func testReservedManagedNameRejectsANewServer() {
+        var form = MCPServerForm()
+        form.name = "team-search"
+        form.transport = .http
+        form.url = "https://example.com/mcp"
+
+        // Managed names stay reserved: they are passed as existing names, so a
+        // new local server may not reuse one.
+        XCTAssertEqual(form.validationMessage(existingNames: ["team-search"]),
+                       "A server named “team-search” already exists.")
+    }
+
     // MARK: - Transport-specific required fields
 
     func testStdioRequiresCommand() {

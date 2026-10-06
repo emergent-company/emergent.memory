@@ -157,6 +157,12 @@ func runRelayCommand(name string, args []string, stdout, stderr io.Writer, withL
 			return regMgr.reload(ctx, &next)
 		}
 		api := mgmtapi.NewServer(*configPath, cfg, log, mergeReload)
+		// Surface the Memory-managed set so the UI can mark those servers
+		// read-only. Managed servers are part of the effective set (list/detail
+		// include them); the API rejects any mutation that names one.
+		api.SetManagedServers(func() []mcphost.ServerConfig {
+			return applier.servers()
+		})
 		api.SetStatuses(mgr.Status())
 		api.SetRuntimeStatus(func() mgmtapi.RuntimeStatus {
 			count := 0

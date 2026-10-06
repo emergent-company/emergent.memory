@@ -63,7 +63,9 @@ struct MCPServerForm: Equatable {
 
     /// First blocking validation problem, or nil when the form may be submitted.
     /// `existingNames` triggers the duplicate-name check (omit the server's own
-    /// name when editing).
+    /// name when editing). Callers pass the store's reserved names, which
+    /// include Memory-managed servers — their names stay taken even though the
+    /// servers themselves are not editable here.
     func validationMessage(existingNames: Set<String> = []) -> String? {
         if trimmedName.isEmpty {
             return "Name is required."
@@ -238,7 +240,7 @@ struct AddMCPServerSheet: View {
     }
 
     private var validationMessage: String? {
-        form.validationMessage(existingNames: store.existingNames)
+        form.validationMessage(existingNames: store.reservedNames)
     }
 
     private var footer: some View {

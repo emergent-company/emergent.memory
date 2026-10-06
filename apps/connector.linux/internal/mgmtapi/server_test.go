@@ -653,3 +653,185 @@ func TestRegisterRoutesOnInjectedMux(t *testing.T) {
 		t.Fatalf("Content-Type = %q, want application/json", ct)
 	}
 }
+
+// managedServersFixture seeds a local server, then marks "managed-1" as a
+// Memory-managed server and installs matching statuses so list/detail/status
+// reflect the effective (local + managed) set.
+func managedServersFixture(t *testing.T) *harness {
+	t.Helper()
+	h := newHarness(t)
+	code, _ := h.do(t, http.MethodPost, "/api/mcp-servers", map[string]any{
+		"name": "local", "transport": "stdio", "command": "c",
+		"env": map[string]string{"LOCAL_TOKEN": "local-secret"},
+	})
+	h.requireStatus(t, code, http.StatusCreated)
+
+	h.server.SetManagedServers(func() []mcphost.ServerConfig {
+		return []mcphost.ServerConfig{
+			{
+				Name: "managed-1", Transport: mcphost.TransportHTTP,
+				URL:     "https://managed.example.test/mcp",
+				Env:     map[string]string{"GH_TOKEN": "managed-secret"},
+				Headers: map[string]string{"Authorization": "Bearer managed-secret"},
+			},
+		}
+	})
+	h.server.SetStatuses([]mcphost.ServerStatus{
+		{Name: "local", Transport: mcphost.TransportStdio, Enabled: true, Connected: true, ToolCount: 1},
+		{Name: "managed-1", Transport: mcphost.TransportHTTP, Enabled: true, Connected: true, ToolCount: 2},
+	})
+	return h
+}
+
+func TestManagedFlagInListDetailStatus(t *testing.T) {
+	h := managedServersFixture(t)
+
+	// List: both servers present, managed flag correct.
+	code, data := h.do(t, http.MethodGet, "/api/mcp-servers", nil)
+	h.requireStatus(t, code, http.StatusOK)
+	list := decodeInto[[]serverSummary](t, data)
+	byName := map[string]serverSummary{}
+	for _, s := range list {
+		byName[s.Name] = s
+	}
+	if len(list) != 2 {
+		t.Fatalf("list length = %d, want 2: %+v", len(list), list)
+	}
+	if s := byName["local"]; s.Managed {
+		t.Errorf("local server managed = true, want false: %+v", s)
+	}
+	if s := byName["managed-1"]; !s.Managed {
+		t.Errorf("managed-1 server managed = false, want true: %+v", s)
+	}
+	if s := byName["managed-1"]; s.Transport != mcphost.TransportHTTP || s.ToolCount != 2 {
+		t.Errorf("managed-1 summary = %+v", s)
+	}
+
+	// Detail: managed server returns full config + managed flag.
+	code, data = h.do(t, http.MethodGet, "/api/mcp-servers/managed-1", nil)
+	h.requireStatus(t, code, http.StatusOK)
+	detail := decodeInto[serverDetail](t, data)
+	if !detail.Managed {
+		t.Errorf("managed-1 detail managed = false, want true: %+v", detail)
+	}
+	if detail.URL != "https://managed.example.test/mcp" || detail.Transport != mcphost.TransportHTTP {
+		t.Errorf("managed-1 detail config = %+v", detail)
+	}
+	// Managed detail withholds credentials: the app is read-only for managed
+	// servers and must never receive their secrets.
+	if detail.Env != nil || detail.Headers != nil {
+		t.Errorf("managed-1 detail leaked secrets: env=%v headers=%v", detail.Env, detail.Headers)
+	}
+
+	// Detail: local server has managed = false.
+	code, data = h.do(t, http.MethodGet, "/api/mcp-servers/local", nil)
+	h.requireStatus(t, code, http.StatusOK)
+	localDetail := decodeInto[serverDetail](t, data)
+	if localDetail.Managed {
+		t.Errorf("local detail managed = true, want false: %+v", localDetail)
+	}
+	// Local servers keep their own config (including secrets) — only managed
+	// servers are redacted.
+	if localDetail.Env["LOCAL_TOKEN"] != "local-secret" {
+		t.Errorf("local detail env = %v, want LOCAL_TOKEN preserved", localDetail.Env)
+	}
+
+	// Status: servers[] summaries carry the managed flag.
+	code, data = h.do(t, http.MethodGet, "/api/status", nil)
+	h.requireStatus(t, code, http.StatusOK)
+	st := decodeInto[statusResponse](t, data)
+	if len(st.Servers) != 2 {
+		t.Fatalf("status servers length = %d, want 2: %+v", len(st.Servers), st.Servers)
+	}
+	statusByName := map[string]serverSummary{}
+	for _, s := range st.Servers {
+		statusByName[s.Name] = s
+	}
+	if s := statusByName["managed-1"]; !s.Managed {
+		t.Errorf("status managed-1 managed = false, want true: %+v", s)
+	}
+	if s := statusByName["local"]; s.Managed {
+		t.Errorf("status local managed = true, want false: %+v", s)
+	}
+}
+
+func TestManagedMutationsRejected409(t *testing.T) {
+	h := managedServersFixture(t)
+	before := h.rawConfig(t)
+	reloadsBefore := h.reloader.callCount()
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		body   map[string]any
+	}{
+		{"create managed name", http.MethodPost, "/api/mcp-servers", map[string]any{"name": "managed-1", "transport": "stdio", "command": "c"}},
+		{"put config managed", http.MethodPut, "/api/mcp-servers/managed-1/config", map[string]any{"transport": "stdio", "command": "c"}},
+		{"put enabled managed", http.MethodPut, "/api/mcp-servers/managed-1/enabled", map[string]any{"enabled": false}},
+		{"delete managed", http.MethodDelete, "/api/mcp-servers/managed-1", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			code, data := h.do(t, tc.method, tc.path, tc.body)
+			h.requireStatus(t, code, http.StatusConflict)
+			var errBody map[string]string
+			if err := json.Unmarshal(data, &errBody); err != nil || !strings.Contains(errBody["error"], "read-only") {
+				t.Fatalf("error body = %s, want read-only message", data)
+			}
+		})
+	}
+
+	// No side effects: local config file unchanged, no extra reloads.
+	if !bytes.Equal(h.rawConfig(t), before) {
+		t.Fatalf("managed mutation changed config file:\nbefore=%s\nafter=%s", before, h.rawConfig(t))
+	}
+	if h.reloader.callCount() != reloadsBefore {
+		t.Fatalf("reload calls = %d, want %d (managed mutations must not reload)", h.reloader.callCount(), reloadsBefore)
+	}
+}
+
+func TestLocalMutationStillWorksWithManagedProvider(t *testing.T) {
+	h := managedServersFixture(t)
+
+	// Create a new local server while a managed provider is installed.
+	code, data := h.do(t, http.MethodPost, "/api/mcp-servers", map[string]any{
+		"name": "new-local", "transport": "stdio", "command": "c",
+	})
+	h.requireStatus(t, code, http.StatusCreated)
+	created := decodeInto[serverDetail](t, data)
+	if created.Managed {
+		t.Errorf("new local server managed = true, want false: %+v", created)
+	}
+
+	// Edit the existing local server.
+	code, _ = h.do(t, http.MethodPut, "/api/mcp-servers/local/enabled", map[string]any{"enabled": false})
+	h.requireStatus(t, code, http.StatusOK)
+
+	// Delete a local server.
+	code, _ = h.do(t, http.MethodDelete, "/api/mcp-servers/new-local", nil)
+	h.requireStatus(t, code, http.StatusNoContent)
+}
+
+func TestNilManagedProviderSafe(t *testing.T) {
+	// No SetManagedServers call: every server is local (managed=false), and
+	// mutations work exactly as before.
+	h := newHarness(t)
+	code, data := h.do(t, http.MethodGet, "/api/mcp-servers", nil)
+	h.requireStatus(t, code, http.StatusOK)
+	if got := strings.TrimSpace(string(data)); got != "[]" {
+		t.Fatalf("empty list = %q, want []", got)
+	}
+
+	code, _ = h.do(t, http.MethodPost, "/api/mcp-servers", map[string]any{
+		"name": "x", "transport": "stdio", "command": "c",
+	})
+	h.requireStatus(t, code, http.StatusCreated)
+
+	code, data = h.do(t, http.MethodGet, "/api/mcp-servers/x", nil)
+	h.requireStatus(t, code, http.StatusOK)
+	detail := decodeInto[serverDetail](t, data)
+	if detail.Managed {
+		t.Errorf("detail managed = true with nil provider, want false: %+v", detail)
+	}
+}

@@ -4,7 +4,8 @@ import SwiftUI
 /// inspect the tools discovered on it, and delete it (with confirmation).
 ///
 /// The enabled toggle applies immediately; other config changes are applied on
-/// Save (a full `PUT .../config` replace).
+/// Save (a full `PUT .../config` replace). A Memory-managed server is read-only
+/// here — it is edited in Memory — so its controls are hidden or disabled.
 struct MCPServerDetailView: View {
     let server: HostedMCPServer
     @ObservedObject var store: MCPServersStore
@@ -21,6 +22,12 @@ struct MCPServerDetailView: View {
     @State private var saveConfirmation: String?
     @State private var confirmDelete = false
 
+    /// True when Memory manages this server: either the row already knew, or
+    /// the loaded list/detail does.
+    private var isManaged: Bool {
+        server.managed || store.isManaged(server.name)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -31,7 +38,7 @@ struct MCPServerDetailView: View {
                     .padding()
                 Spacer()
             } else if form == nil {
-                unavailableState
+                MCPServerUnavailableView(message: errorMessage) { Task { await reload() } }
             } else {
                 content
             }
@@ -65,6 +72,9 @@ struct MCPServerDetailView: View {
                         .font(.title3.weight(.semibold))
                         .lineLimit(1)
                     MCPTransportBadge(transport: form?.transport ?? server.transport)
+                    if isManaged {
+                        MCPManagedBadge()
+                    }
                 }
                 Text(statusText)
                     .font(.caption)
@@ -73,27 +83,22 @@ struct MCPServerDetailView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
-            Toggle("Enabled", isOn: enabledBinding)
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .disabled(form == nil)
-                .help((form?.enabled ?? server.enabled) ? "Disable this server" : "Enable this server")
+            if !isManaged {
+                Toggle("Enabled", isOn: enabledBinding)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .disabled(form == nil)
+                    .help((form?.enabled ?? server.enabled) ? "Disable this server" : "Enable this server")
+            }
         }
         .padding(16)
     }
 
     private var statusText: String {
-        guard let form else { return "Loading…" }
-        if !form.enabled {
-            return "Disabled"
-        }
-        if let error = status?.error, !error.isEmpty {
-            return "Error: \(error)"
-        }
-        if status?.connected == true {
-            return "Connected"
-        }
-        return "Not connected"
+        MCPStatusStyle.detailLabel(enabled: form?.enabled ?? server.enabled,
+                                   connected: status?.connected ?? false,
+                                   error: status?.error,
+                                   loading: form == nil)
     }
 
     private var enabledBinding: Binding<Bool> {
@@ -107,10 +112,15 @@ struct MCPServerDetailView: View {
 
     private var content: some View {
         Form {
+            if isManaged {
+                MCPServerManagedBanner()
+            }
+
             MCPServerFormFields(form: Binding(
                 get: { form ?? MCPServerForm() },
                 set: { form = $0 }
             ), showsEnabled: false)
+                .disabled(isManaged)
 
             if let errorMessage {
                 Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
@@ -119,116 +129,31 @@ struct MCPServerDetailView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            toolsSection
+            MCPServerToolsSection(
+                store: store,
+                serverName: server.name,
+                tools: tools,
+                disabledTools: form?.disabledTools,
+                status: status,
+                isManaged: isManaged,
+                onToggle: { tool, shared in Task { await setShared(tool, shared) } }
+            )
         }
         .formStyle(.grouped)
-    }
-
-    private var toolsSection: some View {
-        Section {
-            if let error = status?.error, !error.isEmpty {
-                Label(error, systemImage: "exclamationmark.triangle")
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if tools.isEmpty {
-                Text(status?.connected == true ? "No tools reported." : "No tools discovered.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(tools) { tool in
-                    MCPToolShareRow(
-                        tool: tool,
-                        displayName: displayName(for: tool),
-                        isShared: isShared(tool),
-                        isSaving: store.isSavingTool(server: server.name, tool: tool.name),
-                        isBusy: store.isSavingTools(server: server.name),
-                        onToggle: { newValue in
-                            Task { await setShared(tool, newValue) }
-                        }
-                    )
-                }
-            }
-        } header: {
-            HStack {
-                Text("Discovered Tools")
-                Spacer()
-                if store.isSavingTools(server: server.name) {
-                    ProgressView()
-                        .controlSize(.small)
-                        .help("Saving sharing changes…")
-                }
-                if !tools.isEmpty {
-                    Text("\(sharedCount) of \(tools.count) shared")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        } footer: {
-            Text("Choose which of this server's tools are shared with Memory. Unshared tools stay on this Mac and are never sent to Memory.")
-        }
-    }
-
-    /// The server-local names currently listed in `disabled_tools`.
-    private var disabledToolNames: Set<String> {
-        Set(form?.disabledTools ?? [])
-    }
-
-    /// The name to show for a tool: the server's own, un-namespaced name, which
-    /// is what `disabled_tools` stores and what the toggle adds or removes.
-    private func displayName(for tool: HostedMCPTool) -> String {
-        MCPServersStore.ownToolName(tool.name, server: server.name)
-    }
-
-    private func isShared(_ tool: HostedMCPTool) -> Bool {
-        !disabledToolNames.contains(displayName(for: tool))
-    }
-
-    private var sharedCount: Int {
-        tools.reduce(0) { $0 + (isShared($1) ? 1 : 0) }
-    }
-
-    /// Appends a row for every configured `disabled_tools` entry the live tools
-    /// endpoint no longer reports (disabled tools are filtered out of the
-    /// discovered list), so a tool switched off from here can always be switched
-    /// back on.
-    private func withConfiguredDisabledTools(_ discovered: [HostedMCPTool],
-                                             disabled: Set<String>) -> [HostedMCPTool]
-    {
-        var result = discovered
-        let present = Set(result.map { displayName(for: $0) })
-        for own in disabled.sorted() where !present.contains(own) {
-            result.append(HostedMCPTool(name: "\(server.name)_\(own)",
-                                        description: "",
-                                        inputSchema: nil))
-        }
-        return result
-    }
-
-    private var unavailableState: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.title3)
-                .foregroundStyle(.orange)
-            Text("Couldn't load this server")
-                .font(.headline)
-            Text(errorMessage ?? "The connector's management API did not return this server.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Button("Retry") { Task { await reload() } }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(24)
     }
 
     // MARK: - Footer
 
     private var footer: some View {
         HStack(spacing: 12) {
-            Button("Delete", role: .destructive) { confirmDelete = true }
-                .disabled(isSaving || store.isSavingTools(server: server.name))
+            if isManaged {
+                Text("Managed in Memory")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Button("Delete", role: .destructive) { confirmDelete = true }
+                    .disabled(isSaving || store.isSavingTools(server: server.name))
+            }
             if let saveConfirmation {
                 Text(saveConfirmation)
                     .font(.caption)
@@ -237,17 +162,19 @@ struct MCPServerDetailView: View {
             Spacer(minLength: 0)
             Button("Close") { dismiss() }
                 .keyboardShortcut(.cancelAction)
-            Button {
-                save()
-            } label: {
-                if isSaving {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Text("Save")
+            if !isManaged {
+                Button {
+                    save()
+                } label: {
+                    if isSaving {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("Save")
+                    }
                 }
+                .keyboardShortcut(.defaultAction)
+                .disabled(isSaving || form == nil || store.isSavingTools(server: server.name))
             }
-            .keyboardShortcut(.defaultAction)
-            .disabled(isSaving || form == nil || store.isSavingTools(server: server.name))
         }
         .padding(16)
     }
@@ -268,17 +195,21 @@ struct MCPServerDetailView: View {
         }
         status = detail.status
         let fetched = await store.fetchTools(name: server.name)
-        tools = withConfiguredDisabledTools(fetched.isEmpty ? detail.status.tools : fetched,
-                                            disabled: Set(detail.config.disabledTools ?? []))
+        tools = MCPServerToolSelection.displayTools(
+            discovered: fetched.isEmpty ? detail.status.tools : fetched,
+            disabledTools: detail.config.disabledTools,
+            server: server.name
+        )
     }
 
     /// Applies a sharing toggle: updates the form optimistically so the switch
     /// moves immediately, then persists through the store. On failure the
     /// previous list is restored and the error shown.
     private func setShared(_ tool: HostedMCPTool, _ shared: Bool) async {
-        let own = displayName(for: tool)
+        guard !isManaged else { return }
+        let own = MCPServerToolSelection.displayName(for: tool, server: server.name)
         let previous = form?.disabledTools
-        form?.disabledTools = optimisticDisabled(own: own, shared: shared)
+        form?.disabledTools = MCPServerToolSelection.applying(own: own, shared: shared, to: previous)
         errorMessage = nil
 
         let succeeded = await store.setToolShared(server: server.name, tool: tool, shared: shared)
@@ -295,17 +226,8 @@ struct MCPServerDetailView: View {
         }
     }
 
-    private func optimisticDisabled(own: String, shared: Bool) -> [String]? {
-        var list = form?.disabledTools ?? []
-        if shared {
-            list.removeAll { $0 == own }
-        } else if !list.contains(own) {
-            list.append(own)
-        }
-        return list.isEmpty ? nil : list
-    }
-
     private func applyEnabled(_ enabled: Bool) async {
+        guard !isManaged else { return }
         let previous = form?.enabled
         form?.enabled = enabled
         let succeeded = await store.setEnabled(name: server.name, enabled: enabled)
@@ -323,8 +245,8 @@ struct MCPServerDetailView: View {
     }
 
     private func save() {
-        guard let form, !isSaving else { return }
-        let existing = store.existingNames.subtracting([server.name])
+        guard let form, !isSaving, !isManaged else { return }
+        let existing = store.reservedNames.subtracting([server.name])
         if let message = form.validationMessage(existingNames: existing) {
             errorMessage = message
             return
@@ -356,54 +278,5 @@ struct MCPServerDetailView: View {
                 errorMessage = store.errorMessage
             }
         }
-    }
-}
-
-// MARK: - Tool sharing row
-
-/// One row in the detail view's tool list: a tool with a per-server sharing
-/// toggle. `isShared == false` means the tool's name is in the server's
-/// `disabled_tools` list, so it is not registered with Memory.
-private struct MCPToolShareRow: View {
-    let tool: HostedMCPTool
-    let displayName: String
-    let isShared: Bool
-    let isSaving: Bool
-    /// True while any sharing write for this server is in flight; the toggle is
-    /// held disabled so two read-modify-write requests cannot race.
-    let isBusy: Bool
-    let onToggle: (Bool) -> Void
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(displayName)
-                    .font(.callout.weight(.medium))
-                    .textSelection(.enabled)
-                if !tool.description.isEmpty {
-                    Text(tool.description)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                if !isShared {
-                    Text("Not shared")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            Spacer(minLength: 0)
-            if isSaving {
-                ProgressView()
-                    .controlSize(.small)
-            }
-            Toggle("Shared", isOn: Binding(get: { isShared }, set: onToggle))
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .disabled(isBusy)
-                .help(isShared ? "Stop sharing \(displayName) with Memory"
-                    : "Share \(displayName) with Memory")
-        }
-        .padding(.vertical, 2)
     }
 }

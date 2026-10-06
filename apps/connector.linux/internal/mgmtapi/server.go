@@ -43,6 +43,14 @@ type RuntimeStatus struct {
 // RuntimeStatusFunc reports live relay state. Optional; defaults are zero.
 type RuntimeStatusFunc func() RuntimeStatus
 
+// ManagedServersFunc reports the current Memory-managed server set (the
+// server-authoritative config applied over the relay). The management API
+// surfaces these servers in list/detail/status — they are part of the
+// effective running set — but treats them as read-only: any mutation that
+// names one is rejected with HTTP 409 before any change. A nil function means
+// no managed servers (all configured servers are locally editable).
+type ManagedServersFunc func() []mcphost.ServerConfig
+
 // Server is the management API state: the config file path, the in-memory
 // config, the reload callback, the latest per-server status, and the optional
 // registry browse source (nil when the connector has no Memory connection).
@@ -55,6 +63,7 @@ type Server struct {
 	statuses   []mcphost.ServerStatus
 	runtime    RuntimeStatusFunc
 	registry   RegistrySource
+	managed    ManagedServersFunc
 }
 
 // NewServer builds a management API server. reload must be non-nil; the caller
@@ -79,6 +88,16 @@ func (s *Server) SetStatuses(statuses []mcphost.ServerStatus) {
 func (s *Server) SetRuntimeStatus(fn RuntimeStatusFunc) {
 	s.mu.Lock()
 	s.runtime = fn
+	s.mu.Unlock()
+}
+
+// SetManagedServers installs the provider for the current Memory-managed
+// server set. Passing nil clears it (no managed servers). It is wired from the
+// relay command's managedConfigApplier so the effective set and the read-only
+// set stay in sync with each push.
+func (s *Server) SetManagedServers(fn ManagedServersFunc) {
+	s.mu.Lock()
+	s.managed = fn
 	s.mu.Unlock()
 }
 
@@ -142,6 +161,7 @@ type serverSummary struct {
 	Connected bool              `json:"connected"`
 	Error     string            `json:"error,omitempty"`
 	ToolCount int               `json:"toolCount"`
+	Managed   bool              `json:"managed"`
 }
 
 type serverRuntime struct {
@@ -161,6 +181,7 @@ type serverDetail struct {
 	URL           string            `json:"url,omitempty"`
 	Headers       map[string]string `json:"headers,omitempty"`
 	DisabledTools []string          `json:"disabled_tools,omitempty"`
+	Managed       bool              `json:"managed"`
 	Status        serverRuntime     `json:"status"`
 }
 
@@ -184,12 +205,12 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	name := r.PathValue("name")
-	cfg, ok := s.findLocked(name)
+	cfg, ok := s.findEffectiveLocked(name)
 	if !ok {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("mcp server %q not found", name))
 		return
 	}
-	writeJSON(w, http.StatusOK, s.detailLocked(cfg))
+	writeJSON(w, http.StatusOK, s.detailLocked(cfg, s.isManagedLocked(name)))
 }
 
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
@@ -201,6 +222,10 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.isManagedLocked(name) {
+		writeManagedConflict(w, name)
+		return
+	}
 	if _, ok := s.findLocked(name); ok {
 		writeError(w, http.StatusConflict, fmt.Sprintf("mcp server %q already exists", name))
 		return
@@ -212,7 +237,7 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg, _ := s.findLocked(name)
-	writeJSON(w, http.StatusCreated, detailFrom(cfg, statusFor(statuses, name)))
+	writeJSON(w, http.StatusCreated, detailFrom(cfg, statusFor(statuses, name), false))
 }
 
 func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
@@ -224,6 +249,10 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.isManagedLocked(name) {
+		writeManagedConflict(w, name)
+		return
+	}
 	if _, ok := s.findLocked(name); !ok {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("mcp server %q not found", name))
 		return
@@ -235,7 +264,7 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg, _ := s.findLocked(name)
-	writeJSON(w, http.StatusOK, detailFrom(cfg, statusFor(statuses, name)))
+	writeJSON(w, http.StatusOK, detailFrom(cfg, statusFor(statuses, name), false))
 }
 
 func (s *Server) handleSetEnabled(w http.ResponseWriter, r *http.Request) {
@@ -253,6 +282,10 @@ func (s *Server) handleSetEnabled(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.isManagedLocked(name) {
+		writeManagedConflict(w, name)
+		return
+	}
 	cfg, ok := s.findLocked(name)
 	if !ok {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("mcp server %q not found", name))
@@ -267,7 +300,7 @@ func (s *Server) handleSetEnabled(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg, _ = s.findLocked(name)
-	writeJSON(w, http.StatusOK, detailFrom(cfg, statusFor(statuses, name)))
+	writeJSON(w, http.StatusOK, detailFrom(cfg, statusFor(statuses, name), false))
 }
 
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
@@ -275,6 +308,10 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.isManagedLocked(name) {
+		writeManagedConflict(w, name)
+		return
+	}
 	if _, ok := s.findLocked(name); !ok {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("mcp server %q not found", name))
 		return
@@ -296,7 +333,7 @@ func (s *Server) handleTools(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.findLocked(name); !ok {
+	if _, ok := s.findEffectiveLocked(name); !ok {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("mcp server %q not found", name))
 		return
 	}
@@ -358,7 +395,8 @@ func (s *Server) commitLocked(next []mcphost.ServerConfig) ([]mcphost.ServerStat
 	return statuses, nil
 }
 
-// findLocked returns the configured server named name.
+// findLocked returns the locally-configured server named name (managed servers
+// are held in a separate set, not in s.cfg).
 func (s *Server) findLocked(name string) (mcphost.ServerConfig, bool) {
 	for _, sc := range s.cfg.MCPServers {
 		if sc.Name == name {
@@ -366,6 +404,72 @@ func (s *Server) findLocked(name string) (mcphost.ServerConfig, bool) {
 		}
 	}
 	return mcphost.ServerConfig{}, false
+}
+
+// findEffectiveLocked returns the server named name in the effective running
+// set (managed servers merged over local). Used by read paths so managed
+// servers appear in detail/tools even though they are not in s.cfg.
+func (s *Server) findEffectiveLocked(name string) (mcphost.ServerConfig, bool) {
+	for _, sc := range s.effectiveServersLocked() {
+		if sc.Name == name {
+			return sc, true
+		}
+	}
+	return mcphost.ServerConfig{}, false
+}
+
+// managedServersLocked returns the current Memory-managed server set, or nil
+// when no provider is installed. The caller must hold s.mu.
+func (s *Server) managedServersLocked() []mcphost.ServerConfig {
+	if s.managed == nil {
+		return nil
+	}
+	return s.managed()
+}
+
+// isManagedLocked reports whether name belongs to the Memory-managed set. The
+// caller must hold s.mu.
+func (s *Server) isManagedLocked(name string) bool {
+	for _, m := range s.managedServersLocked() {
+		if m.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// effectiveServersLocked returns the effective server set for read views:
+// managed servers first, then local servers whose names do not collide
+// (managed wins on collision, matching the connector's merge precedence). The
+// caller must hold s.mu.
+func (s *Server) effectiveServersLocked() []mcphost.ServerConfig {
+	// managedServersLocked reads through the installed provider; callers that
+	// also need the managed name set should take one snapshot and pass it to
+	// effectiveServersFromLocked so the two views cannot disagree.
+	return s.effectiveServersFromLocked(s.managedServersLocked())
+}
+
+// effectiveServersFromLocked is effectiveServersLocked over a caller-supplied
+// managed snapshot, so a single response can derive both the server list and
+// the managed name set from one consistent view. The caller must hold s.mu.
+func (s *Server) effectiveServersFromLocked(managed []mcphost.ServerConfig) []mcphost.ServerConfig {
+	local := s.cfg.MCPServers
+	if len(managed) == 0 {
+		return local
+	}
+	merged := make([]mcphost.ServerConfig, 0, len(local)+len(managed))
+	managedNames := make(map[string]struct{}, len(managed))
+	for _, m := range managed {
+		managedNames[m.Name] = struct{}{}
+		merged = append(merged, m)
+	}
+	for _, l := range local {
+		if _, ok := managedNames[l.Name]; ok {
+			continue
+		}
+		merged = append(merged, l)
+	}
+	return merged
 }
 
 // serversCopyLocked returns a copy of the configured servers so callers can
@@ -378,9 +482,14 @@ func (s *Server) serversCopyLocked() []mcphost.ServerConfig {
 
 // summariesLocked builds the ordered per-server summary list, synthesizing an
 // "unknown/not started" entry for any configured server without a status yet.
+// It iterates the effective set (managed + local) so managed servers appear
+// with their managed flag set.
 func (s *Server) summariesLocked() []serverSummary {
-	out := make([]serverSummary, 0, len(s.cfg.MCPServers))
-	for _, sc := range s.cfg.MCPServers {
+	managed := s.managedServersLocked()
+	effective := s.effectiveServersFromLocked(managed)
+	managedNames := managedNameSet(managed)
+	out := make([]serverSummary, 0, len(effective))
+	for _, sc := range effective {
 		st := statusFor(s.statuses, sc.Name)
 		out = append(out, serverSummary{
 			Name:      sc.Name,
@@ -389,22 +498,44 @@ func (s *Server) summariesLocked() []serverSummary {
 			Connected: st.Connected,
 			Error:     st.Error,
 			ToolCount: st.ToolCount,
+			Managed:   managedNames[sc.Name],
 		})
 	}
 	return out
 }
 
+// managedNameSet returns the set of managed server names (nil when there are
+// none).
+func managedNameSet(managed []mcphost.ServerConfig) map[string]bool {
+	if len(managed) == 0 {
+		return nil
+	}
+	names := make(map[string]bool, len(managed))
+	for _, m := range managed {
+		names[m.Name] = true
+	}
+	return names
+}
+
 // detailLocked builds the full config + runtime status for one server.
-func (s *Server) detailLocked(cfg mcphost.ServerConfig) serverDetail {
-	return detailFrom(cfg, statusFor(s.statuses, cfg.Name))
+func (s *Server) detailLocked(cfg mcphost.ServerConfig, managed bool) serverDetail {
+	return detailFrom(cfg, statusFor(s.statuses, cfg.Name), managed)
 }
 
 // detailFrom assembles a serverDetail; a missing status yields a zero runtime
 // with an empty (non-null) tools list.
-func detailFrom(cfg mcphost.ServerConfig, st mcphost.ServerStatus) serverDetail {
+func detailFrom(cfg mcphost.ServerConfig, st mcphost.ServerStatus, managed bool) serverDetail {
 	tools := st.Tools
 	if tools == nil {
 		tools = []mcphost.ToolStatus{}
+	}
+	// A managed server is configured in Memory and read-only locally: the app
+	// never edits it and never needs its credentials. Withhold Env/Headers so
+	// managed secrets (API keys, Authorization headers) do not leave the
+	// connector's secret store over the management API.
+	env, headers := cfg.Env, cfg.Headers
+	if managed {
+		env, headers = nil, nil
 	}
 	return serverDetail{
 		Name:          cfg.Name,
@@ -412,10 +543,11 @@ func detailFrom(cfg mcphost.ServerConfig, st mcphost.ServerStatus) serverDetail 
 		Enabled:       cfg.IsEnabled(),
 		Command:       cfg.Command,
 		Args:          cfg.Args,
-		Env:           cfg.Env,
+		Env:           env,
 		URL:           cfg.URL,
-		Headers:       cfg.Headers,
+		Headers:       headers,
 		DisabledTools: cfg.DisabledTools,
+		Managed:       managed,
 		Status: serverRuntime{
 			Connected: st.Connected,
 			Error:     st.Error,
@@ -468,6 +600,12 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 func writeError(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, map[string]string{"error": msg})
+}
+
+// writeManagedConflict reports a 409 for an attempted mutation on a
+// Memory-managed server name (read-only through the API).
+func writeManagedConflict(w http.ResponseWriter, name string) {
+	writeError(w, http.StatusConflict, fmt.Sprintf("mcp server %q is managed by Memory and is read-only", name))
 }
 
 // writeCommitError maps a commitLocked error to an HTTP response: validation

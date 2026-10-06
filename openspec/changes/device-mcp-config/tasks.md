@@ -39,13 +39,16 @@
 
 ## 5. Mac app (phase 2, non-blocking)
 
-- [ ] 5.1 The mac app launches the Go connector engine, so pushed-config apply is inherited; add the Swift UI surface (Memory-managed badge, not locally editable) in `MCPServersPage`; Swift unit test for the managed flag.
+- [x] 5.1 The mac app launches the Go connector engine, so pushed-config apply is inherited; add the Swift UI surface (Memory-managed badge, not locally editable) in `MCPServersPage`; Swift unit test for the managed flag.
+  - [x] 5.1a backend: the loopback management API exposes `managed` on list/detail/status and rejects every mutation of a managed name with 409 (wired from the applier's managed set via `mgmtapi.Server.SetManagedServers`). Unit tests added.
+  - [x] 5.1b mac UI: `MCPServersStore`/`MCPServersPage`/`MCPServerDetailView` show a Managed badge and disable edit/delete/enable/tool toggles for managed servers; models decode `managed` tolerantly; Swift tests added. SwiftFormat + SwiftLint clean (0 violations); Xcode `xcodebuild test -scheme MemoryConnector` still pending on macOS.
 
 ## 6. Verification
 
-- [ ] 6.1 `openspec validate device-mcp-config` passes.
-- [ ] 6.2 Server: `go build ./...` and focused `go test ./domain/mcpregistry/... ./domain/mcprelay/... ./domain/mcp/...` pass.
-- [ ] 6.3 Connector: `go build ./...` and focused `go test ./internal/relay/... ./internal/mcphost/... ./cmd/...` pass.
-- [ ] 6.4 Lint the touched trees (`task lint` / web-ui + connector lint).
+- [x] 6.1 `openspec validate device-mcp-config` passes.
+- [x] 6.2 Server: `go build ./...` and focused `go test ./domain/mcpregistry/... ./domain/mcprelay/... ./domain/mcp/...` pass. (Verified on the merged implementation; the follow-up touches only the connector.)
+- [x] 6.3 Connector: `go build ./...` and focused `go test ./internal/relay/... ./internal/mcphost/... ./cmd/...` pass.
+- [x] 6.4 Lint the touched trees (`task lint` / web-ui + connector lint): connector `golangci-lint` 0 issues; SwiftFormat + SwiftLint 0 violations.
 - [ ] 6.5 Manual end-to-end: an opted-in device connects; the assistant creates a device-targeted server; the tool appears as `<instance>_<server>_<tool>` and a call succeeds; kill/restart the device and confirm config re-hydrates on register; confirm a non-owner member cannot target the device.
-- [ ] 6.6 Open one PR containing the change directory and the implementation; summarize delta specs in the description.
+  - [x] 6.5a connector half: automated e2e (`cmd/memory-connector/managed_config_e2e_test.go`) runs the real relay client + `managedConfigApplier` against an in-process hub — register advertises `accepts_managed_config`, a config frame applies/persists and acks `{"ok":true,...}`, a newer frame applies, and a stale (version <= last) frame acks `"stale"`. Server-side manual steps (assistant device-targeted create, tool call, kill/restart re-hydration, non-owner denial) remain and require a live stack.
+- [x] 6.6 Open one PR containing the change directory and the implementation; summarize delta specs in the description.

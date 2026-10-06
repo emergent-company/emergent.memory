@@ -9,7 +9,7 @@ final class MCPServersAPIClientTests: XCTestCase {
     private lazy var detailJSON = """
     {"name":"filesystem","transport":"stdio","enabled":true,
      "command":"/usr/bin/mcp","args":["--root","/tmp"],
-     "env":{"TOKEN":"s3cret"},"disabled_tools":["delete_file"],
+     "env":{"TOKEN":"s3cret"},"disabled_tools":["delete_file"],"managed":false,
      "status":{"connected":true,"toolCount":2,"tools":[
        {"name":"filesystem_read","description":"Read a file",
         "inputSchema":{"type":"object","properties":{}}},
@@ -18,9 +18,10 @@ final class MCPServersAPIClientTests: XCTestCase {
     """
 
     private let listJSON = """
-    [{"name":"filesystem","transport":"stdio","enabled":true,"connected":true,"toolCount":2},
+    [{"name":"filesystem","transport":"stdio","enabled":true,"connected":true,"toolCount":2,
+      "managed":false},
      {"name":"remote","transport":"http","enabled":false,"connected":false,
-      "error":"dial tcp: connection refused","toolCount":0}]
+      "error":"dial tcp: connection refused","toolCount":0,"managed":true}]
     """
 
     private let toolsJSON = """
@@ -30,7 +31,7 @@ final class MCPServersAPIClientTests: XCTestCase {
     private let statusJSON = """
     {"instanceID":"inst-1","serverURL":"https://api.example.test","connected":true,
      "toolCount":3,"servers":[{"name":"filesystem","transport":"stdio","enabled":true,
-     "connected":true,"toolCount":2}]}
+     "connected":true,"toolCount":2,"managed":true}]}
     """
 
     override func setUp() {
@@ -62,6 +63,8 @@ final class MCPServersAPIClientTests: XCTestCase {
         XCTAssertEqual(servers[1].transport, .http)
         XCTAssertFalse(servers[1].enabled)
         XCTAssertEqual(servers[1].error, "dial tcp: connection refused")
+        XCTAssertFalse(servers[0].managed)
+        XCTAssertTrue(servers[1].managed, "the managed flag decodes on list summaries")
 
         let request = StubURLProtocol.registry.capturedRequest
         XCTAssertEqual(request?.httpMethod, "GET")
@@ -81,6 +84,7 @@ final class MCPServersAPIClientTests: XCTestCase {
         XCTAssertEqual(detail.config.args, ["--root", "/tmp"])
         XCTAssertEqual(detail.config.env?["TOKEN"], "s3cret")
         XCTAssertEqual(detail.config.disabledTools, ["delete_file"])
+        XCTAssertFalse(detail.managed, "the managed flag decodes on the detail response")
         XCTAssertTrue(detail.status.connected)
         XCTAssertEqual(detail.status.tools.map(\.name), ["filesystem_read", "filesystem_write"])
         XCTAssertEqual(StubURLProtocol.registry.capturedRequest?.url?.path,
@@ -205,6 +209,8 @@ final class MCPServersAPIClientTests: XCTestCase {
         XCTAssertTrue(status.connected)
         XCTAssertEqual(status.toolCount, 3)
         XCTAssertEqual(status.servers.first?.name, "filesystem")
+        XCTAssertTrue(status.servers.first?.managed == true,
+                      "the managed flag decodes on the status server summaries")
         XCTAssertEqual(StubURLProtocol.registry.capturedRequest?.url?.path, "/api/status")
     }
 
