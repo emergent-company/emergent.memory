@@ -24,6 +24,10 @@ type Service struct {
 	encryptor      *crypto.Encryptor // nil if encryption key not configured
 	log            *slog.Logger
 
+	// registryCache short-caches successful browse results (search + lookup)
+	// so repeated/identical queries and pagination don't re-hit the slow origin.
+	registryCache *registryCache
+
 	// Track registered builtin servers per project to avoid re-registration
 	mu                sync.Mutex
 	builtinRegistered map[string]bool
@@ -64,6 +68,7 @@ func NewService(repo *Repository, mcpService *mcp.Service, registryClient *Regis
 		encryptor:         encryptor,
 		log:               log.With(logger.Scope("mcpregistry.svc")),
 		builtinRegistered: make(map[string]bool),
+		registryCache:     newRegistryCache(0, nil),
 	}
 }
 
@@ -742,6 +747,11 @@ func IsExternalTool(toolName string) bool {
 
 // SearchRegistry searches the official MCP registry for servers.
 func (s *Service) SearchRegistry(ctx context.Context, query string, limit int, cursor string) (*RegistrySearchResultDTO, error) {
+	key := registrySearchKey(query, limit, cursor)
+	if v, ok := s.registryCache.get(key); ok {
+		return v.(*RegistrySearchResultDTO), nil
+	}
+
 	resp, err := s.registryClient.SearchServers(ctx, query, limit, cursor)
 	if err != nil {
 		return nil, fmt.Errorf("%w: searching registry: %w", ErrRegistryUpstream, err)
@@ -752,15 +762,22 @@ func (s *Service) SearchRegistry(ctx context.Context, query string, limit int, c
 		servers = append(servers, registryServerToDTO(entry.Server))
 	}
 
-	return &RegistrySearchResultDTO{
+	result := &RegistrySearchResultDTO{
 		Servers:    servers,
 		NextCursor: resp.Metadata.NextCursor,
 		Count:      resp.Metadata.Count,
-	}, nil
+	}
+	s.registryCache.set(key, result)
+	return result, nil
 }
 
 // GetRegistryServer fetches a single server from the official MCP registry.
 func (s *Service) GetRegistryServer(ctx context.Context, name string) (*RegistryServerDTO, error) {
+	key := registryLookupKey(name)
+	if v, ok := s.registryCache.get(key); ok {
+		return v.(*RegistryServerDTO), nil
+	}
+
 	resp, err := s.registryClient.GetServer(ctx, name)
 	if err != nil {
 		if errors.Is(err, ErrRegistryServerNotFound) {
@@ -770,6 +787,7 @@ func (s *Service) GetRegistryServer(ctx context.Context, name string) (*Registry
 	}
 
 	dto := registryServerToDTO(resp.Server)
+	s.registryCache.set(key, &dto)
 	return &dto, nil
 }
 

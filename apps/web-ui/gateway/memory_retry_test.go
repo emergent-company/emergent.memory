@@ -99,6 +99,42 @@ func TestDoHGETDoesNotRetryClientError(t *testing.T) {
 	}
 }
 
+func TestDoNoRetrySingleAttempt(t *testing.T) {
+	// doNoRetry must issue exactly one attempt on a transient 502 — it is for
+	// idempotent reads whose upstream is slow/hanging (the MCP registry), where
+	// a replay only multiplies page latency.
+	var count atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		count.Add(1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer srv.Close()
+
+	mc := NewMemoryClient(srv.URL, "proj")
+	if err := mc.doNoRetry(t.Context(), http.MethodGet, "/api/x", nil, nil); err == nil {
+		t.Fatal("doNoRetry() error = nil, want non-nil")
+	}
+	if got := count.Load(); got != 1 {
+		t.Fatalf("requests = %d, want 1", got)
+	}
+}
+
+func TestDoNoRetryTransportErrorSingleAttempt(t *testing.T) {
+	var calls atomic.Int32
+	mc := NewMemoryClient("http://memory.test", "proj")
+	mc.http.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return nil, errors.New("connection reset by peer")
+	})
+
+	if err := mc.doNoRetry(t.Context(), http.MethodGet, "/api/x", nil, nil); err == nil {
+		t.Fatal("doNoRetry() error = nil, want non-nil")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("transport calls = %d, want 1", got)
+	}
+}
+
 func TestDoHPostDoesNotRetry(t *testing.T) {
 	var count atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

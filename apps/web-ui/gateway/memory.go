@@ -250,19 +250,58 @@ type successEnvelope[T any] struct {
 	Error   *apiError `json:"error"`
 }
 
+// memoryRetryPolicy controls how doWithPolicy replays a failed request. A zero
+// value disables all retries: the request is attempted exactly once.
+type memoryRetryPolicy struct {
+	// retryTransientStatus retries 502/503/504 responses on idempotent
+	// (GET/HEAD, no body) requests.
+	retryTransientStatus bool
+	// retryTransport retries transport-level failures (connection reset, EOF,
+	// TLS handshake) on idempotent requests.
+	retryTransport bool
+}
+
+// memoryRetryDefault is the policy do/doH use: transient statuses and transport
+// errors are retried for idempotent requests, preserving the historical
+// behavior for every existing caller.
+var memoryRetryDefault = memoryRetryPolicy{retryTransientStatus: true, retryTransport: true}
+
+// memoryRetryNone disables every retry: one attempt, no replay. It is for
+// idempotent reads whose upstream is slow or hanging — the official MCP
+// registry — where a 502 is not a transient blip and replaying it only
+// multiplies page latency (maxMemoryAttempts × the upstream timeout).
+var memoryRetryNone memoryRetryPolicy
+
 func (m *MemoryClient) do(ctx context.Context, method, path string, body any, out any) error {
 	return m.doH(ctx, method, path, body, nil, out)
 }
 
 // doH is do with extra request headers (e.g. the Accept header the MCP
-// endpoint needs).
+// endpoint needs). It retries transient failures under the default policy; see
+// doWithPolicy.
+func (m *MemoryClient) doH(ctx context.Context, method, path string, body any, hdrs map[string]string, out any) error {
+	return m.doWithPolicy(ctx, method, path, body, hdrs, out, memoryRetryDefault)
+}
+
+// doNoRetry issues a request exactly once, without the generic 502/503/504
+// retry and without transport-error retry. It is for idempotent reads whose
+// upstream is slow or hanging — the official MCP registry — where a 502 is not
+// a transient blip worth replaying and a retry only multiplies page latency.
+func (m *MemoryClient) doNoRetry(ctx context.Context, method, path string, body any, out any) error {
+	return m.doWithPolicy(ctx, method, path, body, nil, out, memoryRetryNone)
+}
+
+// doWithPolicy performs one or more attempts of a memory request and unmarshals
+// a 2xx response into out.
 //
 // Transient upstream failures — 502/503/504 responses and transport errors
 // (connection reset, EOF, TLS handshake) — are retried up to maxMemoryAttempts
 // times for idempotent requests only (GET/HEAD without a body); non-idempotent
-// requests are never replayed. The returned error is wrapped in
-// memoryAttemptError so callers can report how many attempts were made.
-func (m *MemoryClient) doH(ctx context.Context, method, path string, body any, hdrs map[string]string, out any) error {
+// requests are never replayed. The policy gates which of those two failure
+// classes are retried; memoryRetryNone retries neither, so a request is made
+// exactly once. The returned error is wrapped in memoryAttemptError so callers
+// can report how many attempts were made.
+func (m *MemoryClient) doWithPolicy(ctx context.Context, method, path string, body any, hdrs map[string]string, out any, policy memoryRetryPolicy) error {
 	// Marshal the body once; a fresh reader is rebuilt per attempt in doOnce so
 	// a *bytes.Reader consumed by an earlier attempt can never be replayed
 	// empty.
@@ -298,7 +337,7 @@ func (m *MemoryClient) doH(ctx context.Context, method, path string, body any, h
 			// slow, and replaying the same 60s request only multiplies the
 			// outage (3×60s ≈ 180s held a page behind one slow /similar call,
 			// issue #1096). Timeout errors therefore never retry.
-			if isTimeout(lastErr) || !retryable || attempts == maxMemoryAttempts || ctx.Err() != nil {
+			if isTimeout(lastErr) || !retryable || !policy.retryTransport || attempts == maxMemoryAttempts || ctx.Err() != nil {
 				break
 			}
 			if !waitRetry(ctx, retryBackoffDelay(attempts)) {
@@ -306,7 +345,7 @@ func (m *MemoryClient) doH(ctx context.Context, method, path string, body any, h
 			}
 			continue
 		}
-		if !retryable || attempts == maxMemoryAttempts || !retryableMemoryStatus(status) {
+		if !retryable || !policy.retryTransientStatus || attempts == maxMemoryAttempts || !retryableMemoryStatus(status) {
 			break
 		}
 		// Honour an upstream Retry-After (delta-seconds or HTTP-date, capped at

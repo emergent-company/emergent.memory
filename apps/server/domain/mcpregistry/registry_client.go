@@ -24,7 +24,12 @@ const (
 	registryAPIVersion = "v0.1"
 
 	// defaultRegistryTimeout is the HTTP client timeout for registry requests.
-	defaultRegistryTimeout = 15 * time.Second
+	// Bumped from 15s: the upstream registry is slow/degraded and has been
+	// observed returning HTTP 200 only after ~38.5s (and sometimes hanging
+	// >60s). 45s covers that while staying under the gateway's 60s client
+	// timeout, so a legitimately slow response is returned instead of failing
+	// every search with a 502. (Gateway retries are disabled separately.)
+	defaultRegistryTimeout = 45 * time.Second
 
 	// defaultSearchLimit is the default number of results per search query.
 	defaultSearchLimit = 20

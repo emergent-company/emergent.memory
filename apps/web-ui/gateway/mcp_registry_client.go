@@ -104,7 +104,12 @@ func (m *MemoryClient) SearchRegistry(ctx context.Context, query string, limit i
 		path += "?" + enc
 	}
 	var env successEnvelope[MCPRegistrySearchResult]
-	if err := m.do(ctx, http.MethodGet, path, nil, &env); err != nil {
+	// The official registry upstream is slow/hanging: when it times out, memory
+	// answers 502 registry_unavailable. That 502 is not a transient blip worth
+	// replaying — a retry just multiplies page latency 3× (memory's full
+	// registry timeout × maxMemoryAttempts). Issue the browse call without the
+	// generic 502/503/504 retry.
+	if err := m.doNoRetry(ctx, http.MethodGet, path, nil, &env); err != nil {
 		return nil, err
 	}
 	return &env.Data, nil

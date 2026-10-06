@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -141,6 +142,29 @@ func TestSearchRegistryError(t *testing.T) {
 	if _, err := m.SearchRegistry(context.Background(), "x", 0, ""); err == nil ||
 		!strings.Contains(err.Error(), "memory 500 internal") {
 		t.Fatalf("error = %v, want memory 500 internal", err)
+	}
+}
+
+func TestSearchRegistryDoesNotRetry502(t *testing.T) {
+	// A slow/hanging registry makes memory answer 502 registry_unavailable
+	// after its full timeout. That 502 is not a transient blip, so the browse
+	// proxy must not replay it: one upstream 502 must cost exactly one attempt,
+	// not maxMemoryAttempts × the upstream timeout.
+	var count atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		count.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, `{"error":{"code":"registry_unavailable","message":"upstream registry timed out"}}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	if _, err := m.SearchRegistry(context.Background(), "github", 0, ""); err == nil {
+		t.Fatal("SearchRegistry() error = nil, want non-nil")
+	}
+	if got := count.Load(); got != 1 {
+		t.Fatalf("requests = %d, want 1 (registry 502 must not retry)", got)
 	}
 }
 

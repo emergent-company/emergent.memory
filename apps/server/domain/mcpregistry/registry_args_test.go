@@ -130,7 +130,7 @@ func TestGetRegistryServerHandlerNotFound(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	svc := &Service{registryClient: NewRegistryClientWithBaseURL(ts.URL)}
+	svc := &Service{registryClient: NewRegistryClientWithBaseURL(ts.URL), registryCache: newRegistryCache(0, nil)}
 	h := NewHandler(svc)
 
 	e := echo.New()
@@ -164,7 +164,7 @@ func TestGetRegistryServerRouteSlashName(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	svc := &Service{registryClient: NewRegistryClientWithBaseURL(upstream.URL)}
+	svc := &Service{registryClient: NewRegistryClientWithBaseURL(upstream.URL), registryCache: newRegistryCache(0, nil)}
 	h := NewHandler(svc)
 
 	e := echo.New()
