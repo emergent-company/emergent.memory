@@ -106,6 +106,53 @@ func TestApply_AgentMaterialization_NonDestructiveUpdate(t *testing.T) {
 	assert.False(t, def2.Enabled, "Enabled is not manifest-driven and must be preserved")
 }
 
+// TestValidateManifest_StaticErrors locks the validate-before-materialize
+// contract: a malformed agent model reference, bad visibility, missing pack
+// name/version, or invalid skill all surface a 400 WITHOUT any database write.
+// An empty model name is allowed (provider default).
+func TestValidateManifest_StaticErrors(t *testing.T) {
+	svc := &Service{skillsRepo: skills.NewRepository(nil, testLogger())}
+
+	t.Run("bare model name rejected", func(t *testing.T) {
+		err := svc.validateManifest(&BlueprintManifest{
+			Agents: []AgentManifest{{Name: "a", Model: &AgentModelManifest{Name: "gemini-2.5-flash"}}},
+		})
+		require.Error(t, err)
+		assertAppErrorCode(t, err, apperror.ErrBadRequest.Code)
+		assert.Contains(t, err.Error(), `agent "a"`)
+	})
+
+	t.Run("empty model name allowed", func(t *testing.T) {
+		err := svc.validateManifest(&BlueprintManifest{
+			Agents: []AgentManifest{{Name: "a", Model: &AgentModelManifest{}}},
+		})
+		require.NoError(t, err)
+	})
+
+	t.Run("invalid visibility rejected", func(t *testing.T) {
+		err := svc.validateManifest(&BlueprintManifest{
+			Agents: []AgentManifest{{Name: "a", Visibility: "public"}},
+		})
+		require.Error(t, err)
+		assertAppErrorCode(t, err, apperror.ErrBadRequest.Code)
+	})
+
+	t.Run("missing pack version rejected", func(t *testing.T) {
+		err := svc.validateManifest(&BlueprintManifest{
+			Packs: []PackManifest{{Name: "p"}},
+		})
+		require.Error(t, err)
+		assertAppErrorCode(t, err, apperror.ErrBadRequest.Code)
+	})
+
+	t.Run("skill missing description rejected", func(t *testing.T) {
+		err := svc.validateManifest(&BlueprintManifest{
+			Skills: []SkillManifest{{Name: "s", Content: "body"}},
+		})
+		require.Error(t, err)
+	})
+}
+
 func derefString(s *string) string {
 	if s == nil {
 		return ""

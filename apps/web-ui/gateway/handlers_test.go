@@ -224,6 +224,11 @@ type fakeMemory struct {
 	importBlueprintRes *BlueprintRecord        // returned by ImportBlueprint, when set
 	importBlueprintErr error                   // ImportBlueprint failure
 
+	previewImportBlueprintRes *BlueprintPreview       // returned by PreviewImportBlueprint, when set
+	importAndApplyReq         *importBlueprintRequest // last request passed to ImportAndApplyBlueprint
+	importAndApplyCalls       int                     // ImportAndApplyBlueprint call count
+	importAndApplyRes         *BlueprintRecord        // returned by ImportAndApplyBlueprint, when set
+
 	schemas []SchemaInfo
 	schema  *BlueprintSchema
 
@@ -1437,6 +1442,31 @@ func (f *fakeMemory) ImportBlueprint(ctx context.Context, url, ref, token string
 	f.importBlueprintReq = &importBlueprintRequest{URL: url, Ref: ref, Token: token}
 	if f.importBlueprintRes != nil {
 		return f.importBlueprintRes, nil
+	}
+	rec := &BlueprintRecord{ID: "bp-imported", Status: "published"}
+	f.blueprint = rec
+	return rec, nil
+}
+
+func (f *fakeMemory) PreviewImportBlueprint(ctx context.Context, url, ref, token string) (*BlueprintPreview, error) {
+	if f.importBlueprintErr != nil {
+		return nil, f.importBlueprintErr
+	}
+	f.importBlueprintReq = &importBlueprintRequest{URL: url, Ref: ref, Token: token}
+	if f.previewImportBlueprintRes != nil {
+		return f.previewImportBlueprintRes, nil
+	}
+	return &BlueprintPreview{}, nil
+}
+
+func (f *fakeMemory) ImportAndApplyBlueprint(ctx context.Context, url, ref, token string, overrides map[string]string) (*BlueprintRecord, error) {
+	if f.importBlueprintErr != nil {
+		return nil, f.importBlueprintErr
+	}
+	f.importAndApplyReq = &importBlueprintRequest{URL: url, Ref: ref, Token: token, Apply: true, ModelOverrides: overrides}
+	f.importAndApplyCalls++
+	if f.importAndApplyRes != nil {
+		return f.importAndApplyRes, nil
 	}
 	rec := &BlueprintRecord{ID: "bp-imported", Status: "published"}
 	f.blueprint = rec

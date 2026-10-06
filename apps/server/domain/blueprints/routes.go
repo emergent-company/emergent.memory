@@ -24,6 +24,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g.POST("", h.CreateBlueprint)
 	// Import from a GitHub repo URL; same guards/scope as create.
 	g.POST("/import", h.ImportBlueprint)
+	// Preview (create-nothing) import; same guards/scope as import.
+	g.POST("/import/preview", h.PreviewImport)
 	g.GET("", h.ListBlueprints)
 	g.GET("/:id", h.GetBlueprint)
 	g.PUT("/:id", h.UpdateBlueprint)

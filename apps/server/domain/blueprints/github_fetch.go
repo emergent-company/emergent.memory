@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -20,6 +21,8 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
 // GitHub blueprint import limits. These bound the resources a single import can
@@ -57,10 +60,26 @@ var refRe = regexp.MustCompile(`^[A-Za-z0-9._/+-]+$`)
 // ImportGitHubRequest is the request body for POST /api/blueprints/import.
 // Token is optional and is only ever used as an outbound Authorization header;
 // it is never persisted, logged, or echoed in responses or errors.
+// ModelOverrides maps an agent name to a `provider/model` reference (or an empty
+// string to select the project default); Apply atomically publishes AND applies
+// the blueprint, rolling back the published row if apply fails.
 type ImportGitHubRequest struct {
-	URL   string `json:"url"`
-	Ref   string `json:"ref,omitempty"`
-	Token string `json:"token,omitempty"`
+	URL            string            `json:"url"`
+	Ref            string            `json:"ref,omitempty"`
+	Token          string            `json:"token,omitempty"`
+	ModelOverrides map[string]string `json:"modelOverrides,omitempty"`
+	Apply          bool              `json:"apply,omitempty"`
+}
+
+// BlueprintPreview is the create-nothing result of a GitHub import preview:
+// the manifest (after model overrides) plus the record metadata, so the caller
+// can map agent models before committing the import.
+type BlueprintPreview struct {
+	Name        string          `json:"name"`
+	Version     string          `json:"version"`
+	Description string          `json:"description"`
+	Author      string          `json:"author"`
+	Manifest    json.RawMessage `json:"manifest"`
 }
 
 // GitHubFetcher downloads and safely extracts a GitHub repository tarball. All
@@ -122,35 +141,23 @@ func (f *GitHubFetcher) newClient() *http.Client {
 // blueprint through the existing service methods. projectID scopes the created
 // blueprint ("" = global; the caller is responsible for authorizing a global
 // write before calling). The optional token is used for private repos and is
-// never stored.
+// never stored. When req.Apply is true the blueprint is also applied and, on an
+// apply failure, the just-created row is hard-deleted so a retry re-imports
+// cleanly (no 409).
 func (s *Service) ImportFromGitHub(ctx context.Context, projectID string, req *ImportGitHubRequest) (*Blueprint, error) {
 	if req == nil {
 		return nil, apperror.NewBadRequest("url is required")
 	}
-	org, repo, ref, err := parseGitHubURL(req.URL, req.Ref)
+
+	// Atomic apply is project-scoped: apply materializes into a project, so a
+	// global import cannot apply (and could not roll back to a clean retry).
+	if req.Apply && projectID == "" {
+		return nil, apperror.NewBadRequest("project context required (X-Project-ID header or API token)")
+	}
+
+	desc, manifest, err := s.fetchAndLoadManifest(ctx, req)
 	if err != nil {
 		return nil, err
-	}
-
-	fetcher := s.fetcher
-	if fetcher == nil {
-		fetcher = newGitHubFetcher()
-	}
-
-	root, cleanup, err := fetcher.Fetch(ctx, org, repo, ref, req.Token)
-	if err != nil {
-		return nil, err
-	}
-	defer cleanup()
-
-	desc, err := loadBlueprintDir(root, repo)
-	if err != nil {
-		return nil, err
-	}
-
-	manifest, err := json.Marshal(desc.BlueprintManifest)
-	if err != nil {
-		return nil, apperror.NewBadRequest("blueprint manifest is not serializable")
 	}
 
 	var scope *string
@@ -174,7 +181,127 @@ func (s *Service) ImportFromGitHub(ctx context.Context, projectID string, req *I
 	if err != nil {
 		return nil, err
 	}
+
+	if !req.Apply {
+		return published, nil
+	}
+
+	// Atomic apply: on any apply failure, hard-delete the just-created row so a
+	// retry re-imports instead of colliding on the published (name, version).
+	// A partially-applied blueprint may already own pack claims, and
+	// kb.blueprint_pack_claims.blueprint_id is a non-cascading FK to
+	// kb.blueprints(id): clear the claims first, otherwise the delete fails and
+	// the retry still hits a 409. The row delete error is surfaced (logged and
+	// returned alongside the apply error) rather than swallowed, so a failed
+	// rollback is visible instead of masquerading as a clean failure.
+	if _, applyErr := s.Apply(ctx, bp.ID, projectID, callerUserID(ctx), ApplyOptions{}); applyErr != nil {
+		if claimErr := s.repo.DeletePackClaimsForBlueprint(ctx, bp.ID); claimErr != nil {
+			s.log.Error("atomic import rollback: failed to clear blueprint pack claims",
+				logger.Error(claimErr), slog.String("blueprint_id", bp.ID))
+			return nil, errors.Join(applyErr, claimErr)
+		}
+		if delErr := s.repo.Delete(ctx, bp.ID); delErr != nil {
+			s.log.Error("atomic import rollback: failed to delete blueprint row",
+				logger.Error(delErr), slog.String("blueprint_id", bp.ID))
+			return nil, errors.Join(applyErr, delErr)
+		}
+		return nil, applyErr
+	}
 	return published, nil
+}
+
+// PreviewFromGitHub performs the SAME fetch + parse + model-override pipeline as
+// ImportFromGitHub but creates NOTHING, returning the preview metadata and the
+// final manifest JSON so the caller can map agent models before committing.
+func (s *Service) PreviewFromGitHub(ctx context.Context, req *ImportGitHubRequest) (*BlueprintPreview, error) {
+	if req == nil {
+		return nil, apperror.NewBadRequest("url is required")
+	}
+
+	desc, manifest, err := s.fetchAndLoadManifest(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	return &BlueprintPreview{
+		Name:        desc.Name,
+		Version:     desc.Version,
+		Description: desc.Description,
+		Author:      desc.Author,
+		Manifest:    manifest,
+	}, nil
+}
+
+// fetchAndLoadManifest parses the GitHub URL, fetches + safely extracts the
+// archive, loads + validates the blueprint descriptor, applies any
+// ModelOverrides, and returns the descriptor plus the final (override-applied)
+// manifest JSON. Shared by ImportFromGitHub and PreviewFromGitHub.
+func (s *Service) fetchAndLoadManifest(ctx context.Context, req *ImportGitHubRequest) (*blueprintDescriptor, json.RawMessage, error) {
+	org, repo, ref, err := parseGitHubURL(req.URL, req.Ref)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	fetcher := s.fetcher
+	if fetcher == nil {
+		fetcher = newGitHubFetcher()
+	}
+
+	root, cleanup, err := fetcher.Fetch(ctx, org, repo, ref, req.Token)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer cleanup()
+
+	desc, err := loadBlueprintDir(root, repo)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	manifest, err := json.Marshal(desc.BlueprintManifest)
+	if err != nil {
+		return nil, nil, apperror.NewBadRequest("blueprint manifest is not serializable")
+	}
+
+	// Model overrides: rewrite each named agent's model before persisting, so a
+	// bare-name import maps to a `provider/model` reference (or an empty string
+	// to select the project default) atomically.
+	if len(req.ModelOverrides) > 0 {
+		var m BlueprintManifest
+		if err := json.Unmarshal(manifest, &m); err != nil {
+			return nil, nil, apperror.NewBadRequest("blueprint manifest is not valid JSON: " + err.Error())
+		}
+		// Model overrides: rewrite each named agent's model reference before
+		// persisting, so a bare-name import maps to a `provider/model` reference
+		// (or an empty string to select the project default) atomically. Only the
+		// reference is replaced; any tuning the manifest already pinned
+		// (temperature/maxTokens/enableThinking) is preserved.
+		for i := range m.Agents {
+			override, ok := req.ModelOverrides[m.Agents[i].Name]
+			if !ok {
+				continue
+			}
+			if m.Agents[i].Model == nil {
+				m.Agents[i].Model = &AgentModelManifest{}
+			}
+			m.Agents[i].Model.Name = override
+		}
+		manifest, err = json.Marshal(m)
+		if err != nil {
+			return nil, nil, apperror.NewBadRequest("blueprint manifest is not serializable")
+		}
+	}
+
+	return desc, manifest, nil
+}
+
+// callerUserID extracts the acting user id from the request context, or "" when
+// unavailable (e.g. a service-to-service import without an authenticated user).
+func callerUserID(ctx context.Context) string {
+	if u := auth.UserFromContext(ctx); u != nil {
+		return u.ID
+	}
+	return ""
 }
 
 // ──────────────────────────────────────────────

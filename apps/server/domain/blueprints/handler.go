@@ -112,6 +112,48 @@ func (h *Handler) ImportBlueprint(c echo.Context) error {
 	return c.JSON(http.StatusCreated, bp)
 }
 
+// PreviewImport handles POST /api/blueprints/import/preview
+// @Summary      Preview blueprint import from a GitHub URL
+// @Description  Fetches a blueprint from https://github.com/<org>/<repo>[#ref], extracts and validates its manifest (applying any modelOverrides), and returns its metadata and manifest WITHOUT creating anything. The optional token is used only for private-repo fetch and is never stored or returned.
+// @Tags         blueprints
+// @Accept       json
+// @Produce      json
+// @Param        request body ImportGitHubRequest true "GitHub source"
+// @Success      200 {object} BlueprintPreview "Import preview"
+// @Failure      400 {object} apperror.Error "Invalid URL or manifest"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden"
+// @Failure      413 {object} apperror.Error "Archive too large"
+// @Failure      502 {object} apperror.Error "Fetch failed"
+// @Router       /api/blueprints/import/preview [post]
+// @Security     bearerAuth
+func (h *Handler) PreviewImport(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	var req ImportGitHubRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+	if strings.TrimSpace(req.URL) == "" {
+		return apperror.NewBadRequest("url is required")
+	}
+
+	// Same scoping/authority as create/import: a global (no project) preview is
+	// a read of the platform-global catalogue surface and requires superadmin.
+	projectID := user.ProjectID
+	if projectID == "" {
+		if err := h.svc.AuthorizeGlobalBlueprintWrite(c.Request().Context()); err != nil {
+			return err
+		}
+	}
+
+	preview, err := h.svc.PreviewFromGitHub(c.Request().Context(), &req)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, preview)
+}
+
 // ListBlueprints handles GET /api/blueprints
 // @Summary      List blueprints
 // @Description  Returns blueprints, optionally filtered by name via the ?name= query parameter

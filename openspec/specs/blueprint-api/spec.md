@@ -242,7 +242,15 @@ through the existing create/publish service path, scoped to the caller's
 project (global only for an authorized superadmin), matching the existing
 blueprint-create authorization guards.
 
-The endpoint is `POST /api/blueprints/import` with body `{url, ref?, token?}`.
+The endpoint is `POST /api/blueprints/import` with body
+`{url, ref?, token?, modelOverrides?, apply?}`. `modelOverrides` maps an agent
+`name` to a `provider/model` reference (or an empty string to select the project
+default); each named agent's model SHALL be rewritten in the stored manifest
+before the blueprint is created. When `apply` is true, the import SHALL require a
+project context, publish the blueprint, and apply it atomically — on an apply
+failure the just-created row SHALL be hard-deleted so a retry re-imports cleanly
+(no 409), and the apply error is returned.
+
 Only `https://github.com/<org>/<repo>` URLs are accepted, with an optional
 `#<ref>` fragment and/or `/tree/<ref>` suffix; every other host and all
 non-https schemes are rejected. The archive is fetched only from
@@ -256,14 +264,13 @@ host suffixes are rejected. Private/link-local/loopback/CGNAT/metadata address
 ranges are therefore never reachable — not via an address-range check, but
 because only the two exact public GitHub hosts (`github.com` for parsing and
 `codeload.github.com` for the fetch) are ever dialed. The archive download is
-capped at 50 MiB and the request
-is bounded by a timeout. Extraction rejects path traversal (`../`), absolute
-paths, and symlinks/hardlinks escaping the archive root, and caps the file
-count at 20000 and total extracted bytes at 200 MiB. The optional `token` is
-used only as an outbound Authorization header; it is never persisted, never
-logged, and never echoed in responses or errors. Errors map to 400 for an
-invalid URL/manifest, 413 for an oversize archive, 502 for a fetch failure, and
-401/403 for authorization failures.
+capped at 50 MiB and the request is bounded by a timeout. Extraction rejects
+path traversal (`../`), absolute paths, and symlinks/hardlinks escaping the
+archive root, and caps the file count at 20000 and total extracted bytes at
+200 MiB. The optional `token` is used only as an outbound Authorization header;
+it is never persisted, never logged, and never echoed in responses or errors.
+Errors map to 400 for an invalid URL/manifest, 413 for an oversize archive, 502
+for a fetch failure, and 401/403 for authorization failures.
 
 #### Scenario: Allowlisted URL accepted
 
@@ -313,6 +320,26 @@ invalid URL/manifest, 413 for an oversize archive, 502 for a fetch failure, and
   caller
 - **THEN** the API creates and publishes a blueprint scoped to the caller's
   project (global only for an authorized superadmin) and returns success
+
+#### Scenario: Model override rewrites the stored manifest
+
+- **WHEN** a client sends `POST /api/blueprints/import` with a `modelOverrides`
+  mapping an agent name to a `provider/model` reference
+- **THEN** the stored blueprint manifest carries that reference for the named
+  agent, and an empty-string override clears the model name (project default)
+
+#### Scenario: Atomic apply rolls back on failure
+
+- **WHEN** a client sends `POST /api/blueprints/import` with `apply: true` and
+  the apply fails
+- **THEN** the API returns the apply error, leaves no published blueprint row,
+  and a retry with the manifest fixed re-imports without a 409
+
+#### Scenario: Atomic apply requires a project context
+
+- **WHEN** a client sends `POST /api/blueprints/import` with `apply: true` but no
+  project context
+- **THEN** the API returns HTTP 400 and creates nothing
 
 #### Scenario: Private token not leaked
 
@@ -495,3 +522,52 @@ route to the matching listener on apply.
 - **WHEN** a keyed, board-enabled seed object declares `assignee` and `status`
 - **THEN** the bulk-upsert item forwards both fields and the applied object
   carries them unchanged
+
+### Requirement: Validate manifest before materialization on apply
+
+The blueprint apply path SHALL validate a manifest's agents (name, visibility,
+and model reference), packs (name and version), and skills (name/description/
+content) BEFORE materializing any pack, agent, or skill. A manifest whose agent
+model reference is malformed (for example a bare name missing the `provider/`
+prefix) SHALL fail with HTTP 400 and zero rows created, rather than
+materializing packs first and leaving a half-applied blueprint behind.
+
+#### Scenario: Malformed agent model rejected with no partial apply
+
+- **WHEN** a blueprint is applied whose manifest has an agent model missing the
+  `provider/` prefix
+- **THEN** the apply fails with HTTP 400 and no pack, agent, or skill is created
+
+#### Scenario: Empty model name selects the provider default
+
+- **WHEN** a blueprint manifest's agent has a model with an empty name
+- **THEN** the apply accepts it as the provider default and proceeds
+
+### Requirement: Preview a GitHub blueprint import without creating anything
+
+The API SHALL expose `POST /api/blueprints/import/preview` that performs the same
+fetch, extract, validate, and model-override pipeline as the import but creates
+NOTHING, returning HTTP 200 with the blueprint's `name`, `version`,
+`description`, `author`, and the final `manifest` JSON so a caller can map agent
+models before committing the import. The endpoint SHALL enforce the same
+scope/authority gating as import (project context → project scope; no project →
+global write requires superadmin).
+
+#### Scenario: Preview returns metadata and manifest
+
+- **WHEN** a client sends `POST /api/blueprints/import/preview` with a valid
+  GitHub URL
+- **THEN** the API returns HTTP 200 with the blueprint's name, version,
+  description, author, and manifest, and creates no blueprint
+
+#### Scenario: Preview applies model overrides
+
+- **WHEN** a client sends `POST /api/blueprints/import/preview` with
+  `modelOverrides`
+- **THEN** the returned manifest carries the overridden agent model references
+
+#### Scenario: Preview rejected for insufficient role
+
+- **WHEN** an authenticated caller without the required capability sends
+  `POST /api/blueprints/import/preview`
+- **THEN** the API returns HTTP 403 and performs no fetch and creates nothing

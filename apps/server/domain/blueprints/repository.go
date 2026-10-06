@@ -368,3 +368,21 @@ func (r *Repository) DeletePackClaim(ctx context.Context, projectID, blueprintID
 	}
 	return nil
 }
+
+// DeletePackClaimsForBlueprint removes every pack claim owned by a blueprint,
+// across all projects. It is used by the atomic-import rollback BEFORE
+// hard-deleting the just-created blueprint row: kb.blueprint_pack_claims
+// .blueprint_id has a non-cascading FK to kb.blueprints(id), so any claim
+// materialized before an apply failure would make the row delete fail and the
+// next import collide on (name, version) with a 409 — the exact symptom this
+// rollback exists to prevent. Idempotent (deleting zero rows is not an error).
+func (r *Repository) DeletePackClaimsForBlueprint(ctx context.Context, blueprintID string) error {
+	if _, err := r.db.NewDelete().
+		Model((*BlueprintPackClaim)(nil)).
+		Where("blueprint_id = ?", blueprintID).
+		Exec(ctx); err != nil {
+		r.log.Error("failed to delete blueprint pack claims", logger.Error(err))
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	return nil
+}

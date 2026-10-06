@@ -515,6 +515,204 @@ func TestService_ImportFromGitHub_TokenNotPersisted(t *testing.T) {
 	assert.NotContains(t, stored.Description, token)
 }
 
+// TestService_ImportFromGitHub_ModelOverrides_RewritesManifest verifies a
+// modelOverrides entry rewrites the named agent's model in the persisted
+// manifest before the blueprint is created/published, while a non-matching key
+// leaves other agents untouched.
+func TestService_ImportFromGitHub_ModelOverrides_RewritesManifest(t *testing.T) {
+	db := connectTestDB(t)
+	svc := newServiceFromBun(t, db)
+	ctx := context.Background()
+
+	archive := buildTarGz(t, []tarEntry{
+		{name: "repo-HEAD/agents/imp.yaml", body: "name: imp\ndescription: d\nmodel:\n  name: gemini-2.5-flash\n"},
+		{name: "repo-HEAD/agents/other.yaml", body: "name: other\n"},
+	})
+	ts := servingTarball(t, archive)
+	svc.fetcher = testGitHubFetcher(t, ts.URL, 1<<20, 1<<20, 100)
+
+	bp, err := svc.ImportFromGitHub(ctx, "", &ImportGitHubRequest{
+		URL:            "https://github.com/org/repo",
+		ModelOverrides: map[string]string{"imp": "openai/gpt-4o"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, StatusPublished, bp.Status)
+
+	var m BlueprintManifest
+	require.NoError(t, json.Unmarshal(bp.Manifest, &m))
+	require.Len(t, m.Agents, 2)
+	byName := map[string]AgentManifest{}
+	for _, a := range m.Agents {
+		byName[a.Name] = a
+	}
+	require.NotNil(t, byName["imp"].Model, "overridden agent must carry a model")
+	assert.Equal(t, "openai/gpt-4o", byName["imp"].Model.Name)
+	assert.Nil(t, byName["other"].Model, "non-matching agent must be untouched")
+}
+
+// TestService_ImportFromGitHub_ModelOverrides_EmptyClearsName verifies an empty
+// string override clears the model name (project default) rather than leaving a
+// bare name that would fail apply.
+func TestService_ImportFromGitHub_ModelOverrides_EmptyClearsName(t *testing.T) {
+	db := connectTestDB(t)
+	svc := newServiceFromBun(t, db)
+	ctx := context.Background()
+
+	archive := buildTarGz(t, []tarEntry{
+		{name: "repo-HEAD/agents/imp2.yaml", body: "name: imp2\nmodel:\n  name: gemini-2.5-flash\n"},
+	})
+	ts := servingTarball(t, archive)
+	svc.fetcher = testGitHubFetcher(t, ts.URL, 1<<20, 1<<20, 100)
+
+	bp, err := svc.ImportFromGitHub(ctx, "", &ImportGitHubRequest{
+		URL:            "https://github.com/org/repo",
+		ModelOverrides: map[string]string{"imp2": ""},
+	})
+	require.NoError(t, err)
+
+	var m BlueprintManifest
+	require.NoError(t, json.Unmarshal(bp.Manifest, &m))
+	require.Len(t, m.Agents, 1)
+	require.NotNil(t, m.Agents[0].Model, "empty override still sets a model struct")
+	assert.Empty(t, m.Agents[0].Model.Name)
+}
+
+// TestService_ImportFromGitHub_AtomicRollback verifies that when Apply=true and
+// apply fails, the just-published row is hard-deleted so a retry re-imports
+// cleanly (no 409) instead of colliding on the (name, version).
+func TestService_ImportFromGitHub_AtomicRollback(t *testing.T) {
+	db := connectTestDB(t)
+	svc := newApplyService(t, db)
+	ctx := context.Background()
+	_, proj := seedProject(t, db)
+
+	// A bare model name fails validateManifest at apply time (the exact
+	// web-UI import bug). No packs/skills/seed, so the retry's apply succeeds.
+	archive := buildTarGz(t, []tarEntry{
+		{name: "repo-HEAD/agents/imp.yaml", body: "name: imp\nmodel:\n  name: gemini-2.5-flash\n"},
+	})
+	ts := servingTarball(t, archive)
+	svc.fetcher = testGitHubFetcher(t, ts.URL, 1<<20, 1<<20, 100)
+
+	// First import+apply fails: the bare model is rejected.
+	_, err := svc.ImportFromGitHub(ctx, proj, &ImportGitHubRequest{
+		URL:   "https://github.com/org/repo",
+		Apply: true,
+	})
+	require.Error(t, err)
+	assertAppErrorCode(t, err, apperror.ErrBadRequest.Code)
+
+	// The failed apply must have hard-deleted the row: no (name, version)
+	// collision, no partial blueprint left behind.
+	exists, err := svc.repo.ExistsByNameVersion(ctx, &proj, "imp", "1.0.0")
+	require.NoError(t, err)
+	assert.False(t, exists, "failed atomic import must not leave a published row")
+
+	// Retry with the model mapped succeeds cleanly (no 409).
+	bp, err := svc.ImportFromGitHub(ctx, proj, &ImportGitHubRequest{
+		URL:            "https://github.com/org/repo",
+		Apply:          true,
+		ModelOverrides: map[string]string{"imp": "openai/gpt-4o"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, StatusPublished, bp.Status)
+}
+
+// TestService_ImportFromGitHub_AtomicRollback_PackBearing is the regression
+// guard for the rollback FK defect. A manifest that materializes a schema pack
+// (creating a kb.blueprint_pack_claims row) and THEN fails during agent
+// materialization must still have its just-created blueprint row deleted, so a
+// retry re-imports cleanly instead of colliding on (name, version) with a 409.
+// kb.blueprint_pack_claims.blueprint_id is a non-cascading FK to
+// kb.blueprints(id), so before the rollback cleared the claims the delete failed
+// (and the error was swallowed), leaving the row behind.
+func TestService_ImportFromGitHub_AtomicRollback_PackBearing(t *testing.T) {
+	db := connectTestDB(t)
+	svc, _, _ := newMigrationService(t, db)
+	ctx := context.Background()
+	_, proj := seedProject(t, db)
+
+	packName := uniqueName("rollback-pack")
+	packYAML := `name: ` + packName + `
+version: 1.0.0
+objectTypes:
+  - name: Thing
+    label: Thing
+`
+	// failureLimit is an int on agents.AgentWorkConfig; a string makes
+	// applyWorkConfig fail AFTER applyPacks has created and claimed the pack.
+	agentYAML := `name: rollback-agent
+description: d
+workConfig:
+  failureLimit: not-a-number
+`
+	archive := buildTarGz(t, []tarEntry{
+		{name: "repo-HEAD/packs/pack.yaml", body: packYAML},
+		{name: "repo-HEAD/agents/agent.yaml", body: agentYAML},
+	})
+	ts := servingTarball(t, archive)
+	svc.fetcher = testGitHubFetcher(t, ts.URL, 1<<20, 1<<20, 100)
+
+	// Import+apply fails during agent materialization, after the pack claim.
+	_, err := svc.ImportFromGitHub(ctx, proj, &ImportGitHubRequest{
+		URL:   "https://github.com/org/repo",
+		Apply: true,
+	})
+	require.Error(t, err)
+	assertAppErrorCode(t, err, apperror.ErrBadRequest.Code)
+
+	// The pack claim existed before the failure, so this asserts the rollback
+	// cleared it before deleting the row: the row must be gone.
+	exists, err := svc.repo.ExistsByNameVersion(ctx, &proj, packName, "1.0.0")
+	require.NoError(t, err)
+	assert.False(t, exists, "failed atomic import with a pack must not leave a published row")
+
+	// Retry with the agent fixed succeeds cleanly (no 409).
+	fixedAgent := `name: rollback-agent
+description: d
+`
+	archive2 := buildTarGz(t, []tarEntry{
+		{name: "repo-HEAD/packs/pack.yaml", body: packYAML},
+		{name: "repo-HEAD/agents/agent.yaml", body: fixedAgent},
+	})
+	ts2 := servingTarball(t, archive2)
+	svc.fetcher = testGitHubFetcher(t, ts2.URL, 1<<20, 1<<20, 100)
+
+	bp, err := svc.ImportFromGitHub(ctx, proj, &ImportGitHubRequest{
+		URL:   "https://github.com/org/repo",
+		Apply: true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, StatusPublished, bp.Status)
+}
+
+// service path performs the same fetch+parse (and model override) but creates no
+// blueprint row.
+func TestService_PreviewFromGitHub_CreatesNothing(t *testing.T) {
+	db := connectTestDB(t)
+	svc := newServiceFromBun(t, db)
+	ctx := context.Background()
+
+	archive := buildTarGz(t, []tarEntry{
+		{name: "repo-HEAD/packs/pack.yaml", body: "name: preview-pack\nversion: 1.0.0\nobjectTypes:\n  - name: Thing\n"},
+	})
+	ts := servingTarball(t, archive)
+	svc.fetcher = testGitHubFetcher(t, ts.URL, 1<<20, 1<<20, 100)
+
+	preview, err := svc.PreviewFromGitHub(ctx, &ImportGitHubRequest{URL: "https://github.com/org/repo"})
+	require.NoError(t, err)
+	assert.Equal(t, "preview-pack", preview.Name)
+	assert.Equal(t, "1.0.0", preview.Version)
+	var m BlueprintManifest
+	require.NoError(t, json.Unmarshal(preview.Manifest, &m))
+	require.Len(t, m.Packs, 1)
+
+	// Nothing created.
+	list, err := svc.ListBlueprints(ctx, "", "")
+	require.NoError(t, err)
+	assert.Empty(t, list)
+}
+
 // ──────────────────────────────────────────────
 // Handler authorization
 // ──────────────────────────────────────────────

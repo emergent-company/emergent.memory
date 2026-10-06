@@ -174,12 +174,31 @@ posts to the import flow; on success the imported blueprint is installed
 existing registry-pack and bundled-pack install paths and their
 ids/`data-testid`/htmx hooks SHALL be preserved.
 
+Before installing, the flow SHALL let the user map the imported manifest's agent
+models to valid `provider/model` references (previewing the manifest without
+installing anything), and the install SHALL submit those mappings atomically so
+a failed install leaves no partial blueprint behind and can be retried cleanly.
+
 #### Scenario: Successful GitHub URL import
 
 - **WHEN** a user submits a valid GitHub repository URL (with optional ref and
   token) in the gallery import form
 - **THEN** the blueprint is imported, installed (applied), and the UI shows
   success
+
+#### Scenario: Model mapping step before install
+
+- **WHEN** the imported manifest's agents carry model references the server
+  would reject (for example a bare name missing the `provider/` prefix)
+- **THEN** the UI lets the user map each such agent to a valid reference before
+  installing, and the submitted import applies those mappings
+
+#### Scenario: No partial install on failure
+
+- **WHEN** the install fails after the import (for example the apply is
+  rejected)
+- **THEN** the UI shows the error and leaves no partial blueprint installed, so
+  the user can retry with the model mapped
 
 #### Scenario: Import error shown
 

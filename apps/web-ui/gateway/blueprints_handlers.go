@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 )
@@ -221,11 +223,12 @@ func (s *Server) uiInstallBlueprintById(c echo.Context) error {
 	return c.Redirect(http.StatusSeeOther, "/blueprints?installed=1")
 }
 
-// uiImportGitHubBlueprint imports a blueprint from a GitHub repository URL
-// (memory creates and publishes it), then applies it to the project, and
-// redirects back to the list (PRG). The optional token is a private-repo
-// credential: it is forwarded only to memory and is never placed in the
-// redirect target or flash.
+// uiImportGitHubBlueprint previews a blueprint import from a GitHub repository
+// URL (side-effect free), then either imports+applies it directly when every
+// pinned model resolves against the project's configured providers, or renders
+// the model-mapping page so the user can map unresolved models first. The
+// optional token is a private-repo credential: it is forwarded only to memory
+// and is never placed in the redirect target or flash.
 func (s *Server) uiImportGitHubBlueprint(c echo.Context) error {
 	repoURL := c.FormValue("url")
 	ref := c.FormValue("ref")
@@ -234,11 +237,91 @@ func (s *Server) uiImportGitHubBlueprint(c echo.Context) error {
 		return c.Redirect(http.StatusSeeOther, "/blueprints?err=1")
 	}
 	ctx := c.Request().Context()
-	rec, err := s.memory.ImportBlueprint(ctx, repoURL, ref, token)
+
+	prev, err := s.memory.PreviewImportBlueprint(ctx, repoURL, ref, token)
 	if err != nil {
 		return redirectWithError(c, "/blueprints", err)
 	}
-	if _, err := s.memory.ApplyBlueprint(ctx, rec.ID); err != nil {
+
+	// Best-effort provider fetch: a failure leaves the catalog empty, which
+	// makes every prefixed model unresolved (still safe — the user maps them).
+	providers, _ := s.memory.ListProjectProviders(ctx)
+	models := s.configuredGenerativeModels(ctx, providers)
+	providerNames := projectProviderNames(providers)
+
+	var manifest blueprintManifest
+	if err := json.Unmarshal(prev.Manifest, &manifest); err != nil {
+		return redirectWithError(c, "/blueprints", err)
+	}
+
+	var rows []BlueprintModelMapRow
+	for _, a := range manifest.Agents {
+		if a.Model == nil || a.Model.Name == "" {
+			continue
+		}
+		prov := modelProviderOf(a.Model.Name)
+		switch {
+		case prov == "":
+			rows = append(rows, BlueprintModelMapRow{
+				AgentName:   a.Name,
+				SourceModel: a.Model.Name,
+				Issue:       "Set a provider for this model (expected provider/model).",
+			})
+		case !slices.Contains(providerNames, prov):
+			rows = append(rows, BlueprintModelMapRow{
+				AgentName:   a.Name,
+				SourceModel: a.Model.Name,
+				Issue:       "The '" + prov + "' provider is not configured in this project.",
+			})
+		}
+	}
+
+	if len(rows) == 0 {
+		if _, err := s.memory.ImportAndApplyBlueprint(ctx, repoURL, ref, token, nil); err != nil {
+			return redirectWithError(c, "/blueprints", err)
+		}
+		return c.Redirect(http.StatusSeeOther, "/blueprints?installed=1")
+	}
+
+	return s.page(c, pageTitle("Map blueprint models"), BlueprintImportModelMapPage(BlueprintModelMapData{
+		URL:    repoURL,
+		Ref:    ref,
+		Token:  token,
+		Rows:   rows,
+		Models: models,
+	}))
+}
+
+// uiImportGitHubBlueprintConfirm handles the model-mapping form submission: it
+// reads the per-agent `model.<agentName>` overrides and applies the import with
+// them (an empty value clears the model → project default). Success redirects
+// to the installed flash; failure redirects with the mapped error.
+func (s *Server) uiImportGitHubBlueprintConfirm(c echo.Context) error {
+	repoURL := c.FormValue("url")
+	ref := c.FormValue("ref")
+	token := c.FormValue("token")
+	if repoURL == "" {
+		return c.Redirect(http.StatusSeeOther, "/blueprints?err=1")
+	}
+	ctx := c.Request().Context()
+
+	if err := c.Request().ParseForm(); err != nil {
+		return redirectWithError(c, "/blueprints", err)
+	}
+	overrides := make(map[string]string)
+	for key, values := range c.Request().PostForm {
+		agentName, ok := strings.CutPrefix(key, "model.")
+		if !ok {
+			continue
+		}
+		if len(values) > 0 {
+			overrides[agentName] = values[0]
+		} else {
+			overrides[agentName] = ""
+		}
+	}
+
+	if _, err := s.memory.ImportAndApplyBlueprint(ctx, repoURL, ref, token, overrides); err != nil {
 		return redirectWithError(c, "/blueprints", err)
 	}
 	return c.Redirect(http.StatusSeeOther, "/blueprints?installed=1")

@@ -61,6 +61,7 @@ func newImportRouteServer(f *fakeMemory) (*Server, *echo.Echo) {
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
 	e.POST("/blueprints/import", s.uiImportGitHubBlueprint)
+	e.POST("/blueprints/import/confirm", s.uiImportGitHubBlueprintConfirm)
 	return s, e
 }
 
@@ -71,11 +72,17 @@ func importFormRequest(t *testing.T, values url.Values) *http.Request {
 	return req
 }
 
-// TestUIRouteImportGitHubBlueprintSuccess verifies a successful import creates +
-// publishes (via ImportBlueprint) and applies the returned blueprint, then
-// redirects to the installed flash (303).
+// TestUIRouteImportGitHubBlueprintSuccess verifies a preview that resolves
+// cleanly (no unresolved models) imports + applies in one step (via
+// ImportAndApplyBlueprint with nil overrides) and redirects to the installed
+// flash (303).
 func TestUIRouteImportGitHubBlueprintSuccess(t *testing.T) {
-	f := &fakeMemory{importBlueprintRes: &BlueprintRecord{ID: "bp-imported", Name: "repo", Status: "published"}}
+	f := &fakeMemory{
+		previewImportBlueprintRes: &BlueprintPreview{
+			Name:     "repo",
+			Manifest: json.RawMessage(`{"agents":[]}`),
+		},
+	}
 	_, e := newImportRouteServer(f)
 
 	rec := httptest.NewRecorder()
@@ -91,20 +98,29 @@ func TestUIRouteImportGitHubBlueprintSuccess(t *testing.T) {
 	if loc := rec.Header().Get("Location"); loc != "/blueprints?installed=1" {
 		t.Errorf("location = %q, want /blueprints?installed=1", loc)
 	}
-	if f.importBlueprintReq == nil {
-		t.Fatal("ImportBlueprint was not called")
+	if f.importAndApplyCalls != 1 {
+		t.Fatalf("ImportAndApplyBlueprint calls = %d, want 1", f.importAndApplyCalls)
 	}
-	if got := f.importBlueprintReq.URL; got != "https://github.com/org/repo" {
+	if f.importAndApplyReq == nil {
+		t.Fatal("ImportAndApplyBlueprint was not called")
+	}
+	if got := f.importAndApplyReq.URL; got != "https://github.com/org/repo" {
 		t.Errorf("url = %q", got)
 	}
-	if got := f.importBlueprintReq.Ref; got != "v1.2.3" {
+	if got := f.importAndApplyReq.Ref; got != "v1.2.3" {
 		t.Errorf("ref = %q", got)
 	}
-	if got := f.importBlueprintReq.Token; got != "ghp_secret" {
+	if got := f.importAndApplyReq.Token; got != "ghp_secret" {
 		t.Errorf("token = %q, want the forwarded credential", got)
 	}
-	if len(f.appliedBlueprint) != 1 || f.appliedBlueprint[0] != "bp-imported" {
-		t.Fatalf("appliedBlueprint = %v, want [bp-imported]", f.appliedBlueprint)
+	if !f.importAndApplyReq.Apply {
+		t.Errorf("apply = false, want true")
+	}
+	if f.importAndApplyReq.ModelOverrides != nil {
+		t.Errorf("modelOverrides = %v, want nil", f.importAndApplyReq.ModelOverrides)
+	}
+	if len(f.appliedBlueprint) != 0 {
+		t.Errorf("import+apply path must not call ApplyBlueprint, applied = %v", f.appliedBlueprint)
 	}
 }
 
@@ -160,6 +176,122 @@ func TestUIRouteImportGitHubBlueprintFailure(t *testing.T) {
 	}
 }
 
+// TestUIRouteImportGitHubBlueprintUnresolvedModel verifies a preview carrying
+// an agent whose pinned model can't be resolved renders the model-mapping page
+// (one select per unresolved agent) and does NOT import.
+func TestUIRouteImportGitHubBlueprintUnresolvedModel(t *testing.T) {
+	f := &fakeMemory{
+		previewImportBlueprintRes: &BlueprintPreview{
+			Name:     "repo",
+			Manifest: json.RawMessage(`{"agents":[{"name":"writer","model":{"name":"gemini-2.5-flash"}}]}`),
+		},
+	}
+	_, e := newImportRouteServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, importFormRequest(t, url.Values{
+		"url":   {"https://github.com/org/repo"},
+		"token": {"ghp_secret"},
+	}))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-testid="blueprint-import-map"`,
+		`data-testid="blueprint-model-map-row"`,
+		`name="model.writer"`,
+		`data-testid="blueprint-model-map-select"`,
+		// The private-repo token must be carried through the mapping step.
+		`name="token"`,
+		`value="ghp_secret"`,
+		"Project default",
+		"Set a provider for this model (expected provider/model).",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("map page missing %q", want)
+		}
+	}
+	if f.importAndApplyCalls != 0 {
+		t.Errorf("ImportAndApplyBlueprint called %d times, want 0", f.importAndApplyCalls)
+	}
+	if len(f.appliedBlueprint) != 0 {
+		t.Errorf("unresolved import must not apply, applied = %v", f.appliedBlueprint)
+	}
+}
+
+// TestUIRouteImportGitHubBlueprintUnconfiguredProvider verifies a preview with a
+// prefixed model whose provider isn't configured is flagged with the provider
+// issue and, like the bare-model case, does not import.
+func TestUIRouteImportGitHubBlueprintUnconfiguredProvider(t *testing.T) {
+	f := &fakeMemory{
+		previewImportBlueprintRes: &BlueprintPreview{
+			Name:     "repo",
+			Manifest: json.RawMessage(`{"agents":[{"name":"writer","model":{"name":"anthropic/claude-3"}}]}`),
+		},
+	}
+	_, e := newImportRouteServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, importFormRequest(t, url.Values{"url": {"https://github.com/org/repo"}}))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "anthropic") || !strings.Contains(body, "is not configured in this project.") {
+		t.Errorf("map page missing provider issue: %s", body)
+	}
+	if f.importAndApplyCalls != 0 {
+		t.Errorf("ImportAndApplyBlueprint called %d times, want 0", f.importAndApplyCalls)
+	}
+}
+
+// TestUIRouteImportGitHubBlueprintConfirm verifies the confirm handler parses
+// the per-agent `model.<agentName>` form fields and passes the chosen overrides
+// (empty value → project default) to ImportAndApplyBlueprint, then redirects.
+func TestUIRouteImportGitHubBlueprintConfirm(t *testing.T) {
+	f := &fakeMemory{}
+	_, e := newImportRouteServer(f)
+
+	values := url.Values{
+		"url":          {"https://github.com/org/repo"},
+		"ref":          {"v1.2.3"},
+		"token":        {"ghp_secret"},
+		"model.writer": {"openai/gpt-4o"},
+		"model.editor": {""},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/blueprints/import/confirm", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "/blueprints?installed=1" {
+		t.Errorf("location = %q, want /blueprints?installed=1", loc)
+	}
+	if f.importAndApplyCalls != 1 {
+		t.Fatalf("ImportAndApplyBlueprint calls = %d, want 1", f.importAndApplyCalls)
+	}
+	if f.importAndApplyReq == nil {
+		t.Fatal("ImportAndApplyBlueprint was not called")
+	}
+	if got := f.importAndApplyReq.Token; got != "ghp_secret" {
+		t.Errorf("token = %q, want the forwarded credential", got)
+	}
+	want := map[string]string{"writer": "openai/gpt-4o", "editor": ""}
+	if len(f.importAndApplyReq.ModelOverrides) != len(want) {
+		t.Fatalf("modelOverrides = %v, want %v", f.importAndApplyReq.ModelOverrides, want)
+	}
+	for k, v := range want {
+		if got := f.importAndApplyReq.ModelOverrides[k]; got != v {
+			t.Errorf("modelOverrides[%q] = %q, want %q", k, got, v)
+		}
+	}
+}
+
 // TestImportBlueprintClientPostsRequest verifies the client posts the expected
 // JSON body to /api/blueprints/import and decodes the created record.
 func TestImportBlueprintClientPostsRequest(t *testing.T) {
@@ -191,6 +323,80 @@ func TestImportBlueprintClientPostsRequest(t *testing.T) {
 		t.Errorf("sent = %+v", sent)
 	}
 	if rec == nil || rec.ID != "bp-9" || rec.Status != "published" {
+		t.Fatalf("record = %+v", rec)
+	}
+}
+
+// TestPreviewImportBlueprintClientPostsRequest verifies the preview client posts
+// to /api/blueprints/import/preview and decodes the metadata + raw manifest.
+func TestPreviewImportBlueprintClientPostsRequest(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"name":"repo","version":"1.0.0","description":"d","author":"a","manifest":{"agents":[]}}`))
+	}))
+	defer ts.Close()
+
+	m := NewMemoryClient(ts.URL, "proj")
+	prev, err := m.PreviewImportBlueprint(t.Context(), "https://github.com/org/repo", "v1.2.3", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/api/blueprints/import/preview" {
+		t.Errorf("request = %s %s, want POST /api/blueprints/import/preview", gotMethod, gotPath)
+	}
+	var sent importBlueprintRequest
+	if err := json.Unmarshal([]byte(gotBody), &sent); err != nil {
+		t.Fatalf("request body not JSON: %v (%s)", err, gotBody)
+	}
+	if sent.URL != "https://github.com/org/repo" || sent.Ref != "v1.2.3" {
+		t.Errorf("sent = %+v", sent)
+	}
+	if sent.Apply || sent.ModelOverrides != nil {
+		t.Errorf("preview must not carry apply/modelOverrides: %+v", sent)
+	}
+	if prev == nil || prev.Name != "repo" || prev.Version != "1.0.0" || len(prev.Manifest) == 0 {
+		t.Fatalf("preview = %+v", prev)
+	}
+}
+
+// TestImportAndApplyBlueprintClientPostsRequest verifies the import+apply client
+// posts apply:true plus the modelOverrides map to /api/blueprints/import.
+func TestImportAndApplyBlueprintClientPostsRequest(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"bp-9","name":"repo","version":"1.0.0","status":"published"}`))
+	}))
+	defer ts.Close()
+
+	m := NewMemoryClient(ts.URL, "proj")
+	rec, err := m.ImportAndApplyBlueprint(t.Context(), "https://github.com/org/repo", "v1.2.3", "", map[string]string{"writer": "openai/gpt-4o"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/api/blueprints/import" {
+		t.Errorf("request = %s %s, want POST /api/blueprints/import", gotMethod, gotPath)
+	}
+	var sent importBlueprintRequest
+	if err := json.Unmarshal([]byte(gotBody), &sent); err != nil {
+		t.Fatalf("request body not JSON: %v (%s)", err, gotBody)
+	}
+	if !sent.Apply {
+		t.Errorf("apply = false, want true")
+	}
+	if got := sent.ModelOverrides["writer"]; got != "openai/gpt-4o" {
+		t.Errorf("modelOverrides[writer] = %q, want openai/gpt-4o", got)
+	}
+	if rec == nil || rec.ID != "bp-9" {
 		t.Fatalf("record = %+v", rec)
 	}
 }

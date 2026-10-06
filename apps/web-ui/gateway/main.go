@@ -377,6 +377,7 @@ func main() {
 	e.GET("/blueprints/:id", s.uiBlueprint)
 	e.POST("/blueprints/install", s.uiInstallBlueprint)
 	e.POST("/blueprints/import", s.uiImportGitHubBlueprint)
+	e.POST("/blueprints/import/confirm", s.uiImportGitHubBlueprintConfirm)
 	e.POST("/blueprints/enable", s.uiEnableBlueprint)
 	e.POST("/blueprints/:id/install", s.uiInstallBlueprintById)
 	e.POST("/blueprints/:id/unapply", s.uiUnapplyBlueprint)

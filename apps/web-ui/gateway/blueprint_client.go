@@ -30,6 +30,18 @@ type BlueprintRecord struct {
 	UpdatedAt   string          `json:"updated_at"`
 }
 
+// BlueprintPreview is the side-effect-free preview returned by POST
+// /api/blueprints/import/preview: the blueprint's metadata plus its raw
+// manifest, without creating or publishing a row. The gateway renders the
+// model-mapping page from this before committing to an import.
+type BlueprintPreview struct {
+	Name        string          `json:"name"`
+	Version     string          `json:"version"`
+	Description string          `json:"description"`
+	Author      string          `json:"author"`
+	Manifest    json.RawMessage `json:"manifest"`
+}
+
 // BlueprintApplyResult mirrors memory's ApplyResult: per-entity-type
 // materialization counts for one blueprint apply.
 type BlueprintApplyResult struct {
@@ -103,9 +115,18 @@ type createBlueprintRequest struct {
 // an optional private-repo credential: it is sent only to the memory backend
 // and is never logged.
 type importBlueprintRequest struct {
-	URL   string `json:"url"`
-	Ref   string `json:"ref,omitempty"`
+	URL string `json:"url"`
+	Ref string `json:"ref,omitempty"`
+	// Token is an optional private-repo credential: it is sent only to the
+	// memory backend and is never logged.
 	Token string `json:"token,omitempty"`
+	// ModelOverrides maps an agent name to a "provider/model" string, resolving
+	// models the project can't map on its own. An empty value clears the model
+	// so the agent falls back to the project default.
+	ModelOverrides map[string]string `json:"modelOverrides,omitempty"`
+	// Apply makes the import create+publish AND apply in one step; on an apply
+	// failure memory deletes the created row so a retry is clean.
+	Apply bool `json:"apply,omitempty"`
 }
 
 // --- MemoryClient blueprint methods ---
@@ -146,6 +167,33 @@ func (m *MemoryClient) CreateBlueprint(ctx context.Context, req *createBlueprint
 // The optional token is a private-repo credential; it is never logged.
 func (m *MemoryClient) ImportBlueprint(ctx context.Context, url, ref, token string) (*BlueprintRecord, error) {
 	req := importBlueprintRequest{URL: url, Ref: ref, Token: token}
+	var out BlueprintRecord
+	if err := m.doH(ctx, http.MethodPost, "/api/blueprints/import", req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// PreviewImportBlueprint fetches a blueprint's metadata and manifest without
+// creating or publishing anything (POST /api/blueprints/import/preview). It is
+// project-scoped (same headers as import) so the gateway can render the
+// model-mapping step before committing to an import. The optional token is a
+// private-repo credential; it is never logged.
+func (m *MemoryClient) PreviewImportBlueprint(ctx context.Context, url, ref, token string) (*BlueprintPreview, error) {
+	req := importBlueprintRequest{URL: url, Ref: ref, Token: token}
+	var out BlueprintPreview
+	if err := m.doH(ctx, http.MethodPost, "/api/blueprints/import/preview", req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ImportAndApplyBlueprint imports a blueprint and applies it in one step
+// (POST /api/blueprints/import with apply:true), passing the resolved model
+// overrides. The optional token is a private-repo credential; it is never
+// logged.
+func (m *MemoryClient) ImportAndApplyBlueprint(ctx context.Context, url, ref, token string, overrides map[string]string) (*BlueprintRecord, error) {
+	req := importBlueprintRequest{URL: url, Ref: ref, Token: token, Apply: true, ModelOverrides: overrides}
 	var out BlueprintRecord
 	if err := m.doH(ctx, http.MethodPost, "/api/blueprints/import", req, m.documentHeaders(ctx), &out); err != nil {
 		return nil, err

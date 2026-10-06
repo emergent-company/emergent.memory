@@ -321,6 +321,35 @@ func TestService_Apply_InvalidManifest_BadRequest(t *testing.T) {
 	assertAppErrorCode(t, err, apperror.ErrBadRequest.Code)
 }
 
+// TestService_Apply_PreValidation_BadModel verifies the validate-before-
+// materialize contract at the Apply level: a manifest whose agent carries a
+// bare model name (missing the provider prefix) returns 400 BEFORE any pack is
+// materialized. The manifest carries a pack that would otherwise reach
+// applyPacks; because newServiceFromBun wires no schemas service, reaching
+// applyPacks would panic — a clean 400 proves validation ran first and zero
+// packs were created.
+func TestService_Apply_PreValidation_BadModel(t *testing.T) {
+	db := connectTestDB(t)
+	svc := newServiceFromBun(t, db)
+	ctx := context.Background()
+
+	proj := uuid.NewString()
+	manifest := json.RawMessage(`{
+		"packs": [{"name": "p", "version": "1.0.0", "objectTypes": [{"name": "T"}]}],
+		"agents": [{"name": "a", "model": {"name": "gemini-2.5-flash"}}]
+	}`)
+
+	bp, err := svc.CreateBlueprint(ctx, &CreateBlueprintRequest{
+		Name: uniqueName("svc-apply-badmodel"), Version: "1.0.0", Manifest: manifest, ProjectID: &proj,
+	})
+	require.NoError(t, err)
+	_, err = svc.PublishBlueprint(ctx, proj, bp.ID)
+	require.NoError(t, err)
+
+	_, err = svc.Apply(ctx, bp.ID, proj, uuid.NewString(), ApplyOptions{})
+	assertAppErrorCode(t, err, apperror.ErrBadRequest.Code)
+}
+
 // TestService_GlobalBlueprint_VisibleFromAnyProject verifies a global blueprint
 // is listable and gettable from any project.
 func TestService_GlobalBlueprint_VisibleFromAnyProject(t *testing.T) {

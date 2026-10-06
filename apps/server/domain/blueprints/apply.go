@@ -76,6 +76,15 @@ func (s *Service) Apply(ctx context.Context, blueprintID, projectID, userID stri
 		return nil, apperror.ErrBadRequest.WithMessage("blueprint manifest is not valid JSON: " + err.Error())
 	}
 
+	// Static validation BEFORE any materialization: a malformed agent model
+	// reference (e.g. a bare name missing the provider prefix) must fail with
+	// 400 and ZERO rows created, rather than materializing packs first and
+	// leaving a half-applied blueprint behind. Every other apply step is
+	// untouched.
+	if err := s.validateManifest(&manifest); err != nil {
+		return nil, err
+	}
+
 	var actorID *uuid.UUID
 	if uid, err := uuid.Parse(userID); err == nil {
 		actorID = &uid
@@ -118,6 +127,46 @@ func (s *Service) Apply(ctx context.Context, blueprintID, projectID, userID stri
 	}
 
 	return result, nil
+}
+
+// validateManifest statically validates a manifest's agents, packs, and skills
+// WITHOUT any database writes, so a malformed manifest returns 400 before any
+// pack/agent/skill is materialized. Each check mirrors the exact validation the
+// corresponding write path performs, so an error here is indistinguishable from
+// an error mid-apply — except that nothing has been created yet.
+func (s *Service) validateManifest(m *BlueprintManifest) error {
+	for _, am := range m.Agents {
+		if am.Name == "" {
+			return apperror.NewBadRequest("agent name is required")
+		}
+		if am.Visibility != "" {
+			if _, ok := agents.NormalizeVisibility(agents.AgentVisibility(am.Visibility)); !ok {
+				return apperror.NewBadRequest("agent visibility must be one of project, external, internal")
+			}
+		}
+		if am.Model != nil {
+			// Route the model reference through the same shared funnel the write
+			// path uses (#1465). An empty model name is allowed (provider default).
+			if err := agents.NormalizeAgentModelConfig(&agents.ModelConfig{Name: am.Model.Name, Provider: ""}); err != nil {
+				return apperror.NewBadRequest(fmt.Sprintf("agent %q: %v", am.Name, err))
+			}
+		}
+	}
+	for _, p := range m.Packs {
+		if p.Name == "" || p.Version == "" {
+			return apperror.NewBadRequest("pack name and version are required")
+		}
+	}
+	for _, sm := range m.Skills {
+		if err := skills.ValidateCreateSkill(skills.CreateSkillDTO{
+			Name:        sm.Name,
+			Description: sm.Description,
+			Content:     sm.Content,
+		}, s.skillsRepo.MaxContentSize()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // applyPacks materializes schema packs. The pack itself is created globally
