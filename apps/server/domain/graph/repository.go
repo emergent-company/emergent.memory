@@ -33,6 +33,51 @@ type Repository struct {
 	// bulkStatementTimeout is attached to bulk-endpoint contexts so each item
 	// transaction sets PostgreSQL statement_timeout (issue #1481). 0 disables.
 	bulkStatementTimeout time.Duration
+	// bulkConcurrency bounds the per-request worker pool used by the bulk
+	// create/upsert/update endpoints (issue #1573). Always >= 1.
+	bulkConcurrency int
+}
+
+// defaultBulkConcurrency is the worker-pool size used by bulk endpoints when
+// GRAPH_BULK_CONCURRENCY is unset or non-positive. It is deliberately modest:
+// each in-flight item holds a pooled connection for the duration of its item
+// transaction, so the pool must be able to hold the workers plus other traffic.
+const defaultBulkConcurrency = 8
+
+// effectiveBulkConcurrency clamps a configured bulk worker count to a sane
+// range: at least 1, and never more than the connection pool minus one
+// (DB_MAX_OPEN_CONNS-1) so a bulk request can never try to open more
+// connections than the pool will ever hand out (issue #1482) and always leaves
+// one pooled connection for other traffic (health checks, concurrent requests,
+// the embedding workers) rather than claiming the whole pool. A pool of one
+// still permits a single worker.
+func effectiveBulkConcurrency(configured, maxOpenConns int) int {
+	c := configured
+	if c <= 0 {
+		c = defaultBulkConcurrency
+	}
+	if maxOpenConns > 0 {
+		limit := maxOpenConns - 1
+		if limit < 1 {
+			limit = 1
+		}
+		if c > limit {
+			c = limit
+		}
+	}
+	if c < 1 {
+		c = 1
+	}
+	return c
+}
+
+// BulkConcurrency returns the bounded number of items a bulk request processes
+// in parallel. Callers clamp it further to the item count.
+func (r *Repository) BulkConcurrency() int {
+	if r.bulkConcurrency < 1 {
+		return 1
+	}
+	return r.bulkConcurrency
 }
 
 func (r *Repository) DB() bun.IDB {
@@ -60,6 +105,7 @@ func NewRepository(db bun.IDB, log *slog.Logger, cfg *config.Config) *Repository
 		log:                  log.With(logger.Scope("graph.repo")),
 		maxListLimit:         cfg.Graph.MaxListLimit,
 		bulkStatementTimeout: cfg.Database.BulkStatementTimeout,
+		bulkConcurrency:      effectiveBulkConcurrency(cfg.Graph.BulkConcurrency, cfg.Database.MaxOpenConns),
 	}
 }
 

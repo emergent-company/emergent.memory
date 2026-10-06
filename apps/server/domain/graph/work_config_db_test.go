@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -139,17 +140,24 @@ func TestPatch_RejectsStatusOutsideAllowedSet(t *testing.T) {
 	require.Equal(t, "ready", *head.Status)
 }
 
-// fakeEmbeddingEnqueuer records the object IDs enqueued for embedding.
+// fakeEmbeddingEnqueuer records the object IDs enqueued for embedding. Its
+// write methods are mutex-guarded so the bulk worker pool (issue #1573) can
+// enqueue from several goroutines without a data race under -race.
 type fakeEmbeddingEnqueuer struct {
+	mu       sync.Mutex
 	enqueued []string
 }
 
 func (f *fakeEmbeddingEnqueuer) EnqueueEmbedding(ctx context.Context, objectID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.enqueued = append(f.enqueued, objectID)
 	return nil
 }
 
 func (f *fakeEmbeddingEnqueuer) EnqueueBatchEmbeddings(ctx context.Context, objectIDs []string) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.enqueued = append(f.enqueued, objectIDs...)
 	return len(objectIDs), nil
 }

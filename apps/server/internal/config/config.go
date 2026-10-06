@@ -673,6 +673,16 @@ type GraphConfig struct {
 	// migration/rollback scans more than 10000 objects, raise
 	// GRAPH_MIGRATION_SCAN_MAX_OBJECTS rather than splitting the operation.
 	MigrationScanMaxObjects int `env:"GRAPH_MIGRATION_SCAN_MAX_OBJECTS" envDefault:"10000"`
+
+	// BulkConcurrency bounds how many items a single bulk create/upsert/update
+	// request processes in parallel. Each in-flight item holds one database
+	// connection for the duration of its item transaction, so the effective
+	// worker count is clamped to the connection pool minus one
+	// (DB_MAX_OPEN_CONNS-1, floor 1), reserving one connection for other
+	// traffic (#1482).
+	// Default: 8 — enough to overlap the per-object version-write I/O wait
+	// (issue #1573) while leaving pool headroom for concurrent requests.
+	BulkConcurrency int `env:"GRAPH_BULK_CONCURRENCY" envDefault:"8"`
 }
 
 // ChunkingConfig holds configuration for text chunking.

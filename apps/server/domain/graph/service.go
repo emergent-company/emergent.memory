@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -323,6 +324,50 @@ const entityTypeRelationship = EntityRelationship
 // bulkUpdateMaxDuration bounds the detached context used by BulkUpdateObjects so
 // a client disconnect cannot leave a batch holding DB connections indefinitely.
 const bulkUpdateMaxDuration = 10 * time.Minute
+
+// runBulkItems runs fn once for every index in [0,n) using at most
+// `concurrency` goroutines. It is the bounded worker pool behind the bulk
+// create/upsert/update endpoints (issue #1573): the per-item write path is
+// I/O-bound (one HEAD read, a version INSERT and a supersedes UPDATE each), so
+// overlapping independent items cuts wall time without changing semantics.
+//
+// Correctness/ordering contract:
+//   - Each index is visited exactly once, so fn may write its own results[i]
+//     slot with no mutex; the function returns only after every worker exits,
+//     so the caller may read the whole slice.
+//   - `concurrency` is clamped to [1,n]; the caller is responsible for the
+//     pool-aware upper bound (Repository.BulkConcurrency).
+//   - A cancelled ctx does not abort the pool: in-flight items observe ctx
+//     themselves and new items are still attempted so each index gets a result
+//     (per-item error isolation) rather than being silently left unset.
+func runBulkItems(n, concurrency int, fn func(i int)) {
+	if n <= 0 {
+		return
+	}
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	if concurrency > n {
+		concurrency = n
+	}
+
+	var next int64
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+	for w := 0; w < concurrency; w++ {
+		go func() {
+			defer wg.Done()
+			for {
+				i := int(atomic.AddInt64(&next, 1)) - 1
+				if i >= n {
+					return
+				}
+				fn(i)
+			}
+		}()
+	}
+	wg.Wait()
+}
 
 // enqueueEmbedding enqueues a graph object for async embedding generation.
 // Logs and swallows errors — embedding is best-effort and must never block CRUD.
@@ -3255,7 +3300,8 @@ func (s *Service) BulkCreateObjects(ctx context.Context, projectID uuid.UUID, re
 		_, _ = s.schemaProvider.GetProjectSchemas(workerCtx, projectID.String())
 	}
 
-	for i, item := range req.Items {
+	runBulkItems(len(req.Items), s.repo.BulkConcurrency(), func(i int) {
+		item := req.Items[i]
 		resp, err := s.Create(workerCtx, projectID, &item, actorID)
 		if err != nil {
 			errMsg := err.Error()
@@ -3263,7 +3309,7 @@ func (s *Service) BulkCreateObjects(ctx context.Context, projectID uuid.UUID, re
 		} else {
 			results[i] = BulkCreateObjectResult{Index: i, Success: true, Object: resp}
 		}
-	}
+	})
 
 	successCount, failedCount := 0, 0
 	byType := make(map[string]int)
@@ -3317,11 +3363,12 @@ func (s *Service) BulkUpsertObjects(ctx context.Context, projectID uuid.UUID, re
 		_, _ = s.schemaProvider.GetProjectSchemas(workerCtx, projectID.String())
 	}
 
-	for i, item := range req.Items {
+	runBulkItems(len(req.Items), s.repo.BulkConcurrency(), func(i int) {
+		item := req.Items[i]
 		if item.Type == "" || item.Key == nil || *item.Key == "" {
 			errMsg := "type and key are required for upsert"
 			results[i] = BulkUpsertObjectResult{Index: i, Success: false, Error: &errMsg}
-			continue
+			return
 		}
 
 		resp, created, err := s.CreateOrUpdate(workerCtx, projectID, &item, actorID)
@@ -3331,7 +3378,7 @@ func (s *Service) BulkUpsertObjects(ctx context.Context, projectID uuid.UUID, re
 		} else {
 			results[i] = BulkUpsertObjectResult{Index: i, Success: true, Created: created, Object: resp}
 		}
-	}
+	})
 
 	successCount, failedCount := 0, 0
 	for _, r := range results {
@@ -3383,12 +3430,13 @@ func (s *Service) BulkUpdateObjects(ctx context.Context, projectID uuid.UUID, re
 		_, _ = s.schemaProvider.GetProjectSchemas(workerCtx, projectID.String())
 	}
 
-	for i, item := range req.Items {
+	runBulkItems(len(req.Items), s.repo.BulkConcurrency(), func(i int) {
+		item := req.Items[i]
 		id, parseErr := uuid.Parse(item.ID)
 		if parseErr != nil {
 			errMsg := "invalid id: " + parseErr.Error()
 			results[i] = BulkUpdateObjectResult{Index: i, ID: item.ID, Success: false, Error: &errMsg}
-			continue
+			return
 		}
 
 		patchReq := &PatchGraphObjectRequest{
@@ -3407,7 +3455,7 @@ func (s *Service) BulkUpdateObjects(ctx context.Context, projectID uuid.UUID, re
 		} else {
 			results[i] = BulkUpdateObjectResult{Index: i, ID: item.ID, Success: true, Object: resp}
 		}
-	}
+	})
 
 	successCount, failedCount := 0, 0
 	for _, r := range results {
