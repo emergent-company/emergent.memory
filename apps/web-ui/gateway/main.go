@@ -55,6 +55,7 @@ func main() {
 
 	e := echo.New()
 	e.HideBanner = true
+	installErrorHandler(e)
 	// Resolve the real client IP from X-Forwarded-For set by traefik. The default
 	// extractor trusts loopback/private/link-local peers, so the gateway — always
 	// reached through traefik on a private network — keys rate limits (and any

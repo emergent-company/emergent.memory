@@ -1,0 +1,161 @@
+package main
+
+import (
+	"net/http"
+	"strconv"
+
+	"github.com/emergent-company/emergent.memory/apps/web-ui/webui"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// errorPageData describes one branded error page.
+type errorPageData struct {
+	Status  int
+	Heading string
+	Message string
+}
+
+// errorPageForStatus maps an HTTP status to its branded copy. Only 403/404/500
+// are ever passed here; anything else falls back to the generic 500 copy.
+func errorPageForStatus(status int) errorPageData {
+	switch status {
+	case http.StatusForbidden:
+		return errorPageData{Status: status, Heading: "Access denied", Message: "You don't have permission to view this page."}
+	case http.StatusNotFound:
+		return errorPageData{Status: status, Heading: "Page not found", Message: "The page you're looking for doesn't exist or may have moved."}
+	default:
+		return errorPageData{Status: status, Heading: "Something went wrong", Message: "An unexpected error occurred. Please try again."}
+	}
+}
+
+// errorPage is the standalone branded document for HTTP 403/404/500 browser
+// navigations. Like loginPage it is a full document on purpose (no appShell):
+// a centered brand + card on the app's dark canvas with the same anti-white-flash
+// paint guard. Copy is generic — no status detail or internal error text leaks.
+templ errorPage(data errorPageData) {
+	<!DOCTYPE html>
+	<html lang="en" data-theme="dark" class="group/html">
+		<head>
+			<meta charset="UTF-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+			<meta name="color-scheme" content="dark"/>
+			<meta name="theme-color" content="#171921"/>
+			<meta name="apple-mobile-web-app-capable" content="yes"/>
+			<meta name="mobile-web-app-capable" content="yes"/>
+			<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+			<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png"/>
+			<link rel="manifest" href="/assets/manifest.webmanifest"/>
+			@appleSplashLinks()
+			<title>{ pageTitle(data.Heading) }</title>
+			<!-- Pre-paint guard: single source is foucBackgroundGuard(). -->
+			@foucBackgroundGuard()
+			<style>
+			/* Error stage: full-viewport centered column over a faint brass/steel
+			   aura, mirroring the sign-in treatment. Self-contained so the page
+			   never depends on app.css beyond the daisy utilities it loads. */
+			.error-stage {
+				position: relative;
+				min-height: 100dvh;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				overflow: hidden;
+				padding: 2.5rem 1.5rem;
+			}
+			.error-aura {
+				position: absolute;
+				inset: 0;
+				pointer-events: none;
+				background:
+					radial-gradient(640px 360px at 50% -8%, oklch(0.74 0.135 78 / 0.15), transparent 70%),
+					radial-gradient(760px 500px at 88% 112%, oklch(0.64 0.105 240 / 0.09), transparent 70%),
+					radial-gradient(520px 420px at 4% 96%, oklch(0.76 0.15 162 / 0.05), transparent 70%);
+			}
+			.error-card {
+				position: relative;
+				width: 100%;
+				max-width: 24rem;
+				padding: 2.25rem 1.75rem 2rem;
+				text-align: center;
+				border-radius: 1.25rem;
+				border: 1px solid oklch(1 0 0 / 0.07);
+				background: linear-gradient(180deg, oklch(0.225 0.017 274), oklch(0.185 0.014 274));
+				box-shadow:
+					0 32px 90px -28px oklch(0 0 0 / 0.7),
+					inset 0 1px 0 oklch(1 0 0 / 0.05);
+			}
+			.error-brand {
+				display: flex;
+				justify-content: center;
+			}
+			.error-divider {
+				height: 1px;
+				margin: 1.25rem 0 1.5rem;
+				background: linear-gradient(90deg, transparent, oklch(1 0 0 / 0.1), transparent);
+			}
+			.error-numeral {
+				margin: 0;
+				font-size: 3.5rem;
+				line-height: 1;
+				font-weight: 800;
+				letter-spacing: -0.04em;
+				font-variant-numeric: tabular-nums;
+				background: linear-gradient(180deg, oklch(0.96 0.02 90), oklch(0.72 0.13 78));
+				-webkit-background-clip: text;
+				background-clip: text;
+				color: transparent;
+			}
+			.error-title {
+				margin: 0.75rem 0 0;
+				font-size: 1.4rem;
+				line-height: 1.25;
+				font-weight: 700;
+				letter-spacing: -0.015em;
+				text-wrap: balance;
+			}
+			.error-message {
+				margin: 0.4rem auto 0;
+				max-width: 18rem;
+				font-size: 0.85rem;
+				line-height: 1.5;
+				color: var(--color-base-content);
+				/* 0.55 (the sign-in subtitle value) only reaches ~5:1 on this
+				   card; the error message is the page's primary explanation, so
+				   lift it to ~8:1 (WCAG AA body with margin). */
+				opacity: 0.7;
+			}
+			.error-cta {
+				margin-top: 1.75rem;
+			}
+			</style>
+			<link rel="stylesheet" href={ templ.SafeURL(webui.AssetPath("/css/app.css")) } data-asset-track="reload"/>
+		</head>
+		<body class="bg-base-200">
+			<div class="error-stage">
+				<div class="error-aura" aria-hidden="true"></div>
+				<main class="error-card" data-testid="error-page">
+					<div class="error-brand">
+						@memoryLogo()
+					</div>
+					<div class="error-divider" aria-hidden="true"></div>
+					<p class="error-numeral" aria-hidden="true">{ strconv.Itoa(data.Status) }</p>
+					<h1 class="error-title">{ data.Heading }</h1>
+					<p class="error-message">{ data.Message }</p>
+					<div class="error-cta">
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeLink,
+							Href:    "/",
+							Variant: ui.ButtonPrimary,
+							Size:    ui.ButtonLG,
+							Block:   true,
+							Glow:    true,
+							Attrs:   templ.Attributes{"data-testid": "error-home"},
+						}) {
+							Back to home
+						}
+					</div>
+				</main>
+			</div>
+		</body>
+	</html>
+}
