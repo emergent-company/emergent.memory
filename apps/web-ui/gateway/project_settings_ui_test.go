@@ -1,6 +1,10 @@
 package main
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -83,6 +87,64 @@ func TestRenderSettingsSubNav(t *testing.T) {
 	if !strings.Contains(html, "bg-base-200 font-medium text-base-content") {
 		t.Error("active item should carry the active highlight class")
 	}
+}
+
+// TestSettingsNavConnectedDevicesIconIsBundled guards #1566: the Connected
+// devices rail entry used the nonexistent icon name "lucide--devices". The
+// @iconify/tailwind4 plugin (webui/css/app.css) only compiles a
+// `.lucide--<name>{--svg:…}` mask rule for names that exist in the bundled
+// @iconify-json/lucide set, so a bogus name silently rendered an empty,
+// invisible span (no glyph, only the inactive text-muted-faint colour).
+// Assert (a) the rendered entry still carries a non-empty lucide icon class and
+// (b) that name is present in the exact bundled set the CSS build consumes.
+func TestSettingsNavConnectedDevicesIconIsBundled(t *testing.T) {
+	html := renderHTML(t, settingsSubNav("devices", false))
+	icon := lucideIconInEntry(html, "/settings/devices")
+	if !strings.HasPrefix(icon, "lucide--") || icon == "lucide--" {
+		t.Fatalf("Connected devices nav entry must render a non-empty lucide icon class, got %q", icon)
+	}
+	name := strings.TrimPrefix(icon, "lucide--")
+	if _, ok := bundledLucideIcons(t)[name]; !ok {
+		t.Errorf("Connected devices icon %q is not in the bundled @iconify-json/lucide set — no mask rule compiles and the glyph renders blank (#1566)", icon)
+	}
+}
+
+// lucideIconInEntry returns the first "lucide--…" class inside the sub-nav
+// anchor whose href matches, or "" when the anchor or its icon is absent.
+func lucideIconInEntry(html, href string) string {
+	i := strings.Index(html, `href="`+href+`"`)
+	if i < 0 {
+		return ""
+	}
+	entry := html[i:]
+	if end := strings.Index(entry, "</a>"); end >= 0 {
+		entry = entry[:end]
+	}
+	return regexp.MustCompile(`lucide--[a-z0-9-]+`).FindString(entry)
+}
+
+// bundledLucideIcons returns the icon names in the exact @iconify-json/lucide
+// set the gateway's Tailwind @iconify/tailwind4 plugin compiles from. The
+// node_modules tree is a build artifact (symlinked by `task css`), so skip when
+// it is not present rather than failing a cold checkout.
+func bundledLucideIcons(t *testing.T) map[string]struct{} {
+	t.Helper()
+	path := filepath.Join("node_modules", "@iconify-json", "lucide", "icons.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Skipf("bundled lucide icon set not present (%v) — run `task css` in apps/web-ui/gateway", err)
+	}
+	var doc struct {
+		Icons map[string]json.RawMessage `json:"icons"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatalf("parse bundled lucide set %s: %v", path, err)
+	}
+	names := make(map[string]struct{}, len(doc.Icons))
+	for name := range doc.Icons {
+		names[name] = struct{}{}
+	}
+	return names
 }
 
 // TestRenderVoiceSettingsPage covers the Voice sub-page: header, sub-nav, and
