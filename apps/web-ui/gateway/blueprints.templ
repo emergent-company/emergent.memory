@@ -728,7 +728,14 @@ templ deriveVersionDialog(d *BlueprintDetail) {
 				<textarea id="derive-version-description" name="description" rows="2" placeholder="Derived from the current project schema." class="textarea w-full resize-none"></textarea>
 			}
 			@form.FormActions("", "") {
-				<button type="button" class="btn btn-ghost btn-sm" data-dialog-close="derive-version-modal">Cancel</button>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"data-dialog-close": "derive-version-modal"},
+				}) {
+					Cancel
+				}
 				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM, Icon: "lucide--save"}) {
 					Create version
 				}

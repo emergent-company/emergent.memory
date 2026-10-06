@@ -430,16 +430,28 @@ templ agentMCPSessionsBlock(data agentSettingsData) {
 templ agentMCPSessionsBody(data agentSettingsData) {
 	<div class="mt-3 flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter sessions by status">
 		for _, f := range agentMCPSessionFilters {
-			<a
-				class={ "btn btn-xs", templ.KV("btn-primary", agentMCPSessionFilterActive(data.MCPSessionStatus, f.Value)), templ.KV("btn-ghost", !agentMCPSessionFilterActive(data.MCPSessionStatus, f.Value)) }
-				href={ templ.URL(agentMCPSettingsPath(data.MCPAgentID) + sessionFilterQuery(f.Value) + "#mcp") }
-				hx-get={ templ.URL("/agents/" + url.PathEscape(data.MCPAgentID) + "/mcp-endpoint/sessions" + sessionFilterQuery(f.Value)) }
-				hx-target="#agent-mcp-sessions-body"
-				hx-swap="innerHTML"
-				if agentMCPSessionFilterActive(data.MCPSessionStatus, f.Value) {
-					aria-current="true"
-				}
-			>{ f.Label }</a>
+			{{ active := agentMCPSessionFilterActive(data.MCPSessionStatus, f.Value) }}
+			{{ variant := ui.ButtonGhost }}
+			if active {
+				{{ variant = ui.ButtonPrimary }}
+			}
+			{{ attrs := templ.Attributes{
+				"hx-get":    "/agents/" + url.PathEscape(data.MCPAgentID) + "/mcp-endpoint/sessions" + sessionFilterQuery(f.Value),
+				"hx-target": "#agent-mcp-sessions-body",
+				"hx-swap":   "innerHTML",
+			} }}
+			if active {
+				{{ attrs["aria-current"] = "true" }}
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    agentMCPSettingsPath(data.MCPAgentID) + sessionFilterQuery(f.Value) + "#mcp",
+				Variant: variant,
+				Size:    ui.ButtonXS,
+				Attrs:   attrs,
+			}) {
+				{ f.Label }
+			}
 		}
 	</div>
 	if data.MCPSessionsErr != nil {

@@ -21,14 +21,19 @@ import (
 templ notificationsBell(unread int) {
 	<div class="contents" data-notifications-bell data-testid="notifications-bell" data-unread={ strconv.Itoa(unread) }>
 		@ui.IndicatorWrapper() {
-			<a
-				href="/inbox"
-				class="btn btn-ghost btn-sm btn-square"
-				aria-label={ bellAriaLabel(unread) }
-				title={ bellAriaLabel(unread) }
-			>
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/inbox",
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Shape:   ui.ButtonShapeSquare,
+				Attrs: templ.Attributes{
+					"aria-label": bellAriaLabel(unread),
+					"title":      bellAriaLabel(unread),
+				},
+			}) {
 				@ui.IconSpan("lucide--bell", "size-5")
-			</a>
+			}
 			if unread > 0 {
 				<span
 					class="indicator-item indicator-top indicator-end badge badge-error badge-sm tabular-nums"

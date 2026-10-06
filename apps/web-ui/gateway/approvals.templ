@@ -37,12 +37,10 @@ templ ApprovalsPage(approvals []ToolApprovalItem, questions []AgentQuestionItem,
 				</section>
 			}
 			if len(approvals) == 0 {
-				<div class="card card-border bg-base-100">
-					<div class="card-body items-center gap-2 memory-density-stack text-center">
-						<p class="text-sm font-medium">No approval decisions yet.</p>
-						<p class="text-xs text-muted">When an agent asks to run a gated tool, its decision appears here.</p>
-					</div>
-				</div>
+				@ui.CardRaw("card-border", "items-center gap-2 memory-density-stack text-center", nil) {
+					<p class="text-sm font-medium">No approval decisions yet.</p>
+					<p class="text-xs text-muted">When an agent asks to run a gated tool, its decision appears here.</p>
+				}
 			} else {
 				<div class="flex flex-col gap-2">
 					for _, a := range approvals {
@@ -62,8 +60,7 @@ templ ApprovalsPage(approvals []ToolApprovalItem, questions []AgentQuestionItem,
 templ questionRow(q AgentQuestionItem) {
 	{{ isText := q.InteractionType == "text" || len(q.Options) == 0 }}
 	{{ isMulti := q.InteractionType == "multi_select" }}
-	<div class="card card-border bg-base-100" data-testid="pending-question" data-question-id={ q.ID }>
-		<div class="card-body gap-3 memory-density-compact">
+	@ui.CardRaw("card-border", "gap-3 memory-density-compact", templ.Attributes{"data-testid": "pending-question", "data-question-id": q.ID}) {
 			<p class="text-sm whitespace-pre-wrap break-words">{ q.Question }</p>
 			// A pending question may carry a structured proposal (issue #1425):
 			// render it through the same sanitized card path the chat transcript
@@ -123,13 +120,11 @@ templ questionRow(q AgentQuestionItem) {
 					</form>
 				</div>
 			}
-		</div>
-	</div>
+	}
 }
 
 templ approvalRow(a ToolApprovalItem) {
-	<div class="card card-border bg-base-100">
-		<div class="card-body gap-2 memory-density-compact">
+	@ui.CardRaw("card-border", "gap-2 memory-density-compact", nil) {
 			<div class="flex items-start justify-between gap-3">
 				<div class="flex min-w-0 flex-wrap items-center gap-2">
 					<span class="font-mono text-sm font-semibold">{ a.ToolName }</span>
@@ -158,8 +153,7 @@ templ approvalRow(a ToolApprovalItem) {
 			if a.Decision == "pending" {
 				@approvalActions(a.QuestionID)
 			}
-		</div>
-	</div>
+	}
 }
 
 templ approvalActions(questionID string) {

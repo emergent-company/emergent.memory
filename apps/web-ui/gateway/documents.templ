@@ -195,10 +195,17 @@ templ documentPreviewCard(doc *Document, preview documentPreview) {
 						<p class="text-muted text-sm">The original file as stored in memory.</p>
 					</div>
 				</div>
-				<a class="btn btn-ghost btn-sm gap-1" href={ templ.URL(documentFilePath(doc.ID)) } data-testid="document-download-link">
+				@ui.Button(ui.ButtonProps{
+					Type:       ui.ButtonTypeLink,
+					Href:       documentFilePath(doc.ID),
+					Variant:    ui.ButtonGhost,
+					Size:       ui.ButtonSM,
+					ExtraClass: "gap-1",
+					Attrs:      templ.Attributes{"data-testid": "document-download-link"},
+				}) {
 					@ui.IconSpan("lucide--download", "size-4")
 					Download
-				</a>
+				}
 			</div>
 			switch preview.Mode {
 				case previewModePDF:
@@ -247,10 +254,16 @@ templ documentPreviewUnavailable(doc *Document) {
 templ documentPreviewDownload(doc *Document) {
 	<div class="rounded-box border border-base-content/10 p-4" data-testid="document-preview-download">
 		<p class="text-sm text-muted-bright">This file type cannot be previewed inline.</p>
-		<a class="btn btn-sm btn-outline gap-1 mt-2" href={ templ.URL(documentFilePath(doc.ID)) }>
+		@ui.Button(ui.ButtonProps{
+			Type:       ui.ButtonTypeLink,
+			Href:       documentFilePath(doc.ID),
+			Variant:    ui.ButtonOutline,
+			Size:       ui.ButtonSM,
+			ExtraClass: "gap-1 mt-2",
+		}) {
 			@ui.IconSpan("lucide--download", "size-4")
 			Download file
-		</a>
+		}
 	</div>
 }
 

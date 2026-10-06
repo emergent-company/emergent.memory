@@ -1,6 +1,10 @@
 package main
 
-import "strconv"
+import (
+	"strconv"
+
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
 
 // DockPanel renders the pending-work dock for one conversation: its pending
 // tool approvals and pending ask_user questions. It renders nothing when both
@@ -38,9 +42,42 @@ templ DockPanel(convID string, approvals []ApprovalCard, questions []QuestionCar
 							maxlength="500"
 							aria-label="Rejection reason (optional)"
 						/>
-						<button type="button" class="dock-approval-cancel btn btn-ghost btn-xs" data-dock-action="cancel" data-question-id={ a.QuestionID }>Cancel</button>
-						<button type="button" class="dock-approval-reject btn btn-ghost btn-xs text-error" data-dock-action="reject" data-question-id={ a.QuestionID }>Reject</button>
-						<button type="button" class="dock-approval-approve btn btn-primary btn-xs" data-dock-action="approve" data-question-id={ a.QuestionID }>Approve</button>
+						@ui.Button(ui.ButtonProps{
+							Type:       ui.ButtonTypeButton,
+							Variant:    ui.ButtonGhost,
+							Size:       ui.ButtonXS,
+							ExtraClass: "dock-approval-cancel",
+							Attrs: templ.Attributes{
+								"data-dock-action": "cancel",
+								"data-question-id": a.QuestionID,
+							},
+						}) {
+							Cancel
+						}
+						@ui.Button(ui.ButtonProps{
+							Type:       ui.ButtonTypeButton,
+							Variant:    ui.ButtonGhost,
+							Size:       ui.ButtonXS,
+							ExtraClass: "dock-approval-reject text-error",
+							Attrs: templ.Attributes{
+								"data-dock-action": "reject",
+								"data-question-id": a.QuestionID,
+							},
+						}) {
+							Reject
+						}
+						@ui.Button(ui.ButtonProps{
+							Type:       ui.ButtonTypeButton,
+							Variant:    ui.ButtonPrimary,
+							Size:       ui.ButtonXS,
+							ExtraClass: "dock-approval-approve",
+							Attrs: templ.Attributes{
+								"data-dock-action": "approve",
+								"data-question-id": a.QuestionID,
+							},
+						}) {
+							Approve
+						}
 					</div>
 				</div>
 			}
@@ -75,8 +112,31 @@ templ DockPanel(convID string, approvals []ApprovalCard, questions []QuestionCar
 						/>
 					}
 					<div class="dock-card-controls">
-						<button type="button" class="dock-question-cancel btn btn-ghost btn-xs" data-dock-action="cancel" data-question-id={ q.QuestionID }>Cancel</button>
-						<button type="button" class="dock-question-submit btn btn-primary btn-xs" data-dock-action="answer" data-question-id={ q.QuestionID } disabled>Submit</button>
+						@ui.Button(ui.ButtonProps{
+							Type:       ui.ButtonTypeButton,
+							Variant:    ui.ButtonGhost,
+							Size:       ui.ButtonXS,
+							ExtraClass: "dock-question-cancel",
+							Attrs: templ.Attributes{
+								"data-dock-action": "cancel",
+								"data-question-id": q.QuestionID,
+							},
+						}) {
+							Cancel
+						}
+						@ui.Button(ui.ButtonProps{
+							Type:       ui.ButtonTypeButton,
+							Variant:    ui.ButtonPrimary,
+							Size:       ui.ButtonXS,
+							ExtraClass: "dock-question-submit",
+							Attrs: templ.Attributes{
+								"data-dock-action": "answer",
+								"data-question-id": q.QuestionID,
+								"disabled":         true,
+							},
+						}) {
+							Submit
+						}
 					</div>
 				</div>
 			}

@@ -314,7 +314,15 @@ templ objectsFilters(data objectsPageData) {
 templ objectsProvenanceFilter(data objectsPageData) {
 	<div class="join" role="group" aria-label="Provenance">
 		for _, m := range objectProvenanceModes() {
-			<label class={ "btn btn-sm join-item", templ.KV("btn-active", data.Provenance == m.Value) }>
+			{{ extra := "join-item"
+			if data.Provenance == m.Value {
+				extra += " btn-active"
+			} }}
+			@ui.Button(ui.ButtonProps{
+				Type:       ui.ButtonTypeLabel,
+				Size:       ui.ButtonSM,
+				ExtraClass: extra,
+			}) {
 				<input
 					type="radio"
 					name="provenance"
@@ -324,7 +332,7 @@ templ objectsProvenanceFilter(data objectsPageData) {
 					class="sr-only"
 				/>
 				{ m.Label }
-			</label>
+			}
 		}
 	</div>
 }
@@ -404,18 +412,16 @@ templ objectsKnowledge(data objectsPageData) {
 // the shared .memory-md prose styles, with the conversation id as a muted
 // caption when the stream reported one.
 templ objectsKnowledgeAnswer(answer, sessionID string) {
-	<div class="card bg-base-100 card-border memory-rise">
-		<div class="card-body p-4">
-			<div class="mb-2 flex items-center gap-2">
-				@ui.IconSpan("lucide--sparkles", "size-3.5 shrink-0 text-accent")
-				<span class="text-muted-faint text-xs font-medium tracking-wide uppercase">Answer</span>
-			</div>
-			<div class="memory-md text-sm leading-relaxed">@templ.Raw(renderMarkdown(answer))</div>
-			if sessionID != "" {
-				<p class="text-muted-faint mt-3 border-t border-base-200 pt-2 font-mono text-[11px]">Session { sessionID }</p>
-			}
+	@ui.CardRaw("card-border memory-rise", "p-4", nil) {
+		<div class="mb-2 flex items-center gap-2">
+			@ui.IconSpan("lucide--sparkles", "size-3.5 shrink-0 text-accent")
+			<span class="text-muted-faint text-xs font-medium tracking-wide uppercase">Answer</span>
 		</div>
-	</div>
+		<div class="memory-md text-sm leading-relaxed">@templ.Raw(renderMarkdown(answer))</div>
+		if sessionID != "" {
+			<p class="text-muted-faint mt-3 border-t border-base-200 pt-2 font-mono text-[11px]">Session { sessionID }</p>
+		}
+	}
 }
 
 // objectsKnowledgeError renders the inline error state for a failed Q&A.
@@ -449,19 +455,17 @@ templ objectsSearchResults(data objectsPageData) {
 			<p class="text-muted min-w-0 truncate text-sm">{ countLabel(len(data.Results), "result", "results") } matching "{ data.Query }"</p>
 			<span class="text-muted-faint shrink-0 text-xs">Ranked by relevance</span>
 		</div>
-		<div class="card bg-base-100 card-border overflow-hidden">
-			<div class="card-body p-0">
-				<div class="divide-y divide-base-200">
-					for _, r := range data.Results {
-						if data.Mode == "unified" {
-							@objectUnifiedRow(r, typeUIOf(data.TypeUIByType, r.Object.Type))
-						} else {
-							@objectSearchRow(r, typeUIOf(data.TypeUIByType, r.Object.Type))
-						}
+		@ui.CardRaw("card-border overflow-hidden", "p-0", nil) {
+			<div class="divide-y divide-base-200">
+				for _, r := range data.Results {
+					if data.Mode == "unified" {
+						@objectUnifiedRow(r, typeUIOf(data.TypeUIByType, r.Object.Type))
+					} else {
+						@objectSearchRow(r, typeUIOf(data.TypeUIByType, r.Object.Type))
 					}
-				</div>
+				}
 			</div>
-		</div>
+		}
 	}
 }
 
@@ -573,15 +577,13 @@ templ objectsBrowseEmpty() {
 }
 
 templ objectsList(objects []GraphObject, typeUIByType map[string]typeUI) {
-	<div class="card bg-base-100 card-border overflow-hidden">
-		<div class="card-body p-0">
-			<div id="objects-list" class="divide-y divide-base-200">
-				for _, o := range objects {
-					@objectRow(o, typeUIOf(typeUIByType, o.Type))
-				}
-			</div>
+	@ui.CardRaw("card-border overflow-hidden", "p-0", nil) {
+		<div id="objects-list" class="divide-y divide-base-200">
+			for _, o := range objects {
+				@objectRow(o, typeUIOf(typeUIByType, o.Type))
+			}
 		</div>
-	</div>
+	}
 }
 
 // objectRow is one browse-mode object row.

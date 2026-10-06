@@ -158,16 +158,19 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 					<span>All</span>
 				</label>
 				<span id="chat-selection-count" data-testid="chat-selection-count" class="text-muted min-w-0 grow text-xs" aria-live="polite">0 selected</span>
-				<button
-					type="button"
-					id="chat-bulk-archive"
-					data-action="bulk-archive-sessions"
-					data-testid="chat-bulk-archive"
-					class="btn btn-primary btn-xs"
-					disabled
-				>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonXS,
+					Attrs: templ.Attributes{
+						"id":          "chat-bulk-archive",
+						"data-action": "bulk-archive-sessions",
+						"data-testid": "chat-bulk-archive",
+						"disabled":    true,
+					},
+				}) {
 					Archive
-				</button>
+				}
 			</div>
 		</aside>
 		<div class="flex min-w-0 grow flex-col">
@@ -568,10 +571,14 @@ templ sessionRailItem(c Conversation, ap agentAppearance, active bool) {
 			<div class="flex flex-wrap items-center gap-1.5">
 				@railStatusBadge(c.Bucket, c.PendingApprovals, c.PendingQuestions)
 				if c.IsArchived {
-					<span class="badge badge-ghost badge-xs gap-1 font-normal" data-testid="session-archived-marker">
-						@ui.IconSpan("lucide--archive", "size-3")
-						Archived
-					</span>
+					@ui.Badge(ui.BadgeProps{
+						Label:      "Archived",
+						Variant:    ui.BadgeGhost,
+						Size:       ui.BadgeSizeXS,
+						Icon:       "lucide--archive",
+						LabelClass: "font-normal",
+						Attrs:      templ.Attributes{"data-testid": "session-archived-marker"},
+					})
 				}
 			</div>
 			<div class="font-medium text-sm">{ c.Title }</div>

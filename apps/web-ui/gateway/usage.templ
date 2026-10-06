@@ -58,10 +58,19 @@ templ usageRangeSelector(days int) {
 }
 
 templ usageRangeLink(active, n int) {
-	<a
-		href={ templ.URL("/usage?days=" + strconv.Itoa(n)) }
-		class={ "btn btn-sm join-item", templ.KV("btn-primary", active == n) }
-	>{ strconv.Itoa(n) }d</a>
+	{{ var variant ui.ButtonVariant }}
+	if active == n {
+		{{ variant = ui.ButtonPrimary }}
+	}
+	@ui.Button(ui.ButtonProps{
+		Type:       ui.ButtonTypeLink,
+		Href:       "/usage?days=" + strconv.Itoa(n),
+		Variant:    variant,
+		Size:       ui.ButtonSM,
+		ExtraClass: "join-item",
+	}) {
+		{ strconv.Itoa(n) }d
+	}
 }
 
 // usageSummaryCards renders the summary stats. The current-month spend card is

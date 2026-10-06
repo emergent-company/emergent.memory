@@ -24,7 +24,22 @@ type AdoptionViewSummary struct {
 // an author can exempt a file's known, acceptable ad-hoc markup without
 // regenerating the committed data file.
 var adoptionAllowlist = map[string][]string{
-	// e.g. "some_page.templ": {"badge"},
+	// link-styled badges (<a class="badge" href>); ui.Badge renders a <span> with no href
+	"runs.templ": {"badge"},
+	// rich children (icon + text + button); ui.Alert has no children slot
+	"chat.templ": {"alert"},
+	// share-inline-terminal rich children; ui.Alert has no children slot
+	"share_page.templ": {"alert"},
+	// <form class="card card-border">; ui.CardRaw as= supports only "a"
+	"share_manage.templ": {"card", "card-border"},
+	// border-only row (no card/card-body); ui.CardRaw always emits card bg-base-100 + card-body
+	"documents.templ": {"card-border"},
+	// tab count badge renders the count as direct text (pinned by TestInboxPageTabsAndCounts);
+	// ui.Badge wraps the label in a nested <span>, which changes that markup
+	"inbox.templ": {"badge"},
+	// unread indicator badge: indicator-item positioning classes + direct-text count that
+	// ui.Badge cannot reproduce (it always emits gap-1 and nests the label in a <span>)
+	"notifications_bell.templ": {"badge"},
 }
 
 // adoptionGaps aggregates the generated adoptionFindings by file, in the

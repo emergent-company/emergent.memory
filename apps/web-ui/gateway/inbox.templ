@@ -3,6 +3,7 @@ package main
 import (
 	"strconv"
 
+	"github.com/emergent-company/go-daisy/components/form"
 	"github.com/emergent-company/go-daisy/components/layout"
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
@@ -68,17 +69,28 @@ templ inboxScopeSwitch(d inboxView) {
 }
 
 templ inboxScopeLink(d inboxView, scope, label, icon string) {
-	<a
-		href={ templ.SafeURL(inboxScopeHref(scope)) }
-		class={ "btn btn-sm gap-2", templ.KV("btn-primary", d.Scope == scope), templ.KV("btn-ghost", d.Scope != scope) }
-		data-inbox-scope={ scope }
-	>
+	{{ variant := ui.ButtonGhost }}
+	if d.Scope == scope {
+		{{ variant = ui.ButtonPrimary }}
+	}
+	@ui.Button(ui.ButtonProps{
+		Type:       ui.ButtonTypeLink,
+		Href:       inboxScopeHref(scope),
+		Variant:    variant,
+		Size:       ui.ButtonSM,
+		ExtraClass: "gap-2",
+		Attrs:      templ.Attributes{"data-inbox-scope": scope},
+	}) {
 		@ui.IconSpan(icon, "size-4")
 		<span>{ label }</span>
 		if scope == "project" && d.Scope == "project" && d.scopeUnread() > 0 {
-			<span class="badge badge-xs badge-neutral">{ strconv.Itoa(d.scopeUnread()) }</span>
+			@ui.Badge(ui.BadgeProps{
+				Label:   strconv.Itoa(d.scopeUnread()),
+				Variant: ui.BadgeNeutral,
+				Size:    ui.BadgeSizeXS,
+			})
 		}
-	</a>
+	}
 }
 
 // inboxTabs is the tab strip with per-tab counts.
@@ -163,13 +175,10 @@ templ inboxRowBody(n Notification) {
 	<div class="flex flex-wrap items-center gap-2">
 		<p class={ "truncate text-sm", templ.KV("font-semibold", !n.Read), templ.KV("text-base-content/75", n.Read) }>{ n.Title }</p>
 		if !n.Read {
-			<span class="badge badge-primary badge-xs">New</span>
+			@ui.Badge(ui.BadgeProps{Label: "New", Variant: ui.BadgePrimary, Size: ui.BadgeSizeXS})
 		}
 		if n.RequiresAction {
-			<span class="badge badge-warning badge-xs gap-1">
-				@ui.IconSpan("lucide--hand", "size-3")
-				Action
-			</span>
+			@ui.Badge(ui.BadgeProps{Label: "Action", Variant: ui.BadgeWarning, Size: ui.BadgeSizeXS, Icon: "lucide--hand"})
 		}
 	</div>
 	if n.Message != "" {
@@ -203,13 +212,18 @@ templ inboxRowControls(n Notification) {
 }
 
 templ inboxResolveButton(id string, a NotificationAction) {
-	<button
-		type="button"
-		class={ "btn btn-xs", notificationActionClass(a) }
-		data-notif-action="resolve"
-		data-notif-id={ id }
-		data-notif-verb={ a.Value }
-	>{ a.Label }</button>
+	@ui.Button(ui.ButtonProps{
+		Type:    ui.ButtonTypeButton,
+		Variant: ui.ButtonVariant(notificationActionClass(a)),
+		Size:    ui.ButtonXS,
+		Attrs: templ.Attributes{
+			"data-notif-action": "resolve",
+			"data-notif-id":     id,
+			"data-notif-verb":   a.Value,
+		},
+	}) {
+		{ a.Label }
+	}
 }
 
 templ inboxReadToggle(n Notification) {
@@ -221,16 +235,20 @@ templ inboxReadToggle(n Notification) {
 }
 
 templ inboxIconButton(action, id, label, icon string) {
-	<button
-		type="button"
-		class="btn btn-ghost btn-xs btn-square"
-		title={ label }
-		aria-label={ label }
-		data-notif-action={ action }
-		data-notif-id={ id }
-	>
+	@ui.Button(ui.ButtonProps{
+		Type:    ui.ButtonTypeButton,
+		Variant: ui.ButtonGhost,
+		Size:    ui.ButtonXS,
+		Shape:   ui.ButtonShapeSquare,
+		Attrs: templ.Attributes{
+			"title":            label,
+			"aria-label":       label,
+			"data-notif-action": action,
+			"data-notif-id":     id,
+		},
+	}) {
 		@ui.IconSpan(icon, "size-4")
-	</button>
+	}
 }
 
 // inboxEmpty is the tab/scope-aware empty state. Project scope with nothing
@@ -303,10 +321,16 @@ templ inboxNoProject() {
 templ NotificationPreferencesPage(d notificationPrefsView) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@pageHeader("Inbox", "Notification settings", "Project activity is opt-in. Account, security, and action-required events are always delivered.") {
-			<a href="/inbox?scope=project" class="btn btn-ghost btn-sm gap-2">
+			@ui.Button(ui.ButtonProps{
+				Type:       ui.ButtonTypeLink,
+				Href:       "/inbox?scope=project",
+				Variant:    ui.ButtonGhost,
+				Size:       ui.ButtonSM,
+				ExtraClass: "gap-2",
+			}) {
 				@ui.IconSpan("lucide--arrow-left", "size-4")
 				<span>Back to inbox</span>
-			</a>
+			}
 		}
 		@flashToasts(d.FlashMsg, d.FlashErr)
 		if d.LoadErr != nil {
@@ -355,18 +379,21 @@ templ NotificationPreferencesPage(d notificationPrefsView) {
 
 templ preferenceRow(p NotificationPreference) {
 	<label class={ "flex items-start gap-3 px-4 py-3", templ.KV("cursor-pointer", !p.Required), templ.KV("opacity-80", p.Required) }>
-		<input
-			type="checkbox"
-			name={ "pref_" + p.EventKey }
-			class="toggle toggle-sm mt-0.5"
-			checked?={ p.Enabled }
-			disabled?={ p.Required }
-		/>
+		{{ attrs := templ.Attributes{} }}
+		if p.Required {
+			{{ attrs["disabled"] = true }}
+		}
+		@form.ToggleInput(form.ToggleInputProps{
+			Name:    "pref_" + p.EventKey,
+			Checked: p.Enabled,
+			Class:   "toggle toggle-sm mt-0.5",
+			Attrs:   attrs,
+		})
 		<span class="min-w-0 grow">
 			<span class="flex flex-wrap items-center gap-2">
 				<span class="text-sm font-medium">{ preferenceLabel(p) }</span>
 				if p.Required {
-					<span class="badge badge-ghost badge-xs">Always on</span>
+					@ui.Badge(ui.BadgeProps{Label: "Always on", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
 				}
 			</span>
 			if p.Description != "" {

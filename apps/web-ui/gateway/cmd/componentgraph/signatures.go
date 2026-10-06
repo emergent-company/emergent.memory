@@ -32,13 +32,18 @@ func componentSignatures() map[string]componentSignature {
 		"PanelCard":         {Classes: []string{"card", "card-border"}},
 		"TableCard":         {Classes: []string{"card", "card-border"}},
 		"Dialog": {
-			Classes: []string{"modal", "modal-box", "modal-backdrop", "modal-action"},
+			Classes: []string{"modal", "modal-box", "modal-backdrop"},
 			Tags:    []string{"dialog"},
 		},
 		"SecretRevealModal": {
-			Classes: []string{"modal", "modal-box", "modal-backdrop", "modal-action"},
+			// modal-action is deliberately not a marker: the component's own
+			// action row lives in the components package (never scanned), and
+			// authored action rows sit inside an already-adopted dialog's
+			// children. A raw dialog is still caught by the modal/dialog markers.
+			Classes: []string{"modal", "modal-box", "modal-backdrop"},
 			Tags:    []string{"dialog"},
 		},
 		"ToggleField": {Classes: []string{"toggle"}},
+		"ToggleInput": {Classes: []string{"toggle"}},
 	}
 }

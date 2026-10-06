@@ -221,8 +221,7 @@ templ shareLinksEmpty(newLinkURL string) {
 // labelled "Access & limits" section grouping the behaviour toggles and numeric
 // caps.
 templ shareLinkRowItem(link ShareLinkRow) {
-	<div class="card card-border bg-base-100" data-testid="share-link-row" data-link-id={ link.ID }>
-		<div class="card-body gap-4 memory-density-compact">
+	@ui.CardRaw("card-border", "gap-4 memory-density-compact", templ.Attributes{"data-testid": "share-link-row", "data-link-id": link.ID}) {
 			<div class="flex flex-wrap items-start justify-between gap-3">
 				<div class="flex min-w-0 items-center gap-2">
 					@ui.IconSpan("lucide--link", "size-4 shrink-0 text-primary/70")
@@ -272,8 +271,7 @@ templ shareLinkRowItem(link ShareLinkRow) {
 				</span>
 			</div>
 			@shareLinkAccessSection(link)
-		</div>
-	</div>
+	}
 }
 
 // shareLinkURLBlock is the prominent share-link band: the copy control plus the
@@ -548,7 +546,12 @@ templ shareToolPicker(tools []ShareToolOption, selected []string) {
 // shareToggleRow is a labelled toggle with a short explanation.
 templ shareToggleRow(name string, label string, help string, icon string, checked bool, testID string) {
 	<label class="flex cursor-pointer items-start gap-3" data-testid={ testID }>
-		<input type="checkbox" name={ name } value="true" class="toggle toggle-sm mt-0.5" checked?={ checked }/>
+		@form.ToggleInput(form.ToggleInputProps{
+			Name:    name,
+			Value:   "true",
+			Checked: checked,
+			Class:   "toggle toggle-sm mt-0.5",
+		})
 		<span class="min-w-0">
 			<span class="flex items-center gap-1.5 text-sm font-medium">
 				@ui.IconSpan(icon, "size-4 text-muted")
@@ -563,7 +566,12 @@ templ shareToggleRow(name string, label string, help string, icon string, checke
 templ shareSandboxToggle(checked bool) {
 	<div class="share-sandbox-row rounded-box border border-warning/30 bg-warning/5 p-3">
 		<label class="flex cursor-pointer items-start gap-3" data-testid="share-create-sandbox">
-			<input type="checkbox" name="sandbox" value="true" class="toggle toggle-sm toggle-warning mt-0.5" checked?={ checked }/>
+			@form.ToggleInput(form.ToggleInputProps{
+				Name:    "sandbox",
+				Value:   "true",
+				Checked: checked,
+				Class:   "toggle toggle-sm toggle-warning mt-0.5",
+			})
 			<span class="min-w-0">
 				<span class="flex items-center gap-1.5 text-sm font-medium">
 					@ui.IconSpan("lucide--shield-alert", "size-4 text-warning")
@@ -586,32 +594,34 @@ templ shareSandboxToggle(checked bool) {
 // shareManageScript() wires the click; without JavaScript the URL is still
 // shown as text in the link block.
 templ shareCopyButton(value string, testID string, label string) {
-	<button
-		type="button"
-		class="btn btn-primary btn-sm gap-2"
-		data-copy-link={ value }
-		data-testid={ testID }
-		aria-label={ label }
-	>
+	@ui.Button(ui.ButtonProps{
+		Type:       ui.ButtonTypeButton,
+		Variant:    ui.ButtonPrimary,
+		Size:       ui.ButtonSM,
+		ExtraClass: "gap-2",
+		AriaLabel:  label,
+		Attrs:      templ.Attributes{"data-copy-link": value, "data-testid": testID},
+	}) {
 		@ui.IconSpan("lucide--copy", "size-4")
 		<span class="share-copy-label">{ label }</span>
-	</button>
+	}
 }
 
 // shareRevealCopyButton is the row's copy action for an existing link whose key
 // is not present at list time. It fetches the reveal endpoint on demand, copies
 // the full URL, and fills the readable link field inline (see shareManageScript).
 templ shareRevealCopyButton(revealURL string, label string) {
-	<button
-		type="button"
-		class="btn btn-primary btn-sm gap-2"
-		data-reveal-url={ revealURL }
-		data-testid="share-copy-link"
-		aria-label={ label }
-	>
+	@ui.Button(ui.ButtonProps{
+		Type:       ui.ButtonTypeButton,
+		Variant:    ui.ButtonPrimary,
+		Size:       ui.ButtonSM,
+		ExtraClass: "gap-2",
+		AriaLabel:  label,
+		Attrs:      templ.Attributes{"data-reveal-url": revealURL, "data-testid": "share-copy-link"},
+	}) {
 		@ui.IconSpan("lucide--copy", "size-4")
 		<span class="share-copy-label">{ label }</span>
-	</button>
+	}
 }
 
 // shareManageScript wires the copy buttons once per page.

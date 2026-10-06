@@ -374,7 +374,17 @@ templ agentAutosaveStatus() {
 	>
 		<span class="iconify lucide--cloud-check text-muted-faint size-4" data-autosave-icon aria-hidden="true"></span>
 		<span class="text-muted-strong text-sm" data-autosave-status-label>All changes saved</span>
-		<button type="button" class="btn btn-ghost btn-xs" data-autosave-retry hidden>Retry</button>
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeButton,
+			Variant: ui.ButtonGhost,
+			Size:    ui.ButtonXS,
+			Attrs: templ.Attributes{
+				"data-autosave-retry": true,
+				"hidden":              true,
+			},
+		}) {
+			Retry
+		}
 	</div>
 }
 

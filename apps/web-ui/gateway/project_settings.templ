@@ -903,21 +903,26 @@ templ defaultModelSelect(name, label, current string, models []Model) {
 //     the button carries htmx-request — makes the wait unmistakable.
 templ defaultModelTestButton(selectName string) {
 	{{ modelType := strings.TrimSuffix(selectName, "_model") }}
-	<button
-		type="button"
-		class="btn btn-ghost btn-outline btn-sm shrink-0 gap-1.5"
-		hx-post="/settings/providers/model-config/test"
-		hx-trigger="click"
-		hx-vals={ `{"model_type":"` + modelType + `"}` }
-		hx-include={ "#" + selectName }
-		hx-swap="none"
-		hx-disable="this"
-		data-testid={ "default-model-test-" + modelType }
-	>
+	@ui.Button(ui.ButtonProps{
+		Type:       ui.ButtonTypeButton,
+		Variant:    ui.ButtonGhost,
+		Style:      ui.ButtonStyleOutline,
+		Size:       ui.ButtonSM,
+		ExtraClass: "shrink-0 gap-1.5",
+		Attrs: templ.Attributes{
+			"hx-post":     "/settings/providers/model-config/test",
+			"hx-trigger":  "click",
+			"hx-vals":     `{"model_type":"` + modelType + `"}`,
+			"hx-include":  "#" + selectName,
+			"hx-swap":     "none",
+			"hx-disable":  "this",
+			"data-testid": "default-model-test-" + modelType,
+		},
+	}) {
 		<span class="htmx-indicator default-model-test-indicator loading loading-spinner loading-xs" aria-hidden="true"></span>
 		@ui.IconSpan("lucide--zap", "size-3.5")
 		Test
-	</button>
+	}
 }
 
 // providerModelSelect renders an instance-grouped model dropdown for the
@@ -1579,14 +1584,13 @@ templ providerExtraField(f ExtraField, value string) {
 					data-testid={ "provider-extra-" + f.Key }
 				/>
 			case "boolean":
-				<input
-					type="checkbox"
-					name={ "extra_" + f.Key }
-					value="true"
-					class="toggle toggle-sm"
-					data-testid={ "provider-extra-" + f.Key }
-					checked?={ value == "true" || value == "1" }
-				/>
+				@form.ToggleInput(form.ToggleInputProps{
+					Name:    "extra_" + f.Key,
+					Value:   "true",
+					Class:   "toggle toggle-sm",
+					Checked: value == "true" || value == "1",
+					Attrs:   templ.Attributes{"data-testid": "provider-extra-" + f.Key},
+				})
 			case "select":
 				<select name={ "extra_" + f.Key } class="select w-full" data-testid={ "provider-extra-" + f.Key }>
 					<option value="" selected?={ value == "" }>Default</option>

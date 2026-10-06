@@ -170,7 +170,13 @@ func TestScanAdoption(t *testing.T) {
 	assert("page.templ", dialogLine, "class:modal", []string{"Dialog", "SecretRevealModal"})
 	assert("page.templ", lineOf(adoptionPageTempl, `class="modal-box"`), "class:modal-box", []string{"Dialog", "SecretRevealModal"})
 	assert("page.templ", lineOf(adoptionPageTempl, `class="modal-backdrop"`), "class:modal-backdrop", []string{"Dialog", "SecretRevealModal"})
-	assert("page.templ", lineOf(adoptionPageTempl, `class="modal-action"`), "class:modal-action", []string{"Dialog", "SecretRevealModal"})
+	// modal-action is not owned by any scanned component: a component's own
+	// action row lives in the components package (never scanned), and authored
+	// action rows sit inside an adopted dialog's children. The raw dialog itself
+	// is still caught by the tag/class markers above.
+	if _, ok := findAdoptionFinding(fs, "page.templ", lineOf(adoptionPageTempl, `class="modal-action"`), "class:modal-action"); ok {
+		t.Errorf("caller-supplied modal-action must not be flagged")
+	}
 
 	// The adoption:ignore suppression: the following badge must not be flagged.
 	if _, ok := findAdoptionFinding(fs, "page.templ", lineOf(adoptionPageTempl, `class="badge badge-outline"`), "class:badge"); ok {
@@ -268,9 +274,8 @@ func TestSignaturesInverted(t *testing.T) {
 		"class:modal":          {"Dialog", "SecretRevealModal"},
 		"class:modal-box":      {"Dialog", "SecretRevealModal"},
 		"class:modal-backdrop": {"Dialog", "SecretRevealModal"},
-		"class:modal-action":   {"Dialog", "SecretRevealModal"},
 		"tag:dialog":           {"Dialog", "SecretRevealModal"},
-		"class:toggle":         {"ToggleField"},
+		"class:toggle":         {"ToggleField", "ToggleInput"},
 	} {
 		if got := owners[marker]; !slices.Equal(got, want) {
 			t.Errorf("owners[%q] = %v, want %v", marker, got, want)

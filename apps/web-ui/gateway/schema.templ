@@ -435,10 +435,18 @@ templ schemaEditorForm(view *SchemaEditView) {
 					<h2 class="text-lg font-semibold tracking-tight">Properties</h2>
 					<p class="text-muted mt-0.5 text-sm">Each property is a typed field on this object type.</p>
 				</div>
-				<button type="button" class="btn btn-outline btn-sm" data-add-property="property-row-template" data-property-rows="property-rows">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonOutline,
+					Size:    ui.ButtonSM,
+					Attrs: templ.Attributes{
+						"data-add-property":  "property-row-template",
+						"data-property-rows": "property-rows",
+					},
+				}) {
 					@ui.IconSpan("lucide--plus", "size-4")
 					Add property
-				</button>
+				}
 			</div>
 			<div class="mb-2 hidden gap-2 text-[11px] font-medium tracking-wide text-muted-faint uppercase sm:grid sm:grid-cols-[minmax(0,1fr)_7rem_8rem_8rem_minmax(0,1.4fr)_auto]">
 				<span>Name</span>
@@ -463,7 +471,14 @@ templ schemaEditorForm(view *SchemaEditView) {
 			</template>
 		}
 		<div class="flex flex-wrap items-center justify-between gap-3">
-			<a class="btn btn-ghost btn-sm" href={ templ.URL("/schema/object-types/" + url.PathEscape(view.Detail.Name)) }>Cancel</a>
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/schema/object-types/" + url.PathEscape(view.Detail.Name),
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+			}) {
+				Cancel
+			}
 			<div class="flex items-center gap-2">
 				if view.Provenance != nil {
 					<span class="text-muted hidden text-xs sm:inline">Derived from a blueprint — a confirmation follows.</span>
@@ -516,9 +531,20 @@ templ schemaPropertyRow(p PropertyDetail) {
 			>Required</option>
 		</select>
 		<input type="text" name="property_description" value={ p.Description } placeholder="Description" class="input input-sm w-full" aria-label="Property description"/>
-		<button type="button" class="btn btn-ghost btn-sm btn-square text-error" data-remove-property="1" aria-label="Remove property" title="Remove property">
+		@ui.Button(ui.ButtonProps{
+			Type:       ui.ButtonTypeButton,
+			Variant:    ui.ButtonGhost,
+			Size:       ui.ButtonSM,
+			Shape:      ui.ButtonShapeSquare,
+			ExtraClass: "text-error",
+			Attrs: templ.Attributes{
+				"data-remove-property": "1",
+				"aria-label":           "Remove property",
+				"title":                "Remove property",
+			},
+		}) {
 			@ui.IconSpan("lucide--trash-2", "size-4")
-		</button>
+		}
 	</div>
 }
 
@@ -541,10 +567,23 @@ templ deriveWarningDialog(view *SchemaEditView) {
 		</div>
 		<div class="modal-action">
 			<form method="dialog">
-				<button class="btn btn-sm" value="cancel" autofocus>Keep editing</button>
+				@ui.Button(ui.ButtonProps{
+					Type:  ui.ButtonTypeSubmit,
+					Size:  ui.ButtonSM,
+					Attrs: templ.Attributes{"value": "cancel", "autofocus": true},
+				}) {
+					Keep editing
+				}
 			</form>
 			<form method="dialog">
-				<button class="btn btn-primary btn-sm" value="confirm">Save anyway</button>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"value": "confirm"},
+				}) {
+					Save anyway
+				}
 			</form>
 		</div>
 	}
@@ -578,7 +617,14 @@ templ deriveBlueprintDialog() {
 				<textarea id="derive-description" name="description" rows="2" placeholder="Derived from the current project schema." class="textarea w-full resize-none"></textarea>
 			}
 			@form.FormActions("", "") {
-				<button type="button" class="btn btn-ghost btn-sm" data-dialog-close="derive-blueprint-modal">Cancel</button>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"data-dialog-close": "derive-blueprint-modal"},
+				}) {
+					Cancel
+				}
 				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM, Icon: "lucide--save"}) {
 					Create draft
 				}
