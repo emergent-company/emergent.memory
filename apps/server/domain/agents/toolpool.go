@@ -42,6 +42,12 @@ const (
 	ToolNameACPMCPServerList     = "mcp-server-list"
 	ToolNameACPMCPServerGet      = "mcp-server-get"
 	ToolNameACPSearchMCPRegistry = "search_mcp_registry"
+	// Device MCP configuration is a privileged capability (it can define a
+	// process a device executes): device-targeted create/update and the device
+	// server list are opt-in.
+	ToolNameACPMCPServerCreate  = "mcp-server-create"
+	ToolNameACPUpdateMCPServer  = "update_mcp_server"
+	ToolNameACPDeviceServerList = "mcp-device-server-list"
 )
 
 // coordinationTools is the set of tools denied to sub-agents by default.
@@ -61,6 +67,9 @@ var acpTools = map[string]bool{
 	ToolNameACPMCPServerList:     true,
 	ToolNameACPMCPServerGet:      true,
 	ToolNameACPSearchMCPRegistry: true,
+	ToolNameACPMCPServerCreate:   true,
+	ToolNameACPUpdateMCPServer:   true,
+	ToolNameACPDeviceServerList:  true,
 }
 
 // DefaultMaxDepth is the default maximum agent spawning depth.

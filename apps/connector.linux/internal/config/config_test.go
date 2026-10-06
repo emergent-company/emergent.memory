@@ -602,3 +602,25 @@ func TestSaveOmitsMCPServersWhenEmpty(t *testing.T) {
 		t.Errorf("empty mcp_servers must be omitted from YAML:\n%s", raw)
 	}
 }
+
+func TestLoadAcceptManagedConfig(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "config.yml", validYAML+"accept_managed_config: true\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.AcceptManagedConfig {
+		t.Error("AcceptManagedConfig = false, want true")
+	}
+}
+
+func TestLoadAcceptManagedConfigDefaultsFalse(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "config.yml", validYAML)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AcceptManagedConfig {
+		t.Error("AcceptManagedConfig = true, want false by default")
+	}
+}

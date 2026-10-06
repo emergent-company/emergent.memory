@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"net/http"
@@ -32,12 +33,37 @@ const (
 	DefaultBackoffResetAfter = 30 * time.Second
 )
 
+// DefaultMaxFrameSize is the application-level maximum size (bytes) of an
+// inbound text frame. A config frame over this size is acknowledged as an
+// error rather than dropped. hardReadLimit is the gorilla safety cap used for
+// the connection-level SetReadLimit (well above DefaultMaxFrameSize so the
+// graceful oversized path, not the library's close-on-too-big, is what fires
+// for config frames).
+const (
+	DefaultMaxFrameSize int64 = 1 << 20
+	hardReadLimit       int64 = 32 << 20
+)
+
 // ToolRegistry supplies the tool list for registration and dispatch. The
 // toolreg.Registry satisfies it.
 type ToolRegistry interface {
 	Lookup(name string) (toolreg.Tool, bool)
 	ToolsListPayload() map[string]any
 }
+
+// ConfigResult reports the outcome of applying a Memory-managed config frame.
+// It carries only counts, never server names or credential values, so it is
+// safe to serialize into an ack.
+type ConfigResult struct {
+	Applied int // number of Memory-managed servers applied
+	Tools   int // total tool count after apply
+}
+
+// ConfigApplier applies a Memory-managed config frame. The relay client runs
+// it off the read loop on its own goroutine with panic recovery, then acks the
+// returned result. A non-nil error is acked as an error frame; an error whose
+// message is "stale" acks the stale sentinel.
+type ConfigApplier func(ctx context.Context, frame ConfigFrame) (ConfigResult, error)
 
 // State is a point-in-time snapshot for the status command.
 type State struct {
@@ -73,6 +99,15 @@ type Client struct {
 	backoffMax        time.Duration
 	backoffFactor     float64
 	backoffResetAfter time.Duration
+
+	// applyConfig, when non-nil, applies Memory-managed config frames pushed by
+	// the hub. It is nil when the connector has not opted in, in which case a
+	// pushed config frame is ignored. acceptsManagedConfig is advertised in the
+	// register frame.
+	applyConfig          ConfigApplier
+	configTimeout        time.Duration
+	maxFrameSize         int64
+	acceptsManagedConfig bool
 
 	mu             sync.Mutex
 	conn           *websocket.Conn
@@ -127,6 +162,22 @@ func WithDialer(d *websocket.Dialer) Option { return func(c *Client) { c.dialer 
 // WithLogger sets the logger (default slog.Default()).
 func WithLogger(l *slog.Logger) Option { return func(c *Client) { c.log = l } }
 
+// WithConfigApplier installs the Memory-managed config applier. When nil
+// (the default), pushed config frames are ignored.
+func WithConfigApplier(f ConfigApplier) Option { return func(c *Client) { c.applyConfig = f } }
+
+// WithConfigTimeout bounds one config apply (default DefaultCallTimeout).
+func WithConfigTimeout(d time.Duration) Option { return func(c *Client) { c.configTimeout = d } }
+
+// WithMaxFrameSize sets the application-level inbound text frame size limit
+// (default DefaultMaxFrameSize). A config frame over this size is acked as an
+// error rather than dropping the connection.
+func WithMaxFrameSize(n int64) Option { return func(c *Client) { c.maxFrameSize = n } }
+
+// WithAcceptsManagedConfig controls the accepts_managed_config flag advertised
+// in the register frame. Default false.
+func WithAcceptsManagedConfig(b bool) Option { return func(c *Client) { c.acceptsManagedConfig = b } }
+
 // New creates a relay client. instanceID and version identify the connector
 // in the hub's session list; token must be non-empty (project context comes
 // from the token).
@@ -157,6 +208,8 @@ func New(serverURL, token, projectID, instanceID, version string, registry ToolR
 		writeTo:           DefaultWriteTimeout,
 		ackTimeout:        DefaultAckTimeout,
 		callTimeout:       DefaultCallTimeout,
+		configTimeout:     DefaultCallTimeout,
+		maxFrameSize:      DefaultMaxFrameSize,
 		backoffBase:       DefaultBackoffBase,
 		backoffMax:        DefaultBackoffMax,
 		backoffFactor:     DefaultBackoffFactor,
@@ -322,7 +375,7 @@ func (c *Client) serveOnce(ctx context.Context, wsURL string) error {
 	if err != nil {
 		return fmt.Errorf("relay: dial: %w", err)
 	}
-	conn.SetReadLimit(1 << 20)
+	conn.SetReadLimit(hardReadLimit)
 	c.installConn(conn)
 	defer c.uninstallConn()
 
@@ -398,7 +451,7 @@ func (c *Client) serveOnce(ctx context.Context, wsURL string) error {
 	}()
 
 	for {
-		msgType, data, err := conn.ReadMessage()
+		msgType, data, err := c.readMessage(conn)
 		if err != nil {
 			_ = conn.Close()
 			return fmt.Errorf("relay: read: %w", err)
@@ -406,8 +459,57 @@ func (c *Client) serveOnce(ctx context.Context, wsURL string) error {
 		if msgType != websocket.TextMessage {
 			continue
 		}
+		if int64(len(data)) > c.effectiveMaxFrameSize() {
+			c.handleOversizedFrame(conn, data)
+			continue
+		}
 		c.handleTextFrame(ctx, conn, data, &wg)
 	}
+}
+
+// readMessage reads one WS message. Binary messages are drained and reported
+// via their msgType so the caller can ignore them (matching the previous
+// ReadMessage behavior). Text messages are read in full; the application-level
+// size check happens in the read loop, so an oversized frame can be fully
+// parsed and acknowledged rather than closing the connection. The gorilla
+// SetReadLimit (hardReadLimit) still bounds any single message to prevent
+// unbounded memory.
+func (c *Client) readMessage(conn *websocket.Conn) (msgType int, data []byte, err error) {
+	mt, r, err := conn.NextReader()
+	if err != nil {
+		return 0, nil, err
+	}
+	if mt != websocket.TextMessage {
+		_, _ = io.Copy(io.Discard, r)
+		return mt, nil, nil
+	}
+	data, err = io.ReadAll(r)
+	if err != nil {
+		return mt, nil, err
+	}
+	return mt, data, nil
+}
+
+// effectiveMaxFrameSize returns the application-level text frame size limit.
+func (c *Client) effectiveMaxFrameSize() int64 {
+	if c.maxFrameSize > 0 {
+		return c.maxFrameSize
+	}
+	return DefaultMaxFrameSize
+}
+
+// handleOversizedFrame reacts to a text frame that exceeded maxFrameSize. A
+// config frame is acknowledged as an error (the hub sees a clean rejection
+// instead of a reconnect); any other oversized frame is dropped.
+func (c *Client) handleOversizedFrame(conn *websocket.Conn, data []byte) {
+	frame, err := Parse(data)
+	if err == nil {
+		if cfg, ok := frame.(*ConfigFrame); ok {
+			c.sendConfigError(conn, cfg.ID, "config frame exceeds read limit")
+			return
+		}
+	}
+	c.log.Debug("relay: dropped oversized frame")
 }
 
 // handleTextFrame decodes one inbound text frame and acts on it. Request
@@ -434,6 +536,16 @@ func (c *Client) handleTextFrame(ctx context.Context, conn *websocket.Conn, data
 			defer wg.Done()
 			defer cancel()
 			c.dispatch(callCtx, conn, f)
+		}()
+	case *ConfigFrame:
+		// Apply off the read loop, like dispatch, so a slow or panicking apply
+		// can never block the read loop or kill the connector.
+		cfgCtx, cancel := context.WithTimeout(ctx, c.configTimeout)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer cancel()
+			c.handleConfig(cfgCtx, conn, f)
 		}()
 	case *PingFrame:
 		// App-level ping from the hub; answer with an app-level pong.
@@ -502,6 +614,45 @@ func (c *Client) invoke(ctx context.Context, tool toolreg.Tool, args map[string]
 	return tool.Handler(ctx, args)
 }
 
+// handleConfig applies a pushed config frame and acks it. It runs on its own
+// goroutine (dispatched by handleTextFrame), never inline in the read loop. A
+// nil applier (opted out) means the push is ignored. A non-nil apply error
+// acks an error frame; a "stale" error acks the exact stale sentinel.
+func (c *Client) handleConfig(ctx context.Context, conn *websocket.Conn, frame *ConfigFrame) {
+	if c.applyConfig == nil {
+		c.log.Debug("relay: ignoring config frame (managed config not enabled)")
+		return
+	}
+	result, err := c.invokeConfig(ctx, *frame)
+	if err != nil {
+		c.sendConfigError(conn, frame.ID, err.Error())
+		return
+	}
+	c.sendConfigOK(conn, frame.ID, result.Applied, result.Tools)
+}
+
+// invokeConfig runs the applier, converting panics into errors so a panicking
+// apply acks an error instead of killing the connector.
+func (c *Client) invokeConfig(ctx context.Context, frame ConfigFrame) (result ConfigResult, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("config apply panicked: %v", r)
+		}
+	}()
+	return c.applyConfig(ctx, frame)
+}
+
+// sendConfigOK acks a successfully applied config frame with counts only (no
+// server names or credential values).
+func (c *Client) sendConfigOK(conn *websocket.Conn, id string, applied, tools int) {
+	c.sendResponse(conn, id, map[string]any{"ok": true, "applied": applied, "tools": tools}, "")
+}
+
+// sendConfigError acks a failed config frame.
+func (c *Client) sendConfigError(conn *websocket.Conn, id, msg string) {
+	c.sendResponse(conn, id, nil, msg)
+}
+
 // sendResponse echoes the request id back to the hub with a result payload or
 // an error string.
 func (c *Client) sendResponse(conn *websocket.Conn, id string, payload map[string]any, errMsg string) {
@@ -523,10 +674,11 @@ func (c *Client) sendResponse(conn *websocket.Conn, id string, payload map[strin
 
 func (c *Client) sendRegister(conn *websocket.Conn) error {
 	reg := &RegisterFrame{
-		Type:       FrameRegister,
-		InstanceID: c.instanceID,
-		Version:    c.version,
-		Tools:      c.registry.ToolsListPayload(),
+		Type:                 FrameRegister,
+		InstanceID:           c.instanceID,
+		Version:              c.version,
+		AcceptsManagedConfig: c.acceptsManagedConfig,
+		Tools:                c.registry.ToolsListPayload(),
 	}
 	data, err := Marshal(reg)
 	if err != nil {
@@ -655,6 +807,8 @@ func frameTypeOf(frame any) string {
 	case *RegisteredFrame:
 		return string(f.Type)
 	case *RegisterFrame:
+		return string(f.Type)
+	case *ConfigFrame:
 		return string(f.Type)
 	default:
 		return "unknown"

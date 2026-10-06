@@ -33,6 +33,10 @@ type Config struct {
 	DisabledTools []string               `yaml:"disabled_tools,omitempty"`
 	Tools         ToolsConfig            `yaml:"tools,omitempty"`
 	MCPServers    []mcphost.ServerConfig `yaml:"mcp_servers,omitempty"`
+	// AcceptManagedConfig opts the connector into server-managed MCP
+	// configuration: the register frame advertises accepts_managed_config and
+	// pushed config frames are applied. Default false (pushes ignored).
+	AcceptManagedConfig bool `yaml:"accept_managed_config,omitempty"`
 }
 
 // ToolsConfig is the platform tool configuration. The section is optional:

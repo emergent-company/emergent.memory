@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/crypto"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
@@ -31,6 +32,11 @@ type Service struct {
 	// ToolPool invalidation callback (registered via RegisterToolPoolInvalidator
 	// to break the mcpregistry ↔ agents circular dependency)
 	toolPoolInvalidator ToolPoolInvalidator
+
+	// DeviceConfigPusher is the in-process bridge to the relay for pushing
+	// resolved device configuration. Registered via RegisterDeviceConfigPusher;
+	// nil-safe (pushes become no-ops).
+	deviceConfigPusher DeviceConfigPusher
 }
 
 // Sentinel errors returned by the registry browse/install flow, mapped to
@@ -75,6 +81,13 @@ func NewService(repo *Repository, mcpService *mcp.Service, encryptor *crypto.Enc
 // construction. Deferred to fx.Invoke to break the mcpregistry ↔ agents constructor cycle.
 func (s *Service) RegisterToolPoolInvalidator(invalidator ToolPoolInvalidator) {
 	s.toolPoolInvalidator = invalidator
+}
+
+// RegisterDeviceConfigPusher wires the relay push bridge after construction
+// (mirrors RegisterToolPoolInvalidator). Nil-safe: with no pusher, device-config
+// pushes and owner lookups become no-ops.
+func (s *Service) RegisterDeviceConfigPusher(pusher DeviceConfigPusher) {
+	s.deviceConfigPusher = pusher
 }
 
 // invalidateToolPool notifies the ToolPool to rebuild its cache for a project.
@@ -192,11 +205,45 @@ func (s *Service) GetServer(ctx context.Context, id string, projectID *string) (
 	return s.repo.FindServerByIDWithTools(ctx, id, projectID)
 }
 
+// ListDeviceServers returns the enabled device-targeted servers of a project.
+// A nil instanceID returns every device row; a non-nil instanceID returns
+// broadcast rows plus rows targeting that instance. Server-targeted rows are
+// always excluded.
+func (s *Service) ListDeviceServers(ctx context.Context, projectID string, instanceID *string) ([]*MCPServer, error) {
+	return s.repo.FindDeviceServers(ctx, projectID, instanceID)
+}
+
 // CreateServer creates a new external MCP server.
 func (s *Service) CreateServer(ctx context.Context, projectID string, dto *CreateMCPServerDTO) (*MCPServer, error) {
 	// Validate: cannot create builtin type via API
 	if dto.Type == ServerTypeBuiltin {
 		return nil, fmt.Errorf("cannot create servers of type 'builtin' via API")
+	}
+
+	// Normalize + validate the delivery target (defaults to 'server').
+	target := dto.Target
+	if target == "" {
+		target = TargetServer
+	}
+	if !ValidTarget(target) {
+		return nil, fmt.Errorf("invalid target %q: must be 'server' or 'device'", target)
+	}
+	// A builtin server cannot be device-targeted (already rejected above, but
+	// guard the invariant explicitly for clarity).
+	if target == TargetDevice && dto.Type == ServerTypeBuiltin {
+		return nil, fmt.Errorf("cannot target a builtin server at a device")
+	}
+	// An instance id is only meaningful for a device target.
+	if target == TargetServer && dto.TargetInstanceID != nil {
+		return nil, fmt.Errorf("target_instance_id is only valid when target is 'device'")
+	}
+
+	// Authorize device-targeted writes: only the target device's owner or a
+	// project admin may create a device-targeted row.
+	if target == TargetDevice {
+		if err := s.authorizeDeviceWrite(ctx, projectID, dto.TargetInstanceID); err != nil {
+			return nil, err
+		}
 	}
 
 	// Validate transport-specific fields
@@ -236,18 +283,20 @@ func (s *Service) CreateServer(ctx context.Context, projectID string, dto *Creat
 	}
 
 	server := &MCPServer{
-		ProjectID:     projectID,
-		Name:          dto.Name,
-		Description:   dto.Description,
-		Enabled:       enabled,
-		Type:          dto.Type,
-		Command:       dto.Command,
-		Args:          dto.Args,
-		Env:           env,
-		URL:           dto.URL,
-		Headers:       headers,
-		SecretEnv:     secretEnv,
-		SecretHeaders: secretHeaders,
+		ProjectID:        projectID,
+		Name:             dto.Name,
+		Description:      dto.Description,
+		Enabled:          enabled,
+		Type:             dto.Type,
+		Command:          dto.Command,
+		Args:             dto.Args,
+		Env:              env,
+		URL:              dto.URL,
+		Headers:          headers,
+		SecretEnv:        secretEnv,
+		SecretHeaders:    secretHeaders,
+		Target:           target,
+		TargetInstanceID: dto.TargetInstanceID,
 	}
 
 	if err := s.repo.CreateServer(ctx, server); err != nil {
@@ -259,9 +308,15 @@ func (s *Service) CreateServer(ctx context.Context, projectID string, dto *Creat
 		slog.String("server_id", server.ID),
 		slog.String("name", server.Name),
 		slog.String("type", string(server.Type)),
+		slog.String("target", string(server.Target)),
 	)
 
 	s.invalidateToolPool(projectID)
+
+	// Push device-targeted config to the matching instance(s), non-blocking.
+	if server.Target == TargetDevice {
+		s.pushAfterDeviceWrite(ctx, projectID, server.TargetInstanceID)
+	}
 
 	return server, nil
 }
@@ -279,7 +334,8 @@ func (s *Service) UpdateServer(ctx context.Context, id string, projectID string,
 	// Cannot modify builtin servers (except enable/disable)
 	if server.Type == ServerTypeBuiltin {
 		if dto.Name != nil || dto.Command != nil || dto.URL != nil || dto.Args != nil || dto.Env != nil || dto.Headers != nil ||
-			dto.SecretEnvKeys != nil || dto.SecretHeadersKeys != nil || dto.Type != nil {
+			dto.SecretEnvKeys != nil || dto.SecretHeadersKeys != nil || dto.Type != nil ||
+			dto.Target != nil || dto.TargetInstanceID != nil {
 			return nil, fmt.Errorf("cannot modify builtin server configuration — only enable/disable is allowed")
 		}
 	}
@@ -358,6 +414,34 @@ func (s *Service) UpdateServer(ctx context.Context, id string, projectID string,
 		server.SecretHeaders = secretHeaders
 	}
 
+	// Delivery target changes: validate the resulting target and authorize
+	// device-targeted writes.
+	if dto.Target != nil {
+		if !ValidTarget(*dto.Target) {
+			return nil, fmt.Errorf("invalid target %q: must be 'server' or 'device'", *dto.Target)
+		}
+		server.Target = *dto.Target
+	}
+	if dto.TargetInstanceID != nil {
+		server.TargetInstanceID = dto.TargetInstanceID
+	}
+	if server.Target == "" {
+		server.Target = TargetServer
+	}
+	// A device-targeted row must not be a builtin server.
+	if server.Target == TargetDevice && server.Type == ServerTypeBuiltin {
+		return nil, fmt.Errorf("cannot target a builtin server at a device")
+	}
+	// An instance id is only meaningful for a device target.
+	if server.Target == TargetServer && server.TargetInstanceID != nil {
+		return nil, fmt.Errorf("target_instance_id is only valid when target is 'device'")
+	}
+	if server.Target == TargetDevice {
+		if err := s.authorizeDeviceWrite(ctx, projectID, server.TargetInstanceID); err != nil {
+			return nil, err
+		}
+	}
+
 	// Transport-required validation covers both a type change and a same-type
 	// partial update (e.g. clearing the command on a stdio server). The builtin
 	// type has no case, so enable/disable-only builtin updates still pass.
@@ -381,6 +465,11 @@ func (s *Service) UpdateServer(ctx context.Context, id string, projectID string,
 
 	s.invalidateToolPool(projectID)
 
+	// Push device-targeted config to the matching instance(s), non-blocking.
+	if server.Target == TargetDevice {
+		s.pushAfterDeviceWrite(ctx, projectID, server.TargetInstanceID)
+	}
+
 	return server, nil
 }
 
@@ -399,6 +488,14 @@ func (s *Service) DeleteServer(ctx context.Context, id string, projectID string)
 		return fmt.Errorf("cannot delete builtin server")
 	}
 
+	// Authorize device-targeted writes: only the device's owner or a project
+	// admin may delete a device-targeted row.
+	if server.Target == TargetDevice {
+		if err := s.authorizeDeviceWrite(ctx, projectID, server.TargetInstanceID); err != nil {
+			return err
+		}
+	}
+
 	if err := s.repo.DeleteServer(ctx, id); err != nil {
 		return fmt.Errorf("deleting server: %w", err)
 	}
@@ -414,7 +511,199 @@ func (s *Service) DeleteServer(ctx context.Context, id string, projectID string)
 
 	s.invalidateToolPool(projectID)
 
+	// Push the reduced device config to the matching instance(s), non-blocking.
+	if server.Target == TargetDevice {
+		s.pushAfterDeviceWrite(ctx, projectID, server.TargetInstanceID)
+	}
+
 	return nil
+}
+
+// --- Device configuration push + authorization ---
+
+// devicePushResolveTimeout bounds the resolve step of a device-config push so a
+// slow DB or decrypt never leaks a goroutine.
+const devicePushResolveTimeout = 30 * time.Second
+
+// authorizeDeviceWrite enforces D2/D6 authorization for a device-targeted write.
+// A project admin may target any device, including a broadcast (instance id
+// nil). A non-admin must target a specific device they own (the device's
+// recorded owner subject must match the caller). Broadcasts are admin-only: a
+// broadcast row persists with no owner identity, so it is hydrated to every
+// opted-in device of the project on (re)connect — allowing a non-admin to
+// create one would be a cross-member RCE (a member's command executing on
+// another member's device).
+func (s *Service) authorizeDeviceWrite(ctx context.Context, projectID string, instanceID *string) error {
+	user, err := auth.RequireUser(ctx)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrDeviceTargetForbidden, err)
+	}
+
+	// A project admin may target any device, including a broadcast that fans out
+	// to every opted-in device of the project.
+	isAdmin, err := s.repo.IsProjectAdmin(ctx, projectID, user.ID)
+	if err != nil {
+		return fmt.Errorf("checking project admin: %w", err)
+	}
+	if isAdmin {
+		return nil
+	}
+
+	// Broadcasts are admin-only (see doc comment): a non-admin must name a
+	// specific device they own.
+	if instanceID == nil {
+		return ErrDeviceTargetForbidden
+	}
+
+	// Owner check: the device's recorded owner subject must match the caller.
+	if s.deviceConfigPusher != nil {
+		if owner, ok := s.deviceConfigPusher.OwnerSubject(projectID, *instanceID); ok && owner != "" && owner == user.ID {
+			return nil
+		}
+	}
+	return ErrDeviceTargetForbidden
+}
+
+// resolveDeviceConfig resolves and decrypts the enabled device-targeted rows of
+// a project into the wire DeviceServerConfig list. instanceID non-nil scopes to
+// a single device (broadcast rows + that instance's rows); nil returns the
+// broadcast rows only. Decryption happens here — the only holder of the
+// encryptor — and the decrypted values never flow through ToDTO/stripSecretKeys
+// or the tool-pool caches.
+func (s *Service) resolveDeviceConfig(ctx context.Context, projectID string, instanceID *string) ([]DeviceServerConfig, error) {
+	servers, err := s.repo.FindDeviceServers(ctx, projectID, instanceID)
+	if err != nil {
+		return nil, fmt.Errorf("listing device servers: %w", err)
+	}
+	out := make([]DeviceServerConfig, 0, len(servers))
+	for _, srv := range servers {
+		env, err := mergeDecrypted(s.encryptor, srv.Env, srv.SecretEnv, "env")
+		if err != nil {
+			return nil, fmt.Errorf("decrypting env for device server %q: %w", srv.Name, err)
+		}
+		headers, err := mergeDecrypted(s.encryptor, srv.Headers, srv.SecretHeaders, "header")
+		if err != nil {
+			return nil, fmt.Errorf("decrypting headers for device server %q: %w", srv.Name, err)
+		}
+		out = append(out, DeviceServerConfig{
+			Name:      srv.Name,
+			Transport: deviceTransport(srv.Type),
+			Enabled:   srv.Enabled,
+			Command:   ptrString(srv.Command),
+			Args:      srv.Args,
+			Env:       env,
+			URL:       ptrString(srv.URL),
+			Headers:   headers,
+		})
+	}
+	return out, nil
+}
+
+// resolveForProject returns the per-instance resolver used by the relay to
+// resolve each target device's own config during a broadcast push.
+func (s *Service) resolveForProject(projectID string) func(ctx context.Context, instanceID string) ([]DeviceServerConfig, error) {
+	return func(ctx context.Context, instanceID string) ([]DeviceServerConfig, error) {
+		return s.resolveDeviceConfig(ctx, projectID, &instanceID)
+	}
+}
+
+// pushAfterDeviceWrite fans out the resolved device config after a
+// device-targeted create/update/delete. Non-blocking: a slow/offline device can
+// never stall the registry write.
+func (s *Service) pushAfterDeviceWrite(ctx context.Context, projectID string, instanceID *string) {
+	if s.deviceConfigPusher == nil {
+		return
+	}
+	ownerSubject := ""
+	admin := false
+	if u, err := auth.RequireUser(ctx); err == nil {
+		ownerSubject = u.ID
+		if a, aerr := s.repo.IsProjectAdmin(ctx, projectID, u.ID); aerr == nil {
+			admin = a
+		}
+	}
+	s.pushDeviceConfig(projectID, instanceID, ownerSubject, admin)
+}
+
+// pushDeviceConfig launches a best-effort push on its own goroutine with a
+// bounded context. Never logs the resolved frame or decrypted values.
+func (s *Service) pushDeviceConfig(projectID string, instanceID *string, ownerSubject string, admin bool) {
+	instanceIDCopy := instanceID
+	go func() {
+		pushCtx, cancel := context.WithTimeout(context.Background(), devicePushResolveTimeout)
+		defer cancel()
+
+		if instanceIDCopy != nil {
+			servers, err := s.resolveDeviceConfig(pushCtx, projectID, instanceIDCopy)
+			if err != nil {
+				s.log.Warn("device config resolve failed", slog.String("error", err.Error()))
+				return
+			}
+			s.deviceConfigPusher.PushConfigToInstance(pushCtx, projectID, *instanceIDCopy, servers)
+			return
+		}
+		s.deviceConfigPusher.PushConfigToProject(pushCtx, projectID, ownerSubject, admin, s.resolveForProject(projectID))
+	}()
+}
+
+// HydrateDevice pushes the current resolved device config to a single instance.
+// Called by the relay's post-ack hydration hook (mcprelay.NotifyRegistered),
+// never before the register ack is written. Non-blocking.
+func (s *Service) HydrateDevice(projectID, instanceID string) {
+	if s.deviceConfigPusher == nil {
+		return
+	}
+	id := instanceID
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), devicePushResolveTimeout)
+		defer cancel()
+		servers, err := s.resolveDeviceConfig(ctx, projectID, &id)
+		if err != nil {
+			s.log.Warn("device hydration resolve failed", slog.String("error", err.Error()))
+			return
+		}
+		s.deviceConfigPusher.PushConfigToInstance(ctx, projectID, id, servers)
+	}()
+}
+
+// mergeDecrypted merges the plaintext map with the decrypted secret values.
+// A nil encryptor with any ciphertext present is an error (cannot decrypt).
+func mergeDecrypted(enc *crypto.Encryptor, plain map[string]any, secrets map[string]EncryptedSecret, kind string) (map[string]any, error) {
+	out := make(map[string]any, len(plain)+len(secrets))
+	for k, v := range plain {
+		out[k] = v
+	}
+	for k, sec := range secrets {
+		if enc == nil {
+			return nil, fmt.Errorf("credential encryption not configured (cannot decrypt secret %s %q)", kind, k)
+		}
+		pt, err := enc.Decrypt(sec.Ciphertext, sec.Nonce)
+		if err != nil {
+			return nil, fmt.Errorf("decrypting secret %s %q: %w", kind, k, err)
+		}
+		out[k] = string(pt)
+	}
+	return out, nil
+}
+
+// deviceTransport maps an MCPServerType to the relay wire transport name.
+func deviceTransport(t MCPServerType) string {
+	switch t {
+	case ServerTypeHTTP:
+		return "http"
+	case ServerTypeSSE:
+		return "sse"
+	default:
+		return "stdio"
+	}
+}
+
+// ptrString dereferences a nullable string, returning "" for nil.
+func ptrString(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 // --- Tool management ---
@@ -465,6 +754,12 @@ func (s *Service) SyncServerTools(ctx context.Context, projectID, serverID strin
 	}
 	if server == nil {
 		return ErrServerNotFound
+	}
+
+	// Device-targeted rows are never tool-synced server-side: their tools are
+	// served by the device through the relay.
+	if server.Target == TargetDevice {
+		return ErrDeviceServerNotOutbound
 	}
 
 	// Upsert discovered tools
@@ -570,6 +865,11 @@ func (s *Service) InspectServer(ctx context.Context, serverID string, projectID 
 		return nil, nil
 	}
 
+	// Device-targeted rows are never connected outbound by the server.
+	if server.Target == TargetDevice {
+		return nil, ErrDeviceServerNotOutbound
+	}
+
 	// Builtin servers don't have external connections to inspect
 	if server.Type == ServerTypeBuiltin {
 		return &MCPServerInspectDTO{
@@ -629,6 +929,11 @@ func (s *Service) CallToolOnServer(ctx context.Context, projectID, serverID, too
 	}
 	if !server.Enabled {
 		return nil, ErrServerDisabled
+	}
+
+	// Device-targeted rows are never connected outbound by the server.
+	if server.Target == TargetDevice {
+		return nil, ErrDeviceServerNotOutbound
 	}
 
 	tool, err := s.repo.FindToolByServerAndName(ctx, serverID, toolName)
@@ -705,6 +1010,9 @@ func (s *Service) DiscoverAndSyncTools(ctx context.Context, serverID string, pro
 	}
 	if server == nil {
 		return nil, fmt.Errorf("server not found")
+	}
+	if server.Target == TargetDevice {
+		return nil, fmt.Errorf("%w: device-targeted servers have no server-side tools to discover", ErrDeviceServerNotOutbound)
 	}
 	if server.Type == ServerTypeBuiltin {
 		return nil, fmt.Errorf("cannot discover tools from builtin server — use EnsureBuiltinServer instead")

@@ -30,3 +30,12 @@ var ErrToolForbidden = errors.New("tool forbidden")
 // ErrUpstreamFailure wraps a connection/call failure from an external MCP
 // server. Handlers map it to 502 (Bad Gateway).
 var ErrUpstreamFailure = errors.New("MCP upstream failure")
+
+// ErrDeviceServerNotOutbound is returned when an outbound server path (inspect,
+// discover/sync, call) targets a device-targeted row. Device rows are delivered
+// over the relay, never connected outbound by the server.
+var ErrDeviceServerNotOutbound = errors.New("device-targeted MCP server is not connected outbound by the server")
+
+// ErrDeviceTargetForbidden is returned when a caller is not the target device's
+// owner (or a project admin) for a device-targeted write.
+var ErrDeviceTargetForbidden = errors.New("not authorized to target this device")

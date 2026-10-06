@@ -79,6 +79,16 @@ func TestInitHelpShowsFlags(t *testing.T) {
 	}
 }
 
+func TestRelayHelpShowsAcceptManagedConfig(t *testing.T) {
+	out, _, err := executeRoot("relay", "--help")
+	if err != nil {
+		t.Fatalf("relay --help: %v", err)
+	}
+	if !strings.Contains(out, "--accept-managed-config") {
+		t.Errorf("relay --help missing --accept-managed-config flag:\n%s", out)
+	}
+}
+
 func TestAuthHelpListsSubcommands(t *testing.T) {
 	out, _, err := executeRoot("auth", "--help")
 	if err != nil {

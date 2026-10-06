@@ -21,6 +21,9 @@ func (fakeRegistryHandler) GetMCPRegistryToolDefinitions() []mcp.ToolDefinition 
 func (fakeRegistryHandler) ExecuteListMCPServers(context.Context, string, map[string]any) (*mcp.ToolResult, error) {
 	return &mcp.ToolResult{}, nil
 }
+func (fakeRegistryHandler) ExecuteListDeviceMCPServers(context.Context, string, map[string]any) (*mcp.ToolResult, error) {
+	return &mcp.ToolResult{}, nil
+}
 func (fakeRegistryHandler) ExecuteGetMCPServer(context.Context, string, map[string]any) (*mcp.ToolResult, error) {
 	return &mcp.ToolResult{}, nil
 }
@@ -81,10 +84,10 @@ func TestAgentOnlyParityHTTPInProcess(t *testing.T) {
 		require.True(t, got.AgentOnly, "agent-only %q: GetToolByName disagrees", def.Name)
 	}
 
-	// The full agent-only set: 3 web tools + 7 mcpregistry admin tools.
+	// The full agent-only set: 3 web tools + 8 mcpregistry admin tools.
 	require.ElementsMatch(t, []string{
 		"web-fetch", "web-search-brave", "web-search-reddit",
-		"mcp-server-list", "mcp-server-get", "mcp-server-create",
+		"mcp-server-list", "mcp-device-server-list", "mcp-server-get", "mcp-server-create",
 		"update_mcp_server", "mcp-server-delete", "toggle_mcp_server_tool",
 		"sync_mcp_server_tools",
 	}, agentOnly, "agent-only set must be exactly the web + mcpregistry tools")

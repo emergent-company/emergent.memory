@@ -305,6 +305,11 @@ type testClientOpts struct {
 	backoffMax        time.Duration
 	backoffFactor     float64
 	backoffResetAfter time.Duration
+
+	// Optional config-frame handling overrides.
+	configApplier        ConfigApplier
+	acceptsManagedConfig bool
+	maxFrameSize         int64
 }
 
 // runHandle lets multiple goroutines (test body and cleanup) wait on the
@@ -377,12 +382,22 @@ func startClient(t *testing.T, opts testClientOpts) (*Client, context.CancelFunc
 		WithPingPeriod(opts.pingPeriod),
 		WithAckTimeout(2 * time.Second),
 		WithCallTimeout(2 * time.Second),
+		WithConfigTimeout(2 * time.Second),
 		WithBackoff(backoffBase, backoffMax, backoffFactor),
 		WithReadWait(5 * time.Second),
 		WithLogger(quietLogger()),
 	}
 	if opts.backoffResetAfter != 0 {
 		clientOpts = append(clientOpts, WithBackoffResetAfter(opts.backoffResetAfter))
+	}
+	if opts.configApplier != nil {
+		clientOpts = append(clientOpts, WithConfigApplier(opts.configApplier))
+	}
+	if opts.acceptsManagedConfig {
+		clientOpts = append(clientOpts, WithAcceptsManagedConfig(true))
+	}
+	if opts.maxFrameSize != 0 {
+		clientOpts = append(clientOpts, WithMaxFrameSize(opts.maxFrameSize))
 	}
 	client, err := New(opts.serverURL, opts.token, opts.projectID, opts.instanceID, "0.1.0", opts.registry, clientOpts...)
 	if err != nil {

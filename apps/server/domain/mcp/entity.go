@@ -127,6 +127,7 @@ func ContextWithoutTransportEnforced(ctx context.Context) context.Context {
 // Implemented by the mcpregistry domain to avoid circular imports (mcpregistry → mcp).
 type MCPRegistryToolHandler interface {
 	ExecuteListMCPServers(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteListDeviceMCPServers(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 	ExecuteGetMCPServer(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 	ExecuteCreateMCPServer(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 	ExecuteUpdateMCPServer(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)

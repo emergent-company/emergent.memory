@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/mcphost"
 )
 
 // FrameType identifies the kind of relay frame. Values match mcprelay's
@@ -22,16 +24,18 @@ const (
 	FramePong       FrameType = "pong"
 	FrameError      FrameType = "error"
 	FrameRegistered FrameType = "registered"
+	FrameConfig     FrameType = "config"
 )
 
 // RegisterFrame is the first frame a connector sends after dialing. Tools
 // carries the nested MCP tools/list result shape {"tools":[...]} the hub
 // re-serves.
 type RegisterFrame struct {
-	Type       FrameType      `json:"type"`
-	InstanceID string         `json:"instance_id"`
-	Version    string         `json:"version,omitempty"`
-	Tools      map[string]any `json:"tools,omitempty"`
+	Type                 FrameType      `json:"type"`
+	InstanceID           string         `json:"instance_id"`
+	Version              string         `json:"version,omitempty"`
+	AcceptsManagedConfig bool           `json:"accepts_managed_config,omitempty"`
+	Tools                map[string]any `json:"tools,omitempty"`
 }
 
 // RequestFrame is sent by the hub to the connector: a relayed tool call.
@@ -76,6 +80,18 @@ type RegisteredFrame struct {
 	InstanceID string    `json:"instance_id"`
 }
 
+// ConfigFrame is sent by the hub to the connector: the resolved Memory-managed
+// MCP server set. Version is monotonic per instance; the connector rejects a
+// frame whose version is not newer than the last applied version as stale.
+// Servers carries mcphost.ServerConfig entries (name/transport/enabled/
+// command/args/env/url/headers); there is no per-server disabled_tools in v1.
+type ConfigFrame struct {
+	Type    FrameType              `json:"type"`
+	ID      string                 `json:"id"`
+	Version int64                  `json:"version"`
+	Servers []mcphost.ServerConfig `json:"servers"`
+}
+
 // Errors returned by Parse for frames that cannot be decoded.
 var (
 	ErrMalformedJSON = errors.New("malformed frame JSON")
@@ -112,6 +128,8 @@ func Parse(data []byte) (any, error) {
 		frame = &ErrorFrame{}
 	case FrameRegistered:
 		frame = &RegisteredFrame{}
+	case FrameConfig:
+		frame = &ConfigFrame{}
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnknownFrame, base.Type)
 	}

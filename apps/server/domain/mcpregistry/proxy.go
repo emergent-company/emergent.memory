@@ -185,7 +185,9 @@ func (pm *ProxyManager) resolveServerForTool(ctx context.Context, projectID, pre
 		if err != nil {
 			return nil, "", fmt.Errorf("looking up server %q: %w", rawServerName, err)
 		}
-		if server != nil {
+		// Device-targeted rows are never connected outbound by the server; a raw
+		// name hit on one falls through to slug mode (which also excludes them).
+		if server != nil && server.Target != TargetDevice {
 			return server, prefixedToolName[idx+1:], nil
 		}
 	}
@@ -200,6 +202,11 @@ func (pm *ProxyManager) resolveServerForTool(ctx context.Context, projectID, pre
 	var best *MCPServer
 	var bestSlug, bestTool string
 	for _, srv := range servers {
+		if srv.Target == TargetDevice {
+			// Device-targeted rows are delivered over the relay, never connected
+			// outbound by the server.
+			continue
+		}
 		slug := SlugifyServerName(srv.Name)
 		prefix := slug + "_"
 		if !strings.HasPrefix(prefixedToolName, prefix) {

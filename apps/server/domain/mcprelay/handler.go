@@ -76,6 +76,12 @@ func (h *Handler) Connect(c echo.Context) error {
 	}
 
 	sess := newSession(projectID, reg.InstanceID, reg.Version, reg.Tools, conn)
+	// Record the device's opt-in flag and the authenticated owner subject (the
+	// internal user ID) so device-targeted configuration writes can be authorized.
+	sess.AcceptsManagedConfig = reg.AcceptsManagedConfig
+	if user := auth.GetUser(c); user != nil {
+		sess.OwnerSubject = user.ID
+	}
 	h.svc.Register(sess)
 	defer h.svc.Unregister(projectID, reg.InstanceID)
 
@@ -84,6 +90,12 @@ func (h *Handler) Connect(c echo.Context) error {
 	if err := sess.writeMessage(websocket.TextMessage, ack); err != nil {
 		return nil
 	}
+
+	// Post-ack hydration: after the `registered` ack is on the wire, notify the
+	// registry so an opted-in device receives its resolved configuration. This
+	// must NOT use OnChange (which fires before the ack and is dropped by the
+	// connector's waitForAck).
+	h.svc.NotifyRegistered(projectID, reg.InstanceID)
 
 	// ── WebSocket-level keepalive ──
 	// Use protocol-level ping/pong so that any intermediate proxy (Traefik, Cloudflare, etc.)

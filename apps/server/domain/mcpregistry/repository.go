@@ -123,6 +123,45 @@ func (r *Repository) FindServerByName(ctx context.Context, projectID, name strin
 	return server, nil
 }
 
+// FindDeviceServers returns the enabled, device-targeted servers of a project.
+// When instanceID is non-nil it returns broadcast rows (target_instance_id IS
+// NULL) plus rows targeting that specific instance; when nil it returns every
+// device-targeted row (used by the list surface). Rows are ordered by name.
+func (r *Repository) FindDeviceServers(ctx context.Context, projectID string, instanceID *string) ([]*MCPServer, error) {
+	var servers []*MCPServer
+	q := r.db.NewSelect().
+		Model(&servers).
+		Where("project_id = ?", projectID).
+		Where("target = ?", TargetDevice).
+		Where("enabled = true")
+	if instanceID != nil {
+		q = q.Where("target_instance_id IS NULL OR target_instance_id = ?", *instanceID)
+	}
+	err := q.Order("name ASC").Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return servers, nil
+}
+
+// IsProjectAdmin reports whether userID holds the project_admin role in
+// projectID. Used to authorize device-targeted writes (owner or project admin).
+func (r *Repository) IsProjectAdmin(ctx context.Context, projectID, userID string) (bool, error) {
+	if userID == "" {
+		return false, nil
+	}
+	exists, err := r.db.NewSelect().
+		TableExpr("kb.project_memberships").
+		Where("project_id = ?", projectID).
+		Where("user_id = ?", userID).
+		Where("role = ?", "project_admin").
+		Exists(ctx)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
 // CreateServer creates a new MCP server.
 func (r *Repository) CreateServer(ctx context.Context, server *MCPServer) error {
 	_, err := r.db.NewInsert().
@@ -366,6 +405,7 @@ func (r *Repository) FindAllEnabledTools(ctx context.Context, projectID string) 
 		Where("ms.enabled = true").
 		Where("mst.enabled = true").
 		Where("ms.type != ?", ServerTypeBuiltin). // exclude builtins — they come from mcp.Service
+		Where("ms.target != ?", TargetDevice).    // exclude device rows — never connected outbound
 		Order("ms.name ASC", "mst.tool_name ASC").
 		Scan(ctx, &tools)
 	if err != nil {

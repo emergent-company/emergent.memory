@@ -127,6 +127,34 @@ func (h *MCPRegistryToolHandler) ExecuteListMCPServers(ctx context.Context, proj
 	return wrapResult(summaries)
 }
 
+// ExecuteListDeviceMCPServers lists device-targeted MCP servers for a project,
+// optionally filtered to a single instance. Broadcast rows (target_instance_id
+// NULL) are always included alongside rows targeting the requested instance.
+func (h *MCPRegistryToolHandler) ExecuteListDeviceMCPServers(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	var instanceID *string
+	if id, ok := args["instance_id"].(string); ok && id != "" {
+		instanceID = &id
+	}
+
+	servers, err := h.service.ListDeviceServers(ctx, projectID, instanceID)
+	if err != nil {
+		return errResult("failed to list device MCP servers: " + err.Error())
+	}
+
+	summaries := make([]mcpServerSummary, 0, len(servers))
+	for _, s := range servers {
+		summaries = append(summaries, mcpServerSummary{
+			ID:          s.ID,
+			Name:        s.Name,
+			Description: s.Description,
+			Enabled:     s.Enabled,
+			Type:        s.Type,
+		})
+	}
+
+	return wrapResult(summaries)
+}
+
 // ExecuteGetMCPServer gets a single MCP server by ID with its tools.
 func (h *MCPRegistryToolHandler) ExecuteGetMCPServer(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
 	id, _ := args["server_id"].(string)
@@ -188,6 +216,14 @@ func (h *MCPRegistryToolHandler) ExecuteCreateMCPServer(ctx context.Context, pro
 	dto.SecretEnvKeys = stringSliceArg(args, "secretEnvKeys", "secret_env_keys")
 	dto.SecretHeadersKeys = stringSliceArg(args, "secretHeadersKeys", "secret_headers_keys")
 
+	// Delivery target (defaults to 'server').
+	if target, ok := args["target"].(string); ok && target != "" {
+		dto.Target = MCPServerTarget(target)
+	}
+	if instID, ok := args["target_instance_id"].(string); ok && instID != "" {
+		dto.TargetInstanceID = &instID
+	}
+
 	server, err := h.service.CreateServer(ctx, projectID, dto)
 	if err != nil {
 		return errResult("failed to create MCP server: " + err.Error())
@@ -234,6 +270,15 @@ func (h *MCPRegistryToolHandler) ExecuteUpdateMCPServer(ctx context.Context, pro
 	}
 	dto.SecretEnvKeys = stringSliceArg(args, "secretEnvKeys", "secret_env_keys")
 	dto.SecretHeadersKeys = stringSliceArg(args, "secretHeadersKeys", "secret_headers_keys")
+
+	// Delivery target changes.
+	if target, ok := args["target"].(string); ok && target != "" {
+		t := MCPServerTarget(target)
+		dto.Target = &t
+	}
+	if instID, ok := args["target_instance_id"].(string); ok && instID != "" {
+		dto.TargetInstanceID = &instID
+	}
 
 	server, err := h.service.UpdateServer(ctx, id, projectID, dto)
 	if err != nil {
@@ -452,6 +497,21 @@ func (h *MCPRegistryToolHandler) GetMCPRegistryToolDefinitions() []mcp.ToolDefin
 			},
 		},
 		{
+			Name:        "mcp-device-server-list",
+			AgentOnly:   true,
+			Description: "List device-targeted MCP servers for the current project — server configuration that is pushed to connected relay devices rather than connected outbound by the server. Optionally filter to a single device instance.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.PropertySchema{
+					"instance_id": {
+						Type:        "string",
+						Description: "Optional relay instance_id. When set, returns broadcast servers plus servers targeting that instance.",
+					},
+				},
+				Required: []string{},
+			},
+		},
+		{
 			Name:        "mcp-server-get",
 			AgentOnly:   true,
 			Description: "Get details of a specific MCP server by ID, including all its registered tools with their enabled/disabled status.",
@@ -507,6 +567,15 @@ func (h *MCPRegistryToolHandler) GetMCPRegistryToolDefinitions() []mcp.ToolDefin
 						Description: "Whether the server is enabled (default: true)",
 						Default:     true,
 					},
+					"target": {
+						Type:        "string",
+						Description: "Delivery mode: 'server' (connected outbound, default) or 'device' (pushed to a connected relay device). Device-targeted writes require the caller to own the device or be a project admin.",
+						Enum:        []string{"server", "device"},
+					},
+					"target_instance_id": {
+						Type:        "string",
+						Description: "Relay instance_id to target when target is 'device'. Omit to broadcast to every eligible device of the project.",
+					},
 				},
 				Required: []string{"name", "type"},
 			},
@@ -537,6 +606,15 @@ func (h *MCPRegistryToolHandler) GetMCPRegistryToolDefinitions() []mcp.ToolDefin
 					"url": {
 						Type:        "string",
 						Description: "New URL (sse/http types only)",
+					},
+					"target": {
+						Type:        "string",
+						Description: "Delivery mode: 'server' (connected outbound) or 'device' (pushed to a connected relay device). Device-targeted writes require the caller to own the device or be a project admin.",
+						Enum:        []string{"server", "device"},
+					},
+					"target_instance_id": {
+						Type:        "string",
+						Description: "Relay instance_id to target when target is 'device'. Omit to broadcast to every eligible device of the project.",
 					},
 				},
 				Required: []string{"server_id"},

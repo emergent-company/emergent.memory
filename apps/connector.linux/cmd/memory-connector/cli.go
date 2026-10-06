@@ -109,6 +109,7 @@ func configFlags(cmd *cobra.Command) {
 func relayFlags(cmd *cobra.Command) {
 	configFlags(cmd)
 	cmd.Flags().Int("api-port", 0, "loopback management API port (127.0.0.1; 0 disables)")
+	cmd.Flags().Bool("accept-managed-config", false, "accept server-managed MCP configuration pushed over the relay")
 }
 
 // installFlags registers install's flags.

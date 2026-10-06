@@ -2334,6 +2334,8 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 	// MCP Registry tools
 	case "mcp-server-list":
 		return s.delegateRegistryTool(ctx, projectID, toolName, args)
+	case "mcp-device-server-list":
+		return s.delegateRegistryTool(ctx, projectID, toolName, args)
 	case "mcp-server-get":
 		return s.delegateRegistryTool(ctx, projectID, toolName, args)
 	case "mcp-server-create":
@@ -5696,6 +5698,8 @@ func (s *Service) delegateRegistryTool(ctx context.Context, projectID, toolName 
 	switch toolName {
 	case "mcp-server-list":
 		return s.mcpRegistryToolHandler.ExecuteListMCPServers(ctx, projectID, args)
+	case "mcp-device-server-list":
+		return s.mcpRegistryToolHandler.ExecuteListDeviceMCPServers(ctx, projectID, args)
 	case "mcp-server-get":
 		return s.mcpRegistryToolHandler.ExecuteGetMCPServer(ctx, projectID, args)
 	case "mcp-server-create":

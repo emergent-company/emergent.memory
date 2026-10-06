@@ -33,6 +33,7 @@ var Module = fx.Module("mcpregistry",
 		RegisterRoutes,
 		registerServiceLifecycle,
 		registerMCPRegistryToolHandler,
+		registerDeviceConfigPusher,
 	),
 )
 
@@ -81,6 +82,12 @@ func provideService(p serviceParams) (*Service, error) {
 // break the constructor cycle).
 func registerMCPRegistryToolHandler(mcpService *mcp.Service, svc *Service, log *slog.Logger) {
 	mcpService.RegisterMCPRegistryToolHandler(NewMCPRegistryToolHandler(svc, log))
+}
+
+// registerDeviceConfigPusher wires the relay push bridge (provided by mcprelay)
+// into the registry service after construction.
+func registerDeviceConfigPusher(svc *Service, pusher DeviceConfigPusher) {
+	svc.RegisterDeviceConfigPusher(pusher)
 }
 
 // registerServiceLifecycle registers the service's Close method with the fx lifecycle

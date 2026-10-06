@@ -6,6 +6,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
 )
 
 // Module provides the MCP Relay domain.
@@ -22,6 +23,8 @@ var Module = fx.Module("mcprelay",
 	fx.Provide(NewHandler),
 	fx.Invoke(RegisterRoutes),
 	fx.Provide(provideRelayProvider),
+	fx.Provide(provideDeviceConfigPusher),
+	fx.Invoke(registerDeviceConfigHydration),
 )
 
 // relayAdapter adapts mcprelay.Service to mcp.RelayToolProvider.
@@ -50,4 +53,37 @@ func (a *relayAdapter) CallTool(ctx context.Context, projectID, instanceID, tool
 // relay tools appear in tools/list and relay tool calls are forwarded correctly.
 func provideRelayProvider(relaySvc *Service) mcp.RelayToolProvider {
 	return &relayAdapter{svc: relaySvc}
+}
+
+// deviceConfigAdapter adapts mcprelay.Service to mcpregistry.DeviceConfigPusher,
+// so mcpregistry can push resolved device configuration without importing
+// mcprelay (one-way dependency).
+type deviceConfigAdapter struct {
+	svc *Service
+}
+
+func (a *deviceConfigAdapter) PushConfigToInstance(ctx context.Context, projectID, instanceID string, servers []mcpregistry.DeviceServerConfig) {
+	a.svc.PushConfigToInstance(ctx, projectID, instanceID, servers)
+}
+
+func (a *deviceConfigAdapter) PushConfigToProject(ctx context.Context, projectID, ownerSubject string, admin bool, resolve func(ctx context.Context, instanceID string) ([]mcpregistry.DeviceServerConfig, error)) {
+	a.svc.PushConfigToProject(ctx, projectID, ownerSubject, admin, resolve)
+}
+
+func (a *deviceConfigAdapter) OwnerSubject(projectID, instanceID string) (string, bool) {
+	return a.svc.OwnerSubject(projectID, instanceID)
+}
+
+func provideDeviceConfigPusher(relaySvc *Service) mcpregistry.DeviceConfigPusher {
+	return &deviceConfigAdapter{svc: relaySvc}
+}
+
+// registerDeviceConfigHydration wires the relay's post-ack registration hook to
+// mcpregistry.HydrateDevice, so an opted-in device receives its resolved
+// configuration after its register ack (never before — the connector's
+// waitForAck drops pre-ack frames).
+func registerDeviceConfigHydration(relaySvc *Service, registry *mcpregistry.Service) {
+	relaySvc.OnRegistered(func(projectID, instanceID string) {
+		registry.HydrateDevice(projectID, instanceID)
+	})
 }

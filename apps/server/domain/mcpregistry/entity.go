@@ -35,6 +35,20 @@ const (
 	ServerTypeHTTP    MCPServerType = "http"
 )
 
+// MCPServerTarget defines whether a registry row is connected outbound by the
+// server ('server') or delivered to a connected relay device ('device').
+type MCPServerTarget string
+
+const (
+	TargetServer MCPServerTarget = "server"
+	TargetDevice MCPServerTarget = "device"
+)
+
+// ValidTarget reports whether t is a known target.
+func ValidTarget(t MCPServerTarget) bool {
+	return t == TargetServer || t == TargetDevice
+}
+
 // MCPServer represents a registered MCP server configuration.
 // Table: kb.mcp_servers
 type MCPServer struct {
@@ -55,8 +69,13 @@ type MCPServer struct {
 	// they are never serialized; the DTO exposes only key names.
 	SecretEnv     map[string]EncryptedSecret `bun:"secret_env,type:jsonb,default:'{}'" json:"-"`
 	SecretHeaders map[string]EncryptedSecret `bun:"secret_headers,type:jsonb,default:'{}'" json:"-"`
-	CreatedAt     time.Time                  `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
-	UpdatedAt     time.Time                  `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
+	// Target selects the delivery mode: 'server' (connected outbound) or
+	// 'device' (pushed over the relay). TargetInstanceID is the relay instance_id
+	// for a device row; nil means every eligible device of the project.
+	Target           MCPServerTarget `bun:"target,notnull,default:'server'" json:"target"`
+	TargetInstanceID *string         `bun:"target_instance_id" json:"targetInstanceId,omitempty"`
+	CreatedAt        time.Time       `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
+	UpdatedAt        time.Time       `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
 
 	// Relations
 	Tools []*MCPServerTool `bun:"rel:has-many,join:id=server_id" json:"tools,omitempty"`
@@ -108,6 +127,8 @@ type MCPServerDTO struct {
 	SecretHeadersKeys []string           `json:"secretHeadersKeys"`
 	ToolCount         int                `json:"toolCount"`
 	Tools             []MCPServerToolDTO `json:"tools,omitempty"`
+	Target            MCPServerTarget    `json:"target"`
+	TargetInstanceID  *string            `json:"targetInstanceId,omitempty"`
 	CreatedAt         time.Time          `json:"createdAt"`
 	UpdatedAt         time.Time          `json:"updatedAt"`
 }
@@ -148,6 +169,10 @@ type CreateMCPServerDTO struct {
 	// values must be encrypted at rest instead of stored in plaintext.
 	SecretEnvKeys     []string `json:"secretEnvKeys"`
 	SecretHeadersKeys []string `json:"secretHeadersKeys"`
+	// Target selects the delivery mode ('server' default | 'device').
+	Target MCPServerTarget `json:"target"`
+	// TargetInstanceID is the relay instance_id for a device row; nil = broadcast.
+	TargetInstanceID *string `json:"targetInstanceId,omitempty"`
 }
 
 // UpdateMCPServerDTO is the request DTO for updating an MCP server. Unlike
@@ -170,6 +195,10 @@ type UpdateMCPServerDTO struct {
 	// removed.
 	SecretEnvKeys     []string `json:"secretEnvKeys"`
 	SecretHeadersKeys []string `json:"secretHeadersKeys"`
+	// Target, when non-nil, switches the delivery mode ('server' | 'device').
+	Target *MCPServerTarget `json:"target"`
+	// TargetInstanceID is the relay instance_id for a device row; nil = broadcast.
+	TargetInstanceID *string `json:"targetInstanceId,omitempty"`
 }
 
 // UpdateMCPServerToolDTO is the request DTO for toggling a tool and/or updating its config.
@@ -369,6 +398,8 @@ func (s *MCPServer) ToDTO() *MCPServerDTO {
 		SecretHeadersKeys: sortedSecretKeys(s.SecretHeaders),
 		ToolCount:         toolCount,
 		Tools:             tools,
+		Target:            s.Target,
+		TargetInstanceID:  s.TargetInstanceID,
 		CreatedAt:         s.CreatedAt,
 		UpdatedAt:         s.UpdatedAt,
 	}

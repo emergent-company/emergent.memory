@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/mcphost"
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/memoryapi"
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/mgmtapi"
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/relay"
@@ -37,6 +38,7 @@ func runRelayCommand(name string, args []string, stdout, stderr io.Writer, withL
 	fs.SetOutput(stderr)
 	configPath := fs.String("config", config.DefaultConfigPath(), "config file path")
 	apiPort := fs.Int("api-port", 0, "loopback management API port (127.0.0.1; 0 disables)")
+	acceptManaged := fs.Bool("accept-managed-config", false, "accept server-managed MCP configuration pushed over the relay")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -78,11 +80,25 @@ func runRelayCommand(name string, args []string, stdout, stderr io.Writer, withL
 
 	log := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
+	// Load any previously persisted Memory-managed server set so it survives a
+	// restart and merges into the effective config (server re-pushes on
+	// reconnect, but this avoids losing config between pushes).
+	managedPath := managedConfigPath(*configPath)
+	secretsStore := managedSecretsStore(*configPath)
+	managedServers, lastVersion, err := loadManagedConfig(managedPath, secretsStore)
+	if err != nil {
+		log.Warn("memory-connector relay: loading managed config failed", "err", err)
+		managedServers, lastVersion = nil, 0
+	}
+
 	// Build the built-in (platform/Apple) tool set plus a started mcphost
 	// Manager for the hosted local MCP servers, sharing one registry so they
 	// are relayed identically. A server that fails to start is logged and
 	// skipped; config/duplicate errors abort startup before dialing the hub.
-	reg, mgr, note, err := buildRegistry(ctx, cfg, log)
+	// Managed servers win over local servers on a name collision.
+	effectiveCfg := *cfg
+	effectiveCfg.MCPServers = mergeServers(cfg.MCPServers, managedServers)
+	reg, mgr, note, err := buildRegistry(ctx, &effectiveCfg, log)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "memory-connector %s: %v\n", name, err)
 		return 1
@@ -91,12 +107,38 @@ func runRelayCommand(name string, args []string, stdout, stderr io.Writer, withL
 	regMgr := &registryManager{registry: reloadable, log: log, manager: mgr}
 	defer regMgr.Close()
 
+	// The Memory-managed config applier: advertised to the hub only when opted
+	// in, and wired to apply pushes through the same reload path.
+	applier := newManagedConfigApplier(
+		log,
+		managedPath,
+		secretsStore,
+		func() *config.Config { return cfg },
+		regMgr.reload,
+		func() int {
+			cur := reloadable.Current()
+			if cur == nil {
+				return 0
+			}
+			return len(cur.List())
+		},
+		managedServers,
+		lastVersion,
+	)
+
 	registered := reg.List()
 	if len(registered) == 0 && note != "" {
 		_, _ = fmt.Fprintf(stderr, "memory-connector %s: warning: %s\n", name, note)
 	}
 
-	client, err := relay.New(cfg.ServerURL, cfg.Token, cfg.ProjectID, cfg.InstanceID, version, reloadable)
+	acceptManagedConfig := cfg.AcceptManagedConfig || *acceptManaged
+	clientOpts := []relay.Option{
+		relay.WithAcceptsManagedConfig(acceptManagedConfig),
+	}
+	if acceptManagedConfig {
+		clientOpts = append(clientOpts, relay.WithConfigApplier(applier.Apply))
+	}
+	client, err := relay.New(cfg.ServerURL, cfg.Token, cfg.ProjectID, cfg.InstanceID, version, reloadable, clientOpts...)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "memory-connector %s: %v\n", name, err)
 		return 1
@@ -107,7 +149,14 @@ func runRelayCommand(name string, args []string, stdout, stderr io.Writer, withL
 	// unauthenticated by design (local-companion trust model); see the
 	// mgmtapi package doc for the risk.
 	if *apiPort > 0 {
-		api := mgmtapi.NewServer(*configPath, cfg, log, regMgr.reload)
+		// Reload on a local-config change merges the current managed set so a
+		// hand-edited local mcp_servers entry never drops pushed servers.
+		mergeReload := func(ctx context.Context, base *config.Config) ([]mcphost.ServerStatus, error) {
+			next := *base
+			next.MCPServers = mergeServers(base.MCPServers, applier.servers())
+			return regMgr.reload(ctx, &next)
+		}
+		api := mgmtapi.NewServer(*configPath, cfg, log, mergeReload)
 		api.SetStatuses(mgr.Status())
 		api.SetRuntimeStatus(func() mgmtapi.RuntimeStatus {
 			count := 0
