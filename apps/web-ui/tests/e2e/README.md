@@ -401,6 +401,11 @@ npx playwright test --config=js-dom.config.ts   # or: task e2e:js
   round-trips through a server refresh, and archive → unarchive round-trips a
   row through its persisted state. Hermetic (no gateway/credentials), so it runs
   in this CI job with the rest of `specs/js/`.
+- `specs/js/toast-persistent.spec.ts` loads the shipped `app.js` against a fake
+  Alpine toast queue and asserts the `feedback.toast` severity rule: `error`
+  toasts are added with `duration 0` (persistent) on both `MemoryApp.toast` and
+  the delegated `memory-toast` event, while `success`/`info`/`warning` use the
+  shared auto-dismiss timeout.
 - The same CI job runs `node --check` over every
   `gateway/webui/static/js/*.js` first — a fast syntax gate.
 - The gateway-free specs are excluded from the live `chromium` project
