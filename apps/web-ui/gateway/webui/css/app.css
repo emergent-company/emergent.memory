@@ -1559,6 +1559,16 @@ pre.memory-scroll::-webkit-scrollbar-thumb { background: var(--color-base-300); 
 .htmx-request .htmx-indicator.default-model-test-indicator,
 .htmx-request.htmx-indicator.default-model-test-indicator { display: inline-flex; }
 
+/* Shared SaveChangesButton in-flight state: while the enclosing form (or the
+   button itself) carries htmx's `htmx-request` class, swap the save icon for a
+   spinner. The form also carries `hx-disable="find button.memory-save-btn"`, so
+   htmx sets the real `disabled` attribute on the button during the request. */
+.memory-save-btn__spinner { display: none; }
+.htmx-request .memory-save-btn__icon,
+.memory-save-btn.htmx-request .memory-save-btn__icon { display: none; }
+.htmx-request .memory-save-btn__spinner,
+.memory-save-btn.htmx-request .memory-save-btn__spinner { display: inline-flex; }
+
 /* ---------- PWA: standalone display-mode hooks ---------- */
 /* Installed launches ("Add to Home Screen" on iOS, installed on Android) run
    in a standalone window with no browser chrome. Future PWA-only styling —

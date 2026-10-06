@@ -254,7 +254,7 @@ templ scheduleDefinitionSelect(id string, defs []AgentDefinitionSummary, current
 // scheduleEditForm is the edit form (PRG → POST /schedules/:id/update).
 templ scheduleEditForm(a *ScheduledAgent, defs []AgentDefinitionSummary) {
 	@ui.Section("Edit schedule", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-comfortable"}) {
-		<form class="flex flex-col gap-4" method="post" action={ templ.URL("/schedules/" + a.ID + "/update") }>
+		<form class="flex flex-col gap-4" method="post" action={ templ.URL("/schedules/" + a.ID + "/update") } hx-disable="find button.memory-save-btn">
 			@form.FormControl("edit-sched-name", "Name", form.LabelAbove, "", "", nil) {
 				<input id="edit-sched-name" name="name" type="text" required value={ a.Name } class="input w-full"/>
 			}

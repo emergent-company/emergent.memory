@@ -270,7 +270,7 @@ templ mcpShareFormBody(data mcpShareFormData, editing bool) {
 		if editing {
 			action = mcpShareSettingsBase + "/" + url.PathEscape(data.ID) + "/update"
 		} }}
-		<form method="post" action={ templ.URL(action) } class="flex flex-col gap-5" data-mcp-share-form-fields>
+		<form method="post" action={ templ.URL(action) } class="flex flex-col gap-5" data-mcp-share-form-fields hx-disable="find button.memory-save-btn">
 			@form.FormControl("mcp-share-name", "Name", form.LabelAbove, "Unique within this project. Shown in your share list.", data.FieldErrs.Name, nil) {
 				<input id="mcp-share-name" name="name" type="text" required maxlength="255" value={ data.Name } placeholder="e.g. research-assistant" class="input w-full"/>
 			}

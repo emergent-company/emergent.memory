@@ -923,7 +923,7 @@ templ objectPropertiesCard(obj *GraphObject, propDefs []objectPropertyDef, label
 		Margin:    "mt-6",
 		BodyClass: "memory-density-comfortable",
 	}) {
-		<form class="flex flex-col gap-4" method="post" action={ templ.URL("/objects/" + url.PathEscape(obj.ID)) }>
+		<form class="flex flex-col gap-4" method="post" action={ templ.URL("/objects/" + url.PathEscape(obj.ID)) } hx-disable="find button.memory-save-btn">
 			@fm.FormControl("object-key", "Key", fm.LabelAbove, "Unique identifier of this object.", "", nil) {
 				<input id="object-key" name="key" type="text" value={ obj.Key } class="input w-full"/>
 			}

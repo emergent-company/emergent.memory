@@ -509,7 +509,7 @@ templ mcpServerFormBody(data mcpServerFormData, editing bool) {
 		if editing {
 			action = mcpServerSettingsBase + "/" + url.PathEscape(data.ID) + "/update"
 		} }}
-		<form method="post" action={ templ.URL(action) } class="flex flex-col gap-4" data-mcp-form-fields>
+		<form method="post" action={ templ.URL(action) } class="flex flex-col gap-4" data-mcp-form-fields hx-disable="find button.memory-save-btn">
 			@form.FormControl("mcp-server-name", "Name", form.LabelAbove, "Unique within this project. Agents reference servers by name.", data.FieldErrs.Name, nil) {
 				<input id="mcp-server-name" name="name" type="text" required maxlength="255" value={ data.Name } placeholder="e.g. github-mcp-server" class="input w-full"/>
 			}

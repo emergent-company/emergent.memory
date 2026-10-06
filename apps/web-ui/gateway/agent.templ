@@ -578,7 +578,7 @@ templ agentGeneralSettingsForm(data agentSettingsData) {
 // /agents/:id/settings/model): the model picker, temperature, max tokens, and
 // the model-misconfiguration warning box.
 templ agentModelSettingsForm(data agentSettingsData) {
-	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/model") }>
+	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/model") } hx-disable="find button.memory-save-btn">
 		@ui.Section("Model", ui.SectionProps{
 			Margin:    "mt-6",
 			BodyClass: "memory-density-comfortable",
@@ -597,7 +597,7 @@ templ agentModelSettingsForm(data agentSettingsData) {
 // /agents/:id/settings/tools): the default-approval select and the grouped tool
 // checkbox picker.
 templ agentToolsSettingsForm(data agentSettingsData) {
-	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/tools") }>
+	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/tools") } hx-disable="find button.memory-save-btn">
 		@ui.Section("Tools", ui.SectionProps{
 			Margin:    "mt-6",
 			BodyClass: "memory-density-comfortable",
@@ -619,7 +619,7 @@ templ agentToolsSettingsForm(data agentSettingsData) {
 // agentSkillsSettingsForm is the Skills subpage (PRG → POST
 // /agents/:id/settings/skills): the skill checkbox picker.
 templ agentSkillsSettingsForm(data agentSettingsData) {
-	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/skills") }>
+	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/skills") } hx-disable="find button.memory-save-btn">
 		@ui.Section("Skills", ui.SectionProps{
 			Margin:    "mt-6",
 			BodyClass: "memory-density-comfortable",
@@ -645,7 +645,7 @@ templ agentSkillsSettingsForm(data agentSettingsData) {
 // /agents/:id/settings/delegation): the enable toggle and the delegation-target
 // agent picker.
 templ agentDelegationSettingsForm(data agentSettingsData) {
-	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/delegation") }>
+	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/delegation") } hx-disable="find button.memory-save-btn">
 		@ui.Section("Delegation", ui.SectionProps{
 			Margin:    "mt-6",
 			BodyClass: "memory-density-comfortable",
@@ -736,7 +736,7 @@ templ sandboxProviderAvailability(data agentSandboxData) {
 // /agents/:id/sandbox/update). Empty tools means "all allowed"; repo_source
 // url is only honored for a fixed source.
 templ agentSandboxForm(data agentSandboxData) {
-	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/sandbox/update") }>
+	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/sandbox/update") } hx-disable="find button.memory-save-btn">
 		@ui.Section("Provider", ui.SectionProps{
 			Margin:    "mt-6",
 			BodyClass: "memory-density-comfortable",

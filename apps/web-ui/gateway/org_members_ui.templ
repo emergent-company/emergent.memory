@@ -914,7 +914,7 @@ templ profileEditForm(p *UserProfileDto) {
 		Margin:    "mb-6",
 		BodyClass: "memory-density-comfortable",
 	}) {
-		<form method="post" action="/profile" class="flex flex-col gap-4">
+		<form method="post" action="/profile" class="flex flex-col gap-4" hx-disable="find button.memory-save-btn">
 			@form.FormControl("profile-display-name", "Display name", form.LabelAbove, "", "", nil) {
 				<input id="profile-display-name" name="displayName" type="text" value={ p.DisplayName } placeholder="e.g. Ada Lovelace" class="input w-full"/>
 			}

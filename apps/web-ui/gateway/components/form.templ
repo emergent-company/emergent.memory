@@ -31,17 +31,28 @@ templ SelectOptionGroups(groups []SelectOptionGroup) {
 
 // SaveChangesButton renders the shared primary submit button every settings and
 // mutation form footer uses: primary, small, save icon, "Save changes" label.
+//
+// In-flight state: while the enclosing form runs an htmx request the save icon
+// is swapped for a spinner (the .htmx-request class htmx puts on the form/button
+// drives the swap via CSS) and the button is truly disabled — the form owns
+// `hx-disable="find button.memory-save-btn"`, since htmx v4 resolves hx-disable
+// from the request's source element (the form), not the submit button.
+//
 // The surrounding FormActions/margin wrapper stays at each call site because it
 // varies (gap-4 forms, cancel/create branches, raw footers with a cancel link),
 // so only the button itself is a clean shared unit.
 templ SaveChangesButton() {
 	@ui.Button(ui.ButtonProps{
-		Type:    ui.ButtonTypeSubmit,
-		Variant: ui.ButtonPrimary,
-		Size:    ui.ButtonSM,
-		Icon:    "lucide--save",
+		Type:       ui.ButtonTypeSubmit,
+		Variant:    ui.ButtonPrimary,
+		Size:       ui.ButtonSM,
+		ExtraClass: "memory-save-btn",
 	}) {
-		Save changes
+		<span class="memory-save-btn__icon inline-flex" aria-hidden="true">
+			@ui.IconSpan("lucide--save", "size-4")
+		</span>
+		<span class="memory-save-btn__spinner loading loading-spinner loading-xs" aria-hidden="true"></span>
+		<span>Save changes</span>
 	}
 }
 

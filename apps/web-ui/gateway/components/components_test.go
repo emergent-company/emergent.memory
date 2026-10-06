@@ -236,7 +236,9 @@ func TestSaveChangesButtonRendersSubmitContract(t *testing.T) {
 	html := renderHTML(t, SaveChangesButton())
 	assertContains(t, html,
 		`type="submit"`,
+		"memory-save-btn",
 		"lucide--save",
+		"loading loading-spinner",
 		"Save changes",
 	)
 }
