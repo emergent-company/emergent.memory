@@ -9,6 +9,11 @@ The governor SHALL derive a `normal` / `throttle` / `shed` mode from the system 
 - **WHEN** the health monitor reports healthy samples
 - **THEN** the governor mode is `normal`
 
+#### Scenario: Sustained high I/O wait escalates
+
+- **WHEN** I/O wait rises above the throttle threshold for the configured number of consecutive samples
+- **THEN** the governor escalates `normal` → `throttle` (host pressure never drives `shed`)
+
 #### Scenario: DB pool and bulk inflight escalate to shed
 
 - **WHEN** database pool utilization is at or above the shed threshold and at least the shed-bound number of bulk admissions are in flight for the configured number of consecutive samples
@@ -54,7 +59,7 @@ Background embedding workers SHALL skip work while the governor is throttled or 
 - **WHEN** the governor is throttled or shedding
 - **THEN** the embedding sweep worker skips its sweep
 
-#### Scenario: Workers pause on throttle or shed
+#### Scenario: Workers pause on shed
 
 - **WHEN** the governor transitions into `throttle` or `shed`
 - **THEN** the object, relationship, and sweep embedding workers are paused
