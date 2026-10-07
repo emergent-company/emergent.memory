@@ -44,8 +44,8 @@ Three clients. One is the main UI (web); two are voice (iOS, Mac).
   type-checked here.
 - **Sync + build:** `tools/ios-build-mac.sh` (also run by `deploy.sh`) rsyncs `apps/ios/` into
   `<MEMORY_MAC_PATH>/client/ios` on the Mac (guarded, scoped `--delete`) and runs `xcodebuild`
-  there. Set `MEMORY_MAC_HOST`/`MEMORY_MAC_PATH` in `apps/web-ui/.env` — see
-  `tools/mac-remote.env.example` and `tools/README.md`.
+  there. Set `MEMORY_MAC_HOST`/`MEMORY_MAC_PATH` in `apps/connector.mac/.env` — see
+  `apps/connector.mac/.env.example` and `tools/README.md`.
 - **Build (manual):** `xcodebuild -project VoiceAgent.xcodeproj -scheme VoiceAgent -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build` (run on the Mac).
 - Never claim an iOS change compiles until the Mac build actually passes.
 
@@ -73,8 +73,8 @@ Three clients. One is the main UI (web); two are voice (iOS, Mac).
   instance id). Tools default OFF per project; a master switch toggles all.
 - **App identity:** product/display name `Memory`; bundle id stays
   `com.emergent.memory.connector` (stable TCC/keychain identity). Build/install:
-  `tools/mac-build.sh --install` (product `Memory.app`); optional stable signing
-  via `tools/mac-sign.sh`.
+  `apps/connector.mac/Scripts/mac-build.sh --install` (product `Memory.app`); optional stable signing
+  via `apps/connector.mac/Scripts/mac-sign.sh`.
 - See [INFRASTRUCTURE.md](../../INFRASTRUCTURE.md) for environment values and
   [2026-09-13-memory-mac-connector](../sessions/2026-09-13-memory-mac-connector.md)
   for the delivery log.

@@ -1,8 +1,15 @@
-# Mac remote build tooling
+# iOS remote build tooling
 
-Scripts in this directory build the iOS app and the macOS connector on a remote
-Mac (this Linux server has no Xcode). Everything derives from one shared config:
-`lib/mac-remote.sh`, fed by the environment or the gitignored `apps/web-ui/.env`.
+The Mac-connector build tooling now lives with the connector itself (see
+`apps/connector.mac/Scripts/README.md`). This directory keeps only the iOS
+tooling that remains here: `ios-build-mac.sh`, `ios-debug-mac.sh`, and
+`memory-trace.sh`. They build the iOS app on a remote Mac (this Linux server has
+no Xcode).
+
+The shared config + plumbing moved to the Mac connector: `lib/mac-remote.sh`
+now lives at `apps/connector.mac/Scripts/lib/mac-remote.sh`, fed by the
+environment or the gitignored `apps/connector.mac/.env`. The iOS scripts here
+source that connector lib.
 
 ## Scripts
 
@@ -10,18 +17,20 @@ Mac (this Linux server has no Xcode). Everything derives from one shared config:
 |---|---|
 | `ios-build-mac.sh` | rsync `apps/ios/` → `<MEMORY_MAC_PATH>/client/ios`, then `xcodebuild` (simulator by default) |
 | `ios-debug-mac.sh` | rsync + build + install/launch on the simulator, plus logs, screenshots, crash/backtrace helpers |
-| `mac-build.sh` | rsync `apps/connector.mac/` → `<MEMORY_MAC_PATH>/client/macos`, XcodeGen + `xcodebuild` |
-| `mac-doctor.sh` | `--check`: verify the Mac is reachable and usable |
 | `memory-trace.sh` | merge the iOS app trace + worker trace for a room |
 
+For the macOS connector build/sign/doctor scripts (`mac-build.sh`,
+`mac-doctor.sh`, `mac-sign.sh`, `mac-setup-signing.sh`), see
+`apps/connector.mac/Scripts/README.md`.
+
 `apps/web-ui/deploy.sh` and the `apps/web-ui/memory` launcher take their Mac host
-from the same config (deploy delegates its iOS step to `ios-build-mac.sh`).
+from the same shared config (deploy delegates its iOS step to `ios-build-mac.sh`).
 
 ## Configuration
 
-Copy what you need into `apps/web-ui/.env` (gitignored) or export it. An
+Copy what you need into `apps/connector.mac/.env` (gitignored) or export it. An
 explicitly-set environment variable always wins over `.env`. The full template is
-`apps/web-ui/tools/mac-remote.env.example`.
+`apps/connector.mac/.env.example`.
 
 | Variable | Required | Meaning |
 |---|---|---|
@@ -33,7 +42,7 @@ explicitly-set environment variable always wins over `.env`. The full template i
 | `ALLOW_SYNC_INTO_GIT` / `ALLOW_DELETE_IN_GIT` | no | Danger overrides for syncing into a real git clone. |
 | `MAC_SSH_OPTS` | no | Extra `ssh` options (used by `mac-doctor.sh` to fail fast). |
 
-This repo's own values live in the gitignored `apps/web-ui/.env`:
+This repo's own values live in the gitignored `apps/connector.mac/.env`:
 `MEMORY_MAC_HOST=mcj-mini`, `MEMORY_MAC_PATH=~/code/alftred`.
 
 ## Expected Mac layout
@@ -81,7 +90,7 @@ repo defaults baked into the scripts.
 ## Doctor
 
 ```sh
-cd apps/web-ui && task mac:doctor      # or: tools/mac-doctor.sh --check
+cd apps/web-ui && task mac:doctor      # or: apps/connector.mac/Scripts/mac-doctor.sh --check
 ```
 
 Checks SSH reachability, the remote checkout, `xcodebuild`, an available iOS

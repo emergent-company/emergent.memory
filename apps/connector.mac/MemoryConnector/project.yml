@@ -14,7 +14,7 @@ settings:
     ENABLE_HARDENED_RUNTIME: YES
     GENERATE_INFOPLIST_FILE: NO
     # Xcode 16+ Debug "debug dylib" splits the app into a thin launcher plus a
-    # Memory.debug.dylib holding the real code. tools/mac-build.sh re-signs the
+    # Memory.debug.dylib holding the real code. apps/connector.mac/Scripts/mac-build.sh re-signs the
     # .app with the stable self-signed identity but leaves that nested dylib
     # ad-hoc; hardened-runtime library validation then refuses to load it at
     # launch ("mapping process and mapped file (non-platform) have different

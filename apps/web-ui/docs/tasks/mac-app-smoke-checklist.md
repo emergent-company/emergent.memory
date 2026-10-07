@@ -22,8 +22,8 @@ Several UI changes were verified only by build/tests and by partial GUI visits;
 the remaining items are quick confirmations that guard against regressions.
 
 ## Depends on
-- `~/Applications/Memory.app` installed (`tools/mac-build.sh --install`).
+- `~/Applications/Memory.app` installed (`apps/connector.mac/Scripts/mac-build.sh --install`).
 
 ## Notes
-- Signing: secrets are 0600 files, so Keychain prompts are gone; `tools/mac-sign.sh`
+- Signing: secrets are 0600 files, so Keychain prompts are gone; `apps/connector.mac/Scripts/mac-sign.sh`
   is optional (stable identity for TCC grants).

@@ -127,8 +127,8 @@ scripts in `apps/web-ui/tools/` target it via one shared config — nothing is
 hardcoded, so a fork points them at its own machine without editing tracked
 files. Full reference: `apps/web-ui/tools/README.md`.
 
-Set these in the gitignored `apps/web-ui/.env` (or export them); see
-`apps/web-ui/tools/mac-remote.env.example`:
+Set these in the gitignored `apps/connector.mac/.env` (or export them); see
+`apps/connector.mac/.env.example`:
 
 | Variable | Meaning |
 |---|---|
@@ -150,7 +150,7 @@ Then:
 
 ```sh
 cd apps/web-ui
-tools/mac-doctor.sh --check       # verify ssh, checkout, Xcode, simulator, signing
+apps/connector.mac/Scripts/mac-doctor.sh --check       # verify ssh, checkout, Xcode, simulator, signing
 tools/ios-build-mac.sh            # rsync + simulator build
 tools/ios-build-mac.sh --device   # signed device build (needs DEVELOPMENT_TEAM)
 ```

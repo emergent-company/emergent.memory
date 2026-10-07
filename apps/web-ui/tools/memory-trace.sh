@@ -3,14 +3,14 @@
 # Usage: tools/memory-trace.sh <room>
 #
 # The Mac host comes from the shared config (MEMORY_MAC_HOST in the environment
-# or the gitignored apps/web-ui/.env) — no repo default is baked in here. See
-# tools/mac-remote.env.example.
+# or the gitignored apps/connector.mac/.env) — no repo default is baked in here. See
+# apps/connector.mac/.env.example.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/mac-remote.sh
+# shellcheck source=../../../apps/connector.mac/Scripts/lib/mac-remote.sh
 # shellcheck disable=SC1091
-. "$HERE/lib/mac-remote.sh"
+. "$HERE/../../../apps/connector.mac/Scripts/lib/mac-remote.sh"
 
 ROOM="${1:-}"
 mac_load_env
@@ -30,7 +30,7 @@ fi
 if [[ -z "$MAC_HOST" ]]; then
   mac_die "MEMORY_MAC_HOST is not set. Point it at the Mac build machine, e.g.:
     export MEMORY_MAC_HOST=mcj-mini
-  or set it in $HERE/../.env (see tools/mac-remote.env.example)."
+  or set it in $MAC_ENV_FILE (see apps/connector.mac/.env.example)."
 fi
 
 tmp="$(mktemp)"

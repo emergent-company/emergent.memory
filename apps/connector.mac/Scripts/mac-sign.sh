@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Sign the INSTALLED MemoryConnector app manually.
 #
-# RECOMMENDED: use tools/mac-setup-signing.sh instead — it creates a dedicated
+# RECOMMENDED: use apps/connector.mac/Scripts/mac-setup-signing.sh instead — it creates a dedicated
 # self-signed codesigning keychain that works automatically (and over ssh), so
-# tools/mac-build.sh signs every build with a stable identity and Keychain
+# apps/connector.mac/Scripts/mac-build.sh signs every build with a stable identity and Keychain
 # tokens / Automation (TCC) grants persist. Use THIS script only if you prefer
 # the real Apple Development identity and can run it in a GUI Terminal.app.
 #
@@ -16,14 +16,14 @@
 # the Mac, NOT over ssh: the signing key lives in the login keychain and is not
 # reachable from a non-GUI ssh session, so `codesign` fails with
 # errSecInternalComponent. For ssh/automatic signing use the dedicated identity
-# from tools/mac-setup-signing.sh.
+# from apps/connector.mac/Scripts/mac-setup-signing.sh.
 #
 # This script signs the INSTALLED app at ~/Applications/MemoryConnector.app
 # (override with --app).
 #
 # Usage:
-#   tools/mac-sign.sh                              # sign ~/Applications/MemoryConnector.app (installed)
-#   tools/mac-sign.sh --app /path/to/App.app       # sign a specific app bundle
+#   apps/connector.mac/Scripts/mac-sign.sh                              # sign ~/Applications/MemoryConnector.app (installed)
+#   apps/connector.mac/Scripts/mac-sign.sh --app /path/to/App.app       # sign a specific app bundle
 #
 # Env:
 #   SIGN_IDENTITY   signing identity (default: "Apple Development")
@@ -46,7 +46,7 @@ done
 
 if [[ ! -d "$APP_PATH" ]]; then
   echo "error: app not found at $APP_PATH" >&2
-  echo "       build/install first (tools/mac-build.sh --install), or pass --app <path>" >&2
+  echo "       build/install first (apps/connector.mac/Scripts/mac-build.sh --install), or pass --app <path>" >&2
   exit 1
 fi
 

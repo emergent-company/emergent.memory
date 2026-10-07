@@ -2,10 +2,10 @@
 # mac-doctor.sh — verify the remote Mac build machine is usable.
 #
 # Usage:
-#   tools/mac-doctor.sh --check     # run all checks; exit non-zero if any fail
+#   apps/connector.mac/Scripts/mac-doctor.sh --check     # run all checks; exit non-zero if any fail
 #
 # Checks (all read-only):
-#   1. MEMORY_MAC_HOST / MEMORY_MAC_PATH configured (env or apps/web-ui/.env)
+#   1. MEMORY_MAC_HOST / MEMORY_MAC_PATH configured (env or apps/connector.mac/.env)
 #   2. SSH reachability of MEMORY_MAC_HOST
 #   3. the remote checkout path exists
 #   4. xcodebuild present + its version
@@ -14,7 +14,7 @@
 #   7. opencode.json's xcodebuild MCP host derives from MEMORY_MAC_HOST
 #
 # All target resolution is delegated to lib/mac-remote.sh — this script only
-# reports. Env: the MEMORY_MAC_* variables (see tools/mac-remote.env.example),
+# reports. Env: the MEMORY_MAC_* variables (see apps/connector.mac/.env.example),
 # plus DEVELOPMENT_TEAM.
 
 set -euo pipefail
@@ -49,9 +49,9 @@ mac_load_env
 # ---- 1. configuration -----------------------------------------------------
 if [[ -z "${MEMORY_MAC_HOST+x}" ]]; then
   bad "MEMORY_MAC_HOST is not set"
-  # shellcheck disable=SC2154 # webui_dir is set by lib/mac-remote.sh
-  printf '       -> set it in %s/.env or export MEMORY_MAC_HOST=<ssh-host>\n' "$webui_dir"
-  printf '          (see tools/mac-remote.env.example)\n'
+  # shellcheck disable=SC2154 # app_dir is set by lib/mac-remote.sh
+  printf '       -> set it in %s/.env or export MEMORY_MAC_HOST=<ssh-host>\n' "$app_dir"
+  printf '          (see apps/connector.mac/.env.example)\n'
 elif [[ -z "$MEMORY_MAC_HOST" ]]; then
   warn "MEMORY_MAC_HOST is empty (local-destination mode); remote checks skipped"
 else
@@ -66,7 +66,8 @@ else
 fi
 
 # ---- 7. opencode MCP host derives from the same config --------------------
-opencode_json="$webui_dir/opencode.json"
+# shellcheck disable=SC2154 # repo_root is set by lib/mac-remote.sh
+opencode_json="$repo_root/apps/web-ui/opencode.json"
 if [[ -f "$opencode_json" ]] && grep -q 'xcodebuild' "$opencode_json"; then
   if grep -q '{env:MEMORY_MAC_HOST}' "$opencode_json"; then
     ok "opencode.json: xcodebuild MCP host derives from {env:MEMORY_MAC_HOST}"
@@ -128,7 +129,8 @@ fi
 
 # ---- 6. signing team ------------------------------------------------------
 team="${DEVELOPMENT_TEAM:-}"
-xcconfig="$webui_dir/../ios/VoiceAgent/VoiceAgent.xcconfig"
+# shellcheck disable=SC2154 # repo_root is set by lib/mac-remote.sh
+xcconfig="$repo_root/apps/ios/VoiceAgent/VoiceAgent.xcconfig"
 if [[ -z "$team" && -f "$xcconfig" ]]; then
   team="$(grep -E '^[[:space:]]*DEVELOPMENT_TEAM' "$xcconfig" | head -1 | sed -E 's/.*=[[:space:]]*//')"
 fi

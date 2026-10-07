@@ -11,8 +11,8 @@
 #
 # The Mac target (host + checkout path + subtree) is NOT hardcoded here: step
 # 2/3 delegates to tools/ios-build-mac.sh, which resolves it from the shared
-# config (tools/lib/mac-remote.sh + the gitignored apps/web-ui/.env). Set
-# MEMORY_MAC_HOST / MEMORY_MAC_PATH there — see tools/mac-remote.env.example.
+# config (apps/connector.mac/Scripts/lib/mac-remote.sh + the gitignored apps/connector.mac/.env). Set
+# MEMORY_MAC_HOST / MEMORY_MAC_PATH there — see apps/connector.mac/.env.example.
 #
 # Deploys the CURRENT working tree (no git step). Run after every change:
 #     ./deploy.sh
@@ -34,7 +34,7 @@ ssh "$GATEWAY_HOST" "cd /root/emergent.memory/apps/web-ui && docker compose up -
 # --- 2. iOS source -> Mac, and 3. build on the Mac -------------------------
 # Delegated to the shared iOS build script so the host/path resolution, the
 # guarded rsync (scoped --delete into client/ios) and the xcodebuild invocation
-# all come from one place (tools/lib/mac-remote.sh). No Mac host or path is
+# all come from one place (apps/connector.mac/Scripts/lib/mac-remote.sh). No Mac host or path is
 # hardcoded in this file.
 step "2/3 sync + build iOS on the Mac (tools/ios-build-mac.sh)"
 "$SRC_ROOT/tools/ios-build-mac.sh"

@@ -10,14 +10,14 @@
 # ssh), giving every build the same stable identity.
 #
 # Run once, on the Mac (ssh is fine):
-#   tools/mac-setup-signing.sh
+#   apps/connector.mac/Scripts/mac-setup-signing.sh
 #
 # It creates:
 #   ~/Library/Keychains/memory-dev.keychain-db       dedicated keychain
 #   ~/.config/memory-connector/signing.keychain.pw   keychain password (0600)
 #   ~/.config/memory-connector/signing.env           keychain path + identity (0600)
 #
-# No secret material is printed. Afterwards, tools/mac-build.sh signs builds
+# No secret material is printed. Afterwards, apps/connector.mac/Scripts/mac-build.sh signs builds
 # with this identity automatically.
 
 set -euo pipefail
@@ -155,6 +155,6 @@ Done. Stable signing identity is ready:
   identity: $IDENTITY_CN
   config:   $ENV_FILE
 
-tools/mac-build.sh now signs builds with this identity automatically, so
+apps/connector.mac/Scripts/mac-build.sh now signs builds with this identity automatically, so
 Keychain tokens and Automation grants persist across rebuilds.
 EOF

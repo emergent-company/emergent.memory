@@ -19,8 +19,9 @@
 #   tools/ios-build-mac.sh --no-sync    # skip rsync (build what's on the Mac now)
 #   tools/ios-build-mac.sh --dry-run    # print the rsync plan only; no ssh/build
 #
-# Target config (required, no repo-specific defaults — see lib/mac-remote.sh and
-# tools/mac-remote.env.example). Set in the environment or in apps/web-ui/.env:
+# Target config (required, no repo-specific defaults — see
+# apps/connector.mac/Scripts/lib/mac-remote.sh and apps/connector.mac/.env.example).
+# Set in the environment or in apps/connector.mac/.env:
 #   MEMORY_MAC_HOST        SSH host, e.g. mcj-mini (empty string = local dest)
 #   MEMORY_MAC_PATH        project dir on Mac, e.g. ~/code/alftred (no spaces)
 #   MEMORY_MAC_IOS_SUBDIR  iOS subtree under MEMORY_MAC_PATH (default: client/ios)
@@ -40,9 +41,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)" # monorepo root
 MAC_SRC="$ROOT/apps/ios"
 
-# shellcheck source=lib/mac-remote.sh
+# shellcheck source=../../../apps/connector.mac/Scripts/lib/mac-remote.sh
 # shellcheck disable=SC1091
-. "$HERE/lib/mac-remote.sh"
+. "$HERE/../../../apps/connector.mac/Scripts/lib/mac-remote.sh"
 
 SCHEME="${SCHEME:-VoiceAgent}"
 DESTINATION="${DESTINATION:-generic/platform=iOS Simulator}"

@@ -11,16 +11,16 @@
 # client/apps/openspec, build/DerivedData, ...) is left untouched.
 #
 # Usage:
-#   tools/mac-build.sh                  # sync + generate + build
-#   tools/mac-build.sh --gen            # regenerate project only (no build)
-#   tools/mac-build.sh --test           # run hosted unit tests (test action)
-#   tools/mac-build.sh --install        # build + copy .app to ~/Applications + open
-#   tools/mac-build.sh --clean          # wipe build/DerivedData before building
-#   tools/mac-build.sh --no-sync        # skip rsync (build what's on the Mac now)
-#   tools/mac-build.sh --dry-run        # print the rsync plan only; no ssh/build
+#   apps/connector.mac/Scripts/mac-build.sh                  # sync + generate + build
+#   apps/connector.mac/Scripts/mac-build.sh --gen            # regenerate project only (no build)
+#   apps/connector.mac/Scripts/mac-build.sh --test           # run hosted unit tests (test action)
+#   apps/connector.mac/Scripts/mac-build.sh --install        # build + copy .app to ~/Applications + open
+#   apps/connector.mac/Scripts/mac-build.sh --clean          # wipe build/DerivedData before building
+#   apps/connector.mac/Scripts/mac-build.sh --no-sync        # skip rsync (build what's on the Mac now)
+#   apps/connector.mac/Scripts/mac-build.sh --dry-run        # print the rsync plan only; no ssh/build
 #
 # Target config (required, no repo-specific defaults — see lib/mac-remote.sh and
-# tools/mac-remote.env.example). Set in the environment or in apps/web-ui/.env:
+# apps/connector.mac/.env.example). Set in the environment or in apps/connector.mac/.env:
 #   MEMORY_MAC_HOST     SSH host, e.g. mcj-mini (empty string = local dest)
 #   MEMORY_MAC_PATH     project dir on Mac, e.g. ~/code/alftred (no spaces)
 #   MEMORY_MAC_SUBTREE  Mac connector subtree (default: client/macos)
@@ -28,9 +28,9 @@
 # Other env overrides:
 #   VERBOSE=1         full xcodebuild output (default: -quiet, errors only)
 #   XCODEBUILD_FLAGS  extra xcodebuild args
-#   SIGN_IDENTITY     manual Apple-Development identity override (tools/mac-sign.sh)
+#   SIGN_IDENTITY     manual Apple-Development identity override (apps/connector.mac/Scripts/mac-sign.sh)
 #
-# Stable signing: run tools/mac-setup-signing.sh ONCE on the Mac to create a
+# Stable signing: run apps/connector.mac/Scripts/mac-setup-signing.sh ONCE on the Mac to create a
 # dedicated codesigning keychain. mac-build.sh then signs every build with that
 # identity automatically (works over ssh), so Keychain tokens and Automation
 # (TCC) grants survive rebuilds. Without it, builds fall back to ad-hoc.
@@ -134,7 +134,7 @@ REMOTE_CMD="$REMOTE_CMD && $GEN_CMD && $BUILD_CMD"
 
 # ---- automatic stable signing (skip for test-only runs) -----------------
 # Sign right after the build, on the Mac, before install. Chain:
-#   1. dedicated self-signed identity from tools/mac-setup-signing.sh
+#   1. dedicated self-signed identity from apps/connector.mac/Scripts/mac-setup-signing.sh
 #      (its own keychain; works non-interactively, including over ssh),
 #   2. Apple Development (usually fails over ssh: errSecInternalComponent),
 #   3. ad-hoc (always works; identity changes per rebuild -> Keychain/TCC may
@@ -161,6 +161,14 @@ if [ -f "$SIGN_ENV" ]; then
       /Library/Keychains/System.keychain >/dev/null 2>&1 || true
     SIGNED=0
     CS_ERR="/tmp/memory-macbuild-codesign.err"
+    # NOTE: deliberately NO `--options runtime`. The dedicated identity is
+    # self-signed and carries no Team ID, so hardened-runtime library validation
+    # refuses to load the app's nested code (Sparkle.framework, the Xcode debug
+    # dylib) and the app aborts at launch with "mapping process and mapped file
+    # (non-platform) have different Team IDs". Re-signing without the hardened
+    # runtime is what keeps the installed dev build launchable; an app that must
+    # stay hardened would instead carry the
+    # com.apple.security.cs.disable-library-validation entitlement.
     if [ -n "${MEMORY_SIGN_REQUIREMENT:-}" ]; then
       # codesign treats a requirement value without a leading '=' as a FILE
       # path; an inline requirement must be '='-prefixed. Normalize so envs
@@ -169,9 +177,9 @@ if [ -f "$SIGN_ENV" ]; then
       # NB: avoid a `case ... in =*)` pattern — zsh performs `=command`
       # expansion on it (`zsh: * not found`). Parameter expansion is portable.
       [ "${REQ#=}" = "$REQ" ] && REQ="=$REQ"
-      codesign --force --options runtime --requirements="$REQ" --keychain "$MEMORY_SIGN_KEYCHAIN" --sign "$MEMORY_SIGN_IDENTITY" "$APP" 2>"$CS_ERR" && SIGNED=1
+      codesign --force --requirements="$REQ" --keychain "$MEMORY_SIGN_KEYCHAIN" --sign "$MEMORY_SIGN_IDENTITY" "$APP" 2>"$CS_ERR" && SIGNED=1
     else
-      codesign --force --options runtime --keychain "$MEMORY_SIGN_KEYCHAIN" --sign "$MEMORY_SIGN_IDENTITY" "$APP" 2>"$CS_ERR" && SIGNED=1
+      codesign --force --keychain "$MEMORY_SIGN_KEYCHAIN" --sign "$MEMORY_SIGN_IDENTITY" "$APP" 2>"$CS_ERR" && SIGNED=1
     fi
     if [ "$SIGNED" -eq 1 ]; then
       STABLE=1
@@ -183,8 +191,8 @@ if [ -f "$SIGN_ENV" ]; then
   fi
 fi
 if [ "$STABLE" -ne 1 ]; then
-  echo "note: no dedicated signing identity — run tools/mac-setup-signing.sh once for a stable identity."
-  if codesign --force --options runtime --sign 'Apple Development' "$APP" >/dev/null 2>&1; then
+  echo "note: no dedicated signing identity — run apps/connector.mac/Scripts/mac-setup-signing.sh once for a stable identity."
+  if codesign --force --sign 'Apple Development' "$APP" >/dev/null 2>&1; then
     echo "signed with Apple Development (over ssh this usually only works in a GUI session)."
   else
     echo "note: Apple Development signing unavailable (expected over ssh); leaving ad-hoc signed."

@@ -96,9 +96,9 @@ Zitadel and relays local Apple MCP tools to Memory. Built-in environments:
 - **Secrets:** 0600 files under `~/.config/memory-connector/accounts/<accountId>/`
   (`session.json`, `projects-tokens.json`, `profiles.json`, `manual-token`);
   engine config at `~/.config/memory-connector.yml`. No Keychain use.
-- **Build/install (from main Mac):** `tools/mac-build.sh --install` → `~/Applications/Memory.app`
+- **Build/install (from main Mac):** `apps/connector.mac/Scripts/mac-build.sh --install` → `~/Applications/Memory.app`
   (rsync to `mcj-mini`, xcodegen, xcodebuild, ad-hoc sign). Optional stable identity:
-  `tools/mac-sign.sh` (run in GUI Terminal).
+  `apps/connector.mac/Scripts/mac-sign.sh` (run in GUI Terminal).
 - **Engine lifecycle:** the app runs the connector only while a project is
   **Connected** (per-project toggle); stale configs are not started.
 - **Tool host `tool`** (Tailscale `tool.tail0358fa.ts.net`, macOS, user `mcj`):

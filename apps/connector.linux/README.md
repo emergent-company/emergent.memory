@@ -672,6 +672,6 @@ Automated code signing is no longer required for secrets to work. Ad-hoc builds
 are fine; the only rebuild-related prompts that can still re-appear are macOS
 **Automation (TCC)** grants for Notes/Reminders, which are keyed to the app's
 code identity. If you want those to persist too, you can optionally give builds
-a stable identity: run `tools/mac-setup-signing.sh` once, then
-`tools/mac-build.sh --install` signs automatically. See the script headers for
-the manual Apple Development alternative (`tools/mac-sign.sh`).
+a stable identity: run `apps/connector.mac/Scripts/mac-setup-signing.sh` once, then
+`apps/connector.mac/Scripts/mac-build.sh --install` signs automatically. See the script headers for
+the manual Apple Development alternative (`apps/connector.mac/Scripts/mac-sign.sh`).

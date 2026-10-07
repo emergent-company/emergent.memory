@@ -18,7 +18,7 @@
 # ---- Target configuration -------------------------------------------------
 # There are NO repo-specific defaults baked into any script. Every remote
 # operation fails fast unless the target is configured, either in the
-# environment or in the gitignored apps/web-ui/.env (loaded by
+# environment or in the gitignored apps/connector.mac/.env (loaded by
 # mac_resolve_target; an explicitly-set environment variable always wins).
 #
 #   MEMORY_MAC_HOST        Required. SSH host of the Mac build machine.
@@ -35,7 +35,7 @@
 #   ALLOW_SYNC_INTO_GIT=1  Permit syncing into a git-checkout root (dangerous).
 #   ALLOW_DELETE_IN_GIT=1  Permit --delete into a git work tree (dangerous).
 #
-# The variables are documented for humans in tools/mac-remote.env.example.
+# The variables are documented for humans in apps/connector.mac/.env.example.
 #
 # ---- Safety model ---------------------------------------------------------
 # * rsync mirrors are rooted at the DEDICATED remote subtree
@@ -56,10 +56,14 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 fi
 
 lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# lib/ -> tools/ -> apps/web-ui
-webui_dir="$(cd "$lib_dir/../.." && pwd)"
-# Overridable for tests; default is the gitignored repo-local env file.
-MAC_ENV_FILE="${MEMORY_MAC_ENV_FILE:-$webui_dir/.env}"
+# lib/ -> Scripts/ -> apps/connector.mac
+app_dir="$(cd "$lib_dir/../.." && pwd)"
+# Monorepo root (apps/connector.mac -> apps -> repo root). Read by sourcing
+# scripts (e.g. mac-doctor.sh); unused within this library itself.
+# shellcheck disable=SC2034
+repo_root="$(cd "$app_dir/../.." && pwd)"
+# Overridable for tests; default is the gitignored connector-local env file.
+MAC_ENV_FILE="${MEMORY_MAC_ENV_FILE:-$app_dir/.env}"
 
 # mac_die <message> — fail fast with a clear, actionable error.
 mac_die() {
@@ -118,15 +122,15 @@ mac_resolve_target() {
   if [[ -z "${MEMORY_MAC_HOST+x}" ]]; then
     mac_die "MEMORY_MAC_HOST is not set. Point it at the Mac build machine, e.g.:
     export MEMORY_MAC_HOST=mcj-mini
-  or set MEMORY_MAC_HOST (and MEMORY_MAC_PATH) in $webui_dir/.env
-  (see tools/mac-remote.env.example)."
+  or set MEMORY_MAC_HOST (and MEMORY_MAC_PATH) in $app_dir/.env
+  (see apps/connector.mac/.env.example)."
   fi
   MAC_HOST="$MEMORY_MAC_HOST"
 
   if [[ -z "${MEMORY_MAC_PATH:-}" ]]; then
     mac_die "MEMORY_MAC_PATH is not set. Set the project dir on the Mac, e.g.:
     export MEMORY_MAC_PATH=~/code/alftred
-  (absolute or ~-rooted, no spaces) in the environment or in $webui_dir/.env."
+  (absolute or ~-rooted, no spaces) in the environment or in $app_dir/.env."
   fi
   MAC_CHECKOUT_PATH="$MEMORY_MAC_PATH"
 
@@ -243,6 +247,9 @@ mac_rsync_guarded() {
     --exclude '.build/'
     --exclude '.swiftpm/'
     --exclude '.git/'
+    # The connector's gitignored target config lives inside the synced subtree
+    # (apps/connector.mac/.env); never mirror a local env file to the Mac.
+    --exclude '.env'
   )
   [[ "${MAC_DRY_RUN:-0}" == 1 ]] && args+=(--dry-run -i)
   rsync "${args[@]}" "$src/" "$dest/"

@@ -32,7 +32,7 @@
 
 - [ ] 4.1 Add a Swift decoder for `status --json` and switch `StatusMonitor` to it; verify Swift unit tests decode fixtures including an unknown `hub_state`
 - [ ] 4.2 Replace the Swift brain calls (auth, projects, config materialization, token store) with the Go CLI surface, using the `auth start` / `auth complete` bridging for the PKCE custom-scheme callback (design "Port Plan"); verify the existing Swift test suite stays green
-- [ ] 4.3 Delete the orphaned Swift brain code; verify the macOS app builds and tests pass on the Mac build machine (`tools/mac-build.sh`)
+- [ ] 4.3 Delete the orphaned Swift brain code; verify the macOS app builds and tests pass on the Mac build machine (`apps/connector.mac/Scripts/mac-build.sh`)
 - [ ] 4.4 Handle migration of a legacy Keychain-backed session to the file store on first shared-core run; verify an existing session is migrated (or the user is cleanly prompted to sign in) with no Keychain prompts on subsequent rebuilds
 
 ## 5. Verification and docs
