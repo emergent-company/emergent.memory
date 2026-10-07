@@ -2,6 +2,14 @@ import SwiftUI
 
 // MARK: - Component registry
 
+/// A decision button on an A2UI card: its label, the response value sent back
+/// when tapped, and whether it is the primary (accented) choice.
+private struct CardDecision {
+    let label: LocalizedStringKey
+    let response: String
+    let primary: Bool
+}
+
 /// Native SwiftUI renderer for a validated A2UI surface: resolves catalog ids
 /// to card views and falls back to a summary card for unknown components.
 /// Renders only the pre-approved catalog — never raw markup or a web view.
@@ -96,7 +104,7 @@ struct A2UIComponentCard: View {
     // MARK: Actions
 
     @ViewBuilder
-    private func actions(_ pairs: [(label: LocalizedStringKey, response: String, primary: Bool)]) -> some View {
+    private func actions(_ pairs: [CardDecision]) -> some View {
         if let submittedResponse {
             HStack(spacing: 1 * .grid) {
                 Image(systemName: "checkmark.circle.fill")
@@ -137,8 +145,8 @@ extension A2UIComponentCard {
                 pre(body)
             }
             actions([
-                (label: "chat.card.reject", response: "reject", primary: false),
-                (label: "chat.card.accept", response: "accept", primary: true),
+                CardDecision(label: "chat.card.reject", response: "reject", primary: false),
+                CardDecision(label: "chat.card.accept", response: "accept", primary: true),
             ])
         }
     }
@@ -153,8 +161,8 @@ extension A2UIComponentCard {
                 pre(input)
             }
             actions([
-                (label: "chat.card.deny", response: "deny", primary: false),
-                (label: "chat.card.approve", response: "approve", primary: true),
+                CardDecision(label: "chat.card.deny", response: "deny", primary: false),
+                CardDecision(label: "chat.card.approve", response: "approve", primary: true),
             ])
         }
     }

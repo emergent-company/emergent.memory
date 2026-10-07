@@ -33,7 +33,7 @@ final class ObjectBrowserStore: ObservableObject {
     /// Loads the first page for `agentID`, resetting the list. Supersedes any
     /// in-flight load (its result is discarded).
     func load(agentID: String) async {
-        let generation = self.generation.next()
+        let generation = generation.next()
         loadState = .loading
         objects = []
         nextCursor = nil
@@ -56,7 +56,7 @@ final class ObjectBrowserStore: ObservableObject {
         guard let cursor = nextCursor, !isLoadingMore else { return }
         isLoadingMore = true
         defer { isLoadingMore = false }
-        let generation = self.generation.current
+        let generation = generation.current
         do {
             let page = try await client.listObjects(agentID: agentID, provenance: provenance, cursor: cursor)
             guard self.generation.isCurrent(generation) else { return }

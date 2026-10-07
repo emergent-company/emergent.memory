@@ -317,7 +317,9 @@ struct ChatView: View {
 struct SuggestedPrompt: Identifiable {
     let key: LocalizedStringKey
     let text: String
-    var id: String { text }
+    var id: String {
+        text
+    }
 }
 
 /// Suggested-prompt chips for the empty chat state. Each chip fills the

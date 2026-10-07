@@ -127,11 +127,10 @@ enum GatewayHTTP {
         }
 
         guard (200 ..< 300).contains(http.statusCode) else {
-            let serverMessage: String?
-            if service.parseErrorBody {
-                serverMessage = (try? JSONDecoder().decode(ErrorResponse.self, from: data)).flatMap(\.message)
+            let serverMessage: String? = if service.parseErrorBody {
+                (try? JSONDecoder().decode(ErrorResponse.self, from: data)).flatMap(\.message)
             } else {
-                serverMessage = nil
+                nil
             }
             let display = serverMessage ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
             if service.logsErrors {

@@ -63,15 +63,15 @@ struct MemorySettingsView: View {
             draft = MemoryConfig()
         }
         #if os(iOS)
-            // A "Done" key so number-pad fields (no return key) can be dismissed.
-            .toolbar {
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("settings.done") { focusedField = nil }
-                }
+        // A "Done" key so number-pad fields (no return key) can be dismissed.
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("settings.done") { focusedField = nil }
             }
+        }
         #endif
-            .safeAreaInset(edge: .bottom, content: saveBar)
+        .safeAreaInset(edge: .bottom, content: saveBar)
         #if os(iOS)
             .sensoryFeedback(.success, trigger: saveFeedback)
         #endif
@@ -260,6 +260,21 @@ struct MemorySettingsView: View {
         .background(.bg1)
     }
 
+    private func savedNote(_ message: LocalizedStringKey) -> some View {
+        HStack(spacing: 2 * .grid) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.fgAccent)
+            Text(message)
+                .font(MemoryFont.meta)
+                .foregroundStyle(.fg3)
+        }
+        .padding(3 * .grid)
+        .background(.bg2, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
+        .transition(.opacity)
+    }
+}
+
+extension MemorySettingsView {
     private func save() {
         focusedField = nil
         // Session-only fields (exit keywords, timeout, chime) live only in
@@ -298,19 +313,6 @@ struct MemorySettingsView: View {
         connection.ttsStrategy = draft.ttsStrategy
         projectStore.upsert(connection)
         projectStore.setActive(projectID: connection.projectID)
-    }
-
-    private func savedNote(_ message: LocalizedStringKey) -> some View {
-        HStack(spacing: 2 * .grid) {
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.fgAccent)
-            Text(message)
-                .font(MemoryFont.meta)
-                .foregroundStyle(.fg3)
-        }
-        .padding(3 * .grid)
-        .background(.bg2, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
-        .transition(.opacity)
     }
 }
 

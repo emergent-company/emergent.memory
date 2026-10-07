@@ -28,7 +28,7 @@ final class FakeSessionLogClient: SessionLogFetching {
         return try sessionsResult.get()
     }
 
-    func timeline(room: String) async throws -> [SessionRecord] {
+    func timeline(room _: String) async throws -> [SessionRecord] {
         timelineCallCount += 1
         return try timelineResult.get()
     }
@@ -48,9 +48,9 @@ struct SessionsStoreTests {
     }
 
     @Test func loadPublishesSessions() async {
-        let s1 = summary("r1")
-        let s2 = summary("r2")
-        let fake = FakeSessionLogClient(sessions: .success([s1, s2]))
+        let first = summary("r1")
+        let second = summary("r2")
+        let fake = FakeSessionLogClient(sessions: .success([first, second]))
         let store = SessionsStore(client: fake)
 
         await store.load()

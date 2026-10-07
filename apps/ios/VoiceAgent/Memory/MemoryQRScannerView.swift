@@ -32,11 +32,11 @@ struct MemoryQRScannerView: View {
 
     @State private var phase: ScanPhase = .requesting
     @State private var session: AVCaptureSession?
-    @State private var hasDecodeError = false
+    @State var hasDecodeError = false
     /// User-presentable message for the most recent setup failure (shown in
     /// place of the generic decode-failure text while scanning resumes).
-    @State private var setupErrorMessage: String?
-    @State private var configured = false
+    @State var setupErrorMessage: String?
+    @State var configured = false
     @State private var showOpenSettings = false
     @State private var denialMessage: LocalizedStringKey = "qr.permission.denied"
     /// Timestamp of the last decode attempt. The metadata output re-reports
@@ -347,52 +347,6 @@ extension MemoryQRScannerView {
                 session?.startRunning()
             }
         }
-    }
-}
-
-// MARK: - Status chrome
-
-extension MemoryQRScannerView {
-    private func statusNote() -> some View {
-        HStack(spacing: 2 * .grid) {
-            Image(systemName: statusIcon)
-                .foregroundStyle(statusColor)
-            Text(statusText)
-                .font(MemoryFont.meta)
-                .foregroundStyle(.fg3)
-        }
-        .padding(3 * .grid)
-        .background(.bg2, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
-    }
-
-    private var statusIcon: String {
-        if configured {
-            return "checkmark.circle.fill"
-        }
-        if hasDecodeError {
-            return "exclamationmark.triangle.fill"
-        }
-        return "qrcode.viewfinder"
-    }
-
-    private var statusColor: Color {
-        if configured {
-            return .fgSuccess
-        }
-        if hasDecodeError {
-            return .fgSerious
-        }
-        return .fg3
-    }
-
-    private var statusText: String {
-        if configured {
-            return NSLocalizedString("qr.configured", comment: "")
-        }
-        if hasDecodeError {
-            return setupErrorMessage ?? NSLocalizedString("qr.decode.failure", comment: "")
-        }
-        return NSLocalizedString("qr.scan.hint", comment: "")
     }
 }
 

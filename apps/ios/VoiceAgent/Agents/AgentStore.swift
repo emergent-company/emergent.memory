@@ -55,7 +55,7 @@ final class AgentStore: ObservableObject {
     func load() async {
         let generation = loadGeneration.next()
         loadState = .loading
-        let client = self.client ?? ControlPlaneClient(config: MemoryConfig())
+        let client = client ?? ControlPlaneClient(config: MemoryConfig())
         do {
             let fetched = try await client.listAgents()
             guard loadGeneration.isCurrent(generation) else { return }

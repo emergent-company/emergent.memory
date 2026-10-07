@@ -42,9 +42,9 @@ struct ErrorStateView: View {
     let retryLabel: LocalizedStringKey
     let retry: () -> Void
     var systemImage: String = "wifi.exclamationmark"
-    var leadingActionLabel: LocalizedStringKey? = nil
-    var leadingActionImage: String? = nil
-    var leadingAction: (() -> Void)? = nil
+    var leadingActionLabel: LocalizedStringKey?
+    var leadingActionImage: String?
+    var leadingAction: (() -> Void)?
 
     var body: some View {
         ContentUnavailableView {
@@ -90,7 +90,7 @@ struct EmptyStateView: View {
     let description: LocalizedStringKey
     let systemImage: String
     /// Optional secondary message (the session detail's soft-failure text).
-    var message: String? = nil
+    var message: String?
     /// Optional extra top padding (the picker's empty state).
     var topPadding: CGFloat = 0
 

@@ -191,7 +191,6 @@ struct Shimmering: ViewModifier {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isShimmering = false
 
-    @ViewBuilder
     func body(content: Content) -> some View {
         if reduceMotion {
             // No sweeping highlight when Reduce Motion is on: show the content

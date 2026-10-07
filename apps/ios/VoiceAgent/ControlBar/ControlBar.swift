@@ -120,16 +120,7 @@ struct ControlBar: View {
                 // The context menu above is not discoverable on touch platforms,
                 // show an explicit affordance for the audio options.
                 separator()
-                Button {
-                    audioOptionsPresented = true
-                } label: {
-                    Image(systemName: "chevron.up")
-                        .font(MemoryFont.metaEmphasis)
-                        .frame(height: Constants.buttonHeight)
-                        .padding(.horizontal, .grid)
-                        .contentShape(Rectangle())
-                }
-                .accessibilityLabel("audio.title")
+                audioOptionsButton()
             #endif
             Spacer()
         }
@@ -137,6 +128,21 @@ struct ControlBar: View {
         .popover(isPresented: $audioOptionsPresented) {
             AudioOptionsSheet()
         }
+    }
+
+    /// Touch-platform affordance for the audio options: the context menu on the
+    /// microphone button is not discoverable, so show an explicit chevron.
+    private func audioOptionsButton() -> some View {
+        Button {
+            audioOptionsPresented = true
+        } label: {
+            Image(systemName: "chevron.up")
+                .font(MemoryFont.metaEmphasis)
+                .frame(height: Constants.buttonHeight)
+                .padding(.horizontal, .grid)
+                .contentShape(Rectangle())
+        }
+        .accessibilityLabel("audio.title")
     }
 
     private func videoControls() -> some View {

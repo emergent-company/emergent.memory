@@ -221,9 +221,11 @@ struct MarkdownRenderer: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: .cornerRadiusSmall))
     }
+}
 
-    // MARK: Inline text
+// MARK: - Inline text
 
+extension MarkdownRenderer {
     /// Builds the styled attributed text for a sequence of inline elements.
     /// Emphasis/strong/code/strikethrough/links become rich-text runs inside
     /// one `AttributedString` so prose still wraps naturally.
