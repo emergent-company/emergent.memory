@@ -43,13 +43,76 @@ func TestService_CreateBlueprint_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, bp.ID)
 	assert.Equal(t, StatusDraft, bp.Status)
-	assert.Equal(t, "", bp.Checksum)
+	assert.NotEmpty(t, bp.Checksum, "a created draft carries a canonical manifest checksum")
 	assert.Equal(t, "global", bp.Scope(), "no project in request => global blueprint")
 
 	got, err := svc.repo.GetByID(ctx, "", bp.ID)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"kind":"service"}`, string(got.Manifest), "manifest must round-trip")
 	assert.Equal(t, "a test blueprint", got.Description)
+}
+
+// TestService_CreateBlueprint_SetsCanonicalChecksum verifies a created draft
+// carries a non-empty canonical manifest checksum, computed with the same helper
+// PublishBlueprint uses, so drift comparison works without a publish step.
+func TestService_CreateBlueprint_SetsCanonicalChecksum(t *testing.T) {
+	db := connectTestDB(t)
+	svc := newServiceFromBun(t, db)
+	ctx := context.Background()
+
+	manifest := json.RawMessage(`{"kind":"checksum-me"}`)
+	bp, err := svc.CreateBlueprint(ctx, &CreateBlueprintRequest{
+		Name:     uniqueName("svc-checksum"),
+		Version:  "1.0.0",
+		Manifest: manifest,
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, bp.Checksum)
+	assert.Equal(t, manifestChecksum(manifest), bp.Checksum)
+
+	// The checksum is persisted on the row, not just the returned struct.
+	stored, err := svc.repo.GetByID(ctx, "", bp.ID)
+	require.NoError(t, err)
+	assert.Equal(t, bp.Checksum, stored.Checksum)
+}
+
+// TestService_CreateBlueprint_PersistsSourceProvenance verifies source
+// provenance supplied on the create request is persisted verbatim (used by the
+// GitHub import path), and that a plain create leaves it empty.
+func TestService_CreateBlueprint_PersistsSourceProvenance(t *testing.T) {
+	db := connectTestDB(t)
+	svc := newServiceFromBun(t, db)
+	ctx := context.Background()
+
+	bp, err := svc.CreateBlueprint(ctx, &CreateBlueprintRequest{
+		Name:       uniqueName("svc-provenance"),
+		Version:    "1.0.0",
+		Manifest:   json.RawMessage(`{}`),
+		SourceKind: "github",
+		SourceURL:  "https://github.com/acme/widgets",
+		SourceRef:  "v1.2.3",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "github", bp.SourceKind)
+	assert.Equal(t, "https://github.com/acme/widgets", bp.SourceURL)
+	assert.Equal(t, "v1.2.3", bp.SourceRef)
+
+	stored, err := svc.repo.GetByID(ctx, "", bp.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "github", stored.SourceKind)
+	assert.Equal(t, "https://github.com/acme/widgets", stored.SourceURL)
+	assert.Equal(t, "v1.2.3", stored.SourceRef)
+
+	// A plain create (no provenance) leaves the columns empty.
+	plain, err := svc.CreateBlueprint(ctx, &CreateBlueprintRequest{
+		Name:     uniqueName("svc-plain"),
+		Version:  "1.0.0",
+		Manifest: json.RawMessage(`{}`),
+	})
+	require.NoError(t, err)
+	assert.Empty(t, plain.SourceKind)
+	assert.Empty(t, plain.SourceURL)
+	assert.Empty(t, plain.SourceRef)
 }
 
 // TestService_CreateBlueprint_Conflict verifies duplicate (name, version) is

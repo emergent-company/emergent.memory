@@ -161,17 +161,36 @@ func (s *Service) CreateBlueprint(ctx context.Context, req *CreateBlueprintReque
 		Status:      StatusDraft,
 		ProjectID:   req.ProjectID,
 		Manifest:    req.Manifest,
+		SourceKind:  req.SourceKind,
+		SourceURL:   req.SourceURL,
+		SourceRef:   req.SourceRef,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
 	if bp.Manifest == nil {
 		bp.Manifest = json.RawMessage("{}")
 	}
+	// Compute the canonical manifest checksum at create time (not only at
+	// publish) so drift/compare works on a draft without requiring publish.
+	bp.Checksum = manifestChecksum(bp.Manifest)
 
 	if err := s.repo.Create(ctx, bp); err != nil {
 		return nil, err
 	}
 	return bp, nil
+}
+
+// manifestChecksum returns the canonical sha256 content hash of a blueprint's
+// JSON manifest. An empty manifest is treated as `{}` (the same default the
+// create path stores), so a blank manifest hashes consistently rather than as
+// the empty string. Shared by CreateBlueprint (so a draft carries a canonical
+// checksum for drift comparison before publish) and PublishBlueprint.
+func manifestChecksum(manifest json.RawMessage) string {
+	if len(manifest) == 0 {
+		manifest = json.RawMessage("{}")
+	}
+	sum := sha256.Sum256(manifest)
+	return hex.EncodeToString(sum[:])
 }
 
 // GetBlueprint returns a blueprint by ID within the caller's read scope
@@ -238,12 +257,7 @@ func (s *Service) PublishBlueprint(ctx context.Context, projectID, id string) (*
 		return nil, apperror.ErrConflict.WithMessage("only draft blueprints can be published")
 	}
 
-	manifestBytes := bp.Manifest
-	if len(manifestBytes) == 0 {
-		manifestBytes = json.RawMessage("{}")
-	}
-	sum := sha256.Sum256(manifestBytes)
-	checksum := hex.EncodeToString(sum[:])
+	checksum := manifestChecksum(bp.Manifest)
 
 	if err := s.repo.UpdateStatus(ctx, id, StatusPublished, checksum); err != nil {
 		return nil, err

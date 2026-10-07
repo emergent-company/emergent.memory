@@ -440,6 +440,56 @@ func TestService_ImportFromGitHub_CreatesPublishedBlueprint(t *testing.T) {
 	assert.Equal(t, bp.ID, got.ID)
 }
 
+// TestService_ImportFromGitHub_PersistsSourceProvenance verifies a GitHub import
+// records its source provenance on the created blueprint: kind "github", the
+// normalized https://github.com/<org>/<repo> URL (no ref, no .git), and the ref
+// with the "HEAD" sentinel normalized to "" (repo default branch). It also
+// asserts the canonical manifest checksum is non-empty.
+func TestService_ImportFromGitHub_PersistsSourceProvenance(t *testing.T) {
+	db := connectTestDB(t)
+	svc := newServiceFromBun(t, db)
+	ctx := context.Background()
+
+	cases := []struct {
+		name        string
+		url         string
+		refOverride string
+		wantRef     string
+	}{
+		{"default HEAD normalizes to empty", "https://github.com/acme/widgets", "", ""},
+		{"git suffix normalizes URL", "https://github.com/acme/widgets.git", "", ""},
+		{"explicit ref override", "https://github.com/acme/widgets", "v1.2.3", "v1.2.3"},
+		{"tree ref", "https://github.com/acme/widgets/tree/main", "", "main"},
+		{"fragment ref", "https://github.com/acme/widgets#v2.0.0", "", "v2.0.0"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			archive := buildTarGz(t, []tarEntry{
+				{name: "repo-HEAD/packs/pack.yaml", body: "name: " + uniqueName("prov") + "\nversion: 1.0.0\nobjectTypes:\n  - name: Thing\n"},
+			})
+			ts := servingTarball(t, archive)
+			svc.fetcher = testGitHubFetcher(t, ts.URL, 1<<20, 1<<20, 100)
+
+			bp, err := svc.ImportFromGitHub(ctx, "", &ImportGitHubRequest{URL: tc.url, Ref: tc.refOverride})
+			require.NoError(t, err)
+
+			assert.Equal(t, "github", bp.SourceKind)
+			assert.Equal(t, "https://github.com/acme/widgets", bp.SourceURL)
+			assert.Equal(t, tc.wantRef, bp.SourceRef)
+			assert.NotEmpty(t, bp.Checksum, "imported blueprint must carry a canonical manifest checksum")
+
+			// Provenance is persisted on the row, not just the returned struct.
+			stored, err := svc.repo.GetByID(ctx, "", bp.ID)
+			require.NoError(t, err)
+			assert.Equal(t, "github", stored.SourceKind)
+			assert.Equal(t, "https://github.com/acme/widgets", stored.SourceURL)
+			assert.Equal(t, tc.wantRef, stored.SourceRef)
+			assert.NotEmpty(t, stored.Checksum)
+		})
+	}
+}
+
 // TestService_ImportFromGitHub_ProjectScoped is the positive project-scope path
 // (spec: "valid manifest creates a published blueprint in the caller's
 // project"): a valid archive imported for a project produces a published

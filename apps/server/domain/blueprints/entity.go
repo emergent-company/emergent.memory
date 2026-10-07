@@ -32,6 +32,9 @@ type Blueprint struct {
 	ProjectID   *string         `bun:"project_id,type:uuid" json:"projectId,omitempty"`
 	Manifest    json.RawMessage `bun:"manifest,type:jsonb" json:"manifest"`
 	Checksum    string          `bun:"checksum,notnull,default:''" json:"checksum"`
+	SourceKind  string          `bun:"source_kind,type:text" json:"sourceKind,omitempty"`
+	SourceURL   string          `bun:"source_url,type:text" json:"sourceUrl,omitempty"`
+	SourceRef   string          `bun:"source_ref,type:text" json:"sourceRef,omitempty"`
 	CreatedAt   time.Time       `bun:"created_at,notnull" json:"created_at"`
 	UpdatedAt   time.Time       `bun:"updated_at,notnull" json:"updated_at"`
 }
@@ -54,6 +57,9 @@ type CreateBlueprintRequest struct {
 	Author      string          `json:"author,omitempty"`
 	ProjectID   *string         `json:"projectId,omitempty"`
 	Manifest    json.RawMessage `json:"manifest"`
+	SourceKind  string          `json:"sourceKind,omitempty"`
+	SourceURL   string          `json:"sourceUrl,omitempty"`
+	SourceRef   string          `json:"sourceRef,omitempty"`
 }
 
 // UpdateBlueprintRequest is the request to update a draft blueprint.

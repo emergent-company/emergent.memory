@@ -155,6 +155,12 @@ func (s *Service) ImportFromGitHub(ctx context.Context, projectID string, req *I
 		return nil, apperror.NewBadRequest("project context required (X-Project-ID header or API token)")
 	}
 
+	org, repo, ref, err := parseGitHubURL(req.URL, req.Ref)
+	if err != nil {
+		return nil, err
+	}
+	sourceKind, sourceURL, sourceRef := sourceProvenance(org, repo, ref)
+
 	desc, manifest, err := s.fetchAndLoadManifest(ctx, req)
 	if err != nil {
 		return nil, err
@@ -172,6 +178,9 @@ func (s *Service) ImportFromGitHub(ctx context.Context, projectID string, req *I
 		Author:      desc.Author,
 		ProjectID:   scope,
 		Manifest:    manifest,
+		SourceKind:  sourceKind,
+		SourceURL:   sourceURL,
+		SourceRef:   sourceRef,
 	})
 	if err != nil {
 		return nil, err
@@ -368,6 +377,17 @@ func parseGitHubURL(rawURL, refOverride string) (org, repo, ref string, err erro
 		return "", "", "", apperror.NewBadRequest("invalid GitHub URL: malformed ref")
 	}
 	return org, repo, ref, nil
+}
+
+// sourceProvenance returns the normalized GitHub source provenance for a parsed
+// URL: the kind ("github"), the canonical https://github.com/<org>/<repo> URL
+// (no ref, no .git), and the ref, with the "HEAD" sentinel normalized to "" so
+// an omitted ref means the repository default branch.
+func sourceProvenance(org, repo, ref string) (kind, sourceURL, sourceRef string) {
+	if ref == "HEAD" {
+		ref = ""
+	}
+	return "github", "https://github.com/" + org + "/" + repo, ref
 }
 
 // validatePublicHost rejects hosts that must never be dialed or fetched on
