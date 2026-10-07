@@ -29,4 +29,3 @@
   the keep-connected/keep-running requirement and a new scenario.
 - [x] 3.2 `openspec validate mac-engine-session-expiry-keeps-running` passes.
 
-<!-- openspec:archive-hold: tests added but Mac build/test not runnable on the Linux host; verify on mcj-mini before archive -->

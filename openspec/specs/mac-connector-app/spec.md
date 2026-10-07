@@ -117,7 +117,10 @@ failure SHALL prefer the connector CLI's own session status (`auth status`),
 falling back to the failure text (`not signed in`, `401`, `invalid_token`). A
 successful sign-in SHALL import that session into the connector CLI via
 `auth import` and then load the user's projects. Non-auth failures SHALL still
-show the error state.
+show the error state. When a project is connected and the failure is an
+auth/session failure, the app SHALL keep the connected intent and SHALL NOT stop
+a running engine whose config still binds that project; only a non-auth failure
+tears down the connection and stops the engine.
 
 #### Scenario: Auth failure shows the signed-out state
 
@@ -140,6 +143,16 @@ show the error state.
   failure
 - **THEN** the app shows the "Couldn't load projects" error state with the
   failure message, as before
+
+#### Scenario: Session expires while a project is connected
+
+- **WHEN** a project is connected and the connector CLI's session expires or is
+  cleared, so a config re-materialisation (e.g. `projects use` during the launch
+  scope-settle) fails with an auth/session error
+- **THEN** the app keeps the connected intent and leaves the running engine
+  running (its long-lived project token and on-disk config still bind that
+  project), and surfaces the signed-out prompt for management actions — it does
+  not tear down a healthy engine
 
 ### Requirement: Accounts are listed by email and switching uses the effective signed-in state
 
