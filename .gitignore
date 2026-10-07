@@ -189,6 +189,21 @@ apps/server/VERSION
 # Local deployment skills (machine-specific)
 .opencode/skills/upgrade-mcj/
 
+# Apple Xcode 27 agent skills — generated locally on the Mac build host by
+# `task skills:export-xcode`. Apple-licensed content (Xcode SLA §2.5/§2.7):
+# never commit or redistribute. The exporter installs to the local opencode
+# skills dir; these entries are a guard against a repo-pointed --dest.
+.opencode/skills/adopt-c-bounds-safety/
+.opencode/skills/app-intents-specialist/
+.opencode/skills/app-intents-whats-new-27/
+.opencode/skills/audit-xcode-security-settings/
+.opencode/skills/building-document-based-swiftui-applications/
+.opencode/skills/device-interaction/
+.opencode/skills/modernize-tests/
+.opencode/skills/swiftui-specialist/
+.opencode/skills/swiftui-whats-new-27/
+.opencode/skills/uikit-app-modernization/
+
 # Machine-specific local TLS material (e.g. tailscale certs used for dev UI hosting).
 # Never commit these — a private key in the working tree is one `git add -A` away from leaking.
 *.key

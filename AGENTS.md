@@ -199,6 +199,23 @@ Deploys are **not scheduled** — trigger explicitly:
 gh workflow run deploy-dev.yml --repo emergent-company/emergent.memory.infra --field target=both
 ```
 
+## Xcode Agent Skills (local-only, never committed)
+
+Xcode 27 ships agent skills (SwiftUI, document-based SwiftUI, App Intents, C bounds safety, test modernization, UIKit modernization, Xcode security audit) that are useful when working on Apple-platform code. **They are Apple-licensed content and MUST NOT be committed to this repo or redistributed.** The Xcode SLA (§2.5 "copying-in-part", §2.7 "hosting/redistribution") forbids copying Xcode components into a shared repository or hosting them for others.
+
+Generate them **locally on the Mac build machine** instead (default ssh alias `mcj-mini`, Xcode 27 installed). The exporter installs into the machine's local opencode skills directory — never the repo checkout:
+
+```bash
+task skills:export-xcode              # export + install into the local opencode skills dir
+task skills:export-xcode -- --dry-run # export + validate, no write
+task skills:export-xcode -- --check   # validate the locally installed set only
+task skills:export-xcode -- --dest DIR # override install dir (do NOT point at the repo)
+```
+
+`scripts/export-xcode-skills.sh` runs `xcrun agent skills export` on the host, strips Xcode's `.packaged` suffix, and normalizes Apple's frontmatter for opencode: it merges the `when_to_use` field into `description` (opencode only reads `description`), drops unused keys, tags `metadata.source: xcode-27`, and truncates any description over opencode's 1024-char limit. The default install dir is `$XDG_CONFIG_HOME/opencode/skills` (i.e. `~/.config/opencode/skills`), so the skills are available machine-wide without entering any Git tree.
+
+The skill directory names are listed in `.gitignore` under `.opencode/skills/` as a guard: if anyone points `--dest` at the repo, the generated Apple content still cannot be committed.
+
 ## Before Writing Code — Check These First
 
 | Creating… | Read first… |

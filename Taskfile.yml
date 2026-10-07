@@ -88,6 +88,11 @@ tasks:
     cmds:
       - bash scripts/preflight/openspec-archive.sh {{.CLI_ARGS}}
 
+  skills:export-xcode:
+    desc: Export Apple-licensed Xcode 27 agent skills from the macOS build host into the local opencode skills dir (never the repo). CLI_ARGS for --dry-run/--check/--host/--dest.
+    cmds:
+      - bash scripts/export-xcode-skills.sh {{.CLI_ARGS}}
+
   cli:gen-docs:
     desc: Regenerate the embedded CLI reference skill (memory-cli-reference/SKILL.md)
     dir: apps/cli
