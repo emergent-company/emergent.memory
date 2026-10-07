@@ -138,6 +138,12 @@ type Config struct {
 	// shared static secret. Every other memory call authenticates with the
 	// request's session token; this is not a general gateway credential.
 	AgentTriggerToken string
+	// ProviderProbeAllow lists hostnames and/or CIDRs (from
+	// PROVIDER_PROBE_ALLOW, comma-separated) the provider connection-test /
+	// base-url check may dial even when they resolve to non-public addresses
+	// (self-hosted gateways such as litellm). Empty = strict public-only
+	// (SSRF guard default).
+	ProviderProbeAllow []string
 }
 
 func LoadConfig() Config {
@@ -208,6 +214,7 @@ func LoadConfig() Config {
 		GitHubReviewAgentID: os.Getenv("GITHUB_REVIEW_AGENT_ID"),
 		GitHubReviewRepos:   os.Getenv("GITHUB_REVIEW_REPOS"),
 		AgentTriggerToken:   os.Getenv("AGENT_TRIGGER_TOKEN"),
+		ProviderProbeAllow:  splitCSV(os.Getenv("PROVIDER_PROBE_ALLOW")),
 	}
 }
 
@@ -216,6 +223,18 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// splitCSV splits a comma-separated env value, trimming whitespace and dropping
+// empty entries. Empty input yields nil.
+func splitCSV(raw string) []string {
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func durationOr(key string, fallback time.Duration) time.Duration {

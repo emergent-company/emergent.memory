@@ -839,9 +839,11 @@ type openAIModelList struct {
 }
 
 // providerProbeHTTPClient dials user-supplied provider base_urls through an
-// SSRF-guarded transport (loopback/private/metadata blocked). Declared as a var
-// so tests can substitute a loopback-permitting client for httptest servers.
-var providerProbeHTTPClient = newSSRFSafeHTTPClient(10 * time.Second)
+// SSRF-guarded transport (loopback/private/metadata blocked by default). Hosts
+// and CIDRs named in PROVIDER_PROBE_ALLOW are additionally dialable, for
+// self-hosted gateways such as litellm. main() rebuilds this from Config;
+// declared as a var so tests can substitute a loopback-permitting client.
+var providerProbeHTTPClient = newSSRFSafeHTTPClient(10*time.Second, nil)
 
 // fetchOpenAICompatFallbackModels seeds the fallback dropdowns after a
 // successful connection test: it fetches the endpoint's OpenAI-compatible

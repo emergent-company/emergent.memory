@@ -24,6 +24,9 @@ func main() {
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("invalid configuration: %v", err)
 	}
+	// Provider probe egress defaults to public-only; PROVIDER_PROBE_ALLOW
+	// exempts internal gateways (e.g. litellm) from the SSRF guard.
+	providerProbeHTTPClient = newSSRFSafeHTTPClient(10*time.Second, newDialAllowlist(cfg.ProviderProbeAllow))
 	if cfg.AuthMode != "session" {
 		log.Printf("WARNING: AUTH_MODE=%s — authentication is relaxed; development only", cfg.AuthMode)
 		log.Printf("WARNING: AUTH_MODE=%s carries no Memory credential; session-less calls send no bearer. Use only with the local mock backend, not a real Memory instance.", cfg.AuthMode)
