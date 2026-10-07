@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -456,6 +457,45 @@ func TestResolveDefaultProjectUnavailable(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, "Service temporarily unavailable") {
 		t.Errorf("unavailable state missing, got %q", body)
+	}
+	if strings.Contains(body, "Create organization") {
+		t.Errorf("backend failure must never render the empty/onboarding state, got %q", body)
+	}
+}
+
+// TestResolveDefaultProjectTransportErrorRedacted asserts a transport-level
+// ListProjects failure renders the unavailable state with a sanitized message
+// (no host/port/URL/"dial tcp" detail leaks) and never the onboarding state.
+func TestResolveDefaultProjectTransportErrorRedacted(t *testing.T) {
+	f := &fakeMemory{
+		listProjectsErr: &url.Error{
+			Op:  "Get",
+			URL: "http://172.17.0.1:8080/api/projects",
+			Err: errors.New("dial tcp 172.17.0.1:8080: connect: connection refused"),
+		},
+	}
+	s := &Server{cfg: Config{AuthMode: "session", SessionSecret: "test-secret"}, memory: f}
+	e := sessionServer(s)
+
+	req := httptest.NewRequest(http.MethodGet, "/agents", nil)
+	addSessionCookie(t, req, "test-secret", sessionClaims{
+		AccessToken: "at",
+		Sub:         "sub-a",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+	})
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (unavailable page, not a redirect)", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, memoryUnavailableMessage) {
+		t.Errorf("unavailable state missing sanitized message, got %q", body)
+	}
+	for _, leak := range []string{"172.17.0.1", "dial tcp", ":8080", "memory 5"} {
+		if strings.Contains(body, leak) {
+			t.Errorf("transport failure leaked %q into the page", leak)
+		}
 	}
 	if strings.Contains(body, "Create organization") {
 		t.Errorf("backend failure must never render the empty/onboarding state, got %q", body)

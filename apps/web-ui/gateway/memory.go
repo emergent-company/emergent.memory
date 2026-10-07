@@ -233,6 +233,45 @@ func memoryStatus(err error) int {
 // HTTP status.
 func isMemoryStatus(err error, status int) bool { return memoryStatus(err) == status }
 
+// userFacingMemoryError returns a safe, non-technical message for a memory
+// request failure. It never returns err.Error(): transport failures carry
+// *url.Error strings such as "dial tcp 172.17.0.1:8080: connect: connection
+// refused" and memoryHTTPError renders a "memory <status> <code>:" prefix —
+// both leak internal addresses and backend detail to end users.
+func userFacingMemoryError(err error) string {
+	if err == nil {
+		return ""
+	}
+	// A 5xx response (502/503/504 and any other server error) is an upstream
+	// outage, not a user mistake: report "temporarily unavailable" without any
+	// backend detail.
+	if status := memoryStatus(err); status >= http.StatusInternalServerError {
+		return memoryUnavailableMessage
+	}
+	// A transport-level failure or client-side timeout: connection
+	// refused/reset, TLS handshake, DNS, or an exceeded deadline. net.Error
+	// covers *url.Error (which implements Timeout/Temporary);
+	// context.DeadlineExceeded is checked explicitly because it is not a
+	// net.Error.
+	if errors.Is(err, context.DeadlineExceeded) {
+		return memoryUnavailableMessage
+	}
+	var ne net.Error
+	if errors.As(err, &ne) {
+		return memoryUnavailableMessage
+	}
+	return genericErrorMessage
+}
+
+// memoryUnavailableMessage is the user-facing copy for a backend outage: a
+// non-technical "your data is safe" message that never exposes hosts, ports,
+// URLs, or the raw `memory <status> <code>:` prefix.
+const memoryUnavailableMessage = "Memory is temporarily unavailable. Your data is safe — retrying automatically."
+
+// genericErrorMessage is the fallback user-facing copy for any failure that is
+// neither a 5xx nor a transport/timeout error.
+const genericErrorMessage = "Something went wrong."
+
 // truncateString caps s at n bytes for log output, appending an ellipsis when
 // truncated. Memory response bodies are small, but a defensive cap keeps a
 // misbehaving backend from flooding the gateway log.

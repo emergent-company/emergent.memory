@@ -701,7 +701,7 @@ func (s *Server) resolveDefaultProject(next echo.HandlerFunc) echo.HandlerFunc {
 			// A backend failure surfaces the explicit unavailable state rather
 			// than misrouting to the org list, so an outage is never mistaken
 			// for a user with no projects.
-			return s.page(c, pageTitle("Service temporarily unavailable"), RootUnavailablePage(err))
+			return s.page(c, pageTitle("Service temporarily unavailable"), RootUnavailablePage(errors.New(userFacingMemoryError(err))))
 		}
 		if len(projects) == 0 {
 			// No project to auto-select: send to the org list to create one.

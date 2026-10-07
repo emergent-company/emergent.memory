@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -72,6 +75,53 @@ func TestIsMemoryStatus(t *testing.T) {
 			}
 			if got := isMemoryStatus(tt.err, status); got != tt.want {
 				t.Fatalf("isMemoryStatus(%v, %d) = %v, want %v", tt.err, status, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUserFacingMemoryError(t *testing.T) {
+	urlErr := &url.Error{
+		Op:  "Get",
+		URL: "http://172.17.0.1:8080/api/orgs",
+		Err: errors.New("dial tcp 172.17.0.1:8080: connect: connection refused"),
+	}
+
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "nil", err: nil, want: ""},
+		{
+			name: "503 service_unavailable",
+			err:  &memoryHTTPError{Status: http.StatusServiceUnavailable, Code: "service_unavailable", Message: "Token validation temporarily unavailable"},
+			want: memoryUnavailableMessage,
+		},
+		{name: "502 bad gateway", err: &memoryHTTPError{Status: http.StatusBadGateway}, want: memoryUnavailableMessage},
+		{name: "500 internal", err: &memoryHTTPError{Status: http.StatusInternalServerError, Message: "boom"}, want: memoryUnavailableMessage},
+		{name: "url.Error transport", err: urlErr, want: memoryUnavailableMessage},
+		{name: "context deadline", err: context.DeadlineExceeded, want: memoryUnavailableMessage},
+		{
+			name: "plain transport error",
+			err:  errors.New("dial tcp 172.17.0.1:8080: connect: connection refused"),
+			want: genericErrorMessage,
+		},
+	}
+
+	// Internal detail that must never leak into user-facing copy.
+	leakTokens := []string{"172.17.0.1", "dial tcp", ":8080", "memory 5", "service_unavailable", "Token validation"}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := userFacingMemoryError(tt.err)
+			if got != tt.want {
+				t.Fatalf("userFacingMemoryError() = %q, want %q", got, tt.want)
+			}
+			for _, token := range leakTokens {
+				if strings.Contains(got, token) {
+					t.Errorf("userFacingMemoryError() = %q leaks %q", got, token)
+				}
 			}
 		})
 	}

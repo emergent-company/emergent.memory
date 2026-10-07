@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -283,6 +285,83 @@ func TestUIOrgLandingProjectsUnavailable(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, "Organization unavailable") {
 		t.Errorf("projects failure must render the unavailable state, got %q", body)
+	}
+	if strings.Contains(body, "Create project") || strings.Contains(body, "Create the first project in this organization.") {
+		t.Errorf("projects failure must never render the empty/onboarding state, got %q", body)
+	}
+}
+
+// TestUIRootTransportErrorRedacted asserts a transport-level ListOrgs failure
+// renders the unavailable state with a sanitized message: no host, port,
+// "dial tcp", or "memory 5xx" detail leaks, and the onboarding wizard never
+// renders.
+func TestUIRootTransportErrorRedacted(t *testing.T) {
+	s := &Server{cfg: sessionCfg(), memory: &fakeMemory{
+		listOrgsErr: &url.Error{
+			Op:  "Get",
+			URL: "http://172.17.0.1:8080/api/orgs",
+			Err: errors.New("dial tcp 172.17.0.1:8080: connect: connection refused"),
+		},
+	}}
+	e := orgContextUIServer(s)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+		AccessToken: "at",
+		Sub:         "sub-a",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+	}))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/ with transport failure = %d, want 200 unavailable page", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, memoryUnavailableMessage) {
+		t.Errorf("unavailable state missing sanitized message, got %q", body)
+	}
+	for _, leak := range []string{"172.17.0.1", "dial tcp", ":8080", "memory 5"} {
+		if strings.Contains(body, leak) {
+			t.Errorf("transport failure leaked %q into the page", leak)
+		}
+	}
+	if strings.Contains(body, "Create organization") || strings.Contains(body, "Create the first project") {
+		t.Errorf("transport failure must never render the empty/onboarding state, got %q", body)
+	}
+}
+
+// TestUIOrgLandingProjectsTransportErrorRedacted asserts a transport-level
+// ListProjectsIncludingPending failure renders "Organization unavailable" with
+// a sanitized message and never the empty/onboarding state.
+func TestUIOrgLandingProjectsTransportErrorRedacted(t *testing.T) {
+	f := &fakeMemory{
+		orgs: []Org{{ID: "o1", Name: "Acme"}},
+		listProjectsInclErr: &url.Error{
+			Op:  "Get",
+			URL: "http://172.17.0.1:8080/api/projects",
+			Err: errors.New("dial tcp 172.17.0.1:8080: connect: connection refused"),
+		},
+	}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	e := orgContextUIServer(s)
+	req := httptest.NewRequest(http.MethodGet, "/orgs/o1", nil)
+	req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+		AccessToken: "at",
+		OrgID:       "o1",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+	}))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /orgs/o1 with transport failure = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Organization unavailable") || !strings.Contains(body, memoryUnavailableMessage) {
+		t.Errorf("unavailable state missing sanitized message, got %q", body)
+	}
+	for _, leak := range []string{"172.17.0.1", "dial tcp", ":8080", "memory 5"} {
+		if strings.Contains(body, leak) {
+			t.Errorf("transport failure leaked %q into the page", leak)
+		}
 	}
 	if strings.Contains(body, "Create project") || strings.Contains(body, "Create the first project in this organization.") {
 		t.Errorf("projects failure must never render the empty/onboarding state, got %q", body)

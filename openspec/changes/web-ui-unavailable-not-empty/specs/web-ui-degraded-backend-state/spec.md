@@ -61,3 +61,29 @@ treated as zero results.
 
 - **WHEN** any tenancy load fails
 - **THEN** the gateway never renders the empty/onboarding state for that request
+
+### Requirement: Unavailable surfaces never expose internal error detail
+
+When a tenancy load fails and the web UI renders the unavailable state, the surfaced message SHALL be a
+sanitized, non-technical message. It SHALL NOT expose the raw backend error: no hostname, IP address,
+port, URL, transport detail (for example `dial tcp`), or the `memory <status> <code>:` prefix (for example
+`memory 503 service_unavailable`).
+
+A backend 5xx response (`502`/`503`/`504` or any other server error), a transport-level failure
+(`*url.Error` or `net.Error`), and a client-side timeout (`context.DeadlineExceeded`) SHALL all surface the
+same generic "Memory is temporarily unavailable" message. Any other failure SHALL surface a generic
+non-technical message, never `err.Error()`.
+
+#### Scenario: Transport failure on the landing route
+
+- **WHEN** an authenticated `GET /` resolves and `ListOrgs` returns a transport error whose text carries a
+  host and port (for example `dial tcp 172.17.0.1:8080: connect: connection refused`)
+- **THEN** the unavailable state renders with the sanitized "Memory is temporarily unavailable" message
+- **AND** the rendered page does not contain the host, IP, port, `dial tcp`, or a `memory 5xx` prefix
+
+#### Scenario: Transport failure on the org landing
+
+- **WHEN** an authenticated `GET /orgs/:id` resolves the org but `ListProjectsIncludingPending` returns a
+  transport error carrying a host and port
+- **THEN** the "Organization unavailable" state renders with the sanitized message
+- **AND** the rendered page does not expose the host, IP, port, `dial tcp`, or a `memory 5xx` prefix

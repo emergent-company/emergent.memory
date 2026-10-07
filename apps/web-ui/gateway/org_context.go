@@ -135,7 +135,7 @@ func (s *Server) uiOrg(c echo.Context) error {
 		// A projects-list failure must render the unavailable state, not the
 		// empty "No projects yet / Create project" screen: the create CTA is
 		// reserved for a successful zero-project response.
-		return s.page(c, pageTitle("Organization"), OrgLandingPage(orgPageData{Org: org, LoadErr: err}))
+		return s.page(c, pageTitle("Organization"), OrgLandingPage(orgPageData{Org: org, LoadErr: errors.New(userFacingMemoryError(err))}))
 	}
 	// The org access tree supplies the acting user's orgs with roles:
 	// candidates for the transfer destination picker and the per-row
@@ -656,7 +656,7 @@ func (s *Server) uiRoot(c echo.Context) error {
 		// the empty/onboarding wizard: the create screen is reserved for an
 		// authenticated zero-org response, so an outage cannot look like data
 		// loss.
-		return s.page(c, pageTitle("Service temporarily unavailable"), RootUnavailablePage(err))
+		return s.page(c, pageTitle("Service temporarily unavailable"), RootUnavailablePage(errors.New(userFacingMemoryError(err))))
 	}
 	if len(orgs) > 0 {
 		s.activateOrg(c, orgs[0].ID)
