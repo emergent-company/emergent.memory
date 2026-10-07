@@ -229,7 +229,10 @@ final class MCPServersStore: ObservableObject {
     /// `disabled_tools` stores the server-local name, so the prefix is dropped
     /// before a name is persisted (and restored when rendering a configured
     /// disabled tool that the endpoint no longer reports).
-    static func ownToolName(_ discovered: String, server: String) -> String {
+    ///
+    /// Pure string helper with no actor state, so it is `nonisolated` and
+    /// callable from non-isolated contexts (e.g. `MCPServerToolSelection`).
+    nonisolated static func ownToolName(_ discovered: String, server: String) -> String {
         let prefix = server + "_"
         if discovered.hasPrefix(prefix) {
             return String(discovered.dropFirst(prefix.count))
