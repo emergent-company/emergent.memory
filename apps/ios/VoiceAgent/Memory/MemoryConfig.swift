@@ -34,6 +34,10 @@ extension Notification.Name {
 ///
 /// `participantIdentity` is generated once per install and persisted; it is
 /// not meant for the settings UI.
+///
+/// `projectID`/`orgID`/`projectName` identify the active connection's project
+/// and are mirrored here by ``MemoryProjectStore``. They default to `""`
+/// (legacy single connection).
 struct MemoryConfig: Sendable, Equatable {
     // MARK: - UserDefaults keys (stable, public)
 
@@ -57,6 +61,12 @@ struct MemoryConfig: Sendable, Equatable {
     static let ttsStrategyKey = "alfred.ttsStrategy"
     /// Stable per-install participant identity sent to the token endpoint.
     static let participantIdentityKey = "alfred.participantIdentity"
+    /// Project id of the active connection (empty for a legacy single connection).
+    static let projectIDKey = "alfred.projectID"
+    /// Organization id of the active connection (may be empty).
+    static let orgIDKey = "alfred.orgID"
+    /// Human-readable name of the active project (may be empty).
+    static let projectNameKey = "alfred.projectName"
 
     // MARK: - Build-time defaults
 
@@ -69,6 +79,10 @@ struct MemoryConfig: Sendable, Equatable {
     static let defaultAgentConnectTimeout: TimeInterval = 20
     static let defaultChimeSoundID: UInt32 = 1057
     static let defaultTTSStrategy = "server"
+    /// Empty = a legacy connection with no project identity yet.
+    static let defaultProjectID = ""
+    static let defaultOrgID = ""
+    static let defaultProjectName = ""
 
     // MARK: - Values
 
@@ -85,6 +99,12 @@ struct MemoryConfig: Sendable, Equatable {
     var ttsStrategy: String
     /// Stable per-install participant identity (generated once, persisted).
     var participantIdentity: String
+    /// Project id of the active connection (empty for a legacy connection).
+    var projectID: String
+    /// Organization id of the active connection (may be empty).
+    var orgID: String
+    /// Human-readable name of the active project (may be empty).
+    var projectName: String
 
     /// Loads the configuration from `UserDefaults`, falling back to the
     /// build-time defaults for unset keys.
@@ -100,6 +120,9 @@ struct MemoryConfig: Sendable, Equatable {
         let storedChime = defaults.integer(forKey: Self.chimeSoundIDKey)
         chimeSoundID = storedChime > 0 ? UInt32(storedChime) : Self.defaultChimeSoundID
         ttsStrategy = defaults.string(forKey: Self.ttsStrategyKey) ?? Self.defaultTTSStrategy
+        projectID = defaults.string(forKey: Self.projectIDKey) ?? Self.defaultProjectID
+        orgID = defaults.string(forKey: Self.orgIDKey) ?? Self.defaultOrgID
+        projectName = defaults.string(forKey: Self.projectNameKey) ?? Self.defaultProjectName
 
         if let storedIdentity = defaults.string(forKey: Self.participantIdentityKey), !storedIdentity.isEmpty {
             participantIdentity = storedIdentity
@@ -121,6 +144,9 @@ struct MemoryConfig: Sendable, Equatable {
         defaults.set(Int(chimeSoundID), forKey: Self.chimeSoundIDKey)
         defaults.set(ttsStrategy, forKey: Self.ttsStrategyKey)
         defaults.set(participantIdentity, forKey: Self.participantIdentityKey)
+        defaults.set(projectID, forKey: Self.projectIDKey)
+        defaults.set(orgID, forKey: Self.orgIDKey)
+        defaults.set(projectName, forKey: Self.projectNameKey)
     }
 
     /// Restores every key to its build-time default and persists the result.
@@ -135,5 +161,8 @@ struct MemoryConfig: Sendable, Equatable {
         defaults.removeObject(forKey: chimeSoundIDKey)
         defaults.removeObject(forKey: ttsStrategyKey)
         defaults.removeObject(forKey: participantIdentityKey)
+        defaults.removeObject(forKey: projectIDKey)
+        defaults.removeObject(forKey: orgIDKey)
+        defaults.removeObject(forKey: projectNameKey)
     }
 }

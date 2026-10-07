@@ -52,6 +52,11 @@ struct MemorySetupClient: Sendable {
         /// `"server"` = worker streams its own TTS audio. Optional for compat
         /// with gateways that predate the field.
         let ttsStrategy: String?
+        /// Project identity the device credential was minted under. Optional
+        /// for compat with gateways that predate multi-project support.
+        let orgID: String?
+        let projectID: String?
+        let projectName: String?
     }
 
     /// POSTs `token` (plus the optional device self-introduction manifest) to

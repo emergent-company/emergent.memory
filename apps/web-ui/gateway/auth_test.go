@@ -239,7 +239,9 @@ func TestSetupClientSuccess(t *testing.T) {
 		DefaultAgent:     "memory",
 		TTSProvider:      "cartesia",
 	})
-	token, err := s.mintSetupToken(t.Context())
+	// Mint on the session-authenticated devices page, then exchange the token
+	// from a session-less client — the whole point of the gateway-local store.
+	token, err := s.mintSetupToken(t.Context(), "org-1", "proj-1", "Project One")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,9 +262,12 @@ func TestSetupClientSuccess(t *testing.T) {
 		"tokenEndpoint": "http://memory.example.com:8080/api/token",
 		"apiBaseURL":    "http://memory.example.com:8080/",
 		"ttsStrategy":   "server",
+		"orgID":         "org-1",
+		"projectID":     "proj-1",
+		"projectName":   "Project One",
 	}
-	if len(got) != 5 {
-		t.Fatalf("setup response must have exactly 5 fields, got %d: %+v", len(got), got)
+	if len(got) != 8 {
+		t.Fatalf("setup response must have exactly 8 fields, got %d: %+v", len(got), got)
 	}
 	for k, v := range want {
 		if got[k] != v {
@@ -283,7 +288,7 @@ func TestSetupClientSuccess(t *testing.T) {
 
 func TestSetupClientTokenSingleUse(t *testing.T) {
 	s, e := newAuthEcho(&fakeMemory{}, Config{})
-	token, err := s.mintSetupToken(t.Context())
+	token, err := s.mintSetupToken(t.Context(), "org-1", "proj-1", "Project One")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +309,7 @@ func TestSetupClientTokenSingleUse(t *testing.T) {
 
 func TestSetupClientServerURLFallback(t *testing.T) {
 	s, e := newAuthEcho(&fakeMemory{}, Config{LiveKitURL: "ws://lk:7880", DefaultAgent: "diane"})
-	token, err := s.mintSetupToken(t.Context())
+	token, err := s.mintSetupToken(t.Context(), "org-1", "proj-1", "Project One")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +336,7 @@ func TestSetupClientServerURLFallback(t *testing.T) {
 func TestSetupClientAcceptsDeviceManifest(t *testing.T) {
 	f := &fakeMemory{}
 	s, e := newAuthEcho(f, Config{})
-	token, err := s.mintSetupToken(t.Context())
+	token, err := s.mintSetupToken(t.Context(), "org-1", "proj-1", "Project One")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +375,7 @@ func TestSetupClientAcceptsDeviceManifest(t *testing.T) {
 func TestSetupClientWithoutManifest(t *testing.T) {
 	f := &fakeMemory{}
 	s, e := newAuthEcho(f, Config{})
-	token, err := s.mintSetupToken(t.Context())
+	token, err := s.mintSetupToken(t.Context(), "org-1", "proj-1", "Project One")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -394,53 +399,42 @@ func TestSetupClientWithoutManifest(t *testing.T) {
 // --- mintSetupToken / consumeSetupToken ---
 
 func TestConsumeSetupTokenExpired(t *testing.T) {
-	f := &fakeMemory{}
-	s := &Server{cfg: Config{}, memory: f}
+	s := &Server{cfg: Config{}, memory: &fakeMemory{}, setupTokens: newSetupTokenStore()}
 	stale := strings.Repeat("a", 32)
 
 	// token older than the TTL → rejected
-	_ = f.SetProjectSetting(t.Context(), setupTokenCategory, setupTokenKey, map[string]any{
-		"token":     stale,
-		"createdAt": time.Now().Add(-11 * time.Minute).UTC().Format(time.RFC3339),
-		"used":      false,
+	s.setupTokens.set(setupEntry{
+		Token:       stale,
+		DeviceToken: "emt_x",
+		CreatedAt:   time.Now().Add(-11 * time.Minute),
 	})
-	if _, ok := s.consumeSetupToken(t.Context(), stale); ok {
+	if _, _, _, _, ok := s.consumeSetupToken(stale); ok {
 		t.Fatal("expired token must not be consumable")
 	}
 
-	// unparsable createdAt → rejected (treated as expired)
-	_ = f.SetProjectSetting(t.Context(), setupTokenCategory, setupTokenKey, map[string]any{
-		"token":     stale,
-		"createdAt": "not-a-timestamp",
-		"used":      false,
+	// zero createdAt → rejected (treated as expired)
+	s.setupTokens.set(setupEntry{
+		Token:       stale,
+		DeviceToken: "emt_x",
 	})
-	if _, ok := s.consumeSetupToken(t.Context(), stale); ok {
-		t.Fatal("token with unparsable createdAt must not be consumable")
-	}
-
-	// empty createdAt → rejected
-	_ = f.SetProjectSetting(t.Context(), setupTokenCategory, setupTokenKey, map[string]any{
-		"token": stale,
-		"used":  false,
-	})
-	if _, ok := s.consumeSetupToken(t.Context(), stale); ok {
+	if _, _, _, _, ok := s.consumeSetupToken(stale); ok {
 		t.Fatal("token with missing createdAt must not be consumable")
 	}
 }
 
 func TestConsumeSetupTokenFresh(t *testing.T) {
 	s := &Server{cfg: Config{}, memory: &fakeMemory{}}
-	token, err := s.mintSetupToken(t.Context())
+	token, err := s.mintSetupToken(t.Context(), "org-1", "proj-1", "Project One")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := s.consumeSetupToken(t.Context(), token); !ok {
+	if _, _, _, _, ok := s.consumeSetupToken(token); !ok {
 		t.Fatal("fresh minted token should be consumable")
 	}
-	if _, ok := s.consumeSetupToken(t.Context(), token); ok {
+	if _, _, _, _, ok := s.consumeSetupToken(token); ok {
 		t.Fatal("token must be single-use")
 	}
-	if _, ok := s.consumeSetupToken(t.Context(), strings.Repeat("0", 32)); ok {
+	if _, _, _, _, ok := s.consumeSetupToken(strings.Repeat("0", 32)); ok {
 		t.Fatal("unknown token must be rejected")
 	}
 }
@@ -450,21 +444,21 @@ func TestConsumeSetupTokenFresh(t *testing.T) {
 // token is minted once the stored one is used.
 func TestMintSetupTokenReusesValid(t *testing.T) {
 	s := &Server{cfg: Config{}, memory: &fakeMemory{}}
-	t1, err := s.mintSetupToken(t.Context())
+	t1, err := s.mintSetupToken(t.Context(), "org-1", "proj-1", "Project One")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t2, err := s.mintSetupToken(t.Context())
+	t2, err := s.mintSetupToken(t.Context(), "org-1", "proj-1", "Project One")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if t1 != t2 {
 		t.Errorf("mintSetupToken should reuse the valid stored token, got %s vs %s", t1, t2)
 	}
-	if _, ok := s.consumeSetupToken(t.Context(), t1); !ok {
+	if _, _, _, _, ok := s.consumeSetupToken(t1); !ok {
 		t.Fatal("token should be consumable")
 	}
-	t3, err := s.mintSetupToken(t.Context())
+	t3, err := s.mintSetupToken(t.Context(), "org-1", "proj-1", "Project One")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -473,23 +467,22 @@ func TestMintSetupTokenReusesValid(t *testing.T) {
 	}
 }
 
-// TestSetupTokenSurvivesRestart proves tokens live in the memory backend, not
-// the process: a NEW Server sharing the same fakeMemory consumes a token
-// minted by the previous Server — the `air` hot-reload restart scenario.
-func TestSetupTokenSurvivesRestart(t *testing.T) {
-	f := &fakeMemory{}
-	s1 := &Server{cfg: Config{}, memory: f}
-	token, err := s1.mintSetupToken(t.Context())
+// TestSetupTokenSingleUseInProcess asserts the setup token is single-use on the
+// same Server. The store is in-process by design (Decision 3): a gateway
+// restart drops pending tokens and the QR is re-minted on the next devices-page
+// load, so there is no restart-survival to assert — only that a consumed token
+// cannot be claimed again.
+func TestSetupTokenSingleUseInProcess(t *testing.T) {
+	s := &Server{cfg: Config{}, memory: &fakeMemory{}}
+	token, err := s.mintSetupToken(t.Context(), "org-1", "proj-1", "Project One")
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	s2 := &Server{cfg: Config{}, memory: f} // "restarted" process, same backend
-	if _, ok := s2.consumeSetupToken(t.Context(), token); !ok {
-		t.Fatal("token minted before restart must survive and be consumable")
+	if _, _, _, _, ok := s.consumeSetupToken(token); !ok {
+		t.Fatal("token should be consumable exactly once")
 	}
-	if _, ok := s2.consumeSetupToken(t.Context(), token); ok {
-		t.Fatal("token must still be single-use after restart")
+	if _, _, _, _, ok := s.consumeSetupToken(token); ok {
+		t.Fatal("token must be single-use")
 	}
 }
 
@@ -506,8 +499,11 @@ func TestSetupQRPayloadShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got struct {
-		SetupURL string `json:"setupURL"`
-		Token    string `json:"token"`
+		SetupURL    string `json:"setupURL"`
+		Token       string `json:"token"`
+		OrgID       string `json:"orgID"`
+		ProjectID   string `json:"projectID"`
+		ProjectName string `json:"projectName"`
 	}
 	if err := json.Unmarshal([]byte(payload), &got); err != nil {
 		t.Fatal(err)
@@ -519,10 +515,10 @@ func TestSetupQRPayloadShape(t *testing.T) {
 		t.Errorf("token = %q, want 64 lowercase hex chars (randomHex(32))", got.Token)
 	}
 	// the token in the QR is a valid one-time setup token
-	if _, ok := s.consumeSetupToken(t.Context(), got.Token); !ok {
+	if _, _, _, _, ok := s.consumeSetupToken(got.Token); !ok {
 		t.Error("QR token should be consumable exactly once")
 	}
-	if _, ok := s.consumeSetupToken(t.Context(), got.Token); ok {
+	if _, _, _, _, ok := s.consumeSetupToken(got.Token); ok {
 		t.Error("QR token must be single-use")
 	}
 }
@@ -677,7 +673,7 @@ func TestSetupClientPublicBaseURL(t *testing.T) {
 		PublicBaseURL: "https://gw.example.com/", // trailing slash must be trimmed
 		LiveKitURL:    "ws://lk:7880",
 	})
-	token, err := s.mintSetupToken(t.Context())
+	token, err := s.mintSetupToken(t.Context(), "org-1", "proj-1", "Project One")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -727,7 +723,7 @@ func TestTTSStrategy(t *testing.T) {
 // TestSetupClientTTSStrategy asserts the setup response carries ttsStrategy.
 func TestSetupClientTTSStrategy(t *testing.T) {
 	s, e := newAuthEcho(&fakeMemory{}, Config{TTSProvider: "none", LiveKitURL: "ws://lk:7880"})
-	token, err := s.mintSetupToken(t.Context())
+	token, err := s.mintSetupToken(t.Context(), "org-1", "proj-1", "Project One")
 	if err != nil {
 		t.Fatal(err)
 	}

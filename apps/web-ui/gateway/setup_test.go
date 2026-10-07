@@ -13,29 +13,28 @@ import (
 )
 
 // This file complements auth_test.go: auth_test.go covers the setup lifecycle
-// end-to-end, this file pins the lower-level edge cases (freshness boundaries,
-// memory-failure paths, QR image encoding).
+// end-to-end, this file pins the lower-level store/consume edge cases
+// (freshness boundaries, rejection paths, QR image encoding).
 
-// TestSetupTokenFreshBoundary pins the TTL decision, including that empty and
-// unparsable timestamps are expired and a future timestamp is fresh.
+// TestSetupTokenFreshBoundary pins the TTL decision: a zero timestamp is
+// expired, a just-now / future timestamp is fresh, and one past the TTL is not.
 func TestSetupTokenFreshBoundary(t *testing.T) {
+	now := time.Now()
 	cases := []struct {
 		name      string
-		createdAt string
+		createdAt time.Time
 		want      bool
 	}{
-		{"empty", "", false},
-		{"unparsable", "not-a-timestamp", false},
-		{"RFC3339 with space", time.Now().UTC().Format("2006-01-02 15:04:05"), false},
-		{"just now", time.Now().UTC().Format(time.RFC3339), true},
-		{"a minute old", time.Now().Add(-time.Minute).UTC().Format(time.RFC3339), true},
-		{"eleven minutes old", time.Now().Add(-11 * time.Minute).UTC().Format(time.RFC3339), false},
-		{"future", time.Now().Add(5 * time.Minute).UTC().Format(time.RFC3339), true},
+		{"zero", time.Time{}, false},
+		{"just now", now, true},
+		{"a minute old", now.Add(-time.Minute), true},
+		{"eleven minutes old", now.Add(-11 * time.Minute), false},
+		{"future", now.Add(5 * time.Minute), true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := setupTokenFresh(tc.createdAt); got != tc.want {
-				t.Errorf("setupTokenFresh(%q) = %v, want %v", tc.createdAt, got, tc.want)
+				t.Errorf("setupTokenFresh(%v) = %v, want %v", tc.createdAt, got, tc.want)
 			}
 		})
 	}
@@ -54,66 +53,73 @@ func TestDeviceTokenErrorPaths(t *testing.T) {
 	}
 }
 
-// TestSetupTokenConsumeUnsetAndMemoryError asserts an absent setting and a
-// memory error both reject consumption (and minting surfaces the error).
-func TestSetupTokenConsumeUnsetAndMemoryError(t *testing.T) {
-	empty := &Server{cfg: Config{}, memory: &fakeMemory{}}
-	if _, ok := empty.consumeSetupToken(t.Context(), strings.Repeat("a", 32)); ok {
-		t.Error("consume with no stored token must be false")
+// TestConsumeSetupTokenRejects asserts unknown, missing-device-credential,
+// expired, and already-used tokens all reject — and that consuming is a
+// local-only lookup (no memory call).
+func TestConsumeSetupTokenRejects(t *testing.T) {
+	s := &Server{cfg: Config{}, memory: &fakeMemory{}, setupTokens: newSetupTokenStore()}
+
+	// unknown token
+	if _, _, _, _, ok := s.consumeSetupToken(strings.Repeat("a", 32)); ok {
+		t.Error("unknown token must be rejected")
 	}
 
-	broken := &Server{cfg: Config{}, memory: &fakeMemory{settingErr: errTest}}
-	if _, ok := broken.consumeSetupToken(t.Context(), strings.Repeat("a", 32)); ok {
-		t.Error("consume must be false when memory read fails")
+	// missing device credential
+	s.setupTokens.set(setupEntry{Token: "tok-nodev", CreatedAt: time.Now()})
+	if _, _, _, _, ok := s.consumeSetupToken("tok-nodev"); ok {
+		t.Error("token without a device credential must be rejected")
 	}
-	if _, err := broken.mintSetupToken(t.Context()); err == nil {
-		t.Error("mintSetupToken must surface the memory read error")
+
+	// expired
+	s.setupTokens.set(setupEntry{
+		Token:       "tok-old",
+		DeviceToken: "emt_old",
+		CreatedAt:   time.Now().Add(-11 * time.Minute),
+	})
+	if _, _, _, _, ok := s.consumeSetupToken("tok-old"); ok {
+		t.Error("expired token must be rejected")
+	}
+
+	// used: consume once, then a second consume must fail
+	s.setupTokens.set(setupEntry{Token: "tok-used", DeviceToken: "emt_used", CreatedAt: time.Now()})
+	if _, _, _, _, ok := s.consumeSetupToken("tok-used"); !ok {
+		t.Fatal("fresh token should be consumable")
+	}
+	if _, _, _, _, ok := s.consumeSetupToken("tok-used"); ok {
+		t.Error("used token must be rejected")
 	}
 }
 
-// TestSetupTokenMetadataPreservedOnConsume asserts the consume write-back keeps
-// the original token + createdAt + device credential and only flips used to
-// true.
-func TestSetupTokenMetadataPreservedOnConsume(t *testing.T) {
-	f := &fakeMemory{}
-	s := &Server{cfg: Config{}, memory: f}
-	token := strings.Repeat("b", 32)
-	createdAt := time.Now().UTC().Format(time.RFC3339)
-	if err := f.SetProjectSetting(t.Context(), setupTokenCategory, setupTokenKey, map[string]any{
-		"token":       token,
-		"createdAt":   createdAt,
-		"used":        false,
-		"deviceToken": "emt_device_credential",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	dc, ok := s.consumeSetupToken(t.Context(), token)
+// TestConsumeSetupTokenReturnsIdentity asserts consume returns the device
+// credential and the stored onboarding project identity, and marks the token used.
+func TestConsumeSetupTokenReturnsIdentity(t *testing.T) {
+	s := &Server{cfg: Config{}, memory: &fakeMemory{}, setupTokens: newSetupTokenStore()}
+	s.setupTokens.set(setupEntry{
+		Token:       "tok-id",
+		OrgID:       "org-1",
+		ProjectID:   "proj-1",
+		ProjectName: "Project One",
+		DeviceToken: "emt_device_credential",
+		CreatedAt:   time.Now(),
+	})
+	deviceToken, orgID, projectID, projectName, ok := s.consumeSetupToken("tok-id")
 	if !ok {
-		t.Fatal("freshly stored token should be consumable")
+		t.Fatal("seeded token should be consumable")
 	}
-	if dc != "emt_device_credential" {
-		t.Errorf("device credential = %q, want emt_device_credential", dc)
+	if deviceToken != "emt_device_credential" {
+		t.Errorf("device credential = %q, want emt_device_credential", deviceToken)
 	}
-	stored := f.settings[setupTokenCategory][setupTokenKey]
-	if stored["token"] != token {
-		t.Errorf("token rewritten: %v", stored["token"])
+	if orgID != "org-1" || projectID != "proj-1" || projectName != "Project One" {
+		t.Errorf("identity = %q/%q/%q, want org-1/proj-1/Project One", orgID, projectID, projectName)
 	}
-	if stored["createdAt"] != createdAt {
-		t.Errorf("createdAt rewritten: %v", stored["createdAt"])
-	}
-	if used, _ := stored["used"].(bool); !used {
-		t.Errorf("used flag not set after consume: %v", stored["used"])
-	}
-	if stored["deviceToken"] != "emt_device_credential" {
-		t.Errorf("deviceToken rewritten: %v", stored["deviceToken"])
+	if e, _ := s.setupTokens.get("tok-id"); !e.Used {
+		t.Error("token should be marked used after consume")
 	}
 }
 
-// TestSetupTokenQRImage asserts setupQRImage produces a decodable PNG data URI
-// and that the embedded token is a single-use setup token.
+// TestSetupTokenQRImage asserts setupQRImage produces a decodable PNG data URI.
 func TestSetupTokenQRImage(t *testing.T) {
-	f := &fakeMemory{}
-	s := &Server{cfg: Config{}, memory: f}
+	s := &Server{cfg: Config{}, memory: &fakeMemory{}}
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Host = "memory.example.com:8080"
@@ -133,20 +139,27 @@ func TestSetupTokenQRImage(t *testing.T) {
 	}
 }
 
-// TestSetupTokenClientNoDeviceCredential asserts a setup token that was minted
-// without a device credential (e.g. dev mode, no session) yields 401 at the
-// exchange — fail closed, never an empty bearer.
-func TestSetupTokenClientNoDeviceCredential(t *testing.T) {
-	f := &fakeMemory{}
-	s := &Server{cfg: Config{}, memory: f}
-	token := strings.Repeat("c", 32)
-	if err := f.SetProjectSetting(t.Context(), setupTokenCategory, setupTokenKey, map[string]any{
-		"token":     token,
-		"createdAt": time.Now().UTC().Format(time.RFC3339),
-		"used":      false,
-	}); err != nil {
-		t.Fatal(err)
+// TestSetupQRPayloadFailsClosedWithoutProjectScope asserts that in session mode
+// a devices-page request with no resolved project does not mint a QR (fail
+// closed, per the "Setup QR carries the onboarding project" requirement).
+func TestSetupQRPayloadFailsClosedWithoutProjectScope(t *testing.T) {
+	s := &Server{cfg: Config{AuthMode: "session"}, memory: &fakeMemory{}}
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "memory.example.com:8080"
+	c := e.NewContext(req, httptest.NewRecorder())
+	if img := s.setupQRImage(c); img != "" {
+		t.Errorf("session-mode QR without a resolved project = %q, want empty", img)
 	}
+}
+
+// TestSetupTokenClientNoDeviceCredential asserts a setup token minted without a
+// device credential (e.g. dev mode, no session) yields 401 at the exchange —
+// fail closed, never an empty bearer — and is not marked used.
+func TestSetupTokenClientNoDeviceCredential(t *testing.T) {
+	s := &Server{cfg: Config{}, memory: &fakeMemory{}, setupTokens: newSetupTokenStore()}
+	token := strings.Repeat("c", 32)
+	s.setupTokens.set(setupEntry{Token: token, CreatedAt: time.Now()})
 
 	e := echo.New()
 	e.POST("/api/setup", s.setupClient)
@@ -158,25 +171,25 @@ func TestSetupTokenClientNoDeviceCredential(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401 (no device credential available)", rec.Code)
 	}
-	if used, _ := f.settings[setupTokenCategory][setupTokenKey]["used"].(bool); used {
+	if e2, _ := s.setupTokens.get(token); e2.Used {
 		t.Error("token should not be marked used when no device credential is returned")
 	}
 }
 
 // TestSetupTokenClientReturnsDeviceCredential asserts the exchange returns the
-// emt_* device credential minted at QR time, ignoring the optional manifest.
+// emt_* device credential minted at QR time plus the onboarding project
+// identity, ignoring the optional manifest.
 func TestSetupTokenClientReturnsDeviceCredential(t *testing.T) {
-	f := &fakeMemory{}
-	s := &Server{cfg: Config{}, memory: f}
+	s := &Server{cfg: Config{}, memory: &fakeMemory{}, setupTokens: newSetupTokenStore()}
 	token := strings.Repeat("d", 32)
-	if err := f.SetProjectSetting(t.Context(), setupTokenCategory, setupTokenKey, map[string]any{
-		"token":       token,
-		"createdAt":   time.Now().UTC().Format(time.RFC3339),
-		"used":        false,
-		"deviceToken": "emt_device_credential_1234",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	s.setupTokens.set(setupEntry{
+		Token:       token,
+		OrgID:       "org-9",
+		ProjectID:   "proj-9",
+		ProjectName: "Project Nine",
+		DeviceToken: "emt_device_credential_1234",
+		CreatedAt:   time.Now(),
+	})
 
 	e := echo.New()
 	e.POST("/api/setup", s.setupClient)
@@ -195,6 +208,9 @@ func TestSetupTokenClientReturnsDeviceCredential(t *testing.T) {
 	if got["apiKey"] != "emt_device_credential_1234" {
 		t.Errorf("apiKey = %q, want the stored device credential", got["apiKey"])
 	}
+	if got["orgID"] != "org-9" || got["projectID"] != "proj-9" || got["projectName"] != "Project Nine" {
+		t.Errorf("identity = %q/%q/%q, want org-9/proj-9/Project Nine", got["orgID"], got["projectID"], got["projectName"])
+	}
 }
 
 // TestMintSetupTokenDoesNotRevokeClaimedCredential guards against the reload
@@ -205,7 +221,7 @@ func TestMintSetupTokenDoesNotRevokeClaimedCredential(t *testing.T) {
 	f := &fakeMemory{}
 	s := &Server{cfg: Config{}, memory: f}
 
-	token, err := s.mintSetupToken(t.Context())
+	token, err := s.mintSetupToken(t.Context(), "org-1", "proj-1", "Project One")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,13 +230,13 @@ func TestMintSetupTokenDoesNotRevokeClaimedCredential(t *testing.T) {
 	}
 	claimedID := f.apiTokens[0].ID
 
-	if _, ok := s.consumeSetupToken(t.Context(), token); !ok {
+	if _, _, _, _, ok := s.consumeSetupToken(token); !ok {
 		t.Fatal("freshly minted token should be consumable")
 	}
 
 	// Reload the devices page: mintSetupToken rotates (used=true) and mints a
 	// fresh credential. The claimed credential must survive.
-	if _, err := s.mintSetupToken(t.Context()); err != nil {
+	if _, err := s.mintSetupToken(t.Context(), "org-1", "proj-1", "Project One"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -240,22 +256,19 @@ func TestMintSetupTokenRevokesUnclaimedOrphanOnRotation(t *testing.T) {
 	f := &fakeMemory{}
 	s := &Server{cfg: Config{}, memory: f}
 
-	if _, err := s.mintSetupToken(t.Context()); err != nil {
+	token, err := s.mintSetupToken(t.Context(), "org-1", "proj-1", "Project One")
+	if err != nil {
 		t.Fatal(err)
 	}
 	orphanID := f.apiTokens[0].ID
 
 	// Force rotation without claiming: expire the setup token so the reuse
 	// branch is skipped but used is still false.
-	_ = f.SetProjectSetting(t.Context(), setupTokenCategory, setupTokenKey, map[string]any{
-		"token":         f.settings[setupTokenCategory][setupTokenKey]["token"],
-		"createdAt":     time.Now().Add(-11 * time.Minute).UTC().Format(time.RFC3339),
-		"used":          false,
-		"deviceToken":   "emt_orphan",
-		"deviceTokenId": orphanID,
-	})
+	e, _ := s.setupTokens.get(token)
+	e.CreatedAt = time.Now().Add(-11 * time.Minute)
+	s.setupTokens.set(e)
 
-	if _, err := s.mintSetupToken(t.Context()); err != nil {
+	if _, err := s.mintSetupToken(t.Context(), "org-1", "proj-1", "Project One"); err != nil {
 		t.Fatal(err)
 	}
 

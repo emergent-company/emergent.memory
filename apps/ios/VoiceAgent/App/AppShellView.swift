@@ -29,6 +29,7 @@ enum AppRoute: Hashable {
 /// when the selected agent changes.
 struct AppShellView: View {
     @EnvironmentObject private var agentStore: AgentStore
+    @EnvironmentObject private var projectStore: MemoryProjectStore
 
     /// The navigation path is owned by `AgentSessionRoot` (which recreates
     /// this shell when the selected agent changes) so controller rebuilds
@@ -137,8 +138,26 @@ struct AppShellView: View {
                     .foregroundStyle(.fg3)
             }
             Spacer()
+            MemoryProjectSwitcher(onSwitch: switchProject, onAddProject: { qrPresented = true })
+                .padding(.top, 2 * .grid)
         }
         .padding(.top, 2 * .grid)
+    }
+
+    /// Switches the active project: drops any pushed agent of the old project,
+    /// mirrors the new connection, re-scopes the agent selection, and reloads
+    /// the picker. The store posts `.memoryConfigChanged`, which rebuilds the
+    /// session controller from the new credential.
+    private func switchProject(_ connection: MemoryProjectConnection) {
+        guard connection.projectID != projectStore.activeProjectID else { return }
+        if !path.isEmpty {
+            path.removeAll()
+        }
+        projectStore.setActive(projectID: connection.projectID)
+        agentStore.setActiveProject(projectStore.activeProjectID)
+        Task { @MainActor in
+            await agentStore.load()
+        }
     }
 
     /// The fetched agent list as native rows, newest server order preserved.
@@ -251,7 +270,7 @@ private struct AppSettingsTabView: View {
     var body: some View {
         VStack(spacing: 0) {
             qrRow()
-            MemorySettingsView()
+            MemorySettingsView(onAddProject: { qrPresented = true })
         }
         .background(.bg1)
     }
@@ -291,4 +310,5 @@ private struct AppSettingsTabView: View {
 #Preview {
     AppShellView(path: .constant([]))
         .environmentObject(AgentStore())
+        .environmentObject(MemoryProjectStore())
 }

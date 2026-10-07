@@ -69,6 +69,10 @@ type Server struct {
 	// constructs them — the share middleware no-ops when unset.
 	shareIPLimiter   *keyedRateLimiter
 	shareLinkLimiter *keyedRateLimiter
+	// setupTokens holds the in-process one-time setup-token store (see
+	// setup.go). Initialized in main(); lazily initialized by setupStore() in
+	// bare test servers.
+	setupTokens *setupTokenStore
 }
 
 // beginShutdown signals long-lived streams to end. Safe to call once.

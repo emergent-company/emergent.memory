@@ -1131,18 +1131,117 @@
         }
       }
     },
-    "objects.detail.noProperties": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No properties"
-          }
-        }
-      }
-    },
-    "sessions.detail.arguments": {
+     "objects.detail.noProperties": {
+       "extractionState": "manual",
+       "localizations": {
+         "en": {
+           "stringUnit": {
+             "state": "translated",
+             "value": "No properties"
+           }
+         }
+       }
+     },
+     "projects.add": {
+       "extractionState": "manual",
+       "localizations": {
+         "en": {
+           "stringUnit": {
+             "state": "translated",
+             "value": "Add project"
+           }
+         }
+       }
+     },
+     "projects.empty": {
+       "extractionState": "manual",
+       "localizations": {
+         "en": {
+           "stringUnit": {
+             "state": "translated",
+             "value": "No projects connected yet."
+           }
+         }
+       }
+     },
+     "projects.none": {
+       "extractionState": "manual",
+       "localizations": {
+         "en": {
+           "stringUnit": {
+             "state": "translated",
+             "value": "No project"
+           }
+         }
+       }
+     },
+     "projects.remove": {
+       "extractionState": "manual",
+       "localizations": {
+         "en": {
+           "stringUnit": {
+             "state": "translated",
+             "value": "Remove project"
+           }
+         }
+       }
+     },
+     "projects.remove.confirm.message": {
+       "extractionState": "manual",
+       "localizations": {
+         "en": {
+           "stringUnit": {
+             "state": "translated",
+             "value": "This device will forget its connection. You can add it again by scanning its setup QR code."
+           }
+         }
+       }
+     },
+     "projects.remove.confirm.title": {
+       "extractionState": "manual",
+       "localizations": {
+         "en": {
+           "stringUnit": {
+             "state": "translated",
+             "value": "Remove project?"
+           }
+         }
+       }
+     },
+     "projects.section.footer": {
+       "extractionState": "manual",
+       "localizations": {
+         "en": {
+           "stringUnit": {
+             "state": "translated",
+             "value": "This device can connect to more than one Memory project. The active project decides which agents, objects, and sessions you see."
+           }
+         }
+       }
+     },
+     "projects.section.title": {
+       "extractionState": "manual",
+       "localizations": {
+         "en": {
+           "stringUnit": {
+             "state": "translated",
+             "value": "Projects"
+           }
+         }
+       }
+     },
+     "projects.switcher.accessibility": {
+       "extractionState": "manual",
+       "localizations": {
+         "en": {
+           "stringUnit": {
+             "state": "translated",
+             "value": "Switch project"
+           }
+         }
+       }
+     },
+     "sessions.detail.arguments": {
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -1461,7 +1560,18 @@
         }
       }
     },
-    "settings.chimeSoundID": {
+     "settings.cancel": {
+       "extractionState": "manual",
+       "localizations": {
+         "en": {
+           "stringUnit": {
+             "state": "translated",
+             "value": "Cancel"
+           }
+         }
+       }
+     },
+     "settings.chimeSoundID": {
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -1593,7 +1703,18 @@
         }
       }
     },
-    "settings.section.session": {
+     "settings.section.connection.footer": {
+       "extractionState": "manual",
+       "localizations": {
+         "en": {
+           "stringUnit": {
+             "state": "translated",
+             "value": "These fields edit the active project's connection. Add more projects with a setup QR code."
+           }
+         }
+       }
+     },
+     "settings.section.session": {
       "extractionState": "manual",
       "localizations": {
         "en": {

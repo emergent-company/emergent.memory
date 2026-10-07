@@ -3,23 +3,25 @@ import SwiftUI
 
 /// QR-code onboarding scanner — backend authentication, not agent config.
 ///
-/// Scans the one-time setup QR code (see the gateway's `GET /api/qr-config`).
-/// The payload is JSON carrying the setup endpoint URL and a one-time token;
-/// the token is POSTed to the setup endpoint, which returns the per-device
-/// server URL, token endpoint, API base URL, and API key. Those are stored in
-/// `MemoryConfig` so the app can reach the backend. It never creates or
-/// changes an agent — agents are added explicitly through the add-agent flow.
+/// Scans the one-time setup QR, POSTs its token to the setup endpoint, and
+/// records the returned per-device connection as a project. It never creates
+/// or changes an agent — agents are added explicitly through the add flow.
 struct MemoryQRScannerView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var agentStore: AgentStore
+    @EnvironmentObject private var projectStore: MemoryProjectStore
 
     /// Payload of the one-time setup QR code. Required fields: `setupURL`
     /// (the setup endpoint) and `token` (the one-time setup token). Both must
     /// be non-empty; anything else is malformed and must not touch the
-    /// previous configuration.
+    /// previous configuration. The project identity is optional so a QR minted
+    /// by an older gateway still onboards.
     private struct QRSetupPayload: Decodable {
         let setupURL: String
         let token: String
+        let orgID: String?
+        let projectID: String?
+        let projectName: String?
     }
 
     private enum ScanPhase {
@@ -99,86 +101,6 @@ struct MemoryQRScannerView: View {
         phase = .scanning
         // Blocks briefly; acceptable for the one-time setup scan.
         session.startRunning()
-    }
-
-    // MARK: - Decode + apply
-
-    @MainActor
-    private func handleFound(_ value: String) {
-        guard phase == .scanning, !configured else { return }
-        // Debounce: the same code is re-reported while it is in view. Ignore
-        // repeats inside the window so a failed decode can be retried by
-        // re-pointing the camera and a successful one is applied only once.
-        if let last = lastDecodeAt, Date().timeIntervalSince(last) < 1.0 {
-            return
-        }
-        lastDecodeAt = Date()
-
-        guard
-            let data = value.data(using: .utf8),
-            let payload = try? JSONDecoder().decode(QRSetupPayload.self, from: data)
-        else {
-            // Not an Memory setup code: show the error inline, keep scanning.
-            hasDecodeError = true
-            return
-        }
-
-        // A valid code must carry a non-empty setup URL and token; anything
-        // else is malformed and must not touch the previous configuration.
-        let setupURL = payload.setupURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let token = payload.token.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !setupURL.isEmpty, !token.isEmpty, let url = URL(string: setupURL), url.scheme != nil else {
-            hasDecodeError = true
-            return
-        }
-
-        // Stop the camera while the exchange runs so the same code is not
-        // re-reported mid-request; it is restarted if the exchange fails.
-        session?.stopRunning()
-
-        // Exchange the one-time token for the per-device configuration,
-        // introducing the device so the gateway can label the registration.
-        Task { @MainActor in
-            do {
-                let response = try await MemorySetupClient().setup(
-                    url: url,
-                    token: token,
-                    device: DeviceInfo().manifest
-                )
-                Log.qr.info("setup ok apiBaseURL=\(response.apiBaseURL)")
-
-                // Overwrite the connection settings; keep everything else
-                // (agentName, exit keywords, ...) from the current config.
-                var config = MemoryConfig()
-                config.serverURL = response.serverURL
-                config.tokenEndpoint = response.tokenEndpoint
-                config.apiBaseURL = response.apiBaseURL
-                config.apiKey = response.apiKey
-                config.ttsStrategy = response.ttsStrategy ?? "server"
-                config.save()
-                NotificationCenter.default.post(name: .memoryConfigChanged, object: nil)
-
-                // The whole point of authenticating is reaching the backend —
-                // refresh the agent list against the newly configured control
-                // plane.
-                await agentStore.load()
-
-                configured = true
-                hasDecodeError = false
-                setupErrorMessage = nil
-
-                // Show the confirmation, then close.
-                try? await Task.sleep(for: .seconds(1.5))
-                dismiss()
-            } catch {
-                // Non-2xx, unreachable, or undecodable: show the message,
-                // keep scanning so the code can be tried again.
-                Log.qr.error("setup failed: \(error.localizedDescription)")
-                hasDecodeError = true
-                setupErrorMessage = error.localizedDescription
-                session?.startRunning()
-            }
-        }
     }
 
     // MARK: - States
@@ -269,48 +191,6 @@ struct MemoryQRScannerView: View {
         UIApplication.shared.open(url)
     }
 
-    private func statusNote() -> some View {
-        HStack(spacing: 2 * .grid) {
-            Image(systemName: statusIcon)
-                .foregroundStyle(statusColor)
-            Text(statusText)
-                .font(.system(size: 12))
-                .foregroundStyle(.fg3)
-        }
-        .padding(3 * .grid)
-        .background(.bg2, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
-    }
-
-    private var statusIcon: String {
-        if configured {
-            return "checkmark.circle.fill"
-        }
-        if hasDecodeError {
-            return "exclamationmark.triangle.fill"
-        }
-        return "qrcode.viewfinder"
-    }
-
-    private var statusColor: Color {
-        if configured {
-            return .fgSuccess
-        }
-        if hasDecodeError {
-            return .fgSerious
-        }
-        return .fg3
-    }
-
-    private var statusText: String {
-        if configured {
-            return NSLocalizedString("qr.configured", comment: "")
-        }
-        if hasDecodeError {
-            return setupErrorMessage ?? NSLocalizedString("qr.decode.failure", comment: "")
-        }
-        return NSLocalizedString("qr.scan.hint", comment: "")
-    }
-
     // MARK: - Camera preview (AVFoundation)
 
     private struct CameraScannerView: UIViewRepresentable {
@@ -375,7 +255,145 @@ struct MemoryQRScannerView: View {
     }
 }
 
+// MARK: - Decode + apply
+
+extension MemoryQRScannerView {
+    /// Debounces and validates a scanned value, then hands it to the exchange.
+    @MainActor
+    private func handleFound(_ value: String) {
+        guard phase == .scanning, !configured else { return }
+        // Debounce: the same code is re-reported while it is in view. Ignore
+        // repeats inside the window so a failed decode can be retried by
+        // re-pointing the camera and a successful one is applied only once.
+        if let last = lastDecodeAt, Date().timeIntervalSince(last) < 1.0 {
+            return
+        }
+        lastDecodeAt = Date()
+
+        guard
+            let data = value.data(using: .utf8),
+            let payload = try? JSONDecoder().decode(QRSetupPayload.self, from: data)
+        else {
+            // Not an Memory setup code: show the error inline, keep scanning.
+            hasDecodeError = true
+            return
+        }
+
+        // A valid code must carry a non-empty setup URL and token; anything
+        // else is malformed and must not touch the previous configuration.
+        let setupURL = payload.setupURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let token = payload.token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !setupURL.isEmpty, !token.isEmpty, let url = URL(string: setupURL), url.scheme != nil else {
+            hasDecodeError = true
+            return
+        }
+
+        // Stop the camera while the exchange runs so the same code is not
+        // re-reported mid-request; it is restarted if the exchange fails.
+        session?.stopRunning()
+        exchangeSetupToken(url: url, token: token, payload: payload)
+    }
+
+    /// Exchanges the one-time token for the per-device configuration, records
+    /// (or updates) the project connection, and refreshes the agent list.
+    @MainActor
+    private func exchangeSetupToken(url: URL, token: String, payload: QRSetupPayload) {
+        Task { @MainActor in
+            do {
+                let response = try await MemorySetupClient().setup(
+                    url: url,
+                    token: token,
+                    device: DeviceInfo().manifest
+                )
+                Log.qr.info("setup ok apiBaseURL=\(response.apiBaseURL)")
+
+                // Each QR is one project: record (or update) that connection and
+                // make it active. The store mirrors the active connection into
+                // MemoryConfig and posts .memoryConfigChanged, so the session
+                // controller rebuilds from the new credential.
+                let connection = MemoryProjectConnection(
+                    projectID: response.projectID ?? payload.projectID ?? "",
+                    orgID: response.orgID ?? payload.orgID ?? "",
+                    projectName: response.projectName ?? payload.projectName ?? "",
+                    serverURL: response.serverURL,
+                    tokenEndpoint: response.tokenEndpoint,
+                    apiBaseURL: response.apiBaseURL,
+                    apiKey: response.apiKey,
+                    ttsStrategy: response.ttsStrategy ?? MemoryConfig.defaultTTSStrategy,
+                    addedAt: Date()
+                )
+                projectStore.upsert(connection)
+                projectStore.setActive(projectID: connection.projectID)
+                agentStore.setActiveProject(projectStore.activeProjectID)
+                await agentStore.load()
+
+                configured = true
+                hasDecodeError = false
+                setupErrorMessage = nil
+
+                // Show the confirmation, then close.
+                try? await Task.sleep(for: .seconds(1.5))
+                dismiss()
+            } catch {
+                // Non-2xx, unreachable, or undecodable: show the message,
+                // keep scanning so the code can be tried again.
+                Log.qr.error("setup failed: \(error.localizedDescription)")
+                hasDecodeError = true
+                setupErrorMessage = error.localizedDescription
+                session?.startRunning()
+            }
+        }
+    }
+}
+
+// MARK: - Status chrome
+
+extension MemoryQRScannerView {
+    private func statusNote() -> some View {
+        HStack(spacing: 2 * .grid) {
+            Image(systemName: statusIcon)
+                .foregroundStyle(statusColor)
+            Text(statusText)
+                .font(.system(size: 12))
+                .foregroundStyle(.fg3)
+        }
+        .padding(3 * .grid)
+        .background(.bg2, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
+    }
+
+    private var statusIcon: String {
+        if configured {
+            return "checkmark.circle.fill"
+        }
+        if hasDecodeError {
+            return "exclamationmark.triangle.fill"
+        }
+        return "qrcode.viewfinder"
+    }
+
+    private var statusColor: Color {
+        if configured {
+            return .fgSuccess
+        }
+        if hasDecodeError {
+            return .fgSerious
+        }
+        return .fg3
+    }
+
+    private var statusText: String {
+        if configured {
+            return NSLocalizedString("qr.configured", comment: "")
+        }
+        if hasDecodeError {
+            return setupErrorMessage ?? NSLocalizedString("qr.decode.failure", comment: "")
+        }
+        return NSLocalizedString("qr.scan.hint", comment: "")
+    }
+}
+
 #Preview {
     MemoryQRScannerView()
         .environmentObject(AgentStore())
+        .environmentObject(MemoryProjectStore())
 }

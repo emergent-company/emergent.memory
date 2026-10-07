@@ -8,6 +8,10 @@ import Foundation
 /// ``ControlPlaneClient`` built from `MemoryConfig()` per call (the same
 /// pattern as ``ObjectBrowserStore``), with stale-result guards so a slow older
 /// load can never overwrite a newer one.
+///
+/// The selected agent is scoped per project: each project remembers its own
+/// pick under `alfred.agentName.<projectID>`, falling back to the legacy
+/// `alfred.agentName` (and the build default) when a project has no stored pick.
 @MainActor
 final class AgentStore: ObservableObject {
     /// Load state for the agent list.
@@ -20,7 +24,8 @@ final class AgentStore: ObservableObject {
 
     @Published private(set) var agents: [Agent] = []
     @Published private(set) var loadState: LoadState = .idle
-    /// Name of the currently selected agent (persisted under `alfred.agentName`).
+    /// Name of the currently selected agent (persisted under the active
+    /// project's key, see `agentNameKey`).
     @Published private(set) var selectedAgentName: String
 
     /// Bumped on every load; results from loads older than the latest are
@@ -28,9 +33,12 @@ final class AgentStore: ObservableObject {
     private var loadGeneration = 0
 
     private let defaults: UserDefaults
+    /// Project whose agent selection is currently loaded (nil = legacy default).
+    private var activeProjectID: String?
 
     /// Starts in the idle state with the persisted (or default) agent name;
-    /// the picker triggers the first `load()` when it appears.
+    /// the picker triggers the first `load()` when it appears. `VoiceAgentApp`
+    /// calls ``setActiveProject(_:)`` on launch to load the active project's pick.
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         selectedAgentName = defaults.string(forKey: MemoryConfig.agentNameKey) ?? MemoryConfig.defaultAgentName
@@ -62,10 +70,27 @@ final class AgentStore: ObservableObject {
         }
     }
 
-    /// Persists `agent` as the selected agent and publishes it.
+    /// Persists `agent` as the selected agent for the active project and
+    /// publishes it.
     func select(_ agent: Agent) {
         selectedAgentName = agent.name
-        defaults.set(agent.name, forKey: MemoryConfig.agentNameKey)
+        defaults.set(agent.name, forKey: agentNameKey)
         TraceLog.log("agent_selected", ["name": agent.name])
+    }
+
+    /// Loads the agent selection remembered for `id` (or the legacy default
+    /// when `id` is nil/empty) and publishes it. Called on launch and whenever
+    /// the active project changes.
+    func setActiveProject(_ id: String?) {
+        let normalized = (id?.isEmpty == false) ? id : nil
+        activeProjectID = normalized
+        selectedAgentName = defaults.string(forKey: agentNameKey) ?? MemoryConfig.defaultAgentName
+    }
+
+    /// The UserDefaults key holding this project's selection: per-project when
+    /// a project id is known, otherwise the legacy single-agent key.
+    private var agentNameKey: String {
+        guard let activeProjectID else { return MemoryConfig.agentNameKey }
+        return "\(MemoryConfig.agentNameKey).\(activeProjectID)"
     }
 }

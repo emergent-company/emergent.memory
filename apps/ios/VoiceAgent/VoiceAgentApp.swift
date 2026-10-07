@@ -24,17 +24,21 @@ enum AgentToConnect {
 struct VoiceAgentApp: App {
     /// The agent list + selection, fetched from the control plane. Replaces
     /// the hardcoded `AgentSelection` list as the selection source of truth
-    /// (still persisted under `alfred.agentName`).
+    /// (persisted per project under `alfred.agentName.<projectID>`).
     @StateObject private var agentStore: AgentStore
+    /// The onboarded project connections + active selection.
+    @StateObject private var projectStore: MemoryProjectStore
 
     init() {
         _agentStore = StateObject(wrappedValue: AgentStore())
+        _projectStore = StateObject(wrappedValue: MemoryProjectStore())
     }
 
     var body: some Scene {
         WindowGroup {
             AgentSessionRoot()
                 .environmentObject(agentStore)
+                .environmentObject(projectStore)
         }
         #if os(macOS)
         .defaultSize(width: 900, height: 900)
@@ -60,6 +64,7 @@ struct VoiceAgentApp: App {
 /// only torn down when the selected agent actually changes.
 private struct AgentSessionRoot: View {
     @EnvironmentObject private var agentStore: AgentStore
+    @EnvironmentObject private var projectStore: MemoryProjectStore
 
     @State private var controller: MemorySessionController?
     @State private var audioOptions: AudioOptions?
@@ -82,10 +87,21 @@ private struct AgentSessionRoot: View {
             }
         }
         .onAppear {
+            // Load the active project's remembered agent before building the
+            // controller, so the first connect uses the right agent.
+            agentStore.setActiveProject(projectStore.activeProjectID)
             install()
         }
         .onChange(of: agentStore.selectedAgentName) { _, _ in
             install()
+        }
+        .onChange(of: projectStore.activeProjectID) { _, _ in
+            // Active project changed: swap the remembered agent for that
+            // project. `setActiveProject` publishing a new selection triggers
+            // `install()` via the change above; a same-named agent still needs
+            // a rebuild for the new connection, which `.memoryConfigChanged`
+            // already drives.
+            agentStore.setActiveProject(projectStore.activeProjectID)
         }
         .onReceive(NotificationCenter.default.publisher(for: .memoryConfigChanged)) { _ in
             install()

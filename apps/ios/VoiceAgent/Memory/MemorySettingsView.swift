@@ -11,6 +11,10 @@ import SwiftUI
 struct MemorySettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var agentStore: AgentStore
+    @EnvironmentObject private var projectStore: MemoryProjectStore
+
+    /// Presents the setup-QR scanner (owned by `AppShellView`).
+    var onAddProject: () -> Void = {}
 
     /// Editable copy of the current configuration. Loaded once from
     /// `UserDefaults`; `save()` writes the values back.
@@ -33,6 +37,7 @@ struct MemorySettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 5 * .grid) {
                 header()
+                MemoryProjectsSection(onAddProject: onAddProject)
                 connectionSection()
                 sessionSection()
                 advancedSection()
@@ -92,6 +97,7 @@ struct MemorySettingsView: View {
             fieldFooter("settings.apiKey.footer")
             inputField("settings.apiBaseURL", text: $draft.apiBaseURL, field: .apiBaseURL)
             fieldFooter("settings.apiBaseURL.footer")
+            fieldFooter("settings.section.connection.footer")
         }
     }
 
@@ -242,7 +248,12 @@ struct MemorySettingsView: View {
 
     private func save() {
         focusedField = nil
+        // Session-only fields (exit keywords, timeout, chime) live only in
+        // MemoryConfig, so persist the full draft first.
         draft.save()
+        // Then fold the connection fields into the active project so the
+        // Projects list and switcher stay in step with what was saved.
+        persistConnectionFromDraft()
         // The agent picker and the session log read config once per call, so
         // reload the agent list against the newly saved control-plane URL and
         // API key.
@@ -250,6 +261,28 @@ struct MemorySettingsView: View {
             await agentStore.load()
         }
         savedMessage = "settings.saved"
+    }
+
+    /// Writes the draft's connection fields onto the active project (creating
+    /// a legacy identity-less one when nothing is connected yet).
+    private func persistConnectionFromDraft() {
+        var connection = projectStore.activeConnection ?? MemoryProjectConnection(
+            projectID: "",
+            orgID: "",
+            projectName: "",
+            serverURL: draft.serverURL,
+            tokenEndpoint: draft.tokenEndpoint,
+            apiBaseURL: draft.apiBaseURL,
+            apiKey: draft.apiKey,
+            ttsStrategy: draft.ttsStrategy
+        )
+        connection.serverURL = draft.serverURL
+        connection.tokenEndpoint = draft.tokenEndpoint
+        connection.apiBaseURL = draft.apiBaseURL
+        connection.apiKey = draft.apiKey
+        connection.ttsStrategy = draft.ttsStrategy
+        projectStore.upsert(connection)
+        projectStore.setActive(projectID: connection.projectID)
     }
 
     private func savedNote(_ message: LocalizedStringKey) -> some View {
@@ -269,4 +302,5 @@ struct MemorySettingsView: View {
 #Preview {
     MemorySettingsView()
         .environmentObject(AgentStore())
+        .environmentObject(MemoryProjectStore())
 }

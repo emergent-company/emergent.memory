@@ -44,7 +44,7 @@ func main() {
 	memory.shareRefSecret = cfg.ShareRefSecret
 	workerCreds := newWorkerRegistry()
 	sup := NewSupervisor(cfg.BridgeBin, cfg.BridgeArgs, cfg.BridgeWorkdir, cfg.SupervisorInterval, cfg.WorkerIdleTTL, workerCreds, "http://127.0.0.1:"+cfg.Port)
-	s := &Server{cfg: cfg, memory: memory, supervisor: sup, bindings: newVoiceBindingStore(), workerCreds: workerCreds, shutdownCh: make(chan struct{})}
+	s := &Server{cfg: cfg, memory: memory, supervisor: sup, bindings: newVoiceBindingStore(), workerCreds: workerCreds, shutdownCh: make(chan struct{}), setupTokens: newSetupTokenStore()}
 	s.hub = newConversationHub(s)
 	s.live = newLiveStateHub()
 	s.registry = newAccountRegistry()

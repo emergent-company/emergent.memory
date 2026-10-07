@@ -16,4 +16,5 @@ enum Log {
     nonisolated static let net = Logger(subsystem: "com.emergent.memory", category: "network")
     nonisolated static let agents = Logger(subsystem: "com.emergent.memory", category: "agents")
     nonisolated static let qr = Logger(subsystem: "com.emergent.memory", category: "qr")
+    nonisolated static let projects = Logger(subsystem: "com.emergent.memory", category: "projects")
 }

@@ -29,6 +29,46 @@ struct AgentStoreTests {
         #expect(defaults.string(forKey: MemoryConfig.agentNameKey) == "diane")
     }
 
+    @Test func setActiveProjectLoadsPerProjectSelection() throws {
+        let suite = "AgentStoreTests.perProject.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        defaults.set("agent-for-a", forKey: "\(MemoryConfig.agentNameKey).projA")
+        let store = AgentStore(defaults: defaults)
+
+        store.setActiveProject("projA")
+        #expect(store.selectedAgentName == "agent-for-a")
+
+        // A project with no stored pick falls back to the build default.
+        store.setActiveProject("projB")
+        #expect(store.selectedAgentName == MemoryConfig.defaultAgentName)
+
+        // nil/empty falls back to the legacy single-agent key.
+        defaults.set("legacy-agent", forKey: MemoryConfig.agentNameKey)
+        store.setActiveProject(nil)
+        #expect(store.selectedAgentName == "legacy-agent")
+        store.setActiveProject("")
+        #expect(store.selectedAgentName == "legacy-agent")
+    }
+
+    @Test func selectPersistsUnderActiveProjectKey() throws {
+        let suite = "AgentStoreTests.selectPerProject.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let store = AgentStore(defaults: defaults)
+        store.setActiveProject("projA")
+
+        let json = #"{"id":"1","name":"diane","toolCount":20,"isDefault":false,"enabled":true}"#
+        let agent = try JSONDecoder().decode(Agent.self, from: Data(json.utf8))
+        store.select(agent)
+
+        #expect(defaults.string(forKey: "\(MemoryConfig.agentNameKey).projA") == "diane")
+        // The legacy key is left untouched for the default (no-project) selection.
+        #expect(defaults.string(forKey: MemoryConfig.agentNameKey) == nil)
+    }
+
     @Test func decodeMissingFieldsDefensively() throws {
         // Summary shape: id/name may even be absent on a malformed record
         // without breaking the list.

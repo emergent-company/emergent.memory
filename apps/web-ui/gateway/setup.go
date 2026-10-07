@@ -2,17 +2,24 @@ package main
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/labstack/echo/v4"
 	qrcode "github.com/skip2/go-qrcode"
 )
+
+// errSetupNoProjectScope is returned when a setup QR cannot name the project it
+// onboards. In session mode the devices page is always project-scoped, so this
+// means the request had no resolved project — fail closed rather than mint a
+// project-less QR (see the "Setup QR carries the onboarding project" spec).
+var errSetupNoProjectScope = errors.New("setup QR requires a resolved project scope")
 
 // device is one registered device credential, as shown in the settings UI. It
 // mirrors a project-scoped core.api_tokens row carrying the reserved device:api
@@ -27,50 +34,140 @@ type device struct {
 	LastUsedAt *time.Time
 }
 
-// setupTokenCategory / setupTokenKey / setupTokenTTL are the settings
-// coordinates of the current one-time setup token. The token is persisted in
-// the memory backend (not in-process) so it survives gateway restarts — `air`
-// hot-reload restarts the binary on any code change, and an in-memory token
-// minted before a restart would be rejected with 401 afterwards. Stored value:
-// {"token": "<32-hex>", "createdAt": "<RFC3339 UTC>", "used": false,
-// "deviceToken": "<emt_* plaintext>", "deviceTokenId": "<uuid>"}. The device
-// credential is minted server-side at setup-token mint time (session present)
-// and stored here for a single claim at /api/setup — the same plaintext trust
-// level as the setup token itself, with a 10-minute window.
-const (
-	setupTokenCategory = "ios_setup_token"
-	setupTokenKey      = "current"
-	setupTokenTTL      = 10 * time.Minute
-)
+// setupTokenTTL bounds a one-time setup token's lifetime. A pending token older
+// than this is treated as expired and re-minted on the next devices-page load.
+const setupTokenTTL = 10 * time.Minute
 
-// mintSetupToken returns the current one-time setup token. While the stored
-// token is unexpired and unused it is REUSED, which keeps the QR stable across
-// page reloads; otherwise a fresh 32-hex token is minted and persisted, and a
-// fresh device credential is minted server-side alongside it (revoking any
-// orphaned prior credential so an unclaimed QR never leaks a live credential).
-func (s *Server) mintSetupToken(ctx context.Context) (string, error) {
-	if ps, err := s.memory.GetProjectSetting(ctx, setupTokenCategory, setupTokenKey); err != nil {
-		return "", err
-	} else if ps != nil {
-		token, _ := ps.Value["token"].(string)
-		used, _ := ps.Value["used"].(bool)
-		createdAt, _ := ps.Value["createdAt"].(string)
-		if token != "" && !used && setupTokenFresh(createdAt) {
-			return token, nil
+// setupEntry is one pending one-time setup token held in the gateway-local
+// store: the token, the project it onboards to, and the pre-minted device
+// credential claimed at /api/setup.
+type setupEntry struct {
+	Token         string
+	OrgID         string
+	ProjectID     string
+	ProjectName   string
+	DeviceToken   string // emt_* plaintext, minted server-side at QR time
+	DeviceTokenID string // id of DeviceToken, for revoke on rotation
+	CreatedAt     time.Time
+	Used          bool
+}
+
+// setupTokenStore is the in-process store of pending one-time setup tokens,
+// keyed by token. It holds no process-global credential: minting runs on the
+// session-authenticated devices page (which also mints the device credential
+// server-side), and consuming is a pure local lookup — so POST /api/setup
+// succeeds with no session. The store is deliberately not persisted: a gateway
+// restart drops pending (unclaimed) tokens, and the QR is re-minted on the next
+// devices-page load (bounded by setupTokenTTL).
+type setupTokenStore struct {
+	mu sync.Mutex
+	m  map[string]setupEntry
+}
+
+func newSetupTokenStore() *setupTokenStore {
+	return &setupTokenStore{m: make(map[string]setupEntry)}
+}
+
+// set stores an entry keyed by its token.
+func (st *setupTokenStore) set(e setupEntry) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.m[e.Token] = e
+}
+
+// get returns the entry for token.
+func (st *setupTokenStore) get(token string) (setupEntry, bool) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	e, ok := st.m[token]
+	return e, ok
+}
+
+// freshFor returns the unexpired, unused entry for the given project identity,
+// or ok=false. Reusing it keeps the QR stable across page reloads within the TTL.
+func (st *setupTokenStore) freshFor(orgID, projectID string) (setupEntry, bool) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	for _, e := range st.m {
+		if e.OrgID == orgID && e.ProjectID == projectID && !e.Used && setupTokenFresh(e.CreatedAt) {
+			return e, true
 		}
+	}
+	return setupEntry{}, false
+}
+
+// unclaimedIDFor returns the device-token id of an unclaimed entry for the
+// given project identity (the pending-onboarding credential hidden from the
+// devices list), or "".
+func (st *setupTokenStore) unclaimedIDFor(orgID, projectID string) string {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	for _, e := range st.m {
+		if e.OrgID == orgID && e.ProjectID == projectID && !e.Used && e.DeviceTokenID != "" {
+			return e.DeviceTokenID
+		}
+	}
+	return ""
+}
+
+// consume atomically marks the entry for token used and returns it, or ok=false
+// when the token is unknown, already used, expired, or has no device credential.
+func (st *setupTokenStore) consume(token string) (setupEntry, bool) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	e, ok := st.m[token]
+	if !ok || e.Used || !setupTokenFresh(e.CreatedAt) || e.DeviceToken == "" {
+		return setupEntry{}, false
+	}
+	e.Used = true
+	st.m[token] = e
+	return e, true
+}
+
+// setupProjectIdentity resolves the onboarding project identity for a request:
+// org/project from the request scope (scoped-path URL), else the session
+// context, else the static project id (dev/API-key mode). The project name is
+// best-effort from GetCurrentProject ("" on error).
+func (s *Server) setupProjectIdentity(ctx context.Context) (orgID, projectID, projectName string) {
+	if sc, ok := scopeFromContext(ctx); ok {
+		projectID = sc.ResolvedProjectID
+		orgID = sc.ResolvedOrgID
+	}
+	if sess, ok := sessionContextFrom(ctx); ok {
+		if projectID == "" {
+			projectID = sess.ProjectID
+		}
+		if orgID == "" {
+			orgID = sess.OrgID
+		}
+	}
+	if projectID == "" {
+		projectID = s.cfg.MemoryProjectID
+	}
+	if p, err := s.memory.GetCurrentProject(ctx); err == nil && p != nil {
+		projectName = p.Name
+	}
+	return orgID, projectID, projectName
+}
+
+// mintSetupToken returns the current one-time setup token for the onboarding
+// project identity. While a store entry for that identity is unexpired and
+// unused it is REUSED, which keeps the QR stable across page reloads; otherwise
+// a fresh 32-hex token is minted alongside a fresh server-side device
+// credential, revoking any prior unclaimed orphan so an abandoned QR never
+// leaks a live credential.
+func (s *Server) mintSetupToken(ctx context.Context, orgID, projectID, projectName string) (string, error) {
+	st := s.setupStore()
+	if e, ok := st.freshFor(orgID, projectID); ok {
+		return e.Token, nil
 	}
 
 	// Rotate: revoke any prior UNCLAIMED device credential so an abandoned QR
 	// never leaks a live credential. A claimed credential (used=true) is a real
 	// device and must survive a page reload — only an unclaimed orphan is
 	// revoked here.
-	if ps, err := s.memory.GetProjectSetting(ctx, setupTokenCategory, setupTokenKey); err == nil && ps != nil {
-		used, _ := ps.Value["used"].(bool)
-		if !used {
-			if priorID, _ := ps.Value["deviceTokenId"].(string); priorID != "" {
-				_ = s.memory.RevokeAPIToken(ctx, priorID)
-			}
-		}
+	if priorID := st.unclaimedIDFor(orgID, projectID); priorID != "" {
+		_ = s.memory.RevokeAPIToken(ctx, priorID)
 	}
 
 	// Mint the device credential server-side while the session context is
@@ -87,65 +184,43 @@ func (s *Server) mintSetupToken(ctx context.Context) (string, error) {
 	}
 
 	token := randomHex(32)
-	value := map[string]any{
-		"token":     token,
-		"createdAt": time.Now().UTC().Format(time.RFC3339),
-		"used":      false,
-	}
-	if deviceToken != "" {
-		value["deviceToken"] = deviceToken
-		value["deviceTokenId"] = deviceTokenID
-	}
-	if err := s.memory.SetProjectSetting(ctx, setupTokenCategory, setupTokenKey, value); err != nil {
-		return "", err
-	}
+	st.set(setupEntry{
+		Token:         token,
+		OrgID:         orgID,
+		ProjectID:     projectID,
+		ProjectName:   projectName,
+		DeviceToken:   deviceToken,
+		DeviceTokenID: deviceTokenID,
+		CreatedAt:     time.Now(),
+	})
 	return token, nil
 }
 
-// consumeSetupToken validates and single-uses the current setup token, returning
-// the device credential it carries. A nil setting, memory error,
-// mismatched/used/expired/unparsable token, or a missing device credential all
-// return ("", false). On success the same value is written back with used=true,
-// so a second consume returns false.
-func (s *Server) consumeSetupToken(ctx context.Context, token string) (string, bool) {
-	ps, err := s.memory.GetProjectSetting(ctx, setupTokenCategory, setupTokenKey)
-	if err != nil || ps == nil {
-		return "", false
+// consumeSetupToken validates and single-uses a setup token, returning the
+// device credential and the onboarding project identity it carries. It is a
+// local-only lookup (no memory call): unknown, used, expired, or
+// missing-device-credential tokens all return ok=false.
+func (s *Server) consumeSetupToken(token string) (deviceToken, orgID, projectID, projectName string, ok bool) {
+	e, ok := s.setupStore().consume(token)
+	if !ok {
+		return "", "", "", "", false
 	}
-	stored, _ := ps.Value["token"].(string)
-	used, _ := ps.Value["used"].(bool)
-	createdAt, _ := ps.Value["createdAt"].(string)
-	if stored == "" || subtle.ConstantTimeCompare([]byte(stored), []byte(token)) != 1 || used || !setupTokenFresh(createdAt) {
-		return "", false
-	}
-	deviceToken, _ := ps.Value["deviceToken"].(string)
-	if deviceToken == "" {
-		return "", false
-	}
-	// Mark used, preserving the already-issued device credential.
-	if err := s.memory.SetProjectSetting(ctx, setupTokenCategory, setupTokenKey, map[string]any{
-		"token":         stored,
-		"createdAt":     createdAt,
-		"used":          true,
-		"deviceToken":   deviceToken,
-		"deviceTokenId": ps.Value["deviceTokenId"],
-	}); err != nil {
-		return "", false
-	}
-	return deviceToken, true
+	return e.DeviceToken, e.OrgID, e.ProjectID, e.ProjectName, true
 }
 
-// setupTokenFresh reports whether a stored RFC3339 createdAt is still within
-// the setup-token TTL. Empty or unparsable timestamps are treated as expired.
-func setupTokenFresh(createdAt string) bool {
-	if createdAt == "" {
-		return false
+// setupStore returns s.setupTokens, lazily initializing it for bare test
+// servers (main.go constructs it eagerly).
+func (s *Server) setupStore() *setupTokenStore {
+	if s.setupTokens == nil {
+		s.setupTokens = newSetupTokenStore()
 	}
-	t, err := time.Parse(time.RFC3339, createdAt)
-	if err != nil {
-		return false
-	}
-	return time.Since(t) <= setupTokenTTL
+	return s.setupTokens
+}
+
+// setupTokenFresh reports whether a setup-token createdAt is still within the
+// setup-token TTL. A zero/absent timestamp is treated as expired.
+func setupTokenFresh(createdAt time.Time) bool {
+	return time.Since(createdAt) <= setupTokenTTL
 }
 
 // deviceManifest is the optional self-description a client sends when it
@@ -184,10 +259,9 @@ func hasDeviceScope(scopes []string) bool {
 // registered device.
 func (s *Server) listDeviceTokens(ctx context.Context) ([]device, error) {
 	pendingID := ""
-	if ps, err := s.memory.GetProjectSetting(ctx, setupTokenCategory, setupTokenKey); err == nil && ps != nil {
-		if used, _ := ps.Value["used"].(bool); !used {
-			pendingID, _ = ps.Value["deviceTokenId"].(string)
-		}
+	if s.setupTokens != nil {
+		orgID, projectID, _ := s.setupProjectIdentity(ctx)
+		pendingID = s.setupTokens.unclaimedIDFor(orgID, projectID)
 	}
 	tokens, err := s.memory.ListAPITokens(ctx)
 	if err != nil {
@@ -253,7 +327,7 @@ func (s *Server) setupClient(c echo.Context) error {
 	if err := c.Bind(&in); err != nil || in.Token == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid or missing token"})
 	}
-	deviceToken, ok := s.consumeSetupToken(c.Request().Context(), in.Token)
+	deviceToken, orgID, projectID, projectName, ok := s.consumeSetupToken(in.Token)
 	if !ok {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unknown, expired, or already-used token"})
 	}
@@ -268,19 +342,34 @@ func (s *Server) setupClient(c echo.Context) error {
 		"apiBaseURL":    base + "/",
 		"apiKey":        deviceToken,
 		"ttsStrategy":   s.ttsStrategy(),
+		"orgID":         orgID,
+		"projectID":     projectID,
+		"projectName":   projectName,
 	})
 }
 
 // setupQRPayload returns the current one-time setup token (minting it if
-// needed) and the JSON string a setup QR encodes: {"setupURL":..., "token":...}.
+// needed) and the JSON string a setup QR encodes: the setup URL, the token, and
+// the onboarding project identity (orgID/projectID/projectName).
 func (s *Server) setupQRPayload(c echo.Context) (string, error) {
-	token, err := s.mintSetupToken(c.Request().Context())
+	ctx := c.Request().Context()
+	orgID, projectID, projectName := s.setupProjectIdentity(ctx)
+	// A setup QR onboards exactly one project. In session mode the devices page
+	// is always project-scoped, so a missing resolved project means we cannot
+	// mint a project-bound QR — fail closed rather than emit a project-less one.
+	if s.cfg.AuthMode == "session" && (orgID == "" || projectID == "") {
+		return "", errSetupNoProjectScope
+	}
+	token, err := s.mintSetupToken(ctx, orgID, projectID, projectName)
 	if err != nil {
 		return "", err
 	}
 	b, err := json.Marshal(map[string]string{
-		"setupURL": s.publicBaseURL(c) + "/api/setup",
-		"token":    token,
+		"setupURL":    s.publicBaseURL(c) + "/api/setup",
+		"token":       token,
+		"orgID":       orgID,
+		"projectID":   projectID,
+		"projectName": projectName,
 	})
 	if err != nil {
 		return "", err

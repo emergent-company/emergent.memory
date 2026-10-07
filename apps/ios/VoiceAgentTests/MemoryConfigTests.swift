@@ -31,6 +31,33 @@ struct MemoryConfigTests {
         #expect(reloaded.apiKey == "sekret")
     }
 
+    @Test func projectIdentityRoundTripsAndResets() throws {
+        let suite = "MemoryConfigTests.projects.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        var config = MemoryConfig(defaults: defaults)
+        #expect(config.projectID == MemoryConfig.defaultProjectID)
+        #expect(config.orgID == MemoryConfig.defaultOrgID)
+        #expect(config.projectName == MemoryConfig.defaultProjectName)
+
+        config.projectID = "proj-1"
+        config.orgID = "org-1"
+        config.projectName = "Project One"
+        config.save(defaults: defaults)
+
+        let reloaded = MemoryConfig(defaults: defaults)
+        #expect(reloaded.projectID == "proj-1")
+        #expect(reloaded.orgID == "org-1")
+        #expect(reloaded.projectName == "Project One")
+
+        MemoryConfig.reset(defaults: defaults)
+        let reset = MemoryConfig(defaults: defaults)
+        #expect(reset.projectID == "")
+        #expect(reset.orgID == "")
+        #expect(reset.projectName == "")
+    }
+
     @Test func resetRestoresBuildDefaults() throws {
         let suite = "MemoryConfigTests.reset.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
