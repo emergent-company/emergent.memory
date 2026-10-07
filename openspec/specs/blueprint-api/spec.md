@@ -658,3 +658,208 @@ SHALL be preserved for the life of the blueprint record.
 
 - **WHEN** a GitHub-imported blueprint is applied to a project
 - **THEN** its `sourceKind`, `sourceUrl`, and `sourceRef` are unchanged
+
+### Requirement: Provenance-based update detection
+
+A blueprint imported from a GitHub repository SHALL be checked against its
+upstream source: the server fetches the upstream manifest at the recorded source
+URL/ref, and compares the upstream version and manifest content against the
+applied blueprint. An update is reported when the upstream version is strictly
+newer, or when the version is unchanged but the manifest content differs.
+
+#### Scenario: Newer upstream version reported
+
+- **WHEN** the upstream repository serves a version newer than the applied
+  blueprint (semver-compared where both parse)
+- **THEN** the check records `updateAvailable: true` and the newer `latestVersion`
+
+#### Scenario: Same version and content reports no update
+
+- **WHEN** the upstream version and manifest content match the applied blueprint
+- **THEN** the check records `updateAvailable: false`
+
+#### Scenario: Same version but changed content reports an update
+
+- **WHEN** the upstream version is unchanged but the manifest content differs
+- **THEN** the check records `updateAvailable: true`
+
+#### Scenario: Locally-overridden import is not a false positive
+
+- **WHEN** an applied GitHub blueprint's stored manifest was rewritten by
+  project model overrides and the upstream version is unchanged
+- **THEN** the check compares against the raw upstream manifest hash recorded at
+  import and records `updateAvailable: false`
+
+#### Scenario: A failed check preserves the last known result
+
+- **WHEN** a check fails (network error, deleted source) after a prior successful
+  check recorded an update
+- **THEN** the previous `updateAvailable` and `latestVersion` are retained and
+  only the error and last-checked timestamp are updated
+
+### Requirement: Periodic always-on update check
+
+The server SHALL periodically enqueue one `check` job per applied,
+GitHub-imported blueprint, so update status stays current without manual
+intervention.
+
+#### Scenario: Sweep enqueues a job per applied GitHub blueprint
+
+- **WHEN** the periodic sweep runs and a project has an applied blueprint whose
+  `sourceKind` is `github`
+- **THEN** one pending `check` job is enqueued for that (project, blueprint)
+
+#### Scenario: Sweep skips non-GitHub blueprints
+
+- **WHEN** the periodic sweep runs and a project has only non-GitHub applied
+  blueprints
+- **THEN** no `check` job is enqueued
+
+### Requirement: Durable job queue with retry and backoff
+
+Update-check jobs SHALL be durably stored and claimed with `FOR UPDATE SKIP
+LOCKED` so multiple instances can run concurrently without double-claiming.
+Failed checks SHALL be retried with exponential backoff (capped), and terminal
+failures recorded with an error.
+
+#### Scenario: Job claim is multi-instance safe
+
+- **WHEN** several instances claim pending jobs concurrently
+- **THEN** each pending job is claimed by at most one instance
+
+#### Scenario: Failed check retries with backoff
+
+- **WHEN** a check fails before exhausting its attempt budget
+- **THEN** the job is returned to pending and is not immediately re-claimable
+  (backoff scales with the attempt count)
+
+#### Scenario: Exhausted job fails terminally
+
+- **WHEN** a check keeps failing past the attempt cap
+- **THEN** the job is marked failed with a `lastError`
+
+#### Scenario: Orphaned running job is reclaimed
+
+- **WHEN** a job is left `running` past its lease because the process crashed
+  or restarted mid-check
+- **THEN** it is claimed again by the runner rather than permanently blocking
+  that blueprint's future checks
+
+### Requirement: Encrypted project GitHub credential
+
+A project's GitHub personal access token SHALL be stored encrypted at rest and
+decrypted only for the outbound fetch. The token SHALL never be serialized in
+API responses or written to logs. When no encryption key is configured, PAT
+storage SHALL be refused rather than stored unencrypted.
+
+#### Scenario: Token encrypted at rest
+
+- **WHEN** a project stores its GitHub token
+- **THEN** the stored row holds only ciphertext and nonce, never the plaintext
+
+#### Scenario: Token never echoed
+
+- **WHEN** a project sets its GitHub token
+- **THEN** the API response does not contain the token
+
+#### Scenario: No encryption key refuses storage
+
+- **WHEN** the server has no encryption key configured and a project attempts to
+  store a token
+- **THEN** the request is refused with a conflict error
+
+### Requirement: Update-status API
+
+The blueprints API SHALL expose the latest update status for the caller's
+project: the applied-blueprint list carries update provenance fields, a POST
+triggers an immediate check, a GET returns the current status, and a PUT sets the
+project GitHub credential.
+
+#### Scenario: Applied list carries update status
+
+- **WHEN** a client requests `GET /api/blueprints/applied`
+- **THEN** each entry carries `sourceUrl`, `sourceRef`, `updateAvailable`,
+  `latestVersion`, and `lastCheckedAt`
+
+#### Scenario: Trigger a check
+
+- **WHEN** a client sends `POST /api/blueprints/:name/updates/check`
+- **THEN** the server enqueues a check job and returns it
+
+#### Scenario: Read the current status
+
+- **WHEN** a client sends `GET /api/blueprints/:name/updates`
+- **THEN** the server returns the latest check result for that blueprint name
+
+#### Scenario: Set the project credential
+
+- **WHEN** a client sends `PUT /api/blueprints/github-credentials` with `{token}`
+- **THEN** the server stores the encrypted token and returns no content
+
+### Requirement: User-triggered asynchronous apply
+
+The API SHALL let a caller enqueue the application of a detected update as a
+durable background job rather than performing the fetch and apply inline. A
+request to `POST /api/blueprints/:name/updates/apply` SHALL create an `update`
+job for the caller's project and return without waiting for it to finish.
+
+#### Scenario: Enqueue an update
+
+- **WHEN** a caller POSTs to `/api/blueprints/:name/updates/apply` for an
+  applied, GitHub-imported blueprint
+- **THEN** an `update` job is enqueued for that (project, blueprint) and the
+  response reports the job as pending/running
+
+#### Scenario: Duplicate enqueue is rejected
+
+- **WHEN** an `update` job for the same (project, blueprint) is already
+  pending or running
+- **THEN** the request is rejected with `409 Conflict` and no second job is
+  created
+
+### Requirement: Update execution is idempotent and no-ops when current
+
+Applying an update SHALL re-fetch the upstream manifest and, when the upstream
+version and content are unchanged from the applied blueprint, complete
+successfully as a no-op without creating a duplicate version. Otherwise it SHALL
+create a new version carrying the blueprint's recorded source provenance,
+publish it, and apply it to the project. Execution SHALL be idempotent under
+retry.
+
+#### Scenario: Upstream unchanged
+
+- **WHEN** the update job runs and upstream matches the applied version/content
+- **THEN** the job succeeds with a no-op result and no new version is created
+
+#### Scenario: Newer upstream applied
+
+- **WHEN** the update job runs and upstream is newer
+- **THEN** a new blueprint version is created with the same source provenance,
+  published, and applied to the project, and the job succeeds
+
+#### Scenario: Retry after partial progress
+
+- **WHEN** the job retries after the new version was already created (same
+  name and version)
+- **THEN** the existing version is reused rather than duplicated, and publish
+  and apply continue
+
+### Requirement: Update job status exposure
+
+`GET /api/blueprints/:name/updates` SHALL return the latest `update`/`check` job
+for the (project, blueprint) — its action, status
+(`pending`/`running`/`succeeded`/`failed`), attempts, last error, timestamps, and
+result — in addition to the current check record, so callers can follow progress
+across reloads.
+
+#### Scenario: Latest job returned
+
+- **WHEN** a caller GETs `/api/blueprints/:name/updates` after an update was
+  enqueued
+- **THEN** the response includes the latest job with its status and timestamps
+
+#### Scenario: Terminal outcome visible
+
+- **WHEN** the update job has finished
+- **THEN** the returned latest job status reflects `succeeded` or `failed` and
+  carries the recorded result or error
