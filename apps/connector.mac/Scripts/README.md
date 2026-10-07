@@ -9,7 +9,7 @@ config: `lib/mac-remote.sh`, fed by the environment or the gitignored
 
 | Script | What it does |
 |---|---|
-| `mac-build.sh` | rsync `apps/connector.mac/` → `<MEMORY_MAC_PATH>/client/macos`, XcodeGen + `xcodebuild`, then sign |
+| `mac-build.sh` | rsync `apps/connector.mac/` → `<MEMORY_MAC_PATH>/client/macos` plus the embedded engine's Go sources, XcodeGen + `xcodebuild`, then sign |
 | `mac-doctor.sh` | `--check`: verify the Mac is reachable and usable (read-only) |
 | `mac-sign.sh` | sign the installed `MemoryConnector.app` with a stable Apple Development identity (GUI only) |
 | `mac-setup-signing.sh` | one-time (idempotent) setup of a dedicated self-signed codesigning identity |
@@ -35,7 +35,7 @@ explicitly-set environment variable always wins over `.env`. The full template i
 | `MAC_SSH_OPTS` | no | Extra `ssh` options (used by `mac-doctor.sh` to fail fast). |
 
 This repo's own values live in the gitignored `apps/connector.mac/.env`:
-`MEMORY_MAC_HOST=mcj-mini`, `MEMORY_MAC_PATH=~/code/alftred`.
+`MEMORY_MAC_HOST=mcj-mini`, `MEMORY_MAC_PATH=~/code/emergent.memory`.
 
 ## Expected Mac layout
 
@@ -43,13 +43,23 @@ This repo's own values live in the gitignored `apps/connector.mac/.env`:
 
 ```
 <MEMORY_MAC_PATH>/
-  client/ios/     # apps/ios/            (owned by apps/web-ui/tools/ios-build-mac.sh)
-  client/macos/   # apps/connector.mac/  (owned by mac-build.sh)
-  build/          # DerivedData, archives (untouched by --delete)
+  client/ios/            # apps/ios/            (owned by apps/web-ui/tools/ios-build-mac.sh)
+  client/macos/          # apps/connector.mac/  (owned by mac-build.sh)
+  apps/connector.linux/  # embedded engine source   (synced by mac-build.sh)
+  apps/server/pkg/sdk/   # engine's sibling module  (synced by mac-build.sh)
+  go.work                # minimal workspace mapping the two modules (written by mac-build.sh)
+  build/                 # DerivedData, archives (untouched by --delete)
 ```
 
-The guarded rsync mirrors only the dedicated subtree (`client/macos` for this
-script), so `--delete` can never remove anything outside `client/macos`.
+The engine embedded by `MemoryConnector/Scripts/build-engine.sh` is compiled from
+`<MEMORY_MAC_PATH>/apps/connector.linux`, which imports `apps/server/pkg/sdk`.
+`mac-build.sh` mirrors both and writes the `go.work`, so the engine resolves its
+sibling module from the synced tree instead of the module cache — otherwise the
+app can embed a stale engine.
+
+The guarded rsync mirrors only those dedicated subtrees, so `--delete` can never
+remove anything outside `client/macos`, `apps/connector.linux`, or
+`apps/server/pkg/sdk`.
 
 ## Signing
 

@@ -43,7 +43,7 @@ explicitly-set environment variable always wins over `.env`. The full template i
 | `MAC_SSH_OPTS` | no | Extra `ssh` options (used by `mac-doctor.sh` to fail fast). |
 
 This repo's own values live in the gitignored `apps/connector.mac/.env`:
-`MEMORY_MAC_HOST=mcj-mini`, `MEMORY_MAC_PATH=~/code/alftred`.
+`MEMORY_MAC_HOST=mcj-mini`, `MEMORY_MAC_PATH=~/code/emergent.memory`.
 
 ## Expected Mac layout
 

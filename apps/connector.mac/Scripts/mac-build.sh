@@ -6,9 +6,12 @@
 # re-signed with the stable dev identity — see 'Stable signing' below).
 #
 # Source: apps/connector.mac/ in this repo; synced into the Mac checkout's
-# client/macos/ subtree — the only path this script owns, and the only path its
-# --delete is allowed to touch. Everything else on the Mac (client/ios,
-# client/apps/openspec, build/DerivedData, ...) is left untouched.
+# client/macos/ subtree. The embedded engine's Go sources (apps/connector.linux
+# and its sibling module apps/server/pkg/sdk) are synced too, and a minimal
+# go.work maps them — MemoryConnector/Scripts/build-engine.sh compiles the
+# engine from the checkout, so without them it builds against a stale local
+# module set or the module cache and the app ships an outdated engine.
+# Everything else on the Mac (client/ios, build/DerivedData, ...) is untouched.
 #
 # Usage:
 #   apps/connector.mac/Scripts/mac-build.sh                  # sync + generate + build
@@ -22,7 +25,7 @@
 # Target config (required, no repo-specific defaults — see lib/mac-remote.sh and
 # apps/connector.mac/.env.example). Set in the environment or in apps/connector.mac/.env:
 #   MEMORY_MAC_HOST     SSH host, e.g. mcj-mini (empty string = local dest)
-#   MEMORY_MAC_PATH     project dir on Mac, e.g. ~/code/alftred (no spaces)
+#   MEMORY_MAC_PATH     project dir on Mac, e.g. ~/code/emergent.memory (no spaces)
 #   MEMORY_MAC_SUBTREE  Mac connector subtree (default: client/macos)
 #
 # Other env overrides:
@@ -73,6 +76,11 @@ mac_resolve_target client/macos
 # ---- rsync local -> Mac (guarded: scoped --delete + destination guards) --
 if [[ "$SYNC" == 1 ]]; then
   mac_rsync_guarded "$MAC_SRC"
+  # The engine is built from the checkout, not from the app subtree above, so
+  # mirror its Go inputs as well. Only client/macos is owned by this script's
+  # app mirror; these two are the additional paths build-engine.sh reads.
+  mac_rsync_guarded "$ROOT/apps/connector.linux" "apps/connector.linux"
+  mac_rsync_guarded "$ROOT/apps/server/pkg/sdk" "apps/server/pkg/sdk"
 fi
 
 if [[ "$MAC_DRY_RUN" == 1 ]]; then
@@ -89,6 +97,15 @@ fi
 # checkout root — the xcodebuild step below resolves its project path relative
 # to that root.
 GEN_CMD="export PATH=\"\$PATH:/opt/homebrew/bin\" && (cd $MAC_CHECKOUT_PATH/$MAC_SUBTREE/MemoryConnector && xcodegen generate --quiet)"
+
+# Go workspace for the embedded engine. build-engine.sh runs `go build` from
+# apps/connector.linux; that module imports the sibling module
+# apps/server/pkg/sdk, which must resolve from the working tree we just synced
+# rather than the published module cache. The checkout is a partial mirror, so
+# regenerate a minimal go.work mapping exactly those two modules (idempotent;
+# `go work init` records the toolchain's Go version). Runs in the checkout root,
+# where REMOTE_CMD has already `cd`-ed.
+GOWORK_CMD="export PATH=\"\$PATH:/opt/homebrew/bin\" && rm -f go.work && go work init ./apps/connector.linux ./apps/server/pkg/sdk"
 
 if [[ "$GEN_ONLY" == 1 ]]; then
   echo "==> ssh $MAC_HOST: xcodegen generate"
@@ -130,7 +147,7 @@ REMOTE_CMD="cd $MAC_CHECKOUT_PATH"
 if [[ "$CLEAN" == 1 ]]; then
   REMOTE_CMD="$REMOTE_CMD && rm -rf 'build/DerivedData'"
 fi
-REMOTE_CMD="$REMOTE_CMD && $GEN_CMD && $BUILD_CMD"
+REMOTE_CMD="$REMOTE_CMD && $GEN_CMD && $GOWORK_CMD && $BUILD_CMD"
 
 # ---- automatic stable signing (skip for test-only runs) -----------------
 # Sign right after the build, on the Mac, before install. Chain:

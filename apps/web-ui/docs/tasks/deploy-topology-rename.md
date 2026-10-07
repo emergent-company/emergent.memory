@@ -8,7 +8,7 @@
 
 Rename the remaining deployment-topology references that were intentionally left as-is during the product rename:
 - **home2 systemd units**: `alfred.service` → `memory.service`, `EnvironmentFile=/opt/alfred/.env` → `/opt/memory/.env` (out-of-repo; documented as an external action item in the rename change).
-- **On-disk checkout dirs**: `/root/alfred` (this server), `/Users/mcj/alfred` (Mac iOS dir), `~/code/alftred` (Mac build checkout).
+- **On-disk checkout dirs**: `/root/alfred` (this server), `/Users/mcj/alfred` (Mac iOS dir). The Mac build checkout was already renamed `~/code/alftred` → `~/code/emergent.memory` (its tooling references updated).
 - Corresponding `deploy.sh` / `tools/ios-*-mac.sh` / plist path literals (`/root/alfred`, `/Users/mcj/alfred`, `__HOME__/alfred`).
 
 ## Why
@@ -23,4 +23,4 @@ none
 
 - Local dev unit already renamed (`alfred-dev.service` → `memory-dev.service`). This task covers **production** (home2) and the on-disk checkouts.
 - `deploy.sh` still hardcodes `/root/alfred` (remote) and `/Users/mcj/alfred` (Mac) — update in the same deploy.
-- Note the Mac checkout is `~/code/alftred` (typo'd variant), not `/Users/mcj/alfred` — reconcile while here.
+- The Mac build checkout is `~/code/emergent.memory` (renamed from the legacy typo `~/code/alftred`), distinct from the older Mac iOS dir `/Users/mcj/alfred`.

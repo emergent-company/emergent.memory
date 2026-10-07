@@ -133,7 +133,7 @@ Set these in the gitignored `apps/connector.mac/.env` (or export them); see
 | Variable | Meaning |
 |---|---|
 | `MEMORY_MAC_HOST` | SSH host of your Mac (`ssh` alias or `user@host`). |
-| `MEMORY_MAC_PATH` | Project dir on the Mac, e.g. `~/code/alftred`. |
+| `MEMORY_MAC_PATH` | Project dir on the Mac, e.g. `~/code/emergent.memory`. |
 | `MEMORY_MAC_IOS_SUBDIR` | iOS subtree under `MEMORY_MAC_PATH` (default `client/ios`). |
 
 Expected Mac layout — `apps/ios/` is rsync'd into

@@ -26,7 +26,7 @@
 #                          destination" (used by tests / --dry-run); an UNSET
 #                          value is an error.
 #   MEMORY_MAC_PATH        Required. Project dir on the Mac, absolute or
-#                          ~-rooted, no spaces. Example: ~/code/alftred
+#                          ~-rooted, no spaces. Example: ~/code/emergent.memory
 #   MEMORY_MAC_SUBTREE     Optional override of the per-script remote subtree
 #                          (iOS scripts: client/ios; Mac connector:
 #                          client/macos). Must be relative to MEMORY_MAC_PATH.
@@ -129,7 +129,7 @@ mac_resolve_target() {
 
   if [[ -z "${MEMORY_MAC_PATH:-}" ]]; then
     mac_die "MEMORY_MAC_PATH is not set. Set the project dir on the Mac, e.g.:
-    export MEMORY_MAC_PATH=~/code/alftred
+    export MEMORY_MAC_PATH=~/code/emergent.memory
   (absolute or ~-rooted, no spaces) in the environment or in $app_dir/.env."
   fi
   MAC_CHECKOUT_PATH="$MEMORY_MAC_PATH"

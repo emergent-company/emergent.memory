@@ -60,7 +60,7 @@ fi
 
 if [[ -z "${MEMORY_MAC_PATH:-}" ]]; then
   bad "MEMORY_MAC_PATH is not set"
-  printf '       -> set the project dir on the Mac, e.g. ~/code/alftred (absolute or ~-rooted)\n'
+  printf '       -> set the project dir on the Mac, e.g. ~/code/emergent.memory (absolute or ~-rooted)\n'
 else
   ok "MEMORY_MAC_PATH=$MEMORY_MAC_PATH"
 fi
