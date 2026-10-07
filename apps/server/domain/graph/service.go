@@ -3309,7 +3309,7 @@ func (s *Service) BulkUpdateStatus(ctx context.Context, projectID uuid.UUID, req
 // BulkCreateObjects creates multiple objects in a single batch.
 // Each object is created independently and concurrently — failures do not roll back other successes.
 func (s *Service) BulkCreateObjects(ctx context.Context, projectID uuid.UUID, req *BulkCreateObjectsRequest, actorID *uuid.UUID) (*BulkCreateObjectsResponse, error) {
-	actorType, actorID := actorFromContext(ctx, actorID)
+	_, actorID = actorFromContext(ctx, actorID)
 
 	results := make([]BulkCreateObjectResult, len(req.Items))
 
@@ -3332,33 +3332,12 @@ func (s *Service) BulkCreateObjects(ctx context.Context, projectID uuid.UUID, re
 	})
 
 	successCount, failedCount := 0, 0
-	byType := make(map[string]int)
 	for _, r := range results {
 		if r.Success {
 			successCount++
-			if r.Object != nil {
-				byType[r.Object.Type]++
-			}
 		} else {
 			failedCount++
 		}
-	}
-
-	if successCount > 0 {
-		byTypeAny := make(map[string]any, len(byType))
-		for k, v := range byType {
-			byTypeAny[k] = v
-		}
-		s.eventSink.Log(ctx, LogParams{
-			ProjectID: projectID,
-			EventType: EventTypeBatch,
-			ActorType: actorType,
-			ActorID:   actorID,
-			Metadata: map[string]any{
-				"created": successCount,
-				"by_type": byTypeAny,
-			},
-		})
 	}
 
 	return &BulkCreateObjectsResponse{
@@ -3372,7 +3351,7 @@ func (s *Service) BulkCreateObjects(ctx context.Context, projectID uuid.UUID, re
 // a single batch. Each object is upserted independently — one bad item does not
 // fail the batch.
 func (s *Service) BulkUpsertObjects(ctx context.Context, projectID uuid.UUID, req *BulkUpsertObjectsRequest, actorID *uuid.UUID) (*BulkUpsertObjectsResponse, error) {
-	actorType, actorID := actorFromContext(ctx, actorID)
+	_, actorID = actorFromContext(ctx, actorID)
 
 	results := make([]BulkUpsertObjectResult, len(req.Items))
 
@@ -3409,18 +3388,6 @@ func (s *Service) BulkUpsertObjects(ctx context.Context, projectID uuid.UUID, re
 		}
 	}
 
-	if successCount > 0 {
-		_ = s.eventSink.Log(ctx, LogParams{
-			ProjectID: projectID,
-			EventType: EventTypeBatch,
-			ActorType: actorType,
-			ActorID:   actorID,
-			Metadata: map[string]any{
-				"upserted": successCount,
-			},
-		})
-	}
-
 	return &BulkUpsertObjectsResponse{
 		Success: successCount,
 		Failed:  failedCount,
@@ -3431,7 +3398,7 @@ func (s *Service) BulkUpsertObjects(ctx context.Context, projectID uuid.UUID, re
 // BulkUpdateObjects updates multiple objects in a single batch.
 // Each object is updated independently and concurrently — failures do not roll back other successes.
 func (s *Service) BulkUpdateObjects(ctx context.Context, projectID uuid.UUID, req *BulkUpdateObjectsRequest, actorID *uuid.UUID) (*BulkUpdateObjectsResponse, error) {
-	actorType, actorID := actorFromContext(ctx, actorID)
+	_, actorID = actorFromContext(ctx, actorID)
 
 	if len(req.Items) > s.bulkUpdateMaxItems {
 		return nil, apperror.NewBadRequest(fmt.Sprintf("items must not exceed %d", s.bulkUpdateMaxItems))
@@ -3490,18 +3457,6 @@ func (s *Service) BulkUpdateObjects(ctx context.Context, projectID uuid.UUID, re
 		}
 	}
 
-	if successCount > 0 {
-		s.eventSink.Log(ctx, LogParams{
-			ProjectID: projectID,
-			EventType: EventTypeBatch,
-			ActorType: actorType,
-			ActorID:   actorID,
-			Metadata: map[string]any{
-				"updated": successCount,
-			},
-		})
-	}
-
 	return &BulkUpdateObjectsResponse{
 		Success: successCount,
 		Failed:  failedCount,
@@ -3513,7 +3468,7 @@ func (s *Service) BulkUpdateObjects(ctx context.Context, projectID uuid.UUID, re
 // Each relationship is created independently and concurrently — failures do not roll back other successes.
 // Inverse relationships are auto-created per template pack inverseType declarations.
 func (s *Service) BulkCreateRelationships(ctx context.Context, projectID uuid.UUID, req *BulkCreateRelationshipsRequest, actorID *uuid.UUID) (*BulkCreateRelationshipsResponse, error) {
-	actorType, actorID := actorFromContext(ctx, actorID)
+	_, actorID = actorFromContext(ctx, actorID)
 
 	results := make([]BulkCreateRelationshipResult, len(req.Items))
 
@@ -3549,18 +3504,6 @@ func (s *Service) BulkCreateRelationships(ctx context.Context, projectID uuid.UU
 		}
 	}
 
-	if successCount > 0 {
-		s.eventSink.Log(ctx, LogParams{
-			ProjectID: projectID,
-			EventType: EventTypeBatch,
-			ActorType: actorType,
-			ActorID:   actorID,
-			Metadata: map[string]any{
-				"created": successCount,
-			},
-		})
-	}
-
 	return &BulkCreateRelationshipsResponse{
 		Success: successCount,
 		Failed:  failedCount,
@@ -3572,7 +3515,7 @@ func (s *Service) BulkCreateRelationships(ctx context.Context, projectID uuid.UU
 // batch. Each relationship is upserted independently — one bad item does not
 // fail the batch.
 func (s *Service) BulkUpsertRelationships(ctx context.Context, projectID uuid.UUID, req *BulkUpsertRelationshipsRequest, actorID *uuid.UUID) (*BulkUpsertRelationshipsResponse, error) {
-	actorType, actorID := actorFromContext(ctx, actorID)
+	_, actorID = actorFromContext(ctx, actorID)
 
 	results := make([]BulkUpsertRelationshipResult, len(req.Items))
 
@@ -3607,18 +3550,6 @@ func (s *Service) BulkUpsertRelationships(ctx context.Context, projectID uuid.UU
 		} else {
 			failedCount++
 		}
-	}
-
-	if successCount > 0 {
-		_ = s.eventSink.Log(ctx, LogParams{
-			ProjectID: projectID,
-			EventType: EventTypeBatch,
-			ActorType: actorType,
-			ActorID:   actorID,
-			Metadata: map[string]any{
-				"upserted": successCount,
-			},
-		})
 	}
 
 	return &BulkUpsertRelationshipsResponse{

@@ -1,6 +1,7 @@
 package journal
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -31,7 +32,7 @@ func NewHandler(svc *Service, branchStore *branches.Store) *Handler {
 // @Produce      json
 // @Param        since   query string false "ISO-8601 timestamp or relative duration (e.g. 7d, 24h)"
 // @Param        limit   query int    false "Max results (default 100)"
-// @Param        page    query int    false "Page number (default 1)"
+// @Param        cursor  query string false "Opaque keyset cursor from a previous response's next_cursor"
 // @Param        branch           query string false "Branch name or UUID (omit for main branch)"
 // @Param        include_branches query bool   false "Include merged branches in feed (default false)"
 // @Success      200    {object} JournalResponse
@@ -49,7 +50,6 @@ func (h *Handler) ListJournal(c echo.Context) error {
 	params := ListParams{
 		ProjectID: projectID,
 		Limit:     100,
-		Page:      1,
 	}
 
 	if limitStr := c.QueryParam("limit"); limitStr != "" {
@@ -58,10 +58,8 @@ func (h *Handler) ListJournal(c echo.Context) error {
 		}
 	}
 
-	if pageStr := c.QueryParam("page"); pageStr != "" {
-		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
-			params.Page = p
-		}
+	if cursorStr := c.QueryParam("cursor"); cursorStr != "" {
+		params.Cursor = &cursorStr
 	}
 
 	if sinceStr := c.QueryParam("since"); sinceStr != "" {
@@ -86,6 +84,9 @@ func (h *Handler) ListJournal(c echo.Context) error {
 
 	resp, err := h.svc.List(c.Request().Context(), params)
 	if err != nil {
+		if errors.Is(err, ErrInvalidCursor) {
+			return apperror.NewBadRequest("invalid cursor")
+		}
 		return err
 	}
 

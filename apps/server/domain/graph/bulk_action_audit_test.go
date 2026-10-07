@@ -86,7 +86,7 @@ func newTestJournalSvc(t *testing.T, db *bun.DB) *journal.Service {
 	branchStore := branches.NewStore(db)
 	journalRepo := journal.NewRepository(db, branchStore)
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	return journal.NewService(journalRepo, log)
+	return journal.NewService(journalRepo, &config.Config{}, log)
 }
 
 // TestBulkActionIntegration_AuditLog verifies a bulk action writes a journal
@@ -137,4 +137,61 @@ func TestBulkActionIntegration_AuditLog(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	assert.Equal(t, 1, journalCount, "one journal entry should be written for the bulk operation")
+}
+
+// TestBulkCreateObjects_NoBatchEvent verifies the list-bulk create path writes
+// per-item "created" events but no redundant trailing "batch" summary event.
+func TestBulkCreateObjects_NoBatchEvent(t *testing.T) {
+	db := openAuditTestDB(t)
+	repo := newAuditTestRepo(t, db)
+	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	projectID := uuid.New()
+	seedAuditProject(t, db, projectID)
+	t.Cleanup(func() {
+		db.ExecContext(context.Background(), "DELETE FROM kb.graph_objects WHERE project_id = ?", projectID)   //nolint:errcheck
+		db.ExecContext(context.Background(), "DELETE FROM kb.project_journal WHERE project_id = ?", projectID) //nolint:errcheck
+	})
+
+	journalSvc := newTestJournalSvc(t, db)
+	defer journalSvc.Stop(context.Background())
+	sink := journal.NewGraphEventSinkAdapter(journalSvc)
+	svc := graph.NewService(repo, log, nil, nil, nil, nil, nil, sink, nil, nil)
+
+	actorID := uuid.New()
+	key := "obj-1"
+	resp, err := svc.BulkCreateObjects(context.Background(), projectID, &graph.BulkCreateObjectsRequest{
+		Items: []graph.CreateGraphObjectRequest{
+			{Type: "Thing", Key: &key, Properties: map[string]any{"name": "one"}},
+		},
+	}, &actorID)
+	require.NoError(t, err)
+	require.Equal(t, 1, resp.Success)
+
+	// journal.Log is async — poll up to 1s for the per-item "created" event.
+	var createdCount int
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		err = db.NewSelect().TableExpr("kb.project_journal").
+			Where("project_id = ?", projectID).
+			Where("event_type = ?", "created").
+			ColumnExpr("count(*)").
+			Scan(context.Background(), &createdCount)
+		require.NoError(t, err)
+		if createdCount > 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	assert.Equal(t, 1, createdCount, "one 'created' event should be written per item")
+
+	// No trailing "batch" summary must be written.
+	var batchCount int
+	err = db.NewSelect().TableExpr("kb.project_journal").
+		Where("project_id = ?", projectID).
+		Where("event_type = ?", "batch").
+		ColumnExpr("count(*)").
+		Scan(context.Background(), &batchCount)
+	require.NoError(t, err)
+	assert.Equal(t, 0, batchCount, "BulkCreateObjects must not write a trailing batch event")
 }

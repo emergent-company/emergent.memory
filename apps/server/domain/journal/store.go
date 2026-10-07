@@ -27,38 +27,42 @@ func (r *Repository) Insert(ctx context.Context, entry *JournalEntry) error {
 	return err
 }
 
+// InsertBatch inserts multiple journal entries in a single multi-row INSERT.
+func (r *Repository) InsertBatch(ctx context.Context, entries []*JournalEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+	_, err := r.db.NewInsert().Model(&entries).Exec(ctx)
+	return err
+}
+
 // InsertNote inserts a new journal note.
 func (r *Repository) InsertNote(ctx context.Context, note *JournalNote) error {
 	_, err := r.db.NewInsert().Model(note).Exec(ctx)
 	return err
 }
 
-// List returns journal entries for a project with optional since filter and pagination.
+// List returns journal entries for a project with optional since filter and
+// keyset pagination. It returns (entries, hasMore, nextCursor, error).
 // Attached notes for each entry are loaded in a second query.
-func (r *Repository) List(ctx context.Context, params ListParams) ([]*JournalEntry, int, error) {
+func (r *Repository) List(ctx context.Context, params ListParams) ([]*JournalEntry, bool, string, error) {
 	limit := params.Limit
 	if limit <= 0 {
 		limit = 100
 	}
-	page := params.Page
-	if page < 1 {
-		page = 1
-	}
-	offset := (page - 1) * limit
 
 	q := r.db.NewSelect().
 		TableExpr("kb.project_journal AS je").
 		ColumnExpr("je.*").
 		Where("je.project_id = ?", params.ProjectID).
-		OrderExpr("je.created_at DESC").
-		Limit(limit).
-		Offset(offset)
+		OrderExpr("je.created_at DESC, je.id DESC").
+		Limit(limit + 1)
 
 	if params.IncludeBranches {
 		// Include main branch (NULL) plus all merged branches.
 		mergedBranches, err := r.branchStore.ListMerged(ctx, strPtr(params.ProjectID.String()))
 		if err != nil {
-			return nil, 0, err
+			return nil, false, "", err
 		}
 		if len(mergedBranches) == 0 {
 			q = q.Where("je.branch_id IS NULL")
@@ -67,7 +71,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]*JournalEnt
 			for i, b := range mergedBranches {
 				id, parseErr := uuid.Parse(b.ID)
 				if parseErr != nil {
-					return nil, 0, parseErr
+					return nil, false, "", parseErr
 				}
 				ids[i] = id
 			}
@@ -83,10 +87,29 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]*JournalEnt
 		q = q.Where("je.created_at >= ?", params.Since)
 	}
 
+	if params.Cursor != nil && *params.Cursor != "" {
+		createdAt, id, err := decodeCursor(*params.Cursor)
+		if err != nil {
+			return nil, false, "", err
+		}
+		q = q.Where("(je.created_at, je.id) < (?, ?)", createdAt, id)
+	}
+
 	var entries []*JournalEntry
-	count, err := q.ScanAndCount(ctx, &entries)
-	if err != nil {
-		return nil, 0, err
+	if err := q.Scan(ctx, &entries); err != nil {
+		return nil, false, "", err
+	}
+
+	hasMore := false
+	if len(entries) > limit {
+		hasMore = true
+		entries = entries[:limit]
+	}
+
+	nextCursor := ""
+	if hasMore && len(entries) > 0 {
+		last := entries[len(entries)-1]
+		nextCursor = encodeCursor(last.CreatedAt, last.ID)
 	}
 
 	// Load attached notes for these entries in a single query.
@@ -96,14 +119,14 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]*JournalEnt
 			ids[i] = e.ID
 		}
 		var notes []*JournalNote
-		err = r.db.NewSelect().
+		err := r.db.NewSelect().
 			TableExpr("kb.project_journal_notes AS jn").
 			ColumnExpr("jn.*").
 			Where("jn.journal_id IN (?)", bun.In(ids)).
 			OrderExpr("jn.created_at ASC").
 			Scan(ctx, &notes)
 		if err != nil {
-			return nil, 0, err
+			return nil, false, "", err
 		}
 		notesByEntry := make(map[uuid.UUID][]*JournalNote)
 		for _, n := range notes {
@@ -116,7 +139,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]*JournalEnt
 		}
 	}
 
-	return entries, count, nil
+	return entries, hasMore, nextCursor, nil
 }
 
 // ListStandaloneNotes returns notes with no journal_id for a project, optionally filtered by branch.

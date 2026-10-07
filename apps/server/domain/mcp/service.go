@@ -1461,6 +1461,10 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					Type:        "boolean",
 					Description: "When true, includes entries from the main branch and all merged branches in a unified time-sorted feed.",
 				},
+				"cursor": {
+					Type:        "string",
+					Description: "Opaque keyset cursor from a previous response's next_cursor. Omit for the first page.",
+				},
 			},
 			Required: []string{},
 		},
@@ -5815,7 +5819,6 @@ func (s *Service) executeJournalList(ctx context.Context, projectID string, args
 	params := journal.ListParams{
 		ProjectID: projectUUID,
 		Limit:     100,
-		Page:      1,
 	}
 
 	if sinceStr, _ := args["since"].(string); sinceStr != "" {
@@ -5836,6 +5839,10 @@ func (s *Service) executeJournalList(ctx context.Context, projectID string, args
 		case int:
 			params.Limit = v
 		}
+	}
+
+	if cursorStr, _ := args["cursor"].(string); cursorStr != "" {
+		params.Cursor = &cursorStr
 	}
 
 	if branchIDStr, _ := args["branch_id"].(string); branchIDStr != "" {

@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/emergent-company/emergent.memory/domain/journal"
+	"github.com/emergent-company/emergent.memory/internal/config"
 )
 
 // newTestJournalSvc returns a *journal.Service with a nil repo.
@@ -19,7 +20,7 @@ import (
 // touching the repo (invalid project_id, missing body, invalid journal_id).
 func newTestJournalSvc() *journal.Service {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	return journal.NewService(nil, log)
+	return journal.NewService(nil, &config.Config{}, log)
 }
 
 // =============================================================================

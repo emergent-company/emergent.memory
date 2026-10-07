@@ -93,7 +93,10 @@ type ListParams struct {
 	IncludeBranches bool
 	Since           *time.Time
 	Limit           int
-	Page            int
+	// Cursor is an opaque keyset cursor from a previous response's NextCursor.
+	// When set, listing resumes strictly after the entry the cursor encodes
+	// (ordered by created_at DESC, id DESC). Nil/empty returns the first page.
+	Cursor *string
 }
 
 // AddNoteRequest is the payload for adding a note.
@@ -109,5 +112,9 @@ type AddNoteRequest struct {
 type JournalResponse struct {
 	Entries []*JournalEntry `json:"entries"`
 	Notes   []*JournalNote  `json:"notes"` // standalone notes (journal_id IS NULL)
-	Total   int             `json:"total"`
+	// NextCursor is the opaque cursor to pass back to fetch the next page.
+	// Empty when there are no more entries.
+	NextCursor string `json:"next_cursor"`
+	// HasMore is true when another page of entries exists beyond NextCursor.
+	HasMore bool `json:"has_more"`
 }

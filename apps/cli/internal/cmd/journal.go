@@ -47,9 +47,10 @@ type journalNote struct {
 }
 
 type journalResponse struct {
-	Entries []journalEntry `json:"entries"`
-	Notes   []journalNote  `json:"notes"`
-	Total   int            `json:"total"`
+	Entries    []journalEntry `json:"entries"`
+	Notes      []journalNote  `json:"notes"`
+	NextCursor string         `json:"next_cursor"`
+	HasMore    bool           `json:"has_more"`
 }
 
 // ── Flags ─────────────────────────────────────────────────────────────────────
@@ -394,7 +395,7 @@ func runJournalList(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Print header
-	fmt.Printf("Project journal — last %s  (%d entries)\n\n", journalListSince, resp.Total)
+	fmt.Printf("Project journal — last %s  (%d entries)\n\n", journalListSince, len(resp.Entries))
 
 	// Print entries in order
 	for _, e := range resp.Entries {
@@ -409,6 +410,11 @@ func runJournalList(cmd *cobra.Command, _ []string) error {
 		for _, n := range resp.Notes {
 			printStandaloneNote(n)
 		}
+	}
+
+	// Indicate further pages are available.
+	if resp.HasMore {
+		fmt.Printf("\n(more entries available — re-run with the cursor to page through)\n")
 	}
 
 	return nil

@@ -4,12 +4,15 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/emergent-company/emergent.memory/internal/config"
 )
 
 // =============================================================================
@@ -17,36 +20,97 @@ import (
 // =============================================================================
 
 type mockRepo struct {
-	insertedEntry *JournalEntry
-	insertedNote  *JournalNote
-	listEntries   []*JournalEntry
-	listTotal     int
-	listNotes     []*JournalNote
-	err           error
+	mu              sync.Mutex
+	insertedEntry   *JournalEntry
+	insertedBatches [][]*JournalEntry
+	insertedNote    *JournalNote
+	listEntries     []*JournalEntry
+	listHasMore     bool
+	listNextCursor  string
+	listNotes       []*JournalNote
+	err             error
+
+	// blockInsert, when non-nil, blocks each InsertBatch call until the channel
+	// is closed. Used to test drain-on-stop deterministically.
+	blockInsert chan struct{}
 }
 
 func (m *mockRepo) Insert(_ context.Context, e *JournalEntry) error {
+	m.mu.Lock()
 	m.insertedEntry = e
+	m.mu.Unlock()
+	return m.err
+}
+
+func (m *mockRepo) InsertBatch(_ context.Context, entries []*JournalEntry) error {
+	if m.blockInsert != nil {
+		<-m.blockInsert
+	}
+	m.mu.Lock()
+	m.insertedBatches = append(m.insertedBatches, entries)
+	m.mu.Unlock()
 	return m.err
 }
 
 func (m *mockRepo) InsertNote(_ context.Context, n *JournalNote) error {
+	m.mu.Lock()
 	m.insertedNote = n
+	m.mu.Unlock()
 	return m.err
 }
 
-func (m *mockRepo) List(_ context.Context, _ ListParams) ([]*JournalEntry, int, error) {
-	return m.listEntries, m.listTotal, m.err
+func (m *mockRepo) List(_ context.Context, _ ListParams) ([]*JournalEntry, bool, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.listEntries, m.listHasMore, m.listNextCursor, m.err
 }
 
 func (m *mockRepo) ListStandaloneNotes(_ context.Context, _ uuid.UUID, _ *uuid.UUID, _ *time.Time, _ int, _ bool) ([]*JournalNote, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.listNotes, m.err
+}
+
+// totalInserted returns the number of entries flushed via InsertBatch.
+func (m *mockRepo) totalInserted() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, b := range m.insertedBatches {
+		n += len(b)
+	}
+	return n
+}
+
+// flushedEntries returns all entries flushed via InsertBatch, in order.
+func (m *mockRepo) flushedEntries() []*JournalEntry {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []*JournalEntry
+	for _, b := range m.insertedBatches {
+		out = append(out, b...)
+	}
+	return out
+}
+
+// waitInserted polls until at least n entries have been flushed via InsertBatch
+// or the deadline passes.
+func (m *mockRepo) waitInserted(t *testing.T, n int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if m.totalInserted() >= n {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d entries to flush; got %d", n, m.totalInserted())
 }
 
 // newTestService returns a Service wired to the given mockRepo.
 func newTestService(repo *mockRepo) *Service {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	return &Service{repo: repo, log: log}
+	return newService(repo, &config.Config{}, log)
 }
 
 // =============================================================================
@@ -148,6 +212,7 @@ func TestEntityTypeConstants(t *testing.T) {
 func TestAddNote_DefaultsActorTypeToUser(t *testing.T) {
 	repo := &mockRepo{}
 	svc := newTestService(repo)
+	defer svc.Stop(context.Background())
 
 	projectID := uuid.New()
 	req := &AddNoteRequest{
@@ -172,6 +237,7 @@ func TestAddNote_DefaultsActorTypeToUser(t *testing.T) {
 func TestAddNote_AttachesJournalID(t *testing.T) {
 	repo := &mockRepo{}
 	svc := newTestService(repo)
+	defer svc.Stop(context.Background())
 
 	projectID := uuid.New()
 	entryID := uuid.New()
@@ -190,6 +256,7 @@ func TestAddNote_AttachesJournalID(t *testing.T) {
 func TestAddNote_ExplicitActorTypePreserved(t *testing.T) {
 	repo := &mockRepo{}
 	svc := newTestService(repo)
+	defer svc.Stop(context.Background())
 
 	projectID := uuid.New()
 	actorID := uuid.New()
@@ -208,6 +275,7 @@ func TestAddNote_ExplicitActorTypePreserved(t *testing.T) {
 func TestAddNote_PropagatesRepoError(t *testing.T) {
 	repo := &mockRepo{err: errTest}
 	svc := newTestService(repo)
+	defer svc.Stop(context.Background())
 
 	_, err := svc.AddNote(context.Background(), uuid.New(), &AddNoteRequest{Body: "x"})
 	assert.ErrorIs(t, err, errTest)
@@ -223,48 +291,55 @@ func TestList_ReturnsEntriesAndNotes(t *testing.T) {
 		listEntries: []*JournalEntry{
 			{ID: uuid.New(), ProjectID: projectID, EventType: EventTypeCreated, ActorType: ActorAgent},
 		},
-		listTotal: 1,
+		listHasMore:    true,
+		listNextCursor: "cursor-abc",
 		listNotes: []*JournalNote{
 			{ID: uuid.New(), ProjectID: projectID, Body: "standalone note", ActorType: ActorUser},
 		},
 	}
 	svc := newTestService(repo)
+	defer svc.Stop(context.Background())
 
-	resp, err := svc.List(context.Background(), ListParams{ProjectID: projectID, Limit: 10, Page: 1})
+	resp, err := svc.List(context.Background(), ListParams{ProjectID: projectID, Limit: 10})
 	require.NoError(t, err)
 	assert.Len(t, resp.Entries, 1)
 	assert.Equal(t, EventTypeCreated, resp.Entries[0].EventType)
 	assert.Len(t, resp.Notes, 1)
 	assert.Equal(t, "standalone note", resp.Notes[0].Body)
-	assert.Equal(t, 1, resp.Total)
+	assert.True(t, resp.HasMore)
+	assert.Equal(t, "cursor-abc", resp.NextCursor)
 }
 
 func TestList_EmptyResults(t *testing.T) {
 	repo := &mockRepo{}
 	svc := newTestService(repo)
+	defer svc.Stop(context.Background())
 
-	resp, err := svc.List(context.Background(), ListParams{ProjectID: uuid.New(), Limit: 10, Page: 1})
+	resp, err := svc.List(context.Background(), ListParams{ProjectID: uuid.New(), Limit: 10})
 	require.NoError(t, err)
 	assert.Empty(t, resp.Entries)
 	assert.Empty(t, resp.Notes)
-	assert.Equal(t, 0, resp.Total)
+	assert.False(t, resp.HasMore)
+	assert.Empty(t, resp.NextCursor)
 }
 
 func TestList_PropagatesEntriesError(t *testing.T) {
 	repo := &mockRepo{err: errTest}
 	svc := newTestService(repo)
+	defer svc.Stop(context.Background())
 
 	_, err := svc.List(context.Background(), ListParams{ProjectID: uuid.New()})
 	assert.ErrorIs(t, err, errTest)
 }
 
 // =============================================================================
-// Service.Log — fire-and-forget behavior
+// Service.Log — bounded async writer
 // =============================================================================
 
 func TestLog_NilMetadataDefaultedToEmptyMap(t *testing.T) {
 	repo := &mockRepo{}
 	svc := newTestService(repo)
+	defer svc.Stop(context.Background())
 
 	projectID := uuid.New()
 	svc.Log(context.Background(), LogParams{
@@ -274,19 +349,20 @@ func TestLog_NilMetadataDefaultedToEmptyMap(t *testing.T) {
 		Metadata:  nil, // should be normalised to empty map
 	})
 
-	// Give the goroutine time to complete.
-	time.Sleep(50 * time.Millisecond)
+	repo.waitInserted(t, 1)
 
-	require.NotNil(t, repo.insertedEntry, "entry should have been inserted")
-	assert.NotNil(t, repo.insertedEntry.Metadata, "nil metadata must be replaced with empty map")
-	assert.Empty(t, repo.insertedEntry.Metadata)
-	assert.Equal(t, projectID, repo.insertedEntry.ProjectID)
-	assert.Equal(t, EventTypeCreated, repo.insertedEntry.EventType)
+	entries := repo.flushedEntries()
+	require.Len(t, entries, 1, "entry should have been inserted")
+	assert.NotNil(t, entries[0].Metadata, "nil metadata must be replaced with empty map")
+	assert.Empty(t, entries[0].Metadata)
+	assert.Equal(t, projectID, entries[0].ProjectID)
+	assert.Equal(t, EventTypeCreated, entries[0].EventType)
 }
 
 func TestLog_PopulatesAllFields(t *testing.T) {
 	repo := &mockRepo{}
 	svc := newTestService(repo)
+	defer svc.Stop(context.Background())
 
 	projectID := uuid.New()
 	actorID := uuid.New()
@@ -305,10 +381,11 @@ func TestLog_PopulatesAllFields(t *testing.T) {
 		Metadata:   map[string]any{"fields_changed": []string{"name"}},
 	})
 
-	time.Sleep(50 * time.Millisecond)
+	repo.waitInserted(t, 1)
 
-	e := repo.insertedEntry
-	require.NotNil(t, e)
+	entries := repo.flushedEntries()
+	require.Len(t, entries, 1)
+	e := entries[0]
 	assert.Equal(t, EventTypeUpdated, e.EventType)
 	assert.Equal(t, entityType, *e.EntityType)
 	assert.Equal(t, entityID, *e.EntityID)
@@ -322,6 +399,7 @@ func TestLog_PopulatesAllFields(t *testing.T) {
 func TestLog_ExistingMetadataPreserved(t *testing.T) {
 	repo := &mockRepo{}
 	svc := newTestService(repo)
+	defer svc.Stop(context.Background())
 
 	meta := map[string]any{"key": "value", "count": 42}
 	svc.Log(context.Background(), LogParams{
@@ -331,17 +409,19 @@ func TestLog_ExistingMetadataPreserved(t *testing.T) {
 		Metadata:  meta,
 	})
 
-	time.Sleep(50 * time.Millisecond)
+	repo.waitInserted(t, 1)
 
-	require.NotNil(t, repo.insertedEntry)
-	assert.Equal(t, "value", repo.insertedEntry.Metadata["key"])
-	assert.Equal(t, 42, repo.insertedEntry.Metadata["count"])
+	entries := repo.flushedEntries()
+	require.Len(t, entries, 1)
+	assert.Equal(t, "value", entries[0].Metadata["key"])
+	assert.Equal(t, 42, entries[0].Metadata["count"])
 }
 
 func TestLog_ErrorIsSilenced(t *testing.T) {
 	// Log must not panic or expose errors to callers even when repo fails.
 	repo := &mockRepo{err: errTest}
 	svc := newTestService(repo)
+	defer svc.Stop(context.Background())
 
 	// Should not panic.
 	assert.NotPanics(t, func() {
@@ -350,8 +430,74 @@ func TestLog_ErrorIsSilenced(t *testing.T) {
 			EventType: EventTypeDeleted,
 			ActorType: ActorAgent,
 		})
-		time.Sleep(50 * time.Millisecond)
+		repo.waitInserted(t, 1)
 	})
+}
+
+func TestLog_FlushesEntriesViaInsertBatch(t *testing.T) {
+	repo := &mockRepo{}
+	svc := newTestService(repo)
+	defer svc.Stop(context.Background())
+
+	const n = 20
+	for i := 0; i < n; i++ {
+		svc.Log(context.Background(), LogParams{
+			ProjectID: uuid.New(),
+			EventType: EventTypeCreated,
+			ActorType: ActorAgent,
+		})
+	}
+
+	repo.waitInserted(t, n)
+	assert.Equal(t, n, repo.totalInserted(), "all entries should be flushed via InsertBatch")
+}
+
+func TestStop_DrainsQueue(t *testing.T) {
+	repo := &mockRepo{blockInsert: make(chan struct{})}
+	cfg := &config.Config{Journal: config.JournalConfig{
+		WriterConcurrency: 1,
+		WriterQueueSize:   64,
+		WriterBatchSize:   8,
+	}}
+	svc := newService(repo, cfg, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
+
+	const n = 11
+	for i := 0; i < n; i++ {
+		svc.Log(context.Background(), LogParams{
+			ProjectID: uuid.New(),
+			EventType: EventTypeCreated,
+			ActorType: ActorAgent,
+		})
+	}
+
+	// Unblock the worker's in-flight insert, then stop: the worker flushes its
+	// batch and exits, and Stop drains whatever remains in the queue.
+	close(repo.blockInsert)
+	svc.Stop(context.Background())
+
+	assert.Equal(t, n, repo.totalInserted(), "Stop must drain all queued entries")
+}
+
+// =============================================================================
+// Cursor encode/decode
+// =============================================================================
+
+func TestCursor_RoundTrip(t *testing.T) {
+	ts := time.Date(2026, time.January, 15, 10, 30, 0, 123456789, time.UTC)
+	id := uuid.New()
+
+	c := encodeCursor(ts, id)
+	gotTS, gotID, err := decodeCursor(c)
+	require.NoError(t, err)
+	assert.True(t, ts.Equal(gotTS), "created_at should round-trip")
+	assert.Equal(t, id, gotID)
+}
+
+func TestCursor_DecodeInvalid(t *testing.T) {
+	for _, bad := range []string{"", "nopipe", "|", "badtime|" + uuid.New().String(), time.Now().Format(time.RFC3339Nano) + "|not-a-uuid", "garbage||extra"} {
+		_, _, err := decodeCursor(bad)
+		assert.ErrorIs(t, err, ErrInvalidCursor, "expected ErrInvalidCursor for %q", bad)
+	}
 }
 
 // =============================================================================

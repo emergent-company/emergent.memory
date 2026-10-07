@@ -1,6 +1,8 @@
 package journal
 
 import (
+	"context"
+
 	"go.uber.org/fx"
 
 	"github.com/emergent-company/emergent.memory/domain/graph"
@@ -17,4 +19,13 @@ var Module = fx.Module("journal",
 		return NewGraphEventSinkAdapter(svc)
 	}),
 	fx.Invoke(RegisterRoutes),
+	// Stop the async writer pool and drain any queued entries on shutdown.
+	fx.Invoke(func(lc fx.Lifecycle, svc *Service) {
+		lc.Append(fx.Hook{
+			OnStop: func(ctx context.Context) error {
+				svc.Stop(ctx)
+				return nil
+			},
+		})
+	}),
 )

@@ -86,6 +86,9 @@ type Config struct {
 	// Graph knowledge base configuration
 	Graph GraphConfig
 
+	// Journal audit log configuration
+	Journal JournalConfig
+
 	// Chunking configuration
 	Chunking ChunkingConfig
 
@@ -707,6 +710,23 @@ type GraphConfig struct {
 	// so a client disconnect cannot leave a batch holding DB connections
 	// indefinitely. Default: 60s.
 	BulkUpdateMaxDuration time.Duration `env:"BULK_UPDATE_MAX_DURATION" envDefault:"60s"`
+}
+
+// JournalConfig holds configuration for the journal audit log's bounded async
+// writer. The journal is an append-only audit log of knowledge-graph mutations;
+// entries are buffered in-process and flushed in multi-row batches by a fixed
+// pool of workers rather than one goroutine + INSERT per mutation.
+type JournalConfig struct {
+	// WriterConcurrency is the number of background workers that flush journal
+	// entries to the database. Default: 8.
+	WriterConcurrency int `env:"JOURNAL_WRITER_CONCURRENCY" envDefault:"8"`
+	// WriterQueueSize is the buffered queue capacity. When the queue is full,
+	// Log blocks (with ctx cancellation as backpressure release) rather than
+	// dropping audit records. Default: 4096.
+	WriterQueueSize int `env:"JOURNAL_WRITE_QUEUE_SIZE" envDefault:"4096"`
+	// WriterBatchSize is the maximum number of entries per multi-row INSERT.
+	// Default: 256.
+	WriterBatchSize int `env:"JOURNAL_WRITE_BATCH_SIZE" envDefault:"256"`
 }
 
 // ChunkingConfig holds configuration for text chunking.
