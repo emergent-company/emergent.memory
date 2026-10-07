@@ -148,6 +148,10 @@ type MemoryBackend interface {
 	ApplyBlueprint(ctx context.Context, id string) (*BlueprintApplyResult, error)
 	ListAppliedBlueprints(ctx context.Context) ([]AppliedBlueprint, error)
 	UnapplyBlueprint(ctx context.Context, id string) (*BlueprintUnapplyResult, error)
+	GetBlueprintUpdates(ctx context.Context, name string) (*BlueprintUpdateCheck, error)
+	CheckBlueprintUpdates(ctx context.Context, name string) (*BlueprintUpdateJob, error)
+	ApplyBlueprintUpdate(ctx context.Context, name string) (*BlueprintUpdateJob, error)
+	SetGithubCredential(ctx context.Context, token string) error
 	CreateBlueprintVersion(ctx context.Context, id string, req *CreateBlueprintVersionRequest) (*BlueprintRecord, error)
 	UpdateBlueprint(ctx context.Context, id string, req *UpdateBlueprintRequest) (*BlueprintRecord, error)
 	GetSchemaHistory(ctx context.Context) ([]SchemaHistoryItem, error)

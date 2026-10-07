@@ -557,6 +557,101 @@ func upgradeByName(upgrades []AvailableSchemaItem) map[string]AvailableSchemaIte
 	return out
 }
 
+// blueprintSourceLabel renders a GitHub provenance URL as a compact
+// "host/owner/repo" label (scheme and trailing .git removed) for the installed
+// row's source line. The full URL stays the link href; this is display only.
+func blueprintSourceLabel(sourceURL string) string {
+	s := strings.TrimPrefix(strings.TrimPrefix(sourceURL, "https://"), "http://")
+	s = strings.TrimSuffix(s, ".git")
+	return strings.TrimSuffix(s, "/")
+}
+
+// blueprintUpdateAction is the rendered state of the Update control on one
+// installed, repo-imported blueprint.
+type blueprintUpdateAction int
+
+const (
+	// blueprintUpdateActionHidden shows no Update control (not repo-imported, or
+	// no update available and no relevant job).
+	blueprintUpdateActionHidden blueprintUpdateAction = iota
+	// blueprintUpdateActionAvailable offers the live Update action.
+	blueprintUpdateActionAvailable
+	// blueprintUpdateActionQueued / Running show a disabled pending control.
+	blueprintUpdateActionQueued
+	blueprintUpdateActionRunning
+	// blueprintUpdateActionSucceeded shows the success state and clears the
+	// available-update badge.
+	blueprintUpdateActionSucceeded
+	// blueprintUpdateActionFailed shows the error and offers a retry.
+	blueprintUpdateActionFailed
+)
+
+// UpdateAction derives the row's Update-control state from the available-update
+// signal and the latest update job (which the page handler loads from the
+// update-status endpoint, so the state survives reloads). Only an update job
+// drives the control; a check job never does.
+func (b AppliedBlueprint) UpdateAction() blueprintUpdateAction {
+	if j := b.LatestJob; j != nil && j.Action == blueprintUpdateJobActionUpdate {
+		switch j.Status {
+		case blueprintUpdateJobStatusPending:
+			return blueprintUpdateActionQueued
+		case blueprintUpdateJobStatusRunning:
+			return blueprintUpdateActionRunning
+		case blueprintUpdateJobStatusSucceeded:
+			return blueprintUpdateActionSucceeded
+		case blueprintUpdateJobStatusFailed:
+			return blueprintUpdateActionFailed
+		}
+	}
+	if b.UpdateBadgeVisible() {
+		return blueprintUpdateActionAvailable
+	}
+	return blueprintUpdateActionHidden
+}
+
+// UpdateBadgeVisible reports whether the "Update available" badge should render.
+// A succeeded update job clears it: applying upstream leaves the (stale) check
+// record reporting updateAvailable until the next check runs, so the job's
+// terminal success is the authoritative signal that the update landed.
+func (b AppliedBlueprint) UpdateBadgeVisible() bool {
+	if b.SourceURL == "" || !b.UpdateAvailable || b.LatestVersion == "" {
+		return false
+	}
+	if j := b.LatestJob; j != nil && j.Action == blueprintUpdateJobActionUpdate && j.Status == blueprintUpdateJobStatusSucceeded {
+		return false
+	}
+	return true
+}
+
+// IsNoop reports whether a succeeded update job applied no change (upstream was
+// already current, or content drifted at the same version).
+func (j *BlueprintUpdateJob) IsNoop() bool {
+	if j == nil || len(j.Result) == 0 {
+		return false
+	}
+	var r struct {
+		Noop bool `json:"noop"`
+	}
+	if err := json.Unmarshal(j.Result, &r); err != nil {
+		return false
+	}
+	return r.Noop
+}
+
+// blueprintUpdateFailureLabel renders the failed job's error as a compact,
+// single-line label (full text stays in the element's title attribute).
+func blueprintUpdateFailureLabel(msg string) string {
+	s := strings.Join(strings.Fields(msg), " ")
+	const maxRunes = 120
+	if runes := []rune(s); len(runes) > maxRunes {
+		s = string(runes[:maxRunes]) + "…"
+	}
+	if s == "" {
+		return "Update failed"
+	}
+	return "Update failed: " + s
+}
+
 // agentNames extracts the sorted names of a blueprint's agent definitions.
 func agentNames(agents []BundledAgent) []string {
 	if len(agents) == 0 {

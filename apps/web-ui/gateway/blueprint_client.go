@@ -74,7 +74,68 @@ type AppliedBlueprint struct {
 	Author      string `json:"author,omitempty"`
 	Checksum    string `json:"checksum"`
 	AppliedAt   string `json:"appliedAt"`
+	// SourceURL/SourceRef carry the GitHub provenance recorded at import time;
+	// both empty for bundled/registry packs. UpdateAvailable, LatestVersion and
+	// LastCheckedAt are the latest update-check outcome for a GitHub-imported
+	// blueprint (see BlueprintUpdateCheck). LastCheckedAt is kept as a string
+	// because the gateway never parses it.
+	SourceURL       string `json:"sourceUrl,omitempty"`
+	SourceRef       string `json:"sourceRef,omitempty"`
+	UpdateAvailable bool   `json:"updateAvailable"`
+	LatestVersion   string `json:"latestVersion,omitempty"`
+	LastCheckedAt   string `json:"lastCheckedAt,omitempty"`
+	// LatestJob is not part of the /applied wire response: the page handler
+	// fills it from GET /api/blueprints/:name/updates so the Update control can
+	// reflect queued/running/succeeded/failed state across reloads.
+	LatestJob *BlueprintUpdateJob `json:"-"`
 }
+
+// BlueprintUpdateCheck mirrors memory's update-check record returned by
+// GET /api/blueprints/:name/updates: the latest check for one applied,
+// GitHub-imported blueprint in a project, plus the latest update/check job.
+// LastCheckedAt is kept as a string because the gateway never parses it.
+type BlueprintUpdateCheck struct {
+	BlueprintName   string `json:"blueprintName"`
+	SourceURL       string `json:"sourceUrl,omitempty"`
+	SourceRef       string `json:"sourceRef,omitempty"`
+	LatestVersion   string `json:"latestVersion,omitempty"`
+	LatestChecksum  string `json:"latestChecksum,omitempty"`
+	UpdateAvailable bool   `json:"updateAvailable"`
+	LastCheckedAt   string `json:"lastCheckedAt,omitempty"`
+	LastCheckError  string `json:"lastCheckError,omitempty"`
+	// LatestJob is the most recent update or check job for this blueprint, when
+	// one has been enqueued (nil before the first job).
+	LatestJob *BlueprintUpdateJob `json:"latestJob,omitempty"`
+}
+
+// BlueprintUpdateJob mirrors memory's durable update job returned by the
+// check/apply endpoints and embedded as latestJob in the update-status
+// response. Timestamps and Result are kept raw because the gateway only reads
+// status/lastError and the result's noop flag.
+type BlueprintUpdateJob struct {
+	ID            string          `json:"id"`
+	ProjectID     string          `json:"projectId,omitempty"`
+	BlueprintName string          `json:"blueprintName,omitempty"`
+	Action        string          `json:"action,omitempty"`
+	Status        string          `json:"status"`
+	Attempts      int             `json:"attempts"`
+	LastError     string          `json:"lastError,omitempty"`
+	Result        json.RawMessage `json:"result,omitempty"`
+	CreatedAt     string          `json:"createdAt,omitempty"`
+	StartedAt     string          `json:"startedAt,omitempty"`
+	FinishedAt    string          `json:"finishedAt,omitempty"`
+}
+
+// Update job action and status values, mirroring memory's blueprints domain.
+const (
+	blueprintUpdateJobActionCheck  = "check"
+	blueprintUpdateJobActionUpdate = "update"
+
+	blueprintUpdateJobStatusPending   = "pending"
+	blueprintUpdateJobStatusRunning   = "running"
+	blueprintUpdateJobStatusSucceeded = "succeeded"
+	blueprintUpdateJobStatusFailed    = "failed"
+)
 
 // BlueprintUnapplyCounts reports per-entity-type reversal counts for one
 // blueprint unapply.
@@ -127,6 +188,13 @@ type importBlueprintRequest struct {
 	// Apply makes the import create+publish AND apply in one step; on an apply
 	// failure memory deletes the created row so a retry is clean.
 	Apply bool `json:"apply,omitempty"`
+}
+
+// setGithubCredentialRequest is the body for
+// PUT /api/blueprints/github-credentials. Token is a private-repo credential:
+// it is sent only to the memory backend and is never logged or echoed.
+type setGithubCredentialRequest struct {
+	Token string `json:"token"`
 }
 
 // --- MemoryClient blueprint methods ---
@@ -247,6 +315,55 @@ func (m *MemoryClient) UnapplyBlueprint(ctx context.Context, id string) (*Bluepr
 		return nil, err
 	}
 	return &out, nil
+}
+
+// GetBlueprintUpdates returns the latest update-check result for an applied
+// blueprint by name (GET /api/blueprints/:name/updates). Project-scoped via
+// X-Project-ID.
+func (m *MemoryClient) GetBlueprintUpdates(ctx context.Context, name string) (*BlueprintUpdateCheck, error) {
+	var out BlueprintUpdateCheck
+	if err := m.doH(ctx, http.MethodGet, "/api/blueprints/"+url.PathEscape(name)+"/updates", nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// CheckBlueprintUpdates enqueues an on-demand update check for an applied
+// blueprint by name (POST /api/blueprints/:name/updates/check) and returns the
+// queued job. The check runs asynchronously in memory. Project-scoped via
+// X-Project-ID.
+func (m *MemoryClient) CheckBlueprintUpdates(ctx context.Context, name string) (*BlueprintUpdateJob, error) {
+	var out BlueprintUpdateJob
+	// Empty object body — the check has no required fields; an empty body would
+	// fail echo's JSON binding.
+	if err := m.doH(ctx, http.MethodPost, "/api/blueprints/"+url.PathEscape(name)+"/updates/check", map[string]any{}, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ApplyBlueprintUpdate enqueues an asynchronous apply of a detected upstream
+// update for an applied blueprint by name (POST /api/blueprints/:name/updates/apply)
+// and returns the queued job. The apply runs in memory; a duplicate enqueue
+// while one is pending/running is rejected with 409. Project-scoped via
+// X-Project-ID.
+func (m *MemoryClient) ApplyBlueprintUpdate(ctx context.Context, name string) (*BlueprintUpdateJob, error) {
+	var out BlueprintUpdateJob
+	// Empty object body — apply has no required fields; an empty body would
+	// fail echo's JSON binding.
+	if err := m.doH(ctx, http.MethodPost, "/api/blueprints/"+url.PathEscape(name)+"/updates/apply", map[string]any{}, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// SetGithubCredential stores (or replaces) the project's encrypted GitHub
+// personal access token (PUT /api/blueprints/github-credentials). The token is
+// forwarded to memory only; it is never logged and memory never echoes it.
+// Project-scoped via X-Project-ID.
+func (m *MemoryClient) SetGithubCredential(ctx context.Context, token string) error {
+	req := setGithubCredentialRequest{Token: token}
+	return m.doH(ctx, http.MethodPut, "/api/blueprints/github-credentials", req, m.documentHeaders(ctx), nil)
 }
 
 // --- install primitive ---

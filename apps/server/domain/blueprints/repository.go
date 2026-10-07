@@ -82,6 +82,39 @@ func (r *Repository) GetByID(ctx context.Context, projectID, id string) (*Bluepr
 	return &bp, nil
 }
 
+// GetByNameVersion returns a blueprint by name and version in the EXACT scope
+// matching CreateBlueprint's conflict scope — the project's own row when
+// projectID is set, else the global row — or ErrNotFound. Used by the update
+// path to recover an already-created version after a duplicate-create conflict.
+//
+// The scope must be exact, not scopeWhere's global+own read scope: a project and
+// a global blueprint may share (name, version), so a broad lookup ordered by
+// created_at could resolve the unrelated older global row and publish/apply it.
+func (r *Repository) GetByNameVersion(ctx context.Context, projectID, name, version string) (*Blueprint, error) {
+	var bp Blueprint
+	q := r.db.NewSelect().
+		Model(&bp).
+		Where("name = ?", name).
+		Where("version = ?", version)
+	if projectID == "" {
+		q = q.Where("project_id IS NULL")
+	} else {
+		q = q.Where("project_id = ?", projectID)
+	}
+	err := q.
+		Order("created_at ASC").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, apperror.NewNotFound("blueprint", name+"@"+version)
+		}
+		r.log.Error("failed to get blueprint by name and version", logger.Error(err))
+		return nil, apperror.NewDatabase("failed to get blueprint by name and version", err)
+	}
+	return &bp, nil
+}
+
 // List returns blueprints within the caller's read scope (global + own
 // private), optionally filtered by name, ordered by name then version.
 func (r *Repository) List(ctx context.Context, projectID, nameFilter string) ([]Blueprint, error) {
@@ -258,19 +291,30 @@ func (r *Repository) SupersedeApplications(ctx context.Context, projectID, bluep
 // blueprint metadata, ordered by name.
 func (r *Repository) ListApplied(ctx context.Context, projectID string) ([]AppliedBlueprint, error) {
 	var results []struct {
-		BlueprintID string    `bun:"blueprint_id"`
-		Name        string    `bun:"name"`
-		Version     string    `bun:"version"`
-		Description string    `bun:"description"`
-		Author      string    `bun:"author"`
-		Checksum    string    `bun:"checksum"`
-		AppliedAt   time.Time `bun:"applied_at"`
+		BlueprintID     string     `bun:"blueprint_id"`
+		Name            string     `bun:"name"`
+		Version         string     `bun:"version"`
+		Description     string     `bun:"description"`
+		Author          string     `bun:"author"`
+		Checksum        string     `bun:"checksum"`
+		AppliedAt       time.Time  `bun:"applied_at"`
+		SourceURL       string     `bun:"source_url"`
+		SourceRef       string     `bun:"source_ref"`
+		UpdateAvailable bool       `bun:"update_available"`
+		LatestVersion   string     `bun:"latest_version"`
+		LastCheckedAt   *time.Time `bun:"last_checked_at"`
 	}
 	err := r.db.NewRaw(`
 		SELECT bpa.blueprint_id, bp.name, bpa.version, bp.description, bp.author,
-		       bpa.checksum, bpa.applied_at
+		       bpa.checksum, bpa.applied_at,
+		       bp.source_url, bp.source_ref,
+		       COALESCE(buc.update_available, false) AS update_available,
+		       buc.latest_version,
+		       buc.last_checked_at
 		FROM kb.blueprint_applications bpa
 		JOIN kb.blueprints bp ON bp.id = bpa.blueprint_id
+		LEFT JOIN kb.blueprint_update_checks buc
+		       ON buc.project_id = bpa.project_id AND buc.blueprint_name = bp.name
 		WHERE bpa.project_id = ?
 		  AND bpa.status = 'applied'
 		ORDER BY bp.name ASC
@@ -283,13 +327,18 @@ func (r *Repository) ListApplied(ctx context.Context, projectID string) ([]Appli
 	out := make([]AppliedBlueprint, len(results))
 	for i, res := range results {
 		out[i] = AppliedBlueprint{
-			BlueprintID: res.BlueprintID,
-			Name:        res.Name,
-			Version:     res.Version,
-			Description: res.Description,
-			Author:      res.Author,
-			Checksum:    res.Checksum,
-			AppliedAt:   res.AppliedAt,
+			BlueprintID:     res.BlueprintID,
+			Name:            res.Name,
+			Version:         res.Version,
+			Description:     res.Description,
+			Author:          res.Author,
+			Checksum:        res.Checksum,
+			AppliedAt:       res.AppliedAt,
+			SourceURL:       res.SourceURL,
+			SourceRef:       res.SourceRef,
+			UpdateAvailable: res.UpdateAvailable,
+			LatestVersion:   res.LatestVersion,
+			LastCheckedAt:   res.LastCheckedAt,
 		}
 	}
 	return out, nil

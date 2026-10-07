@@ -219,6 +219,10 @@ type fakeMemory struct {
 	appliedBlueprints   []AppliedBlueprint      // returned by ListAppliedBlueprints
 	unappliedBlueprint  []string                // ids passed to UnapplyBlueprint
 	unapplyBlueprintRes *BlueprintUnapplyResult // returned by UnapplyBlueprint
+	checkedUpdates      []string                // names passed to CheckBlueprintUpdates
+	appliedUpdates      []string                // names passed to ApplyBlueprintUpdate
+	blueprintUpdates    *BlueprintUpdateCheck   // returned by GetBlueprintUpdates, when set
+	savedGithubToken    *string                 // last token passed to SetGithubCredential
 
 	importBlueprintReq *importBlueprintRequest // last request passed to ImportBlueprint
 	importBlueprintRes *BlueprintRecord        // returned by ImportBlueprint, when set
@@ -1512,6 +1516,40 @@ func (f *fakeMemory) UnapplyBlueprint(ctx context.Context, id string) (*Blueprin
 		return f.unapplyBlueprintRes, nil
 	}
 	return &BlueprintUnapplyResult{BlueprintID: id, Status: "unapplied"}, nil
+}
+
+func (f *fakeMemory) GetBlueprintUpdates(ctx context.Context, name string) (*BlueprintUpdateCheck, error) {
+	if f.blueprintErr != nil {
+		return nil, f.blueprintErr
+	}
+	if f.blueprintUpdates != nil {
+		return f.blueprintUpdates, nil
+	}
+	return &BlueprintUpdateCheck{BlueprintName: name}, nil
+}
+
+func (f *fakeMemory) CheckBlueprintUpdates(ctx context.Context, name string) (*BlueprintUpdateJob, error) {
+	if f.blueprintErr != nil {
+		return nil, f.blueprintErr
+	}
+	f.checkedUpdates = append(f.checkedUpdates, name)
+	return &BlueprintUpdateJob{ID: "job-1", Action: "check", Status: "pending"}, nil
+}
+
+func (f *fakeMemory) ApplyBlueprintUpdate(ctx context.Context, name string) (*BlueprintUpdateJob, error) {
+	if f.blueprintErr != nil {
+		return nil, f.blueprintErr
+	}
+	f.appliedUpdates = append(f.appliedUpdates, name)
+	return &BlueprintUpdateJob{ID: "job-2", Action: "update", Status: "pending"}, nil
+}
+
+func (f *fakeMemory) SetGithubCredential(ctx context.Context, token string) error {
+	if f.blueprintErr != nil {
+		return f.blueprintErr
+	}
+	f.savedGithubToken = &token
+	return nil
 }
 
 func (f *fakeMemory) ListAllSchemas(ctx context.Context) ([]SchemaInfo, error) {

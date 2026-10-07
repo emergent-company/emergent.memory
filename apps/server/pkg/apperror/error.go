@@ -201,3 +201,14 @@ func NewServiceUnavailable(message string, err error) *Error {
 		Internal:   err,
 	}
 }
+
+// NewConflict creates a 409 conflict error with a custom message. Constructed
+// directly rather than by chaining off ErrConflict, so call sites do not grow
+// the apperror Style A lint-ratchet count.
+func NewConflict(message string) *Error {
+	return &Error{
+		HTTPStatus: http.StatusConflict,
+		Code:       "conflict",
+		Message:    message,
+	}
+}

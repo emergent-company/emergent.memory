@@ -537,3 +537,138 @@ func (h *Handler) UnapplyBlueprint(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, result)
 }
+
+// SetGithubCredentialRequest is the body for PUT /api/blueprints/github-credentials.
+type SetGithubCredentialRequest struct {
+	Token string `json:"token"`
+}
+
+// CheckBlueprintUpdates handles POST /api/blueprints/:name/updates/check.
+// @Summary      Check blueprint for updates
+// @Description  Enqueues an update-check job for the caller's applied blueprint by name. The check runs asynchronously; returns the queued job.
+// @Tags         blueprints
+// @Accept       json
+// @Produce      json
+// @Param        name path string true "Blueprint name"
+// @Success      202 {object} BlueprintUpdateJob "Queued update-check job"
+// @Failure      400 {object} apperror.Error "Bad request / project context required"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/blueprints/{name}/updates/check [post]
+// @Security     bearerAuth
+func (h *Handler) CheckBlueprintUpdates(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	name := c.Param("name")
+	if name == "" {
+		return apperror.NewBadRequest("name is required")
+	}
+	projectID := user.ProjectID
+	if projectID == "" {
+		return apperror.NewBadRequest("project context required (X-Project-ID header or API token)")
+	}
+
+	job, err := h.svc.EnqueueUpdateCheck(c.Request().Context(), projectID, name)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusAccepted, job)
+}
+
+// GetBlueprintUpdates handles GET /api/blueprints/:name/updates.
+// @Summary      Get blueprint update status
+// @Description  Returns the latest update-check result for the caller's applied blueprint by name, plus the latest update job (check or apply), when one exists.
+// @Tags         blueprints
+// @Produce      json
+// @Param        name path string true "Blueprint name"
+// @Success      200 {object} BlueprintUpdateStatus "Latest update-check result and job"
+// @Failure      400 {object} apperror.Error "Bad request / project context required"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "No update status recorded"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/blueprints/{name}/updates [get]
+// @Security     bearerAuth
+func (h *Handler) GetBlueprintUpdates(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	name := c.Param("name")
+	if name == "" {
+		return apperror.NewBadRequest("name is required")
+	}
+	projectID := user.ProjectID
+	if projectID == "" {
+		return apperror.NewBadRequest("project context required (X-Project-ID header or API token)")
+	}
+
+	status, err := h.svc.GetUpdateStatus(c.Request().Context(), projectID, name)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, status)
+}
+
+// ApplyBlueprintUpdates handles POST /api/blueprints/:name/updates/apply.
+// @Summary      Apply a blueprint update
+// @Description  Enqueues an update (apply) job for the caller's applied blueprint by name. The job asynchronously fetches the upstream source, creates + publishes + applies a new version when upstream is newer, and returns the queued job. Rejected with 409 while an update for the same blueprint is already pending or running.
+// @Tags         blueprints
+// @Accept       json
+// @Produce      json
+// @Param        name path string true "Blueprint name"
+// @Success      202 {object} BlueprintUpdateJob "Queued update job"
+// @Failure      400 {object} apperror.Error "Bad request / project context required"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      409 {object} apperror.Error "An update is already pending or running"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/blueprints/{name}/updates/apply [post]
+// @Security     bearerAuth
+func (h *Handler) ApplyBlueprintUpdates(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	name := c.Param("name")
+	if name == "" {
+		return apperror.NewBadRequest("name is required")
+	}
+	projectID := user.ProjectID
+	if projectID == "" {
+		return apperror.NewBadRequest("project context required (X-Project-ID header or API token)")
+	}
+
+	job, err := h.svc.EnqueueBlueprintUpdate(c.Request().Context(), projectID, name)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusAccepted, job)
+}
+
+// SaveGithubCredentials handles PUT /api/blueprints/github-credentials.
+// @Summary      Set project GitHub credential
+// @Description  Stores (or replaces) the caller's project-scoped GitHub personal access token, encrypted at rest. The token is never echoed.
+// @Tags         blueprints
+// @Accept       json
+// @Produce      json
+// @Param        request body SetGithubCredentialRequest true "GitHub token"
+// @Success      204 "No content"
+// @Failure      400 {object} apperror.Error "Bad request / project context required"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      409 {object} apperror.Error "Encryption key not configured"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/blueprints/github-credentials [put]
+// @Security     bearerAuth
+func (h *Handler) SaveGithubCredentials(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	projectID := user.ProjectID
+	if projectID == "" {
+		return apperror.NewBadRequest("project context required (X-Project-ID header or API token)")
+	}
+
+	var req SetGithubCredentialRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+
+	if err := h.svc.SaveGithubCredential(c.Request().Context(), projectID, req.Token); err != nil {
+		return err
+	}
+	return c.NoContent(http.StatusNoContent)
+}

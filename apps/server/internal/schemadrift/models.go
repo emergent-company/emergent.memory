@@ -177,6 +177,9 @@ var models = []any{
 	(*blueprints.Blueprint)(nil),
 	(*blueprints.BlueprintApplication)(nil),
 	(*blueprints.BlueprintPackClaim)(nil),
+	(*blueprints.BlueprintUpdateCheck)(nil),
+	(*blueprints.BlueprintUpdateJob)(nil),
+	(*blueprints.GithubCredential)(nil),
 
 	// domain/skills
 	(*skills.Skill)(nil),

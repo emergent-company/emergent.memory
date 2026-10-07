@@ -1,12 +1,19 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/emergent-company/emergent.memory/apps/cli/internal/blueprints"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/client"
 	"github.com/spf13/cobra"
 )
 
@@ -22,6 +29,12 @@ var (
 
 	// dump subcommand flags
 	blueprintsDumpTypesFlag string
+
+	// github-token subcommand flag
+	blueprintsGithubTokenFlag string
+
+	// update subcommand flag
+	blueprintsUpdateWaitFlag bool
 )
 
 // ─────────────────────────────────────────────
@@ -332,8 +345,280 @@ Examples:
 }
 
 // ─────────────────────────────────────────────
-// blueprintsDumpCmd — export project data as seed files
+// blueprintsCheckUpdatesCmd — trigger/print update status
 // ─────────────────────────────────────────────
+
+var blueprintsCheckUpdatesCmd = &cobra.Command{
+	Use:   "check-updates [name]",
+	Short: "Check GitHub-imported blueprints for newer upstream versions",
+	Long: `Check the current project's GitHub-imported blueprints for newer upstream
+versions. With a blueprint name, it triggers a check (POST .../updates/check) and
+prints the latest result; without a name, it prints the current status of every
+applied blueprint.
+
+Examples:
+
+  memory blueprints check-updates
+  memory blueprints check-updates crm
+  memory blueprints check-updates crm --project my-project`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runBlueprintsCheckUpdates,
+}
+
+func runBlueprintsCheckUpdates(cmd *cobra.Command, args []string) error {
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+	projectID, err := resolveProjectContext(cmd, blueprintsProjectFlag)
+	if err != nil {
+		return err
+	}
+	c.SetContext("", projectID)
+
+	out := cmd.OutOrStdout()
+
+	if len(args) == 0 {
+		return printAppliedUpdateStatus(cmd, c, out)
+	}
+	name := args[0]
+	if err := triggerBlueprintCheck(cmd, c, name); err != nil {
+		return err
+	}
+	return printSingleUpdateStatus(cmd, c, name, out)
+}
+
+type appliedBlueprintStatus struct {
+	Name            string `json:"name"`
+	Version         string `json:"version"`
+	SourceURL       string `json:"sourceUrl"`
+	UpdateAvailable bool   `json:"updateAvailable"`
+	LatestVersion   string `json:"latestVersion"`
+	LastCheckedAt   string `json:"lastCheckedAt"`
+}
+
+type blueprintUpdateCheckStatus struct {
+	BlueprintName   string `json:"blueprintName"`
+	SourceURL       string `json:"sourceUrl"`
+	SourceRef       string `json:"sourceRef"`
+	LatestVersion   string `json:"latestVersion"`
+	UpdateAvailable bool   `json:"updateAvailable"`
+	LastCheckedAt   string `json:"lastCheckedAt"`
+	LastCheckError  string `json:"lastCheckError"`
+}
+
+// blueprintRequest issues an authenticated, project-scoped request and returns
+// the response body, treating any non-2xx status as an error.
+func blueprintRequest(c *client.Client, method, path string, body []byte) ([]byte, error) {
+	var req *http.Request
+	var err error
+	if body != nil {
+		req, err = http.NewRequestWithContext(context.Background(), method, path, bytes.NewReader(body))
+	} else {
+		req, err = http.NewRequestWithContext(context.Background(), method, path, nil)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := c.SDK.Do(context.Background(), req)
+	if err != nil {
+		return nil, fmt.Errorf("cannot reach server: %w", err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	return data, nil
+}
+
+func printAppliedUpdateStatus(cmd *cobra.Command, c *client.Client, out io.Writer) error {
+	data, err := blueprintRequest(c, http.MethodGet, c.BaseURL()+"/api/blueprints/applied", nil)
+	if err != nil {
+		return err
+	}
+	var applied []appliedBlueprintStatus
+	if err := json.Unmarshal(data, &applied); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+	if len(applied) == 0 {
+		fmt.Fprintln(out, "No applied blueprints.")
+		return nil
+	}
+	fmt.Fprintln(out, "Applied blueprints:")
+	for _, a := range applied {
+		status := "up to date"
+		if a.UpdateAvailable {
+			status = "update available"
+			if a.LatestVersion != "" {
+				status += " (latest " + a.LatestVersion + ")"
+			}
+		}
+		line := fmt.Sprintf("  %-24s %-12s %s", a.Name, a.Version, status)
+		if a.SourceURL != "" {
+			line += "  [" + a.SourceURL + "]"
+		}
+		fmt.Fprintln(out, line)
+	}
+	return nil
+}
+
+func triggerBlueprintCheck(cmd *cobra.Command, c *client.Client, name string) error {
+	_, err := blueprintRequest(c, http.MethodPost,
+		c.BaseURL()+"/api/blueprints/"+url.PathEscape(name)+"/updates/check", nil)
+	return err
+}
+
+func printSingleUpdateStatus(cmd *cobra.Command, c *client.Client, name string, out io.Writer) error {
+	data, err := blueprintRequest(c, http.MethodGet,
+		c.BaseURL()+"/api/blueprints/"+url.PathEscape(name)+"/updates", nil)
+	if err != nil {
+		return err
+	}
+	var check blueprintUpdateCheckStatus
+	if err := json.Unmarshal(data, &check); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+	status := "up to date"
+	if check.UpdateAvailable {
+		status = "update available"
+	}
+	if check.LastCheckError != "" {
+		status = "last check failed: " + check.LastCheckError
+	}
+	fmt.Fprintf(out, "%s: %s\n", check.BlueprintName, status)
+	if check.LatestVersion != "" {
+		fmt.Fprintf(out, "  latest version: %s\n", check.LatestVersion)
+	}
+	if check.SourceURL != "" {
+		fmt.Fprintf(out, "  source: %s\n", check.SourceURL)
+	}
+	return nil
+}
+
+// ─────────────────────────────────────────────
+// blueprintsUpdateCmd — apply an available update
+// ─────────────────────────────────────────────
+
+var blueprintsUpdateCmd = &cobra.Command{
+	Use:   "update <name>",
+	Short: "Apply an available update for a GitHub-imported blueprint",
+	Long: `Enqueue an asynchronous update (apply) for the current project's
+GitHub-imported blueprint. The server fetches the upstream source and, when a
+newer version is available, creates, publishes, and applies it. With --wait, the
+command blocks until the update job reaches a terminal state and prints the
+outcome.
+
+Examples:
+
+  memory blueprints update crm
+  memory blueprints update crm --wait
+  memory blueprints update crm --project my-project`,
+	Args: cobra.ExactArgs(1),
+	RunE: runBlueprintsUpdate,
+}
+
+type blueprintUpdateJobStatus struct {
+	ID            string          `json:"id"`
+	ProjectID     string          `json:"projectId"`
+	BlueprintName string          `json:"blueprintName"`
+	Action        string          `json:"action"`
+	Status        string          `json:"status"`
+	Attempts      int             `json:"attempts"`
+	LastError     string          `json:"lastError"`
+	Result        json.RawMessage `json:"result"`
+	CreatedAt     string          `json:"createdAt"`
+	StartedAt     string          `json:"startedAt"`
+	FinishedAt    string          `json:"finishedAt"`
+}
+
+type blueprintUpdateStatus struct {
+	BlueprintName   string                    `json:"blueprintName"`
+	UpdateAvailable bool                      `json:"updateAvailable"`
+	LatestVersion   string                    `json:"latestVersion"`
+	LastCheckError  string                    `json:"lastCheckError"`
+	LatestJob       *blueprintUpdateJobStatus `json:"latestJob"`
+}
+
+func runBlueprintsUpdate(cmd *cobra.Command, args []string) error {
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+	projectID, err := resolveProjectContext(cmd, blueprintsProjectFlag)
+	if err != nil {
+		return err
+	}
+	c.SetContext("", projectID)
+
+	name := args[0]
+	out := cmd.OutOrStdout()
+
+	applyPath := c.BaseURL() + "/api/blueprints/" + url.PathEscape(name) + "/updates/apply"
+	if _, err := blueprintRequest(c, http.MethodPost, applyPath, nil); err != nil {
+		return err
+	}
+
+	if !blueprintsUpdateWaitFlag {
+		fmt.Fprintf(out, "Update queued for %s.\n", name)
+		return nil
+	}
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	statusPath := c.BaseURL() + "/api/blueprints/" + url.PathEscape(name) + "/updates"
+	for {
+		data, err := blueprintRequest(c, http.MethodGet, statusPath, nil)
+		if err != nil {
+			return err
+		}
+		var status blueprintUpdateStatus
+		if err := json.Unmarshal(data, &status); err != nil {
+			return fmt.Errorf("decode response: %w", err)
+		}
+		if status.LatestJob == nil {
+			fmt.Fprintln(out, "No update job recorded yet.")
+			return nil
+		}
+		switch status.LatestJob.Status {
+		case "succeeded":
+			printUpdateJobOutcome(out, name, status.LatestJob)
+			return nil
+		case "failed":
+			fmt.Fprintf(out, "%s: update failed: %s\n", name, status.LatestJob.LastError)
+			return fmt.Errorf("blueprint update failed: %s", status.LatestJob.LastError)
+		default:
+			<-ticker.C
+		}
+	}
+}
+
+func printUpdateJobOutcome(out io.Writer, name string, job *blueprintUpdateJobStatus) {
+	var result struct {
+		Noop            bool   `json:"noop"`
+		Version         string `json:"version"`
+		PreviousVersion string `json:"previousVersion"`
+		Reason          string `json:"reason"`
+	}
+	if len(job.Result) > 0 {
+		_ = json.Unmarshal(job.Result, &result)
+	}
+	if result.Noop {
+		msg := "up to date"
+		if result.Reason != "" {
+			msg = result.Reason
+		}
+		fmt.Fprintf(out, "%s: %s\n", name, msg)
+		return
+	}
+	fmt.Fprintf(out, "%s: updated to version %s\n", name, result.Version)
+}
 
 var blueprintsDumpCmd = &cobra.Command{
 	Use:   "dump <output-dir>",
@@ -463,6 +748,65 @@ Examples:
 // init — wire flags and register
 // ─────────────────────────────────────────────
 
+// blueprintsGithubTokenSetCmd stores a project-scoped GitHub PAT (encrypted at
+// rest by the server; never echoed back).
+var blueprintsGithubTokenSetCmd = &cobra.Command{
+	Use:   "set",
+	Short: "Store the project's GitHub personal access token",
+	Long: `Store the project's GitHub personal access token, used by the server to check
+private repositories for updates. The token is encrypted at rest by the server
+and never echoed back.
+
+The token is read from --token, or from stdin when --token is omitted (e.g.
+` + "`echo ghp_... | memory blueprints github-token set`" + `).
+
+Examples:
+
+  memory blueprints github-token set --token ghp_...
+  memory blueprints github-token set`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		token := strings.TrimSpace(blueprintsGithubTokenFlag)
+		if token == "" {
+			data, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				return fmt.Errorf("read token from stdin: %w", err)
+			}
+			token = strings.TrimSpace(string(data))
+		}
+		if token == "" {
+			return fmt.Errorf("token is required (use --token or pipe it via stdin)")
+		}
+
+		c, err := getClient(cmd)
+		if err != nil {
+			return err
+		}
+		projectID, err := resolveProjectContext(cmd, blueprintsProjectFlag)
+		if err != nil {
+			return err
+		}
+		c.SetContext("", projectID)
+
+		body, err := json.Marshal(map[string]string{"token": token})
+		if err != nil {
+			return fmt.Errorf("marshal request: %w", err)
+		}
+		if _, err := blueprintRequest(c, http.MethodPut,
+			c.BaseURL()+"/api/blueprints/github-credentials", body); err != nil {
+			return err
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), "GitHub token stored.")
+		return nil
+	},
+}
+
+var blueprintsGithubTokenCmd = &cobra.Command{
+	Use:   "github-token",
+	Short: "Manage the project's GitHub personal access token",
+	Long:  `Manage the project-scoped GitHub personal access token used for update checks.`,
+}
+
 func init() {
 	// --project is persistent so it's inherited by all subcommands
 	blueprintsCmd.PersistentFlags().StringVar(&blueprintsProjectFlag, "project", "", "Project ID or name (overrides config/env)")
@@ -490,5 +834,15 @@ func init() {
 	blueprintsCmd.AddCommand(blueprintsDumpCmd)
 	blueprintsCmd.AddCommand(blueprintsValidateCmd)
 	blueprintsCmd.AddCommand(blueprintsInspectCmd)
+	blueprintsCmd.AddCommand(blueprintsCheckUpdatesCmd)
+	blueprintsCmd.AddCommand(blueprintsUpdateCmd)
+
+	blueprintsGithubTokenCmd.AddCommand(blueprintsGithubTokenSetCmd)
+	blueprintsGithubTokenSetCmd.Flags().StringVar(&blueprintsGithubTokenFlag, "token", "", "GitHub personal access token (read from stdin when omitted)")
+	blueprintsCmd.AddCommand(blueprintsGithubTokenCmd)
+
+	// update subcommand flags
+	blueprintsUpdateCmd.Flags().BoolVar(&blueprintsUpdateWaitFlag, "wait", false, "Block until the update job reaches a terminal state")
+
 	rootCmd.AddCommand(blueprintsCmd)
 }

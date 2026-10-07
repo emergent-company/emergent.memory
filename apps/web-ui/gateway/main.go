@@ -385,6 +385,11 @@ func main() {
 	e.POST("/blueprints/enable", s.uiEnableBlueprint)
 	e.POST("/blueprints/:id/install", s.uiInstallBlueprintById)
 	e.POST("/blueprints/:id/unapply", s.uiUnapplyBlueprint)
+	// Repo-imported blueprint update checks: enqueue an on-demand check and
+	// store the project's encrypted GitHub PAT (private-repo checks).
+	e.POST("/blueprints/github-credentials", s.uiSaveGithubCredential)
+	e.POST("/blueprints/:name/updates/check", s.uiCheckBlueprintUpdates)
+	e.POST("/blueprints/:name/updates/apply", s.uiApplyBlueprintUpdate)
 	e.POST("/blueprints/migrate", s.uiMigrate)
 	e.POST("/blueprints/migrate/rollback", s.uiRollbackMigration)
 	e.GET("/skills", s.uiSkills)

@@ -238,7 +238,19 @@ routes:
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: GET
+      path: /api/blueprints/:name/updates
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireProjectID
+    - method: POST
+      path: /api/blueprints/:name/updates/check
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireProjectID
+    - method: GET
       path: /api/blueprints/applied
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireProjectID
+    - method: PUT
+      path: /api/blueprints/github-credentials
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireProjectID
     - method: POST

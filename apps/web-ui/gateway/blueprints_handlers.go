@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"slices"
@@ -360,6 +361,53 @@ func (s *Server) uiUnapplyBlueprint(c echo.Context) error {
 		return redirectWithError(c, "/blueprints", err)
 	}
 	return c.Redirect(http.StatusSeeOther, "/blueprints")
+}
+
+// uiCheckBlueprintUpdates enqueues an on-demand update check for one applied
+// blueprint and redirects back to the list (PRG). The check runs asynchronously
+// in memory, so the redirect carries a "queued" flash rather than a result.
+func (s *Server) uiCheckBlueprintUpdates(c echo.Context) error {
+	name := c.Param("name")
+	if name == "" {
+		return c.Redirect(http.StatusSeeOther, "/blueprints?err=1")
+	}
+	if _, err := s.memory.CheckBlueprintUpdates(c.Request().Context(), name); err != nil {
+		return redirectWithError(c, "/blueprints", err)
+	}
+	return c.Redirect(http.StatusSeeOther, "/blueprints?checkQueued=1")
+}
+
+// uiApplyBlueprintUpdate enqueues the asynchronous apply of a detected upstream
+// update for one applied blueprint and redirects back to the list (PRG). A
+// duplicate enqueue while an update is already pending/running is surfaced as a
+// clear flash error (the reload then shows the running job).
+func (s *Server) uiApplyBlueprintUpdate(c echo.Context) error {
+	name := c.Param("name")
+	if name == "" {
+		return c.Redirect(http.StatusSeeOther, "/blueprints?err=1")
+	}
+	if _, err := s.memory.ApplyBlueprintUpdate(c.Request().Context(), name); err != nil {
+		if isMemoryStatus(err, http.StatusConflict) {
+			return redirectWithError(c, "/blueprints", errors.New("an update for this blueprint is already pending or running"))
+		}
+		return redirectWithError(c, "/blueprints", err)
+	}
+	return c.Redirect(http.StatusSeeOther, "/blueprints?updateQueued=1")
+}
+
+// uiSaveGithubCredential stores (or replaces) the project's encrypted GitHub
+// personal access token used for private-repo update checks, then redirects
+// back to the list (PRG). The token is forwarded only to memory and is never
+// echoed back or placed in the redirect target.
+func (s *Server) uiSaveGithubCredential(c echo.Context) error {
+	token := strings.TrimSpace(c.FormValue("token"))
+	if token == "" {
+		return c.Redirect(http.StatusSeeOther, "/blueprints?err=1")
+	}
+	if err := s.memory.SetGithubCredential(c.Request().Context(), token); err != nil {
+		return redirectWithError(c, "/blueprints", err)
+	}
+	return c.Redirect(http.StatusSeeOther, "/blueprints?ghCredentialSaved=1")
 }
 
 // uiBlueprint renders the details page for one blueprint: schema metadata plus

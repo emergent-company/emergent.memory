@@ -35,8 +35,13 @@ type Blueprint struct {
 	SourceKind  string          `bun:"source_kind,type:text" json:"sourceKind,omitempty"`
 	SourceURL   string          `bun:"source_url,type:text" json:"sourceUrl,omitempty"`
 	SourceRef   string          `bun:"source_ref,type:text" json:"sourceRef,omitempty"`
-	CreatedAt   time.Time       `bun:"created_at,notnull" json:"created_at"`
-	UpdatedAt   time.Time       `bun:"updated_at,notnull" json:"updated_at"`
+	// SourceManifestChecksum is the canonical hash of the raw upstream manifest
+	// at import time, before project model overrides. Update checks compare
+	// against it so overridden imports do not report a false-positive update.
+	// Internal only — never serialized.
+	SourceManifestChecksum string    `bun:"source_manifest_checksum,type:text" json:"-"`
+	CreatedAt              time.Time `bun:"created_at,notnull" json:"created_at"`
+	UpdatedAt              time.Time `bun:"updated_at,notnull" json:"updated_at"`
 }
 
 // Scope reports the blueprint's visibility scope: "project" for private
@@ -60,6 +65,9 @@ type CreateBlueprintRequest struct {
 	SourceKind  string          `json:"sourceKind,omitempty"`
 	SourceURL   string          `json:"sourceUrl,omitempty"`
 	SourceRef   string          `json:"sourceRef,omitempty"`
+	// SourceManifestChecksum is internal provenance set by ImportFromGitHub; it
+	// is not client-settable (json:"-") so REST callers cannot forge it.
+	SourceManifestChecksum string `json:"-"`
 }
 
 // UpdateBlueprintRequest is the request to update a draft blueprint.
@@ -110,15 +118,21 @@ type BlueprintPackClaim struct {
 }
 
 // AppliedBlueprint is the project-scoped view of an applied blueprint, joined
-// with its blueprint metadata. Returned by GET /api/blueprints/applied.
+// with its blueprint metadata and (when present) its GitHub source provenance
+// and latest update-check result. Returned by GET /api/blueprints/applied.
 type AppliedBlueprint struct {
-	BlueprintID string    `json:"blueprintId"`
-	Name        string    `json:"name"`
-	Version     string    `json:"version"`
-	Description string    `json:"description,omitempty"`
-	Author      string    `json:"author,omitempty"`
-	Checksum    string    `json:"checksum"`
-	AppliedAt   time.Time `json:"appliedAt"`
+	BlueprintID     string     `json:"blueprintId"`
+	Name            string     `json:"name"`
+	Version         string     `json:"version"`
+	Description     string     `json:"description,omitempty"`
+	Author          string     `json:"author,omitempty"`
+	Checksum        string     `json:"checksum"`
+	AppliedAt       time.Time  `json:"appliedAt"`
+	SourceURL       string     `json:"sourceUrl,omitempty"`
+	SourceRef       string     `json:"sourceRef,omitempty"`
+	UpdateAvailable bool       `json:"updateAvailable"`
+	LatestVersion   string     `json:"latestVersion,omitempty"`
+	LastCheckedAt   *time.Time `json:"lastCheckedAt,omitempty"`
 }
 
 // UnapplyCounts reports per-entity-type reversal counts for one blueprint
@@ -145,4 +159,75 @@ type UnapplyResult struct {
 	SkippedSkills    []string      `json:"skippedSkills,omitempty"`
 	Seed             UnapplyCounts `json:"seed"`
 	Status           string        `json:"status"`
+}
+
+// Update-check job actions and statuses.
+const (
+	UpdateActionCheck  = "check"
+	UpdateActionUpdate = "update"
+
+	UpdateJobStatusPending   = "pending"
+	UpdateJobStatusRunning   = "running"
+	UpdateJobStatusSucceeded = "succeeded"
+	UpdateJobStatusFailed    = "failed"
+)
+
+// BlueprintUpdateCheck is the latest update-check result for one applied,
+// GitHub-imported blueprint in a project. One row per (project_id,
+// blueprint_name); upserted on every check. Table: kb.blueprint_update_checks.
+type BlueprintUpdateCheck struct {
+	bun.BaseModel `bun:"table:kb.blueprint_update_checks,alias:buc"`
+
+	ID              string     `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
+	ProjectID       string     `bun:"project_id,notnull,type:uuid" json:"projectId"`
+	BlueprintName   string     `bun:"blueprint_name,notnull" json:"blueprintName"`
+	SourceURL       string     `bun:"source_url,type:text" json:"sourceUrl,omitempty"`
+	SourceRef       string     `bun:"source_ref,type:text" json:"sourceRef,omitempty"`
+	LatestVersion   string     `bun:"latest_version,type:text" json:"latestVersion,omitempty"`
+	LatestChecksum  string     `bun:"latest_checksum,type:text" json:"latestChecksum,omitempty"`
+	UpdateAvailable bool       `bun:"update_available,notnull,default:false" json:"updateAvailable"`
+	LastCheckedAt   *time.Time `bun:"last_checked_at,type:timestamptz" json:"lastCheckedAt,omitempty"`
+	LastCheckError  string     `bun:"last_check_error,type:text" json:"lastCheckError,omitempty"`
+	CreatedAt       time.Time  `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	UpdatedAt       time.Time  `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+}
+
+// BlueprintUpdateJob is one durable, retryable update-check (or future update)
+// job. Claimed by the job runner with FOR UPDATE SKIP LOCKED. Table:
+// kb.blueprint_update_jobs.
+type BlueprintUpdateJob struct {
+	bun.BaseModel `bun:"table:kb.blueprint_update_jobs,alias:buj"`
+
+	ID            string          `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
+	ProjectID     string          `bun:"project_id,notnull,type:uuid" json:"projectId"`
+	BlueprintName string          `bun:"blueprint_name,notnull" json:"blueprintName"`
+	Action        string          `bun:"action,notnull" json:"action"`
+	Status        string          `bun:"status,notnull,default:'pending'" json:"status"`
+	Attempts      int             `bun:"attempts,notnull,default:0" json:"attempts"`
+	LastError     string          `bun:"last_error,type:text" json:"lastError,omitempty"`
+	Result        json.RawMessage `bun:"result,type:jsonb,notnull,default:'{}'" json:"result,omitempty"`
+	CreatedAt     time.Time       `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	StartedAt     *time.Time      `bun:"started_at,type:timestamptz" json:"startedAt,omitempty"`
+	FinishedAt    *time.Time      `bun:"finished_at,type:timestamptz" json:"finishedAt,omitempty"`
+}
+
+// GithubCredential stores a project's encrypted GitHub personal access token.
+// The token is never serialized or logged; the plaintext is decrypted only for
+// the outbound codeload fetch. Table: kb.github_credentials.
+type GithubCredential struct {
+	bun.BaseModel `bun:"table:kb.github_credentials,alias:gc"`
+
+	ProjectID      string    `bun:"project_id,pk,type:uuid" json:"-"`
+	EncryptedToken []byte    `bun:"encrypted_token,type:bytea,notnull" json:"-"`
+	Nonce          []byte    `bun:"nonce,type:bytea,notnull" json:"-"`
+	CreatedAt      time.Time `bun:"created_at,notnull,default:now()" json:"-"`
+	UpdatedAt      time.Time `bun:"updated_at,notnull,default:now()" json:"-"`
+}
+
+// BlueprintUpdateStatus is the response of GET /api/blueprints/:name/updates:
+// the latest check result (flattened) plus the latest update job, when one has
+// been enqueued. The embedded check pointer is nil when no check has run yet.
+type BlueprintUpdateStatus struct {
+	*BlueprintUpdateCheck
+	LatestJob *BlueprintUpdateJob `json:"latestJob,omitempty"`
 }

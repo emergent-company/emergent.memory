@@ -1308,6 +1308,15 @@ func (s *Server) uiBlueprints(c echo.Context) error {
 	if c.QueryParam("enabled") != "" {
 		flashMsg = "Blueprint enabled."
 	}
+	if c.QueryParam("checkQueued") != "" {
+		flashMsg = "Update check queued. Refresh in a moment to see the result."
+	}
+	if c.QueryParam("updateQueued") != "" {
+		flashMsg = "Update queued. The row shows progress; reload to refresh it."
+	}
+	if c.QueryParam("ghCredentialSaved") != "" {
+		flashMsg = "GitHub access token saved."
+	}
 	if d := c.QueryParam("derived"); d != "" {
 		flashMsg = "Draft " + d + " created."
 	}
@@ -1329,6 +1338,32 @@ func (s *Server) uiBlueprints(c echo.Context) error {
 
 	if appliedErr != nil {
 		return s.page(c, pageTitle("Blueprints"), BlueprintsPage(nil, nil, nil, nil, appliedErr, flashMsg, flashErr))
+	}
+	// The applied list carries no job, so resolve each repo-imported row's
+	// latest update job separately (best effort) — this is what lets the Update
+	// control show queued/running/succeeded/failed across reloads. A missing
+	// status (404) is normal before any check has run.
+	lastJobs := make([]*BlueprintUpdateJob, len(applied))
+	var jg errgroup.Group
+	for i := range applied {
+		if applied[i].SourceURL == "" {
+			continue
+		}
+		jg.Go(func() error {
+			st, err := s.memory.GetBlueprintUpdates(ctx, applied[i].Name)
+			if err != nil {
+				if !isMemoryNotFound(err) {
+					captureError(err)
+				}
+				return nil
+			}
+			lastJobs[i] = st.LatestJob
+			return nil
+		})
+	}
+	_ = jg.Wait()
+	for i := range applied {
+		applied[i].LatestJob = lastJobs[i]
 	}
 	captureError(schemasErr)
 	bundled, _ := s.bundledBlueprints()

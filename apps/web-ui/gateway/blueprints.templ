@@ -32,6 +32,7 @@ templ BlueprintsPage(applied []AppliedBlueprint, upgrades []AvailableSchemaItem,
 	}
 	@deriveBlueprintDialog()
 	@importDialog()
+	@githubTokenDialog()
 	@ui.PopoverScript()
 }
 
@@ -94,6 +95,12 @@ templ blueprintActionsMenu() {
 						<span>Save as blueprint</span>
 					</button>
 				</li>
+				<li>
+					<button type="button" class="flex items-center gap-2" data-dialog-open="blueprint-github-token-modal" data-testid="blueprints-github-token-link">
+						@ui.IconSpan("lucide--key-round", "size-4")
+						<span>GitHub access token</span>
+					</button>
+				</li>
 			</ul>
 		}
 	}
@@ -147,6 +154,48 @@ templ importDialog() {
 	}
 }
 
+// githubTokenDialog stores the project's encrypted GitHub personal access token
+// used to check private repositories for updates. It reuses the import
+// dialog's field pattern and the same PRG flow; the token is posted to
+// /blueprints/github-credentials and is never echoed back. The field is a
+// password input with autocomplete off so the stored value is never suggested
+// or revealed.
+templ githubTokenDialog() {
+	@ui.Dialog(ui.DialogProps{ID: "blueprint-github-token-modal", BoxClass: "max-w-md", Attrs: templ.Attributes{"aria-labelledby": "blueprint-github-token-title"}}) {
+		<div class="mb-5 flex items-start justify-between gap-4">
+			<div>
+				<h3 id="blueprint-github-token-title" class="text-lg font-semibold">GitHub access token</h3>
+				<p class="text-muted mt-0.5 text-sm">Store a personal access token so updates can be checked for blueprints imported from private repositories. It is stored encrypted and never shown again.</p>
+			</div>
+			@ui.Button(ui.ButtonProps{
+				Type:      ui.ButtonTypeButton,
+				Variant:   ui.ButtonGhost,
+				Size:      ui.ButtonSM,
+				Shape:     ui.ButtonShapeCircle,
+				Icon:      "lucide--x",
+				AriaLabel: "Close",
+				Attrs:     templ.Attributes{"data-dialog-close": "blueprint-github-token-modal"},
+			})
+		</div>
+		<form method="post" action="/blueprints/github-credentials" class="flex flex-col gap-4">
+			@form.FormControl("blueprint-github-token", "Access token", form.LabelAbove, "Needed only to check blueprints from private repositories.", "", nil) {
+				<input id="blueprint-github-token" name="token" type="password" required autocomplete="off" class="input w-full" data-testid="blueprint-github-token"/>
+			}
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--key-round",
+					Attrs:   templ.Attributes{"data-testid": "blueprint-github-token-save"},
+				}) {
+					Save token
+				}
+			}
+		</form>
+	}
+}
+
 templ installedSection(applied []AppliedBlueprint, upgrades map[string]AvailableSchemaItem) {
 	@cardList("Installed", cardListProps{
 		Margin:    "mb-8",
@@ -163,13 +212,110 @@ templ installedSection(applied []AppliedBlueprint, upgrades map[string]Available
 // version of this pack (bundled or registry), an "Update available" badge plus
 // an Update action re-applies it through the existing /blueprints/install path;
 // Remove stays available either way.
+//
+// A GitHub-imported blueprint (SourceURL set) additionally shows its upstream
+// repo and ref, the latest update-check outcome when one exists, a "Check for
+// updates" action, and a live Update action that enqueues the asynchronous
+// apply. The Update control reflects the latest update job (queued/running/
+// succeeded/failed) loaded from the update-status endpoint, so its state
+// persists across reloads.
 templ appliedRow(b AppliedBlueprint, upgrade AvailableSchemaItem) {
 	<div class="flex flex-wrap items-center gap-3 px-4 py-3">
 		@ui.IconTile("lucide--library", ui.IconTileProps{Tone: "primary"})
 		<div class="min-w-0 grow">
 			<a class="truncate text-sm font-medium hover:text-primary" href={ templ.URL("/blueprints/" + url.PathEscape(b.BlueprintID)) }>{ b.Name }</a>
 			<p class="text-muted text-xs">v{ b.Version } · { relTime(b.AppliedAt) }</p>
+			if b.SourceURL != "" {
+				<p class="text-muted mt-0.5 flex flex-wrap items-center gap-1.5 text-xs">
+					@ui.IconSpan("lucide--github", "size-3.5 shrink-0")
+					<a class="truncate hover:text-primary" href={ templ.URL(b.SourceURL) } target="_blank" rel="noopener noreferrer" data-testid="blueprint-source-link">{ blueprintSourceLabel(b.SourceURL) }</a>
+					if b.SourceRef != "" {
+						<span class="text-muted-faint">{ "@" }</span>
+						<span class="font-mono">{ b.SourceRef }</span>
+					}
+					if b.LastCheckedAt != "" {
+						<span class="text-muted-faint">·</span>
+						<span>checked { relTime(b.LastCheckedAt) }</span>
+					}
+				</p>
+			}
 		</div>
+		if b.SourceURL != "" {
+			if b.UpdateBadgeVisible() {
+				@ui.Badge(ui.BadgeProps{
+					Label:   "Update available: v" + b.Version + " → v" + b.LatestVersion,
+					Variant: ui.BadgeInfo,
+					Size:    ui.BadgeSizeXS,
+					Icon:    "lucide--arrow-up-circle",
+				})
+			}
+			// The Update control reflects the latest update job (loaded from the
+			// update-status endpoint by the page handler), so its state survives
+			// reloads: available → queued/running → succeeded (badge cleared) or
+			// failed (error + retry).
+			switch b.UpdateAction() {
+				case blueprintUpdateActionAvailable:
+					@updateApplyForm(b)
+				case blueprintUpdateActionQueued:
+					@ui.Button(ui.ButtonProps{
+						Type:      ui.ButtonTypeButton,
+						Variant:   ui.ButtonPrimary,
+						Size:      ui.ButtonSM,
+						Loading:   true,
+						AriaLabel: "Update queued for " + b.Name,
+						Attrs:     templ.Attributes{"data-testid": "blueprint-update-pending-" + b.Name},
+					}) {
+						Queued…
+					}
+				case blueprintUpdateActionRunning:
+					@ui.Button(ui.ButtonProps{
+						Type:      ui.ButtonTypeButton,
+						Variant:   ui.ButtonPrimary,
+						Size:      ui.ButtonSM,
+						Loading:   true,
+						AriaLabel: "Updating " + b.Name,
+						Attrs:     templ.Attributes{"data-testid": "blueprint-update-running-" + b.Name},
+					}) {
+						Updating…
+					}
+				case blueprintUpdateActionSucceeded:
+					<span class="inline-flex items-center gap-1.5 text-xs text-success" data-testid={ "blueprint-update-succeeded-" + b.Name }>
+						@ui.IconSpan("lucide--circle-check", "size-4")
+						if b.LatestJob.IsNoop() {
+							<span>Already up to date</span>
+						} else {
+							<span>Updated</span>
+						}
+					</span>
+				case blueprintUpdateActionFailed:
+					<div class="flex flex-wrap items-center gap-2">
+						<span class="inline-flex items-center gap-1.5 text-xs text-error" data-testid={ "blueprint-update-error-" + b.Name } title={ b.LatestJob.LastError }>
+							@ui.IconSpan("lucide--circle-alert", "size-4")
+							<span>{ blueprintUpdateFailureLabel(b.LatestJob.LastError) }</span>
+						</span>
+						@updateApplyForm(b)
+					</div>
+			}
+			<form method="post" action={ templ.URL("/blueprints/" + url.PathEscape(b.Name) + "/updates/check") } x-data="{ checking: false }" @submit="checking = true">
+				@ui.Button(ui.ButtonProps{
+					Type:      ui.ButtonTypeSubmit,
+					Variant:   ui.ButtonGhost,
+					Size:      ui.ButtonSM,
+					Icon:      "lucide--refresh-cw",
+					AriaLabel: "Check for updates for " + b.Name,
+					Attrs: templ.Attributes{
+						"data-testid": "blueprint-check-updates-" + b.Name,
+						":disabled":   "checking",
+					},
+				}) {
+					<span x-show="!checking">Check for updates</span>
+					<span x-show="checking" class="inline-flex items-center gap-1">
+						<span class="loading loading-spinner loading-xs"></span>
+						<span>Checking…</span>
+					</span>
+				}
+			</form>
+		}
 		if upgrade.Version != "" {
 			@ui.Badge(ui.BadgeProps{Label: "Update available", Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS, Icon: "lucide--arrow-up-circle"})
 			<form method="post" action="/blueprints/install">
@@ -201,6 +347,32 @@ templ appliedRow(b AppliedBlueprint, upgrade AvailableSchemaItem) {
 			}
 		</form>
 	</div>
+}
+
+// updateApplyForm is the live Update action for one repo-imported blueprint:
+// it enqueues the asynchronous apply and shows a client-side pending state
+// until the PRG redirect returns the page (where the server-side job status
+// takes over). Shared by the available and failed/retry states.
+templ updateApplyForm(b AppliedBlueprint) {
+	<form method="post" action={ templ.URL("/blueprints/" + url.PathEscape(b.Name) + "/updates/apply") } x-data="{ updating: false }" @submit="updating = true">
+		@ui.Button(ui.ButtonProps{
+			Type:      ui.ButtonTypeSubmit,
+			Variant:   ui.ButtonPrimary,
+			Size:      ui.ButtonSM,
+			Icon:      "lucide--arrow-up-circle",
+			AriaLabel: "Update " + b.Name + " to the latest version",
+			Attrs: templ.Attributes{
+				"data-testid": "blueprint-update-" + b.Name,
+				":disabled":   "updating",
+			},
+		}) {
+			<span x-show="!updating">Update</span>
+			<span x-show="updating" class="inline-flex items-center gap-1">
+				<span class="loading loading-spinner loading-xs"></span>
+				<span>Updating…</span>
+			</span>
+		}
+	</form>
 }
 
 // draftsSection renders the project's unpublished (draft) blueprints with an

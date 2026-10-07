@@ -15,8 +15,10 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/domain/superadmin"
+	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/crypto"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -55,6 +57,10 @@ type Service struct {
 	// ImportFromGitHub. Injectable so tests can stub the network and limits.
 	fetcher *GitHubFetcher
 
+	// encryptor encrypts/decrypts project-scoped GitHub PATs at rest. nil when
+	// no encryption key is configured (inert — PAT storage is then refused).
+	encryptor *crypto.Encryptor
+
 	log *slog.Logger
 }
 
@@ -76,11 +82,15 @@ type ServiceParams struct {
 	// blueprint writes then fail closed (absence of the dependency is not
 	// permission).
 	Superadmin *superadmin.Repository `optional:"true"`
+
+	// Cfg provides the GitHub PAT encryption key (with fallback to the LLM
+	// provider key) and the update-check scheduler schedules.
+	Cfg *config.Config
 }
 
 // NewService creates a new blueprints service
 func NewService(p ServiceParams) *Service {
-	return &Service{
+	s := &Service{
 		repo:        p.Repo,
 		schemasSvc:  p.SchemasSvc,
 		schemasRepo: p.SchemasRepo,
@@ -91,6 +101,30 @@ func NewService(p ServiceParams) *Service {
 		fetcher:     newGitHubFetcher(),
 		log:         p.Log.With(logger.Scope("blueprints.svc")),
 	}
+	s.initEncryptor(p.Cfg)
+	return s
+}
+
+// initEncryptor builds the GitHub PAT encryptor from GITHUB_TOKEN_ENCRYPTION_KEY,
+// falling back to the LLM provider encryption key. Inert (nil) when no key is
+// configured — PAT storage is then refused rather than stored unencrypted.
+func (s *Service) initEncryptor(cfg *config.Config) {
+	if cfg == nil {
+		return
+	}
+	key := cfg.GitHubTokenEncryptionKey
+	if key == "" {
+		key = cfg.LLMProvider.EncryptionKey
+	}
+	if key == "" {
+		return
+	}
+	enc, err := crypto.NewEncryptor(key)
+	if err != nil {
+		s.log.Error("failed to initialize github token encryptor", logger.Error(err))
+		return
+	}
+	s.encryptor = enc
 }
 
 // AuthorizeGlobalBlueprintWrite enforces superadmin_full for a write to the
@@ -154,18 +188,19 @@ func (s *Service) CreateBlueprint(ctx context.Context, req *CreateBlueprintReque
 
 	now := time.Now()
 	bp := &Blueprint{
-		Name:        req.Name,
-		Version:     req.Version,
-		Description: req.Description,
-		Author:      req.Author,
-		Status:      StatusDraft,
-		ProjectID:   req.ProjectID,
-		Manifest:    req.Manifest,
-		SourceKind:  req.SourceKind,
-		SourceURL:   req.SourceURL,
-		SourceRef:   req.SourceRef,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		Name:                   req.Name,
+		Version:                req.Version,
+		Description:            req.Description,
+		Author:                 req.Author,
+		Status:                 StatusDraft,
+		ProjectID:              req.ProjectID,
+		Manifest:               req.Manifest,
+		SourceKind:             req.SourceKind,
+		SourceURL:              req.SourceURL,
+		SourceRef:              req.SourceRef,
+		SourceManifestChecksum: req.SourceManifestChecksum,
+		CreatedAt:              now,
+		UpdatedAt:              now,
 	}
 	if bp.Manifest == nil {
 		bp.Manifest = json.RawMessage("{}")

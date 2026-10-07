@@ -116,6 +116,18 @@ type Config struct {
 	// which generates Python SDK scripts instead of calling 57 individual MCP tools.
 	AskV2 bool `env:"MEMORY_ASK_V2" envDefault:"false"`
 
+	// GitHubTokenEncryptionKey is the AES-256 encryption key (64-char hex) for
+	// project-scoped GitHub personal access tokens. Falls back to
+	// LLMProvider.EncryptionKey (LLM_ENCRYPTION_KEY) when unset.
+	GitHubTokenEncryptionKey string `env:"GITHUB_TOKEN_ENCRYPTION_KEY" envDefault:""`
+	// BlueprintUpdateCheckSchedule is the cron schedule (seconds precision) for
+	// the always-on sweep that enqueues one check job per applied GitHub-imported
+	// blueprint. Default: daily at 02:00.
+	BlueprintUpdateCheckSchedule string `env:"BLUEPRINT_UPDATE_CHECK_SCHEDULE" envDefault:"0 0 2 * * *"`
+	// BlueprintUpdateJobInterval is how often the job runner claims and executes
+	// pending update-check jobs. Default: 30s.
+	BlueprintUpdateJobInterval time.Duration `env:"BLUEPRINT_UPDATE_JOB_INTERVAL" envDefault:"30s"`
+
 	// Features controls which optional domain modules are loaded at startup.
 	// See FeatureSet for per-flag documentation and defaults.
 	Features FeatureSet

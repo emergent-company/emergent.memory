@@ -161,7 +161,7 @@ func (s *Service) ImportFromGitHub(ctx context.Context, projectID string, req *I
 	}
 	sourceKind, sourceURL, sourceRef := sourceProvenance(org, repo, ref)
 
-	desc, manifest, err := s.fetchAndLoadManifest(ctx, req)
+	desc, manifest, sourceManifest, err := s.fetchAndLoadManifest(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -181,6 +181,9 @@ func (s *Service) ImportFromGitHub(ctx context.Context, projectID string, req *I
 		SourceKind:  sourceKind,
 		SourceURL:   sourceURL,
 		SourceRef:   sourceRef,
+		// Baseline the update check against the raw upstream content, not the
+		// override-applied stored manifest.
+		SourceManifestChecksum: canonicalManifestHash(sourceManifest),
 	})
 	if err != nil {
 		return nil, err
@@ -227,7 +230,7 @@ func (s *Service) PreviewFromGitHub(ctx context.Context, req *ImportGitHubReques
 		return nil, apperror.NewBadRequest("url is required")
 	}
 
-	desc, manifest, err := s.fetchAndLoadManifest(ctx, req)
+	desc, manifest, _, err := s.fetchAndLoadManifest(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -243,12 +246,14 @@ func (s *Service) PreviewFromGitHub(ctx context.Context, req *ImportGitHubReques
 
 // fetchAndLoadManifest parses the GitHub URL, fetches + safely extracts the
 // archive, loads + validates the blueprint descriptor, applies any
-// ModelOverrides, and returns the descriptor plus the final (override-applied)
-// manifest JSON. Shared by ImportFromGitHub and PreviewFromGitHub.
-func (s *Service) fetchAndLoadManifest(ctx context.Context, req *ImportGitHubRequest) (*blueprintDescriptor, json.RawMessage, error) {
+// ModelOverrides, and returns the descriptor, the final (override-applied)
+// manifest JSON, and the RAW upstream manifest JSON (pre-override) used as the
+// update-check content baseline. Shared by ImportFromGitHub and
+// PreviewFromGitHub.
+func (s *Service) fetchAndLoadManifest(ctx context.Context, req *ImportGitHubRequest) (*blueprintDescriptor, json.RawMessage, json.RawMessage, error) {
 	org, repo, ref, err := parseGitHubURL(req.URL, req.Ref)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	fetcher := s.fetcher
@@ -258,19 +263,22 @@ func (s *Service) fetchAndLoadManifest(ctx context.Context, req *ImportGitHubReq
 
 	root, cleanup, err := fetcher.Fetch(ctx, org, repo, ref, req.Token)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	defer cleanup()
 
 	desc, err := loadBlueprintDir(root, repo)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	manifest, err := json.Marshal(desc.BlueprintManifest)
 	if err != nil {
-		return nil, nil, apperror.NewBadRequest("blueprint manifest is not serializable")
+		return nil, nil, nil, apperror.NewBadRequest("blueprint manifest is not serializable")
 	}
+	// sourceManifest is the raw upstream form, kept as the update-check baseline
+	// so a locally-overridden import still compares equal to its own upstream.
+	sourceManifest := manifest
 
 	// Model overrides: rewrite each named agent's model before persisting, so a
 	// bare-name import maps to a `provider/model` reference (or an empty string
@@ -278,7 +286,7 @@ func (s *Service) fetchAndLoadManifest(ctx context.Context, req *ImportGitHubReq
 	if len(req.ModelOverrides) > 0 {
 		var m BlueprintManifest
 		if err := json.Unmarshal(manifest, &m); err != nil {
-			return nil, nil, apperror.NewBadRequest("blueprint manifest is not valid JSON: " + err.Error())
+			return nil, nil, nil, apperror.NewBadRequest("blueprint manifest is not valid JSON: " + err.Error())
 		}
 		// Model overrides: rewrite each named agent's model reference before
 		// persisting, so a bare-name import maps to a `provider/model` reference
@@ -297,11 +305,11 @@ func (s *Service) fetchAndLoadManifest(ctx context.Context, req *ImportGitHubReq
 		}
 		manifest, err = json.Marshal(m)
 		if err != nil {
-			return nil, nil, apperror.NewBadRequest("blueprint manifest is not serializable")
+			return nil, nil, nil, apperror.NewBadRequest("blueprint manifest is not serializable")
 		}
 	}
 
-	return desc, manifest, nil
+	return desc, manifest, sourceManifest, nil
 }
 
 // callerUserID extracts the acting user id from the request context, or "" when
