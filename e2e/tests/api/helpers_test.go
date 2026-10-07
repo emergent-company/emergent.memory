@@ -495,6 +495,29 @@ func createGraphObject(t *testing.T, projectID, objectType, name string, propert
 	return objID
 }
 
+// createGraphObjectKeyed creates a graph object with an explicit top-level key
+// (required for board-enabled types such as Task) and registers t.Cleanup to
+// delete it. Returns the object ID.
+func createGraphObjectKeyed(t *testing.T, projectID, objectType, key string, properties map[string]any) string {
+	t.Helper()
+	token := e2eTestToken()
+
+	if properties == nil {
+		properties = map[string]any{}
+	}
+
+	body := jsonBody(map[string]any{
+		"type":       objectType,
+		"key":        key,
+		"properties": properties,
+	})
+	resp := doAPI(t, "POST", "/api/graph/objects", token, projectID, body)
+	b := mustStatus(t, resp, http.StatusCreated)
+	objID := parseIDFromBody(t, b)
+	t.Cleanup(func() { deleteGraphObject(t, projectID, objID) })
+	return objID
+}
+
 // deleteGraphObject deletes a graph object. Safe for t.Cleanup (does not fail the test).
 func deleteGraphObject(t *testing.T, projectID, objectID string) {
 	t.Helper()

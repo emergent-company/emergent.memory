@@ -108,6 +108,8 @@ func TestGraph_CreateObject_MinimalFields(t *testing.T) {
 
 	resp := doAPILogged(t, rl, "POST", "/api/graph/objects", e2eTestToken(), projectID, jsonBody(map[string]any{
 		"type": "Task",
+		// Task is board-enabled, so a stable key is required (object-driven-agent-work spec).
+		"key": "TASK-MINIMAL",
 	}))
 	body := mustStatus(t, resp, http.StatusCreated)
 
@@ -915,7 +917,7 @@ func TestGraph_ListRelationships_FilterByType(t *testing.T) {
 	projectID, _ := setupProjectLogged(t, rl)
 	srcID := createGraphObject(t, projectID, "Requirement", "", nil)
 	dstID := createGraphObject(t, projectID, "Decision", "", nil)
-	dst2ID := createGraphObject(t, projectID, "Task", "", nil)
+	dst2ID := createGraphObjectKeyed(t, projectID, "Task", "TASK-FILTER-BY-TYPE", nil)
 
 	rel1ID := createRelationship(t, projectID, srcID, dstID, "DEPENDS_ON", nil)
 	rel2ID := createRelationship(t, projectID, srcID, dst2ID, "IMPLEMENTS", nil)

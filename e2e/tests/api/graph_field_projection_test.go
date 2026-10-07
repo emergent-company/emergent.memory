@@ -21,6 +21,8 @@ func TestGraphFieldProjection_ListObjects_FieldProjection(t *testing.T) {
 	// Create an object with multiple properties
 	resp := doAPILogged(t, rl, "POST", "/api/graph/objects", e2eTestToken(), projectID, jsonBody(map[string]any{
 		"type": "Task",
+		// Task is board-enabled, so a stable key is required (object-driven-agent-work spec).
+		"key": "TASK-FIELD-PROJECTION",
 		"properties": map[string]any{
 			"title":       "Build Feature",
 			"description": "Build the new feature for the product",
