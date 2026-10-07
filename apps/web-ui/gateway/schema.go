@@ -368,41 +368,32 @@ func compiledTypeUIValue(t CompiledType, key string) string {
 
 // --- "Add schema" handlers (design D6) ---
 
-// uiSchemaAdd renders the Schema-area "Add schema" action: the installable pack
-// list (registry + bundled) with one-action install.
+// uiSchemaAdd renders the Schema-area "Add schema" action: the installable
+// blueprint list (published blueprints in scope) with one-action install.
 func (s *Server) uiSchemaAdd(c echo.Context) error {
 	ctx := c.Request().Context()
-	schemas, err := s.memory.ListAllSchemas(ctx)
+	records, err := s.memory.ListBlueprints(ctx)
 	if err != nil {
-		// A registry failure still lets bundled packs surface.
 		captureError(err)
-		schemas = nil
+		records = nil
 	}
 	applied, err := s.memory.ListAppliedBlueprints(ctx)
 	captureError(err)
-	bundled, _ := s.bundledBlueprints()
 	return s.page(c, pageTitle("Add schema"), SchemaAddPage(&SchemaAddView{
-		Available: buildAvailableList(schemas, bundled, applied, s.existingAgents(ctx)),
+		Available: buildAvailableList(records, applied),
 		Err:       flashError(c),
 	}))
 }
 
-// uiSchemaInstall installs the selected pack in place, reusing the existing
-// install path (registry schema id or bundled pack name).
+// uiSchemaInstall installs the selected blueprint in place by id, reusing the
+// blueprint apply path.
 func (s *Server) uiSchemaInstall(c echo.Context) error {
 	ctx := c.Request().Context()
 	schemaID := c.FormValue("schemaId")
-	name := c.FormValue("name")
-	var err error
-	switch {
-	case schemaID != "":
-		_, err = s.installRegistryBlueprint(ctx, schemaID)
-	case name != "":
-		_, err = s.installBundledBlueprint(ctx, name)
-	default:
+	if schemaID == "" {
 		return c.Redirect(http.StatusSeeOther, "/schema/add?err=1")
 	}
-	if err != nil {
+	if _, err := s.memory.ApplyBlueprint(ctx, schemaID); err != nil {
 		return redirectWithError(c, "/schema/add", err)
 	}
 	return c.Redirect(http.StatusSeeOther, "/schema?installed=1")

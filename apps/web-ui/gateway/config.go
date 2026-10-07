@@ -27,7 +27,6 @@ type Config struct {
 	// Enable only where idle reclaim is required and calls are shorter than the
 	// TTL.
 	WorkerIdleTTL time.Duration
-	BlueprintsDir string // local bundled blueprint packs (default blueprints/)
 
 	LiveKitAPIKey     string
 	LiveKitAPISecret  string
@@ -162,7 +161,6 @@ func LoadConfig() Config {
 		BridgeWorkdir:      os.Getenv("BRIDGE_WORKDIR"),
 		SupervisorInterval: durationOr("SUPERVISOR_INTERVAL", 5*time.Second),
 		WorkerIdleTTL:      durationOr("WORKER_IDLE_TTL", 0),
-		BlueprintsDir:      os.Getenv("BLUEPRINTS_DIR"), // empty = use embedded packs
 
 		LiveKitAPIKey:     os.Getenv("LIVEKIT_API_KEY"),
 		LiveKitAPISecret:  os.Getenv("LIVEKIT_API_SECRET"),

@@ -1,52 +1,19 @@
 package main
 
 import (
-	"bytes"
 	"cmp"
-	"context"
-	"embed"
 	"encoding/json"
 	"fmt"
-	"io/fs"
-	"os"
-	"path"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"slices"
 )
 
-// bundledFS embeds the bundled blueprint packs (gateway/blueprints/) into the
-// binary, so the gallery can offer them in any deployment without a runtime
-// filesystem dependency.
-//
-//go:embed blueprints
-var bundledFS embed.FS
-
-// BundledBlueprint is one pack discovered under the blueprints/ directory. It
-// carries enough metadata to list it and enough schema to register it with
-// memory. A pack may also carry agent definitions (agents/) — a pure-agent
-// blueprint (like "operator") has no schema at all.
-type BundledBlueprint struct {
-	ID                      string // directory name
-	Name                    string
-	Version                 string
-	Description             string
-	Author                  string
-	ObjectTypeSchemas       []map[string]any
-	RelationshipTypeSchemas []map[string]any
-	Migrations              *SchemaMigrationHints
-	Agents                  []BundledAgent
-	Skills                  []BundledSkill
-	SeedObjects             []BundledSeedObject
-	SeedRelationships       []BundledSeedRelationship
-	HasSchema               bool // true when a schema pack file was parsed
-}
-
-// BundledAgent is one agent definition carried by a bundled blueprint
-// (agents/*.yaml). It maps onto the gateway's AgentDefinition create payload.
+// BundledAgent is one agent definition rendered on the blueprint detail view.
+// It is produced from a blueprint record's manifest (bundledAgentsFromManifest)
+// and doubles as the diff unit for agent comparisons.
 type BundledAgent struct {
 	Name         string          `yaml:"name"`
 	Description  string          `yaml:"description"`
@@ -97,448 +64,63 @@ type BundledReactionConfig struct {
 	IgnoreSelfTriggered  *bool    `json:"ignoreSelfTriggered,omitempty" yaml:"ignoreSelfTriggered,omitempty"`
 }
 
-// BundledSkill is one skill carried by a bundled blueprint (skills/*/SKILL.md).
-// It mirrors the server's SkillManifest: name/description come from the YAML
-// frontmatter and Content is the Markdown body.
-type BundledSkill struct {
-	Name        string         `yaml:"name"`
-	Description string         `yaml:"description"`
-	Content     string         `yaml:"-"`
-	Metadata    map[string]any `yaml:"metadata"`
+// blueprintSource maps a blueprint record's origin onto the available-list
+// source label: built-in blueprints are "builtin", every other published
+// blueprint is "registry".
+func blueprintSource(origin string) string {
+	if origin == "builtin" {
+		return "builtin"
+	}
+	return "registry"
 }
 
-// BundledSeedObject is one keyed seed graph object (seed/objects/*.jsonl). It
-// mirrors the server's SeedObjectRecord so a board-enabled seed object keeps
-// its assignee through the manifest.
-type BundledSeedObject struct {
-	Type       string         `json:"type"`
-	Key        string         `json:"key,omitempty"`
-	Status     string         `json:"status,omitempty"`
-	Properties map[string]any `json:"properties,omitempty"`
-	Labels     []string       `json:"labels,omitempty"`
-	Assignee   string         `json:"assignee,omitempty"`
-}
-
-// BundledSeedRelationship is one keyed seed relationship
-// (seed/relationships/*.jsonl). It mirrors the server's SeedRelationshipRecord.
-type BundledSeedRelationship struct {
-	Type       string         `json:"type"`
-	SrcKey     string         `json:"srcKey,omitempty"`
-	DstKey     string         `json:"dstKey,omitempty"`
-	SrcType    string         `json:"srcType,omitempty"`
-	DstType    string         `json:"dstType,omitempty"`
-	Properties map[string]any `json:"properties,omitempty"`
-}
-
-// bundledPackFile is the union shape of a pack/schema YAML file. Both the
-// legacy field names (objectTypes/relationshipTypes) and the current ones
-// (objectTypeSchemas/relationshipTypeSchemas) are accepted.
-type bundledPackFile struct {
-	Name                    string                `yaml:"name"`
-	Version                 string                `yaml:"version"`
-	Description             string                `yaml:"description"`
-	Author                  string                `yaml:"author"`
-	ObjectTypes             []map[string]any      `yaml:"objectTypes"`
-	RelationshipTypes       []map[string]any      `yaml:"relationshipTypes"`
-	ObjectTypeSchemas       []map[string]any      `yaml:"objectTypeSchemas"`
-	RelationshipTypeSchemas []map[string]any      `yaml:"relationshipTypeSchemas"`
-	Migrations              *SchemaMigrationHints `yaml:"migrations"`
-}
-
-// bundledProjectFile is the optional metadata block of a bundled pack
-// (project.yaml). It supplies name/version/description/author for packs that
-// carry no schema file (pure-agent blueprints).
-type bundledProjectFile struct {
-	Name        string `yaml:"name"`
-	Version     string `yaml:"version"`
-	Description string `yaml:"description"`
-	Author      string `yaml:"author"`
-}
-
-// ListBundledBlueprints scans a directory of blueprint packs on disk and
-// returns the packs it finds as available items (Source "bundled"). Used when
-// BLUEPRINTS_DIR is configured and by tests.
-func ListBundledBlueprints(dir string) ([]AvailableSchemaItem, error) {
-	return listBundledFromFS(os.DirFS(dir), ".")
-}
-
-// listEmbeddedBlueprints returns the packs compiled into the binary.
-func listEmbeddedBlueprints() ([]AvailableSchemaItem, error) {
-	return listBundledFromFS(bundledFS, "blueprints")
-}
-
-// listBundledFromFS walks one pack-directory level under root within fsys and
-// returns the packs it can parse, sorted by name. Unparseable subdirectories
-// are skipped rather than failing the whole list.
-func listBundledFromFS(fsys fs.FS, root string) ([]AvailableSchemaItem, error) {
-	entries, err := fs.ReadDir(fsys, root)
-	if err != nil {
-		return nil, err
-	}
-	var out []AvailableSchemaItem
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		bp, err := loadBundledFromFS(fsys, path.Join(root, e.Name()))
-		if err != nil || bp.Name == "" {
-			continue
-		}
-		out = append(out, AvailableSchemaItem{
-			ID:          bp.ID,
-			Name:        bp.Name,
-			Version:     bp.Version,
-			Description: bp.Description,
-			Author:      bp.Author,
-			Source:      "bundled",
-			Agents:      agentNames(bp.Agents),
-			HasSchema:   bp.HasSchema,
-		})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out, nil
-}
-
-// loadBundledBlueprint reads one pack directory from disk (used for the
-// BLUEPRINTS_DIR override and tests).
-func loadBundledBlueprint(root, id string) (*BundledBlueprint, error) {
-	return loadBundledFromFS(os.DirFS(root), id)
-}
-
-// loadBundledFromFS reads a pack directory and returns the normalized pack.
-// It reads optional project.yaml metadata, then any schema YAML (packs/ or
-// schemas/), then any agent definitions (agents/). Name is resolved from
-// project.yaml → schema file → agent file; it returns an error when no name
-// can be determined.
-func loadBundledFromFS(fsys fs.FS, dir string) (*BundledBlueprint, error) {
-	bp := &BundledBlueprint{ID: path.Base(dir)}
-
-	// 1. project.yaml metadata (optional)
-	if b, err := fs.ReadFile(fsys, path.Join(dir, "project.yaml")); err == nil {
-		var pf bundledProjectFile
-		if yaml.Unmarshal(b, &pf) == nil {
-			bp.Name = pf.Name
-			bp.Version = pf.Version
-			bp.Description = pf.Description
-			bp.Author = pf.Author
-		}
-	}
-
-	// 2. schema files (packs/ + schemas/) — first parseable wins
-	var files []string
-	for _, sub := range []string{"packs", "schemas"} {
-		entries, _ := fs.ReadDir(fsys, path.Join(dir, sub))
-		for _, e := range entries {
-			if e.IsDir() {
-				continue
-			}
-			if ext := path.Ext(e.Name()); ext == ".yaml" || ext == ".yml" {
-				files = append(files, path.Join(dir, sub, e.Name()))
-			}
-		}
-	}
-	sort.Strings(files)
-	for _, f := range files {
-		b, err := fs.ReadFile(fsys, f)
-		if err != nil {
-			continue
-		}
-		var pf bundledPackFile
-		if err := yaml.Unmarshal(b, &pf); err != nil || pf.Name == "" {
-			continue
-		}
-		bp.HasSchema = true
-		if bp.Name == "" {
-			bp.Name = pf.Name
-		}
-		if bp.Version == "" {
-			bp.Version = pf.Version
-		}
-		if bp.Description == "" {
-			bp.Description = pf.Description
-		}
-		if bp.Author == "" {
-			bp.Author = pf.Author
-		}
-		bp.ObjectTypeSchemas = pf.ObjectTypeSchemas
-		if len(bp.ObjectTypeSchemas) == 0 {
-			bp.ObjectTypeSchemas = pf.ObjectTypes
-		}
-		bp.RelationshipTypeSchemas = pf.RelationshipTypeSchemas
-		if len(bp.RelationshipTypeSchemas) == 0 {
-			bp.RelationshipTypeSchemas = pf.RelationshipTypes
-		}
-		bp.Migrations = pf.Migrations
-		break
-	}
-
-	// 3. agent definitions (agents/) — one agent per YAML file
-	agents, _ := bundledAgentsFromFS(fsys, path.Join(dir, "agents"))
-	bp.Agents = agents
-
-	// 4. skills (skills/*/SKILL.md) and seed (seed/objects/*.jsonl +
-	// seed/relationships/*.jsonl) — optional, absent directories are not an
-	// error.
-	bp.Skills = bundledSkillsFromFS(fsys, path.Join(dir, "skills"))
-	bp.SeedObjects, bp.SeedRelationships = bundledSeedFromFS(fsys, path.Join(dir, "seed"))
-
-	if bp.Name == "" {
-		return nil, fmt.Errorf("no parseable pack yaml in %s", dir)
-	}
-	return bp, nil
-}
-
-// bundledAgentsFromFS reads agent definitions from an agents/ directory. It
-// returns nil (no error) when the directory is absent — a blueprint need not
-// define any agents.
-func bundledAgentsFromFS(fsys fs.FS, dir string) ([]BundledAgent, error) {
-	entries, err := fs.ReadDir(fsys, dir)
-	if err != nil {
-		return nil, nil
-	}
-	var out []BundledAgent
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		if ext := path.Ext(e.Name()); ext != ".yaml" && ext != ".yml" {
-			continue
-		}
-		b, err := fs.ReadFile(fsys, path.Join(dir, e.Name()))
-		if err != nil {
-			continue
-		}
-		var a BundledAgent
-		if yaml.Unmarshal(b, &a) != nil || a.Name == "" {
-			continue
-		}
-		out = append(out, a)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out, nil
-}
-
-// bundledSkillsFromFS reads skills from a skills/ directory. Each subdirectory
-// must contain a SKILL.md file with YAML frontmatter (name, description)
-// followed by Markdown content, following the agentskills.io convention. An
-// absent directory, or a subdirectory without a parseable SKILL.md, is skipped
-// without error.
-func bundledSkillsFromFS(fsys fs.FS, dir string) []BundledSkill {
-	entries, err := fs.ReadDir(fsys, dir)
-	if err != nil {
-		return nil
-	}
-	var out []BundledSkill
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		b, err := fs.ReadFile(fsys, path.Join(dir, e.Name(), "SKILL.md"))
-		if err != nil {
-			continue
-		}
-		skill, ok := parseSkillMD(b)
-		if !ok || skill.Name == "" {
-			continue
-		}
-		out = append(out, *skill)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out
-}
-
-// parseSkillMD splits a SKILL.md file into YAML frontmatter and Markdown body.
-// The file must start with a "---" delimiter, carry YAML, and close with "---".
-func parseSkillMD(data []byte) (*BundledSkill, bool) {
-	const delim = "---"
-	trimmed := bytes.TrimSpace(data)
-	if !bytes.HasPrefix(trimmed, []byte(delim)) {
-		return nil, false
-	}
-	rest := bytes.TrimLeft(trimmed[len(delim):], "\r\n")
-	closeIdx := bytes.Index(rest, []byte("\n"+delim))
-	if closeIdx < 0 {
-		return nil, false
-	}
-	var skill BundledSkill
-	if yaml.Unmarshal(rest[:closeIdx], &skill) != nil {
-		return nil, false
-	}
-	skill.Content = string(bytes.TrimLeft(rest[closeIdx+1+len(delim):], "\r\n"))
-	return &skill, true
-}
-
-// bundledSeedFromFS reads seed objects and relationships from a seed/ directory
-// (seed/objects/*.jsonl, seed/relationships/*.jsonl). An absent directory or
-// absent subdirectories yield empty slices, not errors. Records are ordered by
-// filename then line, so split files arrive in order.
-func bundledSeedFromFS(fsys fs.FS, dir string) ([]BundledSeedObject, []BundledSeedRelationship) {
-	objects := bundledSeedObjectsFromFS(fsys, path.Join(dir, "objects"))
-	rels := bundledSeedRelationshipsFromFS(fsys, path.Join(dir, "relationships"))
-	return objects, rels
-}
-
-// bundledSeedObjectsFromFS reads seed objects from a seed/objects/ directory.
-func bundledSeedObjectsFromFS(fsys fs.FS, dir string) []BundledSeedObject {
-	entries, err := fs.ReadDir(fsys, dir)
-	if err != nil {
-		return nil
-	}
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		if !e.IsDir() && path.Ext(e.Name()) == ".jsonl" {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names)
-	var out []BundledSeedObject
-	for _, name := range names {
-		b, err := fs.ReadFile(fsys, path.Join(dir, name))
-		if err != nil {
-			continue
-		}
-		for _, line := range splitJSONLLines(b) {
-			var o BundledSeedObject
-			if json.Unmarshal(line, &o) != nil || o.Type == "" {
-				continue
-			}
-			out = append(out, o)
-		}
-	}
-	return out
-}
-
-// bundledSeedRelationshipsFromFS reads seed relationships from a
-// seed/relationships/ directory.
-func bundledSeedRelationshipsFromFS(fsys fs.FS, dir string) []BundledSeedRelationship {
-	entries, err := fs.ReadDir(fsys, dir)
-	if err != nil {
-		return nil
-	}
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		if !e.IsDir() && path.Ext(e.Name()) == ".jsonl" {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names)
-	var out []BundledSeedRelationship
-	for _, name := range names {
-		b, err := fs.ReadFile(fsys, path.Join(dir, name))
-		if err != nil {
-			continue
-		}
-		for _, line := range splitJSONLLines(b) {
-			var r BundledSeedRelationship
-			if json.Unmarshal(line, &r) != nil || r.Type == "" {
-				continue
-			}
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
-// splitJSONLLines splits a JSONL payload into its non-empty lines, trimming
-// carriage returns.
-func splitJSONLLines(data []byte) [][]byte {
-	var lines [][]byte
-	for _, line := range bytes.Split(data, []byte("\n")) {
-		line = bytes.TrimRight(line, "\r")
-		if len(line) > 0 {
-			lines = append(lines, line)
-		}
-	}
-	return lines
-}
-
-// bundledBlueprints resolves the bundled packs from the configured source: the
-// embedded FS by default, or BLUEPRINTS_DIR when set.
-func (s *Server) bundledBlueprints() ([]AvailableSchemaItem, error) {
-	if s.cfg.BlueprintsDir != "" {
-		return ListBundledBlueprints(s.cfg.BlueprintsDir)
-	}
-	return listEmbeddedBlueprints()
-}
-
-// loadBundled resolves a single bundled pack by name from the configured source.
-func (s *Server) loadBundled(name string) (*BundledBlueprint, error) {
-	if s.cfg.BlueprintsDir != "" {
-		return loadBundledBlueprint(s.cfg.BlueprintsDir, name)
-	}
-	return loadBundledFromFS(bundledFS, path.Join("blueprints", name))
-}
-
-// buildAvailableList merges the global registry schemas (built-in + project)
-// with the bundled packs into one available list, excluding applied blueprints
-// and deduplicating by name. A bundled pack is "installed" when its name+version
-// is in applied, or — as a pre-cutover fallback — when it is agent-only and all
-// its agents exist. Project-scoped registry schemas collapse to the highest
-// version per name; an applied registry pack surfaces (Upgrade=true) only when
-// that latest version is strictly newer than the applied one.
-func buildAvailableList(schemas []SchemaInfo, bundled []AvailableSchemaItem, applied []AppliedBlueprint, existingAgents map[string]bool) []AvailableSchemaItem {
+// buildAvailableList maps the published blueprint records in scope (global +
+// project-private) into the available list: the latest published version per
+// name, excluding those already applied (matched by blueprint id or
+// name+version). Built-in blueprints surface with Source "builtin"; every other
+// blueprint surfaces as "registry". A published version strictly newer than the
+// applied one surfaces with Upgrade=true.
+func buildAvailableList(records []BlueprintRecord, applied []AppliedBlueprint) []AvailableSchemaItem {
 	appliedVersion := make(map[string]string, len(applied))
+	appliedID := make(map[string]bool, len(applied))
 	for _, ap := range applied {
 		appliedVersion[ap.Name] = ap.Version
+		appliedID[ap.BlueprintID] = true
 	}
 
-	// Collapse project-scoped registry schemas to the highest version per name.
-	// Global schemas (project_id NULL) are listed by memory's schema-list, but
-	// its GetPack endpoint is project-scoped (repository.go GetPack filters
-	// `project_id = ?`) and 404s on them, so they cannot be inspected or
-	// installed from here. Skip them.
-	latest := map[string]SchemaInfo{}
-	for _, s := range schemas {
-		if s.ProjectID == "" {
+	// Collapse to the highest published version per name. Drafts surface in the
+	// drafts section, never here.
+	latest := map[string]BlueprintRecord{}
+	for _, r := range records {
+		if r.Status == "draft" {
 			continue
 		}
-		// The project-owned override pack is an internal copy-on-write artifact,
-		// not a user-installable pack — never surface it in "Available schemas".
-		if s.Name == overridePackName {
-			continue
-		}
-		if cur, ok := latest[s.Name]; !ok || versionGreater(s.Version, cur.Version) {
-			latest[s.Name] = s
+		if cur, ok := latest[r.Name]; !ok || versionGreater(r.Version, cur.Version) {
+			latest[r.Name] = r
 		}
 	}
 
-	seen := map[string]bool{}
 	var out []AvailableSchemaItem
-	for _, s := range latest {
-		// An applied registry pack stays hidden unless the registry carries a
-		// strictly newer version; at the same or an older version it must not
-		// regress into the available list.
+	for name, r := range latest {
 		upgrade := false
-		if iv, ok := appliedVersion[s.Name]; ok {
-			if !versionGreater(s.Version, iv) {
+		if iv, ok := appliedVersion[name]; ok {
+			if !versionGreater(r.Version, iv) {
 				continue
 			}
 			upgrade = true
-		}
-		seen[s.Name] = true
-		out = append(out, AvailableSchemaItem{
-			ID:          s.ID,
-			Name:        s.Name,
-			Version:     s.Version,
-			Description: s.Description,
-			Source:      "registry",
-			Upgrade:     upgrade,
-		})
-	}
-	for _, b := range bundled {
-		if seen[b.Name] {
+		} else if appliedID[r.ID] {
 			continue
 		}
-		if iv, ok := appliedVersion[b.Name]; ok {
-			if !versionGreater(b.Version, iv) {
-				continue // applied at same or newer version — not an upgrade
-			}
-			b.Upgrade = true
-		} else if !b.HasSchema && len(b.Agents) > 0 && allAgentsExist(b.Agents, existingAgents) {
-			continue // agent-only blueprint already installed via its agents (pre-cutover)
-		}
-		seen[b.Name] = true
-		out = append(out, b)
+		out = append(out, AvailableSchemaItem{
+			ID:          r.ID,
+			Name:        r.Name,
+			Version:     r.Version,
+			Description: r.Description,
+			Author:      r.Author,
+			Source:      blueprintSource(r.Origin),
+			Origin:      r.Origin,
+			Upgrade:     upgrade,
+		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
@@ -652,46 +234,6 @@ func blueprintUpdateFailureLabel(msg string) string {
 	return "Update failed: " + s
 }
 
-// agentNames extracts the sorted names of a blueprint's agent definitions.
-func agentNames(agents []BundledAgent) []string {
-	if len(agents) == 0 {
-		return nil
-	}
-	names := make([]string, 0, len(agents))
-	for _, a := range agents {
-		names = append(names, a.Name)
-	}
-	sort.Strings(names)
-	return names
-}
-
-// allAgentsExist reports whether every named agent is present in existing.
-func allAgentsExist(names []string, existing map[string]bool) bool {
-	if len(names) == 0 {
-		return false
-	}
-	for _, n := range names {
-		if !existing[n] {
-			return false
-		}
-	}
-	return true
-}
-
-// existingAgents returns the set of agent names already defined in memory. A
-// failure to list agents yields an empty set (best-effort).
-func (s *Server) existingAgents(ctx context.Context) map[string]bool {
-	out := map[string]bool{}
-	agents, err := s.memory.ListAgentDefinitions(ctx)
-	if err != nil {
-		return out
-	}
-	for _, a := range agents {
-		out[a.Name] = true
-	}
-	return out
-}
-
 // versionGreater compares two dotted version strings numerically
 // (e.g. "2.0.0" > "1.9.0"). Missing segments compare as zero.
 func versionGreater(a, b string) bool {
@@ -787,11 +329,11 @@ type BlueprintDetail struct {
 
 	// Versions lists a blueprint record's version history (newest first), shown
 	// on the detail page so a derived new version is visible and selectable for
-	// comparison. Empty for bundled packs and registry schemas.
+	// comparison. Empty for registry schemas.
 	Versions []BlueprintVersionView
 
 	// Status is the blueprint record's lifecycle status ("draft" | "published");
-	// empty for bundled packs and registry schemas.
+	// empty for registry schemas.
 	Status string
 
 	// IsDraft reports whether the viewed blueprint record is a draft — the only
@@ -822,7 +364,7 @@ type BlueprintDetail struct {
 	Diff *BlueprintDiff
 
 	// CanDeriveVersion enables the "Save as new version" action: only a
-	// blueprint record (not a bundled pack or registry schema) can be forked.
+	// blueprint record (not a registry schema) can be forked.
 	CanDeriveVersion bool
 
 	// FlashMsg/FlashErr carry PRG feedback from the "Save as new version"
@@ -950,21 +492,6 @@ type BlueprintDiff struct {
 	ObjectTypes       []ObjectTypeDiff
 	RelationshipTypes []RelationshipTypeDiff
 	Agents            []AgentDiff
-}
-
-// buildBundledDetail converts a bundled pack (embedded YAML) to the detail view.
-func buildBundledDetail(bp *BundledBlueprint) *BlueprintDetail {
-	return &BlueprintDetail{
-		ID:                bp.ID,
-		Name:              bp.Name,
-		Version:           bp.Version,
-		Description:       bp.Description,
-		Author:            bp.Author,
-		Source:            "bundled",
-		ObjectTypes:       objectTypesFromMaps(bp.ObjectTypeSchemas),
-		RelationshipTypes: relationshipTypesFromMaps(bp.RelationshipTypeSchemas),
-		Agents:            bp.Agents,
-	}
 }
 
 // buildBlueprintRecordDetail converts an applied blueprint definition

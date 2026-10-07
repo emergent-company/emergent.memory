@@ -305,8 +305,8 @@ func TestService_DeprecateBlueprint_IsIdempotent(t *testing.T) {
 	assert.Equal(t, dep.ID, again.ID)
 }
 
-// TestService_DeleteBlueprint_DraftOnly verifies draft deletion succeeds and
-// published deletion is rejected.
+// TestService_DeleteBlueprint verifies private-blueprint deletion (any status,
+// draft or published) succeeds and cross-project deletion is rejected.
 func TestService_DeleteBlueprint_DraftOnly(t *testing.T) {
 	db := connectTestDB(t)
 	svc := newServiceFromBun(t, db)
@@ -323,13 +323,14 @@ func TestService_DeleteBlueprint_DraftOnly(t *testing.T) {
 		assertAppErrorCode(t, err, apperror.ErrNotFound.Code)
 	})
 
-	t.Run("published cannot be deleted", func(t *testing.T) {
+	t.Run("published deletes", func(t *testing.T) {
 		bp, err := svc.CreateBlueprint(ctx, req)
 		require.NoError(t, err)
 		_, err = svc.PublishBlueprint(ctx, proj, bp.ID)
 		require.NoError(t, err)
-		err = svc.DeleteBlueprint(ctx, proj, bp.ID)
-		assertAppErrorCode(t, err, apperror.ErrConflict.Code)
+		require.NoError(t, svc.DeleteBlueprint(ctx, proj, bp.ID))
+		_, err = svc.repo.GetByID(ctx, proj, bp.ID)
+		assertAppErrorCode(t, err, apperror.ErrNotFound.Code)
 	})
 
 	t.Run("another project cannot delete a private blueprint", func(t *testing.T) {

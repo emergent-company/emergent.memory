@@ -26,15 +26,13 @@ func (s *Server) listInstalledBlueprints(c echo.Context) error {
 
 func (s *Server) listAvailableBlueprints(c echo.Context) error {
 	ctx := c.Request().Context()
-	schemas, err := s.memory.ListAllSchemas(ctx)
+	records, err := s.memory.ListBlueprints(ctx)
 	if err != nil {
-		// A registry failure still lets bundled packs surface.
-		schemas = nil
+		return blueprintMemoryError(c, err)
 	}
 	applied, err := s.memory.ListAppliedBlueprints(ctx)
 	captureError(err)
-	bundled, _ := s.bundledBlueprints()
-	return c.JSON(http.StatusOK, buildAvailableList(schemas, bundled, applied, s.existingAgents(ctx)))
+	return c.JSON(http.StatusOK, buildAvailableList(records, applied))
 }
 
 func (s *Server) getCompiledTypes(c echo.Context) error {
@@ -45,17 +43,10 @@ func (s *Server) getCompiledTypes(c echo.Context) error {
 	return c.JSON(http.StatusOK, out)
 }
 
-// installBlueprintRequest is the body for POST /api/blueprints/install. Either
-// SchemaID (registry pack) or Source+"bundled" + Name (bundled pack) is set.
+// installBlueprintRequest is the body for POST /api/blueprints/install. SchemaID
+// is the id of the published blueprint to apply to the project.
 type installBlueprintRequest struct {
 	SchemaID string `json:"schemaId"`
-	Source   string `json:"source"`
-	Name     string `json:"name"`
-}
-
-// enableBlueprintRequest is the body for POST /api/blueprints/enable.
-type enableBlueprintRequest struct {
-	Name string `json:"name"`
 }
 
 func (s *Server) installBlueprint(c echo.Context) error {
@@ -63,63 +54,14 @@ func (s *Server) installBlueprint(c echo.Context) error {
 	if err := c.Bind(&in); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
 	}
-	ctx := c.Request().Context()
-	var result any
-	var err error
-	switch {
-	case in.Source == "bundled" && in.Name != "":
-		result, err = s.installBundledBlueprint(ctx, in.Name)
-	case in.SchemaID != "":
-		result, err = s.installRegistryBlueprint(ctx, in.SchemaID)
-	default:
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "schemaId or bundled source+name required"})
+	if in.SchemaID == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "schemaId required"})
 	}
+	res, err := s.memory.ApplyBlueprint(c.Request().Context(), in.SchemaID)
 	if err != nil {
 		return blueprintMemoryError(c, err)
 	}
-	return c.JSON(http.StatusCreated, result)
-}
-
-// seedBundledBlueprint resolves (create → publish) the definition of a bundled
-// pack in memory so it exists as a GLOBAL, published blueprint, ready to be
-// applied. It never applies — enabling and installing are separate steps. The
-// resolved record is returned (a newly created draft is published before
-// returning).
-func (s *Server) seedBundledBlueprint(ctx context.Context, name string) (*BlueprintRecord, error) {
-	bp, err := s.loadBundled(name)
-	if err != nil {
-		return nil, err
-	}
-	manifest, err := buildBlueprintManifest(bp)
-	if err != nil {
-		return nil, err
-	}
-	id, err := s.resolveOrCreateBlueprint(ctx, bp.Name, bp.Version, bp.Description, bp.Author, manifest)
-	if err != nil {
-		return nil, err
-	}
-	rec, err := s.memory.GetBlueprint(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if rec.Status == "draft" {
-		if err := s.memory.PublishBlueprint(ctx, id); err != nil {
-			return nil, err
-		}
-	}
-	return rec, nil
-}
-
-// installBundledBlueprint installs a bundled pack through memory's blueprint
-// API: seed the definition (create+publish), then apply it. The definition row
-// persists in memory — the foundation for uninstall/update via /applied and
-// /unapply.
-func (s *Server) installBundledBlueprint(ctx context.Context, name string) (*BlueprintApplyResult, error) {
-	rec, err := s.seedBundledBlueprint(ctx, name)
-	if err != nil {
-		return nil, err
-	}
-	return s.memory.ApplyBlueprint(ctx, rec.ID)
+	return c.JSON(http.StatusCreated, res)
 }
 
 // listPrivateDrafts returns the project's own draft blueprints (project-scoped,
@@ -137,20 +79,6 @@ func (s *Server) listPrivateDrafts(ctx context.Context) ([]BlueprintRecord, erro
 	}
 	sort.Slice(drafts, func(i, j int) bool { return drafts[i].Name < drafts[j].Name })
 	return drafts, nil
-}
-
-// enableBlueprint seeds a bundled blueprint as a GLOBAL published definition
-// without applying it (JSON API).
-func (s *Server) enableBlueprint(c echo.Context) error {
-	var in enableBlueprintRequest
-	if err := c.Bind(&in); err != nil || in.Name == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "name required"})
-	}
-	rec, err := s.seedBundledBlueprint(c.Request().Context(), in.Name)
-	if err != nil {
-		return blueprintMemoryError(c, err)
-	}
-	return c.JSON(http.StatusCreated, rec)
 }
 
 // installBlueprintById applies an already-seeded blueprint to the project
@@ -185,27 +113,19 @@ func blueprintMemoryError(c echo.Context, err error) error {
 // --- UI (PRG) handlers ---
 
 // uiInstallBlueprint handles the install form on the blueprints page: it
-// performs the install and redirects back to the list (or to ?err=1 on failure).
+// applies the blueprint identified by schemaId (the blueprint id) and redirects
+// back to the list (or to ?err=1 on failure).
 func (s *Server) uiInstallBlueprint(c echo.Context) error {
 	schemaID := c.FormValue("schemaId")
-	name := c.FormValue("name")
 	ctx := c.Request().Context()
-	if schemaID == "" && name == "" {
+	if schemaID == "" {
 		return c.Redirect(http.StatusSeeOther, "/blueprints?err=1")
 	}
 	// Blueprint apply does not surface migration status, so fall back to the
 	// drift scan around the install: redirect to migrations only when this
-	// install increased the stale-object count. A pure-agent install (no schema
-	// packs) can never cause drift, so it must not bounce the user over
-	// unrelated pre-existing staleness.
+	// install increased the stale-object count.
 	before := s.checkMigrationAfterApply(ctx)
-	var err error
-	if schemaID != "" {
-		_, err = s.installRegistryBlueprint(ctx, schemaID)
-	} else {
-		_, err = s.installBundledBlueprint(ctx, name)
-	}
-	if err != nil {
+	if _, err := s.memory.ApplyBlueprint(ctx, schemaID); err != nil {
 		return redirectWithError(c, "/blueprints", err)
 	}
 	if after := s.checkMigrationAfterApply(ctx); after > before {
@@ -328,18 +248,22 @@ func (s *Server) uiImportGitHubBlueprintConfirm(c echo.Context) error {
 	return c.Redirect(http.StatusSeeOther, "/blueprints?installed=1")
 }
 
-// uiEnableBlueprint seeds a bundled blueprint (global, published, not applied)
-// and redirects back to the list (PRG).
-func (s *Server) uiEnableBlueprint(c echo.Context) error {
-	name := c.FormValue("name")
-	if name == "" {
-		return c.Redirect(http.StatusSeeOther, "/blueprints?err=1")
-	}
-	if _, err := s.seedBundledBlueprint(c.Request().Context(), name); err != nil {
+// uiRemoveBlueprint deletes a private, unapplied blueprint from the registry
+// (DELETE /api/blueprints/:id) and redirects back to the list. A 409 (applied
+// or global built-in) maps to a friendly flash; success flashes "removed".
+func (s *Server) uiRemoveBlueprint(c echo.Context) error {
+	if err := s.memory.DeleteBlueprint(c.Request().Context(), c.Param("id")); err != nil {
+		if isMemoryStatus(err, http.StatusConflict) {
+			return c.Redirect(http.StatusSeeOther, "/blueprints?err="+url.QueryEscape(blueprintRemoveConflictMsg))
+		}
 		return redirectWithError(c, "/blueprints", err)
 	}
-	return c.Redirect(http.StatusSeeOther, "/blueprints?enabled=1")
+	return c.Redirect(http.StatusSeeOther, "/blueprints?removed=1")
 }
+
+// blueprintRemoveConflictMsg is the friendly 409 flash shown when removing a
+// blueprint that is applied (or a global built-in).
+const blueprintRemoveConflictMsg = "Uninstall the blueprint before removing it from the registry."
 
 // checkMigrationAfterApply returns the count of stale objects after a blueprint
 // apply (heuristic for a pending migration, since apply exposes no status).
@@ -411,20 +335,17 @@ func (s *Server) uiSaveGithubCredential(c echo.Context) error {
 }
 
 // uiBlueprint renders the details page for one blueprint: schema metadata plus
-// object/relationship type definitions. Bundled packs resolve by directory
-// name; applied blueprints resolve by blueprint id; registry/built-in schemas
-// resolve by schema id. When the detail carries agents with pinned models, the
-// project's configured providers are fetched best-effort so the page can warn
-// about models whose provider isn't configured.
+// object/relationship type definitions. Applied blueprints resolve by blueprint
+// id; registry schemas resolve by schema id. When the detail carries agents
+// with pinned models, the project's configured providers are fetched
+// best-effort so the page can warn about models whose provider isn't configured.
 func (s *Server) uiBlueprint(c echo.Context) error {
 	id := c.Param("id")
 	ctx := c.Request().Context()
 
 	var d *BlueprintDetail
 	fromRecord := false
-	if bp, err := s.loadBundled(id); err == nil && bp.Name != "" {
-		d = buildBundledDetail(bp)
-	} else if rec, err := s.memory.GetBlueprint(ctx, id); err == nil {
+	if rec, err := s.memory.GetBlueprint(ctx, id); err == nil {
 		d = buildBlueprintRecordDetail(rec)
 		fromRecord = true
 	} else {
@@ -441,8 +362,8 @@ func (s *Server) uiBlueprint(c echo.Context) error {
 		captureError(err)
 		applied = nil
 	}
-	// A blueprint record carries a version history; bundled packs and registry
-	// schemas do not. Best-effort: a failed version fetch just hides the section.
+	// A blueprint record carries a version history; registry schemas do not.
+	// Best-effort: a failed version fetch just hides the section.
 	if fromRecord {
 		d.CanDeriveVersion = true
 		d.IsDraft = d.Status == "draft"

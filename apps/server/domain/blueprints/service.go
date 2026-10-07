@@ -199,8 +199,16 @@ func (s *Service) CreateBlueprint(ctx context.Context, req *CreateBlueprintReque
 		SourceURL:              req.SourceURL,
 		SourceRef:              req.SourceRef,
 		SourceManifestChecksum: req.SourceManifestChecksum,
+		Origin:                 req.Origin,
 		CreatedAt:              now,
 		UpdatedAt:              now,
+	}
+	// Origin is server-derived, never client-settable (the request field is
+	// json:"-"): only the internal GitHub-import path may set "import"; every
+	// other create path — including a forged `origin` in a JSON body — is
+	// user-authored. Built-ins are written by the seeder, not this path.
+	if bp.Origin != OriginImport {
+		bp.Origin = OriginUser
 	}
 	if bp.Manifest == nil {
 		bp.Manifest = json.RawMessage("{}")
@@ -356,6 +364,7 @@ func (s *Service) NewVersion(ctx context.Context, projectID, id, newVersion stri
 		Status:      StatusDraft,
 		ProjectID:   cloneScope,
 		Manifest:    source.Manifest,
+		Origin:      OriginUser,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
@@ -369,8 +378,12 @@ func (s *Service) NewVersion(ctx context.Context, projectID, id, newVersion stri
 	return clone, nil
 }
 
-// DeleteBlueprint deletes the caller's own private draft blueprint. Global
-// blueprints are immutable.
+// DeleteBlueprint deletes a blueprint. Global blueprints (project_id IS NULL,
+// origin='builtin') stay immutable. A project-private blueprint may be deleted
+// in any lifecycle status, but only while it has no applied application for the
+// caller's project. On a successful delete its pack claims are cleared and any
+// schema packs owned by this project that become orphaned (no remaining claim
+// and no project_schemas assignment) are removed too.
 func (s *Service) DeleteBlueprint(ctx context.Context, projectID, id string) error {
 	bp, err := s.repo.GetByID(ctx, projectID, id)
 	if err != nil {
@@ -379,8 +392,38 @@ func (s *Service) DeleteBlueprint(ctx context.Context, projectID, id string) err
 	if err := guardMutable(bp); err != nil {
 		return err
 	}
-	if bp.Status != StatusDraft {
-		return apperror.ErrConflict.WithMessage("only draft blueprints can be deleted")
+
+	// Reject deletion while the blueprint has a live application for the
+	// caller's project; the caller must uninstall first. A superseded row (an
+	// older version replaced by a newer apply) is still live — its packs/agents
+	// may still be materialized — so only an explicitly "unapplied" record
+	// permits deletion.
+	app, err := s.repo.GetApplication(ctx, projectID, id)
+	switch {
+	case err == nil && app.Status != "unapplied":
+		return apperror.ErrConflict.WithMessage("uninstall the blueprint before removing it from the registry")
+	case err != nil && !isNotFound(err):
+		return err
+	}
+
+	// Capture the schema packs this blueprint claimed BEFORE clearing the
+	// claims, so orphan cleanup can target the exact packs it owned.
+	schemaIDs, err := s.repo.ListPackClaimSchemaIDs(ctx, id)
+	if err != nil {
+		return err
+	}
+	// Clear claims first (kb.blueprint_pack_claims.blueprint_id is a
+	// non-cascading FK, so the blueprint row cannot be deleted while claims
+	// reference it).
+	if err := s.repo.DeletePackClaimsForBlueprint(ctx, id); err != nil {
+		return err
+	}
+	// Delete project-owned schema packs that are now orphaned (not referenced by
+	// any remaining claim or any project_schemas assignment).
+	if len(schemaIDs) > 0 {
+		if _, err := s.repo.DeleteOrphanedProjectPacks(ctx, projectID, schemaIDs); err != nil {
+			return err
+		}
 	}
 	return s.repo.Delete(ctx, id)
 }
@@ -499,7 +542,18 @@ func (s *Service) Unapply(ctx context.Context, blueprintID, projectID string) (*
 	// applied blueprint still claims. Shared and manual assignments are skipped.
 	if len(manifest.Packs) > 0 {
 		for _, p := range manifest.Packs {
-			pack, err := s.schemasRepo.GetPackByNameVersion(ctx, p.Name, p.Version)
+			// Resolve the pack the SAME way apply materialized it: a built-in
+			// blueprint owns the shared global source='builtin' pack, while a
+			// user/import blueprint owns a project-scoped pack. An unscoped
+			// lookup here could resolve another project's pack of the same
+			// name+version and soft-delete the wrong assignment.
+			var pack *schemas.GraphMemorySchema
+			var err error
+			if bp.Origin == OriginBuiltin {
+				pack, err = s.schemasRepo.GetBuiltinPackByNameVersion(ctx, p.Name, p.Version)
+			} else {
+				pack, err = s.schemasRepo.GetProjectPackByNameVersion(ctx, projectID, p.Name, p.Version)
+			}
 			if err != nil {
 				if isNotFound(err) {
 					result.Packs.Missing++

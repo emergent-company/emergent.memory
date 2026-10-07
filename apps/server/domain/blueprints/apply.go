@@ -99,7 +99,7 @@ func (s *Service) Apply(ctx context.Context, blueprintID, projectID, userID stri
 
 	// Packs: create-or-skip by (name, version); assign runs on EVERY apply so
 	// any project applying the blueprint gets the pack's types registered.
-	result.Packs, err = s.applyPacks(ctx, projectID, blueprintID, userID, manifest.Packs)
+	result.Packs, err = s.applyPacks(ctx, projectID, blueprintID, userID, bp.Origin, manifest.Packs)
 	if err != nil {
 		return nil, err
 	}
@@ -169,57 +169,34 @@ func (s *Service) validateManifest(m *BlueprintManifest) error {
 	return nil
 }
 
-// applyPacks materializes schema packs. The pack itself is created globally
-// only once (create-or-skip by name+version), but AssignPack runs on every
-// apply so that a second project applying the same blueprint still gets the
-// pack's types registered. AssignPack with Merge=true is additive (existing
-// project types win property conflicts) and idempotent when already assigned.
-func (s *Service) applyPacks(ctx context.Context, projectID, blueprintID, userID string, packs []PackManifest) (ApplyCounts, error) {
+// applyPacks materializes schema packs, scoped by the blueprint's origin.
+//
+//   - origin='builtin': reuse (or defensively recreate) the GLOBAL
+//     source='builtin' pack by (name, version) — project_id NULL — then assign.
+//   - origin='user'/'import': reuse (or create) a PROJECT-SCOPED pack only
+//     (project_id = projectID). The cross-project GetPackByNameVersion lookup is
+//     deliberately NOT used here: it let project B silently reuse project A's
+//     pack — the bug behind "appears/succeeds in one project, fails in others".
+//
+// AssignPack runs on every apply so a second project applying a builtin
+// blueprint still gets the pack's types registered. Merge=true is additive and
+// idempotent; AutoUninstall lets the migration worker soft-delete a previous
+// version's assignment after a successful migration.
+func (s *Service) applyPacks(ctx context.Context, projectID, blueprintID, userID, origin string, packs []PackManifest) (ApplyCounts, error) {
 	var counts ApplyCounts
 	for _, p := range packs {
 		if p.Name == "" || p.Version == "" {
 			return counts, apperror.ErrBadRequest.WithMessage("pack name and version are required")
 		}
 
-		pack, err := s.schemasRepo.GetPackByNameVersion(ctx, p.Name, p.Version)
-		switch {
-		case err == nil:
-			// Pack exists globally. Sync its definition (description + type
-			// schemas) from the manifest so source cleanups propagate without a
-			// version bump. Only the owning project can update; a non-owner 404
-			// is benign (the pack still assigns below).
-			if uerr := s.updateExistingPack(ctx, projectID, pack, p); uerr != nil && !isNotFound(uerr) {
-				return counts, uerr
-			}
-			counts.Skipped++ // pack already exists globally; still assign below
-		case isNotFound(err):
-			objectTypes, err := json.Marshal(p.ObjectTypes)
-			if err != nil {
-				return counts, apperror.ErrBadRequest.WithMessage("invalid objectTypes in pack " + p.Name)
-			}
-			expandedRels, err := expandRelationshipTypes(p.RelationshipTypes)
-			if err != nil {
-				return counts, err
-			}
-			relationshipTypes, err := json.Marshal(expandedRels)
-			if err != nil {
-				return counts, apperror.ErrBadRequest.WithMessage("invalid relationshipTypes in pack " + p.Name)
-			}
-			pack, err = s.schemasSvc.CreatePack(ctx, projectID, &schemas.CreatePackRequest{
-				Name:                         p.Name,
-				Version:                      p.Version,
-				Description:                  &p.Description,
-				Author:                       &p.Author,
-				Migrations:                   p.Migrations,
-				ObjectTypeSchemasSnake:       objectTypes,
-				RelationshipTypeSchemasSnake: relationshipTypes,
-			})
-			if err != nil {
-				return counts, err
-			}
-			counts.Created++
-		default:
+		pack, created, err := s.resolvePack(ctx, projectID, origin, p)
+		if err != nil {
 			return counts, err
+		}
+		if created {
+			counts.Created++
+		} else {
+			counts.Skipped++
 		}
 
 		// ALWAYS assign (idempotent; Merge=true additive). AutoUninstall makes
@@ -242,23 +219,94 @@ func (s *Service) applyPacks(ctx context.Context, projectID, blueprintID, userID
 	return counts, nil
 }
 
-// updateExistingPack syncs an already-existing global pack's definition
+// resolvePack returns the schema pack a blueprint apply should assign for one
+// manifest pack, scoped by the blueprint's origin. The bool reports whether the
+// pack was newly created (vs reused).
+func (s *Service) resolvePack(ctx context.Context, projectID, origin string, p PackManifest) (*schemas.GraphMemorySchema, bool, error) {
+	if origin == OriginBuiltin {
+		pack, err := s.schemasRepo.GetBuiltinPackByNameVersion(ctx, p.Name, p.Version)
+		switch {
+		case err == nil:
+			// The built-in seeder keeps the global pack synced from the manifest.
+			return pack, false, nil
+		case isNotFound(err):
+			// Defensive: the seeder normally creates this on boot. Recreate it
+			// so a missing seeded pack cannot block apply.
+			pack, err := upsertBuiltinSchemaPack(ctx, s.schemasRepo.DB(), p)
+			if err != nil {
+				return nil, false, err
+			}
+			return pack, true, nil
+		default:
+			return nil, false, err
+		}
+	}
+
+	// origin='user'/'import': project-scoped only.
+	pack, err := s.schemasRepo.GetProjectPackByNameVersion(ctx, projectID, p.Name, p.Version)
+	switch {
+	case err == nil:
+		if uerr := s.updateExistingPack(ctx, projectID, pack, p); uerr != nil {
+			return nil, false, uerr
+		}
+		return pack, false, nil
+	case isNotFound(err):
+		pack, err = s.createProjectPack(ctx, projectID, p)
+		if err != nil {
+			return nil, false, err
+		}
+		return pack, true, nil
+	default:
+		return nil, false, err
+	}
+}
+
+// packSchemaJSON marshals a pack's object types and (expanded) relationship
+// types into the exact JSON shape the schema registry stores, so the built-in
+// seeder and the apply path produce identical payloads.
+func packSchemaJSON(p PackManifest) (objectTypes, relationshipTypes json.RawMessage, err error) {
+	objectTypes, err = json.Marshal(p.ObjectTypes)
+	if err != nil {
+		return nil, nil, apperror.ErrBadRequest.WithMessage("invalid objectTypes in pack " + p.Name)
+	}
+	expandedRels, err := expandRelationshipTypes(p.RelationshipTypes)
+	if err != nil {
+		return nil, nil, err
+	}
+	relationshipTypes, err = json.Marshal(expandedRels)
+	if err != nil {
+		return nil, nil, apperror.ErrBadRequest.WithMessage("invalid relationshipTypes in pack " + p.Name)
+	}
+	return objectTypes, relationshipTypes, nil
+}
+
+// createProjectPack creates a project-scoped schema pack via the schemas
+// service (same path the pre-scoping apply used), returning the created row.
+func (s *Service) createProjectPack(ctx context.Context, projectID string, p PackManifest) (*schemas.GraphMemorySchema, error) {
+	objectTypes, relationshipTypes, err := packSchemaJSON(p)
+	if err != nil {
+		return nil, err
+	}
+	return s.schemasSvc.CreatePack(ctx, projectID, &schemas.CreatePackRequest{
+		Name:                         p.Name,
+		Version:                      p.Version,
+		Description:                  &p.Description,
+		Author:                       &p.Author,
+		Migrations:                   p.Migrations,
+		ObjectTypeSchemasSnake:       objectTypes,
+		RelationshipTypeSchemasSnake: relationshipTypes,
+	})
+}
+
+// updateExistingPack syncs an already-existing project pack's definition
 // (description + object/relationship type schemas) with the current manifest.
 // This propagates source cleanups (e.g. removed template hints from type
 // descriptions) to the registry without requiring a version bump. Only the
 // owning project can update; a non-owner returns ErrNotFound (benign).
 func (s *Service) updateExistingPack(ctx context.Context, projectID string, pack *schemas.GraphMemorySchema, p PackManifest) error {
-	objectTypes, err := json.Marshal(p.ObjectTypes)
-	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid objectTypes in pack " + p.Name)
-	}
-	expandedRels, err := expandRelationshipTypes(p.RelationshipTypes)
+	objectTypes, relationshipTypes, err := packSchemaJSON(p)
 	if err != nil {
 		return err
-	}
-	relationshipTypes, err := json.Marshal(expandedRels)
-	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid relationshipTypes in pack " + p.Name)
 	}
 	_, err = s.schemasSvc.UpdatePack(ctx, pack.ID, projectID, &schemas.UpdatePackRequest{
 		Description:             &p.Description,

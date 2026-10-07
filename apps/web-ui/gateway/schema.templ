@@ -163,8 +163,8 @@ templ SchemaAddPage(view *SchemaAddView) {
 	}
 }
 
-// availableSchemaRow renders one installable pack with its source/version and a
-// one-action install that reuses the existing install handler.
+// availableSchemaRow renders one installable blueprint with its source/version
+// and a one-action install that applies the blueprint by id.
 templ availableSchemaRow(item AvailableSchemaItem) {
 	<div class="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
 		<div class="min-w-0">
@@ -178,11 +178,7 @@ templ availableSchemaRow(item AvailableSchemaItem) {
 			}
 		</div>
 		<form method="post" action="/schema/add" hx-boost="false">
-			if item.Source == "bundled" {
-				<input type="hidden" name="name" value={ item.Name }/>
-			} else {
-				<input type="hidden" name="schemaId" value={ item.ID }/>
-			}
+			<input type="hidden" name="schemaId" value={ item.ID }/>
 			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM, Icon: "lucide--plus"}) {
 				Install
 			}

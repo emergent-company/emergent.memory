@@ -20,7 +20,7 @@ import (
 // names, and test hooks even though the form moved out of the page body.
 func TestRenderBlueprintsPageImportForm(t *testing.T) {
 	applied := []AppliedBlueprint{{BlueprintID: "bp1", Name: "personal-memory", Version: "1.0.0"}}
-	available := []AvailableSchemaItem{{ID: "code-memory", Name: "code-memory", Version: "1.7.0", Source: "bundled"}}
+	available := []AvailableSchemaItem{{ID: "code-memory", Name: "code-memory", Version: "1.7.0", Source: "registry"}}
 	html := renderHTML(t, BlueprintsPage(applied, nil, available, nil, nil, "", nil))
 
 	for _, want := range []string{
@@ -48,7 +48,7 @@ func TestRenderBlueprintsPageImportForm(t *testing.T) {
 		"Save as blueprint",
 		// The pre-existing install path must survive unchanged.
 		`action="/blueprints/install"`,
-		`name="name"`,
+		`name="schemaId"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("blueprints page missing %q", want)

@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -17,478 +15,86 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// writeBundledPack writes a pack/schema YAML file under dir/<sub>/pack.yaml so
-// ListBundledBlueprints can discover it.
-func writeBundledPack(t *testing.T, dir, sub, content string) {
-	t.Helper()
-	packs := filepath.Join(dir, sub)
-	if err := os.MkdirAll(packs, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(packs, "pack.yaml"), []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
+// --- available list (published blueprints in scope) ---
 
-// --- bundled blueprint discovery ---
-
-func TestListBundledBlueprints(t *testing.T) {
-	dir := t.TempDir()
-	writeBundledPack(t, filepath.Join(dir, "personal-memory"), "packs",
-		"name: personal-memory\nversion: 1.0.0\ndescription: Personal graph\nauthor: diane\nobjectTypes:\n  - name: person\n    label: Person\n")
-	writeBundledPack(t, filepath.Join(dir, "agent-notes"), "schemas",
-		"name: agent-notes\nversion: 1.0.0\nobjectTypeSchemas:\n  - name: Note\n")
-	// A directory with no parseable pack must be skipped, not fail the list.
-	if err := os.MkdirAll(filepath.Join(dir, "empty"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	out, err := ListBundledBlueprints(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// sorted by name: agent-notes, personal-memory
-	if len(out) != 2 {
-		t.Fatalf("got %d bundled packs, want 2: %+v", len(out), out)
-	}
-	if out[0].Name != "agent-notes" || out[0].Source != "bundled" {
-		t.Errorf("item0 = %+v", out[0])
-	}
-	if out[1].Name != "personal-memory" || out[1].Version != "1.0.0" || out[1].Author != "diane" {
-		t.Errorf("item1 = %+v", out[1])
-	}
-}
-
-func TestListBundledBlueprintsMissing(t *testing.T) {
-	if _, err := ListBundledBlueprints(filepath.Join(t.TempDir(), "nope")); err == nil {
-		t.Fatal("want error for missing dir, got nil")
-	}
-}
-
-// TestListEmbeddedBlueprints verifies the packs compiled into the binary are
-// discovered (agent-notes, operator, task-board).
-func TestListEmbeddedBlueprints(t *testing.T) {
-	out, err := listEmbeddedBlueprints()
-	if err != nil {
-		t.Fatal(err)
-	}
-	names := map[string]bool{}
-	for _, b := range out {
-		if b.Source != "bundled" {
-			t.Errorf("source = %q, want bundled", b.Source)
-		}
-		names[b.Name] = true
-	}
-	if names["personal-memory"] {
-		t.Fatalf("personal-memory must no longer be bundled, got: %+v", out)
-	}
-	if !names["agent-notes"] {
-		t.Fatalf("missing embedded packs, got: %+v", out)
-	}
-	if !names["operator"] {
-		t.Fatalf("missing embedded operator pack, got: %+v", out)
-	}
-	if !names["task-board"] {
-		t.Fatalf("missing embedded task-board pack, got: %+v", out)
-	}
-}
-
-// TestTaskBoardBlueprintLoads verifies the embedded task-board blueprint loads
-// its board-enabled Task type, its reaction-triggered task-worker agent with
-// work/reaction config, its workflow skill, and its keyed seed object.
-func TestTaskBoardBlueprintLoads(t *testing.T) {
-	bp, err := loadBundledFromFS(bundledFS, "blueprints/task-board")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bp.Name != "task-board" {
-		t.Fatalf("name = %q, want task-board", bp.Name)
-	}
-	if !bp.HasSchema {
-		t.Fatal("task-board must carry a schema")
-	}
-
-	// Board-enabled Task type with operational flags survive as raw map keys.
-	if len(bp.ObjectTypeSchemas) != 1 {
-		t.Fatalf("object types = %d, want 1", len(bp.ObjectTypeSchemas))
-	}
-	task := bp.ObjectTypeSchemas[0]
-	if strAny(task["name"]) != "Task" {
-		t.Errorf("object type name = %#v", task["name"])
-	}
-	if task["boardEnabled"] != true {
-		t.Errorf("boardEnabled dropped: %#v", task)
-	}
-	if _, ok := task["allowedStatuses"]; !ok {
-		t.Errorf("allowedStatuses dropped: %#v", task)
-	}
-	if task["skipEmbeddings"] != true || task["skipExtraction"] != true || task["excludeFromSearch"] != true {
-		t.Errorf("operational flags dropped: %#v", task)
-	}
-
-	// Reaction-triggered worker carries its work/reaction config.
-	if len(bp.Agents) != 1 {
-		t.Fatalf("agents = %d, want 1", len(bp.Agents))
-	}
-	a := bp.Agents[0]
-	if a.Name != "task-worker" {
-		t.Errorf("agent name = %q", a.Name)
-	}
-	if a.TriggerType != "reaction" || a.DispatchMode != "queued" || a.DefaultQueue != "default" {
-		t.Errorf("task-worker scheduling = triggerType %q dispatchMode %q defaultQueue %q", a.TriggerType, a.DispatchMode, a.DefaultQueue)
-	}
-	if a.MaxSteps == nil || *a.MaxSteps != 20 {
-		t.Errorf("task-worker maxSteps = %#v", a.MaxSteps)
-	}
-	if a.ReactionConfig == nil || len(a.ReactionConfig.ObjectTypes) != 1 || a.ReactionConfig.ObjectTypes[0] != "Task" {
-		t.Errorf("task-worker reactionConfig = %#v", a.ReactionConfig)
-	}
-	if a.WorkConfig == nil || a.WorkConfig["requiresReview"] != true || a.WorkConfig["failureLimit"] != 3 {
-		t.Errorf("task-worker workConfig = %#v", a.WorkConfig)
-	}
-
-	// Workflow skill + keyed seed object are carried.
-	if len(bp.Skills) != 1 || bp.Skills[0].Name != "task-workflow" {
-		t.Errorf("skills = %+v, want task-workflow", bp.Skills)
-	}
-	if bp.Skills[0].Content == "" {
-		t.Error("skill content empty")
-	}
-	if len(bp.SeedObjects) != 1 {
-		t.Fatalf("seed objects = %+v, want 1", bp.SeedObjects)
-	}
-	seed := bp.SeedObjects[0]
-	if seed.Type != "Task" || seed.Key != "example-task" || seed.Assignee != "task-worker" {
-		t.Errorf("seed object = %+v", seed)
-	}
-}
-
-// TestTaskBoardManifestInstalls verifies the embedded task-board blueprint's
-// built manifest carries the worker's work/reaction config, skill, and seed —
-// so installing through POST /api/blueprints drops nothing.
-func TestTaskBoardManifestInstalls(t *testing.T) {
-	bp, err := loadBundledFromFS(bundledFS, "blueprints/task-board")
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := buildBlueprintManifest(bp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatal(err)
-	}
-	agents := m["agents"].([]any)
-	if len(agents) != 1 {
-		t.Fatalf("agents = %#v, want 1", agents)
-	}
-	ag := agents[0].(map[string]any)
-	if ag["workConfig"] == nil || ag["reactionConfig"] == nil {
-		t.Errorf("worker work/reaction config dropped: %#v", ag)
-	}
-	if m["skills"] == nil {
-		t.Errorf("skills dropped: %#v", m)
-	}
-	if m["seed"] == nil {
-		t.Errorf("seed dropped: %#v", m)
-	}
-}
-
-// TestOperatorBlueprintDefinesOperatorAgent loads the embedded operator
-// blueprint and asserts it defines an agent whose tools include ask_user (the
-// proposal/confirm checkpoint) and whose system prompt mandates proposing a
-// change and pausing for acceptance before any write. This is the definitional
-// contract of the general operator instructions: given an operator, the chat
-// loop must be able to emit a "question with a suggestion to confirm".
-func TestOperatorBlueprintDefinesOperatorAgent(t *testing.T) {
-	bp, err := loadBundledFromFS(bundledFS, "blueprints/operator")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bp.Name != "operator" {
-		t.Fatalf("name = %q, want operator", bp.Name)
-	}
-	if bp.HasSchema {
-		t.Error("operator is a pure-agent blueprint; must not carry a schema")
-	}
-	if len(bp.Agents) != 1 {
-		t.Fatalf("agents = %d, want 1", len(bp.Agents))
-	}
-	a := bp.Agents[0]
-	if a.Name != "operator" {
-		t.Errorf("agent name = %q", a.Name)
-	}
-	if a.Model != "openai/deepseek-v4-pro" {
-		t.Errorf("model = %q, want openai/deepseek-v4-pro", a.Model)
-	}
-	if !containsString(a.Tools, "ask_user") {
-		t.Error("operator tools must include ask_user (the proposal checkpoint)")
-	}
-	// The operator instructions must encode the propose → accept contract so
-	// the agent asks for confirmation (a question) before it writes.
-	for _, want := range []string{"ask_user", "Accept", "Reject", "propose"} {
-		if !strings.Contains(a.SystemPrompt, want) {
-			t.Errorf("operator systemPrompt missing %q", want)
-		}
-	}
-}
-
-// TestInstallOperatorBlueprintViaBlueprintAPI installs the operator blueprint
-// through the gateway and asserts it is applied via memory's blueprint API
-// (create → publish → apply) rather than the legacy schema/agent path. No
-// schema is registered and no agent is created directly — the agent is
-// materialized by memory's blueprint apply.
-func TestInstallOperatorBlueprintViaBlueprintAPI(t *testing.T) {
-	f := &fakeMemory{}
-	s := &Server{cfg: Config{}, memory: f}
-
-	res, err := s.installBundledBlueprint(context.Background(), "operator")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res == nil {
-		t.Fatal("install returned nil result")
-	}
-	if len(f.created) != 0 {
-		t.Errorf("operator install must not create an agent directly, got %d", len(f.created))
-	}
-	if f.createdBlueprint == nil {
-		t.Fatal("expected a blueprint definition to be created")
-	}
-	if f.createdBlueprint.Name != "operator" {
-		t.Errorf("created blueprint name = %q, want operator", f.createdBlueprint.Name)
-	}
-	if len(f.appliedBlueprint) != 1 || f.appliedBlueprint[0] != "bp-new" {
-		t.Errorf("applied = %v, want [bp-new]", f.appliedBlueprint)
-	}
-}
-
-// TestInstallOperatorBlueprintIdempotent verifies a second install of the
-// operator blueprint succeeds without error. Real idempotency (no duplicate
-// agent) is memory's apply contract (create-or-update by name); the gateway's
-// resolve-or-create adopts an existing version on re-install.
-func TestInstallOperatorBlueprintIdempotent(t *testing.T) {
-	f := &fakeMemory{}
-	s := &Server{cfg: Config{}, memory: f}
-
-	for range 2 {
-		if _, err := s.installBundledBlueprint(context.Background(), "operator"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if len(f.appliedBlueprint) != 2 {
-		t.Fatalf("applied = %d, want 2 (both installs reach apply)", len(f.appliedBlueprint))
-	}
-}
-
-// TestBuildAvailableListExcludesInstalledAgentBlueprint verifies an agent-only
-// blueprint is excluded from the available list once its agent exists, and is
-// available again when the agent is absent.
-func TestBuildAvailableListExcludesInstalledAgentBlueprint(t *testing.T) {
-	bundled := []AvailableSchemaItem{
-		{ID: "operator", Name: "operator", Version: "1.0.0", Source: "bundled", Agents: []string{"operator"}},
-		{ID: "agent-notes", Name: "agent-notes", Version: "1.0.0", Source: "bundled", HasSchema: true},
-	}
-
-	// operator agent exists → operator excluded from available (pre-cutover
-	// agent fallback)
-	out := buildAvailableList(nil, bundled, nil, map[string]bool{"operator": true})
-	if len(out) != 1 || out[0].Name != "agent-notes" {
-		t.Fatalf("available = %+v, want only agent-notes", out)
-	}
-
-	// no operator agent → both available
-	out2 := buildAvailableList(nil, bundled, nil, nil)
-	if len(out2) != 2 {
-		t.Fatalf("available = %+v, want both (operator agent absent)", out2)
-	}
-}
-
-// TestBuildAvailableList verifies the available list merges project-owned
-// registry packs with bundled packs, excludes installed packs, dedupes by name,
-// and skips global (unfetchable) schemas.
+// TestBuildAvailableList verifies the available list maps published blueprint
+// records to items: built-ins surface as Source "builtin" (Origin "builtin"),
+// everything else as Source "registry" (Origin user/import), drafts are
+// excluded, and applied blueprints are excluded by name+version or id.
 func TestBuildAvailableList(t *testing.T) {
-	schemas := []SchemaInfo{
-		{ID: "s1", Name: "multi-agent", Version: "1.0.0", ProjectID: "proj"},
-		{ID: "s2", Name: "session-message-types", Version: "1.0.0"}, // global — must be skipped
+	records := []BlueprintRecord{
+		{ID: "b1", Name: "agent-notes", Version: "1.0.0", Origin: "builtin", Status: "published"},
+		{ID: "b2", Name: "agent-notes", Version: "2.0.0", Origin: "builtin", Status: "published"},
+		{ID: "u1", Name: "custom-flow", Version: "1.0.0", Origin: "user", Status: "published"},
+		{ID: "d1", Name: "draft-thing", Version: "1.0.0", Origin: "user", Status: "draft"},
+		{ID: "i1", Name: "imported", Version: "1.0.0", Origin: "import", Status: "published"},
 	}
-	bundled := []AvailableSchemaItem{
-		{ID: "agent-notes", Name: "agent-notes", Version: "1.0.0", Source: "bundled"},
-		{ID: "personal-memory", Name: "personal-memory", Version: "1.0.0", Source: "bundled"},
-	}
-	installed := []AppliedBlueprint{{Name: "agent-notes", Version: "1.0.0"}}
-	out := buildAvailableList(schemas, bundled, installed, nil)
-	if len(out) != 2 {
-		t.Fatalf("got %d items, want 2: %+v", len(out), out)
-	}
-	got := map[string]string{}
-	for _, a := range out {
-		got[a.Name] = a.Source
-	}
-	if got["multi-agent"] != "registry" {
-		t.Errorf("multi-agent source = %q", got["multi-agent"])
-	}
-	if got["personal-memory"] != "bundled" {
-		t.Errorf("personal-memory source = %q", got["personal-memory"])
-	}
-	if _, ok := got["session-message-types"]; ok {
-		t.Errorf("global schema should be skipped (unfetchable via GetPack)")
-	}
-	if _, ok := got["agent-notes"]; ok {
-		t.Errorf("agent-notes should be excluded (installed at same version)")
-	}
-}
-
-// TestBuildAvailableListUpgrade verifies a bundled pack with a higher version
-// than the installed pack surfaces as an "upgrade" (kept, Upgrade=true), while
-// same-or-older versions are filtered out.
-func TestBuildAvailableListUpgrade(t *testing.T) {
-	bundled := []AvailableSchemaItem{
-		{ID: "agent-notes", Name: "agent-notes", Version: "2.0.0", Source: "bundled"},
-		{ID: "personal-memory", Name: "personal-memory", Version: "2.0.0", Source: "bundled"},
-	}
-	installed := []AppliedBlueprint{
-		{Name: "agent-notes", Version: "1.0.0"},
-		{Name: "personal-memory", Version: "2.0.0"}, // already at v2 — not an upgrade
-	}
-	out := buildAvailableList(nil, bundled, installed, nil)
-	if len(out) != 1 {
-		t.Fatalf("got %d items, want 1: %+v", len(out), out)
-	}
-	if out[0].Name != "agent-notes" || !out[0].Upgrade {
-		t.Errorf("agent-notes should be an upgrade: %+v", out[0])
-	}
-}
-
-// TestBuildAvailableListRegistryUpgrade verifies project-scoped registry packs
-// collapse to their highest version per name and surface as an upgrade only
-// when that version is strictly newer than the applied one. Applied-at-same (or
-// newer) registry packs must stay hidden, non-applied ones stay available, and
-// the bundled path is unchanged.
-func TestBuildAvailableListRegistryUpgrade(t *testing.T) {
 	applied := []AppliedBlueprint{
-		{Name: "multi-agent", Version: "1.0.0"},
-		{Name: "session-message-types", Version: "2.0.0"},
-		{Name: "vendor-pack", Version: "3.0.0"},
-		{Name: "agent-notes", Version: "1.0.0"},
+		{BlueprintID: "u1", Name: "custom-flow", Version: "1.0.0"},
 	}
-	schemas := []SchemaInfo{
-		// multi-agent has two project-scoped rows: only the highest may surface.
-		{ID: "s1-old", Name: "multi-agent", Version: "1.0.0", ProjectID: "proj"},
-		{ID: "s1-new", Name: "multi-agent", Version: "2.0.0", ProjectID: "proj"},
-		// applied at the same version → hidden
-		{ID: "s2", Name: "session-message-types", Version: "2.0.0", ProjectID: "proj"},
-		// registry older than applied → hidden (no regression)
-		{ID: "s3", Name: "vendor-pack", Version: "1.0.0", ProjectID: "proj"},
-		// not applied → available
-		{ID: "s4", Name: "custom-pack", Version: "1.0.0", ProjectID: "proj"},
-		// global → skipped
-		{ID: "g1", Name: "global-pack", Version: "9.0.0"},
-	}
-	bundled := []AvailableSchemaItem{
-		{ID: "agent-notes", Name: "agent-notes", Version: "2.0.0", Source: "bundled"},
-	}
-
-	out := buildAvailableList(schemas, bundled, applied, nil)
+	out := buildAvailableList(records, applied)
 	byName := map[string]AvailableSchemaItem{}
 	for _, a := range out {
 		byName[a.Name] = a
 	}
 
-	// (a) applied older + registry newer → upgrade from the highest version.
-	up, ok := byName["multi-agent"]
-	if !ok {
-		t.Fatalf("multi-agent should surface as an upgrade: %+v", out)
+	if _, ok := byName["draft-thing"]; ok {
+		t.Error("draft blueprint must not surface in the available list")
 	}
-	if !up.Upgrade || up.Source != "registry" || up.Version != "2.0.0" || up.ID != "s1-new" {
-		t.Errorf("multi-agent upgrade = %+v", up)
+	if _, ok := byName["custom-flow"]; ok {
+		t.Error("applied blueprint must be excluded")
 	}
 
-	// (b) applied at same or newer version → hidden.
-	if _, ok := byName["session-message-types"]; ok {
-		t.Errorf("same-version registry pack must stay hidden: %+v", out)
-	}
-	if _, ok := byName["vendor-pack"]; ok {
-		t.Errorf("older-than-applied registry pack must stay hidden: %+v", out)
+	an, ok := byName["agent-notes"]
+	if !ok || an.ID != "b2" || an.Version != "2.0.0" || an.Source != "builtin" || an.Origin != "builtin" {
+		t.Errorf("agent-notes = %+v, want latest built-in v2.0.0", an)
 	}
 
-	// (c) not applied → plain available (Upgrade=false).
-	av, ok := byName["custom-pack"]
-	if !ok || av.Upgrade || av.Source != "registry" {
-		t.Errorf("custom-pack should be a plain registry available: %+v", av)
-	}
-
-	// global schemas remain skipped.
-	if _, ok := byName["global-pack"]; ok {
-		t.Errorf("global schema should be skipped")
-	}
-
-	// (d) bundled upgrade path unchanged.
-	bup, ok := byName["agent-notes"]
-	if !ok || !bup.Upgrade || bup.Source != "bundled" || bup.Version != "2.0.0" {
-		t.Errorf("bundled upgrade = %+v, want bundled v2.0.0 Upgrade=true", bup)
+	im, ok := byName["imported"]
+	if !ok || im.Source != "registry" || im.Origin != "import" {
+		t.Errorf("imported = %+v, want registry/import", im)
 	}
 }
 
-// TestBuildAvailableListExcludesOverridePack verifies the project-owned
-// copy-on-write override pack never leaks into the "Available schemas" list,
-// while a normal project-scoped registry pack still appears.
-func TestBuildAvailableListExcludesOverridePack(t *testing.T) {
-	schemas := []SchemaInfo{
-		{ID: "ov", Name: overridePackName, Version: overridePackVersion, ProjectID: "proj"},
-		{ID: "p1", Name: "custom-pack", Version: "1.0.0", ProjectID: "proj"},
+// TestBuildAvailableListUpgrade verifies a published version strictly newer than
+// the applied one surfaces with Upgrade=true, while same-or-older versions are
+// filtered out.
+func TestBuildAvailableListUpgrade(t *testing.T) {
+	records := []BlueprintRecord{
+		{ID: "b2", Name: "agent-notes", Version: "2.0.0", Origin: "builtin", Status: "published"},
+		{ID: "p1", Name: "personal-memory", Version: "2.0.0", Origin: "user", Status: "published"},
 	}
-	out := buildAvailableList(schemas, nil, nil, nil)
-	if len(out) != 1 || out[0].Name != "custom-pack" {
-		t.Fatalf("available = %+v, want only custom-pack", out)
+	applied := []AppliedBlueprint{
+		{BlueprintID: "b1", Name: "agent-notes", Version: "1.0.0"},
+		{BlueprintID: "p0", Name: "personal-memory", Version: "2.0.0"},
+	}
+	out := buildAvailableList(records, applied)
+	if len(out) != 1 {
+		t.Fatalf("got %d items, want 1: %+v", len(out), out)
+	}
+	if out[0].Name != "agent-notes" || !out[0].Upgrade {
+		t.Errorf("agent-notes should surface as an upgrade: %+v", out[0])
 	}
 }
 
-// TestBuildBundledDetail verifies the bundled pack → detail conversion parses
-// object types (with properties) and relationship types.
-func TestBuildBundledDetail(t *testing.T) {
-	bp := &BundledBlueprint{
-		ID:      "personal-memory",
-		Name:    "personal-memory",
-		Version: "1.0.0",
-		ObjectTypeSchemas: []map[string]any{
-			{
-				"name":  "person",
-				"label": "Person",
-				"properties": map[string]any{
-					"first_name": map[string]any{"type": "string", "description": "First name"},
-					"active":     map[string]any{"type": "boolean", "required": true},
-				},
-			},
-		},
-		RelationshipTypeSchemas: []map[string]any{
-			{"name": "assigned_to", "sourceType": "task", "targetType": "person"},
-		},
+// TestBuildAvailableListExcludesAppliedByID verifies a blueprint whose name no
+// longer matches the applied record is still excluded by blueprint id.
+func TestBuildAvailableListExcludesAppliedByID(t *testing.T) {
+	records := []BlueprintRecord{
+		{ID: "u1", Name: "renamed-pack", Version: "1.0.0", Origin: "user", Status: "published"},
 	}
-	d := buildBundledDetail(bp)
-	if d.Name != "personal-memory" || d.Source != "bundled" {
-		t.Errorf("detail = %+v", d)
+	applied := []AppliedBlueprint{
+		{BlueprintID: "u1", Name: "old-name", Version: "1.0.0"},
 	}
-	if len(d.ObjectTypes) != 1 || d.ObjectTypes[0].Name != "person" || d.ObjectTypes[0].Label != "Person" {
-		t.Fatalf("object types = %+v", d.ObjectTypes)
-	}
-	props := d.ObjectTypes[0].Properties
-	if len(props) != 2 {
-		t.Fatalf("properties = %+v", props)
-	}
-	if props[0].Name != "active" || props[0].Type != "boolean" || !props[0].Required {
-		t.Errorf("props[0] = %+v (sorted: active before first_name)", props[0])
-	}
-	if len(d.RelationshipTypes) != 1 || d.RelationshipTypes[0].SourceType != "task" {
-		t.Errorf("relationship types = %+v", d.RelationshipTypes)
+	if out := buildAvailableList(records, applied); len(out) != 0 {
+		t.Fatalf("applied-by-id blueprint must be excluded: %+v", out)
 	}
 }
 
 // --- API handlers ---
 
-func newBlueprintServer(f *fakeMemory, dir string) (*Server, *echo.Echo) {
-	s := &Server{cfg: Config{DefaultAgent: "memory", BlueprintsDir: dir}, memory: f}
+func newBlueprintServer(f *fakeMemory) (*Server, *echo.Echo) {
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
 	api := e.Group("/api")
 	api.GET("/blueprints/installed", s.listInstalledBlueprints)
@@ -501,7 +107,7 @@ func newBlueprintServer(f *fakeMemory, dir string) (*Server, *echo.Echo) {
 
 func TestListInstalledBlueprintsHandler(t *testing.T) {
 	f := &fakeMemory{appliedBlueprints: []AppliedBlueprint{{BlueprintID: "bp1", Name: "personal-memory", Version: "1.0.0"}}}
-	_, e := newBlueprintServer(f, t.TempDir())
+	_, e := newBlueprintServer(f)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/blueprints/installed", nil))
 	if rec.Code != http.StatusOK {
@@ -517,13 +123,11 @@ func TestListInstalledBlueprintsHandler(t *testing.T) {
 }
 
 func TestListAvailableBlueprintsHandler(t *testing.T) {
-	f := &fakeMemory{schemas: []SchemaInfo{
-		{ID: "s9", Name: "multi-agent", Version: "1.0.0", ProjectID: "proj"},
-		{ID: "s2", Name: "session-message-types", Version: "1.0.0"}, // global — skipped
+	f := &fakeMemory{blueprints: []BlueprintRecord{
+		{ID: "b1", Name: "multi-agent", Version: "1.0.0", Origin: "builtin", Status: "published"},
+		{ID: "u1", Name: "custom-pack", Version: "1.0.0", Origin: "user", Status: "published"},
 	}}
-	dir := t.TempDir()
-	writeBundledPack(t, filepath.Join(dir, "agent-notes"), "schemas", "name: agent-notes\nversion: 1.0.0\n")
-	_, e := newBlueprintServer(f, dir)
+	_, e := newBlueprintServer(f)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/blueprints/available", nil))
 	if rec.Code != http.StatusOK {
@@ -534,26 +138,23 @@ func TestListAvailableBlueprintsHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(got) != 2 {
-		t.Fatalf("got %d available, want 2 (registry + bundled): %+v", len(got), got)
+		t.Fatalf("got %d available, want 2: %+v", len(got), got)
 	}
 	sources := map[string]string{}
 	for _, a := range got {
 		sources[a.Name] = a.Source
 	}
-	if sources["multi-agent"] != "registry" {
-		t.Errorf("multi-agent source = %q", sources["multi-agent"])
+	if sources["multi-agent"] != "builtin" {
+		t.Errorf("multi-agent source = %q, want builtin", sources["multi-agent"])
 	}
-	if sources["agent-notes"] != "bundled" {
-		t.Errorf("agent-notes source = %q", sources["agent-notes"])
-	}
-	if _, ok := sources["session-message-types"]; ok {
-		t.Errorf("global schema should be skipped")
+	if sources["custom-pack"] != "registry" {
+		t.Errorf("custom-pack source = %q, want registry", sources["custom-pack"])
 	}
 }
 
 func TestGetCompiledTypesHandler(t *testing.T) {
 	f := &fakeMemory{compiled: &CompiledSchemaTypes{ObjectTypes: []CompiledType{{Name: "person", Label: "Person"}}}}
-	_, e := newBlueprintServer(f, t.TempDir())
+	_, e := newBlueprintServer(f)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/blueprints/compiled-types", nil))
 	if rec.Code != http.StatusOK {
@@ -564,47 +165,26 @@ func TestGetCompiledTypesHandler(t *testing.T) {
 	}
 }
 
-func TestInstallBlueprintRegistryHandler(t *testing.T) {
+func TestInstallBlueprintHandlerAppliesByID(t *testing.T) {
 	f := &fakeMemory{}
-	_, e := newBlueprintServer(f, t.TempDir())
-	req := httptest.NewRequest(http.MethodPost, "/api/blueprints/install", strings.NewReader(`{"schemaId":"s1"}`))
+	_, e := newBlueprintServer(f)
+	req := httptest.NewRequest(http.MethodPost, "/api/blueprints/install", strings.NewReader(`{"schemaId":"b1"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
-	if len(f.appliedBlueprint) != 1 || f.appliedBlueprint[0] != "bp-new" {
+	if len(f.appliedBlueprint) != 1 || f.appliedBlueprint[0] != "b1" {
 		t.Fatalf("appliedBlueprint = %v", f.appliedBlueprint)
 	}
-	if f.createdBlueprint == nil || f.createdBlueprint.Name != "s1" {
-		t.Fatalf("createdBlueprint = %+v, want name s1", f.createdBlueprint)
-	}
-}
-
-func TestInstallBlueprintBundledHandler(t *testing.T) {
-	f := &fakeMemory{}
-	dir := t.TempDir()
-	writeBundledPack(t, filepath.Join(dir, "agent-notes"), "schemas",
-		"name: agent-notes\nversion: 1.0.0\nobjectTypeSchemas:\n  - name: Note\n")
-	_, e := newBlueprintServer(f, dir)
-	req := httptest.NewRequest(http.MethodPost, "/api/blueprints/install", strings.NewReader(`{"source":"bundled","name":"agent-notes"}`))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
-	}
-	if f.createdBlueprint == nil || f.createdBlueprint.Name != "agent-notes" {
-		t.Fatalf("createdBlueprint = %+v, want agent-notes", f.createdBlueprint)
-	}
-	if len(f.appliedBlueprint) != 1 || f.appliedBlueprint[0] != "bp-new" {
-		t.Fatalf("appliedBlueprint = %v", f.appliedBlueprint)
+	if f.createdBlueprint != nil {
+		t.Errorf("install by id must not create a blueprint definition: %+v", f.createdBlueprint)
 	}
 }
 
 func TestInstallBlueprintValidation(t *testing.T) {
-	_, e := newBlueprintServer(&fakeMemory{}, t.TempDir())
+	_, e := newBlueprintServer(&fakeMemory{})
 	req := httptest.NewRequest(http.MethodPost, "/api/blueprints/install", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -616,7 +196,7 @@ func TestInstallBlueprintValidation(t *testing.T) {
 
 func TestBlueprintMemoryError(t *testing.T) {
 	f := &fakeMemory{blueprintErr: fmt.Errorf("memory 404 not_found")}
-	_, e := newBlueprintServer(f, t.TempDir())
+	_, e := newBlueprintServer(f)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/blueprints/installed", nil))
 	if rec.Code != http.StatusNotFound {
@@ -629,34 +209,40 @@ func TestBlueprintMemoryError(t *testing.T) {
 func TestRenderBlueprintsPage(t *testing.T) {
 	applied := []AppliedBlueprint{
 		{BlueprintID: "bp1", Name: "agent-notes", Version: "1.0.0", AppliedAt: "2026-08-26T10:00:00Z"},
-		{BlueprintID: "bp2", Name: "operator", Version: "1.0.0", AppliedAt: "2026-08-26T11:00:00Z"},
 	}
 	upgrades := []AvailableSchemaItem{
-		{ID: "agent-notes", Name: "agent-notes", Version: "2.0.0", Source: "bundled", Upgrade: true},
+		{ID: "b2", Name: "agent-notes", Version: "2.0.0", Source: "builtin", Origin: "builtin", Upgrade: true},
 	}
 	available := []AvailableSchemaItem{
-		{ID: "s9", Name: "session-message-types", Version: "1.0.0", Source: "registry"},
-		{ID: "code-memory", Name: "code-memory", Version: "1.7.0", Source: "bundled"},
-		{ID: "personal-memory", Name: "personal-memory", Version: "1.0.0", Source: "bundled"},
+		{ID: "b3", Name: "session-message-types", Version: "1.0.0", Source: "builtin", Origin: "builtin"},
+		{ID: "u1", Name: "code-memory", Version: "1.7.0", Source: "registry", Origin: "user"},
 	}
 	drafts := []BlueprintRecord{
 		{ID: "bp-draft", Name: "custom-flow", Version: "0.3.0", Status: "draft"},
 	}
 	html := renderHTML(t, BlueprintsPage(applied, upgrades, available, drafts, nil, "", nil))
 	for _, want := range []string{
-		"Blueprints", "Installed", "agent-notes", "operator",
+		"Blueprints", "Installed", "agent-notes",
 		"Upgrades", "Upgrade",
-		"Available", "session-message-types", "code-memory", "registry", "bundled",
+		"Available", "session-message-types", "code-memory", "registry", "builtin",
+		"Built-in",
 		`/blueprints/bp1/unapply`,
 		`name="schemaId"`,
 		// drafts section
 		"Drafts", "custom-flow", "v0.3.0 · draft", `/blueprints/bp-draft/install`,
-		// bundled + registry packs share one install form (by name / schemaId)
-		`action="/blueprints/install"`, "Install", `name="name"`,
+		// install action always applies by id
+		`action="/blueprints/install"`, "Install",
+		// remove action rendered only for the registry (non-built-in) row
+		`data-testid="blueprint-remove-u1"`,
+		`action="/blueprints/u1/remove"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("blueprints page missing %q", want)
 		}
+	}
+	// built-in rows must not offer the remove action
+	if strings.Contains(html, `blueprint-remove-b3`) {
+		t.Error("built-in blueprint must not render a remove action")
 	}
 
 	htmlEmpty := renderHTML(t, BlueprintsPage(nil, nil, nil, nil, nil, "", nil))
@@ -683,28 +269,19 @@ func TestRenderBlueprintsPage(t *testing.T) {
 }
 
 // TestRenderAppliedRowUpdateCTA verifies the installed row exposes the update
-// affordance — an "Update available" badge plus an Update action wired to the
-// existing /blueprints/install path — when a newer version of the pack exists,
-// for both bundled (by name) and registry (by schemaId) sources, and hides it
-// (while keeping Remove) when no upgrade exists.
+// affordance — an "Update available" badge plus an Update action that installs
+// by blueprint id — and hides it (while keeping Remove) when no upgrade exists.
 func TestRenderAppliedRowUpdateCTA(t *testing.T) {
 	b := AppliedBlueprint{BlueprintID: "bp1", Name: "agent-notes", Version: "1.0.0", AppliedAt: "2026-08-26T10:00:00Z"}
 
-	bundled := renderHTML(t, appliedRow(b, AvailableSchemaItem{ID: "agent-notes", Name: "agent-notes", Version: "2.0.0", Source: "bundled"}))
-	for _, want := range []string{"Update available", "Update", `action="/blueprints/install"`, `name="name"`, "Remove"} {
-		if !strings.Contains(bundled, want) {
-			t.Errorf("bundled upgrade row missing %q", want)
+	upgrade := renderHTML(t, appliedRow(b, AvailableSchemaItem{ID: "b2", Name: "agent-notes", Version: "2.0.0", Source: "builtin", Upgrade: true}))
+	for _, want := range []string{"Update available", "Update", `action="/blueprints/install"`, `name="schemaId"`, `value="b2"`, "Remove"} {
+		if !strings.Contains(upgrade, want) {
+			t.Errorf("upgrade row missing %q", want)
 		}
 	}
-
-	registry := renderHTML(t, appliedRow(b, AvailableSchemaItem{ID: "s9", Name: "agent-notes", Version: "2.0.0", Source: "registry", Upgrade: true}))
-	for _, want := range []string{"Update available", `name="schemaId"`, `value="s9"`} {
-		if !strings.Contains(registry, want) {
-			t.Errorf("registry upgrade row missing %q", want)
-		}
-	}
-	if strings.Contains(registry, `name="name"`) {
-		t.Error("registry upgrade row must install by schemaId, not name")
+	if strings.Contains(upgrade, `name="name"`) {
+		t.Error("upgrade row must install by schemaId (blueprint id), not name")
 	}
 
 	plain := renderHTML(t, appliedRow(b, AvailableSchemaItem{}))
@@ -717,18 +294,15 @@ func TestRenderAppliedRowUpdateCTA(t *testing.T) {
 }
 
 // TestUIRouteBlueprints exercises the /blueprints page route against the fake
-// backend, including the install/enable/unapply PRG redirects.
+// backend, including the install/remove/unapply PRG redirects.
 func TestUIRouteBlueprints(t *testing.T) {
-	dir := t.TempDir()
-	writeBundledPack(t, filepath.Join(dir, "agent-notes"), "schemas",
-		"name: agent-notes\nversion: 1.0.0\nobjectTypeSchemas:\n  - name: Note\n")
 	f := &fakeMemory{appliedBlueprints: []AppliedBlueprint{{BlueprintID: "bp1", Name: "personal-memory", Version: "1.0.0"}}}
-	s := &Server{cfg: Config{DefaultAgent: "memory", BlueprintsDir: dir}, memory: f}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
 	e.GET("/blueprints", s.uiBlueprints)
 	e.POST("/blueprints/install", s.uiInstallBlueprint)
-	e.POST("/blueprints/enable", s.uiEnableBlueprint)
 	e.POST("/blueprints/:id/install", s.uiInstallBlueprintById)
+	e.POST("/blueprints/:id/remove", s.uiRemoveBlueprint)
 	e.POST("/blueprints/:id/unapply", s.uiUnapplyBlueprint)
 
 	// page render
@@ -738,36 +312,20 @@ func TestUIRouteBlueprints(t *testing.T) {
 		t.Fatalf("page: status=%d body=%s", rec.Code, rec.Body.String())
 	}
 
-	// install redirect (registry)
+	// install redirect (by blueprint id)
 	rec = httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/blueprints/install?schemaId=s9", nil))
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/blueprints/install?schemaId=b9", nil))
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("install redirect status = %d", rec.Code)
 	}
 	if loc := rec.Header().Get("Location"); loc != "/blueprints?installed=1" {
 		t.Errorf("install location = %q", loc)
 	}
-	if len(f.appliedBlueprint) != 1 || f.appliedBlueprint[0] != "bp-new" {
+	if len(f.appliedBlueprint) != 1 || f.appliedBlueprint[0] != "b9" {
 		t.Fatalf("appliedBlueprint = %v", f.appliedBlueprint)
 	}
 
-	// enable redirect (bundled seed, no apply)
-	rec = httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/blueprints/enable?name=agent-notes", nil))
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("enable redirect status = %d", rec.Code)
-	}
-	if loc := rec.Header().Get("Location"); loc != "/blueprints?enabled=1" {
-		t.Errorf("enable location = %q", loc)
-	}
-	if f.createdBlueprint == nil || f.createdBlueprint.Name != "agent-notes" {
-		t.Fatalf("createdBlueprint = %+v, want agent-notes", f.createdBlueprint)
-	}
-	if len(f.appliedBlueprint) != 1 {
-		t.Fatalf("enable must not apply, applied = %v", f.appliedBlueprint)
-	}
-
-	// install-by-id redirect (apply seeded blueprint)
+	// install-by-id redirect
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/blueprints/bp-new/install", nil))
 	if rec.Code != http.StatusSeeOther {
@@ -778,6 +336,19 @@ func TestUIRouteBlueprints(t *testing.T) {
 	}
 	if len(f.appliedBlueprint) != 2 || f.appliedBlueprint[1] != "bp-new" {
 		t.Fatalf("appliedBlueprint = %v", f.appliedBlueprint)
+	}
+
+	// remove redirect
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/blueprints/u1/remove", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("remove redirect status = %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/blueprints?removed=1" {
+		t.Errorf("remove location = %q", loc)
+	}
+	if len(f.deletedBlueprints) != 1 || f.deletedBlueprints[0] != "u1" {
+		t.Fatalf("deletedBlueprints = %v", f.deletedBlueprints)
 	}
 
 	// unapply redirect
@@ -791,42 +362,37 @@ func TestUIRouteBlueprints(t *testing.T) {
 	}
 }
 
-// TestUIRouteInstallPureAgentIgnoresPreExistingDrift installs the pure-agent
-// operator blueprint while unrelated stale objects already exist (the drift
-// scan returns the same stale count before and after). The install cannot have
-// caused that drift, so it must redirect back to /blueprints — never to the
-// migrations page.
-func TestUIRouteInstallPureAgentIgnoresPreExistingDrift(t *testing.T) {
-	f := &fakeMemory{}
-	// Every ValidateSchemas call reports 3 stale objects: pre-existing drift,
-	// unchanged by the operator install.
-	f.validateFn = func(context.Context) (*SchemaValidationResult, error) {
-		return &SchemaValidationResult{TotalObjects: 10, StaleObjects: 3}, nil
-	}
+// TestUIRouteRemoveBlueprintConflict verifies a 409 from DeleteBlueprint maps to
+// the friendly "uninstall first" flash.
+func TestUIRouteRemoveBlueprintConflict(t *testing.T) {
+	f := &fakeMemory{deleteBlueprintErr: &memoryHTTPError{Status: http.StatusConflict, Code: "conflict", Message: "applied"}}
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
-	e.POST("/blueprints/install", s.uiInstallBlueprint)
+	e.POST("/blueprints/:id/remove", s.uiRemoveBlueprint)
 
 	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/blueprints/install?name=operator", nil))
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/blueprints/u1/remove", nil))
 	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("install redirect status = %d", rec.Code)
+		t.Fatalf("status = %d", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/blueprints?installed=1" {
-		t.Errorf("operator install location = %q, want /blueprints?installed=1", loc)
+	loc := rec.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/blueprints?err=") {
+		t.Fatalf("location = %q, want /blueprints?err=…", loc)
 	}
-	if len(f.appliedBlueprint) != 1 || f.appliedBlueprint[0] != "bp-new" {
-		t.Fatalf("appliedBlueprint = %v", f.appliedBlueprint)
+	msg, err := url.QueryUnescape(strings.TrimPrefix(loc, "/blueprints?err="))
+	if err != nil {
+		t.Fatalf("unescape err: %v", err)
+	}
+	if !strings.Contains(msg, "Uninstall the blueprint before removing it") {
+		t.Errorf("409 flash = %q, want the uninstall-first copy", msg)
 	}
 }
 
-// TestUIRouteInstallSchemaRedirectsOnIncreasedDrift installs a schema-bearing
-// blueprint that raises the stale-object count (before low, after high). The
-// install caused the drift, so the redirect must go to the migrations page with
-// the before/after counts in the message.
+// TestUIRouteInstallSchemaRedirectsOnIncreasedDrift installs a blueprint that
+// raises the stale-object count (before low, after high). The install caused
+// the drift, so the redirect must go to the migrations page.
 func TestUIRouteInstallSchemaRedirectsOnIncreasedDrift(t *testing.T) {
 	f := &fakeMemory{}
-	// First scan (before install): 1 stale. Second scan (after): 4 stale.
 	calls := 0
 	f.validateFn = func(context.Context) (*SchemaValidationResult, error) {
 		calls++
@@ -840,7 +406,7 @@ func TestUIRouteInstallSchemaRedirectsOnIncreasedDrift(t *testing.T) {
 	e.POST("/blueprints/install", s.uiInstallBlueprint)
 
 	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/blueprints/install?schemaId=s9", nil))
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/blueprints/install?schemaId=b9", nil))
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("install redirect status = %d", rec.Code)
 	}
@@ -858,14 +424,14 @@ func TestUIRouteInstallSchemaRedirectsOnIncreasedDrift(t *testing.T) {
 	if calls != 2 {
 		t.Errorf("ValidateSchemas calls = %d, want 2 (before + after)", calls)
 	}
-	if len(f.appliedBlueprint) != 1 || f.appliedBlueprint[0] != "bp-new" {
+	if len(f.appliedBlueprint) != 1 || f.appliedBlueprint[0] != "b9" {
 		t.Fatalf("appliedBlueprint = %v", f.appliedBlueprint)
 	}
 }
 
-// TestUIRouteInstallSchemaStaysWhenDriftUnchanged installs a schema-bearing
-// blueprint that leaves the stale count equal. No new drift was introduced, so
-// the redirect goes back to /blueprints.
+// TestUIRouteInstallSchemaStaysWhenDriftUnchanged installs a blueprint that
+// leaves the stale count equal. No new drift was introduced, so the redirect
+// goes back to /blueprints.
 func TestUIRouteInstallSchemaStaysWhenDriftUnchanged(t *testing.T) {
 	f := &fakeMemory{}
 	calls := 0
@@ -878,7 +444,7 @@ func TestUIRouteInstallSchemaStaysWhenDriftUnchanged(t *testing.T) {
 	e.POST("/blueprints/install", s.uiInstallBlueprint)
 
 	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/blueprints/install?schemaId=s9", nil))
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/blueprints/install?schemaId=b9", nil))
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("install redirect status = %d", rec.Code)
 	}
@@ -931,8 +497,7 @@ func TestObjectTypesFromMapsBoardFields(t *testing.T) {
 }
 
 // TestBlueprintDetailBoardWorkStatuses pins the rendered contract for a
-// board-enabled object type row: the work-status region and one data-status
-// hook per allowed status, omitted entirely for a non-board type.
+// board-enabled object type row.
 func TestBlueprintDetailBoardWorkStatuses(t *testing.T) {
 	board := &BlueprintDetail{
 		ObjectTypes: []ObjectTypeDetail{
@@ -958,12 +523,12 @@ func TestBlueprintDetailBoardWorkStatuses(t *testing.T) {
 
 func TestRenderBlueprintDetailPage(t *testing.T) {
 	d := &BlueprintDetail{
-		ID:          "personal-memory",
+		ID:          "bp1",
 		Name:        "personal-memory",
 		Version:     "1.0.0",
 		Description: "Personal knowledge graph",
 		Author:      "diane",
-		Source:      "bundled",
+		Source:      "blueprint",
 		ObjectTypes: []ObjectTypeDetail{
 			{Name: "person", Label: "Person", Description: "a person", Properties: []PropertyDetail{
 				{Name: "first_name", Type: "string", Description: "First name"},
@@ -976,7 +541,7 @@ func TestRenderBlueprintDetailPage(t *testing.T) {
 	}
 	html := renderHTML(t, BlueprintDetailPage(d, nil))
 	for _, want := range []string{
-		"personal-memory", "v1.0.0", "Personal knowledge graph", "diane", "bundled",
+		"personal-memory", "v1.0.0", "Personal knowledge graph", "diane", "blueprint",
 		"person", "Person", "first_name", "string", "boolean", "required",
 		"assigned_to", "task → person",
 		`href="/blueprints"`,
@@ -992,42 +557,17 @@ func TestRenderBlueprintDetailPage(t *testing.T) {
 	}
 }
 
-// TestRenderOperatorBlueprintDetail verifies the operator blueprint's detail
-// page surfaces the full agent config — name, model, tool grant, and system
-// prompt — alongside the (empty) object/relationship sections.
-func TestRenderOperatorBlueprintDetail(t *testing.T) {
-	bp, err := loadBundledFromFS(bundledFS, "blueprints/operator")
-	if err != nil {
-		t.Fatal(err)
-	}
-	d := buildBundledDetail(bp)
-	if len(d.Agents) != 1 {
-		t.Fatalf("agents = %d, want 1", len(d.Agents))
-	}
-	html := renderHTML(t, BlueprintDetailPage(d, nil))
-	for _, want := range []string{
-		"operator", "openai/deepseek-v4-pro", "agentType", "ask_user", "agent-def-*", "skill-*",
-		"Tools", "System prompt", "Propose before write", "Accept", "Reject",
-	} {
-		if !strings.Contains(html, want) {
-			t.Errorf("operator detail missing %q", want)
-		}
-	}
-}
-
 func TestUIRouteBlueprintDetail(t *testing.T) {
-	// bundled pack detail (resolves by directory name)
-	f := &fakeMemory{}
-	dir := t.TempDir()
-	writeBundledPack(t, filepath.Join(dir, "agent-notes"), "schemas",
-		"name: agent-notes\nversion: 1.0.0\nobjectTypeSchemas:\n  - name: Note\n    label: Note\n")
-	s := &Server{cfg: Config{DefaultAgent: "memory", BlueprintsDir: dir}, memory: f}
+	// applied blueprint record detail (resolves by blueprint id)
+	f := &fakeMemory{blueprint: &BlueprintRecord{ID: "bp1", Name: "agent-notes", Version: "1.0.0", Status: "published",
+		Manifest: json.RawMessage(`{"packs":[{"name":"agent-notes","objectTypes":[{"name":"Note","label":"Note"}]}]}`)}}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
 	e.GET("/blueprints/:id", s.uiBlueprint)
 	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/blueprints/agent-notes", nil))
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/blueprints/bp1", nil))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Note") {
-		t.Fatalf("bundled detail: status=%d body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("blueprint detail: status=%d body=%s", rec.Code, rec.Body.String())
 	}
 
 	// registry schema detail (resolves by schema id via GetSchema)
@@ -1054,9 +594,8 @@ func TestUIRouteBlueprintDetail(t *testing.T) {
 	}
 }
 
-// TestModelProviderOf covers the provider-prefix extraction (the substring
-// before the first "/") used to judge whether an agent or blueprint-pinned
-// model is servable by the configured providers.
+// TestModelProviderOf covers the provider-prefix extraction used to judge
+// whether a blueprint-pinned model is servable by the configured providers.
 func TestModelProviderOf(t *testing.T) {
 	cases := []struct {
 		model string
@@ -1065,9 +604,9 @@ func TestModelProviderOf(t *testing.T) {
 		{"openai/deepseek-v4-pro", "openai"},
 		{"deepseek/deepseek-v4-flash", "deepseek"},
 		{"google/gemini-3-pro", "google"},
-		{"gpt-4o", ""},   // bare model, no provider prefix
-		{"", ""},         // empty model
-		{"/leading", ""}, // nothing before the slash
+		{"gpt-4o", ""},
+		{"", ""},
+		{"/leading", ""},
 		{"trailing/", "trailing"},
 	}
 	for _, tc := range cases {
@@ -1078,77 +617,31 @@ func TestModelProviderOf(t *testing.T) {
 }
 
 // TestAgentPinnedModelIssue covers the blueprint-agent-row model availability
-// warning: an error when the project has no configured provider or none
-// matches the pinned model's provider prefix, and no warning for an empty
-// model, a bare model (no prefix), or a model whose provider is configured.
+// warning.
 func TestAgentPinnedModelIssue(t *testing.T) {
-	// zero providers configured → error, zero-provider copy
 	sev, msg := agentPinnedModelIssue("operator", "openai/deepseek-v4-pro", nil)
 	if sev != "error" || !strings.Contains(msg, "This blueprint defines agent operator pinned to openai/deepseek-v4-pro") || !strings.Contains(msg, "no provider is configured in this project") {
 		t.Errorf("zero providers: sev=%q msg=%q", sev, msg)
 	}
 
-	// provider prefix missing from the configured set → error, prefix copy
 	sev, msg = agentPinnedModelIssue("operator", "anthropic/claude-sonnet-4", []string{"openai"})
 	if sev != "error" || !strings.Contains(msg, "needs the anthropic provider") || !strings.Contains(msg, "not configured in this project") {
 		t.Errorf("missing provider: sev=%q msg=%q", sev, msg)
 	}
 
-	// provider prefix configured → satisfied, no warning
 	if sev, msg = agentPinnedModelIssue("operator", "openai/deepseek-v4-pro", []string{"openai"}); sev != "" || msg != "" {
 		t.Errorf("matching provider: sev=%q msg=%q", sev, msg)
 	}
-
-	// bare model (no prefix) with providers configured → satisfied
 	if sev, msg = agentPinnedModelIssue("operator", "deepseek-v4-pro", []string{"openai"}); sev != "" || msg != "" {
 		t.Errorf("bare model: sev=%q msg=%q", sev, msg)
 	}
-
-	// no model → no warning
 	if sev, msg = agentPinnedModelIssue("operator", "", []string{"openai"}); sev != "" || msg != "" {
 		t.Errorf("empty model: sev=%q msg=%q", sev, msg)
 	}
 }
 
-// TestRenderBlueprintPinnedModelWarning asserts the blueprint details page
-// renders an error warning under an agent row whose pinned model's provider
-// isn't configured (zero providers, or a prefix missing from the configured
-// set) and renders none once a matching provider is configured.
-func TestRenderBlueprintPinnedModelWarning(t *testing.T) {
-	bp, err := loadBundledFromFS(bundledFS, "blueprints/operator")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// zero providers → error warning under the agent row
-	html := renderHTML(t, BlueprintDetailPage(buildBundledDetail(bp), nil))
-	for _, want := range []string{
-		"This blueprint defines agent operator pinned to openai/deepseek-v4-pro",
-		"no provider is configured in this project",
-		`href="/settings/providers"`,
-	} {
-		if !strings.Contains(html, want) {
-			t.Errorf("zero-provider blueprint detail missing %q", want)
-		}
-	}
-
-	// provider matching the pinned model's prefix → no warning
-	satisfied := buildBundledDetail(bp)
-	satisfied.ProviderNames = []string{"openai"}
-	htmlOK := renderHTML(t, BlueprintDetailPage(satisfied, nil))
-	if strings.Contains(htmlOK, "This blueprint defines agent") {
-		t.Error("satisfied pinned model must not render the blueprint warning")
-	}
-	// the model badge itself stays visible in both states
-	if !strings.Contains(htmlOK, "openai/deepseek-v4-pro") {
-		t.Error("satisfied detail missing the model badge")
-	}
-}
-
 // TestRenderBlueprintDetailVersionsAndDiff locks the version-history + diff-card
-// markup contract: breadcrumb canonical link, title-adornment version badge,
-// version rows with installed/viewing state, the draft comparison card (selector
-// and added/removed/changed tints), and the derive-version prefill.
+// markup contract.
 func TestRenderBlueprintDetailVersionsAndDiff(t *testing.T) {
 	d := &BlueprintDetail{
 		ID:               "v2",
@@ -1220,20 +713,15 @@ func TestRenderBlueprintDetailVersionsAndDiff(t *testing.T) {
 
 	html := renderHTML(t, BlueprintDetailPage(d, nil))
 	for _, want := range []string{
-		// 1. breadcrumb: canonical name link + active version label
 		`href="/blueprints/v3"`,
 		"v2.0.0",
-		// 2. title-adornment version badge
 		"lucide--tag",
-		// 3. every version row links to its exact version
 		`href="/blueprints/v1"`,
 		`href="/blueprints/v2"`,
 		`href="/blueprints/v3"`,
-		// 4. installed + viewing state on the current row
 		"Installed",
 		"Viewing",
 		`aria-current="true"`,
-		// 5. diff card markers + tints + change chips
 		"Changes",
 		"vs",
 		`name="compare"`,
@@ -1243,7 +731,6 @@ func TestRenderBlueprintDetailVersionsAndDiff(t *testing.T) {
 		"Added",
 		"Removed",
 		"Changed",
-		// diff content
 		"company",
 		"legacy",
 		"person",
@@ -1255,7 +742,6 @@ func TestRenderBlueprintDetailVersionsAndDiff(t *testing.T) {
 		"legacy-skill",
 		"Tools",
 		"Skills",
-		// 6. derive-version prefill
 		`value="2.0.1"`,
 	} {
 		if !strings.Contains(html, want) {
@@ -1263,26 +749,23 @@ func TestRenderBlueprintDetailVersionsAndDiff(t *testing.T) {
 		}
 	}
 
-	// Negative case: a bundled detail (no history, not a draft) must render
-	// neither the diff card nor its comparison selector.
+	// Negative case: a registry-schema detail (no history, not a draft) must
+	// render neither the diff card nor its comparison selector.
 	plain := &BlueprintDetail{
-		ID:      "agent-notes",
+		ID:      "s9",
 		Name:    "agent-notes",
 		Version: "1.0.0",
-		Source:  "bundled",
+		Source:  "registry",
 	}
 	plainHTML := renderHTML(t, BlueprintDetailPage(plain, nil))
 	for _, gone := range []string{"Changes", `name="compare"`, "Viewing"} {
 		if strings.Contains(plainHTML, gone) {
-			t.Errorf("bundled detail must not render %q", gone)
+			t.Errorf("registry detail must not render %q", gone)
 		}
 	}
 }
 
-// propertyTypeIntent is the schema property-type colour scheme: every registry
-// type maps to its own badge tone (integer sharing number's numeric tone), and
-// anything the registry does not declare falls back to neutral so a future type
-// still renders a readable badge.
+// propertyTypeIntent is the schema property-type colour scheme.
 func TestPropertyTypeIntent(t *testing.T) {
 	cases := map[string]ui.BadgeIntent{
 		"string":  ui.BadgeInfo,
@@ -1303,11 +786,7 @@ func TestPropertyTypeIntent(t *testing.T) {
 }
 
 // TestPropertyTypeToneHuesSeparated guards the scannability of the type colour
-// scheme: no two type tones may sit too close in hue in the shipped dark theme.
-// The values are the measured oklch hue angles of the tones propertyTypeIntent
-// returns — the semantic tones resolve through webui/css/app.css, and the three
-// page-local tones are the color-mix expressions defined there. Keeping the
-// table next to the mapping makes a remap that re-aliases tones fail loudly.
+// scheme.
 func TestPropertyTypeToneHuesSeparated(t *testing.T) {
 	hues := []float64{
 		240, // string  — --color-info

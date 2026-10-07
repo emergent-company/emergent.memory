@@ -231,7 +231,6 @@ func main() {
 	api.GET("/blueprints/available", s.listAvailableBlueprints)
 	api.GET("/blueprints/compiled-types", s.getCompiledTypes)
 	api.POST("/blueprints/install", s.installBlueprint)
-	api.POST("/blueprints/enable", s.enableBlueprint)
 	api.POST("/blueprints/:id/install", s.installBlueprintById)
 	api.POST("/blueprints/:id/unapply", s.unapplyBlueprint)
 	// Derive a draft blueprint (or a new version) from the project's current
@@ -413,8 +412,8 @@ func main() {
 	e.POST("/blueprints/install", s.uiInstallBlueprint)
 	e.POST("/blueprints/import", s.uiImportGitHubBlueprint)
 	e.POST("/blueprints/import/confirm", s.uiImportGitHubBlueprintConfirm)
-	e.POST("/blueprints/enable", s.uiEnableBlueprint)
 	e.POST("/blueprints/:id/install", s.uiInstallBlueprintById)
+	e.POST("/blueprints/:id/remove", s.uiRemoveBlueprint)
 	e.POST("/blueprints/:id/unapply", s.uiUnapplyBlueprint)
 	// Repo-imported blueprint update checks: enqueue an on-demand check and
 	// store the project's encrypted GitHub PAT (private-repo checks).

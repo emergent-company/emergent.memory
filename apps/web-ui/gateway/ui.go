@@ -1296,8 +1296,9 @@ func (s *Server) uiDeleteDocument(c echo.Context) error {
 }
 
 // uiBlueprints renders the blueprint gallery: applied blueprints (unapply),
-// the project's private drafts (install), and available packs (enable/install).
-// Available packs are best-effort (a failure still renders the page).
+// the project's private drafts (install), and available blueprints
+// (install/upgrade/remove). Available blueprints are best-effort (a failure
+// still renders the page).
 func (s *Server) uiBlueprints(c echo.Context) error {
 	ctx := c.Request().Context()
 	var flashErr error
@@ -1306,8 +1307,8 @@ func (s *Server) uiBlueprints(c echo.Context) error {
 	if c.QueryParam("installed") != "" {
 		flashMsg = "Blueprint installed."
 	}
-	if c.QueryParam("enabled") != "" {
-		flashMsg = "Blueprint enabled."
+	if c.QueryParam("removed") != "" {
+		flashMsg = "Blueprint removed."
 	}
 	if c.QueryParam("checkQueued") != "" {
 		flashMsg = "Update check queued. Refresh in a moment to see the result."
@@ -1325,16 +1326,14 @@ func (s *Server) uiBlueprints(c echo.Context) error {
 	var (
 		applied    []AppliedBlueprint
 		appliedErr error
-		schemas    []SchemaInfo
-		schemasErr error
+		records    []BlueprintRecord
+		recordsErr error
 		drafts     []BlueprintRecord
-		existing   map[string]bool
 	)
 	var g errgroup.Group
 	g.Go(func() error { applied, appliedErr = s.memory.ListAppliedBlueprints(ctx); return nil })
-	g.Go(func() error { schemas, schemasErr = s.memory.ListAllSchemas(ctx); return nil })
+	g.Go(func() error { records, recordsErr = s.memory.ListBlueprints(ctx); return nil })
 	g.Go(func() error { drafts, _ = s.listPrivateDrafts(ctx); return nil })
-	g.Go(func() error { existing = s.existingAgents(ctx); return nil })
 	_ = g.Wait()
 
 	if appliedErr != nil {
@@ -1366,9 +1365,8 @@ func (s *Server) uiBlueprints(c echo.Context) error {
 	for i := range applied {
 		applied[i].LatestJob = lastJobs[i]
 	}
-	captureError(schemasErr)
-	bundled, _ := s.bundledBlueprints()
-	available := buildAvailableList(schemas, bundled, applied, existing)
+	captureError(recordsErr)
+	available := buildAvailableList(records, applied)
 	var upgrades, avail []AvailableSchemaItem
 	for _, a := range available {
 		if a.Upgrade {

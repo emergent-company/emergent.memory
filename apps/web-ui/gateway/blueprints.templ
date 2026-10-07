@@ -209,9 +209,9 @@ templ installedSection(applied []AppliedBlueprint, upgrades map[string]Available
 }
 
 // appliedRow renders one installed blueprint. When upgrade carries a newer
-// version of this pack (bundled or registry), an "Update available" badge plus
-// an Update action re-applies it through the existing /blueprints/install path;
-// Remove stays available either way.
+// version of this blueprint, an "Update available" badge plus an Update action
+// re-applies it through the existing /blueprints/install path (schemaId = the
+// blueprint id); Remove stays available either way.
 //
 // A GitHub-imported blueprint (SourceURL set) additionally shows its upstream
 // repo and ref, the latest update-check outcome when one exists, a "Check for
@@ -319,11 +319,7 @@ templ appliedRow(b AppliedBlueprint, upgrade AvailableSchemaItem) {
 		if upgrade.Version != "" {
 			@ui.Badge(ui.BadgeProps{Label: "Update available", Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS, Icon: "lucide--arrow-up-circle"})
 			<form method="post" action="/blueprints/install">
-				if upgrade.Source == "bundled" {
-					<input type="hidden" name="name" value={ upgrade.Name }/>
-				} else {
-					<input type="hidden" name="schemaId" value={ upgrade.ID }/>
-				}
+				<input type="hidden" name="schemaId" value={ upgrade.ID }/>
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeSubmit,
 					Variant: ui.ButtonPrimary,
@@ -419,7 +415,7 @@ templ availableSection(available []AvailableSchemaItem) {
 	@cardList("Available", cardListProps{
 		Margin:    "mb-8",
 		Empty:     len(available) == 0,
-		EmptyIcon: "lucide--package-plus", EmptyTitle: "No blueprints available", EmptyDesc: "Nothing new to install — the bundled packs and registry are all in use.",
+		EmptyIcon: "lucide--package-plus", EmptyTitle: "No blueprints available", EmptyDesc: "Nothing new to install — every available blueprint is already in use.",
 	}) {
 		for _, b := range available {
 			@availableRow(b)
@@ -427,28 +423,28 @@ templ availableSection(available []AvailableSchemaItem) {
 	}
 }
 
-// availableRow renders one available pack row with the right install action: a
-// bundled pack installs by name (seed+apply in one step, so an upgrade targets
-// the new bundled version, not a stale seeded one), and a registry pack keeps
-// the legacy schemaId install flow.
+// availableRow renders one available blueprint row: a Built-in badge for
+// built-ins, an Install (or Upgrade) action that applies the blueprint by id
+// via /blueprints/install, and — for non-built-in blueprints — a Remove action
+// that deletes it from the registry after a confirm dialog.
 templ availableRow(b AvailableSchemaItem) {
-	<div class="flex flex-wrap items-center gap-3 px-4 py-3">
+	<div class="flex flex-wrap items-center gap-3 px-4 py-3" data-testid={ "available-blueprint-" + b.Name }>
 		@ui.IconSpan("lucide--package", "size-4 shrink-0 text-muted-faint")
 		<div class="min-w-0 grow">
 			<a class="truncate text-sm font-medium hover:text-primary" href={ templ.URL("/blueprints/" + url.PathEscape(b.ID)) }>{ b.Name }</a>
 			<p class="text-muted text-xs">v{ b.Version } · { b.Source }</p>
 		</div>
+		if b.Source == "builtin" {
+			@ui.Badge(ui.BadgeProps{Label: "Built-in", Variant: ui.BadgeNeutral, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Attrs: templ.Attributes{"data-testid": "blueprint-builtin-" + b.Name}})
+		}
 		<form method="post" action="/blueprints/install">
-			if b.Source == "bundled" {
-				<input type="hidden" name="name" value={ b.Name }/>
-			} else {
-				<input type="hidden" name="schemaId" value={ b.ID }/>
-			}
+			<input type="hidden" name="schemaId" value={ b.ID }/>
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeSubmit,
 				Variant: ui.ButtonPrimary,
 				Size:    ui.ButtonSM,
 				Icon:    "lucide--plus",
+				Attrs:   templ.Attributes{"data-testid": "blueprint-install-" + b.Name},
 			}) {
 				if b.Upgrade {
 					Upgrade
@@ -457,7 +453,59 @@ templ availableRow(b AvailableSchemaItem) {
 				}
 			}
 		</form>
+		if b.Source != "builtin" {
+			@ui.Button(ui.ButtonProps{
+				Type:       ui.ButtonTypeButton,
+				Variant:    ui.ButtonGhost,
+				Size:       ui.ButtonSM,
+				Shape:      ui.ButtonShapeSquare,
+				Icon:       "lucide--trash-2",
+				ExtraClass: "text-error hover:text-error",
+				AriaLabel:  "Remove " + b.Name,
+				Attrs:      templ.Attributes{"data-testid": "blueprint-remove-" + b.ID},
+				OnClick:    templ.JSFuncCall("openDialogByID", "blueprint-remove-"+b.ID),
+			})
+		}
 	</div>
+	if b.Source != "builtin" {
+		@blueprintRemoveDialog(b)
+	}
+}
+
+// blueprintRemoveDescription is the remove-confirm detail paragraph for a
+// blueprint (the name span is filled server-side).
+templ blueprintRemoveDescription(b AvailableSchemaItem) {
+	<p class="text-muted mt-1 text-sm">
+		This removes the <span class="font-medium text-base-content">{ b.Name }</span> blueprint from the registry. Projects that already installed it are unaffected.
+	</p>
+}
+
+// blueprintRemoveDialog confirms removal before the POST to
+// /blueprints/:id/remove. It renders only for non-built-in blueprints.
+templ blueprintRemoveDialog(b AvailableSchemaItem) {
+	@ui.ConfirmDialog(ui.ConfirmDialogProps{ID: "blueprint-remove-" + b.ID, Noun: "blueprint", Title: "Remove " + b.Name + "?"}, blueprintRemoveDescription(b)) {
+		<form method="post" action={ templ.URL("/blueprints/" + url.PathEscape(b.ID) + "/remove") }>
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"formmethod": "dialog"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonError,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--trash-2",
+					Attrs:   templ.Attributes{"data-testid": "blueprint-remove-confirm-" + b.ID},
+				}) {
+					Remove blueprint
+				}
+			}
+		</form>
+	}
 }
 
 // --- Blueprint details ---
@@ -509,7 +557,7 @@ templ blueprintDetailHeader(d *BlueprintDetail) {
 // links to that exact version; the row being viewed is highlighted and carries
 // a "Viewing" chip. A Release badge (Draft/Published) and, when applicable, an
 // "Installed" marker make the lifecycle state scannable at a glance. Hidden for
-// bundled packs and registry schemas (no version history).
+// registry schemas (no version history).
 templ blueprintVersions(d *BlueprintDetail) {
 	if len(d.Versions) > 0 {
 		@cardList("Versions", cardListProps{Margin: "mb-6"}) {

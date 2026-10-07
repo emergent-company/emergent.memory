@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -421,7 +422,7 @@ func (s *Service) applyBlueprintUpdate(ctx context.Context, projectID, blueprint
 	}
 	defer cleanup()
 
-	desc, err := loadBlueprintDir(root, repo)
+	desc, err := loadBlueprintDir(os.DirFS(root), ".", repo)
 	if err != nil {
 		return nil, err
 	}
@@ -548,7 +549,7 @@ func (s *Service) checkBlueprint(ctx context.Context, projectID, blueprintName s
 	}
 	defer cleanup()
 
-	desc, err := loadBlueprintDir(root, repo)
+	desc, err := loadBlueprintDir(os.DirFS(root), ".", repo)
 	if err != nil {
 		check.LastCheckError = err.Error()
 		_ = s.repo.MarkUpdateCheckError(ctx, check)

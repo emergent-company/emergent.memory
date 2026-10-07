@@ -11,11 +11,13 @@ var Module = fx.Module("blueprints",
 	fx.Provide(NewRepository),
 	fx.Provide(NewService),
 	fx.Provide(NewHandler),
+	fx.Provide(NewBuiltinSeeder),
 	fx.Provide(provideMCPBlueprintToolHandler),
 	fx.Invoke(RegisterRoutes),
 	// Register the always-on update-check scheduler tasks (constructed after the
 	// scheduler, before its lifecycle starts it).
 	fx.Invoke(NewUpdateCheckScheduler),
+	fx.Invoke(RegisterBuiltinSeederLifecycle),
 )
 
 // provideMCPBlueprintToolHandler exposes the blueprint tool handler as

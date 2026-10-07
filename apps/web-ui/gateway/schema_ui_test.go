@@ -43,14 +43,14 @@ func TestRenderSchemaPageEmptyStateHasAddSchema(t *testing.T) {
 
 func TestRenderSchemaAddPageStates(t *testing.T) {
 	available := renderHTML(t, SchemaAddPage(&SchemaAddView{Available: []AvailableSchemaItem{
-		{ID: "s1", Name: "agent-notes", Version: "1.0.0", Description: "notes", Source: "registry"},
-		{ID: "personal-memory", Name: "personal-memory", Version: "1.0.0", Source: "bundled"},
+		{ID: "b1", Name: "agent-notes", Version: "1.0.0", Description: "notes", Source: "builtin"},
+		{ID: "u1", Name: "personal-memory", Version: "1.0.0", Source: "registry"},
 	}}))
 	for _, want := range []string{
 		"agent-notes", "personal-memory",
 		`action="/schema/add"`,
-		`name="schemaId" value="s1"`,
-		`name="name" value="personal-memory"`,
+		`name="schemaId" value="b1"`,
+		`name="schemaId" value="u1"`,
 		"Install",
 	} {
 		if !strings.Contains(available, want) {
@@ -424,7 +424,7 @@ func TestRenderBlueprintDetailDeriveVersion(t *testing.T) {
 		}
 	}
 
-	plain := &BlueprintDetail{ID: "agent-notes", Name: "agent-notes", Version: "1.0.0", Source: "bundled"}
+	plain := &BlueprintDetail{ID: "agent-notes", Name: "agent-notes", Version: "1.0.0", Source: "blueprint"}
 	plainHTML := renderHTML(t, BlueprintDetailPage(plain, nil))
 	if strings.Contains(plainHTML, "Save as new version") || strings.Contains(plainHTML, "derive-version-modal") {
 		t.Error("non-record blueprint must not offer version derivation")

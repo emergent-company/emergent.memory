@@ -1535,6 +1535,42 @@ func (r *Repository) GetPackByNameVersion(ctx context.Context, name, version str
 	return &pack, nil
 }
 
+// GetBuiltinPackByNameVersion returns the global builtin schema (source='builtin')
+// by (name, version). Backed by the graph_schemas_builtin_name_version_key
+// partial unique index. Used by blueprint apply for origin='builtin' packs.
+func (r *Repository) GetBuiltinPackByNameVersion(ctx context.Context, name, version string) (*GraphMemorySchema, error) {
+	var pack GraphMemorySchema
+	err := r.db.NewSelect().
+		Model(&pack).
+		Where("name = ?", name).
+		Where("version = ?", version).
+		Where("source = 'builtin'").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		return nil, apperror.NewNotFound("schema", name)
+	}
+	return &pack, nil
+}
+
+// GetProjectPackByNameVersion returns a project-scoped schema (project_id =
+// projectID) by (name, version). Used by blueprint apply for origin='user'/'import'
+// packs, which must never reuse another project's pack.
+func (r *Repository) GetProjectPackByNameVersion(ctx context.Context, projectID, name, version string) (*GraphMemorySchema, error) {
+	var pack GraphMemorySchema
+	err := r.db.NewSelect().
+		Model(&pack).
+		Where("project_id = ?", projectID).
+		Where("name = ?", name).
+		Where("version = ?", version).
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		return nil, apperror.NewNotFound("schema", name)
+	}
+	return &pack, nil
+}
+
 // SupersedeAssignments soft-deletes every other active assignment of the same
 // pack name in the project, leaving only currentSchemaID active. Called when a
 // newer version of a pack is installed (or a no-migration version bump) so the

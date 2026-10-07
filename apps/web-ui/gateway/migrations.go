@@ -232,8 +232,7 @@ func suggestResyncPack(groups []stalePackGroup, packs []activePackOption) active
 
 // staleTypePackIndex maps a stale object's Type to its owning compiled pack.
 // Memory's /validate results do not name the pack, but /compiled-types carries
-// schemaName per type; fall back to the bundled (compiled-in) pack definitions
-// when memory returns nothing usable.
+// schemaName per type.
 func (s *Server) staleTypePackIndex(ctx context.Context) map[string]string {
 	idx := map[string]string{}
 	if compiled, err := s.memory.GetCompiledTypes(ctx); err == nil && compiled != nil {
@@ -243,40 +242,7 @@ func (s *Server) staleTypePackIndex(ctx context.Context) map[string]string {
 			}
 		}
 	}
-	if len(idx) > 0 {
-		return idx
-	}
-	for _, bp := range s.bundledPackDefinitions() {
-		for _, t := range bp.ObjectTypeSchemas {
-			name := strAny(t["name"])
-			if name == "" {
-				continue
-			}
-			if _, ok := idx[name]; !ok {
-				idx[name] = bp.Name
-			}
-		}
-	}
 	return idx
-}
-
-// bundledPackDefinitions loads every bundled pack definition (embedded or the
-// BLUEPRINTS_DIR override) so stale types can be mapped to their pack when
-// memory's compiled-types view is unavailable.
-func (s *Server) bundledPackDefinitions() []*BundledBlueprint {
-	items, err := s.bundledBlueprints()
-	if err != nil {
-		return nil
-	}
-	out := make([]*BundledBlueprint, 0, len(items))
-	for _, it := range items {
-		bp, err := s.loadBundled(it.ID)
-		if err != nil {
-			continue
-		}
-		out = append(out, bp)
-	}
-	return out
 }
 
 // uiMigrations renders the schema-migrations page: install history, schema

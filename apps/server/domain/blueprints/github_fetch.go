@@ -8,11 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -171,6 +173,76 @@ func (s *Service) ImportFromGitHub(ctx context.Context, projectID string, req *I
 		scope = &projectID
 	}
 
+	bp, created, err := s.createOrAdopt(ctx, scope, desc, manifest, sourceManifest, sourceKind, sourceURL, sourceRef)
+	if err != nil {
+		return nil, err
+	}
+
+	// Capture whether this import adopted a pre-existing DRAFT. The adoption
+	// refresh below mutates the draft and then publishes it; if the subsequent
+	// apply fails we must restore the draft status, otherwise a failed import
+	// would silently leave a previously-draft blueprint published (the
+	// pre-#1634 409 path never mutated the row).
+	adoptedDraft := !created && bp.Status == StatusDraft
+
+	if bp.Status == StatusDraft {
+		published, perr := s.PublishBlueprint(ctx, projectID, bp.ID)
+		if perr != nil {
+			return nil, perr
+		}
+		bp = published
+	}
+
+	if !req.Apply {
+		return bp, nil
+	}
+
+	// Atomic apply: on any apply failure, hard-delete the just-created row so a
+	// retry re-imports instead of colliding on the published (name, version).
+	// A partially-applied blueprint may already own pack claims, and
+	// kb.blueprint_pack_claims.blueprint_id is a non-cascading FK to
+	// kb.blueprints(id): clear the claims first, otherwise the delete fails and
+	// the retry still hits a 409. The row delete error is surfaced (logged and
+	// returned alongside the apply error) rather than swallowed, so a failed
+	// rollback is visible instead of masquerading as a clean failure.
+	// An ADOPTED row (pre-existing) is left in place on failure — a retry
+	// re-adopts and re-applies. If it was a draft that this import published,
+	// revert the published transition so the failed import is a no-op on status.
+	if _, applyErr := s.Apply(ctx, bp.ID, projectID, callerUserID(ctx), ApplyOptions{}); applyErr != nil {
+		if !created {
+			if adoptedDraft {
+				if rerr := s.repo.UpdateStatus(ctx, bp.ID, StatusDraft, bp.Checksum); rerr != nil {
+					s.log.Error("atomic import: failed to revert adopted draft after apply failure",
+						logger.Error(rerr), slog.String("blueprint_id", bp.ID))
+					return nil, errors.Join(applyErr, rerr)
+				}
+			}
+			return nil, applyErr
+		}
+		if claimErr := s.repo.DeletePackClaimsForBlueprint(ctx, bp.ID); claimErr != nil {
+			s.log.Error("atomic import rollback: failed to clear blueprint pack claims",
+				logger.Error(claimErr), slog.String("blueprint_id", bp.ID))
+			return nil, errors.Join(applyErr, claimErr)
+		}
+		if delErr := s.repo.Delete(ctx, bp.ID); delErr != nil {
+			s.log.Error("atomic import rollback: failed to delete blueprint row",
+				logger.Error(delErr), slog.String("blueprint_id", bp.ID))
+			return nil, errors.Join(applyErr, delErr)
+		}
+		return nil, applyErr
+	}
+	return bp, nil
+}
+
+// createOrAdopt creates a blueprint for a GitHub import, or — when a (name,
+// version) already exists in the same scope — adopts the existing row instead of
+// returning a 409 (the permanent conflict behind repeated imports of the same
+// repository). A pre-existing draft is refreshed in place; a pre-existing
+// published row is reused unchanged. The bool reports whether a new row was
+// created (true) or an existing row adopted (false). sourceManifest is the raw
+// upstream manifest (pre model-override), used to baseline the update check.
+// The token is never involved here and is never logged.
+func (s *Service) createOrAdopt(ctx context.Context, scope *string, desc *blueprintDescriptor, manifest, sourceManifest json.RawMessage, sourceKind, sourceURL, sourceRef string) (*Blueprint, bool, error) {
 	bp, err := s.CreateBlueprint(ctx, &CreateBlueprintRequest{
 		Name:        desc.Name,
 		Version:     desc.Version,
@@ -184,42 +256,39 @@ func (s *Service) ImportFromGitHub(ctx context.Context, projectID string, req *I
 		// Baseline the update check against the raw upstream content, not the
 		// override-applied stored manifest.
 		SourceManifestChecksum: canonicalManifestHash(sourceManifest),
+		Origin:                 OriginImport,
 	})
-	if err != nil {
-		return nil, err
+	if err == nil {
+		return bp, true, nil
+	}
+	if !isConflict(err) {
+		return nil, false, err
 	}
 
-	published, err := s.PublishBlueprint(ctx, projectID, bp.ID)
-	if err != nil {
-		return nil, err
+	var scopeStr string
+	if scope != nil {
+		scopeStr = *scope
+	}
+	existing, lookupErr := s.repo.GetByNameVersion(ctx, scopeStr, desc.Name, desc.Version)
+	if lookupErr != nil {
+		// The existing row could not be resolved; surface the original conflict.
+		return nil, false, err
 	}
 
-	if !req.Apply {
-		return published, nil
-	}
-
-	// Atomic apply: on any apply failure, hard-delete the just-created row so a
-	// retry re-imports instead of colliding on the published (name, version).
-	// A partially-applied blueprint may already own pack claims, and
-	// kb.blueprint_pack_claims.blueprint_id is a non-cascading FK to
-	// kb.blueprints(id): clear the claims first, otherwise the delete fails and
-	// the retry still hits a 409. The row delete error is surfaced (logged and
-	// returned alongside the apply error) rather than swallowed, so a failed
-	// rollback is visible instead of masquerading as a clean failure.
-	if _, applyErr := s.Apply(ctx, bp.ID, projectID, callerUserID(ctx), ApplyOptions{}); applyErr != nil {
-		if claimErr := s.repo.DeletePackClaimsForBlueprint(ctx, bp.ID); claimErr != nil {
-			s.log.Error("atomic import rollback: failed to clear blueprint pack claims",
-				logger.Error(claimErr), slog.String("blueprint_id", bp.ID))
-			return nil, errors.Join(applyErr, claimErr)
+	if existing.Status == StatusDraft {
+		existing.Description = desc.Description
+		existing.Author = desc.Author
+		existing.Manifest = manifest
+		existing.Checksum = manifestChecksum(manifest)
+		existing.SourceKind = sourceKind
+		existing.SourceURL = sourceURL
+		existing.SourceRef = sourceRef
+		existing.SourceManifestChecksum = canonicalManifestHash(sourceManifest)
+		if uerr := s.repo.Update(ctx, existing); uerr != nil {
+			return nil, false, uerr
 		}
-		if delErr := s.repo.Delete(ctx, bp.ID); delErr != nil {
-			s.log.Error("atomic import rollback: failed to delete blueprint row",
-				logger.Error(delErr), slog.String("blueprint_id", bp.ID))
-			return nil, errors.Join(applyErr, delErr)
-		}
-		return nil, applyErr
 	}
-	return published, nil
+	return existing, false, nil
 }
 
 // PreviewFromGitHub performs the SAME fetch + parse + model-override pipeline as
@@ -267,7 +336,7 @@ func (s *Service) fetchAndLoadManifest(ctx context.Context, req *ImportGitHubReq
 	}
 	defer cleanup()
 
-	desc, err := loadBlueprintDir(root, repo)
+	desc, err := loadBlueprintDir(os.DirFS(root), ".", repo)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -615,23 +684,22 @@ type blueprintDescriptor struct {
 	BlueprintManifest
 }
 
-// loadBlueprintDir loads a validated blueprint descriptor from an extracted
-// repository root. A repo-root manifest file wins; otherwise the
-// `memory blueprints` directory layout is loaded. fallbackName is used as the
-// blueprint name when the contents carry none (e.g. a seed-only blueprint) and
-// is the repo name.
-func loadBlueprintDir(root, fallbackName string) (*blueprintDescriptor, error) {
+// loadBlueprintDir loads a validated blueprint descriptor from a blueprint
+// directory within fsys. A repo-root manifest file wins; otherwise the
+// optional project.yaml metadata (name/version/description/author) is read and
+// the `memory blueprints` directory layout is loaded. fallbackName is used as
+// the blueprint name when the contents carry none (e.g. a seed-only blueprint).
+func loadBlueprintDir(fsys fs.FS, dir, fallbackName string) (*blueprintDescriptor, error) {
 	for _, name := range manifestFileNames {
-		path := filepath.Join(root, name)
-		data, err := os.ReadFile(path)
+		data, err := fs.ReadFile(fsys, path.Join(dir, name))
 		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
+			if errors.Is(err, fs.ErrNotExist) {
 				continue
 			}
 			return nil, apperror.NewBadRequest("failed to read blueprint manifest")
 		}
 		var desc blueprintDescriptor
-		if err := decodeManifestFile(path, data, &desc); err != nil {
+		if err := decodeManifestFile(name, data, &desc); err != nil {
 			return nil, apperror.NewBadRequest("invalid blueprint manifest: " + err.Error())
 		}
 		if err := finalizeDescriptor(&desc, fallbackName); err != nil {
@@ -639,38 +707,51 @@ func loadBlueprintDir(root, fallbackName string) (*blueprintDescriptor, error) {
 		}
 		return &desc, nil
 	}
-	return loadBlueprintLayout(root, fallbackName)
+	return loadBlueprintLayout(fsys, dir, fallbackName)
 }
 
 // loadBlueprintLayout loads the `memory blueprints` directory layout:
 // schemas/ (or packs/) packs, agents/, skills/<name>/SKILL.md, and
-// seed/{objects,relationships}/*.jsonl.
-func loadBlueprintLayout(root, fallbackName string) (*blueprintDescriptor, error) {
+// seed/{objects,relationships}/*.jsonl. An optional project.yaml supplies
+// record metadata (name/version/description/author) for packs that carry no
+// schema file (pure-agent blueprints).
+func loadBlueprintLayout(fsys fs.FS, dir, fallbackName string) (*blueprintDescriptor, error) {
 	desc := &blueprintDescriptor{}
 
-	packs, err := loadPackDir(resolveSchemasDir(root))
+	// Optional project.yaml metadata: name/version/description/author only.
+	if b, err := fs.ReadFile(fsys, path.Join(dir, "project.yaml")); err == nil {
+		var pf blueprintProjectFile
+		if yaml.Unmarshal(b, &pf) == nil {
+			desc.Name = pf.Name
+			desc.Version = pf.Version
+			desc.Description = pf.Description
+			desc.Author = pf.Author
+		}
+	}
+
+	packs, err := loadPackDir(fsys, resolveSchemasDir(fsys, dir))
 	if err != nil {
 		return nil, err
 	}
 	desc.Packs = packs
 
-	agents, err := loadAgentDir(filepath.Join(root, "agents"))
+	agents, err := loadAgentDir(fsys, path.Join(dir, "agents"))
 	if err != nil {
 		return nil, err
 	}
 	desc.Agents = agents
 
-	skills, err := loadSkillDir(filepath.Join(root, "skills"))
+	skills, err := loadSkillDir(fsys, path.Join(dir, "skills"))
 	if err != nil {
 		return nil, err
 	}
 	desc.Skills = skills
 
-	objects, err := loadSeedObjects(filepath.Join(root, "seed", "objects"))
+	objects, err := loadSeedObjects(fsys, path.Join(dir, "seed", "objects"))
 	if err != nil {
 		return nil, err
 	}
-	rels, err := loadSeedRelationships(filepath.Join(root, "seed", "relationships"))
+	rels, err := loadSeedRelationships(fsys, path.Join(dir, "seed", "relationships"))
 	if err != nil {
 		return nil, err
 	}
@@ -682,6 +763,16 @@ func loadBlueprintLayout(root, fallbackName string) (*blueprintDescriptor, error
 		return nil, err
 	}
 	return desc, nil
+}
+
+// blueprintProjectFile is the optional metadata block of a blueprint directory
+// (project.yaml). It supplies name/version/description/author for packs that
+// carry no schema file (pure-agent blueprints).
+type blueprintProjectFile struct {
+	Name        string `yaml:"name"`
+	Version     string `yaml:"version"`
+	Description string `yaml:"description"`
+	Author      string `yaml:"author"`
 }
 
 // finalizeDescriptor derives missing record metadata and validates the manifest.
@@ -725,42 +816,42 @@ func finalizeDescriptor(desc *blueprintDescriptor, fallbackName string) error {
 }
 
 // resolveSchemasDir prefers schemas/ and falls back to packs/.
-func resolveSchemasDir(dir string) string {
-	schemasDir := filepath.Join(dir, "schemas")
-	if info, err := os.Stat(schemasDir); err == nil && info.IsDir() {
+func resolveSchemasDir(fsys fs.FS, dir string) string {
+	schemasDir := path.Join(dir, "schemas")
+	if info, err := fs.Stat(fsys, schemasDir); err == nil && info.IsDir() {
 		return schemasDir
 	}
-	return filepath.Join(dir, "packs")
+	return path.Join(dir, "packs")
 }
 
 // loadPackDir parses every *.json|*.yaml|*.yml pack file in dir.
-func loadPackDir(dir string) ([]PackManifest, error) {
-	paths, err := listDataFiles(dir)
+func loadPackDir(fsys fs.FS, dir string) ([]PackManifest, error) {
+	paths, err := listDataFiles(fsys, dir)
 	if err != nil {
 		return nil, err
 	}
 	var packs []PackManifest
-	for _, path := range paths {
-		var p PackManifest
-		if err := decodeDataFile(path, &p); err != nil {
-			return nil, apperror.NewBadRequest("invalid pack " + filepath.Base(path) + ": " + err.Error())
+	for _, p := range paths {
+		var pack PackManifest
+		if err := decodeDataFile(fsys, p, &pack); err != nil {
+			return nil, apperror.NewBadRequest("invalid pack " + path.Base(p) + ": " + err.Error())
 		}
-		packs = append(packs, p)
+		packs = append(packs, pack)
 	}
 	return packs, nil
 }
 
 // loadAgentDir parses every *.json|*.yaml|*.yml agent file in dir.
-func loadAgentDir(dir string) ([]AgentManifest, error) {
-	paths, err := listDataFiles(dir)
+func loadAgentDir(fsys fs.FS, dir string) ([]AgentManifest, error) {
+	paths, err := listDataFiles(fsys, dir)
 	if err != nil {
 		return nil, err
 	}
 	var agents []AgentManifest
-	for _, path := range paths {
+	for _, p := range paths {
 		var a AgentManifest
-		if err := decodeDataFile(path, &a); err != nil {
-			return nil, apperror.NewBadRequest("invalid agent " + filepath.Base(path) + ": " + err.Error())
+		if err := decodeDataFile(fsys, p, &a); err != nil {
+			return nil, apperror.NewBadRequest("invalid agent " + path.Base(p) + ": " + err.Error())
 		}
 		agents = append(agents, a)
 	}
@@ -768,10 +859,10 @@ func loadAgentDir(dir string) ([]AgentManifest, error) {
 }
 
 // loadSkillDir parses each <name>/SKILL.md subdirectory under dir.
-func loadSkillDir(dir string) ([]SkillManifest, error) {
-	entries, err := os.ReadDir(dir)
+func loadSkillDir(fsys fs.FS, dir string) ([]SkillManifest, error) {
+	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
 		}
 		return nil, apperror.NewBadRequest("failed to read skills directory")
@@ -781,10 +872,10 @@ func loadSkillDir(dir string) ([]SkillManifest, error) {
 		if !e.IsDir() {
 			continue
 		}
-		path := filepath.Join(dir, e.Name(), "SKILL.md")
-		data, err := os.ReadFile(path)
+		skillPath := path.Join(dir, e.Name(), "SKILL.md")
+		data, err := fs.ReadFile(fsys, skillPath)
 		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
+			if errors.Is(err, fs.ErrNotExist) {
 				continue
 			}
 			return nil, apperror.NewBadRequest("failed to read skill " + e.Name())
@@ -799,9 +890,9 @@ func loadSkillDir(dir string) ([]SkillManifest, error) {
 }
 
 // loadSeedObjects parses every *.jsonl file in dir into SeedObjectRecord values.
-func loadSeedObjects(dir string) ([]SeedObjectRecord, error) {
+func loadSeedObjects(fsys fs.FS, dir string) ([]SeedObjectRecord, error) {
 	var out []SeedObjectRecord
-	err := eachJSONLine(dir, func(line []byte) error {
+	err := eachJSONLine(fsys, dir, func(line []byte) error {
 		var rec SeedObjectRecord
 		if err := json.Unmarshal(line, &rec); err != nil {
 			return err
@@ -817,9 +908,9 @@ func loadSeedObjects(dir string) ([]SeedObjectRecord, error) {
 
 // loadSeedRelationships parses every *.jsonl file in dir into
 // SeedRelationshipRecord values.
-func loadSeedRelationships(dir string) ([]SeedRelationshipRecord, error) {
+func loadSeedRelationships(fsys fs.FS, dir string) ([]SeedRelationshipRecord, error) {
 	var out []SeedRelationshipRecord
-	err := eachJSONLine(dir, func(line []byte) error {
+	err := eachJSONLine(fsys, dir, func(line []byte) error {
 		var rec SeedRelationshipRecord
 		if err := json.Unmarshal(line, &rec); err != nil {
 			return err
@@ -839,10 +930,10 @@ func loadSeedRelationships(dir string) ([]SeedRelationshipRecord, error) {
 
 // listDataFiles returns the sorted *.json|*.yaml|*.yml files directly under
 // dir. A missing directory is not an error.
-func listDataFiles(dir string) ([]string, error) {
-	entries, err := os.ReadDir(dir)
+func listDataFiles(fsys fs.FS, dir string) ([]string, error) {
+	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
 		}
 		return nil, apperror.NewBadRequest("failed to read blueprint directory")
@@ -852,9 +943,9 @@ func listDataFiles(dir string) ([]string, error) {
 		if e.IsDir() {
 			continue
 		}
-		switch strings.ToLower(filepath.Ext(e.Name())) {
+		switch strings.ToLower(path.Ext(e.Name())) {
 		case ".json", ".yaml", ".yml":
-			paths = append(paths, filepath.Join(dir, e.Name()))
+			paths = append(paths, path.Join(dir, e.Name()))
 		}
 	}
 	return paths, nil
@@ -862,16 +953,16 @@ func listDataFiles(dir string) ([]string, error) {
 
 // decodeDataFile decodes a JSON or YAML file into v. YAML is round-tripped
 // through JSON so the camelCase manifest field names decode uniformly.
-func decodeDataFile(path string, v any) error {
-	data, err := os.ReadFile(path)
+func decodeDataFile(fsys fs.FS, p string, v any) error {
+	data, err := fs.ReadFile(fsys, p)
 	if err != nil {
 		return err
 	}
-	return decodeManifestFile(path, data, v)
+	return decodeManifestFile(p, data, v)
 }
 
-func decodeManifestFile(path string, data []byte, v any) error {
-	if strings.EqualFold(filepath.Ext(path), ".json") {
+func decodeManifestFile(p string, data []byte, v any) error {
+	if strings.EqualFold(path.Ext(p), ".json") {
 		return json.Unmarshal(data, v)
 	}
 	var raw any
@@ -916,19 +1007,19 @@ func parseSkillMarkdown(data []byte) (*SkillManifest, error) {
 
 // eachJSONLine reads every *.jsonl file in dir and invokes fn for each
 // non-empty line. A missing directory is not an error.
-func eachJSONLine(dir string, fn func([]byte) error) error {
-	entries, err := os.ReadDir(dir)
+func eachJSONLine(fsys fs.FS, dir string, fn func([]byte) error) error {
+	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
 		return apperror.NewBadRequest("failed to read seed directory")
 	}
 	for _, e := range entries {
-		if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".jsonl") {
+		if e.IsDir() || !strings.EqualFold(path.Ext(e.Name()), ".jsonl") {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		data, err := fs.ReadFile(fsys, path.Join(dir, e.Name()))
 		if err != nil {
 			return apperror.NewBadRequest("failed to read seed file " + e.Name())
 		}

@@ -2,11 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
-	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 )
@@ -26,6 +22,7 @@ type BlueprintRecord struct {
 	Manifest    json.RawMessage `json:"manifest"`
 	Checksum    string          `json:"checksum"`
 	ProjectID   *string         `json:"projectId,omitempty"`
+	Origin      string          `json:"origin"`
 	CreatedAt   string          `json:"created_at"`
 	UpdatedAt   string          `json:"updated_at"`
 }
@@ -366,119 +363,9 @@ func (m *MemoryClient) SetGithubCredential(ctx context.Context, token string) er
 	return m.doH(ctx, http.MethodPut, "/api/blueprints/github-credentials", req, m.documentHeaders(ctx), nil)
 }
 
-// --- install primitive ---
-
-// ensureBlueprintApplied builds a manifest from a bundled pack and installs it
-// through the blueprint API.
-func (s *Server) ensureBlueprintApplied(ctx context.Context, bp *BundledBlueprint) (*BlueprintApplyResult, error) {
-	manifest, err := buildBlueprintManifest(bp)
-	if err != nil {
-		return nil, err
-	}
-	return s.ensureManifestApplied(ctx, bp.Name, bp.Version, bp.Description, bp.Author, manifest)
-}
-
-// ensureManifestApplied is the idempotent install primitive: it resolves or
-// creates the blueprint definition at name/version, publishes it if still
-// draft, then applies it to the project. Re-applying an already-applied version
-// is safe (memory's apply is create-or-update by name/key), so this converges
-// on retry after a mid-sequence failure.
-func (s *Server) ensureManifestApplied(ctx context.Context, name, version, description, author string, manifest json.RawMessage) (*BlueprintApplyResult, error) {
-	id, err := s.resolveOrCreateBlueprint(ctx, name, version, description, author, manifest)
-	if err != nil {
-		return nil, err
-	}
-
-	rec, err := s.memory.GetBlueprint(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if rec.Status == "draft" {
-		if err := s.memory.PublishBlueprint(ctx, id); err != nil {
-			return nil, err
-		}
-	}
-
-	return s.memory.ApplyBlueprint(ctx, id)
-}
-
-// resolveOrCreateBlueprint returns the blueprint id for name/version, creating
-// it (draft) if it does not already exist. A 409 conflict from a concurrent
-// create is resolved by re-listing and adopting the winner, so the create is
-// never assumed fresh.
-func (s *Server) resolveOrCreateBlueprint(ctx context.Context, name, version, description, author string, manifest json.RawMessage) (string, error) {
-	versions, err := s.memory.ListBlueprintVersions(ctx, name)
-	if err != nil {
-		return "", err
-	}
-	for _, v := range versions {
-		if v.Version == version {
-			// Detect manifest drift: the bundled yaml changed without a version
-			// bump, so the stored (published, immutable) blueprint is stale.
-			// Surface loudly; the fix is to bump the bundle version. Global
-			// published blueprints are immutable in memory, so we cannot
-			// silently refresh the manifest here.
-			if v.Checksum != "" && manifestChecksum(manifest) != v.Checksum {
-				log.Printf("blueprint %s@%s: bundled manifest differs from stored definition (checksum mismatch); bump the version to apply changes (blueprint %s)", name, version, v.ID)
-			}
-			return v.ID, nil
-		}
-	}
-
-	rec, err := s.memory.CreateBlueprint(ctx, &createBlueprintRequest{
-		Name:        name,
-		Version:     version,
-		Description: description,
-		Author:      author,
-		Manifest:    manifest,
-	})
-	if err == nil {
-		return rec.ID, nil
-	}
-	if !isMemoryStatus(err, http.StatusConflict) {
-		return "", err
-	}
-
-	// Concurrent create won the race — adopt the existing row.
-	versions, err = s.memory.ListBlueprintVersions(ctx, name)
-	if err != nil {
-		return "", err
-	}
-	for _, v := range versions {
-		if v.Version == version {
-			// Detect manifest drift: the bundled yaml changed without a version
-			// bump, so the stored (published, immutable) blueprint is stale.
-			// Surface loudly; the fix is to bump the bundle version. Global
-			// published blueprints are immutable in memory, so we cannot
-			// silently refresh the manifest here.
-			if v.Checksum != "" && manifestChecksum(manifest) != v.Checksum {
-				log.Printf("blueprint %s@%s: bundled manifest differs from stored definition (checksum mismatch); bump the version to apply changes (blueprint %s)", name, version, v.ID)
-			}
-			return v.ID, nil
-		}
-	}
-	return "", fmt.Errorf("blueprint %s@%s exists but was not found on re-list", name, version)
-}
-
-// manifestChecksum computes the sha256 hex checksum of a manifest, matching
-// memory's blueprint publish checksum (sha256 over the raw manifest JSON bytes).
-func manifestChecksum(manifest json.RawMessage) string {
-	sum := sha256.Sum256(manifest)
-	return hex.EncodeToString(sum[:])
-}
-
-// installRegistryBlueprint fetches a registry schema, builds a blueprint
-// manifest from it, and installs it through the blueprint API (create →
-// publish → apply). This migrates registry packs off the legacy
-// schema-assignment path.
-func (s *Server) installRegistryBlueprint(ctx context.Context, schemaID string) (*BlueprintApplyResult, error) {
-	sch, err := s.memory.GetSchema(ctx, schemaID)
-	if err != nil {
-		return nil, err
-	}
-	manifest, err := buildRegistryManifest(sch)
-	if err != nil {
-		return nil, err
-	}
-	return s.ensureManifestApplied(ctx, sch.Name, sch.Version, sch.Description, sch.Author, manifest)
+// DeleteBlueprint deletes a private, unapplied blueprint
+// (DELETE /api/blueprints/:id). Memory rejects the deletion with 409 when the
+// blueprint is applied or is a global built-in.
+func (m *MemoryClient) DeleteBlueprint(ctx context.Context, id string) error {
+	return m.do(ctx, http.MethodDelete, "/api/blueprints/"+url.PathEscape(id), nil, nil)
 }

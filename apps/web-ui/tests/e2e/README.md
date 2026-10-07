@@ -204,8 +204,13 @@ scope-area badge and the one-time secret reveal panel).
 Objects and schema: **object relationships** (edge created from the Connect dialog is
 visible from both objects), **object search** (`/objects/search` filters to the created
 object, and the `#connect-dst` datalist surfaces it), **object merge** (asserts the
-route's deterministic contract only — see below), **blueprint enable + unapply**
-(installed types appear and are removed again, on a scratch project) and **blueprint
+route's deterministic contract only — see below), **blueprint install + unapply**
+(installed types appear and are removed again, on a scratch project; the
+registry-backed install applies a blueprint by id from its Available row, and
+built-ins carry a Built-in badge with no remove action), **blueprint registry
+remove** (a non-built-in blueprint that is uninstalled stays in the Available
+list, is removed via Remove → confirm, and disappears; an applied one is blocked
+with the "uninstall first" flash) and **blueprint
 migration + rollback** (forced migration drops an archived property; the rollback
 assertion is skipped pending the defect below).
 

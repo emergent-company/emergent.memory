@@ -101,28 +101,27 @@ export async function importGitHubBlueprint(
 }
 
 /**
- * UI-install a bundled blueprint pack by name from the /blueprints gallery.
- * Bundled rows post a hidden input[name="name"] to /blueprints/install, so the
- * form filter below is the precise anchor (the same pack can otherwise appear
- * in more than one section). Waits for the PRG redirect: /blueprints?installed=1,
- * or /blueprints/migrations?migrateMsg=… when a migration drift is detected.
+ * UI-install a blueprint by name from the /blueprints gallery. The Available
+ * list is now registry-backed: each row is anchored by
+ * `[data-testid="available-blueprint-<name>"]` and its install submit by
+ * `[data-testid="blueprint-install-<name>"]` (a form POST to /blueprints/install
+ * with a hidden schemaId = blueprint id). Waits for the PRG redirect:
+ * /blueprints?installed=1, or /blueprints/migrations?migrateMsg=… when a
+ * migration drift is detected.
  */
 export async function installBlueprint(page: Page, name: string): Promise<void> {
   await page.goto('/blueprints');
 
-  const form = page
-    .locator('form[action="/blueprints/install"]')
-    .filter({ has: page.locator(`input[name="name"][value="${name}"]`) })
-    .first();
+  const row = page.locator(`[data-testid="available-blueprint-${name}"]`);
   try {
-    await form.waitFor({ state: 'visible', timeout: 10_000 });
+    await row.waitFor({ state: 'visible', timeout: 10_000 });
   } catch (err) {
-    throw new Error(`installBlueprint("${name}"): no install form for that pack on /blueprints`, {
+    throw new Error(`installBlueprint("${name}"): no available row on /blueprints`, {
       cause: err,
     });
   }
 
-  await form.locator('button[type="submit"]').click();
+  await row.locator(`[data-testid="blueprint-install-${name}"]`).click();
 
   // Success: installed → list with ?installed=1; migration drift → /blueprints/migrations.
   const success = (url: URL) =>
@@ -137,6 +136,61 @@ export async function installBlueprint(page: Page, name: string): Promise<void> 
     throw new Error(
       `installBlueprint("${name}"): install did not succeed; landed on ${page.url()} — ${await visibleErrorText(page)}`,
       { cause: err },
+    );
+  }
+}
+
+/**
+ * Remove a non-built-in blueprint from the registry via its Available row: find
+ * the row, click its `[data-testid^="blueprint-remove-"]` button, then the
+ * confirm button inside the confirm dialog. Waits for the PRG landing:
+ * /blueprints?removed=1 on success, or /blueprints?err=… (blocked while applied
+ * or a global built-in). Built-in blueprints render no remove action, so this
+ * helper only applies to user/import blueprints.
+ */
+export async function removeBlueprint(page: Page, name: string): Promise<void> {
+  await page.goto('/blueprints');
+
+  const row = page.locator(`[data-testid="available-blueprint-${name}"]`);
+  try {
+    await row.waitFor({ state: 'visible', timeout: 10_000 });
+  } catch (err) {
+    throw new Error(`removeBlueprint("${name}"): no available row on /blueprints`, {
+      cause: err,
+    });
+  }
+
+  const removeBtn = row.locator('[data-testid^="blueprint-remove-"]');
+  const testId = await removeBtn.getAttribute('data-testid');
+  if (!testId) {
+    throw new Error(`removeBlueprint("${name}"): no remove button on the available row`);
+  }
+  await removeBtn.click();
+
+  // The confirm button lives in the (now-open) confirm dialog, keyed by the same
+  // blueprint id as the row's remove button.
+  const id = testId.replace('blueprint-remove-', '');
+  await page.locator(`[data-testid="blueprint-remove-confirm-${id}"]`).click();
+
+  // Success: removed → list with ?removed=1; blocked → ?err=….
+  const success = (u: URL) => u.pathname === '/blueprints' && u.searchParams.get('removed') === '1';
+  const errorLanding = (u: URL) => u.pathname === '/blueprints' && u.searchParams.has('err');
+
+  try {
+    await page.waitForURL((u) => success(u) || errorLanding(u), { timeout: 10_000 });
+  } catch (err) {
+    throw new Error(
+      `removeBlueprint("${name}"): remove did not settle; landed on ${page.url()} — ${await visibleErrorText(page)}`,
+      { cause: err },
+    );
+  }
+
+  if (errorLanding(new URL(page.url()))) {
+    const surfaced = new URL(page.url()).searchParams.get('err') || '';
+    throw new Error(
+      `removeBlueprint("${name}"): remove failed; landed on ${page.url()} — ${
+        surfaced && surfaced !== '1' ? surfaced : await visibleErrorText(page)
+      }`,
     );
   }
 }

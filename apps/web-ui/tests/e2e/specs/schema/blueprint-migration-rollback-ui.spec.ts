@@ -59,8 +59,9 @@ function migrateMsg(location: string | undefined): string {
 }
 
 /**
- * Create a scratch project, install the bundled pack, and create one object of
- * its type carrying a property the pack's schema does not declare. Returns the
+ * Create a scratch project, install the built-in `agent-notes` blueprint (by
+ * id via the registry-backed gallery), and create one object of its type
+ * carrying a property the pack's schema does not declare. Returns the
  * ids/version the migration routes need.
  */
 async function setupFixture(page: Page, projectName: string): Promise<Fixture> {

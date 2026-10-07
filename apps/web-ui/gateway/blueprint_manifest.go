@@ -7,13 +7,12 @@ import (
 
 // blueprintManifest mirrors Emergent Memory's BlueprintManifest JSON shape
 // (apps/server/domain/blueprints/manifest.go) as consumed by POST
-// /api/blueprints. ObjectTypes and RelationshipTypes are kept as raw maps so
-// behavioural keys (labels, embedding, extraction, ui, and relationship-level
-// properties) survive the round-trip instead of being dropped by a typed
-// struct. Migrations reuses SchemaMigrationHints (snake_case JSON, matching
-// memory's schemas domain). Skills and seed mirror the server's SkillManifest
-// and SeedManifest so a bundled pack's workflow skill and keyed seed objects
-// install out of the box.
+// /api/blueprints and the import preview. ObjectTypes and RelationshipTypes are
+// kept as raw maps so behavioural keys (labels, embedding, extraction, ui, and
+// relationship-level properties) survive the round-trip instead of being
+// dropped by a typed struct. Migrations reuses SchemaMigrationHints
+// (snake_case JSON, matching memory's schemas domain). Skills and seed mirror
+// the server's SkillManifest and SeedManifest.
 type blueprintManifest struct {
 	Packs  []blueprintPack  `json:"packs,omitempty"`
 	Agents []blueprintAgent `json:"agents,omitempty"`
@@ -35,10 +34,10 @@ type blueprintPack struct {
 }
 
 // blueprintAgent is the manifest form of an agent definition. It mirrors
-// memory's AgentManifest. Model is a single-name struct (Memory's bundled
-// agents pin only a model name; temperature/maxTokens/etc. are unmanaged). UI
-// is the optional inline appearance block (BundledAgentUI already carries the
-// json tags AgentUIManifest expects).
+// memory's AgentManifest. Model is a single-name struct (agents pin only a
+// model name; temperature/maxTokens/etc. are unmanaged). UI is the optional
+// inline appearance block (BundledAgentUI already carries the json tags
+// AgentUIManifest expects).
 type blueprintAgent struct {
 	Name         string          `json:"name"`
 	Description  string          `json:"description,omitempty"`
@@ -102,98 +101,6 @@ type blueprintSeedRelationship struct {
 	SrcType    string         `json:"srcType,omitempty"`
 	DstType    string         `json:"dstType,omitempty"`
 	Properties map[string]any `json:"properties,omitempty"`
-}
-
-// nonEmptyAgentUI drops an appearance block that declares neither icon nor
-// color, so the manifest never carries a meaningless `"ui":{}` (nil/empty both
-// mean "no appearance").
-func nonEmptyAgentUI(ui *BundledAgentUI) *BundledAgentUI {
-	if ui == nil || (ui.Icon == "" && ui.Color == "") {
-		return nil
-	}
-	return ui
-}
-
-// buildBlueprintManifest converts a bundled blueprint pack into the manifest
-// JSON consumed by Emergent Memory's /api/blueprints create+apply flow. A
-// schema-carrying pack contributes one pack entry (with its raw object and
-// relationship type maps so behavioural fields are preserved); agents are
-// always included. A pure-agent blueprint (no schema) contributes no pack.
-// Skills and seed are included when present so a bundled pack's workflow skill
-// and keyed seed objects install alongside its schema and agents.
-func buildBlueprintManifest(bp *BundledBlueprint) (json.RawMessage, error) {
-	m := blueprintManifest{}
-	if bp.HasSchema {
-		m.Packs = []blueprintPack{{
-			Name:              bp.Name,
-			Version:           bp.Version,
-			Description:       bp.Description,
-			Author:            bp.Author,
-			Migrations:        bp.Migrations,
-			ObjectTypes:       bp.ObjectTypeSchemas,
-			RelationshipTypes: bp.RelationshipTypeSchemas,
-		}}
-	}
-	for _, a := range bp.Agents {
-		am := blueprintAgent{
-			Name:           a.Name,
-			Description:    a.Description,
-			SystemPrompt:   a.SystemPrompt,
-			Tools:          a.Tools,
-			BannedTools:    a.BannedTools,
-			Skills:         a.Skills,
-			Visibility:     a.Visibility,
-			Config:         a.Config,
-			UI:             nonEmptyAgentUI(a.UI),
-			WorkConfig:     a.WorkConfig,
-			TriggerType:    a.TriggerType,
-			ReactionConfig: a.ReactionConfig,
-			CronSchedule:   a.CronSchedule,
-			DispatchMode:   a.DispatchMode,
-			DefaultQueue:   a.DefaultQueue,
-			MaxSteps:       a.MaxSteps,
-		}
-		if a.Model != "" {
-			am.Model = &blueprintModel{Name: a.Model}
-		}
-		m.Agents = append(m.Agents, am)
-	}
-	if len(bp.Skills) > 0 {
-		m.Skills = make([]blueprintSkill, 0, len(bp.Skills))
-		for _, s := range bp.Skills {
-			m.Skills = append(m.Skills, blueprintSkill(s))
-		}
-	}
-	if len(bp.SeedObjects) > 0 || len(bp.SeedRelationships) > 0 {
-		m.Seed = &blueprintSeed{
-			Objects:       make([]blueprintSeedObject, 0, len(bp.SeedObjects)),
-			Relationships: make([]blueprintSeedRelationship, 0, len(bp.SeedRelationships)),
-		}
-		for _, o := range bp.SeedObjects {
-			m.Seed.Objects = append(m.Seed.Objects, blueprintSeedObject(o))
-		}
-		for _, r := range bp.SeedRelationships {
-			m.Seed.Relationships = append(m.Seed.Relationships, blueprintSeedRelationship(r))
-		}
-	}
-	return json.Marshal(m)
-}
-
-// buildRegistryManifest builds a blueprint manifest from a registry schema
-// (GetSchema), so a registry pack can be installed through the blueprint API
-// (create → publish → apply) instead of the legacy schema-assignment path.
-func buildRegistryManifest(sch *BlueprintSchema) (json.RawMessage, error) {
-	m := blueprintManifest{
-		Packs: []blueprintPack{{
-			Name:              sch.Name,
-			Version:           sch.Version,
-			Description:       sch.Description,
-			Author:            sch.Author,
-			ObjectTypes:       schemaTypesToMaps(sch.ObjectTypeSchemas),
-			RelationshipTypes: schemaTypesToMaps(sch.RelationshipTypeSchemas),
-		}},
-	}
-	return json.Marshal(m)
 }
 
 // schemaTypesToMaps parses a raw objectTypeSchemas/relationshipTypeSchemas jsonb

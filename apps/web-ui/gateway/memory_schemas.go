@@ -8,19 +8,19 @@ import (
 
 // --- blueprints / schemas ---
 
-// AvailableSchemaItem is one installable pack, either from the memory schema
-// registry (Source "registry") or the bundled blueprints/ directory (Source
-// "bundled").
+// AvailableSchemaItem is one installable blueprint in scope (global +
+// project-private), mapped from a published blueprint record. Source is
+// "builtin" for built-in blueprints and "registry" for everything else; Origin
+// carries the raw blueprint origin (builtin|user|import).
 type AvailableSchemaItem struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Version     string   `json:"version"`
-	Description string   `json:"description"`
-	Author      string   `json:"author"`
-	Source      string   `json:"source"`
-	Upgrade     bool     `json:"upgrade,omitempty"` // true when this is a newer version of an installed pack
-	Agents      []string `json:"agents,omitempty"`  // agent names the blueprint defines (agent-only blueprints have no schema)
-	HasSchema   bool     `json:"-"`                 // internal: true when the blueprint carries a schema pack
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Version     string `json:"version"`
+	Description string `json:"description"`
+	Author      string `json:"author"`
+	Source      string `json:"source"`
+	Origin      string `json:"origin,omitempty"`
+	Upgrade     bool   `json:"upgrade,omitempty"` // true when this is a newer version of an installed pack
 }
 
 // CompiledType is one object or relationship type in the merged compiled view

@@ -34,6 +34,30 @@ type PackManifest struct {
 	RelationshipTypes []RelationshipTypeDef         `json:"relationshipTypes,omitempty"`
 }
 
+// UnmarshalJSON accepts both the camelCase (`objectTypes`/`relationshipTypes`)
+// and the snake_case (`objectTypeSchemas`/`relationshipTypeSchemas`) spellings,
+// so packs authored in either convention decode uniformly. Canonical camelCase
+// wins when both are present, mirroring CreatePackRequest's snake/camel aliasing.
+func (p *PackManifest) UnmarshalJSON(data []byte) error {
+	type alias PackManifest
+	var a struct {
+		alias
+		ObjectTypeSchemas       []ObjectTypeDef       `json:"objectTypeSchemas,omitempty"`
+		RelationshipTypeSchemas []RelationshipTypeDef `json:"relationshipTypeSchemas,omitempty"`
+	}
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*p = PackManifest(a.alias)
+	if len(p.ObjectTypes) == 0 && len(a.ObjectTypeSchemas) > 0 {
+		p.ObjectTypes = a.ObjectTypeSchemas
+	}
+	if len(p.RelationshipTypes) == 0 && len(a.RelationshipTypeSchemas) > 0 {
+		p.RelationshipTypes = a.RelationshipTypeSchemas
+	}
+	return nil
+}
+
 // ObjectTypeDef is a single object type schema in a pack manifest. Labels,
 // Embedding, Extraction, and UI are carried as raw maps so behavioural keys
 // (e.g. extraction.enabled:false, embedding.mode/field) survive the manifest
@@ -173,6 +197,24 @@ type AgentModelManifest struct {
 	Temperature    *float32 `json:"temperature,omitempty"`
 	MaxTokens      *int     `json:"maxTokens,omitempty"`
 	EnableThinking *bool    `json:"enableThinking,omitempty"`
+}
+
+// UnmarshalJSON accepts both the object form (`model: {name: ...}`) and the
+// bare-string form (`model: openai/deepseek-v4-pro`) used by bundled packs, so a
+// pinned model reference authored as a plain string decodes into Name.
+func (m *AgentModelManifest) UnmarshalJSON(data []byte) error {
+	var name string
+	if err := json.Unmarshal(data, &name); err == nil {
+		m.Name = name
+		return nil
+	}
+	type alias AgentModelManifest
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*m = AgentModelManifest(a)
+	return nil
 }
 
 // AgentToolPolicy is a per-tool confirmation policy.

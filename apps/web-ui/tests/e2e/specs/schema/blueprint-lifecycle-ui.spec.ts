@@ -2,12 +2,16 @@ import { test, expect, type Page } from '@playwright/test';
 import { readBootstrap, createProject } from '../../helpers/bootstrap';
 import { installBlueprint } from '../../helpers/blueprints';
 
-// Blueprint enable + unapply (gateway/blueprints_handlers.go → POST
+// Blueprint install + unapply (gateway/blueprints_handlers.go → POST
 // /blueprints/install, POST /blueprints/:id/unapply). The bootstrap project
 // already has `personal-memory` applied, so every test runs on its OWN scratch
 // project (created via POST /api/projects, which also activates it for the
 // session) and deletes that project — plus anything it installed — in cleanup.
 // The shared bootstrap org / `E2E Main Project` are never touched.
+//
+// `agent-notes` is a built-in blueprint (global, origin=builtin): its Available
+// row shows the Built-in badge and NO remove action. Installing it applies the
+// blueprint by id (the registry-backed path, not a bundled-by-name path).
 //
 // Assertions are on resulting state, not the one-shot PRG flash:
 //   * `GET /api/blueprints/compiled-types` is the merged compiled view the
@@ -76,8 +80,8 @@ async function cleanup(page: Page, projectId: string): Promise<void> {
   }
 }
 
-test.describe('Blueprint enable + unapply', () => {
-  test('installing a bundled blueprint adds its object types and unapplying removes them', async ({
+test.describe('Blueprint install + unapply', () => {
+  test('installing a built-in blueprint adds its object types and unapplying removes them', async ({
     page,
   }) => {
     const bootstrap = requireBootstrap();
@@ -93,8 +97,19 @@ test.describe('Blueprint enable + unapply', () => {
         .poll(async () => (await compiledObjectTypes(page)).filter((n) => OBJECT_TYPES.includes(n)))
         .toEqual([]);
 
-      // Install through the real gallery form (POST /blueprints/install with the
-      // bundled pack's hidden name input; the helper waits out the PRG redirect).
+      // `agent-notes` is a built-in blueprint: its Available row carries the
+      // Built-in badge and — because built-ins are global/immutable — NO remove
+      // action.
+      await page.goto('/blueprints');
+      const availableRow = page.locator(`[data-testid="available-blueprint-${BLUEPRINT}"]`);
+      await expect(availableRow).toBeVisible();
+      await expect(
+        availableRow.locator(`[data-testid="blueprint-builtin-${BLUEPRINT}"]`),
+      ).toBeVisible();
+      await expect(availableRow.locator('[data-testid^="blueprint-remove-"]')).toHaveCount(0);
+
+      // Install through the real gallery row (POST /blueprints/install with the
+      // blueprint id; the helper waits out the PRG redirect).
       await installBlueprint(page, BLUEPRINT);
 
       // Resulting state: the pack is applied and every declared object type is

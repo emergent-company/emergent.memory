@@ -9,17 +9,30 @@ import { expectAppPage } from '../../helpers/page';
 
 // Blueprint-pinned model warnings (gateway unservable-model surface): the
 // blueprint details page (/blueprints/<id>) renders agent rows from the
-// blueprint's bundled definitions, and an agent whose pinned model can't be
-// served by the project warns at error severity. The bundled `operator`
-// blueprint pins openai/deepseek-v4-pro, so on a FRESH project (no configured
-// provider) /blueprints/operator shows the error alert; once a provider
-// matching the model's prefix (openai) is configured, the same page is quiet.
+// blueprint's manifest, and an agent whose pinned model can't be served by the
+// project warns at error severity. The built-in `operator` blueprint pins
+// openai/deepseek-v4-pro, so on a FRESH project (no configured provider) its
+// detail page shows the error alert; once a provider matching the model's
+// prefix (openai) is configured, the same page is quiet. The operator detail is
+// reached by clicking its link in the /blueprints Available list (there is no
+// longer a bundled-name route like /blueprints/operator).
 //
 // Each test self-cleans: reactivates the bootstrap project, then deletes the
 // scratch project (POST /projects/delete, org-scoped). No agent is created,
 // so there is nothing else to delete.
 const PIN_ERR =
   "This blueprint defines agent operator pinned to openai/deepseek-v4-pro, but no provider is configured in this project. Chats with it will fail until a provider is added or the agent's model is changed in Agent settings.";
+
+const OPERATOR = 'operator';
+
+/** Open the operator blueprint's detail page via its Available-list link. */
+async function openOperatorDetail(page: Page): Promise<void> {
+  await page.goto('/blueprints');
+  const row = page.locator(`[data-testid="available-blueprint-${OPERATOR}"]`);
+  await expect(row).toBeVisible();
+  await row.locator('a[href^="/blueprints/"]').click();
+  await expectAppPage(page, /operator/);
+}
 
 function requireBootstrap() {
   const bootstrap = readBootstrap();
@@ -41,7 +54,7 @@ async function cleanup(page: Page, projectId: string): Promise<void> {
   }
 }
 
-test("bundled operator agent warns when its pinned model's provider is unconfigured", async ({ page }) => {
+test("built-in operator agent warns when its pinned model's provider is unconfigured", async ({ page }) => {
   const bootstrap = requireBootstrap();
   const name = `E2E BP Model Warn ${Date.now()}`;
   let projectId = '';
@@ -51,8 +64,7 @@ test("bundled operator agent warns when its pinned model's provider is unconfigu
 
     // No provider configured on the scratch project → the operator agent's
     // pinned openai/deepseek-v4-pro model can't be served.
-    await page.goto('/blueprints/operator');
-    await expectAppPage(page, /operator/);
+    await openOperatorDetail(page);
 
     const alert = page
       .getByRole('alert')
@@ -96,8 +108,7 @@ test("no warning when the pinned model's provider is configured", async ({ page 
 
     // The openai provider matches the operator agent's pinned model prefix, so
     // the blueprint details page must not flag it.
-    await page.goto('/blueprints/operator');
-    await expectAppPage(page, /operator/);
+    await openOperatorDetail(page);
     await expect(
       page.getByRole('alert').filter({ hasText: 'This blueprint defines agent operator' }),
     ).toHaveCount(0);

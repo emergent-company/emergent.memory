@@ -253,6 +253,8 @@ type fakeMemory struct {
 	appliedUpdates      []string                // names passed to ApplyBlueprintUpdate
 	blueprintUpdates    *BlueprintUpdateCheck   // returned by GetBlueprintUpdates, when set
 	savedGithubToken    *string                 // last token passed to SetGithubCredential
+	deletedBlueprints   []string                // ids passed to DeleteBlueprint
+	deleteBlueprintErr  error                   // DeleteBlueprint failure
 
 	importBlueprintReq *importBlueprintRequest // last request passed to ImportBlueprint
 	importBlueprintRes *BlueprintRecord        // returned by ImportBlueprint, when set
@@ -1579,6 +1581,17 @@ func (f *fakeMemory) SetGithubCredential(ctx context.Context, token string) erro
 		return f.blueprintErr
 	}
 	f.savedGithubToken = &token
+	return nil
+}
+
+func (f *fakeMemory) DeleteBlueprint(ctx context.Context, id string) error {
+	if f.deleteBlueprintErr != nil {
+		return f.deleteBlueprintErr
+	}
+	if f.blueprintErr != nil {
+		return f.blueprintErr
+	}
+	f.deletedBlueprints = append(f.deletedBlueprints, id)
 	return nil
 }
 

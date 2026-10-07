@@ -14,6 +14,16 @@ const (
 	StatusDeprecated = "deprecated"
 )
 
+// Blueprint origin values. Origin distinguishes a platform built-in
+// (project_id IS NULL, seeded at boot) from a user-authored blueprint and a
+// GitHub import; it drives apply-time pack scoping (builtin → global pack,
+// user/import → project-scoped pack).
+const (
+	OriginBuiltin = "builtin"
+	OriginUser    = "user"
+	OriginImport  = "import"
+)
+
 // Blueprint is a versioned, immutable-on-publish blueprint definition.
 // Manifest is stored as opaque JSON; its contents are parsed and validated
 // in a later apply phase. Checksum is a content hash of the JSON manifest
@@ -40,6 +50,7 @@ type Blueprint struct {
 	// against it so overridden imports do not report a false-positive update.
 	// Internal only — never serialized.
 	SourceManifestChecksum string    `bun:"source_manifest_checksum,type:text" json:"-"`
+	Origin                 string    `bun:"origin,notnull,default:'user'" json:"origin"`
 	CreatedAt              time.Time `bun:"created_at,notnull" json:"created_at"`
 	UpdatedAt              time.Time `bun:"updated_at,notnull" json:"updated_at"`
 }
@@ -68,6 +79,11 @@ type CreateBlueprintRequest struct {
 	// SourceManifestChecksum is internal provenance set by ImportFromGitHub; it
 	// is not client-settable (json:"-") so REST callers cannot forge it.
 	SourceManifestChecksum string `json:"-"`
+	// Origin records the blueprint's provenance ("builtin", "user", "import").
+	// It is server-derived and never client-settable (json:"-"): HTTP create
+	// paths are always user-authored; ImportFromGitHub sets "import" and the
+	// built-in seeder writes "builtin" directly, both internal.
+	Origin string `json:"-"`
 }
 
 // UpdateBlueprintRequest is the request to update a draft blueprint.
@@ -133,6 +149,7 @@ type AppliedBlueprint struct {
 	UpdateAvailable bool       `json:"updateAvailable"`
 	LatestVersion   string     `json:"latestVersion,omitempty"`
 	LastCheckedAt   *time.Time `json:"lastCheckedAt,omitempty"`
+	Origin          string     `json:"origin"`
 }
 
 // UnapplyCounts reports per-entity-type reversal counts for one blueprint

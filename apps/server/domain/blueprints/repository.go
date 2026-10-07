@@ -27,6 +27,12 @@ func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 	}
 }
 
+// DB exposes the underlying handle for raw-SQL queries (used by the built-in
+// seeder and the delete-orphan cleanup), mirroring schemas.Repository.DB.
+func (r *Repository) DB() bun.IDB {
+	return r.db
+}
+
 // scopeWhere returns the read-scope WHERE condition and its bind args for the
 // caller's project: global blueprints plus the caller's own private ones when
 // projectID is non-empty; global-only when projectID is empty.
@@ -146,6 +152,7 @@ func (r *Repository) Update(ctx context.Context, bp *Blueprint) error {
 		Set("description = ?", bp.Description).
 		Set("author = ?", bp.Author).
 		Set("manifest = ?", bp.Manifest).
+		Set("checksum = ?", bp.Checksum).
 		Set("updated_at = ?", now).
 		Exec(ctx)
 	if err != nil {
@@ -303,6 +310,7 @@ func (r *Repository) ListApplied(ctx context.Context, projectID string) ([]Appli
 		UpdateAvailable bool       `bun:"update_available"`
 		LatestVersion   string     `bun:"latest_version"`
 		LastCheckedAt   *time.Time `bun:"last_checked_at"`
+		Origin          string     `bun:"origin"`
 	}
 	err := r.db.NewRaw(`
 		SELECT bpa.blueprint_id, bp.name, bpa.version, bp.description, bp.author,
@@ -310,7 +318,8 @@ func (r *Repository) ListApplied(ctx context.Context, projectID string) ([]Appli
 		       bp.source_url, bp.source_ref,
 		       COALESCE(buc.update_available, false) AS update_available,
 		       buc.latest_version,
-		       buc.last_checked_at
+		       buc.last_checked_at,
+		       bp.origin
 		FROM kb.blueprint_applications bpa
 		JOIN kb.blueprints bp ON bp.id = bpa.blueprint_id
 		LEFT JOIN kb.blueprint_update_checks buc
@@ -339,6 +348,7 @@ func (r *Repository) ListApplied(ctx context.Context, projectID string) ([]Appli
 			UpdateAvailable: res.UpdateAvailable,
 			LatestVersion:   res.LatestVersion,
 			LastCheckedAt:   res.LastCheckedAt,
+			Origin:          res.Origin,
 		}
 	}
 	return out, nil
@@ -434,4 +444,55 @@ func (r *Repository) DeletePackClaimsForBlueprint(ctx context.Context, blueprint
 		return apperror.ErrDatabase.WithInternal(err)
 	}
 	return nil
+}
+
+// ListPackClaimSchemaIDs returns the distinct schema IDs claimed by a
+// blueprint, across all projects. Used by DeleteBlueprint to capture the pack
+// identities BEFORE the claims are cleared, so orphan cleanup can target the
+// exact schema packs the blueprint owned.
+func (r *Repository) ListPackClaimSchemaIDs(ctx context.Context, blueprintID string) ([]string, error) {
+	var ids []string
+	err := r.db.NewSelect().
+		Column("schema_id").
+		Model((*BlueprintPackClaim)(nil)).
+		Where("blueprint_id = ?", blueprintID).
+		Scan(ctx, &ids)
+	if err != nil {
+		r.log.Error("failed to list blueprint pack claim schema ids", logger.Error(err))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	if ids == nil {
+		return []string{}, nil
+	}
+	return ids, nil
+}
+
+// DeleteOrphanedProjectPacks hard-deletes project-owned schema packs (rows in
+// kb.graph_schemas with project_id = projectID) from the given set that are no
+// longer referenced by any blueprint pack claim OR any kb.project_schemas
+// assignment. Both of those FKs are non-cascading, so only truly-unreferenced
+// packs are removed; other references (project_edge_schema_registry,
+// schema_studio_sessions) cascade on delete. Idempotent — deleting zero rows is
+// not an error.
+func (r *Repository) DeleteOrphanedProjectPacks(ctx context.Context, projectID string, schemaIDs []string) (int, error) {
+	if len(schemaIDs) == 0 {
+		return 0, nil
+	}
+	res, err := r.db.NewRaw(`
+		DELETE FROM kb.graph_schemas gs
+		WHERE gs.project_id = ?
+		  AND gs.id IN (?)
+		  AND NOT EXISTS (SELECT 1 FROM kb.blueprint_pack_claims bpc WHERE bpc.schema_id = gs.id)
+		  AND NOT EXISTS (SELECT 1 FROM kb.project_schemas ps WHERE ps.schema_id = gs.id)
+		  AND NOT EXISTS (
+		      SELECT 1 FROM kb.project_object_schema_registry r
+		      WHERE r.schema_id = gs.id
+		  )
+	`, projectID, bun.In(schemaIDs)).Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to delete orphaned project packs", logger.Error(err))
+		return 0, apperror.ErrDatabase.WithInternal(err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
 }

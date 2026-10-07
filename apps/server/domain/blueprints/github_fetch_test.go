@@ -321,7 +321,7 @@ func TestFetch_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(cleanup)
 
-	desc, err := loadBlueprintDir(root, "repo")
+	desc, err := loadBlueprintDir(os.DirFS(root), ".", "repo")
 	require.NoError(t, err)
 	assert.Equal(t, "imported-pack", desc.Name)
 	assert.Equal(t, "1.2.3", desc.Version)
@@ -361,7 +361,7 @@ func TestLoadBlueprintDir_ManifestFileWins(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "blueprint.yaml"),
 		[]byte("name: from-file\nversion: 9.9.9\npacks:\n  - name: from-file\n    version: 9.9.9\n    objectTypes:\n      - name: A\n"), 0o644))
 
-	desc, err := loadBlueprintDir(dir, "fallback")
+	desc, err := loadBlueprintDir(os.DirFS(dir), ".", "fallback")
 	require.NoError(t, err)
 	assert.Equal(t, "from-file", desc.Name)
 	assert.Equal(t, "9.9.9", desc.Version)
@@ -390,7 +390,7 @@ func TestLoadBlueprintLayout_AllKinds(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "seed", "relationships", "knows.jsonl"),
 		[]byte(`{"type":"knows","srcKey":"ada","dstKey":"grace"}`+"\n"), 0o644))
 
-	desc, err := loadBlueprintDir(dir, "fallback")
+	desc, err := loadBlueprintDir(os.DirFS(dir), ".", "fallback")
 	require.NoError(t, err)
 	assert.Equal(t, "crm", desc.Name)
 	assert.Equal(t, "2.0.0", desc.Version)
@@ -404,7 +404,7 @@ func TestLoadBlueprintLayout_AllKinds(t *testing.T) {
 
 func TestLoadBlueprintLayout_EmptyRejected(t *testing.T) {
 	t.Parallel()
-	desc, err := loadBlueprintDir(t.TempDir(), "fallback")
+	desc, err := loadBlueprintDir(os.DirFS(t.TempDir()), ".", "fallback")
 	require.Nil(t, desc)
 	requireAppError(t, err, http.StatusBadRequest)
 }
