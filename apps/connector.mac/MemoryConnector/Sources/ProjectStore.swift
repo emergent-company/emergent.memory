@@ -193,10 +193,10 @@ final class ProjectStore: ObservableObject {
     /// account's project (and thus can never run another account's connection).
     ///
     /// Returns `true` when the CLI wrote a valid config (the engine may run).
-    /// Returns `false` — and stays stopped — when nothing is connected or the
-    /// CLI call fails (e.g. the account needs re-auth). In the latter case only
-    /// the in-memory connection is suspended; the persisted `connected` intent
-    /// survives so a later reconnect restores it.
+    /// Returns `false` when nothing is connected or the CLI call fails. An
+    /// auth/session failure keeps the connected intent and the running engine
+    /// (its long-lived project token and on-disk config still bind it), surfacing
+    /// re-auth for management actions only; a non-auth failure tears the engine down.
     @discardableResult
     func reassertConnection() async -> Bool {
         guard let id = connectedProjectID else {
@@ -208,16 +208,16 @@ final class ProjectStore: ObservableObject {
             try await runProjectsUse(projectID: id, profile: profile)
             return true
         } catch {
-            connectedProjectID = nil
-            stop()
             if await Self.isAuthFailure(error, cli: connectorCLI,
                                         serverURL: effectiveServerURL,
                                         configPath: cliConfigPath)
             {
                 state = .signedOut
-            } else {
-                state = .error(error.localizedDescription)
+                return false
             }
+            connectedProjectID = nil
+            stop()
+            state = .error(error.localizedDescription)
             return false
         }
     }
