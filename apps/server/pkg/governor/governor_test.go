@@ -45,11 +45,12 @@ func newTestGovernor(t *testing.T, cfg *Config) (*Governor, *mockMonitor) {
 	return g, m
 }
 
-// sample builds a health snapshot with the given io_wait and a timestamp
-// distinct from prior ones.
-func sample(ioWait float64, ts time.Time) syshealth.HealthMetrics {
+// sample builds a health snapshot with the given io_wait and db-pool percentage
+// and a timestamp distinct from prior ones.
+func sample(ioWait, dbPool float64, ts time.Time) syshealth.HealthMetrics {
 	return syshealth.HealthMetrics{
 		IOWaitPercent: ioWait,
+		DBPoolPercent: dbPool,
 		Timestamp:     ts,
 		Stale:         false,
 	}
@@ -60,29 +61,59 @@ func TestGovernor_SafeStaysNormal(t *testing.T) {
 	base := time.Now()
 
 	for i := 0; i < 10; i++ {
-		m.set(sample(5.0, base.Add(time.Duration(i)*time.Second)))
+		m.set(sample(5.0, 0.0, base.Add(time.Duration(i)*time.Second)))
 		assert.Equal(t, Normal, g.Mode(), "sample %d", i)
 	}
 }
 
-func TestGovernor_ThrottleThenShedHysteresis(t *testing.T) {
+// TestGovernor_ThrottleOnlyNeverShed pins the core fix: high host I/O/CPU
+// pressure drives Throttle only, never Shed, no matter how many consecutive
+// samples arrive.
+func TestGovernor_ThrottleOnlyNeverShed(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.SustainedSamples = 2
-	cfg.RecoverSamples = 4
 	g, m := newTestGovernor(t, cfg)
 	base := time.Now()
 
-	// Throttle sample (io_wait 35 >= 30, < 40).
-	m.set(sample(35.0, base.Add(1*time.Second)))
-	assert.Equal(t, Throttle, g.Mode())
+	for i := 1; i <= 10; i++ {
+		m.set(sample(80.0, 0.0, base.Add(time.Duration(i)*time.Second)))
+		mode := g.Mode()
+		require.Equal(t, Throttle, mode, "sample %d: high I/O wait must throttle, never shed", i)
+	}
+}
 
-	// First shed-level sample: not yet sustained.
-	m.set(sample(45.0, base.Add(2*time.Second)))
-	assert.Equal(t, Throttle, g.Mode(), "first shed sample should not escalate")
+// TestGovernor_ShedOnAttributableCapacity pins the new shed trigger: DB pool
+// utilization >= threshold AND in-flight bulk admissions >= bound, sustained.
+func TestGovernor_ShedOnAttributableCapacity(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.SustainedSamples = 2
+	g, m := newTestGovernor(t, cfg)
+	g.bulkInflight.Store(1)
+	base := time.Now()
 
-	// Second consecutive shed-level sample: escalate to Shed.
-	m.set(sample(45.0, base.Add(3*time.Second)))
+	// First shed-eligible sample: not yet sustained.
+	m.set(sample(5.0, 90.0, base.Add(1*time.Second)))
+	assert.Equal(t, Normal, g.Mode(), "first shed sample should not escalate")
+
+	// Second consecutive shed-eligible sample: escalate to Shed.
+	m.set(sample(5.0, 90.0, base.Add(2*time.Second)))
 	assert.Equal(t, Shed, g.Mode())
+}
+
+// TestGovernor_NoShedWithoutBulkInflight pins that high DB pool utilization
+// alone (no in-flight bulk) never sheds.
+func TestGovernor_NoShedWithoutBulkInflight(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.SustainedSamples = 2
+	g, m := newTestGovernor(t, cfg)
+	g.bulkInflight.Store(0)
+	base := time.Now()
+
+	for i := 1; i <= 10; i++ {
+		m.set(sample(5.0, 99.0, base.Add(time.Duration(i)*time.Second)))
+		mode := g.Mode()
+		require.NotEqual(t, Shed, mode, "sample %d: pool pressure alone must not shed", i)
+	}
 }
 
 func TestGovernor_RecoveryAfterShed(t *testing.T) {
@@ -90,19 +121,20 @@ func TestGovernor_RecoveryAfterShed(t *testing.T) {
 	cfg.SustainedSamples = 2
 	cfg.RecoverSamples = 4
 	g, m := newTestGovernor(t, cfg)
+	g.bulkInflight.Store(1)
 	base := time.Now()
 
-	m.set(sample(45.0, base.Add(1*time.Second)))
+	m.set(sample(5.0, 90.0, base.Add(1*time.Second)))
 	_ = g.Mode()
-	m.set(sample(45.0, base.Add(2*time.Second)))
+	m.set(sample(5.0, 90.0, base.Add(2*time.Second)))
 	assert.Equal(t, Shed, g.Mode())
 
 	// De-escalation requires RecoverSamples consecutive healthy samples.
 	for i := 1; i < cfg.RecoverSamples; i++ {
-		m.set(sample(5.0, base.Add(time.Duration(2+i)*time.Second)))
+		m.set(sample(5.0, 0.0, base.Add(time.Duration(2+i)*time.Second)))
 		assert.Equal(t, Shed, g.Mode(), "should stay shed before recovery count reached")
 	}
-	m.set(sample(5.0, base.Add(time.Duration(2+cfg.RecoverSamples)*time.Second)))
+	m.set(sample(5.0, 0.0, base.Add(time.Duration(2+cfg.RecoverSamples)*time.Second)))
 	assert.Equal(t, Normal, g.Mode())
 }
 
@@ -110,15 +142,16 @@ func TestGovernor_SameTimestampDoesNotAdvance(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.SustainedSamples = 2
 	g, m := newTestGovernor(t, cfg)
+	g.bulkInflight.Store(1)
 	ts := time.Now()
 
 	// A throttle sample establishes lastTS.
-	m.set(sample(35.0, ts))
+	m.set(sample(35.0, 0.0, ts))
 	assert.Equal(t, Throttle, g.Mode())
 
-	// Same timestamp but shed-level io_wait must NOT advance the counter, so
-	// the governor stays at Throttle (not Shed).
-	m.set(sample(45.0, ts))
+	// Same timestamp but shed-eligible must NOT advance the counter, so the
+	// governor stays at Throttle (not Shed).
+	m.set(sample(5.0, 90.0, ts))
 	assert.Equal(t, Throttle, g.Mode())
 }
 
@@ -126,10 +159,11 @@ func TestGovernor_StaleHealthDoesNotShed(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.SustainedSamples = 2
 	g, m := newTestGovernor(t, cfg)
+	g.bulkInflight.Store(1)
 	base := time.Now()
 
 	for i := 1; i <= 5; i++ {
-		h := sample(80.0, base.Add(time.Duration(i)*time.Second))
+		h := sample(5.0, 90.0, base.Add(time.Duration(i)*time.Second))
 		h.Stale = true
 		m.set(h)
 		assert.Equal(t, Normal, g.Mode(), "stale health must never shed")
@@ -140,11 +174,12 @@ func TestGovernor_AdmitShedsBulkNotInteractive(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.SustainedSamples = 2
 	g, m := newTestGovernor(t, cfg)
+	g.bulkInflight.Store(1)
 	base := time.Now()
 
-	m.set(sample(45.0, base.Add(1*time.Second)))
+	m.set(sample(5.0, 90.0, base.Add(1*time.Second)))
 	_ = g.Mode()
-	m.set(sample(45.0, base.Add(2*time.Second)))
+	m.set(sample(5.0, 90.0, base.Add(2*time.Second)))
 	require.Equal(t, Shed, g.Mode())
 
 	// Bulk is shed.
@@ -162,8 +197,9 @@ func TestGovernor_AdmitShedsBulkNotInteractive(t *testing.T) {
 func TestGovernor_AdmitNoCapacityPerProject(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.MaxInflightPerProject = 1
+	cfg.MaxInflightGlobalBulk = 10 // isolate the per-project limit from the global budget
 	g, m := newTestGovernor(t, cfg)
-	m.set(sample(5.0, time.Now())) // healthy => Normal
+	m.set(sample(5.0, 0.0, time.Now())) // healthy => Normal
 
 	release1, err := g.Admit("p1", ClassBulk)
 	require.NoError(t, err)
@@ -187,7 +223,7 @@ func TestGovernor_AdmitReleaseIdempotent(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.MaxInflightPerProject = 1
 	g, m := newTestGovernor(t, cfg)
-	m.set(sample(5.0, time.Now()))
+	m.set(sample(5.0, 0.0, time.Now()))
 
 	release, err := g.Admit("p1", ClassBulk)
 	require.NoError(t, err)
@@ -208,10 +244,29 @@ func TestGovernor_AdmitDisabledAlwaysAllows(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Enabled = false
 	g, m := newTestGovernor(t, cfg)
-	m.set(sample(80.0, time.Now()))
+	m.set(sample(80.0, 0.0, time.Now()))
 
 	release, err := g.Admit("p1", ClassBulk)
 	assert.NoError(t, err)
 	assert.NotNil(t, release)
 	release()
+}
+
+// TestGovernor_AdmitWaitShedReturnsErrShed pins that AdmitWait also sheds bulk
+// in Shed mode (immediately, before waiting).
+func TestGovernor_AdmitWaitShedReturnsErrShed(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.SustainedSamples = 2
+	g, m := newTestGovernor(t, cfg)
+	g.bulkInflight.Store(1)
+	base := time.Now()
+
+	m.set(sample(5.0, 90.0, base.Add(1*time.Second)))
+	_ = g.Mode()
+	m.set(sample(5.0, 90.0, base.Add(2*time.Second)))
+	require.Equal(t, Shed, g.Mode())
+
+	release, err := g.AdmitWait(t.Context(), "p1", ClassBulk, time.Second)
+	assert.Nil(t, release)
+	assert.ErrorIs(t, err, ErrShed)
 }

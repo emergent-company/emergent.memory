@@ -7,17 +7,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/load"
 	"github.com/shirou/gopsutil/v3/mem"
-	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
 type sysHealthMonitor struct {
 	cfg     *Config
-	db      bun.IDB
 	log     *slog.Logger
 	metrics *HealthMetrics
 	mu      sync.RWMutex
@@ -29,6 +28,11 @@ type sysHealthMonitor struct {
 	lastCPUTimes   *cpu.TimesStat
 	consecFailures int
 
+	// poolStats returns the in-use and maximum connection counts for the
+	// database pool. Overridable for tests; nil disables DB pool utilization
+	// collection.
+	poolStats func() (inUse, max int32)
+
 	// Collection functions for mocking
 	getLoadAvg  func(context.Context) (*load.AvgStat, error)
 	getCPUTimes func(context.Context, bool) ([]cpu.TimesStat, error)
@@ -38,15 +42,14 @@ type sysHealthMonitor struct {
 
 // NewMonitor creates a new system health monitor.
 // cfg: Configuration for the monitor (uses DefaultConfig if nil).
-// db: Database connection for pool utilization metrics.
+// pool: Database connection pool for utilization metrics (may be nil).
 // log: Logger for health events.
-func NewMonitor(cfg *Config, db bun.IDB, log *slog.Logger) Monitor {
+func NewMonitor(cfg *Config, pool *pgxpool.Pool, log *slog.Logger) Monitor {
 	if cfg == nil {
 		cfg = DefaultConfig()
 	}
-	return &sysHealthMonitor{
+	m := &sysHealthMonitor{
 		cfg: cfg,
-		db:  db,
 		log: log.With(logger.Scope("syshealth.monitor")),
 		metrics: &HealthMetrics{
 			Score: 100,
@@ -57,6 +60,13 @@ func NewMonitor(cfg *Config, db bun.IDB, log *slog.Logger) Monitor {
 		getMemStats: mem.VirtualMemoryWithContext,
 		getCPUCores: runtime.NumCPU,
 	}
+	if pool != nil {
+		m.poolStats = func() (int32, int32) {
+			s := pool.Stat()
+			return s.AcquiredConns(), s.MaxConns()
+		}
+	}
+	return m
 }
 
 func (m *sysHealthMonitor) Start() error {
@@ -169,10 +179,10 @@ func (m *sysHealthMonitor) collect() {
 	}
 
 	// 4. DB Pool Utilization (Task 2.7)
-	if bdb, ok := m.db.(*bun.DB); ok {
-		stats := bdb.DB.Stats()
-		if stats.MaxOpenConnections > 0 {
-			dbPercent = float64(stats.InUse) / float64(stats.MaxOpenConnections) * 100.0
+	if m.poolStats != nil {
+		inUse, max := m.poolStats()
+		if max > 0 {
+			dbPercent = float64(inUse) / float64(max) * 100.0
 		}
 	}
 

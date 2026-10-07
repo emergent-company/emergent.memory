@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/uptrace/bun"
 	"go.uber.org/fx"
 
@@ -122,10 +123,13 @@ func provideRelEmbeddingEnqueuer(svc *GraphRelationshipEmbeddingJobsService) gra
 	return &relEmbeddingEnqueuerAdapter{svc: svc}
 }
 
-// provideSysHealthMonitor creates system health monitor with fx
-func provideSysHealthMonitor(db bun.IDB, log *slog.Logger) syshealth.Monitor {
+// provideSysHealthMonitor creates system health monitor with fx. It reads DB
+// pool utilization from the pgxpool directly (rather than the bun wrapper),
+// because stdlib.OpenDBFromPool never sets MaxOpenConns and the bun-backed
+// DB.Stats() would always report 0.
+func provideSysHealthMonitor(pool *pgxpool.Pool, log *slog.Logger) syshealth.Monitor {
 	cfg := syshealth.DefaultConfig()
-	return syshealth.NewMonitor(cfg, db, log)
+	return syshealth.NewMonitor(cfg, pool, log)
 }
 
 // provideBackgroundPauser exposes the embedding control handler's PauseAll /

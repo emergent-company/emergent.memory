@@ -2,6 +2,7 @@ package governor
 
 import (
 	"log/slog"
+	"time"
 
 	"go.uber.org/fx"
 
@@ -27,17 +28,21 @@ func ProvideGovernor(cfg *config.Config, monitor syshealth.Monitor, log *slog.Lo
 // runtime config.
 func configFromApp(c config.GovernorConfig) *Config {
 	return &Config{
-		Enabled:                 c.Enabled,
-		ThrottleIOWaitPercent:   c.ThrottleIOWaitPercent,
-		ShedIOWaitPercent:       c.ShedIOWaitPercent,
-		WarningCPULoadFactor:    c.WarningCPULoadFactor,
-		ShedCPULoadFactor:       c.ShedCPULoadFactor,
-		SustainedSamples:        c.SustainedSamples,
-		RecoverSamples:          c.RecoverSamples,
-		MaxInflightPerProject:   c.MaxInflightPerProject,
-		MaxInflightGlobal:       c.MaxInflightGlobal,
-		RatePerMinutePerProject: c.RatePerMinutePerProject,
-		RateBurst:               c.RateBurst,
-		RetryAfterSeconds:       c.RetryAfterSeconds,
+		Enabled:                      c.Enabled,
+		ThrottleIOWaitPercent:        c.ThrottleIOWaitPercent,
+		WarningCPULoadFactor:         c.WarningCPULoadFactor,
+		ShedDBPoolPercent:            c.ShedDBPoolPercent,
+		ShedBulkInflightBound:        c.ShedBulkInflightBound,
+		SustainedSamples:             c.SustainedSamples,
+		RecoverSamples:               c.RecoverSamples,
+		MaxInflightPerProject:        c.MaxInflightPerProject,
+		MaxInflightGlobalInteractive: c.MaxInflightGlobalInteractive,
+		MaxInflightGlobalBulk:        c.MaxInflightGlobalBulk,
+		RatePerMinutePerProject:      c.RatePerMinutePerProject,
+		RatePerMinutePerProjectBulk:  c.RatePerMinutePerProjectBulk,
+		RateBurst:                    c.RateBurst,
+		BulkWaitBudget:               time.Duration(c.BulkWaitMs) * time.Millisecond,
+		MaxWaiters:                   c.MaxWaiters,
+		RetryAfterSeconds:            c.RetryAfterSeconds,
 	}
 }

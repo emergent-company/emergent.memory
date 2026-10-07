@@ -48,6 +48,7 @@ func newMetricsEcho(t *testing.T, testDB *testutil.TestDB) *testutil.HTTPClient 
 		&xberg.Client{},
 		&whisper.Client{},
 		&embeddings.Service{},
+		nil,
 	)
 	m := health.NewMetricsHandler(testDB.DB)
 

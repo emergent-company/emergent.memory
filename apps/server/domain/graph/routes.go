@@ -39,6 +39,9 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware, g
 	objects.GET("/fts", h.FTSSearch)
 	objects.POST("/vector-search", h.VectorSearch)
 	objects.GET("/tags", h.GetTags)
+	// Deliberately ungated: bulk-update-status is a read-only status flip (no
+	// heavy DB work), so it stays exempt from the resource governor's bulk
+	// admission control.
 	objects.POST("/bulk-update-status", h.BulkUpdateStatus)
 	objects.POST("/bulk", bulkAdmit(gov, h.BulkCreateObjects))
 	objects.POST("/bulk-update", bulkAdmit(gov, h.BulkUpdateObjects))
@@ -88,8 +91,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware, g
 	relationships := g.Group("/relationships")
 	relationships.GET("/search", h.ListRelationships)
 	relationships.GET("/count", h.CountRelationships)
-	relationships.POST("/bulk", h.BulkCreateRelationships)
-	relationships.POST("/bulk-upsert", h.BulkUpsertRelationships)
+	relationships.POST("/bulk", bulkAdmit(gov, h.BulkCreateRelationships))
+	relationships.POST("/bulk-upsert", bulkAdmit(gov, h.BulkUpsertRelationships))
 	relationships.PUT("/upsert", h.UpsertRelationship)
 	relationships.GET("/:id", h.GetRelationship)
 	relationships.POST("", h.CreateRelationship)

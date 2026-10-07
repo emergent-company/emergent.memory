@@ -140,6 +140,35 @@ func TestMonitor_Staleness(t *testing.T) {
 	assert.True(t, m.GetHealth().Stale) // Task 2.11
 }
 
+func TestMonitor_DBPoolPercentFromPoolStats(t *testing.T) {
+	cfg := DefaultConfig()
+	m := NewMonitor(cfg, nil, slog.Default()).(*sysHealthMonitor)
+
+	// Mock collectors to avoid real system calls.
+	m.getLoadAvg = func(ctx context.Context) (*load.AvgStat, error) { return &load.AvgStat{Load1: 1.0}, nil }
+	m.getCPUTimes = func(ctx context.Context, b bool) ([]cpu.TimesStat, error) {
+		return []cpu.TimesStat{{User: 100, System: 50, Idle: 850, Iowait: 0}}, nil
+	}
+	m.getMemStats = func(ctx context.Context) (*mem.VirtualMemoryStat, error) {
+		return &mem.VirtualMemoryStat{UsedPercent: 50.0}, nil
+	}
+
+	// 9 of 10 connections in use => 90%.
+	m.poolStats = func() (int32, int32) { return 9, 10 }
+	m.collect()
+	assert.Equal(t, 90.0, m.metrics.DBPoolPercent)
+
+	// 0 max must yield 0 (never NaN).
+	m.poolStats = func() (int32, int32) { return 0, 0 }
+	m.collect()
+	assert.Equal(t, 0.0, m.metrics.DBPoolPercent)
+
+	// No pool stats at all => 0.
+	m.poolStats = nil
+	m.collect()
+	assert.Equal(t, 0.0, m.metrics.DBPoolPercent)
+}
+
 func TestMonitor_Lifecycle(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.CollectionInterval = 10 * time.Millisecond

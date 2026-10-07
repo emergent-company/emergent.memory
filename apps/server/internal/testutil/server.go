@@ -340,7 +340,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	embeddingsSvc := embeddings.NewNoopService(log)
 
 	// Register health routes (public)
-	healthHandler := health.NewHandler(testDB.Pool, testDB.Config, storageSvc, xbergClient, whisperClient, embeddingsSvc)
+	healthHandler := health.NewHandler(testDB.Pool, testDB.Config, storageSvc, xbergClient, whisperClient, embeddingsSvc, nil)
 	e.GET("/health", healthHandler.Health)
 	e.GET("/healthz", healthHandler.Healthz)
 	e.GET("/ready", healthHandler.Ready)

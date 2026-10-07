@@ -1,6 +1,7 @@
 package governor
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -25,11 +26,12 @@ func TestMiddleware_ShedReturns429WithRetryAfter(t *testing.T) {
 	cfg.SustainedSamples = 2
 	cfg.RetryAfterSeconds = 15
 	g, m := newTestGovernor(t, cfg)
+	g.bulkInflight.Store(1)
 	base := time.Now()
 
-	m.set(sample(45.0, base.Add(1*time.Second)))
+	m.set(sample(5.0, 90.0, base.Add(1*time.Second)))
 	_ = g.Mode()
-	m.set(sample(45.0, base.Add(2*time.Second)))
+	m.set(sample(5.0, 90.0, base.Add(2*time.Second)))
 	require.Equal(t, Shed, g.Mode())
 
 	e := echo.New()
@@ -51,13 +53,14 @@ func TestMiddleware_ShedReturns429WithRetryAfter(t *testing.T) {
 
 func TestMiddleware_NoCapacityReturns429(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.MaxInflightPerProject = 1
-	cfg.MaxInflightGlobal = 1
+	cfg.MaxInflightPerProject = 10
+	cfg.MaxInflightGlobalBulk = 1
+	cfg.BulkWaitBudget = 20 * time.Millisecond
 	g, m := newTestGovernor(t, cfg)
-	m.set(sample(5.0, time.Now())) // healthy => Normal
+	m.set(sample(5.0, 0.0, time.Now())) // healthy => Normal
 
-	// Hold the single global slot out-of-band so the middleware's admission
-	// attempt is rejected for lack of capacity.
+	// Hold the single global bulk slot out-of-band so the middleware's bulk
+	// admission (AdmitWait) exhausts its budget and is rejected.
 	hold, err := g.Admit("held", ClassBulk)
 	require.NoError(t, err)
 	defer hold()
@@ -77,7 +80,7 @@ func TestMiddleware_NoCapacityReturns429(t *testing.T) {
 func TestMiddleware_PassesThroughWhenNormal(t *testing.T) {
 	cfg := DefaultConfig()
 	g, m := newTestGovernor(t, cfg)
-	m.set(sample(5.0, time.Now()))
+	m.set(sample(5.0, 0.0, time.Now()))
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodPost, "/api/graph/objects/bulk-update", nil)
@@ -91,16 +94,44 @@ func TestMiddleware_PassesThroughWhenNormal(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
+// TestMiddleware_BudgetExpiryReturns429WithRetryAfter pins the bounded
+// backpressure contract: a bulk admission that cannot acquire capacity within
+// BulkWaitBudget is rejected with 429 + Retry-After (never shed under throttle).
+func TestMiddleware_BudgetExpiryReturns429WithRetryAfter(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxInflightGlobalBulk = 1
+	cfg.MaxInflightPerProject = 10
+	cfg.BulkWaitBudget = 20 * time.Millisecond
+	cfg.RetryAfterSeconds = 15
+	g, m := newTestGovernor(t, cfg)
+	m.set(sample(35.0, 0.0, time.Now())) // Throttle (I/O wait), never shed
+
+	hold, err := g.Admit("held", ClassBulk)
+	require.NoError(t, err)
+	defer hold()
+
+	e := echo.New()
+	h := g.Middleware(ClassBulk)(func(c echo.Context) error {
+		return c.String(http.StatusOK, "ok")
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/graph/objects/bulk", nil)
+	rec := httptest.NewRecorder()
+	require.NoError(t, h(e.NewContext(req, rec)))
+	assert.Equal(t, http.StatusTooManyRequests, rec.Code)
+	assert.Equal(t, strconv.Itoa(cfg.RetryAfterSeconds), rec.Header().Get("Retry-After"))
+	assert.Contains(t, rec.Body.String(), `"code":"no_capacity"`)
+}
+
 // TestMiddleware_ReleasesPermitOnHandlerError proves the admission permit is
 // released when the wrapped handler returns an error, so a failed request can
 // never permanently wedge the endpoint.
 func TestMiddleware_ReleasesPermitOnHandlerError(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.MaxInflightPerProject = 1
-	cfg.MaxInflightGlobal = 1
-	cfg.RatePerMinutePerProject = 0 // disable rate limiter for determinism
+	cfg.MaxInflightGlobalBulk = 1
+	cfg.RatePerMinutePerProject = 0 // interactive rate limiter unused by bulk path
 	g, m := newTestGovernor(t, cfg)
-	m.set(sample(5.0, time.Now()))
+	m.set(sample(5.0, 0.0, time.Now()))
 
 	e := echo.New()
 	h := g.Middleware(ClassBulk)(func(c echo.Context) error {
@@ -110,7 +141,7 @@ func TestMiddleware_ReleasesPermitOnHandlerError(t *testing.T) {
 	err := h(e.NewContext(req, httptest.NewRecorder()))
 	require.Error(t, err)
 
-	// The only slot must be free again despite the handler error.
+	// The only global bulk slot must be free again despite the handler error.
 	release, err := g.Admit(admitKeyForTest, ClassBulk)
 	require.NoError(t, err, "permit leaked after handler error")
 	require.NotNil(t, release)
@@ -122,10 +153,10 @@ func TestMiddleware_ReleasesPermitOnHandlerError(t *testing.T) {
 func TestMiddleware_ReleasesPermitOnPanic(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.MaxInflightPerProject = 1
-	cfg.MaxInflightGlobal = 1
+	cfg.MaxInflightGlobalBulk = 1
 	cfg.RatePerMinutePerProject = 0
 	g, m := newTestGovernor(t, cfg)
-	m.set(sample(5.0, time.Now()))
+	m.set(sample(5.0, 0.0, time.Now()))
 
 	e := echo.New()
 	h := g.Middleware(ClassBulk)(func(c echo.Context) error {
@@ -144,6 +175,108 @@ func TestMiddleware_ReleasesPermitOnPanic(t *testing.T) {
 	release()
 }
 
+// TestAdmitWait_CtxCancelReleasesAllSlots pins that a bulk admission cancelled
+// mid-wait releases everything it had acquired, so later admissions succeed.
+func TestAdmitWait_CtxCancelReleasesAllSlots(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxInflightGlobalBulk = 1
+	cfg.MaxInflightPerProject = 1
+	cfg.BulkWaitBudget = 5 * time.Second
+	g, m := newTestGovernor(t, cfg)
+	m.set(sample(5.0, 0.0, time.Now()))
+
+	hold, err := g.Admit("held", ClassBulk)
+	require.NoError(t, err)
+	defer hold()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		release, err := g.AdmitWait(ctx, "p1", ClassBulk, 5*time.Second)
+		if release != nil {
+			release()
+		}
+		done <- err
+	}()
+
+	time.Sleep(20 * time.Millisecond) // let the waiter block on the global sem
+	cancel()
+
+	err = <-done
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+
+	// Release the held slot; a fresh admission must now succeed (no leak).
+	hold()
+	release, err := g.Admit("p1", ClassBulk)
+	require.NoError(t, err, "slots leaked after ctx cancel")
+	require.NotNil(t, release)
+	release()
+}
+
+// TestAdmitWait_WaiterBoundExceeded pins that exceeding MaxWaiters fails fast
+// with ErrNoCapacity rather than blocking.
+func TestAdmitWait_WaiterBoundExceeded(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxInflightGlobalBulk = 1
+	cfg.MaxInflightPerProject = 10
+	cfg.MaxWaiters = 1
+	cfg.BulkWaitBudget = 5 * time.Second
+	g, m := newTestGovernor(t, cfg)
+	m.set(sample(5.0, 0.0, time.Now()))
+
+	// Manually fill the single waiter slot (same-package access).
+	g.waiterSem <- struct{}{}
+
+	release, err := g.AdmitWait(context.Background(), "p2", ClassBulk, 5*time.Second)
+	assert.Nil(t, release)
+	assert.ErrorIs(t, err, ErrNoCapacity)
+
+	<-g.waiterSem // cleanup
+}
+
+// TestAdmitWait_BulkRateDisabledPath pins the default (rate-exempt) bulk path:
+// with RatePerMinutePerProjectBulk == 0, a bulk admission succeeds and tracks
+// in-flight count.
+func TestAdmitWait_BulkRateDisabledPath(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RatePerMinutePerProjectBulk = 0
+	g, m := newTestGovernor(t, cfg)
+	m.set(sample(5.0, 0.0, time.Now()))
+
+	release, err := g.AdmitWait(context.Background(), "p1", ClassBulk, time.Second)
+	require.NoError(t, err)
+	require.NotNil(t, release)
+	assert.Equal(t, int64(1), g.BulkInflight())
+	release()
+	assert.Equal(t, int64(0), g.BulkInflight())
+}
+
+// TestAdmit_ClassSegregationBulkFullDoesNotBlockInteractive pins that a full
+// bulk budget does not 429 interactive work (class-segregated global budgets).
+func TestAdmit_ClassSegregationBulkFullDoesNotBlockInteractive(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxInflightGlobalBulk = 1
+	cfg.MaxInflightGlobalInteractive = 1
+	cfg.MaxInflightPerProject = 10
+	g, m := newTestGovernor(t, cfg)
+	m.set(sample(5.0, 0.0, time.Now()))
+
+	bulkRelease, err := g.Admit("p1", ClassBulk)
+	require.NoError(t, err)
+	defer bulkRelease()
+
+	// A second bulk admission is rejected (bulk budget full).
+	_, err = g.Admit("p2", ClassBulk)
+	assert.ErrorIs(t, err, ErrNoCapacity)
+
+	// Interactive is unaffected by the full bulk budget.
+	intRelease, err := g.Admit("p3", ClassInteractive)
+	require.NoError(t, err, "interactive must not be 429'd by a full bulk budget")
+	require.NotNil(t, intRelease)
+	intRelease()
+}
+
 // TestAdmit_ConcurrentNeverExceedsBound hammers Admit from many goroutines and
 // asserts the number of simultaneously-held global permits never exceeds the
 // configured bound. This is the mutation target for the inflight limiter.
@@ -154,10 +287,10 @@ func TestAdmit_ConcurrentNeverExceedsBound(t *testing.T) {
 	)
 	cfg := DefaultConfig()
 	cfg.MaxInflightPerProject = 1
-	cfg.MaxInflightGlobal = bound
+	cfg.MaxInflightGlobalBulk = bound
 	cfg.RatePerMinutePerProject = 0
 	g, m := newTestGovernor(t, cfg)
-	m.set(sample(5.0, time.Now()))
+	m.set(sample(5.0, 0.0, time.Now()))
 
 	var inflight, peak int32
 	var wg sync.WaitGroup
@@ -197,10 +330,10 @@ func TestAdmit_ConcurrentNeverExceedsBound(t *testing.T) {
 func TestAdmit_GlobalBoundEnforcedAndReleased(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.MaxInflightPerProject = 10
-	cfg.MaxInflightGlobal = 2
+	cfg.MaxInflightGlobalBulk = 2
 	cfg.RatePerMinutePerProject = 0
 	g, m := newTestGovernor(t, cfg)
-	m.set(sample(5.0, time.Now()))
+	m.set(sample(5.0, 0.0, time.Now()))
 
 	r1, err := g.Admit("p1", ClassBulk)
 	require.NoError(t, err)

@@ -2,6 +2,7 @@ package governor
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -14,6 +15,9 @@ import (
 // governor. It must run AFTER authentication so the project id can be resolved.
 // On ErrShed / ErrNoCapacity it returns HTTP 429 with a Retry-After header and
 // an apperror-shaped JSON body.
+//
+// Bulk admissions use the bounded-backpressure AdmitWait path; interactive
+// admissions use the non-blocking Admit path.
 func (g *Governor) Middleware(class Class) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
@@ -22,9 +26,24 @@ func (g *Governor) Middleware(class Class) echo.MiddlewareFunc {
 			}
 
 			projectID := resolveProjectID(c)
-			release, err := g.Admit(projectID, class)
+			var (
+				release func()
+				err     error
+			)
+			if class == ClassBulk {
+				release, err = g.AdmitWait(c.Request().Context(), projectID, class, g.cfg.BulkWaitBudget)
+			} else {
+				release, err = g.Admit(projectID, class)
+			}
 			if err != nil {
 				governorAdmissionRejected.WithLabelValues(class.String(), c.Path()).Inc()
+				g.log.Info("governor admission rejected",
+					slog.String("class", class.String()),
+					slog.String("endpoint", c.Path()),
+					slog.Int("interactive_inflight", len(g.globalInteractiveSem)),
+					slog.Int("bulk_inflight", len(g.globalBulkSem)),
+					slog.Int64("bulk_inflight_attributable", g.bulkInflight.Load()),
+					slog.String("reason", err.Error()))
 				return g.reject(c, err)
 			}
 			defer release()

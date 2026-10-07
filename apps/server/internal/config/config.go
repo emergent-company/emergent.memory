@@ -724,23 +724,23 @@ type EmbeddingQueueConfig struct {
 }
 
 // GovernorConfig holds configuration for the resource governor / admission
-// control. It drives load shedding on heavy (bulk) endpoints and pausing of
-// background workers when the system is saturated.
+// control. Shedding is driven by attributable capacity (DB pool utilization +
+// in-flight bulk admissions); host I/O/CPU pressure only throttles.
 type GovernorConfig struct {
 	// Enabled toggles the resource governor. Default: true.
 	Enabled bool `env:"GOVERNOR_ENABLED" envDefault:"true"`
 	// ThrottleIOWaitPercent is the I/O wait percentage at/above which the
 	// governor throttles. Default: 30.
 	ThrottleIOWaitPercent float64 `env:"GOVERNOR_THROTTLE_IOWAIT_PERCENT" envDefault:"30"`
-	// ShedIOWaitPercent is the I/O wait percentage at/above which the governor
-	// sheds. Default: 40.
-	ShedIOWaitPercent float64 `env:"GOVERNOR_SHED_IOWAIT_PERCENT" envDefault:"40"`
 	// WarningCPULoadFactor is the load multiple of CPU cores at/above which the
 	// governor throttles. Default: 2.
 	WarningCPULoadFactor float64 `env:"GOVERNOR_WARNING_LOAD_FACTOR" envDefault:"2"`
-	// ShedCPULoadFactor is the load multiple of CPU cores at/above which the
-	// governor sheds. Default: 3.
-	ShedCPULoadFactor float64 `env:"GOVERNOR_SHED_LOAD_FACTOR" envDefault:"3"`
+	// ShedDBPoolPercent is the DB pool utilization percentage at/above which
+	// (combined with ShedBulkInflightBound) the governor sheds. Default: 90.
+	ShedDBPoolPercent float64 `env:"GOVERNOR_SHED_DB_POOL_PERCENT" envDefault:"90"`
+	// ShedBulkInflightBound is the in-flight bulk admissions count at/above
+	// which (combined with ShedDBPoolPercent) the governor sheds. Default: 1.
+	ShedBulkInflightBound int `env:"GOVERNOR_SHED_BULK_INFLIGHT_BOUND" envDefault:"1"`
 	// SustainedSamples is the number of consecutive elevated samples before
 	// escalating to shed. Default: 2.
 	SustainedSamples int `env:"GOVERNOR_SUSTAINED_SAMPLES" envDefault:"2"`
@@ -750,14 +750,26 @@ type GovernorConfig struct {
 	// MaxInflightPerProject is the max concurrent admitted requests per
 	// project. Default: 1.
 	MaxInflightPerProject int `env:"GOVERNOR_MAX_INFLIGHT_PER_PROJECT" envDefault:"1"`
-	// MaxInflightGlobal is the max concurrent admitted requests globally.
-	// Default: 2.
-	MaxInflightGlobal int `env:"GOVERNOR_MAX_INFLIGHT_GLOBAL" envDefault:"2"`
-	// RatePerMinutePerProject is the per-project sustained admission rate.
-	// Default: 30.
+	// MaxInflightGlobalInteractive is the max concurrent admitted interactive
+	// requests globally. Default: 1.
+	MaxInflightGlobalInteractive int `env:"GOVERNOR_MAX_INFLIGHT_GLOBAL_INTERACTIVE" envDefault:"1"`
+	// MaxInflightGlobalBulk is the max concurrent admitted bulk requests
+	// globally. Default: 1.
+	MaxInflightGlobalBulk int `env:"GOVERNOR_MAX_INFLIGHT_GLOBAL_BULK" envDefault:"1"`
+	// RatePerMinutePerProject is the per-project sustained interactive admission
+	// rate. Default: 30.
 	RatePerMinutePerProject int `env:"GOVERNOR_RATE_PER_MINUTE_PER_PROJECT" envDefault:"30"`
+	// RatePerMinutePerProjectBulk is the per-project sustained bulk admission
+	// rate. Default: 0 (disabled — bulk is governed by inflight + backpressure).
+	RatePerMinutePerProjectBulk int `env:"GOVERNOR_RATE_PER_MINUTE_PER_PROJECT_BULK" envDefault:"0"`
 	// RateBurst is the per-project rate limiter burst. Default: 5.
 	RateBurst int `env:"GOVERNOR_RATE_BURST" envDefault:"5"`
+	// BulkWaitMs is how long a bulk admission waits for capacity under
+	// throttle before 429 + Retry-After. Default: 2000.
+	BulkWaitMs int `env:"GOVERNOR_BULK_ADMIT_WAIT_MS" envDefault:"2000"`
+	// MaxWaiters is the max concurrent bulk admissions waiting for capacity.
+	// Default: 100.
+	MaxWaiters int `env:"GOVERNOR_MAX_WAITERS" envDefault:"100"`
 	// RetryAfterSeconds is the Retry-After header value on rejected requests.
 	// Default: 15.
 	RetryAfterSeconds int `env:"GOVERNOR_RETRY_AFTER_SECONDS" envDefault:"15"`

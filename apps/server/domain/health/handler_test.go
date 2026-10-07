@@ -14,11 +14,16 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/labstack/echo/v4"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/storage"
 	"github.com/emergent-company/emergent.memory/internal/version"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
+	"github.com/emergent-company/emergent.memory/pkg/governor"
+	"github.com/emergent-company/emergent.memory/pkg/syshealth"
 	"github.com/emergent-company/emergent.memory/pkg/whisper"
 	"github.com/emergent-company/emergent.memory/pkg/xberg"
 )
@@ -442,5 +447,103 @@ func TestRunChecksXbergToleratesNonStringDetail(t *testing.T) {
 	}
 	if xchk.Message != "unreachable" {
 		t.Fatalf("xberg message = %q, want the fallback %q for a non-string detail", xchk.Message, "unreachable")
+	}
+}
+
+// governorTestMonitor drives a governor into Shed mode with a monotonically
+// advancing timestamp and elevated DB pool utilization.
+type governorTestMonitor struct{ n int }
+
+func (m *governorTestMonitor) Start() error { return nil }
+func (m *governorTestMonitor) Stop() error  { return nil }
+func (m *governorTestMonitor) GetHealth() *syshealth.HealthMetrics {
+	m.n++
+	return &syshealth.HealthMetrics{
+		DBPoolPercent: 95,
+		IOWaitPercent: 5,
+		Timestamp:     time.Now().Add(time.Duration(m.n) * time.Second),
+	}
+}
+
+// newShedGovernor returns a governor whose mode is Shed: it holds an in-flight
+// bulk admission (attributable capacity >= bound) and reports elevated DB pool
+// utilization.
+func newShedGovernor(t *testing.T) *governor.Governor {
+	t.Helper()
+	cfg := governor.DefaultConfig()
+	cfg.SustainedSamples = 1
+	cfg.RecoverSamples = 1
+	cfg.ShedDBPoolPercent = 90
+	cfg.ShedBulkInflightBound = 1
+	g := governor.New(&governorTestMonitor{}, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	release, err := g.AdmitWait(context.Background(), "proj", governor.ClassBulk, time.Second)
+	if err != nil {
+		t.Fatalf("admit wait: %v", err)
+	}
+	t.Cleanup(release)
+
+	if got := g.Mode(); got != governor.Shed {
+		t.Fatalf("governor mode = %s, want shed", got)
+	}
+	return g
+}
+
+func TestGovernorStatusNilGovernor(t *testing.T) {
+	h := &Handler{}
+	assert.Nil(t, h.governorStatus(), "nil governor must yield no governor field")
+}
+
+func TestGovernorStatusShed(t *testing.T) {
+	h := &Handler{gov: newShedGovernor(t)}
+	gs := h.governorStatus()
+	require.NotNil(t, gs)
+	assert.Equal(t, "shed", gs.Mode)
+	assert.GreaterOrEqual(t, gs.DBPoolPercent, 90.0)
+	assert.GreaterOrEqual(t, gs.BulkInflight, int64(1))
+}
+
+// TestHealthGovernorFieldIsInformational proves the governor entry is surfaced
+// in the /health response but never changes the overall status or HTTP code:
+// it lives outside the Checks map and is not in criticalComponents /
+// optionalComponents.
+func TestHealthGovernorFieldIsInformational(t *testing.T) {
+	base := func(gov *governor.Governor) *Handler {
+		return &Handler{
+			pool:       healthTestPool(t),
+			db:         fakeRowQuerier{row: fakeRow{scanErr: pgx.ErrNoRows}},
+			cfg:        &config.Config{},
+			storage:    &storage.Service{},
+			xberg:      &xberg.Client{},
+			whisper:    &whisper.Client{},
+			embeddings: &embeddings.Service{},
+			gov:        gov,
+		}
+	}
+
+	run := func(h *Handler) (int, string) {
+		e := echo.New()
+		req := httptest.NewRequest(http.MethodGet, "/health", nil)
+		rec := httptest.NewRecorder()
+		_ = h.Health(e.NewContext(req, rec))
+		return rec.Code, rec.Body.String()
+	}
+
+	// Nil governor: the field is omitted entirely.
+	code, body := run(base(nil))
+	assert.NotContains(t, body, `"governor"`)
+
+	// Shed governor: the field is present with mode=shed, and the HTTP status
+	// code is identical to the nil-governor baseline (informational only).
+	codeShed, bodyShed := run(base(newShedGovernor(t)))
+	assert.Contains(t, bodyShed, `"mode":"shed"`)
+	assert.Equal(t, code, codeShed, "governor field must not change the HTTP status code")
+
+	// The governor is never a critical/optional component, so it can never
+	// move the overall status.
+	for _, name := range append(append([]string{}, criticalComponents...), optionalComponents...) {
+		if name == "governor" {
+			t.Fatal("governor must not be a critical/optional health component")
+		}
 	}
 }

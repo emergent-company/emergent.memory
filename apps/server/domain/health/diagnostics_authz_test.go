@@ -47,6 +47,7 @@ func newDiagnosticsEcho(t *testing.T, testDB *testutil.TestDB) *testutil.HTTPCli
 		&xberg.Client{},
 		&whisper.Client{},
 		&embeddings.Service{},
+		nil,
 	)
 	m := health.NewMetricsHandler(testDB.DB)
 

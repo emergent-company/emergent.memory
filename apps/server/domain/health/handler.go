@@ -18,6 +18,7 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/storage"
 	"github.com/emergent-company/emergent.memory/internal/version"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
+	"github.com/emergent-company/emergent.memory/pkg/governor"
 	"github.com/emergent-company/emergent.memory/pkg/whisper"
 	"github.com/emergent-company/emergent.memory/pkg/xberg"
 )
@@ -31,6 +32,7 @@ type Handler struct {
 	xberg      *xberg.Client
 	whisper    *whisper.Client
 	embeddings *embeddings.Service
+	gov        *governor.Governor
 	startAt    time.Time
 }
 
@@ -48,6 +50,7 @@ func NewHandler(
 	xbergClient *xberg.Client,
 	whisperClient *whisper.Client,
 	embeddingsSvc *embeddings.Service,
+	gov *governor.Governor,
 ) *Handler {
 	return &Handler{
 		pool:       pool,
@@ -57,6 +60,7 @@ func NewHandler(
 		xberg:      xbergClient,
 		whisper:    whisperClient,
 		embeddings: embeddingsSvc,
+		gov:        gov,
 		startAt:    time.Now(),
 	}
 }
@@ -65,6 +69,14 @@ func NewHandler(
 type TracingInfo struct {
 	Enabled   bool   `json:"enabled"`
 	TracesURL string `json:"traces_url,omitempty"`
+}
+
+// GovernorStatus is the informational resource-governor state surfaced in the
+// health response. It never affects overall status or HTTP code.
+type GovernorStatus struct {
+	Mode          string  `json:"mode"`
+	DBPoolPercent float64 `json:"db_pool_percent"`
+	BulkInflight  int64   `json:"bulk_inflight"`
 }
 
 // HealthResponse represents the health check response
@@ -77,6 +89,7 @@ type HealthResponse struct {
 	BuildTime string           `json:"build_time,omitempty"`
 	Checks    map[string]Check `json:"checks"`
 	Tracing   *TracingInfo     `json:"tracing,omitempty"`
+	Governor  *GovernorStatus  `json:"governor,omitempty"`
 }
 
 // buildInfo returns the health response's build identity fields from the
@@ -180,6 +193,7 @@ func (h *Handler) Health(c echo.Context) error {
 	}
 
 	versionStr, commit, buildTime := buildInfo()
+
 	response := HealthResponse{
 		Status:    overallStatus,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -189,9 +203,26 @@ func (h *Handler) Health(c echo.Context) error {
 		BuildTime: buildTime,
 		Checks:    checks,
 		Tracing:   tracingInfo,
+		Governor:  h.governorStatus(),
 	}
 
 	return c.JSON(statusCode, response)
+}
+
+// governorStatus snapshots the resource governor's mode for the health
+// response. It is informational only — the field is never added to
+// criticalComponents/optionalComponents, so it cannot change the overall status
+// or HTTP code. Nil-safe (returns nil when no governor is wired).
+func (h *Handler) governorStatus() *GovernorStatus {
+	if h.gov == nil {
+		return nil
+	}
+	snap := h.gov.Snapshot()
+	return &GovernorStatus{
+		Mode:          snap.Mode,
+		DBPoolPercent: snap.DBPoolPercent,
+		BulkInflight:  snap.BulkInflight,
+	}
 }
 
 // Health component classification. Critical components make the overall status
