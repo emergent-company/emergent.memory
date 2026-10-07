@@ -7,14 +7,6 @@ import Foundation
 /// superseded load so a slow earlier request can never clobber a newer one.
 @MainActor
 final class ObjectBrowserStore: ObservableObject {
-    /// Load state for the object list.
-    enum LoadState: Equatable {
-        case idle
-        case loading
-        case loaded
-        case failed(String)
-    }
-
     @Published private(set) var objects: [GraphObject] = []
     @Published private(set) var loadState: LoadState = .idle
     @Published private(set) var nextCursor: String?
@@ -24,7 +16,7 @@ final class ObjectBrowserStore: ObservableObject {
     @Published var provenance: ObjectProvenance = .any
 
     /// Bumped on every full load; results older than the latest are discarded.
-    private var generation = 0
+    private var generation = GenerationGuard()
     private let client: any ObjectFetching
 
     /// The client seam makes the store testable without a network; the default
@@ -41,19 +33,18 @@ final class ObjectBrowserStore: ObservableObject {
     /// Loads the first page for `agentID`, resetting the list. Supersedes any
     /// in-flight load (its result is discarded).
     func load(agentID: String) async {
-        generation += 1
-        let generation = generation
+        let generation = self.generation.next()
         loadState = .loading
         objects = []
         nextCursor = nil
         do {
             let page = try await client.listObjects(agentID: agentID, provenance: provenance, cursor: nil)
-            guard generation == self.generation else { return }
+            guard self.generation.isCurrent(generation) else { return }
             objects = page.items
             nextCursor = page.nextCursor
             loadState = .loaded
         } catch {
-            guard generation == self.generation else { return }
+            guard self.generation.isCurrent(generation) else { return }
             Log.net.error("object load failed: \(error.localizedDescription)")
             loadState = .failed(error.localizedDescription)
         }
@@ -65,14 +56,14 @@ final class ObjectBrowserStore: ObservableObject {
         guard let cursor = nextCursor, !isLoadingMore else { return }
         isLoadingMore = true
         defer { isLoadingMore = false }
-        let generation = generation
+        let generation = self.generation.current
         do {
             let page = try await client.listObjects(agentID: agentID, provenance: provenance, cursor: cursor)
-            guard generation == self.generation else { return }
+            guard self.generation.isCurrent(generation) else { return }
             objects.append(contentsOf: page.items)
             nextCursor = page.nextCursor
         } catch {
-            guard generation == self.generation else { return }
+            guard self.generation.isCurrent(generation) else { return }
             Log.net.error("object load-more failed: \(error.localizedDescription)")
         }
     }

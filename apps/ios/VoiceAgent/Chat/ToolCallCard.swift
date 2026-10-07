@@ -32,20 +32,21 @@ struct ToolCallInfo: Identifiable, Equatable {
 struct ToolCallRow: View {
     let tool: ToolCallInfo
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1 * .grid) {
             Button {
-                withAnimation(.snappy) { expanded.toggle() }
+                withAnimation(reduceMotion ? nil : .snappy) { expanded.toggle() }
             } label: {
                 HStack(spacing: 2 * .grid) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                        .font(.caption2.weight(.semibold))
+                        .rotationEffect(.degrees(reduceMotion ? 0 : (expanded ? 90 : 0)))
                         .foregroundStyle(.fg3)
                     Text(tool.name)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(MemoryFont.label)
                         .foregroundStyle(.fg1)
                         .lineLimit(1)
                     Spacer()
@@ -55,7 +56,7 @@ struct ToolCallRow: View {
                     }
                     if tool.isError {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 11))
+                            .font(MemoryFont.meta)
                             .foregroundStyle(.fgSerious)
                     }
                 }
@@ -74,7 +75,7 @@ struct ToolCallRow: View {
                     }
                 }
                 .padding(.leading, 4 * .grid)
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
             }
         }
     }
@@ -82,10 +83,10 @@ struct ToolCallRow: View {
     private func detailBlock(_ label: LocalizedStringKey, text: String) -> some View {
         VStack(alignment: .leading, spacing: 1 * .grid) {
             Text(label)
-                .font(.system(size: 10, weight: .semibold))
+                .font(.caption2.weight(.semibold))
                 .foregroundStyle(.fg3)
             Text(text)
-                .font(.system(size: 12, design: .monospaced))
+                .font(MemoryFont.metaMono)
                 .foregroundStyle(.fg1)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -116,7 +117,7 @@ struct ToolCallsCard: View {
                         .foregroundStyle(.fgSerious)
                 }
             }
-            .font(.system(size: 12, weight: .semibold))
+            .font(MemoryFont.metaEmphasis)
             .foregroundStyle(.fg1)
 
             ForEach(tools) { tool in

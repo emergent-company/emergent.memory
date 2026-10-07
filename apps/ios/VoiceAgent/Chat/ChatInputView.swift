@@ -12,6 +12,9 @@ struct ChatInputView: View {
     @FocusState.Binding var keyboardFocus: Bool
     @Binding var text: String
 
+    /// Bumped on each send to drive the send haptic.
+    @State private var sendFeedback = 0
+
     private var store: ChatActivityStore {
         controller.chatActivity
     }
@@ -22,7 +25,7 @@ struct ChatInputView: View {
     }
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 12) {
+        HStack(alignment: .bottom, spacing: 3 * .grid) {
             textField()
             if store.isGeneratingReply {
                 stopButton()
@@ -33,20 +36,29 @@ struct ChatInputView: View {
         .frame(minHeight: 12 * .grid)
         .frame(maxWidth: horizontalSizeClass == .regular ? 128 * .grid : 92 * .grid)
         #if !os(visionOS)
-            .background(.bg2)
-            .overlay(
-                RoundedRectangle(cornerRadius: 6 * .grid)
-                    .stroke(.separator1.opacity(0.4), lineWidth: 1)
+            // A single rounded surface carries both the fill and the border, so
+            // the stroke is not clipped by the shape mask. `strokeBorder` keeps
+            // the hairline inside the corner radius.
+            .background(
+                RoundedRectangle(cornerRadius: .cornerRadiusLarge)
+                    .fill(.bg2)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: .cornerRadiusLarge)
+                            .strokeBorder(.separator1.opacity(0.4), lineWidth: 1)
+                    )
             )
         #endif
-            .clipShape(RoundedRectangle(cornerRadius: 6 * .grid))
+            .clipShape(RoundedRectangle(cornerRadius: .cornerRadiusLarge))
             .safeAreaPadding(.horizontal, 4 * .grid)
             .safeAreaPadding(.bottom, 4 * .grid)
+        #if os(iOS)
+            .sensoryFeedback(.impact(weight: .light), trigger: sendFeedback)
+        #endif
     }
 
     @ViewBuilder
     private func textField() -> some View {
-        TextField("Message", text: $text, axis: .vertical)
+        TextField("message.placeholder", text: $text, axis: .vertical)
         #if os(iOS)
             .focused($keyboardFocus)
         #endif
@@ -97,6 +109,7 @@ struct ChatInputView: View {
             .buttonStyle(RoundButtonStyle())
         #endif
             .accessibilityLabel("chat.send")
+            .accessibilityHint("chat.send.hint")
     }
 
     /// Stop/interrupt while a reply is generating: sends `lk.chat.interrupt`
@@ -121,6 +134,7 @@ struct ChatInputView: View {
         .buttonStyle(StopButtonStyle())
         #endif
         .accessibilityLabel("chat.stop")
+        .accessibilityHint("chat.stop.hint")
     }
 
     private var isSendDisabled: Bool {
@@ -133,6 +147,7 @@ struct ChatInputView: View {
         text = ""
         TraceLog.log("text_sent", ["text": message])
         keyboardFocus = false
+        sendFeedback += 1
         await session.send(text: message)
     }
 }
@@ -150,5 +165,8 @@ struct StopButtonStyle: ButtonStyle {
                 Circle()
                     .fill(.bgSerious.opacity(configuration.isPressed ? 0.7 : 1))
             )
+            // Expand the hit target to 44pt without growing the 32pt circle.
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
     }
 }

@@ -25,46 +25,23 @@ struct AgentLevelView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header()
+            ScreenHeader(
+                title: Text(agent?.name ?? agentName),
+                subtitle: Text(subtitle)
+            ) {
+                dismiss()
+            }
             TabView {
                 conversationTab
                 sessionsTab
             }
+            // Match the level-1 tab bar's opaque background so pushing into an
+            // agent does not flash a translucent bar.
+            .toolbarBackground(.bg1, for: .tabBar)
         }
         .toolbar(.hidden, for: .tabBar)
         .background(.bg1)
         .onAppear { Log.nav.info("AgentLevelView appear \(agentName)") }
-    }
-
-    // MARK: - Header
-
-    private func header() -> some View {
-        HStack(spacing: 2 * .grid) {
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(.fg3)
-                    .padding(2 * .grid)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("agents.level.back")
-
-            VStack(alignment: .leading, spacing: 1 * .grid) {
-                Text(agent?.name ?? agentName)
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(.fg0)
-                    .lineLimit(1)
-                Text(subtitle)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.fg3)
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 4 * .grid)
-        .padding(.top, 1 * .grid)
     }
 
     private var subtitle: LocalizedStringKey {

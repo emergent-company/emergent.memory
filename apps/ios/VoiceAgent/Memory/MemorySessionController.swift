@@ -116,7 +116,7 @@ final class MemorySessionController: ObservableObject {
     /// frame (Memory uses Gemini-native activity detection — no server VAD —
     /// so barge-in depends on client-side AEC).
     private static func makeSession(config: MemoryConfig) -> Session {
-        let tokenSource = AgentToConnect.memory(config: config).tokenSource
+        let tokenSource = MemoryTokenSource(config: config)
         let room = Room(roomOptions: RoomOptions(
             defaultAudioCaptureOptions: AudioCaptureOptions(
                 echoCancellation: true,
@@ -467,7 +467,7 @@ final class MemorySessionController: ObservableObject {
     }
 
     private func classify(_ error: any Error) -> MemoryFailure {
-        if let tokenError = error as? MemoryTokenError {
+        if let tokenError = error as? GatewayError {
             return .tokenFetch(message: tokenError.localizedDescription)
         }
         if let liveKitError = error as? LiveKitError {

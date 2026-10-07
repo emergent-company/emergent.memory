@@ -1,31 +1,5 @@
 import Foundation
 
-/// Errors thrown by ``ObjectBrowserClient`` while talking to the gateway.
-enum ObjectBrowserError: LocalizedError, Sendable {
-    /// The endpoint answered with a non-2xx status code (401 auth, 404 unknown
-    /// agent, 502 backend unavailable, ...).
-    case httpStatus(code: Int, message: String)
-    /// The endpoint could not be reached at all (DNS/TCP/TLS failure).
-    case transport(message: String)
-    /// The endpoint answered but the body could not be decoded.
-    case decode(message: String)
-    /// The configured `apiBaseURL` cannot be turned into a gateway URL.
-    case invalidConfiguration(message: String)
-
-    var errorDescription: String? {
-        switch self {
-        case let .httpStatus(code, message):
-            "Object browser returned HTTP \(code): \(message)"
-        case let .transport(message):
-            message
-        case let .decode(message):
-            message
-        case let .invalidConfiguration(message):
-            message
-        }
-    }
-}
-
 /// Provenance filter for the object browser. Raw values match the gateway's
 /// `provenance` query param: `any` (created or updated), `created`, `updated`.
 enum ObjectProvenance: String, CaseIterable, Sendable {
@@ -85,8 +59,8 @@ struct ObjectBrowserClient: ObjectFetching {
         do {
             response = try JSONDecoder().decode(ObjectsResponse.self, from: data)
         } catch {
-            throw ObjectBrowserError.decode(
-                message: "Gateway returned an unexpected object list: \(error.localizedDescription)"
+            throw GatewayError.decode(
+                "Gateway returned an unexpected object list: \(error.localizedDescription)"
             )
         }
         let cursor = response.nextCursor.flatMap { $0.isEmpty ? nil : $0 }
@@ -99,8 +73,8 @@ struct ObjectBrowserClient: ObjectFetching {
     /// `provenance` is always sent; `cursor` only when non-empty.
     func makeURL(agentID: String, provenance: ObjectProvenance, cursor: String?) throws -> URL {
         guard let base = gatewayBaseURL else {
-            throw ObjectBrowserError.invalidConfiguration(
-                message: "Could not build the object-browser URL from apiBaseURL: \(config.apiBaseURL)"
+            throw GatewayError.invalidConfiguration(
+                "Could not build the object-browser URL from apiBaseURL: \(config.apiBaseURL)"
             )
         }
         let url = base
@@ -109,7 +83,7 @@ struct ObjectBrowserClient: ObjectFetching {
             .appending(path: agentID)
             .appending(path: "objects")
         guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
-            throw ObjectBrowserError.invalidConfiguration(message: "Could not build the object browser URL.")
+            throw GatewayError.invalidConfiguration("Could not build the object browser URL.")
         }
         var items = [URLQueryItem(name: "provenance", value: provenance.rawValue)]
         if let cursor, !cursor.isEmpty {
@@ -117,7 +91,7 @@ struct ObjectBrowserClient: ObjectFetching {
         }
         components.queryItems = items
         guard let finalURL = components.url else {
-            throw ObjectBrowserError.invalidConfiguration(message: "Could not build the object browser URL.")
+            throw GatewayError.invalidConfiguration("Could not build the object browser URL.")
         }
         return finalURL
     }
@@ -126,41 +100,17 @@ struct ObjectBrowserClient: ObjectFetching {
 
     /// The `X-API-Key` header is required by the gateway, same as the token
     /// endpoint (sent by ``GatewayHTTP``).
-    private func send(url: URL) async throws -> Data {
-        let data: Data
-        let httpResponse: HTTPURLResponse
-        do {
-            (data, httpResponse) = try await GatewayHTTP.send(
-                method: "GET",
-                url: url,
-                apiKey: config.apiKey
-            )
-        } catch let transport as GatewayHTTP.TransportError {
-            switch transport.reason {
-            case let .network(underlying):
-                Log.net.error("transport \(url): \(underlying)")
-                throw ObjectBrowserError.transport(
-                    message: "Could not reach the gateway at \(config.apiBaseURL): \(underlying)"
-                )
-            case .noHTTPResponse:
-                throw ObjectBrowserError.transport(message: "Gateway returned no HTTP response.")
-            }
-        }
-
-        guard (200 ..< 300).contains(httpResponse.statusCode) else {
-            let serverMessage = (try? JSONDecoder().decode(ErrorResponse.self, from: data))?.error
-                ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
-            Log.net.error("HTTP \(httpResponse.statusCode) \(url.absoluteString): \(serverMessage)")
-            throw ObjectBrowserError.httpStatus(code: httpResponse.statusCode, message: serverMessage)
-        }
-        return data
+    private var service: GatewayServiceMessages {
+        GatewayServiceMessages(
+            httpPrefix: "Object browser",
+            noResponsePrefix: "Gateway",
+            reachTarget: "the gateway at \(config.apiBaseURL)"
+        )
     }
 
-    // MARK: - Response models
-
-    /// Error body returned by the gateway on failure.
-    private struct ErrorResponse: Decodable {
-        let error: String
+    private func send(url: URL) async throws -> Data {
+        let request = GatewayHTTP.makeRequest(method: "GET", url: url, apiKey: config.apiKey)
+        return try await GatewayHTTP.sendChecked(request, service: service)
     }
 }
 

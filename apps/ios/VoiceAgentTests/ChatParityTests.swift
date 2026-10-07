@@ -164,19 +164,19 @@ struct MarkdownParserTests {
 
 struct MarkdownSyntaxHighlighterTests {
     @Test func highlightsSwiftCode() {
-        let output = MarkdownSyntaxHighlighter.highlight("let x = 1", language: "swift")
+        let output = MarkdownSyntaxHighlighter.highlight("let x = 1", language: "swift", isDark: false)
         #expect(output != nil)
     }
 
     @Test func returnsNilForEmptyInput() {
-        #expect(MarkdownSyntaxHighlighter.highlight("   \n", language: "swift") == nil)
+        #expect(MarkdownSyntaxHighlighter.highlight("   \n", language: "swift", isDark: false) == nil)
     }
 
     @Test func unknownLanguageAndGarbageDoNotCrash() {
         // Splash core ships only the Swift grammar; anything else degrades
         // gracefully instead of failing.
-        #expect(MarkdownSyntaxHighlighter.highlight("def f(): pass", language: "python") != nil)
-        #expect(MarkdownSyntaxHighlighter.highlight("}}}}))((;;;", language: nil) != nil)
+        #expect(MarkdownSyntaxHighlighter.highlight("def f(): pass", language: "python", isDark: false) != nil)
+        #expect(MarkdownSyntaxHighlighter.highlight("}}}}))((;;;", language: nil, isDark: false) != nil)
     }
 }
 

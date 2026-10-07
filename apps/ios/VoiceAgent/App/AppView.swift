@@ -117,7 +117,7 @@ struct AppView: View {
                         Text("agent.waiting")
                     }
                 }
-                .font(.system(size: 15))
+                .font(MemoryFont.bodySmall)
                 .shimmering()
                 .transition(.blurReplace)
             }

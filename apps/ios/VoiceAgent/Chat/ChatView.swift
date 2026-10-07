@@ -8,16 +8,19 @@ import SwiftUI
 struct ChatView: View {
     @EnvironmentObject private var session: Session
     @EnvironmentObject private var controller: MemorySessionController
+    @EnvironmentObject private var agentStore: AgentStore
 
     /// Invoked when the user taps a suggested prompt (fills the composer).
     var onSuggestion: ((String) -> Void)?
 
     /// Suggested prompts shown in the empty chat state (web-chat parity).
-    static let suggestedPrompts: [String] = [
-        "What can you do?",
-        "Summarize what we talked about",
-        "What should I remember about you?",
-        "What are you working on?",
+    /// Each carries a localized display key plus the English text sent to the
+    /// agent when tapped, so the composer fill stays language-independent.
+    static let suggestedPrompts: [SuggestedPrompt] = [
+        SuggestedPrompt(key: "chat.suggestion.whatCanYouDo", text: "What can you do?"),
+        SuggestedPrompt(key: "chat.suggestion.summarize", text: "Summarize what we talked about"),
+        SuggestedPrompt(key: "chat.suggestion.remember", text: "What should I remember about you?"),
+        SuggestedPrompt(key: "chat.suggestion.workingOn", text: "What are you working on?"),
     ]
 
     /// Scroll anchor pinned at the bottom of the message list.
@@ -109,47 +112,47 @@ struct ChatView: View {
     private func roleLabel(_ role: ConversationRole) -> some View {
         Text(role.labelKey)
             .font(MemoryFont.meta)
-            // fg2/fg3/fg4 all map to `.secondary` (~3.3:1 light), so a primary
-            // tint is used to clear 4.5:1 while still reading as secondary.
-            .foregroundStyle(.fg1.opacity(0.7))
+            .foregroundStyle(.fg3)
             .padding(.horizontal, 1 * .grid)
     }
 
     @ViewBuilder
     private func userBubble(_ text: String) -> some View {
+        let role = ConversationRole.user
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
             HStack {
                 Spacer(minLength: 4 * .grid)
-                VStack(alignment: .trailing, spacing: 1 * .grid) {
-                    roleLabel(.user)
+                VStack(alignment: role.horizontalAlignment, spacing: 1 * .grid) {
+                    roleLabel(role)
                     Text(trimmed)
                         .font(MemoryFont.conversationBody)
                         .foregroundStyle(.fg1)
                         .textSelection(.enabled)
                         .padding(.horizontal, 3 * .grid)
                         .padding(.vertical, 2 * .grid)
-                        .bubbleBackground(.user, cornerRadius: .cornerRadiusLarge)
+                        .bubbleBackground(role, cornerRadius: .cornerRadiusMedium)
                 }
-                .containerRelativeFrame(.horizontal, count: 5, span: 4, spacing: 0, alignment: .trailing)
+                .containerRelativeFrame(.horizontal, count: 5, span: 4, spacing: 0, alignment: role.frameAlignment)
             }
         }
     }
 
     @ViewBuilder
     private func agentBubble(_ text: String) -> some View {
+        let role = ConversationRole.assistant
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
             HStack {
-                VStack(alignment: .leading, spacing: 1 * .grid) {
-                    roleLabel(.assistant)
+                VStack(alignment: role.horizontalAlignment, spacing: 1 * .grid) {
+                    roleLabel(role)
                     MarkdownRenderer(text: trimmed)
                         .textSelection(.enabled)
                         .padding(.horizontal, 3 * .grid)
                         .padding(.vertical, 2 * .grid)
-                        .bubbleBackground(.assistant, cornerRadius: .cornerRadiusLarge)
+                        .bubbleBackground(role, cornerRadius: .cornerRadiusMedium)
                 }
-                .containerRelativeFrame(.horizontal, count: 5, span: 4, spacing: 0, alignment: .leading)
+                .containerRelativeFrame(.horizontal, count: 5, span: 4, spacing: 0, alignment: role.frameAlignment)
                 Spacer(minLength: 4 * .grid)
             }
         }
@@ -259,12 +262,12 @@ struct ChatView: View {
     // MARK: - Empty state
 
     private func emptyState() -> some View {
-        VStack(spacing: 2 * .grid) {
+        VStack(spacing: 3 * .grid) {
             Spacer()
-            Image(systemName: "bubble.left.and.bubble.right")
-                .font(.title2.weight(.light))
-            Text("Type a message")
+            agentIdentity()
+            Text("chat.empty.title")
                 .font(MemoryFont.bodySmall)
+                .foregroundStyle(.fg2)
             Spacer()
             if onSuggestion != nil {
                 SuggestedPromptsView(prompts: Self.suggestedPrompts) { prompt in
@@ -273,25 +276,63 @@ struct ChatView: View {
                 .padding(.bottom, 2 * .grid)
             }
         }
-        .foregroundStyle(.fg2)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal)
     }
+
+    /// The selected agent's identity in the empty state: an initial avatar plus
+    /// the agent name, so the blank chat is anchored to who the user is talking
+    /// to. Falls back to a generic glyph when no agent is selected.
+    @ViewBuilder
+    private func agentIdentity() -> some View {
+        let name = agentStore.selectedAgent?.name ?? ""
+        VStack(spacing: 2 * .grid) {
+            ZStack {
+                Circle()
+                    .fill(.bgAccent)
+                if let initial = name.first {
+                    Text(String(initial).uppercased())
+                        .font(MemoryFont.screenTitle)
+                        .foregroundStyle(.fgAccent)
+                } else {
+                    Image(systemName: "bubble.left.and.bubble.right")
+                        .font(.title2.weight(.light))
+                        .foregroundStyle(.fg3)
+                }
+            }
+            .frame(width: 16 * .grid, height: 16 * .grid)
+
+            if !name.isEmpty {
+                Text(name)
+                    .font(MemoryFont.cardHeader)
+                    .foregroundStyle(.fg0)
+                    .lineLimit(1)
+            }
+        }
+    }
+}
+
+/// One suggested prompt: a localized display key plus the English text sent
+/// to the agent when tapped (see ``ChatView/suggestedPrompts``).
+struct SuggestedPrompt: Identifiable {
+    let key: LocalizedStringKey
+    let text: String
+    var id: String { text }
 }
 
 /// Suggested-prompt chips for the empty chat state. Each chip fills the
 /// composer (no auto-send) via `onPick`.
 struct SuggestedPromptsView: View {
-    let prompts: [String]
+    let prompts: [SuggestedPrompt]
     let onPick: (String) -> Void
 
     var body: some View {
         VStack(spacing: 1 * .grid) {
-            ForEach(prompts, id: \.self) { prompt in
+            ForEach(prompts) { prompt in
                 Button {
-                    onPick(prompt)
+                    onPick(prompt.text)
                 } label: {
-                    Text(prompt)
+                    Text(prompt.key)
                         .font(MemoryFont.label)
                         .foregroundStyle(.fg1)
                         .lineLimit(1)
@@ -299,6 +340,9 @@ struct SuggestedPromptsView: View {
                         .padding(.horizontal, 3 * .grid)
                         .padding(.vertical, 1 * .grid)
                         .background(.bg2, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
+                        // Keep the pill's visual size while giving the row a
+                        // full 44pt tap target.
+                        .frame(minHeight: 44)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)

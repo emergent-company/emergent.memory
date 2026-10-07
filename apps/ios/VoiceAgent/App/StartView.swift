@@ -55,7 +55,7 @@ struct StartView: View {
             Text("connect.tip")
                 .foregroundStyle(.fg3)
         }
-        .font(.system(size: 12))
+        .font(MemoryFont.meta)
         .multilineTextAlignment(.center)
         .safeAreaPadding(.horizontal, horizontalSizeClass == .regular ? 32 * .grid : 16 * .grid)
         .safeAreaPadding(.vertical)
@@ -101,8 +101,9 @@ struct StartView: View {
                 Image(systemName: "slider.horizontal.3")
                 Text("audio.title")
             }
-            .font(.system(size: 13))
+            .font(.footnote)
             .foregroundStyle(.fg3)
+            .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -120,8 +121,9 @@ struct StartView: View {
                 Image(systemName: "square.stack.3d.up")
                 Text("objects.title")
             }
-            .font(.system(size: 13))
+            .font(.footnote)
             .foregroundStyle(.fg3)
+            .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

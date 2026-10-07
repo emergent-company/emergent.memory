@@ -195,67 +195,34 @@ struct AppShellView: View {
     // MARK: - States
 
     private func loadingView() -> some View {
-        VStack(spacing: 3 * .grid) {
-            Spacer()
-            Spinner()
-            Text("agents.loading")
-                .font(.footnote)
-                .foregroundStyle(.fg3)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, minHeight: 32 * .grid)
+        LoadingStateView(title: "agents.loading", fillsHeight: false)
     }
 
     /// Load failure — often stale/invalid connection settings after a server
     /// change. Retry alone cannot fix a wrong host or key, so the setup-QR
     /// re-onboard path is offered first.
     private func failureView(_ message: String) -> some View {
-        ContentUnavailableView {
-            Label("agents.error", systemImage: "wifi.exclamationmark")
-        } description: {
-            VStack(spacing: 1 * .grid) {
-                Text("agents.error.description")
-                Text(message)
-                    .font(MemoryFont.meta)
-                    .foregroundStyle(.fg3)
-            }
-        } actions: {
-            Button {
-                qrPresented = true
-            } label: {
-                HStack(spacing: 1 * .grid) {
-                    Image(systemName: "qrcode.viewfinder")
-                    Text("agents.error.scanQR")
-                }
-                .font(MemoryFont.labelEmphasis)
-                .foregroundStyle(.fgAccent)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .padding(.top, 2 * .grid)
-
-            Button {
-                Task { await agentStore.load() }
-            } label: {
-                Text("agents.retry")
-                    .font(MemoryFont.labelEmphasis)
-                    .foregroundStyle(.fgAccent)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .padding(.top, 1 * .grid)
-        }
+        ErrorStateView(
+            title: "agents.error",
+            description: "agents.error.description",
+            message: message,
+            retryLabel: "agents.retry",
+            retry: { Task { await agentStore.load() } },
+            leadingActionLabel: "agents.error.scanQR",
+            leadingActionImage: "qrcode.viewfinder",
+            leadingAction: { qrPresented = true }
+        )
     }
 
     /// Read-only empty state: no add-agent affordance on the phone, so this
     /// directs the user to configure agents from web/desktop.
     private func emptyView() -> some View {
-        ContentUnavailableView {
-            Label("agents.empty.readonly", systemImage: "person.crop.circle.badge.plus")
-        } description: {
-            Text("agents.empty.readonly.description")
-        }
-        .padding(.top, 4 * .grid)
+        EmptyStateView(
+            title: "agents.empty.readonly",
+            description: "agents.empty.readonly.description",
+            systemImage: "person.crop.circle.badge.plus",
+            topPadding: 4 * .grid
+        )
     }
 }
 

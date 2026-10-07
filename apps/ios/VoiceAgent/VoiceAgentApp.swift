@@ -1,24 +1,4 @@
-import LiveKit
 import SwiftUI
-
-/// The agent this app talks to. Dispatched by name through the token
-/// endpoint; the picker on the start screen chooses which one.
-enum AgentToConnect {
-    /// Memory's self-hosted agent, reached through Memory's token endpoint.
-    case memory(config: MemoryConfig)
-
-    /// The active configuration (read from `UserDefaults` with build defaults).
-    static var current: Self {
-        .memory(config: MemoryConfig())
-    }
-
-    var tokenSource: any TokenSourceConfigurable {
-        switch self {
-        case let .memory(config):
-            MemoryTokenSource(config: config)
-        }
-    }
-}
 
 @main
 struct VoiceAgentApp: App {

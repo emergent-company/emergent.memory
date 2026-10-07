@@ -21,7 +21,10 @@ enum TraceLog {
     /// `UserDefaults` because `MemoryConfig`'s initializer is MainActor-isolated
     /// while `log` is called from nonisolated contexts.
     private nonisolated static let identity: String = {
-        let key = "alfred.participantIdentity" // MemoryConfig.participantIdentityKey
+        // Literal, not `MemoryConfig.participantIdentityKey`: the app builds
+        // with default MainActor isolation, which makes that constant
+        // MainActor-isolated, while this initializer must stay nonisolated.
+        let key = "alfred.participantIdentity"
         let defaults = UserDefaults.standard
         if let stored = defaults.string(forKey: key), !stored.isEmpty {
             return stored

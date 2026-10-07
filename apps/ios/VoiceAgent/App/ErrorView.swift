@@ -18,10 +18,10 @@ struct ErrorView: View {
                 }
                 .buttonStyle(.plain)
             }
-            .font(.system(size: 15, weight: .semibold))
+            .font(MemoryFont.cardHeader)
 
             Text(error.localizedDescription)
-                .font(.system(size: 15))
+                .font(MemoryFont.bodySmall)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(3 * .grid)

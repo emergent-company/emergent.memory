@@ -36,18 +36,18 @@ struct A2UIComponentCard: View {
 
     // MARK: Headers
 
-    private func header(_ title: String, badge: String? = nil) -> some View {
+    private func header(_ title: Text, badge: String? = nil) -> some View {
         HStack(spacing: 2 * .grid) {
             if let badge, !badge.isEmpty {
                 Text(badge)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.caption2.weight(.semibold))
                     .foregroundStyle(.fg2)
                     .padding(.horizontal, 2 * .grid)
                     .padding(.vertical, 1)
                     .overlay(Capsule().stroke(.separator1, lineWidth: 1))
             }
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
+            title
+                .font(MemoryFont.metaEmphasis)
                 .foregroundStyle(.fg3)
                 .textCase(.uppercase)
                 .tracking(0.6)
@@ -57,7 +57,7 @@ struct A2UIComponentCard: View {
 
     private func label(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 14))
+            .font(MemoryFont.bodySmall)
             .foregroundStyle(.fg1)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -65,7 +65,7 @@ struct A2UIComponentCard: View {
 
     private func pre(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 11, design: .monospaced))
+            .font(MemoryFont.metaMono)
             .foregroundStyle(.fg2)
             .textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
@@ -79,12 +79,12 @@ struct A2UIComponentCard: View {
             ForEach(Array(pairs.enumerated()), id: \.offset) { _, pair in
                 VStack(alignment: .leading, spacing: 1) {
                     Text(pair.0)
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.caption2.weight(.semibold))
                         .foregroundStyle(.fg3)
                         .textCase(.uppercase)
                         .tracking(0.5)
                     Text(pair.1)
-                        .font(.system(size: 13))
+                        .font(MemoryFont.label)
                         .foregroundStyle(.fg1)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -96,14 +96,14 @@ struct A2UIComponentCard: View {
     // MARK: Actions
 
     @ViewBuilder
-    private func actions(_ pairs: [(label: String, response: String, primary: Bool)]) -> some View {
+    private func actions(_ pairs: [(label: LocalizedStringKey, response: String, primary: Bool)]) -> some View {
         if let submittedResponse {
             HStack(spacing: 1 * .grid) {
                 Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 13))
+                    .font(.footnote)
                     .foregroundStyle(.fgSuccess)
                 Text(submittedResponse.displayText)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(MemoryFont.labelEmphasis)
                     .foregroundStyle(.fgSuccess)
             }
         } else {
@@ -126,7 +126,7 @@ struct A2UIComponentCard: View {
 extension A2UIComponentCard {
     private var proposalCard: some View {
         VStack(alignment: .leading, spacing: 2 * .grid) {
-            header("Proposal", badge: component.text("kind"))
+            header(Text("chat.card.proposal"), badge: component.text("kind"))
             if let summary = component.text("summary"), !summary.isEmpty {
                 label(summary)
             }
@@ -137,15 +137,15 @@ extension A2UIComponentCard {
                 pre(body)
             }
             actions([
-                (label: "Reject", response: "reject", primary: false),
-                (label: "Accept", response: "accept", primary: true),
+                (label: "chat.card.reject", response: "reject", primary: false),
+                (label: "chat.card.accept", response: "accept", primary: true),
             ])
         }
     }
 
     private var approvalCard: some View {
         VStack(alignment: .leading, spacing: 2 * .grid) {
-            header("Approval", badge: component.text("tool"))
+            header(Text("chat.card.approval"), badge: component.text("tool"))
             let inputRows = objectRows(component.value("input"))
             if !inputRows.isEmpty {
                 rows(inputRows)
@@ -153,15 +153,15 @@ extension A2UIComponentCard {
                 pre(input)
             }
             actions([
-                (label: "Deny", response: "deny", primary: false),
-                (label: "Approve", response: "approve", primary: true),
+                (label: "chat.card.deny", response: "deny", primary: false),
+                (label: "chat.card.approve", response: "approve", primary: true),
             ])
         }
     }
 
     private var questionCard: some View {
         VStack(alignment: .leading, spacing: 2 * .grid) {
-            header("Question")
+            header(Text("chat.card.question"))
             if let prompt = component.text("prompt"), !prompt.isEmpty {
                 label(prompt)
             }
@@ -203,7 +203,7 @@ extension A2UIComponentCard {
         VStack(alignment: .leading, spacing: 2 * .grid) {
             if let lang = component.text("lang"), !lang.isEmpty {
                 Text(lang)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.caption2.weight(.semibold))
                     .foregroundStyle(.fg3)
                     .textCase(.uppercase)
                     .tracking(0.5)
@@ -214,15 +214,15 @@ extension A2UIComponentCard {
 
     private var entityCard: some View {
         VStack(alignment: .leading, spacing: 2 * .grid) {
-            header("Entity", badge: component.text("type"))
+            header(Text("chat.card.entity"), badge: component.text("type"))
             let properties = objectRows(component.value("properties"))
             if !properties.isEmpty {
-                sectionLabel("Properties")
+                sectionLabel("chat.card.properties")
                 rows(properties)
             }
             let relationships = relationshipRows(component.value("relationships"))
             if !relationships.isEmpty {
-                sectionLabel("Relationships")
+                sectionLabel("chat.card.relationships")
                 rows(relationships)
             }
         }
@@ -230,10 +230,14 @@ extension A2UIComponentCard {
 
     private var objectFormCard: some View {
         VStack(alignment: .leading, spacing: 2 * .grid) {
-            header("Form")
+            header(Text("chat.card.form"))
             let fields = component.rows("fields")
             if fields.isEmpty {
-                label("Structured input requested — form rendering is not implemented yet.")
+                Text("chat.card.form.unavailable")
+                    .font(MemoryFont.bodySmall)
+                    .foregroundStyle(.fg1)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 rows(fields)
             }
@@ -242,7 +246,7 @@ extension A2UIComponentCard {
 
     private var todoCard: some View {
         VStack(alignment: .leading, spacing: 2 * .grid) {
-            header("Tasks")
+            header(Text("chat.card.tasks"))
             let items = component.value("items") ?? component.value("todos")
             if case let .array(list)? = items, !list.isEmpty {
                 VStack(alignment: .leading, spacing: 1 * .grid) {
@@ -258,10 +262,10 @@ extension A2UIComponentCard {
         let values = todoValues(item)
         return HStack(spacing: 2 * .grid) {
             Image(systemName: values.done ? "checkmark.square.fill" : "square")
-                .font(.system(size: 13))
+                .font(.footnote)
                 .foregroundStyle(values.done ? .fgSuccess : .fg3)
             Text(values.text)
-                .font(.system(size: 13))
+                .font(MemoryFont.label)
                 .foregroundStyle(.fg1)
                 .strikethrough(values.done, color: .fg3)
             Spacer()
@@ -283,7 +287,7 @@ extension A2UIComponentCard {
 
     private var resultCard: some View {
         VStack(alignment: .leading, spacing: 2 * .grid) {
-            header("Result")
+            header(Text("chat.card.result"))
             let rowsPairs = component.rows("rows")
             if !rowsPairs.isEmpty {
                 rows(rowsPairs)
@@ -300,7 +304,7 @@ extension A2UIComponentCard {
 
     private var summaryCard: some View {
         VStack(alignment: .leading, spacing: 2 * .grid) {
-            header(component.component.isEmpty ? "component" : component.component)
+            header(Text(component.component.isEmpty ? "component" : component.component))
             let pairs = component.extraProps
             if pairs.isEmpty {
                 label("—")
@@ -314,9 +318,9 @@ extension A2UIComponentCard {
 // MARK: - Prop helpers
 
 extension A2UIComponentCard {
-    private func sectionLabel(_ text: String) -> some View {
+    private func sectionLabel(_ text: LocalizedStringKey) -> some View {
         Text(text)
-            .font(.system(size: 10, weight: .semibold))
+            .font(.caption2.weight(.semibold))
             .foregroundStyle(.fg3)
             .textCase(.uppercase)
             .tracking(0.5)

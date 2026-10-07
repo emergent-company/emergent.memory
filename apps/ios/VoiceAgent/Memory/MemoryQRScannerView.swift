@@ -57,6 +57,9 @@ struct MemoryQRScannerView: View {
         }
         .task { await startScanning() }
         .onDisappear { session?.stopRunning() }
+        #if os(iOS)
+            .sensoryFeedback(.success, trigger: configured)
+        #endif
     }
 
     // MARK: - Camera permission + session setup
@@ -109,7 +112,7 @@ struct MemoryQRScannerView: View {
         VStack(spacing: 3 * .grid) {
             Spinner()
             Text("qr.requesting")
-                .font(.system(size: 12))
+                .font(MemoryFont.meta)
                 .foregroundStyle(.fg3)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -124,16 +127,16 @@ struct MemoryQRScannerView: View {
             }
             Spacer()
             Image(systemName: "video.slash")
-                .font(.system(size: 28))
+                .font(.title)
                 .foregroundStyle(.fgModerate)
             Text(denialMessage)
-                .font(.system(size: 13))
+                .font(.footnote)
                 .foregroundStyle(.fg3)
                 .multilineTextAlignment(.center)
             if showOpenSettings {
                 Button(action: openSettings) {
                     Text("qr.openSettings")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(MemoryFont.labelEmphasis)
                         .foregroundStyle(.fgAccent)
                         .contentShape(Rectangle())
                 }
@@ -177,9 +180,10 @@ struct MemoryQRScannerView: View {
             dismiss()
         } label: {
             Image(systemName: "xmark")
-                .font(.system(size: 13, weight: .medium))
+                .font(.footnote.weight(.medium))
                 .foregroundStyle(.fg3)
                 .padding(2 * .grid)
+                .frame(minWidth: 44, minHeight: 44)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -354,7 +358,7 @@ extension MemoryQRScannerView {
             Image(systemName: statusIcon)
                 .foregroundStyle(statusColor)
             Text(statusText)
-                .font(.system(size: 12))
+                .font(MemoryFont.meta)
                 .foregroundStyle(.fg3)
         }
         .padding(3 * .grid)

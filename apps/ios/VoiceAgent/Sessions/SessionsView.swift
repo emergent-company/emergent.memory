@@ -6,7 +6,7 @@ struct SessionRoute: Hashable {
 }
 
 /// Sessions destination (second level): lists the recorded sessions for the
-/// selected agent, most recently active first, via `SessionLogClient`.
+/// selected agent, most recently active first, via ``SessionsStore``.
 ///
 /// Read-only — no create, edit, or delete surface. Shows an empty state when
 /// the agent has no recorded sessions and an error state (with retry) when
@@ -17,65 +17,32 @@ struct SessionsView: View {
     /// provided by the second level itself.
     let agentName: String
 
-    private enum LoadState: Equatable {
-        case loading
-        case loaded
-        case failed(String)
-    }
-
-    @State private var sessions: [SessionSummary] = []
-    @State private var state: LoadState = .loading
+    @StateObject private var store = SessionsStore()
 
     var body: some View {
         ZStack {
-            if sessions.isEmpty {
+            if store.sessions.isEmpty {
                 emptyView()
             } else {
                 list
             }
-            if case .loading = state {
-                loadingView()
+            if store.loadState == .loading {
+                LoadingStateView(title: "sessions.loading")
                     .background(.bg1)
             }
-            if case let .failed(message) = state {
+            if case let .failed(message) = store.loadState {
                 failureView(message)
                     .background(.bg1)
             }
         }
         .background(.bg1)
-        .task(id: "sessions-load") { await load() }
-    }
-
-    // MARK: - Loading
-
-    private func load() async {
-        state = .loading
-        Log.net.info("listSessions")
-        let client = SessionLogClient(config: MemoryConfig())
-        do {
-            sessions = try await client.listSessions()
-            Log.net.info("listSessions ok \(sessions.count)")
-            state = .loaded
-        } catch {
-            Log.net.error("listSessions failed: \(error.localizedDescription)")
-            state = .failed(error.localizedDescription)
-        }
-    }
-
-    private func loadingView() -> some View {
-        VStack(spacing: 3 * .grid) {
-            Spinner()
-            Text("sessions.loading")
-                .font(.system(size: 13))
-                .foregroundStyle(.fg3)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task(id: "sessions-load") { await store.load() }
     }
 
     // MARK: - List
 
     private var list: some View {
-        List(sessions) { summary in
+        List(store.sessions) { summary in
             NavigationLink(value: AppRoute.session(SessionRoute(room: summary.room))) {
                 SessionRow(summary: summary)
             }
@@ -83,39 +50,25 @@ struct SessionsView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
-        .refreshable { await load() }
+        .refreshable { await store.load() }
     }
 
     private func emptyView() -> some View {
-        ContentUnavailableView {
-            Label("sessions.empty", systemImage: "clock")
-        } description: {
-            Text("sessions.empty.description")
-        }
+        EmptyStateView(
+            title: "sessions.empty",
+            description: "sessions.empty.description",
+            systemImage: "clock"
+        )
     }
 
     private func failureView(_ message: String) -> some View {
-        ContentUnavailableView {
-            Label("sessions.error", systemImage: "wifi.exclamationmark")
-        } description: {
-            VStack(spacing: 1 * .grid) {
-                Text("sessions.error.description")
-                Text(message)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.fg3)
-            }
-        } actions: {
-            Button {
-                Task { await load() }
-            } label: {
-                Text("sessions.retry")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.fgAccent)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .padding(.top, 2 * .grid)
-        }
+        ErrorStateView(
+            title: "sessions.error",
+            description: "sessions.error.description",
+            message: message,
+            retryLabel: "sessions.retry",
+            retry: { Task { await store.load() } }
+        )
     }
 }
 
@@ -134,14 +87,14 @@ private struct SessionRow: View {
                         .foregroundStyle(.fg3)
                 }
             }
-            .font(.system(size: 15))
+            .font(MemoryFont.bodySmall)
             .foregroundStyle(.fg1)
             .lineLimit(2)
             .multilineTextAlignment(.leading)
 
             HStack(spacing: 2 * .grid) {
                 if let startedAt = summary.startedAt {
-                    Text("sessions.started \(startedAt)")
+                    Text("sessions.started \(DateFormatting.formatSessionDate(startedAt) ?? startedAt)")
                 }
                 Text("sessions.turns.count \(summary.turns)")
                 Text("sessions.toolCalls.count \(summary.toolCalls)")
@@ -149,7 +102,7 @@ private struct SessionRow: View {
                     liveBadge
                 }
             }
-            .font(.system(size: 11))
+            .font(MemoryFont.meta)
             .foregroundStyle(.fg3)
         }
         .padding(.vertical, 1 * .grid)

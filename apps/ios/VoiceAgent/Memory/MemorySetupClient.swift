@@ -1,27 +1,5 @@
 import Foundation
 
-/// Errors thrown by ``MemorySetupClient`` while exchanging the one-time
-/// setup token for per-device configuration.
-enum MemorySetupError: LocalizedError, Sendable {
-    /// The endpoint answered with a non-2xx status code.
-    case httpStatus(code: Int, message: String)
-    /// The endpoint could not be reached at all (DNS/TCP/TLS failure).
-    case transport(message: String)
-    /// The endpoint answered but the body could not be decoded.
-    case decode(message: String)
-
-    var errorDescription: String? {
-        switch self {
-        case let .httpStatus(code, message):
-            "Setup returned HTTP \(code): \(message)"
-        case let .transport(message):
-            message
-        case let .decode(message):
-            message
-        }
-    }
-}
-
 /// One-time QR onboarding exchange: POSTs the setup token to the setup
 /// endpoint and gets back the per-device server URL, token endpoint, API base
 /// URL, and API key.
@@ -68,34 +46,27 @@ struct MemorySetupClient: Sendable {
         do {
             request.httpBody = try JSONEncoder().encode(Payload(token: token, device: device))
         } catch {
-            throw MemorySetupError.transport(
-                message: "Could not encode the setup request: \(error.localizedDescription)"
+            throw GatewayError.transport(
+                "Could not encode the setup request: \(error.localizedDescription)"
             )
         }
 
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await URLSession.shared.data(for: request)
-        } catch {
-            throw MemorySetupError.transport(
-                message: "Could not reach the setup endpoint at \(url.absoluteString): \(error.localizedDescription)"
+        let data = try await GatewayHTTP.sendChecked(
+            request,
+            service: GatewayServiceMessages(
+                httpPrefix: "Setup",
+                noResponsePrefix: "The setup endpoint",
+                reachTarget: "the setup endpoint at \(url.absoluteString)",
+                logsErrors: false,
+                parseErrorBody: false
             )
-        }
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw MemorySetupError.transport(message: "The setup endpoint returned no HTTP response.")
-        }
-        guard (200 ..< 300).contains(httpResponse.statusCode) else {
-            let serverMessage = HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
-            throw MemorySetupError.httpStatus(code: httpResponse.statusCode, message: serverMessage)
-        }
+        )
 
         do {
             return try JSONDecoder().decode(Response.self, from: data)
         } catch {
-            throw MemorySetupError.decode(
-                message: "The setup endpoint returned an unexpected response: \(error.localizedDescription)"
+            throw GatewayError.decode(
+                "The setup endpoint returned an unexpected response: \(error.localizedDescription)"
             )
         }
     }

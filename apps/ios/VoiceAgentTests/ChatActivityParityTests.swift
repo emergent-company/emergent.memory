@@ -254,8 +254,8 @@ struct ComposerStateTests {
     @Test func suggestedPromptsFillComposerWithoutSending() {
         let prompts = ChatView.suggestedPrompts
         #expect(prompts.count == 4)
-        #expect(Set(prompts).count == prompts.count)
-        #expect(prompts.allSatisfy { !$0.isEmpty })
+        #expect(Set(prompts.map(\.id)).count == prompts.count)
+        #expect(prompts.allSatisfy { !$0.text.isEmpty })
 
         // Each chip is wired to onPick (fills the composer); nothing auto-sends.
         var picked: [String] = []

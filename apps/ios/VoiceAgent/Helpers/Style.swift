@@ -39,6 +39,17 @@ enum ConversationRole {
         self == .user
     }
 
+    /// Logical horizontal alignment for this speaker's content. `leading` and
+    /// `trailing` are layout-direction relative, so bubbles mirror under RTL.
+    var horizontalAlignment: HorizontalAlignment {
+        isUser ? .trailing : .leading
+    }
+
+    /// Logical frame alignment for this speaker's content (same mirroring).
+    var frameAlignment: Alignment {
+        isUser ? .trailing : .leading
+    }
+
     /// Localization key for the role label. Reuses the session-detail keys so
     /// the label is already translated ("You" / "Agent").
     var labelKey: LocalizedStringKey {
@@ -84,7 +95,7 @@ struct BubbleBackground: ViewModifier {
 }
 
 extension View {
-    func bubbleBackground(_ role: ConversationRole, cornerRadius: CGFloat = .cornerRadiusLarge) -> some View {
+    func bubbleBackground(_ role: ConversationRole, cornerRadius: CGFloat = .cornerRadiusMedium) -> some View {
         modifier(BubbleBackground(role: role, cornerRadius: cornerRadius))
     }
 }
@@ -101,11 +112,14 @@ extension CGFloat {
         static let cornerRadiusPerPlatform: Self = 2 * grid
     #endif
 
-    /// The corner radius for the small UI elements.
+    /// The corner radius for the small UI elements (cards, chips, buttons).
     static let cornerRadiusSmall: Self = 2 * grid
 
-    /// The corner radius for the large UI elements.
-    static let cornerRadiusLarge: Self = 4 * grid
+    /// The corner radius for the medium UI elements (bubbles, tool cards).
+    static let cornerRadiusMedium: Self = 4 * grid
+
+    /// The corner radius for the large UI elements (the composer).
+    static let cornerRadiusLarge: Self = 6 * grid
 }
 
 struct ProminentButtonStyle: ButtonStyle {
@@ -125,9 +139,12 @@ struct RoundButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(.caption, weight: .semibold))
-            .foregroundStyle(.white)
-            .background(isEnabled ? .fgAccent.opacity(configuration.isPressed ? 0.75 : 1) : .fg4.opacity(0.4))
+            .foregroundStyle(isEnabled ? .white : .fgDisabled)
+            .background(isEnabled ? .fgAccent.opacity(configuration.isPressed ? 0.75 : 1) : .bgDisabled)
             .clipShape(Circle())
+            // Expand the hit target to 44pt without growing the 32pt circle.
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
     }
 }
 
@@ -138,14 +155,22 @@ struct ControlBarButtonStyle: ButtonStyle {
     let foregroundColor: Color
     let backgroundColor: Color
     let borderColor: Color
+    /// Always fill the chip with `backgroundColor` (and hint its edge with
+    /// `borderColor`). Used for the destructive hang-up control, which is not a
+    /// toggle.
+    var isDestructive: Bool = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 17, weight: .medium))
-            .foregroundStyle(isEnabled ? foregroundColor.opacity(configuration.isPressed ? 0.75 : 1) : borderColor)
+            .font(.body.weight(.medium))
+            .foregroundStyle(isEnabled ? foregroundColor.opacity(configuration.isPressed ? 0.75 : 1) : .fgDisabled)
             .background(
                 RoundedRectangle(cornerRadius: .cornerRadiusPerPlatform)
-                    .fill(isToggled ? backgroundColor : .clear)
+                    .fill(isToggled || isDestructive ? backgroundColor : .clear)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: .cornerRadiusPerPlatform)
+                            .strokeBorder(isDestructive ? borderColor : .clear, lineWidth: 1)
+                    )
             )
     }
 }
@@ -163,26 +188,34 @@ struct BlurredTop: ViewModifier {
 }
 
 struct Shimmering: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isShimmering = false
 
+    @ViewBuilder
     func body(content: Content) -> some View {
-        content
-            .mask(
-                LinearGradient(
-                    colors: [
-                        .black.opacity(0.4),
-                        .black,
-                        .black,
-                        .black.opacity(0.4),
-                    ],
-                    startPoint: isShimmering ? UnitPoint(x: 1, y: 0) : UnitPoint(x: -1, y: 0),
-                    endPoint: isShimmering ? UnitPoint(x: 2, y: 0) : UnitPoint(x: 0, y: 0)
+        if reduceMotion {
+            // No sweeping highlight when Reduce Motion is on: show the content
+            // as-is rather than a continuously moving mask.
+            content
+        } else {
+            content
+                .mask(
+                    LinearGradient(
+                        colors: [
+                            .black.opacity(0.4),
+                            .black,
+                            .black,
+                            .black.opacity(0.4),
+                        ],
+                        startPoint: isShimmering ? UnitPoint(x: 1, y: 0) : UnitPoint(x: -1, y: 0),
+                        endPoint: isShimmering ? UnitPoint(x: 2, y: 0) : UnitPoint(x: 0, y: 0)
+                    )
+                    .animation(.linear(duration: 2).repeatForever(autoreverses: false), value: isShimmering)
                 )
-                .animation(.linear(duration: 2).repeatForever(autoreverses: false), value: isShimmering)
-            )
-            .onAppear {
-                isShimmering = true
-            }
+                .onAppear {
+                    isShimmering = true
+                }
+        }
     }
 }
 

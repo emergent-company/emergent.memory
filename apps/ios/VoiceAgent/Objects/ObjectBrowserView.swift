@@ -23,49 +23,31 @@ struct ObjectBrowserView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header()
+            ScreenHeader(
+                title: Text("objects.title"),
+                subtitle: Text(agentName)
+            ) {
+                dismiss()
+            }
             provenanceControl()
-            searchField()
             content
         }
         .background(.bg1)
-        .task { await store.load(agentID: agentID) }
-        .onChange(of: store.provenance) { _, _ in
-            Task { await store.load(agentID: agentID) }
-        }
+        // The shell hides the navigation bar for its custom chrome; reveal it
+        // here so the native search field has a bar to live in. The back
+        // affordance stays the ScreenHeader chevron, so hide the system one.
+        #if os(iOS)
+            .toolbar(.visible, for: .navigationBar)
+            .navigationBarBackButtonHidden(true)
+        #endif
+            .searchable(text: $searchText, prompt: Text("objects.search"))
+            .task { await store.load(agentID: agentID) }
+            .onChange(of: store.provenance) { _, _ in
+                Task { await store.load(agentID: agentID) }
+            }
     }
 
     // MARK: - Chrome
-
-    private func header() -> some View {
-        HStack(spacing: 2 * .grid) {
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(.fg3)
-                    .padding(2 * .grid)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("agents.level.back")
-
-            VStack(alignment: .leading, spacing: 1 * .grid) {
-                Text("objects.title")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(.fg0)
-                Text(agentName)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.fg3)
-                    .lineLimit(1)
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 4 * .grid)
-        .padding(.top, 1 * .grid)
-        .padding(.bottom, 2 * .grid)
-    }
 
     private func provenanceControl() -> some View {
         Picker("objects.provenance.title", selection: $store.provenance) {
@@ -74,33 +56,6 @@ struct ObjectBrowserView: View {
             }
         }
         .pickerStyle(.segmented)
-        .padding(.horizontal, 4 * .grid)
-        .padding(.bottom, 2 * .grid)
-    }
-
-    private func searchField() -> some View {
-        HStack(spacing: 2 * .grid) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.fg3)
-            TextField("objects.search", text: $searchText)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .foregroundStyle(.fg0)
-            if !searchText.isEmpty {
-                Button {
-                    searchText = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.fg3)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("objects.search.clear")
-            }
-        }
-        .font(.system(size: 14))
-        .padding(.horizontal, 3 * .grid)
-        .padding(.vertical, 2 * .grid)
-        .background(.bg2, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
         .padding(.horizontal, 4 * .grid)
         .padding(.bottom, 2 * .grid)
     }
@@ -158,7 +113,7 @@ struct ObjectBrowserView: View {
                     Task { await store.loadMore(agentID: agentID) }
                 } label: {
                     Text("objects.loadMore")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(MemoryFont.labelEmphasis)
                         .foregroundStyle(.fgAccent)
                         .contentShape(Rectangle())
                 }
@@ -170,45 +125,25 @@ struct ObjectBrowserView: View {
     }
 
     private func loadingView() -> some View {
-        VStack(spacing: 3 * .grid) {
-            Spinner()
-            Text("objects.loading")
-                .font(.system(size: 13))
-                .foregroundStyle(.fg3)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        LoadingStateView(title: "objects.loading")
     }
 
     private func emptyView() -> some View {
-        ContentUnavailableView {
-            Label("objects.empty", systemImage: "square.stack.3d.up")
-        } description: {
-            Text("objects.empty.description")
-        }
+        EmptyStateView(
+            title: "objects.empty",
+            description: "objects.empty.description",
+            systemImage: "square.stack.3d.up"
+        )
     }
 
     private func failureView(_ message: String) -> some View {
-        ContentUnavailableView {
-            Label("objects.error", systemImage: "wifi.exclamationmark")
-        } description: {
-            VStack(spacing: 1 * .grid) {
-                Text("objects.error.description")
-                Text(message)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.fg3)
-            }
-        } actions: {
-            Button {
-                Task { await store.load(agentID: agentID) }
-            } label: {
-                Text("objects.retry")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.fgAccent)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .padding(.top, 2 * .grid)
-        }
+        ErrorStateView(
+            title: "objects.error",
+            description: "objects.error.description",
+            message: message,
+            retryLabel: "objects.retry",
+            retry: { Task { await store.load(agentID: agentID) } }
+        )
     }
 }
 
@@ -219,7 +154,7 @@ private struct ObjectRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2 * .grid) {
             Text(object.displayTitle)
-                .font(.system(size: 15))
+                .font(MemoryFont.bodySmall)
                 .foregroundStyle(.fg1)
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)
@@ -235,7 +170,7 @@ private struct ObjectRow: View {
                     Text(labels.joined(separator: ", "))
                 }
             }
-            .font(.system(size: 11))
+            .font(MemoryFont.meta)
             .foregroundStyle(.fg3)
             .lineLimit(1)
         }

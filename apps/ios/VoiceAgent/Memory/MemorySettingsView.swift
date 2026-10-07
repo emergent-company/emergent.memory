@@ -9,9 +9,9 @@ import SwiftUI
 /// store, so a changed control-plane URL or API key is picked up by the
 /// picker right away.
 struct MemorySettingsView: View {
-    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var agentStore: AgentStore
     @EnvironmentObject private var projectStore: MemoryProjectStore
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     /// Presents the setup-QR scanner (owned by `AppShellView`).
     var onAddProject: () -> Void = {}
@@ -21,6 +21,8 @@ struct MemorySettingsView: View {
     @State private var draft = MemoryConfig()
     /// Set after a successful save so the user sees a confirmation.
     @State private var savedMessage: LocalizedStringKey?
+    /// Bumped on a successful save to drive the save haptic.
+    @State private var saveFeedback = 0
     @FocusState private var focusedField: Field?
 
     private enum Field: Hashable {
@@ -47,6 +49,10 @@ struct MemorySettingsView: View {
             }
             .padding(4 * .grid)
             .padding(.bottom, 2 * .grid)
+            // Constrain the form to a comfortable reading width and centre it
+            // on regular-width devices (iPad).
+            .frame(maxWidth: horizontalSizeClass == .regular ? 128 * .grid : .infinity)
+            .frame(maxWidth: .infinity)
         }
         .background(.bg1)
         .animation(.default, value: savedMessage)
@@ -56,40 +62,39 @@ struct MemorySettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .memoryConfigChanged)) { _ in
             draft = MemoryConfig()
         }
-        .safeAreaInset(edge: .bottom, content: saveBar)
+        #if os(iOS)
+            // A "Done" key so number-pad fields (no return key) can be dismissed.
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("settings.done") { focusedField = nil }
+                }
+            }
+        #endif
+            .safeAreaInset(edge: .bottom, content: saveBar)
+        #if os(iOS)
+            .sensoryFeedback(.success, trigger: saveFeedback)
+        #endif
     }
 
     // MARK: - Header
 
+    /// This screen is the Settings tab root, so it has no dismiss affordance.
     private func header() -> some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 2 * .grid) {
-                Text("settings.title")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(.fg0)
-                Text("settings.intro")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.fg3)
-            }
-            Spacer()
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.fg3)
-                    .padding(2 * .grid)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("settings.close")
+        VStack(alignment: .leading, spacing: 2 * .grid) {
+            Text("settings.title")
+                .font(MemoryFont.screenTitle)
+                .foregroundStyle(.fg0)
+            Text("settings.intro")
+                .font(MemoryFont.meta)
+                .foregroundStyle(.fg3)
         }
     }
 
     // MARK: - Sections
 
     private func connectionSection() -> some View {
-        VStack(alignment: .leading, spacing: 3 * .grid) {
+        sectionCard {
             sectionTitle("settings.section.connection")
             inputField("settings.serverURL", text: $draft.serverURL, field: .serverURL)
             inputField("settings.tokenEndpoint", text: $draft.tokenEndpoint, field: .tokenEndpoint)
@@ -102,7 +107,7 @@ struct MemorySettingsView: View {
     }
 
     private func sessionSection() -> some View {
-        VStack(alignment: .leading, spacing: 3 * .grid) {
+        sectionCard {
             sectionTitle("settings.section.session")
             inputField("settings.exitKeywords", text: exitKeywordsText, field: .exitKeywords)
             fieldFooter("settings.exitKeywords.footer")
@@ -110,7 +115,7 @@ struct MemorySettingsView: View {
     }
 
     private func advancedSection() -> some View {
-        VStack(alignment: .leading, spacing: 3 * .grid) {
+        sectionCard {
             sectionTitle("settings.section.advanced")
             numberField("settings.agentConnectTimeout", value: connectTimeoutSeconds, field: .agentConnectTimeout)
             fieldFooter("settings.agentConnectTimeout.footer")
@@ -120,16 +125,25 @@ struct MemorySettingsView: View {
         }
     }
 
+    /// One inset card grouping a form section.
+    private func sectionCard(@ViewBuilder _ content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 3 * .grid) {
+            content()
+        }
+        .padding(4 * .grid)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.bg2, in: RoundedRectangle(cornerRadius: .cornerRadiusMedium))
+    }
+
     private func sectionTitle(_ title: LocalizedStringKey) -> some View {
         Text(title)
-            .font(.system(size: 12, weight: .semibold))
+            .font(MemoryFont.metaEmphasis)
             .foregroundStyle(.fg3)
-            .padding(.top, 2 * .grid)
     }
 
     private func fieldFooter(_ text: LocalizedStringKey) -> some View {
         Text(text)
-            .font(.system(size: 11))
+            .font(MemoryFont.meta)
             .foregroundStyle(.fg3)
     }
 
@@ -143,7 +157,7 @@ struct MemorySettingsView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 1 * .grid) {
             Text(title)
-                .font(.system(size: 12))
+                .font(MemoryFont.meta)
                 .foregroundStyle(.fg3)
             Group {
                 if isSecure {
@@ -152,7 +166,7 @@ struct MemorySettingsView: View {
                     TextField(title, text: text)
                 }
             }
-            .font(.system(size: 15))
+            .font(MemoryFont.bodySmall)
             .foregroundStyle(.fg1)
             .focused($focusedField, equals: field)
             .textInputAutocapitalization(.never)
@@ -162,7 +176,7 @@ struct MemorySettingsView: View {
             #else
                 .textFieldStyle(.plain)
                 .padding(3 * .grid)
-                .background(.bg2, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
+                .background(.bg1, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
             #endif
         }
     }
@@ -174,10 +188,10 @@ struct MemorySettingsView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 1 * .grid) {
             Text(title)
-                .font(.system(size: 12))
+                .font(MemoryFont.meta)
                 .foregroundStyle(.fg3)
             TextField(title, value: value, format: .number)
-                .font(.system(size: 15))
+                .font(MemoryFont.bodySmall)
                 .foregroundStyle(.fg1)
                 .focused($focusedField, equals: field)
             #if os(iOS)
@@ -188,7 +202,7 @@ struct MemorySettingsView: View {
             #else
             .textFieldStyle(.plain)
             .padding(3 * .grid)
-            .background(.bg2, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
+            .background(.bg1, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
             #endif
         }
     }
@@ -261,6 +275,7 @@ struct MemorySettingsView: View {
             await agentStore.load()
         }
         savedMessage = "settings.saved"
+        saveFeedback += 1
     }
 
     /// Writes the draft's connection fields onto the active project (creating
@@ -290,7 +305,7 @@ struct MemorySettingsView: View {
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.fgAccent)
             Text(message)
-                .font(.system(size: 12))
+                .font(MemoryFont.meta)
                 .foregroundStyle(.fg3)
         }
         .padding(3 * .grid)

@@ -21,7 +21,12 @@ struct LocalParticipantView: View {
                                 .foregroundStyle(.fg0)
                                 .background(.bg1.opacity(0.8))
                                 .clipShape(Circle())
+                                // Expand the hit target to 44pt without growing
+                                // the visible circle.
+                                .frame(minWidth: 44, minHeight: 44)
+                                .contentShape(Rectangle())
                         }
+                        .accessibilityLabel("media.flipCamera")
                         .padding(2 * .grid)
                     }
                 }

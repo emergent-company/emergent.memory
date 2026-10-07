@@ -4,9 +4,9 @@ import Foundation
 ///
 /// Lives for the whole app session; the agent picker drives `load()` (the list
 /// is read-only — agent configuration happens on web/desktop, not the phone).
-/// All state is `@MainActor`; network work runs through a fresh
-/// ``ControlPlaneClient`` built from `MemoryConfig()` per call (the same
-/// pattern as ``ObjectBrowserStore``), with stale-result guards so a slow older
+/// All state is `@MainActor`; network work runs through the injected
+/// ``AgentFetching`` client (defaulting to a fresh ``ControlPlaneClient`` built
+/// from `MemoryConfig()` per call), with stale-result guards so a slow older
 /// load can never overwrite a newer one.
 ///
 /// The selected agent is scoped per project: each project remembers its own
@@ -14,14 +14,6 @@ import Foundation
 /// `alfred.agentName` (and the build default) when a project has no stored pick.
 @MainActor
 final class AgentStore: ObservableObject {
-    /// Load state for the agent list.
-    enum LoadState: Equatable {
-        case idle
-        case loading
-        case loaded
-        case failed(String)
-    }
-
     @Published private(set) var agents: [Agent] = []
     @Published private(set) var loadState: LoadState = .idle
     /// Name of the currently selected agent (persisted under the active
@@ -30,17 +22,25 @@ final class AgentStore: ObservableObject {
 
     /// Bumped on every load; results from loads older than the latest are
     /// discarded, so a slow stale response can't clobber a fresh one.
-    private var loadGeneration = 0
+    private var loadGeneration = GenerationGuard()
 
     private let defaults: UserDefaults
+    /// Injected fetching seam; nil means "build a fresh live client per load".
+    private let client: (any AgentFetching)?
     /// Project whose agent selection is currently loaded (nil = legacy default).
     private var activeProjectID: String?
 
     /// Starts in the idle state with the persisted (or default) agent name;
     /// the picker triggers the first `load()` when it appears. `VoiceAgentApp`
     /// calls ``setActiveProject(_:)`` on launch to load the active project's pick.
-    init(defaults: UserDefaults = .standard) {
+    ///
+    /// `client` defaults to nil, which builds a fresh `ControlPlaneClient` on
+    /// every `load()` so reloads after QR onboarding or a settings edit read
+    /// the newly saved control-plane URL and API key (the picker and session
+    /// log both read config once per call).
+    init(defaults: UserDefaults = .standard, client: (any AgentFetching)? = nil) {
         self.defaults = defaults
+        self.client = client
         selectedAgentName = defaults.string(forKey: MemoryConfig.agentNameKey) ?? MemoryConfig.defaultAgentName
     }
 
@@ -53,18 +53,17 @@ final class AgentStore: ObservableObject {
     /// Fetches `GET /api/agents` into `agents`. Stale-guarded: only the most
     /// recent call may publish its result.
     func load() async {
-        loadGeneration += 1
-        let generation = loadGeneration
+        let generation = loadGeneration.next()
         loadState = .loading
-        let client = ControlPlaneClient(config: MemoryConfig())
+        let client = self.client ?? ControlPlaneClient(config: MemoryConfig())
         do {
             let fetched = try await client.listAgents()
-            guard generation == loadGeneration else { return }
+            guard loadGeneration.isCurrent(generation) else { return }
             agents = fetched
             Log.agents.info("agents loaded \(fetched.count)")
             loadState = .loaded
         } catch {
-            guard generation == loadGeneration else { return }
+            guard loadGeneration.isCurrent(generation) else { return }
             Log.agents.error("agents load failed: \(error.localizedDescription)")
             loadState = .failed(error.localizedDescription)
         }

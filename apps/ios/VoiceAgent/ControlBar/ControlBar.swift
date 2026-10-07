@@ -47,15 +47,15 @@ struct ControlBar: View {
                 borderColor: .separator1
             )
         )
-        .font(.system(size: 17, weight: .medium))
+        .font(.body.weight(.medium))
         .frame(height: 15 * .grid)
         #if !os(visionOS)
             .overlay(
-                RoundedRectangle(cornerRadius: 7.5 * .grid)
+                RoundedRectangle(cornerRadius: .cornerRadiusLarge)
                     .stroke(.separator1, lineWidth: 1)
             )
             .background(
-                RoundedRectangle(cornerRadius: 7.5 * .grid)
+                RoundedRectangle(cornerRadius: .cornerRadiusLarge)
                     .fill(.bg1)
                     .shadow(color: .black.opacity(0.1), radius: 10, y: 10)
             )
@@ -70,8 +70,10 @@ struct ControlBar: View {
     }
 
     private func biggerSpacer() -> some View {
+        // Cap the outer spacers so the bar never stretches edge-to-edge on wide
+        // (iPad) layouts; on phones the content still fills and compresses them.
         Spacer()
-            .frame(maxWidth: horizontalSizeClass == .regular ? 8 * .grid : .infinity)
+            .frame(maxWidth: horizontalSizeClass == .regular ? 8 * .grid : 40 * .grid)
     }
 
     private func separator() -> some View {
@@ -107,6 +109,9 @@ struct ControlBar: View {
             .contextMenu {
                 Button("audio.title") { audioOptionsPresented = true }
             }
+            .accessibilityLabel("controlBar.microphone")
+            .accessibilityValue(localMedia.isMicrophoneEnabled ? Text("controlBar.on") : Text("controlBar.off"))
+            .accessibilityHint("controlBar.microphone.hint")
             #if os(macOS)
                 separator()
                 AudioDeviceSelector()
@@ -119,11 +124,12 @@ struct ControlBar: View {
                     audioOptionsPresented = true
                 } label: {
                     Image(systemName: "chevron.up")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(MemoryFont.metaEmphasis)
                         .frame(height: Constants.buttonHeight)
                         .padding(.horizontal, .grid)
                         .contentShape(Rectangle())
                 }
+                .accessibilityLabel("audio.title")
             #endif
             Spacer()
         }
@@ -145,6 +151,9 @@ struct ControlBar: View {
                     .padding(.horizontal, 2 * .grid)
                     .contentShape(Rectangle())
             }
+            .accessibilityLabel("controlBar.camera")
+            .accessibilityValue(localMedia.isCameraEnabled ? Text("controlBar.on") : Text("controlBar.off"))
+            .accessibilityHint("controlBar.camera.hint")
             #if os(macOS)
                 separator()
                 VideoDeviceSelector()
@@ -173,6 +182,9 @@ struct ControlBar: View {
             )
         )
         .disabled(!session.agent.isConnected)
+        .accessibilityLabel("controlBar.screenShare")
+        .accessibilityValue(localMedia.isScreenShareEnabled ? Text("controlBar.on") : Text("controlBar.off"))
+        .accessibilityHint("controlBar.screenShare.hint")
     }
 
     private func textInputButton() -> some View {
@@ -180,7 +192,7 @@ struct ControlBar: View {
             chat.toggle()
             TraceLog.log(chat ? "chat_mode_entered" : "voice_mode_entered")
         } label: {
-            Image(systemName: "ellipsis.message.fill")
+            Image(systemName: "text.bubble.fill")
                 .frame(width: Constants.buttonWidth, height: Constants.buttonHeight)
                 .contentShape(Rectangle())
         }
@@ -193,12 +205,13 @@ struct ControlBar: View {
             )
         )
         .disabled(!session.agent.isConnected)
+        .accessibilityLabel("controlBar.chat")
+        .accessibilityValue(chat ? Text("controlBar.on") : Text("controlBar.off"))
+        .accessibilityHint("controlBar.chat.hint")
     }
 
     private func disconnectButton() -> some View {
         AsyncButton {
-            // No transcript wipe here: messages persist (via the controller's
-            // TranscriptStore) so the chat log survives reconnect/relaunch.
             TraceLog.log("hangup_tapped")
             await session.end()
         } label: {
@@ -210,9 +223,12 @@ struct ControlBar: View {
             ControlBarButtonStyle(
                 foregroundColor: .fgSerious,
                 backgroundColor: .bgSerious,
-                borderColor: .separatorSerious
+                borderColor: .separatorSerious,
+                isDestructive: true
             )
         )
         .disabled(!session.isConnected)
+        .accessibilityLabel("controlBar.leave")
+        .accessibilityHint("controlBar.leave.hint")
     }
 }

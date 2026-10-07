@@ -7,6 +7,7 @@ struct AgentView: View {
     @EnvironmentObject private var session: Session
 
     @Environment(\.namespace) private var namespace
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Reveals the avatar camera view when true.
     @SceneStorage("videoTransition") private var videoTransition = false
 
@@ -34,7 +35,8 @@ struct AgentView: View {
                                 .frame(width: videoTransition ? targetSize : 6 * .grid)
                                 .position(x: 0.5 * proxy.size.width, y: 0.5 * proxy.size.height)
                                 .scaleEffect(2)
-                                .animation(.smooth(duration: 1.5), value: videoTransition)
+                                // Reveal instantly when Reduce Motion is on.
+                                .animation(reduceMotion ? nil : .smooth(duration: 1.5), value: videoTransition)
                         }
                     )
                     .onAppear {

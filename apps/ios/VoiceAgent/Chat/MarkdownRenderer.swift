@@ -10,15 +10,19 @@ import SwiftUI
 struct MarkdownRenderer: View {
     let text: String
 
-    /// Base point size (matches the previous chat text size).
-    static let baseFontSize: CGFloat = 15
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// Base prose font for the agent bubble; scales with Dynamic Type.
+    private static let baseFont: Font = MemoryFont.conversationBody
+    /// Inline-code / preformatted font.
+    private static let baseMonoFont: Font = .system(.callout, design: .monospaced)
 
     var body: some View {
         let blocks = parseMarkdown(text)
         if blocks.isEmpty {
             // Malformed/empty markdown degrades to plain text.
             Text(text)
-                .font(.system(size: Self.baseFontSize))
+                .font(Self.baseFont)
         } else {
             renderBlocks(blocks, spacing: 2 * .grid)
         }
@@ -49,7 +53,7 @@ struct MarkdownRenderer: View {
         case let .paragraph(inlines):
             AnyView(
                 Text(attributedInlines(inlines))
-                    .font(.system(size: Self.baseFontSize))
+                    .font(Self.baseFont)
                     .foregroundStyle(.fg1)
                     .fixedSize(horizontal: false, vertical: true)
             )
@@ -91,7 +95,7 @@ struct MarkdownRenderer: View {
             AnyView(
                 HStack(alignment: .top, spacing: 2 * .grid) {
                     Image(systemName: isChecked ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 14))
+                        .font(.callout)
                         .foregroundStyle(isChecked ? .fgSuccess : .fg3)
                         .padding(.top, 1)
                     renderBlocks(blocks, spacing: 1 * .grid)
@@ -101,7 +105,7 @@ struct MarkdownRenderer: View {
             AnyView(
                 HStack(alignment: .top, spacing: 2 * .grid) {
                     Text(isOrdered ? "\(startIndex + offset)." : "•")
-                        .font(.system(size: Self.baseFontSize, weight: .medium))
+                        .font(Self.baseFont.weight(.medium))
                         .foregroundStyle(.fg2)
                     renderBlocks(blocks, spacing: 1 * .grid)
                 }
@@ -111,18 +115,18 @@ struct MarkdownRenderer: View {
 
     private func headingFont(_ level: Int) -> Font {
         switch min(max(level, 1), 6) {
-        case 1: .system(size: 22, weight: .bold)
-        case 2: .system(size: 19, weight: .bold)
-        case 3: .system(size: 17, weight: .semibold)
-        case 4: .system(size: Self.baseFontSize + 1, weight: .semibold)
-        default: .system(size: Self.baseFontSize, weight: .semibold)
+        case 1: .title2.weight(.bold)
+        case 2: .title3.weight(.bold)
+        case 3: .headline
+        case 4: .callout.weight(.semibold)
+        default: .body.weight(.semibold)
         }
     }
 
     @ViewBuilder
     private func imageView(source: String?, alt: String?) -> some View {
         let fallback = Text(alt?.isEmpty == false ? alt! : "")
-            .font(.system(size: 12))
+            .font(MemoryFont.meta)
             .foregroundStyle(.fg3)
         if let source,
            let url = URL(string: source),
@@ -157,24 +161,28 @@ struct MarkdownRenderer: View {
         VStack(alignment: .leading, spacing: 1 * .grid) {
             if let language, !language.isEmpty {
                 Text(language)
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .font(.system(.caption2, design: .monospaced, weight: .semibold))
                     .foregroundStyle(.fg3)
             }
             ScrollView(.horizontal, showsIndicators: false) {
-                if let highlighted = MarkdownSyntaxHighlighter.highlight(code, language: language) {
+                if let highlighted = MarkdownSyntaxHighlighter.highlight(
+                    code,
+                    language: language,
+                    isDark: colorScheme == .dark
+                ) {
                     Text(AttributedString(highlighted))
                         .textSelection(.enabled)
                 } else {
-                    // Highlight failure fallback: plain monospaced.
+                    // Highlight failure fallback: plain monospaced on token text.
                     Text(code)
-                        .font(.system(size: 13, design: .monospaced))
-                        .foregroundStyle(.white)
+                        .font(.system(.footnote, design: .monospaced))
+                        .foregroundStyle(.fg1)
                         .textSelection(.enabled)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(2 * .grid)
-            .background(Color(white: 0.11), in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
+            .background(.codeBackground, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
         }
         .padding(.top, 1 * .grid)
     }
@@ -187,7 +195,7 @@ struct MarkdownRenderer: View {
                 GridRow {
                     ForEach(Array(table.headers.enumerated()), id: \.offset) { _, header in
                         Text(attributedInlines(header))
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(MemoryFont.labelEmphasis)
                             .foregroundStyle(.fg0)
                             .padding(1 * .grid)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -198,7 +206,7 @@ struct MarkdownRenderer: View {
                     GridRow {
                         ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
                             Text(attributedInlines(cell))
-                                .font(.system(size: 13))
+                                .font(MemoryFont.label)
                                 .foregroundStyle(.fg1)
                                 .padding(1 * .grid)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -285,10 +293,10 @@ struct MarkdownRenderer: View {
         guard !text.isEmpty else { return AttributedString() }
         var run = AttributedString(text)
         if style.isCode {
-            run.font = .system(size: Self.baseFontSize - 1, design: .monospaced)
-            run.backgroundColor = .bg3
+            run.font = Self.baseMonoFont
+            run.backgroundColor = .codeBackground
         } else {
-            var font = Font.system(size: Self.baseFontSize)
+            var font = Self.baseFont
             if style.isBold {
                 font = font.weight(.semibold)
             }

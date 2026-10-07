@@ -46,14 +46,14 @@ struct MemoryProjectSwitcher: View {
     private var label: some View {
         HStack(spacing: 1 * .grid) {
             Image(systemName: "square.stack.3d.up")
-                .font(.system(size: 13, weight: .medium))
+                .font(MemoryFont.label)
                 .foregroundStyle(.fgAccent)
             Text(projectStore.activeConnection?.displayName ?? String(localized: "projects.none"))
-                .font(.system(size: 14, weight: .semibold))
+                .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.fg0)
                 .lineLimit(1)
             Image(systemName: "chevron.up.chevron.down")
-                .font(.system(size: 10, weight: .semibold))
+                .font(.caption2.weight(.semibold))
                 .foregroundStyle(.fg3)
         }
         .padding(.horizontal, 3 * .grid)

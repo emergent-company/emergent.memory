@@ -75,7 +75,7 @@ surfaced as a "token fetch" failure with a Retry button.
 
 ## Project layout
 
-- `VoiceAgent/VoiceAgentApp.swift` — `@main`, `AgentToConnect` (`.memory` case).
+- `VoiceAgent/VoiceAgentApp.swift` — `@main` app entry point.
 - `VoiceAgent/Memory/MemoryConfig.swift` — config + UserDefaults keys.
 - `VoiceAgent/Memory/MemoryTokenSource.swift` — `EndpointTokenSource` for the
   Memory token endpoint.

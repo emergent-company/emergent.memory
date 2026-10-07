@@ -1,31 +1,5 @@
 import Foundation
 
-/// Errors thrown by ``SessionLogClient`` while talking to the session log.
-enum SessionLogError: LocalizedError, Sendable {
-    /// The endpoint answered with a non-2xx status code (401 auth, 503 not
-    /// configured, ...).
-    case httpStatus(code: Int, message: String)
-    /// The endpoint could not be reached at all (DNS/TCP/TLS failure).
-    case transport(message: String)
-    /// The endpoint answered but the body could not be decoded.
-    case decode(message: String)
-    /// The configured token endpoint cannot be turned into a session-log URL.
-    case invalidConfiguration(message: String)
-
-    var errorDescription: String? {
-        switch self {
-        case let .httpStatus(code, message):
-            "Session log returned HTTP \(code): \(message)"
-        case let .transport(message):
-            message
-        case let .decode(message):
-            message
-        case let .invalidConfiguration(message):
-            message
-        }
-    }
-}
-
 /// One session as listed by `GET /api/sessions`.
 ///
 /// Mirrors the summary shape from `agent/admin.py` `_sessions_summary()`:
@@ -198,7 +172,7 @@ struct ToolCall: Codable, Equatable, Sendable {
         if let text = try? container.decodeIfPresent(String.self, forKey: key) {
             return text
         }
-        guard let raw = try? container.decode(FlexJSON.self, forKey: key) else { return nil }
+        guard let raw = try? container.decode(JSONValue.self, forKey: key) else { return nil }
         return raw.jsonString
     }
 }
@@ -215,7 +189,16 @@ struct ToolCall: Codable, Equatable, Sendable {
 /// Endpoints:
 /// - `GET /api/sessions`            → `{"sessions": [SessionSummary]}`
 /// - `GET /api/session?room=<room>` → `{"room": ..., "records": [SessionRecord]}`
-struct SessionLogClient: Sendable {
+///
+/// Fetching seam for the session list/detail stores, so ``SessionsStore`` and
+/// ``SessionDetailStore`` are testable without a network. ``SessionLogClient``
+/// is the live implementation.
+protocol SessionLogFetching: Sendable {
+    func listSessions() async throws -> [SessionSummary]
+    func timeline(room: String) async throws -> [SessionRecord]
+}
+
+struct SessionLogClient: SessionLogFetching {
     let config: MemoryConfig
 
     /// The session-log base URL, derived from the token endpoint by stripping
@@ -240,8 +223,8 @@ struct SessionLogClient: Sendable {
         do {
             response = try JSONDecoder().decode(SessionsResponse.self, from: data)
         } catch {
-            throw SessionLogError.decode(
-                message: "Session log returned an unexpected session list: \(error.localizedDescription)"
+            throw GatewayError.decode(
+                "Session log returned an unexpected session list: \(error.localizedDescription)"
             )
         }
         return response.sessions
@@ -255,8 +238,8 @@ struct SessionLogClient: Sendable {
         do {
             response = try JSONDecoder().decode(SessionResponse.self, from: data)
         } catch {
-            throw SessionLogError.decode(
-                message: "Session log returned an unexpected session timeline: \(error.localizedDescription)"
+            throw GatewayError.decode(
+                "Session log returned an unexpected session timeline: \(error.localizedDescription)"
             )
         }
         return response.records
@@ -267,18 +250,18 @@ struct SessionLogClient: Sendable {
     /// Builds `<sessionsBaseURL>/<path>?room=<room>` (room optional).
     private func makeURL(path: String, room: String?) throws -> URL {
         guard let base = sessionsBaseURL else {
-            throw SessionLogError.invalidConfiguration(
-                message: "Could not derive the session-log URL from the token endpoint: \(config.tokenEndpoint)"
+            throw GatewayError.invalidConfiguration(
+                "Could not derive the session-log URL from the token endpoint: \(config.tokenEndpoint)"
             )
         }
         let url = base.appending(path: path)
         guard let room else { return url }
         guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
-            throw SessionLogError.invalidConfiguration(message: "Could not build the session-log URL.")
+            throw GatewayError.invalidConfiguration("Could not build the session-log URL.")
         }
         components.queryItems = [URLQueryItem(name: "room", value: room)]
         guard let finalURL = components.url else {
-            throw SessionLogError.invalidConfiguration(message: "Could not build the session-log URL.")
+            throw GatewayError.invalidConfiguration("Could not build the session-log URL.")
         }
         return finalURL
     }
@@ -287,34 +270,17 @@ struct SessionLogClient: Sendable {
 
     /// The `X-API-Key` header is required by the session log, same as the
     /// token endpoint (sent by ``GatewayHTTP``).
-    private func send(url: URL) async throws -> Data {
-        let data: Data
-        let httpResponse: HTTPURLResponse
-        do {
-            (data, httpResponse) = try await GatewayHTTP.send(
-                method: "GET",
-                url: url,
-                apiKey: config.apiKey
-            )
-        } catch let transport as GatewayHTTP.TransportError {
-            switch transport.reason {
-            case let .network(underlying):
-                Log.net.error("transport \(url): \(underlying)")
-                throw SessionLogError.transport(
-                    message: "Could not reach the session log at \(config.tokenEndpoint): \(underlying)"
-                )
-            case .noHTTPResponse:
-                throw SessionLogError.transport(message: "Session log returned no HTTP response.")
-            }
-        }
+    private var service: GatewayServiceMessages {
+        GatewayServiceMessages(
+            httpPrefix: "Session log",
+            noResponsePrefix: "Session log",
+            reachTarget: "the session log at \(config.tokenEndpoint)"
+        )
+    }
 
-        guard (200 ..< 300).contains(httpResponse.statusCode) else {
-            let serverMessage = (try? JSONDecoder().decode(ErrorResponse.self, from: data))?.error
-                ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
-            Log.net.error("HTTP \(httpResponse.statusCode) \(url.absoluteString): \(serverMessage)")
-            throw SessionLogError.httpStatus(code: httpResponse.statusCode, message: serverMessage)
-        }
-        return data
+    private func send(url: URL) async throws -> Data {
+        let request = GatewayHTTP.makeRequest(method: "GET", url: url, apiKey: config.apiKey)
+        return try await GatewayHTTP.sendChecked(request, service: service)
     }
 
     // MARK: - Response models
@@ -325,90 +291,5 @@ struct SessionLogClient: Sendable {
 
     private struct SessionResponse: Decodable {
         let records: [SessionRecord]
-    }
-
-    /// Error body returned by the session log on failure.
-    private struct ErrorResponse: Decodable {
-        let error: String
-    }
-}
-
-/// A flexible JSON value used to salvage tool-call arguments/results that the
-/// server logs as objects instead of strings.
-private enum FlexJSON: Codable, Sendable {
-    case string(String)
-    case number(Double)
-    case bool(Bool)
-    case object([String: FlexJSON])
-    case array([FlexJSON])
-    case null
-
-    /// Compact JSON text for display; plain strings pass through raw.
-    var jsonString: String? {
-        switch self {
-        case let .string(text):
-            text
-        case let .number(number):
-            String(format: "%g", locale: Locale(identifier: "en_US_POSIX"), number)
-        case let .bool(value):
-            value ? "true" : "false"
-        case .null:
-            "null"
-        case .object, .array:
-            (try? JSONEncoder().encode(self)).flatMap { String(data: $0, encoding: .utf8) }
-        }
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if container.decodeNil() {
-            self = .null
-            return
-        }
-        if let value = try? container.decode(String.self) {
-            self = .string(value)
-            return
-        }
-        if let value = try? container.decode(Bool.self) {
-            self = .bool(value)
-            return
-        }
-        if let value = try? container.decode(Double.self) {
-            self = .number(value)
-            return
-        }
-        if let value = try? container.decode([FlexJSON].self) {
-            self = .array(value)
-            return
-        }
-        if let value = try? container.decode([String: FlexJSON].self) {
-            self = .object(value)
-            return
-        }
-        throw DecodingError.typeMismatch(
-            FlexJSON.self,
-            DecodingError.Context(
-                codingPath: decoder.codingPath,
-                debugDescription: "Unsupported JSON value"
-            )
-        )
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        switch self {
-        case let .string(value):
-            try container.encode(value)
-        case let .number(value):
-            try container.encode(value)
-        case let .bool(value):
-            try container.encode(value)
-        case let .object(value):
-            try container.encode(value)
-        case let .array(value):
-            try container.encode(value)
-        case .null:
-            try container.encodeNil()
-        }
     }
 }

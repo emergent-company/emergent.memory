@@ -45,7 +45,7 @@ struct MemoryProjectsSection: View {
 
     private var title: some View {
         Text("projects.section.title")
-            .font(.system(size: 12, weight: .semibold))
+            .font(MemoryFont.metaEmphasis)
             .foregroundStyle(.fg3)
             .padding(.top, 2 * .grid)
     }
@@ -60,7 +60,7 @@ struct MemoryProjectsSection: View {
             }
             if projectStore.connections.isEmpty {
                 Text("projects.empty")
-                    .font(.system(size: 14))
+                    .font(MemoryFont.bodySmall)
                     .foregroundStyle(.fg3)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(3 * .grid)
@@ -77,16 +77,16 @@ struct MemoryProjectsSection: View {
             } label: {
                 HStack(spacing: 2 * .grid) {
                     Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 17))
+                        .font(.body)
                         .foregroundStyle(isActive ? .fgAccent : .fg3)
                     VStack(alignment: .leading, spacing: 0.5 * .grid) {
                         Text(connection.displayName)
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(MemoryFont.cardHeader)
                             .foregroundStyle(.fg0)
                             .lineLimit(1)
                         if connection.projectName.isEmpty, connection.hasIdentity {
                             Text(connection.projectID)
-                                .font(.system(size: 11))
+                                .font(MemoryFont.meta)
                                 .foregroundStyle(.fg3)
                                 .lineLimit(1)
                         }
@@ -103,7 +103,7 @@ struct MemoryProjectsSection: View {
                 projectPendingRemoval = connection
             } label: {
                 Image(systemName: "trash")
-                    .font(.system(size: 14))
+                    .font(.subheadline)
                     .foregroundStyle(.fg3)
                     .padding(1 * .grid)
                     .contentShape(Rectangle())
@@ -118,14 +118,14 @@ struct MemoryProjectsSection: View {
         Button(action: onAddProject) {
             HStack(spacing: 2 * .grid) {
                 Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 17))
+                    .font(.body)
                     .foregroundStyle(.fgAccent)
                 Text("projects.add")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(MemoryFont.cardHeader)
                     .foregroundStyle(.fg0)
                 Spacer()
                 Image(systemName: "qrcode.viewfinder")
-                    .font(.system(size: 14))
+                    .font(.subheadline)
                     .foregroundStyle(.fg3)
             }
             .padding(3 * .grid)
@@ -136,7 +136,7 @@ struct MemoryProjectsSection: View {
 
     private var footer: some View {
         Text("projects.section.footer")
-            .font(.system(size: 11))
+            .font(MemoryFont.meta)
             .foregroundStyle(.fg3)
     }
 

@@ -8,17 +8,18 @@ struct ThinkingBlockView: View {
     let text: String
     var isLive: Bool = false
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expanded = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1 * .grid) {
             Button {
-                withAnimation(.snappy) { expanded.toggle() }
+                withAnimation(reduceMotion ? nil : .snappy) { expanded.toggle() }
             } label: {
                 HStack(spacing: 2 * .grid) {
                     Image(systemName: "chevron.right")
                         .font(.caption2.weight(.semibold))
-                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                        .rotationEffect(.degrees(reduceMotion ? 0 : (expanded ? 90 : 0)))
                         .foregroundStyle(.fg3)
                     if isLive {
                         ProgressView()
@@ -45,7 +46,7 @@ struct ThinkingBlockView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(2 * .grid)
                     .background(.bg1, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
             }
         }
         .padding(2 * .grid)
@@ -58,6 +59,7 @@ struct ThinkingBlockView: View {
 /// Agent-position "agent is typing" dots, shown while awaiting the first
 /// reply token. Purely decorative (dismissal is driven by store state).
 struct TypingIndicatorView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var animating = false
 
     /// Dot diameter, scaled with the caption text it accompanies.
@@ -69,9 +71,12 @@ struct TypingIndicatorView: View {
                 Circle()
                     .fill(.fg3)
                     .frame(width: dotSize, height: dotSize)
-                    .opacity(animating ? 0.35 : 1)
+                    // Static dots under Reduce Motion; a gentle pulse otherwise.
+                    .opacity(reduceMotion ? 1 : (animating ? 0.35 : 1))
                     .animation(
-                        .easeInOut(duration: 0.6)
+                        reduceMotion
+                            ? nil
+                            : .easeInOut(duration: 0.6)
                             .repeatForever(autoreverses: true)
                             .delay(Double(index) * 0.2),
                         value: animating
@@ -80,8 +85,12 @@ struct TypingIndicatorView: View {
         }
         .padding(.horizontal, 3 * .grid)
         .padding(.vertical, 2 * .grid)
-        .bubbleBackground(.assistant, cornerRadius: .cornerRadiusLarge)
-        .onAppear { animating = true }
+        .bubbleBackground(.assistant, cornerRadius: .cornerRadiusMedium)
+        .onAppear {
+            if !reduceMotion {
+                animating = true
+            }
+        }
     }
 }
 
@@ -96,6 +105,9 @@ struct ApprovalCardView: View {
 
     @State private var showingReason = false
     @State private var reason = ""
+    /// Bumped on approve / reject submit to drive the decision haptics.
+    @State private var approveFeedback = 0
+    @State private var rejectFeedback = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2 * .grid) {
@@ -110,6 +122,10 @@ struct ApprovalCardView: View {
         .padding(3 * .grid)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.bg2, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
+        #if os(iOS)
+            .sensoryFeedback(.success, trigger: approveFeedback)
+            .sensoryFeedback(.warning, trigger: rejectFeedback)
+        #endif
     }
 
     private var header: some View {
@@ -144,6 +160,7 @@ struct ApprovalCardView: View {
 
         HStack(spacing: 2 * .grid) {
             Button {
+                approveFeedback += 1
                 onDecide(.approve)
             } label: {
                 Text("chat.approval.approve")
@@ -168,12 +185,16 @@ struct ApprovalCardView: View {
                     .background(.bg1, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
                 Button {
                     let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+                    rejectFeedback += 1
                     onDecide(.reject(reason: trimmed.isEmpty ? nil : trimmed))
                 } label: {
                     Image(systemName: "paperplane.fill")
                         .font(.footnote)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("chat.approval.sendReason")
             }
         }
     }
@@ -217,6 +238,9 @@ struct DecisionButtonStyle: ButtonStyle {
             .background(
                 Capsule().fill(tint.opacity(configuration.isPressed ? 0.75 : 1))
             )
+            // Keep the capsule's visual size while giving it a 44pt tap target.
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
     }
 }
 
@@ -230,6 +254,8 @@ struct QuestionCardView: View {
 
     @State private var selectedValues: Set<String> = []
     @State private var freeText = ""
+    /// Bumped on each option select / deselect to drive the selection haptic.
+    @State private var selectFeedback = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2 * .grid) {
@@ -252,6 +278,9 @@ struct QuestionCardView: View {
         .padding(3 * .grid)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.bg2, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
+        #if os(iOS)
+            .sensoryFeedback(.selection, trigger: selectFeedback)
+        #endif
     }
 
     @ViewBuilder
@@ -261,6 +290,7 @@ struct QuestionCardView: View {
             VStack(spacing: 1 * .grid) {
                 ForEach(request.options, id: \.value) { option in
                     Button {
+                        selectFeedback += 1
                         onAnswer(option.value)
                     } label: {
                         VStack(alignment: .leading, spacing: 1) {
@@ -299,6 +329,7 @@ struct QuestionCardView: View {
                             }
                             Spacer()
                         }
+                        .frame(minHeight: 44)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -340,6 +371,7 @@ struct QuestionCardView: View {
     }
 
     private func toggle(_ value: String) {
+        selectFeedback += 1
         if selectedValues.contains(value) {
             selectedValues.remove(value)
         } else {
@@ -380,5 +412,8 @@ struct OptionRowButtonStyle: ButtonStyle {
             .foregroundStyle(configuration.isPressed ? .fg0 : .fg1)
             .padding(2 * .grid)
             .background(.bg1, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
+            // Keep the row's visual size while giving it a 44pt tap target.
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
     }
 }

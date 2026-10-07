@@ -32,6 +32,9 @@ struct VoiceInteractionView: View {
             .frame(width: 50 * .grid)
         }
         .safeAreaPadding()
+        // Cap and centre the wide layout so the centre agent column does not
+        // stretch edge-to-edge on iPad.
+        .frame(maxWidth: 200 * .grid)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 

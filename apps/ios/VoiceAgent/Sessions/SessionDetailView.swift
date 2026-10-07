@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Session detail: the chronological conversation timeline for one recorded
-/// session (`GET /api/session?room=...`), read-only.
+/// session (`GET /api/session?room=...`), read-only, via ``SessionDetailStore``.
 ///
 /// User turns render as right-aligned bubbles, assistant turns left-aligned,
 /// and `tools_executed` records as expandable tool-call cards (name,
@@ -12,77 +12,21 @@ struct SessionDetailView: View {
     let room: String
 
     @Environment(\.dismiss) private var dismiss
-
-    private enum LoadState: Equatable {
-        case loading
-        case loaded
-        /// Empty timeline; carries the failure message when the fetch itself
-        /// failed (unknown session, unreachable service) so the screen never
-        /// shows a hard error for a missing session.
-        case empty(String?)
-    }
-
-    @State private var records: [SessionRecord] = []
-    @State private var state: LoadState = .loading
+    @StateObject private var store = SessionDetailStore()
 
     var body: some View {
         VStack(spacing: 0) {
-            header()
+            ScreenHeader(
+                title: Text("sessions.detail.title"),
+                subtitle: Text(room),
+                subtitleFont: MemoryFont.metaMono
+            ) {
+                dismiss()
+            }
             content
         }
         .background(.bg1)
-        .task(id: "session-detail-load") { await load() }
-    }
-
-    // MARK: - Loading
-
-    private func load() async {
-        state = .loading
-        Log.net.info("session timeline room=\(room)")
-        let client = SessionLogClient(config: MemoryConfig())
-        do {
-            let fetched = try await client.timeline(room: room)
-            records = fetched
-            Log.net.info("session timeline ok room=\(room) records=\(records.count)")
-            state = fetched.isEmpty ? .empty(nil) : .loaded
-        } catch {
-            // Unknown session → empty timeline, not an error page.
-            records = []
-            Log.net.error("session timeline failed room=\(room): \(error.localizedDescription)")
-            state = .empty(error.localizedDescription)
-        }
-    }
-
-    // MARK: - Chrome
-
-    private func header() -> some View {
-        HStack(spacing: 2 * .grid) {
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(.fg3)
-                    .padding(2 * .grid)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("agents.level.back")
-
-            VStack(alignment: .leading, spacing: 1 * .grid) {
-                Text("sessions.detail.title")
-                    .font(MemoryFont.screenTitle)
-                    .foregroundStyle(.fg0)
-                Text(room)
-                    .font(MemoryFont.metaMono)
-                    .foregroundStyle(.fg3)
-                    .lineLimit(1)
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 4 * .grid)
-        .padding(.top, 1 * .grid)
-        .padding(.bottom, 2 * .grid)
+        .task(id: "session-detail-load") { await store.load(room: room) }
     }
 
     // MARK: - Content
@@ -90,33 +34,17 @@ struct SessionDetailView: View {
     private var content: some View {
         ZStack {
             timeline
-            if case .loading = state {
-                VStack(spacing: 3 * .grid) {
-                    Spinner()
-                    Text("sessions.loading")
-                        .font(.footnote)
-                        .foregroundStyle(.fg3)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(.bg1)
+            if store.loadState == .loading {
+                LoadingStateView(title: "sessions.loading")
+                    .background(.bg1)
             }
-            if case let .empty(message) = state {
-                emptyView(message)
-            }
-        }
-    }
-
-    private func emptyView(_ message: String?) -> some View {
-        ContentUnavailableView {
-            Label("sessions.detail.empty", systemImage: "clock.arrow.circlepath")
-        } description: {
-            VStack(spacing: 1 * .grid) {
-                Text("sessions.detail.empty.description")
-                if let message {
-                    Text(message)
-                        .font(MemoryFont.meta)
-                        .foregroundStyle(.fg3)
-                }
+            if store.loadState == .loaded, store.records.isEmpty {
+                EmptyStateView(
+                    title: "sessions.detail.empty",
+                    description: "sessions.detail.empty.description",
+                    systemImage: "clock.arrow.circlepath",
+                    message: store.failureMessage
+                )
             }
         }
     }
@@ -126,7 +54,7 @@ struct SessionDetailView: View {
     /// Chronological items: user/assistant turn groups and tool-call records.
     private var items: [TimelineItem] {
         var result: [TimelineItem] = []
-        for record in records {
+        for record in store.records {
             switch record.kind {
             case "turn":
                 guard let role = record.role, let text = record.text, !text.isEmpty else { continue }
@@ -160,7 +88,7 @@ struct SessionDetailView: View {
             }
             .padding(4 * .grid)
         }
-        .refreshable { await load() }
+        .refreshable { await store.load(room: room) }
     }
 
     // MARK: - Timeline items
@@ -213,10 +141,10 @@ private struct TurnBubble: View {
 
     var body: some View {
         let role = conversationRole
-        VStack(alignment: role.isUser ? .trailing : .leading, spacing: 1 * .grid) {
+        VStack(alignment: role.horizontalAlignment, spacing: 1 * .grid) {
             Text(role.labelKey)
                 .font(MemoryFont.meta)
-                .foregroundStyle(.fg1.opacity(0.7))
+                .foregroundStyle(.fg3)
             Text(text)
                 .font(MemoryFont.conversationBody)
                 .foregroundStyle(.fg0)
@@ -224,6 +152,6 @@ private struct TurnBubble: View {
                 .padding(3 * .grid)
                 .bubbleBackground(role, cornerRadius: .cornerRadiusSmall)
         }
-        .frame(maxWidth: .infinity, alignment: role.isUser ? .trailing : .leading)
+        .frame(maxWidth: .infinity, alignment: role.frameAlignment)
     }
 }

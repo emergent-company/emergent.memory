@@ -4,7 +4,7 @@ import SwiftUI
 /// (OpenSpec task 3.4).
 ///
 /// Styled on the shared token system: a serious-tinted warning badge, the card
-/// background, the large corner radius, and the prominent button style. The
+/// background, the medium corner radius, and the prominent button style. The
 /// state is a plain `MemoryFailure` enum, so switching presentation requires
 /// no changes outside this view.
 struct MemoryFailureView: View {
@@ -42,9 +42,9 @@ struct MemoryFailureView: View {
         }
         .padding(6 * .grid)
         .frame(maxWidth: 84 * .grid)
-        .background(.bg2, in: RoundedRectangle(cornerRadius: .cornerRadiusLarge))
+        .background(.bg2, in: RoundedRectangle(cornerRadius: .cornerRadiusMedium))
         .overlay(
-            RoundedRectangle(cornerRadius: .cornerRadiusLarge)
+            RoundedRectangle(cornerRadius: .cornerRadiusMedium)
                 .stroke(.separatorSerious, lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.18), radius: 12, y: 4)

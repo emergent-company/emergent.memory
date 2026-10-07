@@ -2,6 +2,26 @@ import Foundation
 @testable import Memory
 import Testing
 
+/// A recording agent-fetching fake. Returns a canned result and counts calls.
+///
+/// Main-actor isolated (the app builds with `-default-isolation=MainActor` and
+/// ``AgentFetching`` is a main-actor protocol), so it is a class rather than an
+/// actor, mirroring `FakeObjectClient`.
+@MainActor
+final class FakeAgentClient: AgentFetching {
+    let result: Result<[Agent], Error>
+    private(set) var callCount = 0
+
+    init(result: Result<[Agent], Error>) {
+        self.result = result
+    }
+
+    func listAgents() async throws -> [Agent] {
+        callCount += 1
+        return try result.get()
+    }
+}
+
 @MainActor
 struct AgentStoreTests {
     @Test func initReadsPersistedOrDefaultAgentName() throws {
@@ -87,5 +107,41 @@ struct AgentStoreTests {
         // Missing `enabled` defaults to true so an odd record never breaks the
         // list or hides an agent from the picker.
         #expect(empty.enabled == true)
+    }
+
+    @Test func loadPublishesAgents() async throws {
+        let suite = "AgentStoreTests.load.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let json = #"{"id":"1","name":"diane","toolCount":20,"isDefault":false,"enabled":true}"#
+        let agent = try JSONDecoder().decode(Agent.self, from: Data(json.utf8))
+        let fake = FakeAgentClient(result: .success([agent]))
+        let store = AgentStore(defaults: defaults, client: fake)
+
+        await store.load()
+
+        #expect(store.loadState == .loaded)
+        #expect(store.agents.map(\.name) == ["diane"])
+        #expect(fake.callCount == 1)
+    }
+
+    @Test func loadFailureSetsFailedState() async throws {
+        struct Boom: Error {}
+        let suite = "AgentStoreTests.loadFailure.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let fake = FakeAgentClient(result: .failure(Boom()))
+        let store = AgentStore(defaults: defaults, client: fake)
+
+        await store.load()
+
+        if case .failed = store.loadState {
+            // expected
+        } else {
+            Issue.record("loadState = \(store.loadState), want .failed")
+        }
+        #expect(store.agents.isEmpty)
     }
 }

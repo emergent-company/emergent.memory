@@ -1,28 +1,6 @@
 import Foundation
 import LiveKit
 
-/// Errors thrown by ``MemoryTokenSource`` while talking to Memory's token
-/// endpoint (`POST /api/token`).
-enum MemoryTokenError: LocalizedError, Sendable {
-    /// The endpoint answered with a non-2xx status code.
-    case httpStatus(code: Int, message: String)
-    /// The endpoint could not be reached at all (DNS/TCP/TLS failure).
-    case transport(message: String)
-    /// The endpoint answered but the body could not be decoded.
-    case decode(message: String)
-
-    var errorDescription: String? {
-        switch self {
-        case let .httpStatus(code, message):
-            "Token endpoint returned HTTP \(code): \(message)"
-        case let .transport(message):
-            message
-        case let .decode(message):
-            message
-        }
-    }
-}
-
 /// Requests a room-join token from Memory's token endpoint.
 ///
 /// The endpoint contract (see `agent/admin.py`, `_post_token`) is:
@@ -42,11 +20,6 @@ struct MemoryTokenSource: EndpointTokenSource {
         let identity: String
         let agent: String
         let client: String
-    }
-
-    /// Error body returned by the token endpoint on failure.
-    private struct ErrorResponse: Decodable {
-        let error: String
     }
 
     let config: MemoryConfig
@@ -81,8 +54,8 @@ struct MemoryTokenSource: EndpointTokenSource {
 
     private func makeRequest(for options: TokenRequestOptions) throws -> URLRequest {
         guard let endpoint = URL(string: config.tokenEndpoint) else {
-            throw MemoryTokenError.transport(
-                message: "Invalid token endpoint URL: \(config.tokenEndpoint)"
+            throw GatewayError.transport(
+                "Invalid token endpoint URL: \(config.tokenEndpoint)"
             )
         }
         var request = URLRequest(url: endpoint)
@@ -100,28 +73,16 @@ struct MemoryTokenSource: EndpointTokenSource {
         return request
     }
 
-    private func send(_ request: URLRequest) async throws -> Data {
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await URLSession.shared.data(for: request)
-        } catch {
-            Log.net.error("transport \(request.url?.absoluteString ?? "unknown"): \(error.localizedDescription)")
-            throw MemoryTokenError.transport(
-                message: "Could not reach the token endpoint at \(config.tokenEndpoint): \(error.localizedDescription)"
-            )
-        }
+    private var service: GatewayServiceMessages {
+        GatewayServiceMessages(
+            httpPrefix: "Token endpoint",
+            noResponsePrefix: "Token endpoint",
+            reachTarget: "the token endpoint at \(config.tokenEndpoint)"
+        )
+    }
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw MemoryTokenError.transport(message: "Token endpoint returned no HTTP response.")
-        }
-        guard (200 ..< 300).contains(httpResponse.statusCode) else {
-            let serverMessage = (try? JSONDecoder().decode(ErrorResponse.self, from: data))?.error
-                ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
-            Log.net.error("HTTP \(httpResponse.statusCode) \(request.url?.absoluteString ?? "unknown"): \(serverMessage)")
-            throw MemoryTokenError.httpStatus(code: httpResponse.statusCode, message: serverMessage)
-        }
-        return data
+    private func send(_ request: URLRequest) async throws -> Data {
+        try await GatewayHTTP.sendChecked(request, service: service)
     }
 
     private func decode(_ data: Data) throws -> TokenSourceResponse {
@@ -129,8 +90,8 @@ struct MemoryTokenSource: EndpointTokenSource {
         do {
             tokenResponse = try JSONDecoder().decode(TokenSourceResponse.self, from: data)
         } catch {
-            throw MemoryTokenError.decode(
-                message: "Token endpoint returned an unexpected response: \(error.localizedDescription)"
+            throw GatewayError.decode(
+                "Token endpoint returned an unexpected response: \(error.localizedDescription)"
             )
         }
 
@@ -138,8 +99,8 @@ struct MemoryTokenSource: EndpointTokenSource {
         // back to the configured server URL if it returns an empty one.
         if tokenResponse.serverURL.absoluteString.isEmpty {
             guard let fallbackURL = URL(string: config.serverURL) else {
-                throw MemoryTokenError.decode(
-                    message: "Token endpoint returned an empty server URL and the configured server URL is invalid: \(config.serverURL)"
+                throw GatewayError.decode(
+                    "Token endpoint returned an empty server URL and the configured server URL is invalid: \(config.serverURL)"
                 )
             }
             return TokenSourceResponse(

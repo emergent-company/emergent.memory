@@ -12,7 +12,12 @@ struct ObjectDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header()
+            ScreenHeader(
+                title: Text("objects.detail.title"),
+                subtitle: Text(object.displayTitle)
+            ) {
+                dismiss()
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 4 * .grid) {
                     metadata
@@ -22,38 +27,6 @@ struct ObjectDetailView: View {
             }
         }
         .background(.bg1)
-    }
-
-    // MARK: - Chrome
-
-    private func header() -> some View {
-        HStack(spacing: 2 * .grid) {
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(.fg3)
-                    .padding(2 * .grid)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("agents.level.back")
-
-            VStack(alignment: .leading, spacing: 1 * .grid) {
-                Text("objects.detail.title")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(.fg0)
-                Text(object.displayTitle)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.fg3)
-                    .lineLimit(1)
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 4 * .grid)
-        .padding(.top, 1 * .grid)
-        .padding(.bottom, 2 * .grid)
     }
 
     // MARK: - Metadata
@@ -76,7 +49,7 @@ struct ObjectDetailView: View {
                 metaRow("objects.detail.id", object.id, monospaced: true)
             }
             if let createdAt = object.createdAt, !createdAt.isEmpty {
-                metaRow("objects.detail.created", createdAt)
+                metaRow("objects.detail.created", DateFormatting.formatObjectDate(createdAt) ?? createdAt)
             }
         }
     }
@@ -84,10 +57,10 @@ struct ObjectDetailView: View {
     private func metaRow(_ label: LocalizedStringKey, _ value: String, monospaced: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 1 * .grid) {
             Text(label)
-                .font(.system(size: 12, weight: .semibold))
+                .font(MemoryFont.metaEmphasis)
                 .foregroundStyle(.fg3)
             Text(value)
-                .font(.system(size: 14, design: monospaced ? .monospaced : .default))
+                .font(.system(.subheadline, design: monospaced ? .monospaced : .default))
                 .foregroundStyle(.fg0)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -99,7 +72,7 @@ struct ObjectDetailView: View {
     private var properties: some View {
         VStack(alignment: .leading, spacing: 2 * .grid) {
             Text("objects.detail.properties")
-                .font(.system(size: 13, weight: .semibold))
+                .font(MemoryFont.labelEmphasis)
                 .foregroundStyle(.fg0)
 
             if let properties = object.properties, !properties.isEmpty {
@@ -108,7 +81,7 @@ struct ObjectDetailView: View {
                 }
             } else {
                 Text("objects.detail.noProperties")
-                    .font(.system(size: 13))
+                    .font(.footnote)
                     .foregroundStyle(.fg3)
             }
         }
@@ -117,10 +90,10 @@ struct ObjectDetailView: View {
     private func propertyRow(_ key: String, _ value: JSONValue) -> some View {
         VStack(alignment: .leading, spacing: 1 * .grid) {
             Text(key)
-                .font(.system(size: 12, weight: .semibold))
+                .font(MemoryFont.metaEmphasis)
                 .foregroundStyle(.fg3)
             Text(value.display)
-                .font(.system(size: 14, design: .monospaced))
+                .font(.system(.subheadline, design: .monospaced))
                 .foregroundStyle(.fg1)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)

@@ -19,7 +19,7 @@ struct ObjectBrowserClientTests {
         config.apiBaseURL = ""
         let client = ObjectBrowserClient(config: config)
         #expect(client.gatewayBaseURL == nil)
-        #expect(throws: ObjectBrowserError.self) {
+        #expect(throws: GatewayError.self) {
             try client.makeURL(agentID: "a1", provenance: .any, cursor: nil)
         }
     }

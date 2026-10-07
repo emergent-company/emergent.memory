@@ -27,7 +27,7 @@ import SwiftUI
             } label: {
                 Image(systemName: "chevron.down")
                     .frame(height: 11 * .grid)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(MemoryFont.metaEmphasis)
                     .contentShape(Rectangle())
             }
             .popover(isPresented: $audioOptionsPresented) {
