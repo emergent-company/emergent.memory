@@ -1,9 +1,23 @@
 name: E2E Tests
 
+# Path-filtered: E2E builds the server image (and the CLI inside it) from
+# apps/** and deploy/self-hosted/**, then runs the compose stack in e2e/**.
+# It is NOT a required check, so a path filter cannot wedge unrelated PRs the
+# way an unfiltered required check would.
 on:
   push:
     branches: [main]
+    paths:
+      - 'apps/**'
+      - 'deploy/**'
+      - 'e2e/**'
+      - '.github/workflows/e2e.yml'
   pull_request:
+    paths:
+      - 'apps/**'
+      - 'deploy/**'
+      - 'e2e/**'
+      - '.github/workflows/e2e.yml'
   workflow_dispatch:
     inputs:
       TEST_RUN:
@@ -21,7 +35,11 @@ jobs:
   # ───────────────────────────────────────────────────────────────────────────
   integration:
     name: CLI Install Tests
-    runs-on: ubuntu-latest
+    # Fork PRs must never execute on the self-hosted runner (read-only token,
+    # no org hardware). Same-repo PRs and main pushes run normally.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 30
 
     defaults:
       run:
@@ -29,6 +47,10 @@ jobs:
 
     env:
       MEMORY_SERVER_IMAGE: memory-server:ci
+      # Unique per run/job so concurrent jobs sharing one self-hosted Docker
+      # daemon never collide on container names, the default network, or host
+      # ports. Paired with ephemeral loopback port bindings in docker-compose.
+      COMPOSE_PROJECT_NAME: e2e-${{ github.run_id }}-integration
 
     steps:
       - name: Checkout
@@ -45,8 +67,11 @@ jobs:
           load: true
           push: false
           tags: memory-server:ci
+          # Mirror server.yml: PR runs only consume the cache; the default
+          # branch writes it. `mode=max` on every PR ref is what filled the
+          # shared 10 GB Actions cache budget with ~7 GB of buildkit blobs.
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,mode=min,ignore-error=true' || '' }}
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -87,7 +112,9 @@ jobs:
   # ───────────────────────────────────────────────────────────────────────────
   api:
     name: API Tests
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 30
 
     defaults:
       run:
@@ -95,6 +122,10 @@ jobs:
 
     env:
       MEMORY_SERVER_IMAGE: memory-server:ci
+      # Unique per run/job so concurrent jobs sharing one self-hosted Docker
+      # daemon never collide on container names, the default network, or host
+      # ports. Paired with ephemeral loopback port bindings in docker-compose.
+      COMPOSE_PROJECT_NAME: e2e-${{ github.run_id }}-api
 
     steps:
       - name: Checkout
@@ -111,8 +142,11 @@ jobs:
           load: true
           push: false
           tags: memory-server:ci
+          # Mirror server.yml: PR runs only consume the cache; the default
+          # branch writes it. `mode=max` on every PR ref is what filled the
+          # shared 10 GB Actions cache budget with ~7 GB of buildkit blobs.
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,mode=min,ignore-error=true' || '' }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -135,10 +169,25 @@ jobs:
 
       - name: Start server stack
         run: |
+          set -euo pipefail
           cp .env.example .env 2>/dev/null || true
           docker compose up -d
+          # Ephemeral loopback bindings: discover the assigned host ports and
+          # export them for the host-run tests (and the health wait below).
+          SERVER_PORT=$(docker compose port test-emergent-server 3002 | head -1 | awk -F: '{print $NF}' || true)
+          MAILPIT_PORT=$(docker compose port mailpit 8025 | head -1 | awk -F: '{print $NF}' || true)
+          if [ -z "$SERVER_PORT" ] || [ -z "$MAILPIT_PORT" ]; then
+            echo "::error::could not resolve published host ports (server='$SERVER_PORT' mailpit='$MAILPIT_PORT')"
+            docker compose ps
+            exit 1
+          fi
+          {
+            echo "MEMORY_TEST_SERVER=http://127.0.0.1:${SERVER_PORT}"
+            echo "MAILPIT_BASE_URL=http://127.0.0.1:${MAILPIT_PORT}"
+          } >> "$GITHUB_ENV"
+          echo "Resolved server=http://127.0.0.1:${SERVER_PORT} mailpit=127.0.0.1:${MAILPIT_PORT}"
           for i in $(seq 1 30); do
-            if curl -sf http://localhost:3002/health > /dev/null 2>&1; then
+            if curl -sf "http://127.0.0.1:${SERVER_PORT}/health" > /dev/null 2>&1; then
               echo "Server is healthy"
               break
             fi
@@ -148,7 +197,8 @@ jobs:
 
       - name: Run API tests
         env:
-          MEMORY_TEST_SERVER: http://localhost:3002
+          # MEMORY_TEST_SERVER / MAILPIT_BASE_URL come from $GITHUB_ENV (the ports
+          # are ephemeral, so they cannot be hard-coded).
           MEMORY_TEST_TOKEN: e2e-test-user
           MEMORY_AUTH_MODE: standalone
         run: go test -v ./tests/api/... -timeout 15m
@@ -162,7 +212,7 @@ jobs:
 
       - name: Stop server stack
         if: always()
-        run: docker compose down -v
+        run: docker compose down -v --remove-orphans
 
   # ───────────────────────────────────────────────────────────────────────────
   # mailgun: run the same e2e stack with the Mailgun email transport pointed at
@@ -171,7 +221,9 @@ jobs:
   # ───────────────────────────────────────────────────────────────────────────
   mailgun:
     name: Mailgun Transport Test
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 30
 
     defaults:
       run:
@@ -189,6 +241,10 @@ jobs:
       E2E_MAILGUN_API_BASE: http://mailgun-stub:8080/v3
       E2E_MAILGUN_REGION: us
       E2E_MAILGUN_STUB_URL: http://mailgun-stub:8080
+      # Unique per run/job so concurrent jobs sharing one self-hosted Docker
+      # daemon never collide on container names, the default network, or host
+      # ports. Paired with ephemeral loopback port bindings in docker-compose.
+      COMPOSE_PROJECT_NAME: e2e-${{ github.run_id }}-mailgun
 
     steps:
       - name: Checkout
@@ -205,8 +261,11 @@ jobs:
           load: true
           push: false
           tags: memory-server:ci
+          # Mirror server.yml: PR runs only consume the cache; the default
+          # branch writes it. `mode=max` on every PR ref is what filled the
+          # shared 10 GB Actions cache budget with ~7 GB of buildkit blobs.
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,mode=min,ignore-error=true' || '' }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -229,11 +288,26 @@ jobs:
 
       - name: Start server stack (Mailgun transport)
         run: |
+          set -euo pipefail
           cp .env.example .env 2>/dev/null || true
           docker compose --profile mailgun up -d --build mailgun-stub test-emergent-server
+          # Ephemeral loopback bindings: discover the assigned host ports and
+          # export them for the host-run test (and the health wait below).
+          SERVER_PORT=$(docker compose --profile mailgun port test-emergent-server 3002 | head -1 | awk -F: '{print $NF}' || true)
+          STUB_PORT=$(docker compose --profile mailgun port mailgun-stub 8080 | head -1 | awk -F: '{print $NF}' || true)
+          if [ -z "$SERVER_PORT" ] || [ -z "$STUB_PORT" ]; then
+            echo "::error::could not resolve published host ports (server='$SERVER_PORT' stub='$STUB_PORT')"
+            docker compose --profile mailgun ps
+            exit 1
+          fi
+          {
+            echo "MEMORY_TEST_SERVER=http://127.0.0.1:${SERVER_PORT}"
+            echo "MAILGUN_STUB_URL=http://127.0.0.1:${STUB_PORT}"
+          } >> "$GITHUB_ENV"
+          echo "Resolved server=127.0.0.1:${SERVER_PORT} mailgun-stub=127.0.0.1:${STUB_PORT}"
           healthy=0
           for i in $(seq 1 30); do
-            if curl -sf http://localhost:3002/health > /dev/null 2>&1; then
+            if curl -sf "http://127.0.0.1:${SERVER_PORT}/health" > /dev/null 2>&1; then
               echo "Server is healthy"
               healthy=1
               break
@@ -249,11 +323,10 @@ jobs:
 
       - name: Run Mailgun transport test
         env:
-          MEMORY_TEST_SERVER: http://localhost:3002
+          # MEMORY_TEST_SERVER / MAILGUN_STUB_URL come from $GITHUB_ENV (the ports
+          # are ephemeral, so they cannot be hard-coded).
           MEMORY_TEST_TOKEN: e2e-test-user
           MEMORY_AUTH_MODE: standalone
-          # Host-run test reads the stub over the published 8080 port.
-          MAILGUN_STUB_URL: http://localhost:8080
         run: go test -v ./tests/api/... -run 'TestInvite_EmailDeliveredViaMailgunTransport' -timeout 15m
 
       - name: Show server logs on failure
@@ -265,5 +338,5 @@ jobs:
 
       - name: Stop server stack
         if: always()
-        run: docker compose --profile mailgun down -v
+        run: docker compose --profile mailgun down -v --remove-orphans
 

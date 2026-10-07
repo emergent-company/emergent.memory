@@ -77,9 +77,16 @@ else
   docker compose -f "$SCRIPT_DIR/docker-compose.yml" logs test-emergent-client
 
   # Capture the test client's exit code for the script's own exit status.
-  # The client has a fixed container_name, so inspect it directly (ps -q only
-  # lists running containers and returns empty once the client has exited).
-  exit_code=$(docker inspect -f '{{.State.ExitCode}}' test-emergent-client)
+  # Services have no fixed container_name (the compose project is namespaced per
+  # CI job), so resolve the container by service name. `ps -aq` includes the
+  # already-exited client; plain `ps -q` would return nothing.
+  client_id=$(docker compose -f "$SCRIPT_DIR/docker-compose.yml" ps -aq test-emergent-client)
+  if [ -n "$client_id" ]; then
+    exit_code=$(docker inspect -f '{{.State.ExitCode}}' "$client_id")
+  else
+    echo "> could not resolve the test-emergent-client container; failing" >&2
+    exit_code=1
+  fi
 
   # Bring down cleanly regardless of outcome.
   docker compose -f "$SCRIPT_DIR/docker-compose.yml" down --remove-orphans 2>/dev/null || true

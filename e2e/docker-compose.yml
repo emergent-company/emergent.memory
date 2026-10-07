@@ -19,6 +19,12 @@
 #   MEMORY_TEST_TOKEN     - static API key for the standalone server (default: e2e-test-user)
 #   MEMORY_TEST_SERVER    - override the server URL seen by tests (default: http://test-emergent-server:3002)
 #   TEST_RUN              - optional -run filter, e.g. TestCLIInstalled_Version
+#
+# No fixed container_name is set on any service: containers, the default network,
+# and any volumes are namespaced by COMPOSE_PROJECT_NAME. CI sets a unique project
+# per job/run (e2e-<run_id>-<job>) so concurrent jobs sharing one Docker daemon
+# stay isolated. Host-published ports are ephemeral loopback binds; host-run
+# tests discover the assigned port via `docker compose port <svc> <port>`.
 
 services:
   # ─────────────────────────────────────────────────────────────────────────
@@ -26,7 +32,6 @@ services:
   # ─────────────────────────────────────────────────────────────────────────
   test-db:
     image: pgvector/pgvector:pg17
-    container_name: test-emergent-db
     environment:
       POSTGRES_USER: emergent
       POSTGRES_PASSWORD: emergent
@@ -44,7 +49,6 @@ services:
   # ─────────────────────────────────────────────────────────────────────────
   seaweedfs:
     image: chrislusf/seaweedfs@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882
-    container_name: test-emergent-seaweedfs
     # Single node: master + volume + filer + S3 in one process. S3 API on 8333.
     command: server -dir=/data -s3
     environment:
@@ -63,7 +67,6 @@ services:
   # image, which carries the emergent-storage-init binary.
   storage-init:
     image: ${MEMORY_SERVER_IMAGE:-ghcr.io/emergent-company/memory-server:latest}
-    container_name: test-emergent-storage-init
     entrypoint: ["/usr/local/bin/emergent-storage-init"]
     restart: "no"
     depends_on:
@@ -85,7 +88,6 @@ services:
   test-mcp-registry:
     build:
       context: ./stubs/mcp-registry
-    container_name: test-mcp-registry
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
       interval: 2s
@@ -100,10 +102,13 @@ services:
   # ─────────────────────────────────────────────────────────────────────────
   mailpit:
     image: axllent/mailpit:latest
-    container_name: test-emergent-mailpit
+    # Publish on ephemeral loopback ports so parallel jobs on the same host
+    # never collide. Host-run tests discover the assigned port with
+    # `docker compose port mailpit 8025` (see .github/workflows/e2e.yml). The
+    # server container reaches Mailpit over the compose network by service name.
     ports:
-      - "8025:8025"
-      - "1025:1025"
+      - "127.0.0.1::8025"
+      - "127.0.0.1::1025"
 
   # ─────────────────────────────────────────────────────────────────────────
   # Mailgun stub — impersonates the Mailgun send API (POST /v3/{domain}/messages)
@@ -117,11 +122,11 @@ services:
     profiles: ["mailgun"]
     build:
       context: ./stubs/mailgun
-    container_name: test-mailgun-stub
     ports:
-      # Host port is configurable: 8080 is commonly held by another proxy on
-      # shared dev hosts (e.g. traefik). CI keeps the 8080 default.
-      - "${E2E_MAILGUN_STUB_PORT:-8080}:8080"
+      # Ephemeral loopback binding: 8080 is commonly held by another proxy on
+      # shared hosts (e.g. traefik) and parallel jobs must not collide. Host-run
+      # tests discover the port with `docker compose port mailgun-stub 8080`.
+      - "127.0.0.1::8080"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
       interval: 2s
@@ -134,7 +139,6 @@ services:
   # ─────────────────────────────────────────────────────────────────────────
   test-emergent-server:
     image: ${MEMORY_SERVER_IMAGE:-ghcr.io/emergent-company/memory-server:latest}
-    container_name: test-emergent-server
     depends_on:
       test-db:
         condition: service_healthy
@@ -157,7 +161,7 @@ services:
       STANDALONE_USER_EMAIL_2: "invitee@localhost"
 
       # Database
-      POSTGRES_HOST: test-emergent-db
+      POSTGRES_HOST: test-db
       POSTGRES_PORT: "5432"
       POSTGRES_USER: emergent
       POSTGRES_PASSWORD: emergent
@@ -207,7 +211,10 @@ services:
       retries: 24
       start_period: 60s
     ports:
-      - "3002:3002"
+      # Ephemeral loopback binding so parallel jobs/runs on one shared host
+      # never fight over a fixed 3002. Host-run tests discover the assigned port
+      # with `docker compose port test-emergent-server 3002`.
+      - "127.0.0.1::3002"
 
   # ─────────────────────────────────────────────────────────────────────────
   # CLI test runner
@@ -217,7 +224,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: test-emergent-client
     depends_on:
       test-emergent-server:
         condition: service_healthy
