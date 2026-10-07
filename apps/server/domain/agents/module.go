@@ -460,7 +460,7 @@ func provideShareRepo(repo *Repository) ShareRepo {
 	return repo
 }
 
-func provideShareRunner(executor *AgentExecutor) agentRunner {
+func provideShareRunner(executor *AgentExecutor) shareRunner {
 	return executor
 }
 
@@ -468,7 +468,7 @@ func provideShareResponder(h *Handler) QuestionResponder {
 	return h
 }
 
-func provideShareService(repo ShareRepo, apiTokens *apitoken.Service, runner agentRunner, responder QuestionResponder, cfg *config.Config, log *slog.Logger) *ShareService {
+func provideShareService(repo ShareRepo, apiTokens *apitoken.Service, runner shareRunner, responder QuestionResponder, cfg *config.Config, log *slog.Logger) *ShareService {
 	return NewShareService(repo, apiTokens, runner, responder, cfg.ShareRefSecret, log)
 }
 

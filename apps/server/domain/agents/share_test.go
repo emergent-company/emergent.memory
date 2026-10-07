@@ -17,6 +17,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
+	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
@@ -53,6 +54,10 @@ type fakeShareRepo struct {
 
 	// createdRun records the pre-created run from CreateShareRunIfUnderLimit.
 	createdRun *AgentRun
+
+	// failedRunID / failedRunErr record the most recent FailRunWithSteps call.
+	failedRunID  string
+	failedRunErr string
 
 	// recording
 	createdSession      *Session
@@ -212,6 +217,14 @@ func (f *fakeShareRepo) CreateShareRunIfUnderLimit(_ context.Context, _ string, 
 	f.createdRun = run
 	return run, nil
 }
+func (f *fakeShareRepo) FailRunWithSteps(_ context.Context, runID, errorMessage string, _ int) error {
+	f.failedRunID = runID
+	f.failedRunErr = errorMessage
+	if f.createdRun != nil && f.createdRun.ID == runID {
+		f.createdRun.Status = RunStatusError
+	}
+	return nil
+}
 func (f *fakeShareRepo) CountSessionToolApprovals(_ context.Context, _, _ string) (int, error) {
 	return f.approvals, nil
 }
@@ -296,12 +309,17 @@ type shareFakeRunner struct {
 	captured ExecuteRequest
 	result   *ExecuteResult
 	err      error
+	// guardErr is returned by EnsureExecutionEnabled. Nil means the kill switch
+	// is enabled.
+	guardErr error
 }
 
 func (f *shareFakeRunner) Execute(_ context.Context, req ExecuteRequest) (*ExecuteResult, error) {
 	f.captured = req
 	return f.result, f.err
 }
+
+func (f *shareFakeRunner) EnsureExecutionEnabled() error { return f.guardErr }
 
 type shareFakeResponder struct {
 	captured RespondParams
@@ -877,4 +895,62 @@ func TestStreamMessage_NilCleanupIsSafe(t *testing.T) {
 	session := &AgentShareSession{ID: "sess-1", SessionID: "acp-1", EndUserRef: "alice"}
 	_, err := svc.StreamMessage(context.Background(), binding, session, "hello", nil)
 	require.NoError(t, err)
+}
+
+// =============================================================================
+// Kill switch on the share path (issue #1648)
+// =============================================================================
+
+// With AGENT_EXECUTION_ENABLED off, StreamMessage must refuse BEFORE the share
+// run is created — otherwise the pre-created run is stranded `running` until the
+// 30-minute stale-run reaper reports a misleading idle timeout. The error must
+// be a clean 503 apperror, never the reaper path.
+func TestStreamMessage_ExecutionDisabled_DoesNotCreateRun(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	def := testDefinition("def-a", "proj-a", "Agent A")
+	repo.defByID["def-a"] = def
+	binding := testBinding(link, def)
+
+	exec := &AgentExecutor{
+		safeguards: config.AgentSafeguardsConfig{ExecutionEnabled: false},
+		log:        testAgentLogger(),
+	}
+	svc := NewShareService(repo, nil, exec, nil, "", nil)
+
+	session := &AgentShareSession{ID: "sess-1", SessionID: "acp-1", EndUserRef: "alice"}
+	_, err := svc.StreamMessage(context.Background(), binding, session, "hello", nil)
+
+	require.Error(t, err)
+	var appErr *apperror.Error
+	require.ErrorAs(t, err, &appErr, "the disabled share path must return an apperror")
+	assert.Equal(t, http.StatusServiceUnavailable, appErr.HTTPStatus)
+	assert.Equal(t, "agent_execution_disabled", appErr.Code)
+	assert.Contains(t, err.Error(), ErrExecutionDisabled.Error())
+	assert.Nil(t, repo.createdRun, "no share run may be created when execution is disabled")
+}
+
+// If the kill switch flips between the pre-check and Execute, the executor
+// refuses without touching the pre-created run. The share path must drive it
+// terminal so it is not left `running` with the disabled reason.
+func TestStreamMessage_ExecutionDisabledRace_MarksPreCreatedRunTerminal(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	def := testDefinition("def-a", "proj-a", "Agent A")
+	repo.defByID["def-a"] = def
+	binding := testBinding(link, def)
+
+	// EnsureExecutionEnabled passes (guardErr nil) but Execute refuses.
+	runner := &shareFakeRunner{result: &ExecuteResult{RunID: "pre-run"}, err: ErrExecutionDisabled}
+	svc := NewShareService(repo, nil, runner, nil, "", nil)
+
+	session := &AgentShareSession{ID: "sess-1", SessionID: "acp-1", EndUserRef: "alice"}
+	_, err := svc.StreamMessage(context.Background(), binding, session, "hello", nil)
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrExecutionDisabled), "the disabled sentinel must reach the caller")
+	require.NotNil(t, repo.createdRun, "the run must have been pre-created under the race")
+	assert.Equal(t, "pre-run", repo.failedRunID, "the refused share run must be marked terminal")
+	assert.Contains(t, repo.failedRunErr, ErrExecutionDisabled.Error(), "the disabled reason must be persisted")
+	assert.NotEqual(t, RunStatusRunning, repo.createdRun.Status, "the share run must not be left running")
 }

@@ -50,6 +50,10 @@ type ShareRepo interface {
 	FindShareSessionByRunAndEndUser(ctx context.Context, linkID, endUserRef, runID string) (*AgentShareSession, error)
 	CountActiveShareRuns(ctx context.Context, linkID string) (int, error)
 	CreateShareRunIfUnderLimit(ctx context.Context, linkID string, maxConcurrent int, opts CreateRunOptions) (*AgentRun, error)
+	// FailRunWithSteps marks a pre-created share run terminal. Used to reconcile
+	// a kill-switch refusal that raced the pre-creation guard, so no share run is
+	// left `running` for the stale-run reaper.
+	FailRunWithSteps(ctx context.Context, runID, errorMessage string, stepCount int) error
 	CountSessionToolApprovals(ctx context.Context, shareLinkID, sessionID string) (int, error)
 	ReserveAndDecideShareApproval(ctx context.Context, shareLinkID, sessionID, questionID, decision, message, decidedBy string, maxApprovals int) (bool, error)
 	ListPendingQuestionsForSession(ctx context.Context, sessionID string) ([]*AgentQuestion, error)
@@ -95,18 +99,26 @@ type shareTokenService interface {
 // Service
 // ============================================================================
 
+// shareRunner is the AgentExecutor surface the share service depends on:
+// agentRunner plus the kill-switch probe, so the share path can refuse before
+// it pre-creates a run row — mirroring Handler.TriggerAgent.
+type shareRunner interface {
+	agentRunner
+	EnsureExecutionEnabled() error
+}
+
 // ShareService implements the public keyed agent-share feature.
 type ShareService struct {
 	repo      ShareRepo
 	apiTokens shareTokenService
-	runner    agentRunner
+	runner    shareRunner
 	responder QuestionResponder
 	refSecret string // HMAC key for gateway-minted end-user refs (SHARE_REF_SECRET)
 	log       *slog.Logger
 }
 
 // NewShareService constructs a ShareService.
-func NewShareService(repo ShareRepo, apiTokens shareTokenService, runner agentRunner, responder QuestionResponder, refSecret string, log *slog.Logger) *ShareService {
+func NewShareService(repo ShareRepo, apiTokens shareTokenService, runner shareRunner, responder QuestionResponder, refSecret string, log *slog.Logger) *ShareService {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -815,6 +827,14 @@ func (s *ShareService) PendingQuestions(ctx context.Context, binding *ShareLinkB
 func (s *ShareService) StreamMessage(ctx context.Context, binding *ShareLinkBinding, session *AgentShareSession, message string, streamCallback StreamCallback) (*ExecuteResult, error) {
 	cfg := binding.Config
 
+	// Kill switch: refuse before reserving budget, creating the share run, or
+	// mutating any state, mirroring Handler.TriggerAgent. Creating the run first
+	// would strand a `running` share run until the 30-minute stale-run reaper
+	// reported a misleading idle timeout.
+	if err := s.runner.EnsureExecutionEnabled(); err != nil {
+		return nil, apperror.New(http.StatusServiceUnavailable, "agent_execution_disabled", err.Error())
+	}
+
 	if cfg.MaxMessageChars > 0 && len(message) > cfg.MaxMessageChars {
 		return nil, apperror.NewBadRequest(fmt.Sprintf("message exceeds %d characters", cfg.MaxMessageChars))
 	}
@@ -859,6 +879,10 @@ func (s *ShareService) StreamMessage(ctx context.Context, binding *ShareLinkBind
 		defer result.Cleanup()
 	}
 	if err != nil {
+		// Defense in depth: if the kill switch flipped between the pre-check and
+		// Execute, the executor refused without touching the pre-created run. Mark
+		// it terminal here so it does not sit `running` until the stale-run reaper.
+		failRunIfExecutionDisabled(ctx, s.repo, preRun, err, s.log)
 		return nil, err
 	}
 

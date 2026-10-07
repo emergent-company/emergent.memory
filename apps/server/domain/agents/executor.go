@@ -872,12 +872,19 @@ func (ae *AgentExecutor) ensureExecutionEnabled(req ExecuteRequest) error {
 	return nil
 }
 
+// runFailer is the narrow run-failure surface failRunIfExecutionDisabled needs.
+// *Repository and the share service's ShareRepo both satisfy it, so the same
+// kill-switch reconciliation is reused on both the HTTP/worker and share paths.
+type runFailer interface {
+	FailRunWithSteps(ctx context.Context, runID, errorMessage string, stepCount int) error
+}
+
 // failRunIfExecutionDisabled marks a pre-created run terminal when execution was
 // refused by the kill switch. Such runs are created by callers before the
 // executor's guard runs, so without this they would sit `running` until the
 // stale-run reaper reports a misleading idle-timeout. It is a no-op for nil runs
 // and for any error other than ErrExecutionDisabled.
-func failRunIfExecutionDisabled(ctx context.Context, repo *Repository, run *AgentRun, execErr error, log *slog.Logger) {
+func failRunIfExecutionDisabled(ctx context.Context, repo runFailer, run *AgentRun, execErr error, log *slog.Logger) {
 	if run == nil || execErr == nil || !errors.Is(execErr, ErrExecutionDisabled) {
 		return
 	}
