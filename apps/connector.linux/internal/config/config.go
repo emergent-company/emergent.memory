@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -37,6 +38,8 @@ type Config struct {
 	// configuration: the register frame advertises accepts_managed_config and
 	// pushed config frames are applied. Default false (pushes ignored).
 	AcceptManagedConfig bool `yaml:"accept_managed_config,omitempty"`
+	// AutoUpdate configures the connector's background version checking.
+	AutoUpdate AutoUpdateConfig `yaml:"auto_update,omitempty"`
 }
 
 // ToolsConfig is the platform tool configuration. The section is optional:
@@ -78,6 +81,71 @@ type RootConfig struct {
 	Delete bool   `yaml:"delete,omitempty"`
 }
 
+// AutoUpdateConfig configures the connector's background update check. When
+// enabled (the default) the daemon checks for a newer core release on startup
+// and periodically, in either "notify" (log only) or "auto" (download and
+// replace, then restart) mode.
+type AutoUpdateConfig struct {
+	// Enabled toggles the background check. Nil defaults to true.
+	Enabled *bool `yaml:"enabled,omitempty"`
+	// Mode is "notify" (log only) or "auto" (self-update). Empty defaults to
+	// "notify".
+	Mode string `yaml:"mode,omitempty"`
+	// CheckInterval is the check cadence as a Go duration string. Empty
+	// defaults to "24h".
+	CheckInterval string `yaml:"check_interval,omitempty"`
+}
+
+// EnvNoAutoUpdate disables the background update check entirely when set to a
+// truthy value ("1", "true", or "yes"), regardless of the config file.
+const EnvNoAutoUpdate = "MEMORY_CONNECTOR_NO_AUTO_UPDATE"
+
+// envTruthy reports whether the env var value should be treated as true.
+func envTruthy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+// applyAutoUpdateDefaults fills unset auto-update fields with their defaults
+// and honors the MEMORY_CONNECTOR_NO_AUTO_UPDATE env opt-out.
+func (c *Config) applyAutoUpdateDefaults() {
+	if envTruthy(os.Getenv(EnvNoAutoUpdate)) {
+		disabled := false
+		c.AutoUpdate.Enabled = &disabled
+	}
+	if c.AutoUpdate.Enabled == nil {
+		enabled := true
+		c.AutoUpdate.Enabled = &enabled
+	}
+	if c.AutoUpdate.Mode == "" {
+		c.AutoUpdate.Mode = "notify"
+	}
+	if c.AutoUpdate.CheckInterval == "" {
+		c.AutoUpdate.CheckInterval = "24h"
+	}
+}
+
+// validateAutoUpdate validates the auto-update section. Empty Mode and
+// CheckInterval are allowed here (they mean "not configured"; Load applies
+// defaults first), but any explicit value must be valid.
+func (c *Config) validateAutoUpdate() error {
+	switch c.AutoUpdate.Mode {
+	case "", "notify", "auto":
+	default:
+		return fmt.Errorf("config: auto_update.mode must be \"notify\" or \"auto\" (got %q)", c.AutoUpdate.Mode)
+	}
+	if c.AutoUpdate.CheckInterval != "" {
+		if _, err := time.ParseDuration(c.AutoUpdate.CheckInterval); err != nil {
+			return fmt.Errorf("config: auto_update.check_interval %q: %w", c.AutoUpdate.CheckInterval, err)
+		}
+	}
+	return nil
+}
+
 // DefaultConfigPath returns the default config location. When XDG_CONFIG_HOME
 // is set (the norm on Linux) it is $XDG_CONFIG_HOME/memory-connector.yml;
 // otherwise it falls back to ~/.config/memory-connector.yml.
@@ -112,6 +180,9 @@ func (c *Config) Validate() error {
 	if err := mcphost.ValidateServers(c.MCPServers); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
+	if err := c.validateAutoUpdate(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -129,6 +200,7 @@ func Load(path string) (*Config, error) {
 	if cfg.InstanceID == "" {
 		cfg.InstanceID = DefaultInstanceID()
 	}
+	cfg.applyAutoUpdateDefaults()
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}

@@ -15,12 +15,14 @@ import (
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/toolreg"
 )
 
-// clientName and clientVersion identify the connector to hosted MCP servers
-// during the MCP initialize handshake.
-const (
-	clientName    = "memory-connector"
-	clientVersion = "0.1.0"
-)
+// clientName identifies the connector to hosted MCP servers during the MCP
+// initialize handshake.
+const clientName = "memory-connector"
+
+// ClientVersion is the connector version reported to hosted MCP servers during
+// the MCP initialize handshake. It defaults to "0.1.0" and is overridden from
+// the build-injected version by cmd/memory-connector's main.
+var ClientVersion = "0.1.0"
 
 // mcpClient is the subset of *client.Client the Manager uses. *client.Client
 // satisfies it; tests inject a fake.
@@ -174,7 +176,7 @@ func (m *Manager) startServer(ctx context.Context, cfg ServerConfig, reg *toolre
 
 	initReq := mcp.InitializeRequest{}
 	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
-	initReq.Params.ClientInfo = mcp.Implementation{Name: clientName, Version: clientVersion}
+	initReq.Params.ClientInfo = mcp.Implementation{Name: clientName, Version: ClientVersion}
 	if _, err := cl.Initialize(ctx, initReq); err != nil {
 		_ = cl.Close()
 		fail(err)

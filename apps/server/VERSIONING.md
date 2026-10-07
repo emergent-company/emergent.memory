@@ -2,6 +2,20 @@
 
 The Go server uses **unified versioning** aligned with CLI and Docker images.
 
+## Canonical Version Source
+
+The **root `VERSION` file is the single canonical source** of the release
+version. Two checked-in references must match it exactly:
+
+- `apps/server/cmd/server/main.go`'s `// @version` annotation
+- every `MARKETING_VERSION` in `apps/ios/VoiceAgent.xcodeproj/project.pbxproj`
+  (VoiceAgent app + BroadcastExtension)
+
+A release bumps all of them together — the `release` task in `Taskfile.yml`
+does this atomically, and CI enforces it with a version-drift guard
+(`scripts/preflight/version-drift.sh`, wired into `.github/workflows/ci.yml`)
+that fails when any of them diverge from `VERSION`.
+
 ## Version Components
 
 | Component         | Version Source                       | Dev Mode | Production |
@@ -84,13 +98,25 @@ Git tag v0.4.9
 
 **Before tagging a new release (e.g., v0.5.0):**
 
-### Step 1: Update OpenAPI Spec Version
+### Step 1: Bump the canonical version (all references)
 
 ```bash
+# 1. Root VERSION — canonical source
+echo "0.5.0" > VERSION
+
+# 2. OpenAPI annotation — must match VERSION exactly
 # Edit cmd/server/main.go
 # Change: // @version 0.4.9
 # To:     // @version 0.5.0
+
+# 3. iOS marketing version — must match VERSION exactly
+# apps/ios/VoiceAgent.xcodeproj/project.pbxproj (app + broadcast extension)
+# Change every: MARKETING_VERSION = 0.4.9;
+# To:           MARKETING_VERSION = 0.5.0;
 ```
+
+All references must be updated together. The version-drift guard fails CI if
+any of them diverge (see "Canonical Version Source" above).
 
 ### Step 2: Regenerate Swagger Docs
 

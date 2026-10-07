@@ -24,6 +24,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Canonical version guard: root VERSION must equal the `// @version`
+      # annotation in apps/server/cmd/server/main.go. A release bumps both
+      # together; this fails early when they drift (see #auto-tag dead-path).
+      - name: Version drift guard
+        run: bash scripts/preflight/version-drift.sh
       - name: Setup Go
         uses: actions/setup-go@v5
         with:

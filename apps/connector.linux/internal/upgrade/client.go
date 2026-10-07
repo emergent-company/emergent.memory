@@ -1,8 +1,9 @@
 // Package upgrade implements self-update for the memory-connector CLI. It
-// resolves the newest connector-v* release in the shared emergent.memory monorepo,
-// downloads the matching os/arch archive, verifies its .sha256 checksum when
-// available, extracts the bare memory-connector binary, and atomically replaces
-// the running executable.
+// resolves the newest core v* release in the shared emergent.memory monorepo
+// (ignoring SDK module tags such as apps/server/pkg/sdk/vX.Y.Z, which do not
+// start with "v"), downloads the matching os/arch archive, verifies its .sha256
+// checksum when available, extracts the bare memory-connector binary, and
+// atomically replaces the running executable.
 //
 // The HTTP client and both base URLs are injectable (and overridable via
 // environment variables) so callers and tests never need the real network.
@@ -37,9 +38,10 @@ const (
 	// DefaultDownloadBase is the GitHub release asset base. An asset lives at
 	// <base>/<tag>/<asset-name>.
 	DefaultDownloadBase = "https://github.com/" + Repo + "/releases/download"
-	// TagPrefix marks connector releases inside the shared repo, which also
-	// publishes tags for other components.
-	TagPrefix = "connector-v"
+	// TagPrefix marks core releases inside the shared repo. The repo also
+	// publishes SDK module tags (apps/server/pkg/sdk/vX.Y.Z), but those do not
+	// start with "v" and are ignored by the resolver.
+	TagPrefix = "v"
 	// BinaryName is the executable name inside the release archive.
 	BinaryName = "memory-connector"
 )
@@ -60,7 +62,7 @@ var ErrChecksumMismatch = errors.New("checksum mismatch")
 type Release struct {
 	// Version is the bare semver (for example "0.2.0").
 	Version string
-	// Tag is the GitHub tag (for example "connector-v0.2.0").
+	// Tag is the GitHub tag (for example "v0.2.0").
 	Tag string
 	// AssetName is the os/arch archive name.
 	AssetName string
@@ -134,9 +136,10 @@ type ghAsset struct {
 	BrowserDownloadURL string `json:"browser_download_url"`
 }
 
-// Latest lists the repo's releases and returns the highest connector-v* semver
-// for the current OS/arch. GitHub orders releases by publish date, not semver,
-// so all tags are inspected and the highest is chosen explicitly.
+// Latest lists the repo's releases and returns the highest v* semver for the
+// current OS/arch. GitHub orders releases by publish date, not semver, so all
+// tags are inspected and the highest is chosen explicitly. SDK module tags
+// (apps/server/pkg/sdk/vX.Y.Z) do not start with "v" and are ignored.
 func (c *Client) Latest(ctx context.Context) (*Release, error) {
 	url := strings.TrimRight(c.apiBase(), "/") + "/repos/" + Repo + "/releases?per_page=100"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -178,7 +181,7 @@ func (c *Client) Latest(ctx context.Context) (*Release, error) {
 
 // ReleaseFor builds the release for a pinned version (or tag) without an API
 // call, using the predictable asset URL. The version may be bare ("0.2.0") or
-// prefixed ("v0.2.0", "connector-v0.2.0").
+// prefixed ("v0.2.0").
 func (c *Client) ReleaseFor(v string) (*Release, error) {
 	version := Normalize(v)
 	if _, _, ok := parseVersion(version); !ok {

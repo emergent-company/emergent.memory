@@ -54,7 +54,12 @@ git commit -m "fix/feat: description of changes"
 
 ### Step 3: Update version references
 
-Three places need updating:
+Root `VERSION` is the canonical source; `// @version` in `main.go` and every iOS
+`MARKETING_VERSION` must match it exactly, and a CI version-drift guard fails
+when any diverge. The `release` task in `Taskfile.yml`
+(`task release VERSION=0.X.Y`) bumps `VERSION` + `main.go` + the iOS
+`project.pbxproj` `MARKETING_VERSION`s + the regenerated CLI reference skill in
+one commit — prefer it. Otherwise, update the references below:
 
 1. **VERSION file** (root):
 
@@ -68,7 +73,14 @@ Three places need updating:
    // @version 0.X.Y    ← line 4
    ```
 
-3. **Regenerate Swagger docs** (if OpenAPI version changed):
+3. **iOS marketing version** in `apps/ios/VoiceAgent.xcodeproj/project.pbxproj`
+   (VoiceAgent app + BroadcastExtension — all 6 occurrences):
+
+   ```text
+   MARKETING_VERSION = 0.X.Y;
+   ```
+
+4. **Regenerate Swagger docs** (if OpenAPI version changed):
 
    ```bash
    nx run server:swagger
@@ -76,9 +88,9 @@ Three places need updating:
 
    If swagger generation fails or is unavailable, skip it — the version annotation is what matters for the tag, and CI will regenerate docs during the Docker build.
 
-4. **Commit the version bump:**
+5. **Commit the version bump:**
    ```bash
-   git add VERSION apps/server/cmd/server/main.go apps/server/docs/swagger/
+   git add VERSION apps/server/cmd/server/main.go apps/ios/VoiceAgent.xcodeproj/project.pbxproj apps/server/docs/swagger/
    git commit -m "chore: bump version to 0.X.Y"
    ```
 

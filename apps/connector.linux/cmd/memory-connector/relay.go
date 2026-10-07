@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/relay"
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/toolreg"
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/tools"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/upgrade"
 )
 
 // runRelay runs the relay client in the foreground. It is a thin wrapper over
@@ -145,6 +147,14 @@ func runRelayCommand(name string, args []string, stdout, stderr io.Writer, withL
 	}
 	regMgr.setClient(client)
 
+	// Background auto-update checker. It never blocks startup, swallows
+	// network errors (logged at most), and in auto mode cancels the relay
+	// context and signals a restart so this function can return 1 after a
+	// successful install.
+	relayCtx, relayCancel := context.WithCancel(ctx)
+	defer relayCancel()
+	restart := startUpdateChecker(relayCtx, relayCancel, cfg, log)
+
 	// Optional loopback management API. Bound to 127.0.0.1 only and
 	// unauthenticated by design (local-companion trust model); see the
 	// mgmtapi package doc for the risk.
@@ -201,8 +211,14 @@ func runRelayCommand(name string, args []string, stdout, stderr io.Writer, withL
 
 	_, _ = fmt.Fprintf(stdout, "memory-connector %s: instance %q connecting to %s (%d tools)\n",
 		name, cfg.InstanceID, cfg.ServerURL, len(registered))
-	if err := client.Run(ctx); err != nil {
-		_, _ = fmt.Fprintf(stderr, "memory-connector %s: %v\n", name, err)
+	runErr := client.Run(relayCtx)
+	if channelClosed(restart) {
+		// Auto-update installed a new binary and cancelled the relay context;
+		// exit 1 so systemd (Restart=on-failure) relaunches the new binary.
+		return 1
+	}
+	if runErr != nil {
+		_, _ = fmt.Fprintf(stderr, "memory-connector %s: %v\n", name, runErr)
 		return 1
 	}
 	_, _ = fmt.Fprintf(stdout, "memory-connector %s: stopped\n", name)
@@ -242,4 +258,102 @@ func prepareRelayRegistry(cfg *config.Config) (*toolreg.Registry, string, error)
 // connector host.
 func mgmtAPIAddr(port int) string {
 	return fmt.Sprintf("127.0.0.1:%d", port)
+}
+
+// startUpdateChecker launches the background update-check loop when auto-update
+// is enabled and the build version is parseable. It returns a channel that is
+// closed after a successful auto-install (signalling the caller to return 1),
+// or nil when the checker is disabled. The check runs immediately and then
+// every configured interval. Network errors are swallowed (logged at most) and
+// never block startup.
+func startUpdateChecker(ctx context.Context, cancel context.CancelFunc, cfg *config.Config, log *slog.Logger) <-chan struct{} {
+	au := cfg.AutoUpdate
+	if au.Enabled != nil && !*au.Enabled {
+		return nil
+	}
+	interval, err := time.ParseDuration(au.CheckInterval)
+	if err != nil {
+		log.Warn("memory-connector relay: invalid auto_update.check_interval, skipping auto-update", "interval", au.CheckInterval, "err", err)
+		return nil
+	}
+	current := upgrade.Normalize(version)
+	if current == "" || current == "dev" || current == "unknown" {
+		return nil
+	}
+
+	client := newUpgradeClient()
+	cachePath := upgrade.DefaultCachePath()
+	restart := make(chan struct{})
+	var finishOnce sync.Once
+	finish := func() {
+		finishOnce.Do(func() {
+			close(restart)
+			cancel()
+		})
+	}
+
+	check := func() {
+		res, err := upgrade.CheckForUpdate(ctx, client, current, cachePath, interval)
+		if err != nil {
+			log.Warn("memory-connector relay: auto-update check failed", "err", err)
+			return
+		}
+		if !res.Available {
+			return
+		}
+		switch au.Mode {
+		case "auto":
+			exe, err := upgrade.Executable()
+			if err != nil {
+				log.Warn("memory-connector relay: auto-update resolve executable failed", "err", err)
+				return
+			}
+			if upgrade.IsInsideAppBundle(exe) {
+				log.Info("memory-connector relay: auto-update skipped inside a macOS app bundle; update the app instead", "latest", res.Latest)
+				return
+			}
+			rel, err := client.ReleaseFor(res.Latest)
+			if err != nil {
+				log.Warn("memory-connector relay: auto-update resolve release failed", "err", err)
+				return
+			}
+			if _, err := client.Install(ctx, rel); err != nil {
+				log.Warn("memory-connector relay: auto-update install failed", "err", err)
+				return
+			}
+			log.Info("memory-connector relay: auto-update installed", "from", current, "to", res.Latest)
+			finish()
+		default:
+			log.Info("memory-connector relay: a newer version is available", "current", current, "latest", res.Latest)
+		}
+	}
+
+	go func() {
+		check()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				check()
+			}
+		}
+	}()
+
+	return restart
+}
+
+// channelClosed reports whether ch is non-nil and has been closed.
+func channelClosed(ch <-chan struct{}) bool {
+	if ch == nil {
+		return false
+	}
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
 }

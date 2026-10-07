@@ -45,7 +45,7 @@ func sha256Hex(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func TestLatestPicksHighestConnectorRelease(t *testing.T) {
+func TestLatestPicksHighestCoreRelease(t *testing.T) {
 	name, err := assetName("0.10.0", runtime.GOOS, runtime.GOARCH)
 	if err != nil {
 		t.Fatalf("assetName: %v", err)
@@ -53,20 +53,21 @@ func TestLatestPicksHighestConnectorRelease(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/"+Repo+"/releases", func(w http.ResponseWriter, _ *http.Request) {
-		// Deliberately out of order, with a non-connector tag and a newer
-		// non-connector release that must be ignored.
+		// Deliberately out of order, with an SDK module tag that is
+		// numerically higher but must be ignored because it does not start
+		// with "v".
 		_, _ = fmt.Fprintf(w, `[
-			{"tag_name":"connector-v0.2.0","assets":[]},
-			{"tag_name":"v9.9.9","assets":[]},
-			{"tag_name":"connector-v0.10.0","assets":[{"name":%q,"browser_download_url":%q}]},
-			{"tag_name":"connector-v0.9.0","assets":[]}
+			{"tag_name":"v0.2.0","assets":[]},
+			{"tag_name":"apps/server/pkg/sdk/v9.9.9","assets":[]},
+			{"tag_name":"v0.10.0","assets":[{"name":%q,"browser_download_url":%q}]},
+			{"tag_name":"v0.9.0","assets":[]}
 		]`, name, "")
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
 	// The asset's browser_download_url is filled in once the server URL is known.
-	listURL := srv.URL + "/releases/download/connector-v0.10.0/" + name
+	listURL := srv.URL + "/releases/download/v0.10.0/" + name
 	svc := &Client{HTTP: srv.Client(), APIBase: srv.URL, DownloadBase: srv.URL + "/releases/download"}
 	rel, err := svc.Latest(context.Background())
 	if err != nil {
@@ -75,8 +76,8 @@ func TestLatestPicksHighestConnectorRelease(t *testing.T) {
 	if rel.Version != "0.10.0" {
 		t.Errorf("Version = %q, want 0.10.0", rel.Version)
 	}
-	if rel.Tag != "connector-v0.10.0" {
-		t.Errorf("Tag = %q, want connector-v0.10.0", rel.Tag)
+	if rel.Tag != "v0.10.0" {
+		t.Errorf("Tag = %q, want v0.10.0", rel.Tag)
 	}
 	if rel.AssetName != name {
 		t.Errorf("AssetName = %q, want %q", rel.AssetName, name)
@@ -96,7 +97,7 @@ func TestLatestUsesAPIProvidedAssetURL(t *testing.T) {
 	var srv *httptest.Server
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/"+Repo+"/releases", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = fmt.Fprintf(w, `[{"tag_name":"connector-v0.3.0","assets":[{"name":%q,"browser_download_url":%q}]}]`,
+		_, _ = fmt.Fprintf(w, `[{"tag_name":"v0.3.0","assets":[{"name":%q,"browser_download_url":%q}]}]`,
 			name, srv.URL+"/cdn/"+name)
 	})
 	srv = httptest.NewServer(mux)
@@ -112,10 +113,11 @@ func TestLatestUsesAPIProvidedAssetURL(t *testing.T) {
 	}
 }
 
-func TestLatestNoConnectorRelease(t *testing.T) {
+func TestLatestNoCoreRelease(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/"+Repo+"/releases", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`[{"tag_name":"v1.0.0"}]`))
+		// Only an SDK module tag — no v* release is published.
+		_, _ = w.Write([]byte(`[{"tag_name":"apps/server/pkg/sdk/v1.0.0"}]`))
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -208,7 +210,7 @@ func TestReleaseForBuildsPinnedURL(t *testing.T) {
 	if rel.Version != "0.4.0" {
 		t.Errorf("Version = %q, want 0.4.0", rel.Version)
 	}
-	wantURL := "https://mirror.example/releases/download/connector-v0.4.0/" + name
+	wantURL := "https://mirror.example/releases/download/v0.4.0/" + name
 	if rel.AssetURL != wantURL {
 		t.Errorf("AssetURL = %q, want %q", rel.AssetURL, wantURL)
 	}

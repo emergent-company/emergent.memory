@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/mcphost"
 )
 
 // version is the connector release version reported to users and the hub. It
@@ -37,6 +38,10 @@ var version = "0.1.0"
 const probeTimeout = 15 * time.Second
 
 func main() {
+	// Report the build-injected version to hosted MCP servers during the
+	// initialize handshake instead of the hardcoded default.
+	mcphost.ClientVersion = version
+
 	root := newRootCommand(os.Stdout, os.Stderr)
 	if err := root.Execute(); err != nil {
 		var ec exitError

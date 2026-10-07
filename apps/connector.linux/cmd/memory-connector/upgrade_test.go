@@ -62,7 +62,7 @@ func upgradeReleaseServer(t *testing.T, tag string, tarball []byte, sha256 strin
 }
 
 func TestUpgradeAlreadyUpToDateSkipsDownload(t *testing.T) {
-	srv, downloads := upgradeReleaseServer(t, "connector-v0.1.0", nil, "")
+	srv, downloads := upgradeReleaseServer(t, "v0.1.0", nil, "")
 	useUpgradeClient(t, &upgrade.Client{
 		HTTP:         srv.Client(),
 		APIBase:      srv.URL,
@@ -83,7 +83,7 @@ func TestUpgradeAlreadyUpToDateSkipsDownload(t *testing.T) {
 }
 
 func TestUpgradeCheckReportsWithoutDownloading(t *testing.T) {
-	srv, downloads := upgradeReleaseServer(t, "connector-v0.2.0", nil, "")
+	srv, downloads := upgradeReleaseServer(t, "v0.2.0", nil, "")
 	useUpgradeClient(t, &upgrade.Client{
 		HTTP:         srv.Client(),
 		APIBase:      srv.URL,
@@ -115,7 +115,7 @@ func TestUpgradeDownloadsAndReplaces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tag := "connector-v0.2.0"
+	tag := "v0.2.0"
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/"+upgrade.Repo+"/releases", func(w http.ResponseWriter, _ *http.Request) {
@@ -185,7 +185,7 @@ func TestUpgradeRefusesInsideAppBundle(t *testing.T) {
 	t.Cleanup(func() { upgrade.Executable = prevExec })
 
 	// The release server and client are wired up but must never be contacted.
-	srv, downloads := upgradeReleaseServer(t, "connector-v0.2.0", nil, "")
+	srv, downloads := upgradeReleaseServer(t, "v0.2.0", nil, "")
 	useUpgradeClient(t, &upgrade.Client{
 		HTTP:         srv.Client(),
 		APIBase:      srv.URL,

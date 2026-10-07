@@ -25,7 +25,7 @@ var newUpgradeClient = upgrade.NewClient
 func newUpgradeCmd() *cobra.Command {
 	return leaf("upgrade", "upgrade the memory-connector binary", `Upgrade the memory-connector binary in place from its GitHub releases.
 
-Resolves the newest connector-v* release, downloads the archive for this OS
+Resolves the newest v* (core) release, downloads the archive for this OS
 and architecture, verifies its SHA-256 checksum when published, and atomically
 replaces the running executable.
 

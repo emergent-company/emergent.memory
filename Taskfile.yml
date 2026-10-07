@@ -130,7 +130,8 @@ tasks:
         echo "Releasing v{{.VERSION}}"
         echo "{{.VERSION}}" > VERSION
         sed -i "s|// @version .*|// @version {{.VERSION}}|" apps/server/cmd/server/main.go
-        git add VERSION apps/server/cmd/server/main.go apps/cli/internal/skillsfs/skills/memory-cli-reference/SKILL.md
+        sed -i "s|MARKETING_VERSION = .*;|MARKETING_VERSION = {{.VERSION}};|" apps/ios/VoiceAgent.xcodeproj/project.pbxproj
+        git add VERSION apps/server/cmd/server/main.go apps/ios/VoiceAgent.xcodeproj/project.pbxproj apps/cli/internal/skillsfs/skills/memory-cli-reference/SKILL.md
         git status
         git commit -m "chore: bump version to {{.VERSION}}"
         git tag v{{.VERSION}}

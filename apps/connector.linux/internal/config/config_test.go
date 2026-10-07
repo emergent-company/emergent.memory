@@ -153,11 +153,15 @@ func TestValidate(t *testing.T) {
 }
 
 func TestSaveCreatesParentDirAndMode0600(t *testing.T) {
+	enabled := true
 	cfg := &Config{
 		ServerURL:  "https://memory.example.test",
 		Token:      "emt_projecttoken",
 		ProjectID:  "9f1c1a4b-9d11-4a2e-9a6d-1234567890ab",
 		InstanceID: "mbp-connector",
+		// Load applies auto-update defaults; seed them so the round trip
+		// compares exactly.
+		AutoUpdate: AutoUpdateConfig{Enabled: &enabled, Mode: "notify", CheckInterval: "24h"},
 	}
 	path := filepath.Join(t.TempDir(), "nested", "deeper", "config.yml")
 	if err := cfg.Save(path); err != nil {
@@ -622,5 +626,91 @@ func TestLoadAcceptManagedConfigDefaultsFalse(t *testing.T) {
 	}
 	if cfg.AcceptManagedConfig {
 		t.Error("AcceptManagedConfig = true, want false by default")
+	}
+}
+
+func TestLoadAutoUpdateDefaults(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "config.yml", validYAML)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AutoUpdate.Enabled == nil || !*cfg.AutoUpdate.Enabled {
+		t.Errorf("AutoUpdate.Enabled = %v, want true", cfg.AutoUpdate.Enabled)
+	}
+	if cfg.AutoUpdate.Mode != "notify" {
+		t.Errorf("AutoUpdate.Mode = %q, want notify", cfg.AutoUpdate.Mode)
+	}
+	if cfg.AutoUpdate.CheckInterval != "24h" {
+		t.Errorf("AutoUpdate.CheckInterval = %q, want 24h", cfg.AutoUpdate.CheckInterval)
+	}
+}
+
+func TestLoadAutoUpdateCustom(t *testing.T) {
+	body := validYAML +
+		"auto_update:\n" +
+		"  enabled: false\n" +
+		"  mode: auto\n" +
+		"  check_interval: 1h\n"
+	cfg, err := Load(writeFile(t, t.TempDir(), "config.yml", body))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AutoUpdate.Enabled == nil || *cfg.AutoUpdate.Enabled {
+		t.Errorf("AutoUpdate.Enabled = %v, want false", cfg.AutoUpdate.Enabled)
+	}
+	if cfg.AutoUpdate.Mode != "auto" {
+		t.Errorf("AutoUpdate.Mode = %q, want auto", cfg.AutoUpdate.Mode)
+	}
+	if cfg.AutoUpdate.CheckInterval != "1h" {
+		t.Errorf("AutoUpdate.CheckInterval = %q, want 1h", cfg.AutoUpdate.CheckInterval)
+	}
+}
+
+func TestLoadAutoUpdateInvalidMode(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "config.yml", validYAML+"auto_update:\n  mode: banana\n")
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load: expected invalid-mode error, got nil")
+	}
+	if !strings.Contains(err.Error(), "auto_update.mode") {
+		t.Errorf("Load error %q should mention auto_update.mode", err)
+	}
+}
+
+func TestLoadAutoUpdateInvalidInterval(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "config.yml", validYAML+"auto_update:\n  check_interval: someday\n")
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load: expected invalid-interval error, got nil")
+	}
+	if !strings.Contains(err.Error(), "auto_update.check_interval") {
+		t.Errorf("Load error %q should mention auto_update.check_interval", err)
+	}
+}
+
+func TestLoadAutoUpdateEnvOptOut(t *testing.T) {
+	for _, val := range []string{"1", "true", "yes", "on"} {
+		t.Run(val, func(t *testing.T) {
+			t.Setenv("MEMORY_CONNECTOR_NO_AUTO_UPDATE", val)
+			cfg, err := Load(writeFile(t, t.TempDir(), "config.yml", validYAML))
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.AutoUpdate.Enabled == nil || *cfg.AutoUpdate.Enabled {
+				t.Errorf("AutoUpdate.Enabled = %v, want false (env opt-out %q)", cfg.AutoUpdate.Enabled, val)
+			}
+		})
+	}
+}
+
+func TestLoadAutoUpdateEnvOptOutNotSet(t *testing.T) {
+	t.Setenv("MEMORY_CONNECTOR_NO_AUTO_UPDATE", "")
+	cfg, err := Load(writeFile(t, t.TempDir(), "config.yml", validYAML))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AutoUpdate.Enabled == nil || !*cfg.AutoUpdate.Enabled {
+		t.Errorf("AutoUpdate.Enabled = %v, want true (no opt-out)", cfg.AutoUpdate.Enabled)
 	}
 }

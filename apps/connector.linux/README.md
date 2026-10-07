@@ -74,11 +74,11 @@ memory-connector completion powershell | Out-String | Invoke-Expression
 ## Install & release
 
 Prebuilt binaries are published as GitHub release assets on
-[`emergent-company/memory.web-ui`](https://github.com/emergent-company/memory.web-ui/releases).
+[`emergent-company/emergent.memory`](https://github.com/emergent-company/emergent.memory/releases).
 
 ### Tag & asset contract
 
-- **Tag scheme:** `connector-vX.Y.Z` (e.g. `connector-v0.1.0`).
+- **Tag scheme:** `vX.Y.Z` (e.g. `v0.1.0`) — the shared core release tags.
 - **Asset:** `memory-connector_<VERSION>_<os>_<arch>.tar.gz`, containing the bare
   `memory-connector` binary, plus a matching `.tar.gz.sha256` checksum file.
 - **Platforms:** `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64`.
@@ -86,17 +86,17 @@ Prebuilt binaries are published as GitHub release assets on
 ### Install with `install.sh`
 
 ```sh
-# newest connector release → $HOME/.local/bin
-curl -fsSL https://raw.githubusercontent.com/emergent-company/memory.web-ui/master/connector/install.sh | bash
+# newest release → $HOME/.local/bin
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/apps/connector.linux/install.sh | bash
 
 # pin a version and/or install directory
-./connector/install.sh --version 0.1.0 --dir /usr/local/bin
+./install.sh --version 0.1.0 --dir /usr/local/bin
 
 # install the rolling dev build (tag `connector-dev`)
-./connector/install.sh --channel dev
+./install.sh --channel dev
 ```
 
-`install.sh` detects your OS/arch, resolves the newest `connector-v*` release
+`install.sh` detects your OS/arch, resolves the newest core `v*` release
 (`--channel stable`, the default) or the rolling `connector-dev` build
 (`--channel dev`), verifies the `.sha256` when present, and installs the
 binary. Use `--help` for all flags. `MEMORY_CONNECTOR_BASE_URL` overrides the
@@ -106,8 +106,8 @@ release download URL. `INSTALL_DIR` is the env-var form of `--dir`.
 ### Cut a release
 
 ```sh
-git tag connector-v0.1.0
-git push origin connector-v0.1.0
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
 The `Connector Release` workflow (`.github/workflows/connector-release.yml`)
@@ -116,7 +116,7 @@ publishes them to a GitHub release for the tag.
 
 ### Channels
 
-- **stable** — `connector-vX.Y.Z` tags. Immutable, non-prerelease releases.
+- **stable** — `vX.Y.Z` core release tags. Immutable, non-prerelease releases.
   This is what `install.sh` (default) and `resolve_version` pick up.
 - **dev** — every push to `main` touching `connector/**` publishes a rolling
   prerelease under the fixed tag `connector-dev`, overwriting the previous dev
@@ -274,7 +274,7 @@ memory-connector upgrade --force            # reinstall the current version
 memory-connector upgrade --version 0.2.0    # pin a specific release
 ```
 
-`upgrade` resolves the newest `connector-v*` release, downloads the archive for
+`upgrade` resolves the newest core `v*` release, downloads the archive for
 this OS/architecture, verifies its published SHA-256 when reachable, and
 atomically replaces the running executable (a temp file in the target's
 directory, `chmod`, then `rename` over the target; the original is kept if the
@@ -286,18 +286,38 @@ download, checksum, or replace failure), `2` usage.
 ### Release contract
 
 Connector releases are published from the shared
-[`emergent-company/memory.web-ui`](https://github.com/emergent-company/memory.web-ui/releases)
+[`emergent-company/emergent.memory`](https://github.com/emergent-company/emergent.memory/releases)
 repo, so the resolver enumerates releases and picks the highest
-`connector-v*` semver rather than trusting `/releases/latest`:
+`v*` semver rather than trusting `/releases/latest`:
 
-- **Tag:** `connector-vX.Y.Z` (e.g. `connector-v0.1.0`).
+- **Tag:** `vX.Y.Z` (e.g. `v0.1.0`). SDK module tags such as
+  `apps/server/pkg/sdk/vX.Y.Z` do not start with `v` and are ignored.
 - **Asset:** `memory-connector_<X.Y.Z>_<os>_<arch>.tar.gz`, containing the bare
   `memory-connector` binary, plus a matching `.tar.gz.sha256`.
 - **Platforms:** `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64`.
 - **Mirrors:** `MEMORY_CONNECTOR_BASE_URL` overrides the asset base (default
-  `https://github.com/emergent-company/memory.web-ui/releases/download`) and
+  `https://github.com/emergent-company/emergent.memory/releases/download`) and
   `MEMORY_CONNECTOR_API_BASE_URL` overrides the GitHub API base (default
   `https://api.github.com`).
+
+### Automatic update check
+
+The relay daemon also checks for a newer release in the background: once on
+startup, then every `check_interval`. It is **enabled by default in `notify`
+mode** (logs a message when a newer version is available) and can be made to
+self-update with `mode: auto` (downloads and replaces the binary, then exits so
+systemd relaunches the new build — refused inside a macOS `.app` bundle). A
+check that fails (e.g. offline) is logged and never blocks startup.
+
+```yaml
+auto_update:
+  enabled: true          # absent/nil => enabled
+  mode: notify           # "notify" (log only) or "auto" (self-update)
+  check_interval: 24h    # Go duration string
+```
+
+Set `MEMORY_CONNECTOR_NO_AUTO_UPDATE=1` (or `true`) to disable it entirely,
+regardless of the config file.
 
 ## Sign in: `auth`
 

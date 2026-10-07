@@ -118,6 +118,19 @@ pre-commit:
         - "apps/server/migrations/**/*.sql"
       run: bash scripts/preflight/migration-number.sh
 
+    # Preflight: version drift. Root VERSION is canonical; a release bumps it
+    # and apps/server/cmd/server/main.go `// @version` + every iOS
+    # MARKETING_VERSION together (see the `release` task in Taskfile.yml). Only
+    # runs when one of those files is staged. Single source of truth:
+    # scripts/preflight/version-drift.sh (also enforced in CI — see
+    # .github/workflows/ci.yml).
+    - name: preflight-version-drift
+      glob:
+        - "VERSION"
+        - "apps/server/cmd/server/main.go"
+        - "apps/ios/VoiceAgent.xcodeproj/project.pbxproj"
+      run: bash scripts/preflight/version-drift.sh
+
     # ── CLI — apps/cli ───────────────────────────────────────────────────────
     - name: cli-gofmt
       root: apps/cli
