@@ -61,7 +61,7 @@ struct SessionDetailView: View {
                 dismiss()
             } label: {
                 Image(systemName: "chevron.left")
-                    .font(.system(size: 16, weight: .medium))
+                    .font(.body.weight(.medium))
                     .foregroundStyle(.fg3)
                     .padding(2 * .grid)
                     .contentShape(Rectangle())
@@ -71,10 +71,10 @@ struct SessionDetailView: View {
 
             VStack(alignment: .leading, spacing: 1 * .grid) {
                 Text("sessions.detail.title")
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(MemoryFont.screenTitle)
                     .foregroundStyle(.fg0)
                 Text(room)
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(MemoryFont.metaMono)
                     .foregroundStyle(.fg3)
                     .lineLimit(1)
             }
@@ -94,7 +94,7 @@ struct SessionDetailView: View {
                 VStack(spacing: 3 * .grid) {
                     Spinner()
                     Text("sessions.loading")
-                        .font(.system(size: 13))
+                        .font(.footnote)
                         .foregroundStyle(.fg3)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -114,7 +114,7 @@ struct SessionDetailView: View {
                 Text("sessions.detail.empty.description")
                 if let message {
                     Text(message)
-                        .font(.system(size: 12))
+                        .font(MemoryFont.meta)
                         .foregroundStyle(.fg3)
                 }
             }
@@ -207,25 +207,23 @@ private struct TurnBubble: View {
     let role: String
     let text: String
 
-    private var isUser: Bool {
-        role == "user"
+    private var conversationRole: ConversationRole {
+        role == "user" ? .user : .assistant
     }
 
     var body: some View {
-        VStack(alignment: isUser ? .trailing : .leading, spacing: 1 * .grid) {
-            Text(isUser ? "sessions.detail.user" : "sessions.detail.assistant")
-                .font(.system(size: 11))
-                .foregroundStyle(.fg3)
+        let role = conversationRole
+        VStack(alignment: role.isUser ? .trailing : .leading, spacing: 1 * .grid) {
+            Text(role.labelKey)
+                .font(MemoryFont.meta)
+                .foregroundStyle(.fg1.opacity(0.7))
             Text(text)
-                .font(.system(size: 15))
+                .font(MemoryFont.conversationBody)
                 .foregroundStyle(.fg0)
                 .textSelection(.enabled)
                 .padding(3 * .grid)
-                .background(
-                    RoundedRectangle(cornerRadius: .cornerRadiusSmall)
-                        .fill(isUser ? AnyShapeStyle(.fgAccent.opacity(0.18)) : AnyShapeStyle(.bg2))
-                )
+                .bubbleBackground(role, cornerRadius: .cornerRadiusSmall)
         }
-        .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+        .frame(maxWidth: .infinity, alignment: role.isUser ? .trailing : .leading)
     }
 }

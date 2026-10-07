@@ -144,7 +144,7 @@ struct StopButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 12, weight: .semibold))
+            .font(MemoryFont.labelEmphasis)
             .foregroundStyle(.fgSerious)
             .background(
                 Circle()

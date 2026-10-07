@@ -17,7 +17,7 @@ struct ThinkingBlockView: View {
             } label: {
                 HStack(spacing: 2 * .grid) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.caption2.weight(.semibold))
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                         .foregroundStyle(.fg3)
                     if isLive {
@@ -25,11 +25,11 @@ struct ThinkingBlockView: View {
                             .controlSize(.mini)
                     } else {
                         Image(systemName: "brain")
-                            .font(.system(size: 11))
+                            .font(.caption)
                             .foregroundStyle(.fg3)
                     }
                     Text("chat.thinking")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(MemoryFont.metaEmphasis)
                         .foregroundStyle(.fg2)
                     Spacer()
                 }
@@ -39,7 +39,7 @@ struct ThinkingBlockView: View {
 
             if expanded {
                 Text(text)
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(MemoryFont.metaMono)
                     .foregroundStyle(.fg2)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -49,7 +49,7 @@ struct ThinkingBlockView: View {
             }
         }
         .padding(2 * .grid)
-        .background(.bg2, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
+        .bubbleBackground(.assistant, cornerRadius: .cornerRadiusSmall)
     }
 }
 
@@ -60,12 +60,15 @@ struct ThinkingBlockView: View {
 struct TypingIndicatorView: View {
     @State private var animating = false
 
+    /// Dot diameter, scaled with the caption text it accompanies.
+    @ScaledMetric(relativeTo: .caption) private var dotSize: CGFloat = 5
+
     var body: some View {
         HStack(spacing: 2 * .grid) {
             ForEach(0 ..< 3, id: \.self) { index in
                 Circle()
                     .fill(.fg3)
-                    .frame(width: 5, height: 5)
+                    .frame(width: dotSize, height: dotSize)
                     .opacity(animating ? 0.35 : 1)
                     .animation(
                         .easeInOut(duration: 0.6)
@@ -77,14 +80,7 @@ struct TypingIndicatorView: View {
         }
         .padding(.horizontal, 3 * .grid)
         .padding(.vertical, 2 * .grid)
-        .background(
-            RoundedRectangle(cornerRadius: .cornerRadiusLarge)
-                .fill(.bg1)
-                .overlay(
-                    RoundedRectangle(cornerRadius: .cornerRadiusLarge)
-                        .stroke(.separator1.opacity(0.5), lineWidth: 1)
-                )
-        )
+        .bubbleBackground(.assistant, cornerRadius: .cornerRadiusLarge)
         .onAppear { animating = true }
     }
 }
@@ -119,15 +115,15 @@ struct ApprovalCardView: View {
     private var header: some View {
         HStack(spacing: 2 * .grid) {
             Image(systemName: "hand.raised.fill")
-                .font(.system(size: 12))
+                .font(.caption)
                 .foregroundStyle(.fgAccent)
             VStack(alignment: .leading, spacing: 1) {
                 Text(request.tool)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(MemoryFont.cardHeader)
                     .foregroundStyle(.fg1)
                     .lineLimit(1)
                 Text("chat.approval.title")
-                    .font(.system(size: 11))
+                    .font(MemoryFont.meta)
                     .foregroundStyle(.fg3)
             }
             Spacer()
@@ -138,7 +134,7 @@ struct ApprovalCardView: View {
     private var controls: some View {
         if !request.arguments.isEmpty {
             Text(request.arguments)
-                .font(.system(size: 11, design: .monospaced))
+                .font(MemoryFont.metaMono)
                 .foregroundStyle(.fg2)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -165,7 +161,7 @@ struct ApprovalCardView: View {
         if showingReason {
             HStack(spacing: 2 * .grid) {
                 TextField("chat.approval.reason", text: $reason, axis: .vertical)
-                    .font(.system(size: 13))
+                    .font(MemoryFont.label)
                     .textFieldStyle(.plain)
                     .padding(.horizontal, 2 * .grid)
                     .padding(.vertical, 1 * .grid)
@@ -175,7 +171,7 @@ struct ApprovalCardView: View {
                     onDecide(.reject(reason: trimmed.isEmpty ? nil : trimmed))
                 } label: {
                     Image(systemName: "paperplane.fill")
-                        .font(.system(size: 13))
+                        .font(.footnote)
                 }
                 .buttonStyle(.plain)
             }
@@ -198,13 +194,13 @@ struct ApprovalCardView: View {
                         .foregroundStyle(.fgSerious)
                     if let reason, !reason.isEmpty {
                         Text(reason)
-                            .font(.system(size: 12))
+                            .font(MemoryFont.meta)
                             .foregroundStyle(.fg2)
                     }
                 }
             }
         }
-        .font(.system(size: 13, weight: .semibold))
+        .font(MemoryFont.labelEmphasis)
     }
 }
 
@@ -214,7 +210,7 @@ struct DecisionButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 13, weight: .semibold))
+            .font(MemoryFont.labelEmphasis)
             .foregroundStyle(.white)
             .padding(.horizontal, 3 * .grid)
             .padding(.vertical, 1 * .grid)
@@ -239,10 +235,10 @@ struct QuestionCardView: View {
         VStack(alignment: .leading, spacing: 2 * .grid) {
             HStack(spacing: 2 * .grid) {
                 Image(systemName: "questionmark.circle.fill")
-                    .font(.system(size: 12))
+                    .font(.caption)
                     .foregroundStyle(.fgAccent)
                 Text(request.question)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(MemoryFont.cardHeader)
                     .foregroundStyle(.fg1)
                 Spacer()
             }
@@ -269,10 +265,10 @@ struct QuestionCardView: View {
                     } label: {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(option.label)
-                                .font(.system(size: 13, weight: .medium))
+                                .font(MemoryFont.label)
                             if let description = option.description, !description.isEmpty {
                                 Text(description)
-                                    .font(.system(size: 11))
+                                    .font(MemoryFont.meta)
                                     .foregroundStyle(.fg3)
                                     .multilineTextAlignment(.leading)
                             }
@@ -294,10 +290,10 @@ struct QuestionCardView: View {
                                 .foregroundStyle(selectedValues.contains(option.value) ? .fgAccent : .fg3)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(option.label)
-                                    .font(.system(size: 13, weight: .medium))
+                                    .font(MemoryFont.label)
                                 if let description = option.description, !description.isEmpty {
                                     Text(description)
-                                        .font(.system(size: 11))
+                                        .font(MemoryFont.meta)
                                         .foregroundStyle(.fg3)
                                 }
                             }
@@ -320,7 +316,7 @@ struct QuestionCardView: View {
         case .freeText:
             VStack(alignment: .leading, spacing: 2 * .grid) {
                 TextField(request.placeholder?.isEmpty == false ? request.placeholder! : "chat.question.answer", text: $freeText, axis: .vertical)
-                    .font(.system(size: 13))
+                    .font(MemoryFont.label)
                     .textFieldStyle(.plain)
                     .lineLimit(1 ... 4)
                     .padding(2 * .grid)
@@ -361,14 +357,14 @@ struct QuestionCardView: View {
     private func answeredState(_ answer: String) -> some View {
         HStack(alignment: .top, spacing: 2 * .grid) {
             Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 13))
+                .font(.footnote)
                 .foregroundStyle(.fgSuccess)
             VStack(alignment: .leading, spacing: 1) {
                 Text("chat.question.answered")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(MemoryFont.metaEmphasis)
                     .foregroundStyle(.fgSuccess)
                 Text(answer)
-                    .font(.system(size: 13))
+                    .font(MemoryFont.label)
                     .foregroundStyle(.fg1)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -380,7 +376,7 @@ struct QuestionCardView: View {
 struct OptionRowButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 13, weight: .medium))
+            .font(MemoryFont.label)
             .foregroundStyle(configuration.isPressed ? .fg0 : .fg1)
             .padding(2 * .grid)
             .background(.bg1, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))

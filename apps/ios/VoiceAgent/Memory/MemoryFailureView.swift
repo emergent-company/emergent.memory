@@ -1,57 +1,79 @@
 import SwiftUI
 
-/// Minimal, restyle-friendly presentation of a connection failure with a
-/// retry affordance (OpenSpec task 3.4).
+/// Presentation of a connection failure with a retry affordance
+/// (OpenSpec task 3.4).
 ///
-/// Kept intentionally plain: a separate design pass will replace the styling.
-/// The state is a plain `MemoryFailure` enum, so switching presentation
-/// requires no changes outside this view.
+/// Styled on the shared token system: a serious-tinted warning badge, the card
+/// background, the large corner radius, and the prominent button style. The
+/// state is a plain `MemoryFailure` enum, so switching presentation requires
+/// no changes outside this view.
 struct MemoryFailureView: View {
     let failure: MemoryFailure
     let onRetry: () -> Void
 
     var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 28))
-                .foregroundStyle(.orange)
+        VStack(spacing: 3 * .grid) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.title2)
+                .foregroundStyle(.fgSerious)
+                .padding(3 * .grid)
+                .background(.bgSerious, in: Circle())
 
             Text(title)
-                .font(.headline)
-
-            Text(failure.errorDescription ?? "Unknown error")
-                .font(.subheadline)
+                .font(MemoryFont.cardHeader)
+                .foregroundStyle(.fg0)
                 .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
 
-            Button("Retry", action: onRetry)
-                .buttonStyle(.borderedProminent)
-                .padding(.top, 4)
+            description
+                .font(MemoryFont.bodySmall)
+                // `.secondary` on `bg2` is ~3.1:1 in light; a primary tint
+                // clears 4.5:1 while staying visually secondary.
+                .foregroundStyle(.fg1.opacity(0.8))
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button(action: onRetry) {
+                Text("memory.failure.retry")
+                    .padding(.horizontal, 6 * .grid)
+                    .padding(.vertical, 2 * .grid)
+            }
+            .buttonStyle(ProminentButtonStyle())
+            .padding(.top, 1 * .grid)
         }
-        .padding(24)
-        .frame(maxWidth: 340)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .padding(6 * .grid)
+        .frame(maxWidth: 84 * .grid)
+        .background(.bg2, in: RoundedRectangle(cornerRadius: .cornerRadiusLarge))
         .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(.separator, lineWidth: 1)
+            RoundedRectangle(cornerRadius: .cornerRadiusLarge)
+                .stroke(.separatorSerious, lineWidth: 1)
         )
-        .shadow(radius: 8)
-        .padding()
+        .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
+        .padding(4 * .grid)
     }
 
-    private var title: String {
+    /// Keyed headline for the failure kind (see `memory.failure.*`).
+    private var title: LocalizedStringKey {
         switch failure {
         case .tokenFetch:
-            "Token server unreachable"
+            "memory.failure.tokenFetch"
         case .serverUnreachable:
-            "Server unreachable"
+            "memory.failure.serverUnreachable"
         case .agentNotJoined:
-            "Agent not available"
+            "memory.failure.agentNotJoined"
         case .micPermissionDenied:
-            "Microphone permission needed"
+            "memory.failure.micPermissionDenied"
         case .unknown:
-            "Connection failed"
+            "memory.failure.unknown"
         }
+    }
+
+    /// Runtime detail from the failure, or a keyed generic when absent. The
+    /// runtime message is rendered verbatim (not as a localization key) so it is
+    /// never reinterpreted as markdown or a lookup key.
+    private var description: Text {
+        if let message = failure.errorDescription {
+            return Text(verbatim: message)
+        }
+        return Text("memory.failure.description")
     }
 }

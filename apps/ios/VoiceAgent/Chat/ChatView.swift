@@ -103,23 +103,35 @@ struct ChatView: View {
         }
     }
 
+    /// A subtle role label above a bubble, so speaker attribution is
+    /// unambiguous on both the accent-tinted user bubble and the raised agent
+    /// bubble. Shared copy with the session timeline.
+    private func roleLabel(_ role: ConversationRole) -> some View {
+        Text(role.labelKey)
+            .font(MemoryFont.meta)
+            // fg2/fg3/fg4 all map to `.secondary` (~3.3:1 light), so a primary
+            // tint is used to clear 4.5:1 while still reading as secondary.
+            .foregroundStyle(.fg1.opacity(0.7))
+            .padding(.horizontal, 1 * .grid)
+    }
+
     @ViewBuilder
     private func userBubble(_ text: String) -> some View {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
             HStack {
                 Spacer(minLength: 4 * .grid)
-                Text(trimmed)
-                    .font(.system(size: 17))
-                    .foregroundStyle(.fg1)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 3 * .grid)
-                    .padding(.vertical, 2 * .grid)
-                    .background(
-                        RoundedRectangle(cornerRadius: .cornerRadiusLarge)
-                            .fill(.bg2)
-                    )
-                    .containerRelativeFrame(.horizontal, count: 5, span: 4, spacing: 0, alignment: .trailing)
+                VStack(alignment: .trailing, spacing: 1 * .grid) {
+                    roleLabel(.user)
+                    Text(trimmed)
+                        .font(MemoryFont.conversationBody)
+                        .foregroundStyle(.fg1)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 3 * .grid)
+                        .padding(.vertical, 2 * .grid)
+                        .bubbleBackground(.user, cornerRadius: .cornerRadiusLarge)
+                }
+                .containerRelativeFrame(.horizontal, count: 5, span: 4, spacing: 0, alignment: .trailing)
             }
         }
     }
@@ -129,19 +141,15 @@ struct ChatView: View {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
             HStack {
-                MarkdownRenderer(text: trimmed)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 3 * .grid)
-                    .padding(.vertical, 2 * .grid)
-                    .background(
-                        RoundedRectangle(cornerRadius: .cornerRadiusLarge)
-                            .fill(.bg1)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: .cornerRadiusLarge)
-                                    .stroke(.separator1.opacity(0.5), lineWidth: 1)
-                            )
-                    )
-                    .containerRelativeFrame(.horizontal, count: 5, span: 4, spacing: 0, alignment: .leading)
+                VStack(alignment: .leading, spacing: 1 * .grid) {
+                    roleLabel(.assistant)
+                    MarkdownRenderer(text: trimmed)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 3 * .grid)
+                        .padding(.vertical, 2 * .grid)
+                        .bubbleBackground(.assistant, cornerRadius: .cornerRadiusLarge)
+                }
+                .containerRelativeFrame(.horizontal, count: 5, span: 4, spacing: 0, alignment: .leading)
                 Spacer(minLength: 4 * .grid)
             }
         }
@@ -254,9 +262,9 @@ struct ChatView: View {
         VStack(spacing: 2 * .grid) {
             Spacer()
             Image(systemName: "bubble.left.and.bubble.right")
-                .font(.system(size: 22, weight: .light))
+                .font(.title2.weight(.light))
             Text("Type a message")
-                .font(.system(size: 15))
+                .font(MemoryFont.bodySmall)
             Spacer()
             if onSuggestion != nil {
                 SuggestedPromptsView(prompts: Self.suggestedPrompts) { prompt in
@@ -284,7 +292,7 @@ struct SuggestedPromptsView: View {
                     onPick(prompt)
                 } label: {
                     Text(prompt)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(MemoryFont.label)
                         .foregroundStyle(.fg1)
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)

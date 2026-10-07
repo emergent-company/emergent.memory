@@ -199,7 +199,7 @@ struct AppShellView: View {
             Spacer()
             Spinner()
             Text("agents.loading")
-                .font(.system(size: 13))
+                .font(.footnote)
                 .foregroundStyle(.fg3)
             Spacer()
         }
@@ -216,7 +216,7 @@ struct AppShellView: View {
             VStack(spacing: 1 * .grid) {
                 Text("agents.error.description")
                 Text(message)
-                    .font(.system(size: 12))
+                    .font(MemoryFont.meta)
                     .foregroundStyle(.fg3)
             }
         } actions: {
@@ -227,7 +227,7 @@ struct AppShellView: View {
                     Image(systemName: "qrcode.viewfinder")
                     Text("agents.error.scanQR")
                 }
-                .font(.system(size: 14, weight: .semibold))
+                .font(MemoryFont.labelEmphasis)
                 .foregroundStyle(.fgAccent)
                 .contentShape(Rectangle())
             }
@@ -238,7 +238,7 @@ struct AppShellView: View {
                 Task { await agentStore.load() }
             } label: {
                 Text("agents.retry")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(MemoryFont.labelEmphasis)
                     .foregroundStyle(.fgAccent)
                     .contentShape(Rectangle())
             }
@@ -267,6 +267,10 @@ struct AppShellView: View {
 private struct AppSettingsTabView: View {
     @Binding var qrPresented: Bool
 
+    /// Leading-icon column width, scaled with body text so the 17pt glyph is
+    /// never clipped at any Dynamic Type size.
+    @ScaledMetric(relativeTo: .body) private var qrIconWidth: CGFloat = 6 * .grid
+
     var body: some View {
         VStack(spacing: 0) {
             qrRow()
@@ -281,20 +285,20 @@ private struct AppSettingsTabView: View {
         } label: {
             HStack(spacing: 3 * .grid) {
                 Image(systemName: "qrcode.viewfinder")
-                    .font(.system(size: 17))
+                    .font(.body)
                     .foregroundStyle(.fgAccent)
-                    .frame(width: 3 * .grid)
+                    .frame(width: qrIconWidth)
                 VStack(alignment: .leading, spacing: 1 * .grid) {
                     Text("settings.qr.title")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(MemoryFont.cardHeader)
                         .foregroundStyle(.fg0)
                     Text("settings.qr.footer")
-                        .font(.system(size: 11))
+                        .font(MemoryFont.meta)
                         .foregroundStyle(.fg3)
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(MemoryFont.metaEmphasis)
                     .foregroundStyle(.fg3)
             }
             .padding(3 * .grid)

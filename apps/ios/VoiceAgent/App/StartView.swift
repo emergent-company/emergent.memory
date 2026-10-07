@@ -77,7 +77,7 @@ struct StartView: View {
         } busyLabel: {
             HStack(spacing: 4 * .grid) {
                 Spacer()
-                Spinner()
+                Spinner(tint: .white)
                     .transition(.scale.combined(with: .opacity))
                 Text("connect.connecting")
                     .matchedGeometryEffect(id: "connect", in: button)
