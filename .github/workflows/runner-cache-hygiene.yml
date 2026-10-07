@@ -12,6 +12,12 @@ name: Runner Cache Hygiene
 # Every run logs the resolved path, and a missing directory raises a warning
 # annotation instead of silently skipping the prune forever.
 #
+# The second job prunes the *GitHub Actions* cache (the repo-level 10 GB budget)
+# rather than local disk. Docker `build-push-action` `type=gha` layer caches
+# accumulated ~7 GB across 411 entries and pushed the repo over its budget,
+# evicting useful Go/Swift cache and slowing every job. It deletes entries not
+# accessed for 14 days; this is orthogonal to the Go build cache above.
+#
 # Scheduler note: the three memory runners share a single `memory` label (no
 # per-runner labels), so one job run can only land on one of them. A daily
 # schedule therefore covers the pool over time as the scheduler picks whichever
@@ -27,6 +33,31 @@ permissions:
   contents: read
 
 jobs:
+  prune-actions-cache:
+    name: Prune stale Actions caches
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # Required to DELETE repo-level Actions cache entries.
+      actions: write
+    steps:
+      - name: Delete caches untouched for 14 days
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          CUTOFF=$(date -u -d '14 days ago' +%Y-%m-%dT%H:%M:%SZ)
+          echo "Deleting Actions caches last accessed before $CUTOFF"
+          gh api --paginate "repos/$REPO/actions/caches" \
+            --jq ".actions_caches[] | select(.last_accessed_at < \"$CUTOFF\") | .id" \
+            | while read -r id; do
+                [ -n "$id" ] && gh api -X DELETE "repos/$REPO/actions/caches/$id" >/dev/null && echo "deleted cache $id"
+              done
+          gh api "repos/$REPO/actions/cache/usage" \
+            --jq '"Active cache size: \(.active_caches_size_in_bytes) bytes across \(.active_caches_count) entries"'
+
   prune-go-build-cache:
     name: Prune Go build cache
     runs-on: [self-hosted, linux, x64, memory]
