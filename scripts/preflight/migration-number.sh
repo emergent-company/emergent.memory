@@ -14,8 +14,12 @@
 #
 # Rules, for *.sql files under apps/server/migrations/:
 #   1. Existing migrations (present on origin/main) must never be modified,
-#      renamed, or deleted. (This rule previously lived only in CI
-#      `migration-guard`, so lanes discovered it after pushing.)
+#      renamed, or deleted. This rule is implemented once, in
+#      scripts/preflight/migration-immutability.sh, which this script calls and
+#      which CI's `Migration Immutability` job also calls — so the preflight and
+#      CI gates always agree. (It includes a narrow, documented exception for
+#      repairing an already-merged duplicate base version; see that script's
+#      header.)
 #   2. New migrations must be numbered strictly above max(origin/main) AND
 #      contiguous ascending starting at max+1 — no gaps, no duplicates.
 #
@@ -68,19 +72,13 @@ echo "migration-number: max(origin/main) = $max_base"
 status=0
 added_versions=""
 
-# 1. Existing migrations must not be modified, renamed, or deleted.
-while IFS= read -r f; do
-  [ -z "$f" ] && continue
-  if ! grep -qxF "$f" <<< "$current_files"; then
-    echo "migration-number: FAIL existing migration deleted/renamed: $f (Goose has already applied it; create a NEW migration instead)" >&2
-    status=1
-    continue
-  fi
-  if ! git diff --quiet "$base" -- "$f"; then
-    echo "migration-number: FAIL existing migration modified: $f (Goose has already applied it; create a NEW migration instead)" >&2
-    status=1
-  fi
-done <<< "$base_files"
+# 1. Existing migrations must not be modified, renamed, or deleted. Single
+#    implementation (shared with the CI immutability job):
+#    scripts/preflight/migration-immutability.sh. It prints a REPAIR notice and
+#    succeeds for the narrow duplicated-version repair case.
+if ! bash "$root/scripts/preflight/migration-immutability.sh" --base "$base"; then
+  status=1
+fi
 
 # 2. New migrations must be numbered above max and contiguous ascending.
 while IFS= read -r f; do

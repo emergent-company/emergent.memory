@@ -12,16 +12,16 @@ import (
 	"github.com/emergent-company/emergent.memory/migrations"
 )
 
-// TestMigration00227_BlueprintOrigin verifies the origin-column migration's
+// TestMigration00228_BlueprintOrigin verifies the origin-column migration's
 // semantics against the (already-migrated) test schema: default 'user', the
 // CHECK constraint, the global→builtin backfill, and the origin index. It also
 // guards that the migration is embedded (it must not be silently deleted).
-func TestMigration00227_BlueprintOrigin(t *testing.T) {
+func TestMigration00228_BlueprintOrigin(t *testing.T) {
 	db := connectTestDB(t)
 	ctx := context.Background()
 
-	b, err := migrations.FS.ReadFile("00227_blueprint_origin.sql")
-	require.NoError(t, err, "00227_blueprint_origin.sql must be embedded")
+	b, err := migrations.FS.ReadFile("00228_blueprint_origin.sql")
+	require.NoError(t, err, "00228_blueprint_origin.sql must be embedded")
 	sql := string(b)
 	assert.Contains(t, sql, "blueprints_origin_check")
 	assert.Contains(t, sql, "blueprints_origin_idx")

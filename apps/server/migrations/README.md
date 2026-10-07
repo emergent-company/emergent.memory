@@ -158,6 +158,39 @@ gap). Mark the added migration with a reason:
 
 The reason is required; a bare directive does not exempt the file.
 
+### Migration Immutability (preflight + CI)
+
+Once a migration has merged it must never be **modified, renamed, or deleted**:
+goose records applied migrations by numeric version, so renumbering an applied
+migration makes goose silently skip it on any environment that recorded the old
+version, and deleting it makes the embedded set inconsistent.
+
+This is enforced by a single script,
+`scripts/preflight/migration-immutability.sh` (default base `origin/main`), called
+both by the local preflight (`scripts/preflight/migration-number.sh`) and by CI's
+`Migration Immutability` job. Both gates therefore agree. Run it directly with:
+
+```bash
+bash scripts/preflight/migration-immutability.sh --base origin/main
+```
+
+**Narrow exception — duplicate-version repair (`REPAIR`).** If two migrations on
+the base branch share a version `V` (a pathological state), goose panics at
+startup before applying anything, so no environment can have applied either one
+and renumbering one of them is safe. The rule is relaxed for removing/renaming a
+base migration whose version is **duplicated among the base migrations (≥2 base
+files share it)** when the PR adds a **contiguous replacement** whose versions run
+`max(base)+1 .. max(base)+N` with no gaps or duplicates; a `REPAIR` notice is
+printed instead of a failure. This is exactly the #1646 repair (`00227_blueprint_origin.sql`
+had to become `00228_blueprint_origin.sql`). Everything else is unchanged — a
+plain rename/modify/delete of a non-duplicated migration still fails, and
+modifying a migration is *never* exempt.
+
+The embedded set is additionally asserted to have **unique versions** by
+`apps/server/internal/migrationguard` (`TestEmbeddedMigrationsHaveUniqueVersions`),
+which collects the migrations through goose itself — the definitive guard against
+the `goose: duplicate version N detected` panic.
+
 ### Applying a gap to an existing database
 
 If a gap already exists on a running environment, apply the missing migrations
