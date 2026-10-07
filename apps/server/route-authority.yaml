@@ -246,6 +246,10 @@ routes:
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireProjectID
     - method: POST
+      path: /api/blueprints/:name/updates/apply
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireProjectID
+    - method: POST
       path: /api/blueprints/:name/updates/check
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireProjectID
@@ -354,6 +358,66 @@ routes:
       level: project-member
       note: RequireAuth, RequireProjectID, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(chunks:write)
     - method: GET
+      path: /api/data-source-integrations
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:read)
+    - method: POST
+      path: /api/data-source-integrations
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
+    - method: DELETE
+      path: /api/data-source-integrations/:id
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:delete)
+    - method: GET
+      path: /api/data-source-integrations/:id
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:read)
+    - method: PATCH
+      path: /api/data-source-integrations/:id
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
+    - method: POST
+      path: /api/data-source-integrations/:id/sync
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
+    - method: GET
+      path: /api/data-source-integrations/:id/sync-jobs
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:read)
+    - method: GET
+      path: /api/data-source-integrations/:id/sync-jobs/:jobId
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:read)
+    - method: POST
+      path: /api/data-source-integrations/:id/sync-jobs/:jobId/cancel
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
+    - method: GET
+      path: /api/data-source-integrations/:id/sync-jobs/latest
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:read)
+    - method: POST
+      path: /api/data-source-integrations/:id/test-connection
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
+    - method: GET
+      path: /api/data-source-integrations/providers
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:read)
+    - method: GET
+      path: /api/data-source-integrations/providers/:providerType/schema
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:read)
+    - method: GET
+      path: /api/data-source-integrations/source-types
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:read)
+    - method: POST
+      path: /api/data-source-integrations/test-config
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
+    - method: GET
       path: /api/diagnostics
       level: superadmin-full
       note: RequireAuth, RequireSuperadminFull
@@ -437,6 +501,10 @@ routes:
       path: /api/documents/:id/retry-extraction
       level: project-member
       note: RequireAuth, RequireProjectID, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
+    - method: GET
+      path: /api/documents/:id/versions
+      level: project-member
+      note: RequireAuth, RequireProjectID, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:read)
     - method: POST
       path: /api/documents/deletion-impact
       level: project-member
