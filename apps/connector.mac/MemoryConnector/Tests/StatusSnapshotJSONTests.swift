@@ -1,8 +1,9 @@
+import Foundation
 @testable import MemoryConnector
-import XCTest
+import Testing
 
 /// Tests for the `status --json` machine contract consumed by StatusMonitor.
-final class StatusSnapshotJSONTests: XCTestCase {
+struct StatusSnapshotJSONTests {
     private func json(instance: String = "mbp-connector",
                       version: String = "0.1.0",
                       tools: [String] = ["linux-host-info"],
@@ -35,62 +36,62 @@ final class StatusSnapshotJSONTests: XCTestCase {
         guard let data = try? JSONSerialization.data(withJSONObject: doc, options: [.sortedKeys]),
               let string = String(bytes: data, encoding: .utf8)
         else {
-            XCTFail("status JSON fixture is not serializable")
+            Issue.record("status JSON fixture is not serializable")
             return "{}"
         }
         return string
     }
 
-    func testJSONConnected() {
+    @Test func jsonConnected() {
         let snap = StatusSnapshot.parse(stdout: json(), exitCode: 0)
-        XCTAssertEqual(snap.instanceID, "mbp-connector")
-        XCTAssertEqual(snap.version, "0.1.0")
-        XCTAssertEqual(snap.toolNames, ["linux-host-info"])
-        XCTAssertEqual(snap.toolCount, 1)
-        XCTAssertEqual(snap.hubState, .connected)
-        XCTAssertEqual(snap.hubLine, "connected — hub shows 1 tool(s), matches local set")
+        #expect(snap.instanceID == "mbp-connector")
+        #expect(snap.version == "0.1.0")
+        #expect(snap.toolNames == ["linux-host-info"])
+        #expect(snap.toolCount == 1)
+        #expect(snap.hubState == .connected)
+        #expect(snap.hubLine == "connected — hub shows 1 tool(s), matches local set")
     }
 
-    func testJSONConnectedMismatch() {
+    @Test func jsonConnectedMismatch() {
         let snap = StatusSnapshot.parse(stdout: json(hubToolCount: 0, localToolCount: 5), exitCode: 0)
-        XCTAssertEqual(snap.hubState, .connected)
-        XCTAssertTrue(snap.hubLine.contains("mismatch"))
+        #expect(snap.hubState == .connected)
+        #expect(snap.hubLine.contains("mismatch"))
     }
 
-    func testJSONNotConnected() {
+    @Test func jsonNotConnected() {
         let snap = StatusSnapshot.parse(
             stdout: json(tools: [], hubState: "not_connected", sessionCount: 3), exitCode: 0
         )
-        XCTAssertEqual(snap.hubState, .notConnected)
-        XCTAssertTrue(snap.toolNames.isEmpty)
-        XCTAssertEqual(snap.hubLine, "not connected — instance not found among 3 hub session(s)")
+        #expect(snap.hubState == .notConnected)
+        #expect(snap.toolNames.isEmpty)
+        #expect(snap.hubLine == "not connected — instance not found among 3 hub session(s)")
     }
 
-    func testJSONAuthFailed() {
+    @Test func jsonAuthFailed() {
         let snap = StatusSnapshot.parse(stdout: json(hubState: "auth_failed"), exitCode: 0)
-        XCTAssertEqual(snap.hubState, .authFailed)
-        XCTAssertEqual(snap.hubLine, "authentication failed — the server rejected the token")
+        #expect(snap.hubState == .authFailed)
+        #expect(snap.hubLine == "authentication failed — the server rejected the token")
     }
 
-    func testJSONUnreachable() {
+    @Test func jsonUnreachable() {
         let snap = StatusSnapshot.parse(
             stdout: json(hubState: "unreachable", error: "dial tcp: refused"), exitCode: 0
         )
-        XCTAssertEqual(snap.hubState, .unreachable)
-        XCTAssertEqual(snap.hubLine, "unreachable — dial tcp: refused")
+        #expect(snap.hubState == .unreachable)
+        #expect(snap.hubLine == "unreachable — dial tcp: refused")
     }
 
-    func testJSONMissingConfig() {
+    @Test func jsonMissingConfig() {
         let snap = StatusSnapshot.parse(stdout: json(hubState: "missing_config"), exitCode: 0)
-        XCTAssertEqual(snap.hubState, .missingConfig)
+        #expect(snap.hubState == .missingConfig)
     }
 
-    func testJSONUnknownHubStateIsUnknown() {
+    @Test func jsonUnknownHubStateIsUnknown() {
         let snap = StatusSnapshot.parse(stdout: json(hubState: "something_new"), exitCode: 0)
-        XCTAssertEqual(snap.hubState, .unknown)
+        #expect(snap.hubState == .unknown)
     }
 
-    func testJSONDisabledTools() {
+    @Test func jsonDisabledTools() {
         let snap = StatusSnapshot.parse(
             stdout: json(tools: ["linux-host-info"],
                          disabledTools: [
@@ -98,26 +99,26 @@ final class StatusSnapshotJSONTests: XCTestCase {
                          ]),
             exitCode: 0
         )
-        XCTAssertEqual(snap.disabledTools, [
+        #expect(snap.disabledTools == [
             StatusSnapshot.DisabledTool(name: "linux-fs-write",
                                         reason: "no write-capable root configured"),
         ])
     }
 
-    func testNonZeroExitIsMissingConfig() {
+    @Test func nonZeroExitIsMissingConfig() {
         let snap = StatusSnapshot.parse(stdout: json(), exitCode: 1)
-        XCTAssertEqual(snap.hubState, .missingConfig)
+        #expect(snap.hubState == .missingConfig)
     }
 
-    func testMalformedJSONFallsBackGracefully() {
+    @Test func malformedJSONFallsBackGracefully() {
         // Starts with "{" but is not valid JSON: must not crash and must not be
         // mistaken for the text form.
         let snap = StatusSnapshot.parse(stdout: "{not json", exitCode: 0)
-        XCTAssertEqual(snap.hubState, .unknown)
-        XCTAssertTrue(snap.toolNames.isEmpty)
+        #expect(snap.hubState == .unknown)
+        #expect(snap.toolNames.isEmpty)
     }
 
-    func testTextFormStillParses() {
+    @Test func textFormStillParses() {
         // The legacy text form remains supported (older engine binary).
         let stdout = """
         memory-connector status
@@ -127,8 +128,8 @@ final class StatusSnapshotJSONTests: XCTestCase {
         hub: connected — hub shows 1 tool(s), matches local set
         """
         let snap = StatusSnapshot.parse(stdout: stdout, exitCode: 0)
-        XCTAssertEqual(snap.instanceID, "old-connector")
-        XCTAssertEqual(snap.toolNames, ["notes_search"])
-        XCTAssertEqual(snap.hubState, .connected)
+        #expect(snap.instanceID == "old-connector")
+        #expect(snap.toolNames == ["notes_search"])
+        #expect(snap.hubState == .connected)
     }
 }

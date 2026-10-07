@@ -3,16 +3,23 @@ import SwiftUI
 
 /// Popover content for a LEFT-click on the status item.
 ///
-/// Effectively signed in → the active account listed by EMAIL (environment
-/// badge) plus a switcher for the other accounts and an "Add account" action.
-/// Not effectively signed in → a single prominent Production sign-in call to
-/// action and no account rows. Settings/Quit live in the right-click menu
-/// (`StatusItemController`), not here.
+/// Shows a status summary + tool count, the account switcher (signed in) or a
+/// single Production sign-in call (signed out), and the same action set the
+/// right-click `NSMenu` exposes (open, check for updates, Settings, sign out,
+/// Quit) so both click paths agree. Sign-out is confirmed by the enclosing
+/// `StatusItemController`, which owns the shared confirmation.
 struct MenuBarView: View {
-    @EnvironmentObject private var accountStore: AccountStore
-    @EnvironmentObject private var projectStore: ProjectStore
-    @EnvironmentObject private var engine: EngineManager
-    @EnvironmentObject private var statusMonitor: StatusMonitor
+    @SwiftUI.Environment(AccountStore.self) private var accountStore
+    @SwiftUI.Environment(ProjectStore.self) private var projectStore
+    @SwiftUI.Environment(EngineManager.self) private var engine
+    @SwiftUI.Environment(StatusMonitor.self) private var statusMonitor
+    @SwiftUI.Environment(AppState.self) private var appState
+    @SwiftUI.Environment(UpdaterModel.self) private var updater
+
+    /// Controller-owned actions, so the popover and the secondary-click menu run
+    /// the same code (confirmed sign-out, quit) instead of duplicating it.
+    var onSignOut: @MainActor () -> Void = {}
+    var onQuit: @MainActor () -> Void = {}
 
     private var status: AppStatus {
         AppStatus.derive(engine: engine.state, snapshot: statusMonitor.snapshot)
@@ -27,11 +34,21 @@ struct MenuBarView: View {
 
             Divider()
 
+            statusSummary
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+
+            Divider()
+
             if accountStore.isEffectivelySignedIn {
                 signedIn
             } else {
                 signedOut
             }
+
+            Divider()
+
+            actions
         }
         .frame(width: 300)
     }
@@ -51,6 +68,26 @@ struct MenuBarView: View {
                     .foregroundStyle(.tertiary)
                     .monospacedDigit()
             }
+        }
+    }
+
+    // MARK: - Status summary
+
+    /// Engine/hub state plus the number of tools the running connector reports.
+    private var statusSummary: some View {
+        HStack(spacing: 6) {
+            Text(status.label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if let count = statusMonitor.snapshot?.toolCount, count > 0 {
+                Text("·")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                Text("\(count) \(count == 1 ? "tool" : "tools") registered")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
         }
     }
 
@@ -82,23 +119,13 @@ struct MenuBarView: View {
 
             Divider()
 
-            HStack(spacing: 10) {
-                Button {
-                    signIn(signInEnvironment)
-                } label: {
-                    Label("Add account", systemImage: "plus")
-                        .font(.callout)
-                }
-                .disabled(accountStore.isSigningIn)
-
-                Spacer(minLength: 0)
-
-                Button("Open Memory") {
-                    WindowRouter.shared.requestMainWindow()
-                    NSApp.activate(ignoringOtherApps: true)
-                }
-                .buttonStyle(.link)
+            Button {
+                signIn(signInEnvironment)
+            } label: {
+                Label("Add account", systemImage: "plus")
+                    .font(.callout)
             }
+            .disabled(accountStore.isSigningIn)
 
             if accountStore.isSigningIn {
                 HStack(spacing: 6) {
@@ -147,12 +174,61 @@ struct MenuBarView: View {
         .disabled(accountStore.isSigningIn)
     }
 
-    // MARK: - Actions
+    // MARK: - Actions (same set as the secondary-click menu)
 
-    /// The environment this popover's sign-in action targets, from the shared
-    /// per-surface policy.
+    private var actions: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            actionButton("Open Memory", systemImage: "macwindow") {
+                openApplication()
+            }
+            actionButton("Check for Updates…", systemImage: "arrow.triangle.2.circlepath") {
+                updater.checkForUpdates()
+            }
+            .disabled(!updater.canCheckForUpdates)
+            actionButton("Settings…", systemImage: "gearshape") {
+                openSettings()
+            }
+            if accountStore.isEffectivelySignedIn {
+                actionButton("Sign out", systemImage: "rectangle.portrait.and.arrow.right") {
+                    onSignOut()
+                }
+            }
+            Divider()
+                .padding(.vertical, 4)
+            actionButton("Quit Memory", systemImage: "power") {
+                onQuit()
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+    }
+
+    private func actionButton(_ title: LocalizedStringKey, systemImage: String,
+                              action: @escaping () -> Void) -> some View
+    {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+    }
+
+    // MARK: - Actions helpers
+
     private var signInEnvironment: Environment {
         Environment.signInEnvironments(for: .menuBar).first ?? Environment.primary
+    }
+
+    private func openApplication() {
+        WindowRouter.shared.requestMainWindow()
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func openSettings() {
+        appState.selectedSidebarItem = .connection
+        WindowRouter.shared.requestMainWindow()
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func signIn(_ environment: Environment) {

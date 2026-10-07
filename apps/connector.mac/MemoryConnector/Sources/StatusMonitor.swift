@@ -1,5 +1,5 @@
-import Combine
 import Foundation
+import Observation
 
 /// Polls the embedded engine's own `status --config` subcommand and publishes
 /// the parsed snapshot. Poll cadence: 2s burst while the engine freshly
@@ -7,12 +7,13 @@ import Foundation
 /// 5s. Polls are skipped entirely when the engine is not running — no engine
 /// process spawns then.
 @MainActor
-final class StatusMonitor: ObservableObject {
+@Observable
+final class StatusMonitor {
     static let shared = StatusMonitor()
 
-    @Published private(set) var snapshot: StatusSnapshot?
-    @Published private(set) var lastChecked: Date?
-    @Published private(set) var isChecking = false
+    private(set) var snapshot: StatusSnapshot?
+    private(set) var lastChecked: Date?
+    private(set) var isChecking = false
 
     private static let pollInterval: TimeInterval = 5
     private static let burstInterval: TimeInterval = 2

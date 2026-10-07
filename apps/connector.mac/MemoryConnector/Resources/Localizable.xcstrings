@@ -1,0 +1,281 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "—" : {
+
+    },
+    "·" : {
+
+    },
+    "/usr/local/bin/mcp-server" : {
+
+    },
+    "%@ %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ %2$@"
+          }
+        }
+      }
+    },
+    "%@ %@ registered" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ %2$@ registered"
+          }
+        }
+      }
+    },
+    "%@ of %@ shared" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ of %2$@ shared"
+          }
+        }
+      }
+    },
+    "A native menu-bar companion that runs the Memory connector engine and connects your local Apple tools to Memory." : {
+
+    },
+    "About" : {
+
+    },
+    "Add" : {
+
+    },
+    "Add a local MCP server to share its tools through Memory." : {
+
+    },
+    "Add MCP Server" : {
+
+    },
+    "Agents created for this project will appear here." : {
+
+    },
+    "All local tools" : {
+
+    },
+    "Arguments" : {
+
+    },
+    "Automation permission to control %@." : {
+
+    },
+    "Browse MCP Registry" : {
+
+    },
+    "Can't load hosted MCP servers" : {
+
+    },
+    "Connected to this project" : {
+
+    },
+    "Couldn't load agent details" : {
+
+    },
+    "Couldn't load dashboard" : {
+
+    },
+    "Couldn't load projects" : {
+
+    },
+    "Couldn't load this server" : {
+
+    },
+    "Development" : {
+
+    },
+    "Development sign-in targets %@ at %@." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Development sign-in targets %1$@ at %2$@."
+          }
+        }
+      }
+    },
+    "Discovered Tools" : {
+
+    },
+    "e.g. filesystem" : {
+
+    },
+    "Enabled tools appear in Memory → Settings → MCP nodes and can be attached to agents. Changes take effect after the engine restarts." : {
+
+    },
+    "Environment variables and headers are stored in the connector's local config file in plaintext. They stay on this Mac and are never sent to Memory." : {
+
+    },
+    "Hide value" : {
+
+    },
+    "Hosted MCP Servers" : {
+
+    },
+    "https://example.com/mcp" : {
+
+    },
+    "Loading projects…" : {
+
+    },
+    "Local MCP Tools" : {
+
+    },
+    "macOS asks once per app; grants are per-app and persist. Use Authorize to trigger the prompt, or open Automation settings directly." : {
+
+    },
+    "Managed" : {
+
+    },
+    "Managed in Memory" : {
+
+    },
+    "MCP servers are hosted by the connector on this Mac. Commands, URLs, environment variables, and headers stay in the connector's local config and are never sent to Memory." : {
+
+    },
+    "Memory" : {
+
+    },
+    "Memory Account" : {
+
+    },
+    "No agents yet" : {
+
+    },
+    "No hosted MCP servers" : {
+
+    },
+    "No local tools enabled. Turn some on in MCP Tools." : {
+
+    },
+    "No MCP tools allowed (empty whitelist)" : {
+
+    },
+    "No projects yet" : {
+
+    },
+    "Not shared" : {
+
+    },
+    "Not signed in" : {
+
+    },
+    "Not specified" : {
+
+    },
+    "Only the built-in session-title tool runs for this agent." : {
+
+    },
+    "Permissions" : {
+
+    },
+    "Registry Suggestion" : {
+
+    },
+    "Relay" : {
+
+    },
+    "Reveal value" : {
+
+    },
+    "Save" : {
+
+    },
+    "Search the official registry and review a suggested server before adding it." : {
+
+    },
+    "Select a project to connect." : {
+
+    },
+    "Selecting a project views it; connect to serve its tools" : {
+
+    },
+    "Server" : {
+
+    },
+    "Sidebar structure and card styling derived from Diane (Emergent Company, MIT licensed)." : {
+
+    },
+    "Sign in to connect a project" : {
+
+    },
+    "Sign in to Development" : {
+
+    },
+    "Sign in with Memory" : {
+
+    },
+    "Sign in with Memory to connect your account and projects." : {
+
+    },
+    "Sign in with your Memory identity to list and switch projects." : {
+
+    },
+    "Sign out" : {
+
+    },
+    "Signed out" : {
+
+    },
+    "Signing an account out stops the connector if it is active and clears that account's saved session. Other accounts stay signed in." : {
+
+    },
+    "Signing in…" : {
+
+    },
+    "Status" : {
+
+    },
+    "Suggested from the MCP registry" : {
+
+    },
+    "Switch account" : {
+
+    },
+    "Switch project" : {
+
+    },
+    "Switch projects from the menu at the top of the window." : {
+
+    },
+    "The connector runs only for the connected project." : {
+
+    },
+    "This removes the server from the connector's local config and stops hosting its tools. It cannot be undone." : {
+
+    },
+    "This server is configured in Memory. Its settings can't be edited or removed here." : {
+
+    },
+    "v%@" : {
+
+    },
+    "Values from the registry entry are a starting point and can be edited. Secret values are masked and stay on this Mac — they are never sent to Memory." : {
+
+    },
+    "Version %@ (%@)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Version %1$@ (%2$@)"
+          }
+        }
+      }
+    },
+    "Your Memory account doesn't have any projects you can use yet." : {
+
+    },
+    "Your session expired or was cleared on this Mac. Sign in to load your projects." : {
+
+    }
+  },
+  "version" : "1.0"
+}

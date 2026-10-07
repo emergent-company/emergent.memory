@@ -1,58 +1,59 @@
+import Foundation
 @testable import MemoryConnector
-import XCTest
+import Testing
 
-final class RestartPolicyTests: XCTestCase {
-    func testFirstExitsRestart() {
+struct RestartPolicyTests {
+    @Test func firstExitsRestart() {
         var policy = RestartPolicy(maxRestarts: 3, window: 60, restartDelay: 3)
         let startTime = Date(timeIntervalSince1970: 1000)
 
-        XCTAssertEqual(policy.registerExit(at: startTime), .restart(after: 3))
-        XCTAssertEqual(policy.registerExit(at: startTime + 5), .restart(after: 3))
-        XCTAssertEqual(policy.restartCount, 2)
+        #expect(policy.registerExit(at: startTime) == .restart(after: 3))
+        #expect(policy.registerExit(at: startTime + 5) == .restart(after: 3))
+        #expect(policy.restartCount == 2)
     }
 
-    func testGiveUpAfterMaxRestartsWithinWindow() {
+    @Test func giveUpAfterMaxRestartsWithinWindow() {
         var policy = RestartPolicy(maxRestarts: 3, window: 60, restartDelay: 3)
         let startTime = Date(timeIntervalSince1970: 1000)
 
         // 1st, 2nd, 3rd exit: restart.
-        XCTAssertEqual(policy.registerExit(at: startTime), .restart(after: 3))
-        XCTAssertEqual(policy.registerExit(at: startTime + 10), .restart(after: 3))
-        XCTAssertEqual(policy.registerExit(at: startTime + 20), .restart(after: 3))
+        #expect(policy.registerExit(at: startTime) == .restart(after: 3))
+        #expect(policy.registerExit(at: startTime + 10) == .restart(after: 3))
+        #expect(policy.registerExit(at: startTime + 20) == .restart(after: 3))
         // 4th exit inside the window: give up.
-        XCTAssertEqual(policy.registerExit(at: startTime + 30), .giveUp)
-        XCTAssertEqual(policy.restartCount, 4)
+        #expect(policy.registerExit(at: startTime + 30) == .giveUp)
+        #expect(policy.restartCount == 4)
     }
 
-    func testWindowExpiryResetsCount() {
+    @Test func windowExpiryResetsCount() {
         var policy = RestartPolicy(maxRestarts: 3, window: 60, restartDelay: 3)
         let startTime = Date(timeIntervalSince1970: 1000)
 
         _ = policy.registerExit(at: startTime)
         _ = policy.registerExit(at: startTime + 10)
         _ = policy.registerExit(at: startTime + 20)
-        XCTAssertEqual(policy.restartCount, 3)
+        #expect(policy.restartCount == 3)
 
         // A gap longer than the window resets the breaker.
-        XCTAssertEqual(policy.registerExit(at: startTime + 200), .restart(after: 3))
-        XCTAssertEqual(policy.restartCount, 1)
+        #expect(policy.registerExit(at: startTime + 200) == .restart(after: 3))
+        #expect(policy.restartCount == 1)
     }
 
-    func testExactlyAtWindowBoundaryDoesNotReset() {
+    @Test func exactlyAtWindowBoundaryDoesNotReset() {
         var policy = RestartPolicy(maxRestarts: 3, window: 60, restartDelay: 3)
         let startTime = Date(timeIntervalSince1970: 1000)
 
         _ = policy.registerExit(at: startTime)
         // startTime+60 is not *greater* than the window, so it still counts.
-        XCTAssertEqual(policy.registerExit(at: startTime + 60), .restart(after: 3))
-        XCTAssertEqual(policy.restartCount, 2)
+        #expect(policy.registerExit(at: startTime + 60) == .restart(after: 3))
+        #expect(policy.restartCount == 2)
     }
 
-    func testDefaults() {
+    @Test func defaults() {
         let policy = RestartPolicy()
-        XCTAssertEqual(policy.maxRestarts, 3)
-        XCTAssertEqual(policy.window, 60)
-        XCTAssertEqual(policy.restartDelay, 3)
-        XCTAssertEqual(policy.restartCount, 0)
+        #expect(policy.maxRestarts == 3)
+        #expect(policy.window == 60)
+        #expect(policy.restartDelay == 3)
+        #expect(policy.restartCount == 0)
     }
 }

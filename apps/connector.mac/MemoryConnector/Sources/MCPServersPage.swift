@@ -8,7 +8,7 @@ import SwiftUI
 /// Server commands, URLs, environment variables, and headers stay in the
 /// connector's local config — only the discovered tools are shared with Memory.
 struct MCPServersPage: View {
-    @StateObject private var store = MCPServersStore()
+    @State private var store = MCPServersStore()
     @State private var showingAdd = false
     @State private var showingRegistry = false
     @State private var selectedServer: HostedMCPServer?
@@ -135,6 +135,7 @@ struct MCPServersPage: View {
                 Toggle("", isOn: enabledBinding(server))
                     .labelsHidden()
                     .toggleStyle(.switch)
+                    .accessibilityLabel(Text(AccessibleNames.serverEnabled(server.name)))
                     .help(server.enabled ? "Disable \(server.name)" : "Enable \(server.name)")
             }
         }
@@ -241,7 +242,7 @@ enum MCPStatusStyle {
         return .orange
     }
 
-    static func label(enabled: Bool, connected: Bool, error: String?) -> String {
+    static func label(enabled: Bool, connected: Bool, error: String?) -> LocalizedStringResource {
         if !enabled {
             return "Disabled"
         }
@@ -256,7 +257,9 @@ enum MCPStatusStyle {
 
     /// Status line for the detail sheet: `label`, but with the server's error
     /// text inlined and a loading placeholder until the detail arrives.
-    static func detailLabel(enabled: Bool, connected: Bool, error: String?, loading: Bool = false) -> String {
+    static func detailLabel(enabled: Bool, connected: Bool, error: String?,
+                            loading: Bool = false) -> LocalizedStringResource
+    {
         if loading {
             return "Loading…"
         }

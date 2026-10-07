@@ -9,6 +9,13 @@ settings:
   base:
     SWIFT_VERSION: "6.0"
     MACOSX_DEPLOYMENT_TARGET: "15.0"
+    # Enhanced Security: compiler-driven hardened-runtime protections. The
+    # runtime-driven pieces are the hardened-process entitlements in
+    # MemoryConnector.entitlements. Cascades security compiler warnings,
+    # typed-allocator support, and C++ stdlib hardening automatically.
+    ENABLE_ENHANCED_SECURITY: "YES"
+    # Zero-initialize stack variables so uninitialized stack values are unused.
+    CLANG_ENABLE_STACK_ZERO_INIT: "YES"
     # Manual signing with a stable Apple Development identity (see
     # MemoryConnector.xcconfig): ad-hoc signing resets TCC Automation grants.
     ENABLE_HARDENED_RUNTIME: YES
@@ -42,8 +49,17 @@ targets:
       # `resources:` entry would merely copy the folder and the app icon would
       # never be compiled in.
       - path: Resources/Assets.xcassets
+      # String Catalog: a source entry so XcodeGen routes it through the strings
+      # compiler into the built bundle (Xcode extracts keys from the code).
+      - path: Resources/Localizable.xcstrings
     settings:
       base:
+        # ENABLE_ENHANCED_SECURITY cascades arm64e (pointer authentication)
+        # into the target's architectures, but the linked Sparkle 2.x
+        # framework ships only x86_64/arm64 slices. Pointer authentication is
+        # therefore disabled until Sparkle (and any other linked binary)
+        # provides an arm64e slice. See harden-mac-connector-app design D5.
+        ENABLE_POINTER_AUTHENTICATION: "NO"
         # Product/process/bundle name shown by macOS: "Memory". The XcodeGen
         # target + scheme stay "MemoryConnector", and PRODUCT_MODULE_NAME keeps
         # the Swift module "MemoryConnector" so `@testable import

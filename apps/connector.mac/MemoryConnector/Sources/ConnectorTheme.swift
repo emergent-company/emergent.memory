@@ -14,11 +14,11 @@ extension Color {
 /// Shared card container for the information pages (Dashboard, Project &
 /// Account, About). Keeps padding, corner radius, and border consistent.
 struct ConnectorCard<Content: View>: View {
-    private let title: String?
+    private let title: LocalizedStringResource?
     private let systemImage: String?
     private let content: Content
 
-    init(title: String? = nil, systemImage: String? = nil,
+    init(title: LocalizedStringResource? = nil, systemImage: String? = nil,
          @ViewBuilder content: () -> Content)
     {
         self.title = title
@@ -56,7 +56,7 @@ struct ConnectorCard<Content: View>: View {
 /// A label/value row used inside cards. Values are selectable so a user can
 /// copy a project or instance id out.
 struct ConnectorInfoRow: View {
-    let label: String
+    let label: LocalizedStringResource
     let value: String
     var monospaced: Bool = false
     var valueColor: Color = .primary
@@ -79,7 +79,7 @@ struct ConnectorInfoRow: View {
 /// A label + copy-only identifier row (id hidden until hover, copyable with
 /// the shared control). Used for the engine instance id on the Dashboard page.
 struct IdentifierInfoRow: View {
-    let label: String
+    let label: LocalizedStringResource
     let identifier: String
 
     var body: some View {
@@ -102,7 +102,7 @@ struct IdentifierInfoRow: View {
 
 /// A small centered spinner + caption used while a page loads identity data.
 struct ConnectorLoadingRow: View {
-    var caption: String = "Loading…"
+    var caption: LocalizedStringResource = "Loading…"
 
     var body: some View {
         HStack(spacing: 10) {

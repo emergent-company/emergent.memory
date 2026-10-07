@@ -1,14 +1,14 @@
-import Combine
 import Foundation
+import Observation
 
-/// The app's single instance graph, shared by SwiftUI (via `.environmentObject`)
+/// The app's single instance graph, shared by SwiftUI (via `.environment`)
 /// and AppKit (`StatusItemController`), so there is exactly ONE of each store.
 ///
 /// `AccountStore` owns the signed-in accounts; the active account drives the
 /// `ProjectStore` scope, identity, and the engine. All sign-in/token work is
 /// delegated to the bundled `memory-connector` CLI.
 @MainActor
-final class AppEnvironment: ObservableObject {
+final class AppEnvironment {
     static let shared = AppEnvironment()
 
     let engine = EngineManager.shared
@@ -18,6 +18,7 @@ final class AppEnvironment: ObservableObject {
     let projectStore: ProjectStore
     let appState = AppState()
     let identity = IdentityStore()
+    let avatarStore = AvatarStore()
     /// Sparkle-backed app updater. Created once here so the About page and any
     /// future menu-bar surface share a single controller (starting a second one
     /// would start a second update cycle).
@@ -31,8 +32,6 @@ final class AppEnvironment: ObservableObject {
 
     /// Owned here so the app delegate can start/stop it around launch/quit.
     private(set) lazy var statusItemController = StatusItemController(environment: self)
-
-    private var cancellables = Set<AnyCancellable>()
 
     /// Suppresses the connected-project-id sink while a scope swap is in flight
     /// (see `ScopeSwapGate`). Bumped synchronously on this `@MainActor` thread
@@ -52,12 +51,25 @@ final class AppEnvironment: ObservableObject {
     init(legacyMigrator: LegacyMigrator? = nil) {
         let settings = ConnectorSettings()
         self.settings = settings
-        let projectStore = ProjectStore(settings: settings)
-        self.projectStore = projectStore
         let accountStore = AccountStore()
         self.accountStore = accountStore
         let migrator = legacyMigrator ?? Self.defaultLegacyMigrator()
         self.legacyMigrator = migrator
+        // Capture the composition root's engine directly rather than via
+        // `self`: these closures are built before `projectStore` is assigned,
+        // so capturing `self` would be a use-before-initialization error.
+        let engine = EngineManager.shared
+        let projectStore = ProjectStore(
+            settings: settings,
+            restart: { engine.restart() },
+            stop: { engine.stop() }
+        )
+        self.projectStore = projectStore
+
+        // The engine stop the account store runs before switching accounts is
+        // the composition root's own engine (wired here, not reached via a
+        // `.shared` default inside the store).
+        accountStore.engineWillStop = { [weak self] in self?.engine.stop() }
 
         // When a project load hits an auth failure, `ProjectStore` asks the
         // account store to re-establish the connector CLI session (a best-effort
@@ -89,37 +101,13 @@ final class AppEnvironment: ObservableObject {
             )
         }
 
-        // Keep the account control's effective signed-in state aligned with the
-        // project surface: a project auth failure (`.signedOut`) also means the
-        // active session is not usable, so the switcher must show Sign in.
-        projectStore.$state
-            .receive(on: RunLoop.main)
-            .sink { [weak self] state in
-                if case .signedOut = state {
-                    self?.accountStore.markActiveSessionInvalid()
-                }
-            }
-            .store(in: &cancellables)
-
-        // Keep the engine + status polling aligned with the connected project.
-        // `dropFirst()` skips the current value so init never starts anything;
-        // only real connect/disconnect/sign-out transitions reconcile. A scope
-        // swap in flight suppresses these so the swap's own single reconcile
-        // (after the config rewrite) is the only one that runs.
-        projectStore.$connectedProjectID
-            .dropFirst()
-            .receive(on: RunLoop.main)
-            .sink { [weak self] _ in
-                guard let self, scopeSwapGate.mayReconcile else { return }
-                syncEngineWithConnection()
-            }
-            .store(in: &cancellables)
-
         // The active account drives the ProjectStore scope: switching accounts
         // swaps profiles/tokens/selection, stops the engine, and reloads data.
         accountStore.activeAccountDidChange = { [weak self] account in
             self?.handleActiveAccountChange(account)
         }
+
+        observeProjectStore()
 
         // Restore the launch account's scope before any UI/engine work.
         if let account = accountStore.activeAccount {
@@ -131,6 +119,51 @@ final class AppEnvironment: ObservableObject {
         // `migrateIfNeeded()` never throws.
         Task {
             await migrator?.migrateIfNeeded()
+        }
+    }
+
+    // MARK: - Project-store observation
+
+    /// Replaces the old Combine `$state` / `$connectedProjectID` sinks with
+    /// `@Observable` tracking. Both side effects run on the main actor, exactly
+    /// as the `.receive(on: RunLoop.main)` sinks did.
+    private func observeProjectStore() {
+        observeProjectState()
+        observeConnectedProject()
+    }
+
+    /// Keep the account control's effective signed-in state aligned with the
+    /// project surface: a project auth failure (`.signedOut`) also means the
+    /// active session is not usable, so the switcher must show Sign in.
+    private func observeProjectState() {
+        withObservationTracking {
+            _ = projectStore.state
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                if case .signedOut = self.projectStore.state {
+                    self.accountStore.markActiveSessionInvalid()
+                }
+                self.observeProjectState()
+            }
+        }
+    }
+
+    /// Keep the engine + status polling aligned with the connected project.
+    /// `withObservationTracking` fires only on change (the Combine equivalent
+    /// used `dropFirst()` to skip the current value), and a scope swap in flight
+    /// suppresses these so the swap's own single reconcile is the only one.
+    private func observeConnectedProject() {
+        withObservationTracking {
+            _ = projectStore.connectedProjectID
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                if self.scopeSwapGate.mayReconcile {
+                    self.syncEngineWithConnection()
+                }
+                self.observeConnectedProject()
+            }
         }
     }
 

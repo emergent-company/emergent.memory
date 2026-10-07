@@ -1,5 +1,5 @@
-import Combine
 import Foundation
+import Observation
 
 /// Data layer for the hosted MCP servers page.
 ///
@@ -9,7 +9,8 @@ import Foundation
 /// polling cadence matches the app's other monitors (immediate load, then a
 /// fixed interval while the page is visible).
 @MainActor
-final class MCPServersStore: ObservableObject {
+@Observable
+final class MCPServersStore {
     /// Coarse page state. `servers` is kept across refreshes so a refresh never
     /// blanks an already-populated list.
     enum Phase: Equatable {
@@ -25,26 +26,26 @@ final class MCPServersStore: ObservableObject {
         let tool: String
     }
 
-    @Published private(set) var phase: Phase = .idle
-    @Published private(set) var servers: [HostedMCPServer] = []
-    @Published private(set) var status: RelayRuntimeStatus?
-    @Published private(set) var errorMessage: String?
-    @Published private(set) var isLoading = false
-    @Published private(set) var lastUpdated: Date?
+    private(set) var phase: Phase = .idle
+    private(set) var servers: [HostedMCPServer] = []
+    private(set) var status: RelayRuntimeStatus?
+    private(set) var errorMessage: String?
+    private(set) var isLoading = false
+    private(set) var lastUpdated: Date?
 
     /// Full config + live status per server, keyed by name. Cached so the detail
     /// view can render the current `disabled_tools` list and a tool toggle can
     /// rebuild the complete config without losing any field.
-    @Published private(set) var details: [String: HostedMCPServerDetail] = [:]
+    private(set) var details: [String: HostedMCPServerDetail] = [:]
 
     /// Discovered tools per server, keyed by name. Kept alongside the cached
     /// detail so the detail view reflects a toggle's refreshed tool set.
-    @Published private(set) var toolsByServer: [String: [HostedMCPTool]] = [:]
+    private(set) var toolsByServer: [String: [HostedMCPTool]] = [:]
 
     /// Server/tool pairs with a sharing toggle in flight. The detail view
     /// disables its toggles for a server while any of its writes are pending, so
     /// two read-modify-write requests never race and drop each other's change.
-    @Published private(set) var togglingTools: Set<ToolKey> = []
+    private(set) var togglingTools: Set<ToolKey> = []
 
     private let client: MCPServersAPIClient
     private let pollInterval: TimeInterval

@@ -10,8 +10,9 @@ import SwiftUI
 /// control is per row so secret values (auth headers, API keys) are never shown
 /// unless the user asks.
 struct MCPKeyValueEditor: View {
-    let title: String
+    let title: LocalizedStringResource
     let keyPlaceholder: String
+    let addLabel: LocalizedStringResource
     @Binding var entries: [MCPServerForm.Entry]
 
     var body: some View {
@@ -32,13 +33,18 @@ struct MCPKeyValueEditor: View {
                         Image(systemName: "minus.circle")
                     }
                     .buttonStyle(.borderless)
+                    .accessibilityLabel("Remove row")
                     .help("Remove row")
                 }
             }
             Button {
                 entries.append(MCPServerForm.Entry())
             } label: {
-                Label("Add \(title.lowercased())", systemImage: "plus.circle")
+                Label {
+                    Text(addLabel)
+                } icon: {
+                    Image(systemName: "plus.circle")
+                }
             }
             .buttonStyle(.borderless)
             .font(.caption)
@@ -49,7 +55,7 @@ struct MCPKeyValueEditor: View {
 
 /// Editable list of positional arguments (stdio servers).
 struct MCPArgsEditor: View {
-    @Binding var args: [String]
+    @Binding var args: [MCPServerForm.Arg]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -58,30 +64,22 @@ struct MCPArgsEditor: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            ForEach(args.indices, id: \.self) { index in
+            ForEach($args) { $arg in
                 HStack(spacing: 6) {
-                    TextField("Argument", text: Binding(
-                        get: { index < args.count ? args[index] : "" },
-                        set: {
-                            if index < args.count {
-                                args[index] = $0
-                            }
-                        }
-                    ))
-                    .autocorrectionDisabled()
+                    TextField("Argument", text: $arg.value)
+                        .autocorrectionDisabled()
                     Button {
-                        if index < args.count {
-                            args.remove(at: index)
-                        }
+                        args.removeAll { $0.id == arg.id }
                     } label: {
                         Image(systemName: "minus.circle")
                     }
                     .buttonStyle(.borderless)
+                    .accessibilityLabel("Remove argument")
                     .help("Remove argument")
                 }
             }
             Button {
-                args.append("")
+                args.append(MCPServerForm.Arg())
             } label: {
                 Label("Add argument", systemImage: "plus.circle")
             }
@@ -115,6 +113,7 @@ struct MCPSecretField: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.borderless)
+            .accessibilityLabel(revealed ? Text("Hide value") : Text("Reveal value"))
             .help(revealed ? "Hide value" : "Reveal value")
         }
     }

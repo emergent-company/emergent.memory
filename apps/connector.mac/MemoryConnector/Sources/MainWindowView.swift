@@ -7,13 +7,12 @@ import SwiftUI
 /// A slim footer bar shows overall connector status (engine + hub), derived
 /// from `AppStatus`/`StatusMonitor`; the menu-bar icon keeps its own behaviour.
 struct MainWindowView: View {
-    @EnvironmentObject private var settings: ConnectorSettings
-    @EnvironmentObject private var appState: AppState
-    @EnvironmentObject private var identity: IdentityStore
-    @EnvironmentObject private var projectStore: ProjectStore
-
-    @ObservedObject private var engine = EngineManager.shared
-    @ObservedObject private var statusMonitor = StatusMonitor.shared
+    @SwiftUI.Environment(ConnectorSettings.self) private var settings
+    @SwiftUI.Environment(AppState.self) private var appState
+    @SwiftUI.Environment(IdentityStore.self) private var identity
+    @SwiftUI.Environment(ProjectStore.self) private var projectStore
+    @SwiftUI.Environment(EngineManager.self) private var engine
+    @SwiftUI.Environment(StatusMonitor.self) private var statusMonitor
 
     var body: some View {
         VStack(spacing: 0) {
@@ -80,7 +79,7 @@ struct MainWindowView: View {
     }
 
     /// `Connected: <project>` / `Not connected`, for the engine relay.
-    private var connectionLabel: String {
+    private var connectionLabel: LocalizedStringResource {
         guard projectStore.hasConnectedProject else { return "Not connected" }
         let name = projectStore.projects
             .first { $0.id == projectStore.connectedProjectID }?
@@ -120,7 +119,7 @@ struct MainWindowView: View {
         }
         .padding(.horizontal, 24)
         .frame(height: 24)
-        .help("\(status.label) · \(connectionLabel)")
+        .help(Text(status.label) + Text(verbatim: " · ") + Text(connectionLabel))
     }
 
     // MARK: - Sidebar

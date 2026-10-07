@@ -33,6 +33,8 @@ struct EnvironmentBadge: View {
     let label: String
     let isDev: Bool
 
+    @SwiftUI.Environment(\.colorScheme) private var colorScheme
+
     init(environment: Environment) {
         label = environment.shortLabel
         isDev = environment.id == Environment.dev.id
@@ -48,14 +50,21 @@ struct EnvironmentBadge: View {
             .font(.caption2.weight(.semibold))
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .foregroundStyle(tint)
-            .background(Capsule().fill(tint.opacity(0.15)))
+            .foregroundStyle(foreground)
+            .background(Capsule().fill(tint.opacity(colorScheme == .dark ? 0.22 : 0.15)))
             .overlay(Capsule().strokeBorder(tint.opacity(0.35)))
             .fixedSize()
     }
 
     private var tint: Color {
         isDev ? .orange : .memoryPrimary
+    }
+
+    /// Small caption text on a same-hue tint fails WCAG AA in light mode
+    /// (orange ≈1.8:1, memoryPrimary ≈2.2:1), so the accent is darkened there.
+    /// Dark mode keeps the accent, which is already high contrast.
+    private var foreground: Color {
+        colorScheme == .dark ? tint : tint.mix(with: .black, by: 0.4)
     }
 }
 

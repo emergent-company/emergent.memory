@@ -32,6 +32,9 @@ set -euo pipefail
 SCHEME="MemoryConnector"
 PROJECT_DIR="MemoryConnector"
 PROJECT="${PROJECT_DIR}/${SCHEME}.xcodeproj"
+# Hardened-runtime Enhanced Security entitlements. The re-sign below MUST pass
+# --entitlements, otherwise codesign drops them from the shipped app.
+ENTITLEMENTS="${PROJECT_DIR}/MemoryConnector.entitlements"
 DERIVED_DATA="build/DerivedData"
 ARCHIVE_PATH="build/Memory.xcarchive"
 EXPORT_PATH="build/Export"
@@ -112,8 +115,7 @@ xcodebuild archive \
     CODE_SIGN_STYLE=Manual \
     CODE_SIGN_IDENTITY="${SIGN_IDENTITY}" \
     MARKETING_VERSION="${MARKETING_VERSION}" \
-    CURRENT_PROJECT_VERSION="${CURRENT_PROJECT_VERSION}" \
-    SWIFT_VERSION=5
+    CURRENT_PROJECT_VERSION="${CURRENT_PROJECT_VERSION}"
 
 # Step 3: Export .app
 echo "==> Exporting .app..."
@@ -137,9 +139,19 @@ APP_PATH="${EXPORT_PATH}/Memory.app"
 # Sign embedded binaries (deepest first), then the app. `codesign --deep` is
 # deprecated and unreliable for notarization.
 for bin in "${APP_PATH}/Contents/Resources/memory-connector" "${APP_PATH}/Contents/Resources/memory-reminders"; do
-  [ -f "$bin" ] && codesign --force --options runtime --sign "${SIGN_IDENTITY}" "$bin"
+  [ -f "$bin" ] && codesign --force --options runtime --timestamp --sign "${SIGN_IDENTITY}" "$bin"
 done
-codesign --force --options runtime --sign "${SIGN_IDENTITY}" "${APP_PATH}"
+codesign --force --options runtime --timestamp --entitlements "${ENTITLEMENTS}" --sign "${SIGN_IDENTITY}" "${APP_PATH}"
+
+# Verify the re-sign before spending time on notarization. `codesign` does not
+# preserve entitlements by default, so confirm the Enhanced Security
+# entitlements were actually embedded — dropping them would silently make the
+# hardened-process claim false — and that the signature is valid.
+codesign --verify --verbose=2 "${APP_PATH}"
+if ! codesign -d --entitlements :- "${APP_PATH}" 2>/dev/null | grep -q 'com.apple.security.hardened-process'; then
+    echo "error: hardened-process entitlements missing from the signed app after re-sign" >&2
+    exit 1
+fi
 
 # Step 4: Notarize + staple the app (optional)
 if [[ "${1:-}" == "--notarize" ]]; then

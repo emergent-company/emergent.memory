@@ -5,8 +5,8 @@ import SwiftUI
 /// the shared defaults used to seed profiles. Either way the engine config is
 /// rewritten and the engine restarts through the connected project.
 struct ToolsPage: View {
-    @EnvironmentObject private var settings: ConnectorSettings
-    @EnvironmentObject private var projectStore: ProjectStore
+    @SwiftUI.Environment(ConnectorSettings.self) private var settings
+    @SwiftUI.Environment(ProjectStore.self) private var projectStore
     @State private var alertMessage: String?
 
     var body: some View {
@@ -65,7 +65,7 @@ struct ToolsPage: View {
         }
     }
 
-    private var profileScopeText: String {
+    private var profileScopeText: LocalizedStringResource {
         guard projectStore.hasActiveProject else { return "Shared (no project selected)" }
         if let name = projectStore.activeProjectName {
             return "Applies to \(name)"
@@ -104,7 +104,7 @@ struct ToolsPage: View {
     }
 
     /// All-tools state rendered under the switch: all-on / all-off / mixed.
-    private var allToolsStateText: String {
+    private var allToolsStateText: LocalizedStringResource {
         let total = ToolCatalog.tools.count
         let enabledCount = enabledToolCount
         if enabledCount == 0 {
@@ -156,6 +156,7 @@ struct ToolsPage: View {
             Toggle("", isOn: allToolsBinding)
                 .labelsHidden()
                 .toggleStyle(.switch)
+                .accessibilityLabel(Text(AccessibleNames.allLocalTools))
         }
     }
 

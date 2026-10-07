@@ -1,38 +1,16 @@
 @testable import MemoryConnector
 import XCTest
 
-/// The lifecycle logger must stay silent under hosted unit tests: the test
-/// bundle runs inside the app process, so an unguarded write would append
+/// The lifecycle logger routes through `LogSink.shared`, whose default
+/// suppression drops lifecycle lines under hosted unit tests: the test bundle
+/// runs inside the app process, so an unguarded write would append
 /// `[lifecycle]` lines (and test-stub accounts) to the real user log at
 /// `~/Library/Logs/memory-connector-app.log`.
 ///
-/// These tests inject both the destination and the suppression decision. A suite
-/// that only checked `HostedTest.isRunning` would stay green if the `guard` in `append`
-/// were deleted, leaving hosted runs free to pollute the real log again.
+/// These tests pin the environment detection and the default suppression
+/// decision. The actual write path (destination honoured, whole-line atomicity,
+/// distinguishability) is covered by `LogSinkTests` against injected sinks.
 final class ConnectorLogTests: XCTestCase {
-    private var tempDir: URL!
-    private var logURL: URL!
-    private var originalDestination: URL!
-    private var originalSuppression: (() -> Bool)!
-
-    override func setUpWithError() throws {
-        tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("connector-log-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        logURL = tempDir.appendingPathComponent("lifecycle.log")
-        try "sentinel\n".write(to: logURL, atomically: true, encoding: .utf8)
-
-        originalDestination = ConnectorLog.destinationURL
-        originalSuppression = ConnectorLog.isSuppressed
-        ConnectorLog.destinationURL = logURL
-    }
-
-    override func tearDownWithError() throws {
-        ConnectorLog.destinationURL = originalDestination
-        ConnectorLog.isSuppressed = originalSuppression
-        try? FileManager.default.removeItem(at: tempDir)
-    }
-
     // MARK: - Environment detection
 
     func testHostedTestDetectedByConfigurationPath() {
@@ -54,38 +32,23 @@ final class ConnectorLogTests: XCTestCase {
         ))
     }
 
-    /// The running suite is itself a hosted test run, so the *default* decision
-    /// must suppress here.
-    func testCurrentProcessSuppressesByDefault() {
+    /// The running suite is itself a hosted test run, so the *default* sink
+    /// suppression must drop lifecycle lines here.
+    func testCurrentProcessSuppressesByDefault() async throws {
         XCTAssertTrue(HostedTest.isRunning(environment: ProcessInfo.processInfo.environment))
-        XCTAssertTrue(ConnectorLog.isSuppressed())
-    }
 
-    // MARK: - Actual writes
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("connector-log-default-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let logURL = dir.appendingPathComponent("sink.log")
 
-    /// Regression: if the suppression guard in `append` is removed or bypassed, a
-    /// real `lifecycle` call writes and this fails. This is the assertion the
-    /// detection-only tests could not make.
-    func testLifecycleCallWritesNothingWhenSuppressed() throws {
-        ConnectorLog.isSuppressed = { true }
-        let before = try Data(contentsOf: logURL)
+        // Default suppression = HostedTest.isRunning() (true here), so the
+        // write must be dropped even though the destination is a fresh temp file.
+        let sink = LogSink(destination: logURL)
+        await sink.append(line: "[lifecycle] account=dev:stub source=signIn\n")
 
-        ConnectorLog.lifecycle("account=dev:stub@example.test source=signIn")
-
-        XCTAssertEqual(try Data(contentsOf: logURL), before,
-                       "a suppressed lifecycle() call must leave the destination untouched")
-    }
-
-    /// Proves the write path works and the destination is honoured, so the
-    /// suppression assertion above cannot pass vacuously.
-    func testLifecycleCallAppendsToDestinationWhenNotSuppressed() throws {
-        ConnectorLog.isSuppressed = { false }
-
-        ConnectorLog.lifecycle("account=real source=switchTo")
-
-        let text = try String(contentsOf: logURL, encoding: .utf8)
-        XCTAssertTrue(text.hasPrefix("sentinel\n"), "must append, not truncate: \(text)")
-        XCTAssertTrue(text.contains("[lifecycle] account=real source=switchTo"),
-                      "expected the lifecycle line, got: \(text)")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: logURL.path),
+                       "a default sink must suppress lifecycle writes under a hosted test")
     }
 }

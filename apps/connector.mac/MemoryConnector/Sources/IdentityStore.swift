@@ -1,10 +1,12 @@
 import Foundation
+import Observation
 
 /// Loads and holds the connected project + user identity for the Project &
 /// Account page. Wraps `MemoryAPIClient` with a UI-friendly state machine and
 /// degrades to a clear unavailable state instead of surfacing raw errors.
 @MainActor
-final class IdentityStore: ObservableObject {
+@Observable
+final class IdentityStore {
     enum State: Equatable {
         case idle
         case loading
@@ -19,7 +21,7 @@ final class IdentityStore: ObservableObject {
         }
     }
 
-    @Published private(set) var state: State = .idle
+    private(set) var state: State = .idle
 
     private var loadTask: Task<Void, Never>?
 

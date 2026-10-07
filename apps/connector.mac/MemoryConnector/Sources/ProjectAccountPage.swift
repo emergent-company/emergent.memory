@@ -5,11 +5,11 @@ import SwiftUI
 /// sign-in prompt. The project card hosts the project switcher when signed in
 /// (names lead; ids stay behind the copy control).
 struct ProjectAccountPage: View {
-    @EnvironmentObject private var settings: ConnectorSettings
-    @EnvironmentObject private var accountStore: AccountStore
-    @EnvironmentObject private var projectStore: ProjectStore
-    @EnvironmentObject private var identity: IdentityStore
-    @EnvironmentObject private var appState: AppState
+    @SwiftUI.Environment(ConnectorSettings.self) private var settings
+    @SwiftUI.Environment(AccountStore.self) private var accountStore
+    @SwiftUI.Environment(ProjectStore.self) private var projectStore
+    @SwiftUI.Environment(IdentityStore.self) private var identity
+    @SwiftUI.Environment(AppState.self) private var appState
 
     @State private var pageError: String?
     @State private var accountToSignOut: Account?
@@ -18,13 +18,32 @@ struct ProjectAccountPage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 if let pageError {
-                    errorBanner(pageError)
+                    ErrorBanner(message: pageError)
                 }
-                accountsCard
-                projectCard
                 if accountStore.isEffectivelySignedIn {
+                    AccountsCard(
+                        accounts: accountStore.accounts,
+                        activeAccountID: accountStore.activeAccountID,
+                        isSigningIn: accountStore.isSigningIn,
+                        needsReauthentication: { accountStore.needsReauthentication($0) },
+                        onSignOut: { accountToSignOut = $0 },
+                        onAddAccount: { addAccount(addAccountEnvironment) }
+                    )
+                    ProjectCard(
+                        projects: projectStore.projects,
+                        state: projectStore.state,
+                        activeProject: activeProject,
+                        activeProjectName: projectStore.activeProjectName,
+                        activeProjectID: projectStore.activeProjectID,
+                        snapshot: currentSnapshot,
+                        isSigningIn: accountStore.isSigningIn,
+                        onTryAgain: { refreshAll() },
+                        onSignIn: { signInFromSignedOutState() }
+                    )
                     ProjectConnectionControl()
-                    sessionCard
+                } else {
+                    // Exactly one sign-in prompt on the page while signed out.
+                    SignInCard { appState.selectedSidebarItem = .connection }
                 }
             }
             .padding(24)
@@ -43,7 +62,7 @@ struct ProjectAccountPage: View {
             }
         }
         .task { await initialLoad() }
-        .onChange(of: settings.configurationRevision) { _, _ in refreshAll() }
+        .onChange(of: settings.serverURL) { _, _ in refreshAll() }
         .onChange(of: accountStore.activeAccountID) { _, activeID in
             if activeID != nil {
                 Task { await loadProjects() }
@@ -51,7 +70,7 @@ struct ProjectAccountPage: View {
                 pageError = nil
             }
         }
-        .confirmationDialog("Sign out of Memory?",
+        .confirmationDialog(Text(SignOutConfirmation.title),
                             isPresented: Binding(get: { accountToSignOut != nil },
                                                  set: {
                                                      if !$0 {
@@ -61,12 +80,14 @@ struct ProjectAccountPage: View {
                             titleVisibility: .visible,
                             presenting: accountToSignOut)
         { account in
-            Button("Sign out \(account.displayTitle)", role: .destructive) {
+            Button(role: .destructive) {
                 signOut(account)
+            } label: {
+                Text(SignOutConfirmation.confirmButtonTitle(displayTitle: account.displayTitle))
             }
             Button("Cancel", role: .cancel) {}
         } message: { account in
-            Text("This stops the connector if \(account.displayTitle) is active and clears that account's saved session. Other accounts stay signed in.")
+            Text(SignOutConfirmation.message(displayTitle: account.displayTitle))
         }
     }
 
@@ -111,63 +132,15 @@ struct ProjectAccountPage: View {
         accountStore.activeEnvironment?.serverURLString ?? settings.serverURL
     }
 
-    // MARK: - Accounts
-
-    /// Lists EVERY signed-in account (identity + environment badge + active
-    /// checkmark) with per-account sign-out and an "Add account" action. Shows
-    /// the sign-in prompt when no account is signed in.
-    private var accountsCard: some View {
-        ConnectorCard(title: "Accounts", systemImage: "person.2.circle") {
-            if accountStore.isEffectivelySignedIn {
-                accountsList
-            } else {
-                signInPrompt
-            }
-        }
+    private var activeProject: ProjectInfo? {
+        projectStore.projects.first { $0.id == projectStore.activeProjectID }
     }
 
-    private var accountsList: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            ForEach(accountStore.accounts) { account in
-                accountRow(account)
-            }
-            Divider()
-            addAccountControl
+    private var currentSnapshot: IdentitySnapshot? {
+        if case let .loaded(snapshot) = identity.state {
+            return snapshot
         }
-    }
-
-    private func accountRow(_ account: Account) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                AccountRowLabel(account: account,
-                                showsAvatar: true,
-                                avatarSize: 40,
-                                isActive: account.id == accountStore.activeAccountID)
-                if accountStore.needsReauthentication(account.id) {
-                    Label("Needs sign-in again", systemImage: "exclamationmark.triangle")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-            }
-            Button(role: .destructive) {
-                accountToSignOut = account
-            } label: {
-                Text("Sign out")
-            }
-            .controlSize(.small)
-            .disabled(accountStore.isSigningIn)
-        }
-    }
-
-    /// Single Production sign-in action for adding an account — this page
-    /// offers no environment choice.
-    private var addAccountControl: some View {
-        Button {
-            addAccount(addAccountEnvironment)
-        } label: {
-            Label("Add account", systemImage: "person.badge.plus")
-        }
-        .disabled(accountStore.isSigningIn)
+        return nil
     }
 
     /// The environment the "Add account" action targets, from the shared
@@ -178,202 +151,6 @@ struct ProjectAccountPage: View {
 
     private func addAccount(_ environment: Environment) {
         Task { _ = try? await accountStore.signIn(environment: environment) }
-    }
-
-    private var signInPrompt: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Sign in with Memory to connect your account and projects.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Button {
-                appState.selectedSidebarItem = .connection
-            } label: {
-                Label("Sign in with Memory", systemImage: "person.crop.circle.badge.checkmark")
-            }
-            .buttonStyle(.borderedProminent)
-        }
-    }
-
-    // MARK: - Session (active account)
-
-    private var sessionCard: some View {
-        ConnectorCard(title: "Session", systemImage: "rectangle.portrait.and.arrow.right") {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Managing the active account. Signing it out stops the connector and clears its saved session and project tokens; other accounts stay signed in.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if let account = accountStore.activeAccount {
-                    Button(role: .destructive) {
-                        accountToSignOut = account
-                    } label: {
-                        Label("Sign out \(account.displayTitle)",
-                              systemImage: "rectangle.portrait.and.arrow.right")
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: - Project
-
-    private var projectCard: some View {
-        ConnectorCard(title: "Project", systemImage: "building.2") {
-            if accountStore.isEffectivelySignedIn {
-                signedInProjectSection
-            } else {
-                signInPrompt
-            }
-        }
-    }
-
-    // MARK: Signed-in project details
-
-    @ViewBuilder
-    private var signedInProjectSection: some View {
-        if projectStore.projects.isEmpty {
-            switch projectStore.state {
-            case .idle, .loading:
-                ConnectorLoadingRow(caption: "Loading projects…")
-            case .signedOut:
-                signedOutState
-            case let .error(message):
-                projectErrorState(message)
-            case .loaded:
-                emptyProjectsState
-            }
-        } else {
-            VStack(alignment: .leading, spacing: 14) {
-                activeProjectDetails
-                switchHint
-
-                if case .signedOut = projectStore.state {
-                    signedOutState
-                } else if case let .error(message) = projectStore.state {
-                    inlineError(message)
-                }
-            }
-        }
-    }
-
-    private var switchHint: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "arrow.up.to.line")
-                .font(.caption)
-            Text("Switch projects from the menu at the top of the window.")
-        }
-        .font(.caption)
-        .foregroundStyle(.secondary)
-    }
-
-    private var activeProject: ProjectInfo? {
-        projectStore.projects.first { $0.id == projectStore.activeProjectID }
-    }
-
-    private var activeProjectDetails: some View {
-        let orgName = currentSnapshot?.organizationName
-        let orgID = currentSnapshot?.organizationID ?? activeProject?.orgID
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Text(projectStore.activeProjectName ?? activeProject?.name ?? "No project selected")
-                    .font(.title3.weight(.semibold))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                IdentifierReveal(identifier: projectStore.activeProjectID ?? activeProject?.id ?? "")
-                Spacer(minLength: 0)
-            }
-
-            if let orgName {
-                HStack(spacing: 8) {
-                    Image(systemName: "building.2")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(orgName)
-                        .font(.callout)
-                        .foregroundStyle(HierarchicalShapeStyle.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    IdentifierReveal(identifier: orgID ?? "")
-                    Spacer(minLength: 0)
-                }
-            }
-        }
-    }
-
-    // MARK: - States
-
-    private var currentSnapshot: IdentitySnapshot? {
-        if case let .loaded(snapshot) = identity.state {
-            return snapshot
-        }
-        return nil
-    }
-
-    private var emptyProjectsState: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("No projects yet")
-                .font(.headline)
-            Text("Your Memory account doesn't have any projects you can use yet.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private func projectErrorState(_ message: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-                Text("Couldn't load projects")
-                    .font(.headline)
-            }
-            Text(message)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Button("Try Again") { refreshAll() }
-        }
-    }
-
-    /// Auth/session failure: the app still has an account, but the connector
-    /// CLI has no valid session, so the raw error would be confusing. Offer a
-    /// clear re-authentication action instead of an error message.
-    private var signedOutState: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: "person.crop.circle.badge.questionmark")
-                    .foregroundStyle(.secondary)
-                Text("Signed out")
-                    .font(.headline)
-            }
-            Text("Your session expired or was cleared on this Mac. Sign in to load your projects.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 10) {
-                Button {
-                    signInFromSignedOutState()
-                } label: {
-                    if accountStore.isSigningIn {
-                        HStack(spacing: 6) {
-                            ProgressView().controlSize(.small)
-                            Text("Signing in…")
-                        }
-                    } else {
-                        Label("Sign in", systemImage: "person.crop.circle.badge.checkmark")
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(accountStore.isSigningIn)
-
-                Button("Try again") { refreshAll() }
-                    .disabled(accountStore.isSigningIn)
-            }
-        }
     }
 
     /// The environment to sign in to when re-authenticating the active account:
@@ -394,29 +171,5 @@ struct ProjectAccountPage: View {
                 pageError = error.localizedDescription
             }
         }
-    }
-
-    private func inlineError(_ message: String) -> some View {
-        Label(message, systemImage: "exclamationmark.triangle")
-            .font(.caption)
-            .foregroundStyle(.orange)
-            .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func errorBanner(_ message: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-            Text(message)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.orange.opacity(0.1))
-        )
     }
 }

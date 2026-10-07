@@ -1,6 +1,5 @@
-import Combine
-import Darwin
 import Foundation
+import Observation
 
 /// Supervises the embedded `memory-connector` engine process.
 ///
@@ -13,7 +12,8 @@ import Foundation
 /// `stop()` (SIGTERM) suppresses restarting and leaves the engine's own clean
 /// SIGTERM path to exit 0.
 @MainActor
-final class EngineManager: ObservableObject {
+@Observable
+final class EngineManager {
     /// Process lifecycle for the menu-bar UI.
     enum State: Equatable {
         case stopped
@@ -34,62 +34,16 @@ final class EngineManager: ObservableObject {
     nonisolated static let logFileURL = URL(fileURLWithPath: NSHomeDirectory())
         .appendingPathComponent("Library/Logs/memory-connector-app.log")
 
-    /// Loopback port for the engine's hosted-MCP-server management API
-    /// (`relay --api-port`). Bound to 127.0.0.1 by the engine; the app's
-    /// ``MCPServersAPIClient`` talks to it at `http://127.0.0.1:8931`.
-    ///
-    /// Deliberately NOT 8890: the Diane companion's local API uses 8890 on the
-    /// same host, and both apps can run side by side.
-    nonisolated static let managementAPIPort = 8931
-
     /// The engine command line. Extracted so the argument list is testable
     /// without spawning a process.
     nonisolated static func launchArguments(configPath: String) -> [String] {
-        ["relay", "--config", configPath, "--api-port", String(managementAPIPort)]
+        ["relay", "--config", configPath, "--api-port", String(ManagementPortProbe.port)]
     }
 
-    /// Injectable probe: true when something is already listening on the
-    /// loopback management port. Settable so tests can stub the socket probe;
-    /// the default attempts a TCP connect to `127.0.0.1:8931`.
-    nonisolated(unsafe) static var managementPortInUse: () -> Bool = {
-        EngineManager.tcpConnect(host: "127.0.0.1", port: UInt16(EngineManager.managementAPIPort))
-    }
-
-    /// The pure "may we spawn?" decision for a held management port: abort only
-    /// when there is no live child AND the port is in use. A live child (e.g.
-    /// `restart()`'s just-SIGTERM'd process) never aborts, so its lingering
-    /// socket cannot false-positive the probe.
-    nonisolated static func shouldAbortStartForPortConflict(hasLiveProcess: Bool,
-                                                            portInUse: Bool) -> Bool
-    {
-        !hasLiveProcess && portInUse
-    }
-
-    /// Best-effort synchronous TCP connect probe: true when the connect
-    /// succeeds (something is listening on `host:port`).
-    private nonisolated static func tcpConnect(host: String, port: UInt16) -> Bool {
-        let socketFD = socket(AF_INET, SOCK_STREAM, 0)
-        guard socketFD >= 0 else { return false }
-        defer { Darwin.close(socketFD) }
-
-        var addr = sockaddr_in()
-        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = port.bigEndian
-        addr.sin_addr.s_addr = inet_addr(host)
-
-        let result = withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.connect(socketFD, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-            }
-        }
-        return result == 0
-    }
-
-    @Published private(set) var state: State = .stopped
-    @Published private(set) var restartCount = 0
-    @Published private(set) var lastExitCode: Int32?
-    @Published private(set) var lastError: String?
+    private(set) var state: State = .stopped
+    private(set) var restartCount = 0
+    private(set) var lastExitCode: Int32?
+    private(set) var lastError: String?
 
     private let configPath: String
     private var process: Process?
@@ -99,15 +53,6 @@ final class EngineManager: ObservableObject {
     /// `reportConfigurationError` cannot set `.failed` until the child exits, so
     /// it records the message here and `processDidExit` applies it.
     private var pendingConfigurationError: String?
-    /// Append-only handle for engine output. Written from Process
-    /// readability/termination callbacks (background threads), which are not
-    /// actor-isolated, so this is deliberately not a @MainActor property.
-    private nonisolated(unsafe) var logHandle: FileHandle?
-    /// Pending stderr bytes not yet terminated by a newline. Written from the
-    /// Process stderr readability callback (a background thread), so it is
-    /// `nonisolated(unsafe)` like `logHandle`; line-frames the bind-failure scan
-    /// so a diagnostic split across reads is not missed.
-    private nonisolated(unsafe) var stderrBuffer = Data()
 
     init(configPath: String) {
         self.configPath = configPath
@@ -138,22 +83,28 @@ final class EngineManager: ObservableObject {
             return
         }
 
-        openLogIfNeeded()
-
         // Fail fast when the management port is already held by another
         // process. Only probed when no live child exists (`isRunning`), so a
         // just-SIGTERM'd-but-still-running child cannot false-positive the
         // probe, while a stopped-but-not-yet-cleared child is still probed.
         if process?.isRunning != true,
-           Self.shouldAbortStartForPortConflict(hasLiveProcess: false,
-                                                portInUse: Self.managementPortInUse())
+           ManagementPortProbe.shouldAbortStartForPortConflict(
+               hasLiveProcess: false,
+               portInUse: ManagementPortProbe.portInUse()
+           )
         {
             state = .failed
-            lastError = "management port \(Self.managementAPIPort) is already in use; not starting the engine"
-            appendToLog("=== memory-connector engine start aborted: management port \(Self.managementAPIPort) already in use ===\n")
+            lastError = "management port \(ManagementPortProbe.port) is already in use; not starting the engine"
+            appendToLog("=== memory-connector engine start aborted: management port \(ManagementPortProbe.port) already in use ===\n")
             return
         }
 
+        launchEngine(at: url, resetBreaker: resetBreaker)
+    }
+
+    /// Spawns the engine binary at `url`, wiring its stdout/stderr and
+    /// termination into the log sink and circuit breaker.
+    private func launchEngine(at url: URL, resetBreaker: Bool) {
         state = .starting
         if resetBreaker {
             policy = RestartPolicy()
@@ -162,7 +113,6 @@ final class EngineManager: ObservableObject {
         lastExitCode = nil
         lastError = nil
         pendingConfigurationError = nil
-        stderrBuffer = Data()
 
         let proc = Process()
         proc.executableURL = url
@@ -172,36 +122,9 @@ final class EngineManager: ObservableObject {
         proc.standardOutput = stdoutPipe
         proc.standardError = stderrPipe
 
-        let stdoutHandle = stdoutPipe.fileHandleForReading
-        let stderrHandle = stderrPipe.fileHandleForReading
-
-        stdoutHandle.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            if !data.isEmpty {
-                self?.appendToLog(data)
-            }
-        }
-        stderrHandle.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
-            self?.appendToLog(data)
-            self?.scanStderrForBindFailure(data)
-        }
-
-        proc.terminationHandler = { [weak self] terminated in
-            stdoutHandle.readabilityHandler = nil
-            stderrHandle.readabilityHandler = nil
-            // Drain anything still buffered before the pipes close.
-            if let data = try? stdoutHandle.readToEnd(), !data.isEmpty {
-                self?.appendToLog(data)
-            }
-            if let data = try? stderrHandle.readToEnd(), !data.isEmpty {
-                self?.appendToLog(data)
-            }
-            Task { @MainActor in
-                self?.processDidExit(terminated)
-            }
-        }
+        wireHandlers(proc: proc,
+                     stdoutHandle: stdoutPipe.fileHandleForReading,
+                     stderrHandle: stderrPipe.fileHandleForReading)
 
         do {
             try proc.run()
@@ -213,6 +136,43 @@ final class EngineManager: ObservableObject {
             state = .failed
             lastError = "failed to launch engine: \(error.localizedDescription)"
             appendToLog("launch failed: \(error.localizedDescription)\n")
+        }
+    }
+
+    /// Wires a spawned process's stdout/stderr streams and termination into the
+    /// log sink and exit handling.
+    private func wireHandlers(proc: Process, stdoutHandle: FileHandle, stderrHandle: FileHandle) {
+        stdoutHandle.readabilityHandler = { handle in
+            let data = handle.availableData
+            if !data.isEmpty {
+                Task { await LogSink.shared.append(stdout: data) }
+            }
+        }
+        stderrHandle.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            self?.handleStderr(data)
+        }
+
+        proc.terminationHandler = { [weak self] terminated in
+            stdoutHandle.readabilityHandler = nil
+            stderrHandle.readabilityHandler = nil
+            // Drain synchronously (on this background thread, as before), then
+            // route through the sink and flush so a final unterminated line is
+            // not lost.
+            let stdoutRemainder = (try? stdoutHandle.readToEnd()) ?? Data()
+            let stderrRemainder = (try? stderrHandle.readToEnd()) ?? Data()
+            Task { @MainActor in
+                if !stdoutRemainder.isEmpty {
+                    _ = await LogSink.shared.append(stdout: stdoutRemainder)
+                }
+                if !stderrRemainder.isEmpty {
+                    let lines = await LogSink.shared.append(stderr: stderrRemainder)
+                    self?.surfaceBindFailureIfAny(in: lines)
+                }
+                await LogSink.shared.flush()
+                self?.processDidExit(terminated)
+            }
         }
     }
 
@@ -322,59 +282,38 @@ final class EngineManager: ObservableObject {
             && (text.contains("address already in use") || text.contains("bind:"))
     }
 
-    /// Line-frames raw stderr chunks and surfaces a management-port bind failure
-    /// once a complete line matches. `availableData` is not line-framed, so a
-    /// bind error split across reads would otherwise be missed (the engine keeps
-    /// running with a dead management API while `lastError` stays unset). The
-    /// trailing unterminated bytes stay buffered for the next chunk.
-    private nonisolated func scanStderrForBindFailure(_ chunk: Data) {
-        stderrBuffer.append(chunk)
-        let newline = Data([0x0A])
-        while let range = stderrBuffer.range(of: newline) {
-            let line = stderrBuffer.subdata(in: stderrBuffer.startIndex ..< range.lowerBound)
-            stderrBuffer.removeSubrange(stderrBuffer.startIndex ... range.lowerBound)
-            guard Self.looksLikeManagementPortBindFailure(in: line) else { continue }
-            Task { @MainActor [weak self] in
-                self?.surfaceManagementPortBindFailure()
-            }
+    /// Routes a raw stderr chunk through the log sink and surfaces a
+    /// management-port bind failure once a complete line matches. Nonisolated so
+    /// the Process stderr readability callback (a background thread) can call it
+    /// without hopping to the main actor.
+    private nonisolated func handleStderr(_ data: Data) {
+        Task { @MainActor [weak self] in
+            let lines = await LogSink.shared.append(stderr: data)
+            self?.surfaceBindFailureIfAny(in: lines)
+        }
+    }
+
+    /// Surfaces a management-port bind failure once a complete stderr line
+    /// matches. The log sink line-frames stderr (so a diagnostic split across
+    /// pipe reads is never missed) and returns the whole lines here.
+    private func surfaceBindFailureIfAny(in lines: [String]) {
+        for line in lines where Self.looksLikeManagementPortBindFailure(in: Data(line.utf8)) {
+            surfaceManagementPortBindFailure()
         }
     }
 
     /// Surfaces a management-port bind failure (marker line + `lastError`).
     private func surfaceManagementPortBindFailure() {
-        lastError = "engine management API could not bind port \(Self.managementAPIPort)"
-        appendToLog("=== engine management API bind failure: port \(Self.managementAPIPort) already in use ===\n")
+        lastError = "engine management API could not bind port \(ManagementPortProbe.port)"
+        appendToLog("=== engine management API bind failure: port \(ManagementPortProbe.port) already in use ===\n")
     }
 
     // MARK: - Logging
 
-    private func openLogIfNeeded() {
-        guard logHandle == nil else { return }
-        do {
-            try FileManager.default.createDirectory(
-                at: Self.logFileURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            // O_APPEND makes every write an atomic append, so the Process pipe
-            // callbacks cannot race `ConnectorLog`'s per-line append handle.
-            let logFD = open(Self.logFileURL.path, O_WRONLY | O_APPEND | O_CREAT, 0o600)
-            guard logFD >= 0 else {
-                lastError = "cannot open engine log: \(String(cString: strerror(errno)))"
-                return
-            }
-            logHandle = FileHandle(fileDescriptor: logFD)
-        } catch {
-            lastError = "cannot open engine log: \(error.localizedDescription)"
-        }
-    }
-
-    /// Nonisolated so Process background callbacks can append without hopping
-    /// to the main actor; only touches the append-only file handle.
-    private nonisolated func appendToLog(_ data: Data) {
-        logHandle?.write(data)
-    }
-
+    /// Routes one complete control line (trailing newline included) to the
+    /// shared serialized sink. Fire-and-forget: logging must never fail an
+    /// operation.
     private func appendToLog(_ line: String) {
-        appendToLog(Data(line.utf8))
+        Task { await LogSink.shared.append(line: line) }
     }
 }

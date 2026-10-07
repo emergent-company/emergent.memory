@@ -20,7 +20,7 @@ final class MCPServerFormPrefillTests: XCTestCase {
         XCTAssertEqual(form.transport, .stdio)
         XCTAssertTrue(form.enabled)
         XCTAssertEqual(form.command, "npx")
-        XCTAssertEqual(form.args, ["-y", "chrome-devtools-mcp@1.2.3"])
+        XCTAssertEqual(form.args.map(\.value), ["-y", "chrome-devtools-mcp@1.2.3"])
         XCTAssertEqual(form.env.map(\.key), ["CHROME_PATH"])
         XCTAssertTrue(form.isValid)
 

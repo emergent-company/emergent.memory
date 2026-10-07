@@ -5,8 +5,8 @@ import SwiftUI
 /// dropdown, not a bordered button). Mirrors `ProjectStore` state: signed-out,
 /// loading, empty, error, and ready (checkmark on the active project).
 struct ProjectSwitcherView: View {
-    @EnvironmentObject private var accountStore: AccountStore
-    @EnvironmentObject private var projectStore: ProjectStore
+    @SwiftUI.Environment(AccountStore.self) private var accountStore
+    @SwiftUI.Environment(ProjectStore.self) private var projectStore
 
     @State private var switching: String?
 
@@ -87,7 +87,7 @@ struct ProjectSwitcherView: View {
                                 } else {
                                     Color.clear.frame(width: 12)
                                 }
-                                Text(project.name ?? "Untitled project")
+                                project.name.map { Text($0) } ?? Text("Untitled project")
                                 if projectStore.isConnected(project.id) {
                                     Image(systemName: "bolt.fill")
                                         .font(.system(size: 9, weight: .bold))
@@ -109,7 +109,7 @@ struct ProjectSwitcherView: View {
             switcherLabel {
                 Image(systemName: hasError ? "exclamationmark.triangle" : "shippingbox")
                     .foregroundStyle(hasError ? Color.orange : Color.secondary)
-                Text(projectStore.activeProjectName ?? "Select project")
+                activeProjectLabel
                     .fontWeight(.semibold)
                     .lineLimit(1)
                 if let activeID = projectStore.activeProjectID,
@@ -127,11 +127,12 @@ struct ProjectSwitcherView: View {
                 }
             }
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
+        .buttonStyle(.borderless)
         .menuIndicator(.hidden)
         .fixedSize()
         .disabled(switching != nil)
-        .help(hasError ? switchErrorMessage : "Switch project")
+        .help(switchHelp)
     }
 
     // MARK: - Error / empty
@@ -148,10 +149,11 @@ struct ProjectSwitcherView: View {
                 chevron
             }
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
+        .buttonStyle(.borderless)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help(switchErrorMessage)
+        .help(switchHelp)
     }
 
     private var signedOutMenu: some View {
@@ -167,13 +169,14 @@ struct ProjectSwitcherView: View {
                 chevron
             }
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
+        .buttonStyle(.borderless)
         .menuIndicator(.hidden)
         .fixedSize()
         .help("Signed out — sign in to load projects")
     }
 
-    private func statusLabel(icon: String, text: String) -> some View {
+    private func statusLabel(icon: String, text: LocalizedStringResource) -> some View {
         switcherLabel {
             Image(systemName: icon)
                 .foregroundStyle(.secondary)
@@ -181,7 +184,7 @@ struct ProjectSwitcherView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
-        .help(text)
+        .help(Text(text))
     }
 
     /// Borderless, single-line chrome: spacing + a small chevron and horizontal
@@ -205,6 +208,13 @@ struct ProjectSwitcherView: View {
 
     // MARK: - Derived
 
+    /// Active project name (runtime data), or a localized placeholder when none
+    /// is selected. Returning `Text` keeps the placeholder on the localizable
+    /// path instead of folding it into a verbatim `String`.
+    private var activeProjectLabel: Text {
+        projectStore.activeProjectName.map { Text($0) } ?? Text("Select project")
+    }
+
     private var hasError: Bool {
         if case .error = projectStore.state {
             return true
@@ -212,11 +222,13 @@ struct ProjectSwitcherView: View {
         return false
     }
 
-    private var switchErrorMessage: String {
+    /// Tooltip for the switcher label: the server's error text when the load
+    /// failed (data, shown verbatim), otherwise the localized action label.
+    private var switchHelp: Text {
         if case let .error(message) = projectStore.state {
-            return message
+            return Text(verbatim: message)
         }
-        return "Switch project"
+        return Text("Switch project")
     }
 
     // MARK: - Actions

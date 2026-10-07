@@ -1,5 +1,5 @@
-import Combine
 import Foundation
+import Observation
 
 /// Binds `ProjectStore` to one account's storage + environment.
 ///
@@ -65,7 +65,8 @@ struct ProjectStoreScope {
 /// This store is only driven when a signed-in account exists; the connector CLI
 /// owns tokens, sessions, and engine-config writing.
 @MainActor
-final class ProjectStore: ObservableObject {
+@Observable
+final class ProjectStore {
     enum State: Equatable {
         case idle
         case loading
@@ -80,19 +81,15 @@ final class ProjectStore: ObservableObject {
 
     nonisolated static let activeProjectIDKey = "connector.activeProjectId"
 
-    @Published private(set) var projects: [ProjectInfo] = []
-    @Published private(set) var activeProjectID: String?
-    @Published private(set) var state: State = .idle
+    private(set) var projects: [ProjectInfo] = []
+    private(set) var activeProjectID: String?
+    private(set) var state: State = .idle
     /// The project whose profile is connected, i.e. the one the single engine
     /// relay serves. Persisted via `ProjectProfile.connected`; at most one at a
     /// time. `nil` → no connection (engine should be stopped).
-    @Published private(set) var connectedProjectID: String?
+    private(set) var connectedProjectID: String?
     /// org id → display name, resolved from `GET /api/orgs` (best-effort).
-    @Published private(set) var organizationNames: [String: String] = [:]
-    /// Bumped whenever a stored profile is written (tool enablement, instance
-    /// id, all-tools), so views observing the store re-read the computed
-    /// profile accessors. The connection flag has its own published property.
-    @Published private(set) var profilesRevision = 0
+    private(set) var organizationNames: [String: String] = [:]
 
     private let settings: ConnectorSettings
     private let defaults: UserDefaults
@@ -136,8 +133,8 @@ final class ProjectStore: ObservableObject {
     init(settings: ConnectorSettings,
          defaults: UserDefaults = .standard,
          profileStore: ProjectProfileStore? = nil,
-         restart: @escaping @MainActor () -> Void = { EngineManager.shared.restart() },
-         stop: @escaping @MainActor () -> Void = { EngineManager.shared.stop() })
+         restart: @escaping @MainActor () -> Void = {},
+         stop: @escaping @MainActor () -> Void = {})
     {
         self.settings = settings
         self.defaults = defaults
@@ -520,7 +517,6 @@ final class ProjectStore: ObservableObject {
     @discardableResult
     func setAllTools(enabled: Bool, projectID: String) async -> ProjectProfile {
         let profile = profileStore.setAllTools(enabled: enabled, for: projectID)
-        profilesRevision &+= 1
         await syncEngineIfConnected(projectID: projectID, profile: profile)
         return profile
     }
@@ -549,7 +545,6 @@ final class ProjectStore: ObservableObject {
                                          instanceID: instanceID,
                                          connected: existing?.connected ?? false)
             profileStore.save(profile, for: activeProjectID)
-            profilesRevision &+= 1
             await syncEngineIfConnected(projectID: activeProjectID, profile: profile)
             return
         }

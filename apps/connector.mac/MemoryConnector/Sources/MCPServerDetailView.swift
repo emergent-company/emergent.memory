@@ -8,7 +8,7 @@ import SwiftUI
 /// here — it is edited in Memory — so its controls are hidden or disabled.
 struct MCPServerDetailView: View {
     let server: HostedMCPServer
-    @ObservedObject var store: MCPServersStore
+    let store: MCPServersStore
     // Qualified: the app declares its own `Environment` type (Sources/Environment.swift),
     // which shadows SwiftUI's, so the property wrapper must be namespaced.
     @SwiftUI.Environment(\.dismiss) private var dismiss
@@ -30,7 +30,17 @@ struct MCPServerDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            MCPServerDetailHeader(
+                name: server.name,
+                transport: form?.transport ?? server.transport,
+                enabled: form?.enabled ?? server.enabled,
+                connected: status?.connected ?? false,
+                error: status?.error,
+                isManaged: isManaged,
+                loading: form == nil,
+                statusText: statusText,
+                enabledBinding: enabledBinding
+            )
             Divider()
 
             if form == nil, isLoading {
@@ -40,11 +50,29 @@ struct MCPServerDetailView: View {
             } else if form == nil {
                 MCPServerUnavailableView(message: errorMessage) { Task { await reload() } }
             } else {
-                content
+                MCPServerDetailContent(
+                    form: $form,
+                    isManaged: isManaged,
+                    errorMessage: errorMessage,
+                    tools: tools,
+                    status: status,
+                    store: store,
+                    serverName: server.name,
+                    onToggle: { tool, shared in Task { await setShared(tool, shared) } }
+                )
             }
 
             Divider()
-            footer
+            MCPServerDetailFooter(
+                isManaged: isManaged,
+                isSaving: isSaving,
+                saveConfirmation: saveConfirmation,
+                isSavingTools: store.isSavingTools(server: server.name),
+                hasForm: form != nil,
+                onDelete: { confirmDelete = true },
+                onClose: { dismiss() },
+                onSave: { save() }
+            )
         }
         .frame(width: 560, height: 640)
         .task { await reload() }
@@ -59,42 +87,7 @@ struct MCPServerDetailView: View {
         }
     }
 
-    // MARK: - Header
-
-    private var header: some View {
-        HStack(alignment: .center, spacing: 12) {
-            MCPStatusDot(color: MCPStatusStyle.color(enabled: form?.enabled ?? server.enabled,
-                                                     connected: status?.connected ?? false,
-                                                     error: status?.error))
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 8) {
-                    Text(server.name.isEmpty ? "Untitled server" : server.name)
-                        .font(.title3.weight(.semibold))
-                        .lineLimit(1)
-                    MCPTransportBadge(transport: form?.transport ?? server.transport)
-                    if isManaged {
-                        MCPManagedBadge()
-                    }
-                }
-                Text(statusText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 0)
-            if !isManaged {
-                Toggle("Enabled", isOn: enabledBinding)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .disabled(form == nil)
-                    .help((form?.enabled ?? server.enabled) ? "Disable this server" : "Enable this server")
-            }
-        }
-        .padding(16)
-    }
-
-    private var statusText: String {
+    private var statusText: LocalizedStringResource {
         MCPStatusStyle.detailLabel(enabled: form?.enabled ?? server.enabled,
                                    connected: status?.connected ?? false,
                                    error: status?.error,
@@ -106,77 +99,6 @@ struct MCPServerDetailView: View {
             get: { form?.enabled ?? server.enabled },
             set: { newValue in Task { await applyEnabled(newValue) } }
         )
-    }
-
-    // MARK: - Content
-
-    private var content: some View {
-        Form {
-            if isManaged {
-                MCPServerManagedBanner()
-            }
-
-            MCPServerFormFields(form: Binding(
-                get: { form ?? MCPServerForm() },
-                set: { form = $0 }
-            ), showsEnabled: false)
-                .disabled(isManaged)
-
-            if let errorMessage {
-                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            MCPServerToolsSection(
-                store: store,
-                serverName: server.name,
-                tools: tools,
-                disabledTools: form?.disabledTools,
-                status: status,
-                isManaged: isManaged,
-                onToggle: { tool, shared in Task { await setShared(tool, shared) } }
-            )
-        }
-        .formStyle(.grouped)
-    }
-
-    // MARK: - Footer
-
-    private var footer: some View {
-        HStack(spacing: 12) {
-            if isManaged {
-                Text("Managed in Memory")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                Button("Delete", role: .destructive) { confirmDelete = true }
-                    .disabled(isSaving || store.isSavingTools(server: server.name))
-            }
-            if let saveConfirmation {
-                Text(saveConfirmation)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 0)
-            Button("Close") { dismiss() }
-                .keyboardShortcut(.cancelAction)
-            if !isManaged {
-                Button {
-                    save()
-                } label: {
-                    if isSaving {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Text("Save")
-                    }
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(isSaving || form == nil || store.isSavingTools(server: server.name))
-            }
-        }
-        .padding(16)
     }
 
     // MARK: - Loading / actions
@@ -278,5 +200,150 @@ struct MCPServerDetailView: View {
                 errorMessage = store.errorMessage
             }
         }
+    }
+}
+
+// MARK: - Header
+
+private struct MCPServerDetailHeader: View {
+    let name: String
+    let transport: MCPTransport
+    let enabled: Bool
+    let connected: Bool
+    let error: String?
+    let isManaged: Bool
+    let loading: Bool
+    let statusText: LocalizedStringResource
+    let enabledBinding: Binding<Bool>
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            MCPStatusDot(color: MCPStatusStyle.color(enabled: enabled,
+                                                     connected: connected,
+                                                     error: error))
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 8) {
+                    nameLabel
+                        .font(.title3.weight(.semibold))
+                        .lineLimit(1)
+                    MCPTransportBadge(transport: transport)
+                    if isManaged {
+                        MCPManagedBadge()
+                    }
+                }
+                Text(statusText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+            if !isManaged {
+                Toggle("Enabled", isOn: enabledBinding)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .disabled(loading)
+                    .help(enabled ? "Disable this server" : "Enable this server")
+            }
+        }
+        .padding(16)
+    }
+
+    /// Title text: a localized placeholder for an unnamed server, otherwise the
+    /// server's own name (runtime data). Returning `Text` keeps the literal on
+    /// the localizable path instead of folding it into a verbatim `String`.
+    private var nameLabel: Text {
+        name.isEmpty ? Text("Untitled server") : Text(name)
+    }
+}
+
+// MARK: - Content
+
+private struct MCPServerDetailContent: View {
+    @Binding var form: MCPServerForm?
+    let isManaged: Bool
+    let errorMessage: String?
+    let tools: [HostedMCPTool]
+    let status: HostedMCPServerStatus?
+    let store: MCPServersStore
+    let serverName: String
+    let onToggle: (HostedMCPTool, Bool) -> Void
+
+    var body: some View {
+        Form {
+            if isManaged {
+                MCPServerManagedBanner()
+            }
+
+            MCPServerFormFields(form: Binding(
+                get: { form ?? MCPServerForm() },
+                set: { form = $0 }
+            ), showsEnabled: false)
+                .disabled(isManaged)
+
+            if let errorMessage {
+                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            MCPServerToolsSection(
+                store: store,
+                serverName: serverName,
+                tools: tools,
+                disabledTools: form?.disabledTools,
+                status: status,
+                isManaged: isManaged,
+                onToggle: onToggle
+            )
+        }
+        .formStyle(.grouped)
+    }
+}
+
+// MARK: - Footer
+
+private struct MCPServerDetailFooter: View {
+    let isManaged: Bool
+    let isSaving: Bool
+    let saveConfirmation: String?
+    let isSavingTools: Bool
+    let hasForm: Bool
+    let onDelete: () -> Void
+    let onClose: () -> Void
+    let onSave: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            if isManaged {
+                Text("Managed in Memory")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Button("Delete", role: .destructive, action: onDelete)
+                    .disabled(isSaving || isSavingTools)
+            }
+            if let saveConfirmation {
+                Text(saveConfirmation)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            Button("Close", action: onClose)
+                .keyboardShortcut(.cancelAction)
+            if !isManaged {
+                Button(action: onSave) {
+                    if isSaving {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("Save")
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(isSaving || !hasForm || isSavingTools)
+            }
+        }
+        .padding(16)
     }
 }

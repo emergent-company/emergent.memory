@@ -104,7 +104,11 @@ final class MCPServerFormTests: XCTestCase {
         form.name = "  filesystem "
         form.transport = .stdio
         form.command = " /usr/bin/mcp "
-        form.args = ["--root", "  ", "/tmp"]
+        form.args = [
+            MCPServerForm.Arg(value: "--root"),
+            MCPServerForm.Arg(value: "  "),
+            MCPServerForm.Arg(value: "/tmp"),
+        ]
         form.env = [
             MCPServerForm.Entry(key: "TOKEN", value: "s3cret"),
             MCPServerForm.Entry(key: "   ", value: "dropped"),
@@ -125,7 +129,10 @@ final class MCPServerFormTests: XCTestCase {
         form.name = "filesystem"
         form.transport = .stdio
         form.command = "mcp"
-        form.args = ["", "  "]
+        form.args = [
+            MCPServerForm.Arg(value: ""),
+            MCPServerForm.Arg(value: "  "),
+        ]
         form.env = [MCPServerForm.Entry()]
 
         let config = form.config()

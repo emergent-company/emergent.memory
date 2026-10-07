@@ -10,9 +10,9 @@ import SwiftUI
 /// Editing tools is independent of connection state — this control never
 /// touches tool enablement. Used on the Dashboard and on Project & Account.
 struct ProjectConnectionControl: View {
-    @EnvironmentObject private var accountStore: AccountStore
-    @EnvironmentObject private var projectStore: ProjectStore
-    @EnvironmentObject private var appState: AppState
+    @SwiftUI.Environment(AccountStore.self) private var accountStore
+    @SwiftUI.Environment(ProjectStore.self) private var projectStore
+    @SwiftUI.Environment(AppState.self) private var appState
 
     /// In-flight connect/disconnect (token mint + engine restart).
     @State private var busy = false
@@ -84,6 +84,9 @@ struct ProjectConnectionControl: View {
                 Toggle("", isOn: binding(projectID: projectID))
                     .labelsHidden()
                     .toggleStyle(.switch)
+                    .accessibilityLabel(Text(AccessibleNames.projectConnection(
+                        projectStore.activeProjectName
+                    )))
                     .disabled(busy)
             }
 
@@ -106,7 +109,7 @@ struct ProjectConnectionControl: View {
 
     // MARK: - Derived
 
-    private func connectionSubtitle(projectID: String) -> String {
+    private func connectionSubtitle(projectID: String) -> LocalizedStringResource {
         if projectStore.isConnected(projectID) {
             return "The connector is serving this project's local tools."
         }

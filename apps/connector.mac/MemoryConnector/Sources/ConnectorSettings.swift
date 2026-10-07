@@ -1,5 +1,5 @@
-import Combine
 import Foundation
+import Observation
 
 /// Single source of truth for non-secret connection settings.
 ///
@@ -7,7 +7,8 @@ import Foundation
 /// CLI; the app keeps only non-secret defaults in `UserDefaults` under the
 /// `connector.` prefix. Tool enablement stores only the disabled subset here.
 @MainActor
-final class ConnectorSettings: ObservableObject {
+@Observable
+final class ConnectorSettings {
     private nonisolated static let serverURLKey = "connector.serverURL"
     private static let instanceIDKey = "connector.instanceID"
     private static let disabledToolsKey = "connector.disabledTools"
@@ -18,8 +19,8 @@ final class ConnectorSettings: ObservableObject {
 
     private let defaults: UserDefaults
 
-    @Published var serverURL: String
-    @Published var instanceID: String
+    var serverURL: String
+    var instanceID: String
 
     /// Every catalog tool id. A never-configured install starts with all local
     /// MCP tools OFF, i.e. the disabled set defaults to the whole catalog.
@@ -27,14 +28,10 @@ final class ConnectorSettings: ObservableObject {
         Set(ToolCatalog.tools.map(\.id))
     }
 
-    @Published private(set) var disabledTools: Set<String>
+    private(set) var disabledTools: Set<String>
     /// True when the last `importExistingConfigIfNeeded` pulled values from an
     /// existing engine config file.
-    @Published private(set) var importedFromConfig: Bool = false
-    /// Bumped on every successful settings write (`clearConfiguration`). The
-    /// identity store observes this to reload without reacting to every
-    /// keystroke in the connection fields.
-    @Published private(set) var configurationRevision = 0
+    private(set) var importedFromConfig: Bool = false
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -121,7 +118,6 @@ final class ConnectorSettings: ObservableObject {
         // so a reload would resolve to the same).
         disabledTools = Self.allCatalogToolIDs
         importedFromConfig = false
-        configurationRevision &+= 1
     }
 
     /// Backfills app state from an existing engine config file (typically

@@ -16,6 +16,6 @@ final class EngineArgumentsTests: XCTestCase {
             return XCTFail("--api-port missing a value: \(arguments)")
         }
         XCTAssertEqual(arguments[index + 1], "8931")
-        XCTAssertEqual(arguments[index + 1], String(EngineManager.managementAPIPort))
+        XCTAssertEqual(arguments[index + 1], String(ManagementPortProbe.port))
     }
 }

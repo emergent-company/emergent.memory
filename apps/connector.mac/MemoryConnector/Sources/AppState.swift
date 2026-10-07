@@ -1,11 +1,12 @@
-import Combine
 import Foundation
+import Observation
 
 /// Navigation state for the main window (Diane idiom: a small observable
 /// holding the selected sidebar item; content is switched by the window view).
 @MainActor
-final class AppState: ObservableObject {
-    @Published var selectedSidebarItem: SidebarItem = .dashboard
+@Observable
+final class AppState {
+    var selectedSidebarItem: SidebarItem = .dashboard
 
     nonisolated init() {}
 }

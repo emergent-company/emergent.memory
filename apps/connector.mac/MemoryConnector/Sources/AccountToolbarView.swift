@@ -14,9 +14,9 @@ import SwiftUI
 /// valid connector CLI session), never the bare index lookup, so the control
 /// can never say "Signed in" while the session is gone.
 struct AccountToolbarView: View {
-    @EnvironmentObject private var accountStore: AccountStore
-    @EnvironmentObject private var projectStore: ProjectStore
-    @EnvironmentObject private var appState: AppState
+    @SwiftUI.Environment(AccountStore.self) private var accountStore
+    @SwiftUI.Environment(ProjectStore.self) private var projectStore
+    @SwiftUI.Environment(AppState.self) private var appState
 
     var body: some View {
         if accountStore.isEffectivelySignedIn {
@@ -56,9 +56,11 @@ struct AccountToolbarView: View {
             Image(systemName: "person.crop.circle")
                 .imageScale(.large)
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
+        .buttonStyle(.borderless)
         .fixedSize()
         .disabled(accountStore.isSigningIn)
+        .accessibilityLabel(Text(AccessibleNames.account))
         .help("Account")
     }
 

@@ -15,12 +15,20 @@ struct MCPServerForm: Equatable {
         var value = ""
     }
 
+    /// One editable positional argument (stdio servers). Identified by a
+    /// `UUID` so adding/removing a row preserves the other rows' text and state
+    /// (index identity resets focus and values on mutation).
+    struct Arg: Identifiable, Equatable {
+        var id = UUID()
+        var value = ""
+    }
+
     var name = ""
     var transport: MCPTransport = .stdio
     var enabled = true
     var command = ""
     var url = ""
-    var args: [String] = []
+    var args: [Arg] = []
     var env: [Entry] = []
     var headers: [Entry] = []
     /// Preserved across an edit so replacing a server's config does not drop
@@ -35,7 +43,7 @@ struct MCPServerForm: Equatable {
         enabled = config.enabled
         command = config.command ?? ""
         url = config.url ?? ""
-        args = config.args ?? []
+        args = (config.args ?? []).map { Arg(value: $0) }
         env = Self.entries(from: config.env)
         headers = Self.entries(from: config.headers)
         disabledTools = config.disabledTools
@@ -94,7 +102,7 @@ struct MCPServerForm: Equatable {
 
     var cleanedArgs: [String]? {
         let cleaned = args
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .map { $0.value.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         return cleaned.isEmpty ? nil : cleaned
     }
@@ -145,7 +153,7 @@ struct MCPServerForm: Equatable {
 /// Create-a-server sheet: name, transport, the transport-specific connection
 /// fields, and an enabled toggle. Validation runs live and blocks Add.
 struct AddMCPServerSheet: View {
-    @ObservedObject var store: MCPServersStore
+    let store: MCPServersStore
     // Qualified: the app declares its own `Environment` type (Sources/Environment.swift),
     // which shadows SwiftUI's, so the property wrapper must be namespaced.
     @SwiftUI.Environment(\.dismiss) private var dismiss
@@ -163,7 +171,7 @@ struct AddMCPServerSheet: View {
          prefill: MCPServerForm = MCPServerForm(),
          notes: MCPRegistryNotes? = nil)
     {
-        _store = ObservedObject(wrappedValue: store)
+        self.store = store
         self.notes = notes
         _form = State(initialValue: prefill)
     }
@@ -228,12 +236,12 @@ struct AddMCPServerSheet: View {
         }
     }
 
-    private func registryRequirementRow(label: String, values: [String]) -> some View {
+    private func registryRequirementRow(label: LocalizedStringResource, values: [String]) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text(values.joined(separator: ", "))
+            Text(values.formatted())
                 .font(.caption)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -329,6 +337,7 @@ struct MCPServerFormFields: View {
                 MCPArgsEditor(args: $form.args)
                 MCPKeyValueEditor(title: "Environment Variables",
                                   keyPlaceholder: "NAME",
+                                  addLabel: "Add environment variable",
                                   entries: $form.env)
             case .http, .sse:
                 TextField("URL", text: $form.url,
@@ -336,6 +345,7 @@ struct MCPServerFormFields: View {
                     .autocorrectionDisabled()
                 MCPKeyValueEditor(title: "Headers",
                                   keyPlaceholder: "Authorization",
+                                  addLabel: "Add header",
                                   entries: $form.headers)
             }
         } header: {

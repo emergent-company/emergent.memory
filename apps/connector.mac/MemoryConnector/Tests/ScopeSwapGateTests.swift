@@ -1,62 +1,62 @@
 @testable import MemoryConnector
-import XCTest
+import Testing
 
 /// The scope-swap suppression gate: while a scope swap is in flight, the
 /// connected-project-id sink must not reconcile. A depth counter (not a
 /// boolean) keeps overlapping swaps suppressed until all of them settle.
-final class ScopeSwapGateTests: XCTestCase {
-    func testAllowedBeforeAnySwap() {
+struct ScopeSwapGateTests {
+    @Test func allowedBeforeAnySwap() {
         let gate = ScopeSwapGate()
-        XCTAssertTrue(gate.mayReconcile)
+        #expect(gate.mayReconcile)
     }
 
-    func testSuppressedBetweenBeginAndEnd() {
+    @Test func suppressedBetweenBeginAndEnd() {
         var gate = ScopeSwapGate()
         gate.begin()
-        XCTAssertFalse(gate.mayReconcile)
+        #expect(!gate.mayReconcile)
         gate.end()
-        XCTAssertTrue(gate.mayReconcile)
+        #expect(gate.mayReconcile)
     }
 
-    func testAllowedAgainAfterLastEnd() {
+    @Test func allowedAgainAfterLastEnd() {
         var gate = ScopeSwapGate()
         gate.begin()
         gate.end()
-        XCTAssertTrue(gate.mayReconcile)
+        #expect(gate.mayReconcile)
     }
 
-    func testTwoOverlappingSwapsStaySuppressedUntilBothEnd() {
+    @Test func twoOverlappingSwapsStaySuppressedUntilBothEnd() {
         var gate = ScopeSwapGate()
         gate.begin()
         gate.begin()
-        XCTAssertFalse(gate.mayReconcile)
+        #expect(!gate.mayReconcile)
 
         gate.end() // first swap settles
-        XCTAssertFalse(gate.mayReconcile, "one swap still in flight")
+        #expect(!gate.mayReconcile, "one swap still in flight")
 
         gate.end() // second swap settles
-        XCTAssertTrue(gate.mayReconcile)
+        #expect(gate.mayReconcile)
     }
 
-    func testBeginEndAreBalanced() {
+    @Test func beginEndAreBalanced() {
         var gate = ScopeSwapGate()
         gate.begin()
         gate.begin()
         gate.begin()
-        XCTAssertEqual(gate.depth, 3)
-        XCTAssertFalse(gate.mayReconcile)
+        #expect(gate.depth == 3)
+        #expect(!gate.mayReconcile)
 
         gate.end()
         gate.end()
         gate.end()
-        XCTAssertEqual(gate.depth, 0)
-        XCTAssertTrue(gate.mayReconcile)
+        #expect(gate.depth == 0)
+        #expect(gate.mayReconcile)
     }
 
-    func testEndWithoutBeginDoesNotGoNegative() {
+    @Test func endWithoutBeginDoesNotGoNegative() {
         var gate = ScopeSwapGate()
         gate.end()
-        XCTAssertEqual(gate.depth, 0)
-        XCTAssertTrue(gate.mayReconcile)
+        #expect(gate.depth == 0)
+        #expect(gate.mayReconcile)
     }
 }

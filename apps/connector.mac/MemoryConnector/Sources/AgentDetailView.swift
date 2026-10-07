@@ -16,7 +16,7 @@ struct AgentDetailView: View {
     let projectID: String
     let serverURL: String
 
-    @EnvironmentObject private var accountStore: AccountStore
+    @SwiftUI.Environment(AccountStore.self) private var accountStore
     @StateObject private var store = AgentDetailStore()
 
     @SwiftUI.Environment(\.dismiss) private var dismiss
@@ -220,11 +220,13 @@ struct AgentDetailView: View {
         VStack(alignment: .leading, spacing: 8) {
             toolHeader(title, systemImage: systemImage)
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(names.indices, id: \.self) { index in
-                    if index > names.startIndex {
+                // Tool names are unique within a block, so they are their own
+                // stable identity (never the row index).
+                ForEach(names, id: \.self) { name in
+                    if name != names.first {
                         Divider()
                     }
-                    toolRow(names[index], systemImage: systemImage, subtle: subtle)
+                    toolRow(name, systemImage: systemImage, subtle: subtle)
                 }
             }
         }
@@ -333,15 +335,32 @@ struct AgentDetailView: View {
 /// Small pill describing an agent's enabled / default state, shared by the
 /// dashboard list and this detail sheet.
 struct AgentStatusBadge: View {
-    let text: String
+    let text: LocalizedStringResource
     let color: Color
+
+    @SwiftUI.Environment(\.colorScheme) private var colorScheme
+
+    /// Explicit initializer: the private environment property would otherwise
+    /// lower the synthesized memberwise initializer's access level, and this
+    /// badge is constructed from other files.
+    init(text: LocalizedStringResource, color: Color) {
+        self.text = text
+        self.color = color
+    }
 
     var body: some View {
         Text(text)
             .font(.caption2.weight(.semibold))
-            .foregroundStyle(color)
+            .foregroundStyle(foreground)
             .padding(.horizontal, 7)
             .padding(.vertical, 2)
-            .background(Capsule().fill(color.opacity(0.15)))
+            .background(Capsule().fill(color.opacity(colorScheme == .dark ? 0.22 : 0.15)))
+    }
+
+    /// Small caption text on a same-hue tint fails WCAG AA in light mode
+    /// (system green ≈1.7:1, memoryPrimary ≈2.2:1), so the accent is darkened
+    /// there. Dark mode keeps the accent, which is already high contrast.
+    private var foreground: Color {
+        colorScheme == .dark ? color : color.mix(with: .black, by: 0.4)
     }
 }

@@ -1,7 +1,7 @@
 @testable import MemoryConnector
-import XCTest
+import Testing
 
-final class StatusSnapshotParserTests: XCTestCase {
+struct StatusSnapshotParserTests {
     private func makeStdout(instance: String = "mbp-connector",
                             version: String = "0.1.0",
                             tools: String? = "notes_search, notes_create, reminders_list",
@@ -19,77 +19,77 @@ final class StatusSnapshotParserTests: XCTestCase {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    func testConnectedSnapshot() {
+    @Test func connectedSnapshot() {
         let stdout = makeStdout()
         let snap = StatusSnapshot.parse(stdout: stdout, exitCode: 0)
-        XCTAssertEqual(snap.instanceID, "mbp-connector")
-        XCTAssertEqual(snap.version, "0.1.0")
-        XCTAssertEqual(snap.toolNames, ["notes_search", "notes_create", "reminders_list"])
-        XCTAssertEqual(snap.toolCount, 3)
-        XCTAssertTrue(snap.hubLine.hasPrefix("connected — hub shows 3 tool(s)"))
-        XCTAssertEqual(snap.hubState, .connected)
+        #expect(snap.instanceID == "mbp-connector")
+        #expect(snap.version == "0.1.0")
+        #expect(snap.toolNames == ["notes_search", "notes_create", "reminders_list"])
+        #expect(snap.toolCount == 3)
+        #expect(snap.hubLine.hasPrefix("connected — hub shows 3 tool(s)"))
+        #expect(snap.hubState == .connected)
     }
 
-    func testDisabledToolReflectedInToolList() {
+    @Test func disabledToolReflectedInToolList() {
         // Engine status reflects disabled_tools: only enabled tools listed.
         let stdout = makeStdout(tools: "notes_search, reminders_list",
                                 hub: "connected — hub shows 2 tool(s), matches local set")
         let snap = StatusSnapshot.parse(stdout: stdout, exitCode: 0)
-        XCTAssertEqual(snap.toolNames, ["notes_search", "reminders_list"])
-        XCTAssertEqual(snap.toolCount, 2)
-        XCTAssertEqual(snap.hubState, .connected)
+        #expect(snap.toolNames == ["notes_search", "reminders_list"])
+        #expect(snap.toolCount == 2)
+        #expect(snap.hubState == .connected)
     }
 
-    func testNotConnected() {
+    @Test func notConnected() {
         let stdout = makeStdout(hub: "not connected — instance not found among 0 hub session(s)")
         let snap = StatusSnapshot.parse(stdout: stdout, exitCode: 0)
-        XCTAssertEqual(snap.hubState, .notConnected)
+        #expect(snap.hubState == .notConnected)
     }
 
-    func testAuthFailed() {
+    @Test func authFailed() {
         let stdout = makeStdout(hub: "authentication failed — the server rejected the token")
         let snap = StatusSnapshot.parse(stdout: stdout, exitCode: 0)
-        XCTAssertEqual(snap.hubState, .authFailed)
+        #expect(snap.hubState == .authFailed)
     }
 
-    func testUnreachable() {
+    @Test func unreachable() {
         let stdout = makeStdout(hub: "unreachable — dial tcp 127.0.0.1:1: connect: connection refused")
         let snap = StatusSnapshot.parse(stdout: stdout, exitCode: 0)
-        XCTAssertEqual(snap.hubState, .unreachable)
+        #expect(snap.hubState == .unreachable)
     }
 
-    func testNoToolsPlatformNote() {
+    @Test func noToolsPlatformNote() {
         let stdout = makeStdout(tools: nil, hub: "not connected — instance not found among 0 hub session(s)")
         let snap = StatusSnapshot.parse(stdout: stdout, exitCode: 0)
-        XCTAssertTrue(snap.toolNames.isEmpty)
-        XCTAssertEqual(snap.toolCount, 0)
+        #expect(snap.toolNames.isEmpty)
+        #expect(snap.toolCount == 0)
     }
 
-    func testMissingConfigNonZeroExit() {
+    @Test func missingConfigNonZeroExit() {
         let snap = StatusSnapshot.parse(stdout: "", exitCode: 1)
-        XCTAssertEqual(snap.hubState, .missingConfig)
-        XCTAssertTrue(snap.toolNames.isEmpty)
-        XCTAssertFalse(snap.hubLine.isEmpty)
+        #expect(snap.hubState == .missingConfig)
+        #expect(snap.toolNames.isEmpty)
+        #expect(!snap.hubLine.isEmpty)
     }
 
-    func testGarbageOutput() {
+    @Test func garbageOutput() {
         let snap = StatusSnapshot.parse(stdout: "this is not status output\njust noise\n", exitCode: 0)
-        XCTAssertEqual(snap.instanceID, "")
-        XCTAssertEqual(snap.toolNames, [])
-        XCTAssertEqual(snap.hubState, .unknown)
-        XCTAssertEqual(snap.hubLine, "")
+        #expect(snap.instanceID == "")
+        #expect(snap.toolNames == [])
+        #expect(snap.hubState == .unknown)
+        #expect(snap.hubLine == "")
     }
 
-    func testEmptyOutput() {
+    @Test func emptyOutput() {
         let snap = StatusSnapshot.parse(stdout: "", exitCode: 0)
-        XCTAssertEqual(snap.hubState, .unknown)
-        XCTAssertEqual(snap.toolNames, [])
+        #expect(snap.hubState == .unknown)
+        #expect(snap.toolNames == [])
     }
 
-    func testEngineNotRunningFixture() {
+    @Test func engineNotRunningFixture() {
         let snap = StatusSnapshot.engineNotRunning
-        XCTAssertEqual(snap.hubState, .unknown)
-        XCTAssertEqual(snap.hubLine, "Engine not running")
-        XCTAssertEqual(snap.toolCount, 0)
+        #expect(snap.hubState == .unknown)
+        #expect(snap.hubLine == "Engine not running")
+        #expect(snap.toolCount == 0)
     }
 }

@@ -7,10 +7,11 @@ import SwiftUI
 /// sign-in affordance; signed in, it shows the active account. There is no
 /// manual project-token entry anymore.
 struct ConnectionPage: View {
-    @EnvironmentObject private var accountStore: AccountStore
-    @EnvironmentObject private var projectStore: ProjectStore
+    @SwiftUI.Environment(AccountStore.self) private var accountStore
+    @SwiftUI.Environment(ProjectStore.self) private var projectStore
 
     @State private var alertMessage: String?
+    @State private var confirmSignOut = false
 
     var body: some View {
         Form {
@@ -30,6 +31,21 @@ struct ConnectionPage: View {
         } message: {
             Text(alertMessage ?? "")
         }
+        // Confirmed sign-out, matching the Project & Account page and the
+        // menu-bar surface so the destructive action reads the same everywhere.
+        .confirmationDialog(Text(SignOutConfirmation.title),
+                            isPresented: $confirmSignOut,
+                            titleVisibility: .visible)
+        {
+            Button(role: .destructive) {
+                signOutActive()
+            } label: {
+                Text(SignOutConfirmation.confirmButtonTitle(displayTitle: activeName))
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(SignOutConfirmation.message(displayTitle: activeName))
+        }
     }
 
     // MARK: - Memory Account
@@ -42,9 +58,15 @@ struct ConnectionPage: View {
                 signInControl
             }
         } header: {
-            Text("Memory Account")
+            HStack(spacing: 6) {
+                Text("Memory Account")
+                Image(systemName: "info.circle")
+                    .foregroundStyle(.tertiary)
+                    .accessibilityLabel("Sign-in details")
+                    .help("Sign-in uses a native OAuth app with PKCE; the callback scheme com.emergent.memory.connector must be registered with the identity provider.")
+            }
         } footer: {
-            Text("Sign in with your Memory identity to list and switch projects. Requires a Zitadel native app using PKCE with the com.emergent.memory.connector callback scheme.")
+            Text("Sign in with your Memory identity to list and switch projects.")
         }
     }
 
@@ -72,7 +94,7 @@ struct ConnectionPage: View {
             }
             HStack {
                 Spacer()
-                Button("Sign out", role: .destructive) { signOutActive() }
+                Button("Sign out", role: .destructive) { confirmSignOut = true }
             }
         }
     }

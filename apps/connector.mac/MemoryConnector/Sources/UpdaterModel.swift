@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import Observation
 
 // Sparkle's `SPUUpdater` is not `Sendable` and its KVO surface predates Swift 6
 // concurrency annotations. `@preconcurrency` downgrades those Sendable checks
@@ -21,7 +22,8 @@ import Foundation
 /// misconfigured, so this type constructs with `startingUpdater: false` and
 /// calls `startUpdater()` itself only after validating the bundle.
 @MainActor
-final class UpdaterModel: NSObject, ObservableObject {
+@Observable
+final class UpdaterModel: NSObject {
     /// The last known outcome of an update check, used to drive the status line.
     ///
     /// `.unavailable` means the updater was never started (Debug build, no
@@ -38,13 +40,13 @@ final class UpdaterModel: NSObject, ObservableObject {
     }
 
     /// Human-readable outcome of the most recent update check.
-    @Published private(set) var state: State = .unavailable
+    private(set) var state: State = .unavailable
     /// Mirrors `SPUUpdater.canCheckForUpdates`; false while a session is running
     /// and on builds where the updater was not started.
-    @Published private(set) var canCheckForUpdates = false
+    private(set) var canCheckForUpdates = false
     /// Mirrors Sparkle's own persisted automatic-check preference. Writing it
     /// forwards to the framework, which persists it across launches.
-    @Published var automaticallyChecksForUpdates = false {
+    var automaticallyChecksForUpdates = false {
         didSet {
             guard oldValue != automaticallyChecksForUpdates else { return }
             guard let updater = controller?.updater else { return }

@@ -10,14 +10,13 @@ import SwiftUI
 /// view-local values — so toolbar and page can never diverge. Raw `NSImage`
 /// lives on the main actor (the fetch already hops here); no actor needed.
 @MainActor
-final class AvatarStore: ObservableObject {
-    static let shared = AvatarStore()
-
-    @Published private(set) var images: [String: NSImage] = [:]
+@Observable
+final class AvatarStore {
+    private(set) var images: [String: NSImage] = [:]
     /// Keys the server reported as "no picture" (HTTP 404) — don't refetch.
-    @Published private(set) var missing: Set<String> = []
+    private(set) var missing: Set<String> = []
 
-    private init() {}
+    init() {}
 
     /// The one account key both the toolbar and the card compute.
     static func accountKey(for identity: OIDCUserInfo?) -> String? {
@@ -65,9 +64,9 @@ final class AvatarStore: ObservableObject {
 /// — or while loading, or if the user has no picture — it falls back to the
 /// `AccountAvatar` initials circle in Memory's colours.
 struct MemoryAvatar: View {
-    @EnvironmentObject private var accountStore: AccountStore
-    @EnvironmentObject private var projectStore: ProjectStore
-    @ObservedObject private var store = AvatarStore.shared
+    @SwiftUI.Environment(AccountStore.self) private var accountStore
+    @SwiftUI.Environment(ProjectStore.self) private var projectStore
+    @SwiftUI.Environment(AvatarStore.self) private var store
 
     let initials: String
     let size: CGFloat

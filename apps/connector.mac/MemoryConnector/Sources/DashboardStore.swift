@@ -1,5 +1,5 @@
-import Combine
 import Foundation
+import Observation
 
 /// Aggregated data for the project Dashboard page.
 ///
@@ -56,7 +56,8 @@ struct DashboardSnapshot: Equatable, Sendable {
 /// nil, agents → []); `.error` is only published when every request fails, so a
 /// partially available server still renders a page.
 @MainActor
-final class DashboardStore: ObservableObject {
+@Observable
+final class DashboardStore {
     enum State: Equatable {
         case idle
         case loading
@@ -64,7 +65,7 @@ final class DashboardStore: ObservableObject {
         case error(String)
     }
 
-    @Published private(set) var state: State = .idle
+    private(set) var state: State = .idle
 
     /// Builds a client for a (serverURL, accessToken) pair. Injectable so tests
     /// can supply a stubbed `URLSession` (or any client) without touching the

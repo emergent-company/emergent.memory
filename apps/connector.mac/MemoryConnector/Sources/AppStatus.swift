@@ -9,7 +9,7 @@ enum AppStatus: Equatable {
     case connecting
     case connected
     case disconnected
-    case error(String)
+    case error(LocalizedStringResource)
 
     /// Derives the menu-bar status from engine + hub state.
     static func derive(engine: EngineManager.State, snapshot: StatusSnapshot?) -> AppStatus {
@@ -32,7 +32,7 @@ enum AppStatus: Equatable {
         }
     }
 
-    var label: String {
+    var label: LocalizedStringResource {
         switch self {
         case .connecting:
             "Connecting…"

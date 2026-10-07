@@ -1,5 +1,5 @@
-import Combine
 import Foundation
+import Observation
 
 /// Errors surfaced by `AccountStore`.
 enum AccountStoreError: LocalizedError, Equatable {
@@ -39,7 +39,8 @@ struct AccountsIndex: Codable, Equatable, Sendable {
 /// goes through an `AppSecretStore` rooted at that account's directory, so
 /// switching accounts is a scope swap rather than a shared mutation.
 @MainActor
-final class AccountStore: ObservableObject {
+@Observable
+final class AccountStore {
     // MARK: - Constants
 
     nonisolated static let activeAccountIDKey = "connector.accounts.activeId"
@@ -51,35 +52,35 @@ final class AccountStore: ObservableObject {
         AppSecretStore.defaultBaseDirectory
     }
 
-    // MARK: - Published state
+    // MARK: - Observable state
 
-    @Published private(set) var accounts: [Account] = []
-    @Published private(set) var activeAccountID: String?
+    private(set) var accounts: [Account] = []
+    private(set) var activeAccountID: String?
     /// Effective signed-in state: an account is active AND the connector CLI
     /// holds a valid session for it. The non-secret index (`accounts.json`)
     /// can outlive the CLI session, so this is deliberately NOT derived from
     /// `activeAccountID != nil`. Reconciled on bootstrap, sign-in, switch, and
     /// sign-out (and by `ensureConnectorSession`).
-    @Published private(set) var isEffectivelySignedIn = false
+    private(set) var isEffectivelySignedIn = false
     /// Per-account connector CLI session validity, keyed by account id. Absent
     /// until the account's session has been checked at least once.
-    @Published private(set) var sessionValid: [String: Bool] = [:]
+    private(set) var sessionValid: [String: Bool] = [:]
     /// Identity captured for an account, keyed by account id (in-memory only).
     /// Sign-in now runs in the CLI, so this is only populated by callers that
     /// still have a `OIDCUserInfo` to hand in.
-    @Published private(set) var identities: [String: OIDCUserInfo] = [:]
+    private(set) var identities: [String: OIDCUserInfo] = [:]
     /// Accounts whose last token fetch failed — they need the user to sign in
     /// again. Other accounts are never touched by a failure here.
-    @Published private(set) var needsReauth: Set<String> = []
-    @Published private(set) var lastError: String?
+    private(set) var needsReauth: Set<String> = []
+    private(set) var lastError: String?
     /// True while the browser sign-in flow is in flight (drives the UI spinner).
-    @Published private(set) var isSigningIn = false
+    private(set) var isSigningIn = false
 
     // MARK: - Engine hooks
 
     /// Called before the active account changes: the caller stops/disconnects
     /// the engine for the previous account. Overridable in tests.
-    var engineWillStop: @MainActor () -> Void = { EngineManager.shared.stop() }
+    var engineWillStop: @MainActor () -> Void = {}
     /// Called after the active account changes (or is cleared).
     var activeAccountDidChange: @MainActor (Account?) -> Void = { _ in }
 

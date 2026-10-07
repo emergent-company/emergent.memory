@@ -62,7 +62,7 @@ enum MCPServerToolSelection {
 /// per tool. A Memory-managed server is read-only locally, so its toggles are
 /// held disabled.
 struct MCPServerToolsSection: View {
-    @ObservedObject var store: MCPServersStore
+    let store: MCPServersStore
     let serverName: String
     let tools: [HostedMCPTool]
     let disabledTools: [String]?
@@ -203,7 +203,7 @@ struct MCPServerUnavailableView: View {
                 .foregroundStyle(.orange)
             Text("Couldn't load this server")
                 .font(.headline)
-            Text(message ?? "The connector's management API did not return this server.")
+            messageText
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -211,6 +211,14 @@ struct MCPServerUnavailableView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(24)
+    }
+
+    /// The server's error text (runtime data) or a localized fallback. Returning
+    /// `Text` keeps the fallback literal on the localizable path instead of
+    /// folding it into a verbatim `String`.
+    private var messageText: Text {
+        message.map { Text($0) }
+            ?? Text("The connector's management API did not return this server.")
     }
 }
 
