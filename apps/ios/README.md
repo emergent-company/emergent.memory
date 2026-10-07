@@ -167,6 +167,37 @@ forks set the secret instead of editing tracked files.
 **Fail-fast:** if `MEMORY_MAC_HOST` / `MEMORY_MAC_PATH` are unset, the scripts
 exit non-zero with an actionable message — there is no built-in default target.
 
+### TestFlight releases
+
+Pushing a `vX.Y.Z` tag runs `.github/workflows/ios-release.yml` (archive →
+export IPA → upload to TestFlight). The build is skipped when `apps/ios/**` is
+unchanged since the last **successful upload**, tracked by an
+`ios-release-uploaded/vX.Y.Z` tag that the build job pushes on success. Before
+any marker exists it falls back to the previous `vX.Y.Z` app tag. This replaced
+the old nearest-tag diff, which was confused by the parallel
+`apps/server/pkg/sdk/vX.Y.Z` tags and could permanently "consume" a change behind
+a skipped tag (#1612).
+
+Re-run a release, bypassing the skip check, by dispatching on the **tag ref** so
+the marketing version resolves from the tag name (a branch dispatch requires the
+`version` input and fails fast without it):
+
+```sh
+gh workflow run ios-release.yml --ref vX.Y.Z -f force=true
+```
+
+Back-fill versions whose build job was skipped. For #1612 that is `0.84.0` and
+`0.85.0` (`0.86.0` was already force-dispatched):
+
+```sh
+gh workflow run ios-release.yml --ref v0.84.0 -f force=true
+gh workflow run ios-release.yml --ref v0.85.0 -f force=true
+```
+
+The build number is the dispatch time (`date +%s`), so each run uploads a
+distinct build. App Store Connect may still reject a marketing version that is
+older than one already uploaded — check there rather than assuming success.
+
 ## Notes & trade-offs
 
 - **Transport**: `ws://100.69.175.118:7880` over Tailscale, no TLS. The

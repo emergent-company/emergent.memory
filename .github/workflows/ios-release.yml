@@ -1,7 +1,15 @@
 name: iOS Release (TestFlight)
 
 # Stable channel: tag vX.Y.Z → archive VoiceAgent, export IPA, upload to TestFlight.
-# Skipped entirely when apps/ios/** is unchanged since the last tag.
+#
+# The skip decision diffs apps/ios/** against the last commit that was actually
+# uploaded (an `ios-release-uploaded/vX.Y.Z` marker tag written by the build job
+# on success), falling back to the previous `vX.Y.Z` app tag before any marker
+# exists. This is deliberately *not* `git describe HEAD^` against the nearest
+# tag: both `vX.Y.Z` and `apps/server/pkg/sdk/vX.Y.Z` are pushed per release, so
+# the nearest-tag choice is nondeterministic, and diffing against the immediate
+# predecessor lets an unbuilt tag "consume" a change forever. (See #1612.)
+# Logic: .github/scripts/ios-release-should-build.sh (unit-tested in meta CI).
 
 on:
   push:
@@ -13,6 +21,11 @@ on:
         description: 'Force build even if unchanged'
         type: boolean
         default: false
+      version:
+        description: 'Release version X.Y.Z. Required when dispatching from a branch; ignored for v* tag refs.'
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -28,28 +41,22 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Diff since last tag
+      - name: Diff since last uploaded build
         id: c
         shell: bash
         env:
           FORCE: ${{ github.event.inputs.force }}
-        run: |
-          if [ "${FORCE}" = "true" ]; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
-          if [ -n "$PREV" ] && ! git diff --name-only "$PREV" HEAD -- apps/ios/ | grep -q .; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          fi
+        run: .github/scripts/ios-release-should-build.sh >> "$GITHUB_OUTPUT"
 
   build:
     name: Build & upload to TestFlight
     runs-on: [self-hosted, macOS, ARM64, mac]
     needs: check
     if: needs.check.outputs.changed == 'true'
+    # contents: write is needed only to push the ios-release-uploaded/* marker
+    # tag that records a successful upload (used by the next run's skip check).
+    permissions:
+      contents: write
     # Team comes from a secret when set; the scripts below fall back to this
     # repo's team (74LC88G9SC) so forks only set the secret.
     env:
@@ -71,11 +78,20 @@ jobs:
 
       - name: Derive version
         id: version
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             MARKETING="${GITHUB_REF_NAME#v}"
           else
-            MARKETING="0.0.0"
+            MARKETING="${INPUT_VERSION:-}"
+          fi
+          # A branch dispatch used to silently produce MARKETING_VERSION=0.0.0.
+          # Require a real version: dispatch from a v* tag ref, or pass the
+          # `version` input.
+          if [[ ! "$MARKETING" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::No release version resolved (ref=${GITHUB_REF}). Dispatch from a v* tag, or pass the 'version' input (X.Y.Z)."
+            exit 1
           fi
           echo "marketing=$MARKETING" >> "$GITHUB_OUTPUT"
           echo "build_number=$(date +%s)" >> "$GITHUB_OUTPUT"
@@ -156,3 +172,23 @@ jobs:
             --apiKey "${{ secrets.APP_STORE_CONNECT_KEY_ID }}" \
             --apiIssuer "${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}" \
             --output-format xml
+
+      - name: Record upload marker
+        # Only meaningful for tag releases; marks this commit as uploaded so the
+        # next tag's skip check diffs against it instead of the nearest tag.
+        # Best-effort: a missing marker only costs one redundant rebuild later.
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          MARKETING: ${{ steps.version.outputs.marketing }}
+        run: |
+          tag="ios-release-uploaded/v${MARKETING}"
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "Marker $tag already exists; nothing to do."
+            exit 0
+          fi
+          git tag "$tag"
+          if git push origin "refs/tags/$tag"; then
+            echo "Recorded upload marker $tag"
+          else
+            echo "::warning::Could not push upload marker $tag; the next release will fall back to the previous app tag."
+          fi
