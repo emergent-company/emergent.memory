@@ -13,6 +13,12 @@ on:
       - '.github/workflows/server.yml'
   workflow_dispatch:
 
+# Cancel superseded PR runs; never cancel a default-branch run (a merge to main
+# should always finish and report its status).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   GO_VERSION: '1.26'
 

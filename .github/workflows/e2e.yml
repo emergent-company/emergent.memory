@@ -1,22 +1,29 @@
 name: E2E Tests
 
 # Path-filtered: E2E builds the server image (and the CLI inside it) from
-# apps/** and deploy/self-hosted/**, then runs the compose stack in e2e/**.
+# apps/server/** and apps/cli/** (plus deploy/** and e2e/**), then runs the
+# compose stack in e2e/**.
 # It is NOT a required check, so a path filter cannot wedge unrelated PRs the
 # way an unfiltered required check would.
 on:
   push:
     branches: [main]
     paths:
-      - 'apps/**'
+      - 'apps/server/**'
+      - 'apps/cli/**'
       - 'deploy/**'
       - 'e2e/**'
+      - 'go.work'
+      - 'VERSION'
       - '.github/workflows/e2e.yml'
   pull_request:
     paths:
-      - 'apps/**'
+      - 'apps/server/**'
+      - 'apps/cli/**'
       - 'deploy/**'
       - 'e2e/**'
+      - 'go.work'
+      - 'VERSION'
       - '.github/workflows/e2e.yml'
   workflow_dispatch:
     inputs:
@@ -24,6 +31,12 @@ on:
         description: "Optional -run filter (e.g. TestCLIInstalled_Version)"
         required: false
         default: ""
+
+# Cancel superseded PR runs; never cancel a default-branch run (a merge to main
+# should always finish and report its status).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

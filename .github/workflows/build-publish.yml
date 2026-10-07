@@ -3,6 +3,12 @@ name: Web UI Build & Publish
 on:
   push:
     branches: [master, main]
+    # Rebuild only when the web-ui tree changes: `paths:` is evaluated for
+    # branch pushes only, so tag pushes still always run (the "changed since
+    # last tag" step below skips no-op tag builds).
+    paths:
+      - 'apps/web-ui/**'
+      - '.github/workflows/build-publish.yml'
     tags: ['v*']
   workflow_dispatch:
 
