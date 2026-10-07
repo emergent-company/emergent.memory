@@ -55,6 +55,17 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 		ColumnExpr(extractionRelationshipsCreatedSQL()).
 		Where("d.project_id = ?", params.ProjectID)
 
+	// Listings are HEAD-only: a versioned document's superseded rows are history
+	// and are only returned by the version-history endpoint. Without this filter
+	// a document appears once per version and inflates the total.
+	query = query.Where("d.supersedes_id IS NULL")
+
+	// Default listings exclude documents removed at the source; history reads
+	// opt back in via ListParams.IncludeDeletedFromSource.
+	if !params.IncludeDeletedFromSource {
+		query = query.Where("d.source_status <> ?", SourceStatusDeletedFromSource)
+	}
+
 	// Apply filters
 	if params.SourceType != nil {
 		query = query.Where("d.source_type = ?", *params.SourceType)
@@ -74,7 +85,12 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 	// Get total count (without pagination)
 	countQuery := r.db.NewSelect().
 		Model((*Document)(nil)).
-		Where("project_id = ?", params.ProjectID)
+		Where("project_id = ?", params.ProjectID).
+		Where("supersedes_id IS NULL")
+
+	if !params.IncludeDeletedFromSource {
+		countQuery = countQuery.Where("source_status <> ?", SourceStatusDeletedFromSource)
+	}
 
 	if params.SourceType != nil {
 		countQuery = countQuery.Where("source_type = ?", *params.SourceType)
@@ -210,6 +226,7 @@ func (r *Repository) GetDistinctSourceTypes(ctx context.Context, projectID strin
 		ColumnExpr("source_type, COUNT(*)::int as count").
 		Where("project_id = ?", projectID).
 		Where("source_type IS NOT NULL").
+		Where("supersedes_id IS NULL").
 		GroupExpr("source_type").
 		OrderExpr("count DESC").
 		Scan(ctx, &results)
@@ -245,6 +262,145 @@ func (r *Repository) Create(ctx context.Context, doc *Document) error {
 		return apperror.ErrDatabase.WithInternal(err)
 	}
 
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Source-attributed document versioning (ingestion seam).
+//
+// These are the repository methods the ingestion path (Lane C) calls. They
+// deliberately bypass the content-hash dedup in Create/GetByContentHash: a new
+// version may share bytes with a prior version, and ingestion must not collapse
+// versions (design D2/D3).
+// ---------------------------------------------------------------------------
+
+// GetHeadBySource resolves the HEAD version (supersedes_id IS NULL) of the
+// document attributed to (source_id, source_external_id). Returns nil, nil when
+// no HEAD exists.
+func (r *Repository) GetHeadBySource(ctx context.Context, projectID, sourceID, externalID string) (*Document, error) {
+	var doc Document
+	err := r.db.NewSelect().
+		Model(&doc).
+		Where("project_id = ?", projectID).
+		Where("source_id = ?", sourceID).
+		Where("source_external_id = ?", externalID).
+		Where("supersedes_id IS NULL").
+		Scan(ctx)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get head by source: %w", err)
+	}
+	return &doc, nil
+}
+
+// InsertDocument inserts a new document row directly, with no content-hash
+// dedup. The caller is responsible for setting ID, ProjectID, and any
+// versioning/attribution fields; a zero-valued CanonicalID/Version/SourceStatus
+// falls back to the column defaults (uuid_generate_v4() / 1 / 'active').
+func (r *Repository) InsertDocument(ctx context.Context, doc *Document) error {
+	_, err := r.db.NewInsert().
+		Model(doc).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("insert document: %w", err)
+	}
+	return nil
+}
+
+// CreateVersion appends a new document version as the new HEAD and, in the same
+// transaction, points the prior HEAD's supersedes_id forward at the new row —
+// mirroring the graph-object versioning convention (HEAD is the row whose
+// supersedes_id IS NULL). The caller sets doc.CanonicalID (shared), doc.Version
+// (incremented), and doc.ID; doc.SupersedesID must be nil for the new head.
+func (r *Repository) CreateVersion(ctx context.Context, doc *Document) error {
+	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// Retire the current HEAD by pointing it at the new version. This frees
+		// the partial unique index slot (one HEAD per canonical) before the new
+		// HEAD is inserted, avoiding a two-HEAD window. The FK on supersedes_id
+		// is DEFERRABLE so pointing at the not-yet-inserted row is allowed until
+		// commit.
+		_, err := tx.NewUpdate().
+			Model((*Document)(nil)).
+			Set("supersedes_id = ?", doc.ID).
+			Where("canonical_id = ?", doc.CanonicalID).
+			Where("project_id = ?", doc.ProjectID).
+			Where("supersedes_id IS NULL").
+			Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("retire prior head: %w", err)
+		}
+
+		if _, err := tx.NewInsert().Model(doc).Exec(ctx); err != nil {
+			return fmt.Errorf("insert version: %w", err)
+		}
+		return nil
+	})
+}
+
+// ListVersionsByCanonical returns every version of a canonical document,
+// ordered by version ascending (v1 first). Deleted-from-source rows are
+// included: history survives a source removal.
+func (r *Repository) ListVersionsByCanonical(ctx context.Context, projectID, canonicalID string) ([]Document, error) {
+	var docs []Document
+	err := r.db.NewSelect().
+		Model(&docs).
+		Where("project_id = ?", projectID).
+		Where("canonical_id = ?", canonicalID).
+		Order("version ASC").
+		Scan(ctx)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("list versions by canonical: %w", err)
+	}
+	return docs, nil
+}
+
+// UpdateSourceState updates the source revision pointer, parsed-text hash, and
+// sync timestamp on a document (typically the HEAD) without creating a version.
+func (r *Repository) UpdateSourceState(ctx context.Context, documentID string, revisionID *string, textHash *string, syncedAt time.Time) error {
+	_, err := r.db.NewUpdate().
+		Model((*Document)(nil)).
+		Set("source_revision_id = ?", revisionID).
+		Set("source_text_hash = ?", textHash).
+		Set("source_synced_at = ?", syncedAt).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", documentID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("update source state: %w", err)
+	}
+	return nil
+}
+
+// MarkSourceDeleted marks a document as removed at the source, retaining the
+// row and its history.
+func (r *Repository) MarkSourceDeleted(ctx context.Context, documentID string, deletedAt time.Time) error {
+	_, err := r.db.NewUpdate().
+		Model((*Document)(nil)).
+		Set("source_status = ?", SourceStatusDeletedFromSource).
+		Set("source_deleted_at = ?", deletedAt).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", documentID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("mark source deleted: %w", err)
+	}
+	return nil
+}
+
+// MarkSourceActive re-activates a previously deleted-from-source document.
+func (r *Repository) MarkSourceActive(ctx context.Context, documentID string) error {
+	_, err := r.db.NewUpdate().
+		Model((*Document)(nil)).
+		Set("source_status = ?", SourceStatusActive).
+		Set("source_deleted_at = NULL").
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", documentID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("mark source active: %w", err)
+	}
 	return nil
 }
 

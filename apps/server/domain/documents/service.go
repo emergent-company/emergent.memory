@@ -19,6 +19,14 @@ import (
 type Service struct {
 	repo *Repository
 	log  *slog.Logger
+
+	// chunking/extractionJobs are the narrow pipeline hooks used by the
+	// ingestion seam (ApplySourceItem). They are provided by the extraction
+	// module and are nil when the service is constructed outside a fully-wired
+	// container (e.g. the standalone test servers), in which case the seam
+	// creates/versions the document but skips chunking and extraction.
+	chunking       ChunkingService
+	extractionJobs ExtractionJobCreator
 }
 
 // NewService creates a new documents service
@@ -27,6 +35,13 @@ func NewService(repo *Repository, log *slog.Logger) *Service {
 		repo: repo,
 		log:  log.With(logger.Scope("documents.svc")),
 	}
+}
+
+// AttachPipeline wires the chunking and extraction services used by the ingestion
+// seam. Called by the fx module provider (and by tests that need real chunking).
+func (s *Service) AttachPipeline(chunking ChunkingService, extractionJobs ExtractionJobCreator) {
+	s.chunking = chunking
+	s.extractionJobs = extractionJobs
 }
 
 // List retrieves documents with pagination and filtering
@@ -449,4 +464,181 @@ func (s *Service) GetDocumentClassificationSignals(ctx context.Context, projectI
 		return nil, err
 	}
 	return doc.ClassificationSignals, nil
+}
+
+// ---------------------------------------------------------------------------
+// Provider-agnostic ingestion seam.
+//
+// These methods back the source-sync worker (Lane D): they upsert a document by
+// (source_id, source_external_id), detect changes by parsed-text hash, and
+// version/re-chunk only when the parsed text actually changed. They deliberately
+// bypass the content-hash dedup in Create/GetByContentHash — a new version may
+// share bytes with a prior version (or with another document) and must not
+// collapse.
+// ---------------------------------------------------------------------------
+
+// ApplySourceItem upserts a source item into the document store.
+//
+//   - No HEAD exists → create the first version (repo.InsertDocument, not
+//     Service.Create, to bypass content-hash dedup), then chunk + extract.
+//   - HEAD exists with identical parsed-text hash → update the revision pointer
+//     and sync time only (Skipped); reactivate if it was deleted_from_source.
+//   - HEAD exists with changed text → append a new version (NewVersion), then
+//     chunk + extract.
+func (s *Service) ApplySourceItem(ctx context.Context, p ApplySourceItemParams) (*ApplySourceItemResult, error) {
+	textHash := computeContentHash(p.Content)
+	now := time.Now().UTC()
+
+	var sourceType *string
+	if strings.TrimSpace(p.SourceType) != "" {
+		st := p.SourceType
+		sourceType = &st
+	}
+
+	head, err := s.repo.GetHeadBySource(ctx, p.ProjectID, p.SourceID, p.ExternalID)
+	if err != nil {
+		return nil, err
+	}
+
+	if head == nil {
+		doc := &Document{
+			ID:               uuid.New().String(),
+			ProjectID:        p.ProjectID,
+			Filename:         &p.Filename,
+			MimeType:         &p.MimeType,
+			Content:          &p.Content,
+			SourceType:       sourceType,
+			CanonicalID:      uuid.New().String(),
+			Version:          1,
+			SupersedesID:     nil,
+			SourceID:         &p.SourceID,
+			SourceExternalID: &p.ExternalID,
+			SourceRevisionID: &p.RevisionID,
+			SourceTextHash:   &textHash,
+			SourceSyncedAt:   &now,
+			SourceStatus:     SourceStatusActive,
+			CreatedAt:        now,
+			UpdatedAt:        now,
+		}
+		if err := s.repo.InsertDocument(ctx, doc); err != nil {
+			return nil, err
+		}
+		s.processSourceDocument(ctx, p.ProjectID, doc.ID)
+		return &ApplySourceItemResult{DocumentID: doc.ID, Created: true}, nil
+	}
+
+	if head.SourceTextHash != nil && *head.SourceTextHash == textHash {
+		if err := s.repo.UpdateSourceState(ctx, head.ID, &p.RevisionID, &textHash, now); err != nil {
+			return nil, err
+		}
+		if head.SourceStatus == SourceStatusDeletedFromSource {
+			if err := s.repo.MarkSourceActive(ctx, head.ID); err != nil {
+				return nil, err
+			}
+		}
+		return &ApplySourceItemResult{DocumentID: head.ID, Skipped: true}, nil
+	}
+
+	newVersion := &Document{
+		ID:               uuid.New().String(),
+		ProjectID:        p.ProjectID,
+		Filename:         &p.Filename,
+		MimeType:         &p.MimeType,
+		Content:          &p.Content,
+		SourceType:       sourceType,
+		CanonicalID:      head.CanonicalID,
+		Version:          head.Version + 1,
+		SupersedesID:     nil,
+		SourceID:         &p.SourceID,
+		SourceExternalID: &p.ExternalID,
+		SourceRevisionID: &p.RevisionID,
+		SourceTextHash:   &textHash,
+		SourceSyncedAt:   &now,
+		SourceStatus:     SourceStatusActive,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	if err := s.repo.CreateVersion(ctx, newVersion); err != nil {
+		return nil, err
+	}
+	s.processSourceDocument(ctx, p.ProjectID, newVersion.ID)
+	return &ApplySourceItemResult{DocumentID: newVersion.ID, NewVersion: true}, nil
+}
+
+// MarkSourceItemDeleted marks the HEAD of a source item as removed at the
+// source, retaining the row, versions, chunks, and graph attribution. A no-op
+// when no HEAD exists or it is already marked deleted.
+func (s *Service) MarkSourceItemDeleted(ctx context.Context, projectID, sourceID, externalID string) error {
+	head, err := s.repo.GetHeadBySource(ctx, projectID, sourceID, externalID)
+	if err != nil {
+		return err
+	}
+	if head == nil || head.SourceStatus == SourceStatusDeletedFromSource {
+		return nil
+	}
+	return s.repo.MarkSourceDeleted(ctx, head.ID, time.Now().UTC())
+}
+
+// GetVersionHistory returns every version of a document ordered by version.
+// The document itself may be any version (or deleted_from_source); its canonical
+// id is used to load the full chain.
+func (s *Service) GetVersionHistory(ctx context.Context, projectID, documentID string) ([]DocumentVersion, error) {
+	doc, err := s.repo.GetByID(ctx, projectID, documentID)
+	if err != nil {
+		return nil, err
+	}
+	if doc == nil {
+		return nil, apperror.ErrNotFound
+	}
+
+	versions, err := s.repo.ListVersionsByCanonical(ctx, projectID, doc.CanonicalID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]DocumentVersion, 0, len(versions))
+	for _, v := range versions {
+		result = append(result, DocumentVersion{
+			ID:               v.ID,
+			CanonicalID:      v.CanonicalID,
+			Version:          v.Version,
+			SupersedesID:     v.SupersedesID,
+			SourceStatus:     v.SourceStatus,
+			SourceRevisionID: v.SourceRevisionID,
+			SourceDeletedAt:  v.SourceDeletedAt,
+			CreatedAt:        v.CreatedAt,
+		})
+	}
+	return result, nil
+}
+
+// processSourceDocument runs the post-write pipeline for a source document:
+// mark conversion completed → recreate chunks → trigger extraction. Errors are
+// logged but not returned — the document/version write already succeeded,
+// mirroring the raw-content create path.
+func (s *Service) processSourceDocument(ctx context.Context, projectID, documentID string) {
+	if err := s.MarkConversionCompleted(ctx, documentID); err != nil {
+		s.log.Warn("failed to mark conversion completed for source document",
+			slog.String("document_id", documentID),
+			logger.Error(err))
+		return
+	}
+
+	if s.chunking == nil {
+		return
+	}
+	if err := s.chunking.RecreateChunks(ctx, projectID, documentID); err != nil {
+		s.log.Warn("failed to chunk source document",
+			slog.String("document_id", documentID),
+			logger.Error(err))
+	}
+
+	if s.extractionJobs == nil {
+		return
+	}
+	if err := s.extractionJobs.TriggerForDocument(ctx, projectID, documentID); err != nil {
+		s.log.Warn("failed to trigger extraction for source document",
+			slog.String("document_id", documentID),
+			logger.Error(err))
+	}
 }

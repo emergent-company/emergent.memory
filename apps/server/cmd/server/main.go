@@ -68,6 +68,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/search"
 	"github.com/emergent-company/emergent.memory/domain/sessiontodos"
 	"github.com/emergent-company/emergent.memory/domain/skills"
+	"github.com/emergent-company/emergent.memory/domain/sources"
 	"github.com/emergent-company/emergent.memory/domain/standalone"
 	"github.com/emergent-company/emergent.memory/domain/superadmin"
 	"github.com/emergent-company/emergent.memory/domain/tasks"
@@ -181,6 +182,7 @@ func coreFxOptions() fx.Option {
 		invites.Module,
 		events.Module,
 		discoveryjobs.Module,
+		sources.Module,
 
 		// Provider module (credential resolution, model catalog, LLM usage tracking)
 		provider.Module,

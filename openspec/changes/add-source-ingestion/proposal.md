@@ -102,3 +102,9 @@ existing capability spec. -->
 Relates to `add-resource-acl` for per-source permissions (a source's ingested resources
 should inherit the source's ACL). Not blocked by it; ingestion ships first and ACL is
 applied at read time.
+
+## Superseded
+
+Superseded by `add-google-drive-ingestion`, which implements a reconciled document-attribution
+schema, document versioning, and Google Drive as a native first-class connector (dropping the
+MCP-first generic bus and the `kb.source_sync_jobs` naming in favour of the same merged work).

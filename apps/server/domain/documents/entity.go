@@ -43,6 +43,23 @@ type Document struct {
 	// Data source
 	SourceType *string `bun:"source_type" json:"sourceType,omitempty"`
 
+	// Versioning (supersedes chain). HEAD is the row whose supersedes_id is
+	// NULL; a new version appends a row sharing canonical_id and increments
+	// version. canonical_id/version/source_status carry DB defaults, so the
+	// zero value is omitted from INSERT and the column default applies.
+	CanonicalID  string  `bun:"canonical_id,notnull,default:uuid_generate_v4()" json:"canonicalId"`
+	SupersedesID *string `bun:"supersedes_id" json:"supersedesId,omitempty"`
+	Version      int     `bun:"version,notnull,default:1" json:"version"`
+
+	// Source attribution
+	SourceID         *string    `bun:"source_id" json:"sourceId,omitempty"`
+	SourceExternalID *string    `bun:"source_external_id" json:"sourceExternalId,omitempty"`
+	SourceRevisionID *string    `bun:"source_revision_id" json:"sourceRevisionId,omitempty"`
+	SourceTextHash   *string    `bun:"source_text_hash" json:"sourceTextHash,omitempty"`
+	SourceSyncedAt   *time.Time `bun:"source_synced_at" json:"sourceSyncedAt,omitempty"`
+	SourceStatus     string     `bun:"source_status,notnull,default:'active'" json:"sourceStatus"`
+	SourceDeletedAt  *time.Time `bun:"source_deleted_at" json:"sourceDeletedAt,omitempty"`
+
 	// Domain classification (Phase 3)
 	DomainName            *string        `bun:"domain_name" json:"domainName,omitempty"`
 	DomainConfidence      *float32       `bun:"domain_confidence" json:"domainConfidence,omitempty"`
@@ -69,6 +86,12 @@ type Document struct {
 	JobIDs []string `bun:"-" json:"jobIds,omitempty"`
 }
 
+// SourceStatus values for kb.documents.source_status.
+const (
+	SourceStatusActive            = "active"
+	SourceStatusDeletedFromSource = "deleted_from_source"
+)
+
 // ListParams contains parameters for listing documents
 type ListParams struct {
 	ProjectID        string
@@ -77,6 +100,49 @@ type ListParams struct {
 	SourceType       *string
 	RootOnly         bool
 	ParentDocumentID *string
+	// IncludeDeletedFromSource, when true, includes documents whose
+	// source_status is 'deleted_from_source'. Default listings exclude them.
+	IncludeDeletedFromSource bool
+}
+
+// DocumentVersion is a summary of a single document version for the history
+// endpoint. ListVersionsByCanonical returns []Document; this type is the
+// trimmed view the service layer can project for history reads.
+type DocumentVersion struct {
+	ID               string     `json:"id"`
+	CanonicalID      string     `json:"canonicalId"`
+	Version          int        `json:"version"`
+	SupersedesID     *string    `json:"supersedesId,omitempty"`
+	SourceStatus     string     `json:"sourceStatus,omitempty"`
+	SourceRevisionID *string    `json:"sourceRevisionId,omitempty"`
+	SourceDeletedAt  *time.Time `json:"sourceDeletedAt,omitempty"`
+	CreatedAt        time.Time  `json:"createdAt"`
+}
+
+// ApplySourceItemParams is the input to the provider-agnostic ingestion seam.
+// The source worker performs fetching/parsing and passes the already-parsed text
+// as Content.
+type ApplySourceItemParams struct {
+	ProjectID  string
+	SourceID   string
+	ExternalID string
+	RevisionID string
+	Filename   string
+	MimeType   string
+	Content    string
+	// SourceType is the source-type category stamped on the document (e.g.
+	// "drive") so source-type listings/counts attribute it correctly. Optional;
+	// empty leaves source_type NULL (including all pre-existing calls).
+	SourceType string
+}
+
+// ApplySourceItemResult is the outcome of applying a source item to the
+// document store. Exactly one of Created / NewVersion / Skipped is true.
+type ApplySourceItemResult struct {
+	DocumentID string
+	Created    bool // first ingest created the HEAD version
+	NewVersion bool // a content change appended a new version
+	Skipped    bool // identical parsed text; no new version
 }
 
 // Cursor represents pagination cursor

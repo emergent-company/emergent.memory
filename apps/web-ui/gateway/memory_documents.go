@@ -29,6 +29,16 @@ type Document struct {
 	ProcessingStatus     string `json:"processingStatus"`
 	ObjectsCreated       int    `json:"objectsCreated"`
 	RelationshipsCreated int    `json:"relationshipsCreated"`
+
+	// Source provenance (document-versioning / document-api): present on
+	// documents ingested from a data source. SourceStatus is "active" or
+	// "deleted_from_source"; the rest are absent on uploaded documents.
+	SourceID         string `json:"sourceId,omitempty"`
+	SourceExternalID string `json:"sourceExternalId,omitempty"`
+	SourceRevisionID string `json:"sourceRevisionId,omitempty"`
+	SourceStatus     string `json:"sourceStatus,omitempty"`
+	SourceSyncedAt   string `json:"sourceSyncedAt,omitempty"`
+	SourceDeletedAt  string `json:"sourceDeletedAt,omitempty"`
 }
 
 // Chunk is one chunk of a document (GET /api/chunks).

@@ -85,69 +85,99 @@ type fakeMemory struct {
 	// ListRelaySessions; relayTools holds per-instance tool lists (an empty
 	// value serves a node with no tools). relaySessionsErr /
 	// relayToolsErr simulate whole-endpoint failures.
-	relaySessions       []RelaySession
-	relaySessionsErr    error
-	relayTools          map[string][]RelayTool
-	relayToolsErr       error                           // failure for every GetRelaySessionTools call
-	histories           map[string]*ConversationHistory // history per conversation id
-	details             map[string]*ConversationDetail  // detail per conversation id
-	createConvID        string                          // id returned by CreateObjectConversation
-	createConvErr       error                           // CreateObjectConversation failure
-	convCanonicalID     string                          // last canonicalID passed to CreateObjectConversation
-	convTitle           string                          // last title passed to CreateObjectConversation
-	convMessage         string                          // last message passed to CreateObjectConversation
-	created             []AgentDefinition
-	updatedAgent        *AgentDefinition // last agent passed to UpdateAgentDefinition
-	chatMsg             string
-	chatStream          string        // SSE body returned by ChatStream when non-empty
-	chatStreamReader    io.ReadCloser // overrides ChatStream's return body when non-nil
-	chatErr             error         // ChatStream failure
-	questionID          string        // question id received via RespondQuestion
-	questionResponse    string        // response received via RespondQuestion
-	questionMessage     string        // optional reject message received via RespondQuestion
-	questionCancelID    string        // question id received via CancelQuestion
-	approvals           []ToolApprovalItem
-	questions           []AgentQuestionItem
-	convErr             error // ListConversations failure
-	histErr             error // GetConversationHistory failure
-	documents           []Document
-	chunks              []Chunk
-	docErr              error                      // ListDocuments/GetDocument/ListChunks failure
-	extractErr          error                      // CreateExtractionJob failure
-	uploaded            []string                   // filenames received via UploadDocument
-	uploadResult        *UploadResult              // non-nil overrides the UploadDocument result
-	extracted           []string                   // document ids passed to CreateExtractionJob
-	deletedDocuments    []string                   // document ids passed to DeleteDocument, in order
-	deleteDocErr        error                      // DeleteDocument failure
-	summary             *ExtractionSummary         // returned by GetExtractionSummary
-	docContent          *string                    // returned by GetDocumentContent (nil → "")
-	objects             []GraphObject              // returned by ListExtractionObjects
-	relns               []GraphRelationship        // returned by ListRelationships
-	branches            []Branch                   // returned by ListBranches
-	extractionJobs      []ExtractionJob            // returned by ListExtractionJobs
-	downloadDocBody     []byte                     // raw bytes returned by DownloadDocument
-	downloadDocCT       string                     // Content-Type returned by DownloadDocument
-	downloadDocErr      error                      // DownloadDocument failure
-	mergeReadiness      *MergeReadiness            // returned by GetMergeReadiness
-	mergeResult         *BranchMergeResult         // returned by MergeBranch
-	mergeErr            error                      // GetMergeReadiness/MergeBranch failure
-	lastMergeBranchID   string                     // last sourceBranchID passed to MergeBranch
-	lastMergePolicy     string                     // last policy passed to MergeBranch
-	similar             []SimilarObject            // returned by GetSimilarObjects
-	similarErr          error                      // GetSimilarObjects failure
-	updateResult        *GraphObject               // returned by UpdateObject
-	updateObjectErr     error                      // UpdateObject failure
-	lastUpdateID        string                     // last id passed to UpdateObject
-	lastUpdateReq       *UpdateObjectRequest       // last request passed to UpdateObject
-	createObjectResult  *GraphObject               // returned by CreateObject
-	createObjectErr     error                      // CreateObject failure
-	lastCreateObjectReq *CreateObjectRequest       // last request passed to CreateObject
-	createRelErr        error                      // CreateRelationship failure
-	lastCreateRelReq    *CreateRelationshipRequest // last request passed to CreateRelationship
-	ftsResults          []GraphObject              // returned by SearchObjectsFTS
-	ftsErr              error                      // SearchObjectsFTS failure
-	ftsQuery            string                     // last query passed to SearchObjectsFTS
-	ftsTypeFilter       string                     // last type filter passed to SearchObjectsFTS
+	relaySessions    []RelaySession
+	relaySessionsErr error
+	relayTools       map[string][]RelayTool
+	relayToolsErr    error                           // failure for every GetRelaySessionTools call
+	histories        map[string]*ConversationHistory // history per conversation id
+	details          map[string]*ConversationDetail  // detail per conversation id
+	createConvID     string                          // id returned by CreateObjectConversation
+	createConvErr    error                           // CreateObjectConversation failure
+	convCanonicalID  string                          // last canonicalID passed to CreateObjectConversation
+	convTitle        string                          // last title passed to CreateObjectConversation
+	convMessage      string                          // last message passed to CreateObjectConversation
+	created          []AgentDefinition
+	updatedAgent     *AgentDefinition // last agent passed to UpdateAgentDefinition
+	chatMsg          string
+	chatStream       string        // SSE body returned by ChatStream when non-empty
+	chatStreamReader io.ReadCloser // overrides ChatStream's return body when non-nil
+	chatErr          error         // ChatStream failure
+	questionID       string        // question id received via RespondQuestion
+	questionResponse string        // response received via RespondQuestion
+	questionMessage  string        // optional reject message received via RespondQuestion
+	questionCancelID string        // question id received via CancelQuestion
+	approvals        []ToolApprovalItem
+	questions        []AgentQuestionItem
+	convErr          error // ListConversations failure
+	histErr          error // GetConversationHistory failure
+	documents        []Document
+	chunks           []Chunk
+	docErr           error               // ListDocuments/GetDocument/ListChunks failure
+	extractErr       error               // CreateExtractionJob failure
+	uploaded         []string            // filenames received via UploadDocument
+	uploadResult     *UploadResult       // non-nil overrides the UploadDocument result
+	extracted        []string            // document ids passed to CreateExtractionJob
+	deletedDocuments []string            // document ids passed to DeleteDocument, in order
+	deleteDocErr     error               // DeleteDocument failure
+	summary          *ExtractionSummary  // returned by GetExtractionSummary
+	docContent       *string             // returned by GetDocumentContent (nil → "")
+	objects          []GraphObject       // returned by ListExtractionObjects
+	relns            []GraphRelationship // returned by ListRelationships
+	branches         []Branch            // returned by ListBranches
+	extractionJobs   []ExtractionJob     // returned by ListExtractionJobs
+	downloadDocBody  []byte              // raw bytes returned by DownloadDocument
+	downloadDocCT    string              // Content-Type returned by DownloadDocument
+	downloadDocErr   error               // DownloadDocument failure
+	// Document version history (GET /api/documents/:id/versions).
+	documentVersions    []DocumentVersion
+	documentVersionsErr error
+	// Data-source integrations (see memory_datasources.go).
+	dsProviders         []DSProvider
+	dsSchema            *DSProviderSchema
+	dsSourceTypes       []DSSourceType
+	dsIntegrations      []DSIntegration
+	dsErr               error // failure for any DS read/list method
+	dsCreateErr         error
+	dsUpdateErr         error
+	dsDeleteErr         error
+	dsTestConfigResp    *DSTestConnectionResponse
+	dsTestConfigErr     error
+	dsTestConnResp      *DSTestConnectionResponse
+	dsTestConnErr       error
+	dsTriggerResp       *DSTriggerSyncResponse
+	dsTriggerErr        error
+	dsSyncJobs          map[string][]DSSyncJob // jobs per source id
+	dsSyncJobsErr       error
+	dsCancelResp        *DSCancelSyncJobResponse
+	dsCancelErr         error
+	dsCreatedReq        *DSCreateIntegrationRequest // last create request forwarded
+	dsUpdatedReq        *DSUpdateIntegrationRequest // last update request forwarded
+	dsUpdatedID         string                      // last id passed to UpdateDSIntegration
+	dsDeletedID         string                      // last id passed to DeleteDSIntegration
+	dsLastTestConfig    *DSTestConfigRequest        // last test-config request forwarded
+	dsLastTestConnID    string                      // last id passed to TestDSConnection
+	dsLastTriggerID     string                      // last id passed to TriggerDSSync
+	dsLastCancelJobID   string                      // last job id passed to CancelDSSyncJob
+	mergeReadiness      *MergeReadiness             // returned by GetMergeReadiness
+	mergeResult         *BranchMergeResult          // returned by MergeBranch
+	mergeErr            error                       // GetMergeReadiness/MergeBranch failure
+	lastMergeBranchID   string                      // last sourceBranchID passed to MergeBranch
+	lastMergePolicy     string                      // last policy passed to MergeBranch
+	similar             []SimilarObject             // returned by GetSimilarObjects
+	similarErr          error                       // GetSimilarObjects failure
+	updateResult        *GraphObject                // returned by UpdateObject
+	updateObjectErr     error                       // UpdateObject failure
+	lastUpdateID        string                      // last id passed to UpdateObject
+	lastUpdateReq       *UpdateObjectRequest        // last request passed to UpdateObject
+	createObjectResult  *GraphObject                // returned by CreateObject
+	createObjectErr     error                       // CreateObject failure
+	lastCreateObjectReq *CreateObjectRequest        // last request passed to CreateObject
+	createRelErr        error                       // CreateRelationship failure
+	lastCreateRelReq    *CreateRelationshipRequest  // last request passed to CreateRelationship
+	ftsResults          []GraphObject               // returned by SearchObjectsFTS
+	ftsErr              error                       // SearchObjectsFTS failure
+	ftsQuery            string                      // last query passed to SearchObjectsFTS
+	ftsTypeFilter       string                      // last type filter passed to SearchObjectsFTS
 
 	// Work items (object-driven work / Kanban board).
 	workItems         []WorkItem      // returned by ListWorkItems
@@ -3899,4 +3929,213 @@ func (f *fakeMemory) GetShareSessionTranscript(ctx context.Context, id string) (
 		return nil, f.shareTranscriptErr
 	}
 	return f.shareMessages, nil
+}
+
+// --- document version history ---
+
+func (f *fakeMemory) ListDocumentVersions(ctx context.Context, documentID string) ([]DocumentVersion, error) {
+	if f.documentVersionsErr != nil {
+		return nil, f.documentVersionsErr
+	}
+	return f.documentVersions, nil
+}
+
+// --- data-source integrations ---
+
+func (f *fakeMemory) ListDSProviders(ctx context.Context) ([]DSProvider, error) {
+	if f.dsErr != nil {
+		return nil, f.dsErr
+	}
+	if len(f.dsProviders) == 0 {
+		return []DSProvider{{Type: dsProviderTypeGoogleDrive, Name: "Google Drive", SourceType: "drive", Available: true}}, nil
+	}
+	return f.dsProviders, nil
+}
+
+func (f *fakeMemory) GetDSProviderSchema(ctx context.Context, providerType string) (*DSProviderSchema, error) {
+	if f.dsErr != nil {
+		return nil, f.dsErr
+	}
+	if f.dsSchema != nil {
+		return f.dsSchema, nil
+	}
+	if providerType != dsProviderTypeGoogleDrive {
+		return nil, &memoryHTTPError{Status: http.StatusNotFound, Message: "provider not found"}
+	}
+	return &DSProviderSchema{Type: providerType, Required: []string{"folder_id"}}, nil
+}
+
+func (f *fakeMemory) ListDSSourceTypes(ctx context.Context) ([]DSSourceType, error) {
+	if f.dsErr != nil {
+		return nil, f.dsErr
+	}
+	return f.dsSourceTypes, nil
+}
+
+func (f *fakeMemory) TestDSConfig(ctx context.Context, req *DSTestConfigRequest) (*DSTestConnectionResponse, error) {
+	f.dsLastTestConfig = req
+	if f.dsTestConfigErr != nil {
+		return nil, f.dsTestConfigErr
+	}
+	if f.dsTestConfigResp != nil {
+		return f.dsTestConfigResp, nil
+	}
+	return &DSTestConnectionResponse{Success: true, Message: "connection successful"}, nil
+}
+
+func (f *fakeMemory) TestDSConnection(ctx context.Context, id string) (*DSTestConnectionResponse, error) {
+	f.dsLastTestConnID = id
+	if f.dsTestConnErr != nil {
+		return nil, f.dsTestConnErr
+	}
+	if f.dsTestConnResp != nil {
+		return f.dsTestConnResp, nil
+	}
+	return &DSTestConnectionResponse{Success: true, Message: "connection successful"}, nil
+}
+
+func (f *fakeMemory) ListDSIntegrations(ctx context.Context) ([]DSIntegration, error) {
+	if f.dsErr != nil {
+		return nil, f.dsErr
+	}
+	return f.dsIntegrations, nil
+}
+
+func (f *fakeMemory) GetDSIntegration(ctx context.Context, id string) (*DSIntegration, error) {
+	if f.dsErr != nil {
+		return nil, f.dsErr
+	}
+	for i := range f.dsIntegrations {
+		if f.dsIntegrations[i].ID == id {
+			return &f.dsIntegrations[i], nil
+		}
+	}
+	return nil, &memoryHTTPError{Status: http.StatusNotFound, Message: "source not found"}
+}
+
+func (f *fakeMemory) CreateDSIntegration(ctx context.Context, req *DSCreateIntegrationRequest) (*DSIntegration, error) {
+	if f.dsCreateErr != nil {
+		return nil, f.dsCreateErr
+	}
+	f.dsCreatedReq = req
+	item := DSIntegration{
+		ID:           "ds-new",
+		ProjectID:    "p1",
+		Name:         req.Name,
+		ProviderType: req.ProviderType,
+		SourceType:   req.SourceType,
+		SyncMode:     "manual",
+		Status:       "active",
+		CreatedAt:    "2026-09-01T00:00:00Z",
+		UpdatedAt:    "2026-09-01T00:00:00Z",
+	}
+	if req.SyncMode != nil {
+		item.SyncMode = *req.SyncMode
+	}
+	item.SyncIntervalMinutes = req.SyncIntervalMinutes
+	f.dsIntegrations = append(f.dsIntegrations, item)
+	return &item, nil
+}
+
+func (f *fakeMemory) UpdateDSIntegration(ctx context.Context, id string, req *DSUpdateIntegrationRequest) (*DSIntegration, error) {
+	if f.dsUpdateErr != nil {
+		return nil, f.dsUpdateErr
+	}
+	f.dsUpdatedID = id
+	f.dsUpdatedReq = req
+	for i := range f.dsIntegrations {
+		if f.dsIntegrations[i].ID != id {
+			continue
+		}
+		if req.Name != nil {
+			f.dsIntegrations[i].Name = *req.Name
+		}
+		if req.SyncMode != nil {
+			f.dsIntegrations[i].SyncMode = *req.SyncMode
+		}
+		if req.SyncIntervalMinutes != nil {
+			f.dsIntegrations[i].SyncIntervalMinutes = req.SyncIntervalMinutes
+		}
+		return &f.dsIntegrations[i], nil
+	}
+	return nil, &memoryHTTPError{Status: http.StatusNotFound, Message: "source not found"}
+}
+
+func (f *fakeMemory) DeleteDSIntegration(ctx context.Context, id string) error {
+	if f.dsDeleteErr != nil {
+		return f.dsDeleteErr
+	}
+	f.dsDeletedID = id
+	kept := f.dsIntegrations[:0]
+	for _, s := range f.dsIntegrations {
+		if s.ID != id {
+			kept = append(kept, s)
+		}
+	}
+	f.dsIntegrations = kept
+	return nil
+}
+
+func (f *fakeMemory) TriggerDSSync(ctx context.Context, id string) (*DSTriggerSyncResponse, error) {
+	f.dsLastTriggerID = id
+	if f.dsTriggerErr != nil {
+		return nil, f.dsTriggerErr
+	}
+	if f.dsTriggerResp != nil {
+		return f.dsTriggerResp, nil
+	}
+	jobID := "job-1"
+	return &DSTriggerSyncResponse{Success: true, Message: "sync started", JobID: &jobID}, nil
+}
+
+func (f *fakeMemory) ListDSSyncJobs(ctx context.Context, id, status string) (*DSListSyncJobsResponse, error) {
+	if f.dsSyncJobsErr != nil {
+		return nil, f.dsSyncJobsErr
+	}
+	jobs := f.dsSyncJobs[id]
+	if status != "" {
+		filtered := make([]DSSyncJob, 0, len(jobs))
+		for _, j := range jobs {
+			if j.Status == status {
+				filtered = append(filtered, j)
+			}
+		}
+		jobs = filtered
+	}
+	return &DSListSyncJobsResponse{Items: jobs, Total: len(jobs)}, nil
+}
+
+func (f *fakeMemory) GetLatestDSSyncJob(ctx context.Context, id string) (*DSSyncJob, error) {
+	if f.dsSyncJobsErr != nil {
+		return nil, f.dsSyncJobsErr
+	}
+	jobs := f.dsSyncJobs[id]
+	if len(jobs) == 0 {
+		return nil, nil
+	}
+	return &jobs[0], nil
+}
+
+func (f *fakeMemory) GetDSSyncJob(ctx context.Context, id, jobID string) (*DSSyncJob, error) {
+	if f.dsSyncJobsErr != nil {
+		return nil, f.dsSyncJobsErr
+	}
+	jobs := f.dsSyncJobs[id]
+	for i := range jobs {
+		if jobs[i].ID == jobID {
+			return &jobs[i], nil
+		}
+	}
+	return nil, &memoryHTTPError{Status: http.StatusNotFound, Message: "job not found"}
+}
+
+func (f *fakeMemory) CancelDSSyncJob(ctx context.Context, id, jobID string) (*DSCancelSyncJobResponse, error) {
+	f.dsLastCancelJobID = jobID
+	if f.dsCancelErr != nil {
+		return nil, f.dsCancelErr
+	}
+	if f.dsCancelResp != nil {
+		return f.dsCancelResp, nil
+	}
+	return &DSCancelSyncJobResponse{Success: true, Message: "cancelled"}, nil
 }

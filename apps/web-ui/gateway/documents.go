@@ -21,6 +21,15 @@ type documentItem struct {
 	ExtractionStatus string `json:"extractionStatus"`
 	ObjectsCreated   int    `json:"objectsCreated"`
 	CreatedAt        string `json:"createdAt"`
+	// Source provenance (see Document): populated for documents ingested from
+	// a data source so clients can distinguish sourced documents and identify
+	// ones marked deleted_from_source.
+	SourceID         string `json:"sourceId,omitempty"`
+	SourceExternalID string `json:"sourceExternalId,omitempty"`
+	SourceRevisionID string `json:"sourceRevisionId,omitempty"`
+	SourceStatus     string `json:"sourceStatus,omitempty"`
+	SourceSyncedAt   string `json:"sourceSyncedAt,omitempty"`
+	SourceDeletedAt  string `json:"sourceDeletedAt,omitempty"`
 }
 
 func documentFromParts(d Document) documentItem {
@@ -34,6 +43,12 @@ func documentFromParts(d Document) documentItem {
 		ExtractionStatus: d.ExtractionStatus,
 		ObjectsCreated:   d.ObjectsCreated,
 		CreatedAt:        d.CreatedAt,
+		SourceID:         d.SourceID,
+		SourceExternalID: d.SourceExternalID,
+		SourceRevisionID: d.SourceRevisionID,
+		SourceStatus:     d.SourceStatus,
+		SourceSyncedAt:   d.SourceSyncedAt,
+		SourceDeletedAt:  d.SourceDeletedAt,
 	}
 }
 

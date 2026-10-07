@@ -1,3 +1,4 @@
+<!-- openspec:archive-hold: superseded by add-google-drive-ingestion (attribution schema reconciled; URL ingestion dropped) -->
 ## 1. Source schema and dedup
 
 - [ ] 1.1 Add a migration for `source_provider`, `source_external_id`, `source_synced_at`, `source_content_hash` and a uniqueness constraint on `(project_id, source_provider, source_external_id)` (`source_url` already exists); verify with a migration test

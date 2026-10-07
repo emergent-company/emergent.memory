@@ -78,6 +78,7 @@ func sidebarGroups(base string, isOrgAdmin bool) []layout.SidebarGroup {
 		{Label: "Embeddings", Href: base + "/embeddings", Icon: "lucide--scan-line"},
 		{Label: "Schema", Href: base + "/schema", Icon: "lucide--git-branch"},
 		{Label: "Documents", Href: base + "/documents", Icon: "lucide--file-text"},
+		{Label: "Data Sources", Href: base + "/data-sources", Icon: "lucide--cloud"},
 	}
 	if isOrgAdmin {
 		// Backups are org-scoped and org_admin-gated (see #997). Hiding the

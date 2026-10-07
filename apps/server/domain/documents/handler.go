@@ -120,6 +120,9 @@ func (h *Handler) List(c echo.Context) error {
 	if parentID := c.QueryParam("parentDocumentId"); parentID != "" {
 		params.ParentDocumentID = &parentID
 	}
+	if c.QueryParam("includeDeletedFromSource") == "true" {
+		params.IncludeDeletedFromSource = true
+	}
 
 	// Execute query
 	result, err := h.svc.List(c.Request().Context(), params)
@@ -167,6 +170,40 @@ func (h *Handler) GetByID(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, doc)
+}
+
+// GetVersionHistory handles GET /api/documents/:id/versions
+// @Summary      Get document version history
+// @Description  Return every version of a document ordered by version number, with source revision and status
+// @Tags         documents
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        id path string true "Document ID"
+// @Success      200 {object} map[string][]DocumentVersion
+// @Failure      400 {object} apperror.Error
+// @Failure      401 {object} apperror.Error
+// @Failure      404 {object} apperror.Error
+// @Router       /api/documents/{id}/versions [get]
+// @Security     bearerAuth
+func (h *Handler) GetVersionHistory(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	if user.ProjectID == "" {
+		return apperror.ErrBadRequest
+	}
+
+	documentID := c.Param("id")
+	if documentID == "" {
+		return apperror.ErrBadRequest
+	}
+
+	versions, err := h.svc.GetVersionHistory(c.Request().Context(), user.ProjectID, documentID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{"versions": versions})
 }
 
 // Create handles POST /api/documents

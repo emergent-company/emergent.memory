@@ -50,6 +50,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/search"
 	"github.com/emergent-company/emergent.memory/domain/sessiontodos"
 	"github.com/emergent-company/emergent.memory/domain/skills"
+	"github.com/emergent-company/emergent.memory/domain/sources"
 	"github.com/emergent-company/emergent.memory/domain/superadmin"
 	"github.com/emergent-company/emergent.memory/domain/tasks"
 	"github.com/emergent-company/emergent.memory/domain/useractivity"
@@ -186,6 +187,10 @@ var models = []any{
 
 	// domain/documents
 	(*documents.Document)(nil),
+
+	// domain/sources
+	(*sources.Source)(nil),
+	(*sources.SyncJob)(nil),
 
 	// domain/tasks
 	(*tasks.Task)(nil),

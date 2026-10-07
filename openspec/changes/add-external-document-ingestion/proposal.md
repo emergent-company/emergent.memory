@@ -23,3 +23,9 @@ Memory can only ingest files a user uploads and raw text bodies. There is no way
 - Gateway document API and UI; CLI document commands; SDK/gateway client methods.
 - Migration: add `source_provider`, `source_external_id`, `source_synced_at`, and `source_content_hash` (all new) plus a uniqueness constraint for source dedup. `source_url` already exists on `documents` and is not a new column.
 - Relationship: connector-side CRUD, OAuth, sync **jobs**, and discovery/UI stay in the existing `add-data-sources` change. This change supplies only the document-ingestion seam (upsert-by-source + URL ingest); the server-side integration/sync/discovery domain that `add-data-sources` calls remains unowned and should be scoped separately.
+
+## Superseded
+
+Superseded by `add-google-drive-ingestion`, which reconciles the attribution schema into
+`documents.source_id` + `source_external_id` + versioning columns and drops URL/SSRF ingestion
+(only folder-scoped source ingestion ships).

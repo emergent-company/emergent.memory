@@ -53,6 +53,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/search"
 	"github.com/emergent-company/emergent.memory/domain/sessiontodos"
 	"github.com/emergent-company/emergent.memory/domain/skills"
+	"github.com/emergent-company/emergent.memory/domain/sources"
 	"github.com/emergent-company/emergent.memory/domain/superadmin"
 	"github.com/emergent-company/emergent.memory/domain/tasks"
 	"github.com/emergent-company/emergent.memory/domain/tracing"
@@ -396,6 +397,12 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	docsHandler := documents.NewHandler(docsSvc, storageSvc, nil, nil, nil, log)
 	uploadHandler := documents.NewUploadHandler(docsSvc, storageSvc, nil, nil, &config.Config{}, log)
 	documents.RegisterRoutes(e, docsHandler, uploadHandler, authMiddleware)
+
+	// Register sources routes
+	sourcesRepo := sources.NewRepository(db, log)
+	sourcesSvc := sources.NewService(sourcesRepo, testDB.Config, log)
+	sourcesHandler := sources.NewHandler(sourcesSvc)
+	sources.RegisterRoutes(e, sourcesHandler, authMiddleware)
 
 	// Register orgs routes
 	orgsRepo := orgs.NewRepository(db, log)

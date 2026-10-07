@@ -25,6 +25,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, uploadHandler *UploadHandler, auth
 	readGroup.Use(authMiddleware.RequireAPITokenScopes("documents:read"))
 	readGroup.GET("", h.List)
 	readGroup.GET("/:id", h.GetByID)
+	readGroup.GET("/:id/versions", h.GetVersionHistory)
 	readGroup.GET("/:id/content", h.GetContent)
 	readGroup.GET("/:id/download", h.Download)
 	readGroup.GET("/:id/extraction-summary", h.GetExtractionSummary)
