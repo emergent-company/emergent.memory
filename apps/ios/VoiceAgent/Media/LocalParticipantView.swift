@@ -8,7 +8,7 @@ struct LocalParticipantView: View {
 
     var body: some View {
         if let cameraTrack = localMedia.cameraTrack {
-            SwiftUIVideoView(cameraTrack)
+            let video = SwiftUIVideoView(cameraTrack)
                 .clipShape(RoundedRectangle(cornerRadius: .cornerRadiusPerPlatform))
                 .aspectRatio(cameraTrack.aspectRatio, contentMode: .fit)
                 .shadow(radius: 20, y: 10)
@@ -25,7 +25,12 @@ struct LocalParticipantView: View {
                         .padding(2 * .grid)
                     }
                 }
-                .matchedGeometryEffect(id: "camera", in: namespace!)
+            if let namespace {
+                video
+                    .matchedGeometryEffect(id: "camera", in: namespace)
+            } else {
+                video
+            }
         }
     }
 }

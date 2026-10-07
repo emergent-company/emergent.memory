@@ -8,12 +8,17 @@ struct ScreenShareView: View {
 
     var body: some View {
         if let screenShareTrack = localMedia.screenShareTrack {
-            SwiftUIVideoView(screenShareTrack)
+            let video = SwiftUIVideoView(screenShareTrack)
                 .clipShape(RoundedRectangle(cornerRadius: .cornerRadiusPerPlatform))
                 .aspectRatio(screenShareTrack.aspectRatio, contentMode: .fit)
                 .shadow(radius: 20, y: 10)
                 .transition(.scale.combined(with: .opacity))
-                .matchedGeometryEffect(id: "screen", in: namespace!)
+            if let namespace {
+                video
+                    .matchedGeometryEffect(id: "screen", in: namespace)
+            } else {
+                video
+            }
         }
     }
 }

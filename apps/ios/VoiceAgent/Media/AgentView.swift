@@ -11,6 +11,15 @@ struct AgentView: View {
     @SceneStorage("videoTransition") private var videoTransition = false
 
     var body: some View {
+        if let namespace {
+            content
+                .matchedGeometryEffect(id: "agent", in: namespace)
+        } else {
+            content
+        }
+    }
+
+    private var content: some View {
         ZStack {
             if let avatarVideoTrack = session.agent.avatarVideoTrack {
                 SwiftUIVideoView(avatarVideoTrack)
@@ -49,6 +58,5 @@ struct AgentView: View {
             }
         }
         .animation(.snappy, value: session.agent.audioTrack?.id)
-        .matchedGeometryEffect(id: "agent", in: namespace!)
     }
 }

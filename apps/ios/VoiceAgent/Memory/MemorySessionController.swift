@@ -88,6 +88,9 @@ final class MemorySessionController: ObservableObject {
     /// Task per change.
     private var transcriptScanTask: Task<Void, Never>?
     private var messageTraceTask: Task<Void, Never>?
+    /// Serializes end-of-session sweeps (exit keyword, agent-left, away) into a
+    /// single `endSession` so overlapping triggers don't race each other.
+    private var sessionEndTask: Task<Void, Never>?
 
     /// Speaks agent replies locally (AVSpeechSynthesizer — no server TTS).
     private let speechSynthesizer = AVSpeechSynthesizer()
@@ -97,6 +100,15 @@ final class MemorySessionController: ObservableObject {
         let session = Self.makeSession(config: config)
         self.session = session
         localMedia = LocalMedia(session: session)
+        // SwiftUI `ObservableObject` observation is shallow: views observing the
+        // controller but reading `controller.chatActivity.turns`/`.surfaces`
+        // would not re-render when the nested store mutates. Forward the store's
+        // `objectWillChange` into the controller's own so live thinking, tool
+        // chips, and approval/question cards render promptly (and an approval
+        // card that pauses the worker before the first transcript is not stuck).
+        chatActivity.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
         observe()
     }
 
@@ -237,7 +249,7 @@ final class MemorySessionController: ObservableObject {
             // 4.4: the agent participant left the room — end the session and
             // return the UI to idle.
             TraceLog.log("agent_left", ["identity": agentIdentity, "reason": "left"], room: session.room.name ?? "")
-            Task { await endSession() }
+            scheduleSessionEnd()
         }
     }
 
@@ -306,6 +318,17 @@ final class MemorySessionController: ObservableObject {
         }
     }
 
+    /// Coalesces session-end triggers into a single `endSession` call, mirroring
+    /// `scheduleTranscriptScan`/`scheduleMessageTrace`: cancel/replace instead
+    /// of spawning overlapping sweeps.
+    private func scheduleSessionEnd() {
+        sessionEndTask?.cancel()
+        sessionEndTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await endSession()
+        }
+    }
+
     private func scanTranscripts() {
         let keywords = config.exitKeywords.map { $0.lowercased() }
         guard !keywords.isEmpty else { return }
@@ -315,7 +338,7 @@ final class MemorySessionController: ObservableObject {
             guard message.isFinal, case let .userTranscript(text) = message.content else { continue }
             let transcript = text.lowercased()
             if keywords.contains(where: { transcript.contains($0) }) {
-                Task { await endSession() }
+                scheduleSessionEnd()
                 return
             }
         }
@@ -330,7 +353,8 @@ final class MemorySessionController: ObservableObject {
         let room = session.room
 
         // 4.1: cue-to-speak chime on `lk.agent.ready`.
-        Task { [self] in
+        Task { [weak self] in
+            guard let self else { return }
             do {
                 try await room.registerTextStreamHandler(for: Self.agentReadyTopic) { [weak self] reader, _ in
                     _ = try await reader.readAll()
@@ -342,7 +366,8 @@ final class MemorySessionController: ObservableObject {
         }
 
         // 4.2: `lk.agent.events` — `user_state_changed` to `away` ends the session.
-        Task { [self] in
+        Task { [weak self] in
+            guard let self else { return }
             do {
                 try await room.registerTextStreamHandler(for: Self.agentEventsTopic) { [weak self] reader, _ in
                     let body = try await reader.readAll()
@@ -356,7 +381,8 @@ final class MemorySessionController: ObservableObject {
         // iOS chat parity: `lk.chat.events` — rich activity (tool calls,
         // thinking, approvals, questions) rendered by the live chat. Older
         // workers never emit on this topic, so this registration is additive.
-        Task { [self] in
+        Task { [weak self] in
+            guard let self else { return }
             do {
                 try await room.registerTextStreamHandler(for: Self.chatEventsTopic) { [weak self] reader, _ in
                     let body = try await reader.readAll()
@@ -390,7 +416,7 @@ final class MemorySessionController: ObservableObject {
         else { return }
 
         if event.type == "user_state_changed", event.newState == "away" {
-            Task { await endSession() }
+            scheduleSessionEnd()
         }
     }
 
