@@ -391,6 +391,7 @@ type fakeMemory struct {
 	lastModelConfig        *ProjectModelConfig // last UpsertProjectModelConfig
 
 	orgs                 []Org                     // returned by ListOrgs
+	listOrgsErr          error                     // failure for ListOrgs
 	createdOrgs          []Org                     // every CreateOrg request, in order
 	createOrgID          int                       // id counter for created orgs
 	createOrgErr         error                     // failure for CreateOrg
@@ -417,6 +418,8 @@ type fakeMemory struct {
 	orgsAndProjects      []OrgWithProjectsDto      // returned by GetOrgsAndProjects
 	orgsAndProjectsCalls int                       // number of GetOrgsAndProjects calls
 	projects             []ProjectRef              // returned by ListProjects
+	listProjectsErr      error                     // failure for ListProjects
+	listProjectsInclErr  error                     // failure for ListProjectsIncludingPending
 	createdProjects      []ProjectRef              // every CreateProject request, in order
 	createProjectID      int                       // id counter for created projects
 
@@ -3263,14 +3266,23 @@ func TestListScheduledAgentRuns(t *testing.T) {
 // --- orgs & projects (user tenancy) ---
 
 func (f *fakeMemory) ListOrgs(ctx context.Context) ([]Org, error) {
+	if f.listOrgsErr != nil {
+		return nil, f.listOrgsErr
+	}
 	return f.orgs, nil
 }
 
 func (f *fakeMemory) ListProjects(ctx context.Context) ([]ProjectRef, error) {
+	if f.listProjectsErr != nil {
+		return nil, f.listProjectsErr
+	}
 	return f.projects, nil
 }
 
 func (f *fakeMemory) ListProjectsIncludingPending(ctx context.Context) ([]ProjectRef, error) {
+	if f.listProjectsInclErr != nil {
+		return nil, f.listProjectsInclErr
+	}
 	return f.projects, nil
 }
 

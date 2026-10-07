@@ -233,6 +233,19 @@ templ pageError(heading string, err error) {
 	})
 }
 
+// RootUnavailablePage renders the explicit "backend unavailable" state for the
+// landing route (GET /) when the org-list fetch fails. It deliberately never
+// renders the empty/onboarding state: an authenticated zero-org response is the
+// only trigger for the create flow, so a backend failure cannot masquerade as
+// data loss.
+templ RootUnavailablePage(err error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@pageHeader("Home", "Memory", "") {}
+		<p class="text-muted mb-4 text-sm">Your data is safe — Memory is temporarily unavailable and will retry automatically.</p>
+		@pageError("Service temporarily unavailable", err)
+	}
+}
+
 // --- script blocks exposed to the page (call into window.MemoryApp) ---
 
 script openAgentForm(id string) {

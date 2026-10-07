@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -428,5 +429,35 @@ func TestResolveDefaultProjectNoopWithProject(t *testing.T) {
 	e.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (no redirect when project is active)", rec.Code)
+	}
+}
+
+// TestResolveDefaultProjectUnavailable asserts a projects-list backend failure
+// renders the explicit unavailable state instead of redirecting to /orgs (so an
+// outage is never mistaken for a user with no projects).
+func TestResolveDefaultProjectUnavailable(t *testing.T) {
+	f := &fakeMemory{
+		listProjectsErr: &memoryHTTPError{Status: http.StatusServiceUnavailable, Code: "service_unavailable", Message: "Token validation temporarily unavailable"},
+	}
+	s := &Server{cfg: Config{AuthMode: "session", SessionSecret: "test-secret"}, memory: f}
+	e := sessionServer(s)
+
+	req := httptest.NewRequest(http.MethodGet, "/agents", nil)
+	addSessionCookie(t, req, "test-secret", sessionClaims{
+		AccessToken: "at",
+		Sub:         "sub-a",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+	})
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (unavailable page, not a redirect)", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Service temporarily unavailable") {
+		t.Errorf("unavailable state missing, got %q", body)
+	}
+	if strings.Contains(body, "Create organization") {
+		t.Errorf("backend failure must never render the empty/onboarding state, got %q", body)
 	}
 }

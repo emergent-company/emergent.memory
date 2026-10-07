@@ -119,6 +119,31 @@ func TestUIRootRedirect(t *testing.T) {
 			t.Fatalf("/ with no orgs = %d %q, want 302 /orgs/new", rec.Code, rec.Header().Get("Location"))
 		}
 	})
+
+	t.Run("backend failure renders unavailable state, never the wizard", func(t *testing.T) {
+		s := &Server{cfg: sessionCfg(), memory: &fakeMemory{
+			listOrgsErr: &memoryHTTPError{Status: http.StatusServiceUnavailable, Code: "service_unavailable", Message: "Token validation temporarily unavailable"},
+		}}
+		e := orgContextUIServer(s)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+			AccessToken: "at",
+			Sub:         "sub-a",
+			ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+		}))
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("/ with backend failure = %d, want 200 unavailable page (not a redirect)", rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, "Service temporarily unavailable") || !strings.Contains(body, "Your data is safe") {
+			t.Errorf("unavailable state missing explicit copy, got %q", body)
+		}
+		if strings.Contains(body, "Create organization") || strings.Contains(body, "Create the first project") {
+			t.Errorf("backend failure must never render the empty/onboarding state, got %q", body)
+		}
+	})
 }
 
 // TestUIOrgLanding covers the org landing: populated list, empty state, and
@@ -230,6 +255,37 @@ func TestUIOrgLandingNotFound(t *testing.T) {
 	e.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Organization unavailable") {
 		t.Errorf("unknown org = %d, want 200 with error state", rec.Code)
+	}
+}
+
+// TestUIOrgLandingProjectsUnavailable covers the backend-failure path for the
+// org landing: a projects-list error must render the unavailable state, never
+// the "No projects yet / Create project" empty state.
+func TestUIOrgLandingProjectsUnavailable(t *testing.T) {
+	f := &fakeMemory{
+		orgs:                []Org{{ID: "o1", Name: "Acme"}},
+		listProjectsInclErr: &memoryHTTPError{Status: http.StatusServiceUnavailable, Code: "service_unavailable", Message: "Token validation temporarily unavailable"},
+	}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	e := orgContextUIServer(s)
+
+	req := httptest.NewRequest(http.MethodGet, "/orgs/o1", nil)
+	req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+		AccessToken: "at",
+		OrgID:       "o1",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+	}))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /orgs/o1 with backend failure = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Organization unavailable") {
+		t.Errorf("projects failure must render the unavailable state, got %q", body)
+	}
+	if strings.Contains(body, "Create project") || strings.Contains(body, "Create the first project in this organization.") {
+		t.Errorf("projects failure must never render the empty/onboarding state, got %q", body)
 	}
 }
 

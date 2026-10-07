@@ -131,7 +131,12 @@ func (s *Server) uiOrg(c echo.Context) error {
 		return s.page(c, pageTitle("Organization"), OrgLandingPage(orgPageData{LoadErr: err}))
 	}
 	projects, err := s.memory.ListProjectsIncludingPending(c.Request().Context())
-	captureError(err)
+	if err != nil {
+		// A projects-list failure must render the unavailable state, not the
+		// empty "No projects yet / Create project" screen: the create CTA is
+		// reserved for a successful zero-project response.
+		return s.page(c, pageTitle("Organization"), OrgLandingPage(orgPageData{Org: org, LoadErr: err}))
+	}
 	// The org access tree supplies the acting user's orgs with roles:
 	// candidates for the transfer destination picker and the per-row
 	// Transfer-action gating. Threaded once per request (see orgAccessTree) and
@@ -646,7 +651,14 @@ func (s *Server) uiRoot(c echo.Context) error {
 		return c.Redirect(http.StatusFound, "/o/"+url.PathEscape(sc.OrgID))
 	}
 	orgs, err := s.memory.ListOrgs(c.Request().Context())
-	if err == nil && len(orgs) > 0 {
+	if err != nil {
+		// A backend failure must surface the explicit unavailable state, never
+		// the empty/onboarding wizard: the create screen is reserved for an
+		// authenticated zero-org response, so an outage cannot look like data
+		// loss.
+		return s.page(c, pageTitle("Service temporarily unavailable"), RootUnavailablePage(err))
+	}
+	if len(orgs) > 0 {
 		s.activateOrg(c, orgs[0].ID)
 		return c.Redirect(http.StatusFound, "/o/"+url.PathEscape(orgs[0].ID))
 	}
