@@ -401,6 +401,15 @@ func (h *A2AHandler) streamNewTask(c echo.Context, projectID, userID, userMessag
 	}
 	contextID = session.ID
 
+	// Kill switch: refuse before creating the run row. Creating it first would
+	// leave a `running` row until the stale-run reaper (same guarantee as the
+	// JSON /message path).
+	if h.executor != nil {
+		if err := h.executor.EnsureExecutionEnabled(); err != nil {
+			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, err.Error()))
+		}
+	}
+
 	triggerSource := "a2a"
 	run, err := h.repo.CreateRunWithOptions(ctx, CreateRunOptions{
 		AgentID:        agent.ID,
@@ -459,6 +468,15 @@ func (h *A2AHandler) streamResumeTask(c echo.Context, projectID, userID, userMes
 	questions, err := h.repo.FindPendingQuestionsByRunID(ctx, latest.ID)
 	if err != nil || len(questions) == 0 {
 		return writeA2AError(c, a2aInvalidStateError("no pending question for task"))
+	}
+
+	// Kill switch: check BEFORE claiming the pending question, otherwise a
+	// disabled resume consumes the question and permanently strands the task
+	// (same guarantee as the JSON /message path).
+	if h.executor != nil {
+		if err := h.executor.EnsureExecutionEnabled(); err != nil {
+			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, err.Error()))
+		}
 	}
 
 	claimed, err := h.repo.AnswerQuestion(ctx, questions[0].ID, userMessage, userID)
@@ -577,6 +595,10 @@ func (h *A2AHandler) streamRun(
 	}
 	if execErr != nil {
 		h.log.Error("a2a stream run failed", "task_id", taskID, "error", execErr.Error())
+		// Defence in depth: if the switch was flipped after the pre-check, the
+		// executor refused before touching the row, so fail it terminal rather
+		// than leaving it `running` until the stale-run reaper.
+		failRunIfExecutionDisabled(bgCtx, h.repo, run, execErr, h.log)
 	}
 
 	h.streamTerminal(bgCtx, writer, tr, projectID, taskID, result, execErr)

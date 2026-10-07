@@ -461,3 +461,80 @@ func TestTokenCreateScopesParam_AdvertisesAllScopes(t *testing.T) {
 	assert.Equal(t, want, scopesDesc)
 	assert.Contains(t, scopesDesc, "chat:use")
 }
+
+// =============================================================================
+// Kill switch error surfacing + configurable internal base URL
+// =============================================================================
+
+// TestExecuteQueryKnowledge_KillSwitchErrorNotDoubleWrapped asserts the
+// kill-switch message is surfaced cleanly instead of as "agent error: ...".
+func TestExecuteQueryKnowledge_KillSwitchErrorNotDoubleWrapped(t *testing.T) {
+	body := buildSseLines(`{"type":"error","error":"agent execution is disabled system-wide"}`)
+	ts, port := sseServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, body)
+	})
+	defer ts.Close()
+
+	svc := &Service{serverPort: port}
+	_, err := svc.executeQueryKnowledge(context.Background(), "proj-id", map[string]any{"question": "q"})
+	require.Error(t, err)
+	assert.Equal(t, "query_knowledge: agent execution is disabled system-wide", err.Error())
+}
+
+// TestServiceBaseURL_PrefersConfiguredAndFallsBack asserts baseURL() honours
+// INTERNAL_BASE_URL and otherwise falls back to http://localhost:<port>.
+func TestServiceBaseURL_PrefersConfiguredAndFallsBack(t *testing.T) {
+	configured := &Service{internalBaseURL: "http://internal.example:9999", serverPort: 1234}
+	assert.Equal(t, "http://internal.example:9999", configured.baseURL())
+
+	fallback := &Service{serverPort: 4321}
+	assert.Equal(t, "http://localhost:4321", fallback.baseURL())
+}
+
+// TestExecuteQueryKnowledge_UsesInternalBaseURLWhenSet asserts the tool dials the
+// configured internal base URL rather than localhost:serverPort.
+func TestExecuteQueryKnowledge_UsesInternalBaseURLWhenSet(t *testing.T) {
+	body := buildSseLines(`{"type":"token","token":"ok"}`, `[DONE]`)
+	var hit bool
+	ts, _ := sseServer(t, func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, body)
+	})
+	defer ts.Close()
+
+	svc := &Service{internalBaseURL: ts.URL}
+	result, err := svc.executeQueryKnowledge(context.Background(), "proj-id", map[string]any{"question": "q"})
+	require.NoError(t, err)
+	assert.True(t, hit, "the configured internalBaseURL must have been dialled")
+	m := parseResultMap(t, result)
+	assert.Equal(t, "ok", m["answer"])
+}
+
+// TestExecuteQueryKnowledge_GenericErrorStillWrapped guards the kill-switch
+// special-case against over-broad matching: an unrelated SSE error must keep the
+// generic "agent error: <msg>" wrapper.
+func TestExecuteQueryKnowledge_GenericErrorStillWrapped(t *testing.T) {
+	body := buildSseLines(`{"type":"error","error":"something went wrong"}`)
+	ts, port := sseServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, body)
+	})
+	defer ts.Close()
+
+	svc := &Service{serverPort: port}
+	_, err := svc.executeQueryKnowledge(context.Background(), "proj-id", map[string]any{"question": "q"})
+	require.Error(t, err)
+	assert.Equal(t, "query_knowledge: agent error: something went wrong", err.Error())
+}
+
+// TestServiceBaseURL_TrimsTrailingSlash asserts a configured base URL ending in
+// "/" cannot produce a doubled slash before api/...
+func TestServiceBaseURL_TrimsTrailingSlash(t *testing.T) {
+	svc := &Service{internalBaseURL: "http://internal.example:9999/", serverPort: 1}
+	assert.Equal(t, "http://internal.example:9999", svc.baseURL())
+
+	multi := &Service{internalBaseURL: "http://internal.example:9999///", serverPort: 1}
+	assert.Equal(t, "http://internal.example:9999", multi.baseURL())
+}

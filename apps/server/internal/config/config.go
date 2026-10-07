@@ -17,11 +17,12 @@ var Module = fx.Module("config",
 // Config holds all application configuration
 type Config struct {
 	// Server settings
-	ServerPort    int    `env:"SERVER_PORT" envDefault:"3002"`
-	ServerAddress string `env:"SERVER_ADDRESS" envDefault:"0.0.0.0"`
-	Environment   string `env:"ENVIRONMENT" envDefault:"local"`
-	Debug         bool   `env:"DEBUG" envDefault:"false"`
-	LogLevel      string `env:"LOG_LEVEL" envDefault:"info"`
+	ServerPort      int    `env:"SERVER_PORT" envDefault:"3002"`
+	ServerAddress   string `env:"SERVER_ADDRESS" envDefault:"0.0.0.0"`
+	InternalBaseURL string `env:"INTERNAL_BASE_URL" envDefault:""`
+	Environment     string `env:"ENVIRONMENT" envDefault:"local"`
+	Debug           bool   `env:"DEBUG" envDefault:"false"`
+	LogLevel        string `env:"LOG_LEVEL" envDefault:"info"`
 
 	// Database settings
 	Database DatabaseConfig

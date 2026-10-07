@@ -720,6 +720,15 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 		agentDefID = &agentDef.ID
 	}
 
+	// Kill switch: refuse before creating the run row. Creating it first would
+	// leave a `running` row until the stale-run reaper and still return a false
+	// success:true to the caller.
+	if h.executor != nil {
+		if err := h.executor.EnsureExecutionEnabled(); err != nil {
+			return apperror.New(http.StatusServiceUnavailable, "agent_execution_disabled", err.Error())
+		}
+	}
+
 	run, err := h.repo.CreateRunWithOptions(c.Request().Context(), CreateRunOptions{
 		AgentID:           agent.ID,
 		TriggerSource:     &triggerSource,
@@ -787,6 +796,7 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 				slog.String("agent_id", agent.ID),
 				slog.String("error", execErr.Error()),
 			)
+			failRunIfExecutionDisabled(bgCtx, h.repo, run, execErr, h.executor.log)
 		}
 	}()
 
@@ -2893,6 +2903,14 @@ type RespondParams struct {
 // resumes the run in a background goroutine. Share callers must verify
 // question->run->session ownership BEFORE calling this.
 func (h *Handler) RespondToQuestion(ctx context.Context, p RespondParams) (*AgentQuestionDTO, error) {
+	// Kill switch: refuse before claiming the pending question. Consuming it and
+	// then having Resume refuse would strand the run paused with no question.
+	if h.executor != nil {
+		if err := h.executor.EnsureExecutionEnabled(); err != nil {
+			return nil, apperror.New(http.StatusServiceUnavailable, "agent_execution_disabled", err.Error())
+		}
+	}
+
 	if p.ProjectID == "" {
 		return nil, apperror.NewBadRequest("projectId is required")
 	}
@@ -3128,6 +3146,10 @@ func (h *Handler) resumeQuestionRun(ctx context.Context, p RespondParams, run *A
 					slog.String("error", repoErr.Error()),
 				)
 			}
+			// The pre-created resume run must also reach a terminal state: when the
+			// kill switch refused the resume the executor never touched it, so it
+			// would otherwise sit `running` until the stale-run reaper.
+			failRunIfExecutionDisabled(ctx, h.repo, preCreatedRun, err, slog.Default())
 		}
 		// Notify the caller (share) that the resumed leg has settled so it can
 		// reconcile budget usage. Invoked last so Cleanup + failure marking are

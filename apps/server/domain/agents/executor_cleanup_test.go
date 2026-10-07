@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -293,4 +294,91 @@ func TestExecuteWithRun_DisableAuthMintDoesNotMint(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, svc.mintedTokenIDs, "DisableAuthMint must suppress the ephemeral mint")
 	assert.Empty(t, svc.revokedTokenIDs, "nothing was minted, so nothing may be revoked")
+}
+
+// TestExecuteWithRun_ExecutionDisabledDoesNotMutateRun asserts the headline
+// guarantee: a disabled ExecuteWithRun refuses before touching the pre-created
+// run row (no trust-marker UPDATE) and does not mutate it in memory either. This
+// is what keeps a kill switch from half-persisting execution state.
+func TestExecuteWithRun_ExecutionDisabledDoesNotMutateRun(t *testing.T) {
+	rootDriver.reset()
+	repo := newRootCaptureRepository(t)
+	ae := &AgentExecutor{
+		repo:       repo,
+		safeguards: config.AgentSafeguardsConfig{ExecutionEnabled: false},
+		log:        testAgentLogger(),
+	}
+
+	run := &AgentRun{ID: "run-1", Status: RunStatusRunning}
+	_, err := ae.ExecuteWithRun(context.Background(), run, ExecuteRequest{
+		ProjectID:       "proj-1",
+		UserMessage:     "hello",
+		TrustedInternal: true,
+	})
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrExecutionDisabled))
+	assert.Empty(t, rootDriver.queriesCopy(),
+		"a disabled ExecuteWithRun must not issue any query (no UpdateRunTrustedInternal)")
+	assert.False(t, run.TrustedInternal,
+		"the in-memory run must not be mutated by a disabled ExecuteWithRun")
+}
+
+// TestExecute_ExecutionDisabled asserts the kill switch gates the Execute entry
+// point and returns the stable ErrExecutionDisabled sentinel.
+func TestExecute_ExecutionDisabled(t *testing.T) {
+	repo := newRootCaptureRepository(t)
+	ae := &AgentExecutor{
+		repo:       repo,
+		safeguards: config.AgentSafeguardsConfig{ExecutionEnabled: false},
+		log:        testAgentLogger(),
+	}
+
+	_, err := ae.Execute(context.Background(), ExecuteRequest{
+		ProjectID:   "proj-1",
+		UserMessage: "hello",
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrExecutionDisabled),
+		"Execute must return ErrExecutionDisabled when the kill switch is off")
+}
+
+// TestExecuteWithRun_ExecutionDisabled asserts the kill switch gates the
+// worker-pool / async-A2A entry point before any run-row mutation.
+func TestExecuteWithRun_ExecutionDisabled(t *testing.T) {
+	repo := newRootCaptureRepository(t)
+	ae := &AgentExecutor{
+		repo:       repo,
+		safeguards: config.AgentSafeguardsConfig{ExecutionEnabled: false},
+		log:        testAgentLogger(),
+	}
+
+	run := &AgentRun{ID: "run-1", Status: RunStatusRunning}
+	_, err := ae.ExecuteWithRun(context.Background(), run, ExecuteRequest{
+		ProjectID:   "proj-1",
+		UserMessage: "hello",
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrExecutionDisabled),
+		"ExecuteWithRun must return ErrExecutionDisabled when the kill switch is off")
+}
+
+// TestResume_ExecutionDisabled asserts the kill switch gates the Resume entry
+// point (the MCP respond / session-UI wake path).
+func TestResume_ExecutionDisabled(t *testing.T) {
+	repo := newRootCaptureRepository(t)
+	ae := &AgentExecutor{
+		repo:       repo,
+		safeguards: config.AgentSafeguardsConfig{ExecutionEnabled: false},
+		log:        testAgentLogger(),
+	}
+
+	priorRun := &AgentRun{ID: "run-1", Status: RunStatusPaused}
+	_, err := ae.Resume(context.Background(), priorRun, ExecuteRequest{
+		ProjectID:   "proj-1",
+		UserMessage: "hello",
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrExecutionDisabled),
+		"Resume must return ErrExecutionDisabled when the kill switch is off")
 }

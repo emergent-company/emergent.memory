@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/emergent-company/emergent.memory/domain/provider"
+	"github.com/emergent-company/emergent.memory/pkg/agentexec"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
@@ -97,7 +98,7 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 	}
 
 	// The query endpoint is on the same server — use the server's own listen address.
-	url := fmt.Sprintf("http://localhost:%d/api/projects/%s/query", s.serverPort, projectID)
+	url := fmt.Sprintf("%s/api/projects/%s/query", s.baseURL(), projectID)
 
 	// Capture the tool-imposed budget deadline before deriving the request
 	// context: the caller's context may carry its own (possibly shorter) deadline,
@@ -185,6 +186,11 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 			}
 		case "error":
 			if errMsg, ok := chunk["error"].(string); ok && errMsg != "" {
+				// The kill switch error already names the condition; do not
+				// double-wrap it as "agent error: ...".
+				if strings.Contains(errMsg, agentexec.ErrExecutionDisabled.Error()) {
+					return nil, fmt.Errorf("query_knowledge: %s", agentexec.ErrExecutionDisabled.Error())
+				}
 				return nil, fmt.Errorf("query_knowledge: agent error: %s", errMsg)
 			}
 		}

@@ -73,7 +73,7 @@
 - [x] 9.1 Add check at start of `Execute()` for `AGENT_EXECUTION_ENABLED` env var
 - [x] 9.2 If set to false, return error "agent execution is disabled system-wide"
 - [x] 9.3 Add log entry for kill switch activation
-- [ ] 9.4 Add test case for kill switch blocking execution
+- [x] 9.4 Add test case for kill switch blocking execution (covered by `gate-kill-switch-all-agent-entry-points`, #1646)
 
 ## 10. Worker Pool - Failure Tracking Integration
 
@@ -176,7 +176,7 @@
 - [ ] 20.7 Verify auto-disabled agent does not fire cron schedule
 - [ ] 20.8 Re-enable agent, verify cron re-registers and fires correctly
 - [ ] 20.9 Test RESOURCE_EXHAUSTED error disables agent after 1 retry
-- [ ] 20.10 Verify emergency kill switch blocks all agent execution when AGENT_EXECUTION_ENABLED=false
+- [ ] 20.10 Verify emergency kill switch blocks all agent execution when AGENT_EXECUTION_ENABLED=false (unit coverage for all three entry points added in `gate-kill-switch-all-agent-entry-points`, #1646; live-environment verification still pending)
 
 ## 21. Monitoring & Observability
 

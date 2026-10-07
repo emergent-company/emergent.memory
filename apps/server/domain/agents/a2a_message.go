@@ -648,6 +648,11 @@ func (h *A2AHandler) startA2ATask(c echo.Context, projectID, userID, userMessage
 	contextID = session.ID
 
 	triggerSource := "a2a"
+	if h.executor != nil {
+		if err := h.executor.EnsureExecutionEnabled(); err != nil {
+			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, err.Error()))
+		}
+	}
 	run, err := h.repo.CreateRunWithOptions(ctx, CreateRunOptions{
 		AgentID:        agent.ID,
 		TriggerSource:  &triggerSource,
@@ -684,6 +689,7 @@ func (h *A2AHandler) startA2ATask(c echo.Context, projectID, userID, userMessage
 			}
 			if execErr != nil {
 				h.log.Error("a2a async run failed", "run_id", run.ID, "error", execErr.Error())
+				failRunIfExecutionDisabled(bgCtx, h.repo, run, execErr, h.log)
 			}
 		}()
 		task := asyncTaskSnapshot(run, contextID)
@@ -696,6 +702,7 @@ func (h *A2AHandler) startA2ATask(c echo.Context, projectID, userID, userMessage
 	}
 	if execErr != nil {
 		h.log.Error("a2a sync run failed", "run_id", run.ID, "error", execErr.Error())
+		failRunIfExecutionDisabled(ctx, h.repo, run, execErr, h.log)
 	}
 
 	return h.respondWithA2ATask(c, projectID, run.ID)
@@ -733,6 +740,14 @@ func (h *A2AHandler) resumeA2ATask(c echo.Context, projectID, userID, userMessag
 	questions, err := h.repo.FindPendingQuestionsByRunID(ctx, latest.ID)
 	if err != nil || len(questions) == 0 {
 		return writeA2AError(c, a2aInvalidStateError("no pending question for task"))
+	}
+
+	// Kill switch: check BEFORE claiming the pending question, otherwise a
+	// disabled resume consumes the question and permanently strands the task.
+	if h.executor != nil {
+		if err := h.executor.EnsureExecutionEnabled(); err != nil {
+			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, err.Error()))
+		}
 	}
 
 	// Atomically claim the pending question (mirror ACP AnswerQuestion path); a

@@ -1451,6 +1451,12 @@ func (h *MCPToolHandler) ExecuteRespondToAgentQuestion(ctx context.Context, proj
 		return errResult(fmt.Sprintf("question is already %s", question.Status))
 	}
 
+	if h.executor != nil {
+		if err := h.executor.EnsureExecutionEnabled(); err != nil {
+			return errResult(err.Error())
+		}
+	}
+
 	claimed, err := h.repo.AnswerQuestion(ctx, questionID, response, "mcp-tool")
 	if err != nil {
 		return errResult("failed to answer question: " + err.Error())

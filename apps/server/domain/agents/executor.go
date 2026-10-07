@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -33,6 +34,7 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/a2ui"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
+	"github.com/emergent-company/emergent.memory/pkg/agentexec"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
@@ -392,6 +394,16 @@ func (e *BudgetExceededError) Error() string {
 	}
 	return fmt.Sprintf("project %s has exceeded its monthly budget", e.ProjectID)
 }
+
+// ErrExecutionDisabled is the sentinel error returned by every agent execution
+// entry point (Execute, ExecuteWithRun, Resume) when the AGENT_EXECUTION_ENABLED
+// kill switch is off. It is distinct from budget/queue errors so callers can
+// detect a system-wide disable and surface it cleanly.
+//
+// It aliases agentexec.ErrExecutionDisabled so that consumers which cannot import
+// this package (domain/mcp — importing agents would create a cycle) still detect
+// the same value and share the same canonical message.
+var ErrExecutionDisabled = agentexec.ErrExecutionDisabled
 
 // QueueFullError is returned when an agent already has too many pending jobs in the queue.
 // This prevents queue explosion by rejecting new runs when the queue is at capacity.
@@ -830,18 +842,60 @@ func NewAgentExecutor(
 	}
 }
 
+// EnsureExecutionEnabled reports whether agent execution is currently permitted
+// by the AGENT_EXECUTION_ENABLED kill switch, returning ErrExecutionDisabled when
+// it is off. Callers that create or claim work before reaching an executor entry
+// point (creating a run row, claiming a pending question, resuming an A2A task)
+// SHOULD call this BEFORE consuming that work, so a disabled system refuses
+// cleanly instead of stranding a paused run with no pending question.
+func (ae *AgentExecutor) EnsureExecutionEnabled() error {
+	if !ae.safeguards.ExecutionEnabled {
+		return ErrExecutionDisabled
+	}
+	return nil
+}
+
+// ensureExecutionEnabled is the in-pipeline form of EnsureExecutionEnabled: it
+// logs the block (with request identity) and returns the sentinel. It is called
+// by every execution entry point before any run-row mutation so a disabled
+// executor never creates or updates agent run records. Trust is a reachability
+// marker, not an executability one: there is no TrustedInternal exemption — a
+// disabled system blocks trusted and external paths alike.
+func (ae *AgentExecutor) ensureExecutionEnabled(req ExecuteRequest) error {
+	if err := ae.EnsureExecutionEnabled(); err != nil {
+		ae.log.Error("agent execution blocked by kill switch",
+			slog.String("project_id", req.ProjectID),
+			slog.String("agent_id", ae.resolveAgentID(req)),
+		)
+		return err
+	}
+	return nil
+}
+
+// failRunIfExecutionDisabled marks a pre-created run terminal when execution was
+// refused by the kill switch. Such runs are created by callers before the
+// executor's guard runs, so without this they would sit `running` until the
+// stale-run reaper reports a misleading idle-timeout. It is a no-op for nil runs
+// and for any error other than ErrExecutionDisabled.
+func failRunIfExecutionDisabled(ctx context.Context, repo *Repository, run *AgentRun, execErr error, log *slog.Logger) {
+	if run == nil || execErr == nil || !errors.Is(execErr, ErrExecutionDisabled) {
+		return
+	}
+	if repoErr := repo.FailRunWithSteps(ctx, run.ID, execErr.Error(), run.StepCount); repoErr != nil {
+		log.Error("failed to mark run terminal after disabled execution",
+			slog.String("run_id", run.ID),
+			slog.String("error", repoErr.Error()),
+		)
+	}
+}
+
 // Execute runs an agent from scratch using the provided request.
 func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*ExecuteResult, error) {
 	startTime := time.Now()
 	dbCtx := context.Background()
 
-	// Emergency kill switch — blocks all agent execution when disabled.
-	if !ae.safeguards.ExecutionEnabled {
-		ae.log.Error("agent execution blocked by kill switch",
-			slog.String("project_id", req.ProjectID),
-			slog.String("agent_id", ae.resolveAgentID(req)),
-		)
-		return nil, fmt.Errorf("agent execution is disabled system-wide")
+	if err := ae.ensureExecutionEnabled(req); err != nil {
+		return nil, err
 	}
 
 	// Budget pre-flight check — hard stop when project has exceeded its monthly budget.
@@ -1090,6 +1144,10 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 	startTime := time.Now()
 	dbCtx := context.Background()
 
+	if err := ae.ensureExecutionEnabled(req); err != nil {
+		return nil, err
+	}
+
 	// The pre-created run was inserted by the caller without the trust marker;
 	// the request is authoritative here, so persist it before the pipeline runs.
 	// This keeps the row fail-closed (trusted_internal defaults false) and makes
@@ -1303,6 +1361,10 @@ func resolveRunTimeout(req ExecuteRequest) time.Duration {
 func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req ExecuteRequest) (*ExecuteResult, error) {
 	startTime := time.Now()
 	dbCtx := context.Background()
+
+	if err := ae.ensureExecutionEnabled(req); err != nil {
+		return nil, err
+	}
 
 	if priorRun.Status != RunStatusPaused {
 		return nil, fmt.Errorf("cannot resume run %s: status is %s (expected paused)", priorRun.ID, priorRun.Status)

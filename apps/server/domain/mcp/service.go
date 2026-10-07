@@ -167,6 +167,12 @@ type Service struct {
 	// Server port for internal query calls (query_knowledge tool)
 	serverPort int
 
+	// Optional override for the base URL of internal same-server HTTP calls
+	// (query/remember/forget). Empty means fall back to the loopback listen
+	// address built from serverPort. Set INTERNAL_BASE_URL when localhost is not
+	// the server's own address (e.g. containerised deployments).
+	internalBaseURL string
+
 	// MCP share-instance persistence, credential lifecycle, and agent
 	// directory. Defaults are derived from DB/ApitokenSvc in NewService but are
 	// overridable in tests.
@@ -261,6 +267,7 @@ func NewService(p ServiceParams) *Service {
 		emailSvc:                  p.EmailSvc,
 		tempoBaseURL:              tempoURL,
 		serverPort:                cfg.ServerPort,
+		internalBaseURL:           cfg.InternalBaseURL,
 		journalSvc:                p.JournalSvc,
 		schemasSvc:                p.SchemasSvc,
 		sessionTodoSvc:            p.SessionTodoSvc,
@@ -285,6 +292,16 @@ func NewService(p ServiceParams) *Service {
 		agentKeys:                 agentMCPKeyOrNil(p.DB),
 		agentSessions:             agentMCPSessionOrNil(p.DB),
 	}
+}
+
+// baseURL returns the base URL for internal same-server HTTP calls. It prefers
+// the configured INTERNAL_BASE_URL and otherwise falls back to the loopback
+// listen address built from the server port.
+func (s *Service) baseURL() string {
+	if s.internalBaseURL != "" {
+		return strings.TrimRight(s.internalBaseURL, "/")
+	}
+	return fmt.Sprintf("http://localhost:%d", s.serverPort)
 }
 
 // RegisterAgentToolHandler wires the agent tool handler after construction.
@@ -6186,7 +6203,7 @@ func (s *Service) executeRemember(ctx context.Context, projectID string, args ma
 	}
 	bodyBytes, _ := json.Marshal(body)
 
-	url := fmt.Sprintf("http://localhost:%d/api/projects/%s/remember", s.serverPort, projectID)
+	url := fmt.Sprintf("%s/api/projects/%s/remember", s.baseURL(), projectID)
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("remember: %w", err)
@@ -6292,7 +6309,7 @@ func (s *Service) executeForget(ctx context.Context, projectID string, args map[
 	}
 	bodyBytes, _ := json.Marshal(body)
 
-	url := fmt.Sprintf("http://localhost:%d/api/projects/%s/forget", s.serverPort, projectID)
+	url := fmt.Sprintf("%s/api/projects/%s/forget", s.baseURL(), projectID)
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("forget: %w", err)
