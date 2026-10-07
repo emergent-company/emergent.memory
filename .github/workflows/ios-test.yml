@@ -9,6 +9,13 @@ name: iOS Test
 # The check is named `ios-test`, NOT `ci`: the repo already emits several
 # distinct checks literally named `ci` (ci.yml, server.yml, cli.yml, web-ui.yml,
 # connector.yml), and another would make check results ambiguous.
+#
+# No `actions/cache` here: this runner is persistent, so `xcodebuild` reuses the
+# default `~/Library/Developer/Xcode/DerivedData` (and the SwiftPM cache in
+# `~/Library/Caches/org.swift.swiftpm`) from the previous run for free. The old
+# DerivedData cache was ~650 MB and cost 5-11 min per run to restore/save, while
+# the build itself is only ~2.5 min — a net loss that also held the single Mac
+# runner hostage during the post-job cache upload while PR jobs queued.
 on:
   push:
     branches: [main]
@@ -50,22 +57,11 @@ jobs:
           sudo -n xcode-select -s "$XCODE" 2>/dev/null || true
           xcodebuild -version
 
-      - name: Cache Swift Package Manager
-        uses: actions/cache@v4
-        with:
-          path: ~/Library/Caches/org.swift.swiftpm
-          key: ios-spm-${{ runner.os }}-${{ hashFiles('apps/ios/VoiceAgent.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
-          restore-keys: |
-            ios-spm-${{ runner.os }}-
-
-      - name: Cache DerivedData
-        uses: actions/cache@v4
-        with:
-          # -derivedDataPath below pins this to a deterministic, cacheable path.
-          path: apps/ios/build/DerivedData
-          key: ios-derived-${{ runner.os }}-${{ hashFiles('apps/ios/VoiceAgent.xcodeproj/project.pbxproj') }}
-          restore-keys: |
-            ios-derived-${{ runner.os }}-
+      # The persistent runner keeps DerivedData across runs, so this only guards
+      # against unbounded growth. 7 days is comfortably longer than the spacing
+      # between iOS PRs; a branch untouched for longer just pays one cold build.
+      - name: Prune stale DerivedData
+        run: find ~/Library/Developer/Xcode/DerivedData -mindepth 1 -maxdepth 1 -type d -mtime +7 -exec rm -rf {} + || true
 
       - name: Build (iOS Simulator)
         working-directory: apps/ios
@@ -73,7 +69,6 @@ jobs:
           set -o pipefail
           xcodebuild -project VoiceAgent.xcodeproj -scheme VoiceAgent \
             -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath build/DerivedData \
             CODE_SIGNING_ALLOWED=NO build
 
       - name: Test (iOS Simulator)
@@ -83,5 +78,4 @@ jobs:
           # Use the device NAME, not a UDID: device ids are not stable across runtimes.
           xcodebuild -project VoiceAgent.xcodeproj -scheme VoiceAgent \
             -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
-            -derivedDataPath build/DerivedData \
             CODE_SIGNING_ALLOWED=NO test

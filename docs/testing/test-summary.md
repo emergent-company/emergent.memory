@@ -111,7 +111,10 @@ No XCTest, no UI-test target. Scheme `VoiceAgent`, `TEST_HOST=Memory.app`. Team 
 Test locally via `apps/web-ui/tools/ios-build-mac.sh --test` (rsync → `mcj-mini:~/code/emergent.memory`).
 
 CI: `ios-test.yml` runs the simulator unit tests on the self-hosted `mcj-mini` Mac runner
-(`xcodebuild … -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test`).
+(`xcodebuild … -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test`). The job is
+cache-free by design: the persistent runner reuses `~/Library/Developer/Xcode/DerivedData`
+between runs (pruned after 7 days), avoiding the ~650 MB Actions cache whose restore/save
+cost far more than the ~2.5 min build.
 
 ## Go SDK — `apps/server/pkg/sdk/`
 
