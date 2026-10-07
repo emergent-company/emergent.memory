@@ -36,7 +36,9 @@ env:
 jobs:
   ios-lint:
     name: ios-lint
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -96,7 +96,9 @@ jobs:
   # ───────────────────────────────────────────────────────────────────────────
   js:
     name: JS wiring (Playwright DOM)
-    runs-on: ubuntu-latest
+    # Fork PRs must not run on the self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, memory]
     timeout-minutes: 10
     defaults:
       run:
@@ -131,14 +133,25 @@ jobs:
           key: ms-playwright-${{ runner.os }}-${{ hashFiles('apps/web-ui/tests/e2e/package-lock.json') }}
 
       - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+        # The `memory` self-hosted runner is Arch Linux (mcj-one): it has no
+        # apt-get, but the Chromium runtime libs and browser cache are already
+        # installed on the host, so `--with-deps` (which shells out to apt)
+        # must be skipped there. Keep the dependency install on Debian runners.
+        run: |
+          if command -v apt-get >/dev/null 2>&1; then
+            npx playwright install --with-deps chromium
+          else
+            npx playwright install chromium
+          fi
 
       - name: Run DOM wiring specs
         run: npx playwright test --config=js-dom.config.ts
 
   ci:
     name: ci
-    runs-on: ubuntu-latest
+    # Fork PRs must not run on the self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, memory]
     needs: [gateway, js]
     steps:
       - name: CI gate

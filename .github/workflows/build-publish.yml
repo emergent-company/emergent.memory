@@ -13,7 +13,8 @@ env:
 jobs:
   build:
     name: Build & Push Image
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write

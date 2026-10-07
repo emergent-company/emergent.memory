@@ -267,7 +267,9 @@ jobs:
 
   docker:
     name: Docker Build
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
     needs: [lint, build, test-unit]
     steps:
       - name: Checkout
@@ -313,8 +315,9 @@ jobs:
 
   migration-guard:
     name: Migration Immutability
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -339,9 +342,9 @@ jobs:
   migration-order-guard:
     name: Migration Order Guard
     if: github.event_name == 'pull_request'
-    # Hosted runner, like the sibling Migration Immutability job: this is a pure
-    # git check, so it must not require a persistent self-hosted runner where a
-    # PR could otherwise have its (PR-controlled) guard source executed.
+    # Hosted runner: `go run ./cmd/migration-order-guard` builds PR-controlled
+    # Go source, so it must not run on a persistent self-hosted runner. Kept on
+    # the billed runner deliberately (see sibling route-authority-guard).
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -406,7 +409,8 @@ jobs:
 
   ci:
     name: ci
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, memory]
     # test-db is a required part of the gate: this job is the single required
     # status check on main (branch protection requires only `ci`), so a failing
     # DB-backed test must fail `ci` — otherwise running it would not block a

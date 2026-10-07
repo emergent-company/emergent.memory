@@ -17,7 +17,8 @@ env:
 jobs:
   build:
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -95,7 +96,8 @@ jobs:
 
   release:
     name: Publish to shared release
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
     needs: build
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -33,7 +33,7 @@ permissions:
 jobs:
   check:
     name: Check if changed
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, memory]
     outputs:
       changed: ${{ steps.c.outputs.changed }}
     steps:

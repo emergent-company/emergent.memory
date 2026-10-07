@@ -29,7 +29,7 @@ env:
 jobs:
   version:
     name: Derive version
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, memory]
     outputs:
       version: ${{ steps.v.outputs.version }}
     steps:
@@ -43,7 +43,8 @@ jobs:
 
   build:
     name: Build (${{ matrix.label }})
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
     needs: version
     strategy:
       fail-fast: false
@@ -111,7 +112,8 @@ jobs:
 
   release:
     name: Publish rolling dev release
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
     needs: build
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

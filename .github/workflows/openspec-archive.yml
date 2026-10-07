@@ -39,7 +39,8 @@ permissions:
 jobs:
   archive-drift:
     name: archive-drift
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
