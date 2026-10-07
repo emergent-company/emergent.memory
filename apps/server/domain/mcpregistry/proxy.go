@@ -465,6 +465,8 @@ func (pm *ProxyManager) connectAndInitialize(ctx context.Context, server *MCPSer
 		if len(headers) > 0 {
 			opts = append(opts, transport.WithHeaders(headers))
 		}
+		// Harden the transport: dial-time SSRF guard + redirect validation.
+		opts = append(opts, transport.WithHTTPClient(outboundHTTPClient(*server.URL)))
 		client, err = mcpclient.NewSSEMCPClient(*server.URL, opts...)
 		if err != nil {
 			return nil, nil, fmt.Errorf("creating SSE client: %w", err)
@@ -486,6 +488,8 @@ func (pm *ProxyManager) connectAndInitialize(ctx context.Context, server *MCPSer
 		if len(headers) > 0 {
 			opts = append(opts, transport.WithHTTPHeaders(headers))
 		}
+		// Harden the transport: dial-time SSRF guard + redirect validation.
+		opts = append(opts, transport.WithHTTPBasicClient(outboundHTTPClient(*server.URL)))
 		t, err := transport.NewStreamableHTTP(*server.URL, opts...)
 		if err != nil {
 			return nil, nil, fmt.Errorf("creating HTTP transport: %w", err)
@@ -654,6 +658,8 @@ func (pm *ProxyManager) connectSSE(ctx context.Context, server *MCPServer) (*mcp
 	if len(headers) > 0 {
 		opts = append(opts, transport.WithHeaders(headers))
 	}
+	// Harden the transport: dial-time SSRF guard + redirect validation.
+	opts = append(opts, transport.WithHTTPClient(outboundHTTPClient(*server.URL)))
 
 	c, err := mcpclient.NewSSEMCPClient(*server.URL, opts...)
 	if err != nil {
@@ -687,6 +693,8 @@ func (pm *ProxyManager) connectHTTP(ctx context.Context, server *MCPServer) (*mc
 	if len(headers) > 0 {
 		opts = append(opts, transport.WithHTTPHeaders(headers))
 	}
+	// Harden the transport: dial-time SSRF guard + redirect validation.
+	opts = append(opts, transport.WithHTTPBasicClient(outboundHTTPClient(*server.URL)))
 
 	t, err := transport.NewStreamableHTTP(*server.URL, opts...)
 	if err != nil {

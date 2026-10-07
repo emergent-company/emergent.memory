@@ -149,6 +149,10 @@ routes:
       path: /api/admin/mcp-servers/:id/tools/:toolName/call
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: POST
+      path: /api/admin/mcp-servers/test
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: GET
       path: /api/admin/orgs/:orgId/tool-settings
       level: auth

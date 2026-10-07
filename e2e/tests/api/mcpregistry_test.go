@@ -189,8 +189,11 @@ func TestMCPRegistry_ListServers_WithServers(t *testing.T) {
 	skipIfServerDown(t, rl)
 
 	projectID, _ := setupProjectLogged(t, rl)
-	createMCPServer(t, projectID, uniqueName("server-a"), "http", "https://a.example.com/mcp")
-	createMCPServer(t, projectID, uniqueName("server-b"), "http", "https://b.example.com/mcp")
+	// Public literal IPs: the SSRF guard resolves hostnames and rejects
+	// unresolvable ones, so an NXDOMAIN placeholder (a.example.com) no longer
+	// passes create. Literal public addresses need no DNS and are accepted.
+	createMCPServer(t, projectID, uniqueName("server-a"), "http", "https://8.8.8.8/mcp")
+	createMCPServer(t, projectID, uniqueName("server-b"), "http", "https://9.9.9.9/mcp")
 
 	resp := doAPILogged(t, rl, "GET", "/api/admin/mcp-servers", e2eTestToken(), projectID, nil)
 	body := mustStatus(t, resp, http.StatusOK)

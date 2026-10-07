@@ -53,3 +53,10 @@ type ErrRequiredConfigMissing struct {
 func (e *ErrRequiredConfigMissing) Error() string {
 	return "required configuration is incomplete: " + strings.Join(e.Keys, ", ")
 }
+
+// ErrOutboundURLNotAllowed marks a caller-supplied MCP server URL that the
+// shared SSRF guard rejected before any outbound connection (scheme, userinfo,
+// literal/resolved loopback, private, link-local, metadata, ULA, CGNAT, or
+// reserved address). Handlers map it to 400 (Bad Request), not 500: the URL is
+// bad input, not a server fault.
+var ErrOutboundURLNotAllowed = errors.New("remote MCP server URL not allowed")

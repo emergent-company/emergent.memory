@@ -388,6 +388,9 @@ func (h *Handler) InspectServer(c echo.Context) error {
 
 	result, err := h.svc.InspectServer(c.Request().Context(), serverID, user.ProjectID)
 	if err != nil {
+		if errors.Is(err, ErrOutboundURLNotAllowed) {
+			return apperror.NewBadRequest(err.Error())
+		}
 		return apperror.NewInternal("failed to inspect MCP server", err)
 	}
 	if result == nil {

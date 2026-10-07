@@ -215,6 +215,24 @@ func (s *Service) ListDeviceServers(ctx context.Context, projectID string, insta
 }
 
 // CreateServer creates a new external MCP server.
+// guardOutboundFetchURL validates a caller-supplied remote MCP server URL
+// before the server opens any outbound connection to it (create, update, the
+// save-less /test probe, and stored-server inspect). Stdio servers have no URL
+// and are skipped. It wraps the shared SSRF guard and returns
+// ErrOutboundURLNotAllowed so handlers map the rejection to 400.
+func guardOutboundFetchURL(ctx context.Context, serverType MCPServerType, rawURL *string) error {
+	if serverType != ServerTypeSSE && serverType != ServerTypeHTTP {
+		return nil
+	}
+	if rawURL == nil || strings.TrimSpace(*rawURL) == "" {
+		return nil // transport-required validation reports the empty case
+	}
+	if err := validateOutboundFetchURL(ctx, *rawURL); err != nil {
+		return fmt.Errorf("%w: %v", ErrOutboundURLNotAllowed, err)
+	}
+	return nil
+}
+
 func (s *Service) CreateServer(ctx context.Context, projectID string, dto *CreateMCPServerDTO) (*MCPServer, error) {
 	// Validate: cannot create builtin type via API
 	if dto.Type == ServerTypeBuiltin {
@@ -257,6 +275,12 @@ func (s *Service) CreateServer(ctx context.Context, projectID string, dto *Creat
 		if dto.URL == nil || *dto.URL == "" {
 			return nil, fmt.Errorf("url is required for %s-type servers", dto.Type)
 		}
+	}
+
+	// SSRF guard: the server may later connect outbound to this URL (discovery,
+	// inspect, tool calls), so reject internal targets at write time.
+	if err := guardOutboundFetchURL(ctx, dto.Type, dto.URL); err != nil {
+		return nil, err
 	}
 
 	// Check for name collision
@@ -472,6 +496,12 @@ func (s *Service) UpdateServer(ctx context.Context, id string, projectID string,
 		if server.URL == nil || *server.URL == "" {
 			return nil, fmt.Errorf("url is required for %s-type servers", server.Type)
 		}
+	}
+
+	// SSRF guard: reject a resulting URL that points at internal space before
+	// persisting it and before the proxy is asked to connect.
+	if err := guardOutboundFetchURL(ctx, server.Type, server.URL); err != nil {
+		return nil, err
 	}
 
 	if err := s.repo.UpdateServer(ctx, server); err != nil {
@@ -911,6 +941,11 @@ func (s *Service) InspectServer(ctx context.Context, serverID string, projectID 
 		}, nil
 	}
 
+	// SSRF guard: inspect opens an outbound connection to the stored URL.
+	if err := guardOutboundFetchURL(ctx, server.Type, server.URL); err != nil {
+		return nil, err
+	}
+
 	return s.proxy.InspectServer(ctx, server)
 }
 
@@ -931,6 +966,13 @@ func (s *Service) TestServerConfig(ctx context.Context, projectID string, dto *C
 		if dto.URL == nil || *dto.URL == "" {
 			return nil, fmt.Errorf("url is required for %s-type servers", dto.Type)
 		}
+	}
+
+	// SSRF guard: the probe dials the draft URL, so it must not reach internal
+	// space. Checked before the repo lookup and before any transient server is
+	// built.
+	if err := guardOutboundFetchURL(ctx, dto.Type, dto.URL); err != nil {
+		return nil, err
 	}
 
 	server := buildTransientServer(dto)
