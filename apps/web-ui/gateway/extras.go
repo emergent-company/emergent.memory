@@ -150,6 +150,25 @@ type MCPServer struct {
 	// value keeps the stored secret on update.
 	SecretEnvKeys     []string `json:"secretEnvKeys,omitempty"`
 	SecretHeadersKeys []string `json:"secretHeadersKeys,omitempty"`
+
+	// RequiredConfig is the server's declared required configuration (from a
+	// registry install): the keys that must be set for the server to work.
+	// Memory owns this list — the UI renders it but never sends it back.
+	RequiredConfig []MCPRequiredConfigKey `json:"requiredConfig,omitempty"`
+	// NeedsConfiguration is true when one or more required keys are blank.
+	NeedsConfiguration bool `json:"needsConfiguration,omitempty"`
+	// MissingConfigKeys names the required keys whose values are blank.
+	MissingConfigKeys []string `json:"missingConfigKeys,omitempty"`
+}
+
+// MCPRequiredConfigKey is one declared required configuration entry on an MCP
+// server (a registry transport's header or env var marked required or secret).
+// Kind is "header" or "env".
+type MCPRequiredConfigKey struct {
+	Name       string `json:"name"`
+	Kind       string `json:"kind"`
+	IsSecret   bool   `json:"isSecret"`
+	IsRequired bool   `json:"isRequired"`
 }
 
 // MCPTool is one tool exposed by an MCP server (the agent tools picker's
@@ -196,6 +215,25 @@ func (m *MemoryClient) UpdateMCPServer(ctx context.Context, id string, in *MCPSe
 
 func (m *MemoryClient) DeleteMCPServer(ctx context.Context, id string) error {
 	return m.do(ctx, http.MethodDelete, "/api/admin/mcp-servers/"+id, nil, nil)
+}
+
+// TestMCPServer runs a save-less connection probe against a draft server
+// configuration (the create DTO fields plus an optional serverId, used to
+// backfill stored secrets left blank in edit mode). Memory always answers 200;
+// a connection failure comes back inside the result (Status "error", Error set).
+func (m *MemoryClient) TestMCPServer(ctx context.Context, in *MCPServer, serverID string) (*MCPInspectResult, error) {
+	body := any(in)
+	if serverID != "" {
+		body = struct {
+			*MCPServer
+			ServerID string `json:"serverId"`
+		}{MCPServer: in, ServerID: serverID}
+	}
+	var env successEnvelope[MCPInspectResult]
+	if err := m.do(ctx, http.MethodPost, "/api/admin/mcp-servers/test", body, &env); err != nil {
+		return nil, err
+	}
+	return &env.Data, nil
 }
 
 // --- models (catalog) ---

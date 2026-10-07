@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -282,6 +283,13 @@ func (s *Service) CreateServer(ctx context.Context, projectID string, dto *Creat
 		return nil, err
 	}
 
+	// Required config defaults to an empty list so the non-null column is
+	// written with [] rather than NULL (manual creates carry no required keys).
+	required := dto.RequiredConfig
+	if required == nil {
+		required = []RequiredConfigKey{}
+	}
+
 	server := &MCPServer{
 		ProjectID:        projectID,
 		Name:             dto.Name,
@@ -295,6 +303,7 @@ func (s *Service) CreateServer(ctx context.Context, projectID string, dto *Creat
 		Headers:          headers,
 		SecretEnv:        secretEnv,
 		SecretHeaders:    secretHeaders,
+		RequiredConfig:   required,
 		Target:           target,
 		TargetInstanceID: dto.TargetInstanceID,
 	}
@@ -412,6 +421,15 @@ func (s *Service) UpdateServer(ctx context.Context, id string, projectID string,
 		}
 		server.Headers = headers
 		server.SecretHeaders = secretHeaders
+	}
+
+	// Enable gate: reject enabling while a declared required key is blank. Run
+	// after the Env/Headers blocks so a same-request credential fill counts, and
+	// before the update so a rejected enable never mutates the row.
+	if dto.Enabled != nil && *dto.Enabled {
+		if missing := missingRequiredConfigKeys(server); len(missing) > 0 {
+			return nil, &ErrRequiredConfigMissing{Keys: missing}
+		}
 	}
 
 	// Delivery target changes: validate the resulting target and authorize
@@ -896,6 +914,112 @@ func (s *Service) InspectServer(ctx context.Context, serverID string, projectID 
 	return s.proxy.InspectServer(ctx, server)
 }
 
+// TestServerConfig probes a draft (create or edit) server configuration without
+// persisting it. The draft's secret values arrive in plaintext and are placed
+// directly into Env/Headers (never encrypted, never logged): the proxy's decrypt
+// helpers are no-ops when the Secret maps are empty. When serverID is non-empty,
+// required keys left blank in the draft are backfilled from the stored server's
+// secrets (edit-mode test). The probe never writes to the repository.
+func (s *Service) TestServerConfig(ctx context.Context, projectID string, dto *CreateMCPServerDTO, serverID *string) (*MCPServerInspectDTO, error) {
+	// Validate transport-specific fields exactly like CreateServer.
+	switch dto.Type {
+	case ServerTypeStdio:
+		if dto.Command == nil || *dto.Command == "" {
+			return nil, fmt.Errorf("command is required for stdio-type servers")
+		}
+	case ServerTypeSSE, ServerTypeHTTP:
+		if dto.URL == nil || *dto.URL == "" {
+			return nil, fmt.Errorf("url is required for %s-type servers", dto.Type)
+		}
+	}
+
+	server := buildTransientServer(dto)
+
+	// Edit mode: for each required key left blank in the draft, copy the stored
+	// server's secret entries verbatim into the transient server's secret maps.
+	// A missing/foreign serverID is not fatal (no backfill); a stored device
+	// row is rejected (no outbound connection).
+	if serverID != nil && *serverID != "" {
+		stored, err := s.repo.FindServerByID(ctx, *serverID, &projectID)
+		if err != nil {
+			return nil, fmt.Errorf("fetching server for test: %w", err)
+		}
+		if stored != nil {
+			if stored.Target == TargetDevice {
+				return nil, ErrDeviceServerNotOutbound
+			}
+			backfillTransientSecrets(server, stored)
+		}
+	}
+
+	// Device-targeted drafts are never connected outbound by the server.
+	if server.Target == TargetDevice {
+		return nil, ErrDeviceServerNotOutbound
+	}
+
+	return s.proxy.InspectServer(ctx, server)
+}
+
+// buildTransientServer builds a transient MCPServer for a save-less test probe.
+// The draft's Env/Headers plaintext values (including draft secrets) go directly
+// into Env/Headers; the Secret maps stay empty so the proxy's decrypt helpers are
+// no-ops and nothing is ever encrypted, persisted, or logged. The returned
+// server is never written to the repository.
+func buildTransientServer(dto *CreateMCPServerDTO) *MCPServer {
+	name := dto.Name
+	if name == "" {
+		name = "test"
+	}
+	target := dto.Target
+	if target == "" {
+		target = TargetServer
+	}
+	return &MCPServer{
+		Name:    name,
+		Type:    dto.Type,
+		Command: dto.Command,
+		Args:    dto.Args,
+		URL:     dto.URL,
+		Env:     dto.Env,
+		Headers: dto.Headers,
+		Target:  target,
+	}
+}
+
+// backfillTransientSecrets copies the stored server's secret entries for any
+// required key left blank in the draft into the transient server's secret maps,
+// so an edit-mode test reuses the saved credential. Ciphertext is copied
+// verbatim (never decrypted here); a draft value always wins.
+func backfillTransientSecrets(transient, stored *MCPServer) {
+	if transient == nil || stored == nil {
+		return
+	}
+	if transient.SecretEnv == nil {
+		transient.SecretEnv = make(map[string]EncryptedSecret)
+	}
+	if transient.SecretHeaders == nil {
+		transient.SecretHeaders = make(map[string]EncryptedSecret)
+	}
+	for _, key := range stored.RequiredConfig {
+		switch key.Kind {
+		case "header":
+			if strings.TrimSpace(stringify(transient.Headers[key.Name])) != "" {
+				continue
+			}
+			if sec, ok := stored.SecretHeaders[key.Name]; ok {
+				transient.SecretHeaders[key.Name] = sec
+			}
+		case "env":
+			if strings.TrimSpace(stringify(transient.Env[key.Name])) != "" {
+				continue
+			}
+			if sec, ok := stored.SecretEnv[key.Name]; ok {
+				transient.SecretEnv[key.Name] = sec
+			}
+		}
+	}
+}
+
 // CallExternalTool connects to the appropriate external MCP server and forwards
 // a tool call. The prefixedToolName includes the server name prefix (e.g.
 // "myserver_search"). The proxy strips the prefix and forwards to the real server.
@@ -1124,8 +1248,10 @@ func (s *Service) InstallFromRegistry(ctx context.Context, projectID string, dto
 
 	// For remote transports (sse/http), attempt tool discovery immediately.
 	// For stdio, tools can only be discovered after the process starts
-	// (which requires env vars to be configured first).
-	if createDTO.Type == ServerTypeSSE || createDTO.Type == ServerTypeHTTP {
+	// (which requires env vars to be configured first). When the install
+	// resolved required configuration (unfilled credentials), skip discovery:
+	// the server is created disabled and the connection would fail.
+	if len(createDTO.RequiredConfig) == 0 && (createDTO.Type == ServerTypeSSE || createDTO.Type == ServerTypeHTTP) {
 		discovered, err := s.DiscoverAndSyncTools(ctx, server.ID, projectID)
 		if err != nil {
 			// Don't fail the install, just log the warning.
@@ -1166,6 +1292,7 @@ func (s *Service) InstallFromRegistry(ctx context.Context, projectID string, dto
 		Server:          result.ToDetailDTO(),
 		RequiredEnvVars: envVars,
 		Message:         message,
+		RequiredConfig:  createDTO.RequiredConfig,
 	}, nil
 }
 
@@ -1234,6 +1361,17 @@ func buildRemoteDTO(name string, serverType MCPServerType, remote RegistryRemote
 		URL:  &url,
 	}
 
+	// Resolve required configuration from the selected transport's declaration.
+	// When any required-or-secret key is declared, the install is created
+	// disabled so a server that cannot authenticate is never enabled (and no
+	// discovery is attempted) until the user configures it.
+	required := collectRegistryRequiredConfig(remote)
+	if len(required) > 0 {
+		dto.RequiredConfig = required
+		enabled := false
+		dto.Enabled = &enabled
+	}
+
 	// Extract headers as key-value pairs
 	if len(remote.Headers) > 0 {
 		headers := make(map[string]any, len(remote.Headers))
@@ -1266,6 +1404,63 @@ func buildRemoteDTO(name string, serverType MCPServerType, remote RegistryRemote
 	}
 
 	return dto
+}
+
+// collectRegistryRequiredConfig gathers the required configuration keys declared
+// by a remote transport: every header and environment variable marked
+// isRequired or isSecret. A key marked isSecret counts as required even when
+// isRequired is absent (a secret with no value is unusable). Deduped by
+// (kind, name); deterministic — headers first, then env, each sorted by name.
+func collectRegistryRequiredConfig(remote RegistryRemote) []RequiredConfigKey {
+	headers := make(map[string]RequiredConfigKey)
+	for _, h := range remote.Headers {
+		if !h.IsRequired && !h.IsSecret {
+			continue
+		}
+		headers[h.Name] = RequiredConfigKey{
+			Name:       h.Name,
+			Kind:       "header",
+			IsSecret:   h.IsSecret,
+			IsRequired: h.IsRequired || h.IsSecret,
+		}
+	}
+	env := make(map[string]RequiredConfigKey)
+	for _, ev := range remote.EnvironmentVariables {
+		if !ev.IsRequired && !ev.IsSecret {
+			continue
+		}
+		env[ev.Name] = RequiredConfigKey{
+			Name:       ev.Name,
+			Kind:       "env",
+			IsSecret:   ev.IsSecret,
+			IsRequired: ev.IsRequired || ev.IsSecret,
+		}
+	}
+
+	if len(headers) == 0 && len(env) == 0 {
+		return []RequiredConfigKey{}
+	}
+
+	headerNames := make([]string, 0, len(headers))
+	for name := range headers {
+		headerNames = append(headerNames, name)
+	}
+	sort.Strings(headerNames)
+
+	envNames := make([]string, 0, len(env))
+	for name := range env {
+		envNames = append(envNames, name)
+	}
+	sort.Strings(envNames)
+
+	out := make([]RequiredConfigKey, 0, len(headerNames)+len(envNames))
+	for _, name := range headerNames {
+		out = append(out, headers[name])
+	}
+	for _, name := range envNames {
+		out = append(out, env[name])
+	}
+	return out
 }
 
 // collectRegistryEnvVars gathers all unique environment variables from a registry

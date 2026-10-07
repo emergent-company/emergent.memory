@@ -820,6 +820,10 @@ func (f *fakeMemory) InspectMCPServer(ctx context.Context, id string) (*MCPInspe
 	return &MCPInspectResult{ServerID: id, Status: "ok"}, nil
 }
 
+func (f *fakeMemory) TestMCPServer(ctx context.Context, in *MCPServer, serverID string) (*MCPInspectResult, error) {
+	return &MCPInspectResult{ServerID: serverID, Status: "ok"}, nil
+}
+
 func (f *fakeMemory) ListMCPServerTools(ctx context.Context, id string) ([]MCPTool, error) {
 	return nil, nil
 }

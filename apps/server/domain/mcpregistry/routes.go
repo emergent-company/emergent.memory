@@ -29,6 +29,9 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	admin.GET("/:id", h.GetServer)
 	admin.GET("/:id/tools", h.ListServerTools)
 	admin.POST("/:id/inspect", h.InspectServer)
+	// Test connection (save-less probe). Registered before the write routes so
+	// Echo's static "/test" segment wins over the ":id" param route.
+	admin.POST("/test", h.TestServerConfig)
 
 	// Write operations
 	admin.POST("", h.CreateServer)

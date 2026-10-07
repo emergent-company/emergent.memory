@@ -127,7 +127,7 @@ func (s *Server) uiMCPEditPage(c echo.Context) error {
 		if mcpServerIsBuiltin(*srv) {
 			return redirectWithError(c, mcpServerSettingsBase, builtinEditErr())
 		}
-		data = mcpServerFormDataFromServer(*srv)
+		data = mcpServerFormDataFromServerConfigure(*srv, c.QueryParam("configure") == "1")
 		data.FlashErr = flashError(c)
 	} else {
 		data.NotFound = true
@@ -288,6 +288,23 @@ func (s *Server) inspectMCPServer(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": errServerIDRequired().Error()})
 	}
 	res, err := s.memory.InspectMCPServer(ctx, id)
+	if err != nil {
+		return mcpServerJSONErr(c, err)
+	}
+	return c.JSON(http.StatusOK, res)
+}
+
+// testMCPServer handles POST /api/mcp-servers/test: a save-less connection
+// probe of the currently-entered form configuration (including unsaved kv
+// rows). The form parses through the shared mcpServerFormDataFromRequest; an
+// optional serverId backfills stored secrets left blank in edit mode. Memory
+// always answers 200 with the inspect envelope; a transport failure surfaces
+// as 502 via mcpServerJSONErr.
+func (s *Server) testMCPServer(c echo.Context) error {
+	ctx := c.Request().Context()
+	draft := mcpServerFormDataFromRequest(c)
+	serverID := strings.TrimSpace(c.FormValue("serverId"))
+	res, err := s.memory.TestMCPServer(ctx, draft.toServer(), serverID)
 	if err != nil {
 		return mcpServerJSONErr(c, err)
 	}

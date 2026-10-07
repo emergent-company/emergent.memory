@@ -1,7 +1,9 @@
 package mcpregistry
 
 import (
+	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/emergent-company/emergent.memory/pkg/httputil"
@@ -14,6 +16,17 @@ import (
 type EncryptedSecret struct {
 	Ciphertext []byte `json:"ct"`
 	Nonce      []byte `json:"nonce"`
+}
+
+// RequiredConfigKey describes a single credential key (header or env) a server
+// needs before it can be enabled. Kind is "header" or "env". IsRequired is true
+// when the registry declared the key required or secret (a secret with no value
+// is unusable).
+type RequiredConfigKey struct {
+	Name       string `json:"name"`
+	Kind       string `json:"kind"` // "header" | "env"
+	IsSecret   bool   `json:"isSecret"`
+	IsRequired bool   `json:"isRequired"`
 }
 
 // ToolPoolInvalidator is implemented by agents.ToolPool to invalidate cached
@@ -54,21 +67,31 @@ func ValidTarget(t MCPServerTarget) bool {
 type MCPServer struct {
 	bun.BaseModel `bun:"table:kb.mcp_servers,alias:ms"`
 
-	ID          string         `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
-	ProjectID   string         `bun:"project_id,type:uuid,notnull" json:"projectId"`
-	Name        string         `bun:"name,notnull" json:"name"`
-	Description *string        `bun:"description" json:"description,omitempty"`
-	Enabled     bool           `bun:"enabled,notnull,default:true" json:"enabled"`
-	Type        MCPServerType  `bun:"type,notnull" json:"type"`
-	Command     *string        `bun:"command" json:"command,omitempty"`               // for stdio
-	Args        []string       `bun:"args,array,default:'{}'" json:"args"`            // for stdio
-	Env         map[string]any `bun:"env,type:jsonb,default:'{}'" json:"env"`         // environment vars
-	URL         *string        `bun:"url" json:"url,omitempty"`                       // for sse/http
-	Headers     map[string]any `bun:"headers,type:jsonb,default:'{}'" json:"headers"` // for sse/http
+	ID          string  `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
+	ProjectID   string  `bun:"project_id,type:uuid,notnull" json:"projectId"`
+	Name        string  `bun:"name,notnull" json:"name"`
+	Description *string `bun:"description" json:"description,omitempty"`
+	// No bun `default:true` tag: bun omits a column from INSERT when its value is
+	// the Go zero value and the tag declares a SQL default, so an explicit
+	// Enabled=false (e.g. a registry install with required config) would be
+	// silently replaced by the column default `true`. The column keeps its DB
+	// default for raw inserts; every code path sets Enabled explicitly.
+	Enabled bool           `bun:"enabled,notnull" json:"enabled"`
+	Type    MCPServerType  `bun:"type,notnull" json:"type"`
+	Command *string        `bun:"command" json:"command,omitempty"`               // for stdio
+	Args    []string       `bun:"args,array,default:'{}'" json:"args"`            // for stdio
+	Env     map[string]any `bun:"env,type:jsonb,default:'{}'" json:"env"`         // environment vars
+	URL     *string        `bun:"url" json:"url,omitempty"`                       // for sse/http
+	Headers map[string]any `bun:"headers,type:jsonb,default:'{}'" json:"headers"` // for sse/http
 	// SecretEnv / SecretHeaders hold encrypted secret values. json:"-" ensures
 	// they are never serialized; the DTO exposes only key names.
 	SecretEnv     map[string]EncryptedSecret `bun:"secret_env,type:jsonb,default:'{}'" json:"-"`
 	SecretHeaders map[string]EncryptedSecret `bun:"secret_headers,type:jsonb,default:'{}'" json:"-"`
+	// RequiredConfig records the credential keys (header/env) the server needs
+	// before it can be enabled. Populated on registry install from the selected
+	// transport's declaration; empty for manual creates. JSONB:
+	// [{"name","kind","isSecret","isRequired"}].
+	RequiredConfig []RequiredConfigKey `bun:"required_config,type:jsonb,default:'[]'" json:"requiredConfig"`
 	// Target selects the delivery mode: 'server' (connected outbound) or
 	// 'device' (pushed over the relay). TargetInstanceID is the relay instance_id
 	// for a device row; nil means every eligible device of the project.
@@ -131,6 +154,12 @@ type MCPServerDTO struct {
 	TargetInstanceID  *string            `json:"targetInstanceId,omitempty"`
 	CreatedAt         time.Time          `json:"createdAt"`
 	UpdatedAt         time.Time          `json:"updatedAt"`
+	// RequiredConfig lists the credential keys (header/env) the server needs
+	// before it can be enabled; NeedsConfiguration is true while any required
+	// key is still missing; MissingConfigKeys names the still-missing ones.
+	RequiredConfig     []RequiredConfigKey `json:"requiredConfig"`
+	NeedsConfiguration bool                `json:"needsConfiguration"`
+	MissingConfigKeys  []string            `json:"missingConfigKeys"`
 }
 
 // MCPServerToolDTO is the response DTO for an MCP server tool.
@@ -173,6 +202,10 @@ type CreateMCPServerDTO struct {
 	Target MCPServerTarget `json:"target"`
 	// TargetInstanceID is the relay instance_id for a device row; nil = broadcast.
 	TargetInstanceID *string `json:"targetInstanceId,omitempty"`
+	// RequiredConfig lists the credential keys (header/env) the server needs
+	// before it can be enabled. Populated by registry install; manual creates
+	// may omit it (stored as an empty list).
+	RequiredConfig []RequiredConfigKey `json:"requiredConfig"`
 }
 
 // UpdateMCPServerDTO is the request DTO for updating an MCP server. Unlike
@@ -278,6 +311,9 @@ type InstallResultDTO struct {
 	Server          *MCPServerDetailDTO `json:"server"`
 	RequiredEnvVars []RegistryEnvVarDTO `json:"requiredEnvVars"`
 	Message         string              `json:"message,omitempty"`
+	// RequiredConfig lists the credential keys (header/env) resolved from the
+	// selected transport; the UI uses it to guide the user through configuration.
+	RequiredConfig []RequiredConfigKey `json:"requiredConfig"`
 }
 
 // RegistrySearchResultDTO wraps search results from the official MCP registry.
@@ -382,26 +418,30 @@ func (s *MCPServer) ToDTO() *MCPServerDTO {
 		toolCount++
 		tools = append(tools, *t.ToDTO())
 	}
+	missing := missingRequiredConfigKeys(s)
 	return &MCPServerDTO{
-		ID:                s.ID,
-		ProjectID:         s.ProjectID,
-		Name:              s.Name,
-		Description:       s.Description,
-		Enabled:           s.Enabled,
-		Type:              s.Type,
-		Command:           s.Command,
-		Args:              s.Args,
-		Env:               stripSecretKeys(s.Env, s.SecretEnv),
-		URL:               s.URL,
-		Headers:           stripSecretKeys(s.Headers, s.SecretHeaders),
-		SecretEnvKeys:     sortedSecretKeys(s.SecretEnv),
-		SecretHeadersKeys: sortedSecretKeys(s.SecretHeaders),
-		ToolCount:         toolCount,
-		Tools:             tools,
-		Target:            s.Target,
-		TargetInstanceID:  s.TargetInstanceID,
-		CreatedAt:         s.CreatedAt,
-		UpdatedAt:         s.UpdatedAt,
+		ID:                 s.ID,
+		ProjectID:          s.ProjectID,
+		Name:               s.Name,
+		Description:        s.Description,
+		Enabled:            s.Enabled,
+		Type:               s.Type,
+		Command:            s.Command,
+		Args:               s.Args,
+		Env:                stripSecretKeys(s.Env, s.SecretEnv),
+		URL:                s.URL,
+		Headers:            stripSecretKeys(s.Headers, s.SecretHeaders),
+		SecretEnvKeys:      sortedSecretKeys(s.SecretEnv),
+		SecretHeadersKeys:  sortedSecretKeys(s.SecretHeaders),
+		ToolCount:          toolCount,
+		Tools:              tools,
+		Target:             s.Target,
+		TargetInstanceID:   s.TargetInstanceID,
+		CreatedAt:          s.CreatedAt,
+		UpdatedAt:          s.UpdatedAt,
+		RequiredConfig:     nonNilRequiredConfig(s.RequiredConfig),
+		NeedsConfiguration: len(missing) > 0,
+		MissingConfigKeys:  missing,
 	}
 }
 
@@ -435,6 +475,81 @@ func sortedSecretKeys(secrets map[string]EncryptedSecret) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// nonNilRequiredConfig returns required as-is when non-nil, and an empty (non-nil)
+// slice otherwise, so JSON emits [] rather than null.
+func nonNilRequiredConfig(required []RequiredConfigKey) []RequiredConfigKey {
+	if required == nil {
+		return []RequiredConfigKey{}
+	}
+	return required
+}
+
+// stringify renders a map[string]any value as a string: nil → "", strings pass
+// through unchanged, anything else uses the same %v formatting as the stdio env
+// encoder.
+func stringify(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return t
+	default:
+		return fmt.Sprintf("%v", t)
+	}
+}
+
+// missingRequiredConfigKeys returns the names of a server's required config keys
+// whose value is still blank and that have no stored secret. Deterministic:
+// names are sorted and deduped. Env/Headers are map[string]any; nil maps and
+// non-string values are handled via stringify.
+//
+// A key is missing when:
+//   - kind == "header": Headers[name] is blank AND SecretHeaders[name] is absent
+//     (or holds an empty ciphertext).
+//   - kind == "env": Env[name] is blank AND SecretEnv[name] is absent.
+func missingRequiredConfigKeys(s *MCPServer) []string {
+	if s == nil {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(s.RequiredConfig))
+	missing := make([]string, 0, len(s.RequiredConfig))
+	for _, key := range s.RequiredConfig {
+		if key.Name == "" {
+			continue
+		}
+		if _, dup := seen[key.Name]; dup {
+			continue
+		}
+		seen[key.Name] = struct{}{}
+		if !requiredKeyMissing(s, key) {
+			continue
+		}
+		missing = append(missing, key.Name)
+	}
+	sort.Strings(missing)
+	return missing
+}
+
+// requiredKeyMissing reports whether a single required key is still blank.
+func requiredKeyMissing(s *MCPServer, key RequiredConfigKey) bool {
+	switch key.Kind {
+	case "header":
+		if strings.TrimSpace(stringify(s.Headers[key.Name])) != "" {
+			return false
+		}
+		sec, ok := s.SecretHeaders[key.Name]
+		return !ok || len(sec.Ciphertext) == 0
+	case "env":
+		if strings.TrimSpace(stringify(s.Env[key.Name])) != "" {
+			return false
+		}
+		_, ok := s.SecretEnv[key.Name]
+		return !ok
+	default:
+		return false
+	}
 }
 
 // ToDetailDTO converts an MCPServer entity (with loaded tools) to MCPServerDetailDTO.

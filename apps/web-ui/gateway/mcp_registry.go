@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/emergent-company/go-daisy/render"
@@ -73,6 +74,14 @@ func (s *Server) uiMCPRegistryInstall(c echo.Context) error {
 	if err != nil {
 		return redirectWithError(c, mcpRegistrySettingsBase, err)
 	}
+	// A server installed with required configuration is created disabled and
+	// must be configured before use: send the user straight to its edit form
+	// (configure mode marks the required rows and names the missing keys).
+	if len(result.RequiredConfig) > 0 && result.Server != nil && result.Server.ID != "" {
+		render.RedirectAfterMutation(c.Response().Writer, c.Request(),
+			mcpServerSettingsBase+"/"+url.PathEscape(result.Server.ID)+"/edit?configure=1")
+		return nil
+	}
 	target := mcpServerSettingsBase + "?created=1"
 	if names := mcpRegistryRequiredEnvNames(result); names != "" {
 		target += "&env=" + url.QueryEscape(names)
@@ -82,8 +91,8 @@ func (s *Server) uiMCPRegistryInstall(c echo.Context) error {
 }
 
 // mcpRegistryRequiredEnvNames joins the required environment variable names
-// from an install result into a single ", "-separated string for the success
-// flash (empty when the result has none).
+// (plus header names from RequiredConfig) from an install result into a single
+// ", "-separated string for the success flash (empty when the result has none).
 func mcpRegistryRequiredEnvNames(result *MCPRegistryInstallResult) string {
 	if result == nil {
 		return ""
@@ -91,6 +100,17 @@ func mcpRegistryRequiredEnvNames(result *MCPRegistryInstallResult) string {
 	var names []string
 	for _, ev := range result.RequiredEnvVars {
 		if name := strings.TrimSpace(ev.Name); name != "" {
+			names = append(names, name)
+		}
+	}
+	// RequiredConfig carries the selected transport's header names too (the
+	// legacy RequiredEnvVars covers env vars only); include them so the flash
+	// names every key the admin still needs to set.
+	for _, k := range result.RequiredConfig {
+		if k.Kind != "header" {
+			continue
+		}
+		if name := strings.TrimSpace(k.Name); name != "" && !slices.Contains(names, name) {
 			names = append(names, name)
 		}
 	}

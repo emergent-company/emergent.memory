@@ -1,6 +1,9 @@
 package mcpregistry
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 // ErrToolNotFound is returned when a tool lookup is scoped to a project and no
 // tool with the given ID belongs to that project. Handlers map it to 404 so a
@@ -39,3 +42,14 @@ var ErrDeviceServerNotOutbound = errors.New("device-targeted MCP server is not c
 // ErrDeviceTargetForbidden is returned when a caller is not the target device's
 // owner (or a project admin) for a device-targeted write.
 var ErrDeviceTargetForbidden = errors.New("not authorized to target this device")
+
+// ErrRequiredConfigMissing is returned when a request attempts to enable a
+// server while a declared required configuration key is still blank. Handlers
+// map it to 400 (Bad Request); the message names the missing keys.
+type ErrRequiredConfigMissing struct {
+	Keys []string
+}
+
+func (e *ErrRequiredConfigMissing) Error() string {
+	return "required configuration is incomplete: " + strings.Join(e.Keys, ", ")
+}

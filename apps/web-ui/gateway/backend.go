@@ -53,6 +53,7 @@ type MemoryBackend interface {
 	DeleteMCPServer(ctx context.Context, id string) error
 	SyncMCPServer(ctx context.Context, id string) error
 	InspectMCPServer(ctx context.Context, id string) (*MCPInspectResult, error)
+	TestMCPServer(ctx context.Context, in *MCPServer, serverID string) (*MCPInspectResult, error)
 	ListMCPServerTools(ctx context.Context, id string) ([]MCPTool, error)
 	SetMCPServerToolEnabled(ctx context.Context, id string, toolID string, enabled bool) error
 	CallMCPServerTool(ctx context.Context, id, toolName string, args map[string]any) (*MCPToolCallResult, error)

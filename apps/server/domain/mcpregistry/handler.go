@@ -397,6 +397,40 @@ func (h *Handler) InspectServer(c echo.Context) error {
 	return c.JSON(http.StatusOK, SuccessResponse(result))
 }
 
+// testServerConfigRequest binds a CreateMCPServerDTO plus an optional serverId
+// for edit-mode backfill (a stored server's secret values are reused for
+// required keys left blank in the draft).
+type testServerConfigRequest struct {
+	CreateMCPServerDTO
+	ServerID *string `json:"serverId"`
+}
+
+// TestServerConfig handles POST /api/admin/mcp-servers/test
+//
+// Probes a draft (create or edit) server configuration without persisting it.
+// When serverId is set, required keys left blank in the draft are backfilled
+// from the stored server's encrypted secrets so an edit-mode test reuses the
+// saved credential. Secrets are never persisted or logged; the result is the
+// same MCPServerInspectDTO envelope as InspectServer.
+func (h *Handler) TestServerConfig(c echo.Context) error {
+	user := auth.MustGetUser(c)
+	if user.ProjectID == "" {
+		return apperror.NewBadRequest("X-Project-ID header is required")
+	}
+
+	var req testServerConfigRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+
+	result, err := h.svc.TestServerConfig(c.Request().Context(), user.ProjectID, &req.CreateMCPServerDTO, req.ServerID)
+	if err != nil {
+		return apperror.NewBadRequest(err.Error())
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(result))
+}
+
 // SyncTools handles POST /api/admin/mcp-servers/:id/sync
 //
 // Two modes:

@@ -163,6 +163,7 @@ func main() {
 	// MCP server sync/inspect/tool JSON echo routes (page JS; see mcp_servers_handlers.go).
 	api.POST("/mcp-servers/:id/sync", s.syncMCPServer)
 	api.POST("/mcp-servers/:id/inspect", s.inspectMCPServer)
+	api.POST("/mcp-servers/test", s.testMCPServer)
 	api.GET("/mcp-servers/:id/tools", s.listMCPServerTools)
 	api.PATCH("/mcp-servers/:id/tools/:toolId", s.setMCPServerToolEnabled)
 	// Per-tool invocation (the row "Run" affordance); same method/body as

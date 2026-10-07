@@ -101,12 +101,22 @@ templ mcpServerRow(srv MCPServer, builtinGroups []BuiltinToolGroup) {
 				} else {
 					@ui.Badge(ui.BadgeProps{Label: mcpServerTransportForDisplay(srv.Type), Variant: mcpServerBadgeIntent(srv.Type), Size: ui.BadgeSizeXS})
 				}
-				if srv.Enabled {
-					@ui.Badge(ui.BadgeProps{Label: "enabled", Variant: ui.BadgeSuccess, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--check"})
-				} else {
-					@ui.Badge(ui.BadgeProps{Label: "disabled", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Icon: "lucide--pause"})
-				}
-			</div>
+			if srv.Enabled {
+				@ui.Badge(ui.BadgeProps{Label: "enabled", Variant: ui.BadgeSuccess, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--check"})
+			} else {
+				@ui.Badge(ui.BadgeProps{Label: "disabled", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Icon: "lucide--pause"})
+			}
+			if srv.NeedsConfiguration {
+				@ui.Badge(ui.BadgeProps{
+					Label:   "Needs configuration",
+					Variant: ui.BadgeWarning,
+					Style:   ui.BadgeStyleSoft,
+					Size:    ui.BadgeSizeXS,
+					Icon:    "lucide--triangle-alert",
+					Attrs:   templ.Attributes{"data-mcp-needs-config": srv.ID},
+				})
+			}
+		</div>
 			<div class="flex shrink-0 items-center gap-2">
 				@ui.Badge(ui.BadgeProps{
 					Label:   countLabel(len(srv.Tools), "tool", "tools"),
@@ -121,6 +131,27 @@ templ mcpServerRow(srv MCPServer, builtinGroups []BuiltinToolGroup) {
 			</div>
 		</summary>
 		<div class="flex flex-col border-t border-base-content/10">
+			if srv.NeedsConfiguration {
+				<div class="flex flex-wrap items-center justify-between gap-2 border-b border-base-content/10 px-3 py-2">
+					@ui.Alert(ui.AlertProps{
+						Type:    ui.AlertWarning,
+						Style:   ui.AlertStyleOutline,
+						Icon:    "lucide--triangle-alert",
+						Message: "Missing configuration: " + mcpMissingKeysList(srv.MissingConfigKeys) + ".",
+						Attrs:   templ.Attributes{"data-mcp-needs-config-alert": srv.ID},
+					})
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeLink,
+						Href:    mcpServerSettingsBase + "/" + url.PathEscape(srv.ID) + "/edit?configure=1",
+						Variant: ui.ButtonPrimary,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--settings-2",
+						Attrs:   templ.Attributes{"data-mcp-configure-link": srv.ID},
+					}) {
+						Configure
+					}
+				</div>
+			}
 			if !builtin {
 				@mcpServerRowActions(srv)
 			}
@@ -492,6 +523,15 @@ templ MCPServerEditPage(data mcpServerFormData) {
 			{{ title, subtitle := mcpFormPageHeading(true, data.Name) }}
 			@detailHeader(crumbs, "", title, subtitle, detailHeaderOpts{Margin: "mb-6"}) {}
 			@flashToasts("", data.FlashErr)
+			if data.ConfigureMode && len(data.MissingConfigKeys) > 0 {
+				@ui.Alert(ui.AlertProps{
+					Type:    ui.AlertWarning,
+					Style:   ui.AlertStyleOutline,
+					Icon:    "lucide--triangle-alert",
+					Message: "This server needs configuration before it can be enabled. Missing: " + mcpMissingKeysList(data.MissingConfigKeys) + ".",
+					Attrs:   templ.Attributes{"data-mcp-configure-banner": data.ID},
+				})
+			}
 			@mcpServerFormBody(data, true)
 		}
 		@mcpServersScript()
@@ -510,6 +550,9 @@ templ mcpServerFormBody(data mcpServerFormData, editing bool) {
 			action = mcpServerSettingsBase + "/" + url.PathEscape(data.ID) + "/update"
 		} }}
 		<form method="post" action={ templ.URL(action) } class="flex flex-col gap-4" data-mcp-form-fields hx-disable="find button.memory-save-btn">
+			if editing {
+				<input type="hidden" name="serverId" value={ data.ID }/>
+			}
 			@form.FormControl("mcp-server-name", "Name", form.LabelAbove, "Unique within this project. Agents reference servers by name.", data.FieldErrs.Name, nil) {
 				<input id="mcp-server-name" name="name" type="text" required maxlength="255" value={ data.Name } placeholder="e.g. github-mcp-server" class="input w-full"/>
 			}
@@ -528,6 +571,15 @@ templ mcpServerFormBody(data mcpServerFormData, editing bool) {
 				<input id="mcp-server-enabled" name="enabled" type="checkbox" checked?={ data.Enabled } class="checkbox"/>
 			</label>
 			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonOutline,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--plug-zap",
+					Attrs:   templ.Attributes{"data-mcp-test": ""},
+				}) {
+					Test connection
+				}
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeLink,
 					Href:    mcpServerSettingsBase,
@@ -550,6 +602,7 @@ templ mcpServerFormBody(data mcpServerFormData, editing bool) {
 					}
 				}
 			}
+			<div data-mcp-test-result hidden></div>
 		</form>
 	}
 }
@@ -639,9 +692,14 @@ templ mcpServerKVEditor(id, prefix, label, hint string, rows []mcpKVField, field
 	}
 }
 
-// mcpKVValuePlaceholder tweaks the value input's placeholder for write-only
-// secret rows (memory never returns the stored value).
-func mcpKVValuePlaceholder(secret bool) string {
+// mcpKVValuePlaceholder tweaks the value input's placeholder for the row's
+// required/missing state: a missing required secret row prompts for the value
+// (it has no stored secret yet), a non-missing secret row keeps the
+// leave-blank contract, and a plain row just says "Value".
+func mcpKVValuePlaceholder(secret, missing bool) string {
+	if missing {
+		return "Enter value"
+	}
 	if secret {
 		return "Leave blank to keep stored value"
 	}
@@ -655,21 +713,27 @@ func mcpKVSecretTitle() string {
 
 // mcpServerKVRow is one key/value input row plus a Secret select (a blank row
 // is always appended so the user can add the first pair without JS). Secret
-// rows pre-fill with an empty value and carry a "leave blank to keep" hint.
-// The select always submits, so its index stays aligned with the key/value
-// inputs even when earlier rows are Plain.
+// rows pre-fill with an empty value and carry a "leave blank to keep" hint;
+// required rows carry a "Required" marker and a missing required row prompts
+// for a value instead. The select always submits, so its index stays aligned
+// with the key/value inputs even when earlier rows are Plain.
 templ mcpServerKVRow(prefix string, r mcpKVField) {
 	<div class="flex flex-col gap-1" data-mcp-kv-row>
 		<div class="flex items-center gap-1.5">
 			<input type="text" name={ prefix + ".key" } value={ r.Key } placeholder="Name" class="input input-sm min-w-0 flex-1 font-mono"/>
-			<input type="text" name={ prefix + ".value" } value={ r.Value } placeholder={ mcpKVValuePlaceholder(r.Secret) } class="input input-sm min-w-0 flex-1 font-mono"/>
+			<input type="text" name={ prefix + ".value" } value={ r.Value } placeholder={ mcpKVValuePlaceholder(r.Secret, r.Missing) } class="input input-sm min-w-0 flex-1 font-mono"/>
 			<select name={ prefix + ".secret" } class="select select-sm shrink-0" title={ mcpKVSecretTitle() } aria-label="Row visibility">
 				<option value="" selected?={ !r.Secret }>Plain</option>
 				<option value="1" selected?={ r.Secret }>Secret</option>
 			</select>
 			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeButton, Variant: ui.ButtonGhost, Size: ui.ButtonSM, Shape: ui.ButtonShapeSquare, Icon: "lucide--x", ExtraClass: "shrink-0", AriaLabel: "Remove row", Attrs: templ.Attributes{"data-mcp-kv-remove": ""}})
+			if r.Required {
+				<span class="text-warning shrink-0 text-[10px] font-semibold uppercase tracking-wide" data-mcp-kv-required>Required</span>
+			}
 		</div>
-		if r.Secret {
+		if r.Missing {
+			<p class="text-warning pl-1 text-xs" data-mcp-kv-missing>Required — enter a value.</p>
+		} else if r.Secret {
 			<p class="text-muted-faint pl-1 text-xs">Leave blank to keep the stored value.</p>
 		}
 	</div>
@@ -779,6 +843,34 @@ templ mcpServersScript() {
 					var row = rowFor(btn);
 					if (row) row.open = true;
 					renderInspect(area, j);
+				} finally {
+					setBusy(btn, false);
+				}
+			}
+
+			// testConnection probes the live form configuration (including
+			// unsaved kv rows) without persisting. The form serializes to
+			// FormData so secret/blank rows ride the same shape the create/update
+			// posts use; the serverId hidden field lets edit mode backfill stored
+			// secrets left blank.
+			async function testConnection(btn) {
+				var form = btn.closest('form');
+				if (!form) return;
+				var area = form.querySelector('[data-mcp-test-result]');
+				setBusy(btn, true);
+				try {
+					var resp = await fetch('/api/mcp-servers/test', {
+						method: 'POST',
+						body: new FormData(form)
+					});
+					var j = await readJSON(resp);
+					if (!resp.ok) {
+						toast('error', j.error || ('Test failed (' + resp.status + ').'));
+						return;
+					}
+					if (area) renderInspect(area, j);
+				} catch (e) {
+					toast('error', 'Test failed: ' + (e && e.message ? e.message : 'network error'));
 				} finally {
 					setBusy(btn, false);
 				}
@@ -1097,6 +1189,8 @@ templ mcpServersScript() {
 			document.addEventListener('click', function (e) {
 				var btn = e.target && e.target.closest ? e.target.closest('button, a') : null;
 				if (!btn) return;
+				var testBtn = btn.closest('[data-mcp-test]');
+				if (testBtn) { e.preventDefault(); testConnection(testBtn); return; }
 				if (btn.hasAttribute('data-mcp-action')) {
 					var action = btn.getAttribute('data-mcp-action');
 					if (action === 'sync') { e.preventDefault(); syncServer(btn); }

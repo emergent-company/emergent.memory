@@ -57,6 +57,14 @@ type mcpServerFormData struct {
 	Env     []mcpKVField // key/value rows for stdio environment
 	Enabled bool
 
+	// RequiredConfigKeys / MissingConfigKeys carry the server's declared
+	// required configuration and the subset currently blank, for the
+	// required-row markers and the configure banner. ConfigureMode is set when
+	// the edit page is opened with ?configure=1 (post-install redirect).
+	RequiredConfigKeys []string
+	MissingConfigKeys  []string
+	ConfigureMode      bool
+
 	// LoadErr / NotFound only apply to the edit page's GET (the server could
 	// not be resolved); the POST re-renders carry FieldErrs / GeneralErr.
 	LoadErr    error
@@ -79,11 +87,16 @@ type mcpServerFieldErrs struct {
 
 // mcpKVField is one ordered header/env key/value row in the transport form.
 // Secret marks a row whose value memory stores write-only: edits pre-fill it
-// blank and a blank submission keeps the stored value.
+// blank and a blank submission keeps the stored value. Required marks a row
+// corresponding to the server's declared required configuration; Missing marks
+// a required row whose value is blank (drive the "Required" marker and the
+// "Enter value" placeholder).
 type mcpKVField struct {
-	Key    string
-	Value  string
-	Secret bool
+	Key      string
+	Value    string
+	Secret   bool
+	Required bool
+	Missing  bool
 }
 
 // mcpServerSettingsBase is the base path for the MCP Servers management area.
@@ -266,8 +279,9 @@ func mcpKVFieldSecretKeys(rows []mcpKVField) []string {
 // mcpKVFieldsWithSecrets builds editor rows from a server's non-secret
 // map entries (values shown) plus one blank-valued Secret row per write-only
 // key. Memory never returns secret values, so those rows pre-fill empty and
-// rely on the "leave blank to keep" contract on submit.
-func mcpKVFieldsWithSecrets(m map[string]string, secretKeys []string) []mcpKVField {
+// rely on the "leave blank to keep" contract on submit. requiredKeys /
+// missingKeys mark the row's required/missing affordances (see mcpKVField).
+func mcpKVFieldsWithSecrets(m map[string]string, secretKeys, requiredKeys, missingKeys []string) []mcpKVField {
 	out := mcpKVFields(m)
 	keys := make([]string, 0, len(secretKeys))
 	for _, k := range secretKeys {
@@ -278,6 +292,10 @@ func mcpKVFieldsWithSecrets(m map[string]string, secretKeys []string) []mcpKVFie
 	slices.Sort(keys)
 	for _, k := range keys {
 		out = append(out, mcpKVField{Key: k, Secret: true})
+	}
+	for i := range out {
+		out[i].Required = slices.Contains(requiredKeys, out[i].Key)
+		out[i].Missing = slices.Contains(missingKeys, out[i].Key)
 	}
 	return out
 }
@@ -448,21 +466,65 @@ func (d *mcpServerFormData) toServer() *MCPServer {
 // the edit page (transport pre-checked, headers/env as ordered rows, args as
 // lines).
 func mcpServerFormDataFromServer(s MCPServer) mcpServerFormData {
+	return mcpServerFormDataFromServerConfigure(s, false)
+}
+
+// mcpServerFormDataFromServerConfigure is mcpServerFormDataFromServer with the
+// ?configure=1 flag applied (the post-install redirect path). Required rows are
+// marked from the server's declared required config (headers for sse/http,
+// env for stdio); Missing rows from s.MissingConfigKeys.
+func mcpServerFormDataFromServerConfigure(s MCPServer, configure bool) mcpServerFormData {
+	headerRequired := mcpRequiredConfigKeysForKind(s.RequiredConfig, "header")
+	envRequired := mcpRequiredConfigKeysForKind(s.RequiredConfig, "env")
 	d := mcpServerFormData{
-		ID:      s.ID,
-		Name:    s.Name,
-		Type:    s.Type,
-		URL:     s.URL,
-		Command: s.Command,
-		Args:    s.Args,
-		Headers: mcpKVFieldsWithSecrets(s.Headers, s.SecretHeadersKeys),
-		Env:     mcpKVFieldsWithSecrets(s.Env, s.SecretEnvKeys),
-		Enabled: s.Enabled,
+		ID:                 s.ID,
+		Name:               s.Name,
+		Type:               s.Type,
+		URL:                s.URL,
+		Command:            s.Command,
+		Args:               s.Args,
+		Headers:            mcpKVFieldsWithSecrets(s.Headers, s.SecretHeadersKeys, headerRequired, s.MissingConfigKeys),
+		Env:                mcpKVFieldsWithSecrets(s.Env, s.SecretEnvKeys, envRequired, s.MissingConfigKeys),
+		Enabled:            s.Enabled,
+		RequiredConfigKeys: mcpRequiredConfigKeysForTransport(s.RequiredConfig, s.Type),
+		MissingConfigKeys:  s.MissingConfigKeys,
+		ConfigureMode:      configure,
 	}
 	if !mcpServerValidTransport(d.Type) {
 		d.Type = "stdio"
 	}
 	return d
+}
+
+// mcpRequiredConfigKeysForKind returns the names of required config keys of the
+// given kind ("header" or "env").
+func mcpRequiredConfigKeysForKind(required []MCPRequiredConfigKey, kind string) []string {
+	var out []string
+	for _, k := range required {
+		if k.Kind != kind {
+			continue
+		}
+		if name := strings.TrimSpace(k.Name); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// mcpRequiredConfigKeysForTransport returns the names of required config keys
+// for the given transport (sse/http → "header"; anything else → "env").
+func mcpRequiredConfigKeysForTransport(required []MCPRequiredConfigKey, transport string) []string {
+	kind := "env"
+	if transport == "sse" || transport == "http" {
+		kind = "header"
+	}
+	return mcpRequiredConfigKeysForKind(required, kind)
+}
+
+// mcpMissingKeysList joins missing required-config key names into a
+// ", "-separated string for the list alert and the edit-page configure banner.
+func mcpMissingKeysList(keys []string) string {
+	return strings.Join(keys, ", ")
 }
 
 // mcpFindServerByID returns a pointer to the registry entry with the given id,
