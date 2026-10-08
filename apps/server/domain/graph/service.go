@@ -898,8 +898,8 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 	if err := validateTypeStatus(workCfg, req.Status, req.Properties); err != nil {
 		return nil, err
 	}
-	if isBoardEnabledConfig(workCfg) && (req.Key == nil || *req.Key == "") {
-		return nil, workStatusKeyRequired()
+	if err := requireBoardEnabledKey(workCfg, req.Key); err != nil {
+		return nil, err
 	}
 
 	validatedProps, err := s.validateObjectProperties(ctx, projectID, req.Type, req.Properties)
@@ -5296,6 +5296,14 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 				slog.String("project_id", projectID.String()),
 				slog.String("error", err.Error()))
 		}
+	}
+
+	// Guard: board-enabled object types require a stable key, matching the
+	// single-create path (issue #1655). Validate every object up front, before
+	// the transaction, so a keyless board-enabled object rejects the whole batch
+	// atomically with no partial writes.
+	if err := validateSubgraphObjectKeys(schemas, req.Objects); err != nil {
+		return nil, err
 	}
 
 	// Start transaction

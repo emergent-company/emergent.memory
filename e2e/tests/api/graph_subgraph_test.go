@@ -77,8 +77,8 @@ func TestGraphSubgraph_CreateSubgraph_ObjectsOnly(t *testing.T) {
 
 	resp := doAPILogged(t, rl, "POST", "/api/graph/subgraph", e2eTestToken(), projectID, jsonBody(map[string]any{
 		"objects": []map[string]any{
-			{"_ref": "a", "type": "Task", "properties": map[string]any{"title": "Task A"}},
-			{"_ref": "b", "type": "Task", "properties": map[string]any{"title": "Task B"}},
+			{"_ref": "a", "type": "Task", "key": strPtr("subgraph-objects-only-a"), "properties": map[string]any{"title": "Task A"}},
+			{"_ref": "b", "type": "Task", "key": strPtr("subgraph-objects-only-b"), "properties": map[string]any{"title": "Task B"}},
 		},
 	}))
 	body := mustStatus(t, resp, http.StatusCreated)
@@ -238,8 +238,8 @@ func TestGraphSubgraph_CreateSubgraph_SameBranch(t *testing.T) {
 
 	resp := doAPILogged(t, rl, "POST", "/api/graph/subgraph", e2eTestToken(), projectID, jsonBody(map[string]any{
 		"objects": []map[string]any{
-			{"_ref": "a", "type": "Task", "branch_id": branchID, "properties": map[string]any{"title": "Task A"}},
-			{"_ref": "b", "type": "Task", "branch_id": branchID, "properties": map[string]any{"title": "Task B"}},
+			{"_ref": "a", "type": "Task", "key": strPtr("subgraph-same-branch-a"), "branch_id": branchID, "properties": map[string]any{"title": "Task A"}},
+			{"_ref": "b", "type": "Task", "key": strPtr("subgraph-same-branch-b"), "branch_id": branchID, "properties": map[string]any{"title": "Task B"}},
 		},
 		"relationships": []map[string]any{
 			{"type": "depends_on", "src_ref": "a", "dst_ref": "b"},
@@ -278,8 +278,8 @@ func TestGraphSubgraph_CreateSubgraph_DifferentBranches(t *testing.T) {
 
 	resp := doAPILogged(t, rl, "POST", "/api/graph/subgraph", e2eTestToken(), projectID, jsonBody(map[string]any{
 		"objects": []map[string]any{
-			{"_ref": "a", "type": "Task", "branch_id": branchA, "properties": map[string]any{"title": "Task A"}},
-			{"_ref": "b", "type": "Task", "branch_id": branchB, "properties": map[string]any{"title": "Task B"}},
+			{"_ref": "a", "type": "Task", "key": strPtr("subgraph-diff-branches-a"), "branch_id": branchA, "properties": map[string]any{"title": "Task A"}},
+			{"_ref": "b", "type": "Task", "key": strPtr("subgraph-diff-branches-b"), "branch_id": branchB, "properties": map[string]any{"title": "Task B"}},
 		},
 		"relationships": []map[string]any{
 			{"type": "depends_on", "src_ref": "a", "dst_ref": "b"},
@@ -297,8 +297,8 @@ func TestGraphSubgraph_CreateSubgraph_NilBranches(t *testing.T) {
 
 	resp := doAPILogged(t, rl, "POST", "/api/graph/subgraph", e2eTestToken(), projectID, jsonBody(map[string]any{
 		"objects": []map[string]any{
-			{"_ref": "a", "type": "Task", "properties": map[string]any{"title": "Task A"}},
-			{"_ref": "b", "type": "Task", "properties": map[string]any{"title": "Task B"}},
+			{"_ref": "a", "type": "Task", "key": strPtr("subgraph-nil-branches-a"), "properties": map[string]any{"title": "Task A"}},
+			{"_ref": "b", "type": "Task", "key": strPtr("subgraph-nil-branches-b"), "properties": map[string]any{"title": "Task B"}},
 		},
 		"relationships": []map[string]any{
 			{"type": "depends_on", "src_ref": "a", "dst_ref": "b"},
@@ -324,6 +324,24 @@ func TestGraphSubgraph_CreateSubgraph_NilBranches(t *testing.T) {
 			t.Cleanup(func() { deleteGraphObject(t, projectID, id) })
 		}
 	}
+}
+
+func TestGraphSubgraph_CreateSubgraph_KeylessBoardEnabledRejected(t *testing.T) {
+	rl := newRunLog(t)
+	defer rl.Close()
+	skipIfServerDown(t, rl)
+
+	projectID, _ := setupProjectLogged(t, rl)
+
+	// Task is board-enabled in the e2e schema. The subgraph/bulk path must
+	// reject a keyless board-enabled object with work_status_key_required, just
+	// like the single-create path (issue #1655), and create nothing.
+	resp := doAPILogged(t, rl, "POST", "/api/graph/subgraph", e2eTestToken(), projectID, jsonBody(map[string]any{
+		"objects": []map[string]any{
+			{"_ref": "a", "type": "Task", "properties": map[string]any{"title": "Keyless Task"}},
+		},
+	}))
+	mustStatus(t, resp, http.StatusBadRequest)
 }
 
 // strPtr returns a pointer to a string.

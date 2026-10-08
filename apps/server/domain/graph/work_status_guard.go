@@ -92,3 +92,39 @@ func workStatusNotAllowed(status string) error {
 func workStatusKeyRequired() error {
 	return apperror.New(http.StatusBadRequest, "work_status_key_required", "board-enabled work objects require a non-empty key")
 }
+
+// requireBoardEnabledKey enforces the board-enabled stable-key rule for a single
+// object. The claim lock keys on (project, type, key), so a board-enabled object
+// created without a key could be dispatched but never claimed. Shared by every
+// create entry point (single Create and the atomic subgraph/bulk path) so the
+// rule cannot drift. Returns nil when the type is not board-enabled (or its
+// config is unknown) or the object carries a non-empty key.
+func requireBoardEnabledKey(cfg *agents.ObjectTypeWorkConfig, key *string) error {
+	if isBoardEnabledConfig(cfg) && (key == nil || *key == "") {
+		return workStatusKeyRequired()
+	}
+	return nil
+}
+
+// validateSubgraphObjectKeys applies the board-enabled stable-key guard to every
+// object in a subgraph/bulk create request. It is pure — it reads only the
+// already-resolved schemas — so the whole batch can be validated before any
+// write, making a keyless board-enabled object fail the request atomically with
+// no partial state. Unknown/unconfigured types are never board-enabled. A nil
+// schema set (schema provider unavailable) leaves the guard inert, matching the
+// rest of the subgraph path's fail-open property validation.
+func validateSubgraphObjectKeys(schemas *ExtractionSchemas, objects []SubgraphObjectRequest) error {
+	if schemas == nil {
+		return nil
+	}
+	for i := range objects {
+		schema, ok := schemas.ObjectSchemas[objects[i].Type]
+		if !ok {
+			continue
+		}
+		if err := requireBoardEnabledKey(&schema.ObjectTypeWorkConfig, objects[i].Key); err != nil {
+			return err
+		}
+	}
+	return nil
+}
