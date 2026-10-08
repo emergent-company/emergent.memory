@@ -1877,8 +1877,20 @@ definitions:
         type: string
       description:
         type: string
+      lastCheckedAt:
+        type: string
+      latestVersion:
+        type: string
       name:
         type: string
+      origin:
+        type: string
+      sourceRef:
+        type: string
+      sourceUrl:
+        type: string
+      updateAvailable:
+        type: boolean
       version:
         type: string
     type: object
@@ -1934,6 +1946,8 @@ definitions:
         type: array
       name:
         type: string
+      origin:
+        type: string
       projectId:
         type: string
       sourceKind:
@@ -1962,6 +1976,62 @@ definitions:
       name:
         type: string
       version:
+        type: string
+    type: object
+  domain_blueprints.BlueprintUpdateJob:
+    properties:
+      action:
+        type: string
+      attempts:
+        type: integer
+      blueprintName:
+        type: string
+      createdAt:
+        type: string
+      finishedAt:
+        type: string
+      id:
+        type: string
+      lastError:
+        type: string
+      projectId:
+        type: string
+      result:
+        items:
+          type: integer
+        type: array
+      startedAt:
+        type: string
+      status:
+        type: string
+    type: object
+  domain_blueprints.BlueprintUpdateStatus:
+    properties:
+      blueprintName:
+        type: string
+      createdAt:
+        type: string
+      id:
+        type: string
+      lastCheckError:
+        type: string
+      lastCheckedAt:
+        type: string
+      latestChecksum:
+        type: string
+      latestJob:
+        $ref: '#/definitions/domain_blueprints.BlueprintUpdateJob'
+      latestVersion:
+        type: string
+      projectId:
+        type: string
+      sourceRef:
+        type: string
+      sourceUrl:
+        type: string
+      updateAvailable:
+        type: boolean
+      updatedAt:
         type: string
     type: object
   domain_blueprints.CreateBlueprintRequest:
@@ -2005,6 +2075,11 @@ definitions:
   domain_blueprints.NewVersionRequest:
     properties:
       version:
+        type: string
+    type: object
+  domain_blueprints.SetGithubCredentialRequest:
+    properties:
+      token:
         type: string
     type: object
   domain_blueprints.UnapplyCounts:
@@ -5126,6 +5201,14 @@ definitions:
         type: object
       name:
         type: string
+      requiredConfig:
+        description: |-
+          RequiredConfig lists the credential keys (header/env) the server needs
+          before it can be enabled. Populated by registry install; manual creates
+          may omit it (stored as an empty list).
+        items:
+          $ref: '#/definitions/domain_mcpregistry.RequiredConfigKey'
+        type: array
       secretEnvKeys:
         description: |-
           SecretEnvKeys/SecretHeadersKeys name the entries in Env/Headers whose
@@ -5180,10 +5263,24 @@ definitions:
         type: object
       id:
         type: string
+      missingConfigKeys:
+        items:
+          type: string
+        type: array
       name:
         type: string
+      needsConfiguration:
+        type: boolean
       projectId:
         type: string
+      requiredConfig:
+        description: |-
+          RequiredConfig lists the credential keys (header/env) the server needs
+          before it can be enabled; NeedsConfiguration is true while any required
+          key is still missing; MissingConfigKeys names the still-missing ones.
+        items:
+          $ref: '#/definitions/domain_mcpregistry.RequiredConfigKey'
+        type: array
       secretEnvKeys:
         description: |-
           SecretEnvKeys/SecretHeadersKeys list the keys stored encrypted at rest.
@@ -5234,10 +5331,24 @@ definitions:
         type: object
       id:
         type: string
+      missingConfigKeys:
+        items:
+          type: string
+        type: array
       name:
         type: string
+      needsConfiguration:
+        type: boolean
       projectId:
         type: string
+      requiredConfig:
+        description: |-
+          RequiredConfig lists the credential keys (header/env) the server needs
+          before it can be enabled; NeedsConfiguration is true while any required
+          key is still missing; MissingConfigKeys names the still-missing ones.
+        items:
+          $ref: '#/definitions/domain_mcpregistry.RequiredConfigKey'
+        type: array
       secretEnvKeys:
         description: |-
           SecretEnvKeys/SecretHeadersKeys list the keys stored encrypted at rest.
@@ -5317,6 +5428,26 @@ definitions:
     - ServerTypeStdio
     - ServerTypeSSE
     - ServerTypeHTTP
+  domain_mcpregistry.RequiredConfigKey:
+    properties:
+      description:
+        type: string
+      isRequired:
+        type: boolean
+      isSecret:
+        type: boolean
+      kind:
+        description: '"header" | "env"'
+        type: string
+      name:
+        type: string
+      valueHint:
+        description: |-
+          ValueHint is the registry-declared value template (header transports
+          only), e.g. "Bearer {NETDATA_CLOUD_API_TOKEN}". It is surfaced as an
+          input placeholder, never prefilled, so it never leaks a credential.
+        type: string
+    type: object
   domain_mcpregistry.UpdateMCPServerDTO:
     properties:
       args:
@@ -11154,6 +11285,123 @@ paths:
       summary: Create new blueprint version
       tags:
       - blueprints
+  /api/blueprints/{name}/updates:
+    get:
+      description: Returns the latest update-check result for the caller's applied
+        blueprint by name, plus the latest update job (check or apply), when one exists.
+      parameters:
+      - description: Blueprint name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Latest update-check result and job
+          schema:
+            $ref: '#/definitions/domain_blueprints.BlueprintUpdateStatus'
+        "400":
+          description: Bad request / project context required
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: No update status recorded
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get blueprint update status
+      tags:
+      - blueprints
+  /api/blueprints/{name}/updates/apply:
+    post:
+      consumes:
+      - application/json
+      description: Enqueues an update (apply) job for the caller's applied blueprint
+        by name. The job asynchronously fetches the upstream source, creates + publishes
+        + applies a new version when upstream is newer, and returns the queued job.
+        Rejected with 409 while an update for the same blueprint is already pending
+        or running.
+      parameters:
+      - description: Blueprint name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Queued update job
+          schema:
+            $ref: '#/definitions/domain_blueprints.BlueprintUpdateJob'
+        "400":
+          description: Bad request / project context required
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: An update is already pending or running
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Apply a blueprint update
+      tags:
+      - blueprints
+  /api/blueprints/{name}/updates/check:
+    post:
+      consumes:
+      - application/json
+      description: Enqueues an update-check job for the caller's applied blueprint
+        by name. The check runs asynchronously; returns the queued job.
+      parameters:
+      - description: Blueprint name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Queued update-check job
+          schema:
+            $ref: '#/definitions/domain_blueprints.BlueprintUpdateJob'
+        "400":
+          description: Bad request / project context required
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Check blueprint for updates
+      tags:
+      - blueprints
   /api/blueprints/applied:
     get:
       description: Returns the blueprints applied to the caller's project, joined
@@ -11182,6 +11430,45 @@ paths:
       security:
       - bearerAuth: []
       summary: List applied blueprints
+      tags:
+      - blueprints
+  /api/blueprints/github-credentials:
+    put:
+      consumes:
+      - application/json
+      description: Stores (or replaces) the caller's project-scoped GitHub personal
+        access token, encrypted at rest. The token is never echoed.
+      parameters:
+      - description: GitHub token
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_blueprints.SetGithubCredentialRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No content
+        "400":
+          description: Bad request / project context required
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: Encryption key not configured
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Set project GitHub credential
       tags:
       - blueprints
   /api/blueprints/import:

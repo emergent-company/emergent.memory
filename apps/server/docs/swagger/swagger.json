@@ -1811,6 +1811,66 @@
                 }
             }
         },
+        "/api/blueprints/github-credentials": {
+            "put": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Stores (or replaces) the caller's project-scoped GitHub personal access token, encrypted at rest. The token is never echoed.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "blueprints"
+                ],
+                "summary": "Set project GitHub credential",
+                "parameters": [
+                    {
+                        "description": "GitHub token",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_blueprints.SetGithubCredentialRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No content"
+                    },
+                    "400": {
+                        "description": "Bad request / project context required",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Encryption key not configured",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/blueprints/import": {
             "post": {
                 "security": [
@@ -2504,6 +2564,180 @@
                     },
                     "409": {
                         "description": "Blueprint with name and version already exists",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/blueprints/{name}/updates": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the latest update-check result for the caller's applied blueprint by name, plus the latest update job (check or apply), when one exists.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "blueprints"
+                ],
+                "summary": "Get blueprint update status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Blueprint name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Latest update-check result and job",
+                        "schema": {
+                            "$ref": "#/definitions/domain_blueprints.BlueprintUpdateStatus"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request / project context required",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "No update status recorded",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/blueprints/{name}/updates/apply": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Enqueues an update (apply) job for the caller's applied blueprint by name. The job asynchronously fetches the upstream source, creates + publishes + applies a new version when upstream is newer, and returns the queued job. Rejected with 409 while an update for the same blueprint is already pending or running.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "blueprints"
+                ],
+                "summary": "Apply a blueprint update",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Blueprint name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Queued update job",
+                        "schema": {
+                            "$ref": "#/definitions/domain_blueprints.BlueprintUpdateJob"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request / project context required",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "An update is already pending or running",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/blueprints/{name}/updates/check": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Enqueues an update-check job for the caller's applied blueprint by name. The check runs asynchronously; returns the queued job.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "blueprints"
+                ],
+                "summary": "Check blueprint for updates",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Blueprint name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Queued update-check job",
+                        "schema": {
+                            "$ref": "#/definitions/domain_blueprints.BlueprintUpdateJob"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request / project context required",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -26553,8 +26787,26 @@
                 "description": {
                     "type": "string"
                 },
+                "lastCheckedAt": {
+                    "type": "string"
+                },
+                "latestVersion": {
+                    "type": "string"
+                },
                 "name": {
                     "type": "string"
+                },
+                "origin": {
+                    "type": "string"
+                },
+                "sourceRef": {
+                    "type": "string"
+                },
+                "sourceUrl": {
+                    "type": "string"
+                },
+                "updateAvailable": {
+                    "type": "boolean"
                 },
                 "version": {
                     "type": "string"
@@ -26640,6 +26892,9 @@
                 "name": {
                     "type": "string"
                 },
+                "origin": {
+                    "type": "string"
+                },
                 "projectId": {
                     "type": "string"
                 },
@@ -26682,6 +26937,91 @@
                     "type": "string"
                 },
                 "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_blueprints.BlueprintUpdateJob": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "attempts": {
+                    "type": "integer"
+                },
+                "blueprintName": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "finishedAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lastError": {
+                    "type": "string"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "result": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "startedAt": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_blueprints.BlueprintUpdateStatus": {
+            "type": "object",
+            "properties": {
+                "blueprintName": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lastCheckError": {
+                    "type": "string"
+                },
+                "lastCheckedAt": {
+                    "type": "string"
+                },
+                "latestChecksum": {
+                    "type": "string"
+                },
+                "latestJob": {
+                    "$ref": "#/definitions/domain_blueprints.BlueprintUpdateJob"
+                },
+                "latestVersion": {
+                    "type": "string"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "sourceRef": {
+                    "type": "string"
+                },
+                "sourceUrl": {
+                    "type": "string"
+                },
+                "updateAvailable": {
+                    "type": "boolean"
+                },
+                "updatedAt": {
                     "type": "string"
                 }
             }
@@ -26748,6 +27088,14 @@
             "type": "object",
             "properties": {
                 "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_blueprints.SetGithubCredentialRequest": {
+            "type": "object",
+            "properties": {
+                "token": {
                     "type": "string"
                 }
             }
@@ -31270,6 +31618,13 @@
                 "name": {
                     "type": "string"
                 },
+                "requiredConfig": {
+                    "description": "RequiredConfig lists the credential keys (header/env) the server needs\nbefore it can be enabled. Populated by registry install; manual creates\nmay omit it (stored as an empty list).",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_mcpregistry.RequiredConfigKey"
+                    }
+                },
                 "secretEnvKeys": {
                     "description": "SecretEnvKeys/SecretHeadersKeys name the entries in Env/Headers whose\nvalues must be encrypted at rest instead of stored in plaintext.",
                     "type": "array",
@@ -31344,11 +31699,27 @@
                 "id": {
                     "type": "string"
                 },
+                "missingConfigKeys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "name": {
                     "type": "string"
                 },
+                "needsConfiguration": {
+                    "type": "boolean"
+                },
                 "projectId": {
                     "type": "string"
+                },
+                "requiredConfig": {
+                    "description": "RequiredConfig lists the credential keys (header/env) the server needs\nbefore it can be enabled; NeedsConfiguration is true while any required\nkey is still missing; MissingConfigKeys names the still-missing ones.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_mcpregistry.RequiredConfigKey"
+                    }
                 },
                 "secretEnvKeys": {
                     "description": "SecretEnvKeys/SecretHeadersKeys list the keys stored encrypted at rest.\nThe corresponding values are never returned by the API.",
@@ -31421,11 +31792,27 @@
                 "id": {
                     "type": "string"
                 },
+                "missingConfigKeys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "name": {
                     "type": "string"
                 },
+                "needsConfiguration": {
+                    "type": "boolean"
+                },
                 "projectId": {
                     "type": "string"
+                },
+                "requiredConfig": {
+                    "description": "RequiredConfig lists the credential keys (header/env) the server needs\nbefore it can be enabled; NeedsConfiguration is true while any required\nkey is still missing; MissingConfigKeys names the still-missing ones.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_mcpregistry.RequiredConfigKey"
+                    }
                 },
                 "secretEnvKeys": {
                     "description": "SecretEnvKeys/SecretHeadersKeys list the keys stored encrypted at rest.\nThe corresponding values are never returned by the API.",
@@ -31536,6 +31923,31 @@
                 "ServerTypeSSE",
                 "ServerTypeHTTP"
             ]
+        },
+        "domain_mcpregistry.RequiredConfigKey": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "isRequired": {
+                    "type": "boolean"
+                },
+                "isSecret": {
+                    "type": "boolean"
+                },
+                "kind": {
+                    "description": "\"header\" | \"env\"",
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "valueHint": {
+                    "description": "ValueHint is the registry-declared value template (header transports\nonly), e.g. \"Bearer {NETDATA_CLOUD_API_TOKEN}\". It is surfaced as an\ninput placeholder, never prefilled, so it never leaks a credential.",
+                    "type": "string"
+                }
+            }
         },
         "domain_mcpregistry.UpdateMCPServerDTO": {
             "type": "object",
