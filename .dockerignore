@@ -16,3 +16,8 @@ apps/logs
 e2e/test-logs
 e2e/logs
 e2e/.runlog
+
+# Committed CLI release artifacts (~57 MB: emergent-cli-*, emergent-darwin-*).
+# The e2e Dockerfile builds the CLI from source, so these must never enter the
+# repo-root build context — they bloat the context/image and exhaust runner disk.
+apps/cli/emergent-*
