@@ -21,6 +21,13 @@ name: Meta CI
 # The heavy suites still run for the PRs that touch their paths; they stay
 # advisory. See emergent-company/emergent.memory#1673.
 #
+# Fork PRs run a green no-op `ci`: every step is gated on
+# `github.event_name != 'pull_request' || head.repo.full_name == repository`, so
+# a fork PR cannot execute checked-out (untrusted) code on the persistent
+# self-hosted runner. The job still reports a real result (success with all steps
+# skipped), satisfying the required context; a maintainer must re-run from a
+# trusted ref to actually validate a fork.
+#
 # The review-bot meta checks (script syntax + review-gate tests) moved to
 # emergent-company/emergent.memory.infra along with the review-bot apparatus.
 on:
@@ -44,6 +51,7 @@ jobs:
     runs-on: [self-hosted, linux, x64, memory]
     steps:
       - uses: actions/checkout@v4
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         with:
           # Full history: the preflight/migration guards diff the working tree
           # against the base ref (`--base origin/main`) and need the base commit
@@ -53,8 +61,10 @@ jobs:
       # annotation in apps/server/cmd/server/main.go. A release bumps both
       # together; this fails early when they drift (see #auto-tag dead-path).
       - name: Version drift guard
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: bash scripts/preflight/version-drift.sh
       - name: Setup Go
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/setup-go@v5
         with:
           go-version: '1.26'
@@ -64,6 +74,7 @@ jobs:
       # here — over *tracked* files, so generated/untracked artifacts don't
       # produce noise. (See emergent-company/emergent.memory#1058.)
       - name: gofmt (tracked Go files)
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: |
           files=$(git ls-files '*.go' | xargs gofmt -l)
           if [ -n "$files" ]; then
@@ -80,8 +91,10 @@ jobs:
       # migration-immutability.sh --base origin/main), so they are deliberately
       # not repeated here.
       - name: Guard migration workspace
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: bash scripts/preflight/migration-workspace.sh
       - name: Guard route authority
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         working-directory: apps/server
         run: |
           # Parses the whole current tree's route table (apps/server/domain) and
@@ -97,23 +110,30 @@ jobs:
       # branch-protection-required `ci` check enforces them on merge.
       # (See emergent-company/emergent.memory#1074.)
       - name: Preflight guards
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: bash scripts/preflight/all.sh
       # Reject dynamic ${{ ... }} interpolation (refs, inputs, outputs, event
       # payloads) inside shell run:/github-script script: payloads. Runs here so
       # the branch-protection-required `ci` check enforces it repo-wide.
       - name: Workflow injection guard (self-test)
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: python3 .github/scripts/check-injection.py --self-test
       - name: Workflow injection guard
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: python3 .github/scripts/check-injection.py .github/workflows
       - name: go.work coverage guard
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: .github/scripts/check-go-work-coverage.sh
       # Regression test for the iOS release skip decision (#1612): a genuinely
       # new iOS version must build, a re-run / duplicate must skip, and neither
       # the dual SDK tag series nor a skipped intermediate tag may suppress it.
       - name: iOS release skip-check tests
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: .github/scripts/ios-release-should-build.test.sh
       # Same guarantee for the Mac release skip decision (mac-update-channel).
       - name: Mac release skip-check tests
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: .github/scripts/mac-release-should-build.test.sh
       - name: Meta checks
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: 'echo "Meta CI: no meta checks remain in this repository."'

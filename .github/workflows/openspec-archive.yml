@@ -27,10 +27,18 @@ name: OpenSpec archive guard
 on:
   push:
     branches: [main]
+    paths:
+      - 'openspec/**'
+      - '.github/workflows/openspec-archive.yml'
   schedule:
     # 07:23 UTC daily — off the :00/:15 mark to avoid runner congestion.
     - cron: '23 7 * * *'
   workflow_dispatch:
+
+# Serialize per ref; never cancel an in-flight archive run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read

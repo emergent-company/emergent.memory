@@ -6,9 +6,10 @@ name: Web UI CI
 # and never satisfied the required `ci` status check — branch protection left
 # them unmergeable. This workflow supplies that check for web-ui changes.
 #
-# The gate job is deliberately named `ci`, the same context branch protection
-# requires: a web-ui-only PR is gated by this one, and a PR touching both trees
-# must pass both runs.
+# This workflow is path-filtered to `apps/web-ui/**`, so it is NOT the required
+# status check: the single branch-protection-required context on main is Meta
+# CI's `ci` (.github/workflows/ci.yml), which is unfiltered and reports for every
+# PR. This workflow's aggregate gate is named `web-ui-ci` (advisory).
 
 on:
   push:
@@ -153,8 +154,11 @@ jobs:
       - name: Run DOM wiring specs
         run: npx playwright test --config=js-dom.config.ts
 
-  ci:
-    name: ci
+  web-ui-ci:
+    name: web-ui-ci
+    # Advisory aggregate gate for this path-filtered workflow; not the required
+    # `ci` context (that is Meta CI's `ci` in ci.yml). Renamed from `ci` to
+    # `web-ui-ci` so it no longer collides with the required context.
     # Fork PRs must not run on the self-hosted runner.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, x64, memory]

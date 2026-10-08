@@ -12,6 +12,11 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+# Serialize image builds per ref; never cancel an in-flight release build.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/memory-web-ui

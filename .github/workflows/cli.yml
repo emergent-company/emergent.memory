@@ -659,13 +659,16 @@ jobs:
           cache-from: type=gha,scope=memory-cli
           cache-to: type=gha,scope=memory-cli,mode=min
 
-  ci:
-    name: ci
+  cli-ci:
+    name: cli-ci
     runs-on: [self-hosted, linux, x64, memory]
-    # always() so the required `ci` context always reports a real result instead
-    # of being skipped when a dependency fails. The tag-guarded lint/test jobs
-    # are legitimately skipped on tag pushes; the gate treats 'skipped' as
-    # acceptable and fails only on 'failure'/'cancelled'.
+    # Advisory aggregate gate for this path-filtered workflow. It is NOT the
+    # branch-protection-required status check: the single required context on
+    # main is Meta CI's `ci` (.github/workflows/ci.yml). Renamed from `ci` to
+    # `cli-ci` (#1673/#1675 follow-up) so it no longer collides with the required
+    # `ci` context. always(): the tag-guarded lint/test jobs are legitimately
+    # skipped on tag pushes, so the gate treats 'skipped' as acceptable and fails
+    # only on 'failure'/'cancelled' (and still reports when a dependency fails).
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     needs: [lint, test, build]
     steps:

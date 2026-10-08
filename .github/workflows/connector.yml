@@ -119,11 +119,14 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: apps/connector.mac/Scripts/lint-swift.sh
 
-  ci:
-    name: ci
+  connector-ci:
+    name: connector-ci
     runs-on: [self-hosted, linux, x64, memory]
-    # always() so the required `ci` context always reports a real result instead
-    # of being skipped when a dependency fails (same pattern as cli.yml).
+    # Advisory aggregate gate for this path-filtered workflow. NOT the required
+    # status check: the single required context on main is Meta CI's `ci`
+    # (.github/workflows/ci.yml). Renamed from `ci` to `connector-ci` so it no
+    # longer collides with the required `ci` context. always() so the gate still
+    # reports when a dependency fails (same pattern as cli.yml).
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     needs: [linux-lint, mac-lint]
     steps:
