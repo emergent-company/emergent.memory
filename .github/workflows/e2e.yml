@@ -1,8 +1,8 @@
 name: E2E Tests
 
 # Path-filtered: E2E builds the server image (and the CLI inside it) from
-# apps/server/** and apps/cli/** (plus deploy/** and e2e/**), then runs the
-# compose stack in e2e/**.
+# apps/server/** and apps/cli/** (plus deploy/**, e2e/**, and the root
+# .dockerignore), then runs the compose stack in e2e/**.
 # It is NOT a required check, so a path filter cannot wedge unrelated PRs the
 # way an unfiltered required check would.
 on:
@@ -16,6 +16,7 @@ on:
       - 'go.work'
       - 'VERSION'
       - '.github/workflows/e2e.yml'
+      - '.dockerignore'
   pull_request:
     paths:
       - 'apps/server/**'
@@ -25,6 +26,7 @@ on:
       - 'go.work'
       - 'VERSION'
       - '.github/workflows/e2e.yml'
+      - '.dockerignore'
   workflow_dispatch:
     inputs:
       TEST_RUN:
