@@ -16,7 +16,7 @@ func (s *Server) uiShareSessionTranscript(c echo.Context) error {
 		if isMemoryNotFound(err) {
 			return s.page(c, pageTitle("Shared session"), ShareSessionTranscriptPage(id, nil, nil))
 		}
-		return s.page(c, pageTitle("Shared session"), ShareSessionTranscriptPage(id, nil, err))
+		return s.page(c, pageTitle("Shared session"), ShareSessionTranscriptPage(id, nil, userFacingError(err)))
 	}
 	return s.page(c, pageTitle("Shared session"), ShareSessionTranscriptPage(id, messages, nil))
 }

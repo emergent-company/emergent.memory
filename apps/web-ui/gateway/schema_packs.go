@@ -168,7 +168,7 @@ func (s *Server) uiSchemaPacks(c echo.Context) error {
 	ctx := c.Request().Context()
 	compiled, err := s.memory.GetCompiledTypes(ctx)
 	if err != nil {
-		return s.page(c, pageTitle("Schema packs"), SchemaPacksPage(nil, err))
+		return s.page(c, pageTitle("Schema packs"), SchemaPacksPage(nil, userFacingError(err)))
 	}
 	metas, merr := s.memory.ListAllSchemas(ctx)
 	captureError(merr)
@@ -184,7 +184,7 @@ func (s *Server) uiSchemaPack(c echo.Context) error {
 	id := pathUnescape(c.Param("id"))
 	compiled, err := s.memory.GetCompiledTypes(ctx)
 	if err != nil {
-		return s.page(c, pageTitle("Schema pack"), SchemaPackPage(nil, err))
+		return s.page(c, pageTitle("Schema pack"), SchemaPackPage(nil, userFacingError(err)))
 	}
 	metas, merr := s.memory.ListAllSchemas(ctx)
 	captureError(merr)

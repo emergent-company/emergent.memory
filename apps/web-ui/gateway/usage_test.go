@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -234,7 +233,11 @@ func TestUsageRouteEmptyState(t *testing.T) {
 }
 
 func TestUsageRouteBackendFailure(t *testing.T) {
-	f := &fakeMemory{usageErr: fmt.Errorf("memory 503: service down")}
+	f := &fakeMemory{usageErr: &memoryHTTPError{
+		Status:  http.StatusServiceUnavailable,
+		Code:    "service_unavailable",
+		Message: "Token validation temporarily unavailable",
+	}}
 	_, e := newUsageEcho(f)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/usage", nil))
@@ -242,8 +245,13 @@ func TestUsageRouteBackendFailure(t *testing.T) {
 		t.Fatalf("status = %d (error state renders the page, not a crash)", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Failed to load usage") || !strings.Contains(body, "service down") {
-		t.Errorf("error state missing:\n%s", body)
+	if !strings.Contains(body, "Failed to load usage") || !strings.Contains(body, memoryUnavailableMessage) {
+		t.Errorf("error state missing sanitized message:\n%s", body)
+	}
+	for _, leak := range []string{"dial tcp", "memory 5", "service_unavailable", "Token validation"} {
+		if strings.Contains(body, leak) {
+			t.Errorf("error state leaked %q", leak)
+		}
 	}
 }
 

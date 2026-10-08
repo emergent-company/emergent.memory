@@ -247,7 +247,7 @@ func (s *Server) loadMembersData(c echo.Context, data *membersPageData) {
 	}
 	members, err := s.memory.ListMembers(ctx)
 	if err != nil {
-		data.LoadErr = err
+		data.LoadErr = userFacingError(err)
 	} else {
 		data.Members = members
 	}
@@ -295,7 +295,7 @@ func (s *Server) uiMemberDetailsFor(surf membersSurface, c echo.Context) error {
 	data := memberDetailPageData{Base: surf.base, FlashErr: flashError(c)}
 	members, err := s.memory.ListMembers(ctx)
 	if err != nil {
-		data.LoadErr = err
+		data.LoadErr = userFacingError(err)
 		return s.page(c, pageTitle("Member unavailable"), MemberDetailPage(data))
 	}
 	if i := slices.IndexFunc(members, func(m ProjectMemberDto) bool { return m.ID == userID }); i >= 0 {
@@ -363,7 +363,7 @@ func (s *Server) loadProfileFields(ctx context.Context, data *profilePageData) {
 	}
 	profile, err := s.memory.GetProfile(ctx)
 	if err != nil {
-		data.LoadErr = err
+		data.LoadErr = userFacingError(err)
 	} else {
 		data.Profile = profile
 		if data.Email == "" && profile != nil {
@@ -377,7 +377,7 @@ func (s *Server) loadProfileFields(ctx context.Context, data *profilePageData) {
 func (s *Server) loadPendingInvites(ctx context.Context, data *invitationsPageData) {
 	pending, err := s.memory.ListPendingInvites(ctx)
 	if err != nil {
-		data.LoadErr = err
+		data.LoadErr = userFacingError(err)
 		return
 	}
 	data.Pending = pending

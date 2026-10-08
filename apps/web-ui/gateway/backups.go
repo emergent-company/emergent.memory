@@ -214,6 +214,17 @@ var errBackupsNoOrg = errors.New("no organization is bound to the active project
 // active project via the tenancy listing); the API-key path resolves it from
 // the token-bound current-project lookup. Callers render a clear error state
 // when no org can be resolved (never a 500).
+// backupsLoadErr sanitizes a backups load failure for the pageError surface so
+// a raw transport or backend error cannot leak internal detail. The deliberate
+// no-org sentinel (errBackupsNoOrg) is already safe, specific user copy and is
+// returned unchanged.
+func backupsLoadErr(err error) error {
+	if errors.Is(err, errBackupsNoOrg) {
+		return err
+	}
+	return userFacingError(err)
+}
+
 func (s *Server) backupsOrgID(ctx context.Context) (string, error) {
 	// Web session: the org is authoritative when present. When only the project
 	// is known (the project picker stores just the id), recover the org from the
@@ -285,7 +296,7 @@ func (s *Server) uiBackups(c echo.Context) error {
 	if err != nil {
 		// Unreachable/gated Memory or a project with no org: a clear error
 		// state, never a 500.
-		return s.page(c, pageTitle("Backups"), BackupsPage(nil, 0, "", err, flashMsg, flashErr))
+		return s.page(c, pageTitle("Backups"), BackupsPage(nil, 0, "", backupsLoadErr(err), flashMsg, flashErr))
 	}
 	backups, total, err := s.memory.ListBackups(ctx, orgID)
 	if err != nil {
@@ -294,7 +305,7 @@ func (s *Server) uiBackups(c echo.Context) error {
 			// an unavailable state instead of a hard error.
 			return s.page(c, pageTitle("Backups"), BackupsPage(nil, 0, "The connected Memory service does not expose backups.", nil, flashMsg, flashErr))
 		}
-		return s.page(c, pageTitle("Backups"), BackupsPage(nil, 0, "", err, flashMsg, flashErr))
+		return s.page(c, pageTitle("Backups"), BackupsPage(nil, 0, "", userFacingError(err), flashMsg, flashErr))
 	}
 	if backups == nil {
 		backups = []Backup{}
@@ -312,11 +323,16 @@ func (s *Server) uiBackupDetail(c echo.Context) error {
 	id := c.Param("id")
 	orgID, err := s.backupsOrgID(ctx)
 	if err != nil {
-		return s.page(c, pageTitle("Backup"), BackupDetailPage(nil, err))
+		return s.page(c, pageTitle("Backup"), BackupDetailPage(nil, backupsLoadErr(err)))
 	}
 	b, err := s.memory.GetBackup(ctx, orgID, id)
 	if err != nil {
-		return s.page(c, pageTitle("Backup"), BackupDetailPage(nil, err))
+		// A missing backup keeps its specific, safe "not found" copy; any other
+		// failure is sanitized so it cannot leak transport/backend detail.
+		if isMemoryNotFound(err) {
+			return s.page(c, pageTitle("Backup"), BackupDetailPage(nil, fmt.Errorf("backup %s not found", shortID(id))))
+		}
+		return s.page(c, pageTitle("Backup"), BackupDetailPage(nil, userFacingError(err)))
 	}
 	if b == nil {
 		return s.page(c, pageTitle("Backup"), BackupDetailPage(nil, fmt.Errorf("backup %s not found", shortID(id))))

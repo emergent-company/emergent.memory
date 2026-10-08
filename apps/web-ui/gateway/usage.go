@@ -152,13 +152,13 @@ func (s *Server) uiUsage(c echo.Context) error {
 	_ = g.Wait()
 
 	if summaryErr != nil {
-		return s.page(c, pageTitle("Usage"), UsagePage(nil, nil, usageChartPayload{}, 0, false, days, summaryErr))
+		return s.page(c, pageTitle("Usage"), UsagePage(nil, nil, usageChartPayload{}, 0, false, days, userFacingError(summaryErr)))
 	}
 	if seriesErr != nil {
-		return s.page(c, pageTitle("Usage"), UsagePage(summary, nil, usageChartPayload{}, 0, false, days, seriesErr))
+		return s.page(c, pageTitle("Usage"), UsagePage(summary, nil, usageChartPayload{}, 0, false, days, userFacingError(seriesErr)))
 	}
 	if convsErr != nil {
-		return s.page(c, pageTitle("Usage"), UsagePage(summary, series, usageChartPayload{}, 0, false, days, convsErr))
+		return s.page(c, pageTitle("Usage"), UsagePage(summary, series, usageChartPayload{}, 0, false, days, userFacingError(convsErr)))
 	}
 
 	payload := usageChartPayload{

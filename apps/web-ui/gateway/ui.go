@@ -530,7 +530,7 @@ func (s *Server) uiAgents(c echo.Context) error {
 	})
 	_ = g.Wait()
 	if agentsErr != nil {
-		return s.page(c, pageTitle("Agents"), AgentsPage(nil, nil, "", agentsErr))
+		return s.page(c, pageTitle("Agents"), AgentsPage(nil, nil, "", userFacingError(agentsErr)))
 	}
 	captureError(providersErr)
 	captureError(defaultModelErr)
@@ -694,7 +694,7 @@ func (s *Server) uiChat(c echo.Context) error {
 	ctx := c.Request().Context()
 	agents, appearances, convs, schedRuns, shared, err := s.chatRailData(ctx, false)
 	if err != nil {
-		return s.page(c, pageTitle("Chat"), ChatPage(nil, nil, nil, nil, nil, "", "", "", err, true, nil))
+		return s.page(c, pageTitle("Chat"), ChatPage(nil, nil, nil, nil, nil, "", "", "", userFacingError(err), true, nil))
 	}
 	modelWarnings := s.chatModelWarnings(ctx, agents)
 	convID := c.QueryParam("c")
@@ -1208,7 +1208,11 @@ func (s *Server) uiDocuments(c echo.Context) error {
 		{key: "deleted", msg: "Document deleted."},
 	})
 	flashErr := flashError(c)
-	return s.page(c, pageTitle("Documents"), DocumentsPage(docs, cursor, err, flashMsg, flashErr))
+	var loadErr error
+	if err != nil {
+		loadErr = userFacingError(err)
+	}
+	return s.page(c, pageTitle("Documents"), DocumentsPage(docs, cursor, loadErr, flashMsg, flashErr))
 }
 
 // uiDocument renders a document's Overview sub-page: metadata, the extraction
@@ -1221,7 +1225,7 @@ func (s *Server) uiDocument(c echo.Context) error {
 
 	doc, err := s.memory.GetDocument(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle("Document"), DocumentDetailPage(nil, documentPreview{}, err, "", nil, false))
+		return s.page(c, pageTitle("Document"), DocumentDetailPage(nil, documentPreview{}, userFacingError(err), "", nil, false))
 	}
 
 	preview := s.loadDocumentPreview(ctx, doc)
@@ -1337,7 +1341,7 @@ func (s *Server) uiBlueprints(c echo.Context) error {
 	_ = g.Wait()
 
 	if appliedErr != nil {
-		return s.page(c, pageTitle("Blueprints"), BlueprintsPage(nil, nil, nil, nil, appliedErr, flashMsg, flashErr))
+		return s.page(c, pageTitle("Blueprints"), BlueprintsPage(nil, nil, nil, nil, userFacingError(appliedErr), flashMsg, flashErr))
 	}
 	// The applied list carries no job, so resolve each repo-imported row's
 	// latest update job separately (best effort) — this is what lets the Update
@@ -1484,7 +1488,11 @@ func (s *Server) uiSkills(c echo.Context) error {
 	captureError(agentErr)
 	assistant := s.assistantAgentID(ctx, agents)
 	usedBy := s.skillUsage(agents)
-	return s.page(c, pageTitle("Skills"), SkillsPage(skills, skillsErr, flashMsg, flashErr, assistant, usedBy))
+	var loadErr error
+	if skillsErr != nil {
+		loadErr = userFacingError(skillsErr)
+	}
+	return s.page(c, pageTitle("Skills"), SkillsPage(skills, loadErr, flashMsg, flashErr, assistant, usedBy))
 }
 
 // uiSkill renders one skill: scope + provenance badges, the full content, the
@@ -1500,7 +1508,7 @@ func (s *Server) uiSkill(c echo.Context) error {
 		flashMsg = "Skill updated."
 	}
 	if err != nil {
-		return s.page(c, pageTitle("Skill"), SkillDetailPage(nil, err, "", nil))
+		return s.page(c, pageTitle("Skill"), SkillDetailPage(nil, userFacingError(err), "", nil))
 	}
 	return s.page(c, pageTitle(skill.Name), SkillDetailPage(skill, nil, flashMsg, flashErr))
 }

@@ -338,7 +338,7 @@ func (s *Server) uiObjects(c echo.Context) error {
 			results, _, err = s.memory.SearchObjects(ctx, mode, query, typeFilter, branchID, 25, 0)
 		}
 		if err != nil {
-			data.LoadErr = err
+			data.LoadErr = userFacingError(err)
 			return s.page(c, pageTitle("Objects"), ObjectsPage(data))
 		}
 		data.Results = results
@@ -355,7 +355,7 @@ func (s *Server) uiObjects(c echo.Context) error {
 	// endpoints cannot apply it), so search mode does not pay for the fetches.
 	s.loadObjectActorOptions(ctx, &data)
 	if err := s.loadObjectBrowsePage(ctx, &data, cursor); err != nil {
-		data.LoadErr = err
+		data.LoadErr = userFacingError(err)
 		return s.page(c, pageTitle("Objects"), ObjectsPage(data))
 	}
 	return s.page(c, pageTitle("Objects"), ObjectsPage(data))
@@ -394,7 +394,7 @@ func (s *Server) uiAgentObjects(c echo.Context) error {
 
 	agent, err := s.memory.GetAgentDefinition(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle("Objects"), ObjectsPage(objectsPageData{LoadErr: err}))
+		return s.page(c, pageTitle("Objects"), ObjectsPage(objectsPageData{LoadErr: userFacingError(err)}))
 	}
 
 	data := objectsPageData{
@@ -409,7 +409,7 @@ func (s *Server) uiAgentObjects(c echo.Context) error {
 	s.loadObjectFilterOptions(ctx, &data)
 
 	if err := s.loadObjectBrowsePage(ctx, &data, c.QueryParam("cursor")); err != nil {
-		data.LoadErr = err
+		data.LoadErr = userFacingError(err)
 		return s.page(c, pageTitle(agent.Name, "Objects"), ObjectsPage(data))
 	}
 	return s.page(c, pageTitle(agent.Name, "Objects"), ObjectsPage(data))
@@ -627,7 +627,7 @@ func (s *Server) uiObject(c echo.Context) error {
 
 	obj, err := s.memory.GetGraphObject(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle("Object"), ObjectDetailPage(nil, nil, nil, nil, nil, err, "", flashErr, nil, nil, nil, nil))
+		return s.page(c, pageTitle("Object"), ObjectDetailPage(nil, nil, nil, nil, nil, userFacingError(err), "", flashErr, nil, nil, nil, nil))
 	}
 
 	var (
@@ -937,7 +937,7 @@ func (s *Server) uiObjectNew(c echo.Context) error {
 	ctx := c.Request().Context()
 	compiled, err := s.memory.GetCompiledTypes(ctx)
 	if err != nil {
-		return s.page(c, pageTitle("New object"), ObjectCreatePage(nil, nil, objectCreateForm{}, nil, err, nil))
+		return s.page(c, pageTitle("New object"), ObjectCreatePage(nil, nil, objectCreateForm{}, nil, userFacingError(err), nil))
 	}
 	var objectTypes []CompiledType
 	if compiled != nil {

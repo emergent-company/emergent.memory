@@ -46,7 +46,7 @@ func (s *Server) uiMCPRegistry(c echo.Context) error {
 	}
 	res, err := s.memory.SearchRegistry(ctx, data.Query, 0, strings.TrimSpace(c.QueryParam("cursor")))
 	if err != nil {
-		data.LoadErr = err
+		data.LoadErr = userFacingError(err)
 	} else if res != nil {
 		data.Servers = res.Servers
 		data.NextCursor = res.NextCursor

@@ -149,7 +149,7 @@ func (s *Server) uiInbox(c echo.Context) error {
 	projectID := inboxProjectFilter(scope, view.Project)
 	items, err := s.memory.ListNotifications(ctx, inboxListParams(scope, projectID, tab))
 	if err != nil {
-		view.LoadErr = err
+		view.LoadErr = userFacingError(err)
 		return s.page(c, pageTitle("Inbox"), InboxPage(view))
 	}
 	if items == nil {
@@ -252,7 +252,7 @@ func (s *Server) uiNotificationPreferences(c echo.Context) error {
 	}
 	prefs, err := s.memory.ListNotificationPreferences(ctx, view.Project.ID)
 	if err != nil {
-		view.LoadErr = err
+		view.LoadErr = userFacingError(err)
 		return s.page(c, pageTitle("Notification settings"), NotificationPreferencesPage(view))
 	}
 	sort.SliceStable(prefs, func(i, j int) bool { return prefs[i].Label < prefs[j].Label })

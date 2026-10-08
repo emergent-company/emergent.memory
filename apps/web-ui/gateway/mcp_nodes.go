@@ -171,6 +171,9 @@ func (s *Server) loadMCPNodesData(ctx context.Context, selectedNode string) exte
 			data.NodeNotFound = true
 		}
 	}
+	if data.LoadErr != nil {
+		data.LoadErr = userFacingError(data.LoadErr)
+	}
 	return data
 }
 

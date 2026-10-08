@@ -75,7 +75,7 @@ func (s *Server) uiRun(c echo.Context) error {
 	runID := c.Param("runId")
 	run, err := s.memory.GetRunFull(ctx, runID)
 	if err != nil {
-		return s.page(c, pageTitle("Run"), RunPage(runPageData{LoadErr: err}))
+		return s.page(c, pageTitle("Run"), RunPage(runPageData{LoadErr: userFacingError(err)}))
 	}
 	data := runPageData{Run: run}
 	if tr, err := s.memory.GetAgentRun(ctx, runID); err == nil && tr != nil {

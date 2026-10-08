@@ -281,7 +281,7 @@ func (s *Server) uiBoard(c echo.Context) error {
 	ctx := c.Request().Context()
 	items, err := s.memory.ListWorkItems(ctx, "", "", 200)
 	if err != nil {
-		return s.page(c, pageTitle("Board"), BoardPage(nil, nil, nil, defaultBoardStatusMap(), err))
+		return s.page(c, pageTitle("Board"), BoardPage(nil, nil, nil, defaultBoardStatusMap(), userFacingError(err)))
 	}
 	agents, aerr := s.memory.ListScheduledAgents(ctx)
 	if aerr != nil {

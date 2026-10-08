@@ -18,7 +18,7 @@ func (s *Server) uiSessions(c echo.Context) error {
 	ctx := c.Request().Context()
 	convs, err := s.memory.ListConversations(ctx, false)
 	if err != nil {
-		return s.page(c, pageTitle("Sessions"), SessionsPage(nil, nil, err))
+		return s.page(c, pageTitle("Sessions"), SessionsPage(nil, nil, userFacingError(err)))
 	}
 	list := convs.Conversations
 	// Agent appearance (icon + color) is best-effort decoration on each row
@@ -55,7 +55,7 @@ func (s *Server) uiSession(c echo.Context) error {
 		if isSessionNotFound(err) {
 			return s.page(c, pageTitle("Session"), SessionPage(nil, nil, nil, nil))
 		}
-		return s.page(c, pageTitle("Session"), SessionPage(nil, nil, nil, err))
+		return s.page(c, pageTitle("Session"), SessionPage(nil, nil, nil, userFacingError(err)))
 	}
 	// Agent appearance (icon + color) is best-effort decoration on the header
 	// badge and the assistant avatar; it only applies to agent-bound sessions,
@@ -74,7 +74,7 @@ func (s *Server) uiSession(c echo.Context) error {
 		if isSessionNotFound(err) {
 			return s.page(c, pageTitle("Session"), SessionPage(agents, detail, nil, nil))
 		}
-		return s.page(c, pageTitle("Session"), SessionPage(agents, detail, nil, err))
+		return s.page(c, pageTitle("Session"), SessionPage(agents, detail, nil, userFacingError(err)))
 	}
 	if len(history.Items) == 0 {
 		history.Items = messageTimelineItems(detail.Messages)

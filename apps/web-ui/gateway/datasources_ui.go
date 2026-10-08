@@ -284,6 +284,9 @@ func dsTestMessage(resp *DSTestConnectionResponse) string {
 func (s *Server) uiDataSources(c echo.Context) error {
 	ctx := c.Request().Context()
 	items, err := s.memory.ListDSIntegrations(ctx)
+	if err != nil {
+		err = userFacingError(err)
+	}
 	names := dsProviderNameMap(nil)
 	if providers, perr := s.memory.ListDSProviders(ctx); perr == nil {
 		names = dsProviderNameMap(providers)
@@ -303,6 +306,9 @@ func (s *Server) uiDataSources(c echo.Context) error {
 func (s *Server) uiDataSourceNew(c echo.Context) error {
 	ctx := c.Request().Context()
 	schema, err := s.memory.GetDSProviderSchema(ctx, dsProviderTypeGoogleDrive)
+	if err != nil {
+		err = userFacingError(err)
+	}
 	configFields, credentialFields := dsConfigFields(schema)
 	flashErr := flashError(c)
 	return s.page(c, pageTitle("New Data Source"), DataSourceNewPage(configFields, credentialFields, err, flashErr))
@@ -354,7 +360,7 @@ func (s *Server) uiDataSourceDetail(c echo.Context) error {
 	id := c.Param("id")
 	src, err := s.memory.GetDSIntegration(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle("Data Source"), DataSourceDetailPage(nil, "", nil, nil, nil, err, "", nil))
+		return s.page(c, pageTitle("Data Source"), DataSourceDetailPage(nil, "", nil, nil, nil, userFacingError(err), "", nil))
 	}
 	providerName := dsProviderLabel(dsProviderNameMap(nil), src.ProviderType)
 	if providers, perr := s.memory.ListDSProviders(ctx); perr == nil {
@@ -463,8 +469,11 @@ func (s *Server) uiDocumentVersions(c echo.Context) error {
 	id := c.Param("id")
 	doc, err := s.memory.GetDocument(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle("Document"), DocumentVersionsPage(nil, nil, err))
+		return s.page(c, pageTitle("Document"), DocumentVersionsPage(nil, nil, userFacingError(err)))
 	}
 	versions, err := s.memory.ListDocumentVersions(ctx, id)
+	if err != nil {
+		err = userFacingError(err)
+	}
 	return s.page(c, pageTitle(documentName(*doc), "Versions"), DocumentVersionsPage(doc, versions, err))
 }

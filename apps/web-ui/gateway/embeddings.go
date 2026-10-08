@@ -222,6 +222,10 @@ func (s *Server) uiEmbeddings(c echo.Context) error {
 	captureError(modelErr)
 	captureError(covErr)
 
+	if progErr != nil {
+		progErr = userFacingError(progErr)
+	}
+
 	data := embeddingPageData{
 		Progress:    progress,
 		Status:      status,

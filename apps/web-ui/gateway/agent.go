@@ -53,7 +53,7 @@ func (s *Server) uiAgent(c echo.Context) error {
 
 	agent, err := s.memory.GetAgentDefinition(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle("Agent"), AgentDashboardPage(agentDashboardData{LoadErr: err}))
+		return s.page(c, pageTitle("Agent"), AgentDashboardPage(agentDashboardData{LoadErr: userFacingError(err)}))
 	}
 	data := agentDashboardData{Agent: agent}
 
@@ -234,7 +234,7 @@ func (s *Server) renderAgentSettingsSection(c echo.Context, section string) erro
 	data.MCPSessionStatus = normalizeAgentMCPSessionStatus(c.QueryParam("sessions"))
 
 	if err := s.loadAgentSettings(ctx, id, &data); err != nil {
-		data.LoadErr = err
+		data.LoadErr = userFacingError(err)
 		return s.page(c, pageTitle("Agent settings"), AgentSettingsPage(data))
 	}
 	// The MCP block (endpoint/keys/sessions) is only rendered on the MCP
@@ -639,7 +639,7 @@ func (s *Server) uiAgentSessions(c echo.Context) error {
 	data := agentSessionsData{}
 	agent, err := s.memory.GetAgentDefinition(ctx, id)
 	if err != nil {
-		data.LoadErr = err
+		data.LoadErr = userFacingError(err)
 		return s.page(c, pageTitle("Agent sessions"), AgentSessionsPage(data))
 	}
 	data.Agent = agent
@@ -1433,14 +1433,14 @@ func (s *Server) uiAgentSandbox(c echo.Context) error {
 
 	agent, err := s.memory.GetAgentDefinition(ctx, id)
 	if err != nil {
-		data.LoadErr = err
+		data.LoadErr = userFacingError(err)
 		return s.page(c, pageTitle("Sandbox"), AgentSandboxPage(data))
 	}
 	data.Agent = agent
 
 	cfg, err := s.memory.GetAgentSandboxConfig(ctx, id)
 	if err != nil {
-		data.LoadErr = err
+		data.LoadErr = userFacingError(err)
 		return s.page(c, pageTitle("Sandbox"), AgentSandboxPage(data))
 	}
 	data.Config = cfg

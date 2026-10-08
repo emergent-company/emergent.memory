@@ -311,7 +311,11 @@ func TestUIBackupsPageNoOrg(t *testing.T) {
 }
 
 func TestUIBackupsPageMemoryUnreachable(t *testing.T) {
-	f := &fakeMemory{projectErr: errTest} // project lookup transport failure
+	f := &fakeMemory{projectErr: &url.Error{ // project lookup transport failure
+		Op:  "Get",
+		URL: "http://172.17.0.1:8080/api/projects/current",
+		Err: errors.New("dial tcp 172.17.0.1:8080: connect: connection refused"),
+	}}
 	_, e := newBackupsEcho(f)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/backups", nil))
@@ -319,8 +323,13 @@ func TestUIBackupsPageMemoryUnreachable(t *testing.T) {
 		t.Fatalf("status = %d, want 200 (page error state)", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Failed to load backups") || !strings.Contains(body, "backend unreachable") {
-		t.Errorf("unreachable error state missing: %s", body)
+	if !strings.Contains(body, "Failed to load backups") || !strings.Contains(body, memoryUnavailableMessage) {
+		t.Errorf("unreachable error state missing sanitized message: %s", body)
+	}
+	for _, leak := range []string{"172.17.0.1", "dial tcp", ":8080", "memory 5"} {
+		if strings.Contains(body, leak) {
+			t.Errorf("unreachable error state leaked %q", leak)
+		}
 	}
 }
 

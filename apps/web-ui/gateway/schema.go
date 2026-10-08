@@ -71,7 +71,7 @@ func (s *Server) uiSchema(c echo.Context) error {
 	ctx := c.Request().Context()
 	compiled, err := s.memory.GetCompiledTypes(ctx)
 	if err != nil {
-		return s.page(c, pageTitle("Schema"), SchemaPage(nil, err))
+		return s.page(c, pageTitle("Schema"), SchemaPage(nil, userFacingError(err)))
 	}
 	visible := &CompiledSchemaTypes{
 		ObjectTypes:       visibleCompiledTypes(compiled.ObjectTypes),
@@ -126,7 +126,7 @@ func (s *Server) uiSchemaObjectType(c echo.Context) error {
 	name := pathUnescape(c.Param("name"))
 	compiled, err := s.memory.GetCompiledTypes(ctx)
 	if err != nil {
-		return s.page(c, pageTitle("Object type"), SchemaObjectTypePage(nil, err))
+		return s.page(c, pageTitle("Object type"), SchemaObjectTypePage(nil, userFacingError(err)))
 	}
 	found := findCompiledObjectType(compiled, name)
 	if found == nil {
@@ -408,7 +408,7 @@ func (s *Server) uiSchemaObjectTypeEdit(c echo.Context) error {
 	name := pathUnescape(c.Param("name"))
 	compiled, err := s.memory.GetCompiledTypes(ctx)
 	if err != nil {
-		return s.page(c, pageTitle("Edit object type"), SchemaObjectTypeEditPage(&SchemaEditView{Err: err}))
+		return s.page(c, pageTitle("Edit object type"), SchemaObjectTypeEditPage(&SchemaEditView{Err: userFacingError(err)}))
 	}
 	found := findCompiledObjectType(compiled, name)
 	if found == nil {

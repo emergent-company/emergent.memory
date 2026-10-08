@@ -350,7 +350,7 @@ func (s *Server) renderAgentSettingsWithMCP(c echo.Context, agentID string, extr
 	data := extra
 	data.Section = sectionMCP
 	if err := s.loadAgentSettings(ctx, agentID, &data); err != nil {
-		data.LoadErr = err
+		data.LoadErr = userFacingError(err)
 		return s.page(c, pageTitle("Agent settings"), AgentSettingsPage(data))
 	}
 	s.loadAgentMCP(ctx, agentID, &data)

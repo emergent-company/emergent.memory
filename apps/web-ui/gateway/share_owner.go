@@ -39,7 +39,7 @@ func (s *Server) uiAgentShare(c echo.Context) error {
 	ctx := c.Request().Context()
 	agent, err := s.memory.GetAgentDefinition(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle("Share links"), AgentSharePage(shareLinksPageData{LoadErr: err}))
+		return s.page(c, pageTitle("Share links"), AgentSharePage(shareLinksPageData{LoadErr: userFacingError(err)}))
 	}
 	data := shareLinksPageData{Agent: agent}
 	if c.QueryParam("revoked") != "" {
@@ -56,7 +56,7 @@ func (s *Server) uiAgentShareNewPage(c echo.Context) error {
 	ctx := c.Request().Context()
 	agent, err := s.memory.GetAgentDefinition(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle("New share link"), AgentShareCreatePage(shareLinkCreatePageData{LoadErr: err}))
+		return s.page(c, pageTitle("New share link"), AgentShareCreatePage(shareLinkCreatePageData{LoadErr: userFacingError(err)}))
 	}
 	data := shareLinkCreatePageData{Agent: agent}
 	data.Form = s.shareCreatePageProps(agent, ShareLinkCreateValues{}, "")
@@ -70,7 +70,7 @@ func (s *Server) renderAgentShareList(c echo.Context, agentID string, reveal *Sh
 	ctx := c.Request().Context()
 	agent, err := s.memory.GetAgentDefinition(ctx, agentID)
 	if err != nil {
-		return s.page(c, pageTitle("Share links"), AgentSharePage(shareLinksPageData{LoadErr: err}))
+		return s.page(c, pageTitle("Share links"), AgentSharePage(shareLinksPageData{LoadErr: userFacingError(err)}))
 	}
 	data := shareLinksPageData{Agent: agent, FlashMsg: flashMsg, Reveal: reveal}
 	data.Panel = s.shareListPanelProps(ctx, agent, reveal)
@@ -83,7 +83,7 @@ func (s *Server) renderAgentShareCreate(c echo.Context, agentID string, values S
 	ctx := c.Request().Context()
 	agent, err := s.memory.GetAgentDefinition(ctx, agentID)
 	if err != nil {
-		return s.page(c, pageTitle("New share link"), AgentShareCreatePage(shareLinkCreatePageData{LoadErr: err}))
+		return s.page(c, pageTitle("New share link"), AgentShareCreatePage(shareLinkCreatePageData{LoadErr: userFacingError(err)}))
 	}
 	data := shareLinkCreatePageData{Agent: agent}
 	data.Form = s.shareCreatePageProps(agent, values, formErr)

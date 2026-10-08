@@ -294,14 +294,23 @@ func TestSessionDetailNotFoundError(t *testing.T) {
 }
 
 func TestSessionDetailBackendFailure(t *testing.T) {
-	_, e := newSessionsEcho(&dumpFake{err: fmt.Errorf("memory 503: service down")})
+	_, e := newSessionsEcho(&dumpFake{err: &memoryHTTPError{
+		Status:  http.StatusServiceUnavailable,
+		Code:    "service_unavailable",
+		Message: "Token validation temporarily unavailable",
+	}})
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sessions/missing", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d (error state renders, not a crash)", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Session unavailable") || !strings.Contains(body, "service down") {
-		t.Errorf("error state missing:\n%s", body)
+	if !strings.Contains(body, "Session unavailable") || !strings.Contains(body, memoryUnavailableMessage) {
+		t.Errorf("error state missing sanitized message:\n%s", body)
+	}
+	for _, leak := range []string{"dial tcp", "memory 5", "service_unavailable", "Token validation"} {
+		if strings.Contains(body, leak) {
+			t.Errorf("error state leaked %q", leak)
+		}
 	}
 }

@@ -43,7 +43,7 @@ func (s *Server) uiMCPServers(c echo.Context) error {
 	data.FlashErr = flashError(c)
 	servers, err := s.memory.ListMCPServers(ctx)
 	if err != nil {
-		data.LoadErr = err
+		data.LoadErr = userFacingError(err)
 	} else {
 		data.Servers = servers
 		// The builtin tool taxonomy is additive: when the groups endpoint is
@@ -122,7 +122,7 @@ func (s *Server) uiMCPEditPage(c echo.Context) error {
 	}
 	servers, err := s.memory.ListMCPServers(ctx)
 	if err != nil {
-		data.LoadErr = err
+		data.LoadErr = userFacingError(err)
 	} else if srv := mcpFindServerByID(servers, id); srv != nil {
 		if mcpServerIsBuiltin(*srv) {
 			return redirectWithError(c, mcpServerSettingsBase, builtinEditErr())

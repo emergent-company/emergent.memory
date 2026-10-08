@@ -87,7 +87,7 @@ func (s *Server) uiMCPShares(c echo.Context) error {
 	data.FlashErr = flashError(c)
 	shares, err := s.memory.ListMCPShareInstances(ctx)
 	if err != nil {
-		data.LoadErr = err
+		data.LoadErr = userFacingError(err)
 	} else {
 		data.Shares = mcpSharesSortedNewestFirst(shares)
 	}
@@ -103,7 +103,7 @@ func (s *Server) renderMCPShareListWithReveal(c echo.Context, reveal *mcpShareRe
 	data := mcpSharesPageData{Reveal: reveal}
 	shares, err := s.memory.ListMCPShareInstances(ctx)
 	if err != nil {
-		data.LoadErr = err
+		data.LoadErr = userFacingError(err)
 	} else {
 		data.Shares = mcpSharesSortedNewestFirst(shares)
 	}
@@ -117,7 +117,7 @@ func (s *Server) uiMCPShareNewPage(c echo.Context) error {
 	ctx := c.Request().Context()
 	data := mcpShareFormData{FlashErr: flashError(c)}
 	if err := s.loadMCPShareFormData(ctx, &data); err != nil {
-		data.LoadErr = err
+		data.LoadErr = userFacingError(err)
 	}
 	return s.page(c, pageTitle("New MCP share"), MCPShareNewPage(data))
 }
@@ -134,7 +134,7 @@ func (s *Server) uiMCPShareCreate(c echo.Context) error {
 	ctx := c.Request().Context()
 	draft := mcpShareFormDataFromRequest(c)
 	if err := s.loadMCPShareFormData(ctx, &draft); err != nil {
-		draft.LoadErr = err
+		draft.LoadErr = userFacingError(err)
 		return s.renderMCPShareNewPage(c, draft)
 	}
 	fe := draft.validate()
@@ -192,7 +192,7 @@ func (s *Server) uiMCPShareEditPage(c echo.Context) error {
 		FlashErr:    flashError(c),
 	}
 	if err := s.loadMCPShareFormData(ctx, &data); err != nil {
-		data.LoadErr = err
+		data.LoadErr = userFacingError(err)
 	}
 	return s.page(c, pageTitle("Edit share"), MCPShareEditPage(data))
 }
@@ -219,7 +219,7 @@ func (s *Server) uiMCPShareUpdate(c echo.Context) error {
 	draft := mcpShareFormDataFromRequest(c)
 	draft.ID = id
 	if err := s.loadMCPShareFormData(ctx, &draft); err != nil {
-		draft.LoadErr = err
+		draft.LoadErr = userFacingError(err)
 		return s.renderMCPShareEditPage(c, draft)
 	}
 	fe := draft.validate()

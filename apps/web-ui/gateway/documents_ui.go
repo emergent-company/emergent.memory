@@ -217,7 +217,7 @@ func (s *Server) uiDocumentChunks(c echo.Context) error {
 	id := c.Param("id")
 	doc, err := s.memory.GetDocument(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle("Document"), DocumentChunksPage(nil, nil, err))
+		return s.page(c, pageTitle("Document"), DocumentChunksPage(nil, nil, userFacingError(err)))
 	}
 	chunks, err := s.memory.ListChunks(ctx, id)
 	captureError(err)
@@ -232,11 +232,11 @@ func (s *Server) uiDocumentExtractions(c echo.Context) error {
 	id := c.Param("id")
 	doc, err := s.memory.GetDocument(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle("Document"), DocumentExtractionsPage(nil, nil, err, "", nil))
+		return s.page(c, pageTitle("Document"), DocumentExtractionsPage(nil, nil, userFacingError(err), "", nil))
 	}
 	jobs, err := s.memory.ListExtractionJobs(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle(documentName(*doc), "Extraction history"), DocumentExtractionsPage(doc, nil, err, "", nil))
+		return s.page(c, pageTitle(documentName(*doc), "Extraction history"), DocumentExtractionsPage(doc, nil, userFacingError(err), "", nil))
 	}
 	sortExtractionJobsNewestFirst(jobs)
 	flashMsg := flashFromQuery(c, []flashParam{{key: "merged", msg: "Branch merged into main."}})

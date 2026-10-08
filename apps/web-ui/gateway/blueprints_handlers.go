@@ -351,7 +351,7 @@ func (s *Server) uiBlueprint(c echo.Context) error {
 	} else {
 		sch, err := s.memory.GetSchema(ctx, id)
 		if err != nil {
-			return s.page(c, pageTitle("Blueprint"), BlueprintDetailPage(nil, err))
+			return s.page(c, pageTitle("Blueprint"), BlueprintDetailPage(nil, userFacingError(err)))
 		}
 		d = buildSchemaDetail(sch)
 	}

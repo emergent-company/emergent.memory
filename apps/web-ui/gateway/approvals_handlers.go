@@ -19,11 +19,11 @@ func (s *Server) uiApprovals(c echo.Context) error {
 	ctx := c.Request().Context()
 	approvals, err := s.memory.ListToolApprovals(ctx)
 	if err != nil {
-		return s.page(c, pageTitle("Approvals"), ApprovalsPage(nil, nil, err))
+		return s.page(c, pageTitle("Approvals"), ApprovalsPage(nil, nil, userFacingError(err)))
 	}
 	questions, qErr := s.memory.ListAgentQuestions(ctx)
 	if qErr != nil {
-		return s.page(c, pageTitle("Approvals"), ApprovalsPage(approvals, nil, qErr))
+		return s.page(c, pageTitle("Approvals"), ApprovalsPage(approvals, nil, userFacingError(qErr)))
 	}
 	return s.page(c, pageTitle("Approvals"), ApprovalsPage(approvals, pendingQuestions(questions, approvals), nil))
 }

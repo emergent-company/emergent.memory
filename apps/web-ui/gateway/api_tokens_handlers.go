@@ -389,7 +389,7 @@ func (s *Server) loadTokenList(ctx context.Context, data *apiTokensPageData, acc
 		tokens, err = s.memory.ListAPITokens(ctx)
 	}
 	if err != nil {
-		data.LoadErr = err
+		data.LoadErr = userFacingError(err)
 		return
 	}
 	data.Tokens = tokens
@@ -514,7 +514,7 @@ func (s *Server) uiTokenEditPage(c echo.Context, account bool) error {
 		tokens, err = s.memory.ListAPITokens(ctx)
 	}
 	if err != nil {
-		data.LoadErr = err
+		data.LoadErr = userFacingError(err)
 	} else if tok := findTokenByID(tokens, tokenID); tok != nil {
 		data.Token = tok
 	} else {

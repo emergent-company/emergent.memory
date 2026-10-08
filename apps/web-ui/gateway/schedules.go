@@ -24,6 +24,12 @@ import (
 func (s *Server) uiSchedules(c echo.Context) error {
 	ctx := c.Request().Context()
 	all, err := s.memory.ListScheduledAgents(ctx)
+	if err != nil {
+		// Sanitize the raw backend error before it reaches the pageError
+		// surface; the guard keeps err nil on success so the empty-state
+		// gating (loadErr == nil) is preserved.
+		err = userFacingError(err)
+	}
 	var schedules []ScheduledAgent
 	for _, a := range all {
 		if a.TriggerType == "schedule" {
@@ -70,7 +76,7 @@ func (s *Server) uiSchedule(c echo.Context) error {
 
 	agent, err := s.memory.GetScheduledAgent(ctx, id)
 	if err != nil {
-		data.LoadErr = err
+		data.LoadErr = userFacingError(err)
 		return s.page(c, pageTitle("Schedule"), ScheduleDetailPage(data))
 	}
 	data.Agent = agent
