@@ -28,6 +28,9 @@ repo_name="${repo##*/}"
 pages_url="https://${org}.github.io/${repo_name}"
 dest_rel="appcast/${channel}"
 
+# Canonicalise the source dir to an absolute path: we `cd` into the cloned pages
+# branch below, so a relative source path would no longer resolve.
+source_dir="$(cd "${source_dir}" && pwd)"
 [ -f "${source_dir}/appcast.xml" ] || { echo "error: ${source_dir}/appcast.xml not found" >&2; exit 1; }
 
 tmp="$(mktemp -d)"
