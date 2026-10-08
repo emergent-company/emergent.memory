@@ -9,7 +9,7 @@ version. Two checked-in references must match it exactly:
 
 - `apps/server/cmd/server/main.go`'s `// @version` annotation
 - every `MARKETING_VERSION` in `apps/ios/VoiceAgent.xcodeproj/project.pbxproj`
-  (VoiceAgent app + BroadcastExtension)
+  (VoiceAgent app, Debug + Release configs)
 
 A release bumps all of them together — the `release` task in `Taskfile.yml`
 does this atomically, and CI enforces it with a version-drift guard

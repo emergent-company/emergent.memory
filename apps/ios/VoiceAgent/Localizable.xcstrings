@@ -2154,28 +2154,6 @@
         }
       }
     },
-    "controlBar.camera": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Camera"
-          }
-        }
-      }
-    },
-    "controlBar.screenShare": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Share screen"
-          }
-        }
-      }
-    },
     "controlBar.chat": {
       "extractionState": "manual",
       "localizations": {
@@ -2205,28 +2183,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Toggles your microphone"
-          }
-        }
-      }
-    },
-    "controlBar.camera.hint": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Toggles your camera"
-          }
-        }
-      }
-    },
-    "controlBar.screenShare.hint": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Toggles screen sharing"
           }
         }
       }

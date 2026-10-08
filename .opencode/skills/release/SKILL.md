@@ -74,7 +74,7 @@ one commit — prefer it. Otherwise, update the references below:
    ```
 
 3. **iOS marketing version** in `apps/ios/VoiceAgent.xcodeproj/project.pbxproj`
-   (VoiceAgent app + BroadcastExtension — all 6 occurrences):
+   (VoiceAgent app — all 4 occurrences):
 
    ```text
    MARKETING_VERSION = 0.X.Y;

@@ -3,7 +3,7 @@
 # checked-in references:
 #   * the OpenAPI `// @version` annotation in apps/server/cmd/server/main.go
 #   * every MARKETING_VERSION in apps/ios/VoiceAgent.xcodeproj/project.pbxproj
-#     (VoiceAgent app + BroadcastExtension, Debug + Release configs)
+#     (VoiceAgent app, Debug + Release configs)
 #
 # Root VERSION is the single canonical source of the release version; a release
 # must bump all references together (see the `release` task in Taskfile.yml).
