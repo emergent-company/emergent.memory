@@ -177,7 +177,22 @@ jobs:
         working-directory: apps/cli
         env:
           GOWORK: off
-        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+        run: |
+          # `-race` requires cgo, i.e. a C toolchain plus CGO_ENABLED=1. GitHub's
+          # ubuntu-latest image has gcc, but some self-hosted runners do not, where
+          # `go test -race` hard-fails with:
+          #   go: -race requires cgo; enable CGO_ENABLED=1
+          # Enable cgo when a compiler is present (keeps real race coverage); on a
+          # runner without one, fall back to a non-race run with a visible notice
+          # instead of failing the whole suite with a confusing error.
+          if command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1 || command -v clang >/dev/null 2>&1; then
+            export CGO_ENABLED=1
+            echo "C toolchain found; running CLI tests with -race (CGO_ENABLED=1)."
+            go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+          else
+            echo "::warning::No C toolchain found on this runner; running CLI tests without -race. Install a C compiler on the runner image (or route this job to a GitHub-hosted ubuntu-latest runner) to restore race coverage."
+            go test -v -coverprofile=coverage.out -covermode=atomic ./...
+          fi
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
