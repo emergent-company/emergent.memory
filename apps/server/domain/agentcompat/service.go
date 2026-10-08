@@ -191,12 +191,11 @@ func (s *Service) handleNewRun(
 		return nil, fmt.Errorf("building client tools: %w", err)
 	}
 
-	// Fetch project_info and inject it into the system prompt so the agent
-	// understands the KB context without needing to call project-get as a tool.
-	projectInfo, _ := s.agentRepo.GetProjectInfo(ctx, projectID)
-
-	// Inject prior conversation turns + project info into the system prompt appendix.
-	appendix := buildSystemAppendix(req.Messages, len(req.Tools) > 0, projectInfo)
+	// Inject prior conversation turns into the system prompt appendix. Project
+	// context (project_info) is intentionally NOT injected here: it is opt-in
+	// per agent definition and applied centrally by the executor, so every
+	// surface (chat-completions, trigger, A2A, chat) stays consistent (#1694).
+	appendix := buildSystemAppendix(req.Messages, len(req.Tools) > 0)
 
 	execReq := agents.ExecuteRequest{
 		Agent:                agent,
@@ -253,9 +252,9 @@ func (s *Service) handleResume(
 		return nil, fmt.Errorf("building client tools: %w", err)
 	}
 
-	// Fetch project_info so the resumed run also has KB context in its system prompt.
-	projectInfo, _ := s.agentRepo.GetProjectInfo(ctx, projectID)
-
+	// Project context is injected centrally by the executor when the agent
+	// definition opts in, so the resumed run matches every other surface
+	// (issue #1694).
 	resumeReq := agents.ExecuteRequest{
 		AgentDefinition: agentDef,
 		ProjectID:       projectID,
@@ -264,7 +263,7 @@ func (s *Service) handleResume(
 		// injectToolResponse injects this as responseBody["result"] so the LLM
 		// sees the actual tool output, not Go struct field names.
 		UserMessage:          toolResult.Content,
-		SystemPromptAppendix: buildSystemAppendix(req.Messages, len(req.Tools) > 0, projectInfo),
+		SystemPromptAppendix: buildSystemAppendix(req.Messages, len(req.Tools) > 0),
 		UserID:               user.ID,
 		ExtraTools:           extraTools,
 		ReasoningEffort:      req.ReasoningEffort,
@@ -625,25 +624,17 @@ func buildUserMessage(messages []ChatMessage) string {
 }
 
 // buildSystemAppendix combines:
-//   - project_info context (injected so the agent knows the KB purpose without a tool call)
 //   - conversation history (prior turns from the messages[] array)
 //   - tool-naming convention block (when client tools are present)
 //
-// All three are appended to the agent's system instruction so the executor
-// starts with full context on every fresh ADK session.
-func buildSystemAppendix(messages []ChatMessage, hasClientTools bool, projectInfo string) string {
+// Both are appended to the agent's system instruction so the executor starts
+// with full context on every fresh ADK session. Project-level context
+// (project_info) is NOT included here: it is opt-in per agent definition and
+// applied centrally by the executor so all surfaces stay identical (#1694).
+func buildSystemAppendix(messages []ChatMessage, hasClientTools bool) string {
 	var sb strings.Builder
 
-	if projectInfo != "" {
-		sb.WriteString("## Knowledge base context\n\n")
-		sb.WriteString(projectInfo)
-		sb.WriteString("\n")
-	}
-
 	if history := buildConversationHistory(messages); history != "" {
-		if sb.Len() > 0 {
-			sb.WriteString("\n")
-		}
 		sb.WriteString("## Conversation history\n\n")
 		sb.WriteString("The following is the conversation so far. Use it to answer the user's latest message.\n\n")
 		sb.WriteString(history)

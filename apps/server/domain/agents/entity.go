@@ -587,6 +587,43 @@ type AgentDefinition struct {
 	UpdatedAt         time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
 }
 
+// includeProjectInfoConfigKey is the AgentDefinition.Config key controlling
+// whether the project's project_info (kb.projects.project_info) is injected into
+// the agent's system instruction at run time. It lives in the config JSONB blob
+// alongside the other per-definition runtime settings (language,
+// contextInjection, ...) so no schema change is needed. Absent or false means
+// opt-out, which is the default (issue #1694).
+const includeProjectInfoConfigKey = "includeProjectInfo"
+
+// IncludeProjectInfo reports whether this definition opts into receiving the
+// project's project_info as a "## Knowledge base context" block in its composed
+// system instruction. It is default-false and nil-safe: a nil definition, nil
+// Config, or non-bool value all read as false.
+func (d *AgentDefinition) IncludeProjectInfo() bool {
+	if d == nil || d.Config == nil {
+		return false
+	}
+	v, ok := d.Config[includeProjectInfoConfigKey].(bool)
+	return ok && v
+}
+
+// SetIncludeProjectInfo stores or clears the project-context opt-in flag in the
+// definition's Config blob. Setting false deletes the key so a default
+// definition carries no redundant entry.
+func (d *AgentDefinition) SetIncludeProjectInfo(enabled bool) {
+	if d == nil {
+		return
+	}
+	if !enabled {
+		delete(d.Config, includeProjectInfoConfigKey)
+		return
+	}
+	if d.Config == nil {
+		d.Config = map[string]any{}
+	}
+	d.Config[includeProjectInfoConfigKey] = true
+}
+
 // toolGroupPolicyPrefix is the reserved key prefix for group-level tool
 // policies stored in AgentDefinition.ToolPolicies. Tool names are validated
 // identifiers that cannot begin with '@', so the prefix cannot collide with a

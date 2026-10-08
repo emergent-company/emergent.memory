@@ -24999,6 +24999,10 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "includeProjectInfo": {
+                    "description": "IncludeProjectInfo opts the definition into injecting the project's\nproject_info as a \"## Knowledge base context\" block on every surface.\nDefault false; stored in Config under key \"includeProjectInfo\" (#1694).",
+                    "type": "boolean"
+                },
                 "isDefault": {
                     "type": "boolean"
                 },

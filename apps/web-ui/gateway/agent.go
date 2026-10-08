@@ -349,7 +349,8 @@ func (s *Server) uiAgentUpdateDelegation(c echo.Context) error {
 // system prompt, language, appearance, visibility) onto the definition. Name is
 // trimmed and required; the short description is trimmed and shown under the
 // agent's name in chat (empty clears it); language persists to Config["language"]
-// (deleted when empty); the icon + color appearance persists to the uiConfig
+// (deleted when empty); includeProjectInfo persists to Config["includeProjectInfo"]
+// (deleted when false, only when the field is present); the icon + color appearance persists to the uiConfig
 // blob (both empty clears it); visibility accepts only project/external/internal,
 // with empty/missing defaulting to project (the server default) and anything else
 // rejected.
@@ -382,6 +383,26 @@ func applyAgentGeneralSection(def *AgentDefinition, c echo.Context) error {
 		def.Config["language"] = lang
 	} else {
 		delete(def.Config, "language")
+	}
+	// Lossless partial save: only touch the key when the request carries it
+	// (the rendered form always submits it via the hidden companion input).
+	//
+	// A boolean control submits its hidden "false" then, when checked, the
+	// toggle's "true", so the browser-serialized body is ["false","true"] when
+	// checked. Take the LAST submitted value (repo convention; see objects.go)
+	// rather than the first, or a checked box would always read as false.
+	if vals := params["includeProjectInfo"]; len(vals) > 0 {
+		last := ""
+		for _, v := range vals {
+			if v != "" {
+				last = v
+			}
+		}
+		if last == "true" {
+			def.Config["includeProjectInfo"] = true
+		} else {
+			delete(def.Config, "includeProjectInfo")
+		}
 	}
 	visibility, ok := agentVisibilityNormalize(c.FormValue("visibility"))
 	if !ok {
@@ -1346,6 +1367,17 @@ func agentLanguageValue(a *AgentDefinition) string {
 		return strings.TrimSpace(v)
 	}
 	return ""
+}
+
+// agentIncludeProjectInfoValue reads whether the project description is injected
+// into the agent's system prompt from Config["includeProjectInfo"], returning
+// false when the agent, its config, or the key is absent or non-bool.
+func agentIncludeProjectInfoValue(a *AgentDefinition) bool {
+	if a == nil || a.Config == nil {
+		return false
+	}
+	v, ok := a.Config["includeProjectInfo"].(bool)
+	return ok && v
 }
 
 // languageOption is one selectable agent language.

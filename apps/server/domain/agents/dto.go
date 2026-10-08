@@ -324,33 +324,37 @@ type ToolGroupDTO struct {
 
 // AgentDefinitionDTO is the full response DTO for an agent definition
 type AgentDefinitionDTO struct {
-	ID                string                `json:"id"`
-	ProductID         *string               `json:"productId,omitempty"`
-	ProjectID         string                `json:"projectId"`
-	Name              string                `json:"name"`
-	Description       *string               `json:"description,omitempty"`
-	SystemPrompt      *string               `json:"systemPrompt,omitempty"`
-	Model             *ModelConfig          `json:"model,omitempty"`
-	Tools             []string              `json:"tools"`
-	BannedTools       []string              `json:"bannedTools,omitempty"`
-	Skills            []string              `json:"skills"`
-	AutoLoadSkills    bool                  `json:"autoLoadSkills"`
-	IsDefault         bool                  `json:"isDefault"`
-	Enabled           bool                  `json:"enabled"`
-	MaxSteps          *int                  `json:"maxSteps,omitempty"`
-	DefaultTimeout    *int                  `json:"defaultTimeout,omitempty"`
-	Visibility        AgentVisibility       `json:"visibility"`
-	DispatchMode      AgentDispatchMode     `json:"dispatchMode"`
-	DefaultQueue      string                `json:"defaultQueue"`
-	WorkConfig        AgentWorkConfig       `json:"workConfig"`
-	ACPConfig         *ACPConfig            `json:"acpConfig,omitempty"`
-	Config            map[string]any        `json:"config,omitempty"`
-	SandboxConfig     map[string]any        `json:"workspaceConfig,omitempty"`
-	ToolPolicies      map[string]ToolPolicy `json:"toolPolicies,omitempty"`
-	DefaultToolPolicy ToolPolicyDefault     `json:"defaultToolPolicy,omitempty"`
-	UIConfig          json.RawMessage       `json:"uiConfig,omitempty"`
-	CreatedAt         time.Time             `json:"createdAt"`
-	UpdatedAt         time.Time             `json:"updatedAt"`
+	ID             string            `json:"id"`
+	ProductID      *string           `json:"productId,omitempty"`
+	ProjectID      string            `json:"projectId"`
+	Name           string            `json:"name"`
+	Description    *string           `json:"description,omitempty"`
+	SystemPrompt   *string           `json:"systemPrompt,omitempty"`
+	Model          *ModelConfig      `json:"model,omitempty"`
+	Tools          []string          `json:"tools"`
+	BannedTools    []string          `json:"bannedTools,omitempty"`
+	Skills         []string          `json:"skills"`
+	AutoLoadSkills bool              `json:"autoLoadSkills"`
+	IsDefault      bool              `json:"isDefault"`
+	Enabled        bool              `json:"enabled"`
+	MaxSteps       *int              `json:"maxSteps,omitempty"`
+	DefaultTimeout *int              `json:"defaultTimeout,omitempty"`
+	Visibility     AgentVisibility   `json:"visibility"`
+	DispatchMode   AgentDispatchMode `json:"dispatchMode"`
+	DefaultQueue   string            `json:"defaultQueue"`
+	WorkConfig     AgentWorkConfig   `json:"workConfig"`
+	ACPConfig      *ACPConfig        `json:"acpConfig,omitempty"`
+	Config         map[string]any    `json:"config,omitempty"`
+	// IncludeProjectInfo opts the definition into injecting the project's
+	// project_info as a "## Knowledge base context" block on every surface.
+	// Default false; stored in Config under key "includeProjectInfo" (#1694).
+	IncludeProjectInfo bool                  `json:"includeProjectInfo"`
+	SandboxConfig      map[string]any        `json:"workspaceConfig,omitempty"`
+	ToolPolicies       map[string]ToolPolicy `json:"toolPolicies,omitempty"`
+	DefaultToolPolicy  ToolPolicyDefault     `json:"defaultToolPolicy,omitempty"`
+	UIConfig           json.RawMessage       `json:"uiConfig,omitempty"`
+	CreatedAt          time.Time             `json:"createdAt"`
+	UpdatedAt          time.Time             `json:"updatedAt"`
 	// ToolGroups is the computed capability-group catalog (server-owned
 	// taxonomy) rendered by the gateway. Read-only; groups with no member tools
 	// at all are omitted — a fully-disabled group still renders (with
@@ -392,54 +396,60 @@ type AgentDefinitionSummaryDTO struct {
 
 // CreateAgentDefinitionDTO is the request DTO for creating an agent definition
 type CreateAgentDefinitionDTO struct {
-	Name              string                `json:"name" validate:"required"`
-	Description       *string               `json:"description"`
-	SystemPrompt      *string               `json:"systemPrompt"`
-	Model             *ModelConfig          `json:"model"`
-	Tools             []string              `json:"tools"`
-	BannedTools       []string              `json:"bannedTools,omitempty"`
-	Skills            []string              `json:"skills"`
-	AutoLoadSkills    *bool                 `json:"autoLoadSkills"`
-	IsDefault         *bool                 `json:"isDefault"`
-	Enabled           *bool                 `json:"enabled"`
-	MaxSteps          *int                  `json:"maxSteps"`
-	DefaultTimeout    *int                  `json:"defaultTimeout"`
-	Visibility        AgentVisibility       `json:"visibility"`
-	DispatchMode      AgentDispatchMode     `json:"dispatchMode"`
-	DefaultQueue      string                `json:"defaultQueue"`
-	WorkConfig        *AgentWorkConfig      `json:"workConfig,omitempty"`
-	ACPConfig         *ACPConfig            `json:"acpConfig"`
-	Config            map[string]any        `json:"config"`
-	SandboxConfig     map[string]any        `json:"workspaceConfig"`
-	ToolPolicies      map[string]ToolPolicy `json:"toolPolicies,omitempty"`
-	DefaultToolPolicy ToolPolicyDefault     `json:"defaultToolPolicy,omitempty"`
-	UIConfig          json.RawMessage       `json:"uiConfig,omitempty"`
+	Name           string            `json:"name" validate:"required"`
+	Description    *string           `json:"description"`
+	SystemPrompt   *string           `json:"systemPrompt"`
+	Model          *ModelConfig      `json:"model"`
+	Tools          []string          `json:"tools"`
+	BannedTools    []string          `json:"bannedTools,omitempty"`
+	Skills         []string          `json:"skills"`
+	AutoLoadSkills *bool             `json:"autoLoadSkills"`
+	IsDefault      *bool             `json:"isDefault"`
+	Enabled        *bool             `json:"enabled"`
+	MaxSteps       *int              `json:"maxSteps"`
+	DefaultTimeout *int              `json:"defaultTimeout"`
+	Visibility     AgentVisibility   `json:"visibility"`
+	DispatchMode   AgentDispatchMode `json:"dispatchMode"`
+	DefaultQueue   string            `json:"defaultQueue"`
+	WorkConfig     *AgentWorkConfig  `json:"workConfig,omitempty"`
+	ACPConfig      *ACPConfig        `json:"acpConfig"`
+	Config         map[string]any    `json:"config"`
+	// IncludeProjectInfo opts into project-info injection (default false). When
+	// false the key is absent from the stored config.
+	IncludeProjectInfo *bool                 `json:"includeProjectInfo"`
+	SandboxConfig      map[string]any        `json:"workspaceConfig"`
+	ToolPolicies       map[string]ToolPolicy `json:"toolPolicies,omitempty"`
+	DefaultToolPolicy  ToolPolicyDefault     `json:"defaultToolPolicy,omitempty"`
+	UIConfig           json.RawMessage       `json:"uiConfig,omitempty"`
 }
 
 // UpdateAgentDefinitionDTO is the request DTO for updating an agent definition
 type UpdateAgentDefinitionDTO struct {
-	Name              *string               `json:"name"`
-	Description       *string               `json:"description"`
-	SystemPrompt      *string               `json:"systemPrompt"`
-	Model             *ModelConfig          `json:"model"`
-	Tools             []string              `json:"tools"`
-	BannedTools       []string              `json:"bannedTools,omitempty"`
-	Skills            []string              `json:"skills"`
-	AutoLoadSkills    *bool                 `json:"autoLoadSkills"`
-	IsDefault         *bool                 `json:"isDefault"`
-	Enabled           *bool                 `json:"enabled"`
-	MaxSteps          *int                  `json:"maxSteps"`
-	DefaultTimeout    *int                  `json:"defaultTimeout"`
-	Visibility        *AgentVisibility      `json:"visibility"`
-	DispatchMode      *AgentDispatchMode    `json:"dispatchMode"`
-	DefaultQueue      *string               `json:"defaultQueue"`
-	WorkConfig        *AgentWorkConfig      `json:"workConfig,omitempty"`
-	ACPConfig         *ACPConfig            `json:"acpConfig"`
-	Config            map[string]any        `json:"config"`
-	SandboxConfig     map[string]any        `json:"workspaceConfig"`
-	ToolPolicies      map[string]ToolPolicy `json:"toolPolicies,omitempty"`
-	DefaultToolPolicy *ToolPolicyDefault    `json:"defaultToolPolicy,omitempty"`
-	UIConfig          json.RawMessage       `json:"uiConfig,omitempty"`
+	Name           *string            `json:"name"`
+	Description    *string            `json:"description"`
+	SystemPrompt   *string            `json:"systemPrompt"`
+	Model          *ModelConfig       `json:"model"`
+	Tools          []string           `json:"tools"`
+	BannedTools    []string           `json:"bannedTools,omitempty"`
+	Skills         []string           `json:"skills"`
+	AutoLoadSkills *bool              `json:"autoLoadSkills"`
+	IsDefault      *bool              `json:"isDefault"`
+	Enabled        *bool              `json:"enabled"`
+	MaxSteps       *int               `json:"maxSteps"`
+	DefaultTimeout *int               `json:"defaultTimeout"`
+	Visibility     *AgentVisibility   `json:"visibility"`
+	DispatchMode   *AgentDispatchMode `json:"dispatchMode"`
+	DefaultQueue   *string            `json:"defaultQueue"`
+	WorkConfig     *AgentWorkConfig   `json:"workConfig,omitempty"`
+	ACPConfig      *ACPConfig         `json:"acpConfig"`
+	Config         map[string]any     `json:"config"`
+	// IncludeProjectInfo opts into project-info injection (default false). When
+	// false the key is removed from the stored config.
+	IncludeProjectInfo *bool                 `json:"includeProjectInfo"`
+	SandboxConfig      map[string]any        `json:"workspaceConfig"`
+	ToolPolicies       map[string]ToolPolicy `json:"toolPolicies,omitempty"`
+	DefaultToolPolicy  *ToolPolicyDefault    `json:"defaultToolPolicy,omitempty"`
+	UIConfig           json.RawMessage       `json:"uiConfig,omitempty"`
 }
 
 // --- Agent Run Message / Tool Call DTOs ---
@@ -488,34 +498,35 @@ type AgentRunStepDTO struct {
 // result to ToolGroups.
 func (d *AgentDefinition) ToDTO() *AgentDefinitionDTO {
 	return &AgentDefinitionDTO{
-		ID:                d.ID,
-		ProductID:         d.ProductID,
-		ProjectID:         d.ProjectID,
-		Name:              d.Name,
-		Description:       d.Description,
-		SystemPrompt:      d.SystemPrompt,
-		Model:             d.Model,
-		Tools:             d.Tools,
-		BannedTools:       d.BannedTools,
-		Skills:            d.Skills,
-		AutoLoadSkills:    d.AutoLoadSkills,
-		IsDefault:         d.IsDefault,
-		Enabled:           d.Enabled,
-		MaxSteps:          d.MaxSteps,
-		DefaultTimeout:    d.DefaultTimeout,
-		Visibility:        d.Visibility,
-		DispatchMode:      d.DispatchMode,
-		DefaultQueue:      d.DefaultQueue,
-		WorkConfig:        d.WorkConfig,
-		ACPConfig:         d.ACPConfig,
-		Config:            d.Config,
-		SandboxConfig:     d.SandboxConfig,
-		ToolPolicies:      d.ToolPolicies,
-		DefaultToolPolicy: d.DefaultToolPolicy,
-		UIConfig:          d.UIConfig,
-		CreatedAt:         d.CreatedAt,
-		UpdatedAt:         d.UpdatedAt,
-		ToolGroups:        d.ToolGroupsWithCatalog(nil),
+		ID:                 d.ID,
+		ProductID:          d.ProductID,
+		ProjectID:          d.ProjectID,
+		Name:               d.Name,
+		Description:        d.Description,
+		SystemPrompt:       d.SystemPrompt,
+		Model:              d.Model,
+		Tools:              d.Tools,
+		BannedTools:        d.BannedTools,
+		Skills:             d.Skills,
+		AutoLoadSkills:     d.AutoLoadSkills,
+		IsDefault:          d.IsDefault,
+		Enabled:            d.Enabled,
+		MaxSteps:           d.MaxSteps,
+		DefaultTimeout:     d.DefaultTimeout,
+		Visibility:         d.Visibility,
+		DispatchMode:       d.DispatchMode,
+		DefaultQueue:       d.DefaultQueue,
+		WorkConfig:         d.WorkConfig,
+		ACPConfig:          d.ACPConfig,
+		Config:             d.Config,
+		IncludeProjectInfo: d.IncludeProjectInfo(),
+		SandboxConfig:      d.SandboxConfig,
+		ToolPolicies:       d.ToolPolicies,
+		DefaultToolPolicy:  d.DefaultToolPolicy,
+		UIConfig:           d.UIConfig,
+		CreatedAt:          d.CreatedAt,
+		UpdatedAt:          d.UpdatedAt,
+		ToolGroups:         d.ToolGroupsWithCatalog(nil),
 	}
 }
 

@@ -520,6 +520,15 @@ type ExecuteRequest struct {
 	// modifying the persisted agent definition. It is never written to the DB.
 	SystemPromptAppendix string
 
+	// ProjectInfo is the project's project_info (kb.projects.project_info) to
+	// inject into the system instruction as a "## Knowledge base context" block.
+	// It is populated once per run by runPipeline when the agent definition opts
+	// in via includeProjectInfo, so every execution surface (HTTP trigger, A2A,
+	// chat sessions, /v1/chat/completions) gets the same block. It is ignored
+	// when the definition has not opted in, so a caller can never force
+	// project context onto an agent that does not want it (issue #1694).
+	ProjectInfo string
+
 	// UserID is the authenticated user who initiated this run (empty for system/background runs).
 	// Passed to ask_user tool so notifications target the correct user.
 	UserID string
@@ -2454,6 +2463,10 @@ func (ae *AgentExecutor) runPipeline(
 
 	// Build the LLM agent
 	agentName := ae.resolveAgentName(req)
+	// Populate project context for the instruction in one place, so every
+	// surface that reaches runPipeline (trigger, A2A, chat, chat-completions,
+	// resume, sub-agent spawns) gets it identically when the definition opts in.
+	req.ProjectInfo = ae.resolveProjectInfo(ctx, req.AgentDefinition, req.ProjectID)
 	instruction := ae.resolveInstruction(req)
 
 	// Augment system instruction with workspace context if available.
@@ -4238,6 +4251,39 @@ func isKnowledgeBaseAgent(d *AgentDefinition) bool {
 	return false
 }
 
+// knowledgeBaseContextHeading is the heading that introduces the injected
+// project_info block. It is shared by the executor's system-instruction
+// resolver so every surface emits the identical block (issue #1694).
+const knowledgeBaseContextHeading = "## Knowledge base context"
+
+// knowledgeBaseContextBlock renders the project context appendix. It is a single
+// function so the block text cannot drift between surfaces.
+func knowledgeBaseContextBlock(projectInfo string) string {
+	return knowledgeBaseContextHeading + "\n\n" + projectInfo
+}
+
+// resolveProjectInfo returns the project's project_info for injection into the
+// system instruction. It returns "" unless the agent definition opts in via
+// includeProjectInfo, so the default is no injection on every surface. It is
+// nil-repo safe (unit tests build a zero-value executor) and never fails a run:
+// a lookup error degrades to no context and is logged.
+func (ae *AgentExecutor) resolveProjectInfo(ctx context.Context, def *AgentDefinition, projectID string) string {
+	if !def.IncludeProjectInfo() || ae.repo == nil || projectID == "" {
+		return ""
+	}
+	info, err := ae.repo.GetProjectInfo(ctx, projectID)
+	if err != nil {
+		if ae.log != nil {
+			ae.log.Warn("failed to load project_info for agent instruction",
+				slog.String("project_id", projectID),
+				slog.String("error", err.Error()),
+			)
+		}
+		return ""
+	}
+	return info
+}
+
 func (ae *AgentExecutor) resolveInstruction(req ExecuteRequest) string {
 	inst := ""
 	if req.AgentDefinition != nil && req.AgentDefinition.SystemPrompt != nil {
@@ -4254,6 +4300,13 @@ func (ae *AgentExecutor) resolveInstruction(req ExecuteRequest) string {
 
 	if appendix := ae.buildSkillsSystemPrompt(req); appendix != "" {
 		inst += "\n\n" + appendix
+	}
+
+	// Project-level context is injected here, at one fixed position, for every
+	// surface, and only when the definition opts in. The flag check makes a
+	// caller-supplied ProjectInfo inert unless the agent wants it (issue #1694).
+	if req.ProjectInfo != "" && req.AgentDefinition.IncludeProjectInfo() {
+		inst += "\n\n" + knowledgeBaseContextBlock(req.ProjectInfo)
 	}
 
 	if req.SystemPromptAppendix != "" {

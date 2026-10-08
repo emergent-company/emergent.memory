@@ -416,6 +416,14 @@ templ agentGeneralSettingsForm(data agentSettingsData) {
 						}
 					</select>
 				}
+				@form.FormControl("agent-settings-project-context", "Project context", form.LabelAbove, "Inject this project's description into the agent's system prompt on every run. Off by default.", "", nil) {
+					// Unchecked checkboxes are not submitted, so the hidden
+					// companion guarantees the field is present (true/false)
+					// on a full form submit; a partial body that omits it
+					// leaves the stored value unchanged.
+					<input type="hidden" name="includeProjectInfo" value="false"/>
+					<input id="agent-settings-project-context" name="includeProjectInfo" type="checkbox" value="true" checked?={ agentIncludeProjectInfoValue(data.Agent) } class="checkbox"/>
+				}
 			</div>
 		}
 		@ui.Section("Appearance", ui.SectionProps{

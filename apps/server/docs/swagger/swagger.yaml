@@ -588,6 +588,12 @@ definitions:
         type: boolean
       id:
         type: string
+      includeProjectInfo:
+        description: |-
+          IncludeProjectInfo opts the definition into injecting the project's
+          project_info as a "## Knowledge base context" block on every surface.
+          Default false; stored in Config under key "includeProjectInfo" (#1694).
+        type: boolean
       isDefault:
         type: boolean
       maxSteps:

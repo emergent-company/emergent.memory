@@ -1669,6 +1669,10 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 		DefaultToolPolicy: defaultToolPolicy,
 		UIConfig:          normalizeUIConfig(dto.UIConfig),
 	}
+	// Explicit opt-in flag wins over the raw config map; false removes the key.
+	if dto.IncludeProjectInfo != nil {
+		def.SetIncludeProjectInfo(*dto.IncludeProjectInfo)
+	}
 
 	// Check for existing definition with same name to return a clear 409 instead of a 500
 	// from a unique constraint violation on (project_id, name).
@@ -1776,6 +1780,10 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 	}
 	if dto.Config != nil {
 		def.Config = dto.Config
+	}
+	// Explicit opt-in flag wins over the raw config map; false removes the key.
+	if dto.IncludeProjectInfo != nil {
+		def.SetIncludeProjectInfo(*dto.IncludeProjectInfo)
 	}
 	if dto.SandboxConfig != nil {
 		def.SandboxConfig = dto.SandboxConfig
