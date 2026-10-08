@@ -57,6 +57,9 @@ final class UpdaterModel: NSObject {
 
     private(set) var controller: SPUStandardUpdaterController?
     private var cancellables = Set<AnyCancellable>()
+    /// Supplies the currently selected update channel, read at each update check
+    /// so a channel change takes effect without recreating the updater.
+    private let channelProvider: () -> UpdateChannel
 
     /// True when Sparkle was actually started, i.e. the manual/automatic
     /// controls have something to drive.
@@ -100,7 +103,11 @@ final class UpdaterModel: NSObject {
         }
     }
 
-    override init() {
+    /// - Parameter channelProvider: supplies the user's selected update channel.
+    ///   Read at each check so switching channels redirects the feed without
+    ///   rebuilding the controller.
+    init(channelProvider: @escaping () -> UpdateChannel = { .stable }) {
+        self.channelProvider = channelProvider
         super.init()
 
         #if DEBUG
@@ -108,7 +115,7 @@ final class UpdaterModel: NSObject {
             // misconfigured bundle must not be able to start (or alert) Sparkle.
             state = .unavailable
         #else
-            guard Self.configuredFeedURL() != nil, Self.configuredPublicKey() != nil else {
+            guard Self.feedURLString(for: channelProvider()) != nil, Self.configuredPublicKey() != nil else {
                 // Missing or placeholder feed/key: do not start the updater. This is
                 // the guard that keeps a bad build from aborting at launch.
                 state = .unavailable
@@ -149,19 +156,37 @@ final class UpdaterModel: NSObject {
     /// The automatic-check floor required by `mac-connector-update`.
     private static let minimumAutomaticCheckInterval: TimeInterval = 60 * 60
 
-    /// Reads and validates `SUFeedURL`; only an HTTPS feed is accepted.
-    private static func configuredFeedURL() -> URL? {
-        guard let raw = Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String else {
-            return nil
+    /// Reads and validates the feed URL for `channel`; only an HTTPS feed is
+    /// accepted. Uses the per-channel Info.plist keys, falling back to
+    /// `SUFeedURL` for the stable channel (the value build-dmg.sh also rewrites
+    /// per channel). Exposed for unit tests via the injectable `infoDictionary`.
+    static func feedURLString(
+        for channel: UpdateChannel,
+        infoDictionary: [String: Any]? = Bundle.main.infoDictionary
+    ) -> String? {
+        let channelKey = switch channel {
+        case .stable: "MemoryUpdateFeedURLStable"
+        case .dev: "MemoryUpdateFeedURLDev"
         }
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmed),
-              let scheme = url.scheme?.lowercased(),
-              scheme == "https"
+
+        func trimmedString(_ key: String) -> String? {
+            guard let raw = infoDictionary?[key] as? String else { return nil }
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+
+        var candidate = trimmedString(channelKey)
+        if candidate == nil, channel == .stable {
+            candidate = trimmedString("SUFeedURL")
+        }
+
+        guard let trimmed = candidate,
+              let url = URL(string: trimmed),
+              url.scheme?.lowercased() == "https"
         else {
             return nil
         }
-        return url
+        return trimmed
     }
 
     /// Reads and validates `SUPublicEDKey`. A missing, placeholder, or
@@ -290,5 +315,12 @@ extension UpdaterModel: SPUUpdaterDelegate {
 
     func updater(_: SPUUpdater, didFinishUpdateCycleFor _: SPUUpdateCheck, error: Error?) {
         applyCompletion(error: error)
+    }
+
+    /// Sparkle 2 asks for the feed URL through this delegate hook, which overrides
+    /// the `SUFeedURL` baked into Info.plist. Returning the selected channel's URL
+    /// here is what makes the in-app channel switch effective at runtime.
+    func feedURLString(for _: SPUUpdater) -> String? {
+        Self.feedURLString(for: channelProvider())
     }
 }

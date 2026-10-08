@@ -74,5 +74,8 @@ jobs:
       # the dual SDK tag series nor a skipped intermediate tag may suppress it.
       - name: iOS release skip-check tests
         run: .github/scripts/ios-release-should-build.test.sh
+      # Same guarantee for the Mac release skip decision (mac-update-channel).
+      - name: Mac release skip-check tests
+        run: .github/scripts/mac-release-should-build.test.sh
       - name: Meta checks
         run: 'echo "Meta CI: no meta checks remain in this repository."'

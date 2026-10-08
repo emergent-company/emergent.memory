@@ -52,6 +52,15 @@
 	     are intentionally absent — the app is not sandboxed. -->
 	<key>SUFeedURL</key>
 	<string>https://github.com/emergent-company/emergent.memory/releases/download/memory-appcast/appcast.xml</string>
+	<!-- Per-channel feed URLs for the in-app update-channel switch. The updater
+	     resolves the effective feed through SPUUpdaterDelegate
+	     -feedURLStringForUpdater: from the user's selected channel, falling back
+	     to SUFeedURL above for the stable channel. build-dmg.sh rewrites
+	     SUFeedURL to the channel's URL for a channel-specific build default. -->
+	<key>MemoryUpdateFeedURLStable</key>
+	<string>https://github.com/emergent-company/emergent.memory/releases/download/memory-appcast/appcast.xml</string>
+	<key>MemoryUpdateFeedURLDev</key>
+	<string>https://github.com/emergent-company/emergent.memory/releases/download/mac-dev/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>PmNdMg8V1L//noPSUCvjjmBy14WQfnlyeVPAFySIE2A=</string>
 	<key>SUEnableAutomaticChecks</key>

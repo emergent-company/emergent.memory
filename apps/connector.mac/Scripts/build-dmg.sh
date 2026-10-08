@@ -50,17 +50,26 @@ SIGN_IDENTITY="${APP_CERT_NAME:-Developer ID Application}"
 DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM:-74LC88G9SC}"
 
 # --- Version handling -----------------------------------------------------
-# VERSION is a release tag (v0.2.0) or bare semver (0.2.0). Derive two values:
-#   MARKETING_VERSION        = the semver WITHOUT the leading 'v'
-#                              (CFBundleShortVersionString)
-#   CURRENT_PROJECT_VERSION  = a monotonic integer (CFBundleVersion), encoded as
-#                              major*1000000 + minor*1000 + patch
-# The monotonic encoding is REQUIRED: Sparkle 2's generate_appcast orders
-# updates by sparkle:version (the app's CFBundleVersion), which must strictly
-# increase per published app release.
+# Two channel modes:
+#   stable (default): VERSION is a release tag (v0.2.0) or bare semver (0.2.0).
+#   dev:              CHANNEL=dev with an explicit BUILD_NUMBER; VERSION may be
+#                     a non-semver marketing string (e.g. 0.0.0-dev.abc1234).
+#
+# Derive two values:
+#   MARKETING_VERSION        = CFBundleShortVersionString
+#   CURRENT_PROJECT_VERSION  = CFBundleVersion, encoded as:
+#                              version_code * 100000 + variant
+#                              version_code = major*1000000 + minor*1000 + patch
+#                              variant      = 99999 for stable, 1..99998 for dev
+# The encoding is shared by both channels and is REQUIRED: Sparkle 2's
+# generate_appcast orders updates by sparkle:version (the app's CFBundleVersion),
+# which must strictly increase per published release. Sharing the space makes a
+# dev build of version V+1 sort above stable V and below stable V+1, so a machine
+# can switch channels in either direction (see the mac-update-channel change).
 # Fallback for local runs without VERSION. Info.plist stores the literal
 # build-setting placeholder "$(MARKETING_VERSION)", so it cannot be read
 # directly; prefer the newest release tag, then project.yml's default.
+CHANNEL="${CHANNEL:-stable}"
 RAW_VERSION="${VERSION:-}"
 if [ -z "$RAW_VERSION" ]; then
     RAW_VERSION="$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)"
@@ -73,25 +82,49 @@ if [[ "$RAW_VERSION" == v* ]]; then
 else
     MARKETING_VERSION="$RAW_VERSION"
 fi
-# Guard against an empty or unresolved build-setting placeholder (e.g.
-# "$(MARKETING_VERSION)") reaching semver validation. This only happens on
-# local runs where VERSION, a release tag, and a concrete project.yml
-# MARKETING_VERSION are all unavailable; treat it as a local/dev build with a
-# safe default rather than failing validation.
-if [[ -z "$MARKETING_VERSION" || "$MARKETING_VERSION" == \$\(* ]]; then
-    echo "warning: no release version resolvable — using local/dev version 0.0.0" >&2
-    MARKETING_VERSION="0.0.0"
-fi
-if [[ ! "$MARKETING_VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-    echo "error: VERSION '$RAW_VERSION' is not a parseable X.Y.Z semver" >&2
-    exit 1
-fi
-MAJOR="${BASH_REMATCH[1]}"
-MINOR="${BASH_REMATCH[2]}"
-PATCH="${BASH_REMATCH[3]}"
-CURRENT_PROJECT_VERSION=$(( MAJOR * 1000000 + MINOR * 1000 + PATCH ))
 
-echo "==> Building Memory v${MARKETING_VERSION} (build ${CURRENT_PROJECT_VERSION})"
+if [[ -n "${BUILD_NUMBER:-}" ]]; then
+    # Dev path: the caller supplies a monotonic build number and the marketing
+    # version may be non-semver. Guard only against an unresolved placeholder.
+    if [[ -z "$MARKETING_VERSION" || "$MARKETING_VERSION" == \$\(* ]]; then
+        echo "warning: no dev marketing version resolvable — using 0.0.0-dev.local" >&2
+        MARKETING_VERSION="0.0.0-dev.local"
+    fi
+    if ! [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
+        echo "error: BUILD_NUMBER '$BUILD_NUMBER' is not an integer" >&2
+        exit 1
+    fi
+    CURRENT_PROJECT_VERSION="$BUILD_NUMBER"
+else
+    # Stable path: VERSION must be parseable X.Y.Z semver.
+    # Guard against an empty or unresolved build-setting placeholder (e.g.
+    # "$(MARKETING_VERSION)"). This only happens on local runs where VERSION, a
+    # release tag, and a concrete project.yml MARKETING_VERSION are all
+    # unavailable; treat it as a local/dev build with a safe default.
+    if [[ -z "$MARKETING_VERSION" || "$MARKETING_VERSION" == \$\(* ]]; then
+        echo "warning: no release version resolvable — using local/dev version 0.0.0" >&2
+        MARKETING_VERSION="0.0.0"
+    fi
+    if [[ ! "$MARKETING_VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+        echo "error: VERSION '$RAW_VERSION' is not a parseable X.Y.Z semver" >&2
+        exit 1
+    fi
+    MAJOR="${BASH_REMATCH[1]}"
+    MINOR="${BASH_REMATCH[2]}"
+    PATCH="${BASH_REMATCH[3]}"
+    VERSION_CODE=$(( MAJOR * 1000000 + MINOR * 1000 + PATCH ))
+    CURRENT_PROJECT_VERSION=$(( VERSION_CODE * 100000 + 99999 ))
+fi
+
+# Per-channel Sparkle feed URL. Written into the exported app's Info.plist below
+# (before it is re-signed) so the bundled default feed matches the channel.
+case "$CHANNEL" in
+    stable) FEED_URL="https://github.com/emergent-company/emergent.memory/releases/download/memory-appcast/appcast.xml" ;;
+    dev)    FEED_URL="https://github.com/emergent-company/emergent.memory/releases/download/mac-dev/appcast.xml" ;;
+    *)      echo "error: CHANNEL must be 'stable' or 'dev' (got '$CHANNEL')" >&2; exit 1 ;;
+esac
+
+echo "==> Building Memory v${MARKETING_VERSION} (build ${CURRENT_PROJECT_VERSION}, channel ${CHANNEL})"
 
 # Step 1: Generate Xcode project (requires xcodegen)
 if command -v xcodegen &>/dev/null; then
@@ -131,6 +164,14 @@ xcodebuild -exportArchive \
     -exportOptionsPlist "${EXPORT_OPTIONS_PLIST}"
 
 APP_PATH="${EXPORT_PATH}/Memory.app"
+
+# Bundle this channel's feed URL as the default SUFeedURL. MUST run before the
+# codesign steps below — the code signature seals Info.plist, so any byte change
+# after signing invalidates it (and the notarization ticket).
+PLIST="${APP_PATH}/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :SUFeedURL ${FEED_URL}" "${PLIST}" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :SUFeedURL string ${FEED_URL}" "${PLIST}"
+echo "==> Bundled SUFeedURL: ${FEED_URL}"
 
 # Re-sign the whole bundle with hardened runtime before notarization. The
 # embedded Go engine + reminders helper are produced unsigned by the pre-build

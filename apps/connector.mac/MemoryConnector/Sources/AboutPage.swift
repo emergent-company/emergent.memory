@@ -20,7 +20,7 @@ struct AboutPage: View {
                 AboutDetailsCard(engineVersion: engineVersion,
                                  instanceID: instanceID,
                                  serverURL: settings.serverURL)
-                AboutUpdatesCard(updater: updater)
+                AboutUpdatesCard(updater: updater, settings: settings)
                 AboutInfoCard(mcpNodesURL: mcpNodesURL)
                 DevelopmentSignIn(
                     environment: developmentEnvironment,
@@ -133,6 +133,19 @@ private struct AboutDetailsCard: View {
 
 private struct AboutUpdatesCard: View {
     let updater: UpdaterModel
+    let settings: ConnectorSettings
+
+    /// Two-way binding for the channel picker: selecting a channel persists it
+    /// and immediately re-checks the newly selected feed.
+    private var updateChannelBinding: Binding<UpdateChannel> {
+        Binding(
+            get: { settings.updateChannel },
+            set: { channel in
+                settings.setUpdateChannel(channel)
+                updater.checkForUpdates()
+            }
+        )
+    }
 
     var body: some View {
         @Bindable var updater = updater
@@ -156,6 +169,20 @@ private struct AboutUpdatesCard: View {
                 Toggle("Automatically check for updates", isOn: $updater.automaticallyChecksForUpdates)
                     .font(.subheadline)
                     .disabled(!updater.isUpdaterAvailable)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Picker("Update channel", selection: updateChannelBinding) {
+                        ForEach(UpdateChannel.allCases) { channel in
+                            Text(channel.displayName).tag(channel)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .disabled(!updater.isUpdaterAvailable)
+                    Text(settings.updateChannel.explanation)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 HStack {
                     Button("Check for Updates…") {

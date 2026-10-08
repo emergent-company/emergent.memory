@@ -1,6 +1,38 @@
 import Foundation
 import Observation
 
+/// The Sparkle update channel the app follows. `stable` tracks tagged releases;
+/// `dev` tracks the rolling development build. The choice is persisted in
+/// `UserDefaults` and applied at runtime through Sparkle's feed-URL override.
+enum UpdateChannel: String, CaseIterable, Identifiable {
+    case stable
+    case dev
+
+    var id: String {
+        rawValue
+    }
+
+    /// User-facing label for the channel picker.
+    var displayName: String {
+        switch self {
+        case .stable:
+            "Stable"
+        case .dev:
+            "Development"
+        }
+    }
+
+    /// One-line explanation shown next to the channel picker.
+    var explanation: String {
+        switch self {
+        case .stable:
+            "Tagged releases."
+        case .dev:
+            "Rolling builds from the main branch."
+        }
+    }
+}
+
 /// Single source of truth for non-secret connection settings.
 ///
 /// Sign-in and connector secrets are owned by the bundled `memory-connector`
@@ -16,11 +48,15 @@ final class ConnectorSettings {
     /// "never configured" (so import does not clobber an intentional empty set
     /// and only backfills a genuinely unset one).
     private static let disabledToolsInitializedKey = "connector.disabledToolsInitialized"
+    /// Persisted update channel (`connector.updateChannel`).
+    private static let updateChannelKey = "connector.updateChannel"
 
     private let defaults: UserDefaults
 
     var serverURL: String
     var instanceID: String
+    /// Selected Sparkle update channel. Defaults to stable.
+    var updateChannel: UpdateChannel
 
     /// Every catalog tool id. A never-configured install starts with all local
     /// MCP tools OFF, i.e. the disabled set defaults to the whole catalog.
@@ -38,6 +74,7 @@ final class ConnectorSettings {
         serverURL = defaults.string(forKey: Self.serverURLKey) ?? ""
         instanceID = defaults.string(forKey: Self.instanceIDKey) ?? Self.defaultInstanceID()
         disabledTools = Self.loadDisabledTools(defaults: defaults)
+        updateChannel = Self.loadUpdateChannel(defaults: defaults)
     }
 
     /// Live, nonisolated read of the persisted `serverURL`. The one-time legacy
@@ -67,6 +104,17 @@ final class ConnectorSettings {
         return Self.allCatalogToolIDs
     }
 
+    /// Loads the persisted update channel, defaulting to `.stable` when unset or
+    /// unrecognized.
+    private static func loadUpdateChannel(defaults: UserDefaults) -> UpdateChannel {
+        guard let raw = defaults.string(forKey: updateChannelKey),
+              let channel = UpdateChannel(rawValue: raw)
+        else {
+            return .stable
+        }
+        return channel
+    }
+
     /// Default instance id mirrors the engine's `<hostname>-connector`.
     static func defaultInstanceID() -> String {
         let host = ProcessInfo.processInfo.hostName
@@ -81,6 +129,15 @@ final class ConnectorSettings {
         defaults.set(instanceID, forKey: Self.instanceIDKey)
         defaults.set(Array(disabledTools).sorted(), forKey: Self.disabledToolsKey)
         defaults.set(true, forKey: Self.disabledToolsInitializedKey)
+        defaults.set(updateChannel.rawValue, forKey: Self.updateChannelKey)
+    }
+
+    /// Selects the Sparkle update channel and persists it. Callers re-check the
+    /// newly selected feed (see `UpdaterModel`).
+    func setUpdateChannel(_ channel: UpdateChannel) {
+        guard updateChannel != channel else { return }
+        updateChannel = channel
+        persist()
     }
 
     /// Replaces the disabled tool set. The caller then materializes the engine
@@ -112,8 +169,10 @@ final class ConnectorSettings {
         defaults.removeObject(forKey: Self.instanceIDKey)
         defaults.removeObject(forKey: Self.disabledToolsKey)
         defaults.removeObject(forKey: Self.disabledToolsInitializedKey)
+        defaults.removeObject(forKey: Self.updateChannelKey)
         serverURL = ""
         instanceID = Self.defaultInstanceID()
+        updateChannel = .stable
         // Back to a fresh install: all local MCP tools OFF (keys were removed,
         // so a reload would resolve to the same).
         disabledTools = Self.allCatalogToolIDs

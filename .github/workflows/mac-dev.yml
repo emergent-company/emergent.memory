@@ -1,0 +1,181 @@
+name: Mac Dev
+
+# Dev channel: push to main touching apps/connector.mac/** → sign (NOT notarize)
+# and publish a rolling prerelease under the fixed tag `mac-dev`, together with
+# its own signed Sparkle appcast. Mirrors connector-dev.yml for the Mac app.
+#
+# Dev builds are signed with the same Developer ID as stable releases so
+# Sparkle's signing-continuity check passes and updates install atomically, but
+# they skip notarization: an update into an already-installed signed app does
+# not need the notary ticket, and notarization is the ~10min bottleneck.
+#
+# The build number is derived from the last release tag so dev builds sort above
+# the current stable and below the next stable (see build-dmg.sh / the
+# mac-update-channel change), allowing two-way channel switching.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/connector.mac/**'
+      - '.github/workflows/mac-dev.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mac-dev
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build, sign, package (dev)
+    runs-on: [self-hosted, macOS, ARM64, mac]
+    env:
+      DEVELOPMENT_TEAM: ${{ secrets.DEVELOPMENT_TEAM }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history + tags: version/build-number derivation needs the last
+          # release tag and the commit count since it.
+          fetch-depth: 0
+
+      - name: Select Xcode (project format 77 requires Xcode 16+)
+        run: |
+          XCODE=$(ls -d /Applications/Xcode.app 2>/dev/null || ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE" ]; then
+            echo "::error::No Xcode found in /Applications"
+            ls -d /Applications/Xcode*.app 2>/dev/null || true
+            exit 1
+          fi
+          echo "Selecting $XCODE"
+          sudo -n xcode-select -s "$XCODE" 2>/dev/null || true
+          xcodebuild -version
+          MAJOR=$(xcodebuild -version | awk 'NR==1 {split($2,v,"."); print v[1]}')
+          if [ -z "$MAJOR" ] || [ "$MAJOR" -lt 16 ]; then
+            echo "::error::Xcode 16 or newer is required (project format 77); selected $XCODE"
+            exit 1
+          fi
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache-dependency-path: apps/connector.linux/go.sum
+
+      - name: Install tools
+        run: |
+          brew list xcodegen &>/dev/null || brew install xcodegen
+          brew list create-dmg &>/dev/null || brew install create-dmg
+
+      - name: Import signing certificate
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          security create-keychain -p "temp-keychain-password" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "temp-keychain-password" "$KEYCHAIN_PATH"
+          echo "$CERTIFICATE_BASE64" | base64 --decode -o "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -P "$CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
+      - name: Derive version and build number
+        id: version
+        run: |
+          SHORT="$(git rev-parse --short HEAD)"
+          MARKETING="0.0.0-dev.${SHORT}"
+          LAST="$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD 2>/dev/null || echo v0.0.0)"
+          VER="${LAST#v}"
+          IFS=. read -r MA MI PA <<<"$VER"
+          : "${MA:=0}" "${MI:=0}" "${PA:=0}"
+          # Unified scheme (must match build-dmg.sh): dev build of the next
+          # version sorts above the current stable and below the next stable.
+          CODE=$(( MA * 1000000 + MI * 1000 + PA + 1 ))
+          SINCE=$(( $(git rev-list --count "${LAST}..HEAD" 2>/dev/null || echo 0) ))
+          [ "$SINCE" -lt 1 ] && SINCE=1
+          [ "$SINCE" -gt 99998 ] && SINCE=99998
+          BUILD=$(( CODE * 100000 + SINCE ))
+          echo "last=$LAST commits_since=$SINCE marketing=$MARKETING build=$BUILD"
+          echo "marketing=$MARKETING" >> "$GITHUB_OUTPUT"
+          echo "build_number=$BUILD" >> "$GITHUB_OUTPUT"
+
+      - name: Build, sign, package
+        working-directory: apps/connector.mac
+        env:
+          VERSION: ${{ steps.version.outputs.marketing }}
+          CHANNEL: dev
+          BUILD_NUMBER: ${{ steps.version.outputs.build_number }}
+        run: |
+          chmod +x Scripts/build-dmg.sh
+          # No --notarize: dev builds are signed with the Developer ID only.
+          ./Scripts/build-dmg.sh
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-mac-dev-dmg
+          path: apps/connector.mac/build/Memory-*.dmg
+          retention-days: 7
+
+      - name: Generate Sparkle appcast (dev feed)
+        working-directory: apps/connector.mac
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          MARKETING: ${{ steps.version.outputs.marketing }}
+        run: |
+          GENERATE_APPCAST="$(find build/DerivedData -type f -path '*/artifacts/sparkle/Sparkle/bin/generate_appcast' 2>/dev/null | head -n 1 || true)"
+          if [ -z "$GENERATE_APPCAST" ]; then
+            echo "::error::generate_appcast not found under build/DerivedData"
+            exit 1
+          fi
+          echo "Using generate_appcast: $GENERATE_APPCAST"
+
+          UPDATES_DIR="build/appcast"
+          mkdir -p "$UPDATES_DIR"
+
+          # Pull previously published dev archives so older installs can still
+          # resolve. `|| true` because the first dev release does not exist yet.
+          gh release download mac-dev \
+            -p '*.dmg' -p '*.delta' -p 'appcast.xml' \
+            -D "$UPDATES_DIR" --skip-existing || true
+
+          DMG="build/Memory-${MARKETING}.dmg"
+          cp "$DMG" "$UPDATES_DIR/"
+
+          # Monotonicity guard: CFBundleVersion must strictly increase vs the
+          # largest sparkle:version already published to the dev feed.
+          NEW_VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "build/Export/Memory.app/Contents/Info.plist")"
+          PREV_APPCAST="$UPDATES_DIR/appcast.xml"
+          if [ -f "$PREV_APPCAST" ]; then
+            PREV_VERSION="$(grep -o '<sparkle:version>[0-9]*</sparkle:version>' "$PREV_APPCAST" | grep -o '[0-9]*' | sort -n | tail -n 1 || true)"
+            if [ -n "$PREV_VERSION" ] && [ "$NEW_VERSION" -le "$PREV_VERSION" ]; then
+              echo "::error::CFBundleVersion $NEW_VERSION is not greater than previously published $PREV_VERSION"
+              exit 1
+            fi
+          fi
+
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$GENERATE_APPCAST" \
+            --download-url-prefix "https://github.com/emergent-company/emergent.memory/releases/download/mac-dev/" \
+            --ed-key-file - \
+            "$UPDATES_DIR"
+
+          echo "Appcast generated at $UPDATES_DIR/appcast.xml"
+
+      - name: Publish rolling dev release
+        working-directory: apps/connector.mac
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete mac-dev --cleanup-tag -y || true
+          shopt -s nullglob
+          ASSETS=(build/appcast/appcast.xml build/appcast/Memory-*.dmg build/appcast/*.delta)
+          gh release create mac-dev "${ASSETS[@]}" \
+            --prerelease \
+            --title "Memory mac dev (rolling)" \
+            --notes "Rolling mac app dev build. Commit: ${GITHUB_SHA}"

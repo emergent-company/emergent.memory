@@ -21,8 +21,9 @@ final class AppEnvironment {
     let avatarStore = AvatarStore()
     /// Sparkle-backed app updater. Created once here so the About page and any
     /// future menu-bar surface share a single controller (starting a second one
-    /// would start a second update cycle).
-    let updater = UpdaterModel()
+    /// would start a second update cycle). Assigned in `init` so it can read the
+    /// persisted update channel from `settings`.
+    let updater: UpdaterModel
 
     /// The one-time legacy-session migrator, if one should run. Built by
     /// default against the shared legacy storage; `nil` when a migrator is
@@ -51,6 +52,11 @@ final class AppEnvironment {
     init(legacyMigrator: LegacyMigrator? = nil) {
         let settings = ConnectorSettings()
         self.settings = settings
+        // The updater reads the selected channel lazily on each check, so a
+        // channel change in the About page redirects the feed without a rebuild.
+        updater = UpdaterModel(
+            channelProvider: { [weak settings] in settings?.updateChannel ?? .stable }
+        )
         let accountStore = AccountStore()
         self.accountStore = accountStore
         let migrator = legacyMigrator ?? Self.defaultLegacyMigrator()

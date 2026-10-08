@@ -105,7 +105,11 @@ jobs:
           unzip -q "$RUNNER_TEMP/swiftlint.zip" -d "$RUNNER_TEMP/swiftlint"
           mkdir -p "$RUNNER_TEMP/bin"
           install -m 0755 "$RUNNER_TEMP/swiftformat/swiftformat_linux" "$RUNNER_TEMP/bin/swiftformat"
-          install -m 0755 "$RUNNER_TEMP/swiftlint/swiftlint" "$RUNNER_TEMP/bin/swiftlint"
+          # Statically linked SwiftLint: the dynamic build needs Swift's
+          # libsourcekitdInProc.so, which is absent on some of the self-hosted
+          # linux runners, and it aborts (Illegal instruction) there. The static
+          # build is self-contained and runs everywhere — mirrors ios.yml.
+          install -m 0755 "$RUNNER_TEMP/swiftlint/swiftlint-static" "$RUNNER_TEMP/bin/swiftlint"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/bin/swiftformat" --version
           "$RUNNER_TEMP/bin/swiftlint" version
