@@ -128,6 +128,9 @@ jobs:
           # the 10GB cache limit.
           cache: false
 
+      - name: Guard migration workspace
+        run: bash scripts/preflight/migration-workspace.sh
+
       - name: Run unit tests
         working-directory: apps/server
         run: |
@@ -190,6 +193,9 @@ jobs:
           # Same rationale as the other jobs: the persistent self-hosted runner
           # already keeps GOMODCACHE/GOCACHE on disk.
           cache: false
+
+      - name: Guard migration workspace
+        run: bash scripts/preflight/migration-workspace.sh
 
       # Postgres is started explicitly rather than as a workflow `service` so it
       # can publish on an *ephemeral* host port. A fixed host port (the first
