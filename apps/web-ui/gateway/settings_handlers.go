@@ -257,7 +257,7 @@ func (s *Server) uiProjectSettings(c echo.Context) error {
 
 	project, err := s.memory.GetCurrentProject(ctx)
 	if err != nil {
-		data.LoadErr = err
+		data.LoadErr = userFacingError(err)
 		return s.page(c, pageTitle("Project Settings"), ProjectSettingsPage(data))
 	}
 	if project == nil {
@@ -428,7 +428,7 @@ func (s *Server) uiProjectBudgetSettings(c echo.Context) error {
 	data.ProvidersMissing = s.projectHasNoProviders(ctx)
 	project, err := s.memory.GetCurrentProject(ctx)
 	if err != nil {
-		data.LoadErr = err
+		data.LoadErr = userFacingError(err)
 		return s.page(c, pageTitle("Budget"), BudgetSettingsPage(data))
 	}
 	if project == nil {

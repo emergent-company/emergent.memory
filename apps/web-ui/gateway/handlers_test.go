@@ -416,6 +416,7 @@ type fakeMemory struct {
 	toolSettingTool      string                    // last tool name passed to Upsert/DeleteOrgToolSetting
 	toolSettingIn        UpsertOrgToolSettingInput // last input passed to UpsertOrgToolSetting
 	orgsAndProjects      []OrgWithProjectsDto      // returned by GetOrgsAndProjects
+	orgsAndProjectsErr   error                     // failure for GetOrgsAndProjects
 	orgsAndProjectsCalls int                       // number of GetOrgsAndProjects calls
 	projects             []ProjectRef              // returned by ListProjects
 	listProjectsErr      error                     // failure for ListProjects
@@ -3333,7 +3334,7 @@ func (f *fakeMemory) CreateOrg(ctx context.Context, name string) (*Org, error) {
 
 func (f *fakeMemory) GetOrgsAndProjects(ctx context.Context) ([]OrgWithProjectsDto, error) {
 	f.orgsAndProjectsCalls++
-	return f.orgsAndProjects, nil
+	return f.orgsAndProjects, f.orgsAndProjectsErr
 }
 
 func (f *fakeMemory) GetOrg(ctx context.Context, orgID string) (*Org, error) {

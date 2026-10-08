@@ -189,7 +189,7 @@ func (s *Server) uiOrgs(c echo.Context) error {
 	data.FlashErr = flashError(c)
 	orgs, err := s.orgAccessTree(c)
 	if err != nil {
-		data.LoadErr = err
+		data.LoadErr = userFacingError(err)
 	} else {
 		data.Orgs = orgs
 	}

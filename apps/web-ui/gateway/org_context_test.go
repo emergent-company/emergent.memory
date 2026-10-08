@@ -20,7 +20,10 @@ func orgContextUIServer(s *Server) *echo.Echo {
 	e := echo.New()
 	e.Use(s.authDispatch)
 	e.GET("/", s.uiRoot)
+	e.GET("/orgs", s.uiOrgs)
 	e.GET("/orgs/:id", s.uiOrg)
+	e.GET("/settings", s.uiProjectSettings)
+	e.GET("/settings/budget", s.uiProjectBudgetSettings)
 	e.GET("/orgs/:id/members", s.uiOrgMembers)
 	e.GET("/orgs/:id/invite", s.uiOrgInvitePage)
 	e.POST("/orgs/:id/invite", s.uiOrgInviteCreate)
@@ -366,6 +369,124 @@ func TestUIOrgLandingProjectsTransportErrorRedacted(t *testing.T) {
 	if strings.Contains(body, "Create project") || strings.Contains(body, "Create the first project in this organization.") {
 		t.Errorf("projects failure must never render the empty/onboarding state, got %q", body)
 	}
+}
+
+// TestUIOrgOrgLoadFailureRedacted asserts the org-load (GetOrg) failure path
+// renders the sanitized unavailable state — never the raw backend error. This
+// is the #1654 follow-up to #1645: a transport failure carries
+// "dial tcp <host>:<port>" and a memoryHTTPError renders a "memory <status>
+// <code>:" prefix, both of which must be redacted. The leak assertions fail if
+// userFacingMemoryError is bypassed at the resolveOrg call site.
+func TestUIOrgOrgLoadFailureRedacted(t *testing.T) {
+	transport := &url.Error{
+		Op:  "Get",
+		URL: "http://172.17.0.1:8080/api/orgs/o1",
+		Err: errors.New("dial tcp 172.17.0.1:8080: connect: connection refused"),
+	}
+	serviceUnavailable := &memoryHTTPError{
+		Status:  http.StatusServiceUnavailable,
+		Code:    "service_unavailable",
+		Message: "Token validation temporarily unavailable",
+	}
+
+	for _, tc := range []struct {
+		name    string
+		path    string
+		heading string
+		err     error
+	}{
+		{"org landing transport", "/orgs/o1", "Organization unavailable", transport},
+		{"org landing service_unavailable", "/orgs/o1", "Organization unavailable", serviceUnavailable},
+		{"org settings sibling transport", "/orgs/o1/settings", "Settings unavailable", transport},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Server{cfg: sessionCfg(), memory: &fakeMemory{getOrgErr: tc.err}}
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+				AccessToken: "at",
+				OrgID:       "o1",
+				ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+			}))
+			rec := httptest.NewRecorder()
+			orgContextUIServer(s).ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET %s with org-load failure = %d, want 200", tc.path, rec.Code)
+			}
+			body := rec.Body.String()
+			if !strings.Contains(body, tc.heading) {
+				t.Errorf("GET %s missing unavailable heading %q, got %q", tc.path, tc.heading, body)
+			}
+			if !strings.Contains(body, memoryUnavailableMessage) {
+				t.Errorf("GET %s missing sanitized message, got %q", tc.path, body)
+			}
+			for _, leak := range []string{"172.17.0.1", "dial tcp", ":8080", "memory 5", "service_unavailable", "Token validation"} {
+				if strings.Contains(body, leak) {
+					t.Errorf("GET %s leaked %q into the page", tc.path, leak)
+				}
+			}
+		})
+	}
+}
+
+// TestTenancyLoadFailureRedactedSiblings asserts the audit companion to
+// TestUIOrgOrgLoadFailureRedacted: the other single-resource tenancy loads that
+// render an unavailable state — the org list (the caller's access tree) and the
+// project settings / budget pages (the current project) — render the sanitized
+// message, never the raw backend error (#1654).
+func TestTenancyLoadFailureRedactedSiblings(t *testing.T) {
+	transport := func(path string) error {
+		return &url.Error{
+			Op:  "Get",
+			URL: "http://172.17.0.1:8080" + path,
+			Err: errors.New("dial tcp 172.17.0.1:8080: connect: connection refused"),
+		}
+	}
+	leaks := []string{"172.17.0.1", "dial tcp", ":8080", "memory 5", "service_unavailable"}
+	check := func(t *testing.T, rec *httptest.ResponseRecorder, heading string) {
+		t.Helper()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d (Location %q), want 200", rec.Code, rec.Header().Get("Location"))
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, heading) {
+			t.Errorf("missing unavailable heading %q, got %q", heading, body)
+		}
+		if !strings.Contains(body, memoryUnavailableMessage) {
+			t.Errorf("missing sanitized message, got %q", body)
+		}
+		for _, leak := range leaks {
+			if strings.Contains(body, leak) {
+				t.Errorf("leaked %q into the page", leak)
+			}
+		}
+	}
+	get := func(t *testing.T, s *Server, path string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+			AccessToken: "at",
+			Sub:         "sub-a",
+			ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+		}))
+		rec := httptest.NewRecorder()
+		orgContextUIServer(s).ServeHTTP(rec, req)
+		return rec
+	}
+
+	t.Run("org list access tree", func(t *testing.T) {
+		s := &Server{cfg: sessionCfg(), memory: &fakeMemory{orgsAndProjectsErr: transport("/api/user/orgs-and-projects")}}
+		check(t, get(t, s, "/orgs"), "Organizations unavailable")
+	})
+
+	t.Run("project settings current project", func(t *testing.T) {
+		s := &Server{cfg: sessionCfg(), memory: &fakeMemory{projectErr: transport("/api/projects/current"), projects: []ProjectRef{{ID: "p1", Name: "Home", OrgID: "o1"}}}}
+		check(t, get(t, s, "/settings"), "Project settings unavailable")
+	})
+
+	t.Run("budget settings current project", func(t *testing.T) {
+		s := &Server{cfg: sessionCfg(), memory: &fakeMemory{projectErr: transport("/api/projects/current"), projects: []ProjectRef{{ID: "p1", Name: "Home", OrgID: "o1"}}}}
+		check(t, get(t, s, "/settings/budget"), "Budget settings unavailable")
+	})
 }
 
 // TestUIOrgMembers covers the org members page.

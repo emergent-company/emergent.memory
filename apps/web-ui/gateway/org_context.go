@@ -128,14 +128,16 @@ func (s *Server) resolveOrg(c echo.Context) (*Org, error) {
 func (s *Server) uiOrg(c echo.Context) error {
 	org, err := s.resolveOrg(c)
 	if err != nil {
-		return s.page(c, pageTitle("Organization"), OrgLandingPage(orgPageData{LoadErr: err}))
+		// A failed org load (GetOrg) is an unavailable tenancy surface: render
+		// the sanitized message, never the raw backend error (#1654).
+		return s.page(c, pageTitle("Organization"), OrgLandingPage(orgPageData{LoadErr: userFacingError(err)}))
 	}
 	projects, err := s.memory.ListProjectsIncludingPending(c.Request().Context())
 	if err != nil {
 		// A projects-list failure must render the unavailable state, not the
 		// empty "No projects yet / Create project" screen: the create CTA is
 		// reserved for a successful zero-project response.
-		return s.page(c, pageTitle("Organization"), OrgLandingPage(orgPageData{Org: org, LoadErr: errors.New(userFacingMemoryError(err))}))
+		return s.page(c, pageTitle("Organization"), OrgLandingPage(orgPageData{Org: org, LoadErr: userFacingError(err)}))
 	}
 	// The org access tree supplies the acting user's orgs with roles:
 	// candidates for the transfer destination picker and the per-row
@@ -315,13 +317,13 @@ func (s *Server) uiOrgMembers(c echo.Context) error {
 	}
 	org, err := s.resolveOrg(c)
 	if err != nil {
-		data.LoadErr = err
+		data.LoadErr = userFacingError(err)
 		return s.page(c, pageTitle("Members"), OrgMembersPage(data))
 	}
 	members, err := s.memory.ListOrgMembers(c.Request().Context(), org.ID)
 	if err != nil {
 		data.Org = org
-		data.LoadErr = err
+		data.LoadErr = userFacingError(err)
 		return s.page(c, pageTitle("Members"), OrgMembersPage(data))
 	}
 	data.Org = org
@@ -336,7 +338,7 @@ func (s *Server) uiOrgMembers(c echo.Context) error {
 func (s *Server) uiOrgInvitePage(c echo.Context) error {
 	org, err := s.resolveOrg(c)
 	if err != nil {
-		return s.page(c, pageTitle("Invite a member"), OrgInvitePage(orgInvitePageData{LoadErr: err, FlashErr: flashError(c)}))
+		return s.page(c, pageTitle("Invite a member"), OrgInvitePage(orgInvitePageData{LoadErr: userFacingError(err), FlashErr: flashError(c)}))
 	}
 	return s.page(c, pageTitle("Invite a member"), OrgInvitePage(orgInvitePageData{Org: org, FlashErr: flashError(c)}))
 }
@@ -378,11 +380,11 @@ func (s *Server) uiOrgInviteCreate(c echo.Context) error {
 func (s *Server) uiOrgSettings(c echo.Context) error {
 	org, err := s.resolveOrg(c)
 	if err != nil {
-		return s.page(c, pageTitle("Settings"), OrgSettingsPage(orgSettingsPageData{LoadErr: err}))
+		return s.page(c, pageTitle("Settings"), OrgSettingsPage(orgSettingsPageData{LoadErr: userFacingError(err)}))
 	}
 	settings, err := s.memory.ListOrgToolSettings(c.Request().Context(), org.ID)
 	if err != nil {
-		return s.page(c, pageTitle("Settings"), OrgSettingsPage(orgSettingsPageData{Org: org, LoadErr: err}))
+		return s.page(c, pageTitle("Settings"), OrgSettingsPage(orgSettingsPageData{Org: org, LoadErr: userFacingError(err)}))
 	}
 	var flashMsg string
 	if c.QueryParam("updated") != "" {
@@ -398,7 +400,7 @@ func (s *Server) uiOrgSettings(c echo.Context) error {
 func (s *Server) uiOrgSettingsDangerZone(c echo.Context) error {
 	org, err := s.resolveOrg(c)
 	if err != nil {
-		return s.page(c, pageTitle("Settings"), OrgSettingsDangerZonePage(orgSettingsDangerZonePageData{LoadErr: err}))
+		return s.page(c, pageTitle("Settings"), OrgSettingsDangerZonePage(orgSettingsDangerZonePageData{LoadErr: userFacingError(err)}))
 	}
 	return s.page(c, pageTitle("Settings"), OrgSettingsDangerZonePage(orgSettingsDangerZonePageData{Org: org, IsOrgAdmin: s.orgAdminForCaller(c, org.ID)}))
 }
@@ -409,7 +411,7 @@ func (s *Server) uiOrgSettingsDangerZone(c echo.Context) error {
 func (s *Server) uiOrgSettingsGeneral(c echo.Context) error {
 	org, err := s.resolveOrg(c)
 	if err != nil {
-		return s.page(c, pageTitle("Settings"), OrgSettingsGeneralPage(orgSettingsGeneralPageData{LoadErr: err, FlashErr: flashError(c)}))
+		return s.page(c, pageTitle("Settings"), OrgSettingsGeneralPage(orgSettingsGeneralPageData{LoadErr: userFacingError(err), FlashErr: flashError(c)}))
 	}
 	var flashMsg string
 	if c.QueryParam("renamed") != "" {

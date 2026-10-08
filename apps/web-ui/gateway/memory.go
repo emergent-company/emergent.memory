@@ -272,6 +272,14 @@ const memoryUnavailableMessage = "Memory is temporarily unavailable. Your data i
 // neither a 5xx nor a transport/timeout error.
 const genericErrorMessage = "Something went wrong."
 
+// userFacingError wraps a memory backend failure in its sanitized,
+// non-technical message (see userFacingMemoryError) for rendering through a
+// pageError surface. Unavailable tenancy pages (org/project loads) render the
+// error directly, so a raw *url.Error or memoryHTTPError must never reach them.
+func userFacingError(err error) error {
+	return errors.New(userFacingMemoryError(err))
+}
+
 // truncateString caps s at n bytes for log output, appending an ellipsis when
 // truncated. Memory response bodies are small, but a defensive cap keeps a
 // misbehaving backend from flooding the gateway log.
