@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 
 // MARK: - Interactive card models (shared with the card views)
 
@@ -67,7 +68,8 @@ struct QuestionRequest: Identifiable, Equatable {
 /// tool chips stream in above the reply. Each new user message opens a fresh
 /// turn; the previous turn is archived in place.
 @MainActor
-final class ChatActivityStore: ObservableObject {
+@Observable
+final class ChatActivityStore {
     /// One user-initiated turn: everything the worker emitted for it.
     struct Turn: Identifiable, Equatable {
         let id: UUID
@@ -115,14 +117,14 @@ final class ChatActivityStore: ObservableObject {
     static let replyQuietInterval: TimeInterval = 3.0
 
     /// All turns in chronological order; the last one is the live turn.
-    @Published private(set) var turns: [Turn] = []
+    private(set) var turns: [Turn] = []
 
     /// Live A2UI surfaces (structured cards), in arrival order. Store-level
     /// rather than turn-bound: the server may update a surface across turns.
-    @Published private(set) var surfaces: [ChatUISurface] = []
+    private(set) var surfaces: [ChatUISurface] = []
 
     /// Quiet-timer driving `didReplyFinish` (only armed once a reply started).
-    private var quietTask: Task<Void, Never>?
+    @ObservationIgnored private var quietTask: Task<Void, Never>?
 
     // MARK: - Current-turn state
 

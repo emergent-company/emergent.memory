@@ -15,7 +15,7 @@ import SwiftUI
 struct AgentLevelView: View {
     let agentName: String
 
-    @EnvironmentObject private var agentStore: AgentStore
+    @Environment(AgentStore.self) private var agentStore
     @Environment(\.dismiss) private var dismiss
 
     /// The agent this level is scoped to, resolved live from the store.

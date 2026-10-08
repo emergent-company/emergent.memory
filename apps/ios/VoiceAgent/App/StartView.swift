@@ -10,7 +10,7 @@ import SwiftUI
 /// affordance, the audio options, and the selected agent's objects entry.
 struct StartView: View {
     @EnvironmentObject private var controller: MemorySessionController
-    @EnvironmentObject private var agentStore: AgentStore
+    @Environment(AgentStore.self) private var agentStore
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Namespace private var button
@@ -134,5 +134,5 @@ struct StartView: View {
 #Preview {
     StartView()
         .environmentObject(MemorySessionController(config: MemoryConfig()))
-        .environmentObject(AgentStore())
+        .environment(AgentStore())
 }

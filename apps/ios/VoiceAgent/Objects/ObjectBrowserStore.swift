@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 
 /// Holds the object-browser list state for one agent.
 ///
@@ -6,18 +7,19 @@ import Foundation
 /// in `Task`s, and a monotonic generation counter discards results from a
 /// superseded load so a slow earlier request can never clobber a newer one.
 @MainActor
-final class ObjectBrowserStore: ObservableObject {
-    @Published private(set) var objects: [GraphObject] = []
-    @Published private(set) var loadState: LoadState = .idle
-    @Published private(set) var nextCursor: String?
-    @Published private(set) var isLoadingMore = false
+@Observable
+final class ObjectBrowserStore {
+    private(set) var objects: [GraphObject] = []
+    private(set) var loadState: LoadState = .idle
+    private(set) var nextCursor: String?
+    private(set) var isLoadingMore = false
     /// The active provenance filter. Set by the segmented control; ``load``
     /// reads it when fetching, so callers refetch after changing it.
-    @Published var provenance: ObjectProvenance = .any
+    var provenance: ObjectProvenance = .any
 
     /// Bumped on every full load; results older than the latest are discarded.
-    private var generation = GenerationGuard()
-    private let client: any ObjectFetching
+    @ObservationIgnored private var generation = GenerationGuard()
+    @ObservationIgnored private let client: any ObjectFetching
 
     /// The client seam makes the store testable without a network; the default
     /// is the live gateway client.

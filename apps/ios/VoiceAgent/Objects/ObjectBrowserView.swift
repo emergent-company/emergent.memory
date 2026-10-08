@@ -18,7 +18,7 @@ struct ObjectBrowserView: View {
     let agentName: String
 
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var store = ObjectBrowserStore()
+    @State private var store = ObjectBrowserStore()
     @State private var searchText = ""
 
     var body: some View {
@@ -50,7 +50,8 @@ struct ObjectBrowserView: View {
     // MARK: - Chrome
 
     private func provenanceControl() -> some View {
-        Picker("objects.provenance.title", selection: $store.provenance) {
+        @Bindable var store = store
+        return Picker("objects.provenance.title", selection: $store.provenance) {
             ForEach(ObjectProvenance.allCases, id: \.self) { provenance in
                 Text(provenance.labelKey).tag(provenance)
             }

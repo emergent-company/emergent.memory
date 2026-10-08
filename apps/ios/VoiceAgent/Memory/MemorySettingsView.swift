@@ -9,7 +9,7 @@ import SwiftUI
 /// store, so a changed control-plane URL or API key is picked up by the
 /// picker right away.
 struct MemorySettingsView: View {
-    @EnvironmentObject private var agentStore: AgentStore
+    @Environment(AgentStore.self) private var agentStore
     @EnvironmentObject private var projectStore: MemoryProjectStore
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
@@ -318,6 +318,6 @@ extension MemorySettingsView {
 
 #Preview {
     MemorySettingsView()
-        .environmentObject(AgentStore())
+        .environment(AgentStore())
         .environmentObject(MemoryProjectStore())
 }

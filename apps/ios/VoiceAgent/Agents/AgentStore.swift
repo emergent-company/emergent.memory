@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 
 /// Loads the agent list from the control plane and tracks the selected agent.
 ///
@@ -13,22 +14,23 @@ import Foundation
 /// pick under `alfred.agentName.<projectID>`, falling back to the legacy
 /// `alfred.agentName` (and the build default) when a project has no stored pick.
 @MainActor
-final class AgentStore: ObservableObject {
-    @Published private(set) var agents: [Agent] = []
-    @Published private(set) var loadState: LoadState = .idle
+@Observable
+final class AgentStore {
+    private(set) var agents: [Agent] = []
+    private(set) var loadState: LoadState = .idle
     /// Name of the currently selected agent (persisted under the active
     /// project's key, see `agentNameKey`).
-    @Published private(set) var selectedAgentName: String
+    private(set) var selectedAgentName: String
 
     /// Bumped on every load; results from loads older than the latest are
     /// discarded, so a slow stale response can't clobber a fresh one.
-    private var loadGeneration = GenerationGuard()
+    @ObservationIgnored private var loadGeneration = GenerationGuard()
 
-    private let defaults: UserDefaults
+    @ObservationIgnored private let defaults: UserDefaults
     /// Injected fetching seam; nil means "build a fresh live client per load".
-    private let client: (any AgentFetching)?
+    @ObservationIgnored private let client: (any AgentFetching)?
     /// Project whose agent selection is currently loaded (nil = legacy default).
-    private var activeProjectID: String?
+    @ObservationIgnored private var activeProjectID: String?
 
     /// Starts in the idle state with the persisted (or default) agent name;
     /// the picker triggers the first `load()` when it appears. `VoiceAgentApp`

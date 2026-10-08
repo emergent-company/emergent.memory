@@ -68,6 +68,10 @@ final class MemorySessionController: ObservableObject {
 
     /// Live rich-chat activity (tool chips, thinking, approval/question cards)
     /// decoded from `lk.chat.events` and rendered by `ChatView`.
+    ///
+    /// `ChatActivityStore` is `@Observable` and this same instance is injected
+    /// into the environment by `AgentSessionRoot` so chat surfaces observe it
+    /// directly (the controller feeds it via `apply`/`reset`).
     let chatActivity = ChatActivityStore()
 
     @Published private(set) var phase: Phase = .idle
@@ -100,15 +104,6 @@ final class MemorySessionController: ObservableObject {
         let session = Self.makeSession(config: config)
         self.session = session
         localMedia = LocalMedia(session: session)
-        // SwiftUI `ObservableObject` observation is shallow: views observing the
-        // controller but reading `controller.chatActivity.turns`/`.surfaces`
-        // would not re-render when the nested store mutates. Forward the store's
-        // `objectWillChange` into the controller's own so live thinking, tool
-        // chips, and approval/question cards render promptly (and an approval
-        // card that pauses the worker before the first transcript is not stuck).
-        chatActivity.objectWillChange
-            .sink { [weak self] _ in self?.objectWillChange.send() }
-            .store(in: &cancellables)
         observe()
     }
 

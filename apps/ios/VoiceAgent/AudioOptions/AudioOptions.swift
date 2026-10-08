@@ -29,14 +29,15 @@ enum VoiceProcessingMode: CaseIterable, Identifiable {
 /// processing options, pass them as room defaults instead. See the comment
 /// on `RoomOptions` in `VoiceAgentApp`.
 @MainActor
-final class AudioOptions: ObservableObject {
-    @Published private(set) var voiceProcessingMode: VoiceProcessingMode = .automatic
+@Observable
+final class AudioOptions {
+    private(set) var voiceProcessingMode: VoiceProcessingMode = .automatic
 
     /// The last error from applying the selection, if any.
-    @Published private(set) var applyError: Swift.Error?
+    private(set) var applyError: Swift.Error?
 
-    private let localMedia: LocalMedia
-    private var cancellable: AnyCancellable?
+    @ObservationIgnored private let localMedia: LocalMedia
+    @ObservationIgnored private var cancellable: AnyCancellable?
 
     init(localMedia: LocalMedia) {
         self.localMedia = localMedia

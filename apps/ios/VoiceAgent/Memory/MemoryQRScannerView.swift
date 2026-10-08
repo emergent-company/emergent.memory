@@ -8,7 +8,7 @@ import SwiftUI
 /// or changes an agent — agents are added explicitly through the add flow.
 struct MemoryQRScannerView: View {
     @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var agentStore: AgentStore
+    @Environment(AgentStore.self) private var agentStore
     @EnvironmentObject private var projectStore: MemoryProjectStore
 
     /// Payload of the one-time setup QR code. Required fields: `setupURL`
@@ -352,6 +352,6 @@ extension MemoryQRScannerView {
 
 #Preview {
     MemoryQRScannerView()
-        .environmentObject(AgentStore())
+        .environment(AgentStore())
         .environmentObject(MemoryProjectStore())
 }

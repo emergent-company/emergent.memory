@@ -7,7 +7,7 @@ import SwiftUI
 /// setup-QR scanner owned by `AppShellView`). The manual connection fields in
 /// ``MemorySettingsView`` edit whichever project is active.
 struct MemoryProjectsSection: View {
-    @EnvironmentObject private var agentStore: AgentStore
+    @Environment(AgentStore.self) private var agentStore
     @EnvironmentObject private var projectStore: MemoryProjectStore
 
     /// Opens the setup-QR scanner.
@@ -180,6 +180,6 @@ struct MemoryProjectsSection: View {
             .padding(4 * .grid)
     }
     .background(.bg1)
-    .environmentObject(AgentStore())
+    .environment(AgentStore())
     .environmentObject(MemoryProjectStore())
 }

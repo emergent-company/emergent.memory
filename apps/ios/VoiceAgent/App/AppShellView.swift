@@ -28,7 +28,7 @@ enum AppRoute: Hashable {
 /// navigating here never tears down an active session — it is only rebuilt
 /// when the selected agent changes.
 struct AppShellView: View {
-    @EnvironmentObject private var agentStore: AgentStore
+    @Environment(AgentStore.self) private var agentStore
     @EnvironmentObject private var projectStore: MemoryProjectStore
 
     /// The navigation path is owned by `AgentSessionRoot` (which recreates
@@ -280,6 +280,6 @@ private struct AppSettingsTabView: View {
 
 #Preview {
     AppShellView(path: .constant([]))
-        .environmentObject(AgentStore())
+        .environment(AgentStore())
         .environmentObject(MemoryProjectStore())
 }

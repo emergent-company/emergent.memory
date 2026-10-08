@@ -9,7 +9,7 @@ import SwiftUI
 ///
 /// The selection takes effect on Apply, not while changing the picker.
 struct AudioOptionsSheet: View {
-    @EnvironmentObject private var audioOptions: AudioOptions
+    @Environment(AudioOptions.self) private var audioOptions
     @Environment(\.dismiss) private var dismiss
 
     @State private var selectedMode: VoiceProcessingMode = .automatic

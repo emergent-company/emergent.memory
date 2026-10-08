@@ -8,7 +8,8 @@ import SwiftUI
 struct ChatView: View {
     @EnvironmentObject private var session: Session
     @EnvironmentObject private var controller: MemorySessionController
-    @EnvironmentObject private var agentStore: AgentStore
+    @Environment(AgentStore.self) private var agentStore
+    @Environment(ChatActivityStore.self) private var store
 
     /// Invoked when the user taps a suggested prompt (fills the composer).
     var onSuggestion: ((String) -> Void)?
@@ -25,10 +26,6 @@ struct ChatView: View {
 
     /// Scroll anchor pinned at the bottom of the message list.
     private static let bottomAnchorID = "chat.bottom"
-
-    private var store: ChatActivityStore {
-        controller.chatActivity
-    }
 
     var body: some View {
         if session.messages.isEmpty {

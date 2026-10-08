@@ -7,6 +7,7 @@ import SwiftUI
 struct ChatInputView: View {
     @EnvironmentObject private var session: Session
     @EnvironmentObject private var controller: MemorySessionController
+    @Environment(ChatActivityStore.self) private var store
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @FocusState.Binding var keyboardFocus: Bool
@@ -14,10 +15,6 @@ struct ChatInputView: View {
 
     /// Bumped on each send to drive the send haptic.
     @State private var sendFeedback = 0
-
-    private var store: ChatActivityStore {
-        controller.chatActivity
-    }
 
     init(keyboardFocus: FocusState<Bool>.Binding, text: Binding<String>) {
         _keyboardFocus = keyboardFocus

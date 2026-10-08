@@ -5,19 +5,19 @@ struct VoiceAgentApp: App {
     /// The agent list + selection, fetched from the control plane. Replaces
     /// the hardcoded `AgentSelection` list as the selection source of truth
     /// (persisted per project under `alfred.agentName.<projectID>`).
-    @StateObject private var agentStore: AgentStore
+    @State private var agentStore: AgentStore
     /// The onboarded project connections + active selection.
     @StateObject private var projectStore: MemoryProjectStore
 
     init() {
-        _agentStore = StateObject(wrappedValue: AgentStore())
+        _agentStore = State(initialValue: AgentStore())
         _projectStore = StateObject(wrappedValue: MemoryProjectStore())
     }
 
     var body: some Scene {
         WindowGroup {
             AgentSessionRoot()
-                .environmentObject(agentStore)
+                .environment(agentStore)
                 .environmentObject(projectStore)
         }
         #if os(macOS)
@@ -43,7 +43,7 @@ struct VoiceAgentApp: App {
 /// survives navigation between the picker and an agent's second level — it is
 /// only torn down when the selected agent actually changes.
 private struct AgentSessionRoot: View {
-    @EnvironmentObject private var agentStore: AgentStore
+    @Environment(AgentStore.self) private var agentStore
     @EnvironmentObject private var projectStore: MemoryProjectStore
 
     @State private var controller: MemorySessionController?
@@ -60,7 +60,8 @@ private struct AgentSessionRoot: View {
                     .environmentObject(controller)
                     .environmentObject(controller.session)
                     .environmentObject(controller.localMedia)
-                    .environmentObject(audioOptions)
+                    .environment(audioOptions)
+                    .environment(controller.chatActivity)
                     .environment(\.voiceEnabled, true)
                     .environment(\.videoEnabled, false)
                     .environment(\.textEnabled, true)
