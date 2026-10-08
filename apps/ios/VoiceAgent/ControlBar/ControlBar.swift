@@ -1,6 +1,6 @@
 import LiveKitComponents
 
-/// A multiplatform view that shows the control bar: audio/video and chat controls.
+/// A multiplatform view that shows the control bar: audio and chat controls.
 /// Available controls depend on the agent features and the track availability.
 /// - SeeAlso: ``AgentFeatures``
 struct ControlBar: View {
@@ -10,7 +10,6 @@ struct ControlBar: View {
     @Binding var chat: Bool
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.voiceEnabled) private var voiceEnabled
-    @Environment(\.videoEnabled) private var videoEnabled
     @Environment(\.textEnabled) private var textEnabled
 
     @State private var audioOptionsPresented = false
@@ -25,12 +24,6 @@ struct ControlBar: View {
             biggerSpacer()
             if voiceEnabled {
                 audioControls()
-                flexibleSpacer()
-            }
-            if videoEnabled {
-                videoControls()
-                flexibleSpacer()
-                screenShareButton()
                 flexibleSpacer()
             }
             if textEnabled {
@@ -143,54 +136,6 @@ struct ControlBar: View {
                 .contentShape(Rectangle())
         }
         .accessibilityLabel("audio.title")
-    }
-
-    private func videoControls() -> some View {
-        HStack(spacing: .zero) {
-            Spacer()
-            AsyncButton {
-                await localMedia.toggleCamera(disableScreenShare: true)
-            } label: {
-                Image(systemName: localMedia.isCameraEnabled ? "video.fill" : "video.slash.fill")
-                    .transition(.symbolEffect)
-                    .frame(height: Constants.buttonHeight)
-                    .padding(.horizontal, 2 * .grid)
-                    .contentShape(Rectangle())
-            }
-            .accessibilityLabel("controlBar.camera")
-            .accessibilityValue(localMedia.isCameraEnabled ? Text("controlBar.on") : Text("controlBar.off"))
-            .accessibilityHint("controlBar.camera.hint")
-            #if os(macOS)
-                separator()
-                VideoDeviceSelector()
-                    .frame(height: Constants.buttonHeight)
-            #endif
-            Spacer()
-        }
-        .frame(width: Constants.buttonWidth)
-        .disabled(!session.agent.isConnected)
-    }
-
-    private func screenShareButton() -> some View {
-        AsyncButton {
-            await localMedia.toggleScreenShare(disableCamera: true)
-        } label: {
-            Image(systemName: "arrow.up.square.fill")
-                .frame(width: Constants.buttonWidth, height: Constants.buttonHeight)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(
-            ControlBarButtonStyle(
-                isToggled: localMedia.isScreenShareEnabled,
-                foregroundColor: .fg1,
-                backgroundColor: .bg2,
-                borderColor: .separator1
-            )
-        )
-        .disabled(!session.agent.isConnected)
-        .accessibilityLabel("controlBar.screenShare")
-        .accessibilityValue(localMedia.isScreenShareEnabled ? Text("controlBar.on") : Text("controlBar.off"))
-        .accessibilityHint("controlBar.screenShare.hint")
     }
 
     private func textInputButton() -> some View {

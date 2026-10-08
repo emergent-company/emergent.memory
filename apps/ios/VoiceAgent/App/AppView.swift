@@ -59,8 +59,6 @@ struct AppView: View {
             .animation(.default, value: session.isConnected)
             .animation(.default, value: session.error?.localizedDescription)
             .animation(.default, value: session.agent.error?.localizedDescription)
-            .animation(.default, value: localMedia.isCameraEnabled)
-            .animation(.default, value: localMedia.isScreenShareEnabled)
             .animation(.default, value: localMedia.error?.localizedDescription)
         #if os(iOS)
             .sensoryFeedback(.impact, trigger: session.isConnected)
@@ -106,10 +104,7 @@ struct AppView: View {
 
     private func agentListening() -> some View {
         ZStack {
-            if session.messages.isEmpty,
-               !localMedia.isCameraEnabled,
-               !localMedia.isScreenShareEnabled
-            {
+            if session.messages.isEmpty {
                 Group {
                     if session.agent.isConnected {
                         Text("agent.listening")

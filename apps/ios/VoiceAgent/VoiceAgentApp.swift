@@ -63,7 +63,6 @@ private struct AgentSessionRoot: View {
                     .environment(audioOptions)
                     .environment(controller.chatActivity)
                     .environment(\.voiceEnabled, true)
-                    .environment(\.videoEnabled, false)
                     .environment(\.textEnabled, true)
             }
         }

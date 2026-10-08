@@ -17,13 +17,8 @@ import SwiftUI
         }
 
         private func participants() -> some View {
-            VStack {
-                Spacer()
-                ScreenShareView()
-                LocalParticipantView()
-                Spacer()
-            }
-            .frame(width: 125 * .grid)
+            Spacer()
+                .frame(width: 125 * .grid)
         }
 
         private func agent() -> some View {

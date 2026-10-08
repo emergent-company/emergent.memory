@@ -7,23 +7,13 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		ACAEBA5B2DE6EE970072E93E /* ReplayKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = ACAEBA5A2DE6EE970072E93E /* ReplayKit.framework */; };
-		ACAEBA622DE6EE970072E93E /* BroadcastExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = ACAEBA582DE6EE970072E93E /* BroadcastExtension.appex */; platformFilters = (ios, xros, ); settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		A110C0DF2D14E9EC00A38C01 /* Markdown in Frameworks */ = {isa = PBXBuildFile; productRef = A110C0DE2D14E9EC00A38C03 /* Markdown */; };
 		A110C0DF2D14E9EC00A38C02 /* Splash in Frameworks */ = {isa = PBXBuildFile; productRef = A110C0DE2D14E9EC00A38C04 /* Splash */; };
-		ACAEBA692DE6EF4B0072E93E /* LiveKit in Frameworks */ = {isa = PBXBuildFile; productRef = ACAEBA682DE6EF4B0072E93E /* LiveKit */; };
 		B5E1B90F2D14E9EC00A38CB6 /* LiveKitComponents in Frameworks */ = {isa = PBXBuildFile; productRef = B5E1B90E2D14E9EC00A38CB6 /* LiveKitComponents */; };
 		B5E1B9122D14E9F500A38CB6 /* LiveKit in Frameworks */ = {isa = PBXBuildFile; productRef = B5E1B9112D14E9F500A38CB6 /* LiveKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
-		ACAEBA602DE6EE970072E93E /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = B5B5E3AA2D124AE00099C9BE /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = ACAEBA572DE6EE970072E93E;
-			remoteInfo = BroadcastExtension;
-		};
 		ACC280262DEDDA1D0023C13D /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = B5B5E3AA2D124AE00099C9BE /* Project object */;
@@ -33,35 +23,12 @@
 		};
 /* End PBXContainerItemProxy section */
 
-/* Begin PBXCopyFilesBuildPhase section */
-		ACAEBA672DE6EE970072E93E /* Embed Foundation Extensions */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 13;
-			files = (
-				ACAEBA622DE6EE970072E93E /* BroadcastExtension.appex in Embed Foundation Extensions */,
-			);
-			name = "Embed Foundation Extensions";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXCopyFilesBuildPhase section */
-
 /* Begin PBXFileReference section */
-		ACAEBA582DE6EE970072E93E /* BroadcastExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BroadcastExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
-		ACAEBA5A2DE6EE970072E93E /* ReplayKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ReplayKit.framework; path = System/Library/Frameworks/ReplayKit.framework; sourceTree = SDKROOT; };
 		B5B5E3B22D124AE00099C9BE /* VoiceAgent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VoiceAgent.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		ACC280262DEDDA1D0023C138 /* VoiceAgentTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VoiceAgentTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		ACAEBA662DE6EE970072E93E /* Exceptions for "BroadcastExtension" folder in "BroadcastExtension" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Info.plist,
-			);
-			target = ACAEBA572DE6EE970072E93E /* BroadcastExtension */;
-		};
 		B577A91F2D15FDB800B59A0B /* Exceptions for "VoiceAgent" folder in "VoiceAgent" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -73,14 +40,6 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		ACAEBA5C2DE6EE970072E93E /* BroadcastExtension */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				ACAEBA662DE6EE970072E93E /* Exceptions for "BroadcastExtension" folder in "BroadcastExtension" target */,
-			);
-			path = BroadcastExtension;
-			sourceTree = "<group>";
-		};
 		B5B5E3B42D124AE00099C9BE /* VoiceAgent */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -97,15 +56,6 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		ACAEBA552DE6EE970072E93E /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				ACAEBA5B2DE6EE970072E93E /* ReplayKit.framework in Frameworks */,
-				ACAEBA692DE6EF4B0072E93E /* LiveKit in Frameworks */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		B5B5E3AF2D124AE00099C9BE /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -127,20 +77,10 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		ACAEBA592DE6EE970072E93E /* Frameworks */ = {
-			isa = PBXGroup;
-			children = (
-				ACAEBA5A2DE6EE970072E93E /* ReplayKit.framework */,
-			);
-			name = Frameworks;
-			sourceTree = "<group>";
-		};
 		B5B5E3A92D124AE00099C9BE = {
 			isa = PBXGroup;
 			children = (
 				B5B5E3B42D124AE00099C9BE /* VoiceAgent */,
-				ACAEBA5C2DE6EE970072E93E /* BroadcastExtension */,
-				ACAEBA592DE6EE970072E93E /* Frameworks */,
 				ACC280262DEDDA1D0023C139 /* VoiceAgentTests */,
 				B5B5E3B32D124AE00099C9BE /* Products */,
 			);
@@ -151,7 +91,6 @@
 			children = (
 				B5B5E3B22D124AE00099C9BE /* VoiceAgent.app */,
 				ACC280262DEDDA1D0023C138 /* VoiceAgentTests.xctest */,
-				ACAEBA582DE6EE970072E93E /* BroadcastExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -159,29 +98,6 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		ACAEBA572DE6EE970072E93E /* BroadcastExtension */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = ACAEBA632DE6EE970072E93E /* Build configuration list for PBXNativeTarget "BroadcastExtension" */;
-			buildPhases = (
-				ACAEBA542DE6EE970072E93E /* Sources */,
-				ACAEBA552DE6EE970072E93E /* Frameworks */,
-				ACAEBA562DE6EE970072E93E /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			fileSystemSynchronizedGroups = (
-				ACAEBA5C2DE6EE970072E93E /* BroadcastExtension */,
-			);
-			name = BroadcastExtension;
-			packageProductDependencies = (
-				ACAEBA682DE6EF4B0072E93E /* LiveKit */,
-			);
-			productName = BroadcastExtension;
-			productReference = ACAEBA582DE6EE970072E93E /* BroadcastExtension.appex */;
-			productType = "com.apple.product-type.app-extension";
-		};
 		B5B5E3B12D124AE00099C9BE /* VoiceAgent */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = B5B5E3C12D124AE20099C9BE /* Build configuration list for PBXNativeTarget "VoiceAgent" */;
@@ -239,9 +155,6 @@
 				LastSwiftUpdateCheck = 1630;
 				LastUpgradeCheck = 2620;
 				TargetAttributes = {
-					ACAEBA572DE6EE970072E93E = {
-						CreatedOnToolsVersion = 16.3;
-					};
 					ACC280262DEDDA1D0023C137 = {
 						CreatedOnToolsVersion = 16.3;
 						TestTargetID = B5B5E3B12D124AE00099C9BE;
@@ -273,19 +186,11 @@
 			targets = (
 				B5B5E3B12D124AE00099C9BE /* VoiceAgent */,
 				ACC280262DEDDA1D0023C137 /* VoiceAgentTests */,
-				ACAEBA572DE6EE970072E93E /* BroadcastExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		ACAEBA562DE6EE970072E93E /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		B5B5E3B02D124AE00099C9BE /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -303,13 +208,6 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		ACAEBA542DE6EE970072E93E /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		B5B5E3AE2D124AE00099C9BE /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -327,15 +225,6 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
-		ACAEBA612DE6EE970072E93E /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			platformFilters = (
-				ios,
-				xros,
-			);
-			target = ACAEBA572DE6EE970072E93E /* BroadcastExtension */;
-			targetProxy = ACAEBA602DE6EE970072E93E /* PBXContainerItemProxy */;
-		};
 		ACC280262DEDDA1D0023C13E /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = B5B5E3B12D124AE00099C9BE /* VoiceAgent */;
@@ -344,71 +233,6 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		ACAEBA642DE6EE970072E93E /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = BroadcastExtension/BroadcastExtension.entitlements;
-				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = "";
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = BroadcastExtension/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Memory Broadcast";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-				);
-				MARKETING_VERSION = 0.87.4;
-				PRODUCT_BUNDLE_IDENTIFIER = com.emergent.memory.broadcast;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
-				SKIP_INSTALL = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator xros xrsimulator";
-				SUPPORTS_MACCATALYST = NO;
-				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
-				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2,7";
-				XROS_DEPLOYMENT_TARGET = 26.0;
-			};
-			name = Debug;
-		};
-		ACAEBA652DE6EE970072E93E /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = BroadcastExtension/BroadcastExtension.entitlements;
-				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = "";
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = BroadcastExtension/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Memory Broadcast";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-				);
-				MARKETING_VERSION = 0.87.4;
-				PRODUCT_BUNDLE_IDENTIFIER = com.emergent.memory.broadcast;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
-				SKIP_INSTALL = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator xros xrsimulator";
-				SUPPORTS_MACCATALYST = NO;
-				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
-				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2,7";
-				VALIDATE_PRODUCT = YES;
-				XROS_DEPLOYMENT_TARGET = 26.0;
-			};
-			name = Release;
-		};
 		B5B5E3BF2D124AE20099C9BE /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -670,15 +494,6 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		ACAEBA632DE6EE970072E93E /* Build configuration list for PBXNativeTarget "BroadcastExtension" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				ACAEBA642DE6EE970072E93E /* Debug */,
-				ACAEBA652DE6EE970072E93E /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
 		B5B5E3AD2D124AE00099C9BE /* Build configuration list for PBXProject "VoiceAgent" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -753,10 +568,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A110C0DD2D14E9EC00A38C02 /* XCRemoteSwiftPackageReference "Splash" */;
 			productName = Splash;
-		};
-		ACAEBA682DE6EF4B0072E93E /* LiveKit */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = LiveKit;
 		};
 		B5E1B90E2D14E9EC00A38CB6 /* LiveKitComponents */ = {
 			isa = XCSwiftPackageProductDependency;

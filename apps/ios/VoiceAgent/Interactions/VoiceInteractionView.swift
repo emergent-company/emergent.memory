@@ -2,10 +2,7 @@ import SwiftUI
 
 /// A multiplatform view that shows voice-specific interaction controls.
 ///
-/// Depending on the track availability, the view will show:
-/// - agent participant view
-/// - local participant camera preview
-/// - local participant screen share preview
+/// Shows the agent participant view (avatar camera or audio visualizer).
 ///
 /// - Note: The layout is determined by the horizontal size class.
 struct VoiceInteractionView: View {
@@ -24,12 +21,8 @@ struct VoiceInteractionView: View {
             Spacer()
                 .frame(width: 50 * .grid)
             AgentView()
-            VStack {
-                Spacer()
-                ScreenShareView()
-                LocalParticipantView()
-            }
-            .frame(width: 50 * .grid)
+            Spacer()
+                .frame(width: 50 * .grid)
         }
         .safeAreaPadding()
         // Cap and centre the wide layout so the centre agent column does not
@@ -39,17 +32,8 @@ struct VoiceInteractionView: View {
     }
 
     private func compact() -> some View {
-        ZStack(alignment: .bottom) {
-            AgentView()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .ignoresSafeArea()
-            HStack {
-                Spacer()
-                ScreenShareView()
-                LocalParticipantView()
-            }
-            .frame(height: 50 * .grid)
-            .safeAreaPadding()
-        }
+        AgentView()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .ignoresSafeArea()
     }
 }

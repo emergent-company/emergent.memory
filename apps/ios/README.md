@@ -98,16 +98,11 @@ Do these once in Xcode (or by editing `VoiceAgent.xcconfig`):
    (currently an empty placeholder; simulator builds work without it).
 2. **Bundle id** — optional: replace `com.emergent.memory` if your account needs a
    unique id (same file).
-3. **Remove the `BroadcastExtension` target** (screen share — not used by the
-   voice-only client). This was deliberately NOT hand-edited out of
-   `project.pbxproj` (error-prone without a build to verify). In Xcode:
-   select `BroadcastExtension` in the project navigator → Delete → "Remove
-   Reference" (or "Delete Files" — either works since the scheme no longer
-   references it for builds). The `Embed Foundation Extensions` build phase and
-   the `PBXTargetDependency` are removed automatically with the target.
-   While it exists the target is harmless: the screen-share UI is disabled in
-   Swift and the extension's team/bundle were already updated
-   (`com.emergent.memory.broadcast`).
+3. **`BroadcastExtension` target removed** (done). The app is audio-only, so the
+   screen-share surface was unreachable; the target, its sources/entitlements,
+   the `Embed Foundation Extensions` copy phase, the ReplayKit framework link
+   and the `BroadcastExtension` scheme were removed from the Xcode project.
+   Nothing to do here.
 4. **Scheme/product name** — the shared scheme `VoiceAgent.xcscheme` was
    already updated to `Memory.app` (matching `PRODUCT_NAME = Memory`). If Xcode
    ever reports a stale buildable name, delete the derived scheme and let Xcode
