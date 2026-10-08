@@ -131,8 +131,10 @@ Applies to `.env`, `.env.google`, `.env.realtime`, `.env.cloud` on **both** mcj-
 
 ## Dev memory backend (api.dev)
 
-The gateway's `MEMORY_URL=https://api.dev.emergent-company.ai` points at the **`emergent-dev`** tailnet host
-(`100.117.62.45`, ssh alias `emergent-dev` in `~/.ssh/config`), which runs the Emergent Memory server in Docker:
+The gateway's `MEMORY_URL=https://api.dev.emergent-company.ai` points at the dev host **`memory-dev`**
+(`ssh memory-dev`), which runs the Emergent Memory server in Docker. Canonical dev host addressing is
+single-sourced in the infra repo `emergent.memory.infra` (`docs/agent-host-reference.md`); the old
+`emergent-dev` / LXC 140 host is retired — never target it:
 
 - Stack: docker compose project **`emergent-dev`** at `/opt/emergent-dev/docker-compose.yml` on the host;
   services include `memory-server` (`ghcr.io/emergent-company/memory-server:dev`), `memory-db` (pgvector:pg16), zitadel.

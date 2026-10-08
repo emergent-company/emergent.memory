@@ -46,7 +46,7 @@ Gateway (`memory.web-ui`, `gateway/`):
 - CI: memory `Server Go CI` ran post-merge; gateway `CI`/`Build & Publish` jobs fail immediately on GitHub-hosted runners (account-wide Actions billing block, tracked as `ci-actions-billing-blocker`) — not a code failure.
 
 ## Open questions / follow-ups
-- **Deploy:** rebuild/publish `ghcr.io/emergent-company/memory-server:dev` and `.../memory-web-ui:dev` on `emergent-dev`, apply migration `00147`, restart `/opt/emergent-dev` compose, then run browser/e2e verification.
+- **Deploy:** rebuild/publish `ghcr.io/emergent-company/memory-server:dev` and `.../memory-web-ui:dev` on the dev host (`memory-dev`), apply migration `00147`, restart `/opt/emergent-dev` compose, then run browser/e2e verification.
 - Dev may want a shorter `PROJECT_DELETION_GRACE_PERIOD` to demo the purge transition.
 - Memory branch rules block force-push; rebased work was re-pushed as a new branch (`omos/project-pending-deletion-rebased`) → PR #421 (superseding #420).
 - Old remote branch `omos/project-pending-deletion` (memory) is the closed PR #420 branch; can be deleted.

@@ -20,7 +20,9 @@ this runbook cross-references it rather than duplicating it.
 
 ## 0. Environment facts
 
-- **Remote dev:** host `emergent-dev`; containers `emergent-dev-memory-server-1`,
+- **Remote dev:** host `memory-dev` (`ssh memory-dev`; dev host addressing is single-sourced in the
+  infra repo `emergent.memory.infra` `docs/agent-host-reference.md` — the old `emergent-dev` / LXC 140
+  host is retired, never target it); containers `emergent-dev-memory-server-1`,
   `emergent-dev-memory-db-1` (pg16 / pgvector, db `emergent`).
 - **Server image:** `ghcr.io/emergent-company/memory-server:dev` (mutable tag).
 - **Migrations run at server-container startup** via `/usr/local/bin/emergent-migrate -c up`
@@ -237,8 +239,8 @@ SELECT count(*) FROM pg_index WHERE NOT indisvalid OR NOT indisready;
 
 ```bash
 # was a CONCURRENTLY build killed? (errors are logged even with log_statement=none)
-ssh emergent-dev "docker logs --since 24h emergent-dev-memory-db-1 2>&1 | grep -Ei 'FATAL|ERROR|CONCURRENTLY'"
-ssh emergent-dev "docker logs --tail 40 emergent-dev-memory-server-1 | grep -i migrat"
+ssh memory-dev "docker logs --since 24h emergent-dev-memory-db-1 2>&1 | grep -Ei 'FATAL|ERROR|CONCURRENTLY'"
+ssh memory-dev "docker logs --tail 40 emergent-dev-memory-server-1 | grep -i migrat"
 ```
 
 ## 6. Prevention — tracked in #750

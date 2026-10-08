@@ -10,7 +10,7 @@
 #   tools/logs.sh -f alfred-worker:diane       # live stream one worker
 #   tools/logs.sh --host voice                 # voice infra only (home2 LXC 112)
 #   tools/logs.sh --host memory                # prod memory stack only (VM 220)
-#   tools/logs.sh --host dev                   # dev stack only (LXC 140)
+#   tools/logs.sh --host dev                   # dev stack only (memory-dev)
 #   tools/logs.sh --list                       # catalog of known services
 #
 # Env overrides:
@@ -19,8 +19,7 @@
 #   VOICE_HOST       voice SSH alias        (default: home2)
 #   VOICE_LXC        LXC container id       (default: 112)
 #   LIVEKIT_COMPOSE  livekit compose file   (default: /opt/livekit/docker-compose.yml)
-#   DEV_HOST         dev Proxmox SSH alias  (default: proxmox-zoidberg)
-#   DEV_CT           dev LXC container id   (default: 140)
+#   DEV_HOST         dev SSH alias          (default: memory-dev)
 #   DEV_DIR          compose dir on dev     (default: /opt/emergent-dev)
 set -euo pipefail
 
@@ -32,8 +31,7 @@ PROD_DIR="${MEMORY_PROD_DIR:-/root/emergent}"
 VOICE_HOST="${VOICE_HOST:-home2}"
 VOICE_LXC="${VOICE_LXC:-112}"
 LIVEKIT_COMPOSE="${LIVEKIT_COMPOSE:-/opt/livekit/docker-compose.yml}"
-DEV_HOST="${DEV_HOST:-proxmox-zoidberg}"
-DEV_CT="${DEV_CT:-140}"
+DEV_HOST="${DEV_HOST:-memory-dev}"
 DEV_DIR="${DEV_DIR:-/opt/emergent-dev}"
 
 TAIL=200
@@ -212,7 +210,7 @@ run_batched() {
     } | ssh "$VOICE_HOST" "pct exec $VOICE_LXC -- bash -s"
   fi
 
-  # --- dev stack (LXC 140) ---
+  # --- dev stack (memory-dev) ---
   if [ ${#dev_compose[@]} -gt 0 ]; then
     {
       echo "cd '$DEV_DIR'"
@@ -222,7 +220,7 @@ run_batched() {
         echo "printf '%s\\n' '===== dev / $l ====='"
         echo "docker compose logs $( [ $FOLLOW -eq 1 ] && echo -n '-f ' )--tail=$TAIL $DOCKER_OPTS '$n'$(err_filter)"
       done
-    } | ssh "$DEV_HOST" "pct exec $DEV_CT -- bash -s"
+    } | ssh "$DEV_HOST" "bash -s"
   fi
 }
 
@@ -248,7 +246,7 @@ run_follow() {
         ;;
       dev:compose)
         ( printf '%s\n' "===== dev / $l ====="
-          ssh "$DEV_HOST" "pct exec $DEV_CT -- bash -c \"cd $DEV_DIR && docker compose logs -f --tail=$TAIL $DOCKER_OPTS '$n'\"" 2>&1 || true ) &
+          ssh "$DEV_HOST" "bash -c \"cd $DEV_DIR && docker compose logs -f --tail=$TAIL $DOCKER_OPTS '$n'\"" 2>&1 || true ) &
         ;;
     esac
   done < <(selected_entries)
