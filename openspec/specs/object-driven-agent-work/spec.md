@@ -109,6 +109,11 @@ Claiming SHALL transition the object from the ready status to the in-progress st
 - **WHEN** a board-enabled work object is created without a key
 - **THEN** the write is rejected, because the claim requires a stable identity
 
+#### Scenario: Subgraph creation rejects a keyless board-enabled object
+
+- **WHEN** a board-enabled work object is created via the subgraph/bulk path (`POST /api/graph/subgraph`) without a key
+- **THEN** the request is rejected with `work_status_key_required` and no object or relationship is created
+
 ### Requirement: Claimed work is reclaimed when its run dies
 
 A claim whose run is missing or terminal beyond a threshold SHALL be reclaimed, and ready board-enabled objects with no live run SHALL be reconciled and enqueued. A run paused for human input SHALL count as live and SHALL NOT be reclaimed.
