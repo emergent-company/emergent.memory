@@ -97,9 +97,7 @@ spec-server-dev-vertex-ai.json
 .gemini/
 
 # Built CLI binaries
-apps/cli/emergent-cli-*
-apps/cli/emergent-darwin-*
-apps/cli/emergent-linux-*
+apps/cli/emergent-*
 apps/cli/emergent
 apps/cli/memory
 bin/
