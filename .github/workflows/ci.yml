@@ -2,10 +2,24 @@ name: Meta CI
 
 # NO `paths:` filter on either trigger.
 #
-# `ci` is a REQUIRED status check on `main`. A path-filtered required check never
-# reports for PRs that do not touch the listed paths, so the required check is
-# simply absent for those PRs and the whole required-check set becomes
-# unenforceable. (Pre-existing defect; fixed here deliberately.)
+# `ci` is the ONLY branch-protection-required status check on `main` (the
+# required context list is exactly ["ci"]). A path-filtered required check never
+# reports for PRs that do not touch the listed paths, so the required check would
+# simply be absent for those PRs and the whole required-check set would become
+# unenforceable. This workflow is therefore unfiltered and MUST run for every PR
+# and every push to main.
+#
+# The heavy suites (server unit/DB, E2E, CLI, web-ui, iOS, docker) are
+# intentionally path-filtered and are therefore NOT required: their job contexts
+# cannot be made required without deadlocking PRs that do not touch those paths.
+# To make the cheap, always-applicable guards actually gate merges, they run here
+# in the required `ci` job instead:
+#   * migration numbering + immutability (through scripts/preflight/all.sh, which
+#     calls migration-number.sh -> migration-immutability.sh --base origin/main),
+#   * migration workspace hygiene (stray untracked files / duplicate versions),
+#   * the route-authority guard.
+# The heavy suites still run for the PRs that touch their paths; they stay
+# advisory. See emergent-company/emergent.memory#1673.
 #
 # The review-bot meta checks (script syntax + review-gate tests) moved to
 # emergent-company/emergent.memory.infra along with the review-bot apparatus.
@@ -30,6 +44,11 @@ jobs:
     runs-on: [self-hosted, linux, x64, memory]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: the preflight/migration guards diff the working tree
+          # against the base ref (`--base origin/main`) and need the base commit
+          # and blob history present in this checkout.
+          fetch-depth: 0
       # Canonical version guard: root VERSION must equal the `// @version`
       # annotation in apps/server/cmd/server/main.go. A release bumps both
       # together; this fails early when they drift (see #auto-tag dead-path).
@@ -53,9 +72,28 @@ jobs:
             echo "Fix with: gofmt -w <file>"
             exit 1
           fi
+      # Cheap, always-applicable guards folded into the required `ci` job so they
+      # actually gate merges (#1673). The path-filtered server.yml workflow cannot
+      # be a required check, so its guards would otherwise only surface after
+      # merge. Migration numbering + immutability are already covered by the
+      # all.sh step below (migration-number.sh calls
+      # migration-immutability.sh --base origin/main), so they are deliberately
+      # not repeated here.
+      - name: Guard migration workspace
+        run: bash scripts/preflight/migration-workspace.sh
+      - name: Guard route authority
+        working-directory: apps/server
+        run: |
+          # Parses the whole current tree's route table (apps/server/domain) and
+          # compares it against the checked-in route-authority.yaml. No base ref
+          # needed: an undeclared route, a vanished route, or a drifted tier all
+          # fail. Same invocation as server.yml's `route-authority-guard` job.
+          go run ./cmd/route-authority-guard
       # Preflight guards: the same checks lanes run locally before pushing —
-      # stale base, migration numbering (goose silently de-duplicates duplicate
-      # versions), and tracked-file gofmt. Runs here so the
+      # stale base, migration numbering + immutability (goose panics on duplicate
+      # versions; migration-number.sh delegates the immutability rule to
+      # migration-immutability.sh --base origin/main), tracked-file gofmt, skip
+      # census, mcp authz, modelref split, and schemadrift. Runs here so the
       # branch-protection-required `ci` check enforces them on merge.
       # (See emergent-company/emergent.memory#1074.)
       - name: Preflight guards

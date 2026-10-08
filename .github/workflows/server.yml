@@ -412,15 +412,19 @@ jobs:
           # undeclared route, a vanished route, or a drifted tier all fail.
           go run ./cmd/route-authority-guard
 
-  ci:
-    name: ci
+  server-ci:
+    name: server-ci
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, x64, memory]
-    # test-db is a required part of the gate: this job is the single required
-    # status check on main (branch protection requires only `ci`), so a failing
-    # DB-backed test must fail `ci` — otherwise running it would not block a
-    # merge (#778, and the same "ran but did not gate" trap as #759).
+    # Aggregate gate for this path-filtered server workflow. It is NOT a required
+    # status check: the single required context on main is Meta CI's `ci`
+    # (.github/workflows/ci.yml). Renamed from `ci` to `server-ci` (#1673) to
+    # remove the check-name collision with Meta CI — two distinct jobs both named
+    # `ci` made the required context ambiguous.
+    # test-db is part of this gate: a failing DB-backed test must fail the
+    # aggregate (otherwise running it would not block the server suite), the same
+    # "ran but did not gate" trap as #759/#778.
     needs: [lint, build, test-unit, test-db, migration-guard, migration-order-guard, route-authority-guard]
     steps:
-      - name: CI gate
-        run: echo "CI passed"
+      - name: Server CI gate
+        run: echo "Server CI passed"
