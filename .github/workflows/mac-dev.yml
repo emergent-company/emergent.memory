@@ -175,7 +175,7 @@ jobs:
           fi
 
           printf '%s' "$SPARKLE_PRIVATE_KEY" | "$GENERATE_APPCAST" \
-            --download-url-prefix "https://github.com/emergent-company/emergent.memory/releases/download/mac-dev/" \
+            --download-url-prefix "https://emergent-company.github.io/emergent.memory/appcast/dev/" \
             --ed-key-file - \
             "$UPDATES_DIR"
 
@@ -193,3 +193,11 @@ jobs:
             --prerelease \
             --title "Memory mac dev (rolling)" \
             --notes "Rolling mac app dev build. Commit: ${GITHUB_SHA}"
+
+      - name: Publish feed to public GitHub Pages
+        # The app fetches the feed unauthenticated; private release assets 404,
+        # so the feed + DMG must be served from the public Pages site.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MARKETING: ${{ steps.version.outputs.marketing }}
+        run: bash .github/scripts/publish-appcast.sh dev "$MARKETING" apps/connector.mac/build/appcast

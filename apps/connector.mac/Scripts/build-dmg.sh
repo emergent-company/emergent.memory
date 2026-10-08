@@ -118,9 +118,11 @@ fi
 
 # Per-channel Sparkle feed URL. Written into the exported app's Info.plist below
 # (before it is re-signed) so the bundled default feed matches the channel.
+# MUST be the PUBLIC Pages host: the repo is private, so release-asset URLs
+# return 404 to Sparkle's unauthenticated fetch.
 case "$CHANNEL" in
-    stable) FEED_URL="https://github.com/emergent-company/emergent.memory/releases/download/memory-appcast/appcast.xml" ;;
-    dev)    FEED_URL="https://github.com/emergent-company/emergent.memory/releases/download/mac-dev/appcast.xml" ;;
+    stable) FEED_URL="https://emergent-company.github.io/emergent.memory/appcast/stable/appcast.xml" ;;
+    dev)    FEED_URL="https://emergent-company.github.io/emergent.memory/appcast/dev/appcast.xml" ;;
     *)      echo "error: CHANNEL must be 'stable' or 'dev' (got '$CHANNEL')" >&2; exit 1 ;;
 esac
 
