@@ -4824,13 +4824,19 @@ definitions:
         items:
           $ref: '#/definitions/domain_journal.JournalEntry'
         type: array
+      has_more:
+        description: HasMore is true when another page of entries exists beyond NextCursor.
+        type: boolean
+      next_cursor:
+        description: |-
+          NextCursor is the opaque cursor to pass back to fetch the next page.
+          Empty when there are no more entries.
+        type: string
       notes:
         description: standalone notes (journal_id IS NULL)
         items:
           $ref: '#/definitions/domain_journal.JournalNote'
         type: array
-      total:
-        type: integer
     type: object
   domain_mcp.AgentMCPEndpointDTO:
     properties:
@@ -13127,10 +13133,10 @@ paths:
         in: query
         name: limit
         type: integer
-      - description: Page number (default 1)
+      - description: Opaque keyset cursor from a previous response's next_cursor
         in: query
-        name: page
-        type: integer
+        name: cursor
+        type: string
       - description: Branch name or UUID (omit for main branch)
         in: query
         name: branch

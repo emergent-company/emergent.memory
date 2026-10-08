@@ -5307,9 +5307,9 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
-                        "type": "integer",
-                        "description": "Page number (default 1)",
-                        "name": "page",
+                        "type": "string",
+                        "description": "Opaque keyset cursor from a previous response's next_cursor",
+                        "name": "cursor",
                         "in": "query"
                     },
                     {
@@ -30817,15 +30817,20 @@ const docTemplate = `{
                         "$ref": "#/definitions/domain_journal.JournalEntry"
                     }
                 },
+                "has_more": {
+                    "description": "HasMore is true when another page of entries exists beyond NextCursor.",
+                    "type": "boolean"
+                },
+                "next_cursor": {
+                    "description": "NextCursor is the opaque cursor to pass back to fetch the next page.\nEmpty when there are no more entries.",
+                    "type": "string"
+                },
                 "notes": {
                     "description": "standalone notes (journal_id IS NULL)",
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/domain_journal.JournalNote"
                     }
-                },
-                "total": {
-                    "type": "integer"
                 }
             }
         },
