@@ -225,6 +225,12 @@ func (s *Server) uiEmbeddings(c echo.Context) error {
 	if progErr != nil {
 		progErr = userFacingError(progErr)
 	}
+	if statErr != nil {
+		statErr = userFacingError(statErr)
+	}
+	if covErr != nil {
+		covErr = userFacingError(covErr)
+	}
 
 	data := embeddingPageData{
 		Progress:    progress,

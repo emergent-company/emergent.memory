@@ -510,8 +510,8 @@ func TestUIMCPServersCreateRejectedInline(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("rejected create = %d, want 200 inline re-render", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "command is required") {
-		t.Error("memory rejection text must surface on the re-rendered form")
+	if !strings.Contains(rec.Body.String(), genericErrorMessage) {
+		t.Error("memory rejection must surface (sanitized) on the re-rendered form")
 	}
 }
 

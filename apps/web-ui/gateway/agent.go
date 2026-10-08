@@ -75,7 +75,7 @@ func (s *Server) uiAgent(c echo.Context) error {
 
 	convs, cerr := s.memory.ListConversations(ctx, false)
 	if cerr != nil {
-		data.ChatsErr = cerr
+		data.ChatsErr = userFacingError(cerr)
 	} else {
 		for _, conv := range convs.Conversations {
 			if conv.AgentDefinitionID == id {
@@ -646,7 +646,7 @@ func (s *Server) uiAgentSessions(c echo.Context) error {
 
 	convs, cerr := s.memory.ListConversations(ctx, false)
 	if cerr != nil {
-		data.ChatsErr = cerr
+		data.ChatsErr = userFacingError(cerr)
 	} else {
 		for _, conv := range convs.Conversations {
 			if conv.AgentDefinitionID == id {

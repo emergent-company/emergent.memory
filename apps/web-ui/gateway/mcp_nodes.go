@@ -153,7 +153,7 @@ func (s *Server) loadMCPNodesData(ctx context.Context, selectedNode string) exte
 			data.SelectedLive = true
 			node := &relayNode{Session: sess}
 			if terr, ok := liveToolsErr[selectedNode]; ok {
-				data.ToolsErr = terr
+				data.ToolsErr = userFacingError(terr)
 			} else {
 				node.Tools = liveTools[selectedNode]
 			}

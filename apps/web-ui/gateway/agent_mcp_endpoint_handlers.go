@@ -357,15 +357,20 @@ func (s *Server) renderAgentSettingsWithMCP(c echo.Context, agentID string, extr
 	return s.page(c, pageTitle(data.Agent.Name, "Settings"), AgentSettingsPage(data))
 }
 
-// agentMCPErrText returns the human part of a backend error: the message alone
-// when the error carries one (so the UI never shows "memory 409 conflict:"
-// noise), else the error's own text.
+// agentMCPErrText returns the human part of a backend error for the inline MCP
+// action banner. A 4xx backend rejection carries a user-facing message
+// (duplicate label, already-exists, 403/404) that is kept as authored; a 5xx,
+// transport, or timeout failure is sanitized; a locally-authored sentinel (for
+// example "this agent has no active MCP endpoint") passes through unchanged.
 func agentMCPErrText(err error) string {
 	var he *memoryHTTPError
-	if errors.As(err, &he) && strings.TrimSpace(he.Message) != "" {
-		return he.Message
+	if errors.As(err, &he) {
+		if he.Status < http.StatusInternalServerError && strings.TrimSpace(he.Message) != "" {
+			return he.Message
+		}
+		return userFacingMemoryError(err)
 	}
-	return err.Error()
+	return redactBackendError(err).Error()
 }
 
 // renderAgentSettingsWithMCPErr renders the settings page with an inline MCP

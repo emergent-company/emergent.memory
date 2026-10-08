@@ -67,6 +67,7 @@ type fakeMemory struct {
 	unarchiveConvErr    error    // UnarchiveConversation failure
 	deleteConvErr       error    // DeleteConversation failure
 	servers             []MCPServer
+	mcpServerCreateErr  error // CreateMCPServer failure
 
 	// owner share-session surface (ListShareSessionsByProject /
 	// GetShareSessionTranscript).
@@ -431,6 +432,7 @@ type fakeMemory struct {
 	updatedRoleVal    string                // last role passed to UpdateMemberRole
 	updateRoleErr     error                 // failure for UpdateMemberRole
 	sentInvites       []SentInviteDto       // returned by ListInvites
+	sentInvitesErr    error                 // ListInvites failure
 	createdInvites    []CreateInviteDto     // every CreateInvite request, in order
 	createInviteID    int                   // id counter for created invites
 	createInviteErr   error                 // failure for CreateInvite
@@ -843,6 +845,9 @@ func (f *fakeMemory) GetMCPServer(ctx context.Context, id string) (*MCPServer, e
 }
 
 func (f *fakeMemory) CreateMCPServer(ctx context.Context, in *MCPServer) (*MCPServer, error) {
+	if f.mcpServerCreateErr != nil {
+		return nil, f.mcpServerCreateErr
+	}
 	in.ID = "new-id"
 	return in, nil
 }
@@ -3432,6 +3437,9 @@ func (f *fakeMemory) UpdateMemberRole(ctx context.Context, userID, role string) 
 }
 
 func (f *fakeMemory) ListInvites(ctx context.Context) ([]SentInviteDto, error) {
+	if f.sentInvitesErr != nil {
+		return nil, f.sentInvitesErr
+	}
 	return f.sentInvites, nil
 }
 

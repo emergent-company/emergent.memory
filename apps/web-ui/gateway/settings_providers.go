@@ -227,18 +227,18 @@ func (s *Server) loadProviderPanel(ctx context.Context) providerPanelData {
 	d := providerPanelData{}
 	providers, err := s.memory.ListProjectProviders(ctx)
 	if err != nil {
-		d.Err = err
+		d.Err = userFacingError(err)
 		return d
 	}
 	d.Providers = providers
 	pricing, err := s.memory.ListPricing(ctx)
 	if err != nil {
-		d.Err = err
+		d.Err = userFacingError(err)
 		return d
 	}
 	overrides, err := s.memory.ListProjectPricingOverrides(ctx)
 	if err != nil {
-		d.Err = err
+		d.Err = userFacingError(err)
 		return d
 	}
 	if mc, err := s.memory.GetProjectModelConfig(ctx); err == nil && mc != nil {

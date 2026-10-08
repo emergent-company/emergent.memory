@@ -277,8 +277,8 @@ func TestEmbeddingsRoute(t *testing.T) {
 		if !strings.Contains(body, "Workers") {
 			t.Errorf("worker error section missing: %s", body)
 		}
-		if !strings.Contains(body, "boom") {
-			t.Errorf("worker error message missing: %s", body)
+		if !strings.Contains(body, genericErrorMessage) {
+			t.Errorf("worker error message missing (want sanitized %q): %s", genericErrorMessage, body)
 		}
 	})
 
@@ -425,8 +425,8 @@ func TestEmbeddingsRoute(t *testing.T) {
 		if !strings.Contains(body, `data-testid="embeddings-coverage-error"`) {
 			t.Errorf("coverage error state missing: %s", body)
 		}
-		if !strings.Contains(body, "coverage boom") {
-			t.Errorf("coverage error message missing: %s", body)
+		if !strings.Contains(body, genericErrorMessage) {
+			t.Errorf("coverage error message missing (want sanitized %q): %s", genericErrorMessage, body)
 		}
 		if !strings.Contains(body, "Object embedding queue") || !strings.Contains(body, "Workers") {
 			t.Errorf("coverage failure blanked the queue/worker sections: %s", body)

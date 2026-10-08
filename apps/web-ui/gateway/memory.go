@@ -280,6 +280,24 @@ func userFacingError(err error) error {
 	return errors.New(userFacingMemoryError(err))
 }
 
+// redactBackendError sanitizes a memory backend or transport failure, while
+// returning a locally-authored, already-safe error unchanged. Surfaces that mix
+// their own validation/sentinel copy with backend failures use it so only the
+// latter is redacted.
+func redactBackendError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if memoryStatus(err) != 0 || errors.Is(err, context.DeadlineExceeded) {
+		return userFacingError(err)
+	}
+	var ne net.Error
+	if errors.As(err, &ne) {
+		return userFacingError(err)
+	}
+	return err
+}
+
 // truncateString caps s at n bytes for log output, appending an ellipsis when
 // truncated. Memory response bodies are small, but a defensive cap keeps a
 // misbehaving backend from flooding the gateway log.

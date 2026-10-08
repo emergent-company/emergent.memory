@@ -155,7 +155,7 @@ func (s *Server) uiMCPShareCreate(c echo.Context) error {
 			fe.Name = err.Error()
 			draft.FieldErrs = fe
 		} else {
-			draft.GeneralErr = err
+			draft.GeneralErr = userFacingError(err)
 		}
 		return s.renderMCPShareNewPage(c, draft)
 	}
@@ -239,7 +239,7 @@ func (s *Server) uiMCPShareUpdate(c echo.Context) error {
 			fe.Name = err.Error()
 			draft.FieldErrs = fe
 		} else {
-			draft.GeneralErr = err
+			draft.GeneralErr = userFacingError(err)
 		}
 		return s.renderMCPShareEditPage(c, draft)
 	}

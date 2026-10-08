@@ -539,7 +539,7 @@ func (s *Server) renderEditorError(c echo.Context, name string, failure error) e
 		Detail:  objectTypeDetailFromForm(name, c),
 		Icon:    c.FormValue("icon"),
 		Color:   c.FormValue("color"),
-		SaveErr: failure,
+		SaveErr: redactBackendError(failure),
 	}
 	if compiled, err := s.memory.GetCompiledTypes(ctx); err == nil {
 		if found := findCompiledObjectType(compiled, name); found != nil {

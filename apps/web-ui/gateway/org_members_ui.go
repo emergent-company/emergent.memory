@@ -253,7 +253,7 @@ func (s *Server) loadMembersData(c echo.Context, data *membersPageData) {
 	}
 	invites, err := s.memory.ListInvites(ctx)
 	if err != nil {
-		data.PendingErr = err
+		data.PendingErr = userFacingError(err)
 	} else {
 		for _, inv := range invites {
 			if inv.Status == "pending" {

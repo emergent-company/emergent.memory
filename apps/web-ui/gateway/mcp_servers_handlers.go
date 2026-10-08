@@ -98,7 +98,7 @@ func (s *Server) uiMCPCreate(c echo.Context) error {
 		if mcpServerIsNameConflict(err) {
 			fe.Name = err.Error()
 		} else {
-			draft.GeneralErr = err
+			draft.GeneralErr = userFacingError(err)
 		}
 		draft.FieldErrs = fe
 		return s.renderMCPNewPage(c, draft)
@@ -172,7 +172,7 @@ func (s *Server) uiMCPUpdate(c echo.Context) error {
 			fe.Name = err.Error()
 			draft.FieldErrs = fe
 		} else {
-			draft.GeneralErr = err
+			draft.GeneralErr = userFacingError(err)
 		}
 		return s.renderMCPEditPage(c, draft)
 	}

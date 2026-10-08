@@ -1573,7 +1573,7 @@ func TestUIProviderModelConfig(t *testing.T) {
 func TestSettingsProvidersLoadFailure(t *testing.T) {
 	f := &fakeMemory{
 		project:     &Project{ID: "p1", Name: "Home"},
-		providerErr: fmt.Errorf("memory 503: service down"),
+		providerErr: &memoryHTTPError{Status: http.StatusServiceUnavailable, Code: "service_unavailable", Message: "service down"},
 	}
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
@@ -1585,7 +1585,7 @@ func TestSettingsProvidersLoadFailure(t *testing.T) {
 		t.Fatalf("status = %d (panel error must not crash the page)", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Failed to load providers") || !strings.Contains(body, "service down") {
+	if !strings.Contains(body, "Failed to load providers") || !strings.Contains(body, memoryUnavailableMessage) {
 		t.Errorf("panel error missing:\n%s", body)
 	}
 }
