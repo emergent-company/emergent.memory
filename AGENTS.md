@@ -179,19 +179,14 @@ task stop        # stop background server
 | Remote test server | — | `http://localhost:3002` (via SSH tunnel) |
 | Local Go server (direct) | — | `http://localhost:3012` |
 
-### Dev host topology — one machine, several names
+### Dev host topology
 
-There is **one** dev machine. The names below all reach it; there is **no separate legacy
-dev host** — never target one.
+Canonical host addressing lives in the infra repo `emergent.memory.infra`
+(`docs/host-bootstrap.md` + `docs/agent-host-reference.md`) — that is the single
+source of truth; do **not** duplicate full host tables here.
 
-| Name / address | Reaches |
-|---|---|
-| `ssh emergent-dev` | hostname `emergent-dev` (the dev box) |
-| `ssh memory-dev` | same machine — operator-provided; this alias is not defined on the orchestrator host |
-| `10.10.10.40` | private IP of the same box |
-| `100.117.62.45` | Tailscale IP of the same box |
-| `46.4.253.156` / `api.dev.emergent-company.ai` | public address fronting the same box |
-| `http://10.10.10.40:3002/health` | dev API (port `3002`) |
+- **Dev** = host `memory-dev`, reached via `ssh memory-dev`. Dev public URLs `https://api.dev.emergent-company.ai` / `https://admin.dev.emergent-company.ai` remain valid.
+- **LXC 140 is RETIRED.** Its identifiers — `emergent-dev`, `10.10.10.40`, `100.117.62.45`, `46.4.253.156` — are a **different** machine from `memory-dev`; never target them.
 
 Deploys are **not scheduled** — trigger explicitly:
 
