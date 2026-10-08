@@ -108,13 +108,27 @@ jobs:
           APPLE_DIST_CERT_PASSWORD: ${{ secrets.APPLE_DIST_CERT_PASSWORD }}
         run: |
           KEYCHAIN_PATH=$RUNNER_TEMP/ios-signing.keychain-db
+          # Idempotent: a leftover keychain from an earlier attempt on this runner
+          # would make create-keychain fail under `bash -e`.
+          security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
           security create-keychain -p "temp-keychain-password" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "temp-keychain-password" "$KEYCHAIN_PATH"
           echo "$APPLE_DIST_CERT_BASE64" | base64 --decode -o "$RUNNER_TEMP/ios-dist.p12"
           security import "$RUNNER_TEMP/ios-dist.p12" -P "$APPLE_DIST_CERT_PASSWORD" \
             -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          # Grant codesign non-interactive access to the imported private key.
+          # Without this, exportArchive fails on a headless runner with
+          # errSecInternalComponent / "unable to build chain to self-signed root"
+          # when signing nested binaries during export.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "temp-keychain-password" "$KEYCHAIN_PATH"
+          # PREPEND the signing keychain to the existing search list (do not
+          # replace it): the Apple Distribution intermediate/root in the System
+          # and login keychains must stay reachable so codesign can build the chain.
+          security list-keychain -d user -s "$KEYCHAIN_PATH" \
+            $(security list-keychains -d user | tr -d '"')
+          security default-keychain -d user -s "$KEYCHAIN_PATH"
 
       - name: Archive
         working-directory: apps/ios
