@@ -5,6 +5,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/emergent-company/emergent.memory/domain/graph"
 )
 
 func toolDefByName(t *testing.T, tools []ToolDefinition, name string) ToolDefinition {
@@ -136,4 +138,31 @@ func TestBuildHybridUnifiedRequest_IncludeRelationships(t *testing.T) {
 	req := buildHybridUnifiedRequest(map[string]any{}, "q", 20, nil, nil, nil, "")
 	require.NotNil(t, req.IncludeRelationships)
 	assert.False(t, *req.IncludeRelationships, "MCP search-hybrid must always skip the relationship leg")
+}
+
+// =============================================================================
+// filterSearchItemsByScope
+// =============================================================================
+
+func TestFilterSearchItemsByScope(t *testing.T) {
+	items := []*graph.SearchResultItem{
+		{Object: &graph.GraphObjectResponse{Type: "Person"}},
+		{Object: &graph.GraphObjectResponse{Type: "Org"}},
+		{Object: &graph.GraphObjectResponse{Type: "Dog"}},
+		{Object: &graph.GraphObjectResponse{Type: "text_chunk"}},
+		nil,
+		{Object: nil},
+	}
+
+	// nil/unrestricted scope returns the same slice unchanged.
+	var nilScope *TypeScope
+	assert.Same(t, &items[0], &filterSearchItemsByScope(nilScope, items)[0])
+
+	restricted := NewTypeScope([]string{"Person", "Org"}, nil)
+	got := filterSearchItemsByScope(restricted, items)
+	// Person + Org allowed, text_chunk always allowed, Dog/nil/nil-object dropped.
+	require.Len(t, got, 3)
+	assert.Equal(t, "Person", got[0].Object.Type)
+	assert.Equal(t, "Org", got[1].Object.Type)
+	assert.Equal(t, "text_chunk", got[2].Object.Type)
 }

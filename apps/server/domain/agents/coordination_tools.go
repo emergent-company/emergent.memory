@@ -402,6 +402,16 @@ func executeSingleSpawn(ctx context.Context, deps *CoordinationToolDeps, req Spa
 		}
 	}
 
+	// Type-scope delegation guard: a scoped caller must not spawn an agent whose
+	// declared allowlist would let the child reach excluded types (#1695).
+	if delegationDeniedByTypeScope(ctx, def) {
+		return SpawnResult{
+			AgentName: req.AgentName,
+			Status:    RunStatusError,
+			Error:     delegationScopeError(),
+		}
+	}
+
 	// Find the corresponding runtime Agent entity by name
 	agent, err := deps.Repo.FindByName(ctx, deps.ProjectID, req.AgentName)
 	if err != nil {

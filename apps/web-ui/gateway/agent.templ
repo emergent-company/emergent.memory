@@ -424,6 +424,38 @@ templ agentGeneralSettingsForm(data agentSettingsData) {
 					<input type="hidden" name="includeProjectInfo" value="false"/>
 					<input id="agent-settings-project-context" name="includeProjectInfo" type="checkbox" value="true" checked?={ agentIncludeProjectInfoValue(data.Agent) } class="checkbox"/>
 				}
+				// Graph type scope: an allowlist of the object / relationship
+				// types this agent may see and query. Both pickers are empty by
+				// default, which means "all types". The hidden companion input
+				// guarantees the field is always submitted (present, possibly
+				// blank), so clearing every box is distinguishable from a
+				// partial body that omits the field.
+				@form.FormControl("agent-settings-object-types", "Object types", form.LabelAbove, "Only the object types this agent may see and query. Leave all unchecked to allow every type.", "", nil) {
+					<input type="hidden" name="objectType" value=""/>
+					@checkboxPicker(checkboxPickerProps{
+						Name:          "objectType",
+						EmptyNote:     objectTypeEmptyNote(),
+						LabelClass:    "items-start gap-2 py-1.5",
+						CheckboxClass: "checkbox checkbox-sm mt-0.5",
+						TitleClass:    "block text-sm font-medium",
+						DescClass:     "text-muted block text-xs",
+						WrapTitle:     true,
+						Items:         compiledTypePickerItems(data.ObjectTypes, func(name string) bool { return containsString(agentObjectTypesValue(data.Agent), name) }),
+					})
+				}
+				@form.FormControl("agent-settings-relationship-types", "Relationship types", form.LabelAbove, "Only the relationship types this agent may see and query. Leave all unchecked to allow every type.", "", nil) {
+					<input type="hidden" name="relationshipType" value=""/>
+					@checkboxPicker(checkboxPickerProps{
+						Name:          "relationshipType",
+						EmptyNote:     relationshipTypeEmptyNote(),
+						LabelClass:    "items-start gap-2 py-1.5",
+						CheckboxClass: "checkbox checkbox-sm mt-0.5",
+						TitleClass:    "block text-sm font-medium",
+						DescClass:     "text-muted block text-xs",
+						WrapTitle:     true,
+						Items:         compiledTypePickerItems(data.RelationshipTypes, func(name string) bool { return containsString(agentRelationshipTypesValue(data.Agent), name) }),
+					})
+				}
 			</div>
 		}
 		@ui.Section("Appearance", ui.SectionProps{

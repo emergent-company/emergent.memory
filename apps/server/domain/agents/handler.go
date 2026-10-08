@@ -1673,6 +1673,14 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 	if dto.IncludeProjectInfo != nil {
 		def.SetIncludeProjectInfo(*dto.IncludeProjectInfo)
 	}
+	// Typed allowlists win over the raw config map; nil leaves the config value
+	// (absent), empty is normalised to "all types" by deleting the key (#1695).
+	if dto.ObjectTypes != nil {
+		def.SetObjectTypes(dto.ObjectTypes)
+	}
+	if dto.RelationshipTypes != nil {
+		def.SetRelationshipTypes(dto.RelationshipTypes)
+	}
 
 	// Check for existing definition with same name to return a clear 409 instead of a 500
 	// from a unique constraint violation on (project_id, name).
@@ -1784,6 +1792,15 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 	// Explicit opt-in flag wins over the raw config map; false removes the key.
 	if dto.IncludeProjectInfo != nil {
 		def.SetIncludeProjectInfo(*dto.IncludeProjectInfo)
+	}
+	// Typed allowlists win over the raw config map. Omitted (nil) leaves the
+	// stored value unchanged; an explicit empty list clears the allowlist by
+	// deleting the key (all types) (#1695).
+	if dto.ObjectTypes != nil {
+		def.SetObjectTypes(dto.ObjectTypes)
+	}
+	if dto.RelationshipTypes != nil {
+		def.SetRelationshipTypes(dto.RelationshipTypes)
 	}
 	if dto.SandboxConfig != nil {
 		def.SandboxConfig = dto.SandboxConfig

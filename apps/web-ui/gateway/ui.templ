@@ -965,11 +965,37 @@ templ delegateEmptyNote() {
 	No other agents to delegate to.
 }
 
+// objectTypeEmptyNote is the graph object-type picker's empty-note content.
+templ objectTypeEmptyNote() {
+	No object types in this project yet.
+}
+
+// relationshipTypeEmptyNote is the graph relationship-type picker's empty-note
+// content.
+templ relationshipTypeEmptyNote() {
+	No relationship types in this project yet.
+}
+
 // skillPickerItems builds checkboxPicker items from a skill list.
 func skillPickerItems(skills []Skill, selected func(string) bool) []checkboxPickerItem {
 	items := make([]checkboxPickerItem, 0, len(skills))
 	for _, sk := range skills {
 		items = append(items, checkboxPickerItem{Value: sk.Name, Title: sk.Name, Desc: sk.Description, Checked: selected != nil && selected(sk.Name)})
+	}
+	return items
+}
+
+// compiledTypePickerItems builds checkboxPicker items from a project's compiled
+// object or relationship types. The type label (falling back to the name) is
+// the title, the type description the optional sub-line.
+func compiledTypePickerItems(types []CompiledType, selected func(string) bool) []checkboxPickerItem {
+	items := make([]checkboxPickerItem, 0, len(types))
+	for _, ct := range types {
+		title := ct.Label
+		if title == "" {
+			title = ct.Name
+		}
+		items = append(items, checkboxPickerItem{Value: ct.Name, Title: title, Desc: ct.Description, Checked: selected != nil && selected(ct.Name)})
 	}
 	return items
 }

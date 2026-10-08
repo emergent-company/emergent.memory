@@ -348,13 +348,19 @@ type AgentDefinitionDTO struct {
 	// IncludeProjectInfo opts the definition into injecting the project's
 	// project_info as a "## Knowledge base context" block on every surface.
 	// Default false; stored in Config under key "includeProjectInfo" (#1694).
-	IncludeProjectInfo bool                  `json:"includeProjectInfo"`
-	SandboxConfig      map[string]any        `json:"workspaceConfig,omitempty"`
-	ToolPolicies       map[string]ToolPolicy `json:"toolPolicies,omitempty"`
-	DefaultToolPolicy  ToolPolicyDefault     `json:"defaultToolPolicy,omitempty"`
-	UIConfig           json.RawMessage       `json:"uiConfig,omitempty"`
-	CreatedAt          time.Time             `json:"createdAt"`
-	UpdatedAt          time.Time             `json:"updatedAt"`
+	IncludeProjectInfo bool `json:"includeProjectInfo"`
+	// ObjectTypes / RelationshipTypes bound the graph data types this agent is
+	// offered (searched, queried, traversed, listed). Empty/omitted means all
+	// types (backwards compatible); stored in Config under keys "objectTypes"
+	// and "relationshipTypes" (#1695).
+	ObjectTypes       []string              `json:"objectTypes,omitempty"`
+	RelationshipTypes []string              `json:"relationshipTypes,omitempty"`
+	SandboxConfig     map[string]any        `json:"workspaceConfig,omitempty"`
+	ToolPolicies      map[string]ToolPolicy `json:"toolPolicies,omitempty"`
+	DefaultToolPolicy ToolPolicyDefault     `json:"defaultToolPolicy,omitempty"`
+	UIConfig          json.RawMessage       `json:"uiConfig,omitempty"`
+	CreatedAt         time.Time             `json:"createdAt"`
+	UpdatedAt         time.Time             `json:"updatedAt"`
 	// ToolGroups is the computed capability-group catalog (server-owned
 	// taxonomy) rendered by the gateway. Read-only; groups with no member tools
 	// at all are omitted — a fully-disabled group still renders (with
@@ -416,11 +422,15 @@ type CreateAgentDefinitionDTO struct {
 	Config         map[string]any    `json:"config"`
 	// IncludeProjectInfo opts into project-info injection (default false). When
 	// false the key is absent from the stored config.
-	IncludeProjectInfo *bool                 `json:"includeProjectInfo"`
-	SandboxConfig      map[string]any        `json:"workspaceConfig"`
-	ToolPolicies       map[string]ToolPolicy `json:"toolPolicies,omitempty"`
-	DefaultToolPolicy  ToolPolicyDefault     `json:"defaultToolPolicy,omitempty"`
-	UIConfig           json.RawMessage       `json:"uiConfig,omitempty"`
+	IncludeProjectInfo *bool `json:"includeProjectInfo"`
+	// ObjectTypes / RelationshipTypes bound the graph data types this agent is
+	// offered. Absent or empty means all types (#1695).
+	ObjectTypes       []string              `json:"objectTypes"`
+	RelationshipTypes []string              `json:"relationshipTypes"`
+	SandboxConfig     map[string]any        `json:"workspaceConfig"`
+	ToolPolicies      map[string]ToolPolicy `json:"toolPolicies,omitempty"`
+	DefaultToolPolicy ToolPolicyDefault     `json:"defaultToolPolicy,omitempty"`
+	UIConfig          json.RawMessage       `json:"uiConfig,omitempty"`
 }
 
 // UpdateAgentDefinitionDTO is the request DTO for updating an agent definition
@@ -445,11 +455,16 @@ type UpdateAgentDefinitionDTO struct {
 	Config         map[string]any     `json:"config"`
 	// IncludeProjectInfo opts into project-info injection (default false). When
 	// false the key is removed from the stored config.
-	IncludeProjectInfo *bool                 `json:"includeProjectInfo"`
-	SandboxConfig      map[string]any        `json:"workspaceConfig"`
-	ToolPolicies       map[string]ToolPolicy `json:"toolPolicies,omitempty"`
-	DefaultToolPolicy  *ToolPolicyDefault    `json:"defaultToolPolicy,omitempty"`
-	UIConfig           json.RawMessage       `json:"uiConfig,omitempty"`
+	IncludeProjectInfo *bool `json:"includeProjectInfo"`
+	// ObjectTypes / RelationshipTypes bound the graph data types this agent is
+	// offered. Omitted (nil) leaves the stored value unchanged; an explicit
+	// empty list clears the allowlist (all types) (#1695).
+	ObjectTypes       []string              `json:"objectTypes"`
+	RelationshipTypes []string              `json:"relationshipTypes"`
+	SandboxConfig     map[string]any        `json:"workspaceConfig"`
+	ToolPolicies      map[string]ToolPolicy `json:"toolPolicies,omitempty"`
+	DefaultToolPolicy *ToolPolicyDefault    `json:"defaultToolPolicy,omitempty"`
+	UIConfig          json.RawMessage       `json:"uiConfig,omitempty"`
 }
 
 // --- Agent Run Message / Tool Call DTOs ---
@@ -520,6 +535,8 @@ func (d *AgentDefinition) ToDTO() *AgentDefinitionDTO {
 		ACPConfig:          d.ACPConfig,
 		Config:             d.Config,
 		IncludeProjectInfo: d.IncludeProjectInfo(),
+		ObjectTypes:        d.ObjectTypes(),
+		RelationshipTypes:  d.RelationshipTypes(),
 		SandboxConfig:      d.SandboxConfig,
 		ToolPolicies:       d.ToolPolicies,
 		DefaultToolPolicy:  d.DefaultToolPolicy,

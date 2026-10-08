@@ -602,10 +602,23 @@ definitions:
         $ref: '#/definitions/domain_agents.ModelConfig'
       name:
         type: string
+      objectTypes:
+        description: |-
+          ObjectTypes / RelationshipTypes bound the graph data types this agent is
+          offered (searched, queried, traversed, listed). Empty/omitted means all
+          types (backwards compatible); stored in Config under keys "objectTypes"
+          and "relationshipTypes" (#1695).
+        items:
+          type: string
+        type: array
       productId:
         type: string
       projectId:
         type: string
+      relationshipTypes:
+        items:
+          type: string
+        type: array
       skills:
         items:
           type: string

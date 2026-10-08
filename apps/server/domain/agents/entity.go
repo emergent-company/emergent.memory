@@ -624,6 +624,92 @@ func (d *AgentDefinition) SetIncludeProjectInfo(enabled bool) {
 	d.Config[includeProjectInfoConfigKey] = true
 }
 
+// objectTypesConfigKey / relationshipTypesConfigKey are the AgentDefinition.Config
+// keys that bound which graph data types this agent is offered. They live in the
+// config JSONB blob alongside the other per-definition runtime settings, so no
+// schema change is needed. Each is a list of type names; absent or empty means
+// "all types" (the backwards-compatible default, issue #1695).
+const (
+	objectTypesConfigKey       = "objectTypes"
+	relationshipTypesConfigKey = "relationshipTypes"
+)
+
+// ObjectTypes returns the object-type allowlist from the definition's Config
+// blob, or nil when the key is absent/empty (meaning all object types are
+// allowed). It is nil-safe and tolerates both []string and the []any shape that
+// JSONB round-trips into.
+func (d *AgentDefinition) ObjectTypes() []string {
+	return stringListFromConfig(d, objectTypesConfigKey)
+}
+
+// SetObjectTypes stores or clears the object-type allowlist. Passing an empty
+// list deletes the key so "all types" carries no redundant entry.
+func (d *AgentDefinition) SetObjectTypes(types []string) {
+	setStringListConfig(d, objectTypesConfigKey, types)
+}
+
+// RelationshipTypes returns the relationship-type allowlist from the
+// definition's Config blob, or nil when absent/empty (all relationship types
+// allowed). Nil-safe; tolerates []any from JSONB.
+func (d *AgentDefinition) RelationshipTypes() []string {
+	return stringListFromConfig(d, relationshipTypesConfigKey)
+}
+
+// SetRelationshipTypes stores or clears the relationship-type allowlist.
+// Passing an empty list deletes the key so "all types" carries no redundant
+// entry.
+func (d *AgentDefinition) SetRelationshipTypes(types []string) {
+	setStringListConfig(d, relationshipTypesConfigKey, types)
+}
+
+// stringListFromConfig reads a non-empty []string from the definition's config.
+// It returns nil when the definition, config, or key is absent, when the value
+// is the wrong shape, or when the list is empty — all of which mean "unset".
+func stringListFromConfig(d *AgentDefinition, key string) []string {
+	if d == nil || d.Config == nil {
+		return nil
+	}
+	switch v := d.Config[key].(type) {
+	case []string:
+		return nonEmptyStringList(v)
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return nonEmptyStringList(out)
+	default:
+		return nil
+	}
+}
+
+// nonEmptyStringList returns the list when it has at least one element, else nil.
+func nonEmptyStringList(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	return in
+}
+
+// setStringListConfig writes a []string into the definition's config under key.
+// An empty/nil list deletes the key (unset = all). It initialises Config lazily
+// and never disturbs other keys.
+func setStringListConfig(d *AgentDefinition, key string, types []string) {
+	if d == nil {
+		return
+	}
+	if len(types) == 0 {
+		delete(d.Config, key)
+		return
+	}
+	if d.Config == nil {
+		d.Config = map[string]any{}
+	}
+	d.Config[key] = append([]string(nil), types...)
+}
+
 // toolGroupPolicyPrefix is the reserved key prefix for group-level tool
 // policies stored in AgentDefinition.ToolPolicies. Tool names are validated
 // identifiers that cannot begin with '@', so the prefix cannot collide with a

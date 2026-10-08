@@ -2467,6 +2467,12 @@ func (ae *AgentExecutor) runPipeline(
 	// surface that reaches runPipeline (trigger, A2A, chat, chat-completions,
 	// resume, sub-agent spawns) gets it identically when the definition opts in.
 	req.ProjectInfo = ae.resolveProjectInfo(ctx, req.AgentDefinition, req.ProjectID)
+	// Derive the per-agent graph type allowlist once per run and thread it into
+	// the tool layer via context, so every graph-touching tool enforces the same
+	// scope on every surface (trigger, A2A, chat, chat-completions, resume,
+	// sub-agent spawns). A nil scope (no allowlist configured) is the
+	// backwards-compatible "all types" default (issue #1695).
+	ctx = mcp.ContextWithTypeScope(ctx, resolveTypeScope(req.AgentDefinition))
 	instruction := ae.resolveInstruction(req)
 
 	// Augment system instruction with workspace context if available.
@@ -4260,6 +4266,16 @@ const knowledgeBaseContextHeading = "## Knowledge base context"
 // function so the block text cannot drift between surfaces.
 func knowledgeBaseContextBlock(projectInfo string) string {
 	return knowledgeBaseContextHeading + "\n\n" + projectInfo
+}
+
+// resolveTypeScope derives the per-agent-run graph type allowlist from the
+// definition's config. It returns nil when the definition is nil or configures
+// no allowlist, which the tool layer treats as "all types" (backwards
+// compatible). It is the single derivation point shared by every execution
+// surface, so trigger, A2A, chat and /v1/chat/completions enforce the identical
+// scope (issue #1695).
+func resolveTypeScope(def *AgentDefinition) *mcp.TypeScope {
+	return mcp.NewTypeScope(def.ObjectTypes(), def.RelationshipTypes())
 }
 
 // resolveProjectInfo returns the project's project_info for injection into the

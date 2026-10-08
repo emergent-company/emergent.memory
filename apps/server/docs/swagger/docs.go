@@ -25015,11 +25015,24 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
+                "objectTypes": {
+                    "description": "ObjectTypes / RelationshipTypes bound the graph data types this agent is\noffered (searched, queried, traversed, listed). Empty/omitted means all\ntypes (backwards compatible); stored in Config under keys \"objectTypes\"\nand \"relationshipTypes\" (#1695).",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "productId": {
                     "type": "string"
                 },
                 "projectId": {
                     "type": "string"
+                },
+                "relationshipTypes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "skills": {
                     "type": "array",

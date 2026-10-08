@@ -2136,11 +2136,13 @@ func (s *Service) createRelationship(ctx context.Context, projectID uuid.UUID, r
 				dstKey = *dstObj.Key
 			}
 			entityType := entityTypeRelationship
+			relType := req.Type
 			s.eventSink.Log(ctx, LogParams{
 				ProjectID:  projectID,
 				BranchID:   effectiveBranchID,
 				EventType:  EventTypeRelated,
 				EntityType: &entityType,
+				ObjectType: &relType,
 				ActorType:  actorType,
 				ActorID:    actorID,
 				Metadata: map[string]any{

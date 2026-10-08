@@ -71,6 +71,15 @@ func queryToolDefinitions() []ToolDefinition {
 const queryKnowledgeTimeout = 120 * time.Second
 
 func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	// Fail closed under a graph type scope: the internal /query loopback spawns a
+	// separate unrestricted graph-query-agent whose ctx scope is never carried,
+	// so a scoped agent could otherwise reach excluded types through it. Point
+	// the caller at the scoped search tools instead (issue #1695).
+	scope := TypeScopeFromContext(ctx)
+	if scope.HasObjectRestriction() || scope.HasRelationshipRestriction() {
+		return nil, fmt.Errorf("search-knowledge is unavailable when the agent has a graph type scope; use search-hybrid or search-semantic instead")
+	}
+
 	question, _ := args["question"].(string)
 	if question == "" {
 		return nil, fmt.Errorf("query_knowledge: 'question' is required")

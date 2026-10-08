@@ -140,6 +140,13 @@ func (h *MCPToolHandler) runAgentTurn(ctx context.Context, projectID, agentID, s
 		return "", "", 0, &mcp.AgentRunError{Kind: mcp.AgentRunErrorFailed, Message: "failed to load agent definition: " + err.Error()}
 	}
 
+	// Type-scope delegation guard: when a scoped caller invokes call_agent, the
+	// target's declared allowlist must not widen beyond the caller's (#1695).
+	// External (no-scope) callers are unaffected.
+	if delegationDeniedByTypeScope(ctx, def) {
+		return "", "", 0, &mcp.AgentRunError{Kind: mcp.AgentRunErrorFailed, Message: delegationScopeError()}
+	}
+
 	// Resolve the org that owns the project so the executor can attribute LLM
 	// usage to the correct tenant. OrgIDFromContext is non-empty only when a
 	// caller has already resolved the org (executor loopback via

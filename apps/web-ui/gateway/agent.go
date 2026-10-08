@@ -109,9 +109,14 @@ type agentSettingsData struct {
 	// the rest of the page intact.
 	RelayNodes []relayNode
 	Skills     []Skill
-	LoadErr    error
-	FlashMsg   string
-	FlashErr   error
+	// ObjectTypes / RelationshipTypes are the project's compiled graph types,
+	// offered as the General form's scope allowlist. Best-effort: a failed or
+	// empty fetch leaves them nil and the picker shows its empty note.
+	ObjectTypes       []CompiledType
+	RelationshipTypes []CompiledType
+	LoadErr           error
+	FlashMsg          string
+	FlashErr          error
 
 	// DefaultModel is the project's PINNED default generative model (project
 	// model-config); "" when none is pinned.
@@ -350,7 +355,9 @@ func (s *Server) uiAgentUpdateDelegation(c echo.Context) error {
 // trimmed and required; the short description is trimmed and shown under the
 // agent's name in chat (empty clears it); language persists to Config["language"]
 // (deleted when empty); includeProjectInfo persists to Config["includeProjectInfo"]
-// (deleted when false, only when the field is present); the icon + color appearance persists to the uiConfig
+// (deleted when false, only when the field is present); the graph type scope
+// allowlists persist to Config["objectTypes"] / Config["relationshipTypes"]
+// (deleted when the selection is empty, only when each field is present); the icon + color appearance persists to the uiConfig
 // blob (both empty clears it); visibility accepts only project/external/internal,
 // with empty/missing defaulting to project (the server default) and anything else
 // rejected.
@@ -402,6 +409,25 @@ func applyAgentGeneralSection(def *AgentDefinition, c echo.Context) error {
 			def.Config["includeProjectInfo"] = true
 		} else {
 			delete(def.Config, "includeProjectInfo")
+		}
+	}
+	// Graph type scope: a multi-select allowlist of object / relationship type
+	// names the agent may see and query. An empty selection means "all types",
+	// so it is stored as the key being absent. Lossless partial save: only touch
+	// a key when the request carries its field. The rendered form always submits
+	// each field via a hidden companion input, so clearing every box reads as
+	// present-but-blank (a real "none") rather than absent (leave unchanged).
+	for _, ts := range []struct{ form, config string }{
+		{"objectType", "objectTypes"},
+		{"relationshipType", "relationshipTypes"},
+	} {
+		if !params.Has(ts.form) {
+			continue
+		}
+		if names := normalizedTypeNames(params[ts.form]); len(names) > 0 {
+			def.Config[ts.config] = names
+		} else {
+			delete(def.Config, ts.config)
 		}
 	}
 	visibility, ok := agentVisibilityNormalize(c.FormValue("visibility"))
@@ -594,7 +620,7 @@ func applyAgentDelegationSection(def *AgentDefinition, c echo.Context) error {
 // loadAgentSettings assembles the agent settings payload for ONE subpage: the
 // agent being edited plus only the catalog data that subpage renders. Each
 // subpage's template is the source of truth for what must load here:
-//   - general:     agent only (name / system prompt / language / appearance)
+//   - general:     + the project's compiled graph types (the scope allowlist)
 //   - model:       + project model config, providers, and the model catalog
 //   - tools:       + MCP servers + relay node tools (the picker)
 //   - skills:      + the skill list
@@ -613,6 +639,13 @@ func (s *Server) loadAgentSettings(ctx context.Context, id string, data *agentSe
 	data.Agent = agent
 
 	switch data.Section {
+	case sectionGeneral:
+		if types, err := s.memory.GetCompiledTypes(ctx); err != nil {
+			captureError(err)
+		} else if types != nil {
+			data.ObjectTypes = types.ObjectTypes
+			data.RelationshipTypes = types.RelationshipTypes
+		}
 	case sectionModel:
 		if mc, err := s.memory.GetProjectModelConfig(ctx); err != nil {
 			captureError(err)
@@ -1378,6 +1411,56 @@ func agentIncludeProjectInfoValue(a *AgentDefinition) bool {
 	}
 	v, ok := a.Config["includeProjectInfo"].(bool)
 	return ok && v
+}
+
+// agentObjectTypesValue reads the agent's object-type allowlist from
+// Config["objectTypes"]. An absent or empty list means "all types".
+func agentObjectTypesValue(a *AgentDefinition) []string {
+	return agentConfigStringList(a, "objectTypes")
+}
+
+// agentRelationshipTypesValue reads the agent's relationship-type allowlist
+// from Config["relationshipTypes"]. An absent or empty list means "all types".
+func agentRelationshipTypesValue(a *AgentDefinition) []string {
+	return agentConfigStringList(a, "relationshipTypes")
+}
+
+// agentConfigStringList reads a []string value from an agent's Config, tolerating
+// both the []string the fresh-save applier writes and the []any a JSON-decoded
+// definition carries. Non-string items are dropped; nil means absent.
+func agentConfigStringList(a *AgentDefinition, key string) []string {
+	if a == nil || a.Config == nil {
+		return nil
+	}
+	switch v := a.Config[key].(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// normalizedTypeNames trims each submitted value and drops blanks, preserving
+// submission order. It returns nil when nothing remains so the caller can treat
+// "no names" uniformly (empty selection = all types).
+func normalizedTypeNames(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // languageOption is one selectable agent language.

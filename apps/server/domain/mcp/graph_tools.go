@@ -202,6 +202,13 @@ func (s *Service) executeHybridSearch(ctx context.Context, projectID string, arg
 		}
 	}
 
+	scope := TypeScopeFromContext(ctx)
+	var denied bool
+	types, denied = scope.FilterRequestedObjectTypes(types)
+	if denied {
+		return envelopeSearchResponse(&graph.SearchResponse{}, opts)
+	}
+
 	var labels []string
 	if l, ok := args["labels"].([]any); ok {
 		for _, v := range l {
@@ -234,7 +241,10 @@ func (s *Service) executeHybridSearch(ctx context.Context, projectID string, arg
 				"project_id", projectID,
 			)
 		} else {
-			return envelopeSearchResponse(s.mapUnifiedToSearchResponse(res, types, labels, allowedTypes, blockedTypes), opts)
+			mapped := s.mapUnifiedToSearchResponse(res, types, labels, allowedTypes, blockedTypes)
+			mapped.Data = filterSearchItemsByScope(scope, mapped.Data)
+			mapped.Total = len(mapped.Data)
+			return envelopeSearchResponse(mapped, opts)
 		}
 	}
 
@@ -289,8 +299,8 @@ func (s *Service) executeHybridSearch(ctx context.Context, projectID string, arg
 		}
 		filtered = kept
 	}
-	results.Data = filtered
-	results.Total = len(filtered)
+	results.Data = filterSearchItemsByScope(scope, filtered)
+	results.Total = len(results.Data)
 
 	return envelopeSearchResponse(results, opts)
 }
@@ -393,6 +403,28 @@ func containsStr(slice []string, s string) bool {
 	return false
 }
 
+// filterSearchItemsByScope drops search result items whose object type is not
+// permitted by the scope. A nil/unrestricted scope returns items unchanged (no
+// allocation). It guards nil items and nil objects so the search paths can call
+// it unconditionally on the final result list. The `text_chunk` pseudo-type
+// (document snippet, not a graph object type) is always allowed so a scoped
+// agent still sees document snippets.
+func filterSearchItemsByScope(scope *TypeScope, items []*graph.SearchResultItem) []*graph.SearchResultItem {
+	if !scope.HasObjectRestriction() {
+		return items
+	}
+	out := make([]*graph.SearchResultItem, 0, len(items))
+	for _, item := range items {
+		if item == nil || item.Object == nil {
+			continue
+		}
+		if item.Object.Type == "text_chunk" || scope.AllowsObject(item.Object.Type) {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
 // executeSemanticSearch performs vector-based semantic search.
 // Routes through search.Service so the query text is automatically embedded
 // before the vector search leg runs. This ensures multi-word queries produce
@@ -439,6 +471,13 @@ func (s *Service) executeSemanticSearch(ctx context.Context, projectID string, a
 		}
 	}
 
+	scope := TypeScopeFromContext(ctx)
+	var denied bool
+	types, denied = scope.FilterRequestedObjectTypes(types)
+	if denied {
+		return envelopeSearchResponse(&graph.SearchResponse{}, opts)
+	}
+
 	namespaceFilter, _ := args["namespace"].(string)
 	allowedTypes, err := s.getTypesForNamespace(ctx, projectID, namespaceFilter)
 	if err != nil {
@@ -468,7 +507,10 @@ func (s *Service) executeSemanticSearch(ctx context.Context, projectID string, a
 			s.log.WarnContext(ctx, "unified search failed in semantic_search, falling back",
 				"error", err, "project_id", projectID)
 		} else {
-			return envelopeSearchResponse(s.mapUnifiedToSearchResponse(res, types, nil, allowedTypes, blockedTypes), opts)
+			mapped := s.mapUnifiedToSearchResponse(res, types, nil, allowedTypes, blockedTypes)
+			mapped.Data = filterSearchItemsByScope(scope, mapped.Data)
+			mapped.Total = len(mapped.Data)
+			return envelopeSearchResponse(mapped, opts)
 		}
 	}
 
@@ -511,8 +553,8 @@ func (s *Service) executeSemanticSearch(ctx context.Context, projectID string, a
 		}
 		filtered = kept
 	}
-	results.Data = filtered
-	results.Total = len(filtered)
+	results.Data = filterSearchItemsByScope(scope, filtered)
+	results.Total = len(results.Data)
 
 	return envelopeSearchResponse(results, opts)
 }
@@ -559,6 +601,11 @@ func (s *Service) executeFindSimilar(ctx context.Context, projectID string, args
 		typeFilter = &types[0]
 	}
 
+	scope := TypeScopeFromContext(ctx)
+	if typeFilter != nil && !scope.AllowsObject(*typeFilter) {
+		return nil, fmt.Errorf("find similar: object type %q is not allowed for this agent", *typeFilter)
+	}
+
 	opts := responseOptsFromArgs(args)
 	if opts.FieldStrategy == "" {
 		opts.FieldStrategy = "compact"
@@ -576,6 +623,9 @@ func (s *Service) executeFindSimilar(ctx context.Context, projectID string, args
 
 	items := make([]map[string]any, 0, len(results))
 	for _, r := range results {
+		if !scope.AllowsObject(r.Type) {
+			continue
+		}
 		items = append(items, slimSimilarResult(r, opts))
 	}
 	return s.wrapResultCompact(map[string]any{"similar_entities": items, "total": len(items)})
@@ -642,6 +692,13 @@ func (s *Service) executeTraverseGraph(ctx context.Context, projectID string, ar
 		}
 	}
 
+	scope := TypeScopeFromContext(ctx)
+	var denied bool
+	relationshipTypes, denied = scope.FilterRequestedRelationshipTypes(relationshipTypes)
+	if denied {
+		return nil, fmt.Errorf("traverse graph: none of the requested relationship types are allowed for this agent")
+	}
+
 	queryContext := ""
 	if qc, ok := args["query_context"].(string); ok {
 		queryContext = qc
@@ -664,6 +721,8 @@ func (s *Service) executeTraverseGraph(ctx context.Context, projectID string, ar
 	if err != nil {
 		return nil, fmt.Errorf("traverse graph: %w", err)
 	}
+
+	results = filterTraverseResponseByScope(scope, results)
 
 	return s.wrapResultCompact(slimTraverseResponse(results, opts))
 }
@@ -718,13 +777,21 @@ func (s *Service) executeListRelationships(ctx context.Context, projectID string
 		return nil, fmt.Errorf("list relationships: %w", err)
 	}
 
+	scope := TypeScopeFromContext(ctx)
 	data := make([]map[string]any, 0, len(results.Items))
 	for _, r := range results.Items {
+		if !scope.AllowsRelationship(r.Type) {
+			continue
+		}
 		data = append(data, slimRelationship(r, opts))
+	}
+	total := results.Total
+	if scope.HasRelationshipRestriction() {
+		total = len(data)
 	}
 	out := map[string]any{
 		"data":     data,
-		"total":    results.Total,
+		"total":    total,
 		"has_more": results.NextCursor != nil,
 	}
 	if opts.Verbose && results.NextCursor != nil {

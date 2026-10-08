@@ -575,6 +575,13 @@ func (h *MCPToolHandler) ExecuteTriggerAgent(ctx context.Context, projectID stri
 		}
 	}
 
+	// Type-scope delegation guard: a scoped caller must not hand work to an
+	// agent whose declared allowlist would let the model reach excluded types
+	// (#1695). Applies to both the sync and queued branches below.
+	if delegationDeniedByTypeScope(ctx, agentDef) {
+		return errResult(delegationScopeError())
+	}
+
 	// Build the user message from structured input
 	// Accepts: message as a JSON object { instructions, task_id } or legacy plain string
 	userMessage := "Execute agent tasks"

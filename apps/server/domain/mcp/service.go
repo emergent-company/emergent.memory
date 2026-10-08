@@ -2762,27 +2762,30 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 		return nil, fmt.Errorf("query entity types: %w", err)
 	}
 
-	entityTypes := make([]EntityType, len(types))
-	for i, t := range types {
+	scope := TypeScopeFromContext(ctx)
+
+	entityTypes := make([]EntityType, 0, len(types))
+	for _, t := range types {
+		if !scope.AllowsObject(t.Name) {
+			continue
+		}
 		desc := t.Description
 		if desc == "" {
 			desc = "No description"
 		}
-		entityTypes[i] = EntityType{
+		entityTypes = append(entityTypes, EntityType{
 			Name:        t.Name,
 			Description: desc,
 			Count:       t.InstanceCount,
-		}
+		})
 	}
 
-	relationshipTypes := make([]RelationshipType, len(relTypes))
-	for i, r := range relTypes {
-		relationshipTypes[i] = RelationshipType{
-			Type:     r.Type,
-			FromType: r.FromType,
-			ToType:   r.ToType,
-			Count:    r.Count,
+	relationshipTypes := make([]RelationshipType, 0, len(relTypes))
+	for _, r := range relTypes {
+		if !scope.AllowsRelationshipRow(r.Type, r.FromType, r.ToType) {
+			continue
 		}
+		relationshipTypes = append(relationshipTypes, RelationshipType(r))
 	}
 
 	result := EntityTypesResult{
@@ -3014,6 +3017,11 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	// Parse arguments
 	typeName, _ := args["type_name"].(string)
 
+	scope := TypeScopeFromContext(ctx)
+	if typeName != "" && !scope.AllowsObject(typeName) {
+		return nil, fmt.Errorf("query entities: object type %q is not allowed for this agent", typeName)
+	}
+
 	// Hard per-call deadline created at the tool entry so it covers EVERY path
 	// in this call: branch resolution, the ids[] fast-path, the type/pagination
 	// queries, and relationship enrichment (issue #1148 follow-up). Every
@@ -3188,6 +3196,9 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	if typeName != "" {
 		type_clause = "AND go.type = ?"
 		type_args = []any{typeName}
+	} else if scope.HasObjectRestriction() {
+		type_clause = "AND go.type IN (?)"
+		type_args = []any{bun.In(scope.ObjectTypes())}
 	}
 
 	var entities []entityRow
@@ -3392,6 +3403,9 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 		}
 		edgesByEntityID := make(map[string][]edgeRef, len(resultEntities))
 		for _, row := range relRows {
+			if !scope.AllowsRelationshipEndpoint(row.RelType, row.DstType) {
+				continue
+			}
 			srcStr := row.SrcID.String()
 			edgesByEntityID[srcStr] = append(edgesByEntityID[srcStr], edgeRef{
 				Type:       row.RelType,
@@ -3449,6 +3463,8 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 	if err != nil {
 		return nil, fmt.Errorf("invalid project_id: %w", err)
 	}
+
+	scope := TypeScopeFromContext(ctx)
 
 	canonicalIDs := make([]uuid.UUID, 0, len(idStrs))
 	for _, s := range idStrs {
@@ -3521,9 +3537,12 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 		return nil, fmt.Errorf("query entities by ids: %w", err)
 	}
 
-	resultEntities := make([]Entity, len(entities))
-	for i, e := range entities {
-		resultEntities[i] = Entity{
+	resultEntities := make([]Entity, 0, len(entities))
+	for _, e := range entities {
+		if !scope.AllowsObject(e.TypeName) {
+			continue
+		}
+		resultEntities = append(resultEntities, Entity{
 			ID:         e.CanonicalID.String(),
 			Key:        e.Key,
 			Name:       e.Name,
@@ -3532,7 +3551,7 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 			Properties: truncateProperties(e.Properties),
 			CreatedAt:  e.CreatedAt,
 			UpdatedAt:  e.UpdatedAt,
-		}
+		})
 	}
 
 	result := QueryEntitiesResult{
@@ -3715,6 +3734,11 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 
 	typeName, _ := args["type_name"].(string)
 
+	scope := TypeScopeFromContext(ctx)
+	if typeName != "" && !scope.AllowsObject(typeName) {
+		return nil, fmt.Errorf("search entities: object type %q is not allowed for this agent", typeName)
+	}
+
 	// Resolve optional branch parameter.
 	branchRef, _ := args["branch"].(string)
 	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
@@ -3875,14 +3899,17 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 	}
 
 	// Transform to response format
-	resultEntities := make([]Entity, len(entities))
-	for i, e := range entities {
+	resultEntities := make([]Entity, 0, len(entities))
+	for _, e := range entities {
+		if !scope.AllowsObject(e.TypeName) {
+			continue
+		}
 		var branchIDStr *string
 		if e.BranchID != nil {
 			s := e.BranchID.String()
 			branchIDStr = &s
 		}
-		resultEntities[i] = Entity{
+		resultEntities = append(resultEntities, Entity{
 			ID:         e.ID.String(),
 			Key:        e.Key,
 			Name:       e.Name,
@@ -3891,7 +3918,7 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 			CreatedAt:  e.CreatedAt,
 			BranchID:   branchIDStr,
 			BranchName: e.BranchName,
-		}
+		})
 	}
 
 	result := SearchEntitiesResult{
@@ -3935,10 +3962,20 @@ func (s *Service) executeGetEntityEdges(ctx context.Context, projectID string, a
 		return nil, fmt.Errorf("get entity edges: %w", err)
 	}
 
+	scope := TypeScopeFromContext(ctx)
+
 	incoming := make([]EdgeInfo, 0, len(edges.Incoming))
 	for _, rel := range edges.Incoming {
+		// Relationship-level check first so an excluded relationship type never
+		// triggers a per-edge endpoint lookup.
+		if !scope.AllowsRelationship(rel.Type) {
+			continue
+		}
 		srcEntity, err := s.getEntityBasicInfo(ctx, projectUUID, rel.SrcID)
 		if err != nil {
+			continue
+		}
+		if !scope.AllowsRelationshipEndpoint(rel.Type, srcEntity.Type) {
 			continue
 		}
 		incoming = append(incoming, EdgeInfo{
@@ -3951,8 +3988,16 @@ func (s *Service) executeGetEntityEdges(ctx context.Context, projectID string, a
 
 	outgoing := make([]EdgeInfo, 0, len(edges.Outgoing))
 	for _, rel := range edges.Outgoing {
+		// Relationship-level check first so an excluded relationship type never
+		// triggers a per-edge endpoint lookup.
+		if !scope.AllowsRelationship(rel.Type) {
+			continue
+		}
 		dstEntity, err := s.getEntityBasicInfo(ctx, projectUUID, rel.DstID)
 		if err != nil {
+			continue
+		}
+		if !scope.AllowsRelationshipEndpoint(rel.Type, dstEntity.Type) {
 			continue
 		}
 		outgoing = append(outgoing, EdgeInfo{
@@ -4066,13 +4111,23 @@ func (s *Service) suggestEntityKeysByFuzzy(ctx context.Context, projectID uuid.U
 	var rows []row
 
 	// Grab a sample of recent distinct keys for this project (capped at 200 for speed).
-	queryErr := s.db.NewRaw(`
+	// When the object axis is restricted, narrow the sample to allowed types so the
+	// suggestions never leak an excluded type name.
+	scope := TypeScopeFromContext(ctx)
+	sampleQuery := `
 		SELECT DISTINCT ON (key) key, type
 		FROM kb.graph_objects
-		WHERE project_id = ? AND deleted_at IS NULL AND key IS NOT NULL
+		WHERE project_id = ? AND deleted_at IS NULL AND key IS NOT NULL`
+	sampleArgs := []any{projectID}
+	if scope.HasObjectRestriction() {
+		sampleQuery += ` AND type IN (?)`
+		sampleArgs = append(sampleArgs, bun.In(scope.ObjectTypes()))
+	}
+	sampleQuery += `
 		ORDER BY key, version DESC
-		LIMIT 200
-	`, projectID).Scan(ctx, &rows)
+		LIMIT 200`
+
+	queryErr := s.db.NewRaw(sampleQuery, sampleArgs...).Scan(ctx, &rows)
 	if queryErr != nil || len(rows) == 0 {
 		return nil
 	}
@@ -5876,6 +5931,12 @@ func (s *Service) executeJournalList(ctx context.Context, projectID string, args
 	if err != nil {
 		return nil, fmt.Errorf("journal list: %w", err)
 	}
+
+	// Filter out entries whose affected graph type is outside the per-run scope.
+	// Pagination cursors (NextCursor/HasMore) are computed by the journal service
+	// against the unfiltered page, so a page may come back shorter than requested
+	// under a scope; that is acceptable — excluded types are never surfaced.
+	resp.Entries = filterJournalEntriesByScope(TypeScopeFromContext(ctx), resp.Entries)
 
 	return s.wrapResult(resp)
 }

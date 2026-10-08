@@ -238,6 +238,8 @@ func (s *Service) executeGetSchema(ctx context.Context, projectID string, args m
 		return nil, fmt.Errorf("schema_id is required")
 	}
 
+	scope := TypeScopeFromContext(ctx)
+
 	var schema SchemaInfo
 	err := s.db.NewRaw(`
 		SELECT id, name, version, description, project_id, source, created_at, updated_at
@@ -276,8 +278,11 @@ func (s *Service) executeGetSchema(ctx context.Context, projectID string, args m
 		s.log.Warn("failed to query object types", logger.Error(err))
 	}
 
-	objectTypes := make([]map[string]any, len(objRows))
-	for i, r := range objRows {
+	objectTypes := make([]map[string]any, 0, len(objRows))
+	for _, r := range objRows {
+		if !scope.AllowsObject(r.TypeName) {
+			continue
+		}
 		objType := map[string]any{
 			"type_name":      r.TypeName,
 			"type_schema":    r.TypeSchema,
@@ -285,7 +290,7 @@ func (s *Service) executeGetSchema(ctx context.Context, projectID string, args m
 			"schema_name":    r.SchemaName,
 			"schema_version": r.SchemaVersion,
 		}
-		objectTypes[i] = objType
+		objectTypes = append(objectTypes, objType)
 	}
 
 	// Get relationship types
@@ -315,15 +320,18 @@ func (s *Service) executeGetSchema(ctx context.Context, projectID string, args m
 		s.log.Warn("failed to query relationship types", logger.Error(err))
 	}
 
-	relTypes := make([]map[string]any, len(relRows))
-	for i, r := range relRows {
+	relTypes := make([]map[string]any, 0, len(relRows))
+	for _, r := range relRows {
+		if !scope.AllowsRelationship(r.TypeName) {
+			continue
+		}
 		relType := map[string]any{
 			"type_name":      r.TypeName,
 			"schema_id":      r.SchemaID,
 			"schema_name":    r.SchemaName,
 			"schema_version": r.SchemaVersion,
 		}
-		relTypes[i] = relType
+		relTypes = append(relTypes, relType)
 	}
 
 	result := map[string]any{
@@ -804,12 +812,16 @@ func (s *Service) executeListMigrationArchives(ctx context.Context, projectID st
 	}
 
 	var objects []graph.GraphObject
-	err = s.db.NewSelect().
+	scope := TypeScopeFromContext(ctx)
+	q := s.db.NewSelect().
 		Model(&objects).
 		Where("project_id = ?", projectUUID).
 		Where("migration_archive IS NOT NULL").
-		Where("jsonb_array_length(migration_archive) > 0").
-		Limit(limit).
+		Where("jsonb_array_length(migration_archive) > 0")
+	if scope.HasObjectRestriction() {
+		q = q.Where("type IN (?)", bun.In(scope.ObjectTypes()))
+	}
+	err = q.Limit(limit).
 		Offset(offset).
 		Scan(ctx)
 
@@ -888,6 +900,16 @@ func (s *Service) executeGetMigrationArchive(ctx context.Context, projectID stri
 		return &ToolResult{
 			Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("Object not found: %v", err)}},
 		}, err
+	}
+
+	scope := TypeScopeFromContext(ctx)
+	if !scope.AllowsObject(obj.Type) {
+		// Deliberately generic: naming the excluded type would leak it back to a
+		// scoped agent that guessed the object id (#1695).
+		msg := fmt.Sprintf("object %s is outside this agent's permitted object types", obj.ID)
+		return &ToolResult{
+			Content: []ContentBlock{{Type: "text", Text: msg}},
+		}, fmt.Errorf("%s", msg)
 	}
 
 	if len(obj.MigrationArchive) == 0 {
@@ -1023,6 +1045,8 @@ func (s *Service) executeSchemaCompiledTypes(ctx context.Context, projectID stri
 		return nil, fmt.Errorf("invalid project_id: %w", err)
 	}
 
+	scope := TypeScopeFromContext(ctx)
+
 	verbose, _ := args["verbose"].(bool)
 
 	type objectTypeRow struct {
@@ -1106,6 +1130,9 @@ func (s *Service) executeSchemaCompiledTypes(ctx context.Context, projectID stri
 	objectTypes := make([]objectTypeOut, 0, len(objRows))
 	seenObj := make(map[string]bool)
 	for _, r := range objRows {
+		if !scope.AllowsObject(r.TypeName) {
+			continue
+		}
 		shadowed := typeSchemaCount[r.TypeName] > 1 && seenObj[r.TypeName]
 		seenObj[r.TypeName] = true
 
@@ -1127,6 +1154,9 @@ func (s *Service) executeSchemaCompiledTypes(ctx context.Context, projectID stri
 
 	relTypes := make([]relTypeOut, 0, len(relRows))
 	for _, r := range relRows {
+		if !scope.AllowsRelationship(r.TypeName) {
+			continue
+		}
 		out := relTypeOut{Name: r.TypeName}
 		if verbose {
 			out.SchemaID = r.SchemaID
@@ -1147,6 +1177,13 @@ func (s *Service) executeSchemaCompiledTypes(ctx context.Context, projectID stri
 }
 
 func (s *Service) executeSchemaMigratePreview(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	// Fail closed under any graph type scope: the migration plan embeds object
+	// and relationship type names (added types, type/property renames,
+	// per-type results) that cannot be faithfully scrubbed without producing an
+	// incoherent plan, so a scoped agent must not receive it (#1695).
+	if scope := TypeScopeFromContext(ctx); scope.HasObjectRestriction() || scope.HasRelationshipRestriction() {
+		return nil, fmt.Errorf("schema-migrate-preview is unavailable when the agent has a graph type scope")
+	}
 	if s.schemasSvc == nil {
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "schemas service not available"}}}, nil
 	}
