@@ -134,6 +134,19 @@ else
     echo "⚠️  xcodegen not found — using existing .xcodeproj"
 fi
 
+# Fail fast if XcodeGen just emptied the hand-maintained entitlements. XcodeGen
+# regenerates the file named by a target's `entitlements:` block from its
+# `properties:` (none here), which drops the hardened-process Enhanced Security
+# entitlements; the post-sign check would catch it too, but only after a full
+# archive. Guard immediately with an actionable message.
+if ! grep -q 'com.apple.security.hardened-process' "${ENTITLEMENTS}"; then
+    echo "error: ${ENTITLEMENTS} lost its hardened-process entitlements." >&2
+    echo "       XcodeGen regenerates this file when the target declares an" >&2
+    echo "       'entitlements:' block — remove it from project.yml (the file is" >&2
+    echo "       wired via CODE_SIGN_ENTITLEMENTS) and keep the file hand-written." >&2
+    exit 1
+fi
+
 # Step 2: Archive. MARKETING_VERSION / CURRENT_PROJECT_VERSION override the
 # target settings in project.yml so the built app's Info.plist carries the
 # exact release version and monotonic build number.

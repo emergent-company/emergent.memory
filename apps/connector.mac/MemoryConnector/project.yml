@@ -68,6 +68,12 @@ targets:
         PRODUCT_MODULE_NAME: MemoryConnector
         PRODUCT_BUNDLE_IDENTIFIER: com.emergent.memory.connector
         INFOPLIST_FILE: Info.plist
+        # Hand-maintained entitlements file, wired via CODE_SIGN_ENTITLEMENTS.
+        # Do NOT add a top-level `entitlements:` block for this target: XcodeGen
+        # regenerates that file from its `properties:` (there are none), which
+        # silently empties MemoryConnector.entitlements and drops the
+        # hardened-process Enhanced Security entitlements — the release re-sign
+        # then fails its post-sign entitlements check.
         CODE_SIGN_ENTITLEMENTS: MemoryConnector.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         MARKETING_VERSION: 0.1.0
@@ -75,8 +81,6 @@ targets:
       configFiles:
         Debug: MemoryConnector.xcconfig
         Release: MemoryConnector.xcconfig
-    entitlements:
-      path: MemoryConnector.entitlements
     dependencies:
       - package: Sparkle
     preBuildScripts:
