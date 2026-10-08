@@ -163,12 +163,16 @@ type MCPServer struct {
 
 // MCPRequiredConfigKey is one declared required configuration entry on an MCP
 // server (a registry transport's header or env var marked required or secret).
-// Kind is "header" or "env".
+// Kind is "header" or "env". Description is the registry's own guidance for the
+// key; ValueHint is the registry's value template (header transports only),
+// rendered as an input placeholder so the user knows the expected shape.
 type MCPRequiredConfigKey struct {
-	Name       string `json:"name"`
-	Kind       string `json:"kind"`
-	IsSecret   bool   `json:"isSecret"`
-	IsRequired bool   `json:"isRequired"`
+	Name        string `json:"name"`
+	Kind        string `json:"kind"`
+	IsSecret    bool   `json:"isSecret"`
+	IsRequired  bool   `json:"isRequired"`
+	Description string `json:"description,omitempty"`
+	ValueHint   string `json:"valueHint,omitempty"`
 }
 
 // MCPTool is one tool exposed by an MCP server (the agent tools picker's

@@ -706,6 +706,17 @@ func mcpKVValuePlaceholder(secret, missing bool) string {
 	return "Value"
 }
 
+// mcpKVValuePlaceholderFor picks the value input's placeholder: a registry
+// value template (ValueHint) wins when present so the user sees the expected
+// shape (e.g. "Bearer {API_TOKEN}"); otherwise the required/missing secret-state
+// copy applies. The template is only ever a placeholder — never prefilled.
+func mcpKVValuePlaceholderFor(r mcpKVField) string {
+	if r.Placeholder != "" {
+		return r.Placeholder
+	}
+	return mcpKVValuePlaceholder(r.Secret, r.Missing)
+}
+
 // mcpKVSecretTitle is the secret-select tooltip copy.
 func mcpKVSecretTitle() string {
 	return "Store this value as a secret — it is write-only and never shown again."
@@ -714,14 +725,16 @@ func mcpKVSecretTitle() string {
 // mcpServerKVRow is one key/value input row plus a Secret select (a blank row
 // is always appended so the user can add the first pair without JS). Secret
 // rows pre-fill with an empty value and carry a "leave blank to keep" hint;
-// required rows carry a "Required" marker and a missing required row prompts
-// for a value instead. The select always submits, so its index stays aligned
-// with the key/value inputs even when earlier rows are Plain.
+// required rows carry a "Required" marker, the registry's guidance (Hint) when
+// declared, and a missing required row prompts for a value instead. A required
+// key's registry value template, when present, becomes the value input's
+// placeholder. The select always submits, so its index stays aligned with the
+// key/value inputs even when earlier rows are Plain.
 templ mcpServerKVRow(prefix string, r mcpKVField) {
 	<div class="flex flex-col gap-1" data-mcp-kv-row>
 		<div class="flex items-center gap-1.5">
 			<input type="text" name={ prefix + ".key" } value={ r.Key } placeholder="Name" class="input input-sm min-w-0 flex-1 font-mono"/>
-			<input type="text" name={ prefix + ".value" } value={ r.Value } placeholder={ mcpKVValuePlaceholder(r.Secret, r.Missing) } class="input input-sm min-w-0 flex-1 font-mono"/>
+			<input type="text" name={ prefix + ".value" } value={ r.Value } placeholder={ mcpKVValuePlaceholderFor(r) } class="input input-sm min-w-0 flex-1 font-mono"/>
 			<select name={ prefix + ".secret" } class="select select-sm shrink-0" title={ mcpKVSecretTitle() } aria-label="Row visibility">
 				<option value="" selected?={ !r.Secret }>Plain</option>
 				<option value="1" selected?={ r.Secret }>Secret</option>
@@ -731,6 +744,9 @@ templ mcpServerKVRow(prefix string, r mcpKVField) {
 				<span class="text-warning shrink-0 text-[10px] font-semibold uppercase tracking-wide" data-mcp-kv-required>Required</span>
 			}
 		</div>
+		if r.Hint != "" {
+			<p class="text-muted-faint pl-1 text-xs" data-mcp-kv-hint>{ r.Hint }</p>
+		}
 		if r.Missing {
 			<p class="text-warning pl-1 text-xs" data-mcp-kv-missing>Required — enter a value.</p>
 		} else if r.Secret {

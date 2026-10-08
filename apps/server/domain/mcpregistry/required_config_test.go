@@ -25,6 +25,47 @@ func TestCollectRegistryRequiredConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("registry description and header value template are carried", func(t *testing.T) {
+		got := collectRegistryRequiredConfig(RegistryRemote{
+			Type: "streamable-http",
+			URL:  "https://api.githubcopilot.com/mcp/",
+			Headers: []RegistryHeader{
+				{
+					Name:        "Authorization",
+					IsSecret:    true,
+					Description: "Authorization header with authentication token (PAT or App token)",
+				},
+			},
+			EnvironmentVariables: []RegistryEnvVar{
+				{
+					Name:        "NETDATA_CLOUD_API_TOKEN",
+					IsRequired:  true,
+					Description: "Netdata Cloud API token with scope:mcp",
+				},
+			},
+		})
+		if len(got) != 2 {
+			t.Fatalf("len = %d, want 2 (%+v)", len(got), got)
+		}
+		if got[0].Description != "Authorization header with authentication token (PAT or App token)" {
+			t.Fatalf("header Description = %q", got[0].Description)
+		}
+		if got[1].Description != "Netdata Cloud API token with scope:mcp" {
+			t.Fatalf("env Description = %q", got[1].Description)
+		}
+	})
+
+	t.Run("header value template is captured as ValueHint", func(t *testing.T) {
+		got := collectRegistryRequiredConfig(RegistryRemote{
+			Headers: []RegistryHeader{
+				{Name: "Authorization", IsRequired: true, Value: "Bearer {NETDATA_CLOUD_API_TOKEN}"},
+			},
+		})
+		if len(got) != 1 || got[0].ValueHint != "Bearer {NETDATA_CLOUD_API_TOKEN}" {
+			t.Fatalf("got %+v, want ValueHint=Bearer {NETDATA_CLOUD_API_TOKEN}", got)
+		}
+	})
+
 	t.Run("env var case", func(t *testing.T) {
 		got := collectRegistryRequiredConfig(RegistryRemote{
 			Type: "streamable-http",

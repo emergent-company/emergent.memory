@@ -22,11 +22,21 @@ type EncryptedSecret struct {
 // needs before it can be enabled. Kind is "header" or "env". IsRequired is true
 // when the registry declared the key required or secret (a secret with no value
 // is unusable).
+//
+// Description and ValueHint carry the registry's own guidance for the key so
+// the configuration UI can tell the user what to enter (e.g. GitHub's
+// Authorization header: "Authorization header with authentication token (PAT
+// or App token)"). Both are best-effort: registry entries may omit them.
 type RequiredConfigKey struct {
-	Name       string `json:"name"`
-	Kind       string `json:"kind"` // "header" | "env"
-	IsSecret   bool   `json:"isSecret"`
-	IsRequired bool   `json:"isRequired"`
+	Name        string `json:"name"`
+	Kind        string `json:"kind"` // "header" | "env"
+	IsSecret    bool   `json:"isSecret"`
+	IsRequired  bool   `json:"isRequired"`
+	Description string `json:"description,omitempty"`
+	// ValueHint is the registry-declared value template (header transports
+	// only), e.g. "Bearer {NETDATA_CLOUD_API_TOKEN}". It is surfaced as an
+	// input placeholder, never prefilled, so it never leaks a credential.
+	ValueHint string `json:"valueHint,omitempty"`
 }
 
 // ToolPoolInvalidator is implemented by agents.ToolPool to invalidate cached

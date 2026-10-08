@@ -15,13 +15,17 @@ import (
 // names), and the save-less test-connection handler.
 
 // mcpNeedsConfigServer is an http server whose required Authorization header is
-// still blank (needs configuration).
+// still blank (needs configuration). Its required key carries the registry's
+// description but, like GitHub's real entry, no value template.
 func mcpNeedsConfigServer() MCPServer {
 	return MCPServer{
 		ID: "srv-http", Name: "github-mcp", Type: "http", Enabled: false,
 		URL: "https://github.example.com/mcp",
 		RequiredConfig: []MCPRequiredConfigKey{
-			{Name: "Authorization", Kind: "header", IsSecret: true, IsRequired: true},
+			{
+				Name: "Authorization", Kind: "header", IsSecret: true, IsRequired: true,
+				Description: "Authorization header with authentication token (PAT or App token)",
+			},
 		},
 		NeedsConfiguration: true,
 		MissingConfigKeys:  []string{"Authorization"},
@@ -75,7 +79,10 @@ func TestRenderMCPServerEditPageRequiredConfig(t *testing.T) {
 		ID: "srv-http", Name: "github-mcp", Type: "http",
 		URL: "https://github.example.com/mcp",
 		RequiredConfig: []MCPRequiredConfigKey{
-			{Name: "Authorization", Kind: "header", IsSecret: true, IsRequired: true},
+			{
+				Name: "Authorization", Kind: "header", IsSecret: true, IsRequired: true,
+				Description: "Authorization header with authentication token (PAT or App token)",
+			},
 		},
 		MissingConfigKeys: []string{"Authorization"},
 		SecretHeadersKeys: []string{"Authorization"},
@@ -89,6 +96,9 @@ func TestRenderMCPServerEditPageRequiredConfig(t *testing.T) {
 		`data-mcp-kv-missing`,
 		"Required — enter a value.",
 		`placeholder="Enter value"`,
+		// the registry's own guidance for the required key is shown under the row
+		`data-mcp-kv-hint`,
+		"Authorization header with authentication token (PAT or App token)",
 		// hidden serverId + test button are present on the edit form
 		`name="serverId" value="srv-http"`,
 		"data-mcp-test",
@@ -101,6 +111,40 @@ func TestRenderMCPServerEditPageRequiredConfig(t *testing.T) {
 	// the missing secret row must not advertise the leave-blank contract
 	if strings.Contains(html, "Leave blank to keep the stored value.") {
 		t.Error("missing required secret row must prompt for a value, not keep-blank")
+	}
+}
+
+// TestRenderMCPServerEditPageRequiredConfigValueHint asserts a required header
+// whose registry entry declares a value template renders that template as the
+// value input's placeholder (never prefilled), alongside the description hint.
+func TestRenderMCPServerEditPageRequiredConfigValueHint(t *testing.T) {
+	s := MCPServer{
+		ID: "srv-http", Name: "netdata-mcp", Type: "http",
+		URL: "https://app.netdata.cloud/mcp",
+		RequiredConfig: []MCPRequiredConfigKey{
+			{
+				Name: "Authorization", Kind: "header", IsSecret: true, IsRequired: true,
+				Description: "Netdata Cloud API token with scope:mcp",
+				ValueHint:   "Bearer {NETDATA_CLOUD_API_TOKEN}",
+			},
+		},
+		MissingConfigKeys: []string{"Authorization"},
+		SecretHeadersKeys: []string{"Authorization"},
+	}
+	data := mcpServerFormDataFromServerConfigure(s, true)
+	html := renderHTML(t, MCPServerEditPage(data))
+	for _, want := range []string{
+		`data-mcp-kv-hint`,
+		"Netdata Cloud API token with scope:mcp",
+		`placeholder="Bearer {NETDATA_CLOUD_API_TOKEN}"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("edit required-config value-hint form missing %q", want)
+		}
+	}
+	// the template must be a hint only — the input value stays blank
+	if strings.Contains(html, `value="Bearer {NETDATA_CLOUD_API_TOKEN}"`) {
+		t.Error("registry value template must be a placeholder, never prefilled")
 	}
 }
 

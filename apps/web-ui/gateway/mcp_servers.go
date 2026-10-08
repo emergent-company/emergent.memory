@@ -90,13 +90,17 @@ type mcpServerFieldErrs struct {
 // blank and a blank submission keeps the stored value. Required marks a row
 // corresponding to the server's declared required configuration; Missing marks
 // a required row whose value is blank (drive the "Required" marker and the
-// "Enter value" placeholder).
+// "Enter value" placeholder). Hint is the registry's guidance for a required
+// key (shown under the row); Placeholder is the registry's value template,
+// shown as the value input's placeholder — never prefilled.
 type mcpKVField struct {
-	Key      string
-	Value    string
-	Secret   bool
-	Required bool
-	Missing  bool
+	Key         string
+	Value       string
+	Secret      bool
+	Required    bool
+	Missing     bool
+	Hint        string
+	Placeholder string
 }
 
 // mcpServerSettingsBase is the base path for the MCP Servers management area.
@@ -279,9 +283,12 @@ func mcpKVFieldSecretKeys(rows []mcpKVField) []string {
 // mcpKVFieldsWithSecrets builds editor rows from a server's non-secret
 // map entries (values shown) plus one blank-valued Secret row per write-only
 // key. Memory never returns secret values, so those rows pre-fill empty and
-// rely on the "leave blank to keep" contract on submit. requiredKeys /
-// missingKeys mark the row's required/missing affordances (see mcpKVField).
-func mcpKVFieldsWithSecrets(m map[string]string, secretKeys, requiredKeys, missingKeys []string) []mcpKVField {
+// rely on the "leave blank to keep" contract on submit. required carries the
+// server's declared required config for this kind (see mcpKVField): matching
+// rows are marked Required, and their registry description/value template is
+// attached as Hint/Placeholder. missingKeys marks rows whose required value is
+// still blank.
+func mcpKVFieldsWithSecrets(m map[string]string, secretKeys []string, required []MCPRequiredConfigKey, missingKeys []string) []mcpKVField {
 	out := mcpKVFields(m)
 	keys := make([]string, 0, len(secretKeys))
 	for _, k := range secretKeys {
@@ -293,9 +300,21 @@ func mcpKVFieldsWithSecrets(m map[string]string, secretKeys, requiredKeys, missi
 	for _, k := range keys {
 		out = append(out, mcpKVField{Key: k, Secret: true})
 	}
+	byName := make(map[string]MCPRequiredConfigKey, len(required))
+	for _, req := range required {
+		if name := strings.TrimSpace(req.Name); name != "" {
+			byName[name] = req
+		}
+	}
 	for i := range out {
-		out[i].Required = slices.Contains(requiredKeys, out[i].Key)
 		out[i].Missing = slices.Contains(missingKeys, out[i].Key)
+		req, ok := byName[out[i].Key]
+		if !ok {
+			continue
+		}
+		out[i].Required = true
+		out[i].Hint = req.Description
+		out[i].Placeholder = req.ValueHint
 	}
 	return out
 }
@@ -474,8 +493,8 @@ func mcpServerFormDataFromServer(s MCPServer) mcpServerFormData {
 // marked from the server's declared required config (headers for sse/http,
 // env for stdio); Missing rows from s.MissingConfigKeys.
 func mcpServerFormDataFromServerConfigure(s MCPServer, configure bool) mcpServerFormData {
-	headerRequired := mcpRequiredConfigKeysForKind(s.RequiredConfig, "header")
-	envRequired := mcpRequiredConfigKeysForKind(s.RequiredConfig, "env")
+	headerRequired := mcpRequiredConfigForKind(s.RequiredConfig, "header")
+	envRequired := mcpRequiredConfigForKind(s.RequiredConfig, "env")
 	d := mcpServerFormData{
 		ID:                 s.ID,
 		Name:               s.Name,
@@ -494,6 +513,19 @@ func mcpServerFormDataFromServerConfigure(s MCPServer, configure bool) mcpServer
 		d.Type = "stdio"
 	}
 	return d
+}
+
+// mcpRequiredConfigForKind returns the required config entries of the given
+// kind ("header" or "env"), preserving their registry descriptions and value
+// templates for the form rows.
+func mcpRequiredConfigForKind(required []MCPRequiredConfigKey, kind string) []MCPRequiredConfigKey {
+	var out []MCPRequiredConfigKey
+	for _, k := range required {
+		if k.Kind == kind && strings.TrimSpace(k.Name) != "" {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 // mcpRequiredConfigKeysForKind returns the names of required config keys of the

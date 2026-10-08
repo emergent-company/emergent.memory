@@ -1453,6 +1453,10 @@ func buildRemoteDTO(name string, serverType MCPServerType, remote RegistryRemote
 // isRequired or isSecret. A key marked isSecret counts as required even when
 // isRequired is absent (a secret with no value is unusable). Deduped by
 // (kind, name); deterministic — headers first, then env, each sorted by name.
+//
+// Each key also carries the registry's description and (for headers) its value
+// template, so the configuration UI can show what to enter rather than only the
+// key name.
 func collectRegistryRequiredConfig(remote RegistryRemote) []RequiredConfigKey {
 	headers := make(map[string]RequiredConfigKey)
 	for _, h := range remote.Headers {
@@ -1460,10 +1464,12 @@ func collectRegistryRequiredConfig(remote RegistryRemote) []RequiredConfigKey {
 			continue
 		}
 		headers[h.Name] = RequiredConfigKey{
-			Name:       h.Name,
-			Kind:       "header",
-			IsSecret:   h.IsSecret,
-			IsRequired: h.IsRequired || h.IsSecret,
+			Name:        h.Name,
+			Kind:        "header",
+			IsSecret:    h.IsSecret,
+			IsRequired:  h.IsRequired || h.IsSecret,
+			Description: strings.TrimSpace(h.Description),
+			ValueHint:   strings.TrimSpace(h.Value),
 		}
 	}
 	env := make(map[string]RequiredConfigKey)
@@ -1472,10 +1478,11 @@ func collectRegistryRequiredConfig(remote RegistryRemote) []RequiredConfigKey {
 			continue
 		}
 		env[ev.Name] = RequiredConfigKey{
-			Name:       ev.Name,
-			Kind:       "env",
-			IsSecret:   ev.IsSecret,
-			IsRequired: ev.IsRequired || ev.IsSecret,
+			Name:        ev.Name,
+			Kind:        "env",
+			IsSecret:    ev.IsSecret,
+			IsRequired:  ev.IsRequired || ev.IsSecret,
+			Description: strings.TrimSpace(ev.Description),
 		}
 	}
 
