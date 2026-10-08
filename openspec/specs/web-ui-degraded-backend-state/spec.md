@@ -91,6 +91,17 @@ A locally-authored, already-safe message SHALL be preserved rather than remapped
 for example the backup page's no-org sentinel copy and its "backup not found" copy. Only genuine backend
 failures (a memory HTTP error, a transport failure, or a timeout) are sanitized.
 
+This extends further to the **templated error fields that are rendered directly** (not through
+`pageError` and not via `data.LoadErr`): `.PendingErr`, `.ToolsErr`, `.ChatsErr`, `.StatusErr` /
+`.CoverageErr`, `.GeneralErr`, `.SaveErr`, `.MCPActionErr`, and the providers `d.Err`. Each such field
+SHALL carry an already-sanitized value **at the point it is assigned** on the page/view model, so the
+template cannot render raw backend detail. Where a field mixes locally-authored copy with backend
+failures (the object-type editor's `SaveErr`, the MCP action banner's `MCPActionErr`), a local
+validation/sentinel error SHALL pass through unchanged while a memory HTTP error, transport failure, or
+timeout is sanitized. A field already sanitized by its loader and passed through unchanged SHALL NOT be
+re-sanitized (no double-wrapping). Control flow, branching, HTTP status codes, and which variant/empty
+state renders SHALL be unchanged.
+
 #### Scenario: Transport failure on the landing route
 
 - **WHEN** an authenticated `GET /` resolves and `ListOrgs` returns a transport error whose text carries a
@@ -151,6 +162,23 @@ failures (a memory HTTP error, a transport failure, or a timeout) are sanitized.
 - **WHEN** the backups page fails because the backend returns a 5xx or a transport error
 - **THEN** the page renders the sanitized message
 - **AND** does not expose the host, IP, port, `dial tcp`, or a `memory 5xx` prefix
+
+#### Scenario: Templated error field failure is sanitized
+
+- **WHEN** an affected templated field (`.PendingErr`, `.ToolsErr`, `.ChatsErr`, `.StatusErr`,
+  `.CoverageErr`, `.GeneralErr`, `.MCPActionErr`, or providers `d.Err`) is populated from a backend
+  failure — a 5xx/503, a transport error, or a timeout
+- **THEN** the rendered page carries the sanitized "Memory is temporarily unavailable" message
+- **AND** the rendered page does not contain the host, IP, port, `dial tcp`, `memory 5`, a `memory 5xx`
+  prefix, `service_unavailable`, or `Token validation`
+
+#### Scenario: Mixed local copy survives on a sanitized field
+
+- **WHEN** the object-type editor's `SaveErr` carries a local validation error (for example a property
+  needs a type) or the MCP action banner's `.MCPActionErr` carries a 4xx/sentinel message (a duplicate
+  label, already-exists, or "this agent has no active MCP endpoint")
+- **THEN** that specific, safe, locally-authored copy is rendered unchanged
+- **AND** only genuine backend failures on the same field are replaced by the sanitized message
 
 ### Requirement: Org-scoped list failures on an org sub-page never expose internal error detail
 
