@@ -1,26 +1,54 @@
-# Test container for emergent CLI installation tests.
+# Test container for the memory CLI installation tests.
 #
-# This image deliberately does NOT pre-install the emergent CLI at build time.
-# Instead, the entrypoint script runs the exact one-liner a real user would use:
+# The memory CLI is built from the checked-out repo source in a Docker stage —
+# it is NOT downloaded from GitHub. The repository is private, so the previous
+# approach (curl the install script from raw.githubusercontent.com and download
+# the latest GitHub release) failed unauthenticated with `curl: (22) ... 404`.
 #
-#   curl -fsSL https://raw.githubusercontent.com/.../install.sh | bash
+# Stage 1 (cli-builder) compiles apps/cli using the same source layout as
+# deploy/self-hosted/Dockerfile.server. The test-runner stage stages the binary
+# at /opt/memory/memory; entrypoint.sh installs it into $HOME/.memory/bin — the
+# same destination install.sh uses — so the install step and PATH wiring stay
+# faithful while the private-repo network dependency is gone.
 #
-# This ensures the test exercises the full install path — download, extract,
-# PATH setup — exactly as a real user experiences it, not a cached artefact.
+# The container runs against a live Memory server injected via MEMORY_TEST_SERVER
+# at runtime (see docker-compose.yml).
 #
-# The container is designed to run against a live Emergent server injected via
-# MEMORY_TEST_SERVER at runtime (see docker-compose.yml).
-#
-# Usage (standalone):
-#   docker build -t emergent-cli-test .
+# Build from the REPO ROOT — the context must include apps/cli and
+# apps/server/pkg/sdk:
+#   docker build -f e2e/Dockerfile -t emergent-cli-test .
 #   docker run --rm \
 #     -e MEMORY_TEST_SERVER=http://host.docker.internal:5300 \
 #     emergent-cli-test
 
+# ── Stage 1: build the memory CLI from the checked-out source ───────────────
+FROM golang:1.25-alpine AS cli-builder
+
+WORKDIR /build/cli
+
+# The SDK must be staged at the path apps/cli/go.mod's replace directive expects.
+COPY apps/server/pkg/sdk/ /apps/server/pkg/sdk/
+
+# Dependency cache layer.
+COPY apps/cli/go.mod apps/cli/go.sum ./
+RUN go mod download
+
+# CLI source.
+COPY apps/cli/ ./
+
+# -ldflags stamps a version so `memory version` prints real values.
+RUN GOWORK=off CGO_ENABLED=0 go build \
+    -ldflags="-s -w \
+      -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Version=e2e \
+      -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Commit=e2e \
+      -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.BuildDate=e2e" \
+    -o /out/memory ./cmd
+
+# ── Stage 2: test runner ────────────────────────────────────────────────────
 FROM golang:1.25-alpine AS test-runner
 
-# Runtime deps: curl + tar for install.sh; bash for scripts; git for workspace setup
-# libstdc++/libgcc are required by the opencode binary on Alpine (musl libc)
+# Runtime deps: bash for scripts; curl/tar/git for test tooling and workspace
+# setup; libstdc++/libgcc are required by the opencode binary on Alpine (musl libc)
 RUN apk --no-cache add \
     bash \
     curl \
@@ -31,14 +59,18 @@ RUN apk --no-cache add \
     libstdc++ \
     libgcc
 
+# The memory CLI built from source; entrypoint.sh installs it to ~/.memory/bin.
+COPY --from=cli-builder /out/memory /opt/memory/memory
+RUN chmod +x /opt/memory/memory
+
 WORKDIR /tests
 
 # Copy the Go test module and pre-download dependencies so the test run is fast.
-COPY go.mod go.sum* ./
+COPY e2e/go.mod e2e/go.sum* ./
 RUN go mod download
 
 # Copy test source
-COPY . .
+COPY e2e/ ./
 
 # Install opencode CLI (pinned release for linux/amd64, musl build for Alpine).
 # This is a test infrastructure dependency, not the subject under test.
@@ -70,7 +102,7 @@ RUN set -eux; \
     chmod +x /usr/local/bin/opencode; \
     opencode --version
 
-ENV PATH="/usr/local/bin:${HOME}/.emergent/bin:${PATH}"
+ENV PATH="/usr/local/bin:${HOME}/.memory/bin:${PATH}"
 ENV HOME="/root"
 
 # Log directory for test session output
@@ -78,10 +110,11 @@ RUN mkdir -p /test-logs
 
 # MEMORY_TEST_SERVER must be injected at runtime (e.g. by docker-compose.yml).
 # The server runs in a separate container — there is no localhost fallback.
-# docker-compose.yml sets:  MEMORY_TEST_SERVER=http://test-emergent-server:5300
+# docker-compose.yml sets:  MEMORY_TEST_SERVER=http://test-emergent-server:3002
 
-# Copy the entrypoint which installs the emergent CLI at runtime then runs tests.
-COPY entrypoint.sh /entrypoint.sh
+# Copy the entrypoint which installs the memory CLI from the staged binary then
+# runs tests.
+COPY e2e/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]

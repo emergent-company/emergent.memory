@@ -309,7 +309,7 @@ categories:
     - TestDocInstall_VersionFormat
     - TestDocInstall_BinaryInMemoryBinDir
     - TestDocInstall_RootInstallScriptBinaryName
-    - TestDocInstall_ToolsInstallScriptExists
+    - TestDocInstall_CliInstallScriptExists
     - TestDocInstall_UpgradeCommandExists
 
   docs/help:

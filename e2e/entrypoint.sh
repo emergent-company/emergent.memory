@@ -1,35 +1,41 @@
 #!/usr/bin/env bash
-# entrypoint.sh — installs the memory CLI from the GitHub release at runtime,
+# entrypoint.sh — installs the memory CLI built from the checked-out source,
 # then runs the Go test suite.
 #
-# This simulates exactly what a real user does:
-#
-#   curl -fsSL https://raw.githubusercontent.com/.../install.sh | bash
-#
-# The CLI is NOT baked into the Docker image.  It is downloaded fresh every
-# time the container starts so the tests exercise the real install path.
+# The repository is private, so this script no longer fetches install.sh from
+# raw.githubusercontent.com (that returned 404 unauthenticated). Instead the
+# Dockerfile builds the `memory` binary from apps/cli and stages it at
+# /opt/memory/memory; this script installs it into $HOME/.memory/bin — the exact
+# destination install.sh uses — and then runs `memory version`.
 #
 # Environment variables consumed here:
-#   CI=true                 — suppresses the interactive Google API-key prompt in install.sh
+#   CI=true               — non-interactive marker
 #   MEMORY_TEST_SERVER    — Emergent API server URL (set by docker-compose.yml)
-#   TEST_LOG_DIR            — where test session logs are written (default /test-logs)
-#   TEST_RUN                — optional -run filter, e.g. TestCLIInstalled_Version
+#   TEST_LOG_DIR          — where test session logs are written (default /test-logs)
+#   TEST_RUN              — optional -run filter, e.g. TestCLIInstalled_Version
 
 set -euo pipefail
 
-INSTALL_URL="https://raw.githubusercontent.com/emergent-company/emergent.memory/main/apps/cli/install.sh"
+BUILT_BINARY="/opt/memory/memory"
+INSTALL_DIR="${HOME}/.memory/bin"
 
 echo "=== memory CLI install test entrypoint ==="
-echo ">>> installing memory CLI from ${INSTALL_URL} ..."
+echo ">>> installing memory CLI from ${BUILT_BINARY} into ${INSTALL_DIR} ..."
 
-# Run the real-user install command.  CI=true prevents install.sh from
-# asking interactively for a Google API key.  set -euo pipefail means this
-# script will exit non-zero immediately if the install fails.
-CI=true curl -fsSL "${INSTALL_URL}" | bash
+# Mirror install.sh's install step: place the binary at $HOME/.memory/bin/memory
+# and make it executable.  Hard-fail (no silent fallback) if the staged binary
+# is missing.
+if [ ! -x "${BUILT_BINARY}" ]; then
+    echo "ERROR: built memory binary not found at ${BUILT_BINARY}.  Aborting." >&2
+    exit 1
+fi
+
+mkdir -p "${INSTALL_DIR}"
+cp "${BUILT_BINARY}" "${INSTALL_DIR}/memory"
+chmod 0755 "${INSTALL_DIR}/memory"
 
 # Ensure the install directory is on PATH for this session.
-# install.sh puts the binary at $HOME/.memory/bin by default.
-export PATH="${HOME}/.memory/bin:${PATH}"
+export PATH="${INSTALL_DIR}:${PATH}"
 
 # Hard-fail if the binary isn't reachable — no silent fallback.
 if ! command -v memory >/dev/null 2>&1; then

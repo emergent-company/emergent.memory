@@ -2,7 +2,7 @@
 
 End-to-end tests for the [Memory](https://github.com/emergent-company/emergent.memory) CLI.
 
-These tests run inside a Docker container where the `memory` binary is installed from the GitHub release via `install.sh` — exactly as a real end-user would. They exercise the full install path (download, extract, PATH setup) and validate CLI behaviour against a live Memory server.
+These tests run inside a Docker container where the `memory` binary is built from the checked-out source and installed under `$HOME/.memory/bin` — the same destination `apps/cli/install.sh` uses. The repo is private, so the image does not fetch the install script or a release from GitHub; it validates CLI behaviour against a live Memory server.
 
 [![E2E Tests](https://github.com/emergent-company/emergent.memory/e2e/actions/workflows/e2e.yml/badge.svg)](https://github.com/emergent-company/emergent.memory/e2e/actions/workflows/e2e.yml)
 
@@ -102,5 +102,5 @@ Two jobs run on every push to `main` and on pull requests:
 
 | Job | Description |
 |---|---|
-| **CLI Install Tests** | Full Docker Compose stack. Installs the `memory` CLI from the GitHub release inside the container, then runs all `TestCLIInstalled_*` and `TestOpencode*` tests. |
+| **CLI Install Tests** | Full Docker Compose stack. Builds the `memory` CLI from the checked-out source inside the image and installs it in the container, then runs all `TestCLIInstalled_*` and `TestOpencode*` tests. |
 | **Production Smoke Tests** | Runs `TestProduction_*` against the live production server using `MEMORY_PROD_TEST_TOKEN`. Skipped when the secret is absent (e.g. on forks). |

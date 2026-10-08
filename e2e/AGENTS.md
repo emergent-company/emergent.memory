@@ -2,7 +2,7 @@
 
 End-to-end test suite for the `memory` CLI (`github.com/emergent-company/emergent.memory`).
 
-Tests run inside Docker where the `memory` binary is installed at runtime via `install.sh` — exactly as a real end-user would. Two categories:
+Tests run inside Docker where the `memory` binary is built from the checked-out source and installed at runtime under `$HOME/.memory/bin` — the same destination `apps/cli/install.sh` produces. The repo is private, so the image does **not** fetch the install script or a release from GitHub. Two categories:
 - **CLI Install Tests** (`TestCLIInstalled_*`, `TestOpencode*`): full Docker Compose stack with ephemeral server + Postgres
 - **Production Smoke Tests** (`TestProduction_*`): runs against live production server (skipped when `MEMORY_PROD_TEST_TOKEN` is absent)
 

@@ -10,3 +10,9 @@ coverage
 !.env.example
 *.log
 apps/logs
+
+# e2e test-run artifacts — the e2e Dockerfile builds with the repo root as
+# context, so keep run logs/DB out of the image.
+e2e/test-logs
+e2e/logs
+e2e/.runlog

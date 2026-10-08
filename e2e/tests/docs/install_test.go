@@ -8,9 +8,9 @@ package docs_test
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // TestDocInstall_BinaryNameIsMemory verifies that the installed binary is named
@@ -84,7 +84,7 @@ func TestDocInstall_VersionFormat(t *testing.T) {
 }
 
 // TestDocInstall_BinaryInMemoryBinDir verifies that the memory binary lives
-// in ~/.memory/bin/ as the install script (tools/cli/install.sh) dictates.
+// in ~/.memory/bin/ as the CLI install script (apps/cli/install.sh) dictates.
 // The docs reference ~/.memory/bin/ as the install location.
 func TestDocInstall_BinaryInMemoryBinDir(t *testing.T) {
 	rl := newRunLog(t)
@@ -118,38 +118,59 @@ func TestDocInstall_BinaryInMemoryBinDir(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Install script verification (GitHub-hosted scripts)
+// Install script verification (read from the local checkout)
+//
+// These tests read the install scripts from the checked-out repository rather
+// than fetching them from raw.githubusercontent.com. The repository is private,
+// so unauthenticated raw fetches return 404, and the entrypoint no longer
+// depends on that URL either (e2e/entrypoint.sh installs the CLI built from
+// source).
 // ─────────────────────────────────────────────────────────────────────────────
 
-// TestDocInstall_RootInstallScriptBinaryName fetches the root install.sh from
-// GitHub and parses out the BINARY_NAME variable.  The root script installs a
-// binary named "emergent", while the CLI documented in the user guide is
-// "memory".  This test documents the discrepancy so it can be tracked.
+// repoFile walks up from the current working directory to locate a path
+// relative to the repository root, returning its absolute location. It skips
+// the test when the file cannot be found (e.g. when run from the Docker test
+// container, which only contains e2e/).
+func repoFile(t *testing.T, rel string) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("could not determine working directory: %v", err)
+	}
+	for {
+		candidate := filepath.Join(dir, rel)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Skipf("could not locate %s in any parent of the working directory — skipping", rel)
+		}
+		dir = parent
+	}
+}
+
+// TestDocInstall_RootInstallScriptBinaryName reads the repo-root install.sh from
+// the local checkout and parses out the BINARY_NAME variable.  The root script
+// installs a binary named "emergent", while the CLI documented in the user guide
+// is "memory".  This test documents the discrepancy so it can be tracked.
 func TestDocInstall_RootInstallScriptBinaryName(t *testing.T) {
 	rl := newRunLog(t)
 	t.Cleanup(rl.Close)
-	rl.Describe("Fetch root install.sh from GitHub and parse BINARY_NAME",
-		"GET the root install.sh from GitHub raw content",
+	rl.Describe("Read the root install.sh from the checkout and parse BINARY_NAME",
+		"Locate install.sh in the checked-out repository",
 		"Parse BINARY_NAME= line",
 		"Document whether it says 'emergent' (known discrepancy with CLI name 'memory')",
 	)
 
-	skipIfDocsUnreachable(t, rl) // network required
-
-	rl.Section("Fetch root install.sh")
-	url := "https://raw.githubusercontent.com/emergent-company/emergent.memory/main/install.sh"
-	body, status, err := httpGet(url, 15*time.Second)
+	rl.Section("Read root install.sh from the checkout")
+	path := repoFile(t, "install.sh")
+	raw, err := os.ReadFile(path)
 	if err != nil {
-		t.Skipf("could not fetch root install.sh: %v — skipping", err)
+		t.Fatalf("could not read %s: %v", path, err)
 	}
-	rl.Printf("GET %s → HTTP %d (%d bytes)", url, status, len(body))
-
-	if status == 404 {
-		t.Skipf("root install.sh not found (404) — may have been removed")
-	}
-	if status != 200 {
-		rl.Failf("expected HTTP 200, got %d", status)
-	}
+	body := string(raw)
+	rl.Printf("read %s (%d bytes)", path, len(body))
 
 	rl.Section("Parse BINARY_NAME from script")
 	var binaryName string
@@ -173,34 +194,40 @@ func TestDocInstall_RootInstallScriptBinaryName(t *testing.T) {
 	}
 }
 
-// TestDocInstall_ToolsInstallScriptExists verifies that the tools/cli/install.sh
-// script (used by entrypoint.sh in Docker) is reachable on GitHub.
-func TestDocInstall_ToolsInstallScriptExists(t *testing.T) {
+// TestDocInstall_CliInstallScriptExists verifies that the CLI install script
+// (apps/cli/install.sh) exists in the local checkout and installs the "memory"
+// binary into ~/.memory/bin.  It replaces the previous raw.githubusercontent.com
+// fetch of tools/cli/install.sh — a path that never existed — and, like the
+// entrypoint, no longer depends on an unauthenticated private-repo fetch.
+func TestDocInstall_CliInstallScriptExists(t *testing.T) {
 	rl := newRunLog(t)
 	t.Cleanup(rl.Close)
-	rl.Describe("Verify tools/cli/install.sh exists on GitHub",
-		"GET the tools/cli/install.sh from GitHub raw content",
-		"Assert HTTP 200",
+	rl.Describe("Verify apps/cli/install.sh exists and installs the memory CLI",
+		"Locate apps/cli/install.sh in the checked-out repository",
+		"Assert it is non-trivial",
+		"Assert it installs to ~/.memory/bin and runs memory version",
 	)
 
-	skipIfDocsUnreachable(t, rl)
-
-	rl.Section("Fetch tools/cli/install.sh")
-	url := "https://raw.githubusercontent.com/emergent-company/emergent.memory/main/tools/cli/install.sh"
-	body, status, err := httpGet(url, 15*time.Second)
+	rl.Section("Read apps/cli/install.sh")
+	path := repoFile(t, "apps/cli/install.sh")
+	raw, err := os.ReadFile(path)
 	if err != nil {
-		t.Skipf("could not fetch tools/cli/install.sh: %v — skipping", err)
+		t.Fatalf("could not read %s: %v", path, err)
 	}
-	rl.Printf("GET %s → HTTP %d (%d bytes)", url, status, len(body))
+	body := string(raw)
+	rl.Printf("read %s (%d bytes)", path, len(body))
 
-	rl.Section("Verify script is reachable")
-	if status != 200 {
-		rl.Failf("expected HTTP 200 for tools/cli/install.sh, got %d", status)
-	}
+	rl.Section("Verify script contents")
 	if len(body) < 50 {
-		t.Errorf("tools/cli/install.sh suspiciously small (%d bytes)", len(body))
+		t.Errorf("apps/cli/install.sh suspiciously small (%d bytes)", len(body))
 	}
-	rl.Printf("tools/cli/install.sh is accessible (%d bytes)", len(body))
+	if !strings.Contains(body, ".memory/bin") {
+		t.Errorf("apps/cli/install.sh does not reference the ~/.memory/bin install dir")
+	}
+	if !strings.Contains(body, `"${INSTALL_DIR}/memory" version`) {
+		t.Errorf("apps/cli/install.sh does not run the installed memory binary with `version`")
+	}
+	rl.Printf("apps/cli/install.sh is valid (%d bytes)", len(body))
 }
 
 // TestDocInstall_UpgradeCommandExists verifies `memory upgrade --help` works,

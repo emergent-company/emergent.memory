@@ -13,6 +13,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 LOG_DIR="${SCRIPT_DIR}/test-logs"
 RUNS_DB_DIR="${SCRIPT_DIR}/logs"
 TESTS_ONLY=false
@@ -34,8 +35,11 @@ echo "> test session logs will be written to: $LOG_DIR"
 echo "> runs DB will be written to: $RUNS_DB_DIR/runs.db"
 
 # ─── Build the test image ─────────────────────────────────────────────────────
+# The build context is the REPO ROOT: the Dockerfile compiles the memory CLI
+# from apps/cli (see e2e/Dockerfile). The repo is private, so the test no longer
+# downloads the CLI/install script from GitHub.
 echo "> building Docker test image..."
-docker build -t emergent-cli-install-tests "$SCRIPT_DIR"
+docker build -f "$SCRIPT_DIR/Dockerfile" -t emergent-cli-install-tests "$REPO_ROOT"
 
 if $BUILD_ONLY; then
   echo "> build complete (--build-only, not running tests)"

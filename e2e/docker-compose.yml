@@ -3,8 +3,9 @@
 # This compose file spins up:
 #   - test-db:               Postgres + pgvector (required by the server)
 #   - test-emergent-server:  the Memory backend API in standalone mode
-#   - test-emergent-client:  the Go test container that installs the CLI via install.sh
-#                            and runs all tests against the live server
+#   - test-emergent-client:  the Go test container that installs the CLI built
+#                            from the checked-out source and runs all tests
+#                            against the live server
 #
 # Usage:
 #   docker compose -f docker-compose.yml up --build --abort-on-container-exit
@@ -218,12 +219,13 @@ services:
 
   # ─────────────────────────────────────────────────────────────────────────
   # CLI test runner
-  # Installs the emergent CLI from the GitHub release and runs all Go tests.
+  # Installs the memory CLI built from the checked-out source and runs all Go tests.
+  # Build context is the repo root so apps/cli + apps/server/pkg/sdk are available.
   # ─────────────────────────────────────────────────────────────────────────
   test-emergent-client:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: e2e/Dockerfile
     depends_on:
       test-emergent-server:
         condition: service_healthy
