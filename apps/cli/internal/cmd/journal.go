@@ -60,6 +60,7 @@ var (
 	journalListLimit           int
 	journalListBranch          string
 	journalListIncludeBranches bool
+	journalListCursor          string
 	journalNoteEntry           string
 )
 
@@ -82,6 +83,7 @@ standalone notes).
 
 Use --since to filter by age (e.g. 7d, 24h, 1h). Defaults to last 7 days.
 Use --limit to control the maximum number of entries returned.
+Use --cursor to fetch the next page; the cursor is printed after each non-final page.
 Use --output json for machine-readable output.`,
 	RunE: runJournalList,
 }
@@ -371,6 +373,9 @@ func runJournalList(cmd *cobra.Command, _ []string) error {
 	if journalListIncludeBranches {
 		params.Set("include_branches", "true")
 	}
+	if journalListCursor != "" {
+		params.Set("cursor", journalListCursor)
+	}
 
 	body, err := journalGet(cmd, projectID, params)
 	if err != nil {
@@ -412,9 +417,14 @@ func runJournalList(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	// Indicate further pages are available.
+	// Indicate further pages are available and surface the cursor to pass back.
 	if resp.HasMore {
-		fmt.Printf("\n(more entries available — re-run with the cursor to page through)\n")
+		if resp.NextCursor != "" {
+			fmt.Printf("\nNext cursor: %s\n", resp.NextCursor)
+			fmt.Printf("Use --cursor %s to fetch the next page.\n", resp.NextCursor)
+		} else {
+			fmt.Printf("\n(more entries available — re-run with the cursor to page through)\n")
+		}
 	}
 
 	return nil
@@ -491,6 +501,7 @@ func init() {
 	journalListCmd.Flags().IntVar(&journalListLimit, "limit", 100, "Maximum number of entries to return")
 	journalListCmd.Flags().StringVar(&journalListBranch, "branch", "", "Branch name or UUID (omit for main branch)")
 	journalListCmd.Flags().BoolVar(&journalListIncludeBranches, "include-branches", false, "Include merged branches in the feed alongside the main branch")
+	journalListCmd.Flags().StringVar(&journalListCursor, "cursor", "", "Keyset cursor from a previous response (next_cursor)")
 
 	journalNoteCmd.Flags().StringVar(&journalNoteEntry, "entry", "", "Journal entry ID to attach the note to")
 
