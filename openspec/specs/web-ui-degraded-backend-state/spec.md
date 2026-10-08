@@ -79,6 +79,18 @@ This covers every tenancy load that renders an unavailable page — including th
 (`GetOrg`) behind `GET /orgs/:id` and its org sub-pages — not only the `ListOrgs` / `ListProjects` /
 `ListProjectsIncludingPending` calls redacted by the initial change.
 
+This also covers **every non-tenancy page** whose load failure renders through `pageError`: the agent,
+api-token, approvals, backup, blueprint, board, data-source, document, embedding, inbox, MCP
+(nodes/registry/servers/shares), object, org-member, run, schedule, schema, schema-pack, session, share,
+skill, and usage surfaces. Their displayed error SHALL be routed through the shared redaction helper
+(`userFacingError`) so the same sanitized message appears, without changing control flow, branching, or
+HTTP status codes. This extends to the two surfaces that render `data.LoadErr.Error()` directly rather than
+through `pageError` — the MCP connected-devices relay banner and the API-token reveal branch.
+
+A locally-authored, already-safe message SHALL be preserved rather than remapped to the generic message —
+for example the backup page's no-org sentinel copy and its "backup not found" copy. Only genuine backend
+failures (a memory HTTP error, a transport failure, or a timeout) are sanitized.
+
 #### Scenario: Transport failure on the landing route
 
 - **WHEN** an authenticated `GET /` resolves and `ListOrgs` returns a transport error whose text carries a
@@ -110,6 +122,35 @@ This covers every tenancy load that renders an unavailable page — including th
 - **THEN** that page's unavailable state renders with the sanitized message
 - **AND** the rendered page does not expose the host, IP, port, `dial tcp`, `service_unavailable`, or a
   `memory 5xx` prefix
+
+#### Scenario: Non-tenancy page load failure
+
+- **WHEN** any swept non-tenancy page (for example `GET /agents`, `/documents`, `/skills`, `/sessions`,
+  `/board`, `/usage`, or `/objects`) fails its load because the backend returns a 5xx, a transport error,
+  or a timeout
+- **THEN** that page renders the sanitized "Memory is temporarily unavailable" message
+- **AND** the rendered page does not contain the host, IP, port, `dial tcp`, a `memory 5xx` prefix,
+  `service_unavailable`, or `Token validation`
+
+#### Scenario: MCP connected-devices relay failure
+
+- **WHEN** the MCP relay registry/sessions load fails on the connected-devices surface (rendered from
+  `data.LoadErr` directly, not through `pageError`)
+- **THEN** the rendered banner carries the sanitized message
+- **AND** does not expose the host, IP, port, `dial tcp`, or a `memory 5xx` prefix
+
+#### Scenario: Backups no-org copy is preserved
+
+- **WHEN** the backups page cannot resolve an org because the active project carries none (the deliberate
+  `errBackupsNoOrg` sentinel)
+- **THEN** the page renders that specific, safe no-org copy
+- **AND** does not render the generic "Something went wrong." message
+
+#### Scenario: Backups backend failure is sanitized
+
+- **WHEN** the backups page fails because the backend returns a 5xx or a transport error
+- **THEN** the page renders the sanitized message
+- **AND** does not expose the host, IP, port, `dial tcp`, or a `memory 5xx` prefix
 
 ### Requirement: Org-scoped list failures on an org sub-page never expose internal error detail
 
