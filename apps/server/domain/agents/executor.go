@@ -2472,7 +2472,14 @@ func (ae *AgentExecutor) runPipeline(
 	// scope on every surface (trigger, A2A, chat, chat-completions, resume,
 	// sub-agent spawns). A nil scope (no allowlist configured) is the
 	// backwards-compatible "all types" default (issue #1695).
-	ctx = mcp.ContextWithTypeScope(ctx, resolveTypeScope(req.AgentDefinition))
+	//
+	// When the incoming context ALREADY carries a scope — a delegated caller's
+	// scope, or the search-knowledge loopback's caller scope — the definition's
+	// scope is NARROWED by it, never allowed to replace and widen it (#1695
+	// follow-up). Without this, a definition that gained an allowlist (including
+	// the internal graph-query-agent) could silently widen an inherited caller
+	// boundary.
+	ctx = mcp.ContextWithTypeScope(ctx, mcp.NarrowTypeScope(mcp.TypeScopeFromContext(ctx), resolveTypeScope(req.AgentDefinition)))
 	instruction := ae.resolveInstruction(req)
 
 	// Augment system instruction with workspace context if available.

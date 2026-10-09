@@ -1661,6 +1661,7 @@ type RelationshipListParams struct {
 	ProjectID      uuid.UUID
 	BranchID       *uuid.UUID
 	Type           *string
+	Types          []string
 	SrcID          *uuid.UUID
 	DstID          *uuid.UUID
 	IncludeDeleted bool
@@ -1684,6 +1685,10 @@ func (r *Repository) CountRelationships(ctx context.Context, params Relationship
 
 	if params.Type != nil {
 		q = q.Where("type = ?", *params.Type)
+	}
+
+	if len(params.Types) > 0 {
+		q = q.Where("type IN (?)", bun.In(params.Types))
 	}
 
 	if params.SrcID != nil {
@@ -1733,6 +1738,10 @@ func (r *Repository) ListRelationships(ctx context.Context, params RelationshipL
 
 	if params.Type != nil {
 		q = q.Where("type = ?", *params.Type)
+	}
+
+	if len(params.Types) > 0 {
+		q = q.Where("type IN (?)", bun.In(params.Types))
 	}
 
 	if params.SrcID != nil {

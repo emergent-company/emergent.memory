@@ -200,34 +200,79 @@ func TestTypeScope_AllowsRelationshipRow(t *testing.T) {
 	assert.False(t, both.AllowsRelationshipRow("works_at", "Law", "Paragraph"))
 }
 
-func TestExecuteQueryKnowledge_TypeScopeGuard(t *testing.T) {
+// The type scope is now THREADED through the /query loopback rather than failing
+// closed (issue #1695 follow-up). A restricted scope must proceed to the HTTP
+// stage; with no server configured it fails there, never with the retired
+// "search-knowledge is unavailable" guard. Re-introducing the guard fails this.
+func TestExecuteQueryKnowledge_TypeScopeThreadedNotFailClosed(t *testing.T) {
 	svc := &Service{}
 
-	// A restricted scope fails closed before any HTTP/loopback work.
 	restricted := NewTypeScope([]string{"Person"}, []string{"references"})
 	ctx := ContextWithTypeScope(context.Background(), restricted)
 
 	_, err := svc.executeQueryKnowledge(ctx, "proj", map[string]any{"question": "what?"})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "search-knowledge is unavailable")
+	assert.NotContains(t, err.Error(), "search-knowledge is unavailable")
 
-	// The guard runs before the question check.
+	// The question check still runs before any HTTP work.
 	_, err = svc.executeQueryKnowledge(ctx, "proj", map[string]any{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "search-knowledge is unavailable")
-
-	// Object-only and relationship-only scopes also trip the guard.
-	_, err = svc.executeQueryKnowledge(ContextWithTypeScope(context.Background(), NewTypeScope([]string{"Person"}, nil)), "proj", map[string]any{"question": "what?"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "search-knowledge is unavailable")
-
-	_, err = svc.executeQueryKnowledge(ContextWithTypeScope(context.Background(), NewTypeScope(nil, []string{"references"})), "proj", map[string]any{"question": "what?"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "search-knowledge is unavailable")
-
-	// Unrestricted scope: guard does not trigger, reaches the question check.
-	_, err = svc.executeQueryKnowledge(context.Background(), "proj", map[string]any{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "question")
 	assert.NotContains(t, err.Error(), "unavailable")
+
+	// Object-only and relationship-only scopes also proceed past the old guard.
+	_, err = svc.executeQueryKnowledge(ContextWithTypeScope(context.Background(), NewTypeScope([]string{"Person"}, nil)), "proj", map[string]any{"question": "what?"})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "search-knowledge is unavailable")
+
+	_, err = svc.executeQueryKnowledge(ContextWithTypeScope(context.Background(), NewTypeScope(nil, []string{"references"})), "proj", map[string]any{"question": "what?"})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "search-knowledge is unavailable")
+}
+
+// TestNarrowTypeScope covers bounding a declared scope by an inherited one. The
+// key property: the result never permits a type the inherited scope excludes
+// (it must not widen). Returning declared unconditionally would fail the
+// "never widens" assertions.
+func TestNarrowTypeScope(t *testing.T) {
+	assert.Nil(t, NarrowTypeScope(nil, nil))
+
+	declared := NewTypeScope([]string{"Law"}, []string{"CITES"})
+
+	// nil inherited (normal run) => declared unchanged.
+	assert.Equal(t, declared, NarrowTypeScope(nil, declared))
+
+	// nil declared (definition has no allowlist) => bounded by inherited.
+	inherited := NewTypeScope([]string{"Law", "Person"}, nil)
+	assert.Equal(t, inherited, NarrowTypeScope(inherited, nil))
+
+	// Declared within inherited => the tighter declared scope is kept (per axis).
+	sub := NewTypeScope([]string{"Law"}, nil)
+	got := NarrowTypeScope(inherited, sub)
+	require.NotNil(t, got)
+	assert.True(t, got.AllowsObject("Law"))
+	assert.False(t, got.AllowsObject("Person"))
+
+	// Declared WIDER than inherited => inherited is kept; must NOT widen.
+	wider := NewTypeScope([]string{"Law", "Person", "Org"}, nil)
+	got = NarrowTypeScope(NewTypeScope([]string{"Law"}, nil), wider)
+	require.NotNil(t, got)
+	assert.True(t, got.AllowsObject("Law"))
+	assert.False(t, got.AllowsObject("Person"), "narrowing must never widen to an inherited-excluded type")
+	assert.False(t, got.AllowsObject("Org"))
+
+	// Disjoint axes => inherited kept (conservative, never widens).
+	got = NarrowTypeScope(NewTypeScope([]string{"Law"}, nil), NewTypeScope([]string{"Person"}, nil))
+	require.NotNil(t, got)
+	assert.True(t, got.AllowsObject("Law"))
+	assert.False(t, got.AllowsObject("Person"))
+
+	// Independent axes: the inherited object restriction and the declared
+	// relationship restriction both survive.
+	got = NarrowTypeScope(NewTypeScope([]string{"Law", "Person"}, nil), NewTypeScope(nil, []string{"CITES"}))
+	require.NotNil(t, got)
+	assert.True(t, got.HasObjectRestriction())
+	assert.True(t, got.AllowsObject("Law"))
+	assert.True(t, got.AllowsObject("Person"))
+	assert.True(t, got.AllowsRelationship("CITES"))
 }

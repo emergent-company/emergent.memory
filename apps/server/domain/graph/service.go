@@ -836,6 +836,18 @@ func (s *Service) GetByID(ctx context.Context, projectID, id uuid.UUID, resolveH
 	return obj.ToResponse(), nil
 }
 
+// GetByIDIncludingDeleted returns an object by physical id or canonical id,
+// including a soft-deleted row. It mirrors GetByID but does not filter
+// `deleted_at`, so a caller can read a soft-deleted object's type before
+// restoring it (used by the MCP write-path type-scope gate).
+func (s *Service) GetByIDIncludingDeleted(ctx context.Context, projectID, id uuid.UUID) (*GraphObjectResponse, error) {
+	obj, err := s.repo.GetByIDIncludeDeleted(ctx, projectID, id)
+	if err != nil {
+		return nil, err
+	}
+	return obj.ToResponse(), nil
+}
+
 // Create creates a new graph object.
 // ValidateObjectRequest is the request body for the validate endpoint.
 type ValidateObjectRequest struct {

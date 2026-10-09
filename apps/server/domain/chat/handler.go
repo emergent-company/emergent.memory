@@ -1524,6 +1524,26 @@ type QueryStreamRequest struct {
 	ParentRunID    string `json:"parent_run_id,omitempty"`   // optional: calling agent's run ID for parent→child linkage
 	RootRunID      string `json:"root_run_id,omitempty"`     // optional: top-level orchestration run ID
 	ResponseFormat string `json:"response_format,omitempty"` // optional: hint prepended to message to control answer shape/verbosity
+
+	// Per-call graph type scope. The internal graph-query-agent carries no
+	// allowlist of its own, so a caller-supplied scope is threaded into its run
+	// and preserved end-to-end. It can only NARROW the internal run, never widen
+	// it (issue #1695 follow-up; used by the search-knowledge MCP loopback).
+	ObjectTypes       []string `json:"object_types,omitempty"`
+	RelationshipTypes []string `json:"relationship_types,omitempty"`
+}
+
+// withQueryTypeScope threads a caller-supplied graph type scope into the internal
+// query agent's run context. The internal graph-query-agent definition carries no
+// allowlist, so the executor's own scope derivation is a no-op and this scope is
+// preserved for the whole run. A nil/empty scope leaves the context unchanged
+// (unrestricted). It can only NARROW the unrestricted internal run, never widen it
+// (issue #1695 follow-up; used by the search-knowledge MCP loopback).
+func withQueryTypeScope(ctx context.Context, req QueryStreamRequest) context.Context {
+	if req.ObjectTypes == nil && req.RelationshipTypes == nil {
+		return ctx
+	}
+	return mcp.ContextWithTypeScope(ctx, mcp.NewTypeScope(req.ObjectTypes, req.RelationshipTypes))
 }
 
 // QueryStream handles POST /api/projects/:projectId/query.
@@ -1591,6 +1611,7 @@ func (h *Handler) QueryStream(c echo.Context) error {
 	if req.Namespace != "" {
 		ctx = auth.ContextWithNamespace(ctx, req.Namespace)
 	}
+	ctx = withQueryTypeScope(ctx, req)
 
 	// Fail fast if no LLM provider is configured. Probe the model factory before
 	// opening the SSE stream so clients get a proper HTTP error code, not a

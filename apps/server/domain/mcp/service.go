@@ -3590,6 +3590,7 @@ func (s *Service) executeEntityHistory(ctx context.Context, projectID string, ar
 	type versionRow struct {
 		PhysicalID  uuid.UUID `bun:"id"`
 		CanonicalID uuid.UUID `bun:"canonical_id"`
+		Type        string    `bun:"type"`
 		Version     int       `bun:"version"`
 		CreatedAt   time.Time `bun:"created_at"`
 		UpdatedAt   time.Time `bun:"updated_at"`
@@ -3604,6 +3605,7 @@ func (s *Service) executeEntityHistory(ctx context.Context, projectID string, ar
 			SELECT
 				go.id,
 				go.canonical_id,
+				go.type,
 				go.version,
 				go.created_at,
 				COALESCE(go.updated_at, go.created_at) as updated_at
@@ -3617,6 +3619,10 @@ func (s *Service) executeEntityHistory(ctx context.Context, projectID string, ar
 	})
 	if err != nil {
 		return nil, fmt.Errorf("query entity history: %w", err)
+	}
+
+	if len(rows) > 0 && !TypeScopeFromContext(ctx).AllowsObject(rows[0].Type) {
+		return nil, fmt.Errorf("entity history: object type is not allowed for this agent's scope")
 	}
 
 	type versionEntry struct {
@@ -4173,6 +4179,42 @@ func (s *Service) suggestEntityKeysByFuzzy(ctx context.Context, projectID uuid.U
 	return suggestions
 }
 
+// lookupObjectType returns the current type of a graph object by physical or
+// canonical id. It is routed through the graph service so the mcp package issues
+// no raw SQL (the mcp-authz guard forbids unclassified raw access).
+func (s *Service) lookupObjectType(ctx context.Context, projectID string, entityID uuid.UUID) (string, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return "", err
+	}
+	obj, err := s.graphService.GetByID(ctx, projectUUID, entityID, false)
+	if err != nil {
+		return "", err
+	}
+	if obj == nil {
+		return "", fmt.Errorf("object not found")
+	}
+	return obj.Type, nil
+}
+
+// lookupObjectTypeIncludingDeleted is lookupObjectType for a possibly
+// soft-deleted object, needed by the entity-restore gate (which must see the
+// type of the deleted row being restored).
+func (s *Service) lookupObjectTypeIncludingDeleted(ctx context.Context, projectID string, entityID uuid.UUID) (string, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return "", err
+	}
+	obj, err := s.graphService.GetByIDIncludingDeleted(ctx, projectUUID, entityID)
+	if err != nil {
+		return "", err
+	}
+	if obj == nil {
+		return "", fmt.Errorf("object not found")
+	}
+	return obj.Type, nil
+}
+
 // executeUpdateEntity updates an existing entity's properties, labels, or status.
 func (s *Service) executeUpdateEntity(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
@@ -4227,6 +4269,13 @@ func (s *Service) executeUpdateEntity(ctx context.Context, projectID string, arg
 
 	if status, ok := args["status"].(string); ok && status != "" {
 		req.Status = &status
+	}
+
+	scope := TypeScopeFromContext(ctx)
+	if typ, lerr := s.lookupObjectType(ctx, projectID, entityID); lerr == nil {
+		if !scope.AllowsObject(typ) {
+			return nil, fmt.Errorf("update entity: object type is not allowed for this agent's scope")
+		}
 	}
 
 	result, err := s.graphService.Patch(ctx, projectUUID, entityID, req, nil)
@@ -4295,6 +4344,17 @@ func (s *Service) executeRestoreEntity(ctx context.Context, projectID string, ar
 			return nil, fmt.Errorf("invalid entity_id: %q is not a UUID and key lookup failed: %w", entityIDStr, keyErr)
 		}
 		entityID = resolved
+	}
+
+	// Scope gate: restoring echoes the object (incl. its type), so a scoped agent
+	// must not restore an object whose type is outside its allowlist. The row is
+	// soft-deleted, so the include-deleted lookup is required; a lookup error
+	// falls through to Restore, which reports not-found/not-deleted as before.
+	scope := TypeScopeFromContext(ctx)
+	if typ, lerr := s.lookupObjectTypeIncludingDeleted(ctx, projectID, entityID); lerr == nil {
+		if !scope.AllowsObject(typ) {
+			return nil, fmt.Errorf("restore entity: object type is not allowed for this agent's scope")
+		}
 	}
 
 	result, err := s.graphService.Restore(ctx, projectUUID, entityID, nil)
@@ -4560,6 +4620,8 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 		return nil, fmt.Errorf("invalid project_id: %w", err)
 	}
 
+	scope := TypeScopeFromContext(ctx)
+
 	// Resolve optional branch param — auto-creates the branch if it does not exist.
 	var branchID *uuid.UUID
 	if branchRef, _ := args["branch"].(string); branchRef != "" {
@@ -4662,6 +4724,16 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 			results = append(results, batchResult{
 				Ok:    false,
 				Error: "missing entity type",
+				Index: i,
+			})
+			failedCount++
+			continue
+		}
+
+		if !scope.AllowsObject(typeName) {
+			results = append(results, batchResult{
+				Ok:    false,
+				Error: "object type is not allowed for this agent's scope",
 				Index: i,
 			})
 			failedCount++
@@ -4783,6 +4855,10 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 				if relType == "" {
 					continue
 				}
+				if !scope.AllowsRelationship(relType) {
+					s.log.Warn("skipping inline relationship: type not allowed for this agent's scope", "rel_type", relType)
+					continue
+				}
 				relProps, _ := relMap["properties"].(map[string]any)
 
 				// Support both source_id and target_id in inline relationship specs.
@@ -4873,6 +4949,8 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 		return nil, fmt.Errorf("invalid project_id: %w", err)
 	}
 
+	scope := TypeScopeFromContext(ctx)
+
 	// Support flat single-relationship form for backward compat
 	var relationshipsRaw []any
 	if arr, ok := args["relationships"].([]any); ok {
@@ -4939,6 +5017,16 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 			results = append(results, batchResult{
 				Ok:    false,
 				Error: "missing relationship type",
+				Index: i,
+			})
+			failedCount++
+			continue
+		}
+
+		if !scope.AllowsRelationship(relType) {
+			results = append(results, batchResult{
+				Ok:    false,
+				Error: "relationship type is not allowed for this agent's scope",
 				Index: i,
 			})
 			failedCount++

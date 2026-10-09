@@ -262,6 +262,51 @@ func scopeSubset(child, parent map[string]bool) bool {
 	return true
 }
 
+// NarrowTypeScope bounds a declared scope by an inherited scope so a run can
+// never see more than the inherited authority permits. It is used where a run
+// already carries a scope in context (a delegated sub-agent's caller scope, or
+// the search-knowledge loopback's caller scope) and then derives the agent
+// definition's own scope: the two must be combined WITHOUT letting the
+// definition widen the inherited boundary.
+//
+// A nil inherited scope is unrestricted, so declared is returned unchanged (the
+// normal, non-nested run). A nil declared scope returns inherited (a
+// definition with no allowlist is bounded by the inherited scope). When both
+// restrict, each axis keeps the narrower allowlist: a declared axis within the
+// inherited axis is kept, otherwise the inherited axis is kept — the inherited
+// (outer) authority is never widened. Returns nil when neither scope restricts.
+func NarrowTypeScope(inherited, declared *TypeScope) *TypeScope {
+	if inherited == nil {
+		return declared
+	}
+	if declared == nil {
+		return inherited
+	}
+	obj := narrowScopeAxis(inherited.objectTypes, declared.objectTypes)
+	rel := narrowScopeAxis(inherited.relationshipTypes, declared.relationshipTypes)
+	if len(obj) == 0 && len(rel) == 0 {
+		return nil
+	}
+	return &TypeScope{objectTypes: obj, relationshipTypes: rel}
+}
+
+// narrowScopeAxis returns the tighter of two allowlists for one axis. A nil/empty
+// parent is unrestricted and yields the child; a nil/empty child would widen, so
+// the parent is kept; a child within the parent is kept; otherwise the parent is
+// kept (conservative — never widen).
+func narrowScopeAxis(parent, child map[string]bool) map[string]bool {
+	if len(parent) == 0 {
+		return child
+	}
+	if len(child) == 0 {
+		return parent
+	}
+	if scopeSubset(child, parent) {
+		return child
+	}
+	return parent
+}
+
 // typeScopeCtxKey is the context key for the per-run TypeScope.
 type typeScopeCtxKey struct{}
 

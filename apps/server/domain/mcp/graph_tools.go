@@ -750,7 +750,12 @@ func (s *Service) executeListRelationships(ctx context.Context, projectID string
 		Limit:     limit + 1, // Fetch one extra to check hasMore
 	}
 
+	scope := TypeScopeFromContext(ctx)
+
 	if t, ok := args["type"].(string); ok && t != "" {
+		if !scope.AllowsRelationship(t) {
+			return nil, fmt.Errorf("list relationships: relationship type %q is not allowed for this agent", t)
+		}
 		params.Type = &t
 	}
 
@@ -770,6 +775,10 @@ func (s *Service) executeListRelationships(ctx context.Context, projectID string
 		params.DstID = &id
 	}
 
+	if scope.HasRelationshipRestriction() {
+		params.Types = scope.RelationshipTypes()
+	}
+
 	opts := responseOptsFromArgs(args)
 
 	results, err := s.graphService.ListRelationships(ctx, params)
@@ -777,7 +786,6 @@ func (s *Service) executeListRelationships(ctx context.Context, projectID string
 		return nil, fmt.Errorf("list relationships: %w", err)
 	}
 
-	scope := TypeScopeFromContext(ctx)
 	data := make([]map[string]any, 0, len(results.Items))
 	for _, r := range results.Items {
 		if !scope.AllowsRelationship(r.Type) {
@@ -786,9 +794,6 @@ func (s *Service) executeListRelationships(ctx context.Context, projectID string
 		data = append(data, slimRelationship(r, opts))
 	}
 	total := results.Total
-	if scope.HasRelationshipRestriction() {
-		total = len(data)
-	}
 	out := map[string]any{
 		"data":     data,
 		"total":    total,
@@ -798,6 +803,25 @@ func (s *Service) executeListRelationships(ctx context.Context, projectID string
 		out["next_cursor"] = *results.NextCursor
 	}
 	return s.wrapResultCompact(out)
+}
+
+// lookupRelationshipType returns the current type of a graph relationship by
+// physical or canonical id. It is routed through the graph service so the mcp
+// package issues no raw SQL (the mcp-authz guard forbids unclassified raw
+// access).
+func (s *Service) lookupRelationshipType(ctx context.Context, projectID string, relID uuid.UUID) (string, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return "", err
+	}
+	rel, err := s.graphService.GetRelationship(ctx, projectUUID, relID)
+	if err != nil {
+		return "", err
+	}
+	if rel == nil {
+		return "", fmt.Errorf("relationship not found")
+	}
+	return rel.Type, nil
 }
 
 // executeUpdateRelationship updates a relationship
@@ -815,6 +839,13 @@ func (s *Service) executeUpdateRelationship(ctx context.Context, projectID strin
 	relID, err := uuid.Parse(relIDStr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid relationship_id: %w", err)
+	}
+
+	scope := TypeScopeFromContext(ctx)
+	if typ, lerr := s.lookupRelationshipType(ctx, projectID, relID); lerr == nil {
+		if !scope.AllowsRelationship(typ) {
+			return nil, fmt.Errorf("update relationship: relationship type is not allowed for this agent's scope")
+		}
 	}
 
 	req := &graph.PatchGraphRelationshipRequest{}

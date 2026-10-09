@@ -217,15 +217,23 @@ func TestTypeScope_ExecuteTraverseGraph_RejectsExcludedRelationshipTypes(t *test
 func TestFilterTraverseResponseByScope(t *testing.T) {
 	scope := NewTypeScope([]string{"Law"}, []string{"CITES"})
 
+	law1 := uuid.New()
+	law1c := uuid.New()
+	person1 := uuid.New()
+	person1c := uuid.New()
+	law2 := uuid.New()
+	law2c := uuid.New()
+
 	res := &graph.TraverseGraphResponse{
 		Nodes: []*graph.TraverseNode{
-			{Type: "Law"},
-			{Type: "Person"},
-			{Type: "Law"},
+			{ID: law1, CanonicalID: law1c, Type: "Law"},
+			{ID: person1, CanonicalID: person1c, Type: "Person"},
+			{ID: law2, CanonicalID: law2c, Type: "Law"},
 		},
 		Edges: []*graph.TraverseEdge{
-			{Type: "CITES"},
-			{Type: "OWNS"},
+			{Type: "CITES", SrcID: law1, DstID: law2},    // allowed rel + allowed endpoints → kept
+			{Type: "OWNS", SrcID: law1, DstID: person1},  // excluded rel → dropped
+			{Type: "CITES", SrcID: law1, DstID: person1}, // allowed rel but excluded endpoint → dropped (dangling)
 		},
 	}
 
@@ -236,6 +244,11 @@ func TestFilterTraverseResponseByScope(t *testing.T) {
 	}
 	require.Len(t, out.Edges, 1)
 	assert.Equal(t, "CITES", out.Edges[0].Type)
+	// The surviving edge must connect only allowed nodes and must not reference
+	// the excluded Person node.
+	assert.Equal(t, law1, out.Edges[0].SrcID)
+	assert.Equal(t, law2, out.Edges[0].DstID)
+	assert.NotEqual(t, person1, out.Edges[0].DstID)
 }
 
 // =============================================================================

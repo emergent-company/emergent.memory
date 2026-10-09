@@ -71,15 +71,6 @@ func queryToolDefinitions() []ToolDefinition {
 const queryKnowledgeTimeout = 120 * time.Second
 
 func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
-	// Fail closed under a graph type scope: the internal /query loopback spawns a
-	// separate unrestricted graph-query-agent whose ctx scope is never carried,
-	// so a scoped agent could otherwise reach excluded types through it. Point
-	// the caller at the scoped search tools instead (issue #1695).
-	scope := TypeScopeFromContext(ctx)
-	if scope.HasObjectRestriction() || scope.HasRelationshipRestriction() {
-		return nil, fmt.Errorf("search-knowledge is unavailable when the agent has a graph type scope; use search-hybrid or search-semantic instead")
-	}
-
 	question, _ := args["question"].(string)
 	if question == "" {
 		return nil, fmt.Errorf("query_knowledge: 'question' is required")
@@ -101,6 +92,21 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 	if sessionID, ok := args["session_id"].(string); ok && sessionID != "" {
 		body["conversation_id"] = sessionID
 	}
+
+	// Thread the caller's graph type scope through the /query loopback so the
+	// internal graph-query-agent enforces the SAME boundary instead of leaking
+	// (issue #1695 follow-up). The internal agent's definition carries no
+	// allowlist, so the executor's own scope derivation is a no-op and preserves
+	// this scope for the whole internal run. A caller can only ever NARROW the
+	// unrestricted internal run, never widen it.
+	scope := TypeScopeFromContext(ctx)
+	if scope.HasObjectRestriction() {
+		body["object_types"] = scope.ObjectTypes()
+	}
+	if scope.HasRelationshipRestriction() {
+		body["relationship_types"] = scope.RelationshipTypes()
+	}
+
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("query_knowledge: marshal request: %w", err)
