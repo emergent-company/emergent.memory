@@ -6,32 +6,32 @@
       "name": "io.github.github/github-mcp-server",
       "packages": [
         {
-          "identifier": "ghcr.io/github/github-mcp-server:1.13.0",
+          "identifier": "ghcr.io/github/github-mcp-server:2.0.2",
           "registryType": "oci",
           "runtimeArguments": [
             {
               "description": "Publish the OAuth callback port to loopback so the in-container login callback is reachable",
-              "value": "127.0.0.1:8085:8085",
               "name": "-p",
-              "type": "named"
+              "type": "named",
+              "value": "127.0.0.1:8085:8085"
             },
             {
               "description": "Fixed OAuth callback port, matching the published port above",
-              "value": "GITHUB_OAUTH_CALLBACK_PORT=8085",
               "name": "-e",
-              "type": "named"
+              "type": "named",
+              "value": "GITHUB_OAUTH_CALLBACK_PORT=8085"
             },
             {
               "description": "Optional GitHub Personal Access Token. Omit to log in with OAuth on first use.",
+              "name": "-e",
+              "type": "named",
               "value": "GITHUB_PERSONAL_ACCESS_TOKEN={token}",
               "variables": {
                 "token": {
                   "format": "string",
                   "isSecret": true
                 }
-              },
-              "name": "-e",
-              "type": "named"
+              }
             }
           ],
           "transport": {
@@ -57,7 +57,7 @@
         "url": "https://github.com/github/github-mcp-server"
       },
       "title": "GitHub",
-      "version": "1.13.0"
+      "version": "2.0.2"
     },
     {
       "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
@@ -127,7 +127,7 @@
           "transport": {
             "type": "stdio"
           },
-          "version": "4.1.1"
+          "version": "4.2.0"
         },
         {
           "environmentVariables": [
@@ -137,20 +137,20 @@
               "name": "CONTEXT7_API_KEY"
             }
           ],
-          "fileSha256": "887f32c140ca9fa85a0363191f5ee7a443dac17649aaf1f96cdf505e4dc9d26f",
-          "identifier": "https://github.com/upstash/context7/releases/download/mcpb-v4.1.1/context7.mcpb",
+          "fileSha256": "92b77f081cd347e616b39b96caf746ac4ce6c3efa4626d4c5150ca362d00bb47",
+          "identifier": "https://github.com/upstash/context7/releases/download/mcpb-v4.2.0/context7.mcpb",
           "registryType": "mcpb",
           "transport": {
             "type": "stdio"
           },
-          "version": "4.1.1"
+          "version": "4.2.0"
         }
       ],
       "remotes": [
         {
           "headers": [
             {
-              "description": "API key for authentication. Accepts \"Bearer <key>\" or the raw key.",
+              "description": "API key for authentication. Accepts \"Bearer \u003ckey\u003e\" or the raw key.",
               "isSecret": true,
               "name": "Authorization"
             }
@@ -164,7 +164,7 @@
         "url": "https://github.com/upstash/context7"
       },
       "title": "Context7",
-      "version": "4.1.1",
+      "version": "4.2.0",
       "websiteUrl": "https://context7.com"
     },
     {
@@ -378,6 +378,7 @@
         {
           "environmentVariables": [
             {
+              "name": "FIRECRAWL_API_KEY",
               "value": "{api_key}",
               "variables": {
                 "api_key": {
@@ -385,8 +386,7 @@
                   "isRequired": true,
                   "isSecret": true
                 }
-              },
-              "name": "FIRECRAWL_API_KEY"
+              }
             }
           ],
           "identifier": "firecrawl-mcp",
@@ -395,8 +395,8 @@
             {
               "format": "string",
               "isRequired": true,
-              "value": "-y",
               "type": "positional",
+              "value": "-y",
               "valueHint": "noninteractive_mode"
             }
           ],
@@ -474,12 +474,12 @@
           "identifier": "Azure.Mcp",
           "packageArguments": [
             {
-              "value": "server",
-              "type": "positional"
+              "type": "positional",
+              "value": "server"
             },
             {
-              "value": "start",
-              "type": "positional"
+              "type": "positional",
+              "value": "start"
             }
           ],
           "registryType": "nuget",
@@ -492,12 +492,12 @@
           "identifier": "@azure/mcp",
           "packageArguments": [
             {
-              "value": "server",
-              "type": "positional"
+              "type": "positional",
+              "value": "server"
             },
             {
-              "value": "start",
-              "type": "positional"
+              "type": "positional",
+              "value": "start"
             }
           ],
           "registryType": "npm",
@@ -510,12 +510,12 @@
           "identifier": "msmcp-azure",
           "packageArguments": [
             {
-              "value": "server",
-              "type": "positional"
+              "type": "positional",
+              "value": "server"
             },
             {
-              "value": "start",
-              "type": "positional"
+              "type": "positional",
+              "value": "start"
             }
           ],
           "registryType": "pypi",
@@ -593,15 +593,15 @@
             {
               "format": "string",
               "isRequired": true,
+              "type": "positional",
               "value": "{ado_org}",
+              "valueHint": "organization",
               "variables": {
                 "ado_org": {
                   "description": "Azure DevOps organization name (e.g., contoso).",
                   "isRequired": true
                 }
-              },
-              "type": "positional",
-              "valueHint": "organization"
+              }
             },
             {
               "format": "string",
@@ -610,14 +610,14 @@
             },
             {
               "format": "string",
+              "isRepeated": true,
+              "type": "positional",
               "value": "{ado_domain}",
               "variables": {
                 "ado_domain": {
                   "description": "Repeat to enable specific domains: core, work, work-items, search, test-plans, repositories, wiki, pipelines, advanced-security."
                 }
-              },
-              "isRepeated": true,
-              "type": "positional"
+              }
             }
           ],
           "registryType": "npm",
@@ -625,8 +625,8 @@
             {
               "format": "string",
               "isRequired": true,
-              "value": "-y",
               "type": "positional",
+              "value": "-y",
               "valueHint": "noninteractive_mode"
             }
           ],
@@ -655,39 +655,39 @@
           "runtimeArguments": [
             {
               "description": "HCP Terraform or Terraform Enterprise base URL.",
+              "name": "-e",
+              "type": "named",
               "value": "TFE_ADDRESS={address}",
               "variables": {
                 "address": {
                   "default": "https://app.terraform.io",
                   "format": "string"
                 }
-              },
-              "name": "-e",
-              "type": "named"
+              }
             },
             {
               "description": "HCP Terraform or Terraform Enterprise API token used to authenticate requests.",
+              "name": "-e",
+              "type": "named",
               "value": "TFE_TOKEN={token}",
               "variables": {
                 "token": {
                   "format": "string",
                   "isSecret": true
                 }
-              },
-              "name": "-e",
-              "type": "named"
+              }
             },
             {
               "description": "Set to true to enable tools that execute Terraform operations requiring explicit approval.",
+              "name": "-e",
+              "type": "named",
               "value": "ENABLE_TF_OPERATIONS={enabled}",
               "variables": {
                 "enabled": {
                   "default": "false",
                   "format": "boolean"
                 }
-              },
-              "name": "-e",
-              "type": "named"
+              }
             }
           ],
           "runtimeHint": "docker",
@@ -1884,17 +1884,18 @@
           "environmentVariables": [
             {
               "description": "your elasticsearch url",
+              "name": "ES_URL",
               "value": "{es_url}",
               "variables": {
                 "es_url": {
                   "description": "your elasticsearch url",
                   "isRequired": true
                 }
-              },
-              "name": "ES_URL"
+              }
             },
             {
               "description": "your api key",
+              "name": "ES_API_KEY",
               "value": "{es_api_key}",
               "variables": {
                 "es_api_key": {
@@ -1902,8 +1903,7 @@
                   "isRequired": true,
                   "isSecret": true
                 }
-              },
-              "name": "ES_API_KEY"
+              }
             }
           ],
           "identifier": "docker.elastic.co/mcp/elasticsearch",
@@ -1912,8 +1912,8 @@
             {
               "format": "string",
               "isRequired": true,
-              "value": "run",
               "type": "positional",
+              "value": "run",
               "valueHint": "docker_cmd"
             },
             {
@@ -1937,8 +1937,8 @@
             {
               "format": "string",
               "isRequired": true,
-              "value": "$ES_URL",
               "type": "positional",
+              "value": "$ES_URL",
               "valueHint": "env_var_name"
             },
             {
@@ -1950,21 +1950,21 @@
             {
               "format": "string",
               "isRequired": true,
-              "value": "$ES_API_KEY",
               "type": "positional",
+              "value": "$ES_API_KEY",
               "valueHint": "env_var_name"
             },
             {
               "format": "string",
               "isRequired": true,
-              "value": "docker.elastic.co/mcp/elasticsearch",
               "type": "positional",
+              "value": "docker.elastic.co/mcp/elasticsearch",
               "valueHint": "image"
             },
             {
               "format": "string",
-              "value": "stdio",
               "type": "positional",
+              "value": "stdio",
               "valueHint": "transport_mode"
             }
           ],
@@ -1990,96 +1990,96 @@
         {
           "environmentVariables": [
             {
+              "name": "CHROMA_CLIENT_TYPE",
               "value": "{chroma_client_type}",
               "variables": {
                 "chroma_client_type": {
                   "description": "Client type: ephemeral (default), persistent, cloud, or http."
                 }
-              },
-              "name": "CHROMA_CLIENT_TYPE"
+              }
             },
             {
+              "name": "CHROMA_DOTENV_PATH",
               "value": "{chroma_dotenv_path}",
               "variables": {
                 "chroma_dotenv_path": {
                   "description": "Optional path to .env (defaults to ./.chroma_env)."
                 }
-              },
-              "name": "CHROMA_DOTENV_PATH"
+              }
             },
             {
+              "name": "CHROMA_DATA_DIR",
               "value": "{chroma_data_dir}",
               "variables": {
                 "chroma_data_dir": {
                   "description": "Data directory for persistent client."
                 }
-              },
-              "name": "CHROMA_DATA_DIR"
+              }
             },
             {
+              "name": "CHROMA_TENANT",
               "value": "{chroma_tenant}",
               "variables": {
                 "chroma_tenant": {
                   "description": "Chroma Cloud tenant ID."
                 }
-              },
-              "name": "CHROMA_TENANT"
+              }
             },
             {
+              "name": "CHROMA_DATABASE",
               "value": "{chroma_database}",
               "variables": {
                 "chroma_database": {
                   "description": "Chroma Cloud database name."
                 }
-              },
-              "name": "CHROMA_DATABASE"
+              }
             },
             {
+              "name": "CHROMA_API_KEY",
               "value": "{chroma_api_key}",
               "variables": {
                 "chroma_api_key": {
                   "description": "Chroma Cloud API key.",
                   "isSecret": true
                 }
-              },
-              "name": "CHROMA_API_KEY"
+              }
             },
             {
+              "name": "CHROMA_HOST",
               "value": "{chroma_host}",
               "variables": {
                 "chroma_host": {
                   "description": "Self-hosted Chroma host."
                 }
-              },
-              "name": "CHROMA_HOST"
+              }
             },
             {
+              "name": "CHROMA_PORT",
               "value": "{chroma_port}",
               "variables": {
                 "chroma_port": {
                   "description": "Self-hosted Chroma port."
                 }
-              },
-              "name": "CHROMA_PORT"
+              }
             },
             {
+              "name": "CHROMA_CUSTOM_AUTH_CREDENTIALS",
               "value": "{chroma_custom_auth}",
               "variables": {
                 "chroma_custom_auth": {
                   "description": "Custom auth credentials for self-hosted Chroma.",
                   "isSecret": true
                 }
-              },
-              "name": "CHROMA_CUSTOM_AUTH_CREDENTIALS"
+              }
             },
             {
+              "name": "CHROMA_SSL",
               "value": "{chroma_ssl}",
               "variables": {
                 "chroma_ssl": {
                   "description": "Use SSL (true/false) for self-hosted HTTP."
                 }
-              },
-              "name": "CHROMA_SSL"
+              }
             }
           ],
           "identifier": "chroma-mcp",
@@ -2327,7 +2327,7 @@
     },
     {
       "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
-      "description": "Semantic code retrieval & editing tools for coding agents.",
+      "description": "Semantic code retrieval \u0026 editing tools for coding agents.",
       "name": "oraios/serena",
       "packages": [
         {
@@ -2342,8 +2342,8 @@
             {
               "format": "string",
               "isRequired": true,
-              "value": "ide-assistant",
-              "type": "positional"
+              "type": "positional",
+              "value": "ide-assistant"
             }
           ],
           "registryType": "pypi",
@@ -2357,21 +2357,21 @@
             {
               "format": "string",
               "isRequired": true,
-              "value": "git+https://github.com/oraios/serena",
-              "type": "positional"
+              "type": "positional",
+              "value": "git+https://github.com/oraios/serena"
             },
             {
               "format": "string",
               "isRequired": true,
-              "value": "serena",
               "type": "positional",
+              "value": "serena",
               "valueHint": "cli"
             },
             {
               "format": "string",
               "isRequired": true,
-              "value": "start-mcp-server",
               "type": "positional",
+              "value": "start-mcp-server",
               "valueHint": "subcommand"
             }
           ],
@@ -2422,14 +2422,14 @@
               "description": "Netdata Cloud API token with scope:mcp",
               "isRequired": true,
               "isSecret": true,
+              "name": "Authorization",
               "value": "Bearer {NETDATA_CLOUD_API_TOKEN}",
               "variables": {
                 "NETDATA_CLOUD_API_TOKEN": {
-                  "description": "Netdata Cloud API token (create at app.netdata.cloud > User Settings > API Tokens with scope:mcp)",
+                  "description": "Netdata Cloud API token (create at app.netdata.cloud \u003e User Settings \u003e API Tokens with scope:mcp)",
                   "isSecret": true
                 }
-              },
-              "name": "Authorization"
+              }
             }
           ],
           "type": "streamable-http",
@@ -2442,8 +2442,35 @@
         "url": "https://github.com/netdata/netdata"
       },
       "title": "Netdata",
-      "version": "2.12.0",
+      "version": "2.12.1",
       "websiteUrl": "https://www.netdata.cloud"
+    },
+    {
+      "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+      "description": "Comprehensive Model Context Protocol server for managing Home Assistant through AI assistants.",
+      "name": "io.github.homeassistant-ai/ha-mcp",
+      "packages": [
+        {
+          "identifier": "ha-mcp",
+          "registryType": "pypi",
+          "transport": {
+            "type": "stdio"
+          },
+          "version": "8.6.0"
+        },
+        {
+          "identifier": "ghcr.io/homeassistant-ai/ha-mcp:8.6.0",
+          "registryType": "oci",
+          "transport": {
+            "type": "stdio"
+          }
+        }
+      ],
+      "repository": {
+        "source": "github",
+        "url": "https://github.com/homeassistant-ai/ha-mcp.git"
+      },
+      "version": "8.6.0"
     }
   ]
 }

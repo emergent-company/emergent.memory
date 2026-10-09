@@ -1,17 +1,25 @@
 // Command refresh-mcp-catalog regenerates the embedded curated MCP registry
-// catalog (apps/server/domain/mcpregistry/catalog/servers.json) from the
-// GitHub MCP registry snapshot.
+// catalog (apps/server/domain/mcpregistry/catalog/servers.json) from a curated
+// source list that can mix two source kinds.
 //
-// For each slug in the curated source list (sources.txt, one GitHub MCP-registry
-// slug per line), it fetches https://github.com/mcp/<slug>?format=json and
-// extracts payload.mcpDetailsRoute.server_data.raw_data.server, dropping the
-// `_meta` key. The result is written as {"servers":[...]} in the official
-// registry `server.json` schema, preserving sources.txt order.
+// Each line of the source list (sources.txt) is either:
 //
-// It fails loudly (non-zero exit) if any slug 404s or yields a server object
+//   - a GitHub MCP-registry slug (`owner/repo`), fetched from
+//     https://github.com/mcp/<slug>?format=json with
+//     payload.mcpDetailsRoute.server_data.raw_data.server extracted; or
+//   - an official MCP registry server name prefixed `official:` (e.g.
+//     `official:io.github.homeassistant-ai/ha-mcp`), fetched from
+//     {registry-base}/v0.1/servers/<name>/versions/latest with the top-level
+//     `server` object extracted.
+//
+// Both kinds drop the `_meta` key and require a non-empty `name`. The result is
+// written as {"servers":[...]} in the official registry `server.json` schema,
+// preserving sources.txt order.
+//
+// It fails loudly (non-zero exit) if any source 404s or yields a server object
 // without a `name`, and never overwrites the existing catalog with a partial or
 // empty result: the whole catalog is assembled in memory and only written to
-// disk once every slug has succeeded.
+// disk once every source has succeeded.
 //
 // Run from apps/server:
 //
@@ -29,6 +37,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,7 +47,20 @@ import (
 const (
 	defaultSources = "domain/mcpregistry/catalog/sources.txt"
 	defaultOut     = "domain/mcpregistry/catalog/servers.json"
+
+	// defaultBaseURL is the base URL of the GitHub MCP registry snapshot.
 	defaultBaseURL = "https://github.com/mcp"
+
+	// defaultRegistryBaseURL is the base URL of the official MCP registry.
+	defaultRegistryBaseURL = "https://registry.modelcontextprotocol.io"
+
+	// registryAPIVersion is the official MCP registry API version used in
+	// server lookup URLs.
+	registryAPIVersion = "v0.1"
+
+	// officialPrefix marks a source line as an official MCP registry server
+	// name (everything after the prefix) rather than a GitHub slug.
+	officialPrefix = "official:"
 )
 
 func main() {
@@ -51,9 +73,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("refresh-mcp-catalog", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var (
-		sourcesPath = fs.String("sources", defaultSources, "path to the curated sources list")
-		outPath     = fs.String("out", defaultOut, "path to write the generated catalog JSON")
-		baseURL     = fs.String("base-url", defaultBaseURL, "base URL of the GitHub MCP registry snapshot")
+		sourcesPath     = fs.String("sources", defaultSources, "path to the curated sources list")
+		outPath         = fs.String("out", defaultOut, "path to write the generated catalog JSON")
+		baseURL         = fs.String("base-url", defaultBaseURL, "base URL of the GitHub MCP registry snapshot")
+		registryBaseURL = fs.String("registry-base-url", defaultRegistryBaseURL, "base URL of the official MCP registry")
 	)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -66,12 +89,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	slugs, err := readSources(*sourcesPath)
+	sources, err := readSources(*sourcesPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "reading sources: %v\n", err)
 		return 1
 	}
-	if len(slugs) == 0 {
+	if len(sources) == 0 {
 		fmt.Fprintf(stderr, "sources list is empty\n")
 		return 1
 	}
@@ -80,7 +103,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	defer cancel()
 
 	client := &http.Client{Timeout: 30 * time.Second}
-	servers, err := refresh(ctx, client, *baseURL, slugs)
+	servers, err := refresh(ctx, client, *baseURL, *registryBaseURL, sources)
 	if err != nil {
 		fmt.Fprintf(stderr, "refresh failed: %v\n", err)
 		return 1
@@ -105,9 +128,10 @@ func readSources(path string) ([]string, error) {
 	return parseSources(f)
 }
 
-// parseSources parses a curated source list: one slug per line, with blank
+// parseSources parses a curated source list: one source per line, with blank
 // lines and `#` comments (full-line, leading whitespace allowed) ignored.
-// Lines are trimmed of surrounding whitespace.
+// Lines are trimmed of surrounding whitespace and returned verbatim, so a line
+// prefixed `official:` keeps its prefix for dispatch later.
 func parseSources(r io.Reader) ([]string, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
@@ -124,14 +148,24 @@ func parseSources(r io.Reader) ([]string, error) {
 	return slugs, nil
 }
 
-// refresh fetches and extracts the server object for every slug, in order. It
-// returns a slice of the same length as slugs, or an error on the first
-// failure — the caller writes nothing on error, so a bad slug can never leave a
-// partial catalog on disk.
-func refresh(ctx context.Context, client *http.Client, baseURL string, slugs []string) ([]map[string]any, error) {
-	servers := make([]map[string]any, 0, len(slugs))
-	for _, slug := range slugs {
-		srv, err := fetchServer(ctx, client, baseURL, slug)
+// refresh fetches and extracts the server object for every source, in order.
+// A source prefixed `official:` is resolved against the official MCP registry;
+// any other source is resolved against the GitHub MCP registry. It returns a
+// slice of the same length as sources, or an error on the first failure — the
+// caller writes nothing on error, so a bad source can never leave a partial
+// catalog on disk.
+func refresh(ctx context.Context, client *http.Client, baseURL, registryBaseURL string, sources []string) ([]map[string]any, error) {
+	servers := make([]map[string]any, 0, len(sources))
+	for _, src := range sources {
+		var (
+			srv map[string]any
+			err error
+		)
+		if name, ok := strings.CutPrefix(src, officialPrefix); ok {
+			srv, err = fetchOfficialServer(ctx, client, registryBaseURL, name)
+		} else {
+			srv, err = fetchServer(ctx, client, baseURL, src)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -175,6 +209,44 @@ func fetchServer(ctx context.Context, client *http.Client, baseURL, slug string)
 	return srv, nil
 }
 
+// fetchOfficialServer fetches and extracts the server object for a single
+// official MCP registry server name. The name is path-escaped so slash-bearing
+// names (e.g. `io.github.homeassistant-ai/ha-mcp`) become `%2F` in the URL.
+func fetchOfficialServer(ctx context.Context, client *http.Client, registryBaseURL, name string) (map[string]any, error) {
+	url := fmt.Sprintf("%s/%s/servers/%s/versions/latest",
+		strings.TrimRight(registryBaseURL, "/"), registryAPIVersion, url.PathEscape(name))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("building request for %s: %w", name, err)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetching %s: %w", name, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("server %q not found (404) at %s", name, url)
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("fetching %s: status %d: %s", name, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", name, err)
+	}
+
+	srv, err := extractOfficialServer(body)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+	return srv, nil
+}
+
 // githubPayload models the fixed path into the GitHub MCP registry `?format=json`
 // response: payload.mcpDetailsRoute.server_data.raw_data.server.
 type githubPayload struct {
@@ -187,6 +259,12 @@ type githubPayload struct {
 			} `json:"server_data"`
 		} `json:"mcpDetailsRoute"`
 	} `json:"payload"`
+}
+
+// officialPayload models the official MCP registry server response:
+// {"server": {...}, "_meta": {...}}. The `_meta` sidecar is ignored.
+type officialPayload struct {
+	Server json.RawMessage `json:"server"`
 }
 
 // extractServer extracts the server object from a GitHub `?format=json`
@@ -205,6 +283,27 @@ func extractServer(body []byte) (map[string]any, error) {
 		return nil, errors.New("payload has no server data")
 	}
 
+	return decodeServer(raw)
+}
+
+// extractOfficialServer extracts the server object from an official MCP
+// registry response, drops the `_meta` key, and requires a non-empty `name`.
+func extractOfficialServer(body []byte) (map[string]any, error) {
+	var p officialPayload
+	if err := json.Unmarshal(body, &p); err != nil {
+		return nil, fmt.Errorf("decoding response: %w", err)
+	}
+
+	if len(p.Server) == 0 {
+		return nil, errors.New("payload has no server data")
+	}
+
+	return decodeServer(p.Server)
+}
+
+// decodeServer decodes a raw server object, drops the `_meta` key, and requires
+// a non-empty `name`.
+func decodeServer(raw json.RawMessage) (map[string]any, error) {
 	var server map[string]any
 	if err := json.Unmarshal(raw, &server); err != nil {
 		return nil, fmt.Errorf("decoding server object: %w", err)

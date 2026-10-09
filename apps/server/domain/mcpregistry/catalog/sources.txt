@@ -1,9 +1,20 @@
 # Curated MCP registry catalog — source list
 #
-# One GitHub MCP-registry slug per line. Each slug resolves to
-# https://github.com/mcp/<slug> and is fetched via `?format=json`, from which
-# `payload.mcpDetailsRoute.server_data.raw_data.server` is extracted (with its
-# `_meta` key dropped) to build the embedded catalog.
+# Two source kinds, one per line:
+#
+#   1. A GitHub MCP-registry slug (`owner/repo`), resolved to
+#      https://github.com/mcp/<slug> and fetched via `?format=json`, from which
+#      `payload.mcpDetailsRoute.server_data.raw_data.server` is extracted (with
+#      its `_meta` key dropped).
+#
+#   2. An official MCP registry server name prefixed `official:` (e.g.
+#      `official:io.github.homeassistant-ai/ha-mcp`), resolved to
+#      https://registry.modelcontextprotocol.io/v0.1/servers/<name>/versions/latest,
+#      from which the top-level `server` object is extracted (with its `_meta`
+#      key dropped).
+#
+# Both kinds build the embedded catalog in the official `server.json` schema,
+# preserving the order of this file.
 #
 # To add or remove a server, edit this file and run the refresh tool:
 #
@@ -40,3 +51,4 @@ com.postman/postman-mcp-server
 oraios/serena
 wonderwhy-er/desktop-commander
 netdata/mcp-server
+official:io.github.homeassistant-ai/ha-mcp

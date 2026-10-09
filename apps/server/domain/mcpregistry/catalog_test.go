@@ -13,8 +13,8 @@ func TestLoadCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadCatalog: %v", err)
 	}
-	if len(cat.servers) != 28 {
-		t.Fatalf("len(catalog) = %d, want 28", len(cat.servers))
+	if len(cat.servers) != 29 {
+		t.Fatalf("len(catalog) = %d, want 29", len(cat.servers))
 	}
 	seen := make(map[string]bool, len(cat.servers))
 	for i, s := range cat.servers {
