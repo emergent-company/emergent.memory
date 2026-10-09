@@ -103,6 +103,25 @@ templ mcpRegistryEntry(entry MCPRegistryServer) {
 				}
 			</div>
 		</div>
+		{{ preview := mcpRegistryRequiredPreview(entry) }}
+		if len(preview) > 0 {
+			<div class="mt-2 rounded-field border border-warning/30 bg-warning/5 px-2.5 py-2" data-testid="mcp-registry-needed-credentials">
+				<p class="text-warning flex items-center gap-1.5 text-[11px] font-medium">
+					@ui.IconSpan("lucide--key-round", "size-3.5 shrink-0")
+					Needs configuration after install
+				</p>
+				<ul class="mt-1 flex flex-col gap-0.5">
+					for _, c := range preview {
+						<li class="text-muted text-[11px] leading-snug">
+							<span class="font-mono text-base-content/80">{ c.Name }</span>
+							if c.Description != "" {
+								<span> — { c.Description }</span>
+							}
+						</li>
+					}
+				</ul>
+			</div>
+		}
 		<div class="mt-2 flex items-center justify-between gap-3 border-t border-base-content/10 pt-2">
 			if entry.HasRemotes {
 				@mcpRegistryInstallAction(entry)

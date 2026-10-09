@@ -84,21 +84,28 @@ func TestRenderMCPServerEditPageRequiredConfig(t *testing.T) {
 				Description: "Authorization header with authentication token (PAT or App token)",
 			},
 		},
-		MissingConfigKeys: []string{"Authorization"},
-		SecretHeadersKeys: []string{"Authorization"},
+		MissingConfigKeys:     []string{"Authorization"},
+		SecretHeadersKeys:     []string{"Authorization"},
+		RegistryRepositoryURL: "https://github.com/github/github-mcp-server",
 	}
 	data := mcpServerFormDataFromServerConfigure(s, true)
 	html := renderHTML(t, MCPServerEditPage(data))
 	for _, want := range []string{
 		`data-mcp-configure-banner="srv-http"`,
 		"This server needs configuration before it can be enabled. Missing: Authorization.",
+		`data-mcp-configure-help`,
 		`data-mcp-kv-required`,
 		`data-mcp-kv-missing`,
 		"Required — enter a value.",
-		`placeholder="Enter value"`,
+		// the Authorization header renders as a scheme picker + token field
+		`data-mcp-kv-scheme`,
+		`placeholder="Enter token"`,
 		// the registry's own guidance for the required key is shown under the row
 		`data-mcp-kv-hint`,
 		"Authorization header with authentication token (PAT or App token)",
+		// a docs link is derived from the registry repository URL
+		`data-mcp-credential-docs`,
+		`href="https://github.com/settings/tokens"`,
 		// hidden serverId + test button are present on the edit form
 		`name="serverId" value="srv-http"`,
 		"data-mcp-test",

@@ -159,6 +159,12 @@ type MCPServer struct {
 	NeedsConfiguration bool `json:"needsConfiguration,omitempty"`
 	// MissingConfigKeys names the required keys whose values are blank.
 	MissingConfigKeys []string `json:"missingConfigKeys,omitempty"`
+
+	// RegistryName/RegistryRepositoryURL identify the registry entry a server was
+	// installed from (empty for manual creates). RepositoryURL backs the
+	// configure form's "where to get a token" link.
+	RegistryName          string `json:"registryName,omitempty"`
+	RegistryRepositoryURL string `json:"registryRepositoryUrl,omitempty"`
 }
 
 // MCPRequiredConfigKey is one declared required configuration entry on an MCP

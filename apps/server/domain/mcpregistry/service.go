@@ -315,21 +315,23 @@ func (s *Service) CreateServer(ctx context.Context, projectID string, dto *Creat
 	}
 
 	server := &MCPServer{
-		ProjectID:        projectID,
-		Name:             dto.Name,
-		Description:      dto.Description,
-		Enabled:          enabled,
-		Type:             dto.Type,
-		Command:          dto.Command,
-		Args:             dto.Args,
-		Env:              env,
-		URL:              dto.URL,
-		Headers:          headers,
-		SecretEnv:        secretEnv,
-		SecretHeaders:    secretHeaders,
-		RequiredConfig:   required,
-		Target:           target,
-		TargetInstanceID: dto.TargetInstanceID,
+		ProjectID:             projectID,
+		Name:                  dto.Name,
+		Description:           dto.Description,
+		Enabled:               enabled,
+		Type:                  dto.Type,
+		Command:               dto.Command,
+		Args:                  dto.Args,
+		Env:                   env,
+		URL:                   dto.URL,
+		Headers:               headers,
+		SecretEnv:             secretEnv,
+		SecretHeaders:         secretHeaders,
+		RequiredConfig:        required,
+		Target:                target,
+		TargetInstanceID:      dto.TargetInstanceID,
+		RegistryName:          dto.RegistryName,
+		RegistryRepositoryURL: dto.RegistryRepositoryURL,
 	}
 
 	if err := s.repo.CreateServer(ctx, server); err != nil {
@@ -1274,6 +1276,14 @@ func (s *Service) InstallFromRegistry(ctx context.Context, projectID string, dto
 		return nil, fmt.Errorf("selecting transport: %w", err)
 	}
 
+	// Record where this install came from so the configure form can link to the
+	// provider's docs when a credential is still needed.
+	createDTO.RegistryName = &dto.RegistryName
+	if regServer.Repository != nil && regServer.Repository.URL != "" {
+		repoURL := regServer.Repository.URL
+		createDTO.RegistryRepositoryURL = &repoURL
+	}
+
 	// Create the server in the local registry
 	server, err := s.CreateServer(ctx, projectID, createDTO)
 	if err != nil {
@@ -1590,19 +1600,22 @@ func registryServerToDTO(s RegistryServer) RegistryServerDTO {
 	// like "Bearer {api_key}".
 	headerMap := make(map[string]RegistryHeaderDTO)
 	for _, remote := range s.Remotes {
-		dto.Remotes = append(dto.Remotes, RegistryRemoteDTO{
+		remoteDTO := RegistryRemoteDTO{
 			Type: remote.Type,
 			URL:  remote.URL,
-		})
-		for _, ev := range remote.EnvironmentVariables {
-			envVarMap[ev.Name] = RegistryEnvVarDTO(ev)
 		}
 		for _, h := range remote.Headers {
+			remoteDTO.Headers = append(remoteDTO.Headers, RegistryHeaderDTO(h))
 			if _, seen := headerMap[h.Name]; seen {
 				continue
 			}
 			headerMap[h.Name] = RegistryHeaderDTO(h)
 		}
+		for _, ev := range remote.EnvironmentVariables {
+			remoteDTO.EnvironmentVariables = append(remoteDTO.EnvironmentVariables, RegistryEnvVarDTO(ev))
+			envVarMap[ev.Name] = RegistryEnvVarDTO(ev)
+		}
+		dto.Remotes = append(dto.Remotes, remoteDTO)
 	}
 
 	if len(envVarMap) > 0 {

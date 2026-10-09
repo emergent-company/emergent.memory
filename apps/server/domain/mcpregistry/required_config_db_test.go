@@ -66,6 +66,21 @@ func (s *RequiredConfigSuite) TestInstallFromRegistryRequiredConfig() {
 	s.Require().True(result.Server.NeedsConfiguration,
 		"a disabled install with a blank secret must report needsConfiguration")
 	s.Require().ElementsMatch([]string{"Authorization"}, result.Server.MissingConfigKeys)
+
+	// The registry's own guidance rides through persistence to the API.
+	var header mcpregistry.RequiredConfigKey
+	for _, k := range result.Server.RequiredConfig {
+		if k.Name == "Authorization" {
+			header = k
+		}
+	}
+	s.Require().Equal("Authorization header with authentication token (PAT or App token)", header.Description)
+
+	// Provenance is recorded so the configure form can link to the docs.
+	s.Require().NotNil(result.Server.RegistryName)
+	s.Require().Equal("io.github.github/github-mcp-server", *result.Server.RegistryName)
+	s.Require().NotNil(result.Server.RegistryRepositoryURL)
+	s.Require().Equal("https://github.com/github/github-mcp-server", *result.Server.RegistryRepositoryURL)
 }
 
 // TestUpdateServerEnableGateBlankRequired verifies enabling a server with a

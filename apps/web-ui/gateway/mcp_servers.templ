@@ -531,6 +531,23 @@ templ MCPServerEditPage(data mcpServerFormData) {
 					Message: "This server needs configuration before it can be enabled. Missing: " + mcpMissingKeysList(data.MissingConfigKeys) + ".",
 					Attrs:   templ.Attributes{"data-mcp-configure-banner": data.ID},
 				})
+				{{ details := mcpMissingConfigDetails(data.MissingConfigKeys, data.RequiredConfig) }}
+				{{ docsLabel, docsHref := mcpCredentialDocs(data.RegistryRepositoryURL) }}
+				<div class="-mt-3 rounded-box border border-base-content/10 bg-base-200/40 px-3 py-2.5" data-mcp-configure-help={ data.ID }>
+					<ul class="flex flex-col gap-1.5">
+						for _, det := range details {
+							<li class="text-xs leading-snug">
+								<span class="font-mono text-base-content/80">{ det.Name }</span>
+								if det.Description != "" {
+									<span class="text-muted"> — { det.Description }</span>
+								}
+							</li>
+						}
+					</ul>
+					if docsHref != "" {
+						<a class="link link-primary mt-1.5 inline-block text-xs" href={ templ.URL(docsHref) } target="_blank" rel="noopener noreferrer" data-mcp-credential-docs={ data.ID }>{ docsLabel }</a>
+					}
+				</div>
 			}
 			@mcpServerFormBody(data, true)
 		}
@@ -730,15 +747,34 @@ func mcpKVSecretTitle() string {
 // key's registry value template, when present, becomes the value input's
 // placeholder. The select always submits, so its index stays aligned with the
 // key/value inputs even when earlier rows are Plain.
+//
+// A required Authorization header (r.Auth) renders instead as a scheme picker
+// plus a token field: the key is fixed, the secret is implied, and submit
+// assembles "<scheme> <token>". Every row posts .auth/.scheme hidden fields (even
+// when empty for plain rows) so the arrays stay index-aligned with .key/.value.
 templ mcpServerKVRow(prefix string, r mcpKVField) {
 	<div class="flex flex-col gap-1" data-mcp-kv-row>
 		<div class="flex items-center gap-1.5">
-			<input type="text" name={ prefix + ".key" } value={ r.Key } placeholder="Name" class="input input-sm min-w-0 flex-1 font-mono"/>
-			<input type="text" name={ prefix + ".value" } value={ r.Value } placeholder={ mcpKVValuePlaceholderFor(r) } class="input input-sm min-w-0 flex-1 font-mono"/>
-			<select name={ prefix + ".secret" } class="select select-sm shrink-0" title={ mcpKVSecretTitle() } aria-label="Row visibility">
-				<option value="" selected?={ !r.Secret }>Plain</option>
-				<option value="1" selected?={ r.Secret }>Secret</option>
-			</select>
+			if r.Auth {
+				<input type="hidden" name={ prefix + ".key" } value={ r.Key }/>
+				<input type="hidden" name={ prefix + ".auth" } value="1"/>
+				<input type="hidden" name={ prefix + ".secret" } value="1"/>
+				<select name={ prefix + ".scheme" } class="select select-sm shrink-0" aria-label="Authorization scheme" data-mcp-kv-scheme>
+					for _, opt := range mcpAuthSchemeOptions(r.AuthScheme) {
+						<option value={ opt.Value } selected?={ opt.Value == r.AuthScheme }>{ opt.Label }</option>
+					}
+				</select>
+				<input type="text" name={ prefix + ".value" } value="" placeholder={ mcpAuthTokenPlaceholder(r) } class="input input-sm min-w-0 flex-1 font-mono" autocomplete="off"/>
+			} else {
+				<input type="text" name={ prefix + ".key" } value={ r.Key } placeholder="Name" class="input input-sm min-w-0 flex-1 font-mono"/>
+				<input type="text" name={ prefix + ".value" } value={ r.Value } placeholder={ mcpKVValuePlaceholderFor(r) } class="input input-sm min-w-0 flex-1 font-mono"/>
+				<input type="hidden" name={ prefix + ".auth" } value=""/>
+				<input type="hidden" name={ prefix + ".scheme" } value=""/>
+				<select name={ prefix + ".secret" } class="select select-sm shrink-0" title={ mcpKVSecretTitle() } aria-label="Row visibility">
+					<option value="" selected?={ !r.Secret }>Plain</option>
+					<option value="1" selected?={ r.Secret }>Secret</option>
+				</select>
+			}
 			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeButton, Variant: ui.ButtonGhost, Size: ui.ButtonSM, Shape: ui.ButtonShapeSquare, Icon: "lucide--x", ExtraClass: "shrink-0", AriaLabel: "Remove row", Attrs: templ.Attributes{"data-mcp-kv-remove": ""}})
 			if r.Required {
 				<span class="text-warning shrink-0 text-[10px] font-semibold uppercase tracking-wide" data-mcp-kv-required>Required</span>
@@ -1195,7 +1231,15 @@ templ mcpServersScript() {
 				x.className = 'lucide--x size-4';
 				x.setAttribute('aria-hidden', 'true');
 				rm.appendChild(x);
-				row.appendChild(key); row.appendChild(val); row.appendChild(secret); row.appendChild(rm);
+
+				// Every row carries .auth/.scheme hidden fields (empty for plain
+				// rows) so the arrays stay index-aligned with .key/.value.
+				var auth = document.createElement('input');
+				auth.type = 'hidden'; auth.name = prefix + '.auth'; auth.value = '';
+				var scheme = document.createElement('input');
+				scheme.type = 'hidden'; scheme.name = prefix + '.scheme'; scheme.value = '';
+
+				row.appendChild(key); row.appendChild(val); row.appendChild(secret); row.appendChild(auth); row.appendChild(scheme); row.appendChild(rm);
 				wrap.appendChild(row);
 				var addBtn = container.querySelector('[data-mcp-kv-add]');
 				container.insertBefore(wrap, addBtn);

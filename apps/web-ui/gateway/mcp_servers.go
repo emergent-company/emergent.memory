@@ -64,6 +64,13 @@ type mcpServerFormData struct {
 	RequiredConfigKeys []string
 	MissingConfigKeys  []string
 	ConfigureMode      bool
+	// RequiredConfig carries the full declared entries (name + kind + registry
+	// description) so the configure banner can explain each missing key rather
+	// than only name it.
+	RequiredConfig []MCPRequiredConfigKey
+	// RegistryRepositoryURL is the registry entry's source repo (empty for
+	// manual servers); the configure view links to it for credential setup.
+	RegistryRepositoryURL string
 
 	// LoadErr / NotFound only apply to the edit page's GET (the server could
 	// not be resolved); the POST re-renders carry FieldErrs / GeneralErr.
@@ -93,6 +100,11 @@ type mcpServerFieldErrs struct {
 // "Enter value" placeholder). Hint is the registry's guidance for a required
 // key (shown under the row); Placeholder is the registry's value template,
 // shown as the value input's placeholder — never prefilled.
+//
+// Auth marks a required Authorization header row: instead of a free-form value
+// the form renders a scheme picker (default Bearer) plus a token field, and
+// assembles "<scheme> <token>" on submit. AuthScheme is the selected scheme
+// ("" = raw, no prefix).
 type mcpKVField struct {
 	Key         string
 	Value       string
@@ -101,6 +113,8 @@ type mcpKVField struct {
 	Missing     bool
 	Hint        string
 	Placeholder string
+	Auth        bool
+	AuthScheme  string
 }
 
 // mcpServerSettingsBase is the base path for the MCP Servers management area.
@@ -315,8 +329,94 @@ func mcpKVFieldsWithSecrets(m map[string]string, secretKeys []string, required [
 		out[i].Required = true
 		out[i].Hint = req.Description
 		out[i].Placeholder = req.ValueHint
+		if mcpIsAuthHeader(req) {
+			out[i].Auth = true
+			out[i].AuthScheme = mcpAuthSchemeFromHint(req.ValueHint)
+			out[i].Secret = true
+		}
 	}
 	return out
+}
+
+// mcpIsAuthHeader reports whether a declared required key is an Authorization
+// header, which the form renders as a scheme + token input rather than a
+// free-form header value.
+func mcpIsAuthHeader(req MCPRequiredConfigKey) bool {
+	return req.Kind == "header" && strings.EqualFold(strings.TrimSpace(req.Name), "Authorization")
+}
+
+// mcpAuthSchemeFromHint derives the auth scheme to preselect from the registry
+// value template (e.g. "Bearer {TOKEN}" → "Bearer"). Templates that are just a
+// placeholder (no scheme word, e.g. "{TOKEN}") default to Bearer, the convention
+// for the Authorization header.
+func mcpAuthSchemeFromHint(hint string) string {
+	hint = strings.TrimSpace(hint)
+	if hint == "" {
+		return "Bearer"
+	}
+	scheme, _, ok := strings.Cut(hint, " ")
+	scheme = strings.TrimSpace(scheme)
+	if !ok || scheme == "" || strings.ContainsAny(scheme, "{}") {
+		return "Bearer"
+	}
+	return scheme
+}
+
+// mcpAuthSchemeOption is one selectable Authorization scheme in the token row.
+type mcpAuthSchemeOption struct {
+	Value string
+	Label string
+}
+
+// mcpAuthSchemeOptions returns the scheme choices for an Authorization row,
+// with the currently-selected scheme first/selected. A custom scheme already on
+// the row is preserved so editing never silently rewrites it.
+func mcpAuthSchemeOptions(current string) []mcpAuthSchemeOption {
+	base := []mcpAuthSchemeOption{
+		{Value: "Bearer", Label: "Bearer"},
+		{Value: "Token", Label: "Token"},
+		{Value: "Basic", Label: "Basic"},
+		{Value: "", Label: "Raw (no prefix)"},
+	}
+	current = strings.TrimSpace(current)
+	for _, opt := range base {
+		if opt.Value == current {
+			return base
+		}
+	}
+	if current == "" {
+		return base
+	}
+	return append([]mcpAuthSchemeOption{{Value: current, Label: current}}, base...)
+}
+
+// mcpAuthTokenPlaceholder is the token field's placeholder: the registry value
+// template when declared, otherwise a generic prompt.
+func mcpAuthTokenPlaceholder(r mcpKVField) string {
+	if p := strings.TrimSpace(r.Placeholder); p != "" {
+		return p
+	}
+	return "Enter token"
+}
+
+// mcpAuthHeaderValue assembles the Authorization header value from a selected
+// scheme and a user-entered token. An empty token yields an empty value (memory
+// keeps the stored secret on update). A scheme of "" (raw) returns the token
+// unchanged; otherwise the token is prefixed with "<scheme> " unless the user
+// already pasted a value carrying that prefix.
+func mcpAuthHeaderValue(scheme, token string) string {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return ""
+	}
+	scheme = strings.TrimSpace(scheme)
+	if scheme == "" {
+		return token
+	}
+	if len(token) >= len(scheme)+1 && strings.EqualFold(token[:len(scheme)+1], scheme+" ") {
+		return token
+	}
+	return scheme + " " + token
 }
 
 // mcpEnsureSecretKeyPlaceholders fills a server's Env/Headers maps with a
@@ -387,6 +487,8 @@ func mcpKVFieldsFromForm(c echo.Context, prefix string) []mcpKVField {
 	keys := c.Request().Form[prefix+".key"]
 	values := c.Request().Form[prefix+".value"]
 	secrets := c.Request().Form[prefix+".secret"]
+	auths := c.Request().Form[prefix+".auth"]
+	schemes := c.Request().Form[prefix+".scheme"]
 	n := max(len(keys), len(values))
 	var out []mcpKVField
 	for i := range n {
@@ -402,7 +504,18 @@ func mcpKVFieldsFromForm(c echo.Context, prefix string) []mcpKVField {
 			continue
 		}
 		secret := i < len(secrets) && mcpKVSecretValue(secrets[i])
-		out = append(out, mcpKVField{Key: k, Value: v, Secret: secret})
+		auth := i < len(auths) && strings.TrimSpace(auths[i]) != ""
+		scheme := ""
+		if i < len(schemes) {
+			scheme = strings.TrimSpace(schemes[i])
+		}
+		if auth {
+			// The form posts the bare token plus a scheme; assemble the header
+			// value memory stores.
+			v = mcpAuthHeaderValue(scheme, v)
+			secret = true
+		}
+		out = append(out, mcpKVField{Key: k, Value: v, Secret: secret, Auth: auth, AuthScheme: scheme})
 	}
 	return out
 }
@@ -496,23 +609,63 @@ func mcpServerFormDataFromServerConfigure(s MCPServer, configure bool) mcpServer
 	headerRequired := mcpRequiredConfigForKind(s.RequiredConfig, "header")
 	envRequired := mcpRequiredConfigForKind(s.RequiredConfig, "env")
 	d := mcpServerFormData{
-		ID:                 s.ID,
-		Name:               s.Name,
-		Type:               s.Type,
-		URL:                s.URL,
-		Command:            s.Command,
-		Args:               s.Args,
-		Headers:            mcpKVFieldsWithSecrets(s.Headers, s.SecretHeadersKeys, headerRequired, s.MissingConfigKeys),
-		Env:                mcpKVFieldsWithSecrets(s.Env, s.SecretEnvKeys, envRequired, s.MissingConfigKeys),
-		Enabled:            s.Enabled,
-		RequiredConfigKeys: mcpRequiredConfigKeysForTransport(s.RequiredConfig, s.Type),
-		MissingConfigKeys:  s.MissingConfigKeys,
-		ConfigureMode:      configure,
+		ID:                    s.ID,
+		Name:                  s.Name,
+		Type:                  s.Type,
+		URL:                   s.URL,
+		Command:               s.Command,
+		Args:                  s.Args,
+		Headers:               mcpKVFieldsWithSecrets(s.Headers, s.SecretHeadersKeys, headerRequired, s.MissingConfigKeys),
+		Env:                   mcpKVFieldsWithSecrets(s.Env, s.SecretEnvKeys, envRequired, s.MissingConfigKeys),
+		Enabled:               s.Enabled,
+		RequiredConfigKeys:    mcpRequiredConfigKeysForTransport(s.RequiredConfig, s.Type),
+		MissingConfigKeys:     s.MissingConfigKeys,
+		ConfigureMode:         configure,
+		RequiredConfig:        s.RequiredConfig,
+		RegistryRepositoryURL: s.RegistryRepositoryURL,
 	}
 	if !mcpServerValidTransport(d.Type) {
 		d.Type = "stdio"
 	}
 	return d
+}
+
+// mcpMissingConfigDetail pairs a still-missing required key with the registry's
+// description so the configure banner can explain each missing key.
+type mcpMissingConfigDetail struct {
+	Name        string
+	Description string
+}
+
+// mcpMissingConfigDetails resolves each missing key name to its declared
+// description (empty when the key or its guidance is unknown).
+func mcpMissingConfigDetails(missing []string, required []MCPRequiredConfigKey) []mcpMissingConfigDetail {
+	desc := make(map[string]string, len(required))
+	for _, k := range required {
+		if name := strings.TrimSpace(k.Name); name != "" {
+			desc[name] = k.Description
+		}
+	}
+	out := make([]mcpMissingConfigDetail, 0, len(missing))
+	for _, name := range missing {
+		out = append(out, mcpMissingConfigDetail{Name: name, Description: desc[name]})
+	}
+	return out
+}
+
+// mcpCredentialDocs derives a "where to get this credential" label and URL from
+// a registry repository URL. Known hosts get a direct link to their token
+// settings; anything else falls back to the repository. Returns empty strings
+// when there is no repository URL (manual servers).
+func mcpCredentialDocs(repoURL string) (label, href string) {
+	repoURL = strings.TrimSpace(repoURL)
+	if repoURL == "" {
+		return "", ""
+	}
+	if u, err := url.Parse(repoURL); err == nil && strings.EqualFold(u.Host, "github.com") {
+		return "Create a GitHub token", "https://github.com/settings/tokens"
+	}
+	return "View provider docs", repoURL
 }
 
 // mcpRequiredConfigForKind returns the required config entries of the given

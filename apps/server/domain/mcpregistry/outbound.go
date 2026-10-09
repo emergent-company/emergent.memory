@@ -44,9 +44,33 @@ func outboundHTTPClient(rawURL string) *http.Client {
 	}
 
 	return &http.Client{
-		Transport:     tr,
+		Transport:     authStatusTransport{base: tr},
 		CheckRedirect: safeRedirectPolicy,
 	}
+}
+
+// authStatusTransport wraps the outbound transport so an authentication
+// rejection (HTTP 401/403) surfaces as a typed ErrMCPAuthRejected instead of a
+// generic connection failure. The status is otherwise opaque to the MCP client
+// library, which reports only "error calling tool"/"starting HTTP client".
+//
+// A 401/403 is terminal for a credential-bearing request, so the response body
+// is closed and the request fails fast rather than letting the MCP handshake
+// continue with a body the server will reject downstream.
+type authStatusTransport struct {
+	base http.RoundTripper
+}
+
+func (t authStatusTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	if err != nil {
+		return resp, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		_ = resp.Body.Close()
+		return nil, &ErrMCPAuthRejected{Status: resp.StatusCode}
+	}
+	return resp, nil
 }
 
 // safeRedirectPolicy validates each redirect hop with the shared SSRF guard and

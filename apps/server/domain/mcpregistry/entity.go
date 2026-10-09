@@ -107,8 +107,13 @@ type MCPServer struct {
 	// for a device row; nil means every eligible device of the project.
 	Target           MCPServerTarget `bun:"target,notnull,default:'server'" json:"target"`
 	TargetInstanceID *string         `bun:"target_instance_id" json:"targetInstanceId,omitempty"`
-	CreatedAt        time.Time       `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
-	UpdatedAt        time.Time       `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
+	// RegistryName/RegistryRepositoryURL record where a registry-installed server
+	// came from. Populated only by registry installs; nil for manual creates.
+	// RepositoryURL backs the configure form's "where to get a token" link.
+	RegistryName          *string   `bun:"registry_name" json:"registryName,omitempty"`
+	RegistryRepositoryURL *string   `bun:"registry_repository_url" json:"registryRepositoryUrl,omitempty"`
+	CreatedAt             time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
+	UpdatedAt             time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
 
 	// Relations
 	Tools []*MCPServerTool `bun:"rel:has-many,join:id=server_id" json:"tools,omitempty"`
@@ -170,6 +175,11 @@ type MCPServerDTO struct {
 	RequiredConfig     []RequiredConfigKey `json:"requiredConfig"`
 	NeedsConfiguration bool                `json:"needsConfiguration"`
 	MissingConfigKeys  []string            `json:"missingConfigKeys"`
+	// RegistryName/RegistryRepositoryURL identify the registry entry a server was
+	// installed from (empty for manual creates); the client uses the repository
+	// URL to link to provider docs for credential setup.
+	RegistryName          *string `json:"registryName,omitempty"`
+	RegistryRepositoryURL *string `json:"registryRepositoryUrl,omitempty"`
 }
 
 // MCPServerToolDTO is the response DTO for an MCP server tool.
@@ -216,6 +226,10 @@ type CreateMCPServerDTO struct {
 	// before it can be enabled. Populated by registry install; manual creates
 	// may omit it (stored as an empty list).
 	RequiredConfig []RequiredConfigKey `json:"requiredConfig"`
+	// RegistryName/RegistryRepositoryURL record registry provenance on an
+	// install; manual creates leave them nil.
+	RegistryName          *string `json:"registryName,omitempty"`
+	RegistryRepositoryURL *string `json:"registryRepositoryUrl,omitempty"`
 }
 
 // UpdateMCPServerDTO is the request DTO for updating an MCP server. Unlike
@@ -292,10 +306,14 @@ type RegistryPackageDTO struct {
 	PackageArguments []string `json:"packageArguments,omitempty"`
 }
 
-// RegistryRemoteDTO is the response DTO for a registry remote.
+// RegistryRemoteDTO is the response DTO for a registry remote. Headers and
+// EnvironmentVariables are the credentials this specific remote declares, so
+// clients can preview what an install will require before installing.
 type RegistryRemoteDTO struct {
-	Type string `json:"type"`
-	URL  string `json:"url"`
+	Type                 string              `json:"type"`
+	URL                  string              `json:"url"`
+	Headers              []RegistryHeaderDTO `json:"headers,omitempty"`
+	EnvironmentVariables []RegistryEnvVarDTO `json:"environmentVariables,omitempty"`
 }
 
 // RegistryEnvVarDTO is the response DTO for a registry environment variable.
@@ -452,6 +470,9 @@ func (s *MCPServer) ToDTO() *MCPServerDTO {
 		RequiredConfig:     nonNilRequiredConfig(s.RequiredConfig),
 		NeedsConfiguration: len(missing) > 0,
 		MissingConfigKeys:  missing,
+
+		RegistryName:          s.RegistryName,
+		RegistryRepositoryURL: s.RegistryRepositoryURL,
 	}
 }
 

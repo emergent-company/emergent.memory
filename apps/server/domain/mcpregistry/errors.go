@@ -2,6 +2,7 @@ package mcpregistry
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -60,3 +61,20 @@ func (e *ErrRequiredConfigMissing) Error() string {
 // reserved address). Handlers map it to 400 (Bad Request), not 500: the URL is
 // bad input, not a server fault.
 var ErrOutboundURLNotAllowed = errors.New("remote MCP server URL not allowed")
+
+// ErrMCPAuthRejected is returned when a remote MCP server answers a connection
+// or discovery request with HTTP 401/403. It is raised by the outbound
+// transport (see authStatusTransport) so the failure is attributable to the
+// stored credential rather than a generic connection error, letting the UI tell
+// the user to fix the credential value. The message is user-facing.
+type ErrMCPAuthRejected struct {
+	Status int
+}
+
+func (e *ErrMCPAuthRejected) Error() string {
+	return fmt.Sprintf(
+		"remote MCP server rejected the credentials (HTTP %d) — check the configured value; "+
+			"for an Authorization header the value is usually `Bearer <token>`",
+		e.Status,
+	)
+}
