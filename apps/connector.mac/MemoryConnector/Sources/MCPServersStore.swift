@@ -110,7 +110,7 @@ final class MCPServersStore {
             phase = .loaded
             lastUpdated = Date()
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = Self.userMessage(for: error)
             if servers.isEmpty {
                 phase = .error
             }
@@ -192,7 +192,7 @@ final class MCPServersStore {
             toolsByServer[name] = tools
             return tools
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = Self.userMessage(for: error)
             return []
         }
     }
@@ -207,7 +207,7 @@ final class MCPServersStore {
             details[name] = detail
             return detail
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = Self.userMessage(for: error)
             return nil
         }
     }
@@ -264,7 +264,7 @@ final class MCPServersStore {
         do {
             current = try await client.get(name: server)
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = Self.userMessage(for: error)
             return false
         }
 
@@ -281,7 +281,7 @@ final class MCPServersStore {
         do {
             _ = try await client.update(name: server, config: config)
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = Self.userMessage(for: error)
             return false
         }
 
@@ -321,8 +321,19 @@ final class MCPServersStore {
 
     /// Records a mutation failure and returns `false`.
     private func didFail(_ error: Error) -> Bool {
-        errorMessage = error.localizedDescription
+        errorMessage = Self.userMessage(for: error)
         return false
+    }
+
+    /// User-facing message for an error, collapsing the raw loopback-connection
+    /// failure into a generic unavailable message so internal transport detail
+    /// never reaches the user. Server/validation messages pass through verbatim.
+    /// Pure and testable.
+    nonisolated static func userMessage(for error: Error) -> String {
+        if let api = error as? MCPServersAPIError, case .unreachable = api {
+            return "The connector isn't available right now."
+        }
+        return error.localizedDescription
     }
 
     /// Managed servers are configured in Memory and read-only locally, so every

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Observation
 
@@ -34,12 +35,6 @@ final class EngineManager {
     nonisolated static let logFileURL = URL(fileURLWithPath: NSHomeDirectory())
         .appendingPathComponent("Library/Logs/memory-connector-app.log")
 
-    /// The engine command line. Extracted so the argument list is testable
-    /// without spawning a process.
-    nonisolated static func launchArguments(configPath: String) -> [String] {
-        ["relay", "--config", configPath, "--api-port", String(ManagementPortProbe.port)]
-    }
-
     private(set) var state: State = .stopped
     private(set) var restartCount = 0
     private(set) var lastExitCode: Int32?
@@ -53,6 +48,16 @@ final class EngineManager {
     /// `reportConfigurationError` cannot set `.failed` until the child exits, so
     /// it records the message here and `processDidExit` applies it.
     private var pendingConfigurationError: String?
+    /// Set when a restart is requested while a child is live (or a transition is
+    /// in flight). `processDidExit` consumes it to spawn the successor only
+    /// after the previous child has released the loopback management port.
+    private var pendingRestart = false
+    /// Whether the queued restart is a genuine configuration-change restart and
+    /// must reset the circuit breaker when the successor finally spawns.
+    private var pendingRestartResetBreaker = false
+    /// Backstop that kills a SIGTERM'd child which does not exit within
+    /// ``terminateGracePeriod``, so a queued restart cannot hang forever.
+    private var forceKillTask: Task<Void, Never>?
 
     init(configPath: String) {
         self.configPath = configPath
@@ -70,7 +75,29 @@ final class EngineManager {
     ///   still accumulate toward `giveUp`.
     func start(resetBreaker: Bool = false) {
         guard state == .stopped || state == .failed || state == .restarting else { return }
+        // Never spawn into a management port a previous child still holds
+        // (running or mid-termination). Any live child must exit first; queue
+        // the spawn and let `processDidExit` start the successor once the child
+        // has released the port.
+        if process?.isRunning == true {
+            pendingRestart = true
+            pendingRestartResetBreaker = pendingRestartResetBreaker || resetBreaker
+            // A successor is queued: reflect it as a restart in progress so the
+            // UI shows a connecting state, not a stopped one.
+            state = .restarting
+            if let proc = process {
+                scheduleForceKillIfNeeded(proc)
+            }
+            return
+        }
         stoppedByUser = false
+        // A spawn satisfies any queued restart (config is read fresh at start),
+        // carrying the queued restart's breaker-reset intent.
+        let shouldResetBreaker = resetBreaker || pendingRestartResetBreaker
+        pendingRestart = false
+        pendingRestartResetBreaker = false
+        forceKillTask?.cancel()
+        forceKillTask = nil
 
         guard let url = engineURL() else {
             state = .failed
@@ -84,22 +111,19 @@ final class EngineManager {
         }
 
         // Fail fast when the management port is already held by another
-        // process. Only probed when no live child exists (`isRunning`), so a
-        // just-SIGTERM'd-but-still-running child cannot false-positive the
-        // probe, while a stopped-but-not-yet-cleared child is still probed.
-        if process?.isRunning != true,
-           ManagementPortProbe.shouldAbortStartForPortConflict(
-               hasLiveProcess: false,
-               portInUse: ManagementPortProbe.portInUse()
-           )
-        {
+        // process. A live child was handled above, so a held port here belongs
+        // to a foreign process and must not be raced.
+        if ManagementPortProbe.shouldAbortStartForPortConflict(
+            hasLiveProcess: false,
+            portInUse: ManagementPortProbe.portInUse()
+        ) {
             state = .failed
             lastError = "management port \(ManagementPortProbe.port) is already in use; not starting the engine"
             appendToLog("=== memory-connector engine start aborted: management port \(ManagementPortProbe.port) already in use ===\n")
             return
         }
 
-        launchEngine(at: url, resetBreaker: resetBreaker)
+        launchEngine(at: url, resetBreaker: shouldResetBreaker)
     }
 
     /// Spawns the engine binary at `url`, wiring its stdout/stderr and
@@ -176,9 +200,14 @@ final class EngineManager {
         }
     }
 
-    /// Stops the engine and disables auto-restart. Idempotent.
+    /// Stops the engine and disables auto-restart. Idempotent. Cancels any
+    /// queued restart so an explicit stop always wins.
     func stop() {
         stoppedByUser = true
+        pendingRestart = false
+        pendingRestartResetBreaker = false
+        forceKillTask?.cancel()
+        forceKillTask = nil
         guard let proc = process, proc.isRunning else {
             process = nil
             state = .stopped
@@ -201,17 +230,51 @@ final class EngineManager {
         state = .failed
     }
 
-    /// Restarts the engine with the current configuration: if one is running
-    /// (or pending), stop it and spawn a fresh process; otherwise just start.
-    /// Used by `ProjectStore.connect` after it writes the connected project's
-    /// config. Callers must only invoke this for a connected project.
+    /// Restarts the engine with the current configuration.
+    ///
+    /// A restart **sequences on the previous child's exit**: the successor is
+    /// spawned only after the old process has terminated and released the
+    /// loopback management port. Spawning while the old child still held the
+    /// port left the new engine running with a dead management API. Used by
+    /// `ProjectStore.connect` after it writes the connected project's config.
+    /// Callers must only invoke this for a connected project.
     func restart() {
-        switch state {
-        case .running, .starting, .restarting:
-            stop()
+        switch Self.restartAction(hasLiveProcess: process?.isRunning == true,
+                                  isBusy: state == .starting || state == .restarting)
+        {
+        case .startNow:
+            // Only reached with no live child; a stale `.running` state (no
+            // process) must not block the spawn.
+            if state == .running {
+                state = .stopped
+            }
             start(resetBreaker: true)
-        case .stopped, .failed:
-            start(resetBreaker: true)
+        case .terminateThenRestart:
+            pendingRestart = true
+            pendingRestartResetBreaker = true
+            state = .restarting
+            appendToLog("=== memory-connector engine restart (SIGTERM) ===\n")
+            if let proc = process {
+                proc.terminate()
+                scheduleForceKillIfNeeded(proc)
+            }
+        case .queueRestart:
+            pendingRestart = true
+            pendingRestartResetBreaker = true
+        }
+    }
+
+    /// Kills `proc` if it has not exited within ``terminateGracePeriod``, so a
+    /// hung child cannot wedge a queued restart. Cancelled when the process
+    /// exits or a new lifecycle action supersedes it.
+    private func scheduleForceKillIfNeeded(_ proc: Process) {
+        forceKillTask?.cancel()
+        forceKillTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.terminateGracePeriod))
+            guard !Task.isCancelled, let self else { return }
+            guard process === proc, proc.isRunning else { return }
+            appendToLog("engine did not exit after SIGTERM; killing it\n")
+            kill(proc.processIdentifier, SIGKILL)
         }
     }
 
@@ -233,8 +296,20 @@ final class EngineManager {
         if let current = process, current !== terminated {
             return // stale callback from a superseded process
         }
+        forceKillTask?.cancel()
+        forceKillTask = nil
         process = nil
         lastExitCode = exitCode
+
+        // A restart requested while this child was live is now safe to run: the
+        // port it held is released by the exit, so the successor can bind it.
+        // `start` consumes the queued breaker-reset intent.
+        if pendingRestart {
+            pendingRestart = false
+            appendToLog("engine exited \(exitCode); restarting with current configuration\n")
+            start()
+            return
+        }
 
         if stoppedByUser {
             // A configuration error reported while the child was terminating is

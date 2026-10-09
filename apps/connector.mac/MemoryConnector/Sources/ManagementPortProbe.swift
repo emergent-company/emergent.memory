@@ -24,9 +24,10 @@ enum ManagementPortProbe {
     }
 
     /// The pure "may we spawn?" decision for a held management port: abort only
-    /// when there is no live child AND the port is in use. A live child (e.g.
-    /// `restart()`'s just-SIGTERM'd process) never aborts, so its lingering
-    /// socket cannot false-positive the probe.
+    /// when there is no live child AND the port is in use. A restart now waits
+    /// for its previous child to exit, so a spawn is only attempted with no live
+    /// child; a port still held then belongs to a foreign process and must not
+    /// be raced.
     static func shouldAbortStartForPortConflict(hasLiveProcess: Bool,
                                                 portInUse: Bool) -> Bool
     {

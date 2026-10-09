@@ -8,10 +8,20 @@ import SwiftUI
 /// Server commands, URLs, environment variables, and headers stay in the
 /// connector's local config — only the discovered tools are shared with Memory.
 struct MCPServersPage: View {
+    @SwiftUI.Environment(EngineManager.self) private var engine
+    @SwiftUI.Environment(ProjectStore.self) private var projectStore
+    @SwiftUI.Environment(AppState.self) private var appState
+
     @State private var store = MCPServersStore()
     @State private var showingAdd = false
     @State private var showingRegistry = false
     @State private var selectedServer: HostedMCPServer?
+
+    /// Whether the connector's management API is reachable for this page.
+    private var availability: MCPServersAvailability {
+        MCPServersAvailability.resolve(engineState: engine.state,
+                                       hasConnectedProject: projectStore.hasConnectedProject)
+    }
 
     var body: some View {
         Form {
@@ -27,6 +37,7 @@ struct MCPServersPage: View {
                         Label("Browse registry", systemImage: "magnifyingglass")
                     }
                     .buttonStyle(.borderless)
+                    .disabled(!availability.isAvailable)
                     .help("Search the MCP registry and add a suggested server")
                     Button {
                         showingAdd = true
@@ -34,21 +45,28 @@ struct MCPServersPage: View {
                         Label("Add", systemImage: "plus")
                     }
                     .buttonStyle(.borderless)
+                    .disabled(!availability.isAvailable)
                     .help("Add a hosted MCP server")
                 }
             } footer: {
                 Text("MCP servers are hosted by the connector on this Mac. Commands, URLs, environment variables, and headers stay in the connector's local config and are never sent to Memory.")
             }
 
-            if let status = store.status {
+            if availability.isAvailable, let status = store.status {
                 relaySection(status)
             }
         }
         .formStyle(.grouped)
         .navigationTitle("Hosted MCP Servers")
         .task {
-            await store.load()
             store.startPolling()
+        }
+        // Reload whenever the connector becomes available (and never while it is
+        // starting, stopped, or failed). `availability` is Equatable so the task
+        // re-runs on each transition.
+        .task(id: availability) {
+            guard availability.isAvailable else { return }
+            await store.load()
         }
         .onDisappear { store.stopPolling() }
         .sheet(isPresented: $showingAdd) {
@@ -66,6 +84,20 @@ struct MCPServersPage: View {
 
     @ViewBuilder
     private var listContent: some View {
+        switch availability {
+        case .noConnectedProject:
+            notConnectedRow
+        case .connecting:
+            ConnectorLoadingRow(caption: "Connecting…")
+        case .unavailable:
+            unavailableRow
+        case .available:
+            availableContent
+        }
+    }
+
+    @ViewBuilder
+    private var availableContent: some View {
         if store.servers.isEmpty {
             if store.phase == .loading || store.phase == .idle {
                 ConnectorLoadingRow(caption: "Loading hosted MCP servers…")
@@ -221,6 +253,52 @@ struct MCPServersPage: View {
         } header: {
             Text("Relay")
         }
+    }
+}
+
+// MARK: - Availability-gated states
+
+extension MCPServersPage {
+    /// No project connected: the connector is intentionally stopped, so this is
+    /// a setup prompt rather than an error.
+    private var notConnectedRow: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "person.crop.circle.badge.questionmark")
+                .font(.title3)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Connect a project to manage hosted MCP servers")
+                    .font(.headline)
+                Text("Hosted MCP servers run through the connector while a Memory project is connected.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+            Button("Open Project & Account") { appState.selectedSidebarItem = .project }
+        }
+        .padding(.vertical, 4)
+    }
+
+    /// A project is connected but the connector is not reachable. Kept generic:
+    /// no engine or loopback-API detail is shown.
+    private var unavailableRow: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.title3)
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Can't load hosted MCP servers")
+                    .font(.headline)
+                Text("The connector isn't available right now. Try again in a moment.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+            Button("Retry") { Task { await store.load() } }
+        }
+        .padding(.vertical, 4)
     }
 }
 

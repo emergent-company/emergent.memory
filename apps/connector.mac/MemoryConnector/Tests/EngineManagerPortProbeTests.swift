@@ -27,8 +27,8 @@ final class EngineManagerPortProbeTests: XCTestCase {
     }
 
     func testNeverAbortWithLiveProcess() {
-        // restart()'s just-SIGTERM'd child still holds the port briefly — a
-        // live process must never abort the start, port-in-use or not.
+        // A live child is never raced; restarts now wait for the previous child
+        // to exit, so this path is only reached for an unexpectedly live child.
         XCTAssertFalse(ManagementPortProbe.shouldAbortStartForPortConflict(hasLiveProcess: true, portInUse: true))
     }
 

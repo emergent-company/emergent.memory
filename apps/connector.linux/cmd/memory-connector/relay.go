@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -191,13 +192,21 @@ func runRelayCommand(name string, args []string, stdout, stderr io.Writer, withL
 			}
 		}
 		addr := mgmtAPIAddr(*apiPort)
+		// Bind BEFORE serving. A predecessor engine may still hold the port for
+		// a moment during a restart; retry the bind briefly so the API is never
+		// silently lost, and fail fast (exit 1) if it cannot be bound at all
+		// rather than running with a dead management API.
+		ln, err := listenManagementAPI(addr, mgmtAPIBindRetry)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "memory-connector relay: management API: %v\n", err)
+			return 1
+		}
 		httpServer := &http.Server{
-			Addr:              addr,
 			Handler:           api.Handler(),
 			ReadHeaderTimeout: 5 * time.Second,
 		}
 		go func() {
-			if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			if err := httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				_, _ = fmt.Fprintf(stderr, "memory-connector relay: management API: %v\n", err)
 			}
 		}()
@@ -258,6 +267,30 @@ func prepareRelayRegistry(cfg *config.Config) (*toolreg.Registry, string, error)
 // connector host.
 func mgmtAPIAddr(port int) string {
 	return fmt.Sprintf("127.0.0.1:%d", port)
+}
+
+// mgmtAPIBindRetry bounds how long the management API listener retries a bind
+// that is transiently held (for example by a predecessor engine still shutting
+// down during a restart). Must comfortably exceed the engine's own graceful
+// shutdown window.
+const mgmtAPIBindRetry = 3 * time.Second
+
+// listenManagementAPI binds the loopback management listener at addr, retrying
+// a failed bind for up to retry so a port transiently held by a terminating
+// predecessor is ridden out. It returns the last bind error when the port is
+// still unavailable after the window.
+func listenManagementAPI(addr string, retry time.Duration) (net.Listener, error) {
+	deadline := time.Now().Add(retry)
+	for {
+		ln, err := net.Listen("tcp", addr)
+		if err == nil {
+			return ln, nil
+		}
+		if time.Now().After(deadline) {
+			return nil, err
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // startUpdateChecker launches the background update-check loop when auto-update
