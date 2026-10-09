@@ -96,15 +96,45 @@ struct MCPSecretField: View {
     let placeholder: String
     @Binding var text: String
     @State private var revealed = false
+    /// Local mirror of the field's text. Keeping the in-flight edit in this
+    /// view's own state (with a stable field identity below) stops a parent
+    /// re-render — for example the store refresh that follows a Save — from
+    /// resetting the control to a stale binding value mid-edit.
+    @State private var draft: String
+
+    init(placeholder: String, text: Binding<String>) {
+        self.placeholder = placeholder
+        _text = text
+        _draft = State(initialValue: text.wrappedValue)
+    }
 
     var body: some View {
         HStack(spacing: 4) {
-            if revealed {
-                TextField(placeholder, text: $text)
+            // Both controls stay mounted and are hidden with opacity rather than
+            // swapped in an `if`/`else`: a conditional swap gives the two fields
+            // different identities, so re-rendering the row tears the active
+            // field down before its edit reaches the binding.
+            ZStack(alignment: .leading) {
+                TextField(placeholder, text: $draft)
                     .autocorrectionDisabled()
-            } else {
-                SecureField(placeholder, text: $text)
+                    .opacity(revealed ? 1 : 0)
+                    .allowsHitTesting(revealed)
+                    .accessibilityHidden(!revealed)
+                SecureField(placeholder, text: $draft)
                     .autocorrectionDisabled()
+                    .opacity(revealed ? 0 : 1)
+                    .allowsHitTesting(!revealed)
+                    .accessibilityHidden(revealed)
+            }
+            .onChange(of: draft) { _, newValue in
+                if text != newValue {
+                    text = newValue
+                }
+            }
+            .onChange(of: text) { _, newValue in
+                if draft != newValue {
+                    draft = newValue
+                }
             }
             Button {
                 revealed.toggle()
