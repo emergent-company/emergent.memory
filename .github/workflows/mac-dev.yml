@@ -201,3 +201,27 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MARKETING: ${{ steps.version.outputs.marketing }}
         run: bash .github/scripts/publish-appcast.sh dev "$MARKETING" apps/connector.mac/build/appcast
+
+      - name: Clean up signing keychain and p12
+        # Runs even when an earlier step failed, so signing material never
+        # survives the job. Every command is best-effort (`|| true`) so cleanup
+        # cannot mask the real job result.
+        if: always()
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          if [ -f "$KEYCHAIN_PATH" ]; then
+            security unlock-keychain -p "temp-keychain-password" "$KEYCHAIN_PATH" 2>/dev/null || true
+            # Remove the imported signing identity before dropping the keychain.
+            security find-identity -v -p codesigning "$KEYCHAIN_PATH" 2>/dev/null \
+              | awk '/"Developer ID|"Apple Development|"Mac Developer/ {print $2}' \
+              | while read -r HASH; do
+                  if [ -n "$HASH" ]; then
+                    security delete-identity -Z "$HASH" "$KEYCHAIN_PATH" 2>/dev/null || true
+                  fi
+                done
+          fi
+          security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+          # Restore the user keychain search list so no dangling temp entry is
+          # left behind on the (self-hosted) runner.
+          security list-keychain -d user -s "$HOME/Library/Keychains/login.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/cert.p12"
