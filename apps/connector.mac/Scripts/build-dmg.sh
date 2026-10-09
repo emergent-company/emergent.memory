@@ -242,6 +242,17 @@ else
         "${DMG_PATH}"
 fi
 
+# Step 5b: Guard the DMG size. The update DMG is published to the public GitHub
+# Pages site (committed to the gh-pages branch by
+# .github/scripts/publish-appcast.sh), and GitHub refuses any single file larger
+# than 100 MiB at push time — which would silently break the feed's enclosure
+# URL. Fail early, with the actual size, at a safe 90 MiB threshold via the
+# shared checker (the same one publish-appcast.sh enforces). If this ever trips,
+# host the DMG elsewhere (e.g. an object store) and point the appcast
+# --download-url-prefix at it rather than raising the threshold.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+bash "${SCRIPT_DIR}/../../../.github/scripts/check-pages-file-size.sh" "${DMG_PATH}"
+
 # Step 6: Sign the DMG. Must happen AFTER the DMG is finalized.
 echo "==> Signing DMG..."
 codesign --force --timestamp --sign "${SIGN_IDENTITY}" "${DMG_PATH}"

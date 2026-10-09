@@ -33,6 +33,12 @@ dest_rel="appcast/${channel}"
 source_dir="$(cd "${source_dir}" && pwd)"
 [ -f "${source_dir}/appcast.xml" ] || { echo "error: ${source_dir}/appcast.xml not found" >&2; exit 1; }
 
+# Shared size guard (also enforced at build time in Scripts/build-dmg.sh): a DMG
+# over the guard is committed to gh-pages, where GitHub's 100 MiB per-file push
+# limit would reject it and silently 404 the feed's enclosure URL.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+check_pages_size() { bash "${script_dir}/check-pages-file-size.sh" "$@"; }
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -48,6 +54,7 @@ cp "${source_dir}/appcast.xml" "${dest_rel}/"
 shopt -s nullglob
 dmg=( "${source_dir}"/Memory-*.dmg )
 [ "${#dmg[@]}" -gt 0 ] || { echo "error: no Memory-*.dmg in ${source_dir}" >&2; exit 1; }
+check_pages_size "${dmg[@]}"
 cp "${dmg[@]}" "${dest_rel}/"
 deltas=( "${source_dir}"/*.delta )
 [ "${#deltas[@]}" -gt 0 ] && cp "${deltas[@]}" "${dest_rel}/"

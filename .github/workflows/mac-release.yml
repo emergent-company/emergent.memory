@@ -49,6 +49,14 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64, mac]
     needs: check
     if: needs.check.outputs.changed == 'true'
+    # The appcast publish step commits to the gh-pages branch, which the docs
+    # workflow also deploys to. Share its `gh-pages-deploy` concurrency group so
+    # GitHub serializes the two and their pushes cannot race. Job-level groups
+    # share the same repository-wide namespace as docs.yml's workflow-level
+    # group. cancel-in-progress: false so a release publish is never cancelled.
+    concurrency:
+      group: gh-pages-deploy
+      cancel-in-progress: false
     env:
       DEVELOPMENT_TEAM: ${{ secrets.DEVELOPMENT_TEAM }}
       NOTARIZE_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}

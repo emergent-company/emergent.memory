@@ -1,6 +1,11 @@
 name: Docs
 
 concurrency:
+  # Shared with mac-release.yml / mac-dev.yml, which publish the Sparkle appcast
+  # to the same gh-pages branch: GitHub serializes every run in this group so
+  # their pushes cannot race (a job-level group of the same name contends too).
+  # cancel-in-progress: false so a release publish is never cancelled by a newer
+  # docs run.
   group: gh-pages-deploy
   cancel-in-progress: false
 
@@ -66,7 +71,12 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Deploy as latest
-        run: mike deploy --push --update-aliases dev latest
+        run: |
+          # mike neither fetches nor rebases (it fails hard on a non-FF push), so
+          # refresh the gh-pages tracking ref it compares against. The shared
+          # `gh-pages-deploy` concurrency group already serializes the pushes.
+          git fetch origin gh-pages
+          mike deploy --push --update-aliases dev latest
 
       - name: Sync root-level files to gh-pages
         run: |
@@ -76,6 +86,8 @@ jobs:
           cp docs/llms.md /tmp/llms.md
           cp docs/llms-go-sdk.md /tmp/llms-go-sdk.md
           cp docs/llms-swift-sdk.md /tmp/llms-swift-sdk.md
+          # gh-pages does not contain .github/, so stage the retry helper too.
+          cp .github/scripts/push-gh-pages-with-retry.sh /tmp/push-gh-pages-with-retry.sh
           git fetch origin gh-pages
           git checkout gh-pages
           cp /tmp/swagger.json swagger.json
@@ -86,7 +98,10 @@ jobs:
           cp /tmp/llms-swift-sdk.md llms-swift-sdk.md
           git add swagger.json swagger.yaml openapi.json llms.md llms-go-sdk.md llms-swift-sdk.md
           git diff --cached --quiet || git commit -m "docs: sync root-level raw files [skip ci]"
-          git push origin gh-pages
+          # Pull-rebase-and-retry, matching publish-appcast.sh: the appcast
+          # publisher pushes the same branch and may land first. Run the copy
+          # staged before the checkout (gh-pages has no .github/ directory).
+          bash /tmp/push-gh-pages-with-retry.sh
 
   deploy-version:
     name: Deploy versioned release
@@ -121,6 +136,10 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
+          # mike neither fetches nor rebases (it fails hard on a non-FF push), so
+          # refresh the gh-pages tracking ref it compares against. The shared
+          # `gh-pages-deploy` concurrency group already serializes the pushes.
+          git fetch origin gh-pages
           # Remove 'latest' if it exists as a standalone version (not alias) to avoid conflicts
           mike delete --push latest 2>/dev/null || true
           mike deploy --push --update-aliases "${VERSION}" latest
@@ -134,6 +153,8 @@ jobs:
           cp docs/llms.md /tmp/llms.md
           cp docs/llms-go-sdk.md /tmp/llms-go-sdk.md
           cp docs/llms-swift-sdk.md /tmp/llms-swift-sdk.md
+          # gh-pages does not contain .github/, so stage the retry helper too.
+          cp .github/scripts/push-gh-pages-with-retry.sh /tmp/push-gh-pages-with-retry.sh
           git fetch origin gh-pages
           git checkout gh-pages
           cp /tmp/swagger.json swagger.json
@@ -144,4 +165,7 @@ jobs:
           cp /tmp/llms-swift-sdk.md llms-swift-sdk.md
           git add swagger.json swagger.yaml openapi.json llms.md llms-go-sdk.md llms-swift-sdk.md
           git diff --cached --quiet || git commit -m "docs: sync root-level raw files [skip ci]"
-          git push origin gh-pages
+          # Pull-rebase-and-retry, matching publish-appcast.sh: the appcast
+          # publisher pushes the same branch and may land first. Run the copy
+          # staged before the checkout (gh-pages has no .github/ directory).
+          bash /tmp/push-gh-pages-with-retry.sh
