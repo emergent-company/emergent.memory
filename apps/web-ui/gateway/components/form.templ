@@ -56,6 +56,47 @@ templ SaveChangesButton() {
 	}
 }
 
+// StickyFormActionsProps configures StickyFormActions.
+type StickyFormActionsProps struct {
+	// Align is the horizontal alignment of the action buttons: "" (zero value)
+	// right-aligns, "start" left-aligns.
+	Align string
+	// Edge bleeds the bar to the surrounding container's padding edges so it
+	// reads as pinned to the bottom of the content area. "" (zero value) keeps
+	// the bar inside the form's own box — use that for a form wrapped in a
+	// PanelCard, whose body owns its padding. "container" bleeds to
+	// layout.Container's p-6 lg:p-8 gutter for a form that is a direct child of
+	// the page container.
+	Edge string
+	// Class is appended to the bar's classes (caller-owned spacing/overrides).
+	Class string
+	// Attrs is spread last on the bar's root element.
+	Attrs templ.Attributes
+}
+
+// StickyFormActions renders the pinned footer for a page-level form: it sticks
+// to the bottom of the page scroll area (#main-content) while the form is
+// taller than the viewport, and sits inline in normal flow once the whole form
+// fits. Pure CSS `position: sticky`, so it survives htmx swaps of #main-content
+// with no re-init.
+//
+// Do NOT use inside a <dialog>: a modal has its own scroll box, so bottom-0
+// would pin to the viewport bottom rather than the dialog. Keep the go-daisy
+// form.FormActions footer there.
+templ StickyFormActions(props StickyFormActionsProps) {
+	{{ align := "justify-end"
+	if props.Align == "start" {
+		align = "justify-start"
+	}
+	edge := ""
+	if props.Edge == "container" {
+		edge = "-mx-6 -mb-6 px-6 lg:-mx-8 lg:-mb-8 lg:px-8"
+	} }}
+	<div class={ "sticky bottom-0 z-20 flex flex-wrap items-center gap-2 border-t border-base-content/10 bg-base-100/95 py-3 backdrop-blur", align, edge, props.Class } { props.Attrs... }>
+		{ children... }
+	</div>
+}
+
 // ToggleField renders a settings row that pairs a toggle with a label and an
 // optional explanatory tip. attrs carries the row's htmx wiring.
 templ ToggleField(name, label, tip string, checked bool, attrs templ.Attributes) {

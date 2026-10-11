@@ -97,7 +97,7 @@ templ backupCreateForm() {
 					<input name="includeChat" type="checkbox" class="checkbox checkbox-sm mt-0.5"/>
 				</label>
 			</div>
-			@form.FormActions("", "") {
+			@components.StickyFormActions(components.StickyFormActionsProps{}) {
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeSubmit,
 					Variant: ui.ButtonPrimary,

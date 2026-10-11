@@ -240,7 +240,7 @@ templ migrationForm(data migrationData) {
 				<input type="checkbox" name="force" value="true" class="checkbox checkbox-sm"/>
 				<span class="text-sm">Force (bypass dangerous-migration block)</span>
 			</label>
-			<div class="flex gap-2">
+			@components.StickyFormActions(components.StickyFormActionsProps{Align: "start"}) {
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeSubmit,
 					Variant: ui.ButtonOutline,
@@ -259,7 +259,7 @@ templ migrationForm(data migrationData) {
 				}) {
 					Execute
 				}
-			</div>
+			}
 		</form>
 	}
 }

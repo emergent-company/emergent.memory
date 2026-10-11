@@ -726,7 +726,7 @@ templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef,
 							@propertyInput(p, form.Props[p.Name])
 						}
 					}
-						@fm.FormActions("", "") {
+						@components.StickyFormActions(components.StickyFormActionsProps{}) {
 							@ui.Button(ui.ButtonProps{
 								Type:    ui.ButtonTypeSubmit,
 								Variant: ui.ButtonPrimary,
@@ -944,7 +944,7 @@ templ objectPropertiesCard(obj *GraphObject, propDefs []objectPropertyDef, label
 					}
 				}
 			}
-			@fm.FormActions("", "") {
+			@components.StickyFormActions(components.StickyFormActionsProps{}) {
 				@components.SaveChangesButton()
 			}
 		</form>

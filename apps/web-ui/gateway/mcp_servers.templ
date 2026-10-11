@@ -587,7 +587,7 @@ templ mcpServerFormBody(data mcpServerFormData, editing bool) {
 				<span class="text-sm font-medium">Enabled</span>
 				<input id="mcp-server-enabled" name="enabled" type="checkbox" checked?={ data.Enabled } class="checkbox"/>
 			</label>
-			@form.FormActions("", "") {
+			@components.StickyFormActions(components.StickyFormActionsProps{}) {
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeButton,
 					Variant: ui.ButtonOutline,

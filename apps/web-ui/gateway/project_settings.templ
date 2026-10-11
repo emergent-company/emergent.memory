@@ -1224,7 +1224,22 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 				</div>
 			}
 		}
-		<div class="flex flex-wrap items-center justify-end gap-2">
+		<div class="flex flex-col gap-1">
+			if p != nil {
+				<span id="provider-tested-hint" class="items-center gap-1.5 text-sm text-success" style="display:none">
+					@ui.IconSpan("lucide--check-circle", "size-4")
+					Connection verified — you can save.
+				</span>
+			}
+			<span id="provider-vertex-hint" class="items-center gap-1.5 text-sm text-muted" style="display:none">
+				Vertex uses service-account auth, so there is no base URL to probe — test not available. Save is enabled without testing.
+			</span>
+			<span id="provider-official-hint" class="items-center gap-1.5 text-sm text-muted" style="display:none">
+				@ui.IconSpan("lucide--info", "size-4")
+				Uses the official API — no base URL or connection test needed.
+			</span>
+		</div>
+		@components.StickyFormActions(components.StickyFormActionsProps{}) {
 			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/settings/providers", Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Cancel }
 			if p != nil {
 				@ui.Button(ui.ButtonProps{
@@ -1272,22 +1287,7 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 					Save provider
 				}
 			}
-		</div>
-		<div class="flex flex-col gap-1">
-			if p != nil {
-				<span id="provider-tested-hint" class="items-center gap-1.5 text-sm text-success" style="display:none">
-					@ui.IconSpan("lucide--check-circle", "size-4")
-					Connection verified — you can save.
-				</span>
-			}
-			<span id="provider-vertex-hint" class="items-center gap-1.5 text-sm text-muted" style="display:none">
-				Vertex uses service-account auth, so there is no base URL to probe — test not available. Save is enabled without testing.
-			</span>
-			<span id="provider-official-hint" class="items-center gap-1.5 text-sm text-muted" style="display:none">
-				@ui.IconSpan("lucide--info", "size-4")
-				Uses the official API — no base URL or connection test needed.
-			</span>
-		</div>
+		}
 		<script type="text/javascript">
 			(function () {
 				var form = document.getElementById('provider-form');

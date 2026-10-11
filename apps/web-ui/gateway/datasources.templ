@@ -295,7 +295,7 @@ templ dsCredentialsConnectPage(p DSProvider, configFields, credentialFields []ds
 				</div>
 			}
 			<div id="ds-test-result" data-testid="ds-test-result"></div>
-			<div class="flex flex-wrap items-center gap-2">
+			@components.StickyFormActions(components.StickyFormActionsProps{Align: "start", Edge: "container"}) {
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeSubmit,
 					Variant: ui.ButtonPrimary,
@@ -327,7 +327,7 @@ templ dsCredentialsConnectPage(p DSProvider, configFields, credentialFields []ds
 				}) {
 					Cancel
 				}
-			</div>
+			}
 		</form>
 	}
 }
@@ -552,9 +552,9 @@ templ dsEditCard(src *DSIntegration, configFields, credentialFields []dsConfigFi
 					@dsCredentialFieldInputs(credentialFields)
 				</div>
 			</div>
-			<div>
+			@components.StickyFormActions(components.StickyFormActionsProps{Align: "start"}) {
 				@components.SaveChangesButton()
-			</div>
+			}
 		</form>
 	}
 }

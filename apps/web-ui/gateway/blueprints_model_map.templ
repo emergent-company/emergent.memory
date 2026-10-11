@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/form"
 	"github.com/emergent-company/go-daisy/components/layout"
 	ui "github.com/emergent-company/go-daisy/components/ui"
@@ -62,7 +63,7 @@ templ BlueprintImportModelMapPage(d BlueprintModelMapData) {
 				if len(d.Models) == 0 {
 					@blueprintModelMapNoModels()
 				}
-				@form.FormActions("", "") {
+				@components.StickyFormActions(components.StickyFormActionsProps{Edge: "container"}) {
 					@ui.Button(ui.ButtonProps{
 						Type:    ui.ButtonTypeLink,
 						Href:    "/blueprints",

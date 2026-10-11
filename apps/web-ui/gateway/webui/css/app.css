@@ -238,6 +238,10 @@ body {
 main#main-content {
   background-image:
     radial-gradient(800px 400px at 50% 0%, oklch(0.74 0.135 78 / 0.035), transparent 60%);
+  /* Bottom padding keeps a focused input from hiding behind a pinned form
+     action bar (components.StickyFormActions) when the browser scrolls it
+     into view. */
+  scroll-padding-bottom: 5rem;
 }
 
 /* ---------- iOS safe areas (notch + home indicator) ---------- */

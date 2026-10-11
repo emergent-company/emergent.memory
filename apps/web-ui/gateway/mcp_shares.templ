@@ -286,7 +286,7 @@ templ mcpShareFormBody(data mcpShareFormData, editing bool) {
 					Message: data.GeneralErr.Error(),
 				})
 			}
-			@form.FormActions("", "") {
+			@components.StickyFormActions(components.StickyFormActionsProps{}) {
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeLink,
 					Href:    mcpShareSettingsBase,

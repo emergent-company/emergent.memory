@@ -332,7 +332,7 @@ templ apiTokenCreateFormContent(actionBase string, cfg apiTokenScopePickerConfig
 			<input id="api-token-name" name="name" type="text" required maxlength="255" autocomplete="off" placeholder="e.g. CI deploy" class="input w-full"/>
 		</fieldset>
 		@apiTokenScopePickerContent(nil, cfg)
-		<div class="flex items-center justify-end gap-2">
+		@components.StickyFormActions(components.StickyFormActionsProps{}) {
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeLink,
 				Href:    actionBase,
@@ -350,7 +350,7 @@ templ apiTokenCreateFormContent(actionBase string, cfg apiTokenScopePickerConfig
 			}) {
 				Create token
 			}
-		</div>
+		}
 	</form>
 }
 
@@ -427,7 +427,7 @@ templ apiTokenEditBody(actionBase string, t APIToken, cfg apiTokenScopePickerCon
 				</div>
 			</div>
 			@apiTokenScopePickerContent(t.Scopes, cfg)
-			<div class="flex items-center justify-end gap-2">
+			@components.StickyFormActions(components.StickyFormActionsProps{}) {
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeLink,
 					Href:    actionBase,
@@ -445,7 +445,7 @@ templ apiTokenEditBody(actionBase string, t APIToken, cfg apiTokenScopePickerCon
 				}) {
 					Save scopes
 				}
-			</div>
+			}
 		</form>
 	}
 }
