@@ -112,6 +112,14 @@ targets:
       - target: MemoryConnector
     settings:
       base:
+        # Match the app target's architectures. The project base sets
+        # ENABLE_ENHANCED_SECURITY, which cascades arm64e (pointer
+        # authentication) into every target; the app opts out because the
+        # linked Sparkle 2.x framework ships no arm64e slice. Without the same
+        # opt-out here the test bundle targets arm64e while the app module it
+        # imports is arm64/x86_64 only, so `@testable import MemoryConnector`
+        # can fail with "built for incompatible target".
+        ENABLE_POINTER_AUTHENTICATION: "NO"
         PRODUCT_BUNDLE_IDENTIFIER: com.emergent.memory.connector.tests
         GENERATE_INFOPLIST_FILE: YES
         BUNDLE_LOADER: "$(TEST_HOST)"
