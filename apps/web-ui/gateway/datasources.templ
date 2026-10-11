@@ -135,9 +135,14 @@ templ dsSourceStatusBadge(status string) {
 // with a selected provider it renders either the OAuth confirmation panel or the
 // write-only credentials form the provider advertises. The provider list and
 // each connect action come from the catalog, never a hard-coded provider list.
-// loadErr surfaces a provider-list or schema fetch failure.
-templ DataSourceNewPage(providers []DSProvider, selected *DSProvider, configFields, credentialFields []dsConfigField, loadErr error, flashErr error) {
+// loadErr surfaces a provider-list or schema fetch failure; oauthClientErr
+// surfaces an inline, actionable "no OAuth client configured" error (instead of
+// a transient toast) with a link to the org's OAuth client settings.
+templ DataSourceNewPage(providers []DSProvider, selected *DSProvider, configFields, credentialFields []dsConfigField, loadErr error, flashErr error, oauthClientErr *dsOAuthClientError) {
 	@layout.Container(layout.ContainerLG, nil) {
+		if oauthClientErr != nil {
+			@dsOAuthClientMissingAlert(*oauthClientErr)
+		}
 		if selected == nil {
 			@pageHeader("Integrations", "Connect a data source", "Choose how to connect an external system and sync its documents into this project.")
 			@flashToasts("", flashErr)
@@ -220,6 +225,36 @@ templ dsProviderChoice(p DSProvider) {
 			</div>
 		</div>
 	}
+}
+
+// dsOAuthClientMissingAlert is the inline, actionable error shown when an OAuth
+// connect fails because no OAuth client is configured for the provider. It names
+// the provider from the catalog and, when the active org is known, links to the
+// org's OAuth client settings so the user has a direct remediation path instead
+// of a transient toast.
+templ dsOAuthClientMissingAlert(e dsOAuthClientError) {
+	<div class="flex flex-col gap-2" data-testid="ds-oauth-client-missing">
+		@ui.Alert(ui.AlertProps{
+			Type:    ui.AlertError,
+			Style:   ui.AlertStyleSoft,
+			Icon:    "lucide--alert-triangle",
+			Message: "No OAuth client is configured for " + e.ProviderName + ". An organization admin must add one under Organization settings → Data source OAuth clients before connecting with OAuth.",
+		})
+		if e.SettingsURL != "" {
+			<div>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    e.SettingsURL,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--settings",
+					Attrs:   templ.Attributes{"data-testid": "ds-oauth-client-settings-link"},
+				}) {
+					Configure OAuth clients
+				}
+			</div>
+		}
+	</div>
 }
 
 // dsOAuthConnectPanel is the confirmation step before the browser is sent to the

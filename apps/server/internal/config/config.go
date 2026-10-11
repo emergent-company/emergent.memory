@@ -872,6 +872,22 @@ func (c SourceOAuthConfig) OAuthClientsByProvider() map[string]OAuthClientDefaul
 	return out
 }
 
+// DeploymentEnvVarHint returns the deployment-default env-var hint for a data
+// source provider's OAuth client, or "" when the provider has no deployment
+// default. Today only google_drive has one (SOURCES_OAUTH_GOOGLE_CLIENT_ID/
+// SECRET); a provider without a default gets no hint, so remediation never
+// names an unrelated provider's env vars (e.g. it must never tell a github
+// user to set the Google vars). Keep this aligned with OAuthClientsByProvider:
+// every provider with a hint must also appear there, and vice versa.
+func (c SourceOAuthConfig) DeploymentEnvVarHint(providerType string) string {
+	switch providerType {
+	case "google_drive":
+		return "SOURCES_OAUTH_GOOGLE_CLIENT_ID/SECRET"
+	default:
+		return ""
+	}
+}
+
 // AgentSafeguardsConfig holds configuration for agent queue explosion safeguards.
 type AgentSafeguardsConfig struct {
 	// MaxPendingJobs is the maximum number of pending/processing jobs allowed per agent.

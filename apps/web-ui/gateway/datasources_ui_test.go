@@ -84,7 +84,7 @@ func TestRenderDataSourceNewPage(t *testing.T) {
 	credsOnly := &DSProvider{Type: "github", Name: "GitHub", AuthMethods: []string{"credentials"}}
 
 	// Chooser: one card per provider, actions driven by advertised methods.
-	chooser := renderHTML(t, DataSourceNewPage([]DSProvider{*oauth, *credsOnly}, nil, nil, nil, nil, nil))
+	chooser := renderHTML(t, DataSourceNewPage([]DSProvider{*oauth, *credsOnly}, nil, nil, nil, nil, nil, nil))
 	for _, want := range []string{
 		"Connect a data source",
 		`data-testid="ds-provider-chooser"`,
@@ -106,7 +106,7 @@ func TestRenderDataSourceNewPage(t *testing.T) {
 
 	// An OAuth provider renders the confirmation panel (no credentials form).
 	oauthOnly := &DSProvider{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth"}}
-	confirm := renderHTML(t, DataSourceNewPage([]DSProvider{*oauthOnly}, oauthOnly, nil, nil, nil, nil))
+	confirm := renderHTML(t, DataSourceNewPage([]DSProvider{*oauthOnly}, oauthOnly, nil, nil, nil, nil, nil))
 	for _, want := range []string{
 		"Authorize with Google Drive",
 		`data-testid="ds-oauth-connect"`,
@@ -122,7 +122,7 @@ func TestRenderDataSourceNewPage(t *testing.T) {
 
 	// A credentials provider renders the write-only form from the schema.
 	config, credFields := dsConfigFields(testDSSchema())
-	form := renderHTML(t, DataSourceNewPage([]DSProvider{*credsOnly}, credsOnly, config, credFields, nil, nil))
+	form := renderHTML(t, DataSourceNewPage([]DSProvider{*credsOnly}, credsOnly, config, credFields, nil, nil, nil))
 	for _, want := range []string{
 		"Connect a data source",
 		`data-testid="ds-connect-form"`,
@@ -545,6 +545,98 @@ func TestUIDataSourceOAuthStart(t *testing.T) {
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/oauth/start?providerType=google_drive", nil))
 	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/data-sources/new?err=") {
 		t.Errorf("failure location = %q", loc)
+	}
+}
+
+func TestUIDataSourceOAuthStartMissingClientRendersInline(t *testing.T) {
+	f := &fakeMemory{
+		dsProviders: []DSProvider{{Type: "github", Name: "GitHub", AuthMethods: []string{"oauth"}}},
+		dsOAuthAuthorizeErr: &memoryHTTPError{
+			Status:  http.StatusUnprocessableEntity,
+			Code:    "validation_error",
+			Message: "no OAuth client configured for provider github (configure one under Organization settings → Data source OAuth clients)",
+		},
+	}
+	e := newDSUIServer(f)
+
+	req := httptest.NewRequest(http.MethodGet, "/data-sources/oauth/start?providerType=github", nil)
+	req = req.WithContext(withSessionContext(req.Context(), &sessionContext{OrgID: "org-1"}))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (inline render, not redirect); body=%s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "" {
+		t.Errorf("Location = %q, want no redirect", loc)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-testid="ds-oauth-client-missing"`,
+		"No OAuth client is configured for GitHub",
+		"Organization settings",
+		`data-testid="ds-oauth-client-settings-link"`,
+		"org-1/settings/oauth-clients",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing-client page missing %q", want)
+		}
+	}
+	// The internal backend prefix must never reach the page.
+	if strings.Contains(body, "memory 422") || strings.Contains(body, "validation_error") {
+		t.Errorf("raw backend prefix leaked into page: %s", body)
+	}
+}
+
+func TestUIDataSourceOAuthStartMissingClientNoOrg(t *testing.T) {
+	f := &fakeMemory{
+		dsProviders: []DSProvider{{Type: "github", Name: "GitHub", AuthMethods: []string{"oauth"}}},
+		dsOAuthAuthorizeErr: &memoryHTTPError{
+			Status:  http.StatusUnprocessableEntity,
+			Code:    "validation_error",
+			Message: "no OAuth client configured for provider github (configure one under Organization settings → Data source OAuth clients)",
+		},
+	}
+	e := newDSUIServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/oauth/start?providerType=github", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `data-testid="ds-oauth-client-missing"`) {
+		t.Error("missing-client alert missing when org is unknown")
+	}
+	if strings.Contains(rec.Body.String(), `data-testid="ds-oauth-client-settings-link"`) {
+		t.Error("settings link must be omitted when the active org is unknown")
+	}
+}
+
+func TestUIDataSourceOAuthStartFailureStripsBackendPrefix(t *testing.T) {
+	f := &fakeMemory{
+		dsOAuthAuthorizeErr: &memoryHTTPError{
+			Status:  http.StatusUnprocessableEntity,
+			Code:    "validation_error",
+			Message: "some other validation message",
+		},
+	}
+	e := newDSUIServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/oauth/start?providerType=google_drive", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303 redirect", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/data-sources/new?err=") {
+		t.Fatalf("location = %q, want redirect back to the chooser", loc)
+	}
+	// The surfaced message is the backend Message, never the internal prefix.
+	if strings.Contains(loc, "memory 422") || strings.Contains(loc, "validation_error") {
+		t.Errorf("raw backend prefix leaked into redirect: %q", loc)
+	}
+	if !strings.Contains(loc, "some+other+validation+message") {
+		t.Errorf("location = %q, want the sanitized backend message", loc)
 	}
 }
 

@@ -335,7 +335,7 @@ func (s *Server) uiDataSourceNew(c echo.Context) error {
 		err = schemaErr
 	}
 	flashErr := flashError(c)
-	return s.page(c, pageTitle("New Data Source"), DataSourceNewPage(providers, selected, configFields, credentialFields, err, flashErr))
+	return s.page(c, pageTitle("New Data Source"), DataSourceNewPage(providers, selected, configFields, credentialFields, err, flashErr, nil))
 }
 
 // dsSelectProvider picks the selected provider from the catalog by type, applying
@@ -364,8 +364,34 @@ func dsSelectProvider(providers []DSProvider, providerType, method string) *DSPr
 	return nil
 }
 
+// dsOAuthClientError is the inline, actionable error surfaced on the
+// source-creation page when an OAuth connect fails because no OAuth client is
+// configured for the provider. SettingsURL carries the org's OAuth client
+// settings link, empty when the active org is unknown.
+type dsOAuthClientError struct {
+	ProviderName string
+	SettingsURL  string
+}
+
+// isMissingDSOAuthClient reports whether err is the server's "no OAuth client
+// configured" validation for a data-source OAuth start. The gateway has no
+// machine-readable code for this specific condition, so it matches the
+// validation error's message prefix (kept stable with the server-side copy in
+// service_oauth_client.go).
+func isMissingDSOAuthClient(err error) bool {
+	var he *memoryHTTPError
+	if !errors.As(err, &he) {
+		return false
+	}
+	return he.Code == "validation_error" && strings.HasPrefix(he.Message, "no OAuth client configured for provider ")
+}
+
 // uiDataSourceOAuthStart begins the provider OAuth flow: it asks memory for the
-// provider's authorization URL and redirects the browser to it.
+// provider's authorization URL and redirects the browser to it. A missing
+// OAuth client renders the source-creation page with an inline, actionable
+// error (rather than a toast) so the user sees the remediation path; every
+// other failure redirects back with the sanitized backend message, never the
+// internal "memory <status> <code>:" prefix.
 func (s *Server) uiDataSourceOAuthStart(c echo.Context) error {
 	providerType := strings.TrimSpace(c.QueryParam("providerType"))
 	if providerType == "" {
@@ -373,9 +399,35 @@ func (s *Server) uiDataSourceOAuthStart(c echo.Context) error {
 	}
 	resp, err := s.memory.StartDSOAuth(c.Request().Context(), providerType, nil, nil)
 	if err != nil {
-		return redirectWithError(c, "/data-sources/new", err)
+		if isMissingDSOAuthClient(err) {
+			return s.renderDSOAuthClientMissing(c, providerType)
+		}
+		msg := memoryHTTPErrorMessage(err)
+		if msg == "" {
+			msg = genericErrorMessage
+		}
+		return redirectWithError(c, "/data-sources/new", errors.New(msg))
 	}
 	return c.Redirect(http.StatusFound, resp.AuthorizeURL)
+}
+
+// renderDSOAuthClientMissing renders the source-creation page with an inline
+// error naming the provider (from the catalog) and linking to the org's OAuth
+// client settings when the active org is known. The provider list and display
+// name come from the catalog, never a hard-coded provider.
+func (s *Server) renderDSOAuthClientMissing(c echo.Context, providerType string) error {
+	ctx := c.Request().Context()
+	providers, err := s.memory.ListDSProviders(ctx)
+	if err != nil {
+		err = userFacingError(err)
+	}
+	oauthErr := &dsOAuthClientError{
+		ProviderName: dsProviderLabel(dsProviderNameMap(providers), providerType),
+	}
+	if sc, ok := sessionContextFrom(ctx); ok && sc.OrgID != "" {
+		oauthErr.SettingsURL = "/orgs/" + url.PathEscape(sc.OrgID) + "/settings/oauth-clients"
+	}
+	return s.page(c, pageTitle("New Data Source"), DataSourceNewPage(providers, nil, nil, nil, err, nil, oauthErr))
 }
 
 // uiDataSourceOAuthCallback is the memory OAuth callback's landing handler: it

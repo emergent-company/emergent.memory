@@ -140,6 +140,43 @@ func TestResolveOAuthClient_NoClientIsActionableError(t *testing.T) {
 	if !errors.As(err, &appErr) {
 		t.Fatalf("resolveOAuthClient() error type = %T, want *apperror.Error", err)
 	}
+	if appErr.Code != "validation_error" {
+		t.Fatalf("resolveOAuthClient() error code = %q, want validation_error", appErr.Code)
+	}
+	// google_drive has a deployment default, so its error names the env vars.
+	if !strings.Contains(appErr.Message, ProviderTypeGoogleDrive) {
+		t.Errorf("error message %q must name the provider", appErr.Message)
+	}
+	if !strings.Contains(appErr.Message, "Organization settings") {
+		t.Errorf("error message %q must direct to the org setting", appErr.Message)
+	}
+	if !strings.Contains(appErr.Message, "SOURCES_OAUTH_GOOGLE_CLIENT_ID/SECRET") {
+		t.Errorf("error message %q must carry the env-var hint for a deployment-default provider", appErr.Message)
+	}
+}
+
+func TestResolveOAuthClient_NoClient_NoDeploymentDefaultOmitsEnvVar(t *testing.T) {
+	store := &fakeOrgOAuthStore{orgID: uuid.New(), clients: map[string]*OAuthClientConfig{}}
+	svc := newOrgClientService(store, config.SourceOAuthConfig{})
+
+	_, err := svc.resolveOAuthClient(context.Background(), uuid.New(), ProviderTypeGitHub)
+	if err == nil {
+		t.Fatal("resolveOAuthClient(github) with no org and no deployment default = nil, want error")
+	}
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) {
+		t.Fatalf("resolveOAuthClient() error type = %T, want *apperror.Error", err)
+	}
+	if !strings.Contains(appErr.Message, ProviderTypeGitHub) {
+		t.Errorf("error message %q must name the provider", appErr.Message)
+	}
+	if !strings.Contains(appErr.Message, "Organization settings") {
+		t.Errorf("error message %q must direct to the org setting", appErr.Message)
+	}
+	// github has no deployment default: the Google env-var hint must be absent.
+	if strings.Contains(appErr.Message, "SOURCES_OAUTH_GOOGLE_CLIENT_ID/SECRET") {
+		t.Errorf("error message %q must NOT mention the Google env vars for a provider with no deployment default", appErr.Message)
+	}
 }
 
 func TestListProviders_AdvertisesAuthMethods(t *testing.T) {

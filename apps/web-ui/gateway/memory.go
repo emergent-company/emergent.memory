@@ -229,6 +229,19 @@ func memoryStatus(err error) int {
 	return 0
 }
 
+// memoryHTTPErrorMessage returns the backend's message for a memory HTTP error,
+// without the internal "memory <status> <code>:" prefix. It returns "" for any
+// other error (transport failure, locally-authored error), so callers fall back
+// to a generic message. Use it on surfaces that want to echo the backend's
+// actionable validation copy to the user rather than a redacted generic line.
+func memoryHTTPErrorMessage(err error) string {
+	var he *memoryHTTPError
+	if errors.As(err, &he) {
+		return he.Message
+	}
+	return ""
+}
+
 // isMemoryStatus reports whether err is a memory backend error with the given
 // HTTP status.
 func isMemoryStatus(err error, status int) bool { return memoryStatus(err) == status }

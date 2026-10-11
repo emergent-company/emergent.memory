@@ -182,9 +182,21 @@ func (s *Service) resolveOAuthClient(ctx context.Context, projectID uuid.UUID, p
 	if c, ok := s.oauthClients[providerType]; ok && c.ClientID != "" && c.ClientSecret != "" {
 		return c, nil
 	}
-	return OAuthClient{}, apperror.NewValidation(
-		"no OAuth client configured for provider " + providerType +
-			" (configure an org OAuth client or set SOURCES_OAUTH_GOOGLE_CLIENT_ID/SECRET)")
+	return OAuthClient{}, s.missingOAuthClientError(providerType)
+}
+
+// missingOAuthClientError builds the validation error for a provider with no
+// OAuth client (neither org config nor deployment default). It always names the
+// provider and directs the user to the org OAuth client setting in words; the
+// deployment-env-var hint is appended only for providers that have one (today
+// google_drive only), so a github user is never told to set Google env vars.
+func (s *Service) missingOAuthClientError(providerType string) error {
+	msg := "no OAuth client configured for provider " + providerType +
+		" (configure one under Organization settings → Data source OAuth clients)"
+	if hint := s.oauthCfg.DeploymentEnvVarHint(providerType); hint != "" {
+		msg += " or set " + hint
+	}
+	return apperror.NewValidation(msg)
 }
 
 // applyOrgStrategy folds an org-selected scope strategy (design D6) into the
