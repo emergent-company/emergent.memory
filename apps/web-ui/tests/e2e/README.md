@@ -425,9 +425,10 @@ errors on the exercised paths, plus JS syntax across the static bundle.
 htmx swaps), session/auth flows, and the rest of the session-mode suite
 (navigation, mutations, live-LLM scenarios). Those still require the running
 dev installation and stay manual / not-in-CI. Making the full suite hermetic
-would need a stub gateway + memory fixtures that cover every surface (the
-existing `mock-memory.mjs` implements only the public agent-share surface) —
-tracked as follow-up, not attempted here.
+would need a stub gateway + memory fixtures that cover every surface. The
+`mock-memory.mjs` harness now serves the public agent-share surface **and** the
+data-source-integrations + document-version endpoints (see the data-sources
+note below); the remaining surfaces are still tracked as follow-up.
 
 ## Notes
 
@@ -453,4 +454,12 @@ tracked as follow-up, not attempted here.
   project and runs under its own flag-on harness config instead —
   `npx playwright test --config=dev-gallery.config.ts` (or `task e2e:gallery`),
   which starts `run-e2e.sh` exactly like `share.config.ts`.
+- **Data Sources (Google Drive)** (`specs/datasources/`): connect, sync, and
+  document-version flows run hermetically against the dev-mode mock harness —
+  `npx playwright test --config=datasources.config.ts` (or
+  `task e2e:datasources`). The mock keys sync outcomes off the source's
+  `folder_id` (`folder-slow` → in-progress + cancel, `folder-fail` → failed,
+  otherwise completed) so no real Drive credentials are needed. Excluded from the
+  live `chromium` project via `testIgnore`. `run-e2e.sh` generates templ on an
+  unwarmed tree before building the gateway.
 - Voice/LiveKit/STT and the iOS client are not browser-testable and are out of scope.

@@ -177,6 +177,126 @@ function shareLinkObj(l) {
   };
 }
 
+// --- data-source integrations state (Data Source Integrations API) -----------
+//
+// Stateful store backing the data-sources UI. Sync behavior is keyed off the
+// source's folder_id so a spec can deterministically drive an in-progress job
+// (`folder-slow`), a failed job (`folder-fail`), or a clean completed sync
+// (anything else). Credentials are write-only: they are stored on the source so
+// connection tests can vary, but are never returned in a read response,
+// mirroring the server contract.
+
+const dsProviders = [
+  {
+    type: "google_drive",
+    name: "Google Drive",
+    description: "Sync documents from a Google Drive folder.",
+    sourceType: "drive",
+    available: true,
+  },
+];
+
+const dsProviderSchema = {
+  type: "google_drive",
+  properties: {
+    folder_id: { type: "string", description: "The Drive folder to sync." },
+    shared_drive_id: { type: "string" },
+    mime_types: { type: "array" },
+    recursive: { type: "boolean" },
+    client_id: { type: "string" },
+    client_secret: { type: "string" },
+    refresh_token: { type: "string" },
+  },
+  required: ["folder_id", "refresh_token"],
+};
+
+const dsSourceTypes = [{ sourceType: "drive", documentCount: 3 }];
+
+let dsSources = []; // [{ row, config }] — config is server-side only.
+let dsJobsBySource = {}; // sourceId -> [job], newest first.
+let dsCounter = 1;
+let dsJobCounter = 1;
+
+// dsIntegration projects the stored row; config/credentials never leave here.
+const dsIntegration = (row) => ({ ...row });
+
+// dsNewSyncJob prepends a job to a source's history.
+function dsNewSyncJob(sourceID, status, extra) {
+  const job = {
+    id: `dsjob-${dsJobCounter++}`,
+    integrationId: sourceID,
+    status,
+    totalItems: 0,
+    processedItems: 0,
+    successfulItems: 0,
+    failedItems: 0,
+    skippedItems: 0,
+    triggerType: "manual",
+    retryCount: 0,
+    maxRetries: 3,
+    createdAt: nowISO(),
+    ...extra,
+  };
+  dsJobsBySource[sourceID] = [job, ...(dsJobsBySource[sourceID] || [])];
+  return job;
+}
+
+// --- documents + version history (document-versioning) -----------------------
+//
+// Two seeded documents exercise the version-history surface: `doc-report` has
+// two active versions (a stable document re-synced with new content), and
+// `doc-removed` shows the deleted_from_source terminal state.
+
+const mockDocuments = {
+  "doc-report": {
+    id: "doc-report",
+    filename: "report.md",
+    mimeType: "text/markdown",
+    sourceType: "external",
+    chunks: 3,
+    embeddedChunks: 3,
+    totalChars: 120,
+    extractionStatus: "completed",
+    processingStatus: "completed",
+    objectsCreated: 2,
+    relationshipsCreated: 1,
+    sourceId: "ds-1",
+    sourceExternalId: "file-report",
+    sourceRevisionId: "rev-2",
+    sourceStatus: "active",
+    sourceSyncedAt: "2026-09-02T10:00:00Z",
+    createdAt: "2026-09-01T10:00:00Z",
+    updatedAt: "2026-09-02T10:00:00Z",
+  },
+  "doc-removed": {
+    id: "doc-removed",
+    filename: "removed-notes.md",
+    mimeType: "text/markdown",
+    sourceType: "external",
+    chunks: 2,
+    extractionStatus: "completed",
+    processingStatus: "completed",
+    sourceId: "ds-2",
+    sourceExternalId: "file-removed",
+    sourceRevisionId: "rev-2",
+    sourceStatus: "deleted_from_source",
+    sourceDeletedAt: "2026-09-03T10:00:00Z",
+    createdAt: "2026-09-01T10:00:00Z",
+    updatedAt: "2026-09-03T10:00:00Z",
+  },
+};
+
+const mockDocumentVersions = {
+  "doc-report": [
+    { id: "vd-1", canonicalId: "canon-report", version: 1, sourceStatus: "active", sourceRevisionId: "rev-1", createdAt: "2026-09-01T10:00:00Z" },
+    { id: "vd-2", canonicalId: "canon-report", version: 2, supersedesId: "vd-1", sourceStatus: "active", sourceRevisionId: "rev-2", createdAt: "2026-09-02T10:00:00Z" },
+  ],
+  "doc-removed": [
+    { id: "vr-1", canonicalId: "canon-removed", version: 1, sourceStatus: "active", sourceRevisionId: "rev-1", createdAt: "2026-09-01T10:00:00Z" },
+    { id: "vr-2", canonicalId: "canon-removed", version: 2, supersedesId: "vr-1", sourceStatus: "deleted_from_source", sourceRevisionId: "rev-2", sourceDeletedAt: "2026-09-03T10:00:00Z", createdAt: "2026-09-03T10:00:00Z" },
+  ],
+};
+
 const json = (res, obj) => {
   res.setHeader("Content-Type", "application/json");
   res.end(JSON.stringify(obj));
@@ -489,6 +609,200 @@ const server = http.createServer((req, res) => {
       ...conv,
       messages: msgs.map((m, i) => ({ id: `${cid}-${i}`, conversationId: cid, role: m.role, content: m.content })),
     });
+  }
+
+  // --- data-source integrations (Data Source Integrations API) --------------
+
+  if (path === "/api/data-source-integrations/providers" && req.method === "GET") {
+    return json(res, dsProviders);
+  }
+
+  const dsSchemaMatch = path.match(/^\/api\/data-source-integrations\/providers\/([^/]+)\/schema$/);
+  if (dsSchemaMatch && req.method === "GET") {
+    if (dsSchemaMatch[1] !== "google_drive") {
+      res.statusCode = 404;
+      return json(res, { error: { code: "not_found", message: "unknown provider" } });
+    }
+    return json(res, dsProviderSchema);
+  }
+
+  if (path === "/api/data-source-integrations/source-types" && req.method === "GET") {
+    return json(res, dsSourceTypes);
+  }
+
+  if (path === "/api/data-source-integrations/test-config" && req.method === "POST") {
+    return readBody(req, (payload) => {
+      const folder = String((payload.config || {}).folder_id || "");
+      if (folder === "folder-fail") {
+        return json(res, { success: false, message: "Drive folder not found." });
+      }
+      return json(res, { success: true, message: "Connected to Google Drive." });
+    });
+  }
+
+  if (path === "/api/data-source-integrations" && req.method === "GET") {
+    return json(res, dsSources.map((s) => dsIntegration(s.row)));
+  }
+
+  if (path === "/api/data-source-integrations" && req.method === "POST") {
+    return readBody(req, (payload) => {
+      const now = nowISO();
+      const row = {
+        id: `ds-${dsCounter++}`,
+        projectId: "p1",
+        name: String(payload.name || "Data source"),
+        providerType: payload.providerType || "google_drive",
+        sourceType: payload.sourceType || "drive",
+        syncMode: payload.syncMode || "manual",
+        syncIntervalMinutes: payload.syncIntervalMinutes,
+        lastSyncedAt: null,
+        nextSyncAt: null,
+        status: "active",
+        errorCount: 0,
+        createdAt: now,
+        updatedAt: now,
+      };
+      dsSources.push({ row, config: payload.config || {} });
+      res.statusCode = 201;
+      return json(res, dsIntegration(row));
+    });
+  }
+
+  const dsJobsLatestMatch = path.match(/^\/api\/data-source-integrations\/([^/]+)\/sync-jobs\/latest$/);
+  if (dsJobsLatestMatch && req.method === "GET") {
+    const jobs = dsJobsBySource[dsJobsLatestMatch[1]] || [];
+    return json(res, jobs[0] || null);
+  }
+
+  const dsCancelMatch = path.match(/^\/api\/data-source-integrations\/([^/]+)\/sync-jobs\/([^/]+)\/cancel$/);
+  if (dsCancelMatch && req.method === "POST") {
+    const jobs = dsJobsBySource[dsCancelMatch[1]] || [];
+    const job = jobs.find((j) => j.id === dsCancelMatch[2]);
+    if (job) {
+      job.status = "cancelled";
+      job.currentPhase = "Cancelled";
+      job.completedAt = nowISO();
+    }
+    return json(res, { success: true, message: "Sync cancelled." });
+  }
+
+  const dsJobMatch = path.match(/^\/api\/data-source-integrations\/([^/]+)\/sync-jobs\/([^/]+)$/);
+  if (dsJobMatch && req.method === "GET") {
+    const jobs = dsJobsBySource[dsJobMatch[1]] || [];
+    const job = jobs.find((j) => j.id === dsJobMatch[2]);
+    if (!job) {
+      res.statusCode = 404;
+      return json(res, { error: { code: "not_found", message: "job not found" } });
+    }
+    return json(res, job);
+  }
+
+  const dsJobsListMatch = path.match(/^\/api\/data-source-integrations\/([^/]+)\/sync-jobs$/);
+  if (dsJobsListMatch && req.method === "GET") {
+    const jobs = dsJobsBySource[dsJobsListMatch[1]] || [];
+    return json(res, { items: jobs, total: jobs.length });
+  }
+
+  const dsSyncMatch = path.match(/^\/api\/data-source-integrations\/([^/]+)\/sync$/);
+  if (dsSyncMatch && req.method === "POST") {
+    const src = dsSources.find((s) => s.row.id === dsSyncMatch[1]);
+    if (!src) {
+      res.statusCode = 404;
+      return json(res, { error: { code: "not_found", message: "source not found" } });
+    }
+    const folder = String(src.config.folder_id || "");
+    let job;
+    if (folder === "folder-slow") {
+      job = dsNewSyncJob(src.row.id, "processing", {
+        totalItems: 10,
+        processedItems: 3,
+        successfulItems: 3,
+        currentPhase: "Downloading",
+        statusMessage: "Scanning the configured folder.",
+      });
+    } else if (folder === "folder-fail") {
+      job = dsNewSyncJob(src.row.id, "failed", {
+        totalItems: 1,
+        processedItems: 1,
+        failedItems: 1,
+        errorMessage: "Drive returned 403 for the configured folder.",
+        completedAt: nowISO(),
+      });
+    } else {
+      job = dsNewSyncJob(src.row.id, "completed", {
+        totalItems: 3,
+        processedItems: 3,
+        successfulItems: 3,
+        currentPhase: "Done",
+        completedAt: nowISO(),
+      });
+      src.row.lastSyncedAt = nowISO();
+      src.row.updatedAt = nowISO();
+    }
+    return json(res, { success: true, message: "Sync started.", jobId: job.id });
+  }
+
+  const dsTestConnMatch = path.match(/^\/api\/data-source-integrations\/([^/]+)\/test-connection$/);
+  if (dsTestConnMatch && req.method === "POST") {
+    const src = dsSources.find((s) => s.row.id === dsTestConnMatch[1]);
+    if (!src) {
+      res.statusCode = 404;
+      return json(res, { error: { code: "not_found", message: "source not found" } });
+    }
+    if (String(src.config.folder_id || "") === "folder-fail") {
+      return json(res, { success: false, message: "Drive folder not found." });
+    }
+    return json(res, { success: true, message: "Connection OK." });
+  }
+
+  const dsItemMatch = path.match(/^\/api\/data-source-integrations\/([^/]+)$/);
+  if (dsItemMatch && req.method === "GET") {
+    const src = dsSources.find((s) => s.row.id === dsItemMatch[1]);
+    if (!src) {
+      res.statusCode = 404;
+      return json(res, { error: { code: "not_found", message: "source not found" } });
+    }
+    return json(res, dsIntegration(src.row));
+  }
+
+  if (dsItemMatch && req.method === "PATCH") {
+    return readBody(req, (payload) => {
+      const src = dsSources.find((s) => s.row.id === dsItemMatch[1]);
+      if (!src) {
+        res.statusCode = 404;
+        return json(res, { error: { code: "not_found", message: "source not found" } });
+      }
+      if (payload.name) src.row.name = payload.name;
+      if (payload.syncMode) src.row.syncMode = payload.syncMode;
+      if (payload.syncIntervalMinutes != null) src.row.syncIntervalMinutes = payload.syncIntervalMinutes;
+      if (payload.config) src.config = { ...src.config, ...payload.config };
+      src.row.updatedAt = nowISO();
+      return json(res, dsIntegration(src.row));
+    });
+  }
+
+  if (dsItemMatch && req.method === "DELETE") {
+    dsSources = dsSources.filter((s) => s.row.id !== dsItemMatch[1]);
+    delete dsJobsBySource[dsItemMatch[1]];
+    res.statusCode = 204;
+    return res.end();
+  }
+
+  // --- documents + version history ------------------------------------------
+
+  const docVersionsMatch = path.match(/^\/api\/documents\/([^/]+)\/versions$/);
+  if (docVersionsMatch && req.method === "GET") {
+    return json(res, { versions: mockDocumentVersions[docVersionsMatch[1]] || [] });
+  }
+
+  const docMatch = path.match(/^\/api\/documents\/([^/]+)$/);
+  if (docMatch && req.method === "GET") {
+    const doc = mockDocuments[docMatch[1]];
+    if (!doc) {
+      res.statusCode = 404;
+      return json(res, { error: { code: "not_found", message: "document not found" } });
+    }
+    return json(res, doc);
   }
 
   res.statusCode = 404;

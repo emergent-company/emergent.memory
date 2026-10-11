@@ -4,8 +4,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
-# build the gateway binary
-(cd gateway && go build -o memory .)
+# build the gateway binary; on an unwarmed tree (generated *_templ.go absent,
+# e.g. a fresh worktree) generate templ first — otherwise the build fails.
+(cd gateway && { compgen -G '*_templ.go' >/dev/null || templ generate ./... ; } && go build -o memory .)
 
 # mock memory
 node tests/e2e/mock-memory.mjs &

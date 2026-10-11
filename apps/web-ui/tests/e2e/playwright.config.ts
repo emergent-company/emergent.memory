@@ -53,6 +53,10 @@ export default defineConfig({
         // would only ever skip. It runs under its own flag-on harness
         // (`dev-gallery.config.ts`).
         /specs\/dev\/.*\.spec\.ts/,
+        // Data-sources surface. It needs a stateful upstream (providers,
+        // sources, sync jobs, versions) and no real Drive credentials, so it
+        // runs under its own hermetic mock harness (`datasources.config.ts`).
+        /specs\/datasources\/.*\.spec\.ts/,
       ],
       use: { ...devices['Desktop Chrome'], storageState: STORAGE_STATE },
       dependencies: ['setup'],
