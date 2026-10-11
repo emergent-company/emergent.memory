@@ -29,6 +29,6 @@
 - [x] 3.3 `go test ./domain/extraction/... ./pkg/adk/...` and
   `go test -short ./domain/{agents,skills,chat,discoveryjobs,provider,agentcompat}/...`
   pass — behaviour parity of the agent runtime across the module move.
-- [ ] 3.4 `task lint` (root lefthook) passes for the server tree. (Not runnable here
-  — `golangci-lint`/`lefthook` not installed; owned by CI.)
+- [x] 3.4 `task lint` (root lefthook) passes for the server tree. (CI-owned; green on
+  PR #1740 — `server-ci`, `Lint`, `cli-ci`, `Unit Tests`, `Test`, `API Tests` all pass.)
 - [x] 3.5 `openspec validate adk-v2-migration --strict` passes.
