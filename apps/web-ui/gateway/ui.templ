@@ -904,6 +904,12 @@ templ checkboxPicker(p checkboxPickerProps) {
 	}
 }
 
+// checkboxPickerBody renders the checkbox option list. WrapTitle rows wrap the
+// title (and optional description) in a `min-w-0 whitespace-normal` span: the
+// whitespace reset is required because daisyUI's `.label` sets
+// `white-space: nowrap`, which otherwise inherits here and lets a long
+// description render on a single unbreakable line that overflows the SoftBox
+// (issue #1741).
 templ checkboxPickerBody(p checkboxPickerProps) {
 	if len(p.Items) == 0 {
 		@pickerEmptyNote(p.EmptyID, p.EmptyNote)
@@ -921,7 +927,7 @@ templ checkboxPickerBody(p checkboxPickerProps) {
 						class={ p.CheckboxClass }
 					/>
 					if p.WrapTitle {
-						<span class="min-w-0">
+						<span class="min-w-0 whitespace-normal">
 							<span class={ p.TitleClass }>{ it.Title }</span>
 							if it.Desc != "" {
 								<span class={ p.DescClass }>{ it.Desc }</span>
