@@ -11,6 +11,7 @@ struct AccountsCard: View {
     let needsReauthentication: (String) -> Bool
     let onSignOut: (Account) -> Void
     let onAddAccount: () -> Void
+    let onSignInAgain: (Account) -> Void
 
     var body: some View {
         ConnectorCard(title: "Accounts", systemImage: "person.2.circle") {
@@ -40,6 +41,17 @@ struct AccountsCard: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
+            }
+            if needsReauthentication(account.id) {
+                Button {
+                    onSignInAgain(account)
+                } label: {
+                    Text("Sign in again")
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityLabel(Text("Sign in again \(account.displayTitle)"))
+                .controlSize(.small)
+                .disabled(isSigningIn)
             }
             Button(role: .destructive) {
                 onSignOut(account)

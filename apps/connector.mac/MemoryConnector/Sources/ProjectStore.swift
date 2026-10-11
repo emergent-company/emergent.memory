@@ -371,12 +371,7 @@ final class ProjectStore {
 
     /// Text fallback for the auth-failure classification.
     static func errorLooksLikeAuthFailure(_ error: Error) -> Bool {
-        let text = ((error as? ConnectorCLIError)?.errorDescription ?? error.localizedDescription)
-            .lowercased()
-        return text.contains("not signed in")
-            || text.contains("invalid_token")
-            || text.contains("unauthorized")
-            || text.contains("401")
+        AuthFailure.looksLikeAuthFailure(error)
     }
 
     // MARK: - Organisation grouping

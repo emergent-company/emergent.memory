@@ -422,6 +422,9 @@ final class AccountStore {
         identities[accountID] = nil
         needsReauth.remove(accountID)
         sessionValid[accountID] = nil
+        // A stale failed-sign-in message must not linger on the Connection /
+        // About surfaces after this account is removed.
+        lastError = nil
         try? FileManager.default.removeItem(at: accountDirectory(for: accountID))
 
         accounts.removeAll { $0.id == accountID }
@@ -456,6 +459,11 @@ final class AccountStore {
     /// when near expiry). On failure only this account is marked as needing
     /// re-auth (`needsReauth`), never the others.
     ///
+    /// An auth/session failure (the CLI has no valid session) is mapped to
+    /// `OIDCError.notSignedIn` so callers can tell an expected "no session"
+    /// condition from a genuine error; anything else keeps the existing
+    /// `oidcError(from:)` mapping.
+    ///
     /// Note: `needsReauthentication` stays a synchronous set updated here (and
     /// by `signIn`/`signOut`); querying the CLI is async, so a fully derived
     /// value would break the existing synchronous signature used by the UI.
@@ -478,6 +486,9 @@ final class AccountStore {
             sessionValid[accountID] = false
             if accountID == activeAccountID {
                 isEffectivelySignedIn = false
+            }
+            if AuthFailure.looksLikeAuthFailure(error) {
+                throw OIDCError.notSignedIn
             }
             throw Self.oidcError(from: error)
         }

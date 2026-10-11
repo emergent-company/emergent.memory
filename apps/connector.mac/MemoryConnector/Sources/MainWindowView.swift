@@ -1,14 +1,18 @@
 import SwiftUI
 
 /// Main application window: a `NavigationSplitView` whose sidebar separates
-/// INFORMATION (dashboard, project & account) from SETTINGS (tools,
-/// permissions, connection, about). Replaces the old monolithic settings form.
+/// INFORMATION (dashboard, project & account) from SETTINGS (tools, permissions,
+/// connection), with About pinned to the bottom. Replaces the old monolithic
+/// settings form.
 ///
-/// A slim footer bar shows overall connector status (engine + hub), derived
-/// from `AppStatus`/`StatusMonitor`; the menu-bar icon keeps its own behaviour.
+/// A slim footer bar shows a single project-connection status (dot + label),
+/// driven by the account sign-in state and the connected project. Engine/hub
+/// health (derived from `AppStatus`/`StatusMonitor`) is reachable only via the
+/// footer's help tooltip; the menu-bar icon keeps its own behaviour.
 struct MainWindowView: View {
     @SwiftUI.Environment(ConnectorSettings.self) private var settings
     @SwiftUI.Environment(AppState.self) private var appState
+    @SwiftUI.Environment(AccountStore.self) private var accountStore
     @SwiftUI.Environment(IdentityStore.self) private var identity
     @SwiftUI.Environment(ProjectStore.self) private var projectStore
     @SwiftUI.Environment(EngineManager.self) private var engine
@@ -48,78 +52,51 @@ struct MainWindowView: View {
 
     // MARK: - Footer status
 
-    /// Overall connector status (engine process + hub reachability).
+    /// Overall connector status (engine process + hub reachability). Surfaced
+    /// only through the footer's help tooltip; never as visible text.
     private var status: AppStatus {
         AppStatus.derive(engine: engine.state, snapshot: statusMonitor.snapshot)
     }
 
-    /// Footer dot colours: green connected, orange connecting/starting, red
-    /// error, gray disconnected/stopped. (Independent of the menu-bar icon,
-    /// which keeps `AppStatus.color`.)
-    private var footerColor: Color {
-        switch status {
-        case .connected: .green
-        case .connecting: .orange
-        case .error: .red
-        case .disconnected: .secondary
+    /// Project-connection summary driving the footer dot + label. A leftover
+    /// connected-project id while signed out reads as "no projects connected".
+    private var connectionSummary: ProjectConnectionSummary {
+        ProjectConnectionSummary(
+            signedIn: accountStore.isEffectivelySignedIn,
+            hasConnectedProject: projectStore.hasConnectedProject
+        )
+    }
+
+    /// Maps the summary's dot state to a SwiftUI colour (the summary type is
+    /// kept free of SwiftUI for testing).
+    private var footerDotColor: Color {
+        switch connectionSummary.dot {
+        case .green: .green
+        case .orange: .orange
         }
     }
 
-    /// Optional trailing detail: the hub's own status line, else the engine
-    /// instance id. Kept to a single elided line.
-    private var footerDetail: String? {
-        guard let snapshot = statusMonitor.snapshot else { return nil }
-        if !snapshot.hubLine.isEmpty {
-            return snapshot.hubLine
-        }
-        if !snapshot.instanceID.isEmpty {
-            return snapshot.instanceID
-        }
-        return nil
-    }
-
-    /// `Connected: <project>` / `Not connected`, for the engine relay.
-    private var connectionLabel: LocalizedStringResource {
-        guard projectStore.hasConnectedProject else { return "Not connected" }
-        let name = projectStore.projects
-            .first { $0.id == projectStore.connectedProjectID }?
-            .name
-        return "Connected: \(name ?? "a project")"
+    /// Optional trailing help detail: the hub's own status line, when known.
+    private var hubHelpSuffix: String {
+        guard let hub = statusMonitor.snapshot?.hubLine, !hub.isEmpty else { return "" }
+        return " · " + hub
     }
 
     private var statusFooter: some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(footerColor)
+                .fill(footerDotColor)
                 .frame(width: 8, height: 8)
-            Text(status.label)
+            Text(connectionSummary.label)
                 .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-
-            Text("·")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-
-            Image(systemName: projectStore.hasConnectedProject ? "bolt.fill" : "bolt.slash")
-                .font(.caption2)
-                .foregroundStyle(projectStore.hasConnectedProject ? Color.green : Color.secondary)
-            Text(connectionLabel)
-                .font(.caption)
-                .foregroundStyle(projectStore.hasConnectedProject ? .primary : .secondary)
+                .foregroundStyle(connectionSummary == .connected ? .primary : .secondary)
                 .lineLimit(1)
 
             Spacer(minLength: 0)
-            if let detail = footerDetail {
-                Text(detail)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-            }
         }
         .padding(.horizontal, 24)
         .frame(height: 24)
-        .help(Text(status.label) + Text(verbatim: " · ") + Text(connectionLabel))
+        .help(Text(status.label) + Text(verbatim: hubHelpSuffix))
     }
 
     // MARK: - Sidebar
@@ -137,6 +114,27 @@ struct MainWindowView: View {
         }
         .listStyle(.sidebar)
         .navigationTitle("Memory")
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            aboutSidebarRow
+        }
+    }
+
+    /// About is not project context, so it is pinned to the bottom of the
+    /// sidebar and visually separated from the scrolled Information/Settings
+    /// sections instead of living in the Settings cluster. A one-row `List`
+    /// bound to the same selection keeps it a fully selectable sidebar row that
+    /// highlights when About is selected.
+    private var aboutSidebarRow: some View {
+        VStack(spacing: 0) {
+            Divider()
+            List(selection: sidebarSelection) {
+                Label(SidebarItem.about.title, systemImage: SidebarItem.about.systemIcon)
+                    .tag(SidebarItem.about)
+            }
+            .listStyle(.sidebar)
+            .scrollDisabled(true)
+            .frame(height: 44)
+        }
     }
 
     /// Single-selection `List` takes an optional binding; the app keeps a

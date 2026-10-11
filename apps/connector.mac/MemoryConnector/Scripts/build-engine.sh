@@ -30,6 +30,17 @@ fi
 
 mkdir -p "$OUT_DIR"
 cd "$ENGINE_SRC"
-go build -o "$OUT_BIN" ./cmd/memory-connector
+# Stamp the bundled engine with the app's release version so it reports the
+# SAME version as the app (`memory-connector status` -> `version`), instead of
+# the engine module's own dev default. Xcode exports the target build settings
+# to this phase, so MARKETING_VERSION is the app's CFBundleShortVersionString
+# (the release semver, overridden per release by Scripts/build-dmg.sh). When it
+# is absent (e.g. a bare `go build` run outside Xcode) the engine keeps its own
+# default.
+if [ -n "${MARKETING_VERSION:-}" ]; then
+  go build -ldflags "-X main.version=${MARKETING_VERSION}" -o "$OUT_BIN" ./cmd/memory-connector
+else
+  go build -o "$OUT_BIN" ./cmd/memory-connector
+fi
 chmod +x "$OUT_BIN"
 echo "engine embedded at: $OUT_BIN"

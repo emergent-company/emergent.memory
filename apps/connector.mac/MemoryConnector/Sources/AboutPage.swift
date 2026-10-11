@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// About page: app/engine versions, instance identity, and attribution.
+/// About page: app version, instance identity, and attribution.
 ///
 /// This is also the app's only surface that offers Development sign-in — a
 /// non-prominent developer affordance below the cards, deliberately unlike the
@@ -17,9 +17,7 @@ struct AboutPage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 AboutHeader(appVersion: appVersion, buildNumber: buildNumber)
-                AboutDetailsCard(engineVersion: engineVersion,
-                                 instanceID: instanceID,
-                                 serverURL: settings.serverURL)
+                AboutDetailsCard(instanceID: instanceID)
                 AboutUpdatesCard(updater: updater, settings: settings)
                 AboutInfoCard(mcpNodesURL: mcpNodesURL)
                 DevelopmentSignIn(
@@ -66,11 +64,6 @@ struct AboutPage: View {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
     }
 
-    private var engineVersion: String {
-        guard let version = statusMonitor.snapshot?.version, !version.isEmpty else { return "—" }
-        return version
-    }
-
     private var instanceID: String {
         if let id = statusMonitor.snapshot?.instanceID, !id.isEmpty {
             return id
@@ -78,8 +71,12 @@ struct AboutPage: View {
         return settings.instanceID
     }
 
+    /// Prefers the active account's environment server (the app supports two
+    /// environments, so a single hard-coded URL would be misleading), falling
+    /// back to the configured server.
     private var mcpNodesURL: URL? {
-        let base = settings.serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = (accountStore.activeEnvironment?.serverURLString ?? settings.serverURL)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !base.isEmpty else { return nil }
         let trimmed = base.hasSuffix("/") ? String(base.dropLast()) : base
         return URL(string: trimmed + "/settings/mcp-nodes")
@@ -112,18 +109,12 @@ private struct AboutHeader: View {
 // MARK: - Details card
 
 private struct AboutDetailsCard: View {
-    let engineVersion: String
     let instanceID: String
-    let serverURL: String
 
     var body: some View {
         ConnectorCard(title: "Details", systemImage: "info.circle") {
             VStack(alignment: .leading, spacing: 10) {
-                ConnectorInfoRow(label: "Engine version", value: engineVersion, monospaced: true)
                 IdentifierInfoRow(label: "Instance", identifier: instanceID)
-                if !serverURL.isEmpty {
-                    ConnectorInfoRow(label: "Server", value: serverURL)
-                }
             }
         }
     }

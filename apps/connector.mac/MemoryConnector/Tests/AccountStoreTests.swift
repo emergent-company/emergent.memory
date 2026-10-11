@@ -545,6 +545,27 @@ final class AccountStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testSignOutClearsLastError() async throws {
+        stubComplete(email: "a@example.test")
+        let store = makeStore()
+        let account = try await signIn(store, .prod)
+
+        // Force a stale failed-sign-in message, then remove an account.
+        cli.fail("auth start", message: "binary exploded")
+        do {
+            _ = try await store.signIn(environment: .dev)
+            XCTFail("expected a sign-in failure")
+        } catch {
+            // expected
+        }
+        XCTAssertNotNil(store.lastError)
+
+        await store.signOut(accountID: account.id)
+
+        XCTAssertNil(store.lastError, "removing an account clears a stale sign-in error")
+    }
+
+    @MainActor
     func testIndexReloadsAccountsAndActive() async throws {
         let first = makeStore()
         stubComplete(email: "a@example.test")
@@ -592,6 +613,28 @@ final class AccountStoreTests: XCTestCase {
         }
         XCTAssertTrue(store.needsReauthentication(devAccount.id), "only account B needs re-auth")
         XCTAssertFalse(store.needsReauthentication(prodAccount.id), "A is unaffected by B's failure")
+    }
+
+    @MainActor
+    func testAccessTokenAuthFailureMapsToNotSignedIn() async throws {
+        stubComplete(email: "a@example.test")
+        let store = makeStore()
+        let account = try await signIn(store, .prod)
+        XCTAssertTrue(store.isEffectivelySignedIn)
+
+        cli.on("auth access-token") { _ in
+            ProcessResult(stdout: "not signed in", exitCode: 1, timedOut: false)
+        }
+
+        do {
+            _ = try await store.currentAccessToken(for: account.id)
+            XCTFail("expected notSignedIn")
+        } catch let error as OIDCError {
+            XCTAssertEqual(error, .notSignedIn)
+        }
+        XCTAssertTrue(store.needsReauthentication(account.id))
+        XCTAssertEqual(store.sessionValid[account.id], false)
+        XCTAssertFalse(store.isEffectivelySignedIn, "the active account's session is invalid")
     }
 
     // MARK: - Identity backfill

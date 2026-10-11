@@ -82,6 +82,13 @@ apps/server/coverage_combined/
 *.log
 *.tsbuildinfo
 
+# Xcode generated projects/build output. The Xcode project is generated from
+# project.yml by XcodeGen (see apps/connector.mac); project.yml is the source
+# of truth, so the generated .xcodeproj must never be committed.
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+
 # Development PID files
 .dev-pids/
 apps/pids/

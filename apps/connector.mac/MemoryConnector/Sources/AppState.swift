@@ -55,10 +55,14 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
-    var group: Group {
+    /// The sidebar cluster an item belongs to. `about` is deliberately `nil`:
+    /// it is not project/settings context and is pinned separately at the
+    /// bottom of the sidebar.
+    var group: Group? {
         switch self {
         case .dashboard, .project: .information
-        case .tools, .mcpServers, .permissions, .connection, .about: .settings
+        case .tools, .mcpServers, .permissions, .connection: .settings
+        case .about: nil
         }
     }
 

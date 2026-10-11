@@ -20,30 +20,36 @@ struct ProjectAccountPage: View {
                 if let pageError {
                     ErrorBanner(message: pageError)
                 }
-                if accountStore.isEffectivelySignedIn {
+                if accountStore.accounts.isEmpty {
+                    // Exactly one sign-in prompt on the page while signed out.
+                    SignInCard { appState.selectedSidebarItem = .connection }
+                } else {
+                    // List stored accounts even when the CLI session is invalid
+                    // so a stored Dev account can be re-authenticated (not just
+                    // a generic Production sign-in).
                     AccountsCard(
                         accounts: accountStore.accounts,
                         activeAccountID: accountStore.activeAccountID,
                         isSigningIn: accountStore.isSigningIn,
                         needsReauthentication: { accountStore.needsReauthentication($0) },
                         onSignOut: { accountToSignOut = $0 },
-                        onAddAccount: { addAccount(addAccountEnvironment) }
+                        onAddAccount: { addAccount(addAccountEnvironment) },
+                        onSignInAgain: { reauthenticate($0) }
                     )
-                    ProjectCard(
-                        projects: projectStore.projects,
-                        state: projectStore.state,
-                        activeProject: activeProject,
-                        activeProjectName: projectStore.activeProjectName,
-                        activeProjectID: projectStore.activeProjectID,
-                        snapshot: currentSnapshot,
-                        isSigningIn: accountStore.isSigningIn,
-                        onTryAgain: { refreshAll() },
-                        onSignIn: { signInFromSignedOutState() }
-                    )
-                    ProjectConnectionControl()
-                } else {
-                    // Exactly one sign-in prompt on the page while signed out.
-                    SignInCard { appState.selectedSidebarItem = .connection }
+                    if accountStore.isEffectivelySignedIn {
+                        ProjectCard(
+                            projects: projectStore.projects,
+                            state: projectStore.state,
+                            activeProject: activeProject,
+                            activeProjectName: projectStore.activeProjectName,
+                            activeProjectID: projectStore.activeProjectID,
+                            snapshot: currentSnapshot,
+                            isSigningIn: accountStore.isSigningIn,
+                            onTryAgain: { refreshAll() },
+                            onSignIn: { signInFromSignedOutState() }
+                        )
+                        ProjectConnectionControl()
+                    }
                 }
             }
             .padding(24)
@@ -118,7 +124,13 @@ struct ProjectAccountPage: View {
             await projectStore.loadProjects(accessToken: token)
             pageError = nil
         } catch {
-            pageError = error.localizedDescription
+            if AuthFailure.looksLikeAuthFailure(error) || !accountStore.isEffectivelySignedIn {
+                // An expected auth/session failure (or a now-signed-out account)
+                // is not an error — suppress the raw banner.
+                pageError = nil
+            } else {
+                pageError = error.localizedDescription
+            }
         }
     }
 
@@ -151,6 +163,21 @@ struct ProjectAccountPage: View {
 
     private func addAccount(_ environment: Environment) {
         Task { _ = try? await accountStore.signIn(environment: environment) }
+    }
+
+    /// Re-authenticates a stored account that needs sign-in again, targeting
+    /// the account's OWN environment (a Dev account stays Dev). Then reloads
+    /// projects; an explicit failure surfaces its own error.
+    private func reauthenticate(_ account: Account) {
+        guard let environment = account.environment else { return }
+        Task {
+            do {
+                _ = try await accountStore.signIn(environment: environment)
+                await loadProjects()
+            } catch {
+                pageError = error.localizedDescription
+            }
+        }
     }
 
     /// The environment to sign in to when re-authenticating the active account:
