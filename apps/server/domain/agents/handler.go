@@ -1434,8 +1434,8 @@ func (h *Handler) ListDefinitions(c echo.Context) error {
 	for i, def := range definitions {
 		dto := def.ToSummaryDTO()
 		var override string
-		if def.Model != nil {
-			override = def.Model.Name
+		if m := FoldAgentModelRef(def.Model); m != nil {
+			override = m.Name
 		}
 		dto.EffectiveModel = pickEffectiveModel(override, projectDefault)
 		dtos[i] = dto

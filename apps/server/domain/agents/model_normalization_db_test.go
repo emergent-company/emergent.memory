@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -155,4 +156,84 @@ func TestMCPCreateAgentDefinition_StructuredProviderFoldsIntoName(t *testing.T) 
 	require.Equal(t, "openai/gpt-4o", def.Model.Name,
 		"MCP create must fold structured provider exactly like REST")
 	require.Empty(t, def.Model.Provider)
+}
+
+// TestListDefinitions_LegacyStructuredModelSurfacesPrefixed drives
+// h.ListDefinitions against a real repository holding a legacy structured row
+// (the pre-#1465 shape {"name":"<bare>","provider":"<slug>"}, which the
+// backfill migration has not yet repaired in this fixture) and asserts the
+// read path folds it into the canonical "provider/model" string the list
+// reports for normalized rows, instead of echoing a bare name.
+func TestListDefinitions_LegacyStructuredModelSurfacesPrefixed(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	tdb := testdb.SetupTestDBOrFail(t, context.Background(), "agents_model_legacy_read")
+	t.Cleanup(tdb.Close)
+	ctx := context.Background()
+
+	_, projectID := insertOrgAndProject(t, tdb.DB, ctx)
+	defID := insertAgentDefinition(t, tdb.DB, ctx, projectID, "legacy-agent", string(VisibilityProject))
+	_, err := tdb.DB.ExecContext(ctx,
+		`UPDATE kb.agent_definitions SET model = ?::jsonb WHERE id = ?`,
+		`{"name":"deepseek-v4-flash","provider":"openai"}`, defID)
+	require.NoError(t, err)
+
+	repo := NewRepository(tdb.DB)
+	h := &Handler{repo: repo} // no modelResolver: projectDefault is "", so override wins
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/agent-definitions", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("projectId")
+	c.SetParamValues(projectID)
+	c.Set(string(auth.UserContextKey), &auth.AuthUser{ID: "user-test-id", ProjectID: projectID})
+
+	require.NoError(t, h.ListDefinitions(c))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp APIResponse[[]AgentDefinitionSummaryDTO]
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.True(t, resp.Success)
+	require.Len(t, resp.Data, 1, "fixture project should contain exactly the inserted legacy definition")
+	require.Equal(t, "openai/deepseek-v4-flash", resp.Data[0].EffectiveModel,
+		"legacy structured provider must fold into the canonical prefixed name on read")
+}
+
+// TestExecuteListAgents_LegacyStructuredModelSurfacesPrefixed drives the MCP
+// list_agents tool against a real repository holding a legacy structured row and
+// asserts the DTO surfaces the folded "provider/model" name (and cleared
+// provider), not the raw {"name":"<bare>","provider":"<slug>"} shape.
+func TestExecuteListAgents_LegacyStructuredModelSurfacesPrefixed(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	tdb := testdb.SetupTestDBOrFail(t, context.Background(), "agents_model_legacy_mcp_list")
+	t.Cleanup(tdb.Close)
+	ctx := context.Background()
+
+	_, projectID := insertOrgAndProject(t, tdb.DB, ctx)
+	insertRuntimeAgent(t, tdb.DB, ctx, projectID, "legacy-agent")
+	defID := insertAgentDefinition(t, tdb.DB, ctx, projectID, "legacy-agent", string(VisibilityProject))
+	_, err := tdb.DB.ExecContext(ctx,
+		`UPDATE kb.agent_definitions SET model = ?::jsonb WHERE id = ?`,
+		`{"name":"deepseek-v4-flash","provider":"openai"}`, defID)
+	require.NoError(t, err)
+
+	repo := NewRepository(tdb.DB)
+	h := &MCPToolHandler{repo: repo}
+
+	res, err := h.ExecuteListAgents(ctx, projectID, nil)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.NotEmpty(t, res.Content)
+
+	var dtos []AgentWithDefinitionDTO
+	require.NoError(t, json.Unmarshal([]byte(res.Content[0].Text), &dtos))
+	require.Len(t, dtos, 1, "fixture project should contain exactly the inserted runtime agent")
+	require.NotNil(t, dtos[0].Model, "definition model must be present on the list_agents DTO")
+	require.Equal(t, "openai/deepseek-v4-flash", dtos[0].Model.Name,
+		"legacy structured provider must fold into the canonical prefixed name on list_agents")
+	require.Empty(t, dtos[0].Model.Provider, "folded provider must be cleared")
 }

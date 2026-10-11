@@ -59,3 +59,72 @@ func TestNormalizeAgentModelConfig_ErrorMessageMentionsProviderModel(t *testing.
 	require.Error(t, err)
 	require.True(t, strings.Contains(err.Error(), "provider/model"), "got %q", err.Error())
 }
+
+// TestFoldAgentModelRef guards the read-side fold (#1465) for legacy rows in
+// kb.agent_definitions.model that still hold the structured shape
+// {"name":"<bare>","provider":"<slug>"} (never backfilled). Each case asserts the
+// returned copy is normalized without mutating the input.
+func TestFoldAgentModelRef(t *testing.T) {
+	cases := []struct {
+		name     string
+		in       *ModelConfig
+		wantName string
+		wantProv string
+		wantNil  bool
+	}{
+		{name: "nil returns nil", in: nil, wantNil: true},
+		{name: "bare name plus provider folds into prefixed name",
+			in:       &ModelConfig{Name: "deepseek-v4-flash", Provider: "openai"},
+			wantName: "openai/deepseek-v4-flash"},
+		{name: "prefixed name plus redundant provider clears provider",
+			in:       &ModelConfig{Name: "openai/deepseek-v4-flash", Provider: "openai"},
+			wantName: "openai/deepseek-v4-flash"},
+		{name: "unparsable bare name without provider left untouched",
+			in: &ModelConfig{Name: "gpt-4o"}, wantName: "gpt-4o"},
+		{name: "conflicting providers left untouched",
+			in:       &ModelConfig{Name: "openai/gpt-4o", Provider: "google"},
+			wantName: "openai/gpt-4o", wantProv: "google"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Snapshot the input before folding to prove it is never mutated.
+			var inName, inProv string
+			if tc.in != nil {
+				inName, inProv = tc.in.Name, tc.in.Provider
+			}
+
+			got := FoldAgentModelRef(tc.in)
+			if tc.wantNil {
+				require.Nil(t, got)
+				return
+			}
+			require.NotNil(t, got)
+			require.Equal(t, tc.wantName, got.Name)
+			require.Equal(t, tc.wantProv, got.Provider, "folded provider must be cleared")
+			require.Equal(t, inName, tc.in.Name, "input Name must not be mutated")
+			require.Equal(t, inProv, tc.in.Provider, "input Provider must not be mutated")
+		})
+	}
+}
+
+// TestFoldAgentModelRef_PreservesOtherKeys proves the folded copy keeps the
+// non-model-reference fields (temperature, native tools) and only rewrites Name
+// and Provider.
+func TestFoldAgentModelRef_PreservesOtherKeys(t *testing.T) {
+	temperature := float32(0.7)
+	in := &ModelConfig{
+		Name:        "deepseek-v4-flash",
+		Provider:    "openai",
+		Temperature: &temperature,
+		NativeTools: []string{"google_search"},
+	}
+
+	got := FoldAgentModelRef(in)
+	require.NotNil(t, got)
+	require.Equal(t, "openai/deepseek-v4-flash", got.Name)
+	require.Empty(t, got.Provider)
+	require.NotNil(t, got.Temperature)
+	require.Equal(t, temperature, *got.Temperature)
+	require.Equal(t, []string{"google_search"}, got.NativeTools)
+}

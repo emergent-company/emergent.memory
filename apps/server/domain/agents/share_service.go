@@ -533,8 +533,8 @@ func (s *ShareService) PublicConfig(binding *ShareLinkBinding) *SharePublicConfi
 	if def.Description != nil {
 		dto.AgentDescription = *def.Description
 	}
-	if def.Model != nil {
-		dto.Model = def.Model.Name
+	if m := FoldAgentModelRef(def.Model); m != nil {
+		dto.Model = m.Name
 	}
 	dto.Icon, dto.Color = shareAgentIconColor(def.UIConfig)
 	return dto

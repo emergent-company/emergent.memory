@@ -337,7 +337,7 @@ func (h *MCPToolHandler) ExecuteListAgents(ctx context.Context, projectID string
 		// Enrich with definition metadata (best-effort; ignore errors)
 		if def, defErr := h.repo.ResolveDefinitionForAgent(ctx, agent); defErr == nil && def != nil {
 			dto.Description = def.Description
-			dto.Model = def.Model
+			dto.Model = FoldAgentModelRef(def.Model)
 			// Extract agentType and tier from definition config
 			if agentType, ok := def.Config["agentType"].(string); ok && agentType != "" {
 				dto.AgentType = &agentType

@@ -43,3 +43,34 @@ func NormalizeAgentModelConfig(m *ModelConfig) error {
 	m.Provider = ""
 	return nil
 }
+
+// FoldAgentModelRef returns a normalized copy of m with any legacy structured
+// provider folded into the canonical "provider/model" name and Provider cleared.
+// It never mutates m and never errors: a reference that cannot be parsed is
+// returned unchanged (as a copy), and nil returns nil.
+//
+// It is read-side defense in depth for #1465. Every write path funnels through
+// NormalizeAgentModelConfig, so newly written rows store the canonical shape.
+// But kb.agent_definitions.model was never backfilled, so rows written before
+// the invariant shipped can still hold the legacy structured shape
+// {"name":"<bare>","provider":"<slug>"} (e.g. the dev `operator` row storing
+// {"name":"deepseek-v4-flash","provider":"openai"}). Folding on read makes those
+// rows surface the same "provider/model" string as the normalized rows (which
+// report the project default reconstructed as provider/model), instead of one
+// bare name and one prefixed name in the same list.
+func FoldAgentModelRef(m *ModelConfig) *ModelConfig {
+	if m == nil {
+		return nil
+	}
+	// Shallow copy: Name/Provider are strings we reassign; the remaining pointer
+	// and slice fields are shared but never mutated here, so this is safe.
+	out := *m
+	ref, err := modelref.ParseWithProvider(m.Name, m.Provider)
+	if err != nil || ref.IsZero() {
+		// Unparsable (or empty) reference: leave the stored value untouched.
+		return &out
+	}
+	out.Name = ref.String()
+	out.Provider = ""
+	return &out
+}

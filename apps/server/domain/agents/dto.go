@@ -519,7 +519,7 @@ func (d *AgentDefinition) ToDTO() *AgentDefinitionDTO {
 		Name:               d.Name,
 		Description:        d.Description,
 		SystemPrompt:       d.SystemPrompt,
-		Model:              d.Model,
+		Model:              FoldAgentModelRef(d.Model),
 		Tools:              d.Tools,
 		BannedTools:        d.BannedTools,
 		Skills:             d.Skills,
