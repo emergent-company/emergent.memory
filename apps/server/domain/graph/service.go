@@ -3043,6 +3043,9 @@ func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *Hy
 	lexicalMean, lexicalStd := mathutil.CalcMeanStd(lexicalScores)
 	vectorMean, vectorStd := mathutil.CalcMeanStd(vectorScores)
 
+	// Don't penalise the surviving channel when the other returned no scores.
+	lexicalWeight, vectorWeight = mathutil.EffectiveFusionWeights(lexicalWeight, vectorWeight, len(lexicalScores) > 0, len(vectorScores) > 0)
+
 	// Fuse scores
 	type fusedResult struct {
 		id           uuid.UUID

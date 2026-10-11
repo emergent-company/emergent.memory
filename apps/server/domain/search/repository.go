@@ -315,6 +315,9 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 	lexicalMean, lexicalStd := mathutil.CalcMeanStd(lexicalScores)
 	vectorMean, vectorStd := mathutil.CalcMeanStd(vectorScores)
 
+	// Don't penalise the surviving channel when the other returned no scores.
+	lexicalWeight, vectorWeight = mathutil.EffectiveFusionWeights(lexicalWeight, vectorWeight, len(lexicalScores) > 0, len(vectorScores) > 0)
+
 	// Normalize and fuse scores
 	var candidates []*hybridCandidate
 	for _, c := range lexicalResults {

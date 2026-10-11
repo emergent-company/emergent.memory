@@ -34,6 +34,21 @@ func CalcMeanStd(scores []float32) (mean, std float32) {
 	return mean, std
 }
 
+// EffectiveFusionWeights adjusts lexical/vector fusion weights so a surviving
+// channel is not penalised by an empty channel's share of the weight. When
+// exactly one channel produced no scores, the surviving channel gets effective
+// weight 1.0 and the empty channel 0.0; otherwise the weights are returned
+// unchanged.
+func EffectiveFusionWeights(lexicalWeight, vectorWeight float32, hasLexical, hasVector bool) (float32, float32) {
+	if hasLexical && !hasVector {
+		return 1.0, 0.0
+	}
+	if !hasLexical && hasVector {
+		return 0.0, 1.0
+	}
+	return lexicalWeight, vectorWeight
+}
+
 // Sigmoid applies the sigmoid function to a float32 value.
 // sigmoid(z) = 1 / (1 + e^(-z))
 func Sigmoid(z float32) float32 {

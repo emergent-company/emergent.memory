@@ -115,6 +115,66 @@ func TestCalcMeanStd(t *testing.T) {
 	}
 }
 
+func TestEffectiveFusionWeights(t *testing.T) {
+	tests := []struct {
+		name          string
+		lexicalWeight float32
+		vectorWeight  float32
+		hasLexical    bool
+		hasVector     bool
+		wantLexical   float32
+		wantVector    float32
+	}{
+		{
+			name:          "lexical empty, vector present gives vector full weight",
+			lexicalWeight: 0.5,
+			vectorWeight:  0.5,
+			hasLexical:    false,
+			hasVector:     true,
+			wantLexical:   0.0,
+			wantVector:    1.0,
+		},
+		{
+			name:          "vector empty, lexical present gives lexical full weight",
+			lexicalWeight: 0.5,
+			vectorWeight:  0.5,
+			hasLexical:    true,
+			hasVector:     false,
+			wantLexical:   1.0,
+			wantVector:    0.0,
+		},
+		{
+			name:          "both present keeps weights unchanged",
+			lexicalWeight: 0.4,
+			vectorWeight:  0.6,
+			hasLexical:    true,
+			hasVector:     true,
+			wantLexical:   0.4,
+			wantVector:    0.6,
+		},
+		{
+			name:          "neither present keeps weights unchanged",
+			lexicalWeight: 0.5,
+			vectorWeight:  0.5,
+			hasLexical:    false,
+			hasVector:     false,
+			wantLexical:   0.5,
+			wantVector:    0.5,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotLexical, gotVector := EffectiveFusionWeights(tt.lexicalWeight, tt.vectorWeight, tt.hasLexical, tt.hasVector)
+			if gotLexical != tt.wantLexical || gotVector != tt.wantVector {
+				t.Errorf("EffectiveFusionWeights(%v, %v, %v, %v) = (%v, %v), want (%v, %v)",
+					tt.lexicalWeight, tt.vectorWeight, tt.hasLexical, tt.hasVector,
+					gotLexical, gotVector, tt.wantLexical, tt.wantVector)
+			}
+		})
+	}
+}
+
 func TestSigmoid(t *testing.T) {
 	tests := []struct {
 		name    string
