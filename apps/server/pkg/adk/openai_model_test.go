@@ -15,9 +15,10 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/adk/model"
-	"google.golang.org/adk/tool"
-	"google.golang.org/adk/tool/functiontool"
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/functiontool"
 	"google.golang.org/genai"
 )
 
@@ -558,7 +559,7 @@ func TestOpenAICompatibleModel_ToolSchema_ContainsResolvedPrefixedName(t *testin
 			Description: "Fetch a URL via the Exa MCP server",
 			InputSchema: &jsonschema.Schema{Type: "object"},
 		},
-		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
 			return map[string]any{"ok": true, "result": "fetched"}, nil
 		},
 	)
@@ -656,7 +657,7 @@ func TestOpenAICompatibleModel_ToolSchema_SpaceyServerName_ValidFunctionName(t *
 			Description: "Fetch a URL via the Exa MCP server",
 			InputSchema: &jsonschema.Schema{Type: "object"},
 		},
-		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
 			return map[string]any{"ok": true, "result": "fetched"}, nil
 		},
 	)

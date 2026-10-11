@@ -3,7 +3,7 @@ package adk
 import (
 	"context"
 
-	adkmodel "google.golang.org/adk/model"
+	adkmodel "google.golang.org/adk/v2/model"
 )
 
 // ResolvedCredential holds the decrypted credential material needed to

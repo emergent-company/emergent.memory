@@ -62,6 +62,10 @@ jobs:
 
     env:
       MEMORY_SERVER_IMAGE: memory-server:ci
+      # e2e is a standalone module: runlog pins an old google.golang.org/adk,
+      # so sharing the repo go.work build list would let a server ADK upgrade
+      # perturb e2e's dependency graph (otel bump breaks runlog). Isolate it.
+      GOWORK: "off"
       # Unique per run/job so concurrent jobs sharing one self-hosted Docker
       # daemon never collide on container names, the default network, or host
       # ports. Paired with ephemeral loopback port bindings in docker-compose.
@@ -137,6 +141,10 @@ jobs:
 
     env:
       MEMORY_SERVER_IMAGE: memory-server:ci
+      # e2e is a standalone module: runlog pins an old google.golang.org/adk,
+      # so sharing the repo go.work build list would let a server ADK upgrade
+      # perturb e2e's dependency graph (otel bump breaks runlog). Isolate it.
+      GOWORK: "off"
       # Unique per run/job so concurrent jobs sharing one self-hosted Docker
       # daemon never collide on container names, the default network, or host
       # ports. Paired with ephemeral loopback port bindings in docker-compose.
@@ -246,6 +254,10 @@ jobs:
 
     env:
       MEMORY_SERVER_IMAGE: memory-server:ci
+      # e2e is a standalone module: runlog pins an old google.golang.org/adk,
+      # so sharing the repo go.work build list would let a server ADK upgrade
+      # perturb e2e's dependency graph (otel bump breaks runlog). Isolate it.
+      GOWORK: "off"
       # Switch the stack's email transport from SMTP/Mailpit to Mailgun and
       # point the Mailgun SDK base URL at the local stub. The override includes
       # the /v3 path segment because Mailgun's SetAPIBase replaces the whole

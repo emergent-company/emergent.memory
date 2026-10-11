@@ -8,8 +8,9 @@ import (
 	"time"
 
 	"github.com/emergent-company/emergent.memory/domain/tasks"
-	"google.golang.org/adk/tool"
-	"google.golang.org/adk/tool/functiontool"
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/functiontool"
 )
 
 // WorkToolDeps holds the dependencies needed by the work_complete and
@@ -35,7 +36,7 @@ func BuildWorkCompleteTool(deps WorkToolDeps) (tool.Tool, error) {
 			Name:        ToolNameWorkComplete,
 			Description: "Mark the current work item complete and end the run. Call this exactly once when the work is finished. Provide a summary of what was accomplished, the list of produced object keys/artifacts, and/or structured deliverables (an array of {type, key} entries naming the objects you produced). After this call the run ends — do not call any further tools. If your agent requires review, the item moves to review instead of done. If your agent declares a work contract, the required deliverables must be produced and declared before the item can be completed.",
 		},
-		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
 			return completeWork(ctx, deps, args)
 		},
 	)
@@ -231,7 +232,7 @@ func BuildWorkBlockTool(deps WorkToolDeps) (tool.Tool, error) {
 			Name:        ToolNameWorkBlock,
 			Description: "Block the current work item because it cannot proceed, and end the run. Provide the reason the work is blocked and an optional kind. This surfaces a human-facing task so a person can retry, reassign, or cancel. After this call the run ends — do not call any further tools.",
 		},
-		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
 			reason, _ := args["reason"].(string)
 			if reason == "" {
 				return map[string]any{"error": "reason is required"}, nil

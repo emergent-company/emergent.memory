@@ -3,7 +3,7 @@ package provider
 import (
 	"log/slog"
 
-	adkmodel "google.golang.org/adk/model"
+	adkmodel "google.golang.org/adk/v2/model"
 
 	"github.com/emergent-company/emergent.memory/pkg/adk"
 )

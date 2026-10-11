@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"google.golang.org/adk/session"
+	"google.golang.org/adk/v2/session"
 
 	"github.com/emergent-company/emergent.memory/internal/testdb"
 )

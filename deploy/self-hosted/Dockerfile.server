@@ -19,7 +19,7 @@ ARG BUILD_TIME=unknown
 ARG GITHUB_MCP_SERVER_VERSION=1.12.1
 
 # ── Stage 1: Server + Migration + Swagger ──────────────────────────
-FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS server-builder
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS server-builder
 
 ARG TARGETPLATFORM
 ARG TARGETOS
@@ -91,7 +91,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     ./cmd/storage-init
 
 # ── Stage 2: CLI ───────────────────────────────────────────────────
-FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS cli-builder
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS cli-builder
 
 ARG TARGETPLATFORM
 ARG TARGETOS

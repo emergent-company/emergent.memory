@@ -9,8 +9,9 @@ import (
 	"strings"
 	"unicode"
 
-	"google.golang.org/adk/tool"
-	"google.golang.org/adk/tool/functiontool"
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/functiontool"
 
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
 	"github.com/google/jsonschema-go/jsonschema"
@@ -131,7 +132,7 @@ Usage notes:
 				Required: []string{"command"},
 			},
 		},
-		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
 			command, _ := args["command"].(string)
 			if command == "" {
 				return map[string]any{"error": "command is required"}, nil
@@ -184,7 +185,7 @@ const (
 
 // daemonAvailable checks whether the pyrunner daemon FIFO exists in the
 // container, indicating the daemon is running and ready to accept requests.
-func daemonAvailable(ctx tool.Context, provider sandbox.Provider, providerID string) bool {
+func daemonAvailable(ctx agent.Context, provider sandbox.Provider, providerID string) bool {
 	result, err := provider.Exec(ctx, providerID, &sandbox.ExecRequest{
 		Command:   fmt.Sprintf("test -p %s", daemonFIFOIn),
 		TimeoutMs: 3000, // 3s — should be near-instant
@@ -208,7 +209,7 @@ type daemonResponse struct {
 // input FIFO, and reads the JSON response from the output FIFO.
 // Returns the structured result or an error if the daemon dispatch fails.
 func runViaDaemon(
-	ctx tool.Context,
+	ctx agent.Context,
 	provider sandbox.Provider,
 	providerID string,
 	scriptPath string,
@@ -321,7 +322,7 @@ A non-zero exit_code means the script raised an exception — check stderr for t
 				Required: []string{"code"},
 			},
 		},
-		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
 			code, _ := args["code"].(string)
 			if code == "" {
 				return map[string]any{"error": "code is required"}, nil
@@ -446,7 +447,7 @@ A non-zero exit_code means the program failed — check stderr for the error.`,
 				Required: []string{"code"},
 			},
 		},
-		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
 			code, _ := args["code"].(string)
 			if code == "" {
 				return map[string]any{"error": "code is required"}, nil
@@ -540,7 +541,7 @@ Usage:
 				Required: []string{"file_path"},
 			},
 		},
-		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
 			filePath, _ := args["file_path"].(string)
 			if filePath == "" {
 				filePath, _ = args["path"].(string)
@@ -606,7 +607,7 @@ Usage:
 				Required: []string{"file_path", "content"},
 			},
 		},
-		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
 			filePath, _ := args["file_path"].(string)
 			if filePath == "" {
 				// Fallback: accept "path" as alias for "file_path"
@@ -660,7 +661,7 @@ Usage:
 				Required: []string{"file_path", "old_string", "new_string"},
 			},
 		},
-		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
 			filePath, _ := args["file_path"].(string)
 			if filePath == "" {
 				filePath, _ = args["path"].(string)
@@ -747,7 +748,7 @@ func buildGlobTool(deps WorkspaceToolDeps) (tool.Tool, error) {
 				Required: []string{"pattern"},
 			},
 		},
-		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
 			pattern, _ := args["pattern"].(string)
 			if pattern == "" {
 				return map[string]any{"error": "pattern is required"}, nil
@@ -800,7 +801,7 @@ func buildGrepTool(deps WorkspaceToolDeps) (tool.Tool, error) {
 				Required: []string{"pattern"},
 			},
 		},
-		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
 			pattern, _ := args["pattern"].(string)
 			if pattern == "" {
 				return map[string]any{"error": "pattern is required"}, nil
@@ -862,7 +863,7 @@ func buildGitTool(deps WorkspaceToolDeps) (tool.Tool, error) {
 				Required: []string{"action"},
 			},
 		},
-		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
 			action, _ := args["action"].(string)
 			if action == "" {
 				return map[string]any{"error": "action is required"}, nil
@@ -932,7 +933,7 @@ func buildGitTool(deps WorkspaceToolDeps) (tool.Tool, error) {
 // executeGitClone handles the "clone" action for workspace_git.
 // It validates the URL and destination path, then delegates to CheckoutService
 // (credential-aware) if available, or falls back to a plain git clone.
-func executeGitClone(ctx tool.Context, args map[string]any, deps WorkspaceToolDeps) (map[string]any, error) {
+func executeGitClone(ctx agent.Context, args map[string]any, deps WorkspaceToolDeps) (map[string]any, error) {
 	url, _ := args["url"].(string)
 	if url == "" {
 		return map[string]any{"error": "url is required for clone action"}, nil
@@ -1519,7 +1520,7 @@ yaml, lua, elixir, haskell, nix, solidity
 				Required: []string{"pattern", "lang"},
 			},
 		},
-		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
 			pattern, _ := args["pattern"].(string)
 			lang, _ := args["lang"].(string)
 			if pattern == "" {
@@ -1565,7 +1566,7 @@ yaml, lua, elixir, haskell, nix, solidity
 // resolveAstGrepBinary returns the name of the ast-grep binary available in the
 // sandbox, trying "ast-grep" first and falling back to "sg" (the short alias
 // used by some package managers / distros).
-func resolveAstGrepBinary(ctx tool.Context, provider sandbox.Provider, providerID string) (string, error) {
+func resolveAstGrepBinary(ctx agent.Context, provider sandbox.Provider, providerID string) (string, error) {
 	for _, name := range []string{"ast-grep", "sg"} {
 		result, err := provider.Exec(ctx, providerID, &sandbox.ExecRequest{
 			Command:   fmt.Sprintf("command -v %s 2>/dev/null", name),

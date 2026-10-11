@@ -7,8 +7,9 @@ import (
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
-	"google.golang.org/adk/tool"
-	"google.golang.org/adk/tool/functiontool"
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/functiontool"
 
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
@@ -103,7 +104,7 @@ func BuildSkillTool(ctx context.Context, deps SkillToolDeps) (tool.Tool, error) 
 			Description: desc,
 			InputSchema: inputSchema,
 		},
-		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
 			name, _ := args["name"].(string)
 			if name == "" {
 				return map[string]any{"error": "name is required"}, nil

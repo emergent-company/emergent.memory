@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"google.golang.org/adk/session"
-	"google.golang.org/adk/tool"
+	"google.golang.org/adk/v2/session"
+	"google.golang.org/adk/v2/tool"
 
 	"github.com/emergent-company/emergent.memory/internal/testdb"
 )

@@ -12,12 +12,12 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	"google.golang.org/adk/agent"
-	"google.golang.org/adk/agent/workflowagents/loopagent"
-	"google.golang.org/adk/agent/workflowagents/sequentialagent"
-	"google.golang.org/adk/model"
-	"google.golang.org/adk/runner"
-	"google.golang.org/adk/session"
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/agent/workflowagents/loopagent"
+	"google.golang.org/adk/v2/agent/workflowagents/sequentialagent"
+	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/runner"
+	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
 	"github.com/emergent-company/emergent.memory/pkg/adk"
@@ -477,7 +477,7 @@ func (p *ExtractionPipeline) createEntityProcessorAgent() (agent.Agent, error) {
 				}
 
 				// Also use StateDelta for persistence to session storage (needed by extractResults)
-				event := session.NewEvent(ctx.InvocationID())
+				event := session.NewEvent(ctx, ctx.InvocationID())
 				event.Author = "EntityProcessor"
 				event.Content = genai.NewContentFromText(fmt.Sprintf("Processed %d entities with temp_ids", len(internalEntities)), "model")
 				event.Actions.StateDelta = map[string]any{
@@ -671,7 +671,7 @@ func (p *ExtractionPipeline) createRelationshipProcessorAgent() (agent.Agent, er
 				}
 
 				// Also use StateDelta for persistence to session storage
-				event := session.NewEvent(ctx.InvocationID())
+				event := session.NewEvent(ctx, ctx.InvocationID())
 				event.Author = "RelationshipProcessor"
 				event.Content = genai.NewContentFromText(fmt.Sprintf("Processed %d relationships", len(relationships)), "model")
 				event.Actions.StateDelta = map[string]any{

@@ -13,12 +13,12 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
-	"google.golang.org/adk/agent"
-	"google.golang.org/adk/agent/llmagent"
-	"google.golang.org/adk/model"
-	"google.golang.org/adk/runner"
-	"google.golang.org/adk/session"
-	"google.golang.org/adk/tool"
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/agent/llmagent"
+	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/runner"
+	"google.golang.org/adk/v2/session"
+	"google.golang.org/adk/v2/tool"
 	"google.golang.org/genai"
 
 	"github.com/google/uuid"
@@ -1719,7 +1719,7 @@ func (ae *AgentExecutor) injectToolResponse(ctx context.Context, rootRunID, runI
 		Parts: parts,
 	}
 
-	event := session.NewEvent("")
+	event := session.NewEvent(ctx, "")
 	event.Author = author
 	event.LLMResponse = model.LLMResponse{
 		Content: content,
@@ -2599,7 +2599,7 @@ func (ae *AgentExecutor) runPipeline(
 	defer thinkTrack.close()
 
 	// Set up before-model callback for step tracking
-	beforeModelCb := func(cbCtx agent.CallbackContext, llmReq *model.LLMRequest) (*model.LLMResponse, error) {
+	beforeModelCb := func(cbCtx agent.Context, llmReq *model.LLMRequest) (*model.LLMResponse, error) {
 		// Observe a durable cancel at this step boundary (issue #1166). A cancel
 		// served by another instance persists the "cancelling" status; this
 		// instance's local context and cancel registry know nothing about it, so
@@ -2742,7 +2742,7 @@ func (ae *AgentExecutor) runPipeline(
 	toolScopes := ae.toolPool.ToolScopes()
 
 	// Set up before-tool callback for streaming ToolCallStart events and tool policy enforcement
-	beforeToolCb := func(tCtx tool.Context, t tool.Tool, args map[string]any) (map[string]any, error) {
+	beforeToolCb := func(tCtx agent.Context, t tool.Tool, args map[string]any) (map[string]any, error) {
 		// FunctionCallID is stable across the before/after callback pair, even
 		// for parallel tool calls. Capture it once so the start event, the
 		// terminal status, and the duration window all share the same id.
@@ -2918,7 +2918,7 @@ func (ae *AgentExecutor) runPipeline(
 	}
 
 	// Set up after-tool callback for doom loop detection and state persistence
-	afterToolCb := func(tCtx tool.Context, t tool.Tool, args, result map[string]any, toolErr error) (map[string]any, error) {
+	afterToolCb := func(tCtx agent.Context, t tool.Tool, args, result map[string]any, toolErr error) (map[string]any, error) {
 		toolName := t.Name()
 		currentStep := tracker.current()
 
@@ -3108,7 +3108,7 @@ func (ae *AgentExecutor) runPipeline(
 	}
 
 	// After-model callback: accumulate cached token counts for summary visibility.
-	afterModelCb := func(cbCtx agent.CallbackContext, llmResp *model.LLMResponse, llmErr error) (*model.LLMResponse, error) {
+	afterModelCb := func(cbCtx agent.Context, llmResp *model.LLMResponse, llmErr error) (*model.LLMResponse, error) {
 		if llmResp != nil && llmResp.UsageMetadata != nil && llmResp.UsageMetadata.CachedContentTokenCount > 0 {
 			cachedTokensMu.Lock()
 			totalCachedTokens += int64(llmResp.UsageMetadata.CachedContentTokenCount)

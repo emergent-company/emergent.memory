@@ -51,7 +51,7 @@ RUN ARCH=$(case "$TARGETARCH" in arm64) echo "aarch64";; *) echo "x86_64";; esac
 # ──────────────────────────────────────────────────────────────────────
 # Stage 2: Build vm-agent binary
 # ──────────────────────────────────────────────────────────────────────
-FROM golang:1.24-alpine AS agent-builder
+FROM golang:1.26-alpine AS agent-builder
 
 RUN apk add --no-cache git
 

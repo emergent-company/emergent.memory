@@ -12,8 +12,9 @@ import (
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
-	"google.golang.org/adk/tool"
-	"google.golang.org/adk/tool/functiontool"
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/functiontool"
 
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -498,7 +499,7 @@ func buildClientTools(defs []ClientToolDef, pause *clientPauseState) ([]tool.Too
 				Description: d.Function.Description,
 				InputSchema: schema,
 			},
-			func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+			func(ctx agent.Context, args map[string]any) (map[string]any, error) {
 				// Generate a collision-resistant tool call ID.
 				callID := fmt.Sprintf("call_%s_%s", sanitizeName(d.Function.Name), shortID())
 				pause.add(callID, d.Function.Name, args)

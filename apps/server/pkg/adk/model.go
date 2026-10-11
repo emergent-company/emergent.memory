@@ -9,8 +9,8 @@ import (
 
 	"cloud.google.com/go/auth/credentials"
 	"go.uber.org/fx"
-	"google.golang.org/adk/model"
-	"google.golang.org/adk/model/gemini"
+	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/model/gemini"
 	"google.golang.org/genai"
 
 	"github.com/emergent-company/emergent.memory/internal/config"

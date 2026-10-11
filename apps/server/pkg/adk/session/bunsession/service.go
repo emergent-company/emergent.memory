@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
-	"google.golang.org/adk/session"
+	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 )
 

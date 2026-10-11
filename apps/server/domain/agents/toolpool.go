@@ -11,8 +11,9 @@ import (
 	"sync"
 
 	"github.com/google/jsonschema-go/jsonschema"
-	"google.golang.org/adk/tool"
-	"google.golang.org/adk/tool/functiontool"
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/functiontool"
 
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
@@ -771,7 +772,7 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 				Description: td.Description,
 				InputSchema: inputSchema,
 			},
-			func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+			func(ctx agent.Context, args map[string]any) (map[string]any, error) {
 				// Relay tools forward to a connected client device and are, by
 				// construction, the agent-only class: they must not be reachable
 				// from an untrusted (external) run. This mirrors the ExecuteTool
@@ -809,7 +810,7 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 				Description: td.Description,
 				InputSchema: inputSchema,
 			},
-			func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+			func(ctx agent.Context, args map[string]any) (map[string]any, error) {
 				result, err := regSvc.CallExternalTool(ctx, pid, toolName, args)
 				if err != nil {
 					return map[string]any{"error": err.Error()}, nil
@@ -828,7 +829,7 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 			Description: td.Description,
 			InputSchema: inputSchema,
 		},
-		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
 			// Auto-inject namespace from context if the agent didn't supply one.
 			// This allows callers to set a namespace once (e.g. via /query?namespace=)
 			// and have it propagate to every MCP tool call transparently.
@@ -1089,7 +1090,7 @@ func (tp *ToolPool) wrapHiddenBuiltin(projectID, name, description string, schem
 			Description: description,
 			InputSchema: adkSchema,
 		},
-		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
 			result, err := svc.ExecuteTool(ctx, pid, name, args)
 			if err != nil {
 				return map[string]any{"error": err.Error()}, nil

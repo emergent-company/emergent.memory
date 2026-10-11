@@ -18,7 +18,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
 	"github.com/uptrace/bun"
-	"google.golang.org/adk/session"
+	"google.golang.org/adk/v2/session"
 
 	"github.com/emergent-company/emergent.memory/domain/agentcompat"
 	"github.com/emergent-company/emergent.memory/domain/agents"

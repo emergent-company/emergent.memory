@@ -23,7 +23,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/adk/session/bunsession"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 	"github.com/uptrace/bun"
-	"google.golang.org/adk/session"
+	"google.golang.org/adk/v2/session"
 )
 
 // Module provides the agents domain

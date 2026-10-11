@@ -9,8 +9,9 @@ import (
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
-	"google.golang.org/adk/tool"
-	"google.golang.org/adk/tool/functiontool"
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/functiontool"
 )
 
 // CoordinationToolDeps holds the dependencies needed by coordination tools.
@@ -214,7 +215,7 @@ func BuildListAvailableAgentsTool(deps CoordinationToolDeps) (tool.Tool, error) 
 			Name:        ToolNameListAvailableAgents,
 			Description: "List all available agents in the project's catalog. Returns name, description, tools list, and visibility for each agent. Does not include system prompts.",
 		},
-		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
 			// Query all definitions for the project (include internal — non-external
 			// callers should see everything; buildAgentCatalog hides internal from
 			// external-facing callers).
@@ -304,7 +305,7 @@ func BuildSpawnAgentsTool(deps *CoordinationToolDeps) (tool.Tool, error) {
 				Required: []string{"agents"},
 			},
 		},
-		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
 			// Parse the spawn requests from args
 			requests, err := parseSpawnRequests(args)
 			if err != nil {

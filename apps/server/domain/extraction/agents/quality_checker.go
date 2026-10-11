@@ -9,8 +9,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
-	"google.golang.org/adk/agent"
-	"google.golang.org/adk/session"
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
 	"github.com/emergent-company/emergent.memory/pkg/tracing"
@@ -100,7 +100,7 @@ func NewQualityCheckerAgent(cfg QualityCheckerConfig) (agent.Agent, error) {
 				}
 
 				// Create the event
-				event := session.NewEvent(ctx.InvocationID())
+				event := session.NewEvent(ctx, ctx.InvocationID())
 				event.Author = "QualityChecker"
 
 				if orphanRate <= threshold {

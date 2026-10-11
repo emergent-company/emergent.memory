@@ -29,13 +29,13 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	"google.golang.org/adk/agent"
-	"google.golang.org/adk/agent/llmagent"
-	"google.golang.org/adk/agent/workflowagents/loopagent"
-	"google.golang.org/adk/agent/workflowagents/sequentialagent"
-	"google.golang.org/adk/model"
-	"google.golang.org/adk/runner"
-	"google.golang.org/adk/session"
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/agent/llmagent"
+	"google.golang.org/adk/v2/agent/workflowagents/loopagent"
+	"google.golang.org/adk/v2/agent/workflowagents/sequentialagent"
+	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/runner"
+	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
 	"github.com/emergent-company/emergent.memory/pkg/adk"
@@ -455,7 +455,7 @@ func (p *TwoPhaseExtractionPipeline) createEntityProcessorAgent() (agent.Agent, 
 					return
 				}
 
-				evt := session.NewEvent(ctx.InvocationID())
+				evt := session.NewEvent(ctx, ctx.InvocationID())
 				evt.Author = "TwoPhase_EntityProcessor"
 				evt.Content = genai.NewContentFromText(
 					fmt.Sprintf("Two-phase: processed %d entities", len(internalEntities)), "model")
@@ -520,7 +520,7 @@ func (p *TwoPhaseExtractionPipeline) createRelationshipProcessorAgent() (agent.A
 					return
 				}
 
-				evt := session.NewEvent(ctx.InvocationID())
+				evt := session.NewEvent(ctx, ctx.InvocationID())
 				evt.Author = "TwoPhase_RelationshipProcessor"
 				evt.Content = genai.NewContentFromText(
 					fmt.Sprintf("Two-phase: processed %d relationships", len(relationships)), "model")
