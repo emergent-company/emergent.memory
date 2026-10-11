@@ -9,9 +9,11 @@
 ## 2. Engine / CLI (Go — `apps/connector.linux`)
 
 - [x] 2.1 Confirmed the engine binary is reused as-is; no per-project config-path helper needed once config paths are siblings (see 2.3).
-- [x] 2.2 Confirmed `MaterializeWithOptions` + the managed-config path are per config file (no schema change).
+- [x] 2.2 `MaterializeWithOptions` writes one config file per project (no schema change).
 - [x] 2.3 Confirmed `projects use` honours an explicit per-project config path; additional projects use sibling config files (`~/.config/memory-connector-<projectID>.yml`) so the CLI's account-session store stays shared.
 - [x] 2.4 `go build ./...` PASS; `go test ./...` PASS (the only failure is the pre-existing, macOS-only `internal/appletools` Reminders test on Linux).
+- [x] 2.5 Isolated the engine's managed-MCP-server persistence per config file (issue #1727): `managedConfigDir` now derives its subdirectory from the config file's basename — primary `memory-connector.yml` keeps the legacy `memory-connector/managed/`, per-project `memory-connector-<projectID>.yml` gets `memory-connector/managed-<projectID>/`. The account-session store (parent-dir derived) stays shared; sibling config paths are unchanged.
+- [x] 2.6 Unit tests pin the derivation: distinct managed dirs for sibling configs, legacy dir for the primary, stability for the same config, and isolated-managed/shared-session-store invariant.
 
 ## 3. Mac app (Swift — builds/tests only on the Mac build machine)
 

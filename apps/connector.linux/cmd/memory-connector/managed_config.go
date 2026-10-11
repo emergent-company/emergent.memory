@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"gopkg.in/yaml.v3"
@@ -259,10 +260,37 @@ func loadManagedConfig(managedPath string, secrets secretstore.Store) ([]mcphost
 	return servers, layout.Version, nil
 }
 
+// defaultConfigBase is the config file name (sans extension) of the primary/
+// legacy config, whose managed set keeps its original shared location.
+const defaultConfigBase = "memory-connector"
+
 // managedConfigDir returns the directory holding the persisted managed set and
-// its secrets, beside the main config under memory-connector/managed.
+// its secrets. It lives under the config file's account-store directory
+// (`<configDir>/memory-connector/`, so the OIDC session store stays shared
+// across sibling config files) but is isolated PER config file: the primary/
+// legacy config (`memory-connector.yml`) keeps the original `managed/`
+// subdirectory, while a per-project config (`memory-connector-<projectID>.yml`)
+// gets `managed-<projectID>/`. This lets every connected project hold its own
+// Memory-managed MCP-server set even though the sibling configs share a parent
+// directory (issue #1727).
 func managedConfigDir(configPath string) string {
-	return filepath.Join(filepath.Dir(configPath), "memory-connector", "managed")
+	parent := filepath.Dir(configPath)
+	return filepath.Join(parent, "memory-connector", managedSubdir(filepath.Base(configPath)))
+}
+
+// managedSubdir maps a config file name to its managed-set subdirectory name.
+// The primary config maps to the legacy "managed" dir; every other config maps
+// to "managed-<identity>" derived from its basename, so distinct config files
+// never share a managed set and the same config file is always stable.
+func managedSubdir(configBase string) string {
+	name := strings.TrimSuffix(configBase, filepath.Ext(configBase))
+	if name == defaultConfigBase {
+		return "managed"
+	}
+	// `memory-connector-<projectID>` -> `managed-<projectID>`; any other custom
+	// config name -> `managed-<name>`.
+	name = strings.TrimPrefix(name, defaultConfigBase+"-")
+	return "managed-" + name
 }
 
 // managedConfigPath returns the managed-set structure file path.

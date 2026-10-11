@@ -142,11 +142,17 @@ page becomes project-scoped (talks to the active project's child/port).
   `~/.config/memory-connector-<projectID>.yml` beside the legacy
   `~/.config/memory-connector.yml` (see the finding above), not a `projects/`
   subdirectory.
-- **Known shared-engine limitation** — the engine keys its managed-MCP-server
-  persistence on the config's parent directory, so with sibling paths the managed
-  set is **shared across an account's projects** rather than isolated per
-  project. Per-project managed sets would require an engine change and are out of
-  scope; tracked as a follow-up.
+- **Per-project managed MCP set** — the engine keys its managed-MCP-server
+  persistence on the config file's **identity** (basename), not its parent
+  directory: the primary `memory-connector.yml` keeps the legacy
+  `<configDir>/memory-connector/managed/` directory, while each per-project
+  `memory-connector-<projectID>.yml` gets `<configDir>/memory-connector/managed-<projectID>/`
+  (`apps/connector.linux/cmd/memory-connector/managed_config.go`). Sibling configs
+  therefore hold **independent** managed sets while the account-session store
+  (`<configDir>/memory-connector/`, derived from the parent directory) stays
+  shared. Resolves the former shared-engine limitation (#1727); no Mac/hub change
+  is required — the engine derives isolation from the `--config` path it is
+  already handed.
 - **Secondary surface** — the MCP registry *browse* sheet still targets the
   default port; it is read-only and not yet project-scoped. Tracked as a
   follow-up.

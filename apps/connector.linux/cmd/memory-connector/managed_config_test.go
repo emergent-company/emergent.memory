@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/account"
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/config"
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/mcphost"
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/relay"
@@ -255,5 +256,84 @@ func TestLoadManagedConfigMissingIsNil(t *testing.T) {
 	got, ver, err := loadManagedConfig(filepath.Join(t.TempDir(), "missing"), secretstore.New(t.TempDir()))
 	if err != nil || got != nil || ver != 0 {
 		t.Errorf("loadManagedConfig(missing) = (%v, %d, %v), want (nil, 0, nil)", got, ver, err)
+	}
+}
+
+// TestManagedConfigDirPrimaryKeepsLegacy pins the backward-compatible location:
+// the primary/legacy config file keeps the original `<dir>/memory-connector/
+// managed` directory and `managed/servers.yml` file.
+func TestManagedConfigDirPrimaryKeepsLegacy(t *testing.T) {
+	dir := t.TempDir()
+	primary := filepath.Join(dir, "memory-connector.yml")
+
+	wantDir := filepath.Join(dir, "memory-connector", "managed")
+	if got := managedConfigDir(primary); got != wantDir {
+		t.Errorf("managedConfigDir(primary) = %q, want %q", got, wantDir)
+	}
+	wantPath := filepath.Join(wantDir, "servers.yml")
+	if got := managedConfigPath(primary); got != wantPath {
+		t.Errorf("managedConfigPath(primary) = %q, want %q", got, wantPath)
+	}
+}
+
+// TestManagedConfigDirIsolatedPerConfigFile is the core #1727 regression: two
+// sibling config files (primary + per-project) share a parent directory but
+// must NOT share a managed set.
+func TestManagedConfigDirIsolatedPerConfigFile(t *testing.T) {
+	dir := t.TempDir()
+	primary := filepath.Join(dir, "memory-connector.yml")
+	project := filepath.Join(dir, "memory-connector-proj-abc123.yml")
+
+	primaryDir := managedConfigDir(primary)
+	projectDir := managedConfigDir(project)
+	if primaryDir == projectDir {
+		t.Fatalf("sibling config files share managed dir %q; want distinct dirs", primaryDir)
+	}
+	if primaryDir != filepath.Join(dir, "memory-connector", "managed") {
+		t.Errorf("primary managed dir = %q, want legacy managed/", primaryDir)
+	}
+	if want := filepath.Join(dir, "memory-connector", "managed-proj-abc123"); projectDir != want {
+		t.Errorf("project managed dir = %q, want %q", projectDir, want)
+	}
+	// The persisted structures must not collide either.
+	if managedConfigPath(primary) == managedConfigPath(project) {
+		t.Errorf("sibling config files share managed servers.yml path %q", managedConfigPath(primary))
+	}
+}
+
+// TestManagedConfigDirDistinctProjectsDiffer ensures two different projects
+// never share a managed set.
+func TestManagedConfigDirDistinctProjectsDiffer(t *testing.T) {
+	dir := t.TempDir()
+	a := managedConfigDir(filepath.Join(dir, "memory-connector-proj-a.yml"))
+	b := managedConfigDir(filepath.Join(dir, "memory-connector-proj-b.yml"))
+	if a == b {
+		t.Fatalf("distinct projects share managed dir %q", a)
+	}
+}
+
+// TestManagedConfigDirStableForSameConfig proves the derivation is a pure
+// function of the config path: the same config file always resolves to the same
+// managed dir.
+func TestManagedConfigDirStableForSameConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "memory-connector-proj-stable.yml")
+	if first, second := managedConfigDir(path), managedConfigDir(path); first != second {
+		t.Errorf("managedConfigDir unstable: %q != %q", first, second)
+	}
+}
+
+// TestManagedDirIsolatedWhileSessionStoreShared ties the two invariants
+// together: sibling configs get distinct managed dirs, yet the account-session
+// store (derived from the shared parent directory) stays shared.
+func TestManagedDirIsolatedWhileSessionStoreShared(t *testing.T) {
+	dir := t.TempDir()
+	primary := filepath.Join(dir, "memory-connector.yml")
+	project := filepath.Join(dir, "memory-connector-proj-xyz.yml")
+
+	if managedConfigDir(primary) == managedConfigDir(project) {
+		t.Error("managed dirs must be isolated per config file")
+	}
+	if account.BaseDirForConfig(primary) != account.BaseDirForConfig(project) {
+		t.Error("account-session store must stay shared across sibling config files")
 	}
 }
