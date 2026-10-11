@@ -15,7 +15,13 @@ name: Preview Environment
 #   action     -> github.event.action (opened | synchronize | reopened | closed)
 #
 # Fork PRs are excluded: they get a read-only token and no secrets, so they can
-# never provision. Every same-repository PR gets an environment automatically.
+# never provision. Fork PRs and unlabeled same-repo PRs are never provisioned.
+#
+# Opt-in: same-repository PRs are provisioned ONLY when a maintainer adds the
+# `preview` label — the default is no environment. Adding the label dispatches
+# an action=synchronize (provision/redeploy); pushing to an already-labeled PR
+# redeploys it; closing the PR always dispatches a teardown. Removing the label
+# does NOT tear down; the environment lives until the PR closes or hits the TTL.
 #
 # Rollout switch: the job only runs when the repository variable
 # PREVIEW_ENABLED == 'true'. Set it once the preview host, wildcard DNS/TLS,
@@ -39,7 +45,9 @@ name: Preview Environment
 on:
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened, closed]
+    # `labeled` catches the opt-in moment; the others redeploy an already
+    # opted-in PR (or tear it down on close). See the job `if:` for the gate.
+    types: [opened, synchronize, reopened, labeled, closed]
 
 # Per-PR serialization at the caller too: rapid pushes collapse, and a close
 # (teardown) is never cancelled by an in-flight update.
@@ -50,7 +58,14 @@ concurrency:
 jobs:
   preview:
     name: Preview environment
-    if: github.event.pull_request.head.repo.full_name == github.repository && vars.PREVIEW_ENABLED == 'true'
+    # Default = no preview. Provision only for same-repo PRs opted in with the
+    # `preview` label; always allow teardown on close (even if the label was
+    # since removed) so closing a PR can never strand an environment.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      vars.PREVIEW_ENABLED == 'true' &&
+      (github.event.action == 'closed' ||
+       contains(github.event.pull_request.labels.*.name, 'preview'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -69,7 +84,9 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          ACTION: ${{ github.event.action }}
+          # A `labeled` event is an opt-in (or re-opt-in) request: map it to
+          # `synchronize`, which the infra workflow treats as provision/redeploy.
+          ACTION: ${{ github.event.action == 'labeled' && 'synchronize' || github.event.action }}
         run: |
           gh api repos/emergent-company/emergent.memory.infra/dispatches \
             --method POST \
