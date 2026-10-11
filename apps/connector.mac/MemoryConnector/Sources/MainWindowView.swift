@@ -63,7 +63,7 @@ struct MainWindowView: View {
     private var connectionSummary: ProjectConnectionSummary {
         ProjectConnectionSummary(
             signedIn: accountStore.isEffectivelySignedIn,
-            hasConnectedProject: projectStore.hasConnectedProject
+            connectedCount: projectStore.connectedProjectCount
         )
     }
 
@@ -89,7 +89,7 @@ struct MainWindowView: View {
                 .frame(width: 8, height: 8)
             Text(connectionSummary.label)
                 .font(.caption)
-                .foregroundStyle(connectionSummary == .connected ? .primary : .secondary)
+                .foregroundStyle(connectionSummary.isConnected ? .primary : .secondary)
                 .lineLimit(1)
 
             Spacer(minLength: 0)

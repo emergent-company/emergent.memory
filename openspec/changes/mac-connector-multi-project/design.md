@@ -67,11 +67,16 @@ engine already implements every per-project behaviour correctly.
 
 ## Data model changes
 
-- **Engine config schema: unchanged.** N single-profile config files at
-  `~/.config/memory-connector/projects/<projectID>.yml`; the legacy
-  `~/.config/memory-connector.yml` stays the first/primary project's path.
-  Per-project managed-config sets fall out of the per-config directory
-  (`managed_config.go:264-276`).
+- **Engine config schema: unchanged.** N single-profile config files. The first/
+  primary project keeps the legacy path `~/.config/memory-connector.yml`;
+  additional projects use a **sibling** file
+  `~/.config/memory-connector-<projectID>.yml`. (Implementation finding: the
+  sibling layout is required, not a `projects/` subdirectory — the connector CLI
+  derives its account-session store from the config file's *parent* directory
+  (`account.BaseDirForConfig = <configDir>/memory-connector/`), so a
+  subdirectory would orphan the OIDC session and break `projects use` for every
+  additional project. Sibling files share the parent, so the session/token store
+  stays shared with zero engine change.)
 - **`ProjectProfile`**: `connected: Bool` retained but no longer mutually
   exclusive; add `managementPort: Int?`. `setConnected` stops clearing siblings;
   `connectedProjectID()` → `connectedProjectIDs() -> Set<String>`.
@@ -130,6 +135,21 @@ page becomes project-scoped (talks to the active project's child/port).
   lines), extending "engine lifecycle is observable in the log".
 - **Compatibility**: existing single-connection state reads as a one-element set;
   legacy config path + `8931` unchanged for single-project users.
+
+## Implementation notes (as built)
+
+- **Per-project config path** — sibling files
+  `~/.config/memory-connector-<projectID>.yml` beside the legacy
+  `~/.config/memory-connector.yml` (see the finding above), not a `projects/`
+  subdirectory.
+- **Known shared-engine limitation** — the engine keys its managed-MCP-server
+  persistence on the config's parent directory, so with sibling paths the managed
+  set is **shared across an account's projects** rather than isolated per
+  project. Per-project managed sets would require an engine change and are out of
+  scope; tracked as a follow-up.
+- **Secondary surface** — the MCP registry *browse* sheet still targets the
+  default port; it is read-only and not yet project-scoped. Tracked as a
+  follow-up.
 
 ## Spec impact
 

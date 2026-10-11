@@ -2,10 +2,9 @@ import SwiftUI
 
 /// Reusable per-project connection control.
 ///
-/// A single switch that connects the engine relay to the active project or
-/// disconnects it (stopping the engine). Exactly one project can be connected
-/// at a time: when another project is connected an inline note explains that
-/// connecting here moves the connection.
+/// A switch that connects an engine child to the active project or disconnects
+/// it (stopping that project's child). Any number of projects may be connected
+/// at once — connecting here never disconnects another project.
 ///
 /// Editing tools is independent of connection state — this control never
 /// touches tool enablement. Used on the Dashboard and on Project & Account.
@@ -90,14 +89,6 @@ struct ProjectConnectionControl: View {
                     .disabled(busy)
             }
 
-            if let other = otherConnectedName(projectID: projectID) {
-                Label("Connected to \(other) — connecting here will move the connection.",
-                      systemImage: "info.circle")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .font(.caption)
@@ -113,15 +104,7 @@ struct ProjectConnectionControl: View {
         if projectStore.isConnected(projectID) {
             return "The connector is serving this project's local tools."
         }
-        return "The connector is stopped until a project is connected."
-    }
-
-    /// Name of the currently connected project when it is NOT `projectID`.
-    private func otherConnectedName(projectID: String) -> String? {
-        guard let connected = projectStore.connectedProjectID, connected != projectID else {
-            return nil
-        }
-        return projectStore.projects.first { $0.id == connected }?.name ?? "another project"
+        return "The connector is stopped for this project."
     }
 
     private func binding(projectID: String) -> Binding<Bool> {
@@ -132,7 +115,7 @@ struct ProjectConnectionControl: View {
                 if isOn {
                     connect(projectID)
                 } else {
-                    disconnect()
+                    disconnect(projectID)
                 }
             }
         )
@@ -166,8 +149,8 @@ struct ProjectConnectionControl: View {
         }
     }
 
-    private func disconnect() {
+    private func disconnect(_ projectID: String) {
         error = nil
-        projectStore.disconnect()
+        projectStore.disconnect(projectID: projectID)
     }
 }

@@ -1,39 +1,54 @@
 import Foundation
 
 /// Per-project connector profile: which local MCP tools are OFF for this
-/// project, an optional project-specific instance id, and whether the single
-/// engine relay is connected to this project. Account/server/OIDC settings stay
-/// shared in `ConnectorSettings`; only these knobs vary per project.
+/// project, an optional project-specific instance id, whether an engine relay
+/// child is connected to this project, and the management port that child binds
+/// (when connected). Account/server/OIDC settings stay shared in
+/// `ConnectorSettings`; only these knobs vary per project.
 struct ProjectProfile: Codable, Equatable, Sendable {
     /// Tool names disabled for this project. A fresh profile defaults to the
     /// whole catalog (all tools OFF); empty means the user enabled all.
     var disabledTools: [String]
     /// nil → fall back to the shared `ConnectorSettings.instanceID`.
     var instanceID: String?
-    /// User decision: this project is the one the engine relay connects to.
-    /// At most one profile is `true` at a time. Missing in legacy stored JSON →
-    /// `false` (existing disabledTools/instanceID are left untouched).
+    /// User decision: an engine child is connected to this project. Multiple
+    /// profiles may be `true` at once (one child per connected project). Missing
+    /// in legacy stored JSON → `false` (existing disabledTools/instanceID are
+    /// left untouched).
     var connected: Bool
+    /// The loopback management port the connected child binds. `nil` until the
+    /// project's child is first launched; a legacy connected profile without a
+    /// port is treated as the primary (port `8931`). Missing in legacy JSON →
+    /// `nil`.
+    var managementPort: Int?
 
-    init(disabledTools: [String], instanceID: String? = nil, connected: Bool = false) {
+    init(disabledTools: [String],
+         instanceID: String? = nil,
+         connected: Bool = false,
+         managementPort: Int? = nil)
+    {
         self.disabledTools = disabledTools
         self.instanceID = instanceID
         self.connected = connected
+        self.managementPort = managementPort
     }
 
     enum CodingKeys: String, CodingKey {
         case disabledTools
         case instanceID
         case connected
+        case managementPort
     }
 
-    /// Tolerant decode: profiles written before `connected` existed decode as
-    /// `false` without disturbing the other fields. (`encode` is synthesized.)
+    /// Tolerant decode: profiles written before `connected`/`managementPort`
+    /// existed decode as `false`/`nil` without disturbing the other fields.
+    /// (`encode` is synthesized.)
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         disabledTools = try container.decodeIfPresent([String].self, forKey: .disabledTools) ?? []
         instanceID = try container.decodeIfPresent(String.self, forKey: .instanceID)
         connected = try container.decodeIfPresent(Bool.self, forKey: .connected) ?? false
+        managementPort = try container.decodeIfPresent(Int.self, forKey: .managementPort)
     }
 }
 
@@ -101,10 +116,11 @@ struct ProjectProfileStore {
         profile(for: projectID) ?? Self.newProfile(instanceID: instanceID)
     }
 
-    /// The single connected project, if any. Persisted state lives in each
-    /// profile's `connected` flag (legacy profiles without it are false).
-    func connectedProjectID() -> String? {
-        loadAll().first { $0.value.connected }?.key
+    /// Every connected project, as a set. Persisted state lives in each
+    /// profile's `connected` flag (legacy profiles without it are false). A
+    /// legacy single-connected profile reads as a one-element set.
+    func connectedProjectIDs() -> Set<String> {
+        Set(loadAll().filter(\.value.connected).keys)
     }
 
     func loadAll() -> [String: ProjectProfile] {
@@ -132,25 +148,28 @@ struct ProjectProfileStore {
         persist(all)
     }
 
-    /// Marks exactly one project connected: sets `connected = true` on it and
-    /// clears the flag on every other profile, in a single persisted write.
-    /// Creates a fresh all-disabled profile when the project has none.
-    /// Persisted state is the profile flag, so reloading rebuilds the same
-    /// `connectedProjectID`.
+    /// Sets the `connected` flag on `projectID` without touching any other
+    /// profile: connections are no longer mutually exclusive, so connecting one
+    /// project must not disconnect the others. Creates a fresh all-disabled
+    /// profile when the project has none. Persisted state is the profile flag,
+    /// so reloading rebuilds the same `connectedProjectIDs`.
     @discardableResult
     func setConnected(_ connected: Bool, for projectID: String) -> ProjectProfile {
         var all = loadAll()
-        if connected {
-            // Collect first: never mutate `all` while iterating it.
-            let toDisconnect = all
-                .filter { $0.key != projectID && $0.value.connected }
-                .map(\.key)
-            for id in toDisconnect {
-                all[id]?.connected = false
-            }
-        }
         var target = all[projectID] ?? Self.newProfile()
         target.connected = connected
+        all[projectID] = target
+        persist(all)
+        return target
+    }
+
+    /// Persists the loopback management port a connected child binds. Preserves
+    /// the other profile fields (connected, disabledTools, instanceID).
+    @discardableResult
+    func setManagementPort(_ port: Int, for projectID: String) -> ProjectProfile {
+        var all = loadAll()
+        var target = all[projectID] ?? Self.newProfile()
+        target.managementPort = port
         all[projectID] = target
         persist(all)
         return target

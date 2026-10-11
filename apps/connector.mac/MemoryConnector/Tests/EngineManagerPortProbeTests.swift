@@ -43,4 +43,29 @@ final class EngineManagerPortProbeTests: XCTestCase {
         ManagementPortProbe.portInUse = { false }
         XCTAssertFalse(ManagementPortProbe.portInUse())
     }
+
+    // MARK: - Per-project port allocation
+
+    func testAllocateFreePortStartsAtAdditionalBaseWhenNothingInUse() {
+        let port = ManagementPortProbe.allocateFreePort(excluding: [], probe: { _ in false })
+        XCTAssertEqual(port, ManagementPortProbe.additionalPortBase)
+    }
+
+    func testAllocateFreePortSkipsExcludedPorts() {
+        let port = ManagementPortProbe.allocateFreePort(
+            excluding: [ManagementPortProbe.additionalPortBase], probe: { _ in false }
+        )
+        XCTAssertEqual(port, ManagementPortProbe.additionalPortBase + 1)
+    }
+
+    func testAllocateFreePortSkipsInUsePorts() {
+        let probe: (Int) -> Bool = { $0 == ManagementPortProbe.additionalPortBase }
+        let port = ManagementPortProbe.allocateFreePort(excluding: [], probe: probe)
+        XCTAssertEqual(port, ManagementPortProbe.additionalPortBase + 1)
+    }
+
+    func testAllocateFreePortNeverReturnsPrimaryPort() {
+        let port = ManagementPortProbe.allocateFreePort(excluding: [], probe: { _ in false })
+        XCTAssertNotEqual(port, ManagementPortProbe.primaryPort)
+    }
 }

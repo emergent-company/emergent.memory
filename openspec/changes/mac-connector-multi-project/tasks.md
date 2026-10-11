@@ -4,31 +4,31 @@
 - [x] 1.2 Confirm hub feasibility: sessions are keyed `(projectID, instanceID)` and project identity comes from the token, so no server/protocol change is needed.
 - [x] 1.3 Decide the engine architecture: **N engine processes (one per connected project)** over one multiplexed process, for per-project failure isolation and zero engine rewrite.
 - [x] 1.4 Write `proposal.md`, `design.md`, and the delta specs for `mac-connector-app` and `mcp-connector`.
-- [ ] 1.5 Review/approve the design (this PR).
+- [x] 1.5 Review/approve the design (this PR).
 
 ## 2. Engine / CLI (Go — `apps/connector.linux`)
 
-- [ ] 2.1 Confirm the engine binary is reused as-is; add a per-project config-path helper only if needed (multi-project = N single-profile config files).
-- [ ] 2.2 Verify `MaterializeWithOptions` + the managed-config path already isolate per config file (no schema change).
-- [ ] 2.3 Verify `projects use` honours an explicit per-project config path.
-- [ ] 2.4 `go build ./...` + `go test ./...` (config, project, relay, mcphost, mgmtapi, status).
+- [x] 2.1 Confirmed the engine binary is reused as-is; no per-project config-path helper needed once config paths are siblings (see 2.3).
+- [x] 2.2 Confirmed `MaterializeWithOptions` + the managed-config path are per config file (no schema change).
+- [x] 2.3 Confirmed `projects use` honours an explicit per-project config path; additional projects use sibling config files (`~/.config/memory-connector-<projectID>.yml`) so the CLI's account-session store stays shared.
+- [x] 2.4 `go build ./...` PASS; `go test ./...` PASS (the only failure is the pre-existing, macOS-only `internal/appletools` Reminders test on Linux).
 
 ## 3. Mac app (Swift — builds/tests only on the Mac build machine)
 
-- [ ] 3.1 `ProjectProfile`/`ProjectProfileStore`: `connectedProjectIDs()` set; drop mutual-exclusion in `setConnected`; add per-project `managementPort`.
-- [ ] 3.2 `ProjectStore`: `connectedProjectIDs: Set<String>`; `connect` adds; add `disconnect(projectID:)`; keep `disconnectAll()`.
-- [ ] 3.3 `EngineLifecyclePolicy`: evaluate per project (unchanged shape).
-- [ ] 3.4 `EngineManager`: `children: [ProjectID: ChildSupervisor]`; per-project config path + probed/persisted management port; per-child restart/stop.
-- [ ] 3.5 `AppEnvironment`: set-reconcile in place of the single `syncEngineWithConnection`; generalize the scope-swap gate/settle to the set.
-- [ ] 3.6 `StatusMonitor`/`AppStatus`: per-child polling → aggregate; footer "N projects connected".
-- [ ] 3.7 `ProjectConnectionControl` + Project & Account page: per-project connect/disconnect; remove the "moving the connection" note.
-- [ ] 3.8 `MCPServersStore`/`MCPServersAPIClient`: project-scoped, per-project base URL/port.
-- [ ] 3.9 Legacy migration: an existing single connected project reads as a one-element set; legacy config path + port `8931` unchanged.
-- [ ] 3.10 Per-child logging is attributable (per-project file or prefixed lines).
-- [ ] 3.11 Unit tests (Mac build machine): `EngineLifecyclePolicyTests`, `EngineManagerPortProbeTests`, `ProjectStore*Tests`, `ProjectProfileStoreTests`, `MCPServersAvailabilityTests`, `StatusSnapshot*Tests`; lint via `Scripts/lint-swift.sh`.
+- [x] 3.1 `ProjectProfile`/`ProjectProfileStore`: `connectedProjectIDs()` set; dropped mutual-exclusion in `setConnected`; added per-project `managementPort`.
+- [x] 3.2 `ProjectStore`: `connectedProjectIDs: Set<String>`; `connect` adds; added `disconnect(projectID:)` + `disconnectAll()`.
+- [x] 3.3 `EngineLifecyclePolicy`: evaluated per project (unchanged shape).
+- [x] 3.4 `EngineManager`/`ChildSupervisor`: `children: [ProjectID: ChildSupervisor]`; per-project config path + probed/persisted management port; per-child restart/stop.
+- [x] 3.5 `AppEnvironment`: set-reconcile replaces the single `syncEngineWithConnection`; scope-swap gate generalized to the set.
+- [x] 3.6 `StatusMonitor`/`AppStatus`: per-child polling → aggregate; footer "N projects connected".
+- [x] 3.7 `ProjectConnectionControl` + Project & Account page: per-project connect/disconnect; single-connection copy removed.
+- [x] 3.8 `MCPServersStore`/`MCPServersAPIClient`/`MCPServersPage`: project-scoped, per-project base URL/port.
+- [x] 3.9 Legacy migration: an existing single connected project reads as a one-element set; legacy config path + port `8931` unchanged.
+- [x] 3.10 Per-child logging is attributable (primary → shared app log; others → `memory-connector-app-<projectID>.log`).
+- [x] 3.11 Unit tests updated/added; full suite green on the Mac build machine; SwiftFormat + SwiftLint ratchet clean.
 
 ## 4. Spec + archive
 
-- [ ] 4.1 Confirm the delta specs match shipped behaviour.
-- [ ] 4.2 `openspec validate mac-connector-multi-project --strict`; `task openspec:archive-check` stays green.
+- [x] 4.1 Delta specs match shipped behaviour (config-path finding recorded in `design.md`).
+- [x] 4.2 `openspec validate mac-connector-multi-project --strict` passes.
 - [ ] 4.3 Archive post-merge: `openspec archive mac-connector-multi-project`.

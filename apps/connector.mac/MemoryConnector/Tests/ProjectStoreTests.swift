@@ -66,11 +66,13 @@ final class ProjectStoreTests: XCTestCase {
     @MainActor
     private func makeStore(settings: ConnectorSettings? = nil,
                            restart: CallCounter = CallCounter(),
+                           stopProject: CallCounter = CallCounter(),
                            stop: CallCounter = CallCounter()) -> ProjectStore
     {
         let store = ProjectStore(settings: settings ?? makeSettings(),
                                  defaults: storeDefaults,
-                                 restart: { restart.increment() },
+                                 restart: { _, _, _ in restart.increment() },
+                                 stopProject: { _ in stopProject.increment() },
                                  stop: { stop.increment() })
         store.connectorCLI = cli.cli
         store.cliConfigPath = configURL.path
@@ -102,7 +104,7 @@ final class ProjectStoreTests: XCTestCase {
         XCTAssertEqual(store.state, .idle)
         XCTAssertTrue(store.projects.isEmpty)
         XCTAssertNil(store.activeProjectID)
-        XCTAssertNil(store.connectedProjectID)
+        XCTAssertTrue(store.connectedProjectIDs.isEmpty)
         XCTAssertFalse(store.hasConnectedProject)
         XCTAssertTrue(cli.calls.isEmpty, "no CLI command runs until driven")
     }
@@ -260,7 +262,7 @@ final class ProjectStoreTests: XCTestCase {
         await store.connect(projectID: "p1", accessToken: "user-access")
 
         XCTAssertEqual(store.state, .loaded)
-        XCTAssertEqual(store.connectedProjectID, "p1")
+        XCTAssertEqual(store.connectedProjectIDs, ["p1"])
         XCTAssertEqual(store.activeProjectID, "p1")
         XCTAssertTrue(store.hasConnectedProject)
         XCTAssertTrue(store.isConnected("p1"))
@@ -290,7 +292,7 @@ final class ProjectStoreTests: XCTestCase {
 
         XCTAssertNil(StubURLProtocol.registry.capturedRequest)
         XCTAssertEqual(restart.count, 1)
-        XCTAssertEqual(store.connectedProjectID, "p1")
+        XCTAssertEqual(store.connectedProjectIDs, ["p1"])
         XCTAssertTrue(cli.called("projects use"))
     }
 
@@ -304,7 +306,7 @@ final class ProjectStoreTests: XCTestCase {
         await store.connect(projectID: "p1", accessToken: "user-access")
 
         guard case .error = store.state else { return XCTFail("expected error state") }
-        XCTAssertNil(store.connectedProjectID)
+        XCTAssertTrue(store.connectedProjectIDs.isEmpty)
         XCTAssertEqual(store.activeProjectID, "p0", "failed connect must not change selection")
         XCTAssertEqual(restart.count, 0)
         XCTAssertNotEqual(ProjectProfileStore(defaults: storeDefaults).profile(for: "p1")?.connected, true)
@@ -323,18 +325,18 @@ final class ProjectStoreTests: XCTestCase {
         }
 
         await store.connect(projectID: "p1", accessToken: "user-access")
-        XCTAssertEqual(store.connectedProjectID, "p1")
+        XCTAssertEqual(store.connectedProjectIDs, ["p1"])
 
         await store.connect(projectID: "p2", accessToken: "user-access")
 
         guard case .error = store.state else { return XCTFail("expected error state") }
-        XCTAssertEqual(store.connectedProjectID, "p1", "failed connect must not drop the current connection")
+        XCTAssertEqual(store.connectedProjectIDs, ["p1"], "failed connect must not drop the current connection")
         XCTAssertEqual(restart.count, 1)
         XCTAssertEqual(ProjectProfileStore(defaults: storeDefaults).profile(for: "p1")?.connected, true)
     }
 
     @MainActor
-    func testConnectSecondProjectDisconnectsFirst() async {
+    func testConnectSecondProjectKeepsFirstConnected() async {
         let restart = CallCounter()
         let store = makeStore(restart: restart)
         stubConnectSuccess()
@@ -342,15 +344,14 @@ final class ProjectStoreTests: XCTestCase {
         await store.connect(projectID: "p1", accessToken: "user-access")
         await store.connect(projectID: "p2", accessToken: "user-access")
 
-        XCTAssertEqual(store.connectedProjectID, "p2", "exactly one project is connected")
+        XCTAssertEqual(store.connectedProjectIDs, ["p1", "p2"], "both projects stay connected")
         XCTAssertEqual(restart.count, 2)
         let profiles = ProjectProfileStore(defaults: storeDefaults)
-        XCTAssertEqual(profiles.profile(for: "p1")?.connected, false, "A is flipped to disconnected")
+        XCTAssertEqual(profiles.profile(for: "p1")?.connected, true, "A stays connected")
         XCTAssertEqual(profiles.profile(for: "p2")?.connected, true)
-        XCTAssertEqual(profiles.connectedProjectID(), "p2")
+        XCTAssertEqual(profiles.connectedProjectIDs(), ["p1", "p2"])
 
         let lastUse = useCalls().last ?? []
-        XCTAssertEqual(flagValue("--config", in: lastUse), configURL.path)
         XCTAssertTrue(lastUse.contains("p2"))
     }
 
@@ -364,15 +365,36 @@ final class ProjectStoreTests: XCTestCase {
         await store.connect(projectID: "p1", accessToken: "user-access")
         XCTAssertEqual(restart.count, 1)
 
-        store.disconnect()
+        store.disconnect(projectID: "p1")
 
-        XCTAssertEqual(stop.count, 1, "disconnect stops the engine")
-        XCTAssertNil(store.connectedProjectID)
+        XCTAssertEqual(stop.count, 1, "disconnecting the last project stops every child")
+        XCTAssertTrue(store.connectedProjectIDs.isEmpty)
         XCTAssertFalse(store.hasConnectedProject)
         let profile = ProjectProfileStore(defaults: storeDefaults).profile(for: "p1")
         XCTAssertEqual(profile?.connected, false, "disconnect is persisted")
-        XCTAssertFalse(EngineLifecyclePolicy.shouldRun(connectedProjectID: store.connectedProjectID,
+        XCTAssertFalse(EngineLifecyclePolicy.shouldRun(connectedProjectID: nil,
                                                        configURL: configURL))
+    }
+
+    @MainActor
+    func testDisconnectOneProjectKeepsOthersConnected() async {
+        let restart = CallCounter()
+        let stopProject = CallCounter()
+        let stop = CallCounter()
+        let store = makeStore(restart: restart, stopProject: stopProject, stop: stop)
+        stubConnectSuccess()
+
+        await store.connect(projectID: "p1", accessToken: "user-access")
+        await store.connect(projectID: "p2", accessToken: "user-access")
+
+        store.disconnect(projectID: "p1")
+
+        XCTAssertEqual(stopProject.count, 1, "only p1's child is stopped")
+        XCTAssertEqual(stop.count, 0, "the remaining child is not stopped")
+        XCTAssertEqual(store.connectedProjectIDs, ["p2"])
+        let profiles = ProjectProfileStore(defaults: storeDefaults)
+        XCTAssertEqual(profiles.profile(for: "p1")?.connected, false)
+        XCTAssertEqual(profiles.profile(for: "p2")?.connected, true)
     }
 
     @MainActor
@@ -380,10 +402,10 @@ final class ProjectStoreTests: XCTestCase {
         let first = makeStore()
         stubConnectSuccess()
         await first.connect(projectID: "p1", accessToken: "user-access")
-        XCTAssertEqual(first.connectedProjectID, "p1")
+        XCTAssertEqual(first.connectedProjectIDs, ["p1"])
 
         let second = makeStore()
-        XCTAssertEqual(second.connectedProjectID, "p1", "connection state is reconstructed from profiles")
+        XCTAssertEqual(second.connectedProjectIDs, ["p1"], "connection state is reconstructed from profiles")
     }
 
     // MARK: - Selection (view / configure — never connects)
@@ -397,7 +419,7 @@ final class ProjectStoreTests: XCTestCase {
         await store.selectProject("p1", accessToken: "user-access")
 
         XCTAssertEqual(store.activeProjectID, "p1")
-        XCTAssertNil(store.connectedProjectID, "select must not implicitly connect")
+        XCTAssertTrue(store.connectedProjectIDs.isEmpty, "select must not implicitly connect")
         XCTAssertTrue(useCalls().isEmpty, "no projects use for a non-connected project")
         XCTAssertEqual(restart.count, 0)
         XCTAssertEqual(stop.count, 1, "nothing connected: engine stopped, no lingering connection")
@@ -417,7 +439,7 @@ final class ProjectStoreTests: XCTestCase {
 
         await store.selectProject("p2", accessToken: "user-access")
 
-        XCTAssertEqual(store.connectedProjectID, "p1", "viewing another project does not disconnect")
+        XCTAssertEqual(store.connectedProjectIDs, ["p1"], "viewing another project does not disconnect")
         XCTAssertEqual(restart.count, 1)
         XCTAssertEqual(stop.count, 0)
         XCTAssertEqual(useCalls().count, 1, "select of a non-connected project makes no CLI call")
@@ -491,7 +513,7 @@ final class ProjectStoreTests: XCTestCase {
         let stop = CallCounter()
         let store = makeStore(restart: restart, stop: stop)
         XCTAssertEqual(store.activeProjectID, "p1")
-        XCTAssertNil(store.connectedProjectID)
+        XCTAssertTrue(store.connectedProjectIDs.isEmpty)
 
         await store.saveActiveProfile(disabledTools: ["notes_create"], instanceID: "p1-instance")
 
@@ -513,13 +535,13 @@ final class ProjectStoreTests: XCTestCase {
         let stop = CallCounter()
         let store = makeStore(stop: stop)
         XCTAssertEqual(store.activeProjectID, "p1")
-        XCTAssertEqual(store.connectedProjectID, "p1")
+        XCTAssertEqual(store.connectedProjectIDs, ["p1"])
 
         store.stopAndClear()
 
         XCTAssertEqual(stop.count, 1)
         XCTAssertNil(store.activeProjectID)
-        XCTAssertNil(store.connectedProjectID)
+        XCTAssertTrue(store.connectedProjectIDs.isEmpty)
         XCTAssertNil(storeDefaults.string(forKey: ProjectStore.activeProjectIDKey))
         XCTAssertEqual(ProjectProfileStore(defaults: storeDefaults).profile(for: "p1")?.connected, false)
         XCTAssertEqual(store.state, .idle)
@@ -560,7 +582,7 @@ final class ProjectStoreTests: XCTestCase {
 
         await store.connect(projectID: "p1", accessToken: "user-access")
 
-        XCTAssertEqual(store.connectedProjectID, "p1")
+        XCTAssertEqual(store.connectedProjectIDs, ["p1"])
         let profile = ProjectProfileStore(defaults: storeDefaults).profile(for: "p1")
         XCTAssertEqual(Set(profile?.disabledTools ?? []), Set(ToolCatalog.tools.map(\.id)),
                        "new project must start with every tool disabled")
@@ -591,7 +613,7 @@ final class ProjectStoreTests: XCTestCase {
         XCTAssertEqual(flagValue("--instance-id", in: uses[1]), "p2-connector")
         XCTAssertEqual(flagValue("--disabled-tools", in: uses[1]), "notes_create")
         XCTAssertEqual(flagValue("--instance-id", in: uses[2]), "p1-connector")
-        XCTAssertEqual(store.connectedProjectID, "p1")
+        XCTAssertEqual(store.connectedProjectIDs, ["p1", "p2"], "reconnecting A keeps B connected")
     }
 
     @MainActor

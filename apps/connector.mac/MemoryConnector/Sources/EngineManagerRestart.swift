@@ -35,8 +35,9 @@ extension EngineManager {
     }
 
     /// The engine command line. Extracted so the argument list is testable
-    /// without spawning a process.
-    nonisolated static func launchArguments(configPath: String) -> [String] {
-        ["relay", "--config", configPath, "--api-port", String(ManagementPortProbe.port)]
+    /// without spawning a process. Each child passes its own config path and
+    /// management port.
+    nonisolated static func launchArguments(configPath: String, port: Int) -> [String] {
+        ["relay", "--config", configPath, "--api-port", String(port)]
     }
 }

@@ -65,24 +65,50 @@ final class AppEnvironment {
         // `self`: these closures are built before `projectStore` is assigned,
         // so capturing `self` would be a use-before-initialization error.
         let engine = EngineManager.shared
-        let projectStore = ProjectStore(
+        projectStore = ProjectStore(
             settings: settings,
-            restart: { engine.restart() },
-            stop: { engine.stop() }
+            restart: { projectID, configPath, port in
+                engine.restart(projectID: projectID, configPath: configPath, port: port)
+            },
+            stopProject: { projectID in
+                engine.stop(projectID: projectID)
+            },
+            stop: { engine.stopAll() }
         )
-        self.projectStore = projectStore
 
+        wireStoreHooks()
+        observeProjectStore()
+
+        // Restore the launch account's scope before any UI/engine work.
+        if let account = accountStore.activeAccount {
+            applyScope(for: account)
+        }
+
+        // One-time, best-effort legacy-session import into the connector CLI.
+        // Kicked off once, non-blocking, and independent of sign-in state;
+        // `migrateIfNeeded()` never throws.
+        Task {
+            await migrator?.migrateIfNeeded()
+        }
+    }
+
+    /// Wires the account/project stores' engine, CLI-session, and
+    /// organisation-name hooks. Split out of `init` (called after the stored
+    /// properties are assigned) so the initializer stays within the
+    /// function-body-length limit. Behaviour is identical to the former inline
+    /// wiring.
+    private func wireStoreHooks() {
         // The engine stop the account store runs before switching accounts is
         // the composition root's own engine (wired here, not reached via a
         // `.shared` default inside the store).
-        accountStore.engineWillStop = { [weak self] in self?.engine.stop() }
+        accountStore.engineWillStop = { [weak self] in self?.engine.stopAll() }
 
         // When a project load hits an auth failure, `ProjectStore` asks the
         // account store to re-establish the connector CLI session (a best-effort
         // `auth import`) before deciding whether to show the signed-out state.
         projectStore.repairConnectorSession = { [weak self] in
             guard let self else { return false }
-            return await self.accountStore.ensureConnectorSession()
+            return await accountStore.ensureConnectorSession()
         }
 
         // Resolve organisation display names for the loaded projects so the
@@ -91,8 +117,8 @@ final class AppEnvironment {
         // falls back to "Other" without failing the project load.
         projectStore.organizationNameLoader = { [weak self] in
             guard let self,
-                  let environment = self.accountStore.activeEnvironment,
-                  let token = try? await self.accountStore.currentAccessToken()
+                  let environment = accountStore.activeEnvironment,
+                  let token = try? await accountStore.currentAccessToken()
             else {
                 return [:]
             }
@@ -112,27 +138,13 @@ final class AppEnvironment {
         accountStore.activeAccountDidChange = { [weak self] account in
             self?.handleActiveAccountChange(account)
         }
-
-        observeProjectStore()
-
-        // Restore the launch account's scope before any UI/engine work.
-        if let account = accountStore.activeAccount {
-            applyScope(for: account)
-        }
-
-        // One-time, best-effort legacy-session import into the connector CLI.
-        // Kicked off once, non-blocking, and independent of sign-in state;
-        // `migrateIfNeeded()` never throws.
-        Task {
-            await migrator?.migrateIfNeeded()
-        }
     }
 
     // MARK: - Project-store observation
 
     /// Replaces the old Combine `$state` / `$connectedProjectID` sinks with
-    /// `@Observable` tracking. Both side effects run on the main actor, exactly
-    /// as the `.receive(on: RunLoop.main)` sinks did.
+    /// `@Observable` tracking of the connected-project set. Both side effects run
+    /// on the main actor, exactly as the `.receive(on: RunLoop.main)` sinks did.
     private func observeProjectStore() {
         observeProjectState()
         observeConnectedProject()
@@ -155,18 +167,18 @@ final class AppEnvironment {
         }
     }
 
-    /// Keep the engine + status polling aligned with the connected project.
+    /// Keep the engine + status polling aligned with the connected projects.
     /// `withObservationTracking` fires only on change (the Combine equivalent
     /// used `dropFirst()` to skip the current value), and a scope swap in flight
     /// suppresses these so the swap's own single reconcile is the only one.
     private func observeConnectedProject() {
         withObservationTracking {
-            _ = projectStore.connectedProjectID
+            _ = projectStore.connectedProjectIDs
         } onChange: { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
                 if self.scopeSwapGate.mayReconcile {
-                    self.syncEngineWithConnection()
+                    self.syncEngineWithConnections()
                 }
                 self.observeConnectedProject()
             }
@@ -217,32 +229,32 @@ final class AppEnvironment {
     }
 
     /// Points `ProjectStore` at `account`'s storage/environment and reconciles
-    /// the engine so only this account's connected project can run.
+    /// the engine so only this account's connected projects can run.
     private func applyScope(for account: Account) {
         guard let scope = accountStore.projectScope(for: account.id) else { return }
-        let previousConnected = projectStore.connectedProjectID
+        let previousConnected = projectStore.connectedProjectIDs.sorted().joined(separator: ",")
         ConnectorLog.lifecycle(
-            "applyScope account=\(account.id) environment=\(account.environmentID) previousConnected=\(previousConnected ?? "nil")"
+            "applyScope account=\(account.id) environment=\(account.environmentID) previousConnected=\(previousConnected.isEmpty ? "nil" : previousConnected)"
         )
-        // Suppress the connected-project-id sink for the whole swap: the id
-        // transitions (nil → restored value) must not reconcile against the
-        // stale config. The single reconcile below runs after the rewrite.
+        // Suppress the connected-project-ids sink for the whole swap: the set
+        // transitions (∅ → restored set) must not reconcile against the stale
+        // config. The single reconcile below runs after the rewrite.
         scopeSwapGate.begin()
         projectStore.applyScope(scope)
-        // Rewrite the shared engine config from this account's own CLI session
-        // so a previous account's config can never linger into this scope, then
-        // reconcile the engine exactly once. The CLI call is async, so defer
-        // it. `reassertConnection` never throws (it catches internally), so the
-        // trailing reconcile and decrement always run.
+        // Rewrite every engine config from this account's own CLI session so a
+        // previous account's config can never linger into this scope, then
+        // reconcile the engine set exactly once. The CLI calls are async, so
+        // defer them. `reassertConnection` never throws (it catches internally),
+        // so the trailing reconcile and decrement always run.
         //
         // Chained so overlapping swaps settle in spawn order: each settle awaits
-        // the previous one, so the last swap's config rewrite + reconcile win.
+        // the previous one, so the last swap's config rewrites + reconcile win.
         let previous = settleChain
         settleChain = Task { [weak self] in
             await previous?.value
             guard let self else { return }
             _ = await projectStore.reassertConnection()
-            syncEngineWithConnection()
+            syncEngineWithConnections()
             scopeSwapGate.end()
         }
     }
@@ -271,66 +283,82 @@ final class AppEnvironment {
                                 token: token)
         }
         if reconcileEngine {
-            syncEngineWithConnection()
+            syncEngineWithConnections()
         }
     }
 
     // MARK: - Engine lifecycle gating
 
-    /// Reconciles the engine process with the connected-project state:
+    /// Reconciles the engine children with the connected-project set:
     ///
-    /// - connected + config exists and binds the connected project (and the
-    ///   expected server, when known) → ensure it is running;
-    /// - no connected project → stop it (a stale config must never reconnect);
-    /// - connected but config missing → stop and surface an error (never start
-    ///   a stale/other project's config);
-    /// - config binds a different project/server → stop and surface a
+    /// - connected + config exists and binds that project (and the expected
+    ///   server, when known) → ensure that project's child is running;
+    /// - no connected projects → stop every child (a stale config must never
+    ///   reconnect);
+    /// - connected but config missing → stop that child and surface an error
+    ///   (never start a stale/other project's config);
+    /// - config binds a different project/server → stop that child and surface a
     ///   configuration error naming both project ids (never start it).
     ///
-    /// Safe to call repeatedly (`start()` no-ops while running, `stop()` is
-    /// idempotent).
-    func syncEngineWithConnection() {
+    /// A mismatch in ONE project's config stops only that project's child; every
+    /// other project keeps running. Safe to call repeatedly (`start()` no-ops
+    /// while running, `stop()` is idempotent).
+    func syncEngineWithConnections() {
         let expectedServer = accountStore.activeEnvironment?.serverURLString ?? settings.serverURL
         let expectedServerTrimmed = expectedServer.trimmingCharacters(in: .whitespacesAndNewlines)
-        let decision = EngineLifecyclePolicy.decision(
-            connectedProjectID: projectStore.connectedProjectID,
-            configURL: EngineConfigSync.configURL,
-            expectedServerURL: expectedServerTrimmed.isEmpty ? nil : expectedServerTrimmed
-        )
-        switch decision {
-        case .run:
-            engine.start()
-            statusMonitor.start()
-        case .noConnectedProject:
-            engine.stop()
-            statusMonitor.stop()
-            statusMonitor.markStopped()
-        case let .missingConfig(projectID):
-            engine.stop()
-            statusMonitor.stop()
-            statusMonitor.markStopped()
-            engine.reportConfigurationError(
-                "Engine config for connected project \(projectID) is missing; not starting."
+        let desired = projectStore.connectedProjectIDs
+
+        // Stop children for projects no longer connected.
+        for projectID in engine.children.keys where !desired.contains(projectID) {
+            engine.stop(projectID: projectID)
+        }
+
+        for projectID in desired.sorted() {
+            let target = projectStore.engineTarget(for: projectID)
+            let decision = EngineLifecyclePolicy.decision(
+                connectedProjectID: projectID,
+                configURL: URL(fileURLWithPath: target.configPath),
+                expectedServerURL: expectedServerTrimmed.isEmpty ? nil : expectedServerTrimmed
             )
-        case let .wrongProject(projectID, configured):
-            engine.stop()
-            statusMonitor.stop()
-            statusMonitor.markStopped()
-            // The decision carries no mismatch kind, so distinguish by shape:
-            // a nil configured id means the config binds no project, and a
-            // configured id equal to the connected one can only be a server
-            // mismatch (the project itself matched).
-            let reason = switch configured {
-            case .none:
-                "the engine config binds no project"
-            case let .some(configuredID) where configuredID == projectID:
-                "the engine config binds a different server for project \(projectID)"
-            case let .some(configuredID):
-                "the engine config binds project \(configuredID)"
+            switch decision {
+            case .run:
+                engine.start(projectID: projectID, configPath: target.configPath, port: target.port)
+            case .noConnectedProject:
+                engine.stop(projectID: projectID)
+            case let .missingConfig(projectID):
+                engine.stop(projectID: projectID)
+                engine.reportConfigurationError(
+                    "Engine config for connected project \(projectID) is missing; not starting.",
+                    for: projectID, configPath: target.configPath, port: target.port
+                )
+            case let .wrongProject(projectID, configured):
+                engine.stop(projectID: projectID)
+                // The decision carries no mismatch kind, so distinguish by shape:
+                // a nil configured id means the config binds no project, and a
+                // configured id equal to the connected one can only be a server
+                // mismatch (the project itself matched).
+                let reason = switch configured {
+                case .none:
+                    "the engine config binds no project"
+                case let .some(configuredID) where configuredID == projectID:
+                    "the engine config binds a different server for project \(projectID)"
+                case let .some(configuredID):
+                    "the engine config binds project \(configuredID)"
+                }
+                engine.reportConfigurationError(
+                    "Engine config does not match the connected project \(projectID): \(reason); not starting.",
+                    for: projectID, configPath: target.configPath, port: target.port
+                )
             }
-            engine.reportConfigurationError(
-                "Engine config does not match the connected project \(projectID): \(reason); not starting."
-            )
+        }
+
+        // Status polling follows the connected set: poll while any project is
+        // connected, publish "not running" when none is.
+        if desired.isEmpty {
+            statusMonitor.stop()
+            statusMonitor.markStopped()
+        } else {
+            statusMonitor.start()
         }
     }
 

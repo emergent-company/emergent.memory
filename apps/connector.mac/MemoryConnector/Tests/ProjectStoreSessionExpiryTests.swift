@@ -50,7 +50,8 @@ final class ProjectStoreSessionExpiryTests: XCTestCase {
         settings.updateDisabledTools([])
         let store = ProjectStore(settings: settings,
                                  defaults: defaults,
-                                 restart: {},
+                                 restart: { _, _, _ in },
+                                 stopProject: { _ in },
                                  stop: { stop.increment() })
         store.connectorCLI = cli.cli
         store.cliConfigPath = configURL.path
@@ -58,7 +59,7 @@ final class ProjectStoreSessionExpiryTests: XCTestCase {
     }
 
     /// Seeds a persisted connection for `p1` so the store reconstructs
-    /// `connectedProjectID` on init, mirroring a launch with a configured
+    /// `connectedProjectIDs` on init, mirroring a launch with a configured
     /// project already on disk.
     private func seedConnectedProject(_ id: String = "p1") {
         ProjectProfileStore(defaults: defaults).setConnected(true, for: id)
@@ -75,13 +76,13 @@ final class ProjectStoreSessionExpiryTests: XCTestCase {
         cli.on("auth status", json: signedOutStatus)
         let stop = CallCounter()
         let store = makeStore(stop: stop)
-        XCTAssertEqual(store.connectedProjectID, "p1")
+        XCTAssertEqual(store.connectedProjectIDs, ["p1"])
 
         let result = await store.reassertConnection()
 
         XCTAssertFalse(result)
         XCTAssertEqual(store.state, .signedOut)
-        XCTAssertEqual(store.connectedProjectID, "p1",
+        XCTAssertEqual(store.connectedProjectIDs, ["p1"],
                        "auth failure must keep the connected intent")
         XCTAssertTrue(store.hasConnectedProject)
         XCTAssertEqual(stop.count, 0, "auth failure must not stop the engine")
@@ -100,7 +101,7 @@ final class ProjectStoreSessionExpiryTests: XCTestCase {
 
         XCTAssertFalse(result)
         XCTAssertEqual(store.state, .signedOut)
-        XCTAssertEqual(store.connectedProjectID, "p1")
+        XCTAssertEqual(store.connectedProjectIDs, ["p1"])
         XCTAssertEqual(stop.count, 0)
     }
 
@@ -111,13 +112,13 @@ final class ProjectStoreSessionExpiryTests: XCTestCase {
         cli.on("auth status", json: signedInStatus)
         let stop = CallCounter()
         let store = makeStore(stop: stop)
-        XCTAssertEqual(store.connectedProjectID, "p1")
+        XCTAssertEqual(store.connectedProjectIDs, ["p1"])
 
         let result = await store.reassertConnection()
 
         XCTAssertFalse(result)
         guard case .error = store.state else { return XCTFail("expected error state") }
-        XCTAssertNil(store.connectedProjectID, "non-auth failure must clear the connection")
+        XCTAssertTrue(store.connectedProjectIDs.isEmpty, "non-auth failure must clear the connection")
         XCTAssertFalse(store.hasConnectedProject)
         XCTAssertEqual(stop.count, 1, "non-auth failure must stop the engine")
     }
@@ -141,9 +142,9 @@ final class ProjectStoreSessionExpiryTests: XCTestCase {
         _ = await store.reassertConnection()
 
         XCTAssertEqual(store.state, .signedOut)
-        XCTAssertEqual(store.connectedProjectID, "p1")
+        XCTAssertEqual(store.connectedProjectIDs, ["p1"])
         XCTAssertEqual(stop.count, 0)
-        XCTAssertTrue(EngineLifecyclePolicy.shouldRun(connectedProjectID: store.connectedProjectID,
+        XCTAssertTrue(EngineLifecyclePolicy.shouldRun(connectedProjectID: "p1",
                                                       configURL: configURL),
                       "the engine still has a matching config, so it keeps running")
     }

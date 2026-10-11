@@ -1,14 +1,14 @@
 import Foundation
 
-/// Single decision point for whether the relay engine may run.
+/// Single decision point for whether one project's relay engine child may run.
 ///
-/// Policy: the engine runs **iff a project is connected** (persisted as
-/// `ProjectProfile.connected`, surfaced as `ProjectStore.connectedProjectID`),
+/// Policy: a child runs **iff its project is connected** (persisted as
+/// `ProjectProfile.connected`, surfaced as `ProjectStore.connectedProjectIDs`),
 /// its engine config file exists, AND that config binds **that** project (and,
 /// when an expected server is supplied, that server). This is what stops a
-/// stale `~/.config/memory-connector.yml` (left over from a previously
-/// connected, now disconnected project) from reconnecting at launch — and stops
-/// the engine from serving another account's/ecosystem's config.
+/// stale config file (left over from a previously connected, now disconnected
+/// project) from reconnecting at launch — and stops a child from serving another
+/// account's/ecosystem's config. The app evaluates this PER connected project.
 ///
 /// Pure and testable: callers pass the connected id + config URL (+ optional
 /// expected server), and may inject a `FileManager` for deterministic tests.

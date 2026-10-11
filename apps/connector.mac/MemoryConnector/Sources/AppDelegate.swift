@@ -12,16 +12,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let env = ProcessInfo.processInfo.environment
         guard !HostedTest.isRunning(environment: env) else { return }
         let app = AppEnvironment.shared
-        // Gated: start the engine + status polling ONLY for a connected project
-        // with a valid config; otherwise stop and publish "not running" so a
-        // stale `~/.config/memory-connector.yml` never reconnects.
-        app.syncEngineWithConnection()
+        // Gated: start engine children + status polling ONLY for connected
+        // projects with valid configs; otherwise stop and publish "not running"
+        // so a stale `~/.config/memory-connector.yml` never reconnects.
+        app.syncEngineWithConnections()
         app.statusItemController.start()
     }
 
     func applicationWillTerminate(_: Notification) {
         AppEnvironment.shared.statusItemController.stop()
-        EngineManager.shared.stop()
+        EngineManager.shared.stopAll()
     }
 
     /// Menu-bar agent: closing the settings window must never quit the app.

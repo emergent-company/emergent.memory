@@ -170,7 +170,7 @@ final class StatusItemController: NSObject {
     }
 
     @objc private func quit() {
-        environment.engine.stop()
+        environment.engine.stopAll()
         environment.projectStore.stopAndClear()
         NSApp.terminate(nil)
     }

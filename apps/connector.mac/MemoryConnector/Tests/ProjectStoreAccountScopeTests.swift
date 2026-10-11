@@ -49,7 +49,8 @@ final class ProjectStoreAccountScopeTests: XCTestCase {
     private func makeStore(restart: CallCounter, stop: CallCounter) -> ProjectStore {
         let store = ProjectStore(settings: makeSettings(),
                                  defaults: defaults,
-                                 restart: { restart.increment() },
+                                 restart: { _, _, _ in restart.increment() },
+                                 stopProject: { _ in },
                                  stop: { stop.increment() })
         store.connectorCLI = cli.cli
         store.cliConfigPath = configURL.path
@@ -86,7 +87,7 @@ final class ProjectStoreAccountScopeTests: XCTestCase {
 
         store.applyScope(scopeA)
         await store.connect(projectID: "p1", accessToken: "access-A")
-        XCTAssertEqual(store.connectedProjectID, "p1")
+        XCTAssertEqual(store.connectedProjectIDs, ["p1"])
         XCTAssertEqual(store.activeProjectID, "p1")
         XCTAssertEqual(scopeA.profileStore.profile(for: "p1")?.connected, true)
 
@@ -94,14 +95,14 @@ final class ProjectStoreAccountScopeTests: XCTestCase {
         let stopBefore = stop.count
         store.applyScope(scopeB)
         XCTAssertEqual(stop.count, stopBefore + 1, "scope swap stops the engine")
-        XCTAssertNil(store.connectedProjectID)
+        XCTAssertTrue(store.connectedProjectIDs.isEmpty)
         XCTAssertNil(store.activeProjectID)
         XCTAssertNil(scopeB.profileStore.profile(for: "p1"))
-        XCTAssertEqual(scopeB.profileStore.connectedProjectID(), nil)
+        XCTAssertTrue(scopeB.profileStore.connectedProjectIDs().isEmpty)
 
         // Switching back restores A's persisted state from disk.
         store.applyScope(scopeA)
-        XCTAssertEqual(store.connectedProjectID, "p1")
+        XCTAssertEqual(store.connectedProjectIDs, ["p1"])
         XCTAssertEqual(store.activeProjectID, "p1")
     }
 
@@ -127,7 +128,7 @@ final class ProjectStoreAccountScopeTests: XCTestCase {
         await store.connect(projectID: "p1", accessToken: "access-A")
 
         store.applyScope(ProjectStoreScope.shared(defaults: defaults, secrets: baseSecrets))
-        XCTAssertNil(store.connectedProjectID)
+        XCTAssertTrue(store.connectedProjectIDs.isEmpty)
         XCTAssertNil(store.activeProjectID)
         XCTAssertNil(ProjectProfileStore(defaults: defaults).profile(for: "p1"),
                      "shared profiles stay empty")

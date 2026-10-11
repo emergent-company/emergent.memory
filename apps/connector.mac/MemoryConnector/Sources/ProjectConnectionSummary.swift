@@ -1,22 +1,22 @@
 import Foundation
 
-/// What the main-window footer reports about the project connected to the
-/// Memory relay. The relay serves at most one project, so the reported count is
-/// always 0 or 1.
+/// What the main-window footer reports about the projects connected to the
+/// Memory relays. The app can hold several simultaneous project connections, so
+/// the reported count is zero or more.
 ///
 /// Deliberately free of SwiftUI so the mapping can be unit-tested without a UI
-/// stack; the view maps `dot` to a `Color`. A connected-project id can outlive a
-/// sign-out, so it is only honoured while the user is actually signed in — a
+/// stack; the view maps `dot` to a `Color`. Connected-project ids can outlive a
+/// sign-out, so they are only honoured while the user is actually signed in — a
 /// stale id must not read as connected.
 enum ProjectConnectionSummary: Equatable {
-    /// Signed in, with a project connected to the relay.
-    case connected
-    /// Signed out (even with a leftover connected id), or signed in with no
+    /// Signed in, with at least one project connected.
+    case connected(count: Int)
+    /// Signed out (even with leftover connected ids), or signed in with no
     /// project connected.
     case noProjects
 
-    init(signedIn: Bool, hasConnectedProject: Bool) {
-        self = (signedIn && hasConnectedProject) ? .connected : .noProjects
+    init(signedIn: Bool, connectedCount: Int) {
+        self = (signedIn && connectedCount > 0) ? .connected(count: connectedCount) : .noProjects
     }
 
     /// Footer dot state, mapped to a SwiftUI `Color` by the view.
@@ -32,10 +32,20 @@ enum ProjectConnectionSummary: Equatable {
         }
     }
 
+    /// True when at least one project is connected (and the user is signed in).
+    var isConnected: Bool {
+        if case .connected = self {
+            return true
+        }
+        return false
+    }
+
     var label: LocalizedStringResource {
         switch self {
-        case .connected: "1 project connected"
-        case .noProjects: "no projects connected"
+        case let .connected(count):
+            count == 1 ? "1 project connected" : "\(count) projects connected"
+        case .noProjects:
+            "no projects connected"
         }
     }
 }

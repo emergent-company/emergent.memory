@@ -17,10 +17,21 @@ struct MCPServersPage: View {
     @State private var showingRegistry = false
     @State private var selectedServer: HostedMCPServer?
 
-    /// Whether the connector's management API is reachable for this page.
+    /// The active project's management port (when that project is connected).
+    private var activePort: Int? {
+        guard let id = projectStore.activeProjectID, projectStore.isConnected(id) else {
+            return nil
+        }
+        return projectStore.managementPort(for: id)
+    }
+
+    /// Whether the ACTIVE project's management API is reachable for this page.
     private var availability: MCPServersAvailability {
-        MCPServersAvailability.resolve(engineState: engine.state,
-                                       hasConnectedProject: projectStore.hasConnectedProject)
+        guard let id = projectStore.activeProjectID, projectStore.isConnected(id) else {
+            return .noConnectedProject
+        }
+        return MCPServersAvailability.resolve(engineState: engine.state(for: id),
+                                              hasConnectedProject: true)
     }
 
     var body: some View {
@@ -60,6 +71,20 @@ struct MCPServersPage: View {
         .navigationTitle("Hosted MCP Servers")
         .task {
             store.startPolling()
+        }
+        // Re-point the store at the active project's management port whenever it
+        // changes, and reset the (project-scoped) list so servers never bleed
+        // across projects.
+        .task(id: activePort) {
+            guard let activePort else {
+                store.clear()
+                return
+            }
+            store.setBaseURL(MCPServersAPIClient.baseURL(port: activePort))
+            store.clear()
+            if availability.isAvailable {
+                await store.load()
+            }
         }
         // Reload whenever the connector becomes available (and never while it is
         // starting, stopped, or failed). `availability` is Equatable so the task
@@ -299,96 +324,5 @@ extension MCPServersPage {
             Button("Retry") { Task { await store.load() } }
         }
         .padding(.vertical, 4)
-    }
-}
-
-// MARK: - Shared status affordances
-
-/// Colored status dot, matching the footer/menu-bar palette: green connected,
-/// orange connecting/starting, red error, gray disabled.
-enum MCPStatusStyle {
-    static func color(enabled: Bool, connected: Bool, error: String?) -> Color {
-        if !enabled {
-            return .secondary
-        }
-        if connected {
-            return .green
-        }
-        if let error, !error.isEmpty {
-            return .red
-        }
-        return .orange
-    }
-
-    static func label(enabled: Bool, connected: Bool, error: String?) -> LocalizedStringResource {
-        if !enabled {
-            return "Disabled"
-        }
-        if connected {
-            return "Connected"
-        }
-        if let error, !error.isEmpty {
-            return "Error"
-        }
-        return "Not connected"
-    }
-
-    /// Status line for the detail sheet: `label`, but with the server's error
-    /// text inlined and a loading placeholder until the detail arrives.
-    static func detailLabel(enabled: Bool, connected: Bool, error: String?,
-                            loading: Bool = false) -> LocalizedStringResource
-    {
-        if loading {
-            return "Loading…"
-        }
-        if !enabled {
-            return "Disabled"
-        }
-        if let error, !error.isEmpty {
-            return "Error: \(error)"
-        }
-        return connected ? "Connected" : "Not connected"
-    }
-}
-
-struct MCPStatusDot: View {
-    let color: Color
-
-    var body: some View {
-        Circle()
-            .fill(color)
-            .frame(width: 8, height: 8)
-    }
-}
-
-/// Small capsule showing a server's transport (`stdio` / `http` / `sse`).
-struct MCPTransportBadge: View {
-    let transport: MCPTransport
-
-    var body: some View {
-        Text(transport.displayName)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(
-                Capsule().fill(.quaternary.opacity(0.6))
-            )
-    }
-}
-
-/// Small capsule marking a server as configured in Memory. Such servers are
-/// read-only locally and are edited in Memory, not in this app.
-struct MCPManagedBadge: View {
-    var body: some View {
-        Text("Managed")
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(
-                Capsule().fill(.quaternary.opacity(0.6))
-            )
-            .help("Managed in Memory. Edit this server in Memory, not here.")
     }
 }

@@ -47,7 +47,7 @@ final class MCPServersStore {
     /// two read-modify-write requests never race and drop each other's change.
     private(set) var togglingTools: Set<ToolKey> = []
 
-    private let client: MCPServersAPIClient
+    private var client: MCPServersAPIClient
     private let pollInterval: TimeInterval
     private var pollTask: Task<Void, Never>?
 
@@ -56,6 +56,13 @@ final class MCPServersStore {
     {
         self.client = client
         self.pollInterval = pollInterval
+    }
+
+    /// Re-points the store at a different project's management port (keeps the
+    /// same `URLSession`). Callers project-scope the page by rebinding the base
+    /// URL when the active project changes.
+    func setBaseURL(_ baseURL: String) {
+        client = MCPServersAPIClient(baseURL: baseURL, session: client.session)
     }
 
     /// Names of currently configured servers, for form validation (duplicate

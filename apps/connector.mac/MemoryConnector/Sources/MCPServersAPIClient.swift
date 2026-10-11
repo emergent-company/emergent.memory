@@ -231,8 +231,15 @@ struct RelayRuntimeStatus: Codable, Equatable, Sendable {
 /// are injectable so tests can stub the network.
 struct MCPServersAPIClient: Sendable {
     /// Default loopback base URL; the engine serves the API on `--api-port 8931`
-    /// (not 8890, which the Diane companion uses on the same host).
-    static let defaultBaseURL = "http://127.0.0.1:8931"
+    /// (not 8890, which the Diane companion uses on the same host). Additional
+    /// connected projects serve on probed ports, so callers project-scope their
+    /// client via `baseURL(port:)`.
+    static let defaultBaseURL = baseURL(port: 8931)
+
+    /// The loopback base URL for a management port.
+    static func baseURL(port: Int) -> String {
+        "http://127.0.0.1:\(port)"
+    }
 
     let baseURL: String
     let session: URLSession

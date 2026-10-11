@@ -98,24 +98,27 @@ final class ProjectProfileStoreTests: XCTestCase {
         let store = ProjectProfileStore(defaults: defaults)
         store.save(ProjectProfile(disabledTools: [], instanceID: "p1"), for: "p1")
         XCTAssertEqual(store.profile(for: "p1")?.connected, false)
-        XCTAssertNil(store.connectedProjectID())
+        XCTAssertTrue(store.connectedProjectIDs().isEmpty)
 
         store.setConnected(true, for: "p1")
         XCTAssertEqual(store.profile(for: "p1")?.connected, true)
-        XCTAssertEqual(store.connectedProjectID(), "p1")
+        XCTAssertEqual(store.connectedProjectIDs(), ["p1"])
     }
 
-    func testSetConnectedClearsEveryOtherProject() {
+    func testSetConnectedDoesNotClearOtherProjects() {
         let store = ProjectProfileStore(defaults: defaults)
         store.setConnected(true, for: "p1")
         store.setConnected(true, for: "p2")
 
-        XCTAssertEqual(store.connectedProjectID(), "p2")
-        XCTAssertEqual(store.profile(for: "p1")?.connected, false)
+        XCTAssertEqual(store.connectedProjectIDs(), ["p1", "p2"],
+                       "connecting a second project must not disconnect the first")
+        XCTAssertEqual(store.profile(for: "p1")?.connected, true)
         XCTAssertEqual(store.profile(for: "p2")?.connected, true)
 
         store.setConnected(false, for: "p2")
-        XCTAssertNil(store.connectedProjectID())
+        XCTAssertEqual(store.connectedProjectIDs(), ["p1"])
+        XCTAssertEqual(store.profile(for: "p1")?.connected, true,
+                       "disconnecting one project must not disconnect the other")
     }
 
     func testSetConnectedCreatesAllDisabledProfileWhenAbsent() {
@@ -127,18 +130,43 @@ final class ProjectProfileStoreTests: XCTestCase {
         XCTAssertNil(profile.instanceID)
     }
 
+    func testManagementPortPersistsAndRoundTrips() {
+        let store = ProjectProfileStore(defaults: defaults)
+        store.setConnected(true, for: "p1")
+        store.setManagementPort(8931, for: "p1")
+
+        XCTAssertEqual(store.profile(for: "p1")?.managementPort, 8931)
+        // Preserves the connected flag + other fields.
+        XCTAssertEqual(store.profile(for: "p1")?.connected, true)
+
+        store.setManagementPort(8934, for: "p1")
+        XCTAssertEqual(store.profile(for: "p1")?.managementPort, 8934)
+    }
+
     func testLegacyStoredProfileWithoutConnectedDecodesFalse() {
-        // A profile written before `connected` existed must decode as false and
-        // keep its disabledTools/instanceID.
+        // A profile written before `connected`/`managementPort` existed must
+        // decode as false/nil and keep its disabledTools/instanceID.
         let legacy = #"{"p1":{"disabledTools":["notes_create"],"instanceID":"p1-connector"}}"#
         defaults.set(Data(legacy.utf8), forKey: ProjectProfileStore.key)
 
         let store = ProjectProfileStore(defaults: defaults)
         let profile = store.profile(for: "p1")
         XCTAssertEqual(profile?.connected, false)
+        XCTAssertNil(profile?.managementPort)
         XCTAssertEqual(profile?.disabledTools, ["notes_create"])
         XCTAssertEqual(profile?.instanceID, "p1-connector")
-        XCTAssertNil(store.connectedProjectID())
+        XCTAssertTrue(store.connectedProjectIDs().isEmpty)
+    }
+
+    func testLegacySingleConnectedProfileReadsAsOneElementSet() {
+        let legacy = #"{"p1":{"disabledTools":[],"instanceID":"p1-connector","connected":true}}"#
+        defaults.set(Data(legacy.utf8), forKey: ProjectProfileStore.key)
+
+        let store = ProjectProfileStore(defaults: defaults)
+        XCTAssertEqual(store.connectedProjectIDs(), ["p1"],
+                       "a legacy single connected profile reads as a one-element set")
+        XCTAssertNil(store.profile(for: "p1")?.managementPort,
+                     "a legacy connected profile has no persisted port (treated as primary)")
     }
 
     // MARK: - All tools in one call
